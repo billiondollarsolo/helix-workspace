@@ -348,42 +348,46 @@ function applyAwayThreshold(
 const PRESENCE_STATUSES = new Set<string>(["available", "away", "busy", "offline", "online"]);
 
 function safePresenceEntry(raw: string): PresenceEntry | null {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      !Array.isArray(parsed) &&
-      typeof (parsed as { readonly actorId?: unknown }).actorId === "string" &&
-      typeof (parsed as { readonly orgId?: unknown }).orgId === "string" &&
-      typeof (parsed as { readonly status?: unknown }).status === "string" &&
-      PRESENCE_STATUSES.has((parsed as { readonly status: string }).status) &&
-      typeof (parsed as { readonly seenAt?: unknown }).seenAt === "string"
-    ) {
-      const status = (parsed as { readonly status: string }).status;
-      // Legacy "online" → available
-      const normalized: ChatPresenceStatus =
-        status === "online" ? "available" : (status as ChatPresenceStatus);
-      return {
-        ...(parsed as PresenceEntry),
-        status: normalized,
-      };
-    }
+    parsed = JSON.parse(raw);
   } catch {
     return null;
   }
-  return null;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (
+    typeof record.actorId !== "string" ||
+    typeof record.orgId !== "string" ||
+    typeof record.status !== "string" ||
+    !PRESENCE_STATUSES.has(record.status) ||
+    typeof record.seenAt !== "string"
+  ) {
+    return null;
+  }
+
+  // Legacy "online" → available
+  const normalized: ChatPresenceStatus =
+    record.status === "online" ? "available" : (record.status as ChatPresenceStatus);
+  return {
+    ...(parsed as PresenceEntry),
+    status: normalized,
+  };
 }
 
 function isChatRoomEvent(value: JsonValue): value is ChatRoomEvent {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
   return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as { readonly type?: unknown }).type === "string" &&
-    typeof (value as { readonly eventId?: unknown }).eventId === "string" &&
-    typeof (value as { readonly orgId?: unknown }).orgId === "string" &&
-    typeof (value as { readonly roomId?: unknown }).roomId === "string"
+    typeof record.type === "string" &&
+    typeof record.eventId === "string" &&
+    typeof record.orgId === "string" &&
+    typeof record.roomId === "string"
   );
 }
 

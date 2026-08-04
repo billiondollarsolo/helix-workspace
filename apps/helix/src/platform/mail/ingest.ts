@@ -31,6 +31,7 @@ import {
   inspectInboundAttachments,
   sanitizeMailHeaderDisplayValue,
   sanitizeMailHtml,
+  type SanitizedMailHtml,
 } from "./content-safety.js";
 import type { MailQuarantineRecord, MailQuarantineStore } from "./quarantine.js";
 
@@ -560,31 +561,15 @@ export async function ingestResolvedRawMail(input: {
                 patch: { spamAt: receivedAt },
               });
               if (input.store.recordSpamFeedback !== undefined) {
-                const catcher = scan.spamCatcher;
-                const source =
-                  catcher === "ai"
-                    ? "auto_ai"
-                    : catcher === "rules"
-                      ? "auto_rules"
-                      : catcher === "spamd"
-                        ? "auto_spamd"
-                        : "auto_spamd";
+                const feedback = autoSpamFeedback(scan);
                 await input.store.recordSpamFeedback({
                   orgId,
                   actorId,
                   threadId: stored.threadId,
                   messageId: stored.messageId,
                   label: "spam",
-                  source,
-                  evidence: {
-                    /* `spamCatcher` is optional on the scan result while
-                       `SpamCatcher` already models "nothing caught it" as null,
-                       so an absent field collapses to that rather than putting
-                       `undefined` into a JSON evidence record. */
-                    catcher: catcher ?? null,
-                    reason: scan.spamReason,
-                    layering: "spamd_then_ai_if_pass",
-                  },
+                  source: feedback.source,
+                  evidence: feedback.evidence,
                 });
               }
             }
@@ -606,6 +591,31 @@ export async function ingestResolvedRawMail(input: {
       span.end();
     }
   });
+}
+
+/**
+ * Attribution for a spam-routed inbound message, shared by both delivery paths.
+ *
+ * `spamCatcher` is optional on the scan result while `SpamCatcher` already
+ * models "nothing caught it" as null, so an absent field collapses to that
+ * rather than putting `undefined` into a JSON evidence record.
+ */
+function autoSpamFeedback(scan: InboundScanResult): {
+  readonly source: "auto_ai" | "auto_rules" | "auto_spamd";
+  readonly evidence: JsonObject;
+} {
+  const catcher = scan.spamCatcher ?? null;
+  let source: "auto_ai" | "auto_rules" | "auto_spamd" = "auto_spamd";
+  if (catcher === "ai") source = "auto_ai";
+  else if (catcher === "rules") source = "auto_rules";
+  return {
+    source,
+    evidence: {
+      catcher,
+      reason: scan.spamReason,
+      layering: "spamd_then_ai_if_pass",
+    },
+  };
 }
 
 function assertParsedInboundMessage(parsed: ParsedMail): void {
@@ -691,22 +701,15 @@ export async function ingestRawMail(input: {
               patch: { spamAt: input.input.receivedAt ?? new Date() },
             });
             if (input.store.recordSpamFeedback !== undefined) {
-              const catcher = scan.spamCatcher;
-              const source =
-                catcher === "ai" ? "auto_ai" : catcher === "rules" ? "auto_rules" : "auto_spamd";
+              const feedback = autoSpamFeedback(scan);
               await input.store.recordSpamFeedback({
                 orgId: input.input.orgId,
                 actorId: message.actorId,
                 threadId: stored.threadId,
                 messageId: stored.messageId,
                 label: "spam",
-                source,
-                evidence: {
-                  // See the note on the other feedback record above.
-                  catcher: catcher ?? null,
-                  reason: scan.spamReason,
-                  layering: "spamd_then_ai_if_pass",
-                },
+                source: feedback.source,
+                evidence: feedback.evidence,
               });
             }
           }
@@ -739,12 +742,11 @@ function parsedMailToResolvedMessage(input: {
   const tenantAddresses = input.recipients.map((recipient) => ({
     address: recipient.normalizedAddress,
   }));
+  const sanitizedHtml = sanitizeParsedMailHtml(input.parsed);
   return {
     orgId: input.orgId,
     actorId: primaryRecipient.actorId,
-    from: sanitizeMailAddress(addressObjectToList(input.parsed.from)[0]) ?? {
-      address: input.envelopeFrom ?? "unknown@localhost",
-    },
+    from: resolveFromAddress(input.parsed, input.envelopeFrom),
     // Deliberately project only this tenant's accepted envelope recipients.
     // Parsed To/Cc/Bcc may contain recipients belonging to another tenant.
     to: tenantAddresses,
@@ -752,24 +754,12 @@ function parsedMailToResolvedMessage(input: {
     bcc: [],
     subject: sanitizeMailHeaderDisplayValue(input.parsed.subject ?? ""),
     bodyText: input.parsed.text ?? "",
-    ...(typeof input.parsed.html === "string"
-      ? { bodyHtml: sanitizeMailHtml(input.parsed.html).html }
-      : {}),
+    ...(sanitizedHtml === null ? {} : { bodyHtml: sanitizedHtml.html }),
     messageId: input.parsed.messageId,
     inReplyTo: input.parsed.inReplyTo,
-    references: Array.isArray(input.parsed.references)
-      ? input.parsed.references
-      : input.parsed.references === undefined
-        ? []
-        : [input.parsed.references],
+    references: normalizeParsedReferences(input.parsed.references),
     receivedAt: input.receivedAt,
-    attachments: input.parsed.attachments.map((attachment): MailAttachmentInput => ({
-      filename: attachment.filename,
-      mimeType: attachment.contentType,
-      content: attachment.content,
-      contentId: attachment.cid,
-      disposition: attachment.contentDisposition,
-    })),
+    attachments: toAttachmentInputs(input.parsed.attachments),
     metadata: {
       direction: "inbound",
       auth: { ...input.auth },
@@ -778,10 +768,7 @@ function parsedMailToResolvedMessage(input: {
       recipientActorIds: [...new Set(input.recipients.map((recipient) => recipient.actorId))],
       inboundDedupKey: input.dedupKey,
       quarantined: input.scan.quarantined,
-      remoteImagesBlocked:
-        typeof input.parsed.html === "string"
-          ? sanitizeMailHtml(input.parsed.html).remoteImagesBlocked
-          : 0,
+      remoteImagesBlocked: sanitizedHtml?.remoteImagesBlocked ?? 0,
     },
   };
 }
@@ -812,34 +799,23 @@ async function parsedMailToMessage(
     primaryRecipient === undefined
       ? null
       : await store.findActorByAddress(input.orgId, primaryRecipient);
+  const sanitizedHtml = sanitizeParsedMailHtml(parsed);
 
   return {
     orgId: input.orgId,
     actorId: actor?.actorId ?? null,
-    from: sanitizeMailAddress(addressObjectToList(parsed.from)[0]) ?? {
-      address: input.envelopeFrom ?? "unknown@localhost",
-    },
+    from: resolveFromAddress(parsed, input.envelopeFrom),
     to,
     cc: addressObjectToList(parsed.cc),
     bcc: [],
     subject: sanitizeMailHeaderDisplayValue(parsed.subject ?? ""),
     bodyText: parsed.text ?? "",
-    ...(typeof parsed.html === "string" ? { bodyHtml: sanitizeMailHtml(parsed.html).html } : {}),
+    ...(sanitizedHtml === null ? {} : { bodyHtml: sanitizedHtml.html }),
     messageId: parsed.messageId,
     inReplyTo: parsed.inReplyTo,
-    references: Array.isArray(parsed.references)
-      ? parsed.references
-      : parsed.references === undefined
-        ? []
-        : [parsed.references],
+    references: normalizeParsedReferences(parsed.references),
     receivedAt: input.receivedAt ?? new Date(),
-    attachments: parsed.attachments.map((attachment): MailAttachmentInput => ({
-      filename: attachment.filename,
-      mimeType: attachment.contentType,
-      content: attachment.content,
-      contentId: attachment.cid,
-      disposition: attachment.contentDisposition,
-    })),
+    attachments: toAttachmentInputs(parsed.attachments),
     metadata: {
       direction: "inbound",
       auth: { ...auth },
@@ -859,7 +835,6 @@ export async function scanInboundMail(
   scanners: InboundMailScanners | undefined,
   raw: Buffer | string,
 ): Promise<InboundScanResult> {
-  const tier = scanners?.tier ?? "personal";
   if (scanners === undefined) {
     return {
       spam: null,
@@ -869,6 +844,7 @@ export async function scanInboundMail(
       spamReason: null,
     };
   }
+  const tier = scanners.tier ?? "personal";
   const [spamOutcome, antivirusOutcome] = await Promise.all([
     runScan(scanners.spam, raw),
     runScan(scanners.antivirus, raw),
@@ -887,16 +863,18 @@ export async function scanInboundMail(
   // Layer 1: SpamAssassin. If it says spam, do not run AI.
   const spamdIsSpam = spam !== null && spam.isSpam;
   let spamRouted = spamdIsSpam;
-  let spamCatcher: SpamCatcher = spamdIsSpam ? "spamd" : null;
-  let spamReason: InboundScanResult["spamReason"] = virusRouted
-    ? "virus"
-    : policyQuarantined
-      ? "scanner-policy"
-      : spamdIsSpam
-        ? "spam-score"
-        : null;
-  if (virusRouted) spamCatcher = "virus";
-  else if (policyQuarantined) spamCatcher = "scanner-policy";
+  let spamCatcher: SpamCatcher = null;
+  let spamReason: InboundScanResult["spamReason"] = null;
+  if (virusRouted) {
+    spamCatcher = "virus";
+    spamReason = "virus";
+  } else if (policyQuarantined) {
+    spamCatcher = "scanner-policy";
+    spamReason = "scanner-policy";
+  } else if (spamdIsSpam) {
+    spamCatcher = "spamd";
+    spamReason = "spam-score";
+  }
 
   // Layer 2: beta AI spam tool — only when spamd passed (not spam) and not quarantined.
   // Fail-open: never block SMTP accept on LLM/rules errors.
@@ -943,13 +921,16 @@ export async function scanInboundMail(
     antivirus,
     routedToSpam: virusRouted || policyQuarantined || spamRouted,
     quarantined: policyQuarantined,
-    quarantineReasons: policyQuarantined
-      ? [virusRouted ? "malware" : scannerUnavailable ? "scanner_unavailable" : "scanner_policy"]
-      : [],
+    quarantineReasons: policyQuarantined ? [quarantineReason(virusRouted, scannerUnavailable)] : [],
     scannerUnavailable,
     spamReason,
     spamCatcher,
   };
+}
+
+function quarantineReason(virusRouted: boolean, scannerUnavailable: boolean): string {
+  if (virusRouted) return "malware";
+  return scannerUnavailable ? "scanner_unavailable" : "scanner_policy";
 }
 
 /** Best-effort subject/from/body extraction for beta spam rules (no full MIME reparse). */
@@ -1003,16 +984,20 @@ export function applyInboundSecurityPolicy(
   const quarantineReasons = new Set(scan.quarantineReasons ?? []);
   for (const reason of attachmentPolicy.reasons) quarantineReasons.add(reason);
   const routedToSpam = scan.routedToSpam || authFailed || attachmentPolicy.quarantine;
-  let spamCatcher = scan.spamCatcher ?? null;
-  if (attachmentPolicy.quarantine) spamCatcher = scan.spamCatcher ?? "scanner-policy";
-  else if (authFailed && !scan.routedToSpam) spamCatcher = "auth-failure";
+  let spamCatcher: SpamCatcher = scan.spamCatcher ?? null;
+  let policyReason: InboundScanResult["spamReason"] = null;
+  if (attachmentPolicy.quarantine) {
+    spamCatcher ??= "scanner-policy";
+    policyReason = "scanner-policy";
+  } else if (authFailed) {
+    if (!scan.routedToSpam) spamCatcher = "auth-failure";
+    policyReason = "auth-failure";
+  }
   return {
     ...scan,
     routedToSpam,
     quarantined: scan.quarantined || attachmentPolicy.quarantine,
-    spamReason:
-      scan.spamReason ??
-      (attachmentPolicy.quarantine ? "scanner-policy" : authFailed ? "auth-failure" : null),
+    spamReason: scan.spamReason ?? policyReason,
     spamCatcher,
     quarantineReasons: [...quarantineReasons],
   };
@@ -1030,6 +1015,34 @@ export class MailInboundQuarantinedError extends Error {
     super("Inbound message was accepted into quarantine and was not delivered.");
     this.name = "MailInboundQuarantinedError";
   }
+}
+
+/** Sanitize the parsed HTML body once, or `null` when the message has no HTML part. */
+function sanitizeParsedMailHtml(parsed: ParsedMail): SanitizedMailHtml | null {
+  return typeof parsed.html === "string" ? sanitizeMailHtml(parsed.html) : null;
+}
+
+function normalizeParsedReferences(references: ParsedMail["references"]): readonly string[] {
+  if (Array.isArray(references)) return references;
+  return references === undefined ? [] : [references];
+}
+
+function toAttachmentInputs(attachments: ParsedMail["attachments"]): MailAttachmentInput[] {
+  return attachments.map((attachment) => ({
+    filename: attachment.filename,
+    mimeType: attachment.contentType,
+    content: attachment.content,
+    contentId: attachment.cid,
+    disposition: attachment.contentDisposition,
+  }));
+}
+
+function resolveFromAddress(parsed: ParsedMail, envelopeFrom: string | undefined): MailAddress {
+  return (
+    sanitizeMailAddress(addressObjectToList(parsed.from)[0]) ?? {
+      address: envelopeFrom ?? "unknown@localhost",
+    }
+  );
 }
 
 function sanitizeMailAddress(address: MailAddress | undefined): MailAddress | undefined {

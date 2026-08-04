@@ -19,6 +19,9 @@ import {
   truth,
 } from "./validation-primitives.mjs";
 
+// Gate runs and migration deployments must both be from the last day.
+const GATE_EVIDENCE_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+
 export function validateFullGates(report, expectedBinding, artifactContext, referenceTime) {
   exactKeys(report, [
     "schema",
@@ -124,7 +127,7 @@ function validateGateCommands(
     freshTimestamp(
       result.completedAt,
       referenceTime,
-      24 * 60 * 60 * 1_000,
+      GATE_EVIDENCE_MAX_AGE_MS,
       `${label} command completion`,
     );
     validateArtifactReference(
@@ -171,7 +174,12 @@ export function validateMigration(
   }
   isoDate(report.deployedAt, "migration deployedAt");
   notAfter(report.deployedAt, report.generatedAt, "migration deployment");
-  freshTimestamp(report.deployedAt, referenceTime, 24 * 60 * 60 * 1_000, "migration deployment");
+  freshTimestamp(
+    report.deployedAt,
+    referenceTime,
+    GATE_EVIDENCE_MAX_AGE_MS,
+    "migration deployment",
+  );
   hash(report.environmentSha256, "migration environment digest");
   exactObject(report.migrator, ["replicas", "advisoryLock", "completedAt"], "migrator");
   if (report.migrator.replicas !== 1 || report.migrator.advisoryLock !== true) {
@@ -182,7 +190,7 @@ export function validateMigration(
   freshTimestamp(
     report.migrator.completedAt,
     referenceTime,
-    24 * 60 * 60 * 1_000,
+    GATE_EVIDENCE_MAX_AGE_MS,
     "migrator completion",
   );
   exactObject(report.rollbackPlan, ["status", "owner", "approvedAt", "artifact"], "rollback plan");

@@ -1,6 +1,11 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ensureOk, parseResponse } from "@/features/admin/api-response";
+
+// `parseResponse` used to be defined and exported here; it now lives in
+// `api-response.ts`, but stays re-exported so existing importers keep working.
+export { parseResponse };
 
 /**
  * Mail-delivery admin client.
@@ -539,44 +544,4 @@ export async function fetchSpamSettings(
 ): Promise<SpamSettingsResponse> {
   const response = await fetchImpl("/api/admin/mail/spam", { method: "GET" });
   return parseResponse(response, "load spam settings", spamSettingsResponseSchema);
-}
-
-// ---------------------------------------------------------------------------
-// Shared response handling
-// ---------------------------------------------------------------------------
-
-export async function parseResponse<T>(
-  response: Response,
-  action: string,
-  schema: z.ZodType<T>,
-): Promise<T> {
-  const payload: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-  }
-  const parsed = schema.safeParse(payload);
-  if (parsed.success) {
-    return parsed.data;
-  }
-  throw new Error(`Failed to ${action}: malformed response.`);
-}
-
-async function ensureOk(response: Response, action: string): Promise<void> {
-  if (response.ok) {
-    return;
-  }
-  const payload: unknown = await response.json().catch(() => ({}));
-  throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-}
-
-function errorMessage(payload: unknown): string | undefined {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof payload.error === "string"
-  ) {
-    return payload.error;
-  }
-  return undefined;
 }

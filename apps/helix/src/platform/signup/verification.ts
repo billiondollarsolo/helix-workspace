@@ -164,14 +164,15 @@ export class PostgresSignupEmailVerificationTokenStore implements SignupEmailVer
     readonly token: string;
     readonly now?: Date | undefined;
   }): Promise<SignupEmailVerificationRecord | null> {
+    const now = input.now ?? new Date();
     const rows = (await this.sql`
       update signup_email_verifications
       set
-        consumed_at = ${input.now ?? new Date()},
+        consumed_at = ${now},
         updated_at = now()
       where token_hash = ${hashSignupEmailVerificationToken(input.token)}
         and consumed_at is null
-        and expires_at > ${input.now ?? new Date()}
+        and expires_at > ${now}
       returning org_id, email, password_hash, expires_at, consumed_at, metadata
     `) as unknown as readonly SignupEmailVerificationRow[];
     return rows[0] === undefined ? null : mapSignupEmailVerificationRow(rows[0]);

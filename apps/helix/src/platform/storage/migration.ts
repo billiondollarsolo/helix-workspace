@@ -226,6 +226,14 @@ export async function listTenantStorageMigrationObjects(
 export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigrationJobStore {
   constructor(private readonly sql: postgres.Sql) {}
 
+  #jsonOrNull(
+    state: TenantStorageMigrationStorageState | null | undefined,
+  ): postgres.Parameter | null {
+    return state === undefined || state === null
+      ? null
+      : this.sql.json(state as unknown as Parameters<postgres.Sql["json"]>[0]);
+  }
+
   async create(
     input: CreateTenantStorageMigrationJobInput,
   ): Promise<TenantStorageMigrationJobRecord> {
@@ -243,16 +251,8 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
         ${input.target},
         ${input.dryRun === true},
         ${input.requestedByActorId ?? null},
-        ${
-          input.sourceStorage === undefined || input.sourceStorage === null
-            ? null
-            : this.sql.json(input.sourceStorage as unknown as Parameters<postgres.Sql["json"]>[0])
-        },
-        ${
-          input.targetStorage === undefined || input.targetStorage === null
-            ? null
-            : this.sql.json(input.targetStorage as unknown as Parameters<postgres.Sql["json"]>[0])
-        }
+        ${this.#jsonOrNull(input.sourceStorage)},
+        ${this.#jsonOrNull(input.targetStorage)}
       )
       returning
         id,
@@ -800,13 +800,14 @@ function sha256Hex(body: Uint8Array): string {
 function jobStatusFromMigrationResult(
   result: TenantStorageMigrationResult,
 ): TenantStorageMigrationJobStatus {
-  if (result.status === "completed") {
-    return "succeeded";
+  switch (result.status) {
+    case "completed":
+      return "succeeded";
+    case "completed_with_errors":
+      return "succeeded_with_errors";
+    default:
+      return "dry_run";
   }
-  if (result.status === "completed_with_errors") {
-    return "succeeded_with_errors";
-  }
-  return "dry_run";
 }
 
 function mapTenantStorageMigrationJobRow(

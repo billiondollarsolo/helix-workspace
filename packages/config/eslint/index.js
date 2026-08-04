@@ -31,6 +31,44 @@ function parseListConfig(value) {
     .filter(Boolean);
 }
 
+/**
+ * Property name of a MemberExpression when it is statically knowable:
+ * `obj.name` or `obj["name"]`. Returns undefined for computed dynamic access,
+ * which these rules cannot resolve and therefore never report on by name.
+ */
+function staticMemberName(node) {
+  if (!node || node.type !== "MemberExpression") {
+    return undefined;
+  }
+
+  if (!node.computed && node.property.type === "Identifier") {
+    return node.property.name;
+  }
+
+  if (
+    node.computed &&
+    node.property.type === "Literal" &&
+    typeof node.property.value === "string"
+  ) {
+    return node.property.value;
+  }
+
+  return undefined;
+}
+
+/** `window` / `globalThis`, the two receivers these rules treat as the global object. */
+function isBrowserGlobal(node) {
+  return (
+    node && node.type === "Identifier" && (node.name === "window" || node.name === "globalThis")
+  );
+}
+
+/** The banned method name accessed on `node`, or undefined when it is not banned. */
+function bannedMemberName(node, bannedNames) {
+  const name = staticMemberName(node);
+  return name !== undefined && bannedNames.has(name) ? name : undefined;
+}
+
 const nativePopupRule = {
   meta: {
     type: "problem",
@@ -47,29 +85,6 @@ const nativePopupRule = {
   create(context) {
     const bannedMethods = new Set(["alert", "confirm", "prompt", "open"]);
 
-    function isWindowObject(node) {
-      return (
-        node && node.type === "Identifier" && (node.name === "window" || node.name === "globalThis")
-      );
-    }
-
-    function getBannedMemberName(node) {
-      if (!node.computed && node.property.type === "Identifier") {
-        return bannedMethods.has(node.property.name) ? node.property.name : undefined;
-      }
-
-      if (
-        node.computed &&
-        node.property.type === "Literal" &&
-        typeof node.property.value === "string" &&
-        bannedMethods.has(node.property.value)
-      ) {
-        return node.property.value;
-      }
-
-      return undefined;
-    }
-
     return {
       CallExpression(node) {
         if (node.callee.type === "Identifier" && bannedMethods.has(node.callee.name)) {
@@ -81,9 +96,9 @@ const nativePopupRule = {
         }
       },
       MemberExpression(node) {
-        const methodName = getBannedMemberName(node);
+        const methodName = bannedMemberName(node, bannedMethods);
 
-        if (isWindowObject(node.object) && methodName) {
+        if (isBrowserGlobal(node.object) && methodName) {
           context.report({
             node,
             messageId: "nativePopup",
@@ -272,17 +287,17 @@ const queryRefreshDisciplineRule = {
     schema: [],
   },
   create(context) {
-    function isRefetchMember(node) {
-      if (!node.computed && node.property.type === "Identifier") {
-        return node.property.name === "refetch";
-      }
-
-      return node.computed && node.property.type === "Literal" && node.property.value === "refetch";
-    }
-
     return {
       CallExpression(node) {
-        if (node.callee.type !== "MemberExpression" || !isRefetchMember(node.callee)) {
+        /* Both spellings. `staticMemberName` only sees `query.refetch()`, so
+           destructuring the hook — `const { refetch } = useQuery(...)` — walked
+           straight past this rule. That is not hypothetical: it is exactly how
+           the one violation in the tree got there, in a file whose neighbours
+           carry comments saying the rule bans this. A lint rule that any
+           destructure defeats is not a gate. */
+        const isMemberCall = staticMemberName(node.callee) === "refetch";
+        const isBareCall = node.callee.type === "Identifier" && node.callee.name === "refetch";
+        if (!isMemberCall && !isBareCall) {
           return;
         }
 
@@ -351,6 +366,9 @@ const orgScopedDrizzleTableNames = new Set([
   "webhookDeliveries",
 ]);
 
+/** Drizzle builder methods that take the table as their first argument. */
+const directQueryOperations = new Set(["from", "delete", "insert", "update"]);
+
 const directDrizzleTenantQueryRule = {
   meta: {
     type: "problem",
@@ -364,26 +382,6 @@ const directDrizzleTenantQueryRule = {
     schema: [],
   },
   create(context) {
-    function getMemberName(node) {
-      if (!node || node.type !== "MemberExpression") {
-        return undefined;
-      }
-
-      if (!node.computed && node.property.type === "Identifier") {
-        return node.property.name;
-      }
-
-      if (
-        node.computed &&
-        node.property.type === "Literal" &&
-        typeof node.property.value === "string"
-      ) {
-        return node.property.value;
-      }
-
-      return undefined;
-    }
-
     function getOrgScopedTableName(node) {
       return node?.type === "Identifier" && orgScopedDrizzleTableNames.has(node.name)
         ? node.name
@@ -416,21 +414,8 @@ const directDrizzleTenantQueryRule = {
           return;
         }
 
-        const operation = getMemberName(node.callee);
-        if (!operation) {
-          return;
-        }
-
-        if (operation === "from") {
-          const [tableNode] = node.arguments;
-          const table = getOrgScopedTableName(tableNode);
-          if (table) {
-            report(node, operation, table);
-          }
-          return;
-        }
-
-        if (!["delete", "insert", "update"].includes(operation)) {
+        const operation = staticMemberName(node.callee);
+        if (!operation || !directQueryOperations.has(operation)) {
           return;
         }
 
@@ -463,29 +448,6 @@ const pacerDisciplineRule = {
       "setTimeout",
     ]);
 
-    function isBrowserGlobal(node) {
-      return (
-        node && node.type === "Identifier" && (node.name === "window" || node.name === "globalThis")
-      );
-    }
-
-    function getBannedMemberName(node) {
-      if (!node.computed && node.property.type === "Identifier") {
-        return bannedTimerMethods.has(node.property.name) ? node.property.name : undefined;
-      }
-
-      if (
-        node.computed &&
-        node.property.type === "Literal" &&
-        typeof node.property.value === "string" &&
-        bannedTimerMethods.has(node.property.value)
-      ) {
-        return node.property.value;
-      }
-
-      return undefined;
-    }
-
     return {
       CallExpression(node) {
         if (node.callee.type === "Identifier" && bannedTimerMethods.has(node.callee.name)) {
@@ -501,7 +463,7 @@ const pacerDisciplineRule = {
           return;
         }
 
-        const methodName = getBannedMemberName(node.callee);
+        const methodName = bannedMemberName(node.callee, bannedTimerMethods);
         if (methodName) {
           context.report({
             node: node.callee,

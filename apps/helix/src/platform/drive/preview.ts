@@ -207,7 +207,7 @@ async function officePreviewHtml(input: OfficePreviewConversionInput): Promise<s
   }
 
   if (kind === "spreadsheet") {
-    return wrapOfficePreview(input.name, await renderSpreadsheetPreviewHtml(input.content), []);
+    return wrapOfficePreview(input.name, await renderSpreadsheetPreviewHtml(input.content));
   }
 
   if (kind === "presentation") {
@@ -216,7 +216,7 @@ async function officePreviewHtml(input: OfficePreviewConversionInput): Promise<s
       filename: input.name,
       content: Buffer.from(input.content),
     });
-    return wrapOfficePreview(input.name, renderPresentationPreviewHtml(deck.slides), []);
+    return wrapOfficePreview(input.name, renderPresentationPreviewHtml(deck.slides));
   }
 
   throw new Error(
@@ -347,7 +347,11 @@ function officePreviewKind(mimeType: string, filename: string): OfficePreviewKin
   return null;
 }
 
-function wrapOfficePreview(filename: string, body: string, warnings: readonly string[]): string {
+function wrapOfficePreview(
+  filename: string,
+  body: string,
+  warnings: readonly string[] = [],
+): string {
   const safeName = escapeHtml(filename);
   const warningList =
     warnings.length === 0
@@ -416,6 +420,10 @@ function workbookPreviewSheetName(rawName: string, index: number): string {
   return sanitizeWorkbookPreviewText(rawName).trim().slice(0, 120) || fallback;
 }
 
+/**
+ * Deliberately stricter than {@link isWorkbookPreviewControlCharacter}: tab, LF
+ * and CR count as control characters here. Do not merge the two predicates.
+ */
 function hasWorkbookPreviewControlCharacter(value: string): boolean {
   for (const char of value) {
     const code = char.charCodeAt(0);
@@ -444,23 +452,16 @@ function isWorkbookPreviewControlCharacter(char: string): boolean {
   );
 }
 
+const htmlEntities: Readonly<Record<string, string>> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/gu, (char) => {
-    switch (char) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return char;
-    }
-  });
+  return value.replace(/[&<>"']/gu, (char) => htmlEntities[char] ?? char);
 }
 
 const officePreviewCss = `

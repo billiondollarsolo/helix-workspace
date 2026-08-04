@@ -38,12 +38,7 @@ export function frameForMailActivity(input: {
   readonly payload: unknown;
   readonly actorOrgId: string;
 }): MailStreamFrame | null {
-  const type: MailStreamEventType | null =
-    input.subject === "activity.mail.received"
-      ? "mail.received"
-      : input.subject === "activity.mail.sent"
-        ? "mail.sent"
-        : null;
+  const type = mailStreamEventType(input.subject);
   if (type === null) {
     return null;
   }
@@ -51,18 +46,8 @@ export function frameForMailActivity(input: {
     return null;
   }
   const payload = input.payload as Record<string, unknown>;
-  const threadId =
-    typeof payload.threadId === "string"
-      ? payload.threadId
-      : typeof payload.thread_id === "string"
-        ? payload.thread_id
-        : null;
-  const orgId =
-    typeof payload.orgId === "string"
-      ? payload.orgId
-      : typeof payload.org_id === "string"
-        ? payload.org_id
-        : null;
+  const threadId = firstStringValue(payload, "threadId", "thread_id");
+  const orgId = firstStringValue(payload, "orgId", "org_id");
   if (threadId === null || orgId === null) {
     return null;
   }
@@ -71,6 +56,29 @@ export function frameForMailActivity(input: {
     return null;
   }
   return { type, threadId, orgId };
+}
+
+function mailStreamEventType(subject: string): MailStreamEventType | null {
+  switch (subject) {
+    case "activity.mail.received":
+      return "mail.received";
+    case "activity.mail.sent":
+      return "mail.sent";
+    default:
+      return null;
+  }
+}
+
+/** First key holding a string value — payloads use camelCase or snake_case. */
+function firstStringValue(
+  payload: Record<string, unknown>,
+  ...keys: readonly string[]
+): string | null {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string") return value;
+  }
+  return null;
 }
 
 export function formatMailSseEvent(frame: MailStreamFrame): string {

@@ -247,13 +247,12 @@ export function mapMailSendUiStatus(
     undoUntilMs > nowMs;
 
   if (delivery !== null) {
-    const phase: MailSendUiPhase = delivery;
     return {
-      phase,
+      phase: delivery,
       undoAvailable,
       outboundId,
       lastError,
-      label: mailSendStatusLabel(phase, { undoAvailable, lastError }),
+      label: mailSendStatusLabel(delivery, { undoAvailable, lastError }),
     };
   }
 

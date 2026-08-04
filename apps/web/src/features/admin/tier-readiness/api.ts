@@ -54,17 +54,32 @@ export async function prefetchAdminReadinessQueries(queryClient: AdminReadinessR
     queryClient.ensureQueryData(adminPluginCatalogQueryOptions()).catch(() => undefined),
   ]);
 }
-export async function fetchPlatformConfigStatus(): Promise<PlatformConfigStatus> {
-  const response = await authenticatedFetch("/api/admin/platform-config");
-  const output = (await response.json().catch(() => ({}))) as unknown;
+/* The five transport calls below all share one shape: read the body, prefer a
+   server-supplied `error` string on a non-OK status, then refuse anything the
+   type guard does not recognise. `verb` and `missingSubject` exist because the
+   emitted strings differ between call sites (`update` rather than `request`;
+   "Plugin lifecycle" rather than the action name in the malformed case). */
+async function readValidated<T>(
+  response: Response,
+  guard: (value: unknown) => value is T,
+  subject: string,
+  verb = "request",
+  missingSubject = subject,
+): Promise<T> {
+  const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = isRecord(output) && typeof output.error === "string" ? output.error : undefined;
-    throw new Error(error ?? `Platform config request failed with ${String(response.status)}`);
+    throw new Error(error ?? `${subject} ${verb} failed with ${String(response.status)}`);
   }
-  if (!isPlatformConfigStatus(output)) {
-    throw new Error("Platform config response was missing required fields.");
+  if (!guard(output)) {
+    throw new Error(`${missingSubject} response was missing required fields.`);
   }
   return output;
+}
+
+export async function fetchPlatformConfigStatus(): Promise<PlatformConfigStatus> {
+  const response = await authenticatedFetch("/api/admin/platform-config");
+  return readValidated(response, isPlatformConfigStatus, "Platform config");
 }
 
 export async function updatePlatformTier(tier: TierId): Promise<PlatformConfigStatus> {
@@ -86,15 +101,7 @@ export async function patchPlatformConfig(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   });
-  const output = (await response.json().catch(() => ({}))) as unknown;
-  if (!response.ok) {
-    const error = isRecord(output) && typeof output.error === "string" ? output.error : undefined;
-    throw new Error(error ?? `Platform config update failed with ${String(response.status)}`);
-  }
-  if (!isPlatformConfigStatus(output)) {
-    throw new Error("Platform config response was missing required fields.");
-  }
-  return output;
+  return readValidated(response, isPlatformConfigStatus, "Platform config", "update");
 }
 
 export async function fetchPluginCatalog(): Promise<PluginCatalogStatus> {
@@ -103,15 +110,7 @@ export async function fetchPluginCatalog(): Promise<PluginCatalogStatus> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({}),
   });
-  const output = (await response.json().catch(() => ({}))) as unknown;
-  if (!response.ok) {
-    const error = isRecord(output) && typeof output.error === "string" ? output.error : undefined;
-    throw new Error(error ?? `Plugin catalog request failed with ${String(response.status)}`);
-  }
-  if (!isPluginCatalogStatus(output)) {
-    throw new Error("Plugin catalog response was missing required fields.");
-  }
-  return output;
+  return readValidated(response, isPluginCatalogStatus, "Plugin catalog");
 }
 
 export async function installPlugin(input: PluginInstallInput): Promise<PluginInstallResult> {
@@ -120,15 +119,7 @@ export async function installPlugin(input: PluginInstallInput): Promise<PluginIn
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
-  const output = (await response.json().catch(() => ({}))) as unknown;
-  if (!response.ok) {
-    const error = isRecord(output) && typeof output.error === "string" ? output.error : undefined;
-    throw new Error(error ?? `Plugin install request failed with ${String(response.status)}`);
-  }
-  if (!isPluginInstallResult(output)) {
-    throw new Error("Plugin install response was missing required fields.");
-  }
-  return output;
+  return readValidated(response, isPluginInstallResult, "Plugin install");
 }
 
 /** A lifecycle call plus the confirmation ids the OPERATOR acknowledged.
@@ -157,17 +148,13 @@ export async function mutatePluginLifecycle(
       ...(input.confirmations === undefined ? {} : { confirmations: input.confirmations }),
     }),
   });
-  const output = (await response.json().catch(() => ({}))) as unknown;
-  if (!response.ok) {
-    const error = isRecord(output) && typeof output.error === "string" ? output.error : undefined;
-    throw new Error(
-      error ?? `Plugin ${input.action} request failed with ${String(response.status)}`,
-    );
-  }
-  if (!isPluginLifecycleResult(output)) {
-    throw new Error("Plugin lifecycle response was missing required fields.");
-  }
-  return output;
+  return readValidated(
+    response,
+    isPluginLifecycleResult,
+    `Plugin ${input.action}`,
+    "request",
+    "Plugin lifecycle",
+  );
 }
 function isPlatformConfigStatus(value: unknown): value is PlatformConfigStatus {
   return (

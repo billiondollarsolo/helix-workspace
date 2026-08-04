@@ -23,7 +23,7 @@ export interface SignupOnboardingInviteEmailPayload extends JsonObject {
   readonly source: "signup";
 }
 
-export interface SignupVerificationEmailWorkerOptions {
+export interface SignupEmailWorkerOptions {
   readonly events: EventBus;
   readonly transport: OutboundMailTransport;
   readonly subject?: string;
@@ -32,24 +32,27 @@ export interface SignupVerificationEmailWorkerOptions {
   readonly onError?: (error: unknown) => void;
 }
 
-export interface SignupOnboardingInviteEmailWorkerOptions {
-  readonly events: EventBus;
-  readonly transport: OutboundMailTransport;
-  readonly subject?: string;
-  readonly from?: MailOutboundEnvelope["from"];
-  readonly productName?: string;
-  readonly onError?: (error: unknown) => void;
-}
+export type SignupVerificationEmailWorkerOptions = SignupEmailWorkerOptions;
 
-export class SignupVerificationEmailWorker {
+export type SignupOnboardingInviteEmailWorkerOptions = SignupEmailWorkerOptions;
+
+/**
+ * Shared subscribe/deliver machinery for the signup transactional email workers.
+ * Subclasses only supply the default event subject and how a payload renders.
+ */
+abstract class SignupEmailWorker {
+  protected readonly from: MailOutboundEnvelope["from"];
+  protected readonly productName: string;
   private readonly subject: string;
-  private readonly from: MailOutboundEnvelope["from"];
-  private readonly productName: string;
+  private readonly events: EventBus;
+  private readonly transport: OutboundMailTransport;
   private readonly onError: ((error: unknown) => void) | undefined;
   private unsubscribe: Unsubscribe | undefined;
 
-  constructor(private readonly options: SignupVerificationEmailWorkerOptions) {
-    this.subject = options.subject ?? signupVerificationEmailSubject;
+  constructor(options: SignupEmailWorkerOptions, defaultSubject: string) {
+    this.subject = options.subject ?? defaultSubject;
+    this.events = options.events;
+    this.transport = options.transport;
     this.from = options.from ?? { address: "no-reply@localhost", name: "Helix" };
     this.productName = options.productName ?? "Helix";
     this.onError = options.onError;
@@ -60,7 +63,7 @@ export class SignupVerificationEmailWorker {
       return;
     }
 
-    this.unsubscribe = await this.options.events.subscribe(this.subject, async (event) => {
+    this.unsubscribe = await this.events.subscribe(this.subject, async (event) => {
       await this.handle(event);
     });
   }
@@ -77,69 +80,41 @@ export class SignupVerificationEmailWorker {
 
   async handle(event: EventEnvelope): Promise<MailOutboundDeliveryResult> {
     try {
-      const payload = parseSignupVerificationEmailPayload(event.payload);
-      return await this.options.transport.send(
-        renderSignupVerificationEmail({
-          payload,
-          from: this.from,
-          productName: this.productName,
-        }),
-      );
+      return await this.transport.send(this.render(event.payload));
     } catch (error) {
       this.onError?.(error);
       throw error;
     }
+  }
+
+  protected abstract render(payload: unknown): MailOutboundEnvelope;
+}
+
+export class SignupVerificationEmailWorker extends SignupEmailWorker {
+  constructor(options: SignupVerificationEmailWorkerOptions) {
+    super(options, signupVerificationEmailSubject);
+  }
+
+  protected render(payload: unknown): MailOutboundEnvelope {
+    return renderSignupVerificationEmail({
+      payload: parseSignupVerificationEmailPayload(payload),
+      from: this.from,
+      productName: this.productName,
+    });
   }
 }
 
-export class SignupOnboardingInviteEmailWorker {
-  private readonly subject: string;
-  private readonly from: MailOutboundEnvelope["from"];
-  private readonly productName: string;
-  private readonly onError: ((error: unknown) => void) | undefined;
-  private unsubscribe: Unsubscribe | undefined;
-
-  constructor(private readonly options: SignupOnboardingInviteEmailWorkerOptions) {
-    this.subject = options.subject ?? signupOnboardingInviteEmailSubject;
-    this.from = options.from ?? { address: "no-reply@localhost", name: "Helix" };
-    this.productName = options.productName ?? "Helix";
-    this.onError = options.onError;
+export class SignupOnboardingInviteEmailWorker extends SignupEmailWorker {
+  constructor(options: SignupOnboardingInviteEmailWorkerOptions) {
+    super(options, signupOnboardingInviteEmailSubject);
   }
 
-  async start(): Promise<void> {
-    if (this.unsubscribe !== undefined) {
-      return;
-    }
-
-    this.unsubscribe = await this.options.events.subscribe(this.subject, async (event) => {
-      await this.handle(event);
+  protected render(payload: unknown): MailOutboundEnvelope {
+    return renderSignupOnboardingInviteEmail({
+      payload: parseSignupOnboardingInviteEmailPayload(payload),
+      from: this.from,
+      productName: this.productName,
     });
-  }
-
-  async stop(): Promise<void> {
-    if (this.unsubscribe === undefined) {
-      return;
-    }
-
-    const unsubscribe = this.unsubscribe;
-    this.unsubscribe = undefined;
-    await unsubscribe();
-  }
-
-  async handle(event: EventEnvelope): Promise<MailOutboundDeliveryResult> {
-    try {
-      const payload = parseSignupOnboardingInviteEmailPayload(event.payload);
-      return await this.options.transport.send(
-        renderSignupOnboardingInviteEmail({
-          payload,
-          from: this.from,
-          productName: this.productName,
-        }),
-      );
-    } catch (error) {
-      this.onError?.(error);
-      throw error;
-    }
   }
 }
 
@@ -231,53 +206,46 @@ export function renderSignupOnboardingInviteEmail(input: {
 export function parseSignupVerificationEmailPayload(
   value: unknown,
 ): SignupVerificationEmailPayload {
+  const { orgId, orgSlug, email, verificationUrl, expiresAt, source } = payloadRecord(value);
   if (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as { readonly orgId?: unknown }).orgId === "string" &&
-    typeof (value as { readonly orgSlug?: unknown }).orgSlug === "string" &&
-    typeof (value as { readonly email?: unknown }).email === "string" &&
-    typeof (value as { readonly verificationUrl?: unknown }).verificationUrl === "string" &&
-    typeof (value as { readonly expiresAt?: unknown }).expiresAt === "string" &&
-    (value as { readonly source?: unknown }).source === "signup"
+    typeof orgId !== "string" ||
+    typeof orgSlug !== "string" ||
+    typeof email !== "string" ||
+    typeof verificationUrl !== "string" ||
+    typeof expiresAt !== "string" ||
+    source !== "signup"
   ) {
-    return {
-      orgId: (value as { readonly orgId: string }).orgId,
-      orgSlug: (value as { readonly orgSlug: string }).orgSlug,
-      email: (value as { readonly email: string }).email,
-      verificationUrl: (value as { readonly verificationUrl: string }).verificationUrl,
-      expiresAt: (value as { readonly expiresAt: string }).expiresAt,
-      source: "signup",
-    };
+    throw new Error("Invalid signup verification email payload.");
   }
-  throw new Error("Invalid signup verification email payload.");
+  return { orgId, orgSlug, email, verificationUrl, expiresAt, source: "signup" };
 }
 
 export function parseSignupOnboardingInviteEmailPayload(
   value: unknown,
 ): SignupOnboardingInviteEmailPayload {
+  const { orgId, orgSlug, actorId, email, inviteUrl, source } = payloadRecord(value);
   if (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as { readonly orgId?: unknown }).orgId === "string" &&
-    typeof (value as { readonly orgSlug?: unknown }).orgSlug === "string" &&
-    typeof (value as { readonly actorId?: unknown }).actorId === "string" &&
-    typeof (value as { readonly email?: unknown }).email === "string" &&
-    typeof (value as { readonly inviteUrl?: unknown }).inviteUrl === "string" &&
-    (value as { readonly source?: unknown }).source === "signup"
+    typeof orgId !== "string" ||
+    typeof orgSlug !== "string" ||
+    typeof actorId !== "string" ||
+    typeof email !== "string" ||
+    typeof inviteUrl !== "string" ||
+    source !== "signup"
   ) {
-    return {
-      orgId: (value as { readonly orgId: string }).orgId,
-      orgSlug: (value as { readonly orgSlug: string }).orgSlug,
-      actorId: (value as { readonly actorId: string }).actorId,
-      email: (value as { readonly email: string }).email,
-      inviteUrl: (value as { readonly inviteUrl: string }).inviteUrl,
-      source: "signup",
-    };
+    throw new Error("Invalid signup onboarding invite email payload.");
   }
-  throw new Error("Invalid signup onboarding invite email payload.");
+  return { orgId, orgSlug, actorId, email, inviteUrl, source: "signup" };
+}
+
+/**
+ * Non-object payloads (including arrays) become an empty record so the field
+ * checks below reject them with the same error as a malformed object.
+ */
+function payloadRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
 }
 
 function renderBrandedEmailHtml(input: {
@@ -307,7 +275,7 @@ function renderBrandedEmailHtml(input: {
     '<body style="margin:0;background:#f8fafc;padding:32px 16px;">',
     `<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(input.preheader)}</div>`,
     '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">',
-    "<tr><td align=\"center\">",
+    '<tr><td align="center">',
     '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;max-width:560px;background:#ffffff;border:1px solid #e2e8f0;">',
     '<tr><td style="padding:28px 32px 8px;">',
     `<div style="color:#0f766e;font:700 13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:.04em;text-transform:uppercase;">${escapeHtml(input.productName)}</div>`,

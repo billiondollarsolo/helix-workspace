@@ -271,18 +271,12 @@ async function handleSheetsMessage(input: {
     return;
   }
 
-  input.room.latestRevision = result.revision;
-  const frame = JSON.stringify({
-    type: "operation",
-    protocol: SHEETS_WS_PROTOCOL,
+  broadcastSheetsOperation(input.room, {
     sheetId: input.room.sheetId,
     tabId: message.tabId,
     revision: result.revision,
     operation: result.operation,
   });
-  for (const peer of input.room.peers.keys()) {
-    peer.send(frame);
-  }
   await publishSheetsFanout({
     events: input.events,
     nodeId: input.nodeId,

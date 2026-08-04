@@ -12,13 +12,17 @@ import {
   type AdminUser,
   type AdminUsersQueryInput,
 } from "@/features/admin/admin-users";
-import { useAdminSectionSearch } from "@/features/admin/admin-section-search";
+import {
+  resolveClosedSearchParam,
+  useAdminSectionSearch,
+} from "@/features/admin/admin-section-search";
 import {
   EmptyRow,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
   StateBanner,
+  StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
 import {
@@ -116,18 +120,6 @@ const READ_ONLY_REASON =
 const ROLE_FILTERS = ["all", ...USER_ROLES] as const satisfies readonly RoleFilter[];
 const STATUS_FILTERS = ["all", "active", "suspended"] as const satisfies readonly StatusFilter[];
 
-function roleFilterFromSearch(value: string | undefined): RoleFilter {
-  return ROLE_FILTERS.includes(value as RoleFilter) ? (value as RoleFilter) : "all";
-}
-
-function statusFilterFromSearch(value: string | undefined): StatusFilter {
-  return STATUS_FILTERS.includes(value as StatusFilter) ? (value as StatusFilter) : "all";
-}
-
-function actorTypeFromSearch(value: string | undefined): string {
-  return ACTOR_TYPES.includes(value as (typeof ACTOR_TYPES)[number]) ? (value as string) : "all";
-}
-
 /** Project the real admin user API shape onto the directory row. */
 function projectAdminUser(user: AdminUser): DirectoryUser {
   return {
@@ -158,15 +150,6 @@ function formatDate(value: string): string {
     return value;
   }
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
-}
-
-function StatusChip({ status }: { status: UserStatus }) {
-  return (
-    <span className={`chip ${status === "active" ? "success" : "danger"}`}>
-      <span className="chip-dot" />
-      {status}
-    </span>
-  );
 }
 
 /** Copy-to-clipboard with a short "Copied" acknowledgement.
@@ -325,12 +308,49 @@ function downloadCsv(rows: readonly DirectoryUser[]): void {
   URL.revokeObjectURL(url);
 }
 
+/** The count beside the page title.
+ *
+ *  A row count is only a workspace total when the server said there is nothing
+ *  after it. While a cursor remains, the number is what has been loaded, and it
+ *  is labelled that way.
+ *
+ *  "Loaded" names the fetched rows, never the filtered ones: the client-side
+ *  role/status pass runs after the fetch, so counting it made the header read
+ *  "3 loaded" while the banner one line below said 250 accounts were loaded.
+ *  When that pass is narrowing, both numbers are printed and only the second is
+ *  called loaded. */
+function directoryCountLabel(input: {
+  readonly counted: boolean;
+  readonly failed: boolean;
+  readonly hasMorePages: boolean;
+  readonly narrowedInBrowser: boolean;
+  readonly narrowedByServer: boolean;
+  readonly shown: number;
+  readonly loaded: number;
+}): string {
+  if (!input.counted) {
+    return input.failed ? "count unavailable" : "counting…";
+  }
+  if (input.hasMorePages) {
+    return input.narrowedInBrowser
+      ? `${String(input.shown)} shown of ${String(input.loaded)} loaded — more not yet loaded`
+      : `${String(input.loaded)} loaded — more not yet loaded`;
+  }
+  if (input.narrowedInBrowser) {
+    return `${String(input.shown)} of ${String(input.loaded)} shown`;
+  }
+  if (input.narrowedByServer) {
+    return `${String(input.loaded)} matching`;
+  }
+  return `${String(input.loaded)} user${input.loaded === 1 ? "" : "s"}`;
+}
+
 export function AdminUsers() {
   const { search, patchSearch } = useAdminSectionSearch("users");
   const query = search.q ?? "";
-  const roleFilter = roleFilterFromSearch(search.role);
-  const actorTypeFilter = actorTypeFromSearch(search.actorType);
-  const statusFilter = statusFilterFromSearch(search.status);
+  const roleFilter = resolveClosedSearchParam(search.role, ROLE_FILTERS, "all");
+  const actorTypeFilter: string = resolveClosedSearchParam(search.actorType, ACTOR_TYPES, "all");
+  const statusFilter = resolveClosedSearchParam(search.status, STATUS_FILTERS, "all");
   const expanded = search.user ?? null;
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const { copy, state: copyState } = useCopy();
@@ -613,7 +633,13 @@ export function AdminUsers() {
       header: "Status",
       width: "90px",
       sortValue: (row) => row.user.status,
-      cell: (row) => (row.kind === "detail" ? null : <StatusChip status={row.user.status} />),
+      cell: (row) =>
+        row.kind === "detail" ? null : (
+          <StatusChip
+            tone={row.user.status === "active" ? "success" : "danger"}
+            label={row.user.status}
+          />
+        ),
     },
     {
       id: "expander",
@@ -651,28 +677,15 @@ export function AdminUsers() {
         subtitle="Every actor in this workspace — people, agents, and service identities."
         meta={
           <span className="ml-2 text-[var(--text-3)] [font-size:var(--text-meta)]">
-            {/* A row count is only a workspace total when the server said there
-                is nothing after it. While a cursor remains, the number is what
-                has been loaded, and it is labelled that way.
-
-                "Loaded" names `directory`, never `filtered`: the client-side
-                role/status pass runs after the fetch, so counting it made the
-                header read "3 loaded" while the banner one line below said 250
-                accounts were loaded. When that pass is narrowing, both numbers
-                are printed and only the second is called loaded. */}
-            {!counted
-              ? failure !== null
-                ? "count unavailable"
-                : "counting…"
-              : hasMorePages
-                ? narrowedInBrowser
-                  ? `${String(filtered.length)} shown of ${String(directory.length)} loaded — more not yet loaded`
-                  : `${String(directory.length)} loaded — more not yet loaded`
-                : narrowedInBrowser
-                  ? `${String(filtered.length)} of ${String(directory.length)} shown`
-                  : narrowedByServer
-                    ? `${String(directory.length)} matching`
-                    : `${String(directory.length)} user${directory.length === 1 ? "" : "s"}`}
+            {directoryCountLabel({
+              counted,
+              failed: failure !== null,
+              hasMorePages,
+              narrowedInBrowser,
+              narrowedByServer,
+              shown: filtered.length,
+              loaded: directory.length,
+            })}
           </span>
         }
         actions={

@@ -231,13 +231,16 @@ function collectBounds(
   targets: Set<string>,
 ): void {
   if (typeof value === "string") {
-    if (key !== undefined && resourceKeys.has(key) && value.length > 0) {
+    if (key === undefined || value.length === 0) {
+      return;
+    }
+    if (resourceKeys.has(key)) {
       resources.add(value);
     }
-    if (key !== undefined && recipientKeys.has(key) && value.length > 0) {
+    if (recipientKeys.has(key)) {
       recipients.add(normalizeRecipient(value));
     }
-    if (key !== undefined && targetKeys.has(key) && value.length > 0) {
+    if (targetKeys.has(key)) {
       targets.add(value);
     }
     return;

@@ -375,7 +375,7 @@ function parseMailCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
+  const jsonArgs = argsWithSubject(subject, rest);
   switch (action) {
     case "send":
       return {
@@ -503,8 +503,7 @@ const mailDeleteUsage = "Usage: helix mail delete [--thread-id <id>] [--json [JS
 const mailThreadGetUsage = "Usage: helix mail thread-get [--thread-id <id>] [--json [JSON]]";
 const mailSnoozeUsage =
   "Usage: helix mail snooze [--thread-id <id>] [--until <iso>] [--json [JSON]]";
-const mailReadSetUsage =
-  "Usage: helix mail read [--thread-id <id>] [--unread] [--json [JSON]]";
+const mailReadSetUsage = "Usage: helix mail read [--thread-id <id>] [--unread] [--json [JSON]]";
 const mailStarSetUsage =
   "Usage: helix mail star [--thread-id <id>] [--starred] [--unstarred] [--json [JSON]]";
 const mailFilterCreateUsage =
@@ -736,11 +735,7 @@ function parseMailOptions(
 
     const numberField = spec.numbers.get(flag);
     if (numberField !== undefined) {
-      const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        throw new CliUsageError(mailUsage(commandName, spec));
-      }
-      input[numberField] = parsed;
+      input[numberField] = parsePositiveInteger(value, mailUsage(commandName, spec));
       continue;
     }
 
@@ -775,6 +770,25 @@ function inlineJson(input: Record<string, unknown>): JsonArgument {
 
 function isDefined(value: string | undefined): value is string {
   return value !== undefined;
+}
+
+/**
+ * Scope parsers receive the third positional argument separately from the rest,
+ * but flag parsing treats it as just another argument. This re-joins them.
+ */
+function argsWithSubject(subject: string | undefined, rest: readonly string[]): readonly string[] {
+  return subject === undefined ? rest : [subject, ...rest];
+}
+
+/**
+ * Rejects a third positional argument for subcommands that only accept flags,
+ * so `helix drive list extra` fails with the subcommand usage instead of being
+ * silently parsed as a flag.
+ */
+function rejectPositionalSubject(subject: string | undefined, usageMessage: string): void {
+  if (subject !== undefined && !subject.startsWith("--")) {
+    throw new CliUsageError(usageMessage);
+  }
 }
 
 function mailUsage(commandName: string, spec: MailOptionSpec): string {
@@ -835,10 +849,8 @@ function parseChatCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
-  if (subject !== undefined && !subject.startsWith("--")) {
-    throw new CliUsageError(chatUsage);
-  }
+  const jsonArgs = argsWithSubject(subject, rest);
+  rejectPositionalSubject(subject, chatUsage);
   switch (action) {
     case "send":
       return {
@@ -941,7 +953,7 @@ function parseDriveCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
+  const jsonArgs = argsWithSubject(subject, rest);
   switch (action) {
     case "upload":
       return {
@@ -950,48 +962,32 @@ function parseDriveCommand(
         json: parseDriveUploadOptions(subject, rest),
       };
     case "finalize":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.finalize", json: parseJsonArgument(jsonArgs) };
     case "list":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveListUsage);
-      }
+      rejectPositionalSubject(subject, driveListUsage);
       return {
         kind: "tool-call",
         toolId: "drive.list",
         json: parseDriveListOptions(jsonArgs),
       };
     case "share":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.share", json: parseJsonArgument(jsonArgs) };
     case "move":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.move", json: parseJsonArgument(jsonArgs) };
     case "trash":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.trash", json: parseJsonArgument(jsonArgs) };
     case "restore":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.restore", json: parseJsonArgument(jsonArgs) };
     case "delete":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.delete", json: parseJsonArgument(jsonArgs) };
     case "search":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveSearchUsage);
-      }
+      rejectPositionalSubject(subject, driveSearchUsage);
       return {
         kind: "tool-call",
         toolId: "drive.search",
@@ -1133,11 +1129,7 @@ function parseDriveFlags(
 
     const numberField = spec.numbers.get(flag);
     if (numberField !== undefined) {
-      const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        throw new CliUsageError(usageMessage);
-      }
-      input[numberField] = parsed;
+      input[numberField] = parsePositiveInteger(value, usageMessage);
       index += 1;
       continue;
     }
@@ -1155,50 +1147,38 @@ function parseDocsCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
+  const jsonArgs = argsWithSubject(subject, rest);
   switch (action) {
     case "create":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsCreateUsage);
-      }
+      rejectPositionalSubject(subject, docsCreateUsage);
       return { kind: "tool-call", toolId: "docs.create", json: parseDocsCreateOptions(jsonArgs) };
     case "update-title":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsUpdateTitleUsage);
-      }
+      rejectPositionalSubject(subject, docsUpdateTitleUsage);
       return {
         kind: "tool-call",
         toolId: "docs.update-title",
         json: parseDocsUpdateTitleOptions(jsonArgs),
       };
     case "export":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsExportUsage);
-      }
+      rejectPositionalSubject(subject, docsExportUsage);
       return { kind: "tool-call", toolId: "docs.export", json: parseDocsExportOptions(jsonArgs) };
     case "comment-create":
     case "comment":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsCommentCreateUsage);
-      }
+      rejectPositionalSubject(subject, docsCommentCreateUsage);
       return {
         kind: "tool-call",
         toolId: "docs.comment.create",
         json: parseDocsCommentCreateOptions(jsonArgs),
       };
     case "get":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsGetUsage);
-      }
+      rejectPositionalSubject(subject, docsGetUsage);
       return {
         kind: "tool-call",
         toolId: "docs.get",
         json: parseTypedOptions(jsonArgs, docsGetOptions, docsGetUsage),
       };
     case "list":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsListUsage);
-      }
+      rejectPositionalSubject(subject, docsListUsage);
       return {
         kind: "tool-call",
         toolId: "docs.list",
@@ -1384,10 +1364,8 @@ function parseCalendarCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
-  if (subject !== undefined && !subject.startsWith("--")) {
-    throw new CliUsageError(calendarUsage);
-  }
+  const jsonArgs = argsWithSubject(subject, rest);
+  rejectPositionalSubject(subject, calendarUsage);
   switch (action) {
     case "event-create":
     case "create":
@@ -1528,10 +1506,8 @@ function parseMeetCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
-  if (subject !== undefined && !subject.startsWith("--")) {
-    throw new CliUsageError(meetUsage);
-  }
+  const jsonArgs = argsWithSubject(subject, rest);
+  rejectPositionalSubject(subject, meetUsage);
   switch (action) {
     case "create-room":
     case "create":
@@ -1616,10 +1592,8 @@ function parseAssistantCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
-  if (subject !== undefined && !subject.startsWith("--")) {
-    throw new CliUsageError(assistantUsage);
-  }
+  const jsonArgs = argsWithSubject(subject, rest);
+  rejectPositionalSubject(subject, assistantUsage);
   switch (action) {
     case "chat":
     case "ask":
@@ -1657,8 +1631,7 @@ function parseAssistantCommand(
   }
 }
 
-const assistantUsage =
-  "Usage: helix assistant <chat|new|forget|approve|cancel> [--json [JSON]]";
+const assistantUsage = "Usage: helix assistant <chat|new|forget|approve|cancel> [--json [JSON]]";
 const assistantConfirmationUsage =
   "Usage: helix assistant <approve|cancel> [--conversation-id <id>] [--pending-id <id>] [--classification <public|standard|confidential|restricted>] [--json [JSON]]";
 
@@ -2466,11 +2439,7 @@ function parseWebhookOptions(
 
     const numberField = spec.numbers.get(flag);
     if (numberField !== undefined) {
-      const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        throw new CliUsageError(usageMessage);
-      }
-      input[numberField] = parsed;
+      input[numberField] = parsePositiveInteger(value, usageMessage);
       index += 1;
       continue;
     }
@@ -2588,11 +2557,7 @@ function parseTypedOptions(
 
     const numberField = spec.numbers.get(flag);
     if (numberField !== undefined) {
-      const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        throw new CliUsageError(usageMessage);
-      }
-      input[numberField] = parsed;
+      input[numberField] = parsePositiveInteger(value, usageMessage);
       index += 1;
       continue;
     }

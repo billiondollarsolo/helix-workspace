@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
 import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
+import { appendParam, parseResponse } from "@/features/admin/api-response";
 
 /**
  * Admin Console — OAuth apps client.
@@ -169,43 +170,4 @@ export async function revokeOAuthApp(
     headers: jsonHeaders,
   });
   return (await parseResponse(response, "revoke OAuth app", oauthAppResponseSchema)).app;
-}
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-function appendParam(params: URLSearchParams, key: string, value: string | undefined): void {
-  const trimmed = value?.trim();
-  if (trimmed !== undefined && trimmed.length > 0) {
-    params.set(key, trimmed);
-  }
-}
-
-async function parseResponse<T>(
-  response: Response,
-  action: string,
-  schema: z.ZodType<T>,
-): Promise<T> {
-  const payload: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-  }
-  const parsed = schema.safeParse(payload);
-  if (parsed.success) {
-    return parsed.data;
-  }
-  throw new Error(`Failed to ${action}: malformed response.`);
-}
-
-function errorMessage(payload: unknown): string | undefined {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof payload.error === "string"
-  ) {
-    return payload.error;
-  }
-  return undefined;
 }

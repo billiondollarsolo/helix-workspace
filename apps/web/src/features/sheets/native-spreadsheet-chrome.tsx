@@ -674,13 +674,13 @@ export function buildSheetsRibbon(ctx: SheetsChromeContext): ReactNode {
           icon={<ArrowUpAZ size={16} />}
           label="Sort range A to Z"
           onClick={ctx.sortRangeAsc}
-          disabled={!ctx.hasSelection || ctx.selectionLocked}
+          disabled={formatDisabled}
         />
         <RibbonButton
           icon={<ArrowDownAZ size={16} />}
           label="Sort range Z to A"
           onClick={ctx.sortRangeDesc}
-          disabled={!ctx.hasSelection || ctx.selectionLocked}
+          disabled={formatDisabled}
         />
         <RibbonToggle
           icon={<FilterIcon size={16} />}

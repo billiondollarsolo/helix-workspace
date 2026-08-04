@@ -542,21 +542,16 @@ function serverSideEncryptionHeaders(config: NormalizedS3Config): Record<string,
 }
 
 function presignedUploadHeaders(headers: Record<string, string>): Record<string, string> {
-  const uploadHeaders: Record<string, string> = {};
-  for (const [name, value] of Object.entries(headers)) {
-    if (name !== "host") {
-      uploadHeaders[name] = value;
-    }
-  }
-  return uploadHeaders;
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => name !== "host"));
 }
 
 function metadataHeaders(metadata: Record<string, string> | undefined): Record<string, string> {
-  const headers: Record<string, string> = {};
-  for (const [name, value] of Object.entries(metadata ?? {})) {
-    headers[`${metadataHeaderPrefix}${name.toLowerCase()}`] = value;
-  }
-  return headers;
+  return Object.fromEntries(
+    Object.entries(metadata ?? {}).map(([name, value]) => [
+      `${metadataHeaderPrefix}${name.toLowerCase()}`,
+      value,
+    ]),
+  );
 }
 
 function responseMetadata(headers: Headers): Record<string, string> | undefined {
@@ -575,17 +570,7 @@ async function expectOk(response: Response, operation: string, key: string): Pro
   }
   const detail = await safeResponseText(response);
   throw new S3CompatibleStorageError(
-    [
-      "S3-compatible storage ",
-      operation,
-      " failed for ",
-      key,
-      ": ",
-      String(response.status),
-      " ",
-      response.statusText,
-      detail,
-    ].join(""),
+    `S3-compatible storage ${operation} failed for ${key}: ${String(response.status)} ${response.statusText}${detail}`,
     response.status,
     response.statusText,
   );

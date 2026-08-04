@@ -132,7 +132,7 @@ function broadcastDocsShutdown(state: DocsRouteState, options: RegisterDocsRoute
       }
     }
   }
-  for (const room of (state.yjsRooms ?? new Map<string, DocsYjsRoom>()).values()) {
+  for (const room of state.yjsRooms?.values() ?? []) {
     for (const socket of room.sockets) {
       try {
         socket.close(DOCS_SHUTDOWN_CLOSE_CODE, "host shutting down");
@@ -529,29 +529,28 @@ function sendAwarenessSnapshot(socket: DocsSocket, room: DocsYjsRoom): void {
     return;
   }
   const update = awarenessProtocol.encodeAwarenessUpdate(room.awareness, clientIds);
+  socket.send(encodeYjsAwarenessMessage(update));
+}
+
+function encodeYjsAwarenessMessage(update: Uint8Array): Buffer {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint(encoder, yjsMessageAwareness);
   encoding.writeVarUint8Array(encoder, update);
-  socket.send(Buffer.from(encoding.toUint8Array(encoder)));
+  return Buffer.from(encoding.toUint8Array(encoder));
 }
 
 function broadcastYjsUpdate(room: DocsYjsRoom, update: Uint8Array, origin: DocsSocket): void {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint(encoder, yjsMessageSync);
   syncProtocol.writeUpdate(encoder, update);
-  const payload = Buffer.from(encoding.toUint8Array(encoder));
-  for (const peer of room.sockets) {
-    if (peer !== origin) {
-      peer.send(payload);
-    }
-  }
+  broadcastToPeers(room, Buffer.from(encoding.toUint8Array(encoder)), origin);
 }
 
 function broadcastYjsAwareness(room: DocsYjsRoom, update: Uint8Array, origin: DocsSocket): void {
-  const encoder = encoding.createEncoder();
-  encoding.writeVarUint(encoder, yjsMessageAwareness);
-  encoding.writeVarUint8Array(encoder, update);
-  const payload = Buffer.from(encoding.toUint8Array(encoder));
+  broadcastToPeers(room, encodeYjsAwarenessMessage(update), origin);
+}
+
+function broadcastToPeers(room: DocsYjsRoom, payload: Buffer, origin: DocsSocket): void {
   for (const peer of room.sockets) {
     if (peer !== origin) {
       peer.send(payload);

@@ -4,6 +4,20 @@ const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const OCI_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const SENSITIVE_FIELD_PATTERN =
   /(?:authorization|cookie|credential|password|private.?key|secret|token)/iu;
+// The binding is compared key-for-key, so both lists are kept pre-sorted.
+const BINDING_KEYS = [
+  "applicationImageDigest",
+  "editorsSha",
+  "schema",
+  "webImageDigest",
+  "workspaceSha",
+].sort();
+const BINDING_COMPARED_FIELDS = [
+  "workspaceSha",
+  "editorsSha",
+  "applicationImageDigest",
+  "webImageDigest",
+];
 
 export function createReleaseEvidenceBinding({
   workspaceSha,
@@ -59,16 +73,9 @@ export function validateReleaseEvidenceBinding(binding, expected) {
     throw new Error("release evidence binding must be an object");
   }
   const keys = Object.keys(binding).sort();
-  const expectedKeys = [
-    "applicationImageDigest",
-    "editorsSha",
-    "schema",
-    "webImageDigest",
-    "workspaceSha",
-  ].sort();
   if (
-    keys.length !== expectedKeys.length ||
-    keys.some((key, index) => key !== expectedKeys[index])
+    keys.length !== BINDING_KEYS.length ||
+    keys.some((key, index) => key !== BINDING_KEYS[index])
   ) {
     throw new Error("release evidence binding contains unexpected, missing, or secret-like fields");
   }
@@ -93,12 +100,7 @@ export function validateReleaseEvidenceBinding(binding, expected) {
     throw new Error("release evidence binding web image must be an OCI sha256 digest");
   }
   if (expected !== undefined) {
-    for (const field of [
-      "workspaceSha",
-      "editorsSha",
-      "applicationImageDigest",
-      "webImageDigest",
-    ]) {
+    for (const field of BINDING_COMPARED_FIELDS) {
       if (binding[field] !== expected[field]) {
         throw new Error(`release evidence binding ${field} does not match the promoted release`);
       }

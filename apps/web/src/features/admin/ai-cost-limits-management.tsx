@@ -360,14 +360,18 @@ function parseOptionalUsd(raw: string): number | null | "invalid" {
   return parsed;
 }
 
+/* Built once: `Intl.NumberFormat` resolves its locale data on construction, and
+   every budget on this page is the same two-decimal USD amount. */
+const usdFormat = new Intl.NumberFormat("en-US", {
+  currency: "USD",
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 2,
+  style: "currency",
+});
+
 function formatUsd(value: number | null): string {
   if (value === null) {
     return "tier default";
   }
-  return new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-    style: "currency",
-  }).format(value);
+  return usdFormat.format(value);
 }

@@ -4,8 +4,12 @@
 
 import { useState, type CSSProperties } from "react";
 import { Icons } from "@/components/icons";
+import { ShowMoreButton } from "@/components/show-more-button";
 import { Avatar } from "@/components/ui/avatar";
-import { EditorsAlphaDisabledNotice } from "@/features/apps/editors-alpha";
+import {
+  EDITORS_ALPHA_DISABLED_TITLE,
+  EditorsAlphaDisabledNotice,
+} from "@/features/apps/editors-alpha";
 import { setHelixDriveItemDragData } from "@/features/drive/drag-payload";
 import { FileNameText } from "@/features/drive/file-name-text";
 import { FileThumbnail } from "@/features/drive/file-thumbnail";
@@ -117,12 +121,7 @@ export function DocList({
             <button className="btn" type="button">
               <Icons.Filter /> Filter
             </button>
-            <button
-              className="btn"
-              type="button"
-              onClick={onImportDocument}
-              disabled={isImporting}
-            >
+            <button className="btn" type="button" onClick={onImportDocument} disabled={isImporting}>
               <Icons.Upload /> {isImporting ? "Importing..." : "Import"}
             </button>
             <button
@@ -130,11 +129,7 @@ export function DocList({
               type="button"
               onClick={onNewDoc}
               disabled={isCreating || !editorsEnabled}
-              title={
-                editorsEnabled
-                  ? undefined
-                  : "Editors alpha is disabled by an admin. Import and preview files from Drive."
-              }
+              title={editorsEnabled ? undefined : EDITORS_ALPHA_DISABLED_TITLE}
             >
               <Icons.Plus /> New doc
             </button>
@@ -312,9 +307,7 @@ export function DocList({
                   key={document.id}
                   document={document}
                   isTrash={folder === "trash"}
-                  isBusy={
-                    busyDocumentId === document.id || migratingDocumentId === document.id
-                  }
+                  isBusy={busyDocumentId === document.id || migratingDocumentId === document.id}
                   canMigrate={
                     editorsEnabled && isLegacyDocument(document) && onMigrateDocument !== undefined
                   }
@@ -334,23 +327,6 @@ export function DocList({
         )}
       </div>
     </>
-  );
-}
-
-function ShowMoreButton({
-  label,
-  onClick,
-}: {
-  readonly label: string;
-  readonly onClick: () => void;
-}) {
-  return (
-    <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
-      <button type="button" className="btn" onClick={onClick}>
-        <Icons.ChevronDown />
-        {label}
-      </button>
-    </div>
   );
 }
 
@@ -585,11 +561,7 @@ function DocsSidebar({
         type="button"
         onClick={onNewDoc}
         disabled={isCreating || !editorsEnabled}
-        title={
-          editorsEnabled
-            ? undefined
-            : "Editors alpha is disabled by an admin. Import and preview files from Drive."
-        }
+        title={editorsEnabled ? undefined : EDITORS_ALPHA_DISABLED_TITLE}
         style={{ width: "100%", marginBottom: 12 }}
       >
         <Icons.Plus /> {isCreating ? "Creating…" : "New doc"}

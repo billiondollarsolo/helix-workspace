@@ -17,6 +17,19 @@ import {
   truth,
 } from "./validation-primitives.mjs";
 
+// Any non-zero count in these categories blocks the release outright, so the
+// same list drives both the accepted incident-history shape and the gate.
+const BLOCKING_INCIDENT_FIELDS = [
+  "openSev1",
+  "openSev2",
+  "dataLossEvents",
+  "crossTenantEvents",
+  "malwareBypassEvents",
+  "silentMailLossEvents",
+  "unapprovedAgentWriteEvents",
+];
+const INCIDENT_HISTORY_WINDOW_FIELDS = ["startedAt", "completedAt"];
+
 export function validateSupportReadiness(report, expectedBinding, artifactContext, referenceTime) {
   exactKeys(report, [
     "schema",
@@ -73,18 +86,7 @@ export function validateSupportReadiness(report, expectedBinding, artifactContex
   }
   exactObject(
     report.incidentHistory,
-    [
-      "startedAt",
-      "completedAt",
-      "incidentCount",
-      "openSev1",
-      "openSev2",
-      "dataLossEvents",
-      "crossTenantEvents",
-      "malwareBypassEvents",
-      "silentMailLossEvents",
-      "unapprovedAgentWriteEvents",
-    ],
+    [...INCIDENT_HISTORY_WINDOW_FIELDS, "incidentCount", ...BLOCKING_INCIDENT_FIELDS],
     "incident history",
   );
   orderedWindow(
@@ -106,19 +108,11 @@ export function validateSupportReadiness(report, expectedBinding, artifactContex
     throw new Error("incident history must cover the complete dogfood and private-pilot windows");
   }
   for (const field of Object.keys(report.incidentHistory).filter(
-    (field) => !["startedAt", "completedAt"].includes(field),
+    (field) => !INCIDENT_HISTORY_WINDOW_FIELDS.includes(field),
   )) {
     nonNegativeInteger(report.incidentHistory[field], `incident history ${field}`);
   }
-  for (const field of [
-    "openSev1",
-    "openSev2",
-    "dataLossEvents",
-    "crossTenantEvents",
-    "malwareBypassEvents",
-    "silentMailLossEvents",
-    "unapprovedAgentWriteEvents",
-  ]) {
+  for (const field of BLOCKING_INCIDENT_FIELDS) {
     if (report.incidentHistory[field] !== 0) {
       throw new Error(`support readiness has a blocking incident history: ${field}`);
     }

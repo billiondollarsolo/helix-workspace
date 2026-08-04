@@ -96,10 +96,13 @@ export function DriveAdminSection() {
     },
   });
 
+  /* Mapped once per render and read by both the Save button and the
+     confirmation, so the two cannot disagree about what is being saved. */
+  const pendingLifecycle = mapLifecycleFormToToolInput(form);
+
   const onSave = () => {
-    const mapped = mapLifecycleFormToToolInput(form);
-    if (typeof mapped === "string") {
-      setFormError(mapped);
+    if (typeof pendingLifecycle === "string") {
+      setFormError(pendingLifecycle);
       return;
     }
     setConfirmSave(true);
@@ -201,13 +204,12 @@ export function DriveAdminSection() {
         isPending={saveMutation.isPending}
         blastRadius="Trashed files become hard-delete eligible after the retention window. Orphan garbage collection uses the grace hours you set. Existing trash expiry timestamps on already-trashed objects are not rewritten."
         onConfirm={() => {
-          const mapped = mapLifecycleFormToToolInput(form);
-          if (typeof mapped === "string") {
-            setFormError(mapped);
+          if (typeof pendingLifecycle === "string") {
+            setFormError(pendingLifecycle);
             setConfirmSave(false);
             return;
           }
-          saveMutation.mutate(mapped);
+          saveMutation.mutate(pendingLifecycle);
         }}
       >
         Save trash retention of {form.trashRetentionDays} days and orphan grace of{" "}

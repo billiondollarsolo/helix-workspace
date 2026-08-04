@@ -12,7 +12,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Avatar } from "@/components/ui/avatar";
 import { Icons } from "@/components/icons";
+import { ShowMoreButton } from "@/components/show-more-button";
 import {
+  EDITORS_ALPHA_DISABLED_TITLE,
   EditorsAlphaBadge,
   EditorsAlphaDisabledNotice,
 } from "@/features/apps/editors-alpha";
@@ -449,11 +451,7 @@ export function SlidesList({ onOpen, query, editorsEnabled = true }: SlidesListP
               className="btn"
               onClick={() => setGenerateOpen((current) => !current)}
               disabled={generateMutation.isPending || !editorsEnabled}
-              title={
-                editorsEnabled
-                  ? undefined
-                  : "Editors alpha is disabled by an admin. Import and preview files from Drive."
-              }
+              title={editorsEnabled ? undefined : EDITORS_ALPHA_DISABLED_TITLE}
             >
               <Icons.Sparkles /> Generate deck
             </button>
@@ -462,11 +460,7 @@ export function SlidesList({ onOpen, query, editorsEnabled = true }: SlidesListP
               className="btn primary"
               onClick={handleNewDeck}
               disabled={createMutation.isPending || !editorsEnabled}
-              title={
-                editorsEnabled
-                  ? undefined
-                  : "Editors alpha is disabled by an admin. Import and preview files from Drive."
-              }
+              title={editorsEnabled ? undefined : EDITORS_ALPHA_DISABLED_TITLE}
             >
               <Icons.Plus /> {createMutation.isPending ? "Creating…" : "New deck"}
             </button>
@@ -641,23 +635,6 @@ export function SlidesList({ onOpen, query, editorsEnabled = true }: SlidesListP
   );
 }
 
-function ShowMoreButton({
-  label,
-  onClick,
-}: {
-  readonly label: string;
-  readonly onClick: () => void;
-}) {
-  return (
-    <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
-      <button type="button" className="btn" onClick={onClick}>
-        <Icons.ChevronDown />
-        {label}
-      </button>
-    </div>
-  );
-}
-
 function SlidesSidebar({
   folder,
   onFolder,
@@ -682,11 +659,7 @@ function SlidesSidebar({
         type="button"
         onClick={onNewPresentation}
         disabled={isCreating || !editorsEnabled}
-        title={
-          editorsEnabled
-            ? undefined
-            : "Editors alpha is disabled by an admin. Import and preview files from Drive."
-        }
+        title={editorsEnabled ? undefined : EDITORS_ALPHA_DISABLED_TITLE}
         style={{ width: "100%", marginBottom: 12 }}
       >
         <Icons.Plus /> {isCreating ? "Creating…" : "New presentation"}

@@ -3,7 +3,7 @@
    Notes, Contacts, Helix AI. Panels default to closed; the user opens one
    explicitly from the rail. */
 
-import { useState, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { Icons, type IconName } from "@/components/icons";
 
@@ -32,6 +32,24 @@ const sectionLabelStyle = {
   marginBottom: 8,
 };
 
+/** Every mini panel fills the 320px column top-to-bottom. */
+const panelColumnStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  height: "100%",
+};
+
+/** The full-width primary action that heads the Tasks and Notes panels. */
+function PanelPrimaryAction({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid var(--border)" }}>
+      <button type="button" className="btn primary sm" style={{ width: "100%" }} onClick={onClick}>
+        <Icons.Plus /> {label}
+      </button>
+    </div>
+  );
+}
+
 /* ---------- Mini Calendar ---------- */
 
 function MiniCalendar() {
@@ -50,7 +68,7 @@ function MiniCalendar() {
   const today = now.getDate();
   const days = ["S", "M", "T", "W", "T", "F", "S"];
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div style={panelColumnStyle}>
       <div style={{ padding: "12px 14px 6px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
           <span style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>{monthLabel}</span>
@@ -91,6 +109,12 @@ function MiniCalendar() {
             const day = index - leadingBlanks + 1;
             const valid = day >= 1 && day <= daysInMonth;
             const isToday = valid && day === today;
+            let dayColor = "var(--text)";
+            if (!valid) {
+              dayColor = "var(--text-3)";
+            } else if (isToday) {
+              dayColor = "white";
+            }
             return (
               <div
                 key={index}
@@ -99,7 +123,7 @@ function MiniCalendar() {
                   display: "grid",
                   placeItems: "center",
                   borderRadius: 999,
-                  color: !valid ? "var(--text-3)" : isToday ? "white" : "var(--text)",
+                  color: dayColor,
                   background: isToday ? "var(--accent)" : "transparent",
                   fontWeight: isToday ? 600 : 400,
                   cursor: valid ? "pointer" : "default",
@@ -161,17 +185,8 @@ function MiniTasks() {
 
   const groups: MiniTask["list"][] = ["Today", "This week"];
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid var(--border)" }}>
-        <button
-          type="button"
-          className="btn primary sm"
-          style={{ width: "100%" }}
-          onClick={() => setAdding(true)}
-        >
-          <Icons.Plus /> Add task
-        </button>
-      </div>
+    <div style={panelColumnStyle}>
+      <PanelPrimaryAction label="Add task" onClick={() => setAdding(true)} />
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 14px 12px" }}>
         {adding ? (
           <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
@@ -268,22 +283,20 @@ function MiniNotes() {
   const [notes, setNotes] = useState<MiniNote[]>([]);
   const [editing, setEditing] = useState<number | null>(null);
 
+  const updateNote = (id: number, patch: Partial<MiniNote>) => {
+    setNotes((prev) => prev.map((note) => (note.id === id ? { ...note, ...patch } : note)));
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid var(--border)" }}>
-        <button
-          type="button"
-          className="btn primary sm"
-          style={{ width: "100%" }}
-          onClick={() => {
-            const note: MiniNote = { id: Date.now(), title: "New note", body: "" };
-            setNotes((prev) => [note, ...prev]);
-            setEditing(note.id);
-          }}
-        >
-          <Icons.Plus /> New note
-        </button>
-      </div>
+    <div style={panelColumnStyle}>
+      <PanelPrimaryAction
+        label="New note"
+        onClick={() => {
+          const note: MiniNote = { id: Date.now(), title: "New note", body: "" };
+          setNotes((prev) => [note, ...prev]);
+          setEditing(note.id);
+        }}
+      />
       <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
         {notes.map((note) => (
           <div
@@ -302,22 +315,18 @@ function MiniNotes() {
                   autoFocus
                   className="input"
                   value={note.title}
-                  onChange={(event) =>
-                    setNotes((prev) =>
-                      prev.map((n) => (n.id === note.id ? { ...n, title: event.target.value } : n)),
-                    )
-                  }
+                  onChange={(event) => {
+                    updateNote(note.id, { title: event.target.value });
+                  }}
                   style={{ marginBottom: 6, fontWeight: 600 }}
                 />
                 <textarea
                   className="input"
                   value={note.body}
                   rows={4}
-                  onChange={(event) =>
-                    setNotes((prev) =>
-                      prev.map((n) => (n.id === note.id ? { ...n, body: event.target.value } : n)),
-                    )
-                  }
+                  onChange={(event) => {
+                    updateNote(note.id, { body: event.target.value });
+                  }}
                   onBlur={() => setEditing(null)}
                   style={{
                     height: "auto",
@@ -395,7 +404,7 @@ function MiniAI() {
     "Find time on my calendar this week",
   ];
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div style={panelColumnStyle}>
       <div style={{ padding: 14, borderBottom: "1px solid var(--border)" }}>
         <div
           style={{

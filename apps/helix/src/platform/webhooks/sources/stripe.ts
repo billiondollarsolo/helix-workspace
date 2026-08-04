@@ -13,6 +13,7 @@ import {
   numberField,
   objectField,
   parseJsonPayload,
+  payloadToString,
   safeEqualHex,
   stringField,
 } from "./common.js";
@@ -112,10 +113,4 @@ export function parseStripeWebhook(options: {
     ...(stripeObject === undefined ? {} : { object: stripeObject }),
     payload,
   };
-}
-
-function payloadToString(payload: RawWebhookBody): string {
-  return Buffer.isBuffer(payload)
-    ? payload.toString("utf8")
-    : Buffer.from(payload).toString("utf8");
 }

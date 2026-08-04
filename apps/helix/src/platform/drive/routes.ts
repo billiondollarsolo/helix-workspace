@@ -209,7 +209,7 @@ export async function registerDriveRoutes(
           actorId: actor.id,
           objectId: target.entry.id,
         });
-        if (file?.content === null || file === null) {
+        if (file === null || file.content === null) {
           return reply.code(404).send("WebDAV file content is not available.");
         }
         reply.header("ETag", entryEtag(file.entry));
@@ -393,12 +393,17 @@ async function authenticateWebDav(
 }
 
 function requiredScope(method: WebDavMethod): "drive.read" | "drive.write" | "drive.delete" {
-  if (method === "DELETE") {
-    return "drive.delete";
+  switch (method) {
+    case "DELETE":
+      return "drive.delete";
+    case "PUT":
+    case "MKCOL":
+    case "LOCK":
+    case "UNLOCK":
+      return "drive.write";
+    default:
+      return "drive.read";
   }
-  return method === "PUT" || method === "MKCOL" || method === "LOCK" || method === "UNLOCK"
-    ? "drive.write"
-    : "drive.read";
 }
 
 interface ResolvedTarget {
@@ -694,11 +699,9 @@ function cleanupExpiredLocks(locks: Map<string, WebDavLock>): void {
 function requestIncludesLockToken(request: FastifyRequest, token: string): boolean {
   const ifHeader = headerString(request.headers.if);
   const lockTokenHeader = parseLockTokenHeader(headerString(request.headers["lock-token"]));
-  return (
-    lockTokenHeader === token ||
-    ifHeader?.includes(`<${token}>`) === true ||
-    ifHeader?.includes(token) === true
-  );
+  // An `If:` header carrying `<token>` also contains `token`, so the bare
+  // substring check covers both the bracketed and unbracketed spellings.
+  return lockTokenHeader === token || ifHeader?.includes(token) === true;
 }
 
 function parseLockTokenHeader(value: string | undefined): string | null {
@@ -768,10 +771,7 @@ function activeLockXml(lock: WebDavLock, href: string): string {
 }
 
 function requestedProperties(request: PropfindRequest): readonly WebDavProperty[] {
-  if (request.mode === "propname") {
-    return [...supportedWebDavProperties];
-  }
-  if (request.mode === "allprop") {
+  if (request.mode !== "prop") {
     return [...supportedWebDavProperties];
   }
   return request.names.filter(isWebDavProperty);
@@ -818,7 +818,7 @@ function parseDavFilePath(url: string): readonly string[] | null {
 }
 
 function folderHref(path: readonly string[]): string {
-  return `/dav/files/${path.map(encodeURIComponent).join("/")}${path.length === 0 ? "" : "/"}`;
+  return `${fileHref(path)}${path.length === 0 ? "" : "/"}`;
 }
 
 function fileHref(path: readonly string[]): string {

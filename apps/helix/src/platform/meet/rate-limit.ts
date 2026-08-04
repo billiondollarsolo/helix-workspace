@@ -99,6 +99,7 @@ export class InMemoryMeetRateLimiter implements MeetRateLimiter {
 
     if (current.count >= limit) {
       const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+      const verb = input.action === "create_room" ? "create" : "join";
       return {
         allowed: false,
         limit,
@@ -108,10 +109,7 @@ export class InMemoryMeetRateLimiter implements MeetRateLimiter {
         resetsAt: new Date(current.resetAt),
         action: input.action,
         code: "meet_rate_limited",
-        message:
-          input.action === "create_room"
-            ? `Meet room create rate limit exceeded (${String(limit)} per window). Retry after ${String(retryAfterSeconds)}s.`
-            : `Meet room join rate limit exceeded (${String(limit)} per window). Retry after ${String(retryAfterSeconds)}s.`,
+        message: `Meet room ${verb} rate limit exceeded (${String(limit)} per window). Retry after ${String(retryAfterSeconds)}s.`,
       };
     }
 

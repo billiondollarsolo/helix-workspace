@@ -1,10 +1,12 @@
 import type { JsonObject } from "@helix/sdk-types";
+import type { VectorItem, VectorStore, VectorVisibility } from "../ai/vector/index.js";
 import type {
-  VectorItem,
-  VectorStore,
-  VectorVisibility,
-} from "../ai/vector/index.js";
-import type { IndexDocument, SearchEngine, SearchHit, SearchRequest, SearchResponse } from "./types.js";
+  IndexDocument,
+  SearchEngine,
+  SearchHit,
+  SearchRequest,
+  SearchResponse,
+} from "./types.js";
 
 export interface SearchEmbeddingProvider {
   embed(texts: readonly string[]): Promise<readonly (readonly number[])[]>;
@@ -51,7 +53,12 @@ export class SemanticSearchEngine implements SearchEngine {
       // its own slice of vector_items (org_id, collection_name, id). Two
       // tenants reusing the same collection name no longer collide and
       // cannot read each other's embeddings.
-      await this.options.vectorStore.createCollection(orgId, this.#collection, firstVector.length, "cosine");
+      await this.options.vectorStore.createCollection(
+        orgId,
+        this.#collection,
+        firstVector.length,
+        "cosine",
+      );
       await this.options.vectorStore.upsert(orgId, this.#collection, items);
     }
   }
@@ -74,12 +81,13 @@ export class SemanticSearchEngine implements SearchEngine {
       limit: limit + offset,
       offset: 0,
     });
+    const keywordOnly = (): SearchResponse => ({
+      ...keywordResponse,
+      hits: keywordResponse.hits.slice(offset, offset + limit),
+    });
     const query = request.query.trim();
     if (query.length === 0) {
-      return {
-        ...keywordResponse,
-        hits: keywordResponse.hits.slice(offset, offset + limit),
-      };
+      return keywordOnly();
     }
 
     // Without a tenant scope on the inbound request we MUST NOT issue a
@@ -87,10 +95,7 @@ export class SemanticSearchEngine implements SearchEngine {
     // embeddings. Fall back to keyword-only results.
     const requestedOrgId = orgIdFromFilter(request.filter);
     if (requestedOrgId === undefined) {
-      return {
-        ...keywordResponse,
-        hits: keywordResponse.hits.slice(offset, offset + limit),
-      };
+      return keywordOnly();
     }
 
     const queryVector = (await this.options.embeddings.embed([query]))[0];
@@ -112,7 +117,10 @@ export class SemanticSearchEngine implements SearchEngine {
       },
     );
     const semanticRanks = semanticRankMap(semanticMatches, request);
-    const hits = reciprocalRankFuse(keywordResponse.hits, semanticRanks).slice(offset, offset + limit);
+    const hits = reciprocalRankFuse(keywordResponse.hits, semanticRanks).slice(
+      offset,
+      offset + limit,
+    );
     return {
       ...keywordResponse,
       hits,
@@ -158,9 +166,7 @@ export class SemanticSearchEngine implements SearchEngine {
         vector,
         metadata: semanticMetadata(item.document),
         visibility,
-        ...(visibility === "private" && ownerActorId !== undefined
-          ? { ownerActorId }
-          : {}),
+        ...(visibility === "private" && ownerActorId !== undefined ? { ownerActorId } : {}),
       });
       grouped.set(item.orgId, list);
     });
@@ -201,10 +207,13 @@ function semanticRankMap(
     if (hit === null || !hitMatchesRequest(hit, request)) {
       return;
     }
-    ranks.set(hit.id, 1 / (60 + index + 1));
+    ranks.set(hit.id, 1 / (reciprocalRankConstant + index + 1));
   });
   return ranks;
 }
+
+/** Reciprocal-rank-fusion smoothing constant, shared by both ranked inputs. */
+const reciprocalRankConstant = 60;
 
 function semanticHit(metadata: JsonObject | undefined): SearchHit | null {
   const document = metadata?.document;
@@ -228,7 +237,7 @@ function reciprocalRankFuse(
   semanticRanks: ReadonlyMap<string, number>,
 ): readonly SearchHit[] {
   const byId = new Map<string, { hit: SearchHit; score: number }>();
-  addRankedHits(byId, keywordHits, 60);
+  addRankedHits(byId, keywordHits, reciprocalRankConstant);
   for (const [id, semanticScore] of semanticRanks) {
     const existing = byId.get(id);
     if (existing !== undefined) {
@@ -248,16 +257,19 @@ function addRankedHits(
   hits.forEach((hit, index) => {
     const score = 1 / (k + index + 1);
     const existing = byId.get(hit.id);
-    if (existing === undefined) {
-      byId.set(hit.id, { hit, score });
-      return;
-    }
-    byId.set(hit.id, { hit: existing.hit, score: existing.score + score });
+    byId.set(hit.id, {
+      hit: existing?.hit ?? hit,
+      score: (existing?.score ?? 0) + score,
+    });
   });
 }
 
 function hitMatchesRequest(hit: SearchHit, request: SearchRequest): boolean {
-  if (request.types !== undefined && request.types.length > 0 && !request.types.includes(hit.type)) {
+  if (
+    request.types !== undefined &&
+    request.types.length > 0 &&
+    !request.types.includes(hit.type)
+  ) {
     return false;
   }
   const requestedOrgId = orgIdFromFilter(request.filter);

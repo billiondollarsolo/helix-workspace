@@ -35,19 +35,19 @@ export function parseMailSearchQuery(raw: string | undefined | null): ParsedMail
     (full, key: string, quoted?: string, bare?: string) => {
       const value = (quoted ?? bare ?? "").trim();
       const op = key.toLowerCase();
+      const normalized = value.toLowerCase();
       operators.push(`${op}:${value}`);
       if (op === "from" && value.length > 0) {
-        from.push(value.toLowerCase());
+        from.push(normalized);
       } else if (op === "to" && value.length > 0) {
-        to.push(value.toLowerCase());
+        to.push(normalized);
       } else if (op === "subject" && value.length > 0) {
-        subject.push(value.toLowerCase());
+        subject.push(normalized);
       } else if (op === "has") {
-        if (value.toLowerCase() === "attachment" || value.toLowerCase() === "attachments") {
+        if (normalized === "attachment" || normalized === "attachments") {
           hasAttachment = true;
         }
       } else if (op === "is") {
-        const normalized = value.toLowerCase();
         if (normalized === "unread") {
           isUnread = true;
         } else if (normalized === "read") {

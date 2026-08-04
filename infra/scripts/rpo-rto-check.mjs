@@ -12,7 +12,7 @@
  * Safe by default: never modifies backups or production data. Exit 1 on gate fail
  * when --require-pass is set (or always for failed evidence status when required).
  */
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
@@ -284,18 +284,9 @@ async function findManifestCandidates(dir) {
     }
   }
 
-  // Also accept a top-level directory that is itself empty of nested files but
-  // may only contain archives: fall back to mtime of *.manifest.json already handled.
-  if (out.length === 0) {
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.endsWith(".sha256") && !entry.name.endsWith(".tar.gz")) continue;
-      // No recovery point without a manifest — skip.
-    }
-  }
-
-  // Touch dir to ensure it exists (throws if not).
-  await stat(dir);
+  // A directory holding only archives (*.tar.gz, *.sha256) yields no candidates:
+  // there is no trustworthy recovery point without a manifest, so the caller
+  // reports the gate as failed rather than guessing from file mtimes.
   return out;
 }
 

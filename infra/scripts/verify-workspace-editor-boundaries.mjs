@@ -94,8 +94,9 @@ async function scanPath(path) {
     if (literal === undefined) {
       continue;
     }
-    const reason = editorPathViolationReason(resolvedPath, literal);
-    if (reason !== null) {
+    // Any non-null reason means the literal points into the editor packages; the
+    // reported wording is fixed because a bare string is not an import specifier.
+    if (editorPathViolationReason(resolvedPath, literal) !== null) {
       addViolation({
         file: resolvedPath,
         specifier: literal,
@@ -129,7 +130,6 @@ async function scanPackageManifests(root) {
       await scanPackageManifest(path);
       continue;
     }
-    const relativePath = relative(workspaceRoot, path);
     await scanPackageManifests(path);
   }
 }
@@ -219,13 +219,20 @@ function editorPathViolationReason(file, specifier, dependencyName) {
     return "specifier crosses into helix-editors/packages";
   }
 
-  const resolved = specifier.startsWith(".")
-    ? resolve(file, "..", specifier)
-    : isAbsolute(specifier)
-      ? resolve(specifier)
-      : null;
+  const resolved = resolveFilesystemSpecifier(file, specifier);
   if (resolved !== null && isWithin(editorsPackagesRoot, resolved)) {
     return "relative or absolute reference resolves into helix-editors/packages";
+  }
+  return null;
+}
+
+/** Bare package specifiers have no filesystem target, so they resolve to null. */
+function resolveFilesystemSpecifier(file, specifier) {
+  if (specifier.startsWith(".")) {
+    return resolve(file, "..", specifier);
+  }
+  if (isAbsolute(specifier)) {
+    return resolve(specifier);
   }
   return null;
 }

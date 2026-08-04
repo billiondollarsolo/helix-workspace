@@ -97,10 +97,11 @@ export class PostgresSignupOnboardingInviteTokenStore implements SignupOnboardin
     readonly now?: Date | undefined;
   }): Promise<SignupOnboardingInviteAcceptResult> {
     const now = input.now ?? new Date();
+    const tokenHash = hashSignupOnboardingInviteToken(input.token);
     const rows = (await this.sql`
       select org_id, invited_by_actor_id, email, expires_at, accepted_at, accepted_by_actor_id, metadata
       from signup_onboarding_invites
-      where token_hash = ${hashSignupOnboardingInviteToken(input.token)}
+      where token_hash = ${tokenHash}
         and accepted_at is null
         and expires_at > ${now}
       limit 1
@@ -127,7 +128,7 @@ export class PostgresSignupOnboardingInviteTokenStore implements SignupOnboardin
           },
         })},
         updated_at = now()
-      where token_hash = ${hashSignupOnboardingInviteToken(input.token)}
+      where token_hash = ${tokenHash}
         and accepted_at is null
         and expires_at > ${now}
       returning org_id, invited_by_actor_id, email, expires_at, accepted_at, accepted_by_actor_id, metadata

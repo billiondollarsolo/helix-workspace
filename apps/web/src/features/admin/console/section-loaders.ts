@@ -189,15 +189,13 @@ export async function prefetchAdminSectionData(
   id: AdminSectionId,
 ): Promise<void> {
   const entry = ADMIN_SECTION_LOADERS[id];
-  const chunk = entry.load().catch(() => undefined);
-  if (entry.prefetch === undefined) {
-    await chunk;
-    return;
-  }
   const prefetchName = entry.prefetch;
   await entry
     .load()
     .then(async (loaded) => {
+      if (prefetchName === undefined) {
+        return;
+      }
       const prefetch = loaded[prefetchName] as PrefetchHelper | undefined;
       /* A renamed or removed helper must not break navigation — the section
          still renders and fetches on mount. */

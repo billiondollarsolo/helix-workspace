@@ -143,6 +143,16 @@ const BYO_STORAGE_FIELDS = [
   ["sse_kms_key_arn", "SSE-KMS key ARN"],
 ] as const;
 
+/* There is no shared Select primitive, so the selects restate the shell
+   `components/ui/input` draws rather than growing a second field look. */
+const SELECT_CLASS =
+  "h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30";
+
+const FIELD_LABEL_CLASS = "grid gap-1 text-xs text-muted-foreground";
+
+const CARD_CLASS =
+  "grid content-start gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground";
+
 type BooleanFeatureFlagKey = (typeof BOOLEAN_FEATURE_FLAGS)[number][0];
 
 /** Flag key -> display label, so the grouped form can render by key. */
@@ -327,11 +337,6 @@ export function TenantConfigManagement() {
      operator whose config had not loaded would have been asked to type the
      word "tenant" to authorise repointing every object read in the tenant. */
   const orgId = query.data?.orgId ?? null;
-  const selectFeatureRows = useMemo(() => [...SELECT_FEATURE_FLAGS], []);
-  const quotaRows = useMemo(() => [...QUOTA_FIELDS], []);
-  const brandingRows = useMemo(() => [...BRANDING_FIELDS], []);
-  const byoStorageRows = useMemo(() => [...BYO_STORAGE_FIELDS], []);
-  const byoStorageKinds = useMemo(() => [...BYO_STORAGE_KINDS], []);
 
   /* Disclosure defaults are derived from the *loaded config*, never from live
      form state. React writes a DOM prop only when it changes between renders,
@@ -402,17 +407,12 @@ export function TenantConfigManagement() {
     setError(null);
     storageTestMutation.mutate();
   };
+  /* No try/catch around `mutate`: `buildStorageMigrationRequest` throws inside
+     `mutationFn`, which React Query routes to this mutation's own `onError` —
+     and that already reports the message through `setError`. */
   const requestStorageMigration = () => {
     setError(null);
-    try {
-      storageMigrationMutation.mutate();
-    } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Failed to prepare tenant storage migration request.",
-      );
-    }
+    storageMigrationMutation.mutate();
   };
   const refreshStorageMigration = () => {
     if (storageMigration === null) {
@@ -494,7 +494,7 @@ export function TenantConfigManagement() {
         <div className="grid items-start gap-4 lg:grid-cols-2">
           <form
             aria-label="Feature flags"
-            className="grid content-start gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
+            className={CARD_CLASS}
             onSubmit={(event) => {
               event.preventDefault();
               saveFeatures();
@@ -525,11 +525,11 @@ export function TenantConfigManagement() {
               </fieldset>
             ))}
             <div className="grid gap-2">
-              {selectFeatureRows.map(([key, label, options]) => (
-                <label key={key} className="grid gap-1 text-xs text-muted-foreground">
+              {SELECT_FEATURE_FLAGS.map(([key, label, options]) => (
+                <label key={key} className={FIELD_LABEL_CLASS}>
                   <span>{label}</span>
                   <select
-                    className="h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+                    className={SELECT_CLASS}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       setFeatures((current) => ({
@@ -565,7 +565,7 @@ export function TenantConfigManagement() {
 
           <form
             aria-label="Branding"
-            className="grid content-start gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
+            className={CARD_CLASS}
             onSubmit={(event) => {
               event.preventDefault();
               saveBranding();
@@ -573,8 +573,8 @@ export function TenantConfigManagement() {
           >
             <SectionHeader icon={<Palette aria-hidden="true" />} title="Branding" />
             <div className="grid gap-2">
-              {brandingRows.map(([key, label]) => (
-                <label key={key} className="grid gap-1 text-xs text-muted-foreground">
+              {BRANDING_FIELDS.map(([key, label]) => (
+                <label key={key} className={FIELD_LABEL_CLASS}>
                   <span>{label}</span>
                   <Input
                     onChange={(event) => {
@@ -596,17 +596,17 @@ export function TenantConfigManagement() {
 
           <form
             aria-label="BYO storage"
-            className="grid content-start gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
+            className={CARD_CLASS}
             onSubmit={(event) => {
               event.preventDefault();
               saveByoStorage();
             }}
           >
             <SectionHeader icon={<Database aria-hidden="true" />} title="BYO storage" />
-            <label className="grid gap-1 text-xs text-muted-foreground">
+            <label className={FIELD_LABEL_CLASS}>
               <span>Storage mode</span>
               <select
-                className="h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+                className={SELECT_CLASS}
                 onChange={(event) => {
                   const kind = event.currentTarget.value as ByoStorageKind;
                   setByoStorage((current) => ({
@@ -616,7 +616,7 @@ export function TenantConfigManagement() {
                 }}
                 value={byoStorage.kind}
               >
-                {byoStorageKinds.map(([value, label]) => (
+                {BYO_STORAGE_KINDS.map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
@@ -633,10 +633,10 @@ export function TenantConfigManagement() {
               open={storageFieldsDefaultOpen}
               title="Connection details"
             >
-              <label className="grid gap-1 text-xs text-muted-foreground">
+              <label className={FIELD_LABEL_CLASS}>
                 <span>Provider</span>
                 <select
-                  className="h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+                  className={SELECT_CLASS}
                   onChange={(event) => {
                     const provider = event.currentTarget.value as ByoStorageProvider;
                     setByoStorage((current) => ({
@@ -655,8 +655,8 @@ export function TenantConfigManagement() {
                   ))}
                 </select>
               </label>
-              {byoStorageRows.map(([key, label]) => (
-                <label key={key} className="grid gap-1 text-xs text-muted-foreground">
+              {BYO_STORAGE_FIELDS.map(([key, label]) => (
+                <label key={key} className={FIELD_LABEL_CLASS}>
                   <span>{label}</span>
                   <Input
                     onChange={(event) => {
@@ -726,10 +726,10 @@ export function TenantConfigManagement() {
               open={false}
               title="Storage migration"
             >
-              <label className="grid gap-1 text-xs text-muted-foreground">
+              <label className={FIELD_LABEL_CLASS}>
                 <span>Migration target</span>
                 <select
-                  className="h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+                  className={SELECT_CLASS}
                   onChange={(event) => {
                     setMigrationTarget(event.currentTarget.value as TenantStorageMigrationTarget);
                     setMigrationRequestConfirmed(false);
@@ -850,10 +850,7 @@ export function TenantConfigManagement() {
           {/* Read-only reference, so it sits after the editable cards and its
               rows fold away. Seeded open whenever a tenant override exists —
               an override is an active setting and must not be concealed. */}
-          <section
-            aria-label="Quotas"
-            className="grid content-start gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
-          >
+          <section aria-label="Quotas" className={CARD_CLASS}>
             <SectionHeader icon={<Gauge aria-hidden="true" />} title="Quotas" />
             <p className="text-xs text-muted-foreground">
               {query.data?.plan === null || query.data?.plan === undefined
@@ -861,12 +858,12 @@ export function TenantConfigManagement() {
                 : `${query.data.plan.displayName} plan defaults with tenant overrides applied.`}
             </p>
             <Disclosure
-              detail={quotaSummary(quotaRows.length, quotaOverrideCount)}
+              detail={quotaSummary(QUOTA_FIELDS.length, quotaOverrideCount)}
               open={quotaOverrideCount > 0}
               title="Effective limits"
             >
               <div className="grid gap-2" role="list">
-                {quotaRows.map(([key, label]) => (
+                {QUOTA_FIELDS.map(([key, label]) => (
                   <QuotaRow
                     key={key}
                     effective={query.data?.effective.quotas[key]}

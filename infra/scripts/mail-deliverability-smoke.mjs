@@ -71,7 +71,9 @@ const pendingId = await queueMail(baseUrl, token, {
 const approvalOutput = await approvePending(baseUrl, token, pendingId);
 const outboundId = approvalOutput?.id;
 if (typeof outboundId !== "string" || outboundId.length === 0) {
-  throw new Error(`pending approve output did not include outbound id: ${JSON.stringify(approvalOutput)}`);
+  throw new Error(
+    `pending approve output did not include outbound id: ${JSON.stringify(approvalOutput)}`,
+  );
 }
 const outbound = await waitForOutboundSent(baseUrl, token, outboundId, timeoutMs);
 
@@ -130,14 +132,18 @@ async function getAccessToken(apiBaseUrl) {
   return parsed.access_token;
 }
 
+function authorizedJsonHeaders(accessToken) {
+  return {
+    accept: "application/json",
+    authorization: `Bearer ${accessToken}`,
+    "content-type": "application/json",
+  };
+}
+
 async function queueMail(apiBaseUrl, accessToken, body) {
   const response = await fetch(new URL("/api/tools/mail.send", apiBaseUrl), {
     method: "POST",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
-    },
+    headers: authorizedJsonHeaders(accessToken),
     body: JSON.stringify(body),
   });
   const parsed = await readJsonResponse(response, "mail.send");
@@ -149,15 +155,14 @@ async function queueMail(apiBaseUrl, accessToken, body) {
 }
 
 async function approvePending(apiBaseUrl, accessToken, pendingId) {
-  const response = await fetch(new URL(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, apiBaseUrl), {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
+  const response = await fetch(
+    new URL(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, apiBaseUrl),
+    {
+      method: "POST",
+      headers: authorizedJsonHeaders(accessToken),
+      body: "{}",
     },
-    body: "{}",
-  });
+  );
   const parsed = await readJsonResponse(response, "pending approve");
   if (response.status !== 200 || parsed.status !== "executed") {
     throw new Error(`pending approve did not execute: ${JSON.stringify(parsed)}`);
@@ -184,22 +189,22 @@ async function waitForOutboundSent(apiBaseUrl, accessToken, outboundId, timeoutM
     lastSeen = outbound;
     await sleep(1_000);
   }
-  throw new Error(`Timed out waiting for outbound ${outboundId} to be sent. Last seen: ${JSON.stringify(lastSeen)}`);
+  throw new Error(
+    `Timed out waiting for outbound ${outboundId} to be sent. Last seen: ${JSON.stringify(lastSeen)}`,
+  );
 }
 
 async function getOutbound(apiBaseUrl, accessToken, outboundId) {
   const response = await fetch(new URL("/api/tools/mail.outbound.get", apiBaseUrl), {
     method: "POST",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
-    },
+    headers: authorizedJsonHeaders(accessToken),
     body: JSON.stringify({ id: outboundId }),
   });
   const parsed = await readJsonResponse(response, "mail.outbound.get");
   if (response.status !== 200) {
-    throw new Error(`mail.outbound.get returned HTTP ${response.status}: ${JSON.stringify(parsed)}`);
+    throw new Error(
+      `mail.outbound.get returned HTTP ${response.status}: ${JSON.stringify(parsed)}`,
+    );
   }
   return parsed.output?.outbound ?? null;
 }
@@ -300,7 +305,10 @@ class ImapClient {
   command(commandText) {
     const tag = `A${String(++this.tag).padStart(4, "0")}`;
     this.socket.write(`${tag} ${commandText}\r\n`);
-    return this.readUntil((line) => line.startsWith(`${tag} OK`), (line) => line.startsWith(`${tag} NO`) || line.startsWith(`${tag} BAD`));
+    return this.readUntil(
+      (line) => line.startsWith(`${tag} OK`),
+      (line) => line.startsWith(`${tag} NO`) || line.startsWith(`${tag} BAD`),
+    );
   }
 
   readUntil(done, failed = () => false) {

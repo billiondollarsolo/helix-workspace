@@ -28,10 +28,12 @@ import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   EmptyRow,
   EmptyState,
+  MutationError,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
   StateBanner,
+  StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
 
@@ -174,10 +176,7 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
       header: "Status",
       width: "100px",
       cell: (record) => (
-        <span className={`chip ${verificationVariant(record.status)}`}>
-          <span className="chip-dot" />
-          {record.status}
-        </span>
+        <StatusChip tone={verificationVariant(record.status)} label={record.status} />
       ),
     },
     {
@@ -349,15 +348,9 @@ export function AdminDomain() {
       ) : domainsQuery.isPending ? (
         <StateBanner kind="loading">Loading domains…</StateBanner>
       ) : null}
-      {addMutation.isError ? (
-        <StateBanner kind="error">{addMutation.error.message}</StateBanner>
-      ) : null}
-      {primaryMutation.isError ? (
-        <StateBanner kind="error">{primaryMutation.error.message}</StateBanner>
-      ) : null}
-      {deleteMutation.isError ? (
-        <StateBanner kind="error">{deleteMutation.error.message}</StateBanner>
-      ) : null}
+      <MutationError error={addMutation.error} />
+      <MutationError error={primaryMutation.error} />
+      <MutationError error={deleteMutation.error} />
 
       {domainsFailure !== null ? null : (
         <>
@@ -414,10 +407,10 @@ export function AdminDomain() {
                         act on. */}
                     <div className="admin-domain-summary">{domainSummary(entry)}</div>
                   </div>
-                  <span className={`chip ${verificationVariant(entry.domain.verificationStatus)}`}>
-                    <span className="chip-dot" />
-                    {ownershipLabel(entry.domain.verificationStatus)}
-                  </span>
+                  <StatusChip
+                    tone={verificationVariant(entry.domain.verificationStatus)}
+                    label={ownershipLabel(entry.domain.verificationStatus)}
+                  />
                   {!entry.domain.isPrimary ? (
                     <Button
                       type="button"

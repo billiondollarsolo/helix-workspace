@@ -105,6 +105,24 @@ const TONE_CHIP: Record<SignalTone, string> = {
   clear: "chip success",
 };
 
+/* Precedence for a band that reads more than one source: "we could not look"
+   outranks "still looking", which outranks a finding, which outranks clear. A
+   band must never read calmer than the weakest reading behind it. */
+const TONE_PRECEDENCE: readonly SignalTone[] = ["unavailable", "checking", "attention", "clear"];
+
+function bandTone(...tones: readonly SignalTone[]): SignalTone {
+  return TONE_PRECEDENCE.find((tone) => tones.includes(tone)) ?? "clear";
+}
+
+/** Tone for a band with no rule of its own: it can report that its source was
+ *  unreadable or is still loading, and nothing beyond "a payload arrived". */
+function readingTone(failure: QueryFailure | null, data: unknown): SignalTone {
+  if (failure !== null) {
+    return "unavailable";
+  }
+  return data === undefined ? "checking" : "clear";
+}
+
 /** What a reader function extracts once a payload is in hand. `attention` is
  *  the sentence the page leads with; `null` means this signal's rule did not
  *  fire, which is a statement about live data and never about a missing one. */
@@ -191,6 +209,20 @@ function nameList(names: readonly string[], cap = 3): string {
 /* Readers — one per query, pure, only ever called with real data      */
 /* ------------------------------------------------------------------ */
 
+/** The three verification states, counted in one pass over the list — the card
+ *  and the detail band below it must never disagree about them. */
+function countVerification(domains: readonly DomainWithRecords[]): {
+  readonly verified: number;
+  readonly pending: number;
+  readonly failed: number;
+} {
+  return {
+    verified: domains.filter((it) => it.domain.verificationStatus === "verified").length,
+    pending: domains.filter((it) => it.domain.verificationStatus === "pending").length,
+    failed: domains.filter((it) => it.domain.verificationStatus === "failed").length,
+  };
+}
+
 function readDomains(domains: readonly DomainWithRecords[]): Reading {
   const total = domains.length;
   if (total === 0) {
@@ -201,9 +233,7 @@ function readDomains(domains: readonly DomainWithRecords[]): Reading {
       attention: "No domains are registered.",
     };
   }
-  const verified = domains.filter((it) => it.domain.verificationStatus === "verified").length;
-  const failed = domains.filter((it) => it.domain.verificationStatus === "failed").length;
-  const pending = domains.filter((it) => it.domain.verificationStatus === "pending").length;
+  const { verified, pending, failed } = countVerification(domains);
   const unverified = failed + pending;
   return {
     figure: `${String(verified)}/${String(total)}`,
@@ -540,6 +570,16 @@ export function AdminOverview() {
 
   const coverage = coverageOf(signals);
 
+  /* Locals so the detail bands below can narrow their payload once and hand the
+     narrowed value to their child — the band itself only knows whether there is
+     something to render. */
+  const platformData = platformQuery.data;
+  const domainsData = domainsQuery.data;
+  const directoryData = directoryQuery.data;
+  const coreAppsData = coreAppsQuery.data;
+  const toneOf = (id: string): SignalTone =>
+    signals.find((signal) => signal.id === id)?.tone ?? "checking";
+
   const queries = [domainsQuery, policiesQuery, platformQuery, directoryQuery, coreAppsQuery];
   const isRefreshing = queries.some((query) => query.isFetching);
   /* One request, so there is no burst left to pace — this used to fan five
@@ -608,42 +648,27 @@ export function AdminOverview() {
           title="Security & tier"
           section="tier-readiness"
           linkLabel="Open Tier readiness"
-          tone={signals.find((s) => s.id === "platform")?.tone ?? "checking"}
+          tone={toneOf("platform")}
+          unreadable={platformFailure !== null}
+          unreadableNote="Tier readiness could not be read — see the banner above."
+          pending={platformData === undefined}
+          pendingNote="Reading platform configuration…"
         >
-          {platformFailure !== null ? (
-            <p className="m-0 text-xs text-[var(--text-2)]">
-              Tier readiness could not be read — see the banner above.
-            </p>
-          ) : platformQuery.data === undefined ? (
-            <p className="m-0 text-xs text-[var(--text-2)]">Reading platform configuration…</p>
-          ) : (
-            <SecurityTierDetail status={platformQuery.data} />
-          )}
+          {platformData === undefined ? null : <SecurityTierDetail status={platformData} />}
         </EnterpriseDetailBand>
 
         <EnterpriseDetailBand
           title="People & domains"
           section="users"
           linkLabel="Open Users"
-          tone={
-            domainsFailure !== null || directoryFailure !== null
-              ? "unavailable"
-              : domainsQuery.data === undefined || directoryQuery.data === undefined
-                ? "checking"
-                : signals.find((s) => s.id === "domains")?.tone === "attention" ||
-                    signals.find((s) => s.id === "directory")?.tone === "attention"
-                  ? "attention"
-                  : "clear"
-          }
+          tone={bandTone(toneOf("domains"), toneOf("directory"))}
+          unreadable={domainsFailure !== null || directoryFailure !== null}
+          unreadableNote="Directory or domains could not be read — see the banner above."
+          pending={domainsData === undefined || directoryData === undefined}
+          pendingNote="Reading people and domains…"
         >
-          {domainsFailure !== null || directoryFailure !== null ? (
-            <p className="m-0 text-xs text-[var(--text-2)]">
-              Directory or domains could not be read — see the banner above.
-            </p>
-          ) : domainsQuery.data === undefined || directoryQuery.data === undefined ? (
-            <p className="m-0 text-xs text-[var(--text-2)]">Reading people and domains…</p>
-          ) : (
-            <PeopleDomainsDetail domains={domainsQuery.data} directory={directoryQuery.data} />
+          {domainsData === undefined || directoryData === undefined ? null : (
+            <PeopleDomainsDetail domains={domainsData} directory={directoryData} />
           )}
         </EnterpriseDetailBand>
 
@@ -651,40 +676,28 @@ export function AdminOverview() {
           title="App enablement"
           section="workspace-apps"
           linkLabel="Open Workspace apps"
-          tone={signals.find((s) => s.id === "apps")?.tone ?? "checking"}
+          tone={toneOf("apps")}
+          unreadable={coreAppsFailure !== null}
+          unreadableNote="Workspace apps could not be read — see the banner above."
+          pending={coreAppsData === undefined}
+          pendingNote="Reading workspace apps…"
         >
-          {coreAppsFailure !== null ? (
-            <p className="m-0 text-xs text-[var(--text-2)]">
-              Workspace apps could not be read — see the banner above.
-            </p>
-          ) : coreAppsQuery.data === undefined ? (
-            <p className="m-0 text-xs text-[var(--text-2)]">Reading workspace apps…</p>
-          ) : (
-            <WorkspaceAppsDetail status={coreAppsQuery.data} />
-          )}
+          {coreAppsData === undefined ? null : <WorkspaceAppsDetail status={coreAppsData} />}
         </EnterpriseDetailBand>
 
         <EnterpriseDetailBand
           title="AI & mail spam"
           section="ai-providers"
           linkLabel="Open AI providers"
-          tone={
-            platformFailure !== null
-              ? "unavailable"
-              : platformQuery.data === undefined
-                ? "checking"
-                : "clear"
-          }
+          /* No rule of its own — this band reports the platform read, not a
+             judgement on what it contains. */
+          tone={readingTone(platformFailure, platformData)}
+          unreadable={platformFailure !== null}
+          unreadableNote="AI config is part of platform-config and could not be read."
+          pending={platformData === undefined}
+          pendingNote="Reading AI configuration…"
         >
-          {platformFailure !== null ? (
-            <p className="m-0 text-xs text-[var(--text-2)]">
-              AI config is part of platform-config and could not be read.
-            </p>
-          ) : platformQuery.data === undefined ? (
-            <p className="m-0 text-xs text-[var(--text-2)]">Reading AI configuration…</p>
-          ) : (
-            <AiMailDetail status={platformQuery.data} />
-          )}
+          {platformData === undefined ? null : <AiMailDetail status={platformData} />}
         </EnterpriseDetailBand>
       </div>
 
@@ -861,17 +874,31 @@ function describeGap(unavailable: number, checking: number): string | null {
 /* Signal card                                                         */
 /* ------------------------------------------------------------------ */
 
+/* The three states every band has: its source could not be read, it has not
+   arrived yet, or it is here — with one class for the two note states, which
+   was written out eight times across four bands. */
+const BAND_NOTE = "m-0 text-xs text-[var(--text-2)]";
+
 function EnterpriseDetailBand({
   title,
   section,
   linkLabel,
   tone,
+  unreadable,
+  unreadableNote,
+  pending,
+  pendingNote,
   children,
 }: {
   readonly title: string;
   readonly section: AdminSectionId;
   readonly linkLabel: string;
   readonly tone: SignalTone;
+  /** The band's source failed; the page-level banner carries the reason. */
+  readonly unreadable: boolean;
+  readonly unreadableNote: string;
+  readonly pending: boolean;
+  readonly pendingNote: string;
   readonly children: ReactNode;
 }) {
   const headingId = `admin-overview-detail-${section}`;
@@ -887,7 +914,15 @@ function EnterpriseDetailBand({
         </h3>
         <span className={`${TONE_CHIP[tone]} shrink-0`}>{TONE_LABEL[tone]}</span>
       </div>
-      <div className="min-w-0 flex-1">{children}</div>
+      <div className="min-w-0 flex-1">
+        {unreadable ? (
+          <p className={BAND_NOTE}>{unreadableNote}</p>
+        ) : pending ? (
+          <p className={BAND_NOTE}>{pendingNote}</p>
+        ) : (
+          children
+        )}
+      </div>
       <div>
         <Button asChild size="xs" variant="outline">
           <Link to="/admin/$section" params={{ section }}>
@@ -901,13 +936,17 @@ function EnterpriseDetailBand({
 
 function SecurityTierDetail({ status }: { readonly status: PlatformConfigStatus }) {
   const tier = titleForTier(status.config.security.tier);
-  const unmet = countUnmetRequirements(status.readiness.requirements);
-  const requirementLines = status.readiness.requirements
-    .filter(
-      (requirement: unknown): requirement is { readonly key?: string; readonly status?: string } =>
-        typeof requirement === "object" && requirement !== null,
-    )
-    .filter((requirement) => requirement.status === "missing" || requirement.status === "degraded")
+  /* Filtered once: the count and the named list are the same finding, and
+     deriving them from two passes let them disagree about what "unmet" means. */
+  const unmetRequirements = status.readiness.requirements.filter(
+    (requirement: unknown): requirement is { readonly key?: string; readonly status?: string } =>
+      typeof requirement === "object" &&
+      requirement !== null &&
+      "status" in requirement &&
+      (requirement.status === "missing" || requirement.status === "degraded"),
+  );
+  const unmet = unmetRequirements.length;
+  const requirementLines = unmetRequirements
     .map((requirement) => String(requirement.key ?? "requirement"))
     .slice(0, 6);
 
@@ -939,9 +978,7 @@ function PeopleDomainsDetail({
   readonly domains: readonly DomainWithRecords[];
   readonly directory: AdminUsersListResponse;
 }) {
-  const verified = domains.filter((it) => it.domain.verificationStatus === "verified").length;
-  const pending = domains.filter((it) => it.domain.verificationStatus === "pending").length;
-  const failed = domains.filter((it) => it.domain.verificationStatus === "failed").length;
+  const { verified, pending, failed } = countVerification(domains);
   const suspended = directory.users.filter((user) => user.disabledAt !== null).length;
   const active = directory.users.length - suspended;
   const domainNames = domains.map((it) => it.domain.domain);

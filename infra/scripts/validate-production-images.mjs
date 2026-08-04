@@ -59,6 +59,13 @@ for (const prefix of ["vite@", "vitest@", "esbuild@", "@esbuild+"]) {
 }
 `.trim();
 
+// Every docker invocation captures both streams so failures surface the container
+// output instead of leaking it to this process' stdio.
+const DOCKER_EXEC_OPTIONS = {
+  encoding: "utf8",
+  stdio: ["ignore", "pipe", "pipe"],
+};
+
 const webPayloadCheck = `
 set -eu
 test "$(id -u)" = "10001"
@@ -151,8 +158,15 @@ export function validateProductionImages(options, run = execFileSync) {
 }
 
 function runApplicationContainerChecks(image, run) {
-  const baseArgs = ["run", "--rm", "--read-only", "--network", "none"];
-  baseArgs.push("--tmpfs", "/tmp:rw,noexec,nosuid,size=64m");
+  const baseArgs = [
+    "run",
+    "--rm",
+    "--read-only",
+    "--network",
+    "none",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,size=64m",
+  ];
   run(
     "docker",
     [
@@ -164,18 +178,12 @@ function runApplicationContainerChecks(image, run) {
       "--eval",
       applicationPayloadCheck,
     ],
-    {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
+    DOCKER_EXEC_OPTIONS,
   );
   run(
     "docker",
     [...baseArgs, "--entrypoint", "/nodejs/bin/node", image, "--check", "/app/dist/index.js"],
-    {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
+    DOCKER_EXEC_OPTIONS,
   );
 }
 
@@ -222,10 +230,7 @@ export function assertImageMetadata(
 }
 
 function inspectImage(image, run) {
-  const output = run("docker", ["image", "inspect", image], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const output = run("docker", ["image", "inspect", image], DOCKER_EXEC_OPTIONS);
   const parsed = JSON.parse(output);
   if (!Array.isArray(parsed) || parsed.length !== 1) {
     throw new Error(`docker returned unexpected inspection output for ${image}`);
@@ -242,10 +247,7 @@ function runContainerCheck(image, script, writableTmpfs, environment, run) {
     args.push("--env", `${name}=${value}`);
   }
   args.push("--entrypoint", "sh", image, "-euc", script);
-  run("docker", args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  run("docker", args, DOCKER_EXEC_OPTIONS);
 }
 
 function isMain() {

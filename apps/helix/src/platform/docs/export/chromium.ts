@@ -42,9 +42,13 @@ export interface PlaywrightChromiumModule {
   };
 }
 
+/** Default budget for both setContent and pdf generation. */
+const DEFAULT_CHROMIUM_TIMEOUT_MS = 15_000;
+
 export function createHeadlessChromiumPdfRenderer(
   options: HeadlessChromiumPdfRendererOptions = {},
 ): PdfExportRenderer {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CHROMIUM_TIMEOUT_MS;
   return {
     async render(input) {
       const { chromium } = await (options.loadPlaywright ?? importPlaywright)();
@@ -69,7 +73,7 @@ export function createHeadlessChromiumPdfRenderer(
           // sufficient. Waiting for networkidle here would also let a doc
           // hold the export open until the per-request timeout.
           waitUntil: "domcontentloaded",
-          timeout: options.timeoutMs ?? 15_000,
+          timeout: timeoutMs,
         });
         const pdf = await page.pdf({
           format: "Letter",
@@ -81,7 +85,7 @@ export function createHeadlessChromiumPdfRenderer(
             bottom: "0.75in",
             left: "0.75in",
           },
-          timeout: options.timeoutMs ?? 15_000,
+          timeout: timeoutMs,
         });
         return {
           buffer: Buffer.from(pdf),

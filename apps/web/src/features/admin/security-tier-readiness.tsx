@@ -15,7 +15,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { AlertTriangle, CheckCircle2, CircleDashed, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -114,6 +114,33 @@ const TIER_PAGE_TAB_LABELS: Record<TierPageTab, string> = {
   plugins: "Plugins",
 };
 
+/** Rewrites the cached plugin catalog in place: every plugin `matches` accepts
+ *  is replaced by `patch(plugin)`, everything else is left alone. The
+ *  `current === undefined` guard lives here so no caller can forget it — with
+ *  no catalog cached there is nothing to patch, and writing a synthesised entry
+ *  would put a plugin on screen the backend never returned. */
+function patchCachedPluginCatalog(
+  queryClient: QueryClient,
+  matches: (plugin: PluginCatalogItem) => boolean,
+  patch: (plugin: PluginCatalogItem) => PluginCatalogItem,
+): void {
+  queryClient.setQueryData<PluginCatalogStatus | undefined>(
+    adminPluginCatalogQueryKey,
+    (current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            plugins: current.plugins.map((plugin) => (matches(plugin) ? patch(plugin) : plugin)),
+          },
+  );
+}
+
+/** Checkbox toggle over a list of acknowledged ids. */
+function toggleId(current: readonly string[], id: string): readonly string[] {
+  return current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id];
+}
+
 export function SecurityTierReadiness() {
   const { search, patchSearch } = useAdminSectionSearch("tier-readiness");
   const [tierConfirmOpen, setTierConfirmOpen] = useState(false);
@@ -159,18 +186,22 @@ export function SecurityTierReadiness() {
   const moveTabSelection = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const last = TIER_PAGE_TABS.length - 1;
     const current = TIER_PAGE_TABS.indexOf(activeTab);
-    const nextIndex =
-      event.key === "ArrowRight"
-        ? (current + 1) % TIER_PAGE_TABS.length
-        : event.key === "ArrowLeft"
-          ? (current + last) % TIER_PAGE_TABS.length
-          : event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? last
-              : null;
-    if (nextIndex === null) {
-      return;
+    let nextIndex: number;
+    switch (event.key) {
+      case "ArrowRight":
+        nextIndex = (current + 1) % TIER_PAGE_TABS.length;
+        break;
+      case "ArrowLeft":
+        nextIndex = (current + last) % TIER_PAGE_TABS.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = last;
+        break;
+      default:
+        return;
     }
     const next = TIER_PAGE_TABS[nextIndex];
     if (next === undefined) {
@@ -182,9 +213,11 @@ export function SecurityTierReadiness() {
   };
 
   /* URL `?tier=` wins when present; otherwise follow the live platform tier. */
-  const selectedTierId: TierId = TIER_IDS.includes(search.tier as TierId)
-    ? (search.tier as TierId)
-    : (liveTier ?? "business");
+  const selectedTierId: TierId = resolveClosedSearchParam(
+    search.tier,
+    TIER_IDS,
+    liveTier ?? "business",
+  );
   const setSelectedTierId = (tier: TierId) => {
     patchSearch({ tier });
   };
@@ -245,26 +278,17 @@ export function SecurityTierReadiness() {
         adminPluginCatalogQueryKey,
       );
 
-      queryClient.setQueryData<PluginCatalogStatus | undefined>(
-        adminPluginCatalogQueryKey,
-        (current) =>
-          current === undefined
-            ? current
-            : {
-                ...current,
-                plugins: current.plugins.map((plugin) =>
-                  plugin.id === input.pluginId && plugin.version === input.version
-                    ? {
-                        ...plugin,
-                        install: {
-                          ...(plugin.install ?? {}),
-                          optimisticStatus: "installing",
-                          source: input.source,
-                        },
-                      }
-                    : plugin,
-                ),
-              },
+      patchCachedPluginCatalog(
+        queryClient,
+        (plugin) => plugin.id === input.pluginId && plugin.version === input.version,
+        (plugin) => ({
+          ...plugin,
+          install: {
+            ...(plugin.install ?? {}),
+            optimisticStatus: "installing",
+            source: input.source,
+          },
+        }),
       );
 
       return { previousPluginCatalog };
@@ -277,27 +301,18 @@ export function SecurityTierReadiness() {
     onSuccess: (result) => {
       setPluginInstallStatus(result);
       if (result.status === "installed" && result.plugin !== undefined) {
-        queryClient.setQueryData<PluginCatalogStatus | undefined>(
-          adminPluginCatalogQueryKey,
-          (current) =>
-            current === undefined
-              ? current
-              : {
-                  ...current,
-                  plugins: current.plugins.map((plugin) =>
-                    plugin.id === result.plugin?.id
-                      ? {
-                          ...plugin,
-                          ...result.plugin,
-                          install: {
-                            ...(plugin.install ?? {}),
-                            optimisticStatus: "installed",
-                            source: result.source,
-                          },
-                        }
-                      : plugin,
-                  ),
-                },
+        patchCachedPluginCatalog(
+          queryClient,
+          (plugin) => plugin.id === result.plugin?.id,
+          (plugin) => ({
+            ...plugin,
+            ...result.plugin,
+            install: {
+              ...(plugin.install ?? {}),
+              optimisticStatus: "installed",
+              source: result.source,
+            },
+          }),
         );
       }
       void queryClient.invalidateQueries({ queryKey: adminPluginCatalogQueryKey });
@@ -328,23 +343,14 @@ export function SecurityTierReadiness() {
         }
       }
       if (result.plugin !== undefined && result.lifecycle !== undefined) {
-        queryClient.setQueryData<PluginCatalogStatus | undefined>(
-          adminPluginCatalogQueryKey,
-          (current) =>
-            current === undefined
-              ? current
-              : {
-                  ...current,
-                  plugins: current.plugins.map((plugin) =>
-                    plugin.id === result.plugin?.id
-                      ? {
-                          ...plugin,
-                          ...result.plugin,
-                          lifecycle: result.lifecycle,
-                        }
-                      : plugin,
-                  ),
-                },
+        patchCachedPluginCatalog(
+          queryClient,
+          (plugin) => plugin.id === result.plugin?.id,
+          (plugin) => ({
+            ...plugin,
+            ...result.plugin,
+            lifecycle: result.lifecycle,
+          }),
         );
       }
       void queryClient.invalidateQueries({ queryKey: adminPluginCatalogQueryKey });
@@ -413,8 +419,6 @@ export function SecurityTierReadiness() {
   }
 
   const backendStatus = platformConfigQuery.data;
-  const platformConfigError =
-    platformConfigQuery.error instanceof Error ? platformConfigQuery.error.message : null;
   /* The platform evaluates readiness for the tier it is RUNNING and for nothing
      else, so this is `undefined` for every other target tier — which is the
      usual case on this screen, since picking a target tier is its point. */
@@ -441,20 +445,17 @@ export function SecurityTierReadiness() {
     if (platformConfigQuery.isError) {
       return [];
     }
-    return selectedTier.requiredServiceIds.flatMap((serviceId) => {
-      const service = serviceById.get(serviceId);
-      if (service === undefined) {
-        return [];
-      }
-      return [
+    return selectedTier.requiredServiceIds
+      .map((serviceId) => serviceById.get(serviceId))
+      .filter((service) => service !== undefined)
+      .map((service) =>
         serviceFromBackendRequirement(
           service,
           measuredRequirements?.find(
             (requirement) => requirement.key === serviceRequirementKeyById[service.id],
           ),
         ),
-      ];
-    });
+      );
   }, [measuredRequirements, platformConfigQuery.isError, selectedTier]);
   const tierGates = useMemo(
     () => tierGatesForTier(selectedTierId, measuredRequirements),
@@ -511,6 +512,31 @@ export function SecurityTierReadiness() {
   const notEvaluatedReason = `${selectedTierTitle} is not the tier this platform runs (${currentTierTitle}), and readiness is only reported for the live tier`;
   const isLiveTierSelected =
     backendStatus !== undefined && backendStatus.config.security.tier === selectedTierId;
+  /* One three-way state behind both the score's accessible name and its visible
+     caption, so a screen reader and the page cannot end up describing different
+     readiness states. */
+  const scoreSummary =
+    readiness !== null
+      ? {
+          label: `${readiness.percent}% readiness, ${readiness.blocking} blocking`,
+          caption: `${readiness.blocking} blocking`,
+        }
+      : readinessMode === "not-evaluated"
+        ? {
+            label: `Readiness for ${selectedTierTitle} not evaluated — ${notEvaluatedReason}`,
+            caption: "not evaluated",
+          }
+        : {
+            label: "Readiness unknown — no live platform config",
+            caption: "readiness unknown",
+          };
+  const readinessSummaryText = summariseReadiness({
+    isPending: platformConfigQuery.isPending,
+    backendStatus,
+    readinessMode,
+    readiness,
+    selectedTierTitle,
+  });
   const pluginCatalogColumns = useMemo<ColumnDef<PluginCatalogItem>[]>(
     () => [
       {
@@ -603,6 +629,10 @@ export function SecurityTierReadiness() {
     ],
     [pluginLifecycleMutation, selectedPlugin?.id, startUninstall],
   );
+  /* `useReactTable` wants a mutable `T[]`, and the query's array is readonly —
+     hence the copy. The memo is load-bearing: `pluginCatalogQuery.data.plugins`
+     keeps its identity between renders, and handing the table a fresh array
+     every render re-renders it every render, which is a live render loop. */
   const pluginCatalogTableData = useMemo<PluginCatalogItem[]>(
     () => [...pluginCatalog],
     [pluginCatalog],
@@ -624,22 +654,10 @@ export function SecurityTierReadiness() {
           <div
             className="admin-tier-score"
             data-unknown={readiness === null ? "" : undefined}
-            aria-label={
-              readiness !== null
-                ? `${readiness.percent}% readiness, ${readiness.blocking} blocking`
-                : readinessMode === "not-evaluated"
-                  ? `Readiness for ${selectedTierTitle} not evaluated — ${notEvaluatedReason}`
-                  : "Readiness unknown — no live platform config"
-            }
+            aria-label={scoreSummary.label}
           >
             <strong>{readiness === null ? "—" : `${readiness.percent}%`}</strong>
-            <span>
-              {readiness !== null
-                ? `${readiness.blocking} blocking`
-                : readinessMode === "not-evaluated"
-                  ? "not evaluated"
-                  : "readiness unknown"}
-            </span>
+            <span>{scoreSummary.caption}</span>
           </div>
         }
       />
@@ -800,19 +818,7 @@ export function SecurityTierReadiness() {
                 </div>
                 <div>
                   <dt>Readiness</dt>
-                  <dd>
-                    {platformConfigQuery.isPending
-                      ? "Loading"
-                      : backendStatus === undefined || readinessMode === "unscoreable"
-                        ? "Backend unavailable"
-                        : readinessMode === "not-evaluated"
-                          ? `Not evaluated for ${selectedTierTitle}`
-                          : readiness === null
-                            ? "No gates reported"
-                            : backendStatus.readiness.ready
-                              ? "Ready"
-                              : `${readiness.blocking} blocking`}
-                  </dd>
+                  <dd>{readinessSummaryText}</dd>
                 </div>
                 <div>
                   <dt>Backend requirements</dt>
@@ -889,8 +895,9 @@ export function SecurityTierReadiness() {
               {tierMutation.isError ? <p role="alert">Could not apply the tier draft.</p> : null}
               {platformConfigQuery.isError ? (
                 <p role="alert">
-                  {platformConfigError ??
-                    "Admin config API is unavailable or missing admin config scope."}
+                  {platformConfigQuery.error instanceof Error
+                    ? platformConfigQuery.error.message
+                    : "Admin config API is unavailable or missing admin config scope."}
                 </p>
               ) : null}
             </aside>
@@ -1047,9 +1054,7 @@ export function SecurityTierReadiness() {
                           checked={confirmedPluginIds.has(confirmation.id)}
                           onChange={() =>
                             setConfirmedPluginRequirements((current) =>
-                              current.includes(confirmation.id)
-                                ? current.filter((id) => id !== confirmation.id)
-                                : [...current, confirmation.id],
+                              toggleId(current, confirmation.id),
                             )
                           }
                           type="checkbox"
@@ -1116,9 +1121,7 @@ export function SecurityTierReadiness() {
                               checked={acknowledgedUninstallSet.has(requirement.id)}
                               onChange={() =>
                                 setAcknowledgedUninstallIds((current) =>
-                                  current.includes(requirement.id)
-                                    ? current.filter((id) => id !== requirement.id)
-                                    : [...current, requirement.id],
+                                  toggleId(current, requirement.id),
                                 )
                               }
                               type="checkbox"
@@ -1185,6 +1188,38 @@ export function SecurityTierReadiness() {
       )}
     </section>
   );
+}
+
+/** The summary panel's Readiness line. The three unscored states each get their
+ *  own sentence: "Backend unavailable" is not the same as a live platform that
+ *  simply has not measured the tier the operator picked, and neither is a tier
+ *  the platform measured but reported no gates for. */
+function summariseReadiness({
+  isPending,
+  backendStatus,
+  readinessMode,
+  readiness,
+  selectedTierTitle,
+}: {
+  readonly isPending: boolean;
+  readonly backendStatus: PlatformConfigStatus | undefined;
+  readonly readinessMode: "measured" | "not-evaluated" | "unscoreable";
+  readonly readiness: { readonly percent: number; readonly blocking: number } | null;
+  readonly selectedTierTitle: string;
+}): string {
+  if (isPending) {
+    return "Loading";
+  }
+  if (backendStatus === undefined || readinessMode === "unscoreable") {
+    return "Backend unavailable";
+  }
+  if (readinessMode === "not-evaluated") {
+    return `Not evaluated for ${selectedTierTitle}`;
+  }
+  if (readiness === null) {
+    return "No gates reported";
+  }
+  return backendStatus.readiness.ready ? "Ready" : `${readiness.blocking} blocking`;
 }
 
 /** "1 acknowledgement" / "3 acknowledgements". */

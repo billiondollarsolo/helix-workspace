@@ -180,7 +180,7 @@ export function OpenObjectRouteContent({
     if (decision === "import" || importMutation.isPending || importMutation.data !== undefined) {
       return (
         <CenteredMessage>
-          Importing {result.parsed.format.label} into {surfaceProductLabel(result.parsed)}…
+          Importing {result.parsed.format.label} into {SURFACE_WORDS[result.parsed.kind].product}…
         </CenteredMessage>
       );
     }
@@ -257,27 +257,14 @@ function renderEditablePreview(
   }
 }
 
-function surfaceProductLabel(parsed: EditableParsed): string {
-  switch (parsed.kind) {
-    case "doc":
-      return "Docs";
-    case "sheet":
-      return "Sheets";
-    case "deck":
-      return "Slides";
-  }
-}
-
-function surfaceNoun(parsed: EditableParsed): string {
-  switch (parsed.kind) {
-    case "doc":
-      return "document";
-    case "sheet":
-      return "spreadsheet";
-    case "deck":
-      return "presentation";
-  }
-}
+/** Helix product name and the everyday noun for each editable parsed kind. */
+const SURFACE_WORDS: Readonly<
+  Record<EditableParsed["kind"], { readonly product: string; readonly noun: string }>
+> = {
+  doc: { product: "Docs", noun: "document" },
+  sheet: { product: "Sheets", noun: "spreadsheet" },
+  deck: { product: "Slides", noun: "presentation" },
+};
 
 function OpenConversionChoice({
   parsed,
@@ -331,9 +318,9 @@ function OpenConversionChoice({
         >
           {canCreateCopy ? (
             <>
-              Helix can create an editable {surfaceProductLabel(parsed)} {surfaceNoun(parsed)} from{" "}
-              <strong>{fileName}</strong>. The original {parsed.format.label} stays unchanged in
-              Drive.
+              Helix can create an editable {SURFACE_WORDS[parsed.kind].product}{" "}
+              {SURFACE_WORDS[parsed.kind].noun} from <strong>{fileName}</strong>. The original{" "}
+              {parsed.format.label} stays unchanged in Drive.
             </>
           ) : (
             <>

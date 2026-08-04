@@ -95,16 +95,7 @@ export class SesMailProvider implements OutboundMailProvider {
   constructor(options: SesProviderOptions, transport?: Transporter<SMTPTransport.SentMessageInfo>) {
     this.name = options.name;
     this.#region = options.region;
-    this.#transport =
-      transport ??
-      nodemailer.createTransport({
-        host: options.host,
-        port: options.port ?? 587,
-        secure: options.secure ?? false,
-        ...(options.user === undefined
-          ? {}
-          : { auth: { user: options.user, pass: options.pass ?? "" } }),
-      });
+    this.#transport = transport ?? createSmtpTransport(options);
   }
 
   async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
@@ -229,16 +220,7 @@ export class SmtpRelayMailProvider implements OutboundMailProvider {
   ) {
     this.name = options.name;
     this.#host = options.host;
-    this.#transport =
-      transport ??
-      nodemailer.createTransport({
-        host: options.host,
-        port: options.port ?? 587,
-        secure: options.secure ?? false,
-        ...(options.user === undefined
-          ? {}
-          : { auth: { user: options.user, pass: options.pass ?? "" } }),
-      });
+    this.#transport = transport ?? createSmtpTransport(options);
   }
 
   async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
@@ -505,6 +487,24 @@ function addressOf(value: { readonly address: string; readonly name?: string }):
   return value.name === undefined
     ? { address: value.address }
     : { address: value.address, name: value.name };
+}
+
+/** Shared nodemailer SMTP transport used by the SES and SMTP-relay providers. */
+function createSmtpTransport(options: {
+  readonly host: string;
+  readonly port?: number | undefined;
+  readonly secure?: boolean | undefined;
+  readonly user?: string | undefined;
+  readonly pass?: string | undefined;
+}): Transporter<SMTPTransport.SentMessageInfo> {
+  return nodemailer.createTransport({
+    host: options.host,
+    port: options.port ?? 587,
+    secure: options.secure ?? false,
+    ...(options.user === undefined
+      ? {}
+      : { auth: { user: options.user, pass: options.pass ?? "" } }),
+  });
 }
 
 function toNodemailerMail(message: OutboundMailMessage): SMTPTransport.MailOptions {

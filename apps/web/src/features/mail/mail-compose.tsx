@@ -34,11 +34,21 @@ import {
   mapMailSendUiStatus,
   shouldPollMailSendStatus,
   type MailSendStatusSource,
+  type MailSendUiPhase,
   type MailSendUiStatus,
 } from "./mail-send-status";
 
-function cx(...parts: Array<string | false | null | undefined>): string {
-  return parts.filter(Boolean).join(" ");
+/** Send-status text colour: failures shout, settled phases recede, in-flight stays primary. */
+function sendStatusColor(phase: MailSendUiPhase): string {
+  switch (phase) {
+    case "failed":
+      return "var(--danger)";
+    case "sent":
+    case "cancelled":
+      return "var(--text-2)";
+    default:
+      return "var(--text-1)";
+  }
 }
 
 /* ------------------------------------------------------------------ compose */
@@ -428,6 +438,21 @@ export function Compose({ onClose, onSent }: ComposeProps) {
     onClose();
   }, [hasDraft, onClose]);
 
+  // Resolve a draft conflict in the server's favour so we never silently
+  // overwrite server content. Used by both the dialog's dismiss and its
+  // explicit "Keep server draft" button.
+  function keepServerDraft() {
+    if (composeConflict === null) {
+      return;
+    }
+    applyComposeFields(composeConflict.server);
+    setDraftId(composeConflict.serverDraftId || null);
+    setDraftVersion(composeConflict.serverVersion);
+    clearMailComposeRecovery();
+    setShowRecoveryNotice(false);
+    setComposeConflict(null);
+  }
+
   const discardDraft = useCallback(() => {
     skipRecoveryFlushRef.current = true;
     recoveryDebouncer.cancel();
@@ -508,7 +533,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
 
   return (
     <div
-      className={cx("compose", "compose-drop-root", minimized && "compose-minimized")}
+      className={`compose compose-drop-root${minimized ? " compose-minimized" : ""}`}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -759,12 +784,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 borderRadius: 8,
                 background: "var(--surface-2)",
                 fontSize: "var(--text-body-sm)",
-                color:
-                  sendStatus.phase === "failed"
-                    ? "var(--danger)"
-                    : sendStatus.phase === "sent" || sendStatus.phase === "cancelled"
-                      ? "var(--text-2)"
-                      : "var(--text-1)",
+                color: sendStatusColor(sendStatus.phase),
               }}
             >
               <span>{sendStatus.label}</span>
@@ -903,29 +923,10 @@ export function Compose({ onClose, onSent }: ComposeProps) {
       {composeConflict !== null ? (
         <Dialog
           title="Draft conflict"
-          onClose={() => {
-            // Prefer server on dismiss so we never silent-overwrite server content.
-            applyComposeFields(composeConflict.server);
-            setDraftId(composeConflict.serverDraftId || null);
-            setDraftVersion(composeConflict.serverVersion);
-            clearMailComposeRecovery();
-            setShowRecoveryNotice(false);
-            setComposeConflict(null);
-          }}
+          onClose={keepServerDraft}
           footer={
             <>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  applyComposeFields(composeConflict.server);
-                  setDraftId(composeConflict.serverDraftId || null);
-                  setDraftVersion(composeConflict.serverVersion);
-                  clearMailComposeRecovery();
-                  setShowRecoveryNotice(false);
-                  setComposeConflict(null);
-                }}
-              >
+              <button type="button" className="btn" onClick={keepServerDraft}>
                 Keep server draft
               </button>
               <button

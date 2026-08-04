@@ -21,10 +21,12 @@ import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   EmptyRow,
   EmptyState,
+  MutationError,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
   StateBanner,
+  StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
 
@@ -54,7 +56,7 @@ function statusVariant(status: OAuthAppStatus): string {
 }
 
 interface AppsRow {
-  readonly id: string | null;
+  readonly id: string;
   readonly name: string;
   readonly scope: string;
   readonly users: number;
@@ -189,18 +191,13 @@ export function AdminApps() {
       id: "risk",
       header: "Risk",
       width: "90px",
-      cell: (app) => (
-        <span className={`chip ${riskVariant(app.risk)}`}>
-          <span className="chip-dot" />
-          {app.risk}
-        </span>
-      ),
+      cell: (app) => <StatusChip tone={riskVariant(app.risk)} label={app.risk} />,
     },
     {
       id: "status",
       header: "Status",
       width: "100px",
-      cell: (app) => <span className={`chip ${statusVariant(app.status)}`}>{app.status}</span>,
+      cell: (app) => <StatusChip tone={statusVariant(app.status)} label={app.status} dot={false} />,
     },
     {
       id: "actions",
@@ -213,7 +210,7 @@ export function AdminApps() {
          here that cannot be undone. */
       cell: (app) => (
         <div className="flex justify-end gap-1.5">
-          {app.id !== null && app.status !== "revoked" ? (
+          {app.status !== "revoked" ? (
             <>
               {app.status !== "approved" ? (
                 <Button
@@ -222,7 +219,7 @@ export function AdminApps() {
                   variant="outline"
                   aria-label={`Approve ${app.name}`}
                   disabled={mutating}
-                  onClick={() => statusMutation.mutate({ id: app.id ?? "", status: "approved" })}
+                  onClick={() => statusMutation.mutate({ id: app.id, status: "approved" })}
                 >
                   Approve
                 </Button>
@@ -234,7 +231,7 @@ export function AdminApps() {
                   variant="outline"
                   aria-label={`Block ${app.name}`}
                   disabled={mutating}
-                  onClick={() => statusMutation.mutate({ id: app.id ?? "", status: "blocked" })}
+                  onClick={() => statusMutation.mutate({ id: app.id, status: "blocked" })}
                 >
                   Block
                 </Button>
@@ -245,9 +242,7 @@ export function AdminApps() {
                 variant="destructive"
                 aria-label={`Revoke ${app.name}`}
                 disabled={mutating}
-                onClick={() =>
-                  setRevokeTarget({ id: app.id ?? "", name: app.name, users: app.users })
-                }
+                onClick={() => setRevokeTarget({ id: app.id, name: app.name, users: app.users })}
               >
                 Revoke
               </Button>
@@ -340,12 +335,8 @@ export function AdminApps() {
       ) : appsQuery.isPending ? (
         <StateBanner kind="loading">Loading OAuth apps…</StateBanner>
       ) : null}
-      {statusMutation.isError ? (
-        <StateBanner kind="error">{statusMutation.error.message}</StateBanner>
-      ) : null}
-      {revokeMutation.isError ? (
-        <StateBanner kind="error">{revokeMutation.error.message}</StateBanner>
-      ) : null}
+      <MutationError error={statusMutation.error} />
+      <MutationError error={revokeMutation.error} />
 
       {/* A column header over nothing is not an explanation. This is the
           shadow-IT surface, and blank is its normal state — so blank has to say
@@ -369,7 +360,7 @@ export function AdminApps() {
             label="OAuth apps with access to workspace data"
             columns={columns}
             rows={rows}
-            rowKey={(app) => app.id ?? app.name}
+            rowKey={(app) => app.id}
             /* "No grants exist" is the EmptyState above and is only ever said
                after a successful load. The last branch here is a not-loaded
                list, which must not read as an empty one. */

@@ -168,8 +168,7 @@ async function main() {
     }
     process.stdout.write(serialized);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`release-readiness manifest failed: ${message}\n`);
+    process.stderr.write(`release-readiness manifest failed: ${errorMessage(error)}\n`);
     process.exit(1);
   }
 }
@@ -658,11 +657,7 @@ async function loadAndValidateFinalArtifacts(
         `${name} final-release evidence`,
       );
     } catch (error) {
-      throw new Error(
-        `invalid ${name} final-release evidence: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      throw new Error(`invalid ${name} final-release evidence: ${errorMessage(error)}`);
     }
   }
   const decisionInputs = evidence
@@ -722,11 +717,7 @@ async function loadAndValidateFinalArtifacts(
       ),
     });
   } catch (error) {
-    throw new Error(
-      `invalid final-release supporting evidence: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    throw new Error(`invalid final-release supporting evidence: ${errorMessage(error)}`);
   }
   return Object.fromEntries(
     FINAL_ARTIFACT_OPTIONS.map(([, option, name]) => [
@@ -746,30 +737,19 @@ function validateExpectedReleaseBinding(evidence, options, expected, label) {
   try {
     validateReleaseEvidenceBinding(evidence.releaseBinding, expected);
   } catch (error) {
-    throw new Error(
-      `${label} release binding is invalid: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new Error(`${label} release binding is invalid: ${errorMessage(error)}`);
   }
 }
 
 async function validateRequiredDriveEvidence(options, evidencePaths, expectedBinding) {
   if (options.driveLiveEvidence === undefined) return undefined;
-  if (!evidencePaths.has(options.driveLiveEvidence)) {
-    throw new Error(`required Drive live evidence missing: ${options.driveLiveEvidence}`);
-  }
-  let evidence;
-  try {
-    evidence = validateDriveEvidence(
+  requireRetainedEvidence(evidencePaths, options.driveLiveEvidence, "Drive live evidence");
+  const evidence = withFailurePrefix("invalid or incomplete Drive live evidence", () =>
+    validateDriveEvidence(
       parseSnapshotJson(options.evidenceByPath, options.driveLiveEvidence, "Drive live evidence"),
       { requirePass: true },
-    );
-  } catch (error) {
-    throw new Error(
-      `invalid or incomplete Drive live evidence: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
+    ),
+  );
   validateExpectedReleaseBinding(evidence, options, expectedBinding, "Drive live evidence");
   return {
     path: options.driveLiveEvidence,
@@ -789,26 +769,17 @@ async function validateRequiredDriveEvidence(options, evidencePaths, expectedBin
 
 async function validateRequiredDataPlaneEvidence(options, evidencePaths, expectedBinding) {
   if (options.dataPlaneLiveEvidence === undefined) return undefined;
-  if (!evidencePaths.has(options.dataPlaneLiveEvidence)) {
-    throw new Error(`required data-plane live evidence missing: ${options.dataPlaneLiveEvidence}`);
-  }
-  let evidence;
-  try {
-    evidence = validateDataPlaneEvidence(
+  requireRetainedEvidence(evidencePaths, options.dataPlaneLiveEvidence, "data-plane live evidence");
+  const evidence = withFailurePrefix("invalid or incomplete data-plane live evidence", () =>
+    validateDataPlaneEvidence(
       parseSnapshotJson(
         options.evidenceByPath,
         options.dataPlaneLiveEvidence,
         "data-plane live evidence",
       ),
       true,
-    );
-  } catch (error) {
-    throw new Error(
-      `invalid or incomplete data-plane live evidence: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
+    ),
+  );
   validateExpectedReleaseBinding(evidence, options, expectedBinding, "data-plane live evidence");
   return {
     path: options.dataPlaneLiveEvidence,
@@ -824,28 +795,21 @@ async function validateRequiredDataPlaneEvidence(options, evidencePaths, expecte
 
 async function validateRequiredFailureRecoveryEvidence(options, evidencePaths, expectedBinding) {
   if (options.failureRecoveryEvidence === undefined) return undefined;
-  if (!evidencePaths.has(options.failureRecoveryEvidence)) {
-    throw new Error(
-      `required failure/recovery evidence missing: ${options.failureRecoveryEvidence}`,
-    );
-  }
-  let evidence;
-  try {
-    evidence = validateFailureRecoveryEvidence(
+  requireRetainedEvidence(
+    evidencePaths,
+    options.failureRecoveryEvidence,
+    "failure/recovery evidence",
+  );
+  const evidence = withFailurePrefix("invalid or incomplete failure/recovery evidence", () =>
+    validateFailureRecoveryEvidence(
       parseSnapshotJson(
         options.evidenceByPath,
         options.failureRecoveryEvidence,
         "failure/recovery evidence",
       ),
       { requirePass: true },
-    );
-  } catch (error) {
-    throw new Error(
-      `invalid or incomplete failure/recovery evidence: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
+    ),
+  );
   validateExpectedReleaseBinding(evidence, options, expectedBinding, "failure/recovery evidence");
   return {
     path: options.failureRecoveryEvidence,
@@ -874,25 +838,16 @@ async function validateRequiredFailureRecoveryEvidence(options, evidencePaths, e
 
 async function validateRequiredDastEvidence(options, evidencePaths, expectedBinding) {
   if (options.dastEvidence === undefined) return undefined;
-  if (!evidencePaths.has(options.dastEvidence)) {
-    throw new Error(`required V5 DAST evidence missing: ${options.dastEvidence}`);
-  }
-  let evidence;
-  try {
-    evidence = validateDastEvidence(
+  requireRetainedEvidence(evidencePaths, options.dastEvidence, "V5 DAST evidence");
+  const evidence = withFailurePrefix("invalid or incomplete V5 DAST evidence", () =>
+    validateDastEvidence(
       parseSnapshotJson(options.evidenceByPath, options.dastEvidence, "DAST evidence"),
       {
         requirePass: true,
         expectedBinding,
       },
-    );
-  } catch (error) {
-    throw new Error(
-      `invalid or incomplete V5 DAST evidence: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
+    ),
+  );
   return {
     path: options.dastEvidence,
     status: evidence.status,
@@ -906,25 +861,16 @@ async function validateRequiredDastEvidence(options, evidencePaths, expectedBind
 
 async function validateRequiredChatEvidence(options, evidencePaths, expectedBinding) {
   if (options.chatLiveEvidence === undefined) return undefined;
-  if (!evidencePaths.has(options.chatLiveEvidence)) {
-    throw new Error(`required Chat live evidence missing: ${options.chatLiveEvidence}`);
-  }
-  let evidence;
-  try {
-    evidence = validateChatLiveEvidence(
+  requireRetainedEvidence(evidencePaths, options.chatLiveEvidence, "Chat live evidence");
+  const evidence = withFailurePrefix("invalid or incomplete Chat live evidence", () =>
+    validateChatLiveEvidence(
       parseSnapshotJson(options.evidenceByPath, options.chatLiveEvidence, "Chat live evidence"),
       {
         requirePass: true,
         requireReleaseLoad: true,
       },
-    );
-  } catch (error) {
-    throw new Error(
-      `invalid or incomplete Chat live evidence: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
+    ),
+  );
   validateExpectedReleaseBinding(evidence, options, expectedBinding, "Chat live evidence");
   const load = evidence.scenarios.pilot_load.evidence;
   return {
@@ -952,23 +898,16 @@ async function validateRequiredChatEvidence(options, evidencePaths, expectedBind
 
 async function validateRequiredRestoreEvidence(options, evidencePaths, expectedBinding) {
   if (options.restoreDrillEvidence === undefined) return undefined;
-  if (!evidencePaths.has(options.restoreDrillEvidence)) {
-    throw new Error(`required restore drill evidence missing: ${options.restoreDrillEvidence}`);
-  }
-  let evidence;
-  try {
-    evidence = validateRestoreDrillEvidence(
+  requireRetainedEvidence(evidencePaths, options.restoreDrillEvidence, "restore drill evidence");
+  const evidence = withFailurePrefix("invalid restore drill evidence", () =>
+    validateRestoreDrillEvidence(
       parseSnapshotJson(
         options.evidenceByPath,
         options.restoreDrillEvidence,
         "restore drill evidence",
       ),
-    );
-  } catch (error) {
-    throw new Error(
-      `invalid restore drill evidence: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+    ),
+  );
   const incomplete = RESTORE_DRILL_SCENARIOS.filter(
     (scenario) => evidence.scenarios[scenario].status !== "passed",
   );
@@ -992,19 +931,12 @@ async function validateRequiredRestoreEvidence(options, evidencePaths, expectedB
 
 async function validateRequiredAgentEvidence(options, evidencePaths, expectedBinding) {
   if (options.agentLiveEvidence === undefined) return undefined;
-  if (!evidencePaths.has(options.agentLiveEvidence)) {
-    throw new Error(`required Agent live evidence missing: ${options.agentLiveEvidence}`);
-  }
-  let evidence;
-  try {
-    evidence = validateAgentLiveEvidence(
+  requireRetainedEvidence(evidencePaths, options.agentLiveEvidence, "Agent live evidence");
+  const evidence = withFailurePrefix("invalid Agent live evidence", () =>
+    validateAgentLiveEvidence(
       parseSnapshotJson(options.evidenceByPath, options.agentLiveEvidence, "Agent live evidence"),
-    );
-  } catch (error) {
-    throw new Error(
-      `invalid Agent live evidence: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+    ),
+  );
   const incomplete = AGENT_LIVE_SCENARIOS.filter(
     (scenario) => evidence.scenarios[scenario].status !== "passed",
   );
@@ -1026,19 +958,12 @@ async function validateRequiredAgentEvidence(options, evidencePaths, expectedBin
 
 async function validateRequiredMailEvidence(options, evidencePaths, expectedBinding) {
   if (options.mailLiveEvidence === undefined) return undefined;
-  if (!evidencePaths.has(options.mailLiveEvidence)) {
-    throw new Error(`required Mail live evidence missing: ${options.mailLiveEvidence}`);
-  }
-  let evidence;
-  try {
-    evidence = validateMailLiveEvidence(
+  requireRetainedEvidence(evidencePaths, options.mailLiveEvidence, "Mail live evidence");
+  const evidence = withFailurePrefix("invalid Mail live evidence", () =>
+    validateMailLiveEvidence(
       parseSnapshotJson(options.evidenceByPath, options.mailLiveEvidence, "Mail live evidence"),
-    );
-  } catch (error) {
-    throw new Error(
-      `invalid Mail live evidence: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+    ),
+  );
   const failedLocal = MAIL_LIVE_SCENARIOS.filter(
     (scenario) => evidence.local[scenario].status !== "passed",
   );
@@ -1132,17 +1057,16 @@ async function collectEvidence(root) {
 
 async function verifyEvidenceSnapshot(root, expected) {
   const current = await collectEvidence(root);
-  if (current.length !== expected.length) {
+  const changed =
+    current.length !== expected.length ||
+    current.some(
+      (entry, index) =>
+        entry.path !== expected[index].path ||
+        entry.bytes !== expected[index].bytes ||
+        entry.sha256 !== expected[index].sha256,
+    );
+  if (changed) {
     throw new Error("source evidence changed while the release packet was being validated");
-  }
-  for (let index = 0; index < expected.length; index += 1) {
-    if (
-      current[index].path !== expected[index].path ||
-      current[index].bytes !== expected[index].bytes ||
-      current[index].sha256 !== expected[index].sha256
-    ) {
-      throw new Error("source evidence changed while the release packet was being validated");
-    }
   }
 }
 
@@ -1221,11 +1145,17 @@ function normalizeRelativePath(value) {
 }
 
 function canonicalTimestamp(value) {
-  const date = value instanceof Date ? value : value === undefined ? new Date() : new Date(value);
+  const date = toDate(value);
   if (!Number.isFinite(date.getTime())) {
     throw new Error(`invalid timestamp: ${value}`);
   }
   return date.toISOString();
+}
+
+function toDate(value) {
+  if (value instanceof Date) return value;
+  if (value === undefined) return new Date();
+  return new Date(value);
 }
 
 function parseSnapshotJson(evidenceByPath, path, label) {
@@ -1236,9 +1166,27 @@ function parseSnapshotJson(evidenceByPath, path, label) {
   try {
     return JSON.parse(snapshot.content.toString("utf8"));
   } catch (error) {
-    throw new Error(
-      `${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new Error(`${label} is not valid JSON: ${errorMessage(error)}`);
+  }
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function requireRetainedEvidence(evidencePaths, path, label) {
+  if (!evidencePaths.has(path)) {
+    throw new Error(`required ${label} missing: ${path}`);
+  }
+}
+
+// Every gate validator reports its own failure with a stable, gate-specific
+// prefix so operators can tell which release evidence rejected the packet.
+function withFailurePrefix(prefix, validate) {
+  try {
+    return validate();
+  } catch (error) {
+    throw new Error(`${prefix}: ${errorMessage(error)}`);
   }
 }
 

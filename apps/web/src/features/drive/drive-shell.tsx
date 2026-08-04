@@ -68,6 +68,12 @@ import {
   type DriveCreateKind,
 } from "./api";
 import {
+  DRIVE_ACCESS_ROLE_OPTIONS,
+  driveAccessRoleLabel,
+  driveAccessRoleValue,
+  driveShareTargetsFromInput,
+} from "./share-access";
+import {
   DRIVE_FILE_META,
   fileItemFromEntry,
   folderItemFromEntry,
@@ -113,6 +119,90 @@ interface DriveScopeItem {
   readonly label: string;
   readonly icon: keyof typeof Icons;
 }
+
+const DRIVE_NEW_MENU_ITEM_STYLE: CSSProperties = {
+  width: "100%",
+  justifyContent: "flex-start",
+  fontWeight: 400,
+};
+
+/** Body of the "New" menu, shared by the sidebar dropdown and the mobile FAB.
+ *  `onRun` lets each caller close its own menu around the chosen action. */
+function DriveNewMenuItems({
+  onRun,
+  onNewItem,
+  onUploadFile,
+}: {
+  readonly onRun: (action: () => void) => void;
+  readonly onNewItem: (kind: DriveCreateKind) => void;
+  readonly onUploadFile: () => void;
+}) {
+  return (
+    <>
+      <button
+        type="button"
+        role="menuitem"
+        className="btn"
+        style={DRIVE_NEW_MENU_ITEM_STYLE}
+        onClick={() => onRun(() => onNewItem("folder"))}
+      >
+        <Icons.Folder />
+        New folder
+      </button>
+      {CORE_WORKSPACE_STORAGE_ONLY ? null : (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            className="btn"
+            style={DRIVE_NEW_MENU_ITEM_STYLE}
+            onClick={() => onRun(() => onNewItem("document"))}
+          >
+            <Icons.Doc />
+            Document
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="btn"
+            style={DRIVE_NEW_MENU_ITEM_STYLE}
+            onClick={() => onRun(() => onNewItem("spreadsheet"))}
+          >
+            <Icons.Sheet />
+            Spreadsheet
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="btn"
+            style={DRIVE_NEW_MENU_ITEM_STYLE}
+            onClick={() => onRun(() => onNewItem("presentation"))}
+          >
+            <Icons.Image />
+            Presentation
+          </button>
+        </>
+      )}
+      <button
+        type="button"
+        role="menuitem"
+        className="btn"
+        style={DRIVE_NEW_MENU_ITEM_STYLE}
+        onClick={() => onRun(onUploadFile)}
+      >
+        <Icons.Upload />
+        Upload file
+      </button>
+    </>
+  );
+}
+
+const DRIVE_CREATE_DEFAULT_NAMES: Record<DriveCreateKind, string> = {
+  folder: "New folder",
+  document: "Untitled document",
+  spreadsheet: "Untitled spreadsheet",
+  presentation: "Untitled presentation",
+};
 
 const DRIVE_SCOPES: readonly DriveScopeItem[] = [
   { id: "my", label: "My Drive", icon: "Drive" },
@@ -171,6 +261,27 @@ type EditorDestination =
     };
 
 type ImportableSurface = "docs" | "sheets" | "slides";
+
+/** Nouns used in the "create editable copy" dialog, per target surface. */
+const CONVERSION_LABELS: Record<
+  ImportableSurface,
+  { readonly surface: string; readonly app: string }
+> = {
+  docs: { surface: "document", app: "Docs" },
+  sheets: { surface: "spreadsheet", app: "Sheets" },
+  slides: { surface: "presentation", app: "Slides" },
+};
+
+/** Recent is capped at the search page size; browsing and search each get their own ceiling. */
+function maxDriveListLimit(hasQuery: boolean, scope: DriveScope): number {
+  if (hasQuery) {
+    return DRIVE_MAX_SEARCH_LIMIT;
+  }
+  if (scope === "recent") {
+    return DRIVE_SEARCH_LIST_LIMIT;
+  }
+  return DRIVE_MAX_LIST_LIMIT;
+}
 
 interface PendingConversion {
   readonly objectId: string;
@@ -293,6 +404,13 @@ const APP_ICON_META: Record<string, { readonly icon: keyof typeof Icons; readonl
     slides: { icon: "Image", color: "#ea580c" },
   };
 
+/** Icon + colour for a row: the owning editor app's badge when it has one,
+ *  otherwise the generic per-file-type badge. */
+function driveFileMeta(file: Pick<DriveFileItem, "app" | "type">) {
+  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
+  return appMeta ?? DRIVE_FILE_META[file.type];
+}
+
 /** A folder in the breadcrumb trail. `null` id is the scope root. */
 interface DriveCrumb {
   readonly id: string | null;
@@ -340,12 +458,7 @@ export function DriveShell() {
 
   const driveQuery = driveSearch.q?.trim() ?? "";
   const baseListLimit = driveQuery.length > 0 ? DRIVE_SEARCH_LIST_LIMIT : DRIVE_DEFAULT_LIST_LIMIT;
-  const maxListLimit =
-    driveQuery.length > 0
-      ? DRIVE_MAX_SEARCH_LIMIT
-      : scope === "recent"
-        ? DRIVE_SEARCH_LIST_LIMIT
-        : DRIVE_MAX_LIST_LIMIT;
+  const maxListLimit = maxDriveListLimit(driveQuery.length > 0, scope);
   const [listLimit, setListLimit] = useState(baseListLimit);
   useEffect(() => {
     setListLimit(baseListLimit);
@@ -363,6 +476,12 @@ export function DriveShell() {
   const uploadStatusQuery = useQuery(
     driveUploadStatusQueryOptions(processingUpload?.objectId ?? null),
   );
+  // The scan came back bad — the banner turns red and grows an explanation.
+  // Distinct from `uploadStatusQuery.isError`, which only means we could not
+  // refresh the status (the upload itself is still fine).
+  const uploadScanFailed =
+    uploadStatusQuery.data?.state === "quarantined" ||
+    uploadStatusQuery.data?.state === "scan_failed";
 
   const invalidateDrive = () => queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
   const invalidateSheets = () => queryClient.invalidateQueries({ queryKey: ["sheets"] });
@@ -516,13 +635,7 @@ export function DriveShell() {
   });
 
   const onNewItem = (kind: DriveCreateKind) => {
-    const defaultNames: Record<DriveCreateKind, string> = {
-      folder: "New folder",
-      document: "Untitled document",
-      spreadsheet: "Untitled spreadsheet",
-      presentation: "Untitled presentation",
-    };
-    createMutation.mutate({ kind, name: defaultNames[kind] });
+    createMutation.mutate({ kind, name: DRIVE_CREATE_DEFAULT_NAMES[kind] });
   };
 
   // Live backend entries for the current scope/folder. Search results are
@@ -716,7 +829,7 @@ export function DriveShell() {
         setImportErrorState(`${err.message} The file is still downloadable via its details pane.`);
       } else {
         setImportErrorState(
-          `Failed to import ${fileName}: ${(err as Error).message ?? String(err)}`,
+          `Failed to import ${fileName}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
       setSelectedFileId(objectId);
@@ -775,13 +888,7 @@ export function DriveShell() {
       />
       {processingUpload !== null ? (
         <div
-          role={
-            uploadStatusQuery.data?.state === "quarantined" ||
-            uploadStatusQuery.data?.state === "scan_failed" ||
-            uploadStatusQuery.isError
-              ? "alert"
-              : "status"
-          }
+          role={uploadScanFailed || uploadStatusQuery.isError ? "alert" : "status"}
           aria-live="polite"
           data-testid="drive-processing-banner"
           data-upload-state={uploadStatusQuery.data?.state ?? processingUpload.initialState}
@@ -793,16 +900,10 @@ export function DriveShell() {
             maxWidth: 420,
             padding: "12px 16px",
             borderRadius: 8,
-            border:
-              uploadStatusQuery.data?.state === "quarantined" ||
-              uploadStatusQuery.data?.state === "scan_failed"
-                ? "1px solid var(--danger, #dc2626)"
-                : "1px solid var(--border)",
-            background:
-              uploadStatusQuery.data?.state === "quarantined" ||
-              uploadStatusQuery.data?.state === "scan_failed"
-                ? "var(--danger-soft, #fef2f2)"
-                : "var(--surface)",
+            border: uploadScanFailed
+              ? "1px solid var(--danger, #dc2626)"
+              : "1px solid var(--border)",
+            background: uploadScanFailed ? "var(--danger-soft, #fef2f2)" : "var(--surface)",
             boxShadow: "var(--shadow-lg)",
           }}
         >
@@ -812,8 +913,7 @@ export function DriveShell() {
               ? "Upload stored safely, but its security scan status could not be refreshed."
               : (uploadStatusQuery.data?.label ?? "Queued for security scan")}
           </div>
-          {uploadStatusQuery.data?.state === "quarantined" ||
-          uploadStatusQuery.data?.state === "scan_failed" ? (
+          {uploadScanFailed ? (
             <div
               style={{
                 marginTop: 6,
@@ -821,7 +921,7 @@ export function DriveShell() {
                 color: "var(--danger, #dc2626)",
               }}
             >
-              {openDenialMessage(uploadStatusQuery.data.state)}
+              {openDenialMessage(uploadStatusQuery.data?.state)}
             </div>
           ) : null}
           <button
@@ -1007,14 +1107,7 @@ function DriveConversionDialog({
   readonly onPreviewOnly: () => void;
   readonly onCreateCopy: () => void;
 }) {
-  const surfaceLabel =
-    conversion.surface === "docs"
-      ? "document"
-      : conversion.surface === "sheets"
-        ? "spreadsheet"
-        : "presentation";
-  const appLabel =
-    conversion.surface === "docs" ? "Docs" : conversion.surface === "sheets" ? "Sheets" : "Slides";
+  const { surface: surfaceLabel, app: appLabel } = CONVERSION_LABELS[conversion.surface];
 
   return (
     <div
@@ -1198,60 +1291,11 @@ function DriveSidebar({
                 padding: 4,
               }}
             >
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleMenuItem(() => onNewItem("folder"))}
-              >
-                <Icons.Folder />
-                New folder
-              </button>
-              {CORE_WORKSPACE_STORAGE_ONLY ? null : (
-                <>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="btn"
-                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                    onClick={() => handleMenuItem(() => onNewItem("document"))}
-                  >
-                    <Icons.Doc />
-                    Document
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="btn"
-                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                    onClick={() => handleMenuItem(() => onNewItem("spreadsheet"))}
-                  >
-                    <Icons.Sheet />
-                    Spreadsheet
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="btn"
-                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                    onClick={() => handleMenuItem(() => onNewItem("presentation"))}
-                  >
-                    <Icons.Image />
-                    Presentation
-                  </button>
-                </>
-              )}
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleMenuItem(onPickFile)}
-              >
-                <Icons.Upload />
-                Upload file
-              </button>
+              <DriveNewMenuItems
+                onRun={handleMenuItem}
+                onNewItem={onNewItem}
+                onUploadFile={onPickFile}
+              />
             </div>
           </>
         ) : null}
@@ -1623,60 +1667,11 @@ function DriveMain({
                 }
               }}
             >
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleFabMenuItem(() => onNewItem("folder"))}
-              >
-                <Icons.Folder />
-                New folder
-              </button>
-              {CORE_WORKSPACE_STORAGE_ONLY ? null : (
-                <>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="btn"
-                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                    onClick={() => handleFabMenuItem(() => onNewItem("document"))}
-                  >
-                    <Icons.Doc />
-                    Document
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="btn"
-                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                    onClick={() => handleFabMenuItem(() => onNewItem("spreadsheet"))}
-                  >
-                    <Icons.Sheet />
-                    Spreadsheet
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="btn"
-                    style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                    onClick={() => handleFabMenuItem(() => onNewItem("presentation"))}
-                  >
-                    <Icons.Image />
-                    Presentation
-                  </button>
-                </>
-              )}
-              <button
-                type="button"
-                role="menuitem"
-                className="btn"
-                style={{ width: "100%", justifyContent: "flex-start", fontWeight: 400 }}
-                onClick={() => handleFabMenuItem(onUpload)}
-              >
-                <Icons.Upload />
-                Upload file
-              </button>
+              <DriveNewMenuItems
+                onRun={handleFabMenuItem}
+                onNewItem={onNewItem}
+                onUploadFile={onUpload}
+              />
             </div>
           </>
         ) : null}
@@ -1818,8 +1813,7 @@ function DriveFileCard({
   readonly onSelect: () => void;
   readonly onSetStarred: (starred: boolean) => void;
 }) {
-  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
-  const meta = appMeta ?? DRIVE_FILE_META[file.type];
+  const meta = driveFileMeta(file);
   const openable = canOpenDriveObject({
     uploadState: file.uploadState,
     available: file.available,
@@ -1933,8 +1927,7 @@ function DriveFileRow({
   readonly onSelect: () => void;
   readonly onSetStarred: (starred: boolean) => void;
 }) {
-  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
-  const meta = appMeta ?? DRIVE_FILE_META[file.type];
+  const meta = driveFileMeta(file);
   const FileIcon = Icons[meta.icon];
   // DriveFileRow is only used for non-folder file rows (folders render separately).
   const openable = canOpenDriveObject({
@@ -2092,8 +2085,7 @@ function DriveDetailsPanel({
   readonly onShare: (id: string, targets: readonly string[], role: DriveAccessRole) => void;
   readonly shareDone: boolean;
 }) {
-  const appMeta = file.app !== null ? (APP_ICON_META[file.app] ?? null) : null;
-  const meta = appMeta ?? DRIVE_FILE_META[file.type];
+  const meta = driveFileMeta(file);
   const FileIcon = Icons[meta.icon];
   const [shareInput, setShareInput] = useState("");
   const [shareRole, setShareRole] = useState<DriveAccessRole>("reader");
@@ -2481,23 +2473,6 @@ function DriveDetailsPanel({
   );
 }
 
-const DRIVE_ACCESS_ROLE_OPTIONS: ReadonlyArray<{
-  readonly role: DriveAccessRole;
-  readonly label: string;
-}> = [
-  { role: "reader", label: "Viewer" },
-  { role: "commenter", label: "Commenter" },
-  { role: "editor", label: "Editor" },
-];
-
-function driveAccessRoleValue(role: string): DriveAccessRole {
-  return role === "commenter" || role === "editor" ? role : "reader";
-}
-
-function driveAccessRoleLabel(role: string): string {
-  return DRIVE_ACCESS_ROLE_OPTIONS.find((option) => option.role === role)?.label ?? role;
-}
-
 function AccessList({
   grants,
   loading,
@@ -2587,22 +2562,4 @@ function AccessList({
       </div>
     </div>
   );
-}
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
-function driveShareTargetsFromInput(targets: readonly string[]): {
-  readonly actorIds: readonly string[];
-  readonly actorRefs: readonly string[];
-} {
-  const actorIds: string[] = [];
-  const actorRefs: string[] = [];
-  for (const target of targets) {
-    if (UUID_PATTERN.test(target)) {
-      actorIds.push(target);
-    } else {
-      actorRefs.push(target);
-    }
-  }
-  return { actorIds, actorRefs };
 }

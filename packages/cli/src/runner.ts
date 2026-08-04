@@ -11,7 +11,7 @@ import {
   type HelixCliEnv,
 } from "./client.js";
 import { generateCompletionScript } from "./completion.js";
-import { CliUsageError, parseCliArgs, usage } from "./parser.js";
+import { CliUsageError, type HelixCommand, parseCliArgs, usage } from "./parser.js";
 
 export interface CliIo {
   readonly stdout: NodeJS.WritableStream;
@@ -178,18 +178,35 @@ async function fetchOpenApiDocument(
   return parsed;
 }
 
-async function listMcpTools(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike): Promise<number> {
-  const request = buildMcpToolListRequest(env);
+/**
+ * Performs an MCP JSON-RPC request and returns the wrapped `result` payload.
+ * Returns `undefined` after writing the HTTP or JSON-RPC failure to stderr, so
+ * callers only have to decide how to render a success.
+ */
+async function fetchMcpResult(
+  request: ReturnType<typeof buildMcpRequest>,
+  io: CliIo,
+  fetchImpl: FetchLike,
+): Promise<{ readonly value: unknown } | undefined> {
   const response = await fetchImpl(request.url, request.init);
   const text = await response.text();
   if (!response.ok) {
     io.stderr.write(formatHttpError(response.status, text));
-    return 1;
+    return undefined;
   }
 
   const result = parseMcpResult(text);
   if (!result.ok) {
     io.stderr.write(`${result.message}\n`);
+    return undefined;
+  }
+
+  return { value: result.value };
+}
+
+async function listMcpTools(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike): Promise<number> {
+  const result = await fetchMcpResult(buildMcpToolListRequest(env), io, fetchImpl);
+  if (result === undefined) {
     return 1;
   }
 
@@ -204,17 +221,8 @@ async function callMcpTool(
   io: CliIo,
   fetchImpl: FetchLike,
 ): Promise<number> {
-  const request = buildMcpToolCallRequest(env, toolId, input);
-  const response = await fetchImpl(request.url, request.init);
-  const text = await response.text();
-  if (!response.ok) {
-    io.stderr.write(formatHttpError(response.status, text));
-    return 1;
-  }
-
-  const result = parseMcpResult(text);
-  if (!result.ok) {
-    io.stderr.write(`${result.message}\n`);
+  const result = await fetchMcpResult(buildMcpToolCallRequest(env, toolId, input), io, fetchImpl);
+  if (result === undefined) {
     return 1;
   }
 
@@ -246,16 +254,8 @@ async function writeMcpJsonResult(
   io: CliIo,
   fetchImpl: FetchLike,
 ): Promise<number> {
-  const response = await fetchImpl(request.url, request.init);
-  const text = await response.text();
-  if (!response.ok) {
-    io.stderr.write(formatHttpError(response.status, text));
-    return 1;
-  }
-
-  const result = parseMcpResult(text);
-  if (!result.ok) {
-    io.stderr.write(`${result.message}\n`);
+  const result = await fetchMcpResult(request, io, fetchImpl);
+  if (result === undefined) {
     return 1;
   }
 
@@ -512,11 +512,12 @@ function extractMcpFrames(
     }
 
     if (/^content-length:/i.test(remaining)) {
-      const separator = remaining.includes("\r\n\r\n")
-        ? "\r\n\r\n"
-        : remaining.includes("\n\n")
-          ? "\n\n"
-          : undefined;
+      let separator: string | undefined;
+      if (remaining.includes("\r\n\r\n")) {
+        separator = "\r\n\r\n";
+      } else if (remaining.includes("\n\n")) {
+        separator = "\n\n";
+      }
       if (separator === undefined) {
         break;
       }
@@ -614,7 +615,7 @@ function formatJsonValue(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function formatCommandOutput(command: ReturnType<typeof parseCliArgs>, text: string): string {
+function formatCommandOutput(command: HelixCommand, text: string): string {
   const formatted = formatJsonText(text);
   if (command.kind !== "auth-token" || command.printExport !== true) {
     return formatted;

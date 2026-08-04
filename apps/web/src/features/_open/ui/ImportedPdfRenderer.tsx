@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ImportedPdf } from "../parsers/types.js";
+import { driveDownloadHref } from "./viewer-shared";
 
 export interface ImportedPdfRendererProps {
   readonly pdf: ImportedPdf;
@@ -206,11 +207,7 @@ function PdfToolbar({
       >
         +
       </button>
-      <a
-        href={`/api/drive/objects/${objectId}/content?download=1`}
-        className="btn sm"
-        download={fileName ?? ""}
-      >
+      <a href={driveDownloadHref(objectId)} className="btn sm" download={fileName ?? ""}>
         Download
       </a>
     </div>

@@ -332,9 +332,7 @@ function svgImageMaskRadius(shape: SlideShape, width: number, height: number): n
   if (shape.imageMask === "circle") {
     return Math.min(width, height) / 2;
   }
-  if (shape.imageMask === "rounded") {
-    return 18;
-  }
+  // "rounded" and an unset mask share the same corner radius.
   return 18;
 }
 

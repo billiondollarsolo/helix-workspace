@@ -95,6 +95,10 @@ export interface AdminServicesResponse {
   readonly services: readonly AdminServiceSurface[];
 }
 
+/** Stable empty list, so a pending or failed catalog does not hand the render a
+ *  fresh array identity on every pass. */
+const NO_SERVICES: readonly AdminServiceSurface[] = [];
+
 export const adminServicesQueryKey = ["admin", "services"] as const;
 
 export function adminServicesQueryOptions() {
@@ -129,10 +133,10 @@ export function AdminServicesOverview() {
   const failure = useQueryFailure(servicesQuery, () => {
     void queryClient.invalidateQueries({ queryKey: adminServicesQueryKey });
   });
-  const services = useMemo(() => [...(servicesQuery.data?.services ?? [])], [servicesQuery.data]);
+  const services = servicesQuery.data?.services ?? NO_SERVICES;
   const [selectedServiceId, setSelectedServiceId] = useState<string | undefined>();
   const selectedService =
-    services.find((service) => service.id === selectedServiceId) ?? services[0] ?? undefined;
+    services.find((service) => service.id === selectedServiceId) ?? services[0];
   /* Grading requires a catalog. `services` is empty both when the API reported
      no services and when it reported nothing at all, and the second case must
      not be scored — every total is 0, so a "no missing, no degraded" ternary
@@ -191,15 +195,7 @@ export function AdminServicesOverview() {
           <ServiceSummaryCard
             title="Services"
             note={ungradedNote}
-            status={
-              totals === null
-                ? "unknown"
-                : totals.disabled > 0
-                  ? "configured"
-                  : totals.total > 0
-                    ? "ready"
-                    : "missing"
-            }
+            status={servicesCardStatus(totals)}
             rows={[
               ["Total", countLabel(totals?.total)],
               ["Enabled", countLabel(totals?.enabled)],
@@ -209,18 +205,7 @@ export function AdminServicesOverview() {
           <ServiceSummaryCard
             title="Readiness"
             note={ungradedNote}
-            status={
-              /* Three states, not two. `totals === null` covers a failed
-                 request, but a request that SUCCEEDED and returned no services
-                 also has nothing to grade — and `missing > 0 || degraded > 0`
-                 sent that case to "ready", painting a green check over four
-                 zeroes. An empty catalogue is not a healthy catalogue. */
-              totals === null || totals.total === 0
-                ? "unknown"
-                : totals.missing > 0 || totals.degraded > 0
-                  ? "degraded"
-                  : "ready"
-            }
+            status={readinessCardStatus(totals)}
             rows={[
               ["Ready", countLabel(totals?.ready)],
               ["Configured", countLabel(totals?.configured)],
@@ -269,11 +254,7 @@ export function AdminServicesOverview() {
               <TableRow role="row">
                 <TableCell colSpan={8} role="cell">
                   <EmptyRow>
-                    {servicesQuery.isPending
-                      ? "Loading service catalog…"
-                      : servicesQuery.data === undefined
-                        ? "Service catalog unavailable."
-                        : "No services reported."}
+                    {emptyCatalogMessage(servicesQuery.isPending, servicesQuery.data !== undefined)}
                   </EmptyRow>
                 </TableCell>
               </TableRow>
@@ -494,6 +475,36 @@ function DetailList({
   );
 }
 
+type ServiceTotals = ReturnType<typeof serviceTotals>;
+
+function servicesCardStatus(totals: ServiceTotals | null): SummaryCardStatus {
+  if (totals === null) {
+    return "unknown";
+  }
+  if (totals.disabled > 0) {
+    return "configured";
+  }
+  return totals.total > 0 ? "ready" : "missing";
+}
+
+/* Three states, not two. `totals === null` covers a failed request, but a
+   request that SUCCEEDED and returned no services also has nothing to grade —
+   and `missing > 0 || degraded > 0` sent that case to "ready", painting a green
+   check over four zeroes. An empty catalogue is not a healthy catalogue. */
+function readinessCardStatus(totals: ServiceTotals | null): SummaryCardStatus {
+  if (totals === null || totals.total === 0) {
+    return "unknown";
+  }
+  return totals.missing > 0 || totals.degraded > 0 ? "degraded" : "ready";
+}
+
+function emptyCatalogMessage(isPending: boolean, answered: boolean): string {
+  if (isPending) {
+    return "Loading service catalog…";
+  }
+  return answered ? "No services reported." : "Service catalog unavailable.";
+}
+
 function serviceTotals(services: readonly AdminServiceSurface[]) {
   return services.reduce(
     (totals, service) => ({
@@ -626,8 +637,16 @@ function categoryLabel(category: AdminServiceCategory): string {
   }
 }
 
+/* Built once. These pages render a formatter call per cell, and constructing an
+   `Intl` formatter is the expensive half of the operation. */
+const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+const TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
+  return NUMBER_FORMAT.format(value);
 }
 
 /** A rollup with no catalog behind it has no count — printing `0` would report
@@ -644,10 +663,7 @@ function formatTimestamp(value: string | undefined): string {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+  return TIMESTAMP_FORMAT.format(date);
 }
 
 function isAdminServicesResponse(value: unknown): value is AdminServicesResponse {

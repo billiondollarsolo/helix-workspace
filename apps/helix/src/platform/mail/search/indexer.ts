@@ -1,11 +1,23 @@
 import type { JsonObject } from "@helix/sdk-types";
-import type { IndexDocument, SearchEventIndexer, SearchIndexer, SearchIndexerEvent } from "../../search/index.js";
-import type { MailActivityPayload, MailAddress, MailSearchProjectionStore, MailSearchRecord } from "../types.js";
+import type {
+  IndexDocument,
+  SearchEventIndexer,
+  SearchIndexer,
+  SearchIndexerEvent,
+} from "../../search/index.js";
+import type {
+  MailActivityPayload,
+  MailAddress,
+  MailSearchProjectionStore,
+  MailSearchRecord,
+} from "../types.js";
 
 export const mailSearchIndexerId = "mail";
 export const mailSearchSubjects = ["activity.mail.>", "com.helix.core.mail.>"] as const;
 
-export function createMailSearchIndexer(store: MailSearchProjectionStore): SearchIndexer<MailActivityPayload> {
+export function createMailSearchIndexer(
+  store: MailSearchProjectionStore,
+): SearchIndexer<MailActivityPayload> {
   return {
     id: mailSearchIndexerId,
     subjects: mailSearchSubjects,
@@ -29,16 +41,27 @@ export function createMailSearchIndexer(store: MailSearchProjectionStore): Searc
   };
 }
 
-export function registerMailIndexer(indexer: SearchEventIndexer, store: MailSearchProjectionStore): void {
+export function registerMailIndexer(
+  indexer: SearchEventIndexer,
+  store: MailSearchProjectionStore,
+): void {
   indexer.register(createMailSearchIndexer(store));
 }
 
 export function mailRecordToIndexDocument(record: MailSearchRecord): IndexDocument {
   const labels = record.labels ?? [];
-  const to = record.to.map(addressSearchText).join(", ");
-  const cc = (record.cc ?? []).map(addressSearchText).join(", ");
-  const bcc = (record.bcc ?? []).map(addressSearchText).join(", ");
-  const body = [record.subject, addressSearchText(record.from), to, cc, bcc, labels.join(" "), record.body]
+  const to = joinAddresses(record.to);
+  const cc = joinAddresses(record.cc);
+  const bcc = joinAddresses(record.bcc);
+  const body = [
+    record.subject,
+    addressSearchText(record.from),
+    to,
+    cc,
+    bcc,
+    labels.join(" "),
+    record.body,
+  ]
     .filter((part) => part.length > 0)
     .join("\n");
 
@@ -77,13 +100,19 @@ export function mailDocumentId(messageId: string): string {
   return `mail:${messageId}`;
 }
 
-function mailMessageIdFromEvent(event: SearchIndexerEvent<MailActivityPayload>): string | undefined {
+function mailMessageIdFromEvent(
+  event: SearchIndexerEvent<MailActivityPayload>,
+): string | undefined {
   const id = event.payload.messageId ?? event.payload.id;
   return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
 function isDeleteSubject(subject: string): boolean {
   return subject.endsWith(".deleted") || subject.endsWith(".delete");
+}
+
+function joinAddresses(addresses: readonly MailAddress[] | undefined): string {
+  return (addresses ?? []).map(addressSearchText).join(", ");
 }
 
 function addressSearchText(address: MailAddress): string {
@@ -96,11 +125,7 @@ function addressEmail(address: MailAddress): string {
 }
 
 function compactJsonObject(input: Record<string, unknown>): JsonObject {
-  const output: Record<string, JsonObject[keyof JsonObject]> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (value !== undefined) {
-      output[key] = value as JsonObject[keyof JsonObject];
-    }
-  }
-  return output;
+  return Object.fromEntries(
+    Object.entries(input).filter((entry) => entry[1] !== undefined),
+  ) as JsonObject;
 }

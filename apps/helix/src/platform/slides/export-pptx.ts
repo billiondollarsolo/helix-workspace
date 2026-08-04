@@ -313,37 +313,43 @@ function bodyBox(overrides: Record<string, unknown> = {}): Record<string, unknow
 function renderPptxShapes(pptxSlide: PptxSlide, shapes: readonly SlideShape[]): void {
   for (const shape of shapes.slice(0, 40)) {
     const box = percentBox(shape);
-    if (shape.kind === "rectangle") {
-      pptxSlide.addText(shape.text ?? "", {
-        ...box,
-        fontSize: 12,
-        color: shape.tone === "dark" ? "FFFFFF" : "111827",
-        align: "center",
-        valign: "mid",
-        fit: "shrink",
-        fill: { color: shapeFillColor(shape.tone) },
-        line: { color: "98A2B3" },
-      });
-    } else if (shape.kind === "text") {
-      pptxSlide.addText(shape.text ?? "", {
-        ...box,
-        fontSize: 14,
-        color: shape.tone === "light" ? "475467" : "111827",
-        fit: "shrink",
-      });
-    } else if (shape.kind === "connector") {
-      renderPptxConnector(pptxSlide, shape);
-    } else if (shape.kind === "image") {
-      if (!renderPptxImage(pptxSlide, shape, shape.imageUrl, shape.imageAlt ?? "Image")) {
-        renderPptxShapePlaceholder(pptxSlide, shape, box);
-      }
-    } else {
-      if (
-        shape.mediaType !== "audio" &&
-        !renderPptxImage(pptxSlide, shape, shape.mediaPosterUrl, shape.mediaTitle ?? "Video")
-      ) {
-        renderPptxShapePlaceholder(pptxSlide, shape, box);
-      }
+    switch (shape.kind) {
+      case "rectangle":
+        pptxSlide.addText(shape.text ?? "", {
+          ...box,
+          fontSize: 12,
+          color: shape.tone === "dark" ? "FFFFFF" : "111827",
+          align: "center",
+          valign: "mid",
+          fit: "shrink",
+          fill: { color: shapeFillColor(shape.tone) },
+          line: { color: "98A2B3" },
+        });
+        break;
+      case "text":
+        pptxSlide.addText(shape.text ?? "", {
+          ...box,
+          fontSize: 14,
+          color: shape.tone === "light" ? "475467" : "111827",
+          fit: "shrink",
+        });
+        break;
+      case "connector":
+        renderPptxConnector(pptxSlide, shape);
+        break;
+      case "image":
+        if (!renderPptxImage(pptxSlide, shape, shape.imageUrl, shape.imageAlt ?? "Image")) {
+          renderPptxShapePlaceholder(pptxSlide, shape, box);
+        }
+        break;
+      case "media":
+        if (
+          shape.mediaType !== "audio" &&
+          !renderPptxImage(pptxSlide, shape, shape.mediaPosterUrl, shape.mediaTitle ?? "Video")
+        ) {
+          renderPptxShapePlaceholder(pptxSlide, shape, box);
+        }
+        break;
     }
   }
 }
@@ -431,7 +437,10 @@ function shapePlaceholderText(shape: SlideShape): string {
   if (shape.connectorArrow === "both") {
     return "<- Connector ->";
   }
-  return shape.connectorArrow === "end" ? "Connector ->" : "Connector";
+  if (shape.connectorArrow === "end") {
+    return "Connector ->";
+  }
+  return "Connector";
 }
 
 function imageDataFromDataUri(value: string | undefined): string | null {

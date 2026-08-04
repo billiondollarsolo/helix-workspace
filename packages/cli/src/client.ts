@@ -212,25 +212,22 @@ function createRequest(
   input?: unknown,
 ): HelixRequest {
   const headers = commonHeaders(env);
+  const url = new URL(path, baseUrl(env).href).href;
 
-  const init =
-    method !== "GET"
-      ? {
-          method,
-          headers: {
-            ...headers,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(input),
-        }
-      : {
-          method,
-          headers,
-        };
+  if (method === "GET") {
+    return { url, init: { method, headers } };
+  }
 
   return {
-    url: new URL(path, baseUrl(env).href).href,
-    init,
+    url,
+    init: {
+      method,
+      headers: {
+        ...headers,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
   };
 }
 

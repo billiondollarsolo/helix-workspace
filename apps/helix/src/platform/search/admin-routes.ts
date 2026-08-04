@@ -29,7 +29,7 @@ export async function registerSearchAdminRoutes(
   app.post("/api/admin/search/reindex", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReindexSearch(actor)) {
-      return reply.code(403).send(permissionDeniedResponse());
+      return reply.code(403).send(permissionDenied);
     }
 
     const parsed = reindexSchema.safeParse(request.body ?? {});
@@ -42,7 +42,7 @@ export async function registerSearchAdminRoutes(
     // Fail closed: tenant admins reindex only their own org. A missing body
     // orgId scopes to the actor org rather than the entire corpus.
     if (parsed.data.orgId !== undefined && parsed.data.orgId !== actor.orgId) {
-      return reply.code(403).send(crossOrgDeniedResponse());
+      return reply.code(403).send(crossOrgDenied);
     }
 
     const input: SearchReindexRequest = {
@@ -55,33 +55,25 @@ export async function registerSearchAdminRoutes(
   });
 }
 
+const reindexScopes = [
+  adminConfigWriteScope,
+  "admin.config.*",
+  "admin.search.write",
+  "admin.search.*",
+  "admin.*",
+] as const;
+
 export function canReindexSearch(actor: Actor): boolean {
   const scopes = actor.scopes ?? [];
-  return (
-    scopes.includes(adminConfigWriteScope) ||
-    scopes.includes("admin.config.*") ||
-    scopes.includes("admin.search.write") ||
-    scopes.includes("admin.search.*") ||
-    scopes.includes("admin.*")
-  );
+  return reindexScopes.some((scope) => scopes.includes(scope));
 }
 
-function permissionDeniedResponse(): {
-  readonly error: string;
-  readonly requiredScope: typeof adminConfigWriteScope;
-} {
-  return {
-    error: "Admin search reindex permission denied.",
-    requiredScope: adminConfigWriteScope,
-  };
-}
+const permissionDenied = {
+  error: "Admin search reindex permission denied.",
+  requiredScope: adminConfigWriteScope,
+} as const;
 
-function crossOrgDeniedResponse(): {
-  readonly error: string;
-  readonly code: "cross_org_reindex_denied";
-} {
-  return {
-    error: "Cross-organization search reindex denied.",
-    code: "cross_org_reindex_denied",
-  };
-}
+const crossOrgDenied = {
+  error: "Cross-organization search reindex denied.",
+  code: "cross_org_reindex_denied",
+} as const;

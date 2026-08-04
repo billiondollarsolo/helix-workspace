@@ -60,7 +60,12 @@ export function documentStateFromStoredUpdates(updates: readonly Buffer[]): {
   };
 }
 
-export function stateVectorFromStoredState(state: Buffer | null): Buffer {
+/**
+ * Rebuild a Y.Doc from a stored state buffer. Legacy rows can hold raw UTF-8
+ * markdown instead of a Yjs update, so a decode failure falls back to seeding
+ * the "markdown" text type with the raw bytes.
+ */
+function docFromStoredState(state: Buffer | null): Y.Doc {
   const doc = new Y.Doc();
   if (state !== null && state.length > 0) {
     try {
@@ -69,6 +74,11 @@ export function stateVectorFromStoredState(state: Buffer | null): Buffer {
       doc.getText("markdown").insert(0, state.toString("utf8"));
     }
   }
+  return doc;
+}
+
+export function stateVectorFromStoredState(state: Buffer | null): Buffer {
+  const doc = docFromStoredState(state);
   const stateVector = Buffer.from(Y.encodeStateVector(doc));
   doc.destroy();
   return stateVector;
@@ -93,14 +103,7 @@ export function replaceFirstTextInStoredState(input: {
   if (input.beforeText.length === 0 || input.beforeText === input.afterText) {
     return null;
   }
-  const doc = new Y.Doc();
-  if (input.state !== null && input.state.length > 0) {
-    try {
-      Y.applyUpdate(doc, new Uint8Array(input.state));
-    } catch {
-      doc.getText("markdown").insert(0, input.state.toString("utf8"));
-    }
-  }
+  const doc = docFromStoredState(input.state);
   const beforeUpdate = Y.encodeStateVector(doc);
   const nativeChildren = doc.getXmlFragment(DOCS_NATIVE_YJS_FRAGMENT).toArray();
   const anchorSelection = normalizeTextSelection(input.anchorSelection);
@@ -276,22 +279,11 @@ function replaceFirstTextInXmlChildren(
 
 function replaceAnchoredTextInXmlChildren(input: {
   readonly children: readonly YXmlChild[];
-  readonly selection?: NativeDocumentTextSelection | undefined;
+  readonly selection: NativeDocumentTextSelection;
   readonly beforeText: string;
   readonly afterText: string;
 }): boolean {
-  const selection = normalizeTextSelection(input.selection);
-  if (selection === null) {
-    return false;
-  }
-  const result = replaceAnchoredTextInXmlChildrenAt({
-    children: input.children,
-    position: 0,
-    selection,
-    beforeText: input.beforeText,
-    afterText: input.afterText,
-  });
-  return result.replaced;
+  return replaceAnchoredTextInXmlChildrenAt({ ...input, position: 0 }).replaced;
 }
 
 function replaceAnchoredTextInXmlChildrenAt(input: {

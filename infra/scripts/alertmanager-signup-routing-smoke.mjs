@@ -54,6 +54,7 @@ async function validateStaticConfig() {
   const alertmanagerProductionConfig = await readFile(alertmanagerProductionConfigPath, "utf8");
   const prometheusConfig = await readFile(prometheusConfigPath, "utf8");
   const signupRules = await readFile(signupRulesPath, "utf8");
+  const alertmanagerConfigs = `${alertmanagerConfig}\n${alertmanagerProductionConfig}`;
 
   for (const expected of [
     "helix-signup-slo-webhook",
@@ -63,7 +64,7 @@ async function validateStaticConfig() {
     "runbook",
   ]) {
     if (
-      !`${alertmanagerConfig}\n${alertmanagerProductionConfig}`.includes(expected) &&
+      !alertmanagerConfigs.includes(expected) &&
       !prometheusConfig.includes(expected) &&
       !signupRules.includes(expected)
     ) {
@@ -85,7 +86,7 @@ async function validateStaticConfig() {
     throw new Error("local Alertmanager config must not require production paging secrets");
   }
   for (const forbidden of ["org_id", "actor_id", "email", "token", "user_agent", "ip_address"]) {
-    if (`${alertmanagerConfig}\n${alertmanagerProductionConfig}`.includes(forbidden)) {
+    if (alertmanagerConfigs.includes(forbidden)) {
       throw new Error(`Alertmanager routing config must not include private label ${forbidden}`);
     }
   }

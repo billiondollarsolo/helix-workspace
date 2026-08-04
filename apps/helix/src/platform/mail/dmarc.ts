@@ -54,20 +54,21 @@ export function parseDmarcAggregateReport(orgId: string, xml: string): IngestDma
   const policySp = tagText(policy, "sp");
   const policyPct = parseIntOrNull(tagText(policy, "pct"));
 
-  const records: MailDmarcReportRowRecord[] = [];
-  for (const recordBlock of extractAllBlocks(feedback, "record")) {
-    const row = extractBlock(recordBlock, "row") ?? "";
-    const policyEvaluated = extractBlock(row, "policy_evaluated") ?? "";
-    const identifiers = extractBlock(recordBlock, "identifiers") ?? "";
-    records.push({
-      sourceIp: tagText(row, "source_ip") ?? "0.0.0.0",
-      messageCount: parseIntOrNull(tagText(row, "count")) ?? 0,
-      disposition: tagText(policyEvaluated, "disposition") ?? "none",
-      dkimResult: tagText(policyEvaluated, "dkim") ?? "fail",
-      spfResult: tagText(policyEvaluated, "spf") ?? "fail",
-      headerFrom: tagText(identifiers, "header_from") ?? "",
-    });
-  }
+  const records: MailDmarcReportRowRecord[] = extractAllBlocks(feedback, "record").map(
+    (recordBlock) => {
+      const row = extractBlock(recordBlock, "row") ?? "";
+      const policyEvaluated = extractBlock(row, "policy_evaluated") ?? "";
+      const identifiers = extractBlock(recordBlock, "identifiers") ?? "";
+      return {
+        sourceIp: tagText(row, "source_ip") ?? "0.0.0.0",
+        messageCount: parseIntOrNull(tagText(row, "count")) ?? 0,
+        disposition: tagText(policyEvaluated, "disposition") ?? "none",
+        dkimResult: tagText(policyEvaluated, "dkim") ?? "fail",
+        spfResult: tagText(policyEvaluated, "spf") ?? "fail",
+        headerFrom: tagText(identifiers, "header_from") ?? "",
+      };
+    },
+  );
 
   const raw: JsonObject = {
     orgName,
@@ -94,7 +95,7 @@ export function parseDmarcAggregateReport(orgId: string, xml: string): IngestDma
 /** Extract the inner content of the first `<tag>...</tag>` block. */
 function extractBlock(source: string, tag: string): string | null {
   const open = new RegExp(`<${tag}(?:\\s[^>]*)?>`, "iu");
-  const openMatch = open.test(source) ? open.exec(source) : null;
+  const openMatch = open.exec(source);
   if (openMatch === null) {
     return null;
   }

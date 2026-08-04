@@ -122,15 +122,13 @@ export function evaluateToolPolicyFirewall(input: ToolPolicyFirewallInput): Tool
     return { outcome: "allow", reason: "approved_pending_execution" };
   }
   if (input.actor.type === "agent") {
-    return input.automationDecision?.allowed === true
-      ? { outcome: "allow-automation", reason: "automation_policy_match" }
-      : {
-          outcome: "queue-confirmation",
-          reason:
-            input.automationDecision === undefined || input.automationDecision === null
-              ? "agent_write_requires_approval"
-              : "automation_policy_no_match",
-        };
+    if (input.automationDecision?.allowed === true) {
+      return { outcome: "allow-automation", reason: "automation_policy_match" };
+    }
+    if (input.automationDecision === undefined || input.automationDecision === null) {
+      return { outcome: "queue-confirmation", reason: "agent_write_requires_approval" };
+    }
+    return { outcome: "queue-confirmation", reason: "automation_policy_no_match" };
   }
   if (input.requestChannel === "assistant") {
     return { outcome: "queue-confirmation", reason: "assistant_write_requires_approval" };

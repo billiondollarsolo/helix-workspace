@@ -80,6 +80,95 @@ function segmentButton(selected: boolean): CSSProperties {
   };
 }
 
+const menuActionStyle: CSSProperties = {
+  width: "100%",
+  height: 34,
+  padding: "0 14px",
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  fontSize: "var(--text-meta)",
+  textAlign: "left",
+};
+
+const groupLabelStyle: CSSProperties = {
+  fontSize: "var(--text-caption)",
+  color: "var(--text-2)",
+  marginBottom: 4,
+};
+
+const MODE_OPTIONS: readonly { v: "light" | "dark"; label: string; icon: IconComponent }[] = [
+  { v: "light", label: "Light", icon: Icons.Sun },
+  { v: "dark", label: "Dark", icon: Icons.Moon },
+];
+
+const DENSITY_OPTIONS: readonly { v: "compact" | "comfortable"; label: string }[] = [
+  { v: "compact", label: "Compact" },
+  { v: "comfortable", label: "Roomy" },
+];
+
+/** Labelled segmented control used for both Mode and Density. */
+function SegmentedGroup<TValue extends string>({
+  labelId,
+  label,
+  options,
+  value,
+  onSelect,
+  marginBottom,
+}: {
+  labelId: string;
+  label: string;
+  options: readonly { v: TValue; label: string; icon?: IconComponent }[];
+  value: TValue;
+  onSelect: (value: TValue) => void;
+  marginBottom?: number;
+}) {
+  return (
+    <div style={{ marginBottom }}>
+      <div id={labelId} style={groupLabelStyle}>
+        {label}
+      </div>
+      <div style={segmentWrap} role="group" aria-labelledby={labelId}>
+        {options.map((option) => {
+          const Ico = option.icon;
+          const selected = value === option.v;
+          return (
+            <button
+              key={option.v}
+              type="button"
+              onClick={() => onSelect(option.v)}
+              aria-pressed={selected}
+              style={segmentButton(selected)}
+            >
+              {Ico ? (
+                <>
+                  <Ico /> {option.label}
+                </>
+              ) : (
+                option.label
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Roving focus target for the menu's Arrow/Home/End keys. */
+function rovingFocusIndex(key: string, currentIndex: number, count: number): number {
+  switch (key) {
+    case "Home":
+      return 0;
+    case "End":
+      return count - 1;
+    case "ArrowDown":
+      return (currentIndex + 1 + count) % count;
+    default:
+      return (currentIndex - 1 + count) % count;
+  }
+}
+
 export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileMenuProps) {
   const theme = useAppearance((s) => s.theme);
   const density = useAppearance((s) => s.density);
@@ -130,14 +219,6 @@ export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileM
     }
   };
 
-  const modeOptions: { v: "light" | "dark"; label: string; icon: IconComponent }[] = [
-    { v: "light", label: "Light", icon: Icons.Sun },
-    { v: "dark", label: "Dark", icon: Icons.Moon },
-  ];
-  const densityOptions: { v: "compact" | "comfortable"; label: string }[] = [
-    { v: "compact", label: "Compact" },
-    { v: "comfortable", label: "Roomy" },
-  ];
   const footerActions: { icon: IconComponent; label: string; action: () => void }[] = [
     {
       icon: Icons.Settings,
@@ -186,15 +267,7 @@ export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileM
         if (controls.length === 0) return;
         event.preventDefault();
         const currentIndex = controls.indexOf(document.activeElement as HTMLButtonElement);
-        const nextIndex =
-          event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? controls.length - 1
-              : event.key === "ArrowDown"
-                ? (currentIndex + 1 + controls.length) % controls.length
-                : (currentIndex - 1 + controls.length) % controls.length;
-        controls[nextIndex]?.focus();
+        controls[rovingFocusIndex(event.key, currentIndex, controls.length)]?.focus();
       }}
       style={{
         position: "absolute",
@@ -247,64 +320,28 @@ export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileM
         </div>
 
         {/* Mode */}
-        <div style={{ marginBottom: 10 }}>
-          <div
-            id="profile-theme-label"
-            style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 4 }}
-          >
-            Mode
-          </div>
-          <div style={segmentWrap} role="group" aria-labelledby="profile-theme-label">
-            {modeOptions.map((option) => {
-              const Ico = option.icon;
-              const selected = theme === option.v;
-              return (
-                <button
-                  key={option.v}
-                  type="button"
-                  onClick={() => setAppearance("theme", option.v)}
-                  aria-pressed={selected}
-                  style={segmentButton(selected)}
-                >
-                  <Ico /> {option.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <SegmentedGroup
+          labelId="profile-theme-label"
+          label="Mode"
+          options={MODE_OPTIONS}
+          value={theme}
+          onSelect={(next) => setAppearance("theme", next)}
+          marginBottom={10}
+        />
 
         {/* Density */}
-        <div style={{ marginBottom: 10 }}>
-          <div
-            id="profile-density-label"
-            style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 4 }}
-          >
-            Density
-          </div>
-          <div style={segmentWrap} role="group" aria-labelledby="profile-density-label">
-            {densityOptions.map((option) => {
-              const selected = density === option.v;
-              return (
-                <button
-                  key={option.v}
-                  type="button"
-                  onClick={() => setAppearance("density", option.v)}
-                  aria-pressed={selected}
-                  style={segmentButton(selected)}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <SegmentedGroup
+          labelId="profile-density-label"
+          label="Density"
+          options={DENSITY_OPTIONS}
+          value={density}
+          onSelect={(next) => setAppearance("density", next)}
+          marginBottom={10}
+        />
 
         {/* Accent */}
         <div>
-          <div
-            id="profile-accent-label"
-            style={{ fontSize: "var(--text-caption)", color: "var(--text-2)", marginBottom: 6 }}
-          >
+          <div id="profile-accent-label" style={{ ...groupLabelStyle, marginBottom: 6 }}>
             Accent color
           </div>
           <div
@@ -335,17 +372,7 @@ export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileM
               role="menuitem"
               onClick={item.action}
               className="profile-menu-action"
-              style={{
-                width: "100%",
-                height: 34,
-                padding: "0 14px",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                fontSize: "var(--text-meta)",
-                color: "var(--text)",
-                textAlign: "left",
-              }}
+              style={{ ...menuActionStyle, color: "var(--text)" }}
             >
               <Ico />
               {item.label}
@@ -361,15 +388,8 @@ export function ProfileMenu({ open, onClose, anchorRef, openSettings }: ProfileM
             void handleSignOut();
           }}
           style={{
-            width: "100%",
-            height: 34,
-            padding: "0 14px",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            fontSize: "var(--text-meta)",
+            ...menuActionStyle,
             color: "var(--danger)",
-            textAlign: "left",
             cursor: signingOut ? "default" : "pointer",
             opacity: signingOut ? 0.6 : 1,
           }}

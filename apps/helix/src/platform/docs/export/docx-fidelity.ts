@@ -64,22 +64,22 @@ export async function verifyDocxExportFidelity(
 
   for (const fragment of fragments) {
     const required = fragment.required ?? true;
-    if (normalizeFidelityText(fragment.text).length === 0) {
+    const normalized = normalizeFidelityText(fragment.text);
+    if (normalized.length === 0) {
       continue;
     }
-    if (extracted.includes(normalizeFidelityText(fragment.text))) {
+    if (extracted.includes(normalized)) {
       matchedFragments.push(fragment.label);
     } else if (required) {
       missingFragments.push(fragment.label);
     }
   }
 
+  const commentPartsPresent = hasCommentsPart && hasCommentsRelationship && hasCommentsContentType;
+
   return {
     passed:
-      missingFragments.length === 0 &&
-      (input.includeComments === true
-        ? hasCommentsPart && hasCommentsRelationship && hasCommentsContentType
-        : true),
+      missingFragments.length === 0 && (input.includeComments !== true || commentPartsPresent),
     byteSize: buffer.byteLength,
     packageEntries: packageEntries.map((entry) => entry.name),
     hasCommentsPart,
@@ -134,20 +134,18 @@ function zipStoreEntries(buffer: Buffer): readonly ZipStoreEntry[] {
   return entries;
 }
 
+interface MammothConverter {
+  convertToMarkdown(input: { readonly buffer: Buffer }): Promise<{
+    readonly value: string;
+    readonly messages?: readonly { readonly message?: string }[];
+  }>;
+}
+
 async function convertDocxWithMammoth(input: {
   readonly buffer: Buffer;
 }): Promise<DocxFidelityConverterResult> {
-  const mammothModule = (await import("mammoth")) as unknown as {
-    readonly default?: {
-      convertToMarkdown(input: { readonly buffer: Buffer }): Promise<{
-        readonly value: string;
-        readonly messages?: readonly { readonly message?: string }[];
-      }>;
-    };
-    convertToMarkdown(input: { readonly buffer: Buffer }): Promise<{
-      readonly value: string;
-      readonly messages?: readonly { readonly message?: string }[];
-    }>;
+  const mammothModule = (await import("mammoth")) as unknown as MammothConverter & {
+    readonly default?: MammothConverter;
   };
   const mammoth = mammothModule.default ?? mammothModule;
   const result = await mammoth.convertToMarkdown({ buffer: input.buffer });

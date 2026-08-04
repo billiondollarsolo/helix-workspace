@@ -47,18 +47,22 @@ export function snapshotFromEnvironment(env: {
   readonly HELIX_AGENT_WRITES_DISABLED_ORGS?: string | undefined;
   readonly HELIX_DISABLED_TOOLS?: string | undefined;
 }): AgentOperationalControlSnapshot {
-  const agentWritesEnabled = !(
-    env.HELIX_AGENT_WRITES_ENABLED?.trim().toLowerCase() === "false" ||
-    env.HELIX_AGENT_WRITES_ENABLED?.trim() === "0"
-  );
   return {
-    globalReadOnly:
-      env.HELIX_GLOBAL_READ_ONLY?.trim().toLowerCase() === "true" ||
-      env.HELIX_GLOBAL_READ_ONLY?.trim() === "1",
-    agentWritesEnabled,
+    globalReadOnly: isEnvFlagTrue(env.HELIX_GLOBAL_READ_ONLY),
+    agentWritesEnabled: !isEnvFlagFalse(env.HELIX_AGENT_WRITES_ENABLED),
     agentWritesDisabledOrgIds: parseCsvIdList(env.HELIX_AGENT_WRITES_DISABLED_ORGS),
     disabledToolIds: parseCsvIdList(env.HELIX_DISABLED_TOOLS),
   };
+}
+
+function isEnvFlagTrue(value: string | undefined): boolean {
+  const normalized = value?.trim();
+  return normalized?.toLowerCase() === "true" || normalized === "1";
+}
+
+function isEnvFlagFalse(value: string | undefined): boolean {
+  const normalized = value?.trim();
+  return normalized?.toLowerCase() === "false" || normalized === "0";
 }
 
 /** Tools that must remain callable while emergency kill is engaged (A10 self-unlock). */

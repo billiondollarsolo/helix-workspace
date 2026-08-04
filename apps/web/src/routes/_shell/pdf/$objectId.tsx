@@ -62,12 +62,12 @@ function pdfRouteSearchFromState(state: NativePdfViewRouteState): PdfRouteSearch
 }
 
 function positiveIntegerSearchValue(value: unknown): number | null {
-  const parsed =
-    typeof value === "number"
-      ? value
-      : typeof value === "string"
-        ? Number.parseInt(value, 10)
-        : Number.NaN;
+  let parsed = Number.NaN;
+  if (typeof value === "number") {
+    parsed = value;
+  } else if (typeof value === "string") {
+    parsed = Number.parseInt(value, 10);
+  }
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 

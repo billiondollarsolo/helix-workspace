@@ -1,6 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { SheetsShell } from "@/features/sheets/sheets-shell";
 import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
+import {
+  optionalEnumSearchParam,
+  optionalNonBlankStringSearchParam,
+  optionalStringSearchParam,
+} from "@/lib/search-params";
+
+const OPEN_MODES = ["office"] as const;
 
 /** `?sheet=<id>` opens straight into that spreadsheet's editor (used by Drive's New). */
 interface SheetsRouteSearch {
@@ -10,11 +17,9 @@ interface SheetsRouteSearch {
 }
 
 function validateSheetsRouteSearch(search: Record<string, unknown>): SheetsRouteSearch {
-  const sheet =
-    typeof search.sheet === "string" && search.sheet.trim().length > 0 ? search.sheet : undefined;
-  const open = search.open === "office" ? "office" : undefined;
-  const q =
-    typeof search.q === "string" && search.q.trim().length > 0 ? search.q.trim() : undefined;
+  const sheet = optionalNonBlankStringSearchParam(search.sheet);
+  const open = optionalEnumSearchParam(search.open, OPEN_MODES);
+  const q = optionalStringSearchParam(search.q);
   return {
     ...(sheet === undefined ? {} : { sheet }),
     ...(open === undefined ? {} : { open }),

@@ -15,7 +15,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
-import { EditorsAlphaBadge, useEditorsAlpha } from "@/features/apps/editors-alpha";
+import {
+  EDITORS_ALPHA_DISABLED_TITLE,
+  EditorsAlphaBadge,
+  useEditorsAlpha,
+} from "@/features/apps/editors-alpha";
 import {
   deleteDriveObject,
   restoreDriveObject,
@@ -28,6 +32,7 @@ import { createDocsDocument, migrateDocsDocumentToNative } from "./api";
 import { DocList } from "./doc-list";
 import type { DocSummary } from "./data";
 import { docsListFromDriveQueryOptions } from "./queries";
+import { docsQueryKeys } from "./query-keys";
 
 const DOCS_LIST_DEFAULT_LIMIT = 100;
 const DOCS_LIST_MAX_LIMIT = 250;
@@ -94,7 +99,7 @@ export function DocsShell({
   const router = useRouter();
   const editorsAlpha = useEditorsAlpha();
   const invalidateLists = () => {
-    void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+    void queryClient.invalidateQueries({ queryKey: docsQueryKeys.listFromDrive() });
     void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
   };
 
@@ -117,7 +122,7 @@ export function DocsShell({
     },
     onSuccess: (document) => {
       setCreateError(null);
-      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: docsQueryKeys.listFromDrive() });
       void router.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
     },
   });
@@ -131,7 +136,7 @@ export function DocsShell({
     mutationFn: (file: File) => uploadDriveFile({ file, folderId: null }),
     onSuccess: (uploaded) => {
       setImportError(null);
-      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: docsQueryKeys.listFromDrive() });
       void router.navigate({
         to: "/open/$objectId",
         params: { objectId: uploaded.objectId },
@@ -148,7 +153,7 @@ export function DocsShell({
     mutationFn: (docId: string) => migrateDocsDocumentToNative({ docId }),
     onSuccess: (document) => {
       setMigrationError(null);
-      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: docsQueryKeys.listFromDrive() });
       void router.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
     },
   });
@@ -308,11 +313,7 @@ export function DocsShell({
             type="button"
             onClick={createDocument}
             disabled={createMutation.isPending || !editorsAlpha.enabled}
-            title={
-              editorsAlpha.enabled
-                ? undefined
-                : "Editors alpha is disabled by an admin. Import and preview files from Drive."
-            }
+            title={editorsAlpha.enabled ? undefined : EDITORS_ALPHA_DISABLED_TITLE}
           >
             <Icons.Plus /> {createMutation.isPending ? "Creating…" : "New"}
           </button>

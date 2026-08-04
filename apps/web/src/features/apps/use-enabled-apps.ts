@@ -36,8 +36,7 @@ export function useEnabledApps(): EnabledApps {
   return {
     isLoading: query.isLoading,
     isEnabled: (id) => {
-      const entry = map.get(id as CoreAppId);
-      return entry === undefined ? true : entry;
+      return map.get(id as CoreAppId) ?? true;
     },
   };
 }

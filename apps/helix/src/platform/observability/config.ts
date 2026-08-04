@@ -34,12 +34,17 @@ export const defaultObservabilityConfig: ObservabilityConfig = {
   propagateTraceContext: true,
 };
 
-export function loadObservabilityConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ObservabilityConfig {
+export function loadObservabilityConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): ObservabilityConfig {
   const configJson = parseConfigJson(env.HELIX_CONFIG_JSON);
   const jsonConfig = configFromJson(configJson);
   const envConfig = configFromExplicitEnv(env);
 
-  return mergeObservabilityConfig(defaultObservabilityConfig, mergeObservabilityConfig(jsonConfig, envConfig));
+  return mergeObservabilityConfig(
+    defaultObservabilityConfig,
+    mergeObservabilityConfig(jsonConfig, envConfig),
+  );
 }
 
 export function mergeObservabilityConfig(
@@ -52,19 +57,16 @@ export function mergeObservabilityConfig(
     ...override.sampling,
   };
 
+  // Optional fields stay *absent* rather than explicitly `undefined`, so a
+  // merged config can be spread over another without erasing its values.
+  const tracesEndpoint = override.tracesEndpoint ?? base.tracesEndpoint;
+  const headers = override.headers ?? base.headers;
+
   return {
     enabled: override.enabled ?? base.enabled ?? defaultObservabilityConfig.enabled,
     serviceName: override.serviceName ?? base.serviceName ?? defaultObservabilityConfig.serviceName,
-    ...(override.tracesEndpoint !== undefined
-      ? { tracesEndpoint: override.tracesEndpoint }
-      : base.tracesEndpoint === undefined
-        ? {}
-        : { tracesEndpoint: base.tracesEndpoint }),
-    ...(override.headers !== undefined
-      ? { headers: override.headers }
-      : base.headers === undefined
-        ? {}
-        : { headers: base.headers }),
+    ...(tracesEndpoint === undefined ? {} : { tracesEndpoint }),
+    ...(headers === undefined ? {} : { headers }),
     sampling: {
       traces: normalizeSampleRate(sampling.traces),
       llmCalls: normalizeSampleRate(sampling.llmCalls),
@@ -72,7 +74,9 @@ export function mergeObservabilityConfig(
       permissionChecks: normalizeSampleRate(sampling.permissionChecks),
     },
     propagateTraceContext:
-      override.propagateTraceContext ?? base.propagateTraceContext ?? defaultObservabilityConfig.propagateTraceContext,
+      override.propagateTraceContext ??
+      base.propagateTraceContext ??
+      defaultObservabilityConfig.propagateTraceContext,
   };
 }
 
@@ -116,8 +120,11 @@ export function applyOpenTelemetryEnvironment(
 function configFromExplicitEnv(env: NodeJS.ProcessEnv): PartialObservabilityConfig {
   const enabled = parseBoolean(env.HELIX_OBSERVABILITY_ENABLED);
   const rawEndpoint =
-    env.HELIX_OTEL_TRACES_ENDPOINT ?? env.HELIX_OTEL_OTLP_ENDPOINT ?? env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
-  const endpoint = rawEndpoint === undefined ? undefined : normalizeOtlpHttpTraceEndpoint(rawEndpoint);
+    env.HELIX_OTEL_TRACES_ENDPOINT ??
+    env.HELIX_OTEL_OTLP_ENDPOINT ??
+    env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+  const endpoint =
+    rawEndpoint === undefined ? undefined : normalizeOtlpHttpTraceEndpoint(rawEndpoint);
   const headers = parseHeaders(env.HELIX_OTEL_HEADERS ?? env.OTEL_EXPORTER_OTLP_HEADERS);
   const traces = parseSampleRate(env.HELIX_OTEL_TRACES_SAMPLING ?? env.OTEL_TRACES_SAMPLER_ARG);
   const llmCalls = parseSampleRate(env.HELIX_OTEL_LLM_CALLS_SAMPLING);
@@ -183,7 +190,9 @@ function pluginConfigFromJson(value: Record<string, unknown>): Record<string, un
     return exact;
   }
 
-  const versioned = Object.entries(value.plugins).find(([key]) => key.startsWith(`${observabilityOtelPluginId}@`));
+  const versioned = Object.entries(value.plugins).find(([key]) =>
+    key.startsWith(`${observabilityOtelPluginId}@`),
+  );
   return isRecord(versioned?.[1]) ? versioned[1] : undefined;
 }
 
@@ -273,7 +282,8 @@ function mergePlainObjects(
   const merged: Record<string, unknown> = { ...(base ?? {}) };
   for (const [key, value] of Object.entries(override ?? {})) {
     const existing = merged[key];
-    merged[key] = isRecord(existing) && isRecord(value) ? mergePlainObjects(existing, value) : value;
+    merged[key] =
+      isRecord(existing) && isRecord(value) ? mergePlainObjects(existing, value) : value;
   }
   return merged;
 }

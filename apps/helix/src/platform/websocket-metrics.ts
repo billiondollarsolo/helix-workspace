@@ -4,7 +4,7 @@ import type { FastifyRequest } from "fastify";
 import { extractTraceContextFromRequest } from "../api/trace.js";
 
 /**
- * W3C `traceparter`/`tracestate` propagator used to lift trace context off the
+ * W3C `traceparent`/`tracestate` propagator used to lift trace context off the
  * WebSocket upgrade request. Used directly rather than the global propagator so
  * extraction works regardless of whether a global propagator was registered.
  */

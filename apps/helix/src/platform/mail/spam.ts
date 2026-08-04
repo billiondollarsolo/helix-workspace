@@ -203,7 +203,8 @@ export function parseSpamdResponse(response: string): ParsedSpamdResponse {
   const headerBlock = separator === -1 ? normalized : normalized.slice(0, separator);
   const body = separator === -1 ? "" : normalized.slice(separator + 2);
 
-  const statusLine = headerBlock.split("\n")[0] ?? "";
+  const headerLines = headerBlock.split("\n");
+  const statusLine = headerLines[0] ?? "";
   if (!/^SPAMD\//u.test(statusLine)) {
     throw new Error(`Unexpected spamd response: ${statusLine.slice(0, 80)}`);
   }
@@ -212,14 +213,12 @@ export function parseSpamdResponse(response: string): ParsedSpamdResponse {
     throw new Error(`spamd returned error status: ${statusLine.trim()}`);
   }
 
-  const spamHeader = headerBlock.split("\n").find((line) => /^spam:/iu.test(line));
+  const spamHeader = headerLines.find((line) => /^spam:/iu.test(line));
   if (spamHeader === undefined) {
     throw new Error("spamd response is missing the Spam header");
   }
   // `Spam: True ; 8.3 / 5.0`
-  const match = /^spam:\s*\w+\s*;\s*(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/iu.exec(
-    spamHeader,
-  );
+  const match = /^spam:\s*\w+\s*;\s*(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/iu.exec(spamHeader);
   if (match === null) {
     throw new Error(`Unparseable spamd Spam header: ${spamHeader.trim()}`);
   }

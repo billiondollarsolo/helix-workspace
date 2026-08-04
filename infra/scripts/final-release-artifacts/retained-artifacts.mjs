@@ -23,29 +23,10 @@ export function validateArtifactReference(
   context,
   expectations = {},
 ) {
-  if (!(context.availableEvidence instanceof Map)) {
-    throw new Error("available evidence path/digest map is required");
-  }
-  exactObject(reference, ["path", "sha256", "schema"], label);
-  nonEmptyString(reference.path, `${label} path`);
-  hash(reference.sha256, `${label} sha256`);
-  if (reference.schema !== expectedSchema) {
-    throw new Error(`${label} has an invalid artifact schema`);
-  }
-  const retained = context.availableEvidence.get(reference.path);
-  if (
-    retained === undefined ||
-    retained.sha256 !== reference.sha256 ||
-    !Buffer.isBuffer(retained.content)
-  ) {
-    throw new Error(`${label} path/digest is not retained in the evidence directory`);
-  }
-  let retainedDocument;
-  try {
-    retainedDocument = JSON.parse(retained.content.toString("utf8"));
-  } catch {
-    throw new Error(`${label} retained artifact must be a JSON document`);
-  }
+  const retainedDocument = readRetainedDocument(reference, expectedSchema, label, context, {
+    invalidSchema: `${label} has an invalid artifact schema`,
+    invalidJson: `${label} retained artifact must be a JSON document`,
+  });
   if (
     retainedDocument === null ||
     typeof retainedDocument !== "object" ||
@@ -60,14 +41,26 @@ export function validateArtifactReference(
 }
 
 function validateSpdxArtifactReference(reference, label, context, expectations) {
+  const document = readRetainedDocument(reference, ARTIFACT_SCHEMAS.spdxDocument, label, context, {
+    invalidSchema: `${label} has an invalid SPDX artifact schema`,
+    invalidJson: `${label} must be a retained JSON document`,
+  });
+  validateSpdxDocument(document, label, expectations);
+  registerArtifactIdentity(reference, label, context);
+  return { reference, document };
+}
+
+// A reference is only trustworthy when its declared path, digest, and schema all
+// resolve to a retained byte-identical JSON artifact inside the evidence packet.
+function readRetainedDocument(reference, expectedSchema, label, context, messages) {
   if (!(context.availableEvidence instanceof Map)) {
     throw new Error("available evidence path/digest map is required");
   }
   exactObject(reference, ["path", "sha256", "schema"], label);
   nonEmptyString(reference.path, `${label} path`);
   hash(reference.sha256, `${label} sha256`);
-  if (reference.schema !== ARTIFACT_SCHEMAS.spdxDocument) {
-    throw new Error(`${label} has an invalid SPDX artifact schema`);
+  if (reference.schema !== expectedSchema) {
+    throw new Error(messages.invalidSchema);
   }
   const retained = context.availableEvidence.get(reference.path);
   if (
@@ -77,15 +70,11 @@ function validateSpdxArtifactReference(reference, label, context, expectations) 
   ) {
     throw new Error(`${label} path/digest is not retained in the evidence directory`);
   }
-  let document;
   try {
-    document = JSON.parse(retained.content.toString("utf8"));
+    return JSON.parse(retained.content.toString("utf8"));
   } catch {
-    throw new Error(`${label} must be a retained JSON document`);
+    throw new Error(messages.invalidJson);
   }
-  validateSpdxDocument(document, label, expectations);
-  registerArtifactIdentity(reference, label, context);
-  return { reference, document };
 }
 
 function validateRetainedArtifact(document, schema, label, expectations) {

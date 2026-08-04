@@ -6,25 +6,19 @@ import { createScopedSearchRequest, globalSearchTypes } from "./scope.js";
 import type { SearchEngine } from "./types.js";
 
 const globalSearchTypeSchema = z.enum(globalSearchTypes);
-const typesSchema = z.preprocess(
-  (value) => {
-    if (value === undefined) {
+const typesSchema = z.preprocess((value) => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
       return undefined;
     }
-    if (typeof value === "string") {
-      const trimmed = value.trim();
-      if (trimmed.length === 0) {
-        return undefined;
-      }
-      if (trimmed.startsWith("[")) {
-        return JSON.parse(trimmed) as unknown;
-      }
-      return [trimmed];
+    if (trimmed.startsWith("[")) {
+      return JSON.parse(trimmed) as unknown;
     }
-    return value;
-  },
-  z.array(globalSearchTypeSchema).max(globalSearchTypes.length).optional(),
-);
+    return [trimmed];
+  }
+  return value;
+}, z.array(globalSearchTypeSchema).max(globalSearchTypes.length).optional());
 
 const querySchema = z.object({
   query: z.string().trim().min(1).max(1_000),

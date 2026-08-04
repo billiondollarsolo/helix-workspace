@@ -8,8 +8,12 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
+import { ShowMoreButton } from "@/components/show-more-button";
 import { Avatar } from "@/components/ui/avatar";
-import { EditorsAlphaDisabledNotice } from "@/features/apps/editors-alpha";
+import {
+  EDITORS_ALPHA_DISABLED_TITLE,
+  EditorsAlphaDisabledNotice,
+} from "@/features/apps/editors-alpha";
 import { setHelixDriveItemDragData } from "@/features/drive/drag-payload";
 import { FileNameText } from "@/features/drive/file-name-text";
 import { FileThumbnail } from "@/features/drive/file-thumbnail";
@@ -214,11 +218,7 @@ export function SheetsList({
               type="button"
               className="btn primary"
               disabled={isCreating || !editorsEnabled}
-              title={
-                editorsEnabled
-                  ? undefined
-                  : "Editors alpha is disabled by an admin. Import and preview files from Drive."
-              }
+              title={editorsEnabled ? undefined : EDITORS_ALPHA_DISABLED_TITLE}
               onClick={() => onCreate?.()}
             >
               <Icons.Plus /> {isCreating ? "Creating…" : "New sheet"}
@@ -355,23 +355,6 @@ export function SheetsList({
   );
 }
 
-function ShowMoreButton({
-  label,
-  onClick,
-}: {
-  readonly label: string;
-  readonly onClick: () => void;
-}) {
-  return (
-    <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
-      <button type="button" className="btn" onClick={onClick}>
-        <Icons.ChevronDown />
-        {label}
-      </button>
-    </div>
-  );
-}
-
 function SheetCard({
   sheet,
   onOpen,
@@ -477,11 +460,7 @@ function SheetsSidebar({
         type="button"
         onClick={onNewSheet}
         disabled={isCreating || !editorsEnabled}
-        title={
-          editorsEnabled
-            ? undefined
-            : "Editors alpha is disabled by an admin. Import and preview files from Drive."
-        }
+        title={editorsEnabled ? undefined : EDITORS_ALPHA_DISABLED_TITLE}
         style={{ width: "100%", marginBottom: 12 }}
       >
         <Icons.Plus /> {isCreating ? "Creating…" : "New sheet"}

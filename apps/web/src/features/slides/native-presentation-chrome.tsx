@@ -590,8 +590,7 @@ const COLOR_PRESETS = [
 export function buildSlidesRibbon(ctx: SlidesChromeContext): ReactNode {
   const hasShape = ctx.activeShape !== null;
   const hasSlide = ctx.activeSlideId !== null;
-  const transitionValue: SlidesTransitionValue =
-    (ctx.activeSlideTransition?.type as SlidesTransitionValue | undefined) ?? "none";
+  const transitionValue: SlidesTransitionValue = ctx.activeSlideTransition?.type ?? "none";
 
   return (
     <>

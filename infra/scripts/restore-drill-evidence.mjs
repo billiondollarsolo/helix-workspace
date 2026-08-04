@@ -28,6 +28,9 @@ export const RESTORE_DRILL_SCENARIOS = [
 ];
 const SENSITIVE_KEY_PATTERN =
   /(password|secret|token|authorization|cookie|credential|private.?key)/iu;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const RPO_TARGET_HOURS = 24;
+const RTO_TARGET_HOURS = 4;
 
 const usage = `Usage:
   infra/scripts/restore-drill-evidence.mjs --static [--output <path>]
@@ -82,7 +85,12 @@ export function createStaticEvidence(now = new Date()) {
     status: "static_validated",
     startedAt: now.toISOString(),
     completedAt: now.toISOString(),
-    metrics: { rpoHours: null, rtoHours: null, rpoTargetHours: 24, rtoTargetHours: 4 },
+    metrics: {
+      rpoHours: null,
+      rtoHours: null,
+      rpoTargetHours: RPO_TARGET_HOURS,
+      rtoTargetHours: RTO_TARGET_HOURS,
+    },
     scenarios: Object.fromEntries(
       RESTORE_DRILL_SCENARIOS.map((scenario) => [scenario, { status: "not_run" }]),
     ),
@@ -103,10 +111,14 @@ export async function createLiveEvidence(options) {
   const manifestValid =
     options.manifestIntegrity === "passed" && manifest.schema === BACKUP_MANIFEST_SCHEMA;
   const encrypted = ["age", "kms"].includes(manifest.encryption?.method);
+  const recoverySetHash = String(manifest.recoverySet?.id ?? "");
+  const offHostCopyRecorded = String(manifest.resilience?.offHostUri ?? "").startsWith("s3://");
+  const retentionDays = Number(manifest.resilience?.retentionDays ?? 0);
+  const keyCustodyReferenceRecorded = String(manifest.encryption?.keyCustodyRef ?? "").length > 0;
   const offHostContract =
-    String(manifest.resilience?.offHostUri ?? "").startsWith("s3://") &&
-    Number(manifest.resilience?.retentionDays ?? 0) > 0 &&
-    String(manifest.encryption?.keyCustodyRef ?? "").length > 0 &&
+    offHostCopyRecorded &&
+    retentionDays > 0 &&
+    keyCustodyReferenceRecorded &&
     manifest.encryption?.plaintextKeyMaterialIncluded === false;
   const disposableDatabase =
     options.sourceDb.length > 0 &&
@@ -130,7 +142,7 @@ export async function createLiveEvidence(options) {
       status: passFail(manifestValid),
       schema: String(manifest.schema ?? "unknown"),
       manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
-      recoverySetHash: String(manifest.recoverySet?.id ?? ""),
+      recoverySetHash,
     },
     encrypted_restore: {
       status: passFail(encrypted),
@@ -139,9 +151,9 @@ export async function createLiveEvidence(options) {
     },
     off_host_retention_key_custody: {
       status: passFail(offHostContract),
-      offHostCopyRecorded: String(manifest.resilience?.offHostUri ?? "").startsWith("s3://"),
-      retentionDays: Number(manifest.resilience?.retentionDays ?? 0),
-      keyCustodyReferenceRecorded: String(manifest.encryption?.keyCustodyRef ?? "").length > 0,
+      offHostCopyRecorded,
+      retentionDays,
+      keyCustodyReferenceRecorded,
       plaintextKeyMaterialObserved: false,
     },
     disposable_environment: {
@@ -181,15 +193,15 @@ export async function createLiveEvidence(options) {
       rebuiltFromRestoredDatabase: options.searchReindex === "passed",
     },
     rpo: {
-      status: passFail(rpoHours <= 24),
+      status: passFail(rpoHours <= RPO_TARGET_HOURS),
       observedHours: rpoHours,
-      targetHours: 24,
+      targetHours: RPO_TARGET_HOURS,
       recoveryPoint,
     },
     rto: {
-      status: passFail(rtoHours <= 4),
+      status: passFail(rtoHours <= RTO_TARGET_HOURS),
       observedHours: rtoHours,
-      targetHours: 4,
+      targetHours: RTO_TARGET_HOURS,
     },
   };
   const allPassed = RESTORE_DRILL_SCENARIOS.every(
@@ -207,11 +219,16 @@ export async function createLiveEvidence(options) {
     completedAt,
     backup: {
       backupIdHash: anonymize(String(manifest.backupId ?? "")),
-      recoverySetHash: String(manifest.recoverySet?.id ?? ""),
+      recoverySetHash,
       tier: String(manifest.tier ?? "unknown"),
       offHostContractPresent: offHostContract,
     },
-    metrics: { rpoHours, rtoHours, rpoTargetHours: 24, rtoTargetHours: 4 },
+    metrics: {
+      rpoHours,
+      rtoHours,
+      rpoTargetHours: RPO_TARGET_HOURS,
+      rtoTargetHours: RTO_TARGET_HOURS,
+    },
     scenarios,
   };
 }
@@ -252,7 +269,10 @@ export function validateRestoreDrillEvidence(evidence) {
     if (incomplete.length > 0) {
       throw new Error(`passed restore evidence requires every scenario: ${incomplete.join(", ")}`);
     }
-    if (evidence.metrics.rpoHours > 24 || evidence.metrics.rtoHours > 4) {
+    if (
+      evidence.metrics.rpoHours > RPO_TARGET_HOURS ||
+      evidence.metrics.rtoHours > RTO_TARGET_HOURS
+    ) {
       throw new Error("passed restore evidence exceeds the RPO/RTO target");
     }
     validatePassedDetails(evidence);
@@ -263,8 +283,8 @@ export function validateRestoreDrillEvidence(evidence) {
 function validatePassedDetails(evidence) {
   const scenarios = evidence.scenarios;
   if (
-    !/^[a-f0-9]{64}$/u.test(scenarios.manifest_integrity.manifestSha256) ||
-    !/^[a-f0-9]{64}$/u.test(scenarios.manifest_integrity.recoverySetHash)
+    !SHA256_PATTERN.test(scenarios.manifest_integrity.manifestSha256) ||
+    !SHA256_PATTERN.test(scenarios.manifest_integrity.recoverySetHash)
   ) {
     throw new Error("passed restore evidence requires manifest and recovery-set digests");
   }
@@ -288,9 +308,9 @@ function validatePassedDetails(evidence) {
     throw new Error("passed restore evidence requires disposable database and object targets");
   }
   if (
-    !/^[a-f0-9]{64}$/u.test(scenarios.database_consistency.expectedSnapshotSha256) ||
+    !SHA256_PATTERN.test(scenarios.database_consistency.expectedSnapshotSha256) ||
     scenarios.database_consistency.exactMatch !== true ||
-    !/^[a-f0-9]{64}$/u.test(scenarios.object_version_consistency.versionInventorySha256) ||
+    !SHA256_PATTERN.test(scenarios.object_version_consistency.versionInventorySha256) ||
     scenarios.object_version_consistency.isolatedRestore !== true ||
     scenarios.outbound_queue_consistency.exactMatch !== true ||
     scenarios.audit_chain.invalidLinks !== 0
@@ -307,8 +327,8 @@ function validatePassedDetails(evidence) {
   if (
     scenarios.rpo.observedHours !== evidence.metrics.rpoHours ||
     scenarios.rto.observedHours !== evidence.metrics.rtoHours ||
-    scenarios.rpo.targetHours !== 24 ||
-    scenarios.rto.targetHours !== 4
+    scenarios.rpo.targetHours !== RPO_TARGET_HOURS ||
+    scenarios.rto.targetHours !== RTO_TARGET_HOURS
   ) {
     throw new Error("passed restore evidence has inconsistent RPO/RTO measurements");
   }

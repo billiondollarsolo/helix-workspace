@@ -9671,7 +9671,10 @@ function dataValidationRuleLabel(
 
 function compareCellAddresses(left: CellAddress | undefined, right: CellAddress | undefined) {
   if (left === undefined || right === undefined) {
-    return left === right ? 0 : left === undefined ? 1 : -1;
+    if (left === right) {
+      return 0;
+    }
+    return left === undefined ? 1 : -1;
   }
   return left.row === right.row ? left.col - right.col : left.row - right.row;
 }
@@ -9854,7 +9857,12 @@ function conditionalFormatStyle(
   if (!Number.isFinite(numericValue)) {
     return {};
   }
-  const threshold = typeof rule.value === "number" ? rule.value : type === "lessThanZero" ? 0 : 100;
+  let threshold = 100;
+  if (typeof rule.value === "number") {
+    threshold = rule.value;
+  } else if (type === "lessThanZero") {
+    threshold = 0;
+  }
   const matches = type === "greaterThan100" ? numericValue > threshold : numericValue < threshold;
   if (!matches) {
     return {};

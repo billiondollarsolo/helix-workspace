@@ -194,6 +194,22 @@ function NativeTextPreviewThumbnail({
     .filter((line) => line.length > 0);
   const title = lines[0] ?? null;
   const body = lines.slice(1);
+  const model: HtmlThumbnailModel =
+    kind === "spreadsheet"
+      ? { kind, rows: nativeSpreadsheetRows(lines) }
+      : { kind, title, lines: body };
+  return <MiniPreviewSurface name={name} model={model} />;
+}
+
+/** Shared chrome for the rendered mini-previews: fills the thumbnail box and
+ *  dispatches to the renderer for the model's kind. */
+function MiniPreviewSurface({
+  name,
+  model,
+}: {
+  readonly name: string;
+  readonly model: HtmlThumbnailModel;
+}) {
   return (
     <div
       aria-label={`Rendered preview of ${name}`}
@@ -208,15 +224,20 @@ function NativeTextPreviewThumbnail({
         color: "var(--text)",
       }}
     >
-      {kind === "spreadsheet" ? (
-        <MiniSpreadsheet rows={nativeSpreadsheetRows(lines)} />
-      ) : kind === "presentation" ? (
-        <MiniPresentation title={title} lines={body} />
-      ) : (
-        <MiniDocument title={title} lines={body} />
-      )}
+      <MiniPreviewBody model={model} />
     </div>
   );
+}
+
+function MiniPreviewBody({ model }: { readonly model: HtmlThumbnailModel }) {
+  switch (model.kind) {
+    case "spreadsheet":
+      return <MiniSpreadsheet rows={model.rows} />;
+    case "presentation":
+      return <MiniPresentation title={model.title} lines={model.lines} />;
+    case "document":
+      return <MiniDocument title={model.title} lines={model.lines} />;
+  }
 }
 
 function nativeSpreadsheetRows(lines: readonly string[]): readonly (readonly string[])[] {
@@ -255,10 +276,7 @@ function usePreviewVisibility(ref: React.RefObject<HTMLElement | null>): boolean
   return visible;
 }
 
-function runBoundedThumbnailLoad<T>(
-  signal: AbortSignal,
-  task: () => Promise<T>,
-): Promise<T> {
+function runBoundedThumbnailLoad<T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const job: ThumbnailLoadJob = {
       run: () => {
@@ -267,9 +285,7 @@ function runBoundedThumbnailLoad<T>(
           reject(abortError());
           return;
         }
-        task()
-          .then(resolve, reject)
-          .finally(completeThumbnailLoad);
+        task().then(resolve, reject).finally(completeThumbnailLoad);
       },
     };
 
@@ -480,29 +496,7 @@ function HtmlPreviewThumbnail({
   return (
     <>
       {fallbackNode}
-      {preview === null ? null : (
-        <div
-          aria-label={`Rendered preview of ${name}`}
-          style={{
-            position: "absolute",
-            inset: 0,
-            width: "100%",
-            height: "100%",
-            boxSizing: "border-box",
-            overflow: "hidden",
-            background: "var(--surface)",
-            color: "var(--text)",
-          }}
-        >
-          {preview.kind === "spreadsheet" ? (
-            <MiniSpreadsheet rows={preview.rows} />
-          ) : preview.kind === "presentation" ? (
-            <MiniPresentation title={preview.title} lines={preview.lines} />
-          ) : (
-            <MiniDocument title={preview.title} lines={preview.lines} />
-          )}
-        </div>
-      )}
+      {preview === null ? null : <MiniPreviewSurface name={name} model={preview} />}
     </>
   );
 }
@@ -592,11 +586,7 @@ function extractTableRows(document: Document): readonly (readonly string[])[] {
   }
   return [...table.querySelectorAll("tr")]
     .slice(0, 9)
-    .map((row) =>
-      [...row.querySelectorAll("th,td")]
-        .slice(0, 6)
-        .map(textFromNode),
-    )
+    .map((row) => [...row.querySelectorAll("th,td")].slice(0, 6).map(textFromNode))
     .filter((row) => row.some((cell) => cell.length > 0));
 }
 

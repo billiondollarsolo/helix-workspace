@@ -15,7 +15,7 @@ export interface ShellChatRouteSearch {
 }
 
 export const Route = createFileRoute("/_shell/chat/")({
-  component: ChatRoute,
+  component: ChatShell,
   validateSearch: (search): ShellChatRouteSearch => {
     const room = optionalUuidSearchParam(search.room) ?? optionalStringSearchParam(search.room);
     const thread =
@@ -28,7 +28,3 @@ export const Route = createFileRoute("/_shell/chat/")({
     };
   },
 });
-
-function ChatRoute() {
-  return <ChatShell />;
-}

@@ -15,6 +15,37 @@ import {
   setAgentOperationalControls,
 } from "./agent-controls-api";
 
+const NOTE_CLASS = "m-0 text-[0.7rem] text-muted-foreground";
+
+/* The first two posture cards read the same way — a term, the chip that answers
+   it, and one line saying what the answer costs — so they are one component
+   rather than two copies that can drift apart. The third card lists org ids
+   instead of a chip, which is a different shape, and keeps its own body. */
+function PostureCard({
+  chip,
+  note,
+  term,
+  tone,
+}: {
+  readonly chip: string;
+  readonly note: string;
+  readonly term: string;
+  readonly tone: string;
+}) {
+  return (
+    <div className="grid gap-1 rounded-md border border-border/70 p-3">
+      <dt className="text-xs text-muted-foreground">{term}</dt>
+      <dd className="m-0">
+        <span className={`chip ${tone}`}>
+          <span className="chip-dot" />
+          {chip}
+        </span>
+      </dd>
+      <p className={NOTE_CLASS}>{note}</p>
+    </div>
+  );
+}
+
 export function AgentControlsManagement() {
   const queryClient = useQueryClient();
   const [orgId, setOrgId] = useState("");
@@ -81,37 +112,25 @@ export function AgentControlsManagement() {
             Current posture
           </h2>
           <dl className="m-0 grid gap-3 sm:grid-cols-3">
-            <div className="grid gap-1 rounded-md border border-border/70 p-3">
-              <dt className="text-xs text-muted-foreground">Emergency kill (global read-only)</dt>
-              <dd className="m-0">
-                <span className={`chip ${killOn ? "danger" : "success"}`}>
-                  <span className="chip-dot" />
-                  {killOn ? "ON" : "off"}
-                </span>
-              </dd>
-              <p className="m-0 text-[0.7rem] text-muted-foreground">
-                When on, non-read tools are denied for everyone.
-              </p>
-            </div>
-            <div className="grid gap-1 rounded-md border border-border/70 p-3">
-              <dt className="text-xs text-muted-foreground">Agent writes (global)</dt>
-              <dd className="m-0">
-                <span className={`chip ${agentWritesOn ? "success" : "warning"}`}>
-                  <span className="chip-dot" />
-                  {agentWritesOn ? "yes" : "disabled"}
-                </span>
-              </dd>
-              <p className="m-0 text-[0.7rem] text-muted-foreground">
-                Agent write tools are blocked when disabled.
-              </p>
-            </div>
+            <PostureCard
+              term="Emergency kill (global read-only)"
+              tone={killOn ? "danger" : "success"}
+              chip={killOn ? "ON" : "off"}
+              note="When on, non-read tools are denied for everyone."
+            />
+            <PostureCard
+              term="Agent writes (global)"
+              tone={agentWritesOn ? "success" : "warning"}
+              chip={agentWritesOn ? "yes" : "disabled"}
+              note="Agent write tools are blocked when disabled."
+            />
             <div className="grid gap-1 rounded-md border border-border/70 p-3">
               <dt className="text-xs text-muted-foreground">Orgs with agent writes disabled</dt>
               <dd className="m-0 text-sm font-medium">
                 {disabledOrgs.length === 0 ? "None" : String(disabledOrgs.length)}
               </dd>
               {disabledOrgs.length === 0 ? (
-                <p className="m-0 text-[0.7rem] text-muted-foreground">No per-org overrides.</p>
+                <p className={NOTE_CLASS}>No per-org overrides.</p>
               ) : (
                 <ul className="m-0 list-none space-y-1 p-0 text-[0.7rem] text-muted-foreground">
                   {disabledOrgs.map((id) => (

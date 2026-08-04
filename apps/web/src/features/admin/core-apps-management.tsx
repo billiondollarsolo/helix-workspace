@@ -8,8 +8,9 @@ import {
   Pencil,
   Sparkles,
   Video,
+  type LucideIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import {
   coreAppsAdminQueryOptions,
   coreAppsQueryKeys,
@@ -28,6 +29,17 @@ interface CoreAppsRouteQueryClient {
 export async function prefetchAdminCoreAppsQuery(queryClient: CoreAppsRouteQueryClient) {
   await queryClient.ensureQueryData(coreAppsAdminQueryOptions()).catch(() => undefined);
 }
+
+const APP_ICON: Readonly<Record<CoreAppId, LucideIcon>> = {
+  mail: Mail,
+  chat: MessageCircle,
+  drive: Cloud,
+  docs: FileText,
+  calendar: Calendar,
+  meet: Video,
+  assistant: Sparkles,
+  editors: Pencil,
+};
 
 const APP_ICON_BG: Readonly<Record<CoreAppId, string>> = {
   mail: "bg-red-500/15 text-red-400",
@@ -60,28 +72,6 @@ const DISABLE_CONSEQUENCE: Readonly<Record<CoreAppId, string>> = {
   editors:
     "Drive keeps storage, previews, download, and sharing, but nobody can open or create an editable Doc, Sheet, Slide, or PDF.",
 };
-
-function AppIcon({ id }: { readonly id: CoreAppId }) {
-  const cls = "h-5 w-5";
-  switch (id) {
-    case "mail":
-      return <Mail className={cls} />;
-    case "chat":
-      return <MessageCircle className={cls} />;
-    case "drive":
-      return <Cloud className={cls} />;
-    case "docs":
-      return <FileText className={cls} />;
-    case "calendar":
-      return <Calendar className={cls} />;
-    case "meet":
-      return <Video className={cls} />;
-    case "assistant":
-      return <Sparkles className={cls} />;
-    case "editors":
-      return <Pencil className={cls} />;
-  }
-}
 
 /**
  * Admin UI to view and toggle core-app enablement org-wide.
@@ -238,6 +228,7 @@ function CoreAppRow({
   readonly pendingRestart: boolean;
   readonly onToggle: (enabled: boolean) => void;
 }) {
+  const Icon = APP_ICON[app.id];
   return (
     <div
       className={`flex items-center gap-4 px-5 py-4 ${divider ? "border-t border-[var(--border)]" : ""}`}
@@ -245,21 +236,17 @@ function CoreAppRow({
       <div
         className={`shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${APP_ICON_BG[app.id]}`}
       >
-        <AppIcon id={app.id} />
+        <Icon className="h-5 w-5" />
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-[var(--text)]">{app.name}</span>
-          {app.id === "editors" ? <AlphaPill /> : null}
+          {app.id === "editors" ? <Pill background="bg-amber-500/10">Alpha</Pill> : null}
           {/* No Enabled/Disabled pill: the switch on this row already reports
               that state, and two readouts for one value invite the reader to
               wonder which is authoritative. State the switch can't convey —
               pending restart, not served by this role — still gets a badge. */}
-          {pendingRestart ? (
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-500/15 text-amber-400">
-              Pending restart
-            </span>
-          ) : null}
+          {pendingRestart ? <Pill background="bg-amber-500/15">Pending restart</Pill> : null}
           {!app.inRole ? (
             <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
               Not served by this role
@@ -282,10 +269,20 @@ function CoreAppRow({
   );
 }
 
-function AlphaPill() {
+/* One badge shape for the row's amber annotations — they differ only in wording
+   and in how loud the fill is, so a second copy of the class list would drift. */
+function Pill({
+  background,
+  children,
+}: {
+  readonly background: string;
+  readonly children: ReactNode;
+}) {
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-500/10 text-amber-400">
-      Alpha
+    <span
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${background} text-amber-400`}
+    >
+      {children}
     </span>
   );
 }

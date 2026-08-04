@@ -59,11 +59,9 @@ export async function registerPluginAdminRoutes(
 
   app.get("/api/admin/plugins/:pluginId", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
-    const params = pluginIdParamsSchema.safeParse(request.params);
+    const params = parsePluginId(request);
     if (!params.success) {
-      return reply
-        .code(400)
-        .send({ error: "Invalid plugin identifier.", issues: params.error.issues });
+      return reply.code(400).send(params.error);
     }
 
     const result = await options.tools.invoke<Record<string, unknown>>(
@@ -75,7 +73,7 @@ export async function registerPluginAdminRoutes(
       return sendToolError(reply, result);
     }
     const plugins = pluginArray(result.output);
-    const plugin = plugins.find((candidate) => candidate.id === params.data.pluginId);
+    const plugin = plugins.find((candidate) => candidate.id === params.pluginId);
     if (plugin === undefined) {
       return reply.code(404).send({ error: "Admin plugin not found." });
     }
@@ -100,29 +98,25 @@ export async function registerPluginAdminRoutes(
 
   app.post("/api/admin/plugins/:pluginId/enable", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
-    const params = pluginIdParamsSchema.safeParse(request.params);
+    const params = parsePluginId(request);
     if (!params.success) {
-      return reply
-        .code(400)
-        .send({ error: "Invalid plugin identifier.", issues: params.error.issues });
+      return reply.code(400).send(params.error);
     }
     return sendToolResult(
       reply,
-      await options.tools.invoke("plugin.enable", { pluginId: params.data.pluginId }, { actor }),
+      await options.tools.invoke("plugin.enable", { pluginId: params.pluginId }, { actor }),
     );
   });
 
   app.post("/api/admin/plugins/:pluginId/disable", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
-    const params = pluginIdParamsSchema.safeParse(request.params);
+    const params = parsePluginId(request);
     if (!params.success) {
-      return reply
-        .code(400)
-        .send({ error: "Invalid plugin identifier.", issues: params.error.issues });
+      return reply.code(400).send(params.error);
     }
     return sendToolResult(
       reply,
-      await options.tools.invoke("plugin.disable", { pluginId: params.data.pluginId }, { actor }),
+      await options.tools.invoke("plugin.disable", { pluginId: params.pluginId }, { actor }),
     );
   });
 
@@ -148,21 +142,35 @@ export function canAdminPlugins(actor: Actor): boolean {
   return scopes.includes(adminPluginsScope) || scopes.includes("admin.*");
 }
 
-function parsePluginActionRequest<Body>(
+interface PluginRequestError {
+  readonly error: string;
+  readonly issues: unknown;
+}
+
+function parsePluginId(
   request: FastifyRequest,
-  bodySchema: z.ZodType<Body>,
 ):
-  | { readonly success: true; readonly pluginId: string; readonly body: Body }
-  | {
-      readonly success: false;
-      readonly error: { readonly error: string; readonly issues: unknown };
-    } {
+  | { readonly success: true; readonly pluginId: string }
+  | { readonly success: false; readonly error: PluginRequestError } {
   const params = pluginIdParamsSchema.safeParse(request.params);
   if (!params.success) {
     return {
       success: false,
       error: { error: "Invalid plugin identifier.", issues: params.error.issues },
     };
+  }
+  return { success: true, pluginId: params.data.pluginId };
+}
+
+function parsePluginActionRequest<Body>(
+  request: FastifyRequest,
+  bodySchema: z.ZodType<Body>,
+):
+  | { readonly success: true; readonly pluginId: string; readonly body: Body }
+  | { readonly success: false; readonly error: PluginRequestError } {
+  const params = parsePluginId(request);
+  if (!params.success) {
+    return params;
   }
   const body = bodySchema.safeParse(request.body ?? {});
   if (!body.success) {
@@ -171,7 +179,7 @@ function parsePluginActionRequest<Body>(
       error: { error: "Invalid plugin admin request.", issues: body.error.issues },
     };
   }
-  return { success: true, pluginId: params.data.pluginId, body: body.data };
+  return { success: true, pluginId: params.pluginId, body: body.data };
 }
 
 function sendToolResult(reply: FastifyReply, result: ToolInvokeResult) {

@@ -90,8 +90,9 @@ export async function convertImportedSheetToNative(
   const metadata = importedFromMetadata(blob, parsed.format, sourceObjectId);
   const title = titleFromFilename(blob.name);
   const contentBase64 = arrayBufferToBase64(blob.bytes);
+  const lowerName = blob.name.toLowerCase();
 
-  if (blob.name.toLowerCase().endsWith(".ods")) {
+  if (lowerName.endsWith(".ods")) {
     const result = await importOdsSheet({
       filename: blob.name,
       title,
@@ -102,7 +103,7 @@ export async function convertImportedSheetToNative(
   }
   // XLSX / XLS / XLSB: server can ingest the raw OOXML/BIFF directly via
   // sheets.import-xlsx (SheetJS server-side too).
-  if (parsed.format.id === "xlsx" || blob.name.toLowerCase().endsWith(".xlsx")) {
+  if (parsed.format.id === "xlsx" || lowerName.endsWith(".xlsx")) {
     const result = await importXlsxSheet({
       filename: blob.name,
       title,
@@ -111,7 +112,7 @@ export async function convertImportedSheetToNative(
     });
     return { surface: "sheets", id: result.id };
   }
-  if (parsed.format.id === "tsv" || blob.name.toLowerCase().endsWith(".tsv")) {
+  if (parsed.format.id === "tsv" || lowerName.endsWith(".tsv")) {
     const text = new TextDecoder("utf-8", { fatal: false }).decode(blob.bytes);
     const result = await importTsvSheet({ filename: blob.name, title, tsvText: text, metadata });
     return { surface: "sheets", id: result.id };

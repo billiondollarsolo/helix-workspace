@@ -135,7 +135,7 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
       where org_id = ${orgId} and id = ${id} and status = 'quarantined'
       returning *
     `) as unknown as readonly QuarantineRow[];
-    return rows[0] === undefined ? null : mapRow(rows[0]);
+    return firstRecord(rows);
   }
 
   async restoreAfterFailedRescan(input: {
@@ -154,7 +154,7 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
       where org_id = ${input.orgId} and id = ${input.id} and status = 'rescanning'
       returning *
     `) as unknown as readonly QuarantineRow[];
-    return rows[0] === undefined ? null : mapRow(rows[0]);
+    return firstRecord(rows);
   }
 
   async markReleased(input: {
@@ -173,7 +173,7 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
       where org_id = ${input.orgId} and id = ${input.id} and status = 'rescanning'
       returning *
     `) as unknown as readonly QuarantineRow[];
-    return rows[0] === undefined ? null : mapRow(rows[0]);
+    return firstRecord(rows);
   }
 
   async deleteQuarantine(input: {
@@ -194,7 +194,7 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
         and status in ('quarantined', 'rescanning')
       returning *
     `) as unknown as readonly QuarantineRow[];
-    return rows[0] === undefined ? null : mapRow(rows[0]);
+    return firstRecord(rows);
   }
 }
 
@@ -437,6 +437,12 @@ export function serializeMailQuarantine(record: MailQuarantineRecord): JsonObjec
     releasedAt: record.releasedAt?.toISOString() ?? null,
     deletedAt: record.deletedAt?.toISOString() ?? null,
   };
+}
+
+/** Map the single row a conditional update returns, or null when it matched nothing. */
+function firstRecord(rows: readonly QuarantineRow[]): MailQuarantineRecord | null {
+  const row = rows[0];
+  return row === undefined ? null : mapRow(row);
 }
 
 function mapRow(row: QuarantineRow): MailQuarantineRecord {

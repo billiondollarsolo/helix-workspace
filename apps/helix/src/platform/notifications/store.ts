@@ -76,22 +76,22 @@ export class PostgresNotificationStore implements NotificationStore {
   async list(input: ListNotificationsInput): Promise<readonly NotificationRecord[]> {
     const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
     const rows = input.unreadOnly
-      ? ((await this.sql`
+      ? await this.sql`
           select * from notifications
           where org_id = ${input.orgId}
             and actor_id = ${input.actorId}
             and read_at is null
           order by created_at desc
           limit ${limit}
-        `) as unknown as readonly NotificationRow[])
-      : ((await this.sql`
+        `
+      : await this.sql`
           select * from notifications
           where org_id = ${input.orgId}
             and actor_id = ${input.actorId}
           order by created_at desc
           limit ${limit}
-        `) as unknown as readonly NotificationRow[]);
-    return rows.map(mapRow);
+        `;
+    return (rows as unknown as readonly NotificationRow[]).map(mapRow);
   }
 
   async countUnread(orgId: string, actorId: string): Promise<number> {

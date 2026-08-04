@@ -122,9 +122,7 @@ function highAdvisories(report, inventory) {
       const installedVersions = inventory.get(advisory.module_name) ?? new Set();
       return {
         ...advisory,
-        findings: (Array.isArray(advisory.findings) ? advisory.findings : []).filter((finding) =>
-          installedVersions.has(finding?.version),
-        ),
+        findings: advisory.findings.filter((finding) => installedVersions.has(finding?.version)),
       };
     })
     .filter((advisory) => advisory.findings.length > 0);
@@ -143,7 +141,7 @@ export function evaluateAudit(report, exceptionDocument, asOf, inventory) {
     const severity = advisory.severity;
     const versions = [
       ...new Set(
-        (Array.isArray(advisory.findings) ? advisory.findings : [])
+        advisory.findings
           .map((finding) => finding?.version)
           .filter((version) => typeof version === "string" && version.length > 0),
       ),
@@ -221,7 +219,8 @@ function productionDependencyPackages(deployRoot) {
   function visit(candidate) {
     let packageRoot;
     try {
-      if (!lstatSync(candidate).isDirectory() && !lstatSync(candidate).isSymbolicLink()) return;
+      const stat = lstatSync(candidate);
+      if (!stat.isDirectory() && !stat.isSymbolicLink()) return;
       packageRoot = realpathSync(candidate);
     } catch {
       return;
@@ -313,27 +312,25 @@ function validateLegacyBraceGlobCompatibility(deployRoot) {
 
 function createProductionInventory() {
   const deployRoot = mkdtempSync(join(tmpdir(), "helix-production-dependencies-"));
-  const result = spawnSync(
-    "pnpm",
-    ["--filter", "@helix/app", "deploy", "--prod", "--ignore-scripts", deployRoot],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf8",
-      env: { ...process.env, CI: "true" },
-      maxBuffer: 32 * 1024 * 1024,
-    },
-  );
-  if (result.error) {
-    rmSync(deployRoot, { recursive: true, force: true });
-    throw new Error(`Unable to create the production dependency tree: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    rmSync(deployRoot, { recursive: true, force: true });
-    throw new Error(
-      `Unable to create the production dependency tree: ${result.stderr.trim() || result.stdout.trim()}`,
-    );
-  }
   try {
+    const result = spawnSync(
+      "pnpm",
+      ["--filter", "@helix/app", "deploy", "--prod", "--ignore-scripts", deployRoot],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, CI: "true" },
+        maxBuffer: 32 * 1024 * 1024,
+      },
+    );
+    if (result.error) {
+      throw new Error(`Unable to create the production dependency tree: ${result.error.message}`);
+    }
+    if (result.status !== 0) {
+      throw new Error(
+        `Unable to create the production dependency tree: ${result.stderr.trim() || result.stdout.trim()}`,
+      );
+    }
     validateLegacyBraceGlobCompatibility(deployRoot);
     return productionDependencyInventory(deployRoot);
   } finally {
@@ -394,12 +391,10 @@ export function main() {
     );
   }
 
-  if (result.failures.length > 0) {
-    for (const failure of result.failures) {
-      process.stderr.write(
-        `Blocked ${failure.severity} advisory ${failure.advisoryId ?? "unknown"} in ${failure.packageName ?? "unknown"}@${failure.versions.join(",") || "unknown"}\n`,
-      );
-    }
+  for (const failure of result.failures) {
+    process.stderr.write(
+      `Blocked ${failure.severity} advisory ${failure.advisoryId ?? "unknown"} in ${failure.packageName ?? "unknown"}@${failure.versions.join(",") || "unknown"}\n`,
+    );
   }
   if (result.unusedExceptions.length > 0) {
     process.stderr.write(

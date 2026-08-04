@@ -12,7 +12,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
-import { EditorsAlphaBadge, useEditorsAlpha } from "@/features/apps/editors-alpha";
+import {
+  EDITORS_ALPHA_DISABLED_TITLE,
+  EditorsAlphaBadge,
+  useEditorsAlpha,
+} from "@/features/apps/editors-alpha";
 import { uploadDriveFile } from "@/features/drive/api";
 import { createSheet } from "./api";
 import type { SheetListRow } from "./model";
@@ -173,11 +177,7 @@ export function SheetsShell({
             type="button"
             className="btn primary"
             disabled={createMutation.isPending || !editorsAlpha.enabled}
-            title={
-              editorsAlpha.enabled
-                ? undefined
-                : "Editors alpha is disabled by an admin. Import and preview files from Drive."
-            }
+            title={editorsAlpha.enabled ? undefined : EDITORS_ALPHA_DISABLED_TITLE}
             onClick={() => createMutation.mutate()}
           >
             <Icons.Plus /> {createMutation.isPending ? "Creating…" : "New"}

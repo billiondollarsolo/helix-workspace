@@ -92,6 +92,9 @@ const genericObjectJsonSchema = {
   additionalProperties: true,
 } as const;
 
+/** Every calendar tool declares the same open output shape; the adapter is stateless. */
+const unknownOutputSchema = zodToolSchema(z.unknown(), genericObjectJsonSchema);
+
 export interface CreateCalendarToolDefinitionsOptions {
   readonly store: CalendarStore;
   readonly invitationSender?: CalendarInvitationSender | undefined;
@@ -157,7 +160,7 @@ export function createCalendarToolDefinitions(
       confirmationRequired: true,
       scopeComposition: { conditionalScopes: [externalAttendeeScope] },
       inputSchema: zodToolSchema(createSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const event = await options.store.createEvent({
           orgId: ctx.actor.orgId,
@@ -188,7 +191,7 @@ export function createCalendarToolDefinitions(
       confirmationRequired: true,
       scopeComposition: { conditionalScopes: [externalAttendeeScope] },
       inputSchema: zodToolSchema(updateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (
         { eventId, sendInvitations: shouldSend, patch: nestedPatch, ...topLevelPatch },
         ctx,
@@ -216,7 +219,7 @@ export function createCalendarToolDefinitions(
       sideEffects: "external_communication",
       confirmationRequired: true,
       inputSchema: zodToolSchema(deleteSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const event = (await options.store.deleteEvent({
           orgId: ctx.actor.orgId,
@@ -239,7 +242,7 @@ export function createCalendarToolDefinitions(
       permission: "calendar.write:respond",
       sideEffects: "external_communication",
       inputSchema: zodToolSchema(respondSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const event = await options.store.respondToEvent({
           orgId: ctx.actor.orgId,
@@ -267,7 +270,7 @@ export function createCalendarToolDefinitions(
       permission: "calendar.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => ({
         events: (
           await options.store.listCalendarEventsForActor({
@@ -290,7 +293,7 @@ export function createCalendarToolDefinitions(
       permission: "calendar.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(calendarsListSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (_input, ctx) => {
         const calendars = (
           await options.store.listCalendarsForActor({
@@ -311,7 +314,7 @@ export function createCalendarToolDefinitions(
       permission: "calendar.read:freebusy",
       sideEffects: "read",
       inputSchema: zodToolSchema(findTimeSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         if (typeof options.store.findTime === "function") {
           return {

@@ -142,44 +142,16 @@ export class AIRouter implements AICapability {
   }
 
   async chat(request: ChatRequest, ctx: Partial<AICallContext> = {}): Promise<ChatResponse> {
-    return trace.getTracer("helix.ai").startActiveSpan("llm.chat", async (span) => {
-      try {
-        const result = await this.#chat(request, ctx, span);
-        span.setStatus({ code: SpanStatusCode.OK });
-        return result;
-      } catch (error) {
-        span.recordException(error instanceof Error ? error : new Error(String(error)));
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      } finally {
-        span.end();
-      }
-    });
+    return inActiveSpan("llm.chat", async (span) => this.#chat(request, ctx, span));
   }
 
   async generateImage(
     request: ImageGenerationRequest,
     ctx: Partial<AICallContext> = {},
   ): Promise<ImageGenerationResponse> {
-    return trace.getTracer("helix.ai").startActiveSpan("ai.image.generate", async (span) => {
-      try {
-        const result = await this.#generateImage(request, ctx, span);
-        span.setStatus({ code: SpanStatusCode.OK });
-        return result;
-      } catch (error) {
-        span.recordException(error instanceof Error ? error : new Error(String(error)));
-        span.setStatus({
-          code: SpanStatusCode.ERROR,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      } finally {
-        span.end();
-      }
-    });
+    return inActiveSpan("ai.image.generate", async (span) =>
+      this.#generateImage(request, ctx, span),
+    );
   }
 
   /**
@@ -197,11 +169,7 @@ export class AIRouter implements AICapability {
       yield* this.#chatStream(request, ctx, span);
       span.setStatus({ code: SpanStatusCode.OK });
     } catch (error) {
-      span.recordException(error instanceof Error ? error : new Error(String(error)));
-      span.setStatus({
-        code: SpanStatusCode.ERROR,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      recordSpanError(span, error);
       throw error;
     } finally {
       span.end();
@@ -219,13 +187,7 @@ export class AIRouter implements AICapability {
     const classification: AIClassification = ctx.classification ?? "standard";
     const actor = ctx.actor ?? this.#systemActor;
     const attempts = await this.#selectProviderAttempts(request, classification);
-    const context: AICallContext = {
-      actor,
-      feature: request.feature,
-      classification,
-      ...(ctx.trace === undefined ? {} : { trace: ctx.trace }),
-      ...(ctx.costLimitCents === undefined ? {} : { costLimitCents: ctx.costLimitCents }),
-    };
+    const context = callContext(actor, request.feature, classification, ctx);
     span.setAttribute("helix.ai.feature", request.feature);
     span.setAttribute("helix.ai.classification", classification);
     span.setAttribute("helix.actor.id", actor.id);
@@ -334,7 +296,7 @@ export class AIRouter implements AICapability {
           "llm.provider": attempt.provider.id,
           "llm.model": modelForMetrics,
           "exception.type": errorName(error),
-          "exception.message": error instanceof Error ? error.message : String(error),
+          "exception.message": errorMessage(error),
         });
       } finally {
         // Release the reservation if the stream was abandoned (client
@@ -495,13 +457,7 @@ export class AIRouter implements AICapability {
     const classification: AIClassification = ctx.classification ?? "standard"; // SECURITY: server-derived only (A1)
     const actor = ctx.actor ?? this.#systemActor;
     const attempts = await this.#selectProviderAttempts(request, classification);
-    const context: AICallContext = {
-      actor,
-      feature: request.feature,
-      classification,
-      ...(ctx.trace === undefined ? {} : { trace: ctx.trace }),
-      ...(ctx.costLimitCents === undefined ? {} : { costLimitCents: ctx.costLimitCents }),
-    };
+    const context = callContext(actor, request.feature, classification, ctx);
     span.setAttribute("helix.ai.feature", request.feature);
     span.setAttribute("helix.ai.classification", classification);
     span.setAttribute("helix.actor.id", actor.id);
@@ -618,7 +574,7 @@ export class AIRouter implements AICapability {
           "llm.provider": attempt.provider.id,
           "llm.model": modelForMetrics,
           "exception.type": errorName(error),
-          "exception.message": error instanceof Error ? error.message : String(error),
+          "exception.message": errorMessage(error),
         });
       }
     }
@@ -638,13 +594,7 @@ export class AIRouter implements AICapability {
     const classification: AIClassification = ctx.classification ?? "standard"; // SECURITY: server-derived only (A1)
     const actor = ctx.actor ?? this.#systemActor;
     const attempts = await this.#selectImageProviderAttempts(request, classification);
-    const context: AICallContext = {
-      actor,
-      feature: request.feature,
-      classification,
-      ...(ctx.trace === undefined ? {} : { trace: ctx.trace }),
-      ...(ctx.costLimitCents === undefined ? {} : { costLimitCents: ctx.costLimitCents }),
-    };
+    const context = callContext(actor, request.feature, classification, ctx);
     span.setAttribute("helix.ai.feature", request.feature);
     span.setAttribute("helix.ai.classification", classification);
     span.setAttribute("helix.actor.id", actor.id);
@@ -709,7 +659,7 @@ export class AIRouter implements AICapability {
           "llm.provider": attempt.provider.id,
           "llm.model": modelForMetrics,
           "exception.type": errorName(error),
-          "exception.message": error instanceof Error ? error.message : String(error),
+          "exception.message": errorMessage(error),
         });
       }
     }
@@ -824,10 +774,11 @@ export class AIRouter implements AICapability {
       this.#policy.featureProviders?.[request.feature] ?? this.#policy.defaultProviderId;
     const provider =
       preferredId === undefined ? this.listProviders()[0] : this.#providers.get(preferredId);
-    if (provider !== undefined) {
-      if (providerAllowedForClassification(provider, classification, this.#policy)) {
-        return [{ provider, fallback: false }];
-      }
+    if (
+      provider !== undefined &&
+      providerAllowedForClassification(provider, classification, this.#policy)
+    ) {
+      return [{ provider, fallback: false }];
     }
     const allowed = this.listProviders().find((candidate) =>
       providerAllowedForClassification(candidate, classification, this.#policy),
@@ -887,7 +838,7 @@ export class AIRouter implements AICapability {
         providerAllowedForClassification(attempt.provider, classification, this.#policy),
       );
       if (allowedAttempts.length > 0) {
-        return dedupeImageAttempts(allowedAttempts);
+        return dedupeAttempts(allowedAttempts);
       }
       throw new AIClassificationBlockedError(
         `No image provider configured for ${request.feature} can process ${classification} AI requests.`,
@@ -900,10 +851,11 @@ export class AIRouter implements AICapability {
       preferredId === undefined
         ? this.listImageProviders()[0]
         : this.#imageProviders.get(preferredId);
-    if (provider !== undefined) {
-      if (providerAllowedForClassification(provider, classification, this.#policy)) {
-        return [{ provider, fallback: false }];
-      }
+    if (
+      provider !== undefined &&
+      providerAllowedForClassification(provider, classification, this.#policy)
+    ) {
+      return [{ provider, fallback: false }];
     }
     const allowed = this.listImageProviders().find((candidate) =>
       providerAllowedForClassification(candidate, classification, this.#policy),
@@ -938,6 +890,51 @@ export class AIRouter implements AICapability {
       ...(ref.model === undefined ? {} : { model: ref.model }),
     };
   }
+}
+
+/**
+ * Runs `body` inside a new active `helix.ai` span, marking the span OK on
+ * success and recording the exception plus an ERROR status on failure. The
+ * span is always ended, and the original error is always rethrown.
+ */
+async function inActiveSpan<T>(name: string, body: (span: Span) => Promise<T>): Promise<T> {
+  return trace.getTracer("helix.ai").startActiveSpan(name, async (span) => {
+    try {
+      const result = await body(span);
+      span.setStatus({ code: SpanStatusCode.OK });
+      return result;
+    } catch (error) {
+      recordSpanError(span, error);
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
+}
+
+/**
+ * Builds the {@link AICallContext} handed to providers. `actor` and
+ * `classification` are passed separately because the caller has already
+ * resolved them server-side — they are deliberately not read back off `ctx`.
+ */
+function callContext(
+  actor: Actor,
+  feature: string,
+  classification: AIClassification,
+  ctx: Partial<AICallContext>,
+): AICallContext {
+  return {
+    actor,
+    feature,
+    classification,
+    ...(ctx.trace === undefined ? {} : { trace: ctx.trace }),
+    ...(ctx.costLimitCents === undefined ? {} : { costLimitCents: ctx.costLimitCents }),
+  };
+}
+
+function recordSpanError(span: Span, error: unknown): void {
+  span.recordException(error instanceof Error ? error : new Error(errorMessage(error)));
+  span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage(error) });
 }
 
 interface AIProviderAttempt {
@@ -1155,25 +1152,16 @@ function durationSecondsSince(start: bigint): number {
   return Number(process.hrtime.bigint() - start) / 1_000_000_000;
 }
 
-function dedupeAttempts(attempts: readonly AIProviderAttempt[]): readonly AIProviderAttempt[] {
+/**
+ * Drops repeat (provider, model) pairs while preserving order, so a feature
+ * route whose fallback names the same provider+model as its primary does not
+ * cause the router to retry an attempt that has already failed.
+ */
+function dedupeAttempts<T extends AIProviderAttempt | ImageProviderAttempt>(
+  attempts: readonly T[],
+): readonly T[] {
   const seen = new Set<string>();
-  const deduped: AIProviderAttempt[] = [];
-  for (const attempt of attempts) {
-    const key = `${attempt.provider.id}:${attempt.model ?? ""}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    deduped.push(attempt);
-  }
-  return deduped;
-}
-
-function dedupeImageAttempts(
-  attempts: readonly ImageProviderAttempt[],
-): readonly ImageProviderAttempt[] {
-  const seen = new Set<string>();
-  const deduped: ImageProviderAttempt[] = [];
+  const deduped: T[] = [];
   for (const attempt of attempts) {
     const key = `${attempt.provider.id}:${attempt.model ?? ""}`;
     if (seen.has(key)) {
@@ -1191,4 +1179,8 @@ function shouldTryFallback(error: unknown): boolean {
 
 function errorName(error: unknown): string {
   return error instanceof Error ? error.name : "Error";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

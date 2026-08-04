@@ -52,6 +52,54 @@ function runLocalEvidence() {
 
   try {
     const credentials = prepareSecrets(temporaryDirectory);
+
+    // The fixture helpers all take the same run-scoped plumbing (network, temp
+    // directory, credentials). Binding it once here lets each scenario below read
+    // as the security property it asserts instead of a wall of repeated arguments.
+    function appQuery(sql, sslmode = "verify-full") {
+      return postgresRun(
+        network,
+        temporaryDirectory,
+        credentials.appPassword,
+        sslmode,
+        "helix_app",
+        sql,
+      );
+    }
+    function migratorQuery(sql) {
+      return postgresRun(
+        network,
+        temporaryDirectory,
+        credentials.migrationPassword,
+        "verify-full",
+        "helix_migrator",
+        sql,
+      );
+    }
+    function redis(useTls, authenticate) {
+      return redisRun(network, temporaryDirectory, credentials.redisPassword, useTls, authenticate);
+    }
+    function natsPublish(useClientCertificate, authenticate, subject, payload) {
+      return run(
+        "docker",
+        natsArgs(
+          network,
+          temporaryDirectory,
+          credentials.natsPassword,
+          useClientCertificate,
+          authenticate,
+          "pub",
+          subject,
+          payload,
+        ),
+      );
+    }
+    function waitAllHealthy() {
+      for (const service of ["postgres", "redis", "nats"]) {
+        waitHealthy(environment, project, service);
+      }
+    }
+
     requireSuccess(
       run("docker", composeArgs(project, "up", "-d", "--build", "postgres", "redis", "nats"), {
         env: environment,
@@ -60,43 +108,16 @@ function runLocalEvidence() {
       "data-plane stack startup",
     );
     stackStarted = true;
-    for (const service of ["postgres", "redis", "nats"]) {
-      waitHealthy(environment, project, service);
-    }
+    waitAllHealthy();
 
     timedScenario(evidence, "postgres_tls_only", () => {
-      requireFailure(
-        postgresRun(
-          network,
-          temporaryDirectory,
-          credentials.appPassword,
-          "disable",
-          "helix_app",
-          "select 1",
-        ),
-        "plaintext PostgreSQL connection",
-      );
-      requireSuccess(
-        postgresRun(
-          network,
-          temporaryDirectory,
-          credentials.appPassword,
-          "verify-full",
-          "helix_app",
-          "select 1",
-        ),
-        "TLS PostgreSQL connection",
-      );
+      requireFailure(appQuery("select 1", "disable"), "plaintext PostgreSQL connection");
+      requireSuccess(appQuery("select 1"), "TLS PostgreSQL connection");
     });
 
     timedScenario(evidence, "postgres_least_privilege_roles", () => {
       const role = requireSuccess(
-        postgresRun(
-          network,
-          temporaryDirectory,
-          credentials.appPassword,
-          "verify-full",
-          "helix_app",
+        appQuery(
           "select current_user || ':' || rolsuper::text || ':' || rolcreatedb::text || ':' || rolcreaterole::text from pg_roles where rolname = current_user",
         ),
         "application role inspection",
@@ -105,34 +126,15 @@ function runLocalEvidence() {
         throw new Error("application PostgreSQL role is over-privileged");
       }
       requireFailure(
-        postgresRun(
-          network,
-          temporaryDirectory,
-          credentials.appPassword,
-          "verify-full",
-          "helix_app",
-          "create table public.helix_data_plane_forbidden(id integer)",
-        ),
+        appQuery("create table public.helix_data_plane_forbidden(id integer)"),
         "application schema mutation",
       );
       requireSuccess(
-        postgresRun(
-          network,
-          temporaryDirectory,
-          credentials.migrationPassword,
-          "verify-full",
-          "helix_migrator",
-          "create table public.helix_data_plane_smoke(id integer primary key)",
-        ),
+        migratorQuery("create table public.helix_data_plane_smoke(id integer primary key)"),
         "migration schema mutation",
       );
       requireSuccess(
-        postgresRun(
-          network,
-          temporaryDirectory,
-          credentials.appPassword,
-          "verify-full",
-          "helix_app",
+        appQuery(
           "insert into public.helix_data_plane_smoke values (1); select count(*) from public.helix_data_plane_smoke",
         ),
         "application DML",
@@ -140,116 +142,42 @@ function runLocalEvidence() {
     });
 
     timedScenario(evidence, "redis_tls_only", () => {
-      requireFailure(
-        redisRun(network, temporaryDirectory, credentials.redisPassword, false, true),
-        "plaintext Redis connection",
-      );
-      requireSuccess(
-        redisRun(network, temporaryDirectory, credentials.redisPassword, true, true),
-        "TLS Redis connection",
-      );
+      requireFailure(redis(false, true), "plaintext Redis connection");
+      requireSuccess(redis(true, true), "TLS Redis connection");
     });
 
     timedScenario(evidence, "redis_authentication", () => {
-      const denied = redisRun(network, temporaryDirectory, credentials.redisPassword, true, false);
+      const denied = redis(true, false);
       if (!/NOAUTH/iu.test(`${denied.stdout}\n${denied.stderr}`)) {
         throw new Error("unauthenticated Redis connection was not denied");
       }
-      if (
-        requireSuccess(
-          redisRun(network, temporaryDirectory, credentials.redisPassword, true, true),
-          "authenticated Redis connection",
-        ).trim() !== "PONG"
-      ) {
+      if (requireSuccess(redis(true, true), "authenticated Redis connection").trim() !== "PONG") {
         throw new Error("authenticated Redis response was not PONG");
       }
     });
 
     timedScenario(evidence, "nats_mutual_tls", () => {
       requireFailure(
-        run(
-          "docker",
-          natsArgs(
-            network,
-            temporaryDirectory,
-            credentials.natsPassword,
-            false,
-            true,
-            "pub",
-            "helix.smoke",
-            "probe",
-          ),
-        ),
+        natsPublish(false, true, "helix.smoke", "probe"),
         "NATS connection without client certificate",
       );
       requireSuccess(
-        run(
-          "docker",
-          natsArgs(
-            network,
-            temporaryDirectory,
-            credentials.natsPassword,
-            true,
-            true,
-            "pub",
-            "helix.smoke",
-            "probe",
-          ),
-        ),
+        natsPublish(true, true, "helix.smoke", "probe"),
         "mutually authenticated NATS connection",
       );
     });
 
     timedScenario(evidence, "nats_authentication", () => {
       requireFailure(
-        run(
-          "docker",
-          natsArgs(
-            network,
-            temporaryDirectory,
-            credentials.natsPassword,
-            true,
-            false,
-            "pub",
-            "helix.smoke",
-            "probe",
-          ),
-        ),
+        natsPublish(true, false, "helix.smoke", "probe"),
         "NATS connection without application authentication",
       );
     });
 
     timedScenario(evidence, "nats_subject_permissions", () => {
-      requireSuccess(
-        run(
-          "docker",
-          natsArgs(
-            network,
-            temporaryDirectory,
-            credentials.natsPassword,
-            true,
-            true,
-            "pub",
-            "helix.smoke",
-            "probe",
-          ),
-        ),
-        "authorized NATS publish",
-      );
+      requireSuccess(natsPublish(true, true, "helix.smoke", "probe"), "authorized NATS publish");
       requireFailure(
-        run(
-          "docker",
-          natsArgs(
-            network,
-            temporaryDirectory,
-            credentials.natsPassword,
-            true,
-            true,
-            "pub",
-            "outside.smoke",
-            "probe",
-          ),
-        ),
+        natsPublish(true, true, "outside.smoke", "probe"),
         "unauthorized NATS publish",
       );
     });
@@ -265,53 +193,16 @@ function runLocalEvidence() {
         }),
         "data-plane certificate rotation restart",
       );
-      for (const service of ["postgres", "redis", "nats"]) {
-        waitHealthy(environment, project, service);
-      }
+      waitAllHealthy();
+      requireSuccess(appQuery("select 1"), "PostgreSQL after certificate rotation");
+      requireSuccess(redis(true, true), "Redis after certificate rotation");
       requireSuccess(
-        postgresRun(
-          network,
-          temporaryDirectory,
-          credentials.appPassword,
-          "verify-full",
-          "helix_app",
-          "select 1",
-        ),
-        "PostgreSQL after certificate rotation",
-      );
-      requireSuccess(
-        redisRun(network, temporaryDirectory, credentials.redisPassword, true, true),
-        "Redis after certificate rotation",
-      );
-      requireSuccess(
-        run(
-          "docker",
-          natsArgs(
-            network,
-            temporaryDirectory,
-            credentials.natsPassword,
-            true,
-            true,
-            "pub",
-            "helix.smoke",
-            "rotated",
-          ),
-        ),
+        natsPublish(true, true, "helix.smoke", "rotated"),
         "NATS after certificate rotation",
       );
 
       copyFileSync(oldCa, join(temporaryDirectory, "postgres_ca"));
-      requireFailure(
-        postgresRun(
-          network,
-          temporaryDirectory,
-          credentials.appPassword,
-          "verify-full",
-          "helix_app",
-          "select 1",
-        ),
-        "PostgreSQL connection using retired CA",
-      );
+      requireFailure(appQuery("select 1"), "PostgreSQL connection using retired CA");
     });
 
     evidence.status = "passed";

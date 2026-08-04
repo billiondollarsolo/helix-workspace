@@ -636,12 +636,7 @@ function resolution(
 }
 
 function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { readonly code?: unknown }).code === "23505"
-  );
+  return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }
 
 function isCatchAllConstraintViolation(error: unknown): boolean {
@@ -649,7 +644,6 @@ function isCatchAllConstraintViolation(error: unknown): boolean {
     typeof error === "object" &&
     error !== null &&
     "constraint_name" in error &&
-    (error as { readonly constraint_name?: unknown }).constraint_name ===
-      "mail_receiving_domains_catch_all_same_org"
+    error.constraint_name === "mail_receiving_domains_catch_all_same_org"
   );
 }

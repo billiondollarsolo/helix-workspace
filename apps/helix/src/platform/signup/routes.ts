@@ -181,13 +181,10 @@ function invalidOnboardingIdentityChoice(
   reply: FastifyReply,
   request: FastifyRequest,
 ): FastifyReply {
-  return reply.code(400).send(
-    buildErrorEnvelope({
-      statusCode: 400,
-      code: "bad_request",
-      message: "Selected SSO provider is not available for the onboarding plan choice.",
-      traceId: traceIdForRequest(request),
-    }),
+  return sendSignupBadRequest(
+    reply,
+    request,
+    "Selected SSO provider is not available for the onboarding plan choice.",
   );
 }
 
@@ -231,29 +228,30 @@ const REQUIRED_SAAS_SIGNUP_DEPENDENCIES = [
   "onboardingInvites",
 ] as const;
 
+interface SignupRouteDependencies {
+  readonly orgs?: SignupOrgStore;
+  readonly provisioning?: SignupProvisioningStore;
+  readonly verificationTokens?: SignupEmailVerificationTokenStore;
+  readonly identities?: SignupVerifiedIdentityStore;
+  readonly sessionIssuer?: BetterAuthSessionIssuer;
+  readonly outbox?: Pick<OutboxStore, "insert">;
+  readonly publicBaseUrl?: string;
+  readonly abuse?: SignupAbuseProtector;
+  readonly ownerEmails?: SignupOwnerEmailLookup;
+  readonly passwordScreener?: SignupPasswordScreener;
+  readonly recaptcha?: SignupRecaptchaVerifier;
+  readonly riskReviewer?: SignupRiskReviewer;
+  readonly actorFromRequest?: (request: FastifyRequest) => Actor | Promise<Actor>;
+  readonly onboarding?: SignupOnboardingStore;
+  readonly onboardingInvites?: SignupOnboardingInviteTokenStore;
+  readonly metering?: MeteringClient;
+  readonly onMeteringError?: (error: unknown) => void;
+  readonly metrics?: PlatformMetrics;
+}
+
 export async function registerSignupRoutesForMode(
   app: FastifyInstance,
-  options: {
-    readonly config: Pick<HelixConfig, "mode">;
-    readonly orgs?: SignupOrgStore;
-    readonly provisioning?: SignupProvisioningStore;
-    readonly verificationTokens?: SignupEmailVerificationTokenStore;
-    readonly identities?: SignupVerifiedIdentityStore;
-    readonly sessionIssuer?: BetterAuthSessionIssuer;
-    readonly outbox?: Pick<OutboxStore, "insert">;
-    readonly publicBaseUrl?: string;
-    readonly abuse?: SignupAbuseProtector;
-    readonly ownerEmails?: SignupOwnerEmailLookup;
-    readonly passwordScreener?: SignupPasswordScreener;
-    readonly recaptcha?: SignupRecaptchaVerifier;
-    readonly riskReviewer?: SignupRiskReviewer;
-    readonly actorFromRequest?: (request: FastifyRequest) => Actor | Promise<Actor>;
-    readonly onboarding?: SignupOnboardingStore;
-    readonly onboardingInvites?: SignupOnboardingInviteTokenStore;
-    readonly metering?: MeteringClient;
-    readonly onMeteringError?: (error: unknown) => void;
-    readonly metrics?: PlatformMetrics;
-  },
+  options: SignupRouteDependencies & { readonly config: Pick<HelixConfig, "mode"> },
 ): Promise<void> {
   if (!shouldRegisterSignupRoutes(options.config)) {
     return;
@@ -266,69 +264,24 @@ export async function registerSignupRoutesForMode(
       `SaaS signup cannot start without required dependencies: ${missingDependencies.join(", ")}`,
     );
   }
-  await registerSignupRoutes(app, {
-    ...(options.orgs === undefined ? {} : { orgs: options.orgs }),
-    ...(options.provisioning === undefined ? {} : { provisioning: options.provisioning }),
-    ...(options.verificationTokens === undefined
-      ? {}
-      : { verificationTokens: options.verificationTokens }),
-    ...(options.identities === undefined ? {} : { identities: options.identities }),
-    ...(options.sessionIssuer === undefined ? {} : { sessionIssuer: options.sessionIssuer }),
-    ...(options.outbox === undefined ? {} : { outbox: options.outbox }),
-    ...(options.publicBaseUrl === undefined ? {} : { publicBaseUrl: options.publicBaseUrl }),
-    ...(options.abuse === undefined ? {} : { abuse: options.abuse }),
-    ...(options.ownerEmails === undefined ? {} : { ownerEmails: options.ownerEmails }),
-    ...(options.passwordScreener === undefined
-      ? {}
-      : { passwordScreener: options.passwordScreener }),
-    ...(options.recaptcha === undefined ? {} : { recaptcha: options.recaptcha }),
-    ...(options.riskReviewer === undefined ? {} : { riskReviewer: options.riskReviewer }),
-    ...(options.actorFromRequest === undefined
-      ? {}
-      : { actorFromRequest: options.actorFromRequest }),
-    ...(options.onboarding === undefined ? {} : { onboarding: options.onboarding }),
-    ...(options.onboardingInvites === undefined
-      ? {}
-      : { onboardingInvites: options.onboardingInvites }),
-    ...(options.metering === undefined ? {} : { metering: options.metering }),
-    ...(options.onMeteringError === undefined ? {} : { onMeteringError: options.onMeteringError }),
-    ...(options.metrics === undefined ? {} : { metrics: options.metrics }),
-  });
+  // Drops `config` so only the wiring dependencies reach the route registrar.
+  const { config: _config, ...dependencies } = options;
+  await registerSignupRoutes(app, dependencies);
 }
 
 export async function registerSignupRoutes(
   app: FastifyInstance,
-  options: {
-    readonly orgs?: SignupOrgStore;
-    readonly provisioning?: SignupProvisioningStore;
-    readonly verificationTokens?: SignupEmailVerificationTokenStore;
-    readonly identities?: SignupVerifiedIdentityStore;
-    readonly sessionIssuer?: BetterAuthSessionIssuer;
-    readonly outbox?: Pick<OutboxStore, "insert">;
-    readonly publicBaseUrl?: string;
-    readonly abuse?: SignupAbuseProtector;
-    readonly ownerEmails?: SignupOwnerEmailLookup;
-    readonly passwordScreener?: SignupPasswordScreener;
-    readonly recaptcha?: SignupRecaptchaVerifier;
-    readonly riskReviewer?: SignupRiskReviewer;
-    readonly actorFromRequest?: (request: FastifyRequest) => Actor | Promise<Actor>;
-    readonly onboarding?: SignupOnboardingStore;
-    readonly onboardingInvites?: SignupOnboardingInviteTokenStore;
-    readonly metering?: MeteringClient;
-    readonly onMeteringError?: (error: unknown) => void;
-    readonly metrics?: PlatformMetrics;
-  } = {},
+  options: SignupRouteDependencies = {},
 ): Promise<void> {
+  const publicBaseUrl = options.publicBaseUrl ?? defaultPublicBaseUrl;
+
   app.get("/api/signup/org-slug/:slug/availability", async (request, reply) => {
     const parsed = slugAvailabilityParamsSchema.safeParse(request.params);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup slug availability request: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup slug availability request: ${parsed.error.message}`,
       );
     }
 
@@ -344,19 +297,13 @@ export async function registerSignupRoutes(
     }
 
     if (options.orgs?.findBySlug === undefined) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_slug_check_not_implemented",
-          message:
-            "Signup organization slug availability is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: {
-            phase: "commercial.B.4",
-            route: "/api/signup/org-slug/:slug/availability",
-          },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_slug_check_not_implemented",
+        message:
+          "Signup organization slug availability is registered for SaaS mode but is not implemented yet.",
+        phase: "commercial.B.4",
+        route: "/api/signup/org-slug/:slug/availability",
+      });
     }
 
     const existing = await options.orgs.findBySlug(slug);
@@ -379,13 +326,10 @@ export async function registerSignupRoutes(
   app.post("/api/signup", async (request, reply) => {
     const parsed = signupBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup request body: ${parsed.error.message}`,
       );
     }
 
@@ -407,14 +351,11 @@ export async function registerSignupRoutes(
 
     const existingOwner = await options.ownerEmails?.findOwnerByEmail(parsed.data.email);
     if (existingOwner !== undefined && existingOwner !== null) {
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "signup_owner_email_unavailable",
-          message: "That email address is already an owner of another workspace.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 409,
+        code: "signup_owner_email_unavailable",
+        message: "That email address is already an owner of another workspace.",
+      });
     }
 
     const passwordDecision = await options.passwordScreener?.check({
@@ -440,14 +381,11 @@ export async function registerSignupRoutes(
         });
       } catch (error: unknown) {
         if (isUniqueViolation(error)) {
-          return reply.code(409).send(
-            buildErrorEnvelope({
-              statusCode: 409,
-              code: "org_slug_unavailable",
-              message: "That organization slug is not available.",
-              traceId: traceIdForRequest(request),
-            }),
-          );
+          return sendSignupError(reply, request, {
+            statusCode: 409,
+            code: "org_slug_unavailable",
+            message: "That organization slug is not available.",
+          });
         }
         throw error;
       }
@@ -494,7 +432,7 @@ export async function registerSignupRoutes(
           org,
           email: verification.email,
           verification,
-          publicBaseUrl: options.publicBaseUrl ?? defaultPublicBaseUrl,
+          publicBaseUrl,
           request,
         });
         await enqueueSignupFunnelEvent({
@@ -523,42 +461,33 @@ export async function registerSignupRoutes(
       });
     }
 
-    return reply.code(501).send(
-      buildErrorEnvelope({
-        statusCode: 501,
-        code: "signup_not_implemented",
-        message:
-          "Self-service signup provisioning is registered for SaaS mode but is not implemented yet.",
-        traceId: traceIdForRequest(request),
-        details: { phase: "platform-v2.A.8", route: "/api/signup" },
-      }),
-    );
+    return sendSignupNotImplemented(reply, request, {
+      code: "signup_not_implemented",
+      message:
+        "Self-service signup provisioning is registered for SaaS mode but is not implemented yet.",
+      phase: "platform-v2.A.8",
+      route: "/api/signup",
+    });
   });
 
   app.post("/api/signup/form-viewed", async (request, reply) => {
     const parsed = signupFormViewedBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup form-viewed request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup form-viewed request body: ${parsed.error.message}`,
       );
     }
 
     if (options.outbox === undefined) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_form_viewed_telemetry_not_implemented",
-          message:
-            "Signup form-viewed telemetry is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/form-viewed" },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_form_viewed_telemetry_not_implemented",
+        message:
+          "Signup form-viewed telemetry is registered for SaaS mode but is not implemented yet.",
+        phase: "commercial.B.4",
+        route: "/api/signup/form-viewed",
+      });
     }
 
     await options.outbox.insert({
@@ -581,70 +510,55 @@ export async function registerSignupRoutes(
   app.post("/api/signup/verify-email", async (request, reply) => {
     const parsed = verifyEmailBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup verification request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup verification request body: ${parsed.error.message}`,
       );
     }
 
     const activation = signupActivationStores(options);
     if (activation === null) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_verify_not_implemented",
-          message:
-            "Signup email verification is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "platform-v2.A.8", route: "/api/signup/verify-email" },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_verify_not_implemented",
+        message:
+          "Signup email verification is registered for SaaS mode but is not implemented yet.",
+        phase: "platform-v2.A.8",
+        route: "/api/signup/verify-email",
+      });
     }
 
     const tokenRecord = await activation.verificationTokens.findValid({ token: parsed.data.token });
     if (tokenRecord === null) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "signup_verification_invalid",
-          message: "Signup email verification token is invalid or expired.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 400,
+        code: "signup_verification_invalid",
+        message: "Signup email verification token is invalid or expired.",
+      });
     }
 
     const provisioning = await activation.provisioning.findByOrgId(tokenRecord.orgId);
     if (provisioning?.status !== "waiting_for_verification") {
       const provisioningStatus = provisioning?.status ?? "missing";
       const currentStep = provisioning?.currentStep ?? null;
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "tenant_not_ready",
-          message: "Tenant provisioning has not completed its pre-verification steps.",
-          traceId: traceIdForRequest(request),
-          details: {
-            status: provisioningStatus,
-            currentStep,
-          },
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 409,
+        code: "tenant_not_ready",
+        message: "Tenant provisioning has not completed its pre-verification steps.",
+        details: {
+          status: provisioningStatus,
+          currentStep,
+        },
+      });
     }
 
     const consumed = await activation.verificationTokens.consume({ token: parsed.data.token });
     if (consumed === null) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "signup_verification_invalid",
-          message: "Signup email verification token is invalid or expired.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 400,
+        code: "signup_verification_invalid",
+        message: "Signup email verification token is invalid or expired.",
+      });
     }
 
     const identity = await activation.identities.createVerifiedCredentialUser({
@@ -653,26 +567,20 @@ export async function registerSignupRoutes(
       passwordHash: consumed.passwordHash,
     });
     if (identity === null) {
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "signup_identity_conflict",
-          message: "Verified signup identity could not be linked to the tenant owner actor.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 409,
+        code: "signup_identity_conflict",
+        message: "Verified signup identity could not be linked to the tenant owner actor.",
+      });
     }
 
     const org = await activation.orgs.activateProvisionedOrg(consumed.orgId);
     if (org === null) {
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "tenant_activation_conflict",
-          message: "Tenant could not be activated from its current status.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 409,
+        code: "tenant_activation_conflict",
+        message: "Tenant could not be activated from its current status.",
+      });
     }
 
     const succeededProvisioning = await activation.provisioning.markSucceeded({
@@ -746,20 +654,17 @@ export async function registerSignupRoutes(
         created: session !== undefined,
         status: session === undefined ? "credential_ready" : "created",
       },
-      workspace: buildSignupWorkspaceUrls(options.publicBaseUrl ?? defaultPublicBaseUrl, org.slug),
+      workspace: buildSignupWorkspaceUrls(publicBaseUrl, org.slug),
     };
   });
 
   app.post("/api/signup/resend-verification", async (request, reply) => {
     const parsed = resendVerificationBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup verification resend request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup verification resend request body: ${parsed.error.message}`,
       );
     }
 
@@ -767,16 +672,13 @@ export async function registerSignupRoutes(
       options.verificationTokens?.reissueFromToken === undefined ||
       options.outbox === undefined
     ) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_verification_resend_not_implemented",
-          message:
-            "Signup email verification resend is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/resend-verification" },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_verification_resend_not_implemented",
+        message:
+          "Signup email verification resend is registered for SaaS mode but is not implemented yet.",
+        phase: "commercial.B.4",
+        route: "/api/signup/resend-verification",
+      });
     }
 
     const reissue = await options.verificationTokens.reissueFromToken({
@@ -784,14 +686,11 @@ export async function registerSignupRoutes(
     });
     if (reissue.status === "rate_limited") {
       reply.header("retry-after", String(reissue.retryAfterSeconds));
-      return reply.code(429).send(
-        buildErrorEnvelope({
-          statusCode: 429,
-          code: "signup_verification_resend_rate_limited",
-          message: "Too many signup verification resend attempts.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 429,
+        code: "signup_verification_resend_rate_limited",
+        message: "Too many signup verification resend attempts.",
+      });
     }
     if (reissue.status === "issued") {
       const org = {
@@ -803,7 +702,7 @@ export async function registerSignupRoutes(
         org,
         email: reissue.verification.email,
         verification: reissue.verification,
-        publicBaseUrl: options.publicBaseUrl ?? defaultPublicBaseUrl,
+        publicBaseUrl,
         request,
       });
       await options.outbox.insert({
@@ -826,28 +725,18 @@ export async function registerSignupRoutes(
 
   app.get("/api/signup/onboarding-state", async (request, reply) => {
     if (options.actorFromRequest === undefined || options.onboarding?.getState === undefined) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_onboarding_state_not_implemented",
-          message:
-            "Signup onboarding state recovery is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/onboarding-state" },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_onboarding_state_not_implemented",
+        message:
+          "Signup onboarding state recovery is registered for SaaS mode but is not implemented yet.",
+        phase: "commercial.B.4",
+        route: "/api/signup/onboarding-state",
+      });
     }
 
     const actor = await options.actorFromRequest(request);
     if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupUnauthorized(reply, request);
     }
 
     return options.onboarding.getState(actor.orgId);
@@ -856,13 +745,10 @@ export async function registerSignupRoutes(
   app.post("/api/signup/onboarding-progress", async (request, reply) => {
     const parsed = onboardingProgressBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup onboarding progress request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup onboarding progress request body: ${parsed.error.message}`,
       );
     }
     if (
@@ -875,28 +761,18 @@ export async function registerSignupRoutes(
       options.actorFromRequest === undefined ||
       options.onboarding?.persistProgress === undefined
     ) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_onboarding_progress_not_implemented",
-          message:
-            "Signup onboarding progress recovery is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/onboarding-progress" },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_onboarding_progress_not_implemented",
+        message:
+          "Signup onboarding progress recovery is registered for SaaS mode but is not implemented yet.",
+        phase: "commercial.B.4",
+        route: "/api/signup/onboarding-progress",
+      });
     }
 
     const actor = await options.actorFromRequest(request);
     if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupUnauthorized(reply, request);
     }
 
     await options.onboarding.persistProgress({
@@ -916,13 +792,10 @@ export async function registerSignupRoutes(
   app.post("/api/signup/onboarding-event", async (request, reply) => {
     const parsed = onboardingEventBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup onboarding event request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup onboarding event request body: ${parsed.error.message}`,
       );
     }
     if (
@@ -933,34 +806,25 @@ export async function registerSignupRoutes(
     }
 
     if (options.actorFromRequest === undefined || options.outbox === undefined) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_onboarding_telemetry_not_implemented",
-          message:
-            "Signup onboarding telemetry is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/onboarding-event" },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_onboarding_telemetry_not_implemented",
+        message:
+          "Signup onboarding telemetry is registered for SaaS mode but is not implemented yet.",
+        phase: "commercial.B.4",
+        route: "/api/signup/onboarding-event",
+      });
     }
 
     const actor = await options.actorFromRequest(request);
     if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupUnauthorized(reply, request);
     }
 
-    const subject =
-      parsed.data.event === "started"
-        ? signupFunnelSubjects.onboardingStarted
-        : signupFunnelSubjects.onboardingCompleted;
+    const started = parsed.data.event === "started";
+    const subject = started
+      ? signupFunnelSubjects.onboardingStarted
+      : signupFunnelSubjects.onboardingCompleted;
+    const step = started ? "onboarding_started" : "onboarding_completed";
     const eventDetails =
       parsed.data.event === "completed"
         ? {
@@ -987,14 +851,12 @@ export async function registerSignupRoutes(
         orgId: actor.orgId,
         actorId: actor.id,
         source: "signup",
-        step: parsed.data.event === "started" ? "onboarding_started" : "onboarding_completed",
+        step,
         ...eventDetails,
       },
       ...traceForOutbox(request),
     });
-    recordSignupFunnelMetric(options.metrics, {
-      step: parsed.data.event === "started" ? "onboarding_started" : "onboarding_completed",
-    });
+    recordSignupFunnelMetric(options.metrics, { step });
 
     return reply.code(202).send({ status: "accepted" });
   });
@@ -1002,13 +864,10 @@ export async function registerSignupRoutes(
   app.post("/api/signup/onboarding-invites", async (request, reply) => {
     const parsed = onboardingInvitesBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup onboarding invites request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup onboarding invites request body: ${parsed.error.message}`,
       );
     }
 
@@ -1018,50 +877,34 @@ export async function registerSignupRoutes(
       options.onboardingInvites === undefined ||
       options.orgs?.findById === undefined
     ) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_onboarding_invites_not_implemented",
-          message:
-            "Signup onboarding invite delivery is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/onboarding-invites" },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_onboarding_invites_not_implemented",
+        message:
+          "Signup onboarding invite delivery is registered for SaaS mode but is not implemented yet.",
+        phase: "commercial.B.4",
+        route: "/api/signup/onboarding-invites",
+      });
     }
 
     const actor = await options.actorFromRequest(request);
     if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupUnauthorized(reply, request);
     }
     if (!canSendSignupOnboardingInvites(actor)) {
-      return reply.code(403).send(
-        buildErrorEnvelope({
-          statusCode: 403,
-          code: "forbidden",
-          message: "Admin access is required to invite teammates.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 403,
+        code: "forbidden",
+        message: "Admin access is required to invite teammates.",
+      });
     }
 
     const org = await options.orgs.findById(actor.orgId);
     if (org === null) {
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "signup_onboarding_invites_org_not_found",
-          message: "Invite delivery could not resolve the current workspace.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 409,
+        code: "signup_onboarding_invites_org_not_found",
+        message: "Invite delivery could not resolve the current workspace.",
+      });
     }
 
     const emails = uniqueSteps(parsed.data.emails);
@@ -1079,11 +922,7 @@ export async function registerSignupRoutes(
           orgSlug: org.slug,
           actorId: actor.id,
           email,
-          inviteUrl: buildSignupOnboardingInviteUrl(
-            options.publicBaseUrl ?? defaultPublicBaseUrl,
-            org.slug,
-            invite.token,
-          ),
+          inviteUrl: buildSignupOnboardingInviteUrl(publicBaseUrl, org.slug, invite.token),
           source: "signup",
         },
         ...traceForOutbox(request),
@@ -1096,13 +935,10 @@ export async function registerSignupRoutes(
   app.post("/api/signup/onboarding-invite/accept", async (request, reply) => {
     const parsed = onboardingInviteAcceptBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup onboarding invite acceptance request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup onboarding invite acceptance request body: ${parsed.error.message}`,
       );
     }
 
@@ -1111,28 +947,18 @@ export async function registerSignupRoutes(
       options.onboardingInvites === undefined ||
       options.orgs?.findById === undefined
     ) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_onboarding_invite_accept_not_implemented",
-          message:
-            "Signup onboarding invite acceptance is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/onboarding-invite/accept" },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_onboarding_invite_accept_not_implemented",
+        message:
+          "Signup onboarding invite acceptance is registered for SaaS mode but is not implemented yet.",
+        phase: "commercial.B.4",
+        route: "/api/signup/onboarding-invite/accept",
+      });
     }
 
     const actor = await options.actorFromRequest(request);
     if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupUnauthorized(reply, request);
     }
 
     const acceptance = await options.onboardingInvites.accept({
@@ -1140,36 +966,27 @@ export async function registerSignupRoutes(
       actor,
     });
     if (acceptance.status === "not_found") {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "signup_onboarding_invite_invalid",
-          message: "Signup onboarding invite is invalid or expired.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 400,
+        code: "signup_onboarding_invite_invalid",
+        message: "Signup onboarding invite is invalid or expired.",
+      });
     }
     if (acceptance.status === "email_mismatch") {
-      return reply.code(403).send(
-        buildErrorEnvelope({
-          statusCode: 403,
-          code: "signup_onboarding_invite_email_mismatch",
-          message: "Sign in with the invited email address before accepting this invite.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 403,
+        code: "signup_onboarding_invite_email_mismatch",
+        message: "Sign in with the invited email address before accepting this invite.",
+      });
     }
 
     const org = await options.orgs.findById(acceptance.invite.orgId);
     if (org === null) {
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "signup_onboarding_invite_org_not_found",
-          message: "Invite acceptance could not resolve the invited workspace.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupError(reply, request, {
+        statusCode: 409,
+        code: "signup_onboarding_invite_org_not_found",
+        message: "Invite acceptance could not resolve the invited workspace.",
+      });
     }
 
     await options.outbox?.insert({
@@ -1204,65 +1021,51 @@ export async function registerSignupRoutes(
       status: "accepted",
       org: publicSignupOrg(org),
       actorId: actor.id,
-      workspace: buildSignupWorkspaceUrls(options.publicBaseUrl ?? defaultPublicBaseUrl, org.slug),
+      workspace: buildSignupWorkspaceUrls(publicBaseUrl, org.slug),
     };
   });
 
   app.post("/api/signup/welcome-event", async (request, reply) => {
     const parsed = welcomeEventBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup welcome event request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
+      return sendSignupBadRequest(
+        reply,
+        request,
+        `Invalid signup welcome event request body: ${parsed.error.message}`,
       );
     }
 
     if (options.actorFromRequest === undefined || options.outbox === undefined) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_welcome_telemetry_not_implemented",
-          message:
-            "Signup welcome activation telemetry is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/welcome-event" },
-        }),
-      );
+      return sendSignupNotImplemented(reply, request, {
+        code: "signup_welcome_telemetry_not_implemented",
+        message:
+          "Signup welcome activation telemetry is registered for SaaS mode but is not implemented yet.",
+        phase: "commercial.B.4",
+        route: "/api/signup/welcome-event",
+      });
     }
 
     const actor = await options.actorFromRequest(request);
     if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
+      return sendSignupUnauthorized(reply, request);
     }
 
+    const viewed = parsed.data.event === "viewed";
+    const step = viewed ? "welcome_viewed" : "welcome_action_clicked";
     await options.outbox.insert({
-      subject:
-        parsed.data.event === "viewed"
-          ? signupFunnelSubjects.welcomeViewed
-          : signupFunnelSubjects.welcomeActionClicked,
+      subject: viewed
+        ? signupFunnelSubjects.welcomeViewed
+        : signupFunnelSubjects.welcomeActionClicked,
       payload: {
         orgId: actor.orgId,
         actorId: actor.id,
         source: "signup",
-        step: parsed.data.event === "viewed" ? "welcome_viewed" : "welcome_action_clicked",
+        step,
         ...(parsed.data.event === "action_clicked" ? { action: parsed.data.action } : {}),
       },
       ...traceForOutbox(request),
     });
-    recordSignupFunnelMetric(options.metrics, {
-      step: parsed.data.event === "viewed" ? "welcome_viewed" : "welcome_action_clicked",
-    });
+    recordSignupFunnelMetric(options.metrics, { step });
 
     return reply.code(202).send({ status: "accepted" });
   });
@@ -1376,35 +1179,29 @@ function sendSignupAbuseRejection(
 ) {
   if (decision.reason === "rate_limited") {
     reply.header("retry-after", String(decision.retryAfterSeconds));
-    return reply.code(429).send(
-      buildErrorEnvelope({
-        statusCode: 429,
-        code: "signup_rate_limited",
-        message: "Too many signup attempts from this IP address.",
-        traceId: traceIdForRequest(request),
-        details: {
-          retryAfterSeconds: decision.retryAfterSeconds,
-          rateLimit: {
-            reason: "signups_per_ip",
-            limit: decision.limit,
-            windowSeconds: decision.windowSeconds,
-          },
+    return sendSignupError(reply, request, {
+      statusCode: 429,
+      code: "signup_rate_limited",
+      message: "Too many signup attempts from this IP address.",
+      details: {
+        retryAfterSeconds: decision.retryAfterSeconds,
+        rateLimit: {
+          reason: "signups_per_ip",
+          limit: decision.limit,
+          windowSeconds: decision.windowSeconds,
         },
-      }),
-    );
+      },
+    });
   }
 
-  return reply.code(400).send(
-    buildErrorEnvelope({
-      statusCode: 400,
-      code: "signup_email_domain_blocked",
-      message: "That email domain is not accepted for self-service signup.",
-      traceId: traceIdForRequest(request),
-      details: {
-        reason: "disposable_email_domain",
-      },
-    }),
-  );
+  return sendSignupError(reply, request, {
+    statusCode: 400,
+    code: "signup_email_domain_blocked",
+    message: "That email domain is not accepted for self-service signup.",
+    details: {
+      reason: "disposable_email_domain",
+    },
+  });
 }
 
 function sendSignupPasswordRejection(
@@ -1413,42 +1210,33 @@ function sendSignupPasswordRejection(
   decision: Exclude<SignupPasswordScreeningResult, { readonly allowed: true }>,
 ) {
   if (decision.reason === "weak_password") {
-    return reply.code(400).send(
-      buildErrorEnvelope({
-        statusCode: 400,
-        code: "signup_password_weak",
-        message: "Choose a stronger password before creating a workspace.",
-        traceId: traceIdForRequest(request),
-        details: {
-          score: decision.score,
-          minScore: decision.minScore,
-        },
-      }),
-    );
+    return sendSignupError(reply, request, {
+      statusCode: 400,
+      code: "signup_password_weak",
+      message: "Choose a stronger password before creating a workspace.",
+      details: {
+        score: decision.score,
+        minScore: decision.minScore,
+      },
+    });
   }
 
   if (decision.reason === "breached_password") {
-    return reply.code(400).send(
-      buildErrorEnvelope({
-        statusCode: 400,
-        code: "signup_password_breached",
-        message: "Choose a password that has not appeared in a known breach.",
-        traceId: traceIdForRequest(request),
-        details: {
-          reason: "known_breach",
-        },
-      }),
-    );
+    return sendSignupError(reply, request, {
+      statusCode: 400,
+      code: "signup_password_breached",
+      message: "Choose a password that has not appeared in a known breach.",
+      details: {
+        reason: "known_breach",
+      },
+    });
   }
 
-  return reply.code(503).send(
-    buildErrorEnvelope({
-      statusCode: 503,
-      code: "signup_password_screening_unavailable",
-      message: "Password safety checks are temporarily unavailable.",
-      traceId: traceIdForRequest(request),
-    }),
-  );
+  return sendSignupError(reply, request, {
+    statusCode: 503,
+    code: "signup_password_screening_unavailable",
+    message: "Password safety checks are temporarily unavailable.",
+  });
 }
 
 function sendSignupRecaptchaRejection(
@@ -1457,27 +1245,21 @@ function sendSignupRecaptchaRejection(
   decision: Exclude<SignupRecaptchaVerifyResult, { readonly allowed: true }>,
 ) {
   if (decision.reason === "verification_unavailable") {
-    return reply.code(503).send(
-      buildErrorEnvelope({
-        statusCode: 503,
-        code: "signup_recaptcha_unavailable",
-        message: "Signup abuse checks are temporarily unavailable.",
-        traceId: traceIdForRequest(request),
-      }),
-    );
+    return sendSignupError(reply, request, {
+      statusCode: 503,
+      code: "signup_recaptcha_unavailable",
+      message: "Signup abuse checks are temporarily unavailable.",
+    });
   }
 
-  return reply.code(400).send(
-    buildErrorEnvelope({
-      statusCode: 400,
-      code: "signup_recaptcha_failed",
-      message: "Signup abuse verification failed.",
-      traceId: traceIdForRequest(request),
-      details: {
-        reason: decision.reason,
-      },
-    }),
-  );
+  return sendSignupError(reply, request, {
+    statusCode: 400,
+    code: "signup_recaptcha_failed",
+    message: "Signup abuse verification failed.",
+    details: {
+      reason: decision.reason,
+    },
+  });
 }
 
 function validateOrgSlug(
@@ -1754,6 +1536,66 @@ function traceForOutbox(
       ...(context.spanId === undefined ? {} : { spanId: context.spanId }),
     },
   };
+}
+
+/** Sends the canonical error envelope for a signup route, stamped with the request trace id. */
+function sendSignupError(
+  reply: FastifyReply,
+  request: FastifyRequest,
+  input: {
+    readonly statusCode: number;
+    readonly code: string;
+    readonly message: string;
+    readonly details?: Record<string, unknown>;
+  },
+): FastifyReply {
+  return reply.code(input.statusCode).send(
+    buildErrorEnvelope({
+      statusCode: input.statusCode,
+      code: input.code,
+      message: input.message,
+      traceId: traceIdForRequest(request),
+      ...(input.details === undefined ? {} : { details: input.details }),
+    }),
+  );
+}
+
+function sendSignupBadRequest(
+  reply: FastifyReply,
+  request: FastifyRequest,
+  message: string,
+): FastifyReply {
+  return sendSignupError(reply, request, { statusCode: 400, code: "bad_request", message });
+}
+
+function sendSignupUnauthorized(reply: FastifyReply, request: FastifyRequest): FastifyReply {
+  return sendSignupError(reply, request, {
+    statusCode: 401,
+    code: "unauthorized",
+    message: "Authentication required.",
+  });
+}
+
+/**
+ * SaaS signup routes are registered as a unit, so any route whose dependencies were
+ * not wired reports 501 with the delivery phase and route that still owe the work.
+ */
+function sendSignupNotImplemented(
+  reply: FastifyReply,
+  request: FastifyRequest,
+  input: {
+    readonly code: string;
+    readonly message: string;
+    readonly phase: string;
+    readonly route: string;
+  },
+): FastifyReply {
+  return sendSignupError(reply, request, {
+    statusCode: 501,
+    code: input.code,
+    message: input.message,
+    details: { phase: input.phase, route: input.route },
+  });
 }
 
 function traceIdForRequest(request: FastifyRequest): string {

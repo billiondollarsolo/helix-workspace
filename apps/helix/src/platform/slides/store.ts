@@ -656,44 +656,13 @@ export class PostgresSlidesStore implements SlidesStore {
   async createSlide(input: CreateSlideInput): Promise<SlideRecord> {
     return this.sql.begin(async (tx) => {
       await requireDeckAccess(tx, input.orgId, input.actorId, input.deckId);
-      const countRows = (await tx`
-        select count(*)::int as slide_count from slides where deck_id = ${input.deckId}
-      `) as unknown as readonly { readonly slide_count: number }[];
-      const slideCount = countRows[0]?.slide_count ?? 0;
-      const targetPosition =
-        input.position === undefined
-          ? slideCount
-          : Math.max(0, Math.min(input.position, slideCount));
-
-      if (targetPosition < slideCount) {
-        // Open a gap: shift trailing slides down by one. The unique
-        // (deck_id, position) index requires a temporary negative offset so
-        // the in-place renumber never collides mid-update.
-        await tx`
-          update slides
-          set position = -1 - position, updated_at = now()
-          where deck_id = ${input.deckId} and position >= ${targetPosition}
-        `;
-        await tx`
-          update slides
-          set position = (-1 - position) + 1, updated_at = now()
-          where deck_id = ${input.deckId} and position < 0
-        `;
-      }
-
-      const rows = (await tx`
-        insert into slides (org_id, deck_id, position, layout, content, speaker_notes)
-        values (
-          ${input.orgId},
-          ${input.deckId},
-          ${targetPosition},
-          ${input.content.layout},
-          ${tx.json(toSqlJson(input.content))},
-          ${input.speakerNotes ?? ""}
-        )
-        returning *
-      `) as unknown as readonly SlideRow[];
-      const slide = mapSlide(rows[0]);
+      const slide = await insertSlideAtPosition(tx, {
+        orgId: input.orgId,
+        deckId: input.deckId,
+        content: input.content,
+        speakerNotes: input.speakerNotes ?? "",
+        position: input.position,
+      });
       await touchDeck(tx, input.orgId, input.deckId);
       await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
       await appendSlidesActivity(tx, {
@@ -750,15 +719,12 @@ export class PostgresSlidesStore implements SlidesStore {
       if (existing === null) {
         return false;
       }
-      await tx`
-        delete from slides where id = ${input.slideId} and org_id = ${input.orgId}
-      `;
-      // Close the position gap left by the removed slide.
-      await tx`
-        update slides
-        set position = position - 1, updated_at = now()
-        where deck_id = ${existing.deckId} and position > ${existing.position}
-      `;
+      await deleteSlideAndCloseGap(tx, {
+        orgId: input.orgId,
+        deckId: existing.deckId,
+        slideId: input.slideId,
+        position: existing.position,
+      });
       await touchDeck(tx, input.orgId, existing.deckId);
       await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, existing.deckId);
       await appendSlidesActivity(tx, {
@@ -775,29 +741,7 @@ export class PostgresSlidesStore implements SlidesStore {
   async reorderSlides(input: ReorderSlidesInput): Promise<readonly SlideRecord[]> {
     return this.sql.begin(async (tx) => {
       await requireDeckAccess(tx, input.orgId, input.actorId, input.deckId);
-      const currentRows = (await tx`
-        select id from slides where deck_id = ${input.deckId} and org_id = ${input.orgId}
-      `) as unknown as readonly { readonly id: string }[];
-      const currentIds = new Set(currentRows.map((row) => row.id));
-      const requested = new Set(input.slideIds);
-      if (currentIds.size !== requested.size || [...currentIds].some((id) => !requested.has(id))) {
-        throw new Error("Reorder must list every slide in the deck exactly once.");
-      }
-
-      // Two-phase renumber to avoid colliding with the unique
-      // (deck_id, position) index while positions are in flux.
-      await tx`
-        update slides
-        set position = -1 - position, updated_at = now()
-        where deck_id = ${input.deckId} and org_id = ${input.orgId}
-      `;
-      for (const [index, slideId] of input.slideIds.entries()) {
-        await tx`
-          update slides
-          set position = ${index}, updated_at = now()
-          where id = ${slideId} and deck_id = ${input.deckId} and org_id = ${input.orgId}
-        `;
-      }
+      await applySlideReorder(tx, input.orgId, input.deckId, input.slideIds);
       await touchDeck(tx, input.orgId, input.deckId);
       await appendSlidesActivity(tx, {
         orgId: input.orgId,
@@ -1098,39 +1042,13 @@ export class PostgresSlidesStore implements SlidesStore {
         return;
       }
       case "create-slide": {
-        const countRows = (await tx`
-          select count(*)::int as slide_count from slides where deck_id = ${input.deckId}
-        `) as unknown as readonly { readonly slide_count: number }[];
-        const slideCount = countRows[0]?.slide_count ?? 0;
-        const targetPosition =
-          input.operation.position === undefined
-            ? slideCount
-            : Math.max(0, Math.min(input.operation.position, slideCount));
-        if (targetPosition < slideCount) {
-          await tx`
-            update slides
-            set position = -1 - position, updated_at = now()
-            where deck_id = ${input.deckId} and position >= ${targetPosition}
-          `;
-          await tx`
-            update slides
-            set position = (-1 - position) + 1, updated_at = now()
-            where deck_id = ${input.deckId} and position < 0
-          `;
-        }
-        const rows = (await tx`
-          insert into slides (org_id, deck_id, position, layout, content, speaker_notes)
-          values (
-            ${input.orgId},
-            ${input.deckId},
-            ${targetPosition},
-            ${input.operation.content.layout},
-            ${tx.json(toSqlJson(input.operation.content))},
-            ${input.operation.speakerNotes ?? ""}
-          )
-          returning *
-        `) as unknown as readonly SlideRow[];
-        const slide = mapSlide(rows[0]);
+        const slide = await insertSlideAtPosition(tx, {
+          orgId: input.orgId,
+          deckId: input.deckId,
+          content: input.operation.content,
+          speakerNotes: input.operation.speakerNotes ?? "",
+          position: input.operation.position,
+        });
         await touchDeck(tx, input.orgId, input.deckId);
         await appendSlidesActivity(tx, {
           orgId: input.orgId,
@@ -1186,12 +1104,12 @@ export class PostgresSlidesStore implements SlidesStore {
         if (existing === null || existing.deckId !== input.deckId) {
           throw new Error(`Unknown or inaccessible slide: ${input.operation.slideId}`);
         }
-        await tx`delete from slides where id = ${input.operation.slideId} and org_id = ${input.orgId}`;
-        await tx`
-          update slides
-          set position = position - 1, updated_at = now()
-          where deck_id = ${input.deckId} and position > ${existing.position}
-        `;
+        await deleteSlideAndCloseGap(tx, {
+          orgId: input.orgId,
+          deckId: input.deckId,
+          slideId: input.operation.slideId,
+          position: existing.position,
+        });
         await touchDeck(tx, input.orgId, input.deckId);
         await appendSlidesActivity(tx, {
           orgId: input.orgId,
@@ -1204,29 +1122,7 @@ export class PostgresSlidesStore implements SlidesStore {
         return;
       }
       case "reorder-slides": {
-        const currentRows = (await tx`
-          select id from slides where deck_id = ${input.deckId} and org_id = ${input.orgId}
-        `) as unknown as readonly { readonly id: string }[];
-        const currentIds = new Set(currentRows.map((row) => row.id));
-        const requested = new Set(input.operation.slideIds);
-        if (
-          currentIds.size !== requested.size ||
-          [...currentIds].some((id) => !requested.has(id))
-        ) {
-          throw new Error("Reorder must list every slide in the deck exactly once.");
-        }
-        await tx`
-          update slides
-          set position = -1 - position, updated_at = now()
-          where deck_id = ${input.deckId} and org_id = ${input.orgId}
-        `;
-        for (const [index, slideId] of input.operation.slideIds.entries()) {
-          await tx`
-            update slides
-            set position = ${index}, updated_at = now()
-            where id = ${slideId} and deck_id = ${input.deckId} and org_id = ${input.orgId}
-          `;
-        }
+        await applySlideReorder(tx, input.orgId, input.deckId, input.operation.slideIds);
         await touchDeck(tx, input.orgId, input.deckId);
         await appendSlidesActivity(tx, {
           orgId: input.orgId,
@@ -1453,6 +1349,113 @@ async function selectSlidesForDeck(
     order by position asc
   `) as unknown as readonly SlideRow[];
   return rows.map(mapSlide);
+}
+
+/**
+ * Insert a slide into a deck at `position`, appending when it is undefined and
+ * clamping to the deck's current size otherwise.
+ */
+async function insertSlideAtPosition(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly deckId: string;
+    readonly content: SlideContent;
+    readonly speakerNotes: string;
+    readonly position: number | undefined;
+  },
+): Promise<SlideRecord> {
+  const countRows = (await sql`
+    select count(*)::int as slide_count from slides where deck_id = ${input.deckId}
+  `) as unknown as readonly { readonly slide_count: number }[];
+  const slideCount = countRows[0]?.slide_count ?? 0;
+  const targetPosition =
+    input.position === undefined ? slideCount : Math.max(0, Math.min(input.position, slideCount));
+
+  if (targetPosition < slideCount) {
+    // Open a gap: shift trailing slides down by one. The unique
+    // (deck_id, position) index requires a temporary negative offset so
+    // the in-place renumber never collides mid-update.
+    await sql`
+      update slides
+      set position = -1 - position, updated_at = now()
+      where deck_id = ${input.deckId} and position >= ${targetPosition}
+    `;
+    await sql`
+      update slides
+      set position = (-1 - position) + 1, updated_at = now()
+      where deck_id = ${input.deckId} and position < 0
+    `;
+  }
+
+  const rows = (await sql`
+    insert into slides (org_id, deck_id, position, layout, content, speaker_notes)
+    values (
+      ${input.orgId},
+      ${input.deckId},
+      ${targetPosition},
+      ${input.content.layout},
+      ${sql.json(toSqlJson(input.content))},
+      ${input.speakerNotes}
+    )
+    returning *
+  `) as unknown as readonly SlideRow[];
+  return mapSlide(rows[0]);
+}
+
+/** Delete a slide and close the position gap it leaves behind. */
+async function deleteSlideAndCloseGap(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly deckId: string;
+    readonly slideId: string;
+    readonly position: number;
+  },
+): Promise<void> {
+  await sql`
+    delete from slides where id = ${input.slideId} and org_id = ${input.orgId}
+  `;
+  await sql`
+    update slides
+    set position = position - 1, updated_at = now()
+    where deck_id = ${input.deckId} and position > ${input.position}
+  `;
+}
+
+/**
+ * Renumber a deck's slides into the order given by `slideIds`, which must be a
+ * complete permutation of the deck's current slides.
+ */
+async function applySlideReorder(
+  sql: SqlLike,
+  orgId: string,
+  deckId: string,
+  slideIds: readonly string[],
+): Promise<void> {
+  const currentRows = (await sql`
+    select id from slides where deck_id = ${deckId} and org_id = ${orgId}
+  `) as unknown as readonly { readonly id: string }[];
+  const currentIds = new Set(currentRows.map((row) => row.id));
+  const requested = new Set(slideIds);
+  if (currentIds.size !== requested.size || [...currentIds].some((id) => !requested.has(id))) {
+    throw new Error("Reorder must list every slide in the deck exactly once.");
+  }
+
+  // Two-phase renumber to avoid colliding with the unique
+  // (deck_id, position) index while positions are in flux.
+  await sql`
+    update slides
+    set position = -1 - position, updated_at = now()
+    where deck_id = ${deckId} and org_id = ${orgId}
+  `;
+  for (const [index, slideId] of slideIds.entries()) {
+    await sql`
+      update slides
+      set position = ${index}, updated_at = now()
+      where id = ${slideId} and deck_id = ${deckId} and org_id = ${orgId}
+    `;
+  }
 }
 
 async function touchDeck(sql: SqlLike, orgId: string, deckId: string): Promise<void> {
@@ -1863,17 +1866,13 @@ function previewLines(lines: readonly string[]): readonly string[] {
 /* In-memory store (tests / offline)                                          */
 /* -------------------------------------------------------------------------- */
 
-interface InMemoryDeck {
-  deck: SlideDeckRecord;
-}
-
 /**
  * In-memory {@link SlidesStore} for unit tests and offline development. Mirrors
  * the Postgres store's authz and position-management semantics without a
  * database. Not concurrency-safe — intended for single-threaded test use.
  */
 export class InMemorySlidesStore implements SlidesStore {
-  private readonly decks = new Map<string, InMemoryDeck>();
+  private readonly decks = new Map<string, SlideDeckRecord>();
   private readonly slides = new Map<string, SlideRecord>();
   private readonly operationLog = new Map<string, SlideOperationLogRecord[]>();
 
@@ -1894,7 +1893,7 @@ export class InMemorySlidesStore implements SlidesStore {
       createdAt: now,
       updatedAt: now,
     };
-    this.decks.set(deck.id, { deck });
+    this.decks.set(deck.id, deck);
     return { ...deck, slideCount: 0 };
   }
 
@@ -1925,7 +1924,7 @@ export class InMemorySlidesStore implements SlidesStore {
       createdAt: now,
       updatedAt: now,
     };
-    this.decks.set(deck.id, { deck });
+    this.decks.set(deck.id, deck);
     const copiedSlides = this.slidesOf(source.id).map((slide) => {
       const copied: SlideRecord = {
         ...slide,
@@ -1944,7 +1943,6 @@ export class InMemorySlidesStore implements SlidesStore {
   async listDecksForActor(input: ListSlideDecksInput): Promise<ListSlideDecksResult> {
     const query = input.query?.trim().toLowerCase();
     const all = [...this.decks.values()]
-      .map((entry) => entry.deck)
       .filter(
         (deck) =>
           deck.orgId === input.orgId &&
@@ -1987,7 +1985,7 @@ export class InMemorySlidesStore implements SlidesStore {
       metadata: input.metadata ?? deck.metadata,
       updatedAt: new Date(),
     };
-    this.decks.set(updated.id, { deck: updated });
+    this.decks.set(updated.id, updated);
     return { ...updated, slideCount: this.slidesOf(updated.id).length };
   }
 
@@ -2000,7 +1998,7 @@ export class InMemorySlidesStore implements SlidesStore {
     if (deck === null) {
       return false;
     }
-    this.decks.set(deck.id, { deck: { ...deck, deletedAt: new Date(), updatedAt: new Date() } });
+    this.decks.set(deck.id, { ...deck, deletedAt: new Date(), updatedAt: new Date() });
     return true;
   }
 
@@ -2112,13 +2110,11 @@ export class InMemorySlidesStore implements SlidesStore {
     if (deck === null) {
       throw new Error(`Unknown or inaccessible deck: ${input.deckId}`);
     }
-    const existing = (this.operationLog.get(input.deckId) ?? []).find(
-      (operation) => operation.operationId === input.operationId,
-    );
+    const operations = this.operationLog.get(input.deckId) ?? [];
+    const existing = operations.find((operation) => operation.operationId === input.operationId);
     if (existing !== undefined) {
       return existing;
     }
-    const operations = this.operationLog.get(input.deckId) ?? [];
     const record: SlideOperationLogRecord = {
       id: randomUUID(),
       orgId: input.orgId,
@@ -2291,11 +2287,10 @@ export class InMemorySlidesStore implements SlidesStore {
   }
 
   private accessibleDeck(orgId: string, actorId: string, deckId: string): SlideDeckRecord | null {
-    const entry = this.decks.get(deckId);
-    if (entry === undefined) {
+    const deck = this.decks.get(deckId);
+    if (deck === undefined) {
       return null;
     }
-    const { deck } = entry;
     if (
       deck.orgId !== orgId ||
       deck.deletedAt !== null ||
@@ -2315,9 +2310,9 @@ export class InMemorySlidesStore implements SlidesStore {
   }
 
   private touch(deckId: string): void {
-    const entry = this.decks.get(deckId);
-    if (entry !== undefined) {
-      this.decks.set(deckId, { deck: { ...entry.deck, updatedAt: new Date() } });
+    const deck = this.decks.get(deckId);
+    if (deck !== undefined) {
+      this.decks.set(deckId, { ...deck, updatedAt: new Date() });
     }
   }
 }

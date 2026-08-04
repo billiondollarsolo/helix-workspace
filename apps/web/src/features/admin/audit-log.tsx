@@ -119,6 +119,8 @@ const DIRECTORY_LOOKUP_INPUT = {
 const ACTOR_CELL_CLASS = "max-w-[280px] align-top";
 const DEFAULT_CELL_CLASS = "max-w-[260px] truncate";
 
+const FILTER_LABEL_CLASS = "grid gap-1 text-xs font-medium text-muted-foreground";
+
 const FILTER_SELECT_CLASS =
   "h-9 w-64 rounded-md border border-outline bg-surface-container px-2 text-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -127,17 +129,17 @@ export function AuditLogList() {
   const [draftFilters, setDraftFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [cursor, setCursor] = useState<string | undefined>();
+  /* Filters go through unconditionally rather than being spread in only when
+     non-empty: both consumers already normalise an empty string away — the
+     query key trims to `""` either way, and `listAuditLog`'s `appendParam`
+     drops a blank rather than sending `?verb=`. */
   const queryInput = useMemo<AuditLogQueryInput>(
     () => ({
       limit: defaultAuditLogInput.limit,
       ...(cursor === undefined ? {} : { cursor }),
-      ...(appliedFilters.actorId.trim().length === 0
-        ? {}
-        : { actorId: appliedFilters.actorId.trim() }),
-      ...(appliedFilters.objectType.trim().length === 0
-        ? {}
-        : { objectType: appliedFilters.objectType.trim() }),
-      ...(appliedFilters.verb.trim().length === 0 ? {} : { verb: appliedFilters.verb.trim() }),
+      actorId: appliedFilters.actorId.trim(),
+      objectType: appliedFilters.objectType.trim(),
+      verb: appliedFilters.verb.trim(),
     }),
     [appliedFilters.actorId, appliedFilters.objectType, appliedFilters.verb, cursor],
   );
@@ -258,7 +260,7 @@ export function AuditLogList() {
       />
 
       <div aria-label="Audit log filters" className="flex flex-wrap items-end gap-2" role="group">
-        <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+        <label className={FILTER_LABEL_CLASS}>
           Actor
           <select
             aria-label="Audit actor filter"
@@ -287,7 +289,7 @@ export function AuditLogList() {
             </span>
           ) : null}
         </label>
-        <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+        <label className={FILTER_LABEL_CLASS}>
           Verb
           <Input
             aria-label="Audit verb filter"
@@ -299,7 +301,7 @@ export function AuditLogList() {
             value={draftFilters.verb}
           />
         </label>
-        <label className="grid gap-1 text-xs font-medium text-muted-foreground">
+        <label className={FILTER_LABEL_CLASS}>
           Object type
           <Input
             aria-label="Audit object type filter"
@@ -608,15 +610,19 @@ function formatPayloadValue(value: unknown): string {
   return typeof value === "symbol" ? "symbol" : "function";
 }
 
+/* Built once: this runs per row, and constructing the formatter costs more than
+   the format call it wraps. */
+const AUDIT_TIMESTAMP_FORMAT = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "medium",
+});
+
 function formatAuditTimestamp(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "medium",
-  }).format(date);
+  return AUDIT_TIMESTAMP_FORMAT.format(date);
 }
 
 function objectLabel(record: AuditLogRecord): string {

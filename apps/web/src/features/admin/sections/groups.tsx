@@ -25,6 +25,7 @@ import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   EmptyRow,
   EmptyState,
+  MutationError,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
@@ -139,6 +140,56 @@ function deletionCopy(row: GroupsRow): {
   };
 }
 
+/** The "create one of these, by name" form. Org units and groups are the same
+ *  control down to the panel class — one text field and one submit — so they
+ *  share it rather than drifting apart the next time either is touched. Empty
+ *  input is rejected here so neither caller can post a blank name. */
+function CreateNameForm({
+  toolbarLabel,
+  fieldLabel,
+  placeholder,
+  submitLabel,
+  value,
+  onChange,
+  pending,
+  onSubmit,
+}: {
+  readonly toolbarLabel: string;
+  readonly fieldLabel: string;
+  readonly placeholder: string;
+  readonly submitLabel: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly pending: boolean;
+  readonly onSubmit: (name: string) => void;
+}) {
+  return (
+    <form
+      className="panel mb-3 px-3 pt-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (value.trim().length === 0) {
+          return;
+        }
+        onSubmit(value.trim());
+      }}
+    >
+      <AdminToolbar label={toolbarLabel}>
+        <AdminField label={fieldLabel} className="flex-1">
+          <AdminInput
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder={placeholder}
+          />
+        </AdminField>
+        <Button type="submit" className="self-end" disabled={pending}>
+          {pending ? "Creating…" : submitLabel}
+        </Button>
+      </AdminToolbar>
+    </form>
+  );
+}
+
 /** Membership panel for a selected group — list + add + remove members. */
 function GroupMembershipPanel({ group }: { group: Group }) {
   const queryClient = useQueryClient();
@@ -236,12 +287,8 @@ function GroupMembershipPanel({ group }: { group: Group }) {
           Removing a member needs the list, so only adding one is possible until this loads.
         </QueryFailureBanner>
       ) : null}
-      {addMutation.isError ? (
-        <StateBanner kind="error">{addMutation.error.message}</StateBanner>
-      ) : null}
-      {removeMutation.isError ? (
-        <StateBanner kind="error">{removeMutation.error.message}</StateBanner>
-      ) : null}
+      <MutationError error={addMutation.error} />
+      <MutationError error={removeMutation.error} />
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -550,68 +597,34 @@ export function AdminGroups() {
           ) : null}
         </>
       )}
-      {createOuMutation.isError ? (
-        <StateBanner kind="error">{createOuMutation.error.message}</StateBanner>
-      ) : null}
-      {createGroupMutation.isError ? (
-        <StateBanner kind="error">{createGroupMutation.error.message}</StateBanner>
-      ) : null}
-      {deleteOuMutation.isError ? (
-        <StateBanner kind="error">{deleteOuMutation.error.message}</StateBanner>
-      ) : null}
-      {deleteGroupMutation.isError ? (
-        <StateBanner kind="error">{deleteGroupMutation.error.message}</StateBanner>
-      ) : null}
+      <MutationError error={createOuMutation.error} />
+      <MutationError error={createGroupMutation.error} />
+      <MutationError error={deleteOuMutation.error} />
+      <MutationError error={deleteGroupMutation.error} />
 
       {showOuForm && !createOuDisabled ? (
-        <form
-          className="panel mb-3 px-3 pt-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (ouName.trim().length === 0) {
-              return;
-            }
-            createOuMutation.mutate(ouName.trim());
-          }}
-        >
-          <AdminToolbar label="New org unit">
-            <AdminField label="New org unit name" className="flex-1">
-              <AdminInput
-                value={ouName}
-                onChange={(event) => setOuName(event.target.value)}
-                placeholder="Engineering"
-              />
-            </AdminField>
-            <Button type="submit" className="self-end" disabled={createOuMutation.isPending}>
-              {createOuMutation.isPending ? "Creating…" : "Create OU"}
-            </Button>
-          </AdminToolbar>
-        </form>
+        <CreateNameForm
+          toolbarLabel="New org unit"
+          fieldLabel="New org unit name"
+          placeholder="Engineering"
+          submitLabel="Create OU"
+          value={ouName}
+          onChange={setOuName}
+          pending={createOuMutation.isPending}
+          onSubmit={(name) => createOuMutation.mutate(name)}
+        />
       ) : null}
       {showGroupForm && !createGroupDisabled ? (
-        <form
-          className="panel mb-3 px-3 pt-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (groupName.trim().length === 0) {
-              return;
-            }
-            createGroupMutation.mutate(groupName.trim());
-          }}
-        >
-          <AdminToolbar label="New group">
-            <AdminField label="New group name" className="flex-1">
-              <AdminInput
-                value={groupName}
-                onChange={(event) => setGroupName(event.target.value)}
-                placeholder="leads"
-              />
-            </AdminField>
-            <Button type="submit" className="self-end" disabled={createGroupMutation.isPending}>
-              {createGroupMutation.isPending ? "Creating…" : "Create group"}
-            </Button>
-          </AdminToolbar>
-        </form>
+        <CreateNameForm
+          toolbarLabel="New group"
+          fieldLabel="New group name"
+          placeholder="leads"
+          submitLabel="Create group"
+          value={groupName}
+          onChange={setGroupName}
+          pending={createGroupMutation.isPending}
+          onSubmit={(name) => createGroupMutation.mutate(name)}
+        />
       ) : null}
 
       {managedGroup !== null ? <GroupMembershipPanel group={managedGroup} /> : null}

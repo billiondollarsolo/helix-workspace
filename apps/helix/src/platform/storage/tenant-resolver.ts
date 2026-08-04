@@ -112,39 +112,39 @@ export function createTenantStorageResolver(options: {
         return cached;
       }
     }
-    let resolved: ResolvedTenantStorage | undefined;
+    const cacheAndReturn = (resolved: ResolvedTenantStorage): ResolvedTenantStorage => {
+      cache.set(cacheKey, resolved);
+      return resolved;
+    };
     if (storageConfig === undefined) {
       if (options.defaultClient === undefined) {
         return undefined;
       }
-      resolved = {
+      // Note: an unprefixed default client is passed through directly —
+      // createPrefixedStorageClient(client, "") is not equivalent, it drops
+      // optional methods and rewrites the key returned by `get`.
+      return cacheAndReturn({
         client: options.defaultClient,
         managedBy: "helix-default",
         prefix: "",
-      };
-      cache.set(cacheKey, resolved);
-      return resolved;
+      });
     }
     if (storageConfig.kind === "byo") {
       const client = createByoS3StorageClient(storageConfig, options);
-      resolved = {
+      return cacheAndReturn({
         client: createPrefixedStorageClient(client, storageConfig.prefix),
         managedBy: "byo",
         prefix: storageConfig.prefix,
-      };
-      cache.set(cacheKey, resolved);
-      return resolved;
+      });
     }
     if (options.defaultClient === undefined) {
       return undefined;
     }
-    resolved = {
+    return cacheAndReturn({
       client: createPrefixedStorageClient(options.defaultClient, storageConfig.prefix),
       managedBy: "helix-default",
       prefix: storageConfig.prefix,
-    };
-    cache.set(cacheKey, resolved);
-    return resolved;
+    });
   };
 }
 
@@ -285,6 +285,11 @@ function createByoS3StorageClient(
   });
 }
 
+const multipartUnsupportedMessage =
+  "Resolved BYO storage client does not support multipart uploads.";
+const presignPutUnsupportedMessage =
+  "Resolved BYO storage client does not support presigned PUT URLs.";
+
 class LazyByoS3StorageClient implements TenantStorageClient {
   #client: TenantStorageClient | undefined;
 
@@ -336,7 +341,7 @@ class LazyByoS3StorageClient implements TenantStorageClient {
   ): Promise<string> {
     const client = await this.client();
     if (client.presignPutUrl === undefined) {
-      throw new Error("Resolved BYO storage client does not support presigned PUT URLs.");
+      throw new Error(presignPutUnsupportedMessage);
     }
     return client.presignPutUrl(key, options);
   }
@@ -350,7 +355,7 @@ class LazyByoS3StorageClient implements TenantStorageClient {
       return client.presignPutRequest(key, options);
     }
     if (client.presignPutUrl === undefined) {
-      throw new Error("Resolved BYO storage client does not support presigned PUT URLs.");
+      throw new Error(presignPutUnsupportedMessage);
     }
     return {
       url: await client.presignPutUrl(key, options),
@@ -364,7 +369,7 @@ class LazyByoS3StorageClient implements TenantStorageClient {
   ): Promise<{ readonly uploadId: string }> {
     const client = await this.client();
     if (client.createMultipartUpload === undefined) {
-      throw new Error("Resolved BYO storage client does not support multipart uploads.");
+      throw new Error(multipartUnsupportedMessage);
     }
     return client.createMultipartUpload(key, options);
   }
@@ -377,7 +382,7 @@ class LazyByoS3StorageClient implements TenantStorageClient {
   ): Promise<string> {
     const client = await this.client();
     if (client.presignUploadPart === undefined) {
-      throw new Error("Resolved BYO storage client does not support multipart uploads.");
+      throw new Error(multipartUnsupportedMessage);
     }
     return client.presignUploadPart(key, uploadId, partNumber, options);
   }
@@ -389,7 +394,7 @@ class LazyByoS3StorageClient implements TenantStorageClient {
   ): Promise<void> {
     const client = await this.client();
     if (client.completeMultipartUpload === undefined) {
-      throw new Error("Resolved BYO storage client does not support multipart uploads.");
+      throw new Error(multipartUnsupportedMessage);
     }
     await client.completeMultipartUpload(key, uploadId, parts);
   }
@@ -397,7 +402,7 @@ class LazyByoS3StorageClient implements TenantStorageClient {
   async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
     const client = await this.client();
     if (client.abortMultipartUpload === undefined) {
-      throw new Error("Resolved BYO storage client does not support multipart uploads.");
+      throw new Error(multipartUnsupportedMessage);
     }
     await client.abortMultipartUpload(key, uploadId);
   }

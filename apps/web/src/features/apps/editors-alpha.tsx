@@ -1,5 +1,9 @@
 import { useEnabledApps } from "./use-enabled-apps";
 
+/** Tooltip shown on every editor-creating control while the editors alpha is off. */
+export const EDITORS_ALPHA_DISABLED_TITLE =
+  "Editors alpha is disabled by an admin. Import and preview files from Drive.";
+
 export interface EditorsAlphaState {
   readonly enabled: boolean;
   readonly isLoading: boolean;

@@ -454,6 +454,19 @@ export interface MailDeliveryAlert {
   readonly threshold: number;
 }
 
+/** Alert bucket an event belongs to, or null when the event is not alertable. */
+function alertCategoryFor(type: MailDeliveryEventType): MailDeliveryAlert["category"] | null {
+  switch (type) {
+    case "complaint":
+      return "complaint";
+    case "hard_bounce":
+    case "soft_bounce":
+      return "bounce";
+    default:
+      return null;
+  }
+}
+
 export class MailDeliveryAlertMonitor {
   constructor(
     private readonly options: {
@@ -467,12 +480,7 @@ export class MailDeliveryAlertMonitor {
   ) {}
 
   async observe(orgId: string, type: MailDeliveryEventType): Promise<void> {
-    const category =
-      type === "complaint"
-        ? "complaint"
-        : type === "hard_bounce" || type === "soft_bounce"
-          ? "bounce"
-          : null;
+    const category = alertCategoryFor(type);
     if (category === null) return;
     const threshold =
       category === "complaint"
@@ -597,9 +605,9 @@ export function normalizeMailgunDeliveryEvent(raw: unknown): NormalizedMailDeliv
   const headers = objectValue(message.headers, "message.headers");
   const providerMessageId = stringValue(headers["message-id"], "message.headers.message-id");
   const timestamp = numberValue(data.timestamp, "timestamp");
-  const deliveryStatus =
+  const deliveryStatus: Record<string, unknown> =
     data["delivery-status"] === undefined
-      ? undefined
+      ? {}
       : objectValue(data["delivery-status"], "delivery-status");
   return {
     providerEventId,
@@ -611,12 +619,9 @@ export function normalizeMailgunDeliveryEvent(raw: unknown): NormalizedMailDeliv
       provider: "mailgun",
       event: eventName,
       severity: severity ?? null,
-      code:
-        deliveryStatus !== undefined && typeof deliveryStatus.code === "number"
-          ? deliveryStatus.code
-          : null,
+      code: typeof deliveryStatus.code === "number" ? deliveryStatus.code : null,
       description:
-        deliveryStatus !== undefined && typeof deliveryStatus.description === "string"
+        typeof deliveryStatus.description === "string"
           ? deliveryStatus.description.slice(0, 500)
           : null,
     }),

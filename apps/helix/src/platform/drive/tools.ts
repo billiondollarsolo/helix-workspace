@@ -231,6 +231,10 @@ const searchSchema = z.object({
 
 type DriveCreateKind = "folder" | "document" | "spreadsheet" | "presentation";
 
+const commentMethodsRequiredMessage = "drive.comment tools require DriveStore comment methods.";
+const pdfFormStateMethodsRequiredMessage =
+  "drive.pdfFormState tools require DriveStore PDF form state methods.";
+
 const genericObjectJsonSchema = {
   type: "object",
   additionalProperties: true,
@@ -310,10 +314,7 @@ export function createDriveToolDefinitions(
   return [
     defineTool<z.output<typeof createSchema>, unknown>({
       id: "drive.create",
-      description:
-        allowedCreateKinds.length === 1
-          ? "Create a new Drive folder."
-          : `Create a new Drive ${allowedCreateKinds.join(", ")}.`,
+      description: `Create a new Drive ${allowedCreateKinds.join(", ")}.`,
       permission: "drive.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(createSchema, genericObjectJsonSchema),
@@ -514,16 +515,17 @@ export function createDriveToolDefinitions(
           return { entries: serialized };
         }
         const names = await options.resolveActorNames(ownerIds);
-        const enriched = serialized.map((entry) => {
-          const owner = entry.ownerActorId !== null ? names.get(entry.ownerActorId) : undefined;
-          if (owner === undefined) return entry;
-          return {
-            ...entry,
-            ownerDisplayName: owner.displayName,
-            ...(owner.email === undefined ? {} : { ownerEmail: owner.email }),
-          };
-        });
-        return { entries: enriched };
+        return {
+          entries: serialized.map((entry) => {
+            const owner = entry.ownerActorId !== null ? names.get(entry.ownerActorId) : undefined;
+            if (owner === undefined) return entry;
+            return {
+              ...entry,
+              ownerDisplayName: owner.displayName,
+              ...(owner.email === undefined ? {} : { ownerEmail: owner.email }),
+            };
+          }),
+        };
       },
     }),
     defineTool<z.output<typeof shareSchema>, unknown>({
@@ -561,10 +563,7 @@ export function createDriveToolDefinitions(
           objectId: input.objectId,
           targetActorIds: actorIds,
           role: input.role,
-          expiresAt:
-            input.expiresAt === undefined || input.expiresAt === null
-              ? null
-              : new Date(input.expiresAt),
+          expiresAt: toNullableDate(input.expiresAt),
         });
       },
     }),
@@ -630,10 +629,7 @@ export function createDriveToolDefinitions(
           objectId: input.objectId,
           targetActorId: input.actorId,
           role: input.role,
-          expiresAt:
-            input.expiresAt === undefined || input.expiresAt === null
-              ? null
-              : new Date(input.expiresAt),
+          expiresAt: toNullableDate(input.expiresAt),
         });
         return {
           objectId: input.objectId,
@@ -768,7 +764,7 @@ export function createDriveToolDefinitions(
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         if (options.store.createComment === undefined) {
-          throw new Error("drive.comment tools require DriveStore comment methods.");
+          throw new Error(commentMethodsRequiredMessage);
         }
         return serializeComment(
           await options.store.createComment({
@@ -794,7 +790,7 @@ export function createDriveToolDefinitions(
       outputSchema: zodToolSchema(driveCommentListOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         if (options.store.listComments === undefined) {
-          throw new Error("drive.comment tools require DriveStore comment methods.");
+          throw new Error(commentMethodsRequiredMessage);
         }
         return {
           comments: (
@@ -817,7 +813,7 @@ export function createDriveToolDefinitions(
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         if (options.store.resolveComment === undefined) {
-          throw new Error("drive.comment tools require DriveStore comment methods.");
+          throw new Error(commentMethodsRequiredMessage);
         }
         const comment = await options.store.resolveComment({
           orgId: ctx.actor.orgId,
@@ -839,7 +835,7 @@ export function createDriveToolDefinitions(
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         if (options.store.reopenComment === undefined) {
-          throw new Error("drive.comment tools require DriveStore comment methods.");
+          throw new Error(commentMethodsRequiredMessage);
         }
         const comment = await options.store.reopenComment({
           orgId: ctx.actor.orgId,
@@ -861,7 +857,7 @@ export function createDriveToolDefinitions(
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         if (options.store.updateComment === undefined) {
-          throw new Error("drive.comment tools require DriveStore comment methods.");
+          throw new Error(commentMethodsRequiredMessage);
         }
         const comment = await options.store.updateComment({
           orgId: ctx.actor.orgId,
@@ -885,7 +881,7 @@ export function createDriveToolDefinitions(
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         if (options.store.deleteComment === undefined) {
-          throw new Error("drive.comment tools require DriveStore comment methods.");
+          throw new Error(commentMethodsRequiredMessage);
         }
         const comment = await options.store.deleteComment({
           orgId: ctx.actor.orgId,
@@ -909,9 +905,7 @@ export function createDriveToolDefinitions(
             outputSchema: zodToolSchema(drivePdfFormStateGetOutputSchema, genericObjectJsonSchema),
             handler: async (input, ctx) => {
               if (options.store.getPdfFormState === undefined) {
-                throw new Error(
-                  "drive.pdfFormState tools require DriveStore PDF form state methods.",
-                );
+                throw new Error(pdfFormStateMethodsRequiredMessage);
               }
               const state = await options.store.getPdfFormState({
                 orgId: ctx.actor.orgId,
@@ -930,16 +924,14 @@ export function createDriveToolDefinitions(
             outputSchema: zodToolSchema(drivePdfFormStateOutputSchema, genericObjectJsonSchema),
             handler: async (input, ctx) => {
               if (options.store.savePdfFormState === undefined) {
-                throw new Error(
-                  "drive.pdfFormState tools require DriveStore PDF form state methods.",
-                );
+                throw new Error(pdfFormStateMethodsRequiredMessage);
               }
               return serializePdfFormState(
                 await options.store.savePdfFormState({
                   orgId: ctx.actor.orgId,
                   actorId: ctx.actor.id,
                   objectId: input.objectId,
-                  fieldValues: input.fields.map((field) => toJsonObject(field)),
+                  fieldValues: input.fields.map(toJsonObject),
                 }),
               );
             },
@@ -956,9 +948,7 @@ export function createDriveToolDefinitions(
             ),
             handler: async (input, ctx) => {
               if (options.store.clearPdfFormState === undefined) {
-                throw new Error(
-                  "drive.pdfFormState tools require DriveStore PDF form state methods.",
-                );
+                throw new Error(pdfFormStateMethodsRequiredMessage);
               }
               return {
                 objectId: input.objectId,
@@ -1054,10 +1044,7 @@ export function createDriveToolDefinitions(
           if (options.store.createShareLink === undefined) {
             throw new Error("drive.link.create requires DriveStore.createShareLink.");
           }
-          const expiresAt =
-            input.expiresAt === undefined || input.expiresAt === null
-              ? null
-              : new Date(input.expiresAt);
+          const expiresAt = toNullableDate(input.expiresAt);
           if (options.getExternalSharingPolicy !== undefined) {
             const policy = await options.getExternalSharingPolicy(ctx.actor.orgId);
             const decision = evaluatePublicShareLinkPolicy(policy, { expiresAt });
@@ -1269,6 +1256,10 @@ function serializeNullableGrant(grant: DriveAccessGrantRecord | null) {
   return grant === null ? null : serializeAccessGrant(grant);
 }
 
+function toNullableDate(value: string | null | undefined): Date | null {
+  return value === undefined || value === null ? null : new Date(value);
+}
+
 function serializeSearchHit(hit: DriveSearchHit) {
   return {
     ...hit,
@@ -1306,9 +1297,6 @@ function serializeShareLink(link: {
     expiresAt: link.expiresAt?.toISOString() ?? null,
     createdAt: link.createdAt.toISOString(),
     revokedAt: link.revokedAt?.toISOString() ?? null,
-    maxDownloads: link.maxDownloads,
-    downloadCount: link.downloadCount,
-    rateLimitPerHour: link.rateLimitPerHour,
     lastUsedAt: link.lastUsedAt?.toISOString() ?? null,
   };
 }

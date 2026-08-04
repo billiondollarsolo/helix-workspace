@@ -24,6 +24,15 @@ export const AGENT_LIVE_SCENARIOS = [
 ];
 
 const REQUIRED_SCOPES = ["mail.read", "drive.read", "chat.read", "chat.post"];
+const RESOURCE_KINDS = ["mail", "drive", "chat"];
+// MCP fails closed on a forbidden resource with either an authorization or a not-found error.
+const FORBIDDEN_RESOURCE_ERROR_CODES = [-32003, -32004];
+const REQUIRED_AUDIT_VERBS = [
+  "tool.invocation.pending",
+  "tool.invocation.executed",
+  "tool.invocation.denied",
+  "agent.credential.revoked",
+];
 const HASH_PATTERN = /^[a-f0-9]{20}$/u;
 const usage = `Usage: infra/scripts/agent-live-evidence-smoke.mjs [--static|--live|--validate <report.json>]
 
@@ -170,7 +179,7 @@ export async function runAgentLiveEvidence(environment, dependencies = {}) {
     const forbiddenResults = [];
     for (const uri of config.forbiddenUris) {
       const response = await mcpCall(config, request, access.value, "resources/read", { uri });
-      if (!response.error || ![-32003, -32004].includes(response.error.code)) {
+      if (!response.error || !FORBIDDEN_RESOURCE_ERROR_CODES.includes(response.error.code)) {
         throw new Error("forbidden direct resource URI guess did not fail closed");
       }
       forbiddenResults.push({
@@ -225,26 +234,15 @@ export async function runAgentLiveEvidence(environment, dependencies = {}) {
       `${marker}-chat-approved`,
     );
     const pendingId = requirePendingId(queued, "chat.send");
-    const approved = await httpJson(
-      request,
-      new URL(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, config.baseUrl),
-      {
-        method: "POST",
-        headers: authenticatedHeaders(config, config.humanAccess),
-        timeoutMs: config.timeoutMs,
-      },
-    );
+    const approved = await approvePendingAction(config, request, config.humanAccess, pendingId);
     if (!approved.ok || approved.data?.status !== "executed") {
       throw new Error("separate human approval did not execute chat.send");
     }
-    const duplicateApproval = await httpJson(
+    const duplicateApproval = await approvePendingAction(
+      config,
       request,
-      new URL(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, config.baseUrl),
-      {
-        method: "POST",
-        headers: authenticatedHeaders(config, config.humanAccess),
-        timeoutMs: config.timeoutMs,
-      },
+      config.humanAccess,
+      pendingId,
     );
     if (duplicateApproval.ok || ![404, 409].includes(duplicateApproval.status)) {
       throw new Error("duplicate human approval was not rejected");
@@ -322,17 +320,11 @@ export async function runAgentLiveEvidence(environment, dependencies = {}) {
       if (typeof revokePendingId !== "string") {
         throw new Error("credential revoke returned no pending action id");
       }
-      const revokeApproval = await httpJson(
+      const revokeApproval = await approvePendingAction(
+        config,
         request,
-        new URL(
-          `/api/tools/pending/${encodeURIComponent(revokePendingId)}/approve`,
-          config.baseUrl,
-        ),
-        {
-          method: "POST",
-          headers: authenticatedHeaders(config, config.adminAccess),
-          timeoutMs: config.timeoutMs,
-        },
+        config.adminAccess,
+        revokePendingId,
       );
       if (!revokeApproval.ok || revokeApproval.data?.status !== "executed") {
         throw new Error("credential revoke approval did not execute");
@@ -340,14 +332,11 @@ export async function runAgentLiveEvidence(environment, dependencies = {}) {
     } else if (!revokeRequest.ok || revokeRequest.data?.status !== "revoked") {
       throw new Error("credential revoke did not execute");
     }
-    const revokedApproval = await httpJson(
+    const revokedApproval = await approvePendingAction(
+      config,
       request,
-      new URL(`/api/tools/pending/${encodeURIComponent(revokedPendingId)}/approve`, config.baseUrl),
-      {
-        method: "POST",
-        headers: authenticatedHeaders(config, config.humanAccess),
-        timeoutMs: config.timeoutMs,
-      },
+      config.humanAccess,
+      revokedPendingId,
     );
     if (revokedApproval.ok || revokedApproval.status !== 403) {
       throw new Error("approval after credential revocation did not fail closed");
@@ -391,15 +380,9 @@ export async function runAgentLiveEvidence(environment, dependencies = {}) {
       typeof config.mailSendInput.bodyText === "string" ? config.mailSendInput.bodyText : null,
     ].filter((fragment) => typeof fragment === "string" && fragment.length > 0);
     const auditVerbs = new Set(relevant.map((record) => record?.verb));
-    const requiredAuditVerbs = [
-      "tool.invocation.pending",
-      "tool.invocation.executed",
-      "tool.invocation.denied",
-      "agent.credential.revoked",
-    ];
     if (
       relevant.length < 4 ||
-      requiredAuditVerbs.some((verb) => !auditVerbs.has(verb)) ||
+      REQUIRED_AUDIT_VERBS.some((verb) => !auditVerbs.has(verb)) ||
       forbiddenAuditFragments.some((fragment) => serializedAudit.includes(fragment))
     ) {
       throw new Error("audit correlation was incomplete or leaked fixture content");
@@ -416,7 +399,7 @@ export async function runAgentLiveEvidence(environment, dependencies = {}) {
       })),
       contentLeakageObserved: false,
       pendingActionsCorrelated: true,
-      requiredVerbsObserved: requiredAuditVerbs,
+      requiredVerbsObserved: [...REQUIRED_AUDIT_VERBS],
     };
 
     evidence.status = "passed";
@@ -487,7 +470,7 @@ async function main(argv = process.argv.slice(2)) {
 function liveConfig(environment) {
   const resourceUris = requiredJsonObject(environment, "HELIX_AGENT_LIVE_RESOURCE_URIS");
   const injectionUris = requiredJsonObject(environment, "HELIX_AGENT_LIVE_INJECTION_URIS");
-  for (const kind of ["mail", "drive", "chat"]) {
+  for (const kind of RESOURCE_KINDS) {
     if (typeof resourceUris[kind] !== "string" || typeof injectionUris[kind] !== "string") {
       throw new Error(`resource and injection URI configuration requires ${kind}`);
     }
@@ -612,6 +595,19 @@ function firstResourceText(result) {
   return text;
 }
 
+// Every approval carries a fresh span under the run trace id so audit correlation stays provable.
+function approvePendingAction(config, request, access, pendingId) {
+  return httpJson(
+    request,
+    new URL(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, config.baseUrl),
+    {
+      method: "POST",
+      headers: authenticatedHeaders(config, access),
+      timeoutMs: config.timeoutMs,
+    },
+  );
+}
+
 function toolRestCall(config, request, access, toolId, input, idempotencyKey) {
   return httpJson(request, new URL(`/api/tools/${encodeURIComponent(toolId)}`, config.baseUrl), {
     method: "POST",
@@ -682,7 +678,7 @@ function validatePassedScenario(scenario, result) {
     case "mcp_permitted_resources":
       if (
         !Number.isInteger(result.listedCount) ||
-        !["mail", "drive", "chat"].every(
+        !RESOURCE_KINDS.every(
           (kind) =>
             HASH_PATTERN.test(result.reads?.[kind]?.resourceHash) &&
             result.reads[kind].byteSize > 0,
@@ -698,7 +694,8 @@ function validatePassedScenario(scenario, result) {
         result.guesses.length < 3 ||
         !result.guesses.every(
           (guess) =>
-            HASH_PATTERN.test(guess.resourceHash) && [-32003, -32004].includes(guess.errorCode),
+            HASH_PATTERN.test(guess.resourceHash) &&
+            FORBIDDEN_RESOURCE_ERROR_CODES.includes(guess.errorCode),
         )
       ) {
         throw new Error("invalid forbidden MCP resource evidence");
@@ -728,7 +725,7 @@ function validatePassedScenario(scenario, result) {
       if (
         result.toolVisibilityUnchanged !== true ||
         result.forbiddenMutationDenied !== true ||
-        !["mail", "drive", "chat"].every(
+        !RESOURCE_KINDS.every(
           (kind) =>
             HASH_PATTERN.test(result.fixtures?.[kind]?.fixtureHash) &&
             result.fixtures[kind].fixtureBytes > 0 &&
@@ -756,12 +753,7 @@ function validatePassedScenario(scenario, result) {
         result.contentLeakageObserved !== false ||
         result.pendingActionsCorrelated !== true ||
         !Array.isArray(result.requiredVerbsObserved) ||
-        ![
-          "tool.invocation.pending",
-          "tool.invocation.executed",
-          "tool.invocation.denied",
-          "agent.credential.revoked",
-        ].every((verb) => result.requiredVerbsObserved.includes(verb)) ||
+        !REQUIRED_AUDIT_VERBS.every((verb) => result.requiredVerbsObserved.includes(verb)) ||
         !Array.isArray(result.records) ||
         !result.records.every(
           (record) =>

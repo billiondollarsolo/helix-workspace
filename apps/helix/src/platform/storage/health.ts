@@ -15,6 +15,11 @@ export interface PersistedTenantStorageHealth {
   readonly message: string;
 }
 
+/** Probe payload written and read back by the BYO storage health check. */
+const storageHealthProbeBody = "helix-storage-health";
+const storageHealthProbeKeyPrefix = ".helix-health/byo-storage/";
+const storageHealthProbePurpose = "byo-storage-health";
+
 export async function testTenantStorageConnection(input: {
   readonly orgId: string;
   readonly storageResolver: TenantStorageResolver | undefined;
@@ -32,17 +37,20 @@ export async function testTenantStorageConnection(input: {
     if (resolved === undefined) {
       return degradedStorageHealth(checkedAt, "Tenant object storage is not configured.");
     }
-    const key = `.helix-health/byo-storage/${randomUUID()}.txt`;
-    const body = new TextEncoder().encode("helix-storage-health");
+    const key = `${storageHealthProbeKeyPrefix}${randomUUID()}.txt`;
+    const body = new TextEncoder().encode(storageHealthProbeBody);
     await resolved.client.put({
       key,
       body,
       contentType: "text/plain",
-      metadata: { purpose: "byo-storage-health" },
+      metadata: { purpose: storageHealthProbePurpose },
     });
     try {
       const object = await resolved.client.get(key);
-      if (object === null || (await storageObjectBodyText(object.body)) !== "helix-storage-health") {
+      if (
+        object === null ||
+        (await storageObjectBodyText(object.body)) !== storageHealthProbeBody
+      ) {
         return {
           status: "degraded",
           checked_at: checkedAt,
@@ -90,7 +98,9 @@ function storageHealthErrorMessage(error: unknown): string {
     : "Tenant object storage probe failed.";
 }
 
-async function storageObjectBodyText(body: AsyncIterable<Uint8Array> | Uint8Array): Promise<string> {
+async function storageObjectBodyText(
+  body: AsyncIterable<Uint8Array> | Uint8Array,
+): Promise<string> {
   if (body instanceof Uint8Array) {
     return new TextDecoder().decode(body);
   }

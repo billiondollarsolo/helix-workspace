@@ -20,6 +20,10 @@
 
 import type { ReactNode } from "react";
 
+function joinClass(base: string, extra: string | undefined): string {
+  return extra === undefined ? base : `${base} ${extra}`;
+}
+
 /** Label-above-control form row. The `<label>` wraps the control, so the
  *  caption is the accessible name without an id/htmlFor pair to keep in sync. */
 export function AdminField({
@@ -32,7 +36,7 @@ export function AdminField({
   readonly children: ReactNode;
 }) {
   return (
-    <label className={className === undefined ? "admin-field" : `admin-field ${className}`}>
+    <label className={joinClass("admin-field", className)}>
       <span className="admin-field-label">{label}</span>
       {children}
     </label>
@@ -73,10 +77,6 @@ export function AdminBulkBar({
       {children}
     </div>
   );
-}
-
-function joinClass(base: string, extra: string | undefined): string {
-  return extra === undefined ? base : `${base} ${extra}`;
 }
 
 /** The console's text input. Replaces `style={INPUT_STYLE}`. */

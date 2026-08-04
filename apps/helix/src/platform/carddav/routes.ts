@@ -1,11 +1,7 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
-import {
-  InvalidVcardError,
-  type CardDavContactRecord,
-  type CardDavContactStore,
-} from "./store.js";
+import { InvalidVcardError, type CardDavContactRecord, type CardDavContactStore } from "./store.js";
 
 export interface RegisterCardDavRoutesOptions {
   readonly appPasswords: AppPasswordAuthenticator;
@@ -79,24 +75,15 @@ export async function registerCardDavRoutes(
       }
 
       if (method === "PUT") {
-        const href = contactHrefFromRequest(request.url, actor);
-        if (href === null || href === "self.vcf") {
-          return reply.code(404).send("Unknown CardDAV contact.");
-        }
-        const existing = await options.store.getContactForActor({
-          orgId: actor.orgId,
-          actorId: actor.id,
-          href,
-        });
-        const preconditionFailure = cardDavPreconditionFailure(request, existing);
-        if (preconditionFailure !== null) {
-          return reply.code(412).send(preconditionFailure);
+        const writeTarget = await resolveCardDavWriteTarget(request, actor, options.store);
+        if (!writeTarget.ok) {
+          return reply.code(writeTarget.status).send(writeTarget.message);
         }
         try {
           const result = await options.store.upsertContactFromVcard({
             orgId: actor.orgId,
             actorId: actor.id,
-            href,
+            href: writeTarget.href,
             vcard: bodyToString(request.body),
           });
           return await reply
@@ -113,23 +100,14 @@ export async function registerCardDavRoutes(
       }
 
       if (method === "DELETE") {
-        const href = contactHrefFromRequest(request.url, actor);
-        if (href === null || href === "self.vcf") {
-          return reply.code(404).send("Unknown CardDAV contact.");
-        }
-        const existing = await options.store.getContactForActor({
-          orgId: actor.orgId,
-          actorId: actor.id,
-          href,
-        });
-        const preconditionFailure = cardDavPreconditionFailure(request, existing);
-        if (preconditionFailure !== null) {
-          return reply.code(412).send(preconditionFailure);
+        const writeTarget = await resolveCardDavWriteTarget(request, actor, options.store);
+        if (!writeTarget.ok) {
+          return reply.code(writeTarget.status).send(writeTarget.message);
         }
         const deleted = await options.store.deleteContact({
           orgId: actor.orgId,
           actorId: actor.id,
-          href,
+          href: writeTarget.href,
         });
         return deleted ? reply.code(204).send() : reply.code(404).send("Unknown CardDAV contact.");
       }
@@ -178,6 +156,35 @@ export async function registerCardDavRoutes(
         .send(cardDavMultistatusXml(actor, target, contacts, depth, syncVersion));
     },
   });
+}
+
+type CardDavWriteTarget =
+  | { readonly ok: true; readonly href: string }
+  | { readonly ok: false; readonly status: 404 | 412; readonly message: string };
+
+/**
+ * Shared PUT/DELETE prologue: resolve the addressed contact href (the read-only
+ * `self.vcf` card is never writable) and apply If-Match / If-None-Match.
+ */
+async function resolveCardDavWriteTarget(
+  request: FastifyRequest,
+  actor: Actor,
+  store: CardDavContactStore,
+): Promise<CardDavWriteTarget> {
+  const href = contactHrefFromRequest(request.url, actor);
+  if (href === null || href === "self.vcf") {
+    return { ok: false, status: 404, message: "Unknown CardDAV contact." };
+  }
+  const existing = await store.getContactForActor({
+    orgId: actor.orgId,
+    actorId: actor.id,
+    href,
+  });
+  const preconditionFailure = cardDavPreconditionFailure(request, existing);
+  if (preconditionFailure !== null) {
+    return { ok: false, status: 412, message: preconditionFailure };
+  }
+  return { ok: true, href };
 }
 
 async function authenticateCardDav(
@@ -229,15 +236,8 @@ function cardDavReportXml(
   if (isAddressbookMultigetReport(bodyText)) {
     const responses =
       requestedHrefs.length === 0
-        ? [
-            selfCardResponseXml(actor, { includeAddressData: true }),
-            ...contacts.map((contact) =>
-              contactResponseXml(actor, contact, { includeAddressData: true }),
-            ),
-          ]
-        : requestedHrefs.map((href) =>
-            addressbookMultigetResponseXml(actor, contacts, href),
-          );
+        ? fullAddressDataResponsesXml(actor, contacts)
+        : requestedHrefs.map((href) => addressbookMultigetResponseXml(actor, contacts, href));
     return xmlDocument(multistatusXml(responses));
   }
 
@@ -264,18 +264,24 @@ function cardDavSyncCollectionXml(
 ): string {
   const responses =
     sinceSyncVersion === undefined
-      ? [
-          selfCardResponseXml(actor, { includeAddressData: true }),
-          ...contacts.map((contact) =>
-            contactResponseXml(actor, contact, { includeAddressData: true }),
-          ),
-        ]
+      ? fullAddressDataResponsesXml(actor, contacts)
       : changes.map((contact) =>
           contact.deletedAt === undefined
             ? contactResponseXml(actor, contact, { includeAddressData: true })
             : deletedContactResponseXml(actor, contact),
         );
   return xmlDocument(multistatusXml(responses, syncToken(syncVersion)));
+}
+
+/** Full-collection listing: the self card plus every contact, address data inline. */
+function fullAddressDataResponsesXml(
+  actor: Actor,
+  contacts: readonly CardDavContactRecord[],
+): readonly string[] {
+  return [
+    selfCardResponseXml(actor, { includeAddressData: true }),
+    ...contacts.map((contact) => contactResponseXml(actor, contact, { includeAddressData: true })),
+  ];
 }
 
 function targetResponseXml(
@@ -597,9 +603,7 @@ function xmlDocument(body: string): string {
 
 function multistatusXml(responses: readonly string[], syncTokenValue?: string): string {
   const token =
-    syncTokenValue === undefined
-      ? ""
-      : `<D:sync-token>${xmlEscape(syncTokenValue)}</D:sync-token>`;
+    syncTokenValue === undefined ? "" : `<D:sync-token>${xmlEscape(syncTokenValue)}</D:sync-token>`;
   return `<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">${responses.join("")}${token}</D:multistatus>`;
 }
 

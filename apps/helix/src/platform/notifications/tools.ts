@@ -1,8 +1,9 @@
-import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
+import type { ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod3";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { NotificationStore } from "./store.js";
+import type { NotificationRecord } from "./types.js";
 
 const listSchema = z.object({
   unreadOnly: z.boolean().default(false),
@@ -95,19 +96,7 @@ function defineTool<Input, Output>(
   return tool;
 }
 
-function serialize(record: {
-  id: string;
-  orgId: string;
-  actorId: string;
-  verb: string;
-  objectType: string;
-  objectId: string | null;
-  summary: string;
-  body: string | null;
-  payload: JsonObject;
-  createdAt: Date;
-  readAt: Date | null;
-}) {
+function serialize(record: NotificationRecord) {
   return {
     id: record.id,
     orgId: record.orgId,

@@ -189,9 +189,7 @@ export function renderMarkdown(
         options.references === "text"
           ? title
           : `[${escapeMarkdownLinkLabel(title)}](#${epubAnchorId(item.anchor || item.id)})`;
-      lines.push(
-        `${"  ".repeat(Math.max(item.level - 1, 0))}- ${body}`,
-      );
+      lines.push(`${"  ".repeat(Math.max(item.level - 1, 0))}- ${body}`);
     }
   }
   if (includeComments && document.comments !== undefined && document.comments.length > 0) {
@@ -342,9 +340,7 @@ function nativeDocumentExportLayout(document: DocsExportDocument): NativeDocumen
   };
 }
 
-function firstNativeDocumentSection(
-  value: unknown,
-): {
+function firstNativeDocumentSection(value: unknown): {
   readonly columnCount?: 1 | 2;
   readonly pageSize?: "letter" | "a4";
   readonly orientation?: "portrait" | "landscape";
@@ -505,11 +501,9 @@ function renderDocxScaffold(
   const blocks = docxBlocksFromMarkdown(markdown);
   const images = blocks.filter(isDocxImageBlock).map((block) => block.image);
   const hyperlinks = docxHyperlinksFromBlocks(blocks);
-  const paragraphs = blocks
-    .filter(isDocxParagraphBlock)
-    .map((block) => block.text);
-  const paragraphComments = assignDocxCommentsToParagraphs(paragraphs, comments);
   const paragraphBlocks = blocks.filter(isDocxParagraphBlock);
+  const paragraphs = paragraphBlocks.map((block) => block.text);
+  const paragraphComments = assignDocxCommentsToParagraphs(paragraphs, comments);
   const hasStyles = blocks.some(
     (block) => block.kind === "paragraph" && block.styleId !== undefined,
   );
@@ -583,15 +577,13 @@ function renderDocxScaffold(
     });
   }
   if (hasComments) {
-    entries.push(
-      {
-        name: "word/comments.xml",
-        data: xmlBuffer(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    entries.push({
+      name: "word/comments.xml",
+      data: xmlBuffer(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   ${comments.map(docxCommentXml).join("\n  ")}
 </w:comments>`),
-      },
-    );
+    });
   }
   for (const image of images) {
     entries.push({
@@ -682,36 +674,44 @@ function docxParagraphFromMarkdownLine(
 } {
   const heading = /^(#{1,6})\s+(.+)$/u.exec(line);
   if (heading !== null) {
-    const inline = docxInlineRunsFromMarkdown(heading[2]?.trim() ?? "", hyperlinkOffset);
-    return {
-      text: docxTextFromRuns(inline.runs),
-      runs: inline.runs,
-      hyperlinkCount: inline.hyperlinkCount,
-      styleId: `Heading${String(Math.min(heading[1]?.length ?? 1, 6))}` as DocxParagraphStyleId,
-    };
+    return docxParagraphFromInlineMarkdown(
+      heading[2]?.trim() ?? "",
+      hyperlinkOffset,
+      `Heading${String(Math.min(heading[1]?.length ?? 1, 6))}` as DocxParagraphStyleId,
+    );
   }
   const bullet = /^[-*+]\s+(.+)$/u.exec(line);
   if (bullet !== null) {
-    const inline = docxInlineRunsFromMarkdown(bullet[1]?.trim() ?? "", hyperlinkOffset);
-    return {
-      text: docxTextFromRuns(inline.runs),
-      runs: inline.runs,
-      hyperlinkCount: inline.hyperlinkCount,
-      styleId: "ListBullet",
-    };
+    return docxParagraphFromInlineMarkdown(bullet[1]?.trim() ?? "", hyperlinkOffset, "ListBullet");
   }
   const numbered = /^\d+[.)]\s+(.+)$/u.exec(line);
   if (numbered !== null) {
-    const inline = docxInlineRunsFromMarkdown(numbered[1]?.trim() ?? "", hyperlinkOffset);
-    return {
-      text: docxTextFromRuns(inline.runs),
-      runs: inline.runs,
-      hyperlinkCount: inline.hyperlinkCount,
-      styleId: "ListNumber",
-    };
+    return docxParagraphFromInlineMarkdown(
+      numbered[1]?.trim() ?? "",
+      hyperlinkOffset,
+      "ListNumber",
+    );
   }
-  const inline = docxInlineRunsFromMarkdown(line, hyperlinkOffset);
-  return { text: docxTextFromRuns(inline.runs), runs: inline.runs, hyperlinkCount: inline.hyperlinkCount };
+  return docxParagraphFromInlineMarkdown(line, hyperlinkOffset);
+}
+
+function docxParagraphFromInlineMarkdown(
+  text: string,
+  hyperlinkOffset: number,
+  styleId?: DocxParagraphStyleId,
+): {
+  readonly text: string;
+  readonly runs: readonly DocxTextRun[];
+  readonly hyperlinkCount: number;
+  readonly styleId?: DocxParagraphStyleId | undefined;
+} {
+  const inline = docxInlineRunsFromMarkdown(text, hyperlinkOffset);
+  return {
+    text: docxTextFromRuns(inline.runs),
+    runs: inline.runs,
+    hyperlinkCount: inline.hyperlinkCount,
+    ...(styleId === undefined ? {} : { styleId }),
+  };
 }
 
 function docxInlineRunsFromMarkdown(
@@ -755,7 +755,9 @@ function nextInlineMarkdownToken(
   if (candidates.length === 0) {
     return null;
   }
-  return candidates.sort((left, right) => left.start - right.start || right.end - left.end)[0] ?? null;
+  return (
+    candidates.sort((left, right) => left.start - right.start || right.end - left.end)[0] ?? null
+  );
 }
 
 function inlineMarkdownLinkRun(
@@ -846,9 +848,7 @@ function docxHyperlinksFromBlocks(
 }
 
 function stripInlineMarkdownText(text: string): string {
-  return text
-    .replace(/[`*_~>]/gu, "")
-    .replace(/\[(.*?)\]\([^)]*\)/gu, "$1");
+  return text.replace(/[`*_~>]/gu, "").replace(/\[(.*?)\]\([^)]*\)/gu, "$1");
 }
 
 function isDocxParagraphBlock(
@@ -871,7 +871,7 @@ function markdownImageLine(
     return null;
   }
   return {
-    altText: stripMarkdownLine(match[1] ?? ""),
+    altText: stripMarkdown(match[1] ?? ""),
     source: match[2] ?? "",
   };
 }
@@ -905,7 +905,10 @@ function docxImageFromMarkdownImage(
   };
 }
 
-function fallbackDocxImageText(image: { readonly altText: string; readonly source: string }): string {
+function fallbackDocxImageText(image: {
+  readonly altText: string;
+  readonly source: string;
+}): string {
   const altText = image.altText.trim();
   return altText.length === 0 ? `Image: ${image.source}` : `Image: ${altText}`;
 }
@@ -935,20 +938,14 @@ function isMarkdownTableSeparator(line: string): boolean {
 
 function markdownTableCells(line: string): readonly string[] {
   const trimmed = line.trim().replace(/^\|/u, "").replace(/\|$/u, "");
-  return trimmed.split("|").map((cell) => stripMarkdownLine(cell.trim()));
+  return trimmed.split("|").map((cell) => stripMarkdown(cell.trim()));
 }
 
 function normalizeDocxTableRows(rows: readonly (readonly string[])[]): DocxTable {
   const columnCount = Math.max(...rows.map((row) => row.length), 1);
   return {
-    rows: rows.map((row) =>
-      Array.from({ length: columnCount }, (_, index) => row[index] ?? ""),
-    ),
+    rows: rows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? "")),
   };
-}
-
-function stripMarkdownLine(line: string): string {
-  return stripMarkdown(line);
 }
 
 function docxBlockXml(
@@ -1198,9 +1195,7 @@ function markdownInlineToMarkup(text: string, escapeText: (value: string) => str
     }
     const label = stripInlineMarkdownText(match[1] ?? "");
     const href = match[2] ?? "";
-    parts.push(
-      `<a href="${escapeXmlAttribute(href)}">${escapeText(label)}</a>`,
-    );
+    parts.push(`<a href="${escapeXmlAttribute(href)}">${escapeText(label)}</a>`);
     cursor = index + match[0].length;
   }
   if (cursor < text.length) {
@@ -1238,13 +1233,18 @@ function clampHeadingLevel(level: number): number {
   return Number.isInteger(level) ? Math.min(Math.max(level, 1), 6) : 1;
 }
 
+/** Epoch fallback used when a document has no (or an unparseable) timestamp. */
+const EXPORT_TIMESTAMP_EPOCH = "1970-01-01T00:00:00.000Z";
+
+function exportTimestampDate(value: DocsExportDocument["updatedAt"]): Date {
+  if (value === undefined) {
+    return new Date(EXPORT_TIMESTAMP_EPOCH);
+  }
+  return value instanceof Date ? value : new Date(value);
+}
+
 function epubModifiedTimestamp(value: DocsExportDocument["updatedAt"]): string {
-  const date =
-    value === undefined
-      ? new Date("1970-01-01T00:00:00.000Z")
-      : value instanceof Date
-        ? value
-        : new Date(value);
+  const date = exportTimestampDate(value);
   if (!Number.isFinite(date.getTime())) {
     return "1970-01-01T00:00:00Z";
   }
@@ -1303,20 +1303,19 @@ function assignDocxCommentsToParagraphs(
   const fallbackComments: DocxComment[] = [];
 
   for (const comment of comments) {
-    const paragraphIndex = paragraphs.findIndex(
-      (paragraph) => docxCommentRangeInParagraph(paragraph, comment) !== null,
-    );
-    if (paragraphIndex < 0) {
-      fallbackComments.push(comment);
-      continue;
+    let assigned = false;
+    for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
+      const range = docxCommentRangeInParagraph(paragraph, comment);
+      if (range === null) {
+        continue;
+      }
+      paragraphComments[paragraphIndex]?.push({ comment, ...range });
+      assigned = true;
+      break;
     }
-    const paragraph = paragraphs[paragraphIndex] ?? "";
-    const range = docxCommentRangeInParagraph(paragraph, comment);
-    if (range === null) {
+    if (!assigned) {
       fallbackComments.push(comment);
-      continue;
     }
-    paragraphComments[paragraphIndex]?.push({ comment, ...range });
   }
 
   return {
@@ -1341,12 +1340,7 @@ function docxCommentRangeInParagraph(
 }
 
 function docxCommentTimestamp(value: DocsExportDocument["updatedAt"]): string {
-  const date =
-    value === undefined
-      ? new Date("1970-01-01T00:00:00.000Z")
-      : value instanceof Date
-        ? value
-        : new Date(value);
+  const date = exportTimestampDate(value);
   if (!Number.isFinite(date.getTime())) {
     return "1970-01-01T00:00:00Z";
   }

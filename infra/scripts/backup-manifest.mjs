@@ -10,6 +10,23 @@ const MANIFEST_NAME = "manifest.json";
 const SHA256 = /^[a-f0-9]{64}$/u;
 const PRODUCTION_TIERS = new Set(["business", "enterprise", "sovereign"]);
 const MINIMUM_RETENTION_DAYS = { personal: 0, business: 30, enterprise: 90, sovereign: 365 };
+const OPTION_KEYS_BY_FLAG = {
+  "--root": "root",
+  "--backup-id": "backupId",
+  "--tier": "tier",
+  "--created-at": "createdAt",
+  "--database-captured-at": "databaseCapturedAt",
+  "--objects-captured-at": "objectsCapturedAt",
+  "--database-mode": "databaseMode",
+  "--objects-included": "objectsIncluded",
+  "--object-bucket": "objectBucket",
+  "--object-versioning": "objectVersioning",
+  "--object-replication": "objectReplication",
+  "--encryption": "encryption",
+  "--key-custody-ref": "keyCustodyRef",
+  "--off-host-uri": "offHostUri",
+  "--retention-days": "retentionDays",
+};
 
 const usage = `Usage:
   infra/scripts/backup-manifest.mjs create --root <dir> [options]
@@ -48,8 +65,8 @@ if (isMain()) {
       );
     } else if (command === "object-samples") {
       const manifest = await readVerifiedManifest(options.root);
+      const prefix = `objects/${manifest.objects.bucket}/`;
       for (const sample of manifest.objects.sampledCorpus) {
-        const prefix = `objects/${manifest.objects.bucket}/`;
         if (!sample.path.startsWith(prefix))
           throw new Error("object sample path is outside bucket");
         process.stdout.write(`${sample.sha256}\t${sample.path.slice(prefix.length)}\n`);
@@ -425,23 +442,7 @@ function parseCli(args) {
       throw new Error(`${argument} requires a value`);
     }
     index += 1;
-    const key = {
-      "--root": "root",
-      "--backup-id": "backupId",
-      "--tier": "tier",
-      "--created-at": "createdAt",
-      "--database-captured-at": "databaseCapturedAt",
-      "--objects-captured-at": "objectsCapturedAt",
-      "--database-mode": "databaseMode",
-      "--objects-included": "objectsIncluded",
-      "--object-bucket": "objectBucket",
-      "--object-versioning": "objectVersioning",
-      "--object-replication": "objectReplication",
-      "--encryption": "encryption",
-      "--key-custody-ref": "keyCustodyRef",
-      "--off-host-uri": "offHostUri",
-      "--retention-days": "retentionDays",
-    }[argument];
+    const key = OPTION_KEYS_BY_FLAG[argument];
     if (key === undefined) throw new Error(`unknown option: ${argument}`);
     options[key] = value;
   }

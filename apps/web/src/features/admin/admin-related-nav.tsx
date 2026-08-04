@@ -69,32 +69,29 @@ export function AdminRelatedNav({
   );
 }
 
+/** A group's sibling list, with the page you are on marked as current. Each
+ *  strip is otherwise just `[section, label]` data. */
+function siblings(
+  current: AdminSectionId,
+  entries: readonly (readonly [AdminSectionId, string])[],
+): readonly AdminRelatedNavItem[] {
+  return entries.map(([section, label]) => ({ section, label, current: section === current }));
+}
+
 /** Standard AI group sibling strip. */
 export function AdminAiRelatedNav({ current }: { readonly current: AdminSectionId }) {
   return (
     <AdminRelatedNav
       ariaLabel="Related AI admin pages"
       items={[
-        {
-          section: "ai-providers",
-          label: "AI providers",
-          current: current === "ai-providers",
-        },
-        {
-          section: "ai-costs",
-          label: "Cost limits",
-          current: current === "ai-costs",
-        },
-        {
-          section: "ai-observability",
-          label: "Observability",
-          current: current === "ai-observability",
-        },
-        {
-          section: "agent-controls",
-          label: "Agent emergency controls",
-          current: current === "agent-controls",
-        },
+        ...siblings(current, [
+          ["ai-providers", "AI providers"],
+          ["ai-costs", "Cost limits"],
+          ["ai-observability", "Observability"],
+          ["agent-controls", "Agent emergency controls"],
+        ]),
+        /* Never current: this one deep-links into a tab of another section
+           rather than naming a page in this group. */
         {
           section: "mail",
           label: "Mail spam",
@@ -111,28 +108,12 @@ export function AdminAccessRelatedNav({ current }: { readonly current: AdminSect
   return (
     <AdminRelatedNav
       ariaLabel="Related access and agent admin pages"
-      items={[
-        {
-          section: "app-passwords",
-          label: "App passwords",
-          current: current === "app-passwords",
-        },
-        {
-          section: "agent-credentials",
-          label: "Agent credentials",
-          current: current === "agent-credentials",
-        },
-        {
-          section: "agent-controls",
-          label: "Agent emergency controls",
-          current: current === "agent-controls",
-        },
-        {
-          section: "oauth-apps",
-          label: "OAuth apps",
-          current: current === "oauth-apps",
-        },
-      ]}
+      items={siblings(current, [
+        ["app-passwords", "App passwords"],
+        ["agent-credentials", "Agent credentials"],
+        ["agent-controls", "Agent emergency controls"],
+        ["oauth-apps", "OAuth apps"],
+      ])}
     />
   );
 }
@@ -142,28 +123,12 @@ export function AdminSecurityRelatedNav({ current }: { readonly current: AdminSe
   return (
     <AdminRelatedNav
       ariaLabel="Related security admin pages"
-      items={[
-        {
-          section: "policies",
-          label: "Policies",
-          current: current === "policies",
-        },
-        {
-          section: "identity",
-          label: "Identity & SSO",
-          current: current === "identity",
-        },
-        {
-          section: "tier-readiness",
-          label: "Tier readiness",
-          current: current === "tier-readiness",
-        },
-        {
-          section: "audit",
-          label: "Audit log",
-          current: current === "audit",
-        },
-      ]}
+      items={siblings(current, [
+        ["policies", "Policies"],
+        ["identity", "Identity & SSO"],
+        ["tier-readiness", "Tier readiness"],
+        ["audit", "Audit log"],
+      ])}
     />
   );
 }

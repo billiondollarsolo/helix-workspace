@@ -433,13 +433,12 @@ async function dispatchOutboundDelivery(input: {
       body: input.body,
     });
     const delivered = response.status >= 200 && response.status < 300;
-    const retryable = isRetryableStatus(response.status);
     const nextAttemptAt = delivered
       ? null
-      : nextAttemptAtFor(input.attempt, now, retryPolicy, retryable);
+      : nextAttemptAtFor(input.attempt, now, retryPolicy, isRetryableStatus(response.status));
     return await input.store.updateDeliveryStatus({
       id: input.delivery.id,
-      status: delivered ? "delivered" : nextAttemptAt === null ? "abandoned" : "failed",
+      status: attemptStatus(delivered, nextAttemptAt),
       attempt: input.attempt,
       signature: input.signature.header,
       requestHeaders: input.requestHeaders,
@@ -453,7 +452,7 @@ async function dispatchOutboundDelivery(input: {
     const nextAttemptAt = nextAttemptAtFor(input.attempt, now, retryPolicy, true);
     return input.store.updateDeliveryStatus({
       id: input.delivery.id,
-      status: nextAttemptAt === null ? "abandoned" : "failed",
+      status: attemptStatus(false, nextAttemptAt),
       attempt: input.attempt,
       signature: input.signature.header,
       requestHeaders: input.requestHeaders,
@@ -462,6 +461,17 @@ async function dispatchOutboundDelivery(input: {
       deliveredAt: null,
     });
   }
+}
+
+/** No further attempt scheduled means the delivery is done retrying, not merely failed. */
+function attemptStatus(
+  delivered: boolean,
+  nextAttemptAt: Date | null,
+): "delivered" | "abandoned" | "failed" {
+  if (delivered) {
+    return "delivered";
+  }
+  return nextAttemptAt === null ? "abandoned" : "failed";
 }
 
 function nextAttemptAtFor(
@@ -508,9 +518,8 @@ function classificationFromPayload(
   }
   seen.add(payload);
 
-  const direct = dataClassification(payload.classification);
-  if (direct !== undefined) {
-    return direct;
+  if (isDataClassification(payload.classification)) {
+    return payload.classification;
   }
 
   for (const key of ["metadata", "attributes", "resource", "data", "payload"]) {
@@ -530,10 +539,6 @@ function recordField(
 ): Record<string, unknown> | undefined {
   const value = record[key];
   return isRecord(value) ? value : undefined;
-}
-
-function dataClassification(value: unknown): DataClassification | undefined {
-  return isDataClassification(value) ? value : undefined;
 }
 
 function isDataClassification(value: unknown): value is DataClassification {

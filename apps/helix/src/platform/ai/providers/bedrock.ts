@@ -1,7 +1,12 @@
 import { createHash, createHmac } from "node:crypto";
 import type { ChatRequest, ChatResponse, LLMProviderCapability, ModelInfo } from "@helix/sdk-types";
 import { anthropicChatResponse } from "./anthropic-compatible.js";
-import { resolveAwsCredentials, type AwsCredentialResolverOptions, type AwsCredentials } from "./aws-credentials.js";
+import { joinPaths } from "./url-path.js";
+import {
+  resolveAwsCredentials,
+  type AwsCredentialResolverOptions,
+  type AwsCredentials,
+} from "./aws-credentials.js";
 import {
   anthropicRequestBody,
   approximateTokenCount,
@@ -23,9 +28,7 @@ export interface BedrockCredentials {
  * `AWS_PROFILE` / environment-variable resolution; temporary credentials are
  * re-resolved before they expire.
  */
-export type BedrockCredentialSource =
-  | BedrockCredentials
-  | (() => Promise<BedrockCredentials>);
+export type BedrockCredentialSource = BedrockCredentials | (() => Promise<BedrockCredentials>);
 
 export interface BedrockProviderConfig {
   readonly id: string;
@@ -121,7 +124,9 @@ class BedrockProvider implements LLMProviderCapability {
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
     const model = modelForRequest(req.model, this.#defaultModel);
-    const body = JSON.stringify(anthropicRequestBody(model, req.messages, this.#maxTokens, this.#anthropicVersion));
+    const body = JSON.stringify(
+      anthropicRequestBody(model, req.messages, this.#maxTokens, this.#anthropicVersion),
+    );
     const url = bedrockInvokeUrl(this.#endpoint, model);
     const date = this.#now();
     const credentials = await this.#credentials();
@@ -184,9 +189,17 @@ export function signedBedrockHeaders(input: BedrockSigningInput): Record<string,
     host: input.url.host,
     "x-amz-content-sha256": payloadHash,
     "x-amz-date": amzDate(input.date),
-    ...(input.credentials.sessionToken === undefined ? {} : { "x-amz-security-token": input.credentials.sessionToken }),
+    ...(input.credentials.sessionToken === undefined
+      ? {}
+      : { "x-amz-security-token": input.credentials.sessionToken }),
   });
-  const canonicalRequest = createCanonicalRequest("POST", input.url.pathname, "", headers, payloadHash);
+  const canonicalRequest = createCanonicalRequest(
+    "POST",
+    input.url.pathname,
+    "",
+    headers,
+    payloadHash,
+  );
   headers.authorization = authorizationHeader(input, headers, canonicalRequest);
   return headers;
 }
@@ -221,11 +234,19 @@ function authorizationHeader(
 }
 
 function requestSignature(input: BedrockSigningInput, canonicalRequest: string): string {
-  return hmacHex(signingKey(input.credentials.secretAccessKey, input.region, input.date), stringToSign(input, canonicalRequest));
+  return hmacHex(
+    signingKey(input.credentials.secretAccessKey, input.region, input.date),
+    stringToSign(input, canonicalRequest),
+  );
 }
 
 function stringToSign(input: BedrockSigningInput, canonicalRequest: string): string {
-  return [signingAlgorithm, amzDate(input.date), credentialScope(input.region, input.date), hashHex(canonicalRequest)].join("\n");
+  return [
+    signingAlgorithm,
+    amzDate(input.date),
+    credentialScope(input.region, input.date),
+    hashHex(canonicalRequest),
+  ].join("\n");
 }
 
 function signingKey(secretAccessKey: string, region: string, date: Date): Uint8Array {
@@ -258,15 +279,11 @@ function signedHeaderNames(headers: Record<string, string>): string {
   return Object.keys(headers).sort().join(";");
 }
 
-function joinPaths(...parts: readonly string[]): string {
-  return `/${parts
-    .flatMap((part) => part.split("/"))
-    .filter((part) => part.length > 0)
-    .join("/")}`;
-}
-
 function encodeRfc3986(value: string): string {
-  return encodeURIComponent(value).replace(/[!'()*]/gu, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return encodeURIComponent(value).replace(
+    /[!'()*]/gu,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 }
 
 function amzDate(date: Date): string {

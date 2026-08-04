@@ -20,6 +20,17 @@ import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive
 import { EmptyRow, PageHeading, StateBanner } from "@/features/admin/console/primitives";
 import { AdminInput } from "@/features/admin/console/controls";
 import {
+  SELECT_CLASS,
+  actorStatusOf,
+  errorMessage,
+  formatDateTime,
+  invalidExpiresAt,
+  normalizeExpiresAt,
+  parseScopes,
+  toggleScope,
+  type ActorStatus,
+} from "@/features/admin/credentials-shared";
+import {
   agentCredentialsQueryOptions,
   createAgentCredential,
   revokeAgentCredential,
@@ -67,17 +78,20 @@ const commonScopes = [
   "admin.agents",
 ] as const;
 
-const invalidExpiresAt = Symbol("invalidExpiresAt");
-
 const AGENT_ACTOR_TYPE = "agent";
 
 /** The picker's status banner; referenced by the controls it explains. */
 const ACTOR_STATUS_ID = "agent-actor-status";
 
-/* The console has no Select primitive yet — mirror `Input` so the actor picker
-   does not read as a control from a different family than the fields beside it. */
-const SELECT_CLASS =
-  "h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50";
+/* A disabled picker still shows its first option, so that option has to say
+   which of the three reasons it is empty for. */
+const actorPlaceholders: Record<ActorStatus, string> = {
+  loading: "Loading actors…",
+  error: "Actor directory unavailable",
+  empty: "No actors available",
+  truncated: "Select an actor",
+  ready: "Select an actor",
+};
 
 export function AgentCredentialsManagement() {
   const queryClient = useQueryClient();
@@ -144,40 +158,37 @@ export function AgentCredentialsManagement() {
   );
   const actorGroups = useMemo(() => groupActorsByType(actors), [actors]);
   const canPickActor = !actorsQuery.isLoading && !actorsQuery.isError && actors.length > 0;
-  /* A disabled picker still shows its first option, so that option has to say
-     which of the three reasons it is empty for. */
-  const actorPlaceholder = actorsQuery.isLoading
-    ? "Loading actors…"
-    : actorsQuery.isError
-      ? "Actor directory unavailable"
-      : actors.length === 0
-        ? "No actors available"
-        : "Select an actor";
-  const actorStatus = useMemo<ActorDirectoryStatus | null>(() => {
-    if (actorsQuery.isLoading) {
+  const actorStatus = actorStatusOf({
+    actorCount: actors.length,
+    hasMore: (actorsQuery.data?.nextCursor ?? null) !== null,
+    isError: actorsQuery.isError,
+    isPending: actorsQuery.isLoading,
+  });
+  const actorNotice = useMemo<ActorDirectoryStatus | null>(() => {
+    if (actorStatus === "loading") {
       return { kind: "loading", message: "Loading workspace actors…" };
     }
-    if (actorsQuery.isError) {
+    if (actorStatus === "error") {
       return {
         kind: "error",
         message: `${errorMessage(actorsQuery.error, "Could not load workspace actors.")} Credentials cannot be issued until the actor directory loads.`,
       };
     }
-    if (actors.length === 0) {
+    if (actorStatus === "empty") {
       return {
         kind: "info",
         message:
           "This workspace has no enabled actors, so there is nothing to issue a credential to.",
       };
     }
-    if ((actorsQuery.data?.nextCursor ?? null) !== null) {
+    if (actorStatus === "truncated") {
       return {
         kind: "info",
         message: `Showing the first ${actors.length} enabled actors; the directory holds more.`,
       };
     }
     return null;
-  }, [actorsQuery.data, actorsQuery.error, actorsQuery.isError, actorsQuery.isLoading, actors]);
+  }, [actorStatus, actorsQuery.error, actors.length]);
 
   const credentials = credentialsQuery.data ?? [];
   const tableData = useMemo(() => [...credentials], [credentials]);
@@ -315,14 +326,14 @@ export function AgentCredentialsManagement() {
             <h2 className="text-sm font-medium">Create credential</h2>
           </div>
 
-          {actorStatus !== null ? (
+          {actorNotice !== null ? (
             <div id={ACTOR_STATUS_ID}>
-              <StateBanner kind={actorStatus.kind}>
-                {actorStatus.message}
+              <StateBanner kind={actorNotice.kind}>
+                {actorNotice.message}
                 {/* The actor query is `retry: false`, and a failed directory
                     disables the whole form — without this the only way out is
                     a full page reload. */}
-                {actorStatus.kind === "error" ? (
+                {actorNotice.kind === "error" ? (
                   <Button
                     className="mt-2"
                     onClick={() => {
@@ -362,7 +373,7 @@ export function AgentCredentialsManagement() {
                   <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-actor-id">
                     Actor
                     <select
-                      aria-describedby={actorStatus === null ? undefined : ACTOR_STATUS_ID}
+                      aria-describedby={actorNotice === null ? undefined : ACTOR_STATUS_ID}
                       className={SELECT_CLASS}
                       disabled={!canPickActor}
                       id="agent-actor-id"
@@ -371,7 +382,7 @@ export function AgentCredentialsManagement() {
                       required
                       value={field.state.value}
                     >
-                      <option value="">{actorPlaceholder}</option>
+                      <option value="">{actorPlaceholders[actorStatus]}</option>
                       {actorGroups.map((group) => (
                         <optgroup key={group.type} label={group.label}>
                           {group.actors.map((actor) => (
@@ -708,41 +719,6 @@ function compareActorTypes(left: string, right: string): number {
     return left === AGENT_ACTOR_TYPE ? -1 : 1;
   }
   return left.localeCompare(right);
-}
-
-function parseScopes(value: string): string[] {
-  return value
-    .split(/[\s,]+/u)
-    .map((scope) => scope.trim())
-    .filter((scope) => scope.length > 0);
-}
-
-function toggleScope(value: string, scope: string, selected: boolean): string {
-  const scopes = parseScopes(value).filter((candidate) => candidate !== scope);
-  return (selected ? scopes : [...scopes, scope]).join(" ");
-}
-
-function normalizeExpiresAt(value: string): string | null | typeof invalidExpiresAt {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-  const date = new Date(trimmed);
-  return Number.isNaN(date.getTime()) ? invalidExpiresAt : date.toISOString();
-}
-
-function formatDateTime(value: string | null): string | null {
-  if (value === null) {
-    return null;
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message.length > 0 ? error.message : fallback;
 }
 
 async function invalidateAgentCredentialLists(

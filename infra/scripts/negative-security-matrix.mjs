@@ -348,7 +348,7 @@ export function validateNegativeSecurityCommandMappings(matrix = V2_NEGATIVE_SEC
             `V2 case ${entry.id} uses unsupported execution mode: ${test.execution}.`,
           );
         }
-        expectedCommands.add(`${test.file}\0${test.title}\0${test.execution}`);
+        expectedCommands.add(commandKey(test));
       }
     }
   }
@@ -367,14 +367,12 @@ export function negativeSecurityCommands(matrix = V2_NEGATIVE_SECURITY_MATRIX) {
   for (const row of matrix) {
     for (const entry of row.cases) {
       for (const test of entry.tests) {
-        const key = `${test.file}\0${test.title}\0${test.execution}`;
-        const appPrefix = "apps/helix/";
-        const command = test.file.startsWith(appPrefix)
+        const command = test.file.startsWith(APP_PACKAGE_PREFIX)
           ? `pnpm --filter @helix/app exec vitest run ${shellQuote(
-              test.file.slice(appPrefix.length),
+              test.file.slice(APP_PACKAGE_PREFIX.length),
             )} -t ${shellQuote(test.title)}`
           : `pnpm exec vitest run ${shellQuote(test.file)} -t ${shellQuote(test.title)}`;
-        commands.set(key, {
+        commands.set(commandKey(test), {
           execution: test.execution,
           command,
           ...(test.execution === "live-postgres" ? { requiredEnvironment: ["DATABASE_URL"] } : {}),
@@ -383,6 +381,14 @@ export function negativeSecurityCommands(matrix = V2_NEGATIVE_SECURITY_MATRIX) {
     }
   }
   return [...commands.values()];
+}
+
+/** Tests inside the API app run through its own workspace filter. */
+const APP_PACKAGE_PREFIX = "apps/helix/";
+
+/** Identity of a runnable command: the same file/title/mode maps to one command. */
+function commandKey(test) {
+  return `${test.file}\0${test.title}\0${test.execution}`;
 }
 
 function boundary(name, planRequirement, cases) {

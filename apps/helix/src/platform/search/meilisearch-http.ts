@@ -1,12 +1,12 @@
 import type { JsonObject } from "@helix/sdk-types";
+import type { IndexDocument } from "./types.js";
 import type {
-  IndexDocument,
   MeilisearchClientLike,
   MeilisearchIndexLike,
   MeilisearchIndexSettings,
   MeilisearchSearchOptions,
   MeilisearchSearchResponse,
-} from "./index.js";
+} from "./meilisearch.js";
 
 export interface MeilisearchHttpClientOptions {
   readonly baseUrl: string;
@@ -25,7 +25,9 @@ export class MeilisearchHttpError extends Error {
   }
 }
 
-export function createMeilisearchHttpClient(options: MeilisearchHttpClientOptions): MeilisearchClientLike {
+export function createMeilisearchHttpClient(
+  options: MeilisearchHttpClientOptions,
+): MeilisearchClientLike {
   return new MeilisearchHttpClient(options);
 }
 
@@ -93,7 +95,10 @@ class MeilisearchHttpIndex implements MeilisearchIndexLike {
     );
   }
 
-  async search(query: string, options?: MeilisearchSearchOptions): Promise<MeilisearchSearchResponse> {
+  async search(
+    query: string,
+    options?: MeilisearchSearchOptions,
+  ): Promise<MeilisearchSearchResponse> {
     const response = await requestJson(
       this.baseUrl,
       this.fetchImpl,
@@ -145,10 +150,8 @@ async function requestJson(
     body: JSON.stringify(body),
   });
   const text = await response.text();
-  if (!response.ok) {
-    if (response.status === 409 && options?.allowConflict === true) {
-      return text.length === 0 ? null : (JSON.parse(text) as unknown);
-    }
+  const conflictAllowed = response.status === 409 && options?.allowConflict === true;
+  if (!response.ok && !conflictAllowed) {
     throw new MeilisearchHttpError(response.status, response.statusText, text);
   }
   return text.length === 0 ? null : (JSON.parse(text) as unknown);
@@ -181,7 +184,9 @@ function parseSearchResponse(value: unknown): MeilisearchSearchResponse {
     ...(typeof value.estimatedTotalHits === "number"
       ? { estimatedTotalHits: value.estimatedTotalHits }
       : {}),
-    ...(typeof value.processingTimeMs === "number" ? { processingTimeMs: value.processingTimeMs } : {}),
+    ...(typeof value.processingTimeMs === "number"
+      ? { processingTimeMs: value.processingTimeMs }
+      : {}),
   };
 }
 

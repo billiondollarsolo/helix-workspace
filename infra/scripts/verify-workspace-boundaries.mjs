@@ -48,10 +48,7 @@ const seams = [
         return [];
       }
       const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-      return output
-        .split("\n")
-        .filter((line) => line.startsWith("- "))
-        .map((line) => line);
+      return output.split("\n").filter((line) => line.startsWith("- "));
     },
   },
 ];
@@ -90,42 +87,42 @@ if (hard.length > 0) {
 }
 
 async function collectTierViolations() {
+  return [
+    ...(await collectImportViolations(
+      "apps/web",
+      (file, specifier) =>
+        specifier === "@helix/app" ||
+        specifier.startsWith("@helix/app/") ||
+        (specifier.startsWith(".") && resolvesInto(file, specifier, "apps/helix")),
+      "web must not import API app",
+    )),
+    ...(await collectImportViolations(
+      "packages",
+      (file, specifier) => specifier.startsWith(".") && resolvesInto(file, specifier, "apps/"),
+      "packages must not import apps/*",
+    )),
+  ];
+}
+
+/**
+ * Reports every non-test source file under `rootRelative` whose import specifiers
+ * fail `violates`. Tests are exempt: they may reach across tiers to exercise them.
+ * @returns {Promise<string[]>}
+ */
+async function collectImportViolations(rootRelative, violates, reason) {
   /** @type {string[]} */
   const violations = [];
-  await walk(join(workspaceRoot, "apps/web"), async (file) => {
+  await walk(join(workspaceRoot, rootRelative), async (file) => {
     if (file.includes(".test.") || file.includes(".spec.")) return;
     const source = await readFile(file, "utf8");
     for (const match of source.matchAll(importPattern)) {
       const specifier = match[1] ?? match[2];
       if (specifier === undefined) continue;
-      if (
-        specifier === "@helix/app" ||
-        specifier.startsWith("@helix/app/") ||
-        (specifier.startsWith(".") && resolvesInto(file, specifier, "apps/helix"))
-      ) {
-        violations.push(
-          `- ${relative(workspaceRoot, file)} imports ${specifier} (web must not import API app)`,
-        );
+      if (violates(file, specifier)) {
+        violations.push(`- ${relative(workspaceRoot, file)} imports ${specifier} (${reason})`);
       }
     }
   });
-
-  for (const pkgRoot of ["packages"]) {
-    await walk(join(workspaceRoot, pkgRoot), async (file) => {
-      if (file.includes(".test.") || file.includes(".spec.")) return;
-      const source = await readFile(file, "utf8");
-      for (const match of source.matchAll(importPattern)) {
-        const specifier = match[1] ?? match[2];
-        if (specifier === undefined) continue;
-        if (specifier.startsWith(".") && resolvesInto(file, specifier, "apps/")) {
-          violations.push(
-            `- ${relative(workspaceRoot, file)} imports ${specifier} (packages must not import apps/*)`,
-          );
-        }
-      }
-    });
-  }
-
   return violations;
 }
 

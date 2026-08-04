@@ -53,7 +53,7 @@ export function exactObject(value, keys, label) {
 export function exactKeys(value, keys) {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
-  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+  if (!sameOrderedStrings(actual, expected)) {
     throw new Error("evidence contains unexpected or missing fields");
   }
 }
@@ -64,13 +64,15 @@ export function exactStringSet(value, expectedValues, label) {
   }
   const actual = [...value].sort();
   const expected = [...expectedValues].sort();
-  if (
-    new Set(actual).size !== actual.length ||
-    actual.length !== expected.length ||
-    actual.some((entry, index) => entry !== expected[index])
-  ) {
+  if (new Set(actual).size !== actual.length || !sameOrderedStrings(actual, expected)) {
     throw new Error(`${label} does not match the approved MVP boundary`);
   }
+}
+
+function sameOrderedStrings(actual, expected) {
+  return (
+    actual.length === expected.length && actual.every((entry, index) => entry === expected[index])
+  );
 }
 
 export function rejectSensitiveContent(value, label) {

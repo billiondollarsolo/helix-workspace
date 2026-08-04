@@ -42,6 +42,21 @@ export function getHeader(headers: WebhookHeaders | undefined, name: string): st
   return undefined;
 }
 
+/** `Authorization: Bearer <token>`, for sources that authenticate with a shared token. */
+export function bearerToken(headers: WebhookHeaders | undefined): string | undefined {
+  const authorization = getHeader(headers, "authorization");
+  if (authorization === undefined) {
+    return undefined;
+  }
+  const match = /^bearer\s+(.+)$/iu.exec(authorization);
+  return match?.[1]?.trim();
+}
+
+/** Decodes a raw body for sources whose signed message is a UTF-8 string. */
+export function payloadToString(payload: RawWebhookBody): string {
+  return toBuffer(payload).toString("utf8");
+}
+
 export function hmacSha256Hex(secret: string, payload: RawWebhookBody): string {
   return getCryptoProvider().hmac("sha256", secret, toBuffer(payload), "hex");
 }

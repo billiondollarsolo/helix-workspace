@@ -299,15 +299,17 @@ function stringHeader(value: string | string[] | undefined): string | undefined 
   return Array.isArray(value) ? value[0] : value;
 }
 
+/** Jitsi spells the "recording is ready" event differently across versions. */
+const recordingEventNames: ReadonlySet<string> = new Set([
+  "recording.uploaded",
+  "recording.done",
+  "recording.completed",
+  "recording.upload.finished",
+  "recording.file.uploaded",
+]);
+
 function isRecordingEvent(event: string): boolean {
-  const normalized = event.toLowerCase().replace(/[_-]+/g, ".");
-  return [
-    "recording.uploaded",
-    "recording.done",
-    "recording.completed",
-    "recording.upload.finished",
-    "recording.file.uploaded",
-  ].includes(normalized);
+  return recordingEventNames.has(event.toLowerCase().replace(/[_-]+/g, "."));
 }
 
 function toJsonObject(value: Record<string, unknown>): JsonObject {
@@ -356,7 +358,7 @@ function validateRecordingMedia(input: {
 }
 
 function isSupportedRecordingMimeType(mimeType: string): boolean {
-  const normalized = mimeType.toLowerCase().split(";")[0]?.trim();
+  const normalized = normalizedMimeType(mimeType);
   return normalized === "video/mp4" || normalized === "video/webm";
 }
 
@@ -461,18 +463,24 @@ function normalizedMimeType(mimeType: string): string {
 }
 
 function validateMediaSignature(bytes: Buffer, mimeType: string): string | null {
-  const normalized = normalizedMimeType(mimeType);
-  const matches =
-    normalized === "video/webm"
-      ? bytes.byteLength >= 4 &&
+  const mismatch = "Prepared Meet recording object bytes do not match the declared media type.";
+  switch (normalizedMimeType(mimeType)) {
+    // EBML header magic.
+    case "video/webm":
+      return bytes.byteLength >= 4 &&
         bytes[0] === 0x1a &&
         bytes[1] === 0x45 &&
         bytes[2] === 0xdf &&
         bytes[3] === 0xa3
-      : normalized === "video/mp4"
-        ? bytes.byteLength >= 8 && bytes.subarray(4, 8).toString("ascii") === "ftyp"
-        : true;
-  return matches
-    ? null
-    : "Prepared Meet recording object bytes do not match the declared media type.";
+        ? null
+        : mismatch;
+    // ISO base media file format box type at offset 4.
+    case "video/mp4":
+      return bytes.byteLength >= 8 && bytes.subarray(4, 8).toString("ascii") === "ftyp"
+        ? null
+        : mismatch;
+    // Unknown media types are not signature-checked here; the mime allowlist above already ran.
+    default:
+      return null;
+  }
 }

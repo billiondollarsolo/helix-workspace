@@ -141,7 +141,6 @@ export function partitionRooms(
   const directs: ChatDirectView[] = [];
 
   for (const room of rooms) {
-    const memberCount = room.members?.length ?? 0;
     if (room.kind === "chat_dm") {
       const peer = (room.members ?? []).find((m) => m.actorId !== selfActorId);
       directs.push({
@@ -156,7 +155,7 @@ export function partitionRooms(
         id: room.id,
         name: roomDisplayName(room, selfActorId),
         kind: room.kind,
-        memberCount,
+        memberCount: room.members?.length ?? 0,
         unread: 0,
       });
     }
@@ -296,21 +295,7 @@ export function readCountFor(
   receipts: readonly ChatReadReceiptRecord[],
   selfActorId: string | null,
 ): number {
-  const messageIndex = orderedIds.indexOf(messageId);
-  if (messageIndex < 0) {
-    return 0;
-  }
-  let count = 0;
-  for (const receipt of receipts) {
-    if (receipt.actorId === selfActorId || receipt.lastReadMessageId === null) {
-      continue;
-    }
-    const receiptIndex = orderedIds.indexOf(receipt.lastReadMessageId);
-    if (receiptIndex >= messageIndex) {
-      count += 1;
-    }
-  }
-  return count;
+  return seenByForMessage(messageId, orderedIds, receipts, selfActorId).length;
 }
 
 /** Map a presence roster to a `actorId -> online` lookup. */

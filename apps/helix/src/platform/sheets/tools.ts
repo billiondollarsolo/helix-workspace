@@ -76,7 +76,8 @@ const formatSchema = z
       dataValidation !== null &&
       !Array.isArray(dataValidation)
     ) {
-      const mode = (dataValidation as Record<string, unknown>)["mode"];
+      const validation = dataValidation as Record<string, unknown>;
+      const mode = validation["mode"];
       if (mode !== undefined && mode !== "warn" && mode !== "reject") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -84,7 +85,7 @@ const formatSchema = z
           message: "Unsupported data validation mode.",
         });
       }
-      const namedRangeId = (dataValidation as Record<string, unknown>)["namedRangeId"];
+      const namedRangeId = validation["namedRangeId"];
       if (namedRangeId !== undefined && typeof namedRangeId !== "string") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -92,7 +93,7 @@ const formatSchema = z
           message: "Named range validation source must be a string.",
         });
       }
-      const formula = (dataValidation as Record<string, unknown>)["formula"];
+      const formula = validation["formula"];
       if (formula !== undefined && typeof formula !== "string") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -100,7 +101,7 @@ const formatSchema = z
           message: "Validation formula must be a string.",
         });
       }
-      const locale = (dataValidation as Record<string, unknown>)["locale"];
+      const locale = validation["locale"];
       if (
         locale !== undefined &&
         (typeof locale !== "string" || !SUPPORTED_DATA_VALIDATION_DATE_LOCALES.has(locale))
@@ -282,6 +283,12 @@ const genericObjectJsonSchema = {
   additionalProperties: true,
 } as const;
 
+/**
+ * Every Sheets tool returns a domain-shaped JSON object that is documented by
+ * the generic object JSON schema, so they all share one output adapter.
+ */
+const unknownOutputSchema = zodToolSchema(z.unknown(), genericObjectJsonSchema);
+
 export interface CreateSheetsToolDefinitionsOptions {
   readonly store: SheetsStore;
   /**
@@ -303,7 +310,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const page = await store.listSheets({
           orgId: ctx.actor.orgId,
@@ -326,18 +333,9 @@ export function createSheetsToolDefinitions(
       permission: "sheets.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(getSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        const sheet = await store.getSheet({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          sheetId: input.sheetId,
-        });
-        if (sheet === null) {
-          throw new Error(`Unknown or inaccessible sheet: ${input.sheetId}`);
-        }
-        return serializeSheetWithTabs(sheet);
-      },
+      outputSchema: unknownOutputSchema,
+      handler: async (input, ctx) =>
+        serializeSheetWithTabs(await requireSheet(store, ctx.actor, input.sheetId)),
     }),
     defineTool<z.output<typeof listVersionsSchema>, unknown>({
       id: "sheets.version.list",
@@ -345,7 +343,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listVersionsSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const versions = await store.listVersions({
           orgId: ctx.actor.orgId,
@@ -362,7 +360,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(restoreVersionSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const restored = await store.restoreVersion({
           orgId: ctx.actor.orgId,
@@ -382,7 +380,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(createSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const sheet = await store.createSheet({
           orgId: ctx.actor.orgId,
@@ -406,7 +404,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(copySchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const sheet = await store.copySheet({
           orgId: ctx.actor.orgId,
@@ -428,7 +426,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(importCsvSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const parsed = parseCsvForImport(input.csvText);
         const title = input.title ?? titleFromCsvFilename(input.filename);
@@ -463,16 +461,8 @@ export function createSheetsToolDefinitions(
           resourceId: sheet.id,
           derivation: { content: `${title}\n${input.csvText.slice(0, 8_000)}`, scanContent: true },
         });
-        const imported = await store.getSheet({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          sheetId: sheet.id,
-        });
-        if (imported === null) {
-          throw new Error(`Unknown or inaccessible sheet: ${sheet.id}`);
-        }
         return {
-          ...serializeSheetWithTabs(imported),
+          ...serializeSheetWithTabs(await requireSheet(store, ctx.actor, sheet.id)),
           import: {
             format: "csv",
             filename: input.filename,
@@ -489,7 +479,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(importTsvSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const parsed = parseTsvForImport(input.tsvText);
         const title = input.title ?? titleFromTsvFilename(input.filename);
@@ -524,16 +514,8 @@ export function createSheetsToolDefinitions(
           resourceId: sheet.id,
           derivation: { content: `${title}\n${input.tsvText.slice(0, 8_000)}`, scanContent: true },
         });
-        const imported = await store.getSheet({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          sheetId: sheet.id,
-        });
-        if (imported === null) {
-          throw new Error(`Unknown or inaccessible sheet: ${sheet.id}`);
-        }
         return {
-          ...serializeSheetWithTabs(imported),
+          ...serializeSheetWithTabs(await requireSheet(store, ctx.actor, sheet.id)),
           import: {
             format: "tsv",
             filename: input.filename,
@@ -550,7 +532,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(importXlsxSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const parsed = await parseXlsxForImport(input.contentBase64);
         const title = input.title ?? titleFromWorkbookFilename(input.filename);
@@ -567,34 +549,15 @@ export function createSheetsToolDefinitions(
             sourceFilename: input.filename,
           }),
         });
-        for (const [index, importedTab] of parsed.tabs.entries()) {
-          const tab = sheet.tabs[index];
-          if (tab === undefined || importedTab.edits.length === 0) {
-            continue;
-          }
-          await store.updateCells({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            tabId: tab.id,
-            edits: importedTab.edits,
-          });
-        }
+        await writeImportedWorkbookCells(store, ctx.actor, sheet.tabs, parsed.tabs);
         await options.classifyResource?.({
           actor: ctx.actor,
           resourceType: "sheets.sheet",
           resourceId: sheet.id,
           derivation: { content: title, scanContent: true },
         });
-        const imported = await store.getSheet({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          sheetId: sheet.id,
-        });
-        if (imported === null) {
-          throw new Error(`Unknown or inaccessible sheet: ${sheet.id}`);
-        }
         return {
-          ...serializeSheetWithTabs(imported),
+          ...serializeSheetWithTabs(await requireSheet(store, ctx.actor, sheet.id)),
           import: {
             format: sourceFormat,
             filename: input.filename,
@@ -612,7 +575,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(importOdsSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const parsed = await parseOdsForImport(input.contentBase64);
         const title = input.title ?? titleFromWorkbookFilename(input.filename);
@@ -628,34 +591,15 @@ export function createSheetsToolDefinitions(
             sourceFilename: input.filename,
           }),
         });
-        for (const [index, importedTab] of parsed.tabs.entries()) {
-          const tab = sheet.tabs[index];
-          if (tab === undefined || importedTab.edits.length === 0) {
-            continue;
-          }
-          await store.updateCells({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            tabId: tab.id,
-            edits: importedTab.edits,
-          });
-        }
+        await writeImportedWorkbookCells(store, ctx.actor, sheet.tabs, parsed.tabs);
         await options.classifyResource?.({
           actor: ctx.actor,
           resourceType: "sheets.sheet",
           resourceId: sheet.id,
           derivation: { content: title, scanContent: true },
         });
-        const imported = await store.getSheet({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          sheetId: sheet.id,
-        });
-        if (imported === null) {
-          throw new Error(`Unknown or inaccessible sheet: ${sheet.id}`);
-        }
         return {
-          ...serializeSheetWithTabs(imported),
+          ...serializeSheetWithTabs(await requireSheet(store, ctx.actor, sheet.id)),
           import: {
             format: "ods",
             filename: input.filename,
@@ -673,16 +617,9 @@ export function createSheetsToolDefinitions(
       permission: "sheets.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(exportSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
-        const sheet = await store.getSheet({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          sheetId: input.sheetId,
-        });
-        if (sheet === null) {
-          throw new Error(`Unknown or inaccessible sheet: ${input.sheetId}`);
-        }
+        const sheet = await requireSheet(store, ctx.actor, input.sheetId);
         const tabs = await sheetTabsWithCells(sheet, store, {
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -720,7 +657,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(updateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const sheet = await store.updateSheet({
           orgId: ctx.actor.orgId,
@@ -742,7 +679,7 @@ export function createSheetsToolDefinitions(
       sideEffects: "write",
       confirmationRequired: true,
       inputSchema: zodToolSchema(deleteSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const sheet = await store.deleteSheet({
           orgId: ctx.actor.orgId,
@@ -761,7 +698,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(tabCreateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) =>
         serializeTab(
           await store.createTab({
@@ -780,7 +717,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(tabUpdateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const tab = await store.updateTab({
           orgId: ctx.actor.orgId,
@@ -803,7 +740,7 @@ export function createSheetsToolDefinitions(
       sideEffects: "write",
       confirmationRequired: true,
       inputSchema: zodToolSchema(tabDeleteSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const tab = await store.deleteTab({
           orgId: ctx.actor.orgId,
@@ -822,7 +759,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(tabGetSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const tab = await store.getTabCells({
           orgId: ctx.actor.orgId,
@@ -842,7 +779,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(cellsUpdateSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) =>
         serializeTabWithCells(
           await store.updateCells({
@@ -865,7 +802,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(rangeSortSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) =>
         serializeTabWithCells(
           await store.sortRange({
@@ -884,7 +821,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(createCommentSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) =>
         serializeComment(
           await store.createComment({
@@ -906,7 +843,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listCommentsSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => ({
         comments: (
           await store.listComments({
@@ -924,7 +861,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const comment = await store.resolveComment({
           orgId: ctx.actor.orgId,
@@ -943,7 +880,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const comment = await store.reopenComment({
           orgId: ctx.actor.orgId,
@@ -962,7 +899,7 @@ export function createSheetsToolDefinitions(
       permission: "sheets.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(updateCommentSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const comment = await store.updateComment({
           orgId: ctx.actor.orgId,
@@ -983,7 +920,7 @@ export function createSheetsToolDefinitions(
       sideEffects: "write",
       confirmationRequired: true,
       inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const comment = await store.deleteComment({
           orgId: ctx.actor.orgId,
@@ -1094,6 +1031,44 @@ function serializeComment(comment: SheetCommentRecord | SheetCommentListItem) {
     createdAt: comment.createdAt.toISOString(),
     updatedAt: comment.updatedAt?.toISOString() ?? null,
   };
+}
+
+/** Load a spreadsheet the actor can see, or fail with the shared not-found error. */
+async function requireSheet(
+  store: SheetsStore,
+  actor: { readonly orgId: string; readonly id: string },
+  sheetId: string,
+): Promise<SheetWithTabs> {
+  const sheet = await store.getSheet({ orgId: actor.orgId, actorId: actor.id, sheetId });
+  if (sheet === null) {
+    throw new Error(`Unknown or inaccessible sheet: ${sheetId}`);
+  }
+  return sheet;
+}
+
+/**
+ * Persist the parsed cells of an imported workbook. Imported tabs are matched
+ * to the freshly created tabs by position; tabs that parsed empty are skipped
+ * so the import stays sparse.
+ */
+async function writeImportedWorkbookCells(
+  store: SheetsStore,
+  actor: { readonly orgId: string; readonly id: string },
+  tabs: readonly SheetTabRecord[],
+  importedTabs: readonly ImportedWorkbookTab[],
+): Promise<void> {
+  for (const [index, importedTab] of importedTabs.entries()) {
+    const tab = tabs[index];
+    if (tab === undefined || importedTab.edits.length === 0) {
+      continue;
+    }
+    await store.updateCells({
+      orgId: actor.orgId,
+      actorId: actor.id,
+      tabId: tab.id,
+      edits: importedTab.edits,
+    });
+  }
 }
 
 async function sheetTabsWithCells(
@@ -1502,23 +1477,24 @@ function normalizedSafeSheetLinkUrl(value: unknown): string | undefined {
 }
 
 function xlsxExportNumberFormat(format: JsonObject): string | undefined {
-  const custom = format["customNumberFormat"];
-  if (format["numberFormat"] === "custom" && typeof custom === "string") {
-    return SUPPORTED_CUSTOM_NUMBER_FORMAT_SET.has(custom) ? custom : undefined;
+  switch (format["numberFormat"]) {
+    case "custom": {
+      const custom = format["customNumberFormat"];
+      return typeof custom === "string" && SUPPORTED_CUSTOM_NUMBER_FORMAT_SET.has(custom)
+        ? custom
+        : undefined;
+    }
+    case "currency":
+      return "$#,##0.00";
+    case "percent":
+      return "0.00%";
+    case "date":
+      return "m/d/yyyy";
+    case "number":
+      return "#,##0.00";
+    default:
+      return undefined;
   }
-  if (format["numberFormat"] === "currency") {
-    return "$#,##0.00";
-  }
-  if (format["numberFormat"] === "percent") {
-    return "0.00%";
-  }
-  if (format["numberFormat"] === "date") {
-    return "m/d/yyyy";
-  }
-  if (format["numberFormat"] === "number") {
-    return "#,##0.00";
-  }
-  return undefined;
 }
 
 function xlsxApplyCellFormat(
@@ -1832,29 +1808,37 @@ function xlsxDataValidation(
   const namedRangeValidation = namedRangeListValidation(format, context);
   if (namedRangeValidation !== undefined) {
     const { namedRange, mode } = namedRangeValidation;
-    return {
-      type: "list",
-      allowBlank: true,
-      showErrorMessage: true,
-      errorStyle: mode === "warn" ? "warning" : "error",
-      errorTitle: "Invalid value",
-      error: `Choose a value from ${namedRange.name}.`,
-      formulae: [namedRange.exportName],
-    };
+    return xlsxListDataValidation(
+      mode,
+      `Choose a value from ${namedRange.name}.`,
+      namedRange.exportName,
+    );
   }
   const validation = manualListValidation(format);
   if (validation === undefined) {
     return undefined;
   }
   const { choices, mode } = validation;
+  return xlsxListDataValidation(
+    mode,
+    `Choose one of: ${choices.join(", ")}`,
+    `"${choices.map((choice) => choice.replace(/"/gu, '""')).join(",")}"`,
+  );
+}
+
+function xlsxListDataValidation(
+  mode: "warn" | "reject",
+  error: string,
+  formula: string,
+): DataValidation {
   return {
     type: "list",
     allowBlank: true,
     showErrorMessage: true,
     errorStyle: mode === "warn" ? "warning" : "error",
     errorTitle: "Invalid value",
-    error: `Choose one of: ${choices.join(", ")}`,
-    formulae: [`"${choices.map((choice) => choice.replace(/"/gu, '""')).join(",")}"`],
+    error,
+    formulae: [formula],
   };
 }
 
@@ -1910,7 +1894,8 @@ interface OdsExportContext {
   readonly validationXml: readonly string[];
 }
 
-function manualListValidation(format: JsonObject): ManualListValidation | undefined {
+/** Read the `dataValidation` object out of a cell format, if it has one. */
+function cellDataValidationRecord(format: JsonObject): Record<string, unknown> | undefined {
   const dataValidation = format["dataValidation"];
   if (
     typeof dataValidation !== "object" ||
@@ -1919,7 +1904,14 @@ function manualListValidation(format: JsonObject): ManualListValidation | undefi
   ) {
     return undefined;
   }
-  const validation = dataValidation as Record<string, unknown>;
+  return dataValidation as Record<string, unknown>;
+}
+
+function manualListValidation(format: JsonObject): ManualListValidation | undefined {
+  const validation = cellDataValidationRecord(format);
+  if (validation === undefined) {
+    return undefined;
+  }
   if (validation["type"] !== "list" || validation["namedRangeId"] !== undefined) {
     return undefined;
   }
@@ -1945,15 +1937,10 @@ function namedRangeListValidation(
   format: JsonObject,
   context: SheetValidationExportContext,
 ): NamedRangeListValidation | undefined {
-  const dataValidation = format["dataValidation"];
-  if (
-    typeof dataValidation !== "object" ||
-    dataValidation === null ||
-    Array.isArray(dataValidation)
-  ) {
+  const validation = cellDataValidationRecord(format);
+  if (validation === undefined) {
     return undefined;
   }
-  const validation = dataValidation as Record<string, unknown>;
   const namedRangeId = validation["namedRangeId"];
   if (validation["type"] !== "list" || typeof namedRangeId !== "string") {
     return undefined;
@@ -1978,6 +1965,22 @@ function namedRangeListValidationAsChoices(
   }
   const choices = sheetNamedRangeChoices(validation.namedRange, context);
   return choices.length === 0 ? undefined : { choices, mode: validation.mode };
+}
+
+/**
+ * ODS has no named-range list source, so a named-range validation is exported
+ * as the literal choices it currently resolves to. Both the style-collection
+ * pass and the cell-attribute pass must resolve validations identically for
+ * their `JSON.stringify` keys to line up.
+ */
+function odsCellListValidation(
+  cell: SheetCellRecord,
+  validationContext: SheetValidationExportContext,
+): ManualListValidation | undefined {
+  return (
+    manualListValidation(cell.format) ??
+    namedRangeListValidationAsChoices(cell.format, validationContext)
+  );
 }
 
 function sheetNamedRangeChoices(
@@ -2169,9 +2172,7 @@ function buildOdsExportContext(
           styleXml.push(odsCellStyleXml(name, style));
         }
       }
-      const validation =
-        manualListValidation(cell.format) ??
-        namedRangeListValidationAsChoices(cell.format, validationContext);
+      const validation = odsCellListValidation(cell, validationContext);
       if (validation !== undefined) {
         const key = JSON.stringify(validation);
         if (!validations.has(key)) {
@@ -2206,9 +2207,7 @@ function odsCellAttributes(
       attributes.push(`table:style-name="${name}"`);
     }
   }
-  const validation =
-    manualListValidation(cell.format) ??
-    namedRangeListValidationAsChoices(cell.format, validationContext);
+  const validation = odsCellListValidation(cell, validationContext);
   if (validation !== undefined) {
     const name = context.validations.get(JSON.stringify(validation));
     if (name !== undefined) {
@@ -2784,11 +2783,7 @@ async function parseOdsForImport(contentBase64: string): Promise<{
   return { tabs, rowCount, columnCount, populatedCellCount };
 }
 
-function xlsxCellFormat(cell: {
-  readonly numFmt?: string | undefined;
-  readonly z?: string | undefined;
-  readonly l?: { readonly Target?: unknown } | undefined;
-}): JsonObject | undefined {
+function xlsxCellFormat(cell: SheetJsCell): JsonObject | undefined {
   const format: Record<string, string> = {};
   const linkUrl = normalizedSafeSheetLinkUrl(cell.l?.Target);
   if (linkUrl !== undefined) {
@@ -2980,13 +2975,11 @@ function spreadsheetWorkbookSourceFormat(filename: string): string {
 }
 
 function tabNameFromCsvFilename(filename: string): string {
-  const base = titleFromCsvFilename(filename);
-  return base.length > 120 ? base.slice(0, 120) : base;
+  return titleFromCsvFilename(filename).slice(0, 120);
 }
 
 function tabNameFromTsvFilename(filename: string): string {
-  const base = titleFromTsvFilename(filename);
-  return base.length > 120 ? base.slice(0, 120) : base;
+  return titleFromTsvFilename(filename).slice(0, 120);
 }
 
 function toJsonObject(value: Record<string, unknown>): JsonObject {

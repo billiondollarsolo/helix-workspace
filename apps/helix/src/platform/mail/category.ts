@@ -92,7 +92,12 @@ const PROMOTIONS_KEYWORDS = [
 
 function addressDomain(address: string): string {
   const at = address.lastIndexOf("@");
-  return at === -1 ? "" : address.slice(at + 1).trim().toLowerCase();
+  return at === -1
+    ? ""
+    : address
+        .slice(at + 1)
+        .trim()
+        .toLowerCase();
 }
 
 function addressLocalPart(address: string): string {
@@ -105,6 +110,15 @@ function domainMatches(domain: string, suffix: string): boolean {
   return domain === suffix || domain.endsWith(`.${suffix}`);
 }
 
+/** True when a non-empty `domain` matches any suffix in `suffixes`. */
+function matchesAnyDomain(domain: string, suffixes: ReadonlySet<string>): boolean {
+  if (domain.length === 0) return false;
+  for (const suffix of suffixes) {
+    if (domainMatches(domain, suffix)) return true;
+  }
+  return false;
+}
+
 /**
  * Classify a thread into a category tab from one message's headers. The
  * heuristic is intentionally conservative: anything that does not match a
@@ -112,13 +126,13 @@ function domainMatches(domain: string, suffix: string): boolean {
  */
 export function classifyMailCategory(signal: MailCategorySignal): MailCategoryTab {
   const address = (signal.fromAddress ?? "").trim().toLowerCase();
-  const domain = address.length > 0 ? addressDomain(address) : "";
-  const localPart = address.length > 0 ? addressLocalPart(address) : "";
+  const domain = addressDomain(address);
+  const localPart = addressLocalPart(address);
   const subject = (signal.subject ?? "").toLowerCase();
   const name = (signal.fromName ?? "").toLowerCase();
 
   // Social — recognised social-network senders.
-  if (domain.length > 0 && [...SOCIAL_DOMAINS].some((suffix) => domainMatches(domain, suffix))) {
+  if (matchesAnyDomain(domain, SOCIAL_DOMAINS)) {
     return "social";
   }
 
@@ -135,7 +149,7 @@ export function classifyMailCategory(signal: MailCategorySignal): MailCategoryTa
 
   // Updates — transactional / automated mail from recognised service domains
   // or from automated local-parts.
-  if (domain.length > 0 && [...UPDATES_DOMAINS].some((suffix) => domainMatches(domain, suffix))) {
+  if (matchesAnyDomain(domain, UPDATES_DOMAINS)) {
     return "updates";
   }
   if (

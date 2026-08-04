@@ -193,6 +193,15 @@ export async function handleChatSocket(
     }, authGraceMs);
   }
 
+  /* Shared tail for every first-frame auth rejection: cancel the grace timer,
+     drop the socket from the shutdown broadcast set, then tell the client. */
+  function rejectInvalidToken(): void {
+    if (authTimer !== null) clearTimeout(authTimer);
+    options.connections?.delete(socket);
+    sendErrorFrame(socket, new ApiError("unauthenticated", "Invalid chat WebSocket token"));
+    socket.close(CHAT_AUTH_CLOSE_CODE, "auth failed");
+  }
+
   const cleanupPresence = (resolved: Actor): void => {
     void Promise.allSettled([
       ...[...subscriptions.entries()].map(async ([roomId, unsubscribe]) => {
@@ -235,10 +244,7 @@ export async function handleChatSocket(
           }
           const resolved = await resolveActorFromToken(parsed.data.token, options);
           if (resolved === null || isUnauthenticated(resolved)) {
-            if (authTimer !== null) clearTimeout(authTimer);
-            options.connections?.delete(socket);
-            sendErrorFrame(socket, new ApiError("unauthenticated", "Invalid chat WebSocket token"));
-            socket.close(CHAT_AUTH_CLOSE_CODE, "auth failed");
+            rejectInvalidToken();
             return;
           }
           actor = resolved;
@@ -247,10 +253,7 @@ export async function handleChatSocket(
         } catch {
           // Deliberately generic: auth adapter exceptions may contain a
           // credential and must not reach logs or the client.
-          if (authTimer !== null) clearTimeout(authTimer);
-          options.connections?.delete(socket);
-          sendErrorFrame(socket, new ApiError("unauthenticated", "Invalid chat WebSocket token"));
-          socket.close(CHAT_AUTH_CLOSE_CODE, "auth failed");
+          rejectInvalidToken();
         }
         return;
       }
@@ -481,7 +484,7 @@ async function handleInboundMessage(input: {
       roomId: message.roomId,
       presence: roster,
       receipts,
-      members: roster.map((e) => ({ actorId: e.actorId, status: e.status })),
+      members: presenceMembers(roster),
     });
     return;
   }
@@ -587,8 +590,15 @@ async function handleInboundMessage(input: {
     type: "presence",
     roomId: message.roomId,
     presence: roster,
-    members: roster.map((e) => ({ actorId: e.actorId, status: e.status })),
+    members: presenceMembers(roster),
   });
+}
+
+/** The trimmed member roster carried alongside the full presence entries. */
+function presenceMembers(
+  roster: readonly PresenceEntry[],
+): readonly { readonly actorId: string; readonly status: ChatPresenceStatus }[] {
+  return roster.map((entry) => ({ actorId: entry.actorId, status: entry.status }));
 }
 
 async function listRoomReadReceipts(

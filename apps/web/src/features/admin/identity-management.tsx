@@ -183,6 +183,17 @@ export function IdentityManagement() {
     displayNameRef.current?.focus();
   }
 
+  /* The one form does both jobs, so the submit button has to say which one it
+     is about to do — and, while a request is in flight, that it is doing it. */
+  let submitLabel: string;
+  if (editingConfigId !== null) {
+    submitLabel = updateMutation.isPending ? "Saving..." : "Save IdP";
+  } else if (createMutation.isPending) {
+    submitLabel = "Adding...";
+  } else {
+    submitLabel = "Add IdP";
+  }
+
   return (
     <>
       <PageHeading
@@ -326,12 +337,12 @@ export function IdentityManagement() {
               event.preventDefault();
               setFormError(null);
               const configId = editingConfigId;
+              /* Built here rather than only inside the mutation so a validation
+                 failure lands in the form's own error banner instead of the
+                 mutation's, which reports transport failures. */
+              let patch: ReturnType<typeof buildUpdateInput>;
               try {
-                if (configId === null) {
-                  buildCreateInput(form);
-                } else {
-                  buildUpdateInput(form);
-                }
+                patch = configId === null ? buildCreateInput(form) : buildUpdateInput(form);
               } catch (error) {
                 setFormError(error instanceof Error ? error.message : String(error));
                 return;
@@ -339,7 +350,7 @@ export function IdentityManagement() {
               if (configId === null) {
                 createMutation.mutate();
               } else {
-                updateMutation.mutate({ id: configId, patch: buildUpdateInput(form) });
+                updateMutation.mutate({ id: configId, patch });
               }
             }}
           >
@@ -574,13 +585,7 @@ export function IdentityManagement() {
               )}
               <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
                 {editingConfigId === null ? <Icons.Plus /> : <Icons.EditPen />}
-                {editingConfigId === null
-                  ? createMutation.isPending
-                    ? "Adding..."
-                    : "Add IdP"
-                  : updateMutation.isPending
-                    ? "Saving..."
-                    : "Save IdP"}
+                {submitLabel}
               </Button>
             </div>
           </form>
@@ -848,18 +853,10 @@ function buildCreateInput(form: IdpFormState) {
   };
 }
 
-function buildUpdateInput(form: IdpFormState) {
-  const input = buildCreateInput(form);
-  return {
-    protocol: input.protocol,
-    displayName: input.displayName,
-    config: input.config,
-    attrMapping: input.attrMapping,
-    signingCertVaultPath: input.signingCertVaultPath,
-    enabled: input.enabled,
-    isPrimary: input.isPrimary,
-    jitProvisioning: input.jitProvisioning,
-  };
+/* A full replacement, so the update payload is exactly the create payload —
+   every field the create form validates is sent again. */
+function buildUpdateInput(form: IdpFormState): ReturnType<typeof buildCreateInput> {
+  return buildCreateInput(form);
 }
 
 function parseJsonObject(value: string, label: string): Record<string, unknown> {

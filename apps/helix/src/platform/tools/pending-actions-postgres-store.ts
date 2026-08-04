@@ -46,6 +46,9 @@ const RETURNING_COLUMNS = `
   execution_idempotency_key, trace_id, result, error
 `;
 
+/** Max rows touched by a single sweep when the caller does not supply a limit. */
+const defaultSweepLimit = 500;
+
 export class PostgresPendingActionStore implements PendingActionStore {
   constructor(private readonly sql: postgres.Sql) {}
 
@@ -81,7 +84,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
       where id = ${id}
       limit 1
     `) as unknown as readonly PendingActionRow[];
-    return rows[0] === undefined ? null : toPendingActionRecord(rows[0]);
+    return firstPendingActionRecord(rows);
   }
 
   async approve(input: {
@@ -101,7 +104,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
         and expires_at > ${input.approvedAt}
       returning ${this.sql.unsafe(RETURNING_COLUMNS)}
     `) as unknown as readonly PendingActionRow[];
-    return rows[0] === undefined ? null : toPendingActionRecord(rows[0]);
+    return firstPendingActionRecord(rows);
   }
 
   async cancel(input: {
@@ -116,7 +119,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
         and status in ('pending_confirmation', 'approved')
       returning ${this.sql.unsafe(RETURNING_COLUMNS)}
     `) as unknown as readonly PendingActionRow[];
-    return rows[0] === undefined ? null : toPendingActionRecord(rows[0]);
+    return firstPendingActionRecord(rows);
   }
 
   async claimExecution(input: {
@@ -140,7 +143,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
         and status = 'approved'
       returning ${this.sql.unsafe(RETURNING_COLUMNS)}
     `) as unknown as readonly PendingActionRow[];
-    return rows[0] === undefined ? null : toPendingActionRecord(rows[0]);
+    return firstPendingActionRecord(rows);
   }
 
   async completeExecution(input: {
@@ -166,7 +169,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
         and execution_actor_id = ${input.executionActorId}
       returning ${this.sql.unsafe(RETURNING_COLUMNS)}
     `) as unknown as readonly PendingActionRow[];
-    return rows[0] === undefined ? null : toPendingActionRecord(rows[0]);
+    return firstPendingActionRecord(rows);
   }
 
   async expireStale(input: {
@@ -182,7 +185,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
         where status in ('pending_confirmation', 'approved')
           and expires_at <= ${input.now}
         order by expires_at asc
-        limit ${input.limit ?? 500}
+        limit ${input.limit ?? defaultSweepLimit}
         for update skip locked
       )
       returning ${this.sql.unsafe(RETURNING_COLUMNS)}
@@ -207,13 +210,18 @@ export class PostgresPendingActionStore implements PendingActionStore {
         where status = 'executing'
           and execution_lease_expires_at <= ${input.now}
         order by execution_lease_expires_at asc
-        limit ${input.limit ?? 500}
+        limit ${input.limit ?? defaultSweepLimit}
         for update skip locked
       )
       returning ${this.sql.unsafe(RETURNING_COLUMNS)}
     `) as unknown as readonly PendingActionRow[];
     return rows.map(toPendingActionRecord);
   }
+}
+
+function firstPendingActionRecord(rows: readonly PendingActionRow[]): PendingActionRecord | null {
+  const row = rows[0];
+  return row === undefined ? null : toPendingActionRecord(row);
 }
 
 function toPendingActionRecord(row: PendingActionRow): PendingActionRecord {

@@ -72,6 +72,9 @@ const genericObjectJsonSchema = {
   additionalProperties: true,
 } as const;
 
+/** Every Meet tool declares the same open output shape; the adapter is stateless. */
+const unknownOutputSchema = zodToolSchema(z.unknown(), genericObjectJsonSchema);
+
 export interface CreateMeetToolDefinitionsOptions {
   readonly store: MeetStore;
   readonly jwtSecret: string;
@@ -98,11 +101,10 @@ export interface CreateMeetToolDefinitionsOptions {
 export function createMeetToolDefinitions(
   options: CreateMeetToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
-  const rateLimiter =
-    options.rateLimiter ??
-    new InMemoryMeetRateLimiter({
-      ...(options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget }),
-    });
+  // Spread rather than pass `budget: undefined` so exactOptionalPropertyTypes holds.
+  const budgetOption =
+    options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget };
+  const rateLimiter = options.rateLimiter ?? new InMemoryMeetRateLimiter({ ...budgetOption });
   const jwtMaxTtlSeconds = options.jwtMaxTtlSeconds ?? MAX_JITSI_JWT_TTL_SECONDS;
 
   return [
@@ -112,13 +114,13 @@ export function createMeetToolDefinitions(
       permission: "meet.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(createRoomSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const decision = await rateLimiter.consume({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           action: "create_room",
-          ...(options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget }),
+          ...budgetOption,
         });
         if (!decision.allowed) {
           throw meetRateLimitError(decision);
@@ -148,7 +150,7 @@ export function createMeetToolDefinitions(
       permission: "meet.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listRoomsSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => ({
         rooms: (
           await options.store.listRoomsForActor({
@@ -168,7 +170,7 @@ export function createMeetToolDefinitions(
       permission: "meet.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listMeetingsSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const meetings = (
           await options.store.listMeetingsForActor({
@@ -192,7 +194,7 @@ export function createMeetToolDefinitions(
       permission: "meet.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(mintTokenSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const room = await options.store.getRoomForActor({
           orgId: ctx.actor.orgId,
@@ -209,19 +211,18 @@ export function createMeetToolDefinitions(
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           action: "join_room",
-          ...(options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget }),
+          ...budgetOption,
         });
         if (!decision.allowed) {
           throw meetRateLimitError(decision);
         }
-        const requestedTtl = input.expiresInSeconds;
         const minted = mintJitsiJwt({
           secret: options.jwtSecret,
           issuer: options.jwtIssuer ?? options.jwtAppId ?? "helix",
           audience: options.jwtAudience,
           subject: options.jwtSubject ?? room.jitsiDomain,
           room: room.roomName,
-          ttlSeconds: requestedTtl,
+          ttlSeconds: input.expiresInSeconds,
           maxTtlSeconds: jwtMaxTtlSeconds,
           user: {
             id: ctx.actor.id,
@@ -252,7 +253,7 @@ export function createMeetToolDefinitions(
       permission: "meet.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(endRoomSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const room = await options.store.endRoom({
           orgId: ctx.actor.orgId,

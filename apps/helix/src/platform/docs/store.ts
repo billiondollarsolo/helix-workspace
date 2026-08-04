@@ -16,6 +16,7 @@ import {
   stateVectorFromStoredState,
 } from "./native-state.js";
 import type {
+  DocsActor,
   DocsCommentProjection,
   DocsAskHistoryRecord,
   DocsAskSourceScope,
@@ -36,6 +37,7 @@ import type {
   DocsSuggestionStatus,
   DocsUpdateRecord,
   DocsVersionDiffLine,
+  DocsVersionPreviewCompleteness,
   DocsVersionPreviewRecord,
   DocsVersionRestoreRecord,
 } from "./types.js";
@@ -408,27 +410,15 @@ export class PostgresDocsStore
         ),
       });
 
-      await tx`
-        insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
-        values (
-          ${document.id},
-          ${input.orgId},
-          ${input.actorId},
-          'file',
-          ${storageKey},
-          ${docsDocumentMimeType},
-          ${initialState.state.byteLength},
-          ${stateSha256},
-          ${tx.json(driveMetadata)}
-        )
-        on conflict (id) do update set
-          storage_key = excluded.storage_key,
-          mime_type = excluded.mime_type,
-          byte_size = excluded.byte_size,
-          sha256 = excluded.sha256,
-          metadata = excluded.metadata,
-          updated_at = now()
-      `;
+      await upsertDocsDocumentObject(tx, {
+        orgId: input.orgId,
+        documentId: document.id,
+        actorId: input.actorId,
+        storageKey,
+        state: initialState.state,
+        sha256: stateSha256,
+        metadata: driveMetadata,
+      });
       await this.persistDocumentState({
         orgId: input.orgId,
         documentId: document.id,
@@ -437,26 +427,11 @@ export class PostgresDocsStore
         sha256: stateSha256,
       });
 
-      await grantDocumentAccess(tx, {
+      await grantDocumentOwnership(tx, {
         orgId: input.orgId,
         documentId: document.id,
-        actorId: input.actorId,
-        role: "owner",
-        grantedByActorId: input.actorId,
-      });
-      await grantThreadAccess(tx, {
-        orgId: input.orgId,
         threadId,
         actorId: input.actorId,
-        role: "owner",
-        grantedByActorId: input.actorId,
-      });
-      await grantObjectAccess(tx, {
-        orgId: input.orgId,
-        objectId: document.id,
-        actorId: input.actorId,
-        role: "owner",
-        grantedByActorId: input.actorId,
       });
       await appendDocsActivity(tx, {
         orgId: input.orgId,
@@ -552,27 +527,15 @@ export class PostgresDocsStore
         preview,
       });
 
-      await tx`
-        insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
-        values (
-          ${document.id},
-          ${input.orgId},
-          ${input.actorId},
-          'file',
-          ${storageKey},
-          ${docsDocumentMimeType},
-          ${state.byteLength},
-          ${stateSha256},
-          ${tx.json(driveMetadata)}
-        )
-        on conflict (id) do update set
-          storage_key = excluded.storage_key,
-          mime_type = excluded.mime_type,
-          byte_size = excluded.byte_size,
-          sha256 = excluded.sha256,
-          metadata = excluded.metadata,
-          updated_at = now()
-      `;
+      await upsertDocsDocumentObject(tx, {
+        orgId: input.orgId,
+        documentId: document.id,
+        actorId: input.actorId,
+        storageKey,
+        state,
+        sha256: stateSha256,
+        metadata: driveMetadata,
+      });
       await this.persistDocumentState({
         orgId: input.orgId,
         documentId: document.id,
@@ -581,26 +544,11 @@ export class PostgresDocsStore
         sha256: stateSha256,
       });
 
-      await grantDocumentAccess(tx, {
+      await grantDocumentOwnership(tx, {
         orgId: input.orgId,
         documentId: document.id,
-        actorId: input.actorId,
-        role: "owner",
-        grantedByActorId: input.actorId,
-      });
-      await grantThreadAccess(tx, {
-        orgId: input.orgId,
         threadId,
         actorId: input.actorId,
-        role: "owner",
-        grantedByActorId: input.actorId,
-      });
-      await grantObjectAccess(tx, {
-        orgId: input.orgId,
-        objectId: document.id,
-        actorId: input.actorId,
-        role: "owner",
-        grantedByActorId: input.actorId,
       });
       await appendDocsActivity(tx, {
         orgId: input.orgId,
@@ -1061,14 +1009,7 @@ export class PostgresDocsStore
     readonly commentId: string;
   }): Promise<DocsCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from docs_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly DocsCommentRow[];
-      const existing = existingRows[0];
+      const existing = await selectCommentRow(tx, input.orgId, input.commentId);
       if (existing === undefined) {
         return null;
       }
@@ -1100,14 +1041,7 @@ export class PostgresDocsStore
     readonly commentId: string;
   }): Promise<DocsCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from docs_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly DocsCommentRow[];
-      const existing = existingRows[0];
+      const existing = await selectCommentRow(tx, input.orgId, input.commentId);
       if (existing === undefined) {
         return null;
       }
@@ -1140,14 +1074,7 @@ export class PostgresDocsStore
     readonly body: string;
   }): Promise<DocsCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from docs_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly DocsCommentRow[];
-      const existing = existingRows[0];
+      const existing = await selectCommentRow(tx, input.orgId, input.commentId);
       if (existing === undefined) {
         return null;
       }
@@ -1176,14 +1103,7 @@ export class PostgresDocsStore
     readonly commentId: string;
   }): Promise<DocsCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from docs_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly DocsCommentRow[];
-      const existing = existingRows[0];
+      const existing = await selectCommentRow(tx, input.orgId, input.commentId);
       if (existing === undefined) {
         return null;
       }
@@ -1627,23 +1547,13 @@ export class PostgresDocsStore
     }
 
     const warnings: string[] = [];
-    const snapshotState = stateSnapshotFromMetadata(versionRow.metadata);
-    const reconstruction =
-      snapshotState === null
-        ? await this.reconstructVersionState({
-            sql: this.sql,
-            orgId: input.orgId,
-            documentId: versionRow.document_id,
-            seq: versionRow.seq,
-            warnings,
-          })
-        : {
-            state: snapshotState,
-            appliedCount: 0,
-            skippedCount: 0,
-            hasBaseline: true,
-          };
-    const versionText = documentTextFromStoredState(reconstruction.state);
+    const versionState = await this.resolveVersionState({
+      sql: this.sql,
+      orgId: input.orgId,
+      versionRow,
+      warnings,
+    });
+    const versionText = documentTextFromStoredState(versionState.state);
     const currentText = documentTextFromStoredState(document.ydocState);
     return {
       version: mapUpdate(versionRow),
@@ -1651,16 +1561,58 @@ export class PostgresDocsStore
       currentUpdateSeq: document.updateSeq,
       currentText,
       versionText,
-      completeness: snapshotState === null ? "reconstructed" : "snapshot",
-      complete:
-        snapshotState !== null ||
-        (reconstruction.hasBaseline &&
-          reconstruction.appliedCount > 0 &&
-          reconstruction.skippedCount === 0),
-      appliedCount: reconstruction.appliedCount,
-      skippedCount: reconstruction.skippedCount,
+      completeness: versionState.completeness,
+      complete: versionState.complete,
+      appliedCount: versionState.appliedCount,
+      skippedCount: versionState.skippedCount,
       diff: lineDiff(versionText, currentText),
       warnings,
+    };
+  }
+
+  /**
+   * Resolve the document state a saved version represents. Versions written by
+   * the native editor carry a full state snapshot in their metadata; older ones
+   * must be replayed from the stored update log, which can be incomplete.
+   */
+  private async resolveVersionState(input: {
+    readonly sql: SqlLike;
+    readonly orgId: string;
+    readonly versionRow: DocsUpdateRow;
+    readonly warnings: string[];
+  }): Promise<{
+    readonly state: Buffer;
+    readonly appliedCount: number;
+    readonly skippedCount: number;
+    readonly completeness: DocsVersionPreviewCompleteness;
+    readonly complete: boolean;
+  }> {
+    const snapshotState = stateSnapshotFromMetadata(input.versionRow.metadata);
+    if (snapshotState !== null) {
+      return {
+        state: snapshotState,
+        appliedCount: 0,
+        skippedCount: 0,
+        completeness: "snapshot",
+        complete: true,
+      };
+    }
+    const reconstruction = await this.reconstructVersionState({
+      sql: input.sql,
+      orgId: input.orgId,
+      documentId: input.versionRow.document_id,
+      seq: input.versionRow.seq,
+      warnings: input.warnings,
+    });
+    return {
+      state: reconstruction.state,
+      appliedCount: reconstruction.appliedCount,
+      skippedCount: reconstruction.skippedCount,
+      completeness: "reconstructed",
+      complete:
+        reconstruction.hasBaseline &&
+        reconstruction.appliedCount > 0 &&
+        reconstruction.skippedCount === 0,
     };
   }
 
@@ -1740,39 +1692,24 @@ export class PostgresDocsStore
       }
 
       const warnings: string[] = [];
-      const snapshotState = stateSnapshotFromMetadata(versionRow.metadata);
-      const reconstruction =
-        snapshotState === null
-          ? await this.reconstructVersionState({
-              sql: tx,
-              orgId: input.orgId,
-              documentId: versionRow.document_id,
-              seq: versionRow.seq,
-              warnings,
-            })
-          : {
-              state: snapshotState,
-              appliedCount: 0,
-              skippedCount: 0,
-              hasBaseline: true,
-            };
-      const complete =
-        snapshotState !== null ||
-        (reconstruction.hasBaseline &&
-          reconstruction.appliedCount > 0 &&
-          reconstruction.skippedCount === 0);
-      if (!complete) {
+      const versionState = await this.resolveVersionState({
+        sql: tx,
+        orgId: input.orgId,
+        versionRow,
+        warnings,
+      });
+      if (!versionState.complete) {
         throw new Error("Cannot restore an incomplete Docs version preview.");
       }
 
-      const stateSha256 = sha256Hex(reconstruction.state);
-      const stateVector = stateVectorFromStoredState(reconstruction.state);
+      const stateSha256 = sha256Hex(versionState.state);
+      const stateVector = stateVectorFromStoredState(versionState.state);
       const storageKey = docsDocumentStorageKey(input.orgId, versionRow.document_id);
       const seqRows = (await tx`
         update docs_documents
         set
           update_seq = update_seq + 1,
-          ydoc_state = ${reconstruction.state},
+          ydoc_state = ${versionState.state},
           ydoc_state_vector = ${stateVector},
           updated_at = now()
         where id = ${versionRow.document_id}
@@ -1797,13 +1734,13 @@ export class PostgresDocsStore
           ${versionRow.document_id},
           ${input.actorId},
           ${restoredDocument.updateSeq},
-          ${reconstruction.state},
+          ${versionState.state},
           ${tx.json(
             toSqlJson({
               source: "docs.version.restore",
               restoredVersionId: input.versionId,
               restoredSeq: versionRow.seq,
-              stateBase64: reconstruction.state.toString("base64"),
+              stateBase64: versionState.state.toString("base64"),
             }),
           )}
         )
@@ -1814,13 +1751,13 @@ export class PostgresDocsStore
         set
           storage_key = ${storageKey},
           mime_type = ${docsDocumentMimeType},
-          byte_size = ${reconstruction.state.byteLength},
+          byte_size = ${versionState.state.byteLength},
           sha256 = ${stateSha256},
           metadata = metadata || ${tx.json(
             toSqlJson({
               preview: nativeDocumentPreviewMetadata(
                 restoredDocument.title,
-                documentTextFromStoredState(reconstruction.state),
+                documentTextFromStoredState(versionState.state),
               ),
             }),
           )}::jsonb,
@@ -1844,7 +1781,7 @@ export class PostgresDocsStore
         orgId: input.orgId,
         documentId: versionRow.document_id,
         storageKey,
-        state: reconstruction.state,
+        state: versionState.state,
         sha256: stateSha256,
       });
       return {
@@ -2075,6 +2012,21 @@ async function requireDocumentAccess(
   }
 }
 
+async function selectCommentRow(
+  sql: SqlLike,
+  orgId: string,
+  commentId: string,
+): Promise<DocsCommentRow | undefined> {
+  const rows = (await sql`
+    select *
+    from docs_comments
+    where id = ${commentId}
+      and org_id = ${orgId}
+    limit 1
+  `) as unknown as readonly DocsCommentRow[];
+  return rows[0];
+}
+
 async function requireCommentParent(
   sql: SqlLike,
   input: {
@@ -2112,6 +2064,79 @@ async function requireDocumentExists(
   if (rows[0] === undefined) {
     throw new Error(`Unknown document: ${documentId}`);
   }
+}
+
+/**
+ * Upsert the Drive `objects` row that shares its primary key with the docs
+ * document, so a document created or copied through Docs is immediately
+ * visible (and downloadable) as a Drive file.
+ */
+async function upsertDocsDocumentObject(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly documentId: string;
+    readonly actorId: string;
+    readonly storageKey: string;
+    readonly state: Buffer;
+    readonly sha256: string;
+    readonly metadata: postgres.JSONValue;
+  },
+): Promise<void> {
+  await sql`
+    insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
+    values (
+      ${input.documentId},
+      ${input.orgId},
+      ${input.actorId},
+      'file',
+      ${input.storageKey},
+      ${docsDocumentMimeType},
+      ${input.state.byteLength},
+      ${input.sha256},
+      ${sql.json(input.metadata)}
+    )
+    on conflict (id) do update set
+      storage_key = excluded.storage_key,
+      mime_type = excluded.mime_type,
+      byte_size = excluded.byte_size,
+      sha256 = excluded.sha256,
+      metadata = excluded.metadata,
+      updated_at = now()
+  `;
+}
+
+/** Grant the creating actor owner access to all three resources a docs document spans. */
+async function grantDocumentOwnership(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly documentId: string;
+    readonly threadId: string;
+    readonly actorId: string;
+  },
+): Promise<void> {
+  await grantDocumentAccess(sql, {
+    orgId: input.orgId,
+    documentId: input.documentId,
+    actorId: input.actorId,
+    role: "owner",
+    grantedByActorId: input.actorId,
+  });
+  await grantThreadAccess(sql, {
+    orgId: input.orgId,
+    threadId: input.threadId,
+    actorId: input.actorId,
+    role: "owner",
+    grantedByActorId: input.actorId,
+  });
+  await grantObjectAccess(sql, {
+    orgId: input.orgId,
+    objectId: input.documentId,
+    actorId: input.actorId,
+    role: "owner",
+    grantedByActorId: input.actorId,
+  });
 }
 
 async function grantDocumentAccess(
@@ -2572,15 +2597,7 @@ function mapComment(row: DocsCommentRow | undefined): DocsCommentRecord {
 function mapCommentListItem(row: DocsCommentProjectionRow): DocsCommentListItem {
   return {
     ...mapComment(row),
-    ...(row.actor_id === null
-      ? {}
-      : {
-          author: {
-            id: row.actor_id,
-            ...(row.actor_display_name === null ? {} : { displayName: row.actor_display_name }),
-            ...(row.actor_email === null ? {} : { email: row.actor_email }),
-          },
-        }),
+    ...commentAuthorProperty(row),
   };
 }
 
@@ -2590,16 +2607,23 @@ function mapCommentProjection(row: DocsCommentProjectionRow): DocsCommentProject
     parentCommentId: row.parent_comment_id,
     body: row.body,
     anchor: row.anchor,
-    ...(row.actor_id === null
-      ? {}
-      : {
-          author: {
-            id: row.actor_id,
-            ...(row.actor_display_name === null ? {} : { displayName: row.actor_display_name }),
-            ...(row.actor_email === null ? {} : { email: row.actor_email }),
-          },
-        }),
+    ...commentAuthorProperty(row),
     createdAt: row.created_at.toISOString(),
+  };
+}
+
+function commentAuthorProperty(
+  row: DocsCommentProjectionRow,
+): { readonly author: DocsActor } | Record<string, never> {
+  if (row.actor_id === null) {
+    return {};
+  }
+  return {
+    author: {
+      id: row.actor_id,
+      ...(row.actor_display_name === null ? {} : { displayName: row.actor_display_name }),
+      ...(row.actor_email === null ? {} : { email: row.actor_email }),
+    },
   };
 }
 

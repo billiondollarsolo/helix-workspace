@@ -1518,7 +1518,7 @@ function deliveryEndpointLabel(
   names: ReadonlyMap<string, string>,
 ): string {
   const id = delivery.outboundWebhookId ?? delivery.inboundWebhookId;
-  if (id === null || id === undefined) {
+  if (id === null) {
     return "—";
   }
   return names.get(id) ?? id;

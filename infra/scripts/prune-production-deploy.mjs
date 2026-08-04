@@ -68,42 +68,41 @@ function virtualStoreEntry(virtualStore, target) {
   return relativeToStore.split(sep)[0];
 }
 
+/**
+ * Walks the deployed tree without following symlinks, handing every symlink to
+ * `onSymlink`. Descending through a link would leave the virtual store and could
+ * revisit entries, so links are reported and never traversed.
+ */
+function forEachSymlink(root, onSymlink) {
+  const stat = lstatSync(root);
+  if (stat.isSymbolicLink()) {
+    onSymlink(root);
+    return;
+  }
+  if (!stat.isDirectory()) return;
+  for (const entry of readdirSync(root)) forEachSymlink(join(root, entry), onSymlink);
+}
+
 function removeLinksToUnreachableEntries(root, virtualStore, reachableStoreEntries) {
   let removedLinks = 0;
-
-  function visit(path) {
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink()) {
-      const entry = virtualStoreEntry(virtualStore, realpathSync(path));
-      if (entry !== undefined && !reachableStoreEntries.has(entry)) {
-        rmSync(path, { force: true });
-        removedLinks += 1;
-      }
-      return;
+  forEachSymlink(root, (path) => {
+    const entry = virtualStoreEntry(virtualStore, realpathSync(path));
+    if (entry !== undefined && !reachableStoreEntries.has(entry)) {
+      rmSync(path, { force: true });
+      removedLinks += 1;
     }
-    if (!stat.isDirectory()) return;
-    for (const entry of readdirSync(path)) visit(join(path, entry));
-  }
-
-  visit(root);
+  });
   return removedLinks;
 }
 
 function assertNoDanglingSymlinks(root) {
-  function visit(path) {
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink()) {
-      try {
-        realpathSync(path);
-      } catch {
-        throw new Error(`Pruned production deployment contains a dangling symlink: ${path}`);
-      }
-      return;
+  forEachSymlink(root, (path) => {
+    try {
+      realpathSync(path);
+    } catch {
+      throw new Error(`Pruned production deployment contains a dangling symlink: ${path}`);
     }
-    if (!stat.isDirectory()) return;
-    for (const entry of readdirSync(path)) visit(join(path, entry));
-  }
-  visit(root);
+  });
 }
 
 export function pruneProductionDeploy(deployRoot) {

@@ -1,7 +1,15 @@
 import type { AICapability, AIClassification, JsonObject } from "@helix/sdk-types";
 import { deriveClassification, type ClassificationPolicy } from "../../ai/classification/index.js";
-import type { EnrichmentEvent, EnrichmentHandler, EnrichmentWorker } from "../../ai/enrichment/index.js";
-import type { MailActivityPayload, MailEnrichmentProjectionStore, MailEnrichmentRecord } from "../types.js";
+import type {
+  EnrichmentEvent,
+  EnrichmentHandler,
+  EnrichmentWorker,
+} from "../../ai/enrichment/index.js";
+import type {
+  MailActivityPayload,
+  MailEnrichmentProjectionStore,
+  MailEnrichmentRecord,
+} from "../types.js";
 
 export interface MailEntityExtractEnrichmentOptions {
   readonly store: MailEnrichmentProjectionStore;
@@ -31,7 +39,9 @@ export function registerMailEnrichments(
     if (options.ai === undefined) {
       throw new TypeError("mail.entity-extract enrichment requires an AI capability");
     }
-    worker.register(createMailEntityExtractEnrichmentHandler({ store: options.store, ai: options.ai }));
+    worker.register(
+      createMailEntityExtractEnrichmentHandler({ store: options.store, ai: options.ai }),
+    );
   }
 
   if (options.classification === true) {
@@ -58,14 +68,16 @@ export function createMailEntityExtractEnrichmentHandler(
         return skipped("mail.entity-extract", event, "message not found");
       }
 
+      const classification = message.classification ?? "standard";
       const response = await options.ai.chat(
         {
           feature: "mail.entity-extract",
-          classification: message.classification ?? "standard",
+          classification,
           messages: [
             {
               role: "system",
-              content: "Extract people, dates, and action items from this email. Return compact JSON.",
+              content:
+                "Extract people, dates, and action items from this email. Return compact JSON.",
             },
             {
               role: "user",
@@ -75,7 +87,7 @@ export function createMailEntityExtractEnrichmentHandler(
         },
         {
           feature: "mail.entity-extract",
-          classification: message.classification ?? "standard",
+          classification,
         },
       );
       const data = parseJsonObject(response.message) ?? { text: response.message };
@@ -179,22 +191,32 @@ function mailRecordText(message: MailEnrichmentRecord): string {
   ].join("\n");
 }
 
-function addressEmail(address: { readonly address: string; readonly email?: string | undefined }): string {
+function addressEmail(address: {
+  readonly address: string;
+  readonly email?: string | undefined;
+}): string {
   return address.email ?? address.address;
 }
 
 function parseJsonObject(text: string): JsonObject | undefined {
   try {
     const parsed: unknown = JSON.parse(text);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as JsonObject) : undefined;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as JsonObject)
+      : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function mailClassificationFromMetadata(metadata: JsonObject | undefined): AIClassification | undefined {
+export function mailClassificationFromMetadata(
+  metadata: JsonObject | undefined,
+): AIClassification | undefined {
   const value = metadata?.classification;
-  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
+  return value === "public" ||
+    value === "standard" ||
+    value === "confidential" ||
+    value === "restricted"
     ? value
     : undefined;
 }

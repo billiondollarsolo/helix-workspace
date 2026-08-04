@@ -45,15 +45,12 @@ export type CredentialActorResolution =
   | { readonly ok: true; readonly actor: Actor }
   | Exclude<CredentialResolution, { readonly ok: true }>;
 
-/** Result of resolving any supported request authentication mechanism. */
-export type ToolInvocationPrincipalResolution =
-  | { readonly ok: true; readonly principal: ToolInvocationPrincipal }
-  | {
-      readonly ok: false;
-      readonly statusCode: number;
-      readonly code: string;
-      readonly message: string;
-    };
+/**
+ * Result of resolving any supported request authentication mechanism. Shaped
+ * identically to {@link CredentialResolution}: the credential path's result is
+ * returned directly when it authenticates the request.
+ */
+export type ToolInvocationPrincipalResolution = CredentialResolution;
 
 export const systemActor: Actor = {
   id: "system",
@@ -107,20 +104,7 @@ export async function actorFromRequestWithAccessTokenAndSession(
   if (token !== undefined) {
     const accessToken = await tokenStore.findToken(token);
     if (accessToken !== null) {
-      const actor: Actor = {
-        id: accessToken.actorId,
-        orgId: accessToken.orgId,
-        type: accessToken.actorType ?? "agent",
-        scopes: accessToken.scopes,
-      };
-      if (accessToken.actorDisplayName !== undefined) {
-        return accessToken.actorEmail === undefined
-          ? { ...actor, displayName: accessToken.actorDisplayName }
-          : { ...actor, displayName: accessToken.actorDisplayName, email: accessToken.actorEmail };
-      }
-      return accessToken.actorEmail === undefined
-        ? actor
-        : { ...actor, email: accessToken.actorEmail };
+      return actorFromAccessToken(accessToken);
     }
   }
 
@@ -188,17 +172,7 @@ export async function toolInvocationPrincipalFromRequest(
             message: enforcement.message,
           };
         }
-        return {
-          ok: true,
-          principal: credentialToolInvocationPrincipal({
-            actor,
-            credentialId: credential.id,
-            ...(credential.approvalOwnerActorId === undefined
-              ? {}
-              : { credentialOwnerActorId: credential.approvalOwnerActorId }),
-            credentialPolicy: credential.policy,
-          }),
-        };
+        return { ok: true, principal: credentialPrincipalForActor(actor, credential) };
       }
       return { ok: true, principal: actorToolInvocationPrincipal(actor) };
     }
@@ -279,20 +253,19 @@ export async function resolveCredentialAuthenticatedPrincipal(
   return null;
 }
 
-function credentialPrincipal(credential: {
-  readonly id: string;
-  readonly actorId: string;
-  readonly orgId: string;
-  readonly scopes: readonly string[];
-  readonly approvalOwnerActorId?: string | null;
-  readonly policy: AgentCredentialPolicy;
-}): ToolInvocationPrincipal {
-  const actor: Actor = {
-    id: credential.actorId,
-    orgId: credential.orgId,
-    type: "agent",
-    scopes: credential.scopes,
-  };
+/**
+ * Attach a credential's identity and policy to an already-resolved actor.
+ * Shared by API-key/mTLS authentication (which derives the actor from the
+ * credential) and the OAuth path (which derives it from the access token).
+ */
+function credentialPrincipalForActor(
+  actor: Actor,
+  credential: {
+    readonly id: string;
+    readonly approvalOwnerActorId?: string | null;
+    readonly policy: AgentCredentialPolicy;
+  },
+): ToolInvocationPrincipal {
   return credentialToolInvocationPrincipal({
     actor,
     credentialId: credential.id,
@@ -301,6 +274,25 @@ function credentialPrincipal(credential: {
       : { credentialOwnerActorId: credential.approvalOwnerActorId }),
     credentialPolicy: credential.policy,
   });
+}
+
+function credentialPrincipal(credential: {
+  readonly id: string;
+  readonly actorId: string;
+  readonly orgId: string;
+  readonly scopes: readonly string[];
+  readonly approvalOwnerActorId?: string | null;
+  readonly policy: AgentCredentialPolicy;
+}): ToolInvocationPrincipal {
+  return credentialPrincipalForActor(
+    {
+      id: credential.actorId,
+      orgId: credential.orgId,
+      type: "agent",
+      scopes: credential.scopes,
+    },
+    credential,
+  );
 }
 
 function credentialRequestContext(request: FastifyRequest): CredentialRequestContext {
@@ -329,17 +321,27 @@ function actorFromAccessToken(accessToken: {
   };
 }
 
+/** Extract the raw value of an `Authorization: Bearer <value>` header. */
+function bearerHeaderValue(request: FastifyRequest): string | undefined {
+  const authorization = firstHeaderValue(request.headers.authorization);
+  if (authorization === undefined) {
+    return undefined;
+  }
+  const [scheme, value] = authorization.split(" ");
+  if (scheme?.toLowerCase() !== "bearer" || value === undefined || value.length === 0) {
+    return undefined;
+  }
+  return value;
+}
+
 function apiKeyFromRequest(request: FastifyRequest): string | undefined {
   const explicit = firstHeaderValue(request.headers["x-api-key"]);
   if (explicit !== undefined && isApiKey(explicit)) {
     return explicit;
   }
-  const authorization = firstHeaderValue(request.headers.authorization);
-  if (authorization !== undefined) {
-    const [scheme, value] = authorization.split(" ");
-    if (scheme?.toLowerCase() === "bearer" && value !== undefined && isApiKey(value)) {
-      return value;
-    }
+  const bearer = bearerHeaderValue(request);
+  if (bearer !== undefined && isApiKey(bearer)) {
+    return bearer;
   }
   return undefined;
 }
@@ -349,16 +351,7 @@ function clientCertFingerprintFromRequest(request: FastifyRequest): string | und
 }
 
 export function bearerTokenFromRequest(request: FastifyRequest): string | undefined {
-  const authorization = firstHeaderValue(request.headers.authorization);
-  if (authorization !== undefined) {
-    const [scheme, token] = authorization.split(" ");
-    if (scheme?.toLowerCase() === "bearer" && token !== undefined && token.length > 0) {
-      return token;
-    }
-  }
-
-  const queryToken = accessTokenFromQuery(request.query);
-  return queryToken ?? undefined;
+  return bearerHeaderValue(request) ?? accessTokenFromQuery(request.query) ?? undefined;
 }
 
 function parseScopes(value: string | undefined): readonly string[] {

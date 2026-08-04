@@ -20,7 +20,7 @@ interface ShellMailRouteSearch {
 }
 
 export const Route = createFileRoute("/_shell/mail/")({
-  component: MailRoute,
+  component: MailShell,
   validateSearch: (search): ShellMailRouteSearch => {
     const folder = optionalStringSearchParam(search.folder);
     const tab = optionalEnumSearchParam(search.tab, mailTabs);
@@ -36,7 +36,3 @@ export const Route = createFileRoute("/_shell/mail/")({
     };
   },
 });
-
-function MailRoute() {
-  return <MailShell />;
-}

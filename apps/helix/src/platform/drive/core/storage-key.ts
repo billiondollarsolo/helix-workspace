@@ -16,6 +16,7 @@ export function driveBlobKey(orgId: string, sha256: string): string {
   return `drive/${orgId}/blobs/${sha256}`;
 }
 
+/** C0 controls plus DEL — never legal in a Drive storage key. */
 function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
@@ -29,9 +30,7 @@ function hasControlCharacter(value: string): boolean {
 /**
  * Ensures a finalize-time storageKey matches the reserved object key and is not
  * a path-traversal / absolute / scheme-qualified value.
- */
-/**
- * Validates finalize-time storage keys.
+ *
  * Accepts either the reserved per-object key (default path) or a content-addressed
  * blob key (`drive/{org}/blobs/{sha256}`) when dedup is enabled.
  */

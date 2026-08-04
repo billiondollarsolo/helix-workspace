@@ -17,24 +17,29 @@ export interface DatabaseUrlEnvironment {
   readonly MIGRATION_DATABASE_URL?: string | undefined;
 }
 
+/** Read a field that is present on the source object and holds a string value. */
+function presentStringField(source: object, key: string): string | undefined {
+  if (!(key in source)) {
+    return undefined;
+  }
+  const value = (source as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
 export function resolveDatabaseUrl(source: DatabaseUrlEnvironment | Env = process.env): string {
-  const url =
-    "DATABASE_URL" in source && typeof source.DATABASE_URL === "string"
-      ? source.DATABASE_URL
-      : undefined;
+  const url = presentStringField(source, "DATABASE_URL");
   return url && url.length > 0 ? url : DEFAULT_DATABASE_URL;
 }
 
 export function resolveMigrationDatabaseUrl(
   source: DatabaseUrlEnvironment | Env = process.env,
 ): string {
+  // The first *present* string override wins, and only then is it tested for
+  // emptiness: a present-but-empty HELIX_MIGRATION_DATABASE_URL therefore falls
+  // through to DATABASE_URL rather than to MIGRATION_DATABASE_URL.
   const migrationUrl =
-    "HELIX_MIGRATION_DATABASE_URL" in source &&
-    typeof source.HELIX_MIGRATION_DATABASE_URL === "string"
-      ? source.HELIX_MIGRATION_DATABASE_URL
-      : "MIGRATION_DATABASE_URL" in source && typeof source.MIGRATION_DATABASE_URL === "string"
-        ? source.MIGRATION_DATABASE_URL
-        : undefined;
+    presentStringField(source, "HELIX_MIGRATION_DATABASE_URL") ??
+    presentStringField(source, "MIGRATION_DATABASE_URL");
   return migrationUrl && migrationUrl.length > 0 ? migrationUrl : resolveDatabaseUrl(source);
 }
 

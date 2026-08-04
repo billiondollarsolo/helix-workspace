@@ -548,7 +548,7 @@ function mapDriveScanJob(row: DriveScanJobRow): DriveScanJob {
     versionId: row.version_id,
     requestedByActorId,
     storageKey: row.storage_key,
-    byteSize: typeof row.byte_size === "number" ? row.byte_size : Number(row.byte_size),
+    byteSize: Number(row.byte_size),
     sha256: row.sha256,
     attempts: row.attempts,
     maxAttempts: row.max_attempts,

@@ -93,9 +93,7 @@ async function verifyProtectedEd25519Signature(report, trust, label) {
   const publicKey = createPublicKey(await readFile(trust.publicKeyPath, "utf8"));
   if (publicKey.asymmetricKeyType !== "ed25519")
     throw new Error(`${label} public key must be Ed25519`);
-  const fingerprint = `sha256:${createHash("sha256")
-    .update(publicKey.export({ type: "spki", format: "der" }))
-    .digest("hex")}`;
+  const fingerprint = spkiFingerprint(publicKey);
   if (
     fingerprint !== report.signature.signerFingerprint ||
     fingerprint !== trust.signerFingerprint
@@ -103,14 +101,7 @@ async function verifyProtectedEd25519Signature(report, trust, label) {
     throw new Error(`${label} signer fingerprint does not match the trusted public key`);
   }
   const signature = strictBase64(report.signature.value, `${label} signature`);
-  const unsigned = {
-    ...report,
-    signature: {
-      algorithm: report.signature.algorithm,
-      signer: report.signature.signer,
-      signerFingerprint: report.signature.signerFingerprint,
-    },
-  };
+  const unsigned = withoutSignatureValue(report);
   if (
     signature.length !== 64 ||
     !verify(null, Buffer.from(canonicalJson(unsigned)), publicKey, signature)
@@ -194,9 +185,7 @@ export async function validateProductionDecision(
   if (publicKey.asymmetricKeyType !== "ed25519") {
     throw new Error("decision public key must be Ed25519");
   }
-  const fingerprint = `sha256:${createHash("sha256")
-    .update(publicKey.export({ type: "spki", format: "der" }))
-    .digest("hex")}`;
+  const fingerprint = spkiFingerprint(publicKey);
   if (
     fingerprint !== report.signature.signerFingerprint ||
     fingerprint !== trustedSignerFingerprint
@@ -204,14 +193,7 @@ export async function validateProductionDecision(
     throw new Error("decision signer fingerprint does not match the trusted public key");
   }
   const signature = Buffer.from(report.signature.value, "base64");
-  const unsigned = {
-    ...report,
-    signature: {
-      algorithm: report.signature.algorithm,
-      signer: report.signature.signer,
-      signerFingerprint: report.signature.signerFingerprint,
-    },
-  };
+  const unsigned = withoutSignatureValue(report);
   if (
     signature.length !== 64 ||
     !verify(null, Buffer.from(canonicalJson(unsigned)), publicKey, signature)
@@ -225,5 +207,24 @@ export async function validateProductionDecision(
     signer: report.signature.signer,
     signerFingerprint: fingerprint,
     conditionCount: report.conditions.length,
+  };
+}
+
+function spkiFingerprint(publicKey) {
+  return `sha256:${createHash("sha256")
+    .update(publicKey.export({ type: "spki", format: "der" }))
+    .digest("hex")}`;
+}
+
+// Signatures cover the report with the signature value itself removed, so the
+// signed bytes stay reproducible for the verifier.
+function withoutSignatureValue(report) {
+  return {
+    ...report,
+    signature: {
+      algorithm: report.signature.algorithm,
+      signer: report.signature.signer,
+      signerFingerprint: report.signature.signerFingerprint,
+    },
   };
 }

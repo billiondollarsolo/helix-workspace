@@ -564,10 +564,11 @@ function mergeReadinessObjects(observed: JsonObject, existing: JsonObject): Json
 
 function observedPlatformReadiness(config: HelixConfig, env: NodeJS.ProcessEnv): JsonObject {
   const endpoints = platformEndpoints(config.platform);
+  const vaultEndpointConfig = platformServiceEndpoint(endpoints.vault);
   const vaultEndpoint = firstNonEmptyString(
     env.VAULT_ADDR,
-    objectString(platformServiceEndpoint(endpoints.vault), "address"),
-    objectString(platformServiceEndpoint(endpoints.vault), "endpoint"),
+    objectString(vaultEndpointConfig, "address"),
+    objectString(vaultEndpointConfig, "endpoint"),
   );
   const siemEndpoint = firstNonEmptyString(
     env.SIEM_ENDPOINT,
@@ -1159,12 +1160,13 @@ function mfaRequirement(
   tier: SecurityTier,
   state: PlatformReadinessUpdate["mfa"],
 ): PlatformReadinessRequirement {
-  const requiredScope = tier === "personal" ? "none" : tier === "business" ? "admins" : "org";
+  const requiredScope = requiredMfaScope(tier);
   const required = requiredScope !== "none";
   const observedScope = state?.scope ?? "none";
-  const ready = required
-    ? mfaScopeRank(observedScope) >= mfaScopeRank(requiredScope) && isReady(state)
-    : isReady(state);
+  // When no scope is required the rank comparison is trivially satisfied
+  // (`mfaScopeRank("none")` is 0), so readiness collapses to the same
+  // expression on both the required and not-required paths.
+  const ready = mfaScopeRank(observedScope) >= mfaScopeRank(requiredScope) && isReady(state);
   return {
     key: "mfa",
     label: "MFA",
@@ -1208,11 +1210,20 @@ function auditDestinationsRequirement(
   const missing = requiredDestinations.filter(
     (destination) => !observedDestinations.has(destination),
   );
+  // Deliberately not `requirementStatus`: an unsatisfied destination set is
+  // reported as `missing` even when the control self-reports `unknown`, because
+  // the missing destinations are directly observable here.
+  let status: PlatformReadinessRequirement["status"] = "missing";
+  if (missing.length === 0) {
+    status = "ready";
+  } else if (state?.status === "degraded") {
+    status = "degraded";
+  }
   return {
     key: "auditDestinations",
     label: "Audit destinations",
     required: true,
-    status: missing.length === 0 ? "ready" : state?.status === "degraded" ? "degraded" : "missing",
+    status,
     expected: { destinations: [...requiredDestinations] },
     observed: compactJsonObject({
       destinations: [...observedDestinations],
@@ -1456,7 +1467,13 @@ function requirementStatus(
   if (ready) {
     return "ready";
   }
-  return status === "degraded" ? "degraded" : status === "unknown" ? "unknown" : "missing";
+  if (status === "degraded") {
+    return "degraded";
+  }
+  if (status === "unknown") {
+    return "unknown";
+  }
+  return "missing";
 }
 
 function isReady(
@@ -1466,11 +1483,26 @@ function isReady(
   return state?.status === "ready" || state?.enabled === true;
 }
 
-function mfaScopeRank(scope: "none" | "admins" | "org"): number {
-  if (scope === "org") {
-    return 2;
+function requiredMfaScope(tier: SecurityTier): "none" | "admins" | "org" {
+  switch (tier) {
+    case "personal":
+      return "none";
+    case "business":
+      return "admins";
+    default:
+      return "org";
   }
-  return scope === "admins" ? 1 : 0;
+}
+
+function mfaScopeRank(scope: "none" | "admins" | "org"): number {
+  switch (scope) {
+    case "org":
+      return 2;
+    case "admins":
+      return 1;
+    case "none":
+      return 0;
+  }
 }
 
 function compactJsonObject(value: Record<string, JsonValue | undefined>): JsonObject {

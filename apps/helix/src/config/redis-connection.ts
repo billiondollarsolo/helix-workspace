@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import type { RedisOptions } from "ioredis";
+import { readTlsPem, tlsPathValue, type TlsFileReader } from "./tls-files.js";
+
+const TLS_SUBJECT = "Redis";
 
 export interface RedisConnectionEnvironment {
   readonly NODE_ENV?: string | undefined;
@@ -11,7 +14,7 @@ export interface RedisConnectionEnvironment {
 
 export function resolveRedisConnection(
   environment: RedisConnectionEnvironment,
-  readFile: (path: string) => Buffer = (path) => readFileSync(path),
+  readFile: TlsFileReader = (path) => readFileSync(path),
 ): { readonly url: string; readonly options: RedisOptions } | undefined {
   const rawUrl = environment.REDIS_URL?.trim();
   if (rawUrl === undefined || rawUrl.length === 0) return undefined;
@@ -21,9 +24,9 @@ export function resolveRedisConnection(
     throw new Error("Production Redis requires a rediss: URL.");
   }
 
-  const caFile = pathValue(environment.REDIS_TLS_CA_FILE);
-  const certFile = pathValue(environment.REDIS_TLS_CERT_FILE);
-  const keyFile = pathValue(environment.REDIS_TLS_KEY_FILE);
+  const caFile = tlsPathValue(environment.REDIS_TLS_CA_FILE, TLS_SUBJECT);
+  const certFile = tlsPathValue(environment.REDIS_TLS_CERT_FILE, TLS_SUBJECT);
+  const keyFile = tlsPathValue(environment.REDIS_TLS_KEY_FILE, TLS_SUBJECT);
   if ((certFile === undefined) !== (keyFile === undefined)) {
     throw new Error("Redis TLS client certificate and key files must be configured together.");
   }
@@ -38,31 +41,10 @@ export function resolveRedisConnection(
       tls: {
         rejectUnauthorized: true,
         servername: url.hostname,
-        ...(caFile === undefined ? {} : { ca: readPem(caFile, readFile) }),
-        ...(certFile === undefined ? {} : { cert: readPem(certFile, readFile) }),
-        ...(keyFile === undefined ? {} : { key: readPem(keyFile, readFile) }),
+        ...(caFile === undefined ? {} : { ca: readTlsPem(caFile, readFile, TLS_SUBJECT) }),
+        ...(certFile === undefined ? {} : { cert: readTlsPem(certFile, readFile, TLS_SUBJECT) }),
+        ...(keyFile === undefined ? {} : { key: readTlsPem(keyFile, readFile, TLS_SUBJECT) }),
       },
     },
   };
-}
-
-function pathValue(value: string | undefined): string | undefined {
-  const path = value?.trim();
-  if (path === undefined || path.length === 0) return undefined;
-  if (!path.startsWith("/") || path.includes("\0")) {
-    throw new Error("Redis TLS files must use absolute paths.");
-  }
-  return path;
-}
-
-function readPem(path: string, readFile: (path: string) => Buffer): Buffer {
-  try {
-    const contents = readFile(path);
-    if (contents.byteLength === 0 || contents.byteLength > 1024 * 1024) {
-      throw new Error("invalid TLS file");
-    }
-    return contents;
-  } catch {
-    throw new Error("Redis TLS file is unreadable or invalid.");
-  }
 }

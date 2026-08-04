@@ -3,20 +3,16 @@
 import { tiers } from "@/features/admin/tier-readiness/catalog";
 import type { BackendReadinessStatus, TierId } from "@/features/admin/tier-readiness/types";
 
+const BACKEND_STATUS_TEXT: Readonly<Record<BackendReadinessStatus, string>> = {
+  not_required: "Not required",
+  ready: "Ready",
+  missing: "Missing",
+  degraded: "Degraded",
+  unknown: "Unknown",
+};
+
 export function backendStatusText(status: BackendReadinessStatus): string {
-  if (status === "not_required") {
-    return "Not required";
-  }
-  if (status === "ready") {
-    return "Ready";
-  }
-  if (status === "missing") {
-    return "Missing";
-  }
-  if (status === "degraded") {
-    return "Degraded";
-  }
-  return "Unknown";
+  return BACKEND_STATUS_TEXT[status];
 }
 
 export function titleForTier(tierId: TierId): string {

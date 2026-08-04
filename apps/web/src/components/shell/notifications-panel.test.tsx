@@ -9,6 +9,7 @@ import { NotificationsPanel, formatRelativeNotificationTime } from "./notificati
 const navigate = vi.fn();
 const markRead = vi.fn();
 const markAllRead = vi.fn();
+const invalidateQueries = vi.fn();
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
@@ -16,6 +17,9 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: vi.fn(),
+  // The Retry button invalidates the shared notifications key rather than
+  // calling this observer's own `refetch`, so the panel needs a client.
+  useQueryClient: () => ({ invalidateQueries: invalidateQueries }),
 }));
 
 vi.mock("@/features/notifications/api", () => ({

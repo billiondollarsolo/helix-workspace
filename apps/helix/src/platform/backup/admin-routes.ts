@@ -102,7 +102,9 @@ export interface ScriptedBackupAdminServiceOptions {
 export class ScriptedBackupAdminService implements BackupAdminService {
   constructor(private readonly options: ScriptedBackupAdminServiceOptions = {}) {}
 
-  async createBackup(input: { readonly backupId?: string | undefined }): Promise<BackupOperationResult> {
+  async createBackup(input: {
+    readonly backupId?: string | undefined;
+  }): Promise<BackupOperationResult> {
     const backupId = input.backupId ?? utcBackupId();
     const execute = shouldExecute(this.options.execute);
     const args = [
@@ -185,15 +187,18 @@ async function runScript(
 }
 
 function utcBackupId(): string {
-  return `backup-${new Date().toISOString().replaceAll(/[-:]/gu, "").replace(/\.\d{3}Z$/u, "Z")}`;
+  return `backup-${new Date()
+    .toISOString()
+    .replaceAll(/[-:]/gu, "")
+    .replace(/\.\d{3}Z$/u, "Z")}`;
 }
 
 function shouldExecute(value: boolean | undefined): boolean {
   if (value !== undefined) {
     return value;
   }
-  const raw = env().HELIX_ADMIN_BACKUP_EXECUTE;
-  return raw === "1" || raw?.toLowerCase() === "true" || raw?.toLowerCase() === "yes";
+  const raw = env().HELIX_ADMIN_BACKUP_EXECUTE?.toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 function shellCommand(args: readonly string[]): string {

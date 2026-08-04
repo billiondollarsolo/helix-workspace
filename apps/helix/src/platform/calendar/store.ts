@@ -848,10 +848,10 @@ function findOpenSlots(
     startsMs += stepMs
   ) {
     const endsMs = startsMs + durationMs;
-    const conflicts = busy.filter(
+    const conflicts = busy.some(
       (interval) => interval.startsAt.getTime() < endsMs && interval.endsAt.getTime() > startsMs,
     );
-    if (conflicts.length === 0) {
+    if (!conflicts) {
       slots.push({ startsAt: new Date(startsMs), endsAt: new Date(endsMs), busy: [] });
       if (slots.length >= limit) {
         break;

@@ -383,15 +383,7 @@ export class PostgresMeetStore implements MeetStore {
     readonly orgId: string;
     readonly roomName: string;
   }): Promise<MeetRoomRecord | null> {
-    const rows = (await this.sql`
-      select *
-      from meet_rooms
-      where org_id = ${input.orgId}
-        and room_name = ${input.roomName}
-      order by created_at desc
-      limit 1
-    `) as unknown as readonly MeetRoomRow[];
-    return rows[0] === undefined ? null : mapRoom(rows[0]);
+    return selectRoomByName(this.sql, input.orgId, input.roomName);
   }
 
   async endRoom(input: {
@@ -426,12 +418,7 @@ export class PostgresMeetStore implements MeetStore {
     input: AttachMeetRecordingInput,
   ): Promise<MeetRecordingAttachmentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const room =
-        input.roomId === undefined
-          ? input.roomName === undefined
-            ? null
-            : await selectRoomByName(tx, input.orgId, input.roomName)
-          : await selectRoomById(tx, input.orgId, input.roomId);
+      const room = await selectRoomByRef(tx, input.orgId, input);
       if (room === null) {
         return null;
       }
@@ -578,15 +565,14 @@ export class PostgresMeetStore implements MeetStore {
           from unnest(${tx.array([...recipients])}::uuid[]) as actor_id
         `;
       }
-      const attachment = {
+      this.emitRecordingStorageDelta(input.orgId, byteSize);
+      return {
         roomId: room.id,
         threadId: room.threadId,
         objectId,
         messageId,
         storageKey: input.storageKey,
       };
-      this.emitRecordingStorageDelta(input.orgId, byteSize);
-      return attachment;
     });
   }
 
@@ -596,12 +582,7 @@ export class PostgresMeetStore implements MeetStore {
       throw new Error("Meet summary body is required.");
     }
     return this.sql.begin(async (tx) => {
-      const room =
-        input.roomId === undefined
-          ? input.roomName === undefined
-            ? null
-            : await selectRoomByName(tx, input.orgId, input.roomName)
-          : await selectRoomById(tx, input.orgId, input.roomId);
+      const room = await selectRoomByRef(tx, input.orgId, input);
       if (room === null) {
         return null;
       }
@@ -804,12 +785,7 @@ export class InMemoryMeetStore implements MeetStore {
   async attachRecording(
     input: AttachMeetRecordingInput,
   ): Promise<MeetRecordingAttachmentRecord | null> {
-    const room =
-      input.roomId === undefined
-        ? input.roomName === undefined
-          ? null
-          : await this.getRoomByName({ orgId: input.orgId, roomName: input.roomName })
-        : (this.#rooms.get(input.roomId) ?? null);
+    const room = await this.#resolveRoomByRef(input.orgId, input);
     if (room === null || room.orgId !== input.orgId) {
       return null;
     }
@@ -856,12 +832,7 @@ export class InMemoryMeetStore implements MeetStore {
     if (body.length === 0) {
       throw new Error("Meet summary body is required.");
     }
-    const room =
-      input.roomId === undefined
-        ? input.roomName === undefined
-          ? null
-          : await this.getRoomByName({ orgId: input.orgId, roomName: input.roomName })
-        : (this.#rooms.get(input.roomId) ?? null);
+    const room = await this.#resolveRoomByRef(input.orgId, input);
     if (room === null || room.orgId !== input.orgId) {
       return null;
     }
@@ -874,6 +845,24 @@ export class InMemoryMeetStore implements MeetStore {
     const existing = this.#summaries.get(room.id) ?? [];
     this.#summaries.set(room.id, [summary, ...existing]);
     return summary;
+  }
+
+  /**
+   * Resolve the room a recording/summary attachment targets. Callers may address
+   * a room by id or by name; id wins when both are supplied. The id lookup is not
+   * org-scoped here — callers re-check `orgId` on the result.
+   */
+  async #resolveRoomByRef(
+    orgId: string,
+    ref: { readonly roomId?: string | undefined; readonly roomName?: string | undefined },
+  ): Promise<MeetRoomRecord | null> {
+    if (ref.roomId !== undefined) {
+      return this.#rooms.get(ref.roomId) ?? null;
+    }
+    if (ref.roomName !== undefined) {
+      return this.getRoomByName({ orgId, roomName: ref.roomName });
+    }
+    return null;
   }
 
   #withRecordingArtifacts(room: MeetRoomRecord): MeetRoomRecord {
@@ -983,6 +972,24 @@ async function selectRoomByName(
     limit 1
   `) as unknown as readonly MeetRoomRow[];
   return rows[0] === undefined ? null : mapRoom(rows[0]);
+}
+
+/**
+ * Resolve the room a recording/summary attachment targets. Callers may address a
+ * room by id or by name; id wins when both are supplied.
+ */
+async function selectRoomByRef(
+  sql: SqlLike,
+  orgId: string,
+  ref: { readonly roomId?: string | undefined; readonly roomName?: string | undefined },
+): Promise<MeetRoomRecord | null> {
+  if (ref.roomId !== undefined) {
+    return selectRoomById(sql, orgId, ref.roomId);
+  }
+  if (ref.roomName !== undefined) {
+    return selectRoomByName(sql, orgId, ref.roomName);
+  }
+  return null;
 }
 
 async function grantThreadAccess(

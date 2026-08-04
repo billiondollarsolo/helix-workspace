@@ -104,6 +104,16 @@ function launcherItems(root: HTMLElement | null): HTMLElement[] {
   return root === null ? [] : Array.from(root.querySelectorAll<HTMLElement>('[role="menuitem"]'));
 }
 
+/* Arrow-key step through the tile grid. Up/down move a whole row, which is
+   the launcher's column count. */
+const LAUNCHER_COLUMNS = 3;
+const LAUNCHER_ARROW_STEPS: Readonly<Record<string, number>> = {
+  ArrowRight: 1,
+  ArrowLeft: -1,
+  ArrowDown: LAUNCHER_COLUMNS,
+  ArrowUp: -LAUNCHER_COLUMNS,
+};
+
 function launcherNextIndex(key: string, current: number, length: number): number | null {
   if (length === 0) {
     return null;
@@ -114,10 +124,10 @@ function launcherNextIndex(key: string, current: number, length: number): number
   if (key === "End") {
     return length - 1;
   }
-  const start = current < 0 ? 0 : current;
-  const delta = key === "ArrowRight" ? 1 : key === "ArrowLeft" ? -1 : key === "ArrowDown" ? 3 : -3;
-  if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(key)) {
+  const step = LAUNCHER_ARROW_STEPS[key];
+  if (step === undefined) {
     return null;
   }
-  return (start + delta + length) % length;
+  const start = current < 0 ? 0 : current;
+  return (start + step + length) % length;
 }

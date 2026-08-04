@@ -20,6 +20,17 @@ import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive
 import { EmptyRow, PageHeading, StateBanner } from "@/features/admin/console/primitives";
 import { AdminInput } from "@/features/admin/console/controls";
 import {
+  SELECT_CLASS,
+  actorStatusOf,
+  errorMessage,
+  formatDateTime,
+  invalidExpiresAt,
+  normalizeExpiresAt,
+  parseScopes,
+  toggleScope,
+  type ActorStatus,
+} from "@/features/admin/credentials-shared";
+import {
   appPasswordsQueryOptions,
   createAppPassword,
   revokeAppPassword,
@@ -53,16 +64,7 @@ const commonScopes = [
   "docs.write",
 ] as const;
 
-/* The actor picker sits next to `Input` fields in the same form and there is no
-   shared Select primitive to inherit that shell from. */
-const SELECT_CLASS =
-  "h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50";
-
 const ACTOR_STATUS_ID = "app-password-actor-status";
-
-const invalidExpiresAt = Symbol("invalidExpiresAt");
-
-type ActorStatus = "loading" | "error" | "empty" | "truncated" | "ready";
 
 const actorPlaceholders: Record<ActorStatus, string> = {
   loading: "Loading actors…",
@@ -588,24 +590,6 @@ export function AppPasswordsManagement() {
   );
 }
 
-function actorStatusOf(input: {
-  readonly actorCount: number;
-  readonly hasMore: boolean;
-  readonly isError: boolean;
-  readonly isPending: boolean;
-}): ActorStatus {
-  if (input.isError) {
-    return "error";
-  }
-  if (input.isPending) {
-    return "loading";
-  }
-  if (input.actorCount === 0) {
-    return "empty";
-  }
-  return input.hasMore ? "truncated" : "ready";
-}
-
 function actorNoticeFor(
   status: ActorStatus,
   actorCount: number,
@@ -684,41 +668,6 @@ function normalizeCreateInput(value: AppPasswordFormState) {
     scopes,
     ...(expiresAt === null ? {} : { expiresAt }),
   };
-}
-
-function parseScopes(value: string): string[] {
-  return value
-    .split(/[\s,]+/u)
-    .map((scope) => scope.trim())
-    .filter((scope) => scope.length > 0);
-}
-
-function toggleScope(value: string, scope: string, selected: boolean): string {
-  const scopes = parseScopes(value).filter((candidate) => candidate !== scope);
-  return (selected ? scopes : [...scopes, scope]).join(" ");
-}
-
-function normalizeExpiresAt(value: string): string | null | typeof invalidExpiresAt {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-  const date = new Date(trimmed);
-  return Number.isNaN(date.getTime()) ? invalidExpiresAt : date.toISOString();
-}
-
-function formatDateTime(value: string | null): string | null {
-  if (value === null) {
-    return null;
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message.length > 0 ? error.message : fallback;
 }
 
 async function invalidateAppPasswordLists(

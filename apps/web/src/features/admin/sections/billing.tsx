@@ -14,8 +14,6 @@ import {
   type BillingUsageMeter,
   type Invoice,
   type MeteringRollupMetricKey,
-  type UsageRollup,
-  type UsageSummaryMetric,
 } from "@/features/admin/billing-api";
 import {
   AdminInput,
@@ -31,6 +29,7 @@ import {
   PageScroll,
   QueryFailureBanner,
   StateBanner,
+  StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
 
@@ -64,6 +63,16 @@ const USAGE_METRIC_LABELS: Record<MeteringRollupMetricKey, string> = {
 const USAGE_FILTER_METRICS = Object.entries(USAGE_METRIC_LABELS) as ReadonlyArray<
   readonly [MeteringRollupMetricKey, string]
 >;
+
+/** The usage panel's filter state, and the value that means "no filter" —
+ *  written twice before, so Clear and the initial state could drift apart. */
+interface UsageFilters {
+  readonly from: string;
+  readonly to: string;
+  readonly metricKey: MeteringRollupMetricKey | "";
+}
+
+const NO_USAGE_FILTERS: UsageFilters = { from: "", to: "", metricKey: "" };
 
 function formatDateLabel(value: string | null): string {
   if (value === null) {
@@ -130,21 +139,17 @@ const INVOICE_COLUMNS: readonly AdminColumn<Invoice>[] = [
     header: "Status",
     width: "110px",
     cell: (invoice) => (
-      <span className={`chip ${invoice.status === "paid" ? "success" : "warning"}`}>
-        <span className="chip-dot" />
-        {invoice.status}
-      </span>
+      <StatusChip tone={invoice.status === "paid" ? "success" : "warning"} label={invoice.status} />
     ),
   },
 ];
 
 export function AdminBilling() {
   const queryClient = useQueryClient();
-  const [usageFilters, setUsageFilters] = useState<{
-    readonly from: string;
-    readonly to: string;
-    readonly metricKey: MeteringRollupMetricKey | "";
-  }>({ from: "", to: "", metricKey: "" });
+  const [usageFilters, setUsageFilters] = useState<UsageFilters>(NO_USAGE_FILTERS);
+  const patchUsageFilters = (patch: Partial<UsageFilters>) => {
+    setUsageFilters((current) => ({ ...current, ...patch }));
+  };
   const usageQueryInput = useMemo(
     () => ({
       ...(usageFilters.from.trim().length === 0 ? {} : { from: usageFilters.from }),
@@ -349,8 +354,9 @@ export function AdminBilling() {
                     value={usageFilters.metricKey}
                     disabled={usageFiltersDisabled}
                     onChange={(event) => {
-                      const value = event.currentTarget.value as MeteringRollupMetricKey | "";
-                      setUsageFilters((current) => ({ ...current, metricKey: value }));
+                      patchUsageFilters({
+                        metricKey: event.currentTarget.value as MeteringRollupMetricKey | "",
+                      });
                     }}
                   >
                     <option value="">All metrics</option>
@@ -367,8 +373,7 @@ export function AdminBilling() {
                     value={usageFilters.from}
                     disabled={usageFiltersDisabled}
                     onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setUsageFilters((current) => ({ ...current, from: value }));
+                      patchUsageFilters({ from: event.currentTarget.value });
                     }}
                   />
                   <AdminInput
@@ -378,8 +383,7 @@ export function AdminBilling() {
                     value={usageFilters.to}
                     disabled={usageFiltersDisabled}
                     onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setUsageFilters((current) => ({ ...current, to: value }));
+                      patchUsageFilters({ to: event.currentTarget.value });
                     }}
                   />
                   <Button
@@ -387,7 +391,7 @@ export function AdminBilling() {
                     size="sm"
                     variant="outline"
                     disabled={usageFiltersDisabled}
-                    onClick={() => setUsageFilters({ from: "", to: "", metricKey: "" })}
+                    onClick={() => setUsageFilters(NO_USAGE_FILTERS)}
                   >
                     Clear
                   </Button>
@@ -415,15 +419,22 @@ export function AdminBilling() {
                 {usageSummary === undefined || usageSummary.metrics.length === 0 ? null : (
                   <AdminStatRow>
                     {usageSummary.metrics.slice(0, 8).map((metric) => (
-                      <UsageSummaryCard key={metric.metricKey} metric={metric} />
+                      <AdminStatTile
+                        key={metric.metricKey}
+                        label={USAGE_METRIC_LABELS[metric.metricKey]}
+                        value={formatUsageQuantity(metric)}
+                        note={`${metric.aggregation} over ${String(metric.sampleCount)} day${metric.sampleCount === 1 ? "" : "s"}`}
+                      />
                     ))}
                   </AdminStatRow>
                 )}
                 <AdminStatRow>
                   {usageRollups.slice(0, 8).map((rollup) => (
-                    <UsageRollupCard
+                    <AdminStatTile
                       key={`${rollup.periodStart}:${rollup.metricKey}`}
-                      rollup={rollup}
+                      label={USAGE_METRIC_LABELS[rollup.metricKey]}
+                      value={formatUsageQuantity(rollup)}
+                      note={formatUsagePeriod(rollup.periodStart)}
                     />
                   ))}
                 </AdminStatRow>
@@ -462,46 +473,21 @@ export function AdminBilling() {
   );
 }
 
-function UsageSummaryCard({ metric }: { readonly metric: UsageSummaryMetric }) {
-  return (
-    <AdminStatTile
-      label={USAGE_METRIC_LABELS[metric.metricKey] ?? metric.metricKey}
-      value={formatUsageMetricQuantity(metric)}
-      note={`${metric.aggregation} over ${String(metric.sampleCount)} day${metric.sampleCount === 1 ? "" : "s"}`}
-    />
-  );
-}
-
-function UsageRollupCard({ rollup }: { readonly rollup: UsageRollup }) {
-  return (
-    <AdminStatTile
-      label={USAGE_METRIC_LABELS[rollup.metricKey] ?? rollup.metricKey}
-      value={formatUsageQuantity(rollup)}
-      note={formatUsagePeriod(rollup.periodStart)}
-    />
-  );
-}
-
-function formatUsageQuantity(rollup: UsageRollup): string {
-  if (rollup.metricKey === "storage_delta_bytes") {
-    const sign = rollup.quantity > 0 ? "+" : rollup.quantity < 0 ? "-" : "";
-    return `${sign}${formatUsageBytes(Math.abs(rollup.quantity))}`;
+/* A rollup and a summary metric carry the same two fields this reads, so one
+   formatter serves both: bytes metrics are sized (signed, for a delta) and
+   everything else is a plain count. */
+function formatUsageQuantity(entry: {
+  readonly metricKey: MeteringRollupMetricKey;
+  readonly quantity: number;
+}): string {
+  if (entry.metricKey === "storage_delta_bytes") {
+    const sign = entry.quantity > 0 ? "+" : entry.quantity < 0 ? "-" : "";
+    return `${sign}${formatUsageBytes(Math.abs(entry.quantity))}`;
   }
-  if (rollup.metricKey === "storage_avg_bytes") {
-    return formatUsageBytes(rollup.quantity);
+  if (entry.metricKey === "storage_avg_bytes") {
+    return formatUsageBytes(entry.quantity);
   }
-  return new Intl.NumberFormat("en-US").format(rollup.quantity);
-}
-
-function formatUsageMetricQuantity(metric: UsageSummaryMetric): string {
-  if (metric.metricKey === "storage_delta_bytes") {
-    const sign = metric.quantity > 0 ? "+" : metric.quantity < 0 ? "-" : "";
-    return `${sign}${formatUsageBytes(Math.abs(metric.quantity))}`;
-  }
-  if (metric.metricKey === "storage_avg_bytes") {
-    return formatUsageBytes(metric.quantity);
-  }
-  return new Intl.NumberFormat("en-US").format(metric.quantity);
+  return new Intl.NumberFormat("en-US").format(entry.quantity);
 }
 
 function formatUsageBytes(bytes: number): string {

@@ -354,7 +354,7 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
         durationMs: result.durationMs,
       }),
     );
-    report.summary[status === "passed" ? "passed" : "failed"] += 1;
+    report.summary[status] += 1;
   }
 
   // --- Phase B: multi-surface multi-user RBAC unit battery ---
@@ -386,7 +386,7 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
         ],
       }),
     );
-    report.summary[status === "passed" ? "passed" : "failed"] += 1;
+    report.summary[status] += 1;
   } else {
     report.phases.push(phaseRecord("rbac-unit-battery", "skipped", { reason: "--skip-unit" }));
     report.summary.skipped += 1;
@@ -412,7 +412,7 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
     if (health.ok && !options.skipLiveAuth) {
       const clientId = process.env.HELIX_SMOKE_CLIENT_ID ?? DEFAULT_OAUTH_CLIENT_ID;
       const clientSecret = process.env.HELIX_SMOKE_CLIENT_SECRET ?? DEFAULT_OAUTH_CLIENT_SECRET;
-      const liveArgs = [
+      const liveAuthArgs = (flags) => [
         "infra/scripts/live-auth-smoke.sh",
         "--base-url",
         options.baseUrl,
@@ -420,7 +420,7 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
         clientId,
         "--client-secret",
         clientSecret,
-        ...LIVE_AUTH_MVP_FLAGS,
+        ...flags,
       ];
       const defaultScope = [
         "platform.read",
@@ -444,7 +444,7 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
         "admin.config.read",
         "admin.config.write",
       ].join(" ");
-      const result = await runCmd("bash", liveArgs, {
+      const result = await runCmd("bash", liveAuthArgs(LIVE_AUTH_MVP_FLAGS), {
         env: {
           HELIX_BASE_URL: options.baseUrl,
           HELIX_SMOKE_CLIENT_ID: clientId,
@@ -474,20 +474,10 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
           surfaces: ["auth", "mail-smtp-mailpit", "assistant", "webdav", "search", "audit"],
         }),
       );
-      report.summary[status === "passed" ? "passed" : "failed"] += 1;
+      report.summary[status] += 1;
 
       // Optional chat realtime as non-blocking residual if it flakes.
-      const chatArgs = [
-        "infra/scripts/live-auth-smoke.sh",
-        "--base-url",
-        options.baseUrl,
-        "--client-id",
-        clientId,
-        "--client-secret",
-        clientSecret,
-        ...LIVE_AUTH_OPTIONAL_FLAGS,
-      ];
-      const chatResult = await runCmd("bash", chatArgs, {
+      const chatResult = await runCmd("bash", liveAuthArgs(LIVE_AUTH_OPTIONAL_FLAGS), {
         env: {
           HELIX_BASE_URL: options.baseUrl,
           HELIX_SMOKE_CLIENT_ID: clientId,
@@ -515,7 +505,7 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
       } else {
         report.summary.skipped += 1;
       }
-    } else if (options.mode === "execute") {
+    } else {
       report.phases.push(
         phaseRecord("live-auth-mvp-surfaces", "skipped", {
           reason: health.ok ? "--skip-live-auth" : "healthz failed",
@@ -546,7 +536,7 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
           results: probes.results,
         }),
       );
-      report.summary[status === "passed" ? "passed" : "failed"] += 1;
+      report.summary[status] += 1;
     } else if (health.ok) {
       report.phases.push(
         phaseRecord("multi-user-rbac-live", "skipped", {
@@ -578,8 +568,8 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
           note: "external gmail/m365 remain not_run in mail report",
         }),
       );
-      report.summary[status === "passed" ? "passed" : "failed"] += 1;
-    } else if (options.mode === "execute") {
+      report.summary[status] += 1;
+    } else {
       report.phases.push(
         phaseRecord("mail-live-local", "skipped", {
           reason: "HELIX_MAIL_LIVE_* tokens not configured (see docs/mail-live-evidence.md)",
@@ -609,24 +599,25 @@ export async function runLocalDisconnectedLiveSmokes(options, deps = {}) {
           samples: soakSamples,
         }),
       );
-      report.summary[status === "passed" ? "passed" : "failed"] += 1;
+      report.summary[status] += 1;
     }
   }
 
   report.completedAt = new Date().toISOString();
   const blockingFailed = report.phases.some((p) => p.status === "failed" && p.blocking !== false);
-  report.status = blockingFailed ? "failed" : report.summary.passed > 0 ? "passed" : "skipped";
+  if (blockingFailed) {
+    report.status = "failed";
+  } else if (report.summary.passed > 0) {
+    report.status = "passed";
+  } else {
+    report.status = "skipped";
+  }
+  const phasePassed = (name) => report.phases.some((p) => p.name === name && p.status === "passed");
   report.claims = {
     local_disconnected_contracts: !blockingFailed,
-    multi_actor_rbac_units: report.phases.some(
-      (p) => p.name === "rbac-unit-battery" && p.status === "passed",
-    ),
-    live_core_surfaces: report.phases.some(
-      (p) => p.name === "live-auth-mvp-surfaces" && p.status === "passed",
-    ),
-    multi_user_rbac_live: report.phases.some(
-      (p) => p.name === "multi-user-rbac-live" && p.status === "passed",
-    ),
+    multi_actor_rbac_units: phasePassed("rbac-unit-battery"),
+    live_core_surfaces: phasePassed("live-auth-mvp-surfaces"),
+    multi_user_rbac_live: phasePassed("multi-user-rbac-live"),
     external_mail_deliverability: false,
     final_release_go: false,
   };

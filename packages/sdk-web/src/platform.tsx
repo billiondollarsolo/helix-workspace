@@ -189,8 +189,13 @@ const defaultTokens: PresetTokens = {
   radius: "var(--radius)",
 };
 
-function byOrderThenLabel<T extends { order?: number; label: string }>(left: T, right: T) {
-  return (left.order ?? 1000) - (right.order ?? 1000) || left.label.localeCompare(right.label);
+/** Contributions without an explicit order sort after every explicitly ordered one. */
+const defaultContributionOrder = 1000;
+
+function byOrderThenLabel<T extends { order?: number; label: string }>(left: T, right: T): number {
+  const leftOrder = left.order ?? defaultContributionOrder;
+  const rightOrder = right.order ?? defaultContributionOrder;
+  return leftOrder - rightOrder || left.label.localeCompare(right.label);
 }
 
 export function createWebPlatformHost(options: CreateWebPlatformHostOptions): WebPlatformHost {
@@ -205,14 +210,14 @@ export function createWebPlatformHost(options: CreateWebPlatformHostOptions): We
   const previewRenderers = new Map<string, PreviewRenderer>();
   let snapshotVersion = 0;
 
-  const emit = () => {
+  function emit(): void {
     snapshotVersion += 1;
     for (const listener of listeners) {
       listener();
     }
-  };
+  }
 
-  const host: WebPlatformHost = {
+  return {
     trpc: options.trpc ?? { endpoint: "/trpc" },
     queryClient: options.queryClient,
     tokens: { ...defaultTokens, ...options.tokens },
@@ -315,8 +320,6 @@ export function createWebPlatformHost(options: CreateWebPlatformHostOptions): We
       };
     },
   };
-
-  return host;
 }
 
 const WebPlatformContext = createContext<WebPlatformHost | null>(null);

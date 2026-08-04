@@ -349,12 +349,7 @@ export class OutboundMailDispatcher {
                 span.setAttribute("helix.mail.delivery_status", "configuration_failed");
                 span.setAttribute("helix.mail.operator_code", error.operatorCode);
                 span.setStatus({ code: SpanStatusCode.ERROR });
-                return await (this.store.markOutboundDeadLettered === undefined
-                  ? this.store.markOutboundFailed(outbound.id, error.message)
-                  : this.store.markOutboundDeadLettered({
-                      id: outbound.id,
-                      lastError: error.message,
-                    }));
+                return await this.#failOrDeadLetter(outbound.id, error.message);
               }
               throw error;
             }
@@ -394,13 +389,7 @@ export class OutboundMailDispatcher {
                   span.setAttribute("helix.mail.delivery_status", "dead_lettered");
                   span.setStatus({ code: SpanStatusCode.ERROR });
                   const wrapped = new MailProviderError(message, error);
-                  if (this.store.markOutboundDeadLettered !== undefined) {
-                    return await this.store.markOutboundDeadLettered({
-                      id: outbound.id,
-                      lastError: wrapped.message,
-                    });
-                  }
-                  return await this.store.markOutboundFailed(outbound.id, wrapped.message);
+                  return await this.#failOrDeadLetter(outbound.id, wrapped.message);
                 }
 
                 const delay = computeBackoffMs(attempt, this.baseDelayMs, this.maxDelayMs);
@@ -420,12 +409,7 @@ export class OutboundMailDispatcher {
               }
             }
 
-            const message =
-              lastError instanceof Error
-                ? lastError.message
-                : typeof lastError === "string"
-                  ? lastError
-                  : "unknown";
+            const message = exhaustedAttemptsMessage(lastError);
             span.setAttribute("helix.mail.delivery_status", "failed");
             span.setStatus({ code: SpanStatusCode.ERROR });
             return await this.store.markOutboundFailed(outbound.id, message);
@@ -449,6 +433,14 @@ export class OutboundMailDispatcher {
     }
     const fromDomain = normalizeMailboxAddress(outbound.envelope.from.address).domain;
     return this.transportFor(outbound.orgId, fromDomain, outbound.providerId ?? null);
+  }
+
+  /** Dead-letter when the store supports it, otherwise record a plain failure. */
+  async #failOrDeadLetter(id: string, lastError: string): Promise<MailOutboundRecord | null> {
+    if (this.store.markOutboundDeadLettered === undefined) {
+      return this.store.markOutboundFailed(id, lastError);
+    }
+    return this.store.markOutboundDeadLettered({ id, lastError });
   }
 
   #requiredLegacyTransport(): OutboundMailTransport {
@@ -485,11 +477,15 @@ export class OutboundMailDispatcher {
 
 function isNonRetryableDispatchError(error: unknown): boolean {
   return (
-    typeof error === "object" &&
-    error !== null &&
-    "retryable" in error &&
-    (error as { readonly retryable?: unknown }).retryable === false
+    typeof error === "object" && error !== null && "retryable" in error && error.retryable === false
   );
+}
+
+/** Failure text after every attempt was exhausted without a thrown Error. */
+function exhaustedAttemptsMessage(lastError: unknown): string {
+  if (lastError instanceof Error) return lastError.message;
+  if (typeof lastError === "string") return lastError;
+  return "unknown";
 }
 
 /** Exponential backoff with full jitter, capped at maxDelayMs. */

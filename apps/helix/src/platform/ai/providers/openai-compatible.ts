@@ -21,6 +21,7 @@ import {
   stringField,
   toolCallsFromOpenAIMessage,
   usageFromOpenAI,
+  type ProviderRequestConfig,
 } from "./shared.js";
 
 export interface OpenAICompatibleProviderConfig {
@@ -33,7 +34,9 @@ export interface OpenAICompatibleProviderConfig {
   readonly headers?: Record<string, string>;
 }
 
-export function createOpenAICompatibleProvider(config: OpenAICompatibleProviderConfig): LLMProviderCapability {
+export function createOpenAICompatibleProvider(
+  config: OpenAICompatibleProviderConfig,
+): LLMProviderCapability {
   return new OpenAICompatibleProvider(config);
 }
 
@@ -68,11 +71,7 @@ class OpenAICompatibleProvider implements LLMProviderCapability {
         messages: req.messages.map((message) => openAIMessage(message)),
         stream: false,
       },
-      {
-        fetch: this.#fetch,
-        ...(this.#apiKey === undefined ? {} : { apiKey: this.#apiKey }),
-        ...(this.#headers === undefined ? {} : { headers: this.#headers }),
-      },
+      this.#requestConfig(),
     );
 
     return openAIChatResponse(payload, this.id, model);
@@ -88,13 +87,17 @@ class OpenAICompatibleProvider implements LLMProviderCapability {
         stream: true,
         stream_options: { include_usage: true },
       },
-      {
-        fetch: this.#fetch,
-        ...(this.#apiKey === undefined ? {} : { apiKey: this.#apiKey }),
-        ...(this.#headers === undefined ? {} : { headers: this.#headers }),
-      },
+      this.#requestConfig(),
     );
     yield* openAIChatChunks(events, model);
+  }
+
+  #requestConfig(): ProviderRequestConfig {
+    return {
+      fetch: this.#fetch,
+      ...(this.#apiKey === undefined ? {} : { apiKey: this.#apiKey }),
+      ...(this.#headers === undefined ? {} : { headers: this.#headers }),
+    };
   }
 
   async models(): Promise<readonly ModelInfo[]> {
@@ -106,11 +109,15 @@ class OpenAICompatibleProvider implements LLMProviderCapability {
   }
 }
 
-function openAIChatResponse(payload: unknown, providerId: string, fallbackModel: string): ChatResponse {
+function openAIChatResponse(
+  payload: unknown,
+  providerId: string,
+  fallbackModel: string,
+): ChatResponse {
   const record = assertRecord(payload, "OpenAI-compatible chat response");
   const choice = firstRecord(arrayField(record, "choices"));
   const message = choice === undefined ? undefined : firstRecord([choice.message]);
-  const content = message === undefined ? "" : stringField(message, "content") ?? "";
+  const content = message === undefined ? "" : (stringField(message, "content") ?? "");
   const model = stringField(record, "model") ?? fallbackModel;
   return chatResponse({
     message: content,

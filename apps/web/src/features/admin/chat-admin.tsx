@@ -6,7 +6,7 @@
  * no-op.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
@@ -36,6 +36,25 @@ import {
 } from "@/features/admin/chat-admin-api";
 
 const PANEL = "grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4";
+
+/** What differs between enabling and disabling a legal hold. Everything else
+ *  about the two confirmations was identical. */
+const LEGAL_HOLD_COPY = {
+  enable: {
+    title: "Enable Chat legal hold",
+    confirmLabel: "Enable legal hold",
+    verb: "Enable",
+    blastRadius:
+      "While legal hold is on, retention sweeps and user edit/delete windows cannot remove message content for the held scope.",
+  },
+  disable: {
+    title: "Disable Chat legal hold",
+    confirmLabel: "Disable legal hold",
+    verb: "Disable",
+    blastRadius:
+      "Messages that already passed the retention cutoff may be tombstoned on the next retention sweep after hold is cleared.",
+  },
+} as const;
 
 function downloadExportJson(result: ChatExportResult): void {
   const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
@@ -153,10 +172,7 @@ export function ChatAdminSection() {
     },
   });
 
-  const policySummary = useMemo(
-    () => (policy === undefined ? null : formatRetentionSummary(policy)),
-    [policy],
-  );
+  const policySummary = policy === undefined ? null : formatRetentionSummary(policy);
 
   function requestRetentionSave(): void {
     const mapped = mapRetentionFormToToolInput(retentionForm);
@@ -192,15 +208,20 @@ export function ChatAdminSection() {
   }
 
   const pendingRetentionInput = mapRetentionFormToToolInput(retentionForm);
-  const pendingHoldEnable = mapLegalHoldFormToToolInput({
-    enabled: true,
-    roomId: retentionForm.roomId,
-  });
-  const pendingHoldDisable = mapLegalHoldFormToToolInput({
-    enabled: false,
-    roomId: retentionForm.roomId,
-  });
   const pendingExportInput = mapExportFormToToolInput(exportForm);
+  /* Only the scope that is actually being confirmed needs mapping — enable and
+     disable are never open at once. */
+  const pendingHold =
+    confirmHold === null
+      ? null
+      : mapLegalHoldFormToToolInput({
+          enabled: confirmHold === "enable",
+          roomId: retentionForm.roomId,
+        });
+  const holdScope =
+    retentionForm.roomId.trim() === ""
+      ? "the organization default scope"
+      : `room ${retentionForm.roomId.trim()}`;
 
   return (
     <section className="grid gap-5">
@@ -435,54 +456,32 @@ export function ChatAdminSection() {
           : ` for room ${retentionForm.roomId.trim()}.`}
       </ConfirmDestructive>
 
+      {/* One dialog, not two: enable and disable are the same confirmation with
+          the verb flipped, and they can never be open at the same time. The
+          copy that genuinely differs — the title, the button, and what each
+          direction costs — lives in `LEGAL_HOLD_COPY`. */}
       <ConfirmDestructive
-        open={confirmHold === "enable"}
+        open={confirmHold !== null}
         onOpenChange={(open) => {
           if (!open) setConfirmHold(null);
         }}
-        title="Enable Chat legal hold"
-        confirmLabel="Enable legal hold"
+        title={LEGAL_HOLD_COPY[confirmHold ?? "enable"].title}
+        confirmLabel={LEGAL_HOLD_COPY[confirmHold ?? "enable"].confirmLabel}
         isPending={holdMutation.isPending}
-        blastRadius="While legal hold is on, retention sweeps and user edit/delete windows cannot remove message content for the held scope."
+        blastRadius={LEGAL_HOLD_COPY[confirmHold ?? "enable"].blastRadius}
         onConfirm={() => {
-          if (typeof pendingHoldEnable === "string") {
-            setFormError(pendingHoldEnable);
+          if (pendingHold === null) {
+            return;
+          }
+          if (typeof pendingHold === "string") {
+            setFormError(pendingHold);
             setConfirmHold(null);
             return;
           }
-          holdMutation.mutate(pendingHoldEnable);
+          holdMutation.mutate(pendingHold);
         }}
       >
-        Enable legal hold for{" "}
-        {retentionForm.roomId.trim() === ""
-          ? "the organization default scope"
-          : `room ${retentionForm.roomId.trim()}`}
-        .
-      </ConfirmDestructive>
-
-      <ConfirmDestructive
-        open={confirmHold === "disable"}
-        onOpenChange={(open) => {
-          if (!open) setConfirmHold(null);
-        }}
-        title="Disable Chat legal hold"
-        confirmLabel="Disable legal hold"
-        isPending={holdMutation.isPending}
-        blastRadius="Messages that already passed the retention cutoff may be tombstoned on the next retention sweep after hold is cleared."
-        onConfirm={() => {
-          if (typeof pendingHoldDisable === "string") {
-            setFormError(pendingHoldDisable);
-            setConfirmHold(null);
-            return;
-          }
-          holdMutation.mutate(pendingHoldDisable);
-        }}
-      >
-        Disable legal hold for{" "}
-        {retentionForm.roomId.trim() === ""
-          ? "the organization default scope"
-          : `room ${retentionForm.roomId.trim()}`}
-        .
+        {LEGAL_HOLD_COPY[confirmHold ?? "enable"].verb} legal hold for {holdScope}.
       </ConfirmDestructive>
 
       <ConfirmDestructive

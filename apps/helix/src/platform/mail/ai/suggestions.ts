@@ -68,10 +68,12 @@ function createProvider(
     slotId,
     available: async (ctx) => ctx.feature === slotId || ctx.feature.length === 0,
     generate: async function* generate(ctx): AsyncIterable<SuggestionChunk> {
-      const response = await options.ai.chat(toChatRequest(slotId, ctx, options.defaultClassification), {
+      const classification =
+        classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
+      const response = await options.ai.chat(toChatRequest(slotId, ctx, classification), {
         actor: ctx.actor,
         feature: slotId,
-        classification: classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard",
+        classification,
       });
       yield {
         text: response.message,
@@ -89,9 +91,8 @@ function createProvider(
 function toChatRequest(
   slotId: MailSuggestionSlotId,
   ctx: SuggestionContext,
-  defaultClassification: AIClassification | undefined,
+  classification: AIClassification,
 ): ChatRequest {
-  const classification = classificationFromInput(ctx.input) ?? defaultClassification ?? "standard";
   return {
     feature: slotId,
     classification,
@@ -114,7 +115,9 @@ function toChatRequest(
               type: ctx.resource.type,
               ...(ctx.resource.id === undefined ? {} : { id: ctx.resource.id }),
               ...(ctx.resource.orgId === undefined ? {} : { orgId: ctx.resource.orgId }),
-              ...(ctx.resource.attributes === undefined ? {} : { attributes: ctx.resource.attributes }),
+              ...(ctx.resource.attributes === undefined
+                ? {}
+                : { attributes: ctx.resource.attributes }),
             },
           }),
     },
@@ -149,7 +152,10 @@ function suggestionInputText(ctx: SuggestionContext): string {
 
 function classificationFromInput(input: JsonObject | undefined): AIClassification | undefined {
   const value = input?.classification;
-  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
+  return value === "public" ||
+    value === "standard" ||
+    value === "confidential" ||
+    value === "restricted"
     ? value
     : undefined;
 }
@@ -161,5 +167,7 @@ function stringInput(input: JsonObject, key: string): string | undefined {
 
 function arrayInput(input: JsonObject, key: string): readonly string[] {
   const value = input[key];
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }

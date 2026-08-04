@@ -311,27 +311,30 @@ function classificationGatingLabel(tier: TierId, override: boolean | undefined):
   return (override ?? tier !== "personal") ? "Enabled" : "Disabled";
 }
 
+const STATUS_LABELS: Readonly<Record<AIMetricRow["status"], string>> = {
+  configured: "Configured",
+  dashboard: "Dashboard provisioned",
+  pending: "Pending live telemetry",
+};
+
 function statusLabel(status: AIMetricRow["status"]): string {
-  switch (status) {
-    case "configured":
-      return "Configured";
-    case "dashboard":
-      return "Dashboard provisioned";
-    case "pending":
-      return "Pending live telemetry";
-  }
+  return STATUS_LABELS[status];
 }
+
+/* Built once: `Intl.NumberFormat` resolves its locale data on construction, and
+   every budget on this page is the same two-decimal USD amount. */
+const usdFormat = new Intl.NumberFormat("en-US", {
+  currency: "USD",
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 2,
+  style: "currency",
+});
 
 function formatUsdLimit(value: number | undefined): string {
   if (value === undefined) {
     return "tier default";
   }
-  return new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-    style: "currency",
-  }).format(value);
+  return usdFormat.format(value);
 }
 
 function formatValue(value: string): string {
@@ -342,15 +345,13 @@ function formatValue(value: string): string {
     .join(" ");
 }
 
+const TIER_TITLES: Readonly<Record<TierId, string>> = {
+  personal: "Personal",
+  business: "Business",
+  enterprise: "Enterprise",
+  sovereign: "Sovereign",
+};
+
 function titleForTier(tier: TierId): string {
-  switch (tier) {
-    case "personal":
-      return "Personal";
-    case "business":
-      return "Business";
-    case "enterprise":
-      return "Enterprise";
-    case "sovereign":
-      return "Sovereign";
-  }
+  return TIER_TITLES[tier];
 }

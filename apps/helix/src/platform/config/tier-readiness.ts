@@ -36,17 +36,34 @@ export interface TierReadinessResult {
 }
 
 function envFlag(env: NodeJS.ProcessEnv, name: string): boolean {
-  const value = env[name];
-  return (
-    value !== undefined &&
-    value.length > 0 &&
-    (value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes")
-  );
+  const value = env[name]?.toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
 }
 
 function envSet(env: NodeJS.ProcessEnv, name: string): boolean {
   const value = env[name];
   return value !== undefined && value.trim().length > 0;
+}
+
+/**
+ * Record a required control as either `satisfied` or `unsatisfied`.
+ *
+ * Every required control follows the same shape — a boolean probe plus the two
+ * operator-facing details — so the branch lives here rather than being repeated
+ * at each call site.
+ */
+function pushRequiredControl(
+  controls: TierControlResult[],
+  control: string,
+  satisfied: boolean,
+  satisfiedDetail: string,
+  unsatisfiedDetail: string,
+): void {
+  if (satisfied) {
+    controls.push({ control, status: "satisfied", detail: satisfiedDetail });
+    return;
+  }
+  controls.push({ control, status: "unsatisfied", detail: unsatisfiedDetail });
 }
 
 /**
@@ -61,12 +78,11 @@ export function evaluateTierReadiness(
   tier: SecurityTier,
   env: NodeJS.ProcessEnv = process.env,
 ): TierReadinessResult {
-  const controls: TierControlResult[] = [];
-
   if (tier === "personal") {
     return { tier, ok: true, controls: [], warnings: [], failures: [] };
   }
 
+  const controls: TierControlResult[] = [];
   const defaults = tierDefaults[tier];
 
   // Tier 2+: audit log shipping to an immutable / SIEM destination must be
@@ -77,20 +93,13 @@ export function evaluateTierReadiness(
       envFlag(env, "AUDIT_IMMUTABLE_S3_ENABLED") ||
       envFlag(env, "AUDIT_SIEM_SYSLOG_ENABLED") ||
       envFlag(env, "AUDIT_WORM_POSTGRES_ENABLED");
-    controls.push(
-      shippingConfigured
-        ? {
-            control: "audit-shipping",
-            status: "satisfied",
-            detail: "An immutable / SIEM audit shipping destination is configured.",
-          }
-        : {
-            control: "audit-shipping",
-            status: "unsatisfied",
-            detail:
-              `Tier '${tier}' requires audit shipping. Enable one of ` +
-              "AUDIT_IMMUTABLE_S3_ENABLED, AUDIT_SIEM_SYSLOG_ENABLED, or AUDIT_WORM_POSTGRES_ENABLED.",
-          },
+    pushRequiredControl(
+      controls,
+      "audit-shipping",
+      shippingConfigured,
+      "An immutable / SIEM audit shipping destination is configured.",
+      `Tier '${tier}' requires audit shipping. Enable one of ` +
+        "AUDIT_IMMUTABLE_S3_ENABLED, AUDIT_SIEM_SYSLOG_ENABLED, or AUDIT_WORM_POSTGRES_ENABLED.",
     );
   }
 
@@ -99,38 +108,24 @@ export function evaluateTierReadiness(
   // signal that a real secrets backend is wired.
   if (defaults.secrets === "vault") {
     const vaultConfigured = envSet(env, "VAULT_ADDR") || envSet(env, "HELIX_VAULT_ADDR");
-    controls.push(
-      vaultConfigured
-        ? {
-            control: "secrets-vault",
-            status: "satisfied",
-            detail: "A Vault address is configured for the secrets backend.",
-          }
-        : {
-            control: "secrets-vault",
-            status: "unsatisfied",
-            detail:
-              `Tier '${tier}' requires Vault-backed secrets. Set VAULT_ADDR (or HELIX_VAULT_ADDR).`,
-          },
+    pushRequiredControl(
+      controls,
+      "secrets-vault",
+      vaultConfigured,
+      "A Vault address is configured for the secrets backend.",
+      `Tier '${tier}' requires Vault-backed secrets. Set VAULT_ADDR (or HELIX_VAULT_ADDR).`,
     );
   }
 
   // Tier 3+: a SIEM destination is mandated. This is an explicit control
   // distinct from generic audit shipping above.
   if (defaults.auditDestinations.includes("siem")) {
-    const siemConfigured = envFlag(env, "AUDIT_SIEM_SYSLOG_ENABLED");
-    controls.push(
-      siemConfigured
-        ? {
-            control: "audit-siem",
-            status: "satisfied",
-            detail: "A SIEM syslog audit destination is configured.",
-          }
-        : {
-            control: "audit-siem",
-            status: "unsatisfied",
-            detail: `Tier '${tier}' mandates a SIEM destination. Enable AUDIT_SIEM_SYSLOG_ENABLED.`,
-          },
+    pushRequiredControl(
+      controls,
+      "audit-siem",
+      envFlag(env, "AUDIT_SIEM_SYSLOG_ENABLED"),
+      "A SIEM syslog audit destination is configured.",
+      `Tier '${tier}' mandates a SIEM destination. Enable AUDIT_SIEM_SYSLOG_ENABLED.`,
     );
   }
 

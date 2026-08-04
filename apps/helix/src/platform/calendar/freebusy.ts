@@ -171,14 +171,14 @@ function withinWorkingHours(
   if (workingHours.daysOfWeek !== undefined && !workingHours.daysOfWeek.includes(day)) {
     return false;
   }
-  const startsHour =
+  // UTC skips the Intl round-trip; slot bounds are minute-aligned so dropping
+  // seconds here matches what `zonedHourOfDay` would return.
+  const hourOfDay = (value: Date): number | null =>
     timeZone === "UTC"
-      ? startsAt.getUTCHours() + startsAt.getUTCMinutes() / 60
-      : zonedHourOfDay(startsAt, timeZone);
-  const endsHour =
-    timeZone === "UTC"
-      ? endsAt.getUTCHours() + endsAt.getUTCMinutes() / 60
-      : zonedHourOfDay(endsAt, timeZone);
+      ? value.getUTCHours() + value.getUTCMinutes() / 60
+      : zonedHourOfDay(value, timeZone);
+  const startsHour = hourOfDay(startsAt);
+  const endsHour = hourOfDay(endsAt);
   if (startsHour === null || endsHour === null) {
     return false;
   }

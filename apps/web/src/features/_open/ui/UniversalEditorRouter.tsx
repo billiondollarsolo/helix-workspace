@@ -25,6 +25,7 @@ import {
 } from "../conversion-capabilities.js";
 import { fetchDriveBlob } from "../drive-fetcher.js";
 import { UnsupportedFormatPlaceholder } from "./UnsupportedFormatPlaceholder.js";
+import { driveDownloadHref } from "./viewer-shared";
 
 const LazyImportedAudioRenderer = lazy(() =>
   import("./ImportedAudioRenderer.js").then((module) => ({
@@ -454,11 +455,7 @@ function ImportDecision({
           )}
         </p>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 24 }}>
-          <a
-            className="btn"
-            href={`/api/drive/objects/${objectId}/content?download=1`}
-            download={fileName}
-          >
+          <a className="btn" href={driveDownloadHref(objectId)} download={fileName}>
             Download original
           </a>
           <button type="button" className="btn" onClick={() => setDecision("preview")}>
@@ -518,7 +515,7 @@ function EditorsDisabledStorageOnly({ objectId }: { readonly objectId: string })
           Drive storage and sharing; admins can enable Editors alpha from Admin &gt; Core apps.
         </p>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 24 }}>
-          <a className="btn" href={`/api/drive/objects/${objectId}/content?download=1`}>
+          <a className="btn" href={driveDownloadHref(objectId)}>
             Download original
           </a>
         </div>

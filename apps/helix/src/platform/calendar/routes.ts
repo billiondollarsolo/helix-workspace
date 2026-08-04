@@ -456,7 +456,6 @@ function propfindMultistatusXml(input: {
   readonly requestUrl: string;
 }): string {
   const basePath = normalizeDavCollectionHref(input.requestUrl);
-  const collectionResponses = [collectionPropfindResponse(basePath, input.actor)];
   const eventResponses =
     input.depth === 0 || isPrincipalHref(basePath)
       ? []
@@ -466,7 +465,7 @@ function propfindMultistatusXml(input: {
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
     '<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">',
-    ...collectionResponses,
+    collectionPropfindResponse(basePath, input.actor),
     ...eventResponses,
     "</D:multistatus>",
   ].join("\n");
@@ -496,18 +495,16 @@ function collectionPropfindResponse(href: string, actor: Actor): string {
 
 function eventPropfindResponse(href: string, event: CalendarEventRecord): string {
   return [
-    [
-      "  <D:response>",
-      `    <D:href>${escapeXml(href)}</D:href>`,
-      "    <D:propstat>",
-      "      <D:prop>",
-      "        <D:getcontenttype>text/calendar</D:getcontenttype>",
-      `        <D:getetag>${escapeXml(`"${event.id}-${String(event.icsSequence)}"`)}</D:getetag>`,
-      "      </D:prop>",
-      "      <D:status>HTTP/1.1 200 OK</D:status>",
-      "    </D:propstat>",
-      "  </D:response>",
-    ].join("\n"),
+    "  <D:response>",
+    `    <D:href>${escapeXml(href)}</D:href>`,
+    "    <D:propstat>",
+    "      <D:prop>",
+    "        <D:getcontenttype>text/calendar</D:getcontenttype>",
+    `        <D:getetag>${escapeXml(`"${event.id}-${String(event.icsSequence)}"`)}</D:getetag>`,
+    "      </D:prop>",
+    "      <D:status>HTTP/1.1 200 OK</D:status>",
+    "    </D:propstat>",
+    "  </D:response>",
   ].join("\n");
 }
 
@@ -562,19 +559,17 @@ function calendarMultistatusXml(responses: readonly string[]): string {
 
 function calendarDataResponse(href: string, event: CalendarEventRecord): string {
   return [
-    [
-      "  <D:response>",
-      `    <D:href>${escapeXml(href)}</D:href>`,
-      "    <D:propstat>",
-      "      <D:prop>",
-      "        <D:getcontenttype>text/calendar</D:getcontenttype>",
-      `        <D:getetag>${escapeXml(eventEtag(event))}</D:getetag>`,
-      `        <C:calendar-data>${escapeXml(createIcsCalendar({ event }))}</C:calendar-data>`,
-      "      </D:prop>",
-      "      <D:status>HTTP/1.1 200 OK</D:status>",
-      "    </D:propstat>",
-      "  </D:response>",
-    ].join("\n"),
+    "  <D:response>",
+    `    <D:href>${escapeXml(href)}</D:href>`,
+    "    <D:propstat>",
+    "      <D:prop>",
+    "        <D:getcontenttype>text/calendar</D:getcontenttype>",
+    `        <D:getetag>${escapeXml(eventEtag(event))}</D:getetag>`,
+    `        <C:calendar-data>${escapeXml(createIcsCalendar({ event }))}</C:calendar-data>`,
+    "      </D:prop>",
+    "      <D:status>HTTP/1.1 200 OK</D:status>",
+    "    </D:propstat>",
+    "  </D:response>",
   ].join("\n");
 }
 

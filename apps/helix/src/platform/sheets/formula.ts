@@ -182,76 +182,71 @@ function evaluateExpression(
     error: null,
     value: "#VALUE!",
   };
-  const queryResult = evaluateQueryExpression(
-    expression,
-    sourceTabId,
-    values,
-    evaluateCell,
-    visiting,
-    context,
-    dependencies,
-    (error, value) => {
-      referenceFailure.error = error;
-      referenceFailure.value = value;
-    },
+  const onReferenceError = (error: string, value: string): void => {
+    referenceFailure.error = error;
+    referenceFailure.value = value;
+  };
+  /** A reference that failed while a sub-evaluator ran wins over its result. */
+  const withReferenceFailure = (
+    result: FormulaExpressionResult | null,
+  ): FormulaExpressionResult | null => {
+    if (result === null || referenceFailure.error === null) {
+      return result;
+    }
+    return {
+      value: 0,
+      dependencies: result.dependencies,
+      error: referenceFailure.error,
+      errorValue: referenceFailure.value,
+    };
+  };
+
+  const queryResult = withReferenceFailure(
+    evaluateQueryExpression(
+      expression,
+      sourceTabId,
+      values,
+      evaluateCell,
+      visiting,
+      context,
+      dependencies,
+      onReferenceError,
+    ),
   );
   if (queryResult !== null) {
-    return referenceFailure.error === null
-      ? queryResult
-      : {
-          value: 0,
-          dependencies: queryResult.dependencies,
-          error: referenceFailure.error,
-          errorValue: referenceFailure.value,
-        };
+    return queryResult;
   }
 
-  const helixResult = evaluateHelixFunctionExpression(
-    expression,
-    sourceTabId,
-    values,
-    evaluateCell,
-    visiting,
-    context,
-    dependencies,
-    (error, value) => {
-      referenceFailure.error = error;
-      referenceFailure.value = value;
-    },
+  const helixResult = withReferenceFailure(
+    evaluateHelixFunctionExpression(
+      expression,
+      sourceTabId,
+      values,
+      evaluateCell,
+      visiting,
+      context,
+      dependencies,
+      onReferenceError,
+    ),
   );
   if (helixResult !== null) {
-    return referenceFailure.error === null
-      ? helixResult
-      : {
-          value: 0,
-          dependencies: helixResult.dependencies,
-          error: referenceFailure.error,
-          errorValue: referenceFailure.value,
-        };
+    return helixResult;
   }
 
-  const conditionalAggregateResult = evaluateConditionalAggregateExpression(
-    expression,
-    sourceTabId,
-    values,
-    evaluateCell,
-    visiting,
-    context,
-    dependencies,
-    (error, value) => {
-      referenceFailure.error = error;
-      referenceFailure.value = value;
-    },
+  const conditionalAggregateResult = withReferenceFailure(
+    evaluateConditionalAggregateExpression(
+      expression,
+      sourceTabId,
+      values,
+      evaluateCell,
+      visiting,
+      context,
+      dependencies,
+      onReferenceError,
+    ),
   );
   if (conditionalAggregateResult !== null) {
-    return referenceFailure.error === null
-      ? conditionalAggregateResult
-      : {
-          value: 0,
-          dependencies: conditionalAggregateResult.dependencies,
-          error: referenceFailure.error,
-          errorValue: referenceFailure.value,
-        };
+    return conditionalAggregateResult;
   }
 
   const normalized = expression
@@ -267,10 +262,7 @@ function evaluateExpression(
             evaluateCell,
             visiting,
             dependencies,
-            (error, value) => {
-              referenceFailure.error = error;
-              referenceFailure.value = value;
-            },
+            onReferenceError,
             context,
           ),
         ),
@@ -282,10 +274,7 @@ function evaluateExpression(
       }
       const key = keyFromReference(parsed);
       dependencies.add(referenceLabel(parsed, context, sourceTabId));
-      const value = valueForReference(key, values, evaluateCell, visiting, (error, errorValue) => {
-        referenceFailure.error = error;
-        referenceFailure.value = errorValue;
-      });
+      const value = valueForReference(key, values, evaluateCell, visiting, onReferenceError);
       return String(value);
     });
 
@@ -435,7 +424,7 @@ function evaluateQueryExpression(
   }
   if (query.select.fn === "avg") {
     return {
-      value: numbers.reduce((total, value) => total + value, 0) / numbers.length,
+      value: averageNumbers(numbers),
       dependencies,
       error: null,
       errorValue: "",
@@ -448,7 +437,7 @@ function evaluateQueryExpression(
     return { value: Math.max(...numbers), dependencies, error: null, errorValue: "" };
   }
   return {
-    value: numbers.reduce((total, value) => total + value, 0),
+    value: sumNumbers(numbers),
     dependencies,
     error: null,
     errorValue: "",
@@ -588,7 +577,7 @@ function aggregateArguments(
     return 0;
   }
   if (fn === "average") {
-    return numbers.reduce((total, value) => total + value, 0) / numbers.length;
+    return averageNumbers(numbers);
   }
   if (fn === "min") {
     return Math.min(...numbers);
@@ -596,7 +585,7 @@ function aggregateArguments(
   if (fn === "max") {
     return Math.max(...numbers);
   }
-  return numbers.reduce((total, value) => total + value, 0);
+  return sumNumbers(numbers);
 }
 
 function evaluateConditionalAggregateExpression(
@@ -709,18 +698,26 @@ function evaluateConditionalAggregateExpression(
   }
   if (call.fn === "averageif") {
     return {
-      value: numbers.reduce((total, value) => total + value, 0) / numbers.length,
+      value: averageNumbers(numbers),
       dependencies,
       error: null,
       errorValue: "",
     };
   }
   return {
-    value: numbers.reduce((total, value) => total + value, 0),
+    value: sumNumbers(numbers),
     dependencies,
     error: null,
     errorValue: "",
   };
+}
+
+function sumNumbers(numbers: readonly number[]): number {
+  return numbers.reduce((total, value) => total + value, 0);
+}
+
+function averageNumbers(numbers: readonly number[]): number {
+  return sumNumbers(numbers) / numbers.length;
 }
 
 function parseConditionalAggregateCall(expression: string): {
@@ -770,8 +767,33 @@ function parseConditionalCriteria(value: string): ParsedConditionalCriteria {
 }
 
 interface ParsedConditionalCriteria {
-  readonly operator: "=" | "!=" | "<>" | ">" | ">=" | "<" | "<=";
+  readonly operator: ComparisonOperator;
   readonly value: string | number;
+}
+
+type ComparisonOperator = "=" | "!=" | "<>" | ">" | ">=" | "<" | "<=";
+
+function numericComparisonMatches(
+  left: number,
+  operator: ComparisonOperator,
+  right: number,
+): boolean {
+  if (operator === "=") {
+    return left === right;
+  }
+  if (operator === "!=" || operator === "<>") {
+    return left !== right;
+  }
+  if (operator === ">") {
+    return left > right;
+  }
+  if (operator === ">=") {
+    return left >= right;
+  }
+  if (operator === "<") {
+    return left < right;
+  }
+  return left <= right;
 }
 
 function conditionalCriteriaMatches(value: string, criteria: ParsedConditionalCriteria): boolean {
@@ -780,22 +802,7 @@ function conditionalCriteriaMatches(value: string, criteria: ParsedConditionalCr
     if (numeric === null) {
       return criteria.operator === "!=" || criteria.operator === "<>";
     }
-    if (criteria.operator === "=") {
-      return numeric === criteria.value;
-    }
-    if (criteria.operator === "!=" || criteria.operator === "<>") {
-      return numeric !== criteria.value;
-    }
-    if (criteria.operator === ">") {
-      return numeric > criteria.value;
-    }
-    if (criteria.operator === ">=") {
-      return numeric >= criteria.value;
-    }
-    if (criteria.operator === "<") {
-      return numeric < criteria.value;
-    }
-    return numeric <= criteria.value;
+    return numericComparisonMatches(numeric, criteria.operator, criteria.value);
   }
   if (criteria.operator !== "=" && criteria.operator !== "!=" && criteria.operator !== "<>") {
     return false;
@@ -880,7 +887,7 @@ interface ParsedQuery {
 
 interface ParsedQueryPredicate {
   readonly column: QueryColumn;
-  readonly operator: "=" | "!=" | "<>" | ">" | ">=" | "<" | "<=" | "contains";
+  readonly operator: ComparisonOperator | "contains";
   readonly value: string | number;
 }
 
@@ -1055,11 +1062,13 @@ function parseQueryPredicate(query: string): ParsedQueryPredicate | null {
 
 function queryColumn(token: string): QueryColumn | null {
   const normalized = token.toUpperCase();
-  return normalized === "*" || /^[A-Z]+$/u.test(normalized) || /^COL[1-9][0-9]*$/u.test(normalized)
-    ? normalized === "*"
-      ? "*"
-      : { token: normalized }
-    : null;
+  if (normalized === "*") {
+    return "*";
+  }
+  if (/^[A-Z]+$/u.test(normalized) || /^COL[1-9][0-9]*$/u.test(normalized)) {
+    return { token: normalized };
+  }
+  return null;
 }
 
 function queryColumnIndex(
@@ -1118,22 +1127,7 @@ function queryPredicateMatches(value: string, predicate: ParsedQueryPredicate): 
     if (numeric === null) {
       return false;
     }
-    if (predicate.operator === "=") {
-      return numeric === predicate.value;
-    }
-    if (predicate.operator === "!=" || predicate.operator === "<>") {
-      return numeric !== predicate.value;
-    }
-    if (predicate.operator === ">") {
-      return numeric > predicate.value;
-    }
-    if (predicate.operator === ">=") {
-      return numeric >= predicate.value;
-    }
-    if (predicate.operator === "<") {
-      return numeric < predicate.value;
-    }
-    return numeric <= predicate.value;
+    return numericComparisonMatches(numeric, predicate.operator, predicate.value);
   }
   if (predicate.operator === "=") {
     return value === predicate.value;
@@ -1440,11 +1434,10 @@ function parseReference(
   if (match === null) {
     return null;
   }
-  const col = columnIndex(match[1] ?? "") + 1;
   return {
     tabId: scoped.tabId,
     row: Number(match[2]) - 1,
-    col: col - 1,
+    col: columnIndex(match[1] ?? ""),
     explicitTab: scoped.explicitTab,
   };
 }

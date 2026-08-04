@@ -10,6 +10,12 @@ import {
   type DriveAccessGrant,
   type DriveAccessRole,
 } from "./api";
+import {
+  DRIVE_ACCESS_ROLE_OPTIONS,
+  driveAccessRoleLabel,
+  driveAccessRoleValue,
+  driveShareTargetsFromInput,
+} from "./share-access";
 import { driveAccessQueryOptions, driveActorQueryOptions, driveQueryKeys } from "./queries";
 
 interface DriveShareDialogProps {
@@ -222,15 +228,6 @@ export function DriveShareDialog({
   );
 }
 
-const DRIVE_ACCESS_ROLE_OPTIONS: ReadonlyArray<{
-  readonly role: DriveAccessRole;
-  readonly label: string;
-}> = [
-  { role: "reader", label: "Viewer" },
-  { role: "commenter", label: "Commenter" },
-  { role: "editor", label: "Editor" },
-];
-
 function AccessList({
   grants,
   loading,
@@ -316,32 +313,6 @@ function Avatar({ name }: { readonly name: string }) {
       {initials(name)}
     </span>
   );
-}
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
-function driveShareTargetsFromInput(targets: readonly string[]): {
-  readonly actorIds: readonly string[];
-  readonly actorRefs: readonly string[];
-} {
-  const actorIds: string[] = [];
-  const actorRefs: string[] = [];
-  for (const target of targets) {
-    if (UUID_PATTERN.test(target)) {
-      actorIds.push(target);
-    } else {
-      actorRefs.push(target);
-    }
-  }
-  return { actorIds, actorRefs };
-}
-
-function driveAccessRoleValue(role: string): DriveAccessRole {
-  return role === "commenter" || role === "editor" ? role : "reader";
-}
-
-function driveAccessRoleLabel(role: string): string {
-  return DRIVE_ACCESS_ROLE_OPTIONS.find((option) => option.role === role)?.label ?? role;
 }
 
 function initials(name: string): string {

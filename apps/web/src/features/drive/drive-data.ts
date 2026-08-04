@@ -227,20 +227,12 @@ export function folderItemFromEntry(entry: DriveApiEntry): DriveFolderItem {
 /** Adapt a backend file entry into a file card / row model. */
 export function fileItemFromEntry(entry: DriveApiEntry): DriveFileItem {
   const preview = previewFromEntry(entry);
-  const status =
-    entry.uploadState !== undefined
-      ? driveUploadStatusView(entry.uploadState)
-      : entry.available === false
-        ? null
-        : null;
   const uploadState = entry.uploadState;
+  const status = uploadState === undefined ? null : driveUploadStatusView(uploadState);
   const available =
     entry.available ??
     (uploadState === undefined ? undefined : canOpenDriveObject({ uploadState }));
-  const uploadStatusLabel =
-    entry.uploadStatusLabel ??
-    status?.label ??
-    (uploadState === undefined ? undefined : driveUploadStatusView(uploadState)?.label);
+  const uploadStatusLabel = entry.uploadStatusLabel ?? status?.label;
   return {
     id: entry.id,
     name: entry.name,

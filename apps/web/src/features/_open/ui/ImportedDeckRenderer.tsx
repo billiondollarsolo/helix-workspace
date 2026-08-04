@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import type { ImportedDeck, ImportedSlide } from "../parsers/types.js";
+import { driveDownloadHref } from "./viewer-shared";
 
 export interface ImportedDeckRendererProps {
   readonly deck: ImportedDeck;
@@ -52,7 +53,9 @@ export function ImportedDeckRenderer({ deck, objectId, fileName }: ImportedDeckR
                 cursor: "pointer",
               }}
             >
-              <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginBottom: 4 }}>
+              <div
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginBottom: 4 }}
+              >
                 Slide {idx + 1}
               </div>
               <div
@@ -76,7 +79,9 @@ export function ImportedDeckRenderer({ deck, objectId, fileName }: ImportedDeckR
             padding: 32,
           }}
         >
-          {activeSlide ? <SlideCanvas slide={activeSlide} /> : (
+          {activeSlide ? (
+            <SlideCanvas slide={activeSlide} />
+          ) : (
             <div style={{ textAlign: "center", color: "var(--text-3)", marginTop: 64 }}>
               Empty deck
             </div>
@@ -163,7 +168,7 @@ function ImportedBanner({
         </span>
       ) : null}
       <a
-        href={`/api/drive/objects/${objectId}/content?download=1`}
+        href={driveDownloadHref(objectId)}
         className="btn sm"
         style={{ marginLeft: 12 }}
         download={fileName ?? ""}

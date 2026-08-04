@@ -58,7 +58,7 @@ import { createDefaultTrashSyncRegistry, type TrashSyncRegistry } from "./core/t
 import {
   bytesFromDatabase,
   isOwnerVisibleProcessingState,
-  mapDriveAccessGrant as mapDriveAccessGrantCore,
+  mapDriveAccessGrant,
   mapObjectEntry as mapObjectEntryCore,
   mapSearchHit as mapSearchHitCore,
   mapVersion as mapVersionCore,
@@ -614,12 +614,12 @@ export class PostgresDriveStore
 
       const objectId = randomUUID();
       const storageKey = driveStorageKey(input.orgId, objectId, 1, input.name);
-      const metadata = driveObjectMetadata({
+      const metadata: JsonObject = {
         ...(input.metadata ?? {}),
         name: input.name,
         folderId: input.folderId ?? null,
         status: "pending_upload",
-      });
+      };
       const rows = (await tx`
         insert into objects (
           id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256,
@@ -1853,18 +1853,11 @@ export class PostgresDriveStore
       return null;
     }
     const role = normalizeDriveRole(row.role);
-    if (role === "owner") {
-      return {
-        orgId: row.org_id,
-        objectId: row.object_id,
-        role: "reader",
-        auditActorId: row.created_by_actor_id,
-      };
-    }
     return {
       orgId: row.org_id,
       objectId: row.object_id,
-      role,
+      // Anonymous share tokens never confer ownership: owner links read as reader.
+      role: role === "owner" ? "reader" : role,
       auditActorId: row.created_by_actor_id,
     };
   }
@@ -2017,7 +2010,8 @@ export class PostgresDriveStore
         delete from objects
         where id = ${input.objectId} and org_id = ${input.orgId} and kind = 'file'
       `;
-      if (deleted.count > 0) {
+      const removed = deleted.count > 0;
+      if (removed) {
         storageDelta = -distinctStoredBytes([
           { storageKey: object.storage_key, byteSize: object.byte_size },
           ...versionRows.map((row) => ({
@@ -2052,7 +2046,7 @@ export class PostgresDriveStore
           payload: {},
         });
       }
-      return deleted.count > 0;
+      return removed;
     });
     if (deletedObject) {
       this.emitStorageDelta(input.orgId, storageDelta);
@@ -2065,6 +2059,8 @@ export class PostgresDriveStore
     readonly dryRun: boolean;
     readonly limit?: number;
   }): Promise<{ readonly candidates: number; readonly collected: number }> {
+    // Both union legs must use the identical per-leg limit.
+    const batchLimit = Math.min(Math.max(input.limit ?? 100, 1), 1_000);
     return this.sql.begin(async (tx) => {
       const rows = (await tx`
         (
@@ -2082,7 +2078,7 @@ export class PostgresDriveStore
             and o.upload_state = 'pending_upload'
             and o.updated_at < ${input.olderThan}
           order by o.updated_at
-          limit ${Math.min(Math.max(input.limit ?? 100, 1), 1_000)}
+          limit ${batchLimit}
           for update skip locked
         )
         union all
@@ -2097,7 +2093,7 @@ export class PostgresDriveStore
           where b.refcount <= 0
             and b.updated_at < ${input.olderThan}
           order by b.updated_at
-          limit ${Math.min(Math.max(input.limit ?? 100, 1), 1_000)}
+          limit ${batchLimit}
           for update skip locked
         )
       `) as unknown as readonly {
@@ -2276,18 +2272,10 @@ export class PostgresDriveStore
     readonly commentId: string;
   }): Promise<DriveCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from drive_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly DriveCommentRow[];
-      const existing = existingRows[0];
-      if (existing === undefined) {
+      const existing = await loadAccessibleDriveComment(tx, input);
+      if (existing === null) {
         return null;
       }
-      await requireObjectAccess(tx, input.orgId, input.actorId, existing.object_id);
       if (existing.status === "resolved") {
         return mapDriveComment(existing);
       }
@@ -2316,18 +2304,10 @@ export class PostgresDriveStore
     readonly commentId: string;
   }): Promise<DriveCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from drive_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly DriveCommentRow[];
-      const existing = existingRows[0];
-      if (existing === undefined) {
+      const existing = await loadAccessibleDriveComment(tx, input);
+      if (existing === null) {
         return null;
       }
-      await requireObjectAccess(tx, input.orgId, input.actorId, existing.object_id);
       if (existing.status === "open") {
         return mapDriveComment(existing);
       }
@@ -2357,18 +2337,10 @@ export class PostgresDriveStore
     readonly body: string;
   }): Promise<DriveCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from drive_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly DriveCommentRow[];
-      const existing = existingRows[0];
-      if (existing === undefined) {
+      const existing = await loadAccessibleDriveComment(tx, input);
+      if (existing === null) {
         return null;
       }
-      await requireObjectAccess(tx, input.orgId, input.actorId, existing.object_id);
       const rows = (await tx`
         update drive_comments
         set body = ${input.body}, updated_at = now()
@@ -2394,18 +2366,10 @@ export class PostgresDriveStore
     readonly commentId: string;
   }): Promise<DriveCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from drive_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly DriveCommentRow[];
-      const existing = existingRows[0];
-      if (existing === undefined) {
+      const existing = await loadAccessibleDriveComment(tx, input);
+      if (existing === null) {
         return null;
       }
-      await requireObjectAccess(tx, input.orgId, input.actorId, existing.object_id);
       const rows = (await tx`
         delete from drive_comments
         where id = ${input.commentId}
@@ -3154,14 +3118,41 @@ async function requireObjectAccess(
     limit 1
   `) as unknown as readonly ObjectRow[];
   const object = rows[0];
-  const state = object === undefined ? undefined : objectUploadState(object);
-  if (
-    object === undefined ||
-    (state !== undefined && !isDriveFileAvailable(state) && !(allowTrashed && state === "trashed"))
-  ) {
+  if (object === undefined) {
+    throw new DriveNotFoundError(`Unknown or inaccessible Drive object: ${objectId}`);
+  }
+  const state = objectUploadState(object);
+  if (!isDriveFileAvailable(state) && !(allowTrashed && state === "trashed")) {
     throw new DriveNotFoundError(`Unknown or inaccessible Drive object: ${objectId}`);
   }
   return object;
+}
+
+/**
+ * Loads a comment row and asserts the actor can reach its parent object.
+ * Returns null when the comment does not exist; throws when access is denied.
+ */
+async function loadAccessibleDriveComment(
+  sql: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly commentId: string;
+  },
+): Promise<DriveCommentRow | null> {
+  const rows = (await sql`
+    select *
+    from drive_comments
+    where id = ${input.commentId}
+      and org_id = ${input.orgId}
+    limit 1
+  `) as unknown as readonly DriveCommentRow[];
+  const existing = rows[0];
+  if (existing === undefined) {
+    return null;
+  }
+  await requireObjectAccess(sql, input.orgId, input.actorId, existing.object_id);
+  return existing;
 }
 
 async function requireUploadOwnerAccess(
@@ -3692,10 +3683,6 @@ function mapObjectEntry(row: DriveSearchRow): DriveEntryRecord {
   });
 }
 
-function mapDriveAccessGrant(row: DriveAccessGrantRow): DriveAccessGrantRecord {
-  return mapDriveAccessGrantCore(row);
-}
-
 function mapSearchHit(row: DriveSearchRow): DriveSearchHit {
   const previewMetadata = drivePreviewFromMetadata(row.mime_type, row.metadata);
   return mapSearchHitCore({
@@ -3812,10 +3799,6 @@ function mapDriveSearchRecord(row: DriveSearchProjectionRow): DriveSearchRecord 
   };
 }
 
-function driveObjectMetadata(value: JsonObject): JsonObject {
-  return JSON.parse(JSON.stringify(value)) as JsonObject;
-}
-
 function finalizedStorageDelta(current: ObjectRow, storageKey: string, byteSize: number): number {
   if (!isDriveFileAvailable(objectUploadState(current))) {
     return byteSize;
@@ -3908,16 +3891,7 @@ function numberFromBigIntLike(value: string | number | null): number | null {
 }
 
 function jsonObjectArray(value: unknown): readonly JsonObject[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const result: JsonObject[] = [];
-  for (const item of value) {
-    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
-      result.push(item as JsonObject);
-    }
-  }
-  return result;
+  return Array.isArray(value) ? value.filter(isJsonObject) : [];
 }
 
 function metadataStringProperty(metadata: JsonObject, key: string): Record<string, string> {
@@ -4115,16 +4089,7 @@ async function toUint8Array(body: AsyncIterable<Uint8Array> | Uint8Array): Promi
 }
 
 function uniqueStrings(values: readonly string[]): readonly string[] {
-  const seen = new Set<string>();
-  const output: string[] = [];
-  for (const value of values) {
-    const trimmed = value.trim();
-    if (trimmed.length > 0 && !seen.has(trimmed)) {
-      seen.add(trimmed);
-      output.push(trimmed);
-    }
-  }
-  return output;
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
 }
 
 function toSqlJson(value: unknown): postgres.JSONValue {

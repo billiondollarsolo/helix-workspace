@@ -3710,7 +3710,12 @@ function SlideShapePreview({
     event.preventDefault();
     event.stopPropagation();
     selectShape(shape.id);
-    const step = event.altKey ? 0.25 : event.metaKey || event.ctrlKey ? 5 : 1;
+    let step = 1;
+    if (event.altKey) {
+      step = 0.25;
+    } else if (event.metaKey || event.ctrlKey) {
+      step = 5;
+    }
     const nextShape = event.shiftKey
       ? keyboardResizedShape(shape, direction, step)
       : keyboardMovedShape(shape, direction, step);

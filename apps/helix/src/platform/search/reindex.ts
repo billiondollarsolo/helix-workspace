@@ -62,7 +62,10 @@ export class SearchReindexService implements SearchReindexRunner {
     let totalDocuments = 0;
 
     for (const source of sources) {
-      for await (const documents of collectSourceBatches(source, { orgId: input.orgId, batchSize })) {
+      for await (const documents of collectSourceBatches(source, {
+        orgId: input.orgId,
+        batchSize,
+      })) {
         counts[source.type] += documents.length;
         totalDocuments += documents.length;
         for (const document of documents) {
@@ -105,11 +108,7 @@ export class SearchReindexService implements SearchReindexRunner {
     for (const type of input.types) {
       const currentIds = input.currentIdsByType[type];
       const indexedIds = await this.collectIndexedIds({ type, orgId: input.orgId });
-      for (const indexedId of indexedIds) {
-        if (!currentIds.has(indexedId)) {
-          staleIds.push(indexedId);
-        }
-      }
+      staleIds.push(...indexedIds.filter((indexedId) => !currentIds.has(indexedId)));
     }
 
     for (const batch of chunks(staleIds, input.batchSize)) {
@@ -131,7 +130,9 @@ export class SearchReindexService implements SearchReindexRunner {
         types: [input.type],
         limit: pageSize,
         offset,
-        ...(input.orgId === undefined ? {} : { filter: `attributes.orgId = ${JSON.stringify(input.orgId)}` }),
+        ...(input.orgId === undefined
+          ? {}
+          : { filter: `attributes.orgId = ${JSON.stringify(input.orgId)}` }),
         attributesToRetrieve: ["id", "type", "attributes"],
       });
       ids.push(...response.hits.map((hit) => hit.id));
@@ -208,11 +209,13 @@ export function createPostgresSearchReindexSources(
   ];
 }
 
+type ReindexTableName = "messages" | "docs_documents" | "objects" | "cal_events";
+
 interface PostgresSourceOptions<Record> {
   readonly sql: postgres.Sql;
   readonly pageSize: number;
   readonly type: SearchReindexType;
-  readonly tableName: "messages" | "docs_documents" | "objects" | "cal_events";
+  readonly tableName: ReindexTableName;
   readonly predicate: string;
   readonly load: (id: string) => Promise<Record | null>;
   readonly map: (record: Record) => IndexDocument;
@@ -282,7 +285,7 @@ async function collectDocuments<Record>(
 
 async function collectIds(input: {
   readonly sql: postgres.Sql;
-  readonly tableName: "messages" | "docs_documents" | "objects" | "cal_events";
+  readonly tableName: ReindexTableName;
   readonly predicate: string;
   readonly orgId: string | undefined;
   readonly limit: number;
@@ -309,7 +312,9 @@ async function* collectSourceBatches(
   }
 }
 
-function normalizeTypes(types: readonly SearchReindexType[] | undefined): readonly SearchReindexType[] {
+function normalizeTypes(
+  types: readonly SearchReindexType[] | undefined,
+): readonly SearchReindexType[] {
   if (types === undefined || types.length === 0) {
     return searchReindexTypes;
   }

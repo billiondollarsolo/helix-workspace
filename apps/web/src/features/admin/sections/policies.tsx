@@ -21,12 +21,15 @@ import {
 import { AdminField, AdminSelect } from "@/features/admin/console/controls";
 import {
   EmptyState,
+  MutationError,
   PageHeading,
   PageScroll,
   QueryFailureBanner,
   StateBanner,
+  StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
+import { optionalEnumSearchParam } from "@/lib/search-params";
 
 /* Structural rather than importing `QueryClient`: the route loader only ever
    hands this helper an `ensureQueryData`, and typing it that way keeps the
@@ -59,6 +62,20 @@ const POLICY_GROUPS: readonly PolicyGroup[] = ["Authentication", "Access & data"
 const POLICY_GROUP_HEADING_ID: Record<PolicyGroup, string> = {
   Authentication: "policy-group-authentication",
   "Access & data": "policy-group-access-data",
+};
+
+/* What each column would hold, said where the column is empty — a blank column
+   is otherwise indistinguishable from one that failed to render. Keyed by group
+   for the same reason as the heading ids above. */
+const POLICY_GROUP_EMPTY: Record<PolicyGroup, { readonly title: string; readonly body: string }> = {
+  Authentication: {
+    title: "No authentication policies",
+    body: "Multi-factor, single sign-on, and session policies appear here once the workspace defines them.",
+  },
+  "Access & data": {
+    title: "No access or data policies",
+    body: "External sharing, data-loss prevention, and device-trust policies appear here once the workspace defines them.",
+  },
 };
 
 /**
@@ -97,32 +114,34 @@ function policyLevel(policy: SecurityPolicy): { text: string; on: boolean } {
 /** Render a policy's settings blob as a compact descriptive line. */
 function policySettingsSummary(policy: SecurityPolicy): string {
   const settings = policy.settings;
-  const get = (key: string): unknown => settings[key];
   switch (policy.policyType) {
     case "mfa": {
-      const methods = get("allowedMethods");
+      const methods = settings.allowedMethods;
       return Array.isArray(methods) ? `Methods: ${methods.join(", ")}` : "";
     }
     case "sso": {
-      const provider = get("provider");
-      const providerSummary = typeof provider === "string" ? `Provider: ${provider}` : "";
+      /* Local login is always on (see `LocalLoginSecurityCard`), so it is the
+         one part of this line that is never conditional. */
+      const provider = settings.provider;
       const localSummary = "Local email/password: enabled";
-      return [providerSummary, localSummary].filter(Boolean).join(" · ");
+      return typeof provider === "string"
+        ? `Provider: ${provider} · ${localSummary}`
+        : localSummary;
     }
     case "session": {
-      const days = get("inactivityTimeoutDays");
+      const days = settings.inactivityTimeoutDays;
       return typeof days === "number" ? `${String(days)}-day inactivity timeout` : "";
     }
     case "external_sharing": {
-      const mode = get("mode");
+      const mode = settings.mode;
       return typeof mode === "string" ? `Sharing mode: ${mode}` : "";
     }
     case "dlp": {
-      const detectors = get("detectors");
+      const detectors = settings.detectors;
       return Array.isArray(detectors) ? `Detectors: ${detectors.join(", ")}` : "";
     }
     case "device_trust": {
-      const apps = get("protectedApps");
+      const apps = settings.protectedApps;
       return Array.isArray(apps) && apps.length > 0
         ? `Protected: ${apps.join(", ")}`
         : "No protected apps";
@@ -213,9 +232,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
 }
 
 function policyTypeFromSearch(value: string | undefined): SecurityPolicyType | null {
-  return value !== undefined && (SECURITY_POLICY_TYPES as readonly string[]).includes(value)
-    ? (value as SecurityPolicyType)
-    : null;
+  return optionalEnumSearchParam(value, SECURITY_POLICY_TYPES) ?? null;
 }
 
 export function AdminSecurity() {
@@ -319,12 +336,8 @@ export function AdminSecurity() {
       ) : policiesQuery.isPending ? (
         <StateBanner kind="loading">Loading security policies…</StateBanner>
       ) : null}
-      {updateMutation.isError ? (
-        <StateBanner kind="error">{updateMutation.error.message}</StateBanner>
-      ) : null}
-      {ssoTestMutation.isError ? (
-        <StateBanner kind="error">{ssoTestMutation.error.message}</StateBanner>
-      ) : null}
+      <MutationError error={updateMutation.error} />
+      <MutationError error={ssoTestMutation.error} />
       {ssoTestResult === null ? null : (
         <StateBanner kind={ssoTestResult.status === "runtime_pending" ? "info" : "error"}>
           {ssoTestResult.message}
@@ -339,20 +352,9 @@ export function AdminSecurity() {
                 {label}
               </h2>
               {label === "Authentication" ? <LocalLoginSecurityCard /> : null}
-              {/* A column with nothing in it is indistinguishable from a column
-                  that failed to render; say which policies would live here. */}
               {policiesQuery.isSuccess && grouped[label].length === 0 ? (
-                <EmptyState
-                  icon={<Icons.Lock />}
-                  title={
-                    label === "Authentication"
-                      ? "No authentication policies"
-                      : "No access or data policies"
-                  }
-                >
-                  {label === "Authentication"
-                    ? "Multi-factor, single sign-on, and session policies appear here once the workspace defines them."
-                    : "External sharing, data-loss prevention, and device-trust policies appear here once the workspace defines them."}
+                <EmptyState icon={<Icons.Lock />} title={POLICY_GROUP_EMPTY[label].title}>
+                  {POLICY_GROUP_EMPTY[label].body}
                 </EmptyState>
               ) : null}
               {grouped[label].map((policy) => {
@@ -369,10 +371,7 @@ export function AdminSecurity() {
                           <h3 className="m-0 font-semibold [font-size:var(--text-body)]">
                             {securityPolicyLabels[policy.policyType]}
                           </h3>
-                          <span className={`chip ${level.on ? "success" : "warning"}`}>
-                            <span className="chip-dot" />
-                            {level.text}
-                          </span>
+                          <StatusChip tone={level.on ? "success" : "warning"} label={level.text} />
                         </div>
                         {/* An empty summary would leave a key icon labelling
                             nothing, so the row renders only when there is a
@@ -455,10 +454,7 @@ function LocalLoginSecurityCard() {
             <h3 className="m-0 font-semibold [font-size:var(--text-body)]">
               Local email/password login
             </h3>
-            <span className="chip success">
-              <span className="chip-dot" />
-              Enabled
-            </span>
+            <StatusChip tone="success" label="Enabled" />
           </div>
           <div className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
             <Icons.Lock /> Owner/admin recovery path; SSO is additive.

@@ -33,12 +33,15 @@ export function normalizePendingApprovals(
   return out;
 }
 
+/** An approval still awaiting the user: unset, pending, or mid-run. */
+function isActionablePendingApproval(item: PendingApprovalItem): boolean {
+  return item.status === undefined || item.status === "pending" || item.status === "running";
+}
+
 export function pendingApprovalsVisible(
   items: readonly PendingApprovalItem[] | undefined | null,
 ): boolean {
-  return normalizePendingApprovals(items).some(
-    (item) => item.status === undefined || item.status === "pending" || item.status === "running",
-  );
+  return normalizePendingApprovals(items).some(isActionablePendingApproval);
 }
 
 export interface PendingApprovalsPanelProps {
@@ -54,9 +57,7 @@ export function PendingApprovalsPanel({
   onConfirm,
   onCancel,
 }: PendingApprovalsPanelProps) {
-  const visible = normalizePendingApprovals(items).filter(
-    (item) => item.status === undefined || item.status === "pending" || item.status === "running",
-  );
+  const visible = normalizePendingApprovals(items).filter(isActionablePendingApproval);
   if (visible.length === 0) {
     return null;
   }

@@ -243,12 +243,7 @@ async function toolCall(baseUrl, token, toolId, input = {}) {
     },
     body: JSON.stringify(input),
   });
-  let json = null;
-  try {
-    json = await response.json();
-  } catch {
-    json = null;
-  }
+  const json = await response.json().catch(() => null);
   return { status: response.status, body: json, toolId };
 }
 
@@ -353,17 +348,24 @@ export async function runAuditSpotCheck(baseUrl, token) {
   };
 }
 
+/** True when `value` is a non-empty array — tool payload shapes vary per surface. */
+function isNonEmptyArray(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
 export async function assertToolNonEmpty(baseUrl, token, toolId, input, pathHint) {
   const res = await toolCall(baseUrl, token, toolId, input);
   const text = JSON.stringify(res.body ?? {});
-  const hasList =
-    (res.body && Array.isArray(res.body.threads) && res.body.threads.length > 0) ||
-    (res.body && Array.isArray(res.body.rooms) && res.body.rooms.length > 0) ||
-    (res.body && Array.isArray(res.body.items) && res.body.items.length > 0) ||
-    (res.body && Array.isArray(res.body.objects) && res.body.objects.length > 0) ||
-    (res.body && Array.isArray(res.body.hits) && res.body.hits.length > 0) ||
-    (res.body && Array.isArray(res.body.output?.threads) && res.body.output.threads.length > 0) ||
-    (res.body && Array.isArray(res.body.output?.items) && res.body.output.items.length > 0);
+  const body = res.body ?? {};
+  const hasList = [
+    body.threads,
+    body.rooms,
+    body.items,
+    body.objects,
+    body.hits,
+    body.output?.threads,
+    body.output?.items,
+  ].some(isNonEmptyArray);
   const ok = res.status >= 200 && res.status < 300 && (hasList || text.length > 40);
   return {
     toolId,
@@ -400,27 +402,27 @@ export async function runLocalVolumeSoak(options) {
     else report.summary.skipped += 1;
   };
 
+  // Fatal phases (health, oauth mint) abort the run: stamp the report, flush it
+  // to disk, and hand it back so the caller still gets partial evidence.
+  const abortWithFailure = async () => {
+    report.status = "failed";
+    report.completedAt = new Date().toISOString();
+    await writeFile(join(options.outputDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+    return report;
+  };
+
   // 0) health
   try {
     const h = await fetch(new URL("/healthz", options.baseUrl));
     record("healthz", h.ok ? "passed" : "failed", { httpStatus: h.status });
     if (!h.ok) {
-      report.status = "failed";
-      report.completedAt = new Date().toISOString();
-      await writeFile(
-        join(options.outputDir, "report.json"),
-        `${JSON.stringify(report, null, 2)}\n`,
-      );
-      return report;
+      return await abortWithFailure();
     }
   } catch (error) {
     record("healthz", "failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    report.status = "failed";
-    report.completedAt = new Date().toISOString();
-    await writeFile(join(options.outputDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-    return report;
+    return await abortWithFailure();
   }
 
   // 1) large seed (mail/chat/drive volume + 23 teammates ≈ 25 users)
@@ -468,9 +470,8 @@ export async function runLocalVolumeSoak(options) {
   }
 
   // 2) DB count verification
-  let counts = {};
   try {
-    counts = await collectDbCounts(options.databaseUrl, options.orgId);
+    const counts = await collectDbCounts(options.databaseUrl, options.orgId);
     const evaluation = evaluateMinCounts(counts);
     // Require multi-user + multi-surface bulk volume (not just health pings).
     const volumeOk =
@@ -506,10 +507,7 @@ export async function runLocalVolumeSoak(options) {
     record("oauth-mint", "failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    report.status = "failed";
-    report.completedAt = new Date().toISOString();
-    await writeFile(join(options.outputDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-    return report;
+    return await abortWithFailure();
   }
 
   // user token via Better-Auth email sign-in (session bearer)
@@ -574,7 +572,7 @@ export async function runLocalVolumeSoak(options) {
   if (options.writeWave > 0) {
     const wave = await runApiVolumeWave(options.baseUrl, adminToken, options.writeWave);
     const waveOk = wave.failed === 0 || wave.ok / Math.max(1, wave.ok + wave.failed) >= 0.85;
-    record(waveOk ? "api-write-wave" : "api-write-wave", waveOk ? "passed" : "failed", {
+    record("api-write-wave", waveOk ? "passed" : "failed", {
       writeWave: options.writeWave,
       ...wave,
     });
@@ -611,20 +609,13 @@ export async function runLocalVolumeSoak(options) {
 
   report.completedAt = new Date().toISOString();
   report.status = report.summary.failed > 0 ? "failed" : "passed";
+  const phasePassed = (name) => report.phases.some((p) => p.name === name && p.status === "passed");
   report.claims = {
-    multi_user_volume_seed: report.phases.some(
-      (p) => p.name === "seed-volume" && p.status === "passed",
-    ),
-    db_volume_verified: report.phases.some((p) => p.name === "db-counts" && p.status === "passed"),
-    api_volume_wave: report.phases.some(
-      (p) => p.name === "api-write-wave" && p.status === "passed",
-    ),
-    multi_user_rbac: report.phases.some(
-      (p) => p.name === "multi-user-rbac" && p.status === "passed",
-    ),
-    audit_spot_check: report.phases.some(
-      (p) => p.name === "audit-spot-check" && p.status === "passed",
-    ),
+    multi_user_volume_seed: phasePassed("seed-volume"),
+    db_volume_verified: phasePassed("db-counts"),
+    api_volume_wave: phasePassed("api-write-wave"),
+    multi_user_rbac: phasePassed("multi-user-rbac"),
+    audit_spot_check: phasePassed("audit-spot-check"),
     external_mail_deliverability: false,
     final_release_go: false,
   };

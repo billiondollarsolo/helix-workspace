@@ -1,6 +1,7 @@
 import { createSign } from "node:crypto";
 import type { ChatRequest, ChatResponse, LLMProviderCapability, ModelInfo } from "@helix/sdk-types";
 import { anthropicChatResponse } from "./anthropic-compatible.js";
+import { joinPaths } from "./url-path.js";
 import {
   anthropicRequestBody,
   approximateTokenCount,
@@ -98,7 +99,9 @@ class VertexProvider implements LLMProviderCapability {
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
     const model = modelForRequest(req.model, this.#defaultModel);
-    const body = JSON.stringify(anthropicRequestBody(model, req.messages, this.#maxTokens, this.#anthropicVersion));
+    const body = JSON.stringify(
+      anthropicRequestBody(model, req.messages, this.#maxTokens, this.#anthropicVersion),
+    );
     const url = vertexRawPredictUrl({
       endpoint: this.#endpoint,
       project: this.#project,
@@ -196,7 +199,8 @@ class VertexProvider implements LLMProviderCapability {
     const payload: unknown = await response.json();
     const token = parseTokenResponse(payload);
     const refreshAfterMs =
-      this.#now().getTime() + Math.max(token.expiresInSeconds - TOKEN_EXPIRY_SKEW_SECONDS, 1) * 1000;
+      this.#now().getTime() +
+      Math.max(token.expiresInSeconds - TOKEN_EXPIRY_SKEW_SECONDS, 1) * 1000;
     return { token: token.accessToken, refreshAfterMs };
   }
 }
@@ -283,11 +287,4 @@ function base64UrlJson(value: Record<string, string | number>): string {
 
 function base64Url(value: Buffer): string {
   return value.toString("base64url");
-}
-
-function joinPaths(...parts: readonly string[]): string {
-  return `/${parts
-    .flatMap((part) => part.split("/"))
-    .filter((part) => part.length > 0)
-    .join("/")}`;
 }

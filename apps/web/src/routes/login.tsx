@@ -45,6 +45,8 @@ export function LocalLoginPanel({
   const [status, setStatus] = useState<"idle" | "submitting">("idle");
   const [error, setError] = useState<string | null>(null);
   const errorRef = useRef<HTMLParagraphElement | null>(null);
+  const submitting = status === "submitting";
+  const errorId = error === null ? undefined : "login-error";
 
   useEffect(() => {
     if (error !== null) {
@@ -99,7 +101,7 @@ export function LocalLoginPanel({
               spellCheck={false}
               placeholder="you@helix.local"
               value={email}
-              aria-describedby={error === null ? undefined : "login-error"}
+              aria-describedby={errorId}
               aria-invalid={error === null ? undefined : true}
               onChange={(event) => setEmail(event.target.value)}
               required
@@ -114,7 +116,7 @@ export function LocalLoginPanel({
               autoComplete="current-password"
               placeholder="••••••••"
               value={password}
-              aria-describedby={error === null ? undefined : "login-error"}
+              aria-describedby={errorId}
               aria-invalid={error === null ? undefined : true}
               onChange={(event) => setPassword(event.target.value)}
               required
@@ -130,15 +132,15 @@ export function LocalLoginPanel({
           <button
             className="btn primary lg auth-submit"
             type="submit"
-            disabled={status === "submitting"}
-            aria-busy={status === "submitting"}
+            disabled={submitting}
+            aria-busy={submitting}
           >
-            {status === "submitting" ? (
+            {submitting ? (
               <Loader2 className="auth-spinner" aria-hidden="true" />
             ) : (
               <LogIn aria-hidden="true" />
             )}
-            {status === "submitting" ? "Signing in…" : "Sign in"}
+            {submitting ? "Signing in…" : "Sign in"}
           </button>
         </form>
 
@@ -150,7 +152,7 @@ export function LocalLoginPanel({
                 key={account.email}
                 type="button"
                 className="btn sm"
-                disabled={status === "submitting"}
+                disabled={submitting}
                 onClick={() => {
                   setEmail(account.email);
                   setPassword(account.password);

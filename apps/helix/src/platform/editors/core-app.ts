@@ -153,23 +153,27 @@ export async function loadEditorsCoreAppModule(
   specifier = DEFAULT_EDITORS_CORE_APP_MODULE,
   importer?: EditorsCoreAppImporter,
 ): Promise<EditorsCoreAppModule | null> {
+  // Only the resolve/import is guarded: `resolveImportSpecifier` throws
+  // MODULE_NOT_FOUND when the optional package is absent, which is the case we
+  // translate to `null`. A malformed-but-present module must still throw.
+  let loaded: unknown;
   try {
     const moduleSpecifier = importer === undefined ? resolveImportSpecifier(specifier) : specifier;
     const importModule: EditorsCoreAppImporter =
       importer ?? (async (resolvedSpecifier) => (await import(resolvedSpecifier)) as unknown);
-    const loaded = await importModule(moduleSpecifier);
-    if (!isEditorsCoreAppModule(loaded)) {
-      throw new TypeError(
-        `${specifier} must export registerEditorsModule(host, options) as a function`,
-      );
-    }
-    return loaded;
+    loaded = await importModule(moduleSpecifier);
   } catch (error) {
     if (isMissingModuleError(error, specifier)) {
       return null;
     }
     throw error;
   }
+  if (!isEditorsCoreAppModule(loaded)) {
+    throw new TypeError(
+      `${specifier} must export registerEditorsModule(host, options) as a function`,
+    );
+  }
+  return loaded;
 }
 
 export function resolveEditorsModuleOptions(

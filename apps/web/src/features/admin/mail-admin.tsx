@@ -496,6 +496,9 @@ function MailProviders() {
 /* Deliverability (DMARC)                                             */
 /* ================================================================== */
 
+/* Built once rather than per render of the subtitle. */
+const MESSAGE_COUNT_FORMAT = new Intl.NumberFormat("en-US");
+
 function percent(fraction: number): string {
   return `${(fraction * 100).toFixed(1)}%`;
 }
@@ -574,7 +577,7 @@ function Deliverability() {
         title="Deliverability"
         subtitle={
           summary
-            ? `DMARC aggregate reports over the last ${String(summary.windowDays)} days · ${new Intl.NumberFormat("en-US").format(summary.messagesEvaluated)} messages evaluated.`
+            ? `DMARC aggregate reports over the last ${String(summary.windowDays)} days · ${MESSAGE_COUNT_FORMAT.format(summary.messagesEvaluated)} messages evaluated.`
             : "DMARC aggregate report summary."
         }
       />
@@ -987,6 +990,20 @@ function knownNumber(value: number | null | undefined, format: (value: number) =
   return value === null || value === undefined ? "Unknown" : format(value);
 }
 
+/** Chip colour for the spamd daemon. Anything that is neither running nor
+ *  stopped — including a status the backend has not reported — is a warning
+ *  rather than a claim either way. */
+function daemonChipTone(status: string | undefined): "success" | "danger" | "warning" {
+  switch (status) {
+    case "running":
+      return "success";
+    case "stopped":
+      return "danger";
+    default:
+      return "warning";
+  }
+}
+
 function SpamFiltering() {
   const queryClient = useQueryClient();
   const spamQuery = useQuery(spamSettingsQueryOptions());
@@ -996,12 +1013,7 @@ function SpamFiltering() {
     void queryClient.invalidateQueries({ queryKey: mailAdminQueryKeys.spam() });
   });
 
-  const daemonVariant =
-    settings?.daemonStatus === "running"
-      ? "success"
-      : settings?.daemonStatus === "stopped"
-        ? "danger"
-        : "warning";
+  const daemonVariant = daemonChipTone(settings?.daemonStatus);
 
   const spamdHost =
     settings?.spamd?.host !== undefined && settings.spamd.host !== null
@@ -1124,7 +1136,7 @@ function SpamFiltering() {
                 <AdminStatTile
                   label="Tagged (24h)"
                   value={knownNumber(settings.taggedLast24h, (value) =>
-                    new Intl.NumberFormat("en-US").format(value),
+                    MESSAGE_COUNT_FORMAT.format(value),
                   )}
                   note="Messages flagged as spam in the last day"
                 />
@@ -1165,18 +1177,22 @@ export function MailAdminSection() {
   const moveSelection = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const last = MAIL_SUBVIEWS.length - 1;
     const current = MAIL_SUBVIEWS.findIndex((view) => view.id === subview);
-    const nextIndex =
-      event.key === "ArrowRight"
-        ? (current + 1) % MAIL_SUBVIEWS.length
-        : event.key === "ArrowLeft"
-          ? (current + last) % MAIL_SUBVIEWS.length
-          : event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? last
-              : null;
-    if (nextIndex === null) {
-      return;
+    let nextIndex: number;
+    switch (event.key) {
+      case "ArrowRight":
+        nextIndex = (current + 1) % MAIL_SUBVIEWS.length;
+        break;
+      case "ArrowLeft":
+        nextIndex = (current + last) % MAIL_SUBVIEWS.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = last;
+        break;
+      default:
+        return;
     }
     const next = MAIL_SUBVIEWS[nextIndex];
     if (next === undefined) {

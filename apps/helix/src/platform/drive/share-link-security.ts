@@ -4,6 +4,15 @@ import { promisify } from "node:util";
 const passwordKeyBytes = 32;
 const deriveScrypt = promisify(scrypt);
 
+/** MIME types that browsers execute in-origin; always forced to an opaque download. */
+const ACTIVE_CONTENT_MIME_TYPES = new Set([
+  "image/svg+xml",
+  "text/html",
+  "application/xhtml+xml",
+  "application/xml",
+  "text/xml",
+]);
+
 export function hashDriveShareToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
@@ -40,14 +49,11 @@ export function safeDriveDownloadPolicy(input: {
   readonly disposition: "attachment" | "inline";
 } {
   const normalized = input.mimeType?.split(";")[0]?.trim().toLowerCase();
-  const active = new Set([
-    "image/svg+xml",
-    "text/html",
-    "application/xhtml+xml",
-    "application/xml",
-    "text/xml",
-  ]);
-  if (normalized === undefined || normalized.length === 0 || active.has(normalized)) {
+  if (
+    normalized === undefined ||
+    normalized.length === 0 ||
+    ACTIVE_CONTENT_MIME_TYPES.has(normalized)
+  ) {
     return { mimeType: "application/octet-stream", disposition: "attachment" };
   }
   return {

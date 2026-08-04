@@ -113,11 +113,7 @@ export function validateChatLiveEvidence(
   }
 
   const results = CHAT_LIVE_SCENARIOS.map((name) => evidence.scenarios[name].status);
-  const derivedStatus = results.every((status) => status === "passed")
-    ? "passed"
-    : results.some((status) => status === "failed")
-      ? "failed"
-      : "not_run";
+  const derivedStatus = deriveStatus(results);
   if (evidence.status !== derivedStatus) {
     throw new Error(
       `Chat live evidence status ${evidence.status} does not match scenario status ${derivedStatus}`,
@@ -172,6 +168,12 @@ export function assertNoSensitiveChatEvidence(value, path = "evidence") {
 
 export function evidenceHash(value) {
   return createHash("sha256").update(String(value)).digest("hex").slice(0, 24);
+}
+
+function deriveStatus(results) {
+  if (results.every((status) => status === "passed")) return "passed";
+  if (results.some((status) => status === "failed")) return "failed";
+  return "not_run";
 }
 
 function validateProfile(profile) {

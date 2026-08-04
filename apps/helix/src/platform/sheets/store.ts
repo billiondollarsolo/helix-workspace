@@ -3,7 +3,7 @@ import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
 import { insertNotification } from "../notifications/index.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
-import { evaluateSheetFormulas, type SheetFormulaNamedRange } from "./formula.js";
+import { cellReference, evaluateSheetFormulas, type SheetFormulaNamedRange } from "./formula.js";
 import { activityChainHash } from "../activity/hash-chain.js";
 import type {
   SheetCellEdit,
@@ -609,7 +609,7 @@ function assertNoProtectedRangeEdits(
     cellEditIntersectsProtectedRange(blocked, protectedRange),
   );
   throw new SheetsValidationError(
-    `Cell ${cellA1(blocked.row, blocked.col)} is inside protected range ${
+    `Cell ${cellReference(blocked.row, blocked.col)} is inside protected range ${
       range?.label ?? "Protected range"
     }.`,
   );
@@ -637,7 +637,7 @@ function assertNoHardValidationFailures(
       sheetValidationMessageForValue(edit.value, validation, validationContext) !== null
     ) {
       throw new SheetsValidationError(
-        `Cell ${cellA1(edit.row, edit.col)} violates reject-mode data validation.`,
+        `Cell ${cellReference(edit.row, edit.col)} violates reject-mode data validation.`,
       );
     }
   }
@@ -820,13 +820,13 @@ function isValidSheetDateForLocale(
     return true;
   }
   if (locale === "en-US") {
-    return isValidSheetDateParts(sheetMonthDayYearDateParts(value, "/"));
+    return isValidSheetDateParts(sheetSeparatedDateParts(value, "/", "month-day"));
   }
   if (locale === "en-GB") {
-    return isValidSheetDateParts(sheetDayMonthYearDateParts(value, "/"));
+    return isValidSheetDateParts(sheetSeparatedDateParts(value, "/", "day-month"));
   }
   if (locale === "de-DE") {
-    return isValidSheetDateParts(sheetDayMonthYearDateParts(value, "."));
+    return isValidSheetDateParts(sheetSeparatedDateParts(value, ".", "day-month"));
   }
   return false;
 }
@@ -843,10 +843,18 @@ function isValidSheetIsoDate(value: string): boolean {
   });
 }
 
-function sheetMonthDayYearDateParts(
+interface SheetDateParts {
+  readonly year: number;
+  readonly month: number;
+  readonly day: number;
+}
+
+/** Splits `d<sep>d<sep>yyyy`, reading the two leading fields in `order`. */
+function sheetSeparatedDateParts(
   value: string,
   separator: "/" | ".",
-): { readonly year: number; readonly month: number; readonly day: number } | null {
+  order: "month-day" | "day-month",
+): SheetDateParts | null {
   const escapedSeparator = separator === "." ? "\\." : separator;
   const match = new RegExp(
     `^(\\d{1,2})${escapedSeparator}(\\d{1,2})${escapedSeparator}(\\d{4})$`,
@@ -855,35 +863,16 @@ function sheetMonthDayYearDateParts(
   if (match === null) {
     return null;
   }
+  const first = Number(match[1]);
+  const second = Number(match[2]);
   return {
-    month: Number(match[1]),
-    day: Number(match[2]),
+    month: order === "month-day" ? first : second,
+    day: order === "month-day" ? second : first,
     year: Number(match[3]),
   };
 }
 
-function sheetDayMonthYearDateParts(
-  value: string,
-  separator: "/" | ".",
-): { readonly year: number; readonly month: number; readonly day: number } | null {
-  const escapedSeparator = separator === "." ? "\\." : separator;
-  const match = new RegExp(
-    `^(\\d{1,2})${escapedSeparator}(\\d{1,2})${escapedSeparator}(\\d{4})$`,
-    "u",
-  ).exec(value);
-  if (match === null) {
-    return null;
-  }
-  return {
-    day: Number(match[1]),
-    month: Number(match[2]),
-    year: Number(match[3]),
-  };
-}
-
-function isValidSheetDateParts(
-  parts: { readonly year: number; readonly month: number; readonly day: number } | null,
-): boolean {
+function isValidSheetDateParts(parts: SheetDateParts | null): boolean {
   if (parts === null) {
     return false;
   }
@@ -1001,6 +990,17 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** True when `value` is a grid range object with integer corner coordinates. */
+function isSheetGridRange(value: unknown): value is SheetGridRange {
+  return (
+    isPlainRecord(value) &&
+    Number.isInteger(value["startRow"]) &&
+    Number.isInteger(value["startCol"]) &&
+    Number.isInteger(value["endRow"]) &&
+    Number.isInteger(value["endCol"])
+  );
+}
+
 function protectedRangesFromMetadata(metadata: JsonObject): readonly SheetProtectedRange[] {
   const ranges = metadata["protectedRanges"];
   if (!Array.isArray(ranges)) {
@@ -1089,87 +1089,55 @@ function namedRangesFromMetadata(metadata: JsonObject): readonly SheetNamedRange
 }
 
 function isSheetNamedRange(value: unknown): value is SheetNamedRange {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
-  const range = candidate["range"];
   return (
-    (candidate["id"] === undefined || typeof candidate["id"] === "string") &&
-    typeof candidate["tabId"] === "string" &&
-    typeof candidate["name"] === "string" &&
-    typeof range === "object" &&
-    range !== null &&
-    !Array.isArray(range) &&
-    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endCol"])
+    (value["id"] === undefined || typeof value["id"] === "string") &&
+    typeof value["tabId"] === "string" &&
+    typeof value["name"] === "string" &&
+    isSheetGridRange(value["range"])
   );
 }
 
 function isSheetMergedCellRange(value: unknown): value is SheetMergedCellRange {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
-  const range = candidate["range"];
   return (
-    (candidate["id"] === undefined || typeof candidate["id"] === "string") &&
-    typeof candidate["tabId"] === "string" &&
-    (candidate["label"] === undefined || typeof candidate["label"] === "string") &&
-    typeof range === "object" &&
-    range !== null &&
-    !Array.isArray(range) &&
-    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endCol"])
+    (value["id"] === undefined || typeof value["id"] === "string") &&
+    typeof value["tabId"] === "string" &&
+    (value["label"] === undefined || typeof value["label"] === "string") &&
+    isSheetGridRange(value["range"])
   );
 }
 
 function isSheetProtectedRange(value: unknown): value is SheetProtectedRange {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
-  const range = candidate["range"];
   return (
-    (candidate["id"] === undefined || typeof candidate["id"] === "string") &&
-    typeof candidate["tabId"] === "string" &&
-    typeof candidate["label"] === "string" &&
-    (candidate["mode"] === undefined || isSheetProtectedRangeMode(candidate["mode"])) &&
-    typeof range === "object" &&
-    range !== null &&
-    !Array.isArray(range) &&
-    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endCol"])
+    (value["id"] === undefined || typeof value["id"] === "string") &&
+    typeof value["tabId"] === "string" &&
+    typeof value["label"] === "string" &&
+    (value["mode"] === undefined || isSheetProtectedRangeMode(value["mode"])) &&
+    isSheetGridRange(value["range"])
   );
 }
 
 function isSheetChartMetadata(value: unknown): value is SheetChartMetadata {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
-  const range = candidate["range"];
-  const placement = candidate["placement"];
+  const placement = value["placement"];
   return (
-    typeof candidate["id"] === "string" &&
-    typeof candidate["tabId"] === "string" &&
-    typeof candidate["type"] === "string" &&
-    typeof candidate["title"] === "string" &&
-    typeof range === "object" &&
-    range !== null &&
-    !Array.isArray(range) &&
-    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endCol"]) &&
-    isOptionalNonnegativeInteger(candidate["labelCol"]) &&
-    isOptionalNonnegativeInteger(candidate["valueCol"]) &&
+    typeof value["id"] === "string" &&
+    typeof value["tabId"] === "string" &&
+    typeof value["type"] === "string" &&
+    typeof value["title"] === "string" &&
+    isSheetGridRange(value["range"]) &&
+    isOptionalNonnegativeInteger(value["labelCol"]) &&
+    isOptionalNonnegativeInteger(value["valueCol"]) &&
     (placement === undefined || isSheetChartPlacementMetadata(placement))
   );
 }
@@ -1177,15 +1145,14 @@ function isSheetChartMetadata(value: unknown): value is SheetChartMetadata {
 function isSheetChartPlacementMetadata(
   value: unknown,
 ): value is NonNullable<SheetChartMetadata["placement"]> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
   return (
-    Number.isInteger(candidate["anchorRow"]) &&
-    Number.isInteger(candidate["anchorCol"]) &&
-    Number.isInteger(candidate["rowSpan"]) &&
-    Number.isInteger(candidate["colSpan"])
+    Number.isInteger(value["anchorRow"]) &&
+    Number.isInteger(value["anchorCol"]) &&
+    Number.isInteger(value["rowSpan"]) &&
+    Number.isInteger(value["colSpan"])
   );
 }
 
@@ -1196,118 +1163,85 @@ function isOptionalNonnegativeInteger(value: unknown): value is number | undefin
 }
 
 function isSheetFilterViewMetadata(value: unknown): value is SheetFilterViewMetadata {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
-  const range = candidate["range"];
-  const sortColumn = candidate["sortColumn"];
-  const sortKeys = candidate["sortKeys"];
-  const predicate = candidate["predicate"];
-  const predicates = candidate["predicates"];
+  const sortColumn = value["sortColumn"];
+  const sortKeys = value["sortKeys"];
+  const predicate = value["predicate"];
+  const predicates = value["predicates"];
   return (
-    typeof candidate["id"] === "string" &&
-    typeof candidate["tabId"] === "string" &&
-    typeof candidate["name"] === "string" &&
-    typeof candidate["sortDirection"] === "string" &&
+    typeof value["id"] === "string" &&
+    typeof value["tabId"] === "string" &&
+    typeof value["name"] === "string" &&
+    typeof value["sortDirection"] === "string" &&
     (sortColumn === undefined || Number.isInteger(sortColumn)) &&
     (sortKeys === undefined ||
       (Array.isArray(sortKeys) && sortKeys.every((key) => Number.isInteger(key)))) &&
     (predicate === undefined || isSheetFilterPredicateMetadata(predicate)) &&
     (predicates === undefined ||
       (Array.isArray(predicates) && predicates.every(isSheetFilterPredicateMetadata))) &&
-    typeof range === "object" &&
-    range !== null &&
-    !Array.isArray(range) &&
-    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endCol"])
+    isSheetGridRange(value["range"])
   );
 }
 
 function isSheetFilterPredicateMetadata(value: unknown): value is SheetFilterPredicateMetadata {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
   return (
-    Number.isInteger(candidate["column"]) &&
-    typeof candidate["operator"] === "string" &&
-    typeof candidate["value"] === "string"
+    Number.isInteger(value["column"]) &&
+    typeof value["operator"] === "string" &&
+    typeof value["value"] === "string"
   );
 }
 
 function isSheetPivotTableMetadata(value: unknown): value is SheetPivotTableMetadata {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
-  const range = candidate["range"];
-  const slicer = candidate["slicer"];
+  const slicer = value["slicer"];
   return (
-    typeof candidate["id"] === "string" &&
-    typeof candidate["tabId"] === "string" &&
-    typeof candidate["title"] === "string" &&
-    Number.isInteger(candidate["rowFieldCol"]) &&
-    Number.isInteger(candidate["valueFieldCol"]) &&
-    typeof candidate["aggregation"] === "string" &&
+    typeof value["id"] === "string" &&
+    typeof value["tabId"] === "string" &&
+    typeof value["title"] === "string" &&
+    Number.isInteger(value["rowFieldCol"]) &&
+    Number.isInteger(value["valueFieldCol"]) &&
+    typeof value["aggregation"] === "string" &&
     (slicer === undefined || isSheetPivotSlicerMetadata(slicer)) &&
-    typeof range === "object" &&
-    range !== null &&
-    !Array.isArray(range) &&
-    Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
-    Number.isInteger((range as Record<string, unknown>)["endCol"])
+    isSheetGridRange(value["range"])
   );
 }
 
 function isSheetPivotSlicerMetadata(value: unknown): value is SheetPivotSlicerMetadata {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const candidate = value as Record<string, unknown>;
-  return (
-    Number.isInteger(candidate["column"]) &&
-    typeof candidate["operator"] === "string" &&
-    typeof candidate["value"] === "string"
-  );
+  // Slicers carry the same column/operator/value shape as filter predicates.
+  return isSheetFilterPredicateMetadata(value);
 }
 
 function isSheetFrozenPanesMetadata(value: unknown): value is SheetFrozenPanesMetadata {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
   return (
-    typeof candidate["tabId"] === "string" &&
-    Number.isInteger(candidate["frozenRows"]) &&
-    Number.isInteger(candidate["frozenCols"]) &&
-    (candidate["frozenRows"] as number) >= 0 &&
-    (candidate["frozenCols"] as number) >= 0
+    typeof value["tabId"] === "string" &&
+    Number.isInteger(value["frozenRows"]) &&
+    Number.isInteger(value["frozenCols"]) &&
+    (value["frozenRows"] as number) >= 0 &&
+    (value["frozenCols"] as number) >= 0
   );
 }
 
 function isSheetRangeCommentAnchor(value: unknown): value is SheetRangeCommentAnchor {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isPlainRecord(value)) {
     return false;
   }
-  const candidate = value as Record<string, unknown>;
-  const range = candidate["range"];
+  const range = value["range"];
   return (
-    candidate["type"] === "sheet-range" &&
-    (candidate["tabId"] === undefined || typeof candidate["tabId"] === "string") &&
-    (candidate["label"] === undefined || typeof candidate["label"] === "string") &&
-    (candidate["deleted"] === undefined || typeof candidate["deleted"] === "boolean") &&
-    (range === undefined ||
-      (typeof range === "object" &&
-        range !== null &&
-        !Array.isArray(range) &&
-        Number.isInteger((range as Record<string, unknown>)["startRow"]) &&
-        Number.isInteger((range as Record<string, unknown>)["startCol"]) &&
-        Number.isInteger((range as Record<string, unknown>)["endRow"]) &&
-        Number.isInteger((range as Record<string, unknown>)["endCol"])))
+    value["type"] === "sheet-range" &&
+    (value["tabId"] === undefined || typeof value["tabId"] === "string") &&
+    (value["label"] === undefined || typeof value["label"] === "string") &&
+    (value["deleted"] === undefined || typeof value["deleted"] === "boolean") &&
+    (range === undefined || isSheetGridRange(range))
   );
 }
 
@@ -1329,16 +1263,6 @@ function cellEditIntersectsProtectedRange(
   const left = Math.min(range.startCol, range.endCol);
   const right = Math.max(range.startCol, range.endCol);
   return edit.row >= top && edit.row <= bottom && edit.col >= left && edit.col <= right;
-}
-
-function cellA1(row: number, col: number): string {
-  let index = col;
-  let label = "";
-  do {
-    label = String.fromCharCode(65 + (index % 26)) + label;
-    index = Math.floor(index / 26) - 1;
-  } while (index >= 0);
-  return `${label}${String(row + 1)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1675,16 +1599,8 @@ export class InMemorySheetsStore implements SheetsStore {
   }
 
   async resolveComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
-    const existing = this.#comments.get(input.commentId);
-    if (existing === undefined || existing.orgId !== input.orgId) {
-      return null;
-    }
-    const sheet = this.#requireVisible({
-      orgId: input.orgId,
-      actorId: input.actorId,
-      sheetId: existing.sheetId,
-    });
-    if (sheet === null) {
+    const existing = this.#requireVisibleComment(input);
+    if (existing === null) {
       return null;
     }
     if (existing.status === "resolved") {
@@ -1701,16 +1617,8 @@ export class InMemorySheetsStore implements SheetsStore {
   }
 
   async reopenComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
-    const existing = this.#comments.get(input.commentId);
-    if (existing === undefined || existing.orgId !== input.orgId) {
-      return null;
-    }
-    const sheet = this.#requireVisible({
-      orgId: input.orgId,
-      actorId: input.actorId,
-      sheetId: existing.sheetId,
-    });
-    if (sheet === null) {
+    const existing = this.#requireVisibleComment(input);
+    if (existing === null) {
       return null;
     }
     if (existing.status === "open") {
@@ -1727,16 +1635,8 @@ export class InMemorySheetsStore implements SheetsStore {
   }
 
   async updateComment(input: UpdateSheetCommentInput): Promise<SheetCommentRecord | null> {
-    const existing = this.#comments.get(input.commentId);
-    if (existing === undefined || existing.orgId !== input.orgId) {
-      return null;
-    }
-    const sheet = this.#requireVisible({
-      orgId: input.orgId,
-      actorId: input.actorId,
-      sheetId: existing.sheetId,
-    });
-    if (sheet === null) {
+    const existing = this.#requireVisibleComment(input);
+    if (existing === null) {
       return null;
     }
     const updated: SheetCommentRecord = {
@@ -1749,16 +1649,8 @@ export class InMemorySheetsStore implements SheetsStore {
   }
 
   async deleteComment(input: DeleteSheetCommentInput): Promise<SheetCommentRecord | null> {
-    const existing = this.#comments.get(input.commentId);
-    if (existing === undefined || existing.orgId !== input.orgId) {
-      return null;
-    }
-    const sheet = this.#requireVisible({
-      orgId: input.orgId,
-      actorId: input.actorId,
-      sheetId: existing.sheetId,
-    });
-    if (sheet === null) {
+    const existing = this.#requireVisibleComment(input);
+    if (existing === null) {
       return null;
     }
     this.#comments.delete(existing.id);
@@ -2059,6 +1951,20 @@ export class InMemorySheetsStore implements SheetsStore {
     return sheet;
   }
 
+  /** A comment is reachable only when its spreadsheet is visible to the actor. */
+  #requireVisibleComment(input: ResolveSheetCommentInput): SheetCommentRecord | null {
+    const comment = this.#comments.get(input.commentId);
+    if (comment === undefined || comment.orgId !== input.orgId) {
+      return null;
+    }
+    const sheet = this.#requireVisible({
+      orgId: input.orgId,
+      actorId: input.actorId,
+      sheetId: comment.sheetId,
+    });
+    return sheet === null ? null : comment;
+  }
+
   #requireTab(input: { orgId: string; actorId: string; tabId: string }): SheetTabRecord | null {
     const tab = this.#tabs.get(input.tabId);
     if (tab === undefined || tab.orgId !== input.orgId || tab.deletedAt !== null) {
@@ -2338,41 +2244,45 @@ function shiftedCellForStructuralChange(
   now: Date,
 ): SheetCellRecord | null {
   if (change.kind === "insert-rows") {
+    const moved = cell.row >= change.index;
     return rebaseSheetCellForStructuralChange(
-      cell.row >= change.index ? { ...cell, row: cell.row + change.count } : cell,
+      moved ? { ...cell, row: cell.row + change.count } : cell,
       change,
       now,
-      cell.row >= change.index,
+      moved,
     );
   }
   if (change.kind === "insert-columns") {
+    const moved = cell.col >= change.index;
     return rebaseSheetCellForStructuralChange(
-      cell.col >= change.index ? { ...cell, col: cell.col + change.count } : cell,
+      moved ? { ...cell, col: cell.col + change.count } : cell,
       change,
       now,
-      cell.col >= change.index,
+      moved,
     );
   }
   if (change.kind === "delete-rows") {
     if (cell.row >= change.index && cell.row < change.index + change.count) {
       return null;
     }
+    const moved = cell.row >= change.index + change.count;
     return rebaseSheetCellForStructuralChange(
-      cell.row >= change.index + change.count ? { ...cell, row: cell.row - change.count } : cell,
+      moved ? { ...cell, row: cell.row - change.count } : cell,
       change,
       now,
-      cell.row >= change.index + change.count,
+      moved,
     );
   }
   if (change.kind === "delete-columns") {
     if (cell.col >= change.index && cell.col < change.index + change.count) {
       return null;
     }
+    const moved = cell.col >= change.index + change.count;
     return rebaseSheetCellForStructuralChange(
-      cell.col >= change.index + change.count ? { ...cell, col: cell.col - change.count } : cell,
+      moved ? { ...cell, col: cell.col - change.count } : cell,
       change,
       now,
-      cell.col >= change.index + change.count,
+      moved,
     );
   }
   return cell;
@@ -2545,22 +2455,10 @@ function rebaseStructuralReferenceIndex(
   change: SheetCellOperation,
   axis: "row" | "column",
 ): number | null {
-  if (axis === "row") {
-    if (change.kind === "insert-rows") {
-      return index >= change.index ? index + change.count : index;
-    }
-    if (change.kind === "delete-rows") {
-      if (index >= change.index && index < change.index + change.count) {
-        return null;
-      }
-      return index >= change.index + change.count ? index - change.count : index;
-    }
-    return index;
-  }
-  if (change.kind === "insert-columns") {
+  if (isSheetInsertForAxis(change, axis)) {
     return index >= change.index ? index + change.count : index;
   }
-  if (change.kind === "delete-columns") {
+  if (isSheetDeleteForAxis(change, axis)) {
     if (index >= change.index && index < change.index + change.count) {
       return null;
     }
@@ -2592,9 +2490,27 @@ function rebaseSheetMetadataRangesForOperation(
     operation,
     isSheetProtectedRange,
   );
-  const charts = rebaseSheetChartsForOperation(metadata["charts"], tabId, operation);
-  const filterViews = rebaseSheetFilterViewsForOperation(metadata["filterViews"], tabId, operation);
-  const pivotTables = rebaseSheetPivotTablesForOperation(metadata["pivotTables"], tabId, operation);
+  const charts = rebaseSheetMetadataEntriesForOperation(
+    metadata["charts"],
+    tabId,
+    operation,
+    isSheetChartMetadata,
+    rebaseSheetChartForStructuralChange,
+  );
+  const filterViews = rebaseSheetMetadataEntriesForOperation(
+    metadata["filterViews"],
+    tabId,
+    operation,
+    isSheetFilterViewMetadata,
+    rebaseSheetFilterViewForStructuralChange,
+  );
+  const pivotTables = rebaseSheetMetadataEntriesForOperation(
+    metadata["pivotTables"],
+    tabId,
+    operation,
+    isSheetPivotTableMetadata,
+    rebaseSheetPivotTableForStructuralChange,
+  );
   const frozenPanes = rebaseSheetFrozenPanesForOperation(metadata["frozenPanes"], tabId, operation);
   if (
     !namedRanges.changed &&
@@ -2618,13 +2534,13 @@ function rebaseSheetMetadataRangesForOperation(
     nextMetadata["protectedRanges"] = protectedRanges.ranges;
   }
   if (charts.changed) {
-    nextMetadata["charts"] = charts.ranges;
+    nextMetadata["charts"] = charts.entries;
   }
   if (filterViews.changed) {
-    nextMetadata["filterViews"] = filterViews.views;
+    nextMetadata["filterViews"] = filterViews.entries;
   }
   if (pivotTables.changed) {
-    nextMetadata["pivotTables"] = pivotTables.pivots;
+    nextMetadata["pivotTables"] = pivotTables.entries;
   }
   if (frozenPanes.changed) {
     nextMetadata["frozenPanes"] = frozenPanes.panes;
@@ -2731,43 +2647,49 @@ function rebaseSheetCommentAnchorForOperation(
 }
 
 function sheetRangeLabel(range: SheetGridRange): string {
-  const start = cellA1(range.startRow, range.startCol);
-  const end = cellA1(range.endRow, range.endCol);
+  const start = cellReference(range.startRow, range.startCol);
+  const end = cellReference(range.endRow, range.endCol);
   return start === end ? start : `${start}:${end}`;
 }
 
-function rebaseSheetChartsForOperation(
-  charts: unknown,
+/**
+ * Rebases every tab-scoped metadata entry through each change in the
+ * operation, dropping entries whose anchor range was deleted outright.
+ */
+function rebaseSheetMetadataEntriesForOperation<T extends { readonly tabId: string }>(
+  entries: unknown,
   tabId: string,
   operation: SheetOperation,
-): { readonly ranges: readonly unknown[]; readonly changed: boolean } {
-  if (!Array.isArray(charts)) {
-    return { ranges: [], changed: false };
+  isEntry: (value: unknown) => value is T,
+  rebaseEntry: (entry: T, change: SheetCellOperation) => T | null,
+): { readonly entries: readonly unknown[]; readonly changed: boolean } {
+  if (!Array.isArray(entries)) {
+    return { entries: [], changed: false };
   }
   let changed = false;
-  const nextCharts: unknown[] = [];
-  for (const chart of charts) {
-    if (!isSheetChartMetadata(chart) || chart.tabId !== tabId) {
-      nextCharts.push(chart);
+  const nextEntries: unknown[] = [];
+  for (const entry of entries) {
+    if (!isEntry(entry) || entry.tabId !== tabId) {
+      nextEntries.push(entry);
       continue;
     }
-    let nextChart: SheetChartMetadata | null = chart;
+    let nextEntry: T | null = entry;
     for (const change of operation.changes) {
-      nextChart = rebaseSheetChartForStructuralChange(nextChart, change);
-      if (nextChart === null) {
+      nextEntry = rebaseEntry(nextEntry, change);
+      if (nextEntry === null) {
         break;
       }
     }
-    if (nextChart === null) {
+    if (nextEntry === null) {
       changed = true;
       continue;
     }
-    if (JSON.stringify(nextChart) !== JSON.stringify(chart)) {
+    if (JSON.stringify(nextEntry) !== JSON.stringify(entry)) {
       changed = true;
     }
-    nextCharts.push(nextChart);
+    nextEntries.push(nextEntry);
   }
-  return { ranges: nextCharts, changed };
+  return { entries: nextEntries, changed };
 }
 
 function rebaseSheetChartForStructuralChange(
@@ -2846,40 +2768,6 @@ function rebaseSheetChartPlacementForStructuralChange(
   return placement;
 }
 
-function rebaseSheetFilterViewsForOperation(
-  views: unknown,
-  tabId: string,
-  operation: SheetOperation,
-): { readonly views: readonly unknown[]; readonly changed: boolean } {
-  if (!Array.isArray(views)) {
-    return { views: [], changed: false };
-  }
-  let changed = false;
-  const nextViews: unknown[] = [];
-  for (const view of views) {
-    if (!isSheetFilterViewMetadata(view) || view.tabId !== tabId) {
-      nextViews.push(view);
-      continue;
-    }
-    let nextView: SheetFilterViewMetadata | null = view;
-    for (const change of operation.changes) {
-      nextView = rebaseSheetFilterViewForStructuralChange(nextView, change);
-      if (nextView === null) {
-        break;
-      }
-    }
-    if (nextView === null) {
-      changed = true;
-      continue;
-    }
-    if (JSON.stringify(nextView) !== JSON.stringify(view)) {
-      changed = true;
-    }
-    nextViews.push(nextView);
-  }
-  return { views: nextViews, changed };
-}
-
 function rebaseSheetFilterViewForStructuralChange(
   view: SheetFilterViewMetadata,
   change: SheetCellOperation,
@@ -2939,40 +2827,6 @@ function rebaseSheetFilterPredicateForStructuralChange(
 ): SheetFilterPredicateMetadata | null {
   const column = rebaseStructuralReferenceIndex(predicate.column, change, "column");
   return column === null ? null : { ...predicate, column };
-}
-
-function rebaseSheetPivotTablesForOperation(
-  pivots: unknown,
-  tabId: string,
-  operation: SheetOperation,
-): { readonly pivots: readonly unknown[]; readonly changed: boolean } {
-  if (!Array.isArray(pivots)) {
-    return { pivots: [], changed: false };
-  }
-  let changed = false;
-  const nextPivots: unknown[] = [];
-  for (const pivot of pivots) {
-    if (!isSheetPivotTableMetadata(pivot) || pivot.tabId !== tabId) {
-      nextPivots.push(pivot);
-      continue;
-    }
-    let nextPivot: SheetPivotTableMetadata | null = pivot;
-    for (const change of operation.changes) {
-      nextPivot = rebaseSheetPivotTableForStructuralChange(nextPivot, change);
-      if (nextPivot === null) {
-        break;
-      }
-    }
-    if (nextPivot === null) {
-      changed = true;
-      continue;
-    }
-    if (JSON.stringify(nextPivot) !== JSON.stringify(pivot)) {
-      changed = true;
-    }
-    nextPivots.push(nextPivot);
-  }
-  return { pivots: nextPivots, changed };
 }
 
 function rebaseSheetPivotTableForStructuralChange(
@@ -3191,7 +3045,7 @@ function isSheetDeleteForAxis(
 }
 
 function parseSheetOperation(value: unknown): SheetOperation {
-  if (!isObjectRecord(value)) {
+  if (!isPlainRecord(value)) {
     throw new Error("Expected sheet operation object.");
   }
   const id = value["id"];
@@ -3214,7 +3068,7 @@ function parseSheetOperation(value: unknown): SheetOperation {
 }
 
 function parseSheetCellOperation(value: unknown): SheetCellOperation {
-  if (!isObjectRecord(value)) {
+  if (!isPlainRecord(value)) {
     throw new Error("Expected sheet cell operation object.");
   }
   const kind = value["kind"];
@@ -3259,10 +3113,6 @@ function parseSheetCellOperation(value: unknown): SheetCellOperation {
     throw new Error("Invalid sheet set-cell operation.");
   }
   return { kind, row, col, value: valueText };
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -3846,29 +3696,7 @@ export class PostgresSheetsStore implements SheetsStore {
       }
       assertNoProtectedRangeEdits(input.edits, tab, sheet);
       assertNoHardValidationFailures(input.edits, await selectCells(tx, input.tabId), tab, sheet);
-      for (const edit of input.edits) {
-        if (isClearingEdit(edit)) {
-          await tx`
-            delete from sheet_cells
-            where sheet_tab_id = ${input.tabId} and row = ${edit.row} and col = ${edit.col}
-          `;
-          continue;
-        }
-        await tx`
-          insert into sheet_cells (org_id, sheet_tab_id, row, col, value, format)
-          values (
-            ${input.orgId}, ${input.tabId}, ${edit.row}, ${edit.col}, ${edit.value},
-            ${tx.json(toSqlJson(edit.format ?? {}))}
-          )
-          on conflict (sheet_tab_id, row, col) do update set
-            value = excluded.value,
-            format = case
-              when ${edit.format === undefined} then sheet_cells.format
-              else excluded.format
-            end,
-            updated_at = now()
-        `;
-      }
+      await writeSheetCellEdits(tx, input.orgId, input.tabId, input.edits);
       const cellsWithMetadata = await refreshFormulaMetadata(
         tx,
         input.orgId,
@@ -3907,29 +3735,7 @@ export class PostgresSheetsStore implements SheetsStore {
       const edits = sortSheetRangeEdits(currentCells, range, input.direction);
       assertNoProtectedRangeEdits(edits, tab, sheet);
       assertNoHardValidationFailures(edits, currentCells, tab, sheet);
-      for (const edit of edits) {
-        if (isClearingEdit(edit)) {
-          await tx`
-            delete from sheet_cells
-            where sheet_tab_id = ${input.tabId} and row = ${edit.row} and col = ${edit.col}
-          `;
-          continue;
-        }
-        await tx`
-          insert into sheet_cells (org_id, sheet_tab_id, row, col, value, format)
-          values (
-            ${input.orgId}, ${input.tabId}, ${edit.row}, ${edit.col}, ${edit.value},
-            ${tx.json(toSqlJson(edit.format ?? {}))}
-          )
-          on conflict (sheet_tab_id, row, col) do update set
-            value = excluded.value,
-            format = case
-              when ${edit.format === undefined} then sheet_cells.format
-              else excluded.format
-            end,
-            updated_at = now()
-        `;
-      }
+      await writeSheetCellEdits(tx, input.orgId, input.tabId, edits);
       const cellsWithMetadata = await refreshFormulaMetadata(
         tx,
         input.orgId,
@@ -4032,25 +3838,11 @@ export class PostgresSheetsStore implements SheetsStore {
 
   async resolveComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from drive_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly SheetCommentRow[];
-      const existing = existingRows[0];
-      if (existing === undefined) {
+      const loaded = await selectVisibleSheetComment(tx, input);
+      if (loaded === null) {
         return null;
       }
-      const sheet = await selectVisibleSheet(tx, {
-        orgId: input.orgId,
-        actorId: input.actorId,
-        sheetId: existing.object_id,
-      });
-      if (sheet === null) {
-        return null;
-      }
+      const { comment: existing, sheet } = loaded;
       if (existing.status === "resolved") {
         return mapSheetComment(existing);
       }
@@ -4075,25 +3867,11 @@ export class PostgresSheetsStore implements SheetsStore {
 
   async reopenComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from drive_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly SheetCommentRow[];
-      const existing = existingRows[0];
-      if (existing === undefined) {
+      const loaded = await selectVisibleSheetComment(tx, input);
+      if (loaded === null) {
         return null;
       }
-      const sheet = await selectVisibleSheet(tx, {
-        orgId: input.orgId,
-        actorId: input.actorId,
-        sheetId: existing.object_id,
-      });
-      if (sheet === null) {
-        return null;
-      }
+      const { comment: existing, sheet } = loaded;
       if (existing.status === "open") {
         return mapSheetComment(existing);
       }
@@ -4118,25 +3896,11 @@ export class PostgresSheetsStore implements SheetsStore {
 
   async updateComment(input: UpdateSheetCommentInput): Promise<SheetCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from drive_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly SheetCommentRow[];
-      const existing = existingRows[0];
-      if (existing === undefined) {
+      const loaded = await selectVisibleSheetComment(tx, input);
+      if (loaded === null) {
         return null;
       }
-      const sheet = await selectVisibleSheet(tx, {
-        orgId: input.orgId,
-        actorId: input.actorId,
-        sheetId: existing.object_id,
-      });
-      if (sheet === null) {
-        return null;
-      }
+      const { sheet } = loaded;
       const rows = (await tx`
         update drive_comments
         set body = ${input.body}, updated_at = now()
@@ -4158,25 +3922,11 @@ export class PostgresSheetsStore implements SheetsStore {
 
   async deleteComment(input: DeleteSheetCommentInput): Promise<SheetCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
-        select *
-        from drive_comments
-        where id = ${input.commentId}
-          and org_id = ${input.orgId}
-        limit 1
-      `) as unknown as readonly SheetCommentRow[];
-      const existing = existingRows[0];
-      if (existing === undefined) {
+      const loaded = await selectVisibleSheetComment(tx, input);
+      if (loaded === null) {
         return null;
       }
-      const sheet = await selectVisibleSheet(tx, {
-        orgId: input.orgId,
-        actorId: input.actorId,
-        sheetId: existing.object_id,
-      });
-      if (sheet === null) {
-        return null;
-      }
+      const { sheet } = loaded;
       const rows = (await tx`
         delete from drive_comments
         where id = ${input.commentId}
@@ -4869,6 +4619,30 @@ async function rebaseSheetCommentAnchorsForOperation(
   }
 }
 
+/** Loads a comment together with the spreadsheet it anchors to, both actor-visible. */
+async function selectVisibleSheetComment(
+  sql: SqlLike,
+  input: ResolveSheetCommentInput,
+): Promise<{ readonly comment: SheetCommentRow; readonly sheet: SheetRecord } | null> {
+  const rows = (await sql`
+    select *
+    from drive_comments
+    where id = ${input.commentId}
+      and org_id = ${input.orgId}
+    limit 1
+  `) as unknown as readonly SheetCommentRow[];
+  const comment = rows[0];
+  if (comment === undefined) {
+    return null;
+  }
+  const sheet = await selectVisibleSheet(sql, {
+    orgId: input.orgId,
+    actorId: input.actorId,
+    sheetId: comment.object_id,
+  });
+  return sheet === null ? null : { comment, sheet };
+}
+
 async function requireSheetCommentParent(
   sql: SqlLike,
   input: {
@@ -4935,6 +4709,38 @@ function validatedSheetCommentAnchorCoordinate(value: unknown, name: string): nu
     throw new SheetsValidationError(`Sheet comment anchor ${name} must be a non-negative integer.`);
   }
   return value;
+}
+
+/** Upserts each edit into `sheet_cells`, deleting the row when it clears the cell. */
+async function writeSheetCellEdits(
+  sql: SqlLike,
+  orgId: string,
+  tabId: string,
+  edits: readonly SheetCellEdit[],
+): Promise<void> {
+  for (const edit of edits) {
+    if (isClearingEdit(edit)) {
+      await sql`
+        delete from sheet_cells
+        where sheet_tab_id = ${tabId} and row = ${edit.row} and col = ${edit.col}
+      `;
+      continue;
+    }
+    await sql`
+      insert into sheet_cells (org_id, sheet_tab_id, row, col, value, format)
+      values (
+        ${orgId}, ${tabId}, ${edit.row}, ${edit.col}, ${edit.value},
+        ${sql.json(toSqlJson(edit.format ?? {}))}
+      )
+      on conflict (sheet_tab_id, row, col) do update set
+        value = excluded.value,
+        format = case
+          when ${edit.format === undefined} then sheet_cells.format
+          else excluded.format
+        end,
+        updated_at = now()
+    `;
+  }
 }
 
 async function touchSheet(sql: SqlLike, orgId: string, sheetId: string): Promise<void> {
@@ -5454,13 +5260,13 @@ async function readSheetSnapshotVersion(
 
 function parseSheetSnapshot(body: string): SheetSnapshotV1 {
   const parsed: unknown = JSON.parse(body);
-  if (!isRecord(parsed) || parsed["app"] !== "sheets" || parsed["version"] !== 1) {
+  if (!isPlainRecord(parsed) || parsed["app"] !== "sheets" || parsed["version"] !== 1) {
     throw new Error("Invalid sheet version snapshot.");
   }
   const sheet = parsed["sheet"];
   const tabs = parsed["tabs"];
   const cells = parsed["cells"];
-  if (!isRecord(sheet) || !Array.isArray(tabs) || !Array.isArray(cells)) {
+  if (!isPlainRecord(sheet) || !Array.isArray(tabs) || !Array.isArray(cells)) {
     throw new Error("Invalid sheet version snapshot.");
   }
   const parsedTabs = tabs.map(parseSnapshotTab);
@@ -5480,7 +5286,7 @@ function parseSheetSnapshot(body: string): SheetSnapshotV1 {
 }
 
 function parseSnapshotTab(value: unknown): SheetSnapshotV1["tabs"][number] {
-  if (!isRecord(value)) {
+  if (!isPlainRecord(value)) {
     throw new Error("Invalid sheet tab in version snapshot.");
   }
   return {
@@ -5495,7 +5301,7 @@ function parseSnapshotCell(
   value: unknown,
   tabIds: ReadonlySet<string>,
 ): SheetSnapshotV1["cells"][number] {
-  if (!isRecord(value)) {
+  if (!isPlainRecord(value)) {
     throw new Error("Invalid sheet cell in version snapshot.");
   }
   const tabId = readSnapshotString(value["tabId"], "cell.tabId");
@@ -5540,11 +5346,7 @@ function readSnapshotInteger(value: unknown, field: string): number {
 }
 
 function readSnapshotObject(value: unknown): JsonObject {
-  return isRecord(value) ? (JSON.parse(JSON.stringify(value)) as JsonObject) : {};
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return isPlainRecord(value) ? (JSON.parse(JSON.stringify(value)) as JsonObject) : {};
 }
 
 async function storageObjectBody(

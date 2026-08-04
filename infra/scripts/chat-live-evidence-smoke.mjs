@@ -37,6 +37,9 @@ const execFileAsync = promisify(execFile);
 const requireFromApp = createRequire(new URL("../../apps/helix/package.json", import.meta.url));
 const DEFAULT_TIMEOUT_MS = 20_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+// Chat denies non-members with either status; both are an acceptable denial for evidence purposes.
+const DENIAL_STATUSES = [403, 404];
+const DENIAL_FRAME_CODES = ["not_found", "forbidden"];
 
 if (isMain()) {
   await main();
@@ -51,23 +54,16 @@ async function main() {
 
   let evidence;
   if (options.validate !== undefined) {
-    evidence = validateChatLiveEvidence(JSON.parse(await readFile(options.validate, "utf8")), {
-      requirePass: options.requirePass,
-      requireReleaseLoad: options.requireReleaseLoad,
-    });
+    evidence = JSON.parse(await readFile(options.validate, "utf8"));
   } else if (options.config === undefined) {
     evidence = createChatEvidenceSkeleton();
-    validateChatLiveEvidence(evidence, {
-      requirePass: options.requirePass,
-      requireReleaseLoad: options.requireReleaseLoad,
-    });
   } else {
     evidence = await runChatLiveEvidence(options.config);
-    validateChatLiveEvidence(evidence, {
-      requirePass: options.requirePass,
-      requireReleaseLoad: options.requireReleaseLoad,
-    });
   }
+  evidence = validateChatLiveEvidence(evidence, {
+    requirePass: options.requirePass,
+    requireReleaseLoad: options.requireReleaseLoad,
+  });
   if (options.validate === undefined) {
     attachReleaseEvidenceBinding(evidence, releaseEvidenceBindingFromEnvironment(process.env));
   }
@@ -230,16 +226,13 @@ async function proveNonMemberDenials(runtime) {
     ["search", restSearch],
     ["send", restSend],
   ]) {
-    requireStatus(result, [403, 404], `non-member REST ${label}`);
+    requireStatus(result, DENIAL_STATUSES, `non-member REST ${label}`);
   }
 
   await sendFrame(nonMember, 0, { type: "subscribe", roomId: config.roomId });
   const subscribeError = await waitForFrame(
     nonMember,
-    (entry) =>
-      entry.socketIndex === 0 &&
-      entry.frame?.type === "error" &&
-      ["not_found", "forbidden"].includes(entry.frame?.code),
+    isDenialFrame,
     DEFAULT_TIMEOUT_MS,
     "non-member WebSocket subscribe denial",
   );
@@ -251,19 +244,16 @@ async function proveNonMemberDenials(runtime) {
   });
   const sendError = await waitForFrame(
     nonMember,
-    (entry) =>
-      entry.socketIndex === 0 &&
-      entry.frame?.type === "error" &&
-      ["not_found", "forbidden"].includes(entry.frame?.code),
+    isDenialFrame,
     DEFAULT_TIMEOUT_MS,
     "non-member WebSocket send denial",
   );
 
   return {
     roomAbsentFromList,
-    restListDenied: [403, 404].includes(restList.status),
-    restSearchDenied: [403, 404].includes(restSearch.status),
-    restSendDenied: [403, 404].includes(restSend.status),
+    restListDenied: DENIAL_STATUSES.includes(restList.status),
+    restSearchDenied: DENIAL_STATUSES.includes(restSearch.status),
+    restSendDenied: DENIAL_STATUSES.includes(restSend.status),
     websocketSubscribeDenied: subscribeError !== undefined,
     websocketSendDenied: sendError !== undefined,
   };
@@ -380,15 +370,7 @@ async function proveEicarAttachmentDenied(runtime) {
     clientMessageId: randomUUID(),
     attachmentObjectIds: [config.drive.eicarObjectId],
   });
-  await waitForFrame(
-    sender,
-    (entry) =>
-      entry.socketIndex === 0 &&
-      entry.frame?.type === "error" &&
-      ["not_found", "forbidden"].includes(entry.frame?.code),
-    DEFAULT_TIMEOUT_MS,
-    "EICAR Chat attachment denial",
-  );
+  await waitForFrame(sender, isDenialFrame, DEFAULT_TIMEOUT_MS, "EICAR Chat attachment denial");
   let messageNotObserved = true;
   try {
     await waitForFrame(
@@ -508,8 +490,21 @@ async function provePilotLoad(runtime) {
   const dbPoolSamples = [];
   const redisSamples = [];
   const natsSamples = [];
+  const samples = { memorySamples, eventLoopSamples, dbPoolSamples, redisSamples, natsSamples };
   let loadStartedAt = 0;
   const socketsPerUser = distribute(profile.sockets, profile.users);
+
+  // Deliveries are matched back to their send timestamp exactly once, both during the
+  // traffic window and while draining the tail after traffic stops.
+  function takeDeliveryLatencyMs(entry) {
+    const clientMessageId = entry.frame?.message?.clientMessageId;
+    if (entry.frame?.type !== "message.created" || !sendTimes.has(clientMessageId)) {
+      return undefined;
+    }
+    const sentAt = sendTimes.get(clientMessageId);
+    sendTimes.delete(clientMessageId);
+    return Math.max(0, entry.observedAt - sentAt);
+  }
 
   try {
     for (let index = 0; index < profile.users; index += 1) {
@@ -531,13 +526,7 @@ async function provePilotLoad(runtime) {
       throw new Error("pilot browser states did not resolve to the configured distinct users");
     }
     await Promise.all(clients.map((client) => subscribeAll(client, config.roomId)));
-    await collectOperationalSample(config, {
-      memorySamples,
-      eventLoopSamples,
-      dbPoolSamples,
-      redisSamples,
-      natsSamples,
-    });
+    await collectOperationalSample(config, samples);
 
     const observer = clients[0];
     loadStartedAt = Date.now();
@@ -548,14 +537,16 @@ async function provePilotLoad(runtime) {
     let senderIndex = 0;
     while (Date.now() < stopAt) {
       const now = Date.now();
-      const batch =
-        now >= nextBurstAt
-          ? profile.burstMessages
-          : now >= nextSteadyAt
-            ? Math.max(1, Math.floor(profile.steadyMessagesPerSecond))
-            : 0;
+      const burstDue = now >= nextBurstAt;
+      const steadyDue = now >= nextSteadyAt;
+      let batch = 0;
+      if (burstDue) {
+        batch = profile.burstMessages;
+      } else if (steadyDue) {
+        batch = Math.max(1, Math.floor(profile.steadyMessagesPerSecond));
+      }
       if (batch > 0) {
-        if (now >= nextBurstAt) {
+        if (burstDue) {
           burstTrafficObserved = true;
           nextBurstAt += profile.burstIntervalSeconds * 1_000;
         } else {
@@ -586,28 +577,16 @@ async function provePilotLoad(runtime) {
 
       const frames = await drainFrames(observer);
       for (const entry of frames) {
-        const clientMessageId = entry.frame?.message?.clientMessageId;
-        if (
-          entry.frame?.type === "message.created" &&
-          typeof clientMessageId === "string" &&
-          sendTimes.has(clientMessageId)
-        ) {
-          const sentAt = sendTimes.get(clientMessageId);
-          sendTimes.delete(clientMessageId);
-          latencies.push(Math.max(0, entry.observedAt - sentAt));
+        const latencyMs = takeDeliveryLatencyMs(entry);
+        if (latencyMs !== undefined) {
+          latencies.push(latencyMs);
           observed += 1;
         } else if (entry.frame?.type === "error") {
           errors += 1;
         }
       }
       if (Date.now() >= nextSampleAt) {
-        await collectOperationalSample(config, {
-          memorySamples,
-          eventLoopSamples,
-          dbPoolSamples,
-          redisSamples,
-          natsSamples,
-        });
+        await collectOperationalSample(config, samples);
         nextSampleAt += config.load.sampleIntervalMs;
       }
       await delay(25);
@@ -617,24 +596,16 @@ async function provePilotLoad(runtime) {
     const drainDeadline = Date.now() + config.load.deliveryDrainMs;
     while (sendTimes.size > 0 && Date.now() < drainDeadline) {
       for (const entry of await drainFrames(clients[0])) {
-        const clientMessageId = entry.frame?.message?.clientMessageId;
-        if (entry.frame?.type === "message.created" && sendTimes.has(clientMessageId)) {
-          const sentAt = sendTimes.get(clientMessageId);
-          sendTimes.delete(clientMessageId);
-          latencies.push(Math.max(0, entry.observedAt - sentAt));
+        const latencyMs = takeDeliveryLatencyMs(entry);
+        if (latencyMs !== undefined) {
+          latencies.push(latencyMs);
           observed += 1;
         }
       }
       await delay(25);
     }
     errors += sendTimes.size;
-    await collectOperationalSample(config, {
-      memorySamples,
-      eventLoopSamples,
-      dbPoolSamples,
-      redisSamples,
-      natsSamples,
-    });
+    await collectOperationalSample(config, samples);
   } finally {
     await Promise.allSettled(contexts.map((context) => context.close()));
   }
@@ -806,10 +777,15 @@ async function waitReady(client, timeoutMs = DEFAULT_TIMEOUT_MS) {
   client.actorId = [...actorIds][0];
 }
 
-async function subscribe(client, roomId, socketIndex = 0) {
+// The in-page reconnect handler replays every remembered subscription after a socket reopens.
+async function rememberSubscription(client, roomId) {
   await client.page.evaluate(({ roomId: id }) => window.__helixChatEvidence.subscriptions.add(id), {
     roomId,
   });
+}
+
+async function subscribe(client, roomId, socketIndex = 0) {
+  await rememberSubscription(client, roomId);
   await sendFrame(client, socketIndex, { type: "subscribe", roomId });
   await waitForFrame(
     client,
@@ -823,9 +799,7 @@ async function subscribe(client, roomId, socketIndex = 0) {
 }
 
 async function subscribeAll(client, roomId) {
-  await client.page.evaluate(({ roomId: id }) => window.__helixChatEvidence.subscriptions.add(id), {
-    roomId,
-  });
+  await rememberSubscription(client, roomId);
   for (let socketIndex = 0; socketIndex < client.socketCount; socketIndex += 1) {
     await sendFrame(client, socketIndex, { type: "subscribe", roomId });
   }
@@ -1363,6 +1337,14 @@ function websocketUrl(origin) {
   const url = new URL("/ws/chat", origin);
   url.protocol = "wss:";
   return url;
+}
+
+function isDenialFrame(entry) {
+  return (
+    entry.socketIndex === 0 &&
+    entry.frame?.type === "error" &&
+    DENIAL_FRAME_CODES.includes(entry.frame?.code)
+  );
 }
 
 function requireStatus(result, allowed, label) {

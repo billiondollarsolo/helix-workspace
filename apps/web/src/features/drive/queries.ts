@@ -38,15 +38,6 @@ export function deriveDriveSuggestions(entries: readonly DriveApiEntry[]): Drive
   return { folders, files };
 }
 
-/**
- * Build Drive suggestions from a local set of folder/file entries. Used when
- * the backend suggestions query is unavailable (offline) so the Suggested
- * folders / Suggested files sections still render real content.
- */
-export function fallbackDriveSuggestions(entries: readonly DriveApiEntry[]): DriveSuggestions {
-  return deriveDriveSuggestions(entries);
-}
-
 export function driveSuggestionsQueryOptions() {
   return queryOptions({
     queryKey: ["drive", "suggestions"],

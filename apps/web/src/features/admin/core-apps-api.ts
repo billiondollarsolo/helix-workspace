@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
 import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
+import { parseResponse } from "@/features/admin/api-response";
 
 /**
  * Core-app enablement client.
@@ -172,43 +173,4 @@ export async function setCoreAppEnabled(
     body: JSON.stringify({ enabled }),
   });
   return parseResponse(response, "update core app", coreAppToggleResultSchema);
-}
-
-/**
- * Parse and validate a backend response against a Zod schema.
- *
- * - On a non-OK HTTP status: throws with the backend error message.
- * - On a malformed-but-OK body: if `fallback` is provided, returns it (fail
- *   safe); otherwise throws so the caller's query surfaces an error state.
- */
-async function parseResponse<T>(
-  response: Response,
-  action: string,
-  schema: z.ZodType<T>,
-  fallback?: T,
-): Promise<T> {
-  const payload: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-  }
-  const parsed = schema.safeParse(payload);
-  if (parsed.success) {
-    return parsed.data;
-  }
-  if (fallback !== undefined) {
-    return fallback;
-  }
-  throw new Error(`Failed to ${action}: malformed response.`);
-}
-
-function errorMessage(payload: unknown): string | undefined {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof payload.error === "string"
-  ) {
-    return payload.error;
-  }
-  return undefined;
 }

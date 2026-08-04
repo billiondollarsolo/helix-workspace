@@ -16,7 +16,7 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import { StateBanner } from "@/features/admin/console/primitives";
+import { MutationError, StatusChip } from "@/features/admin/console/primitives";
 import {
   domainsQueryKeys,
   issueOwnershipChallenge,
@@ -144,18 +144,23 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
     toggleReceiving.error ??
     dropReceiving.error;
   const proved = entry.domain.verificationStatus === "verified";
+  /* Read once, beside `proved`: both capabilities are nullable and every branch
+     below needs the same narrowing, which a repeated `entry.sending` forces
+     TypeScript to redo (and a reader to re-check) at every use. */
+  const sending = entry.sending;
+  const receiving = entry.receiving;
 
   return (
     <div className="admin-domain-capabilities">
-      {error ? <StateBanner kind="error">{error.message}</StateBanner> : null}
+      <MutationError error={error} />
 
       <section className="admin-domain-block">
         <div className="admin-domain-block-head">
           <h4 className="admin-domain-block-title">Ownership</h4>
-          <span className={`chip ${proved ? "success" : "warning"}`}>
-            <span className="chip-dot" />
-            {proved ? "Proved" : "Not proved"}
-          </span>
+          <StatusChip
+            tone={proved ? "success" : "warning"}
+            label={proved ? "Proved" : "Not proved"}
+          />
         </div>
         <p className="admin-domain-block-note">
           {proved
@@ -206,20 +211,20 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
           <section className="admin-domain-block">
             <div className="admin-domain-block-head">
               <h4 className="admin-domain-block-title">Send mail from this domain</h4>
-              <span className={`chip ${entry.sending === null ? "" : "success"}`}>
-                <span className="chip-dot" />
-                {entry.sending === null ? "Off" : "On"}
-              </span>
+              <StatusChip
+                tone={sending === null ? "" : "success"}
+                label={sending === null ? "Off" : "On"}
+              />
             </div>
             <p className="admin-domain-block-note">
-              {entry.sending === null
+              {sending === null
                 ? "Helix will not send mail addressed from this domain."
-                : entry.sending.verifiedAt === null
-                  ? `Enabled, but SPF and DKIM have not both verified yet — receivers may reject or spam-file this mail. ${entry.sending.dkimKeyCount === 0 ? "No DKIM key has been generated." : `${String(entry.sending.dkimKeyCount)} DKIM key(s) present.`}`
+                : sending.verifiedAt === null
+                  ? `Enabled, but SPF and DKIM have not both verified yet — receivers may reject or spam-file this mail. ${sending.dkimKeyCount === 0 ? "No DKIM key has been generated." : `${String(sending.dkimKeyCount)} DKIM key(s) present.`}`
                   : "SPF and DKIM verify, so mail from this domain is signed and authorized."}
             </p>
             <div className="admin-domain-block-actions">
-              {entry.sending === null ? (
+              {sending === null ? (
                 <Button
                   type="button"
                   size="sm"
@@ -235,13 +240,13 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
                       unsigned, which receivers treat far worse than not
                       sending at all — so the key controls sit here, not in a
                       separate view. */}
-                  {entry.sending.dkimKeyCount === 0 ? (
+                  {sending.dkimKeyCount === 0 ? (
                     <Button
                       type="button"
                       size="sm"
                       disabled={generateKey.isPending}
                       aria-label={`Generate a DKIM key for ${entry.domain.domain}`}
-                      onClick={() => entry.sending !== null && generateKey.mutate(entry.sending.id)}
+                      onClick={() => generateKey.mutate(sending.id)}
                     >
                       Generate signing key
                     </Button>
@@ -273,14 +278,11 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
           <section className="admin-domain-block">
             <div className="admin-domain-block-head">
               <h4 className="admin-domain-block-title">Receive mail for this domain</h4>
-              <span className={`chip ${receivingChipVariant(entry)}`}>
-                <span className="chip-dot" />
-                {receivingLabel(entry)}
-              </span>
+              <StatusChip tone={receivingChipVariant(entry)} label={receivingLabel(entry)} />
             </div>
             <p className="admin-domain-block-note">{receivingNote(entry)}</p>
             <div className="admin-domain-block-actions">
-              {entry.receiving === null ? (
+              {receiving === null ? (
                 <Button
                   type="button"
                   size="sm"
@@ -296,18 +298,15 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
                     type="button"
                     size="sm"
                     disabled={toggleReceiving.isPending}
-                    aria-label={`${entry.receiving.status === "active" ? "Stop" : "Start"} accepting mail for ${entry.domain.domain}`}
+                    aria-label={`${receiving.status === "active" ? "Stop" : "Start"} accepting mail for ${entry.domain.domain}`}
                     onClick={() =>
-                      entry.receiving !== null &&
                       toggleReceiving.mutate({
-                        id: entry.receiving.id,
-                        enable: entry.receiving.status !== "active",
+                        id: receiving.id,
+                        enable: receiving.status !== "active",
                       })
                     }
                   >
-                    {entry.receiving.status === "active"
-                      ? "Stop accepting mail"
-                      : "Start accepting mail"}
+                    {receiving.status === "active" ? "Stop accepting mail" : "Start accepting mail"}
                   </Button>
                   <Button
                     type="button"
@@ -330,19 +329,19 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
         onOpenChange={setRemoveSending}
         title={`Turn off sending for ${entry.domain.domain}?`}
         blastRadius={
-          entry.sending === null
+          sending === null
             ? undefined
             : `Helix stops sending mail addressed from ${entry.domain.domain}. ${
-                entry.sending.dkimKeyCount === 0
+                sending.dkimKeyCount === 0
                   ? "There are no DKIM keys to lose."
-                  : `Its ${String(entry.sending.dkimKeyCount)} DKIM signing key(s) are destroyed — turning sending back on issues new selectors, so the DNS records have to be published and verified again.`
+                  : `Its ${String(sending.dkimKeyCount)} DKIM signing key(s) are destroyed — turning sending back on issues new selectors, so the DNS records have to be published and verified again.`
               }`
         }
         confirmLabel="Turn off sending"
         isPending={dropSending.isPending}
         onConfirm={() => {
-          if (entry.sending !== null) {
-            dropSending.mutate(entry.sending.id);
+          if (sending !== null) {
+            dropSending.mutate(sending.id);
           }
         }}
       >
@@ -360,8 +359,8 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
         confirmLabel="Rotate key"
         isPending={rotateKey.isPending}
         onConfirm={() => {
-          if (entry.sending !== null) {
-            rotateKey.mutate(entry.sending.id);
+          if (sending !== null) {
+            rotateKey.mutate(sending.id);
           }
         }}
       >
@@ -373,10 +372,10 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
         onOpenChange={setRemoveReceiving}
         title={`Turn off receiving for ${entry.domain.domain}?`}
         blastRadius={
-          entry.receiving === null
+          receiving === null
             ? undefined
             : `${
-                entry.receiving.status === "active"
+                receiving.status === "active"
                   ? `Helix stops accepting mail for ${entry.domain.domain} immediately, and senders get a bounce rather than a queued retry.`
                   : "This domain is not accepting mail right now, so no delivery is interrupted."
               } Any mailbox aliases on it stop resolving.`
@@ -384,8 +383,8 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
         confirmLabel="Turn off receiving"
         isPending={dropReceiving.isPending}
         onConfirm={() => {
-          if (entry.receiving !== null) {
-            dropReceiving.mutate(entry.receiving.id);
+          if (receiving !== null) {
+            dropReceiving.mutate(receiving.id);
           }
         }}
       >

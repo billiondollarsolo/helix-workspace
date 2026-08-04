@@ -103,7 +103,9 @@ export async function registerCoreAppsAdminRoutes(
   app: FastifyInstance,
   options: RegisterCoreAppsAdminRoutesOptions,
 ): Promise<void> {
-  const buildStatus = () => buildCoreAppsAdminStatus(options);
+  function buildStatus(): Promise<CoreAppsAdminStatus> {
+    return buildCoreAppsAdminStatus(options);
+  }
 
   app.get("/api/admin/core-apps", async (request, reply) => {
     const actor = await options.actorFromRequest(request);

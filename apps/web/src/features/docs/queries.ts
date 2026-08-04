@@ -197,7 +197,7 @@ export function docsListFromDriveQueryOptions(
   const limit = input.limit ?? 100;
   const searchLimit = Math.min(limit, 100);
   return queryOptions({
-    queryKey: ["docs", "list-from-drive", "app-docs", query, limit] as const,
+    queryKey: [...docsQueryKeys.listFromDrive(), "app-docs", query, limit] as const,
     queryFn: async (): Promise<readonly DocSummary[]> => {
       const entries =
         query.length > 0

@@ -53,13 +53,12 @@ export class EnvConfigSource implements ConfigSource {
     const envConfig = loadConfigFromEnvironment(this.env);
     const tier = parseTier(this.env.HELIX_SECURITY_TIER ?? this.env.HELIX_TIER);
     const mode = parseOptionalHelixMode(this.env.HELIX_MODE, "HELIX_MODE");
-    return mergeConfig(
-      envConfig,
-      mergeConfig(
-        tier === undefined ? {} : { security: { tier } },
-        mode === undefined ? {} : { mode },
-      ),
-    );
+    // The dedicated tier/mode variables take precedence over anything the
+    // generic HELIX_CONFIG__* scan produced, so they merge in on the right.
+    return mergeConfig(envConfig, {
+      ...(tier === undefined ? {} : { security: { tier } }),
+      ...(mode === undefined ? {} : { mode }),
+    });
   }
 }
 
@@ -143,9 +142,7 @@ export function mergeConfig(
       },
     },
     ...(mode === undefined ? {} : { mode }),
-    plugins: {
-      ...mergePluginConfig(left.plugins, right.plugins),
-    },
+    plugins: mergePluginConfig(left.plugins, right.plugins),
     ...(modules === undefined ? {} : { modules }),
     ...(ai === undefined ? {} : { ai }),
     ...(observability === undefined ? {} : { observability }),
@@ -235,13 +232,7 @@ function normalizePartialConfig(value: unknown, label: string): PartialHelixConf
     throw new TypeError(`${label} must contain a config object`);
   }
 
-  const security = value.security;
-  const mode = value.mode;
-  const modules = value.modules;
-  const ai = value.ai;
-  const observability = value.observability;
-  const plugins = value.plugins;
-  const platform = value.platform;
+  const { security, mode, modules, ai, observability, plugins, platform } = value;
   const config: PartialHelixConfig = {};
 
   if (mode !== undefined) {
@@ -281,12 +272,12 @@ function normalizePartialConfig(value: unknown, label: string): PartialHelixConf
   }
 
   if (ai !== undefined) {
-    Object.assign(config, { ai: normalizeAiConfig(ai, `${label}.ai`) });
+    Object.assign(config, { ai: normalizeJsonObject(ai, `${label}.ai`) });
   }
 
   if (observability !== undefined) {
     Object.assign(config, {
-      observability: normalizeObservabilityConfig(observability, `${label}.observability`),
+      observability: normalizeJsonObject(observability, `${label}.observability`),
     });
   }
 
@@ -318,14 +309,6 @@ function normalizeModuleConfig(value: unknown, label: string): Record<string, Mo
     result[key] = normalizeJsonObject(entry, `${label}.${key}`);
   }
   return result;
-}
-
-function normalizeAiConfig(value: unknown, label: string): AiConfig {
-  return normalizeJsonObject(value, label);
-}
-
-function normalizeObservabilityConfig(value: unknown, label: string): ObservabilityConfig {
-  return normalizeJsonObject(value, label);
 }
 
 function mergePluginConfig(
@@ -428,16 +411,10 @@ function parseEnvValue(value: string): JsonValue {
     // Fall through to scalar parsing.
   }
 
-  if (value === "true") {
-    return true;
-  }
-  if (value === "false") {
-    return false;
-  }
-  if (value === "null") {
-    return null;
-  }
-
+  // Only non-JSON input reaches here, so the `true`/`false`/`null` literals and
+  // strict JSON numbers were already handled above. What remains is numeric
+  // forms JSON rejects but `Number` accepts (`.5`, `0x10`, `1.`); anything else
+  // stays a plain string.
   const numericValue = Number(value);
   return Number.isFinite(numericValue) && value.trim() !== "" ? numericValue : value;
 }

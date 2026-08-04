@@ -23,29 +23,16 @@ export function mentionTokensFromMetadata(metadata: JsonObject): readonly string
   if (!Array.isArray(mentionsText)) {
     return [];
   }
-  const tokens = new Set<string>();
-  for (const value of mentionsText) {
-    if (typeof value !== "string") {
-      continue;
-    }
-    const token = normalizeMentionToken(value);
-    if (token.length > 0) {
-      tokens.add(token);
-    }
-  }
-  return [...tokens];
+  const tokens = mentionsText
+    .filter((value): value is string => typeof value === "string")
+    .map(normalizeMentionToken)
+    .filter((token) => token.length > 0);
+  return [...new Set(tokens)];
 }
 
 /** Union of metadata + body mention tokens. */
 export function mentionTokensForComment(metadata: JsonObject, body: string): readonly string[] {
-  const tokens = new Set<string>();
-  for (const token of mentionTokensFromMetadata(metadata)) {
-    tokens.add(token);
-  }
-  for (const token of mentionTokensFromText(body)) {
-    tokens.add(token);
-  }
-  return [...tokens];
+  return [...new Set([...mentionTokensFromMetadata(metadata), ...mentionTokensFromText(body)])];
 }
 
 /** Alias used by plan/tests — parse @mentions from body text. */
@@ -84,16 +71,12 @@ export function mentionedActorIds(input: {
   readonly authorActorId: string;
   readonly tokens: readonly string[];
 }): readonly string[] {
-  const tokenSet = new Set(input.tokens.map(normalizeMentionToken));
-  const ids: string[] = [];
-  for (const actor of input.actors) {
-    if (actor.id === input.authorActorId) {
-      continue;
-    }
-    const aliases = actorMentionAliases(actor);
-    if ([...tokenSet].some((token) => aliases.has(token))) {
-      ids.push(actor.id);
-    }
-  }
-  return ids;
+  const tokens = [...new Set(input.tokens.map(normalizeMentionToken))];
+  return input.actors
+    .filter((actor) => actor.id !== input.authorActorId)
+    .filter((actor) => {
+      const aliases = actorMentionAliases(actor);
+      return tokens.some((token) => aliases.has(token));
+    })
+    .map((actor) => actor.id);
 }

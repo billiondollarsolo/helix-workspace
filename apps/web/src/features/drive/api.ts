@@ -184,10 +184,9 @@ export async function uploadDriveFile(
       await finalizeDriveUploadWithContent(prepared, buffer, sha256, mimeType, fetchImpl);
       return { ...prepared, status: "uploaded" };
     }
-  } else {
-    await finalizeDriveUploadWithContent(prepared, buffer, sha256, mimeType, fetchImpl);
   }
 
+  await finalizeDriveUploadWithContent(prepared, buffer, sha256, mimeType, fetchImpl);
   return { ...prepared, status: "uploaded" };
 }
 

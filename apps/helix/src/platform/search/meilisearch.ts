@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import type { JsonObject } from "@helix/sdk-types";
-import type { IndexDocument, SearchEngine, SearchHit, SearchRequest, SearchResponse } from "./types.js";
+import type {
+  IndexDocument,
+  SearchEngine,
+  SearchHit,
+  SearchRequest,
+  SearchResponse,
+} from "./types.js";
 
 export interface MeilisearchAdapterOptions {
   readonly indexUid: string;
@@ -13,7 +19,10 @@ export interface MeilisearchClientLike {
 }
 
 export interface MeilisearchIndexLike {
-  addDocuments(documents: readonly IndexDocument[], options?: { readonly primaryKey?: string }): Promise<unknown>;
+  addDocuments(
+    documents: readonly IndexDocument[],
+    options?: { readonly primaryKey?: string },
+  ): Promise<unknown>;
   deleteDocuments(ids: readonly string[]): Promise<unknown>;
   search(query: string, options?: MeilisearchSearchOptions): Promise<MeilisearchSearchResponse>;
   updateSettings?(settings: MeilisearchIndexSettings): Promise<unknown>;
@@ -78,7 +87,9 @@ export class MeilisearchSearchEngine implements SearchEngine {
       return;
     }
 
-    await this.indexHandle.addDocuments(documents.map(toStoredDocument), { primaryKey: this.primaryKey });
+    await this.indexHandle.addDocuments(documents.map(toStoredDocument), {
+      primaryKey: this.primaryKey,
+    });
   }
 
   async delete(ids: readonly string[]): Promise<void> {
@@ -95,8 +106,12 @@ export class MeilisearchSearchEngine implements SearchEngine {
     return {
       hits: response.hits.map(toSearchHit),
       query: response.query ?? request.query,
-      ...(response.estimatedTotalHits === undefined ? {} : { estimatedTotalHits: response.estimatedTotalHits }),
-      ...(response.processingTimeMs === undefined ? {} : { processingTimeMs: response.processingTimeMs }),
+      ...(response.estimatedTotalHits === undefined
+        ? {}
+        : { estimatedTotalHits: response.estimatedTotalHits }),
+      ...(response.processingTimeMs === undefined
+        ? {}
+        : { processingTimeMs: response.processingTimeMs }),
     };
   }
 
@@ -111,7 +126,9 @@ function toMeilisearchOptions(request: SearchRequest): MeilisearchSearchOptions 
   return {
     ...(request.limit === undefined ? {} : { limit: request.limit }),
     ...(request.offset === undefined ? {} : { offset: request.offset }),
-    ...(request.attributesToRetrieve === undefined ? {} : { attributesToRetrieve: request.attributesToRetrieve }),
+    ...(request.attributesToRetrieve === undefined
+      ? {}
+      : { attributesToRetrieve: request.attributesToRetrieve }),
     ...(filter === undefined ? {} : { filter }),
   };
 }
@@ -140,8 +157,7 @@ function buildTypeFilter(types: readonly string[] | undefined): string | undefin
 }
 
 function toSearchHit(hit: MeilisearchHit): SearchHit {
-  const { _rankingScore, _formatted, ...document } = hit;
-  delete (document as { _key?: string })._key;
+  const { _rankingScore, _formatted, _key: _ignoredKey, ...document } = hit;
   return {
     ...document,
     ...(_rankingScore === undefined ? {} : { score: _rankingScore }),

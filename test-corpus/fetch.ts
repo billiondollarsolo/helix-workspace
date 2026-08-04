@@ -59,7 +59,7 @@ interface Manifest {
 
 const manifest: Manifest = JSON.parse(readFileSync(path.join(HERE, "manifest.json"), "utf-8"));
 
-async function main() {
+async function main(): Promise<void> {
   const selected =
     ONLY.length > 0 ? manifest.sources.filter((src) => ONLY.includes(src.id)) : manifest.sources;
   if (selected.length === 0) {
@@ -73,20 +73,27 @@ async function main() {
     mkdirSync(targetAbs, { recursive: true });
 
     try {
-      if (src.strategy === "github-tarball-subdir") {
-        await fetchGithubTarballSubdir(src, targetAbs);
-      } else if (src.strategy === "commonmark-spec-split") {
-        await fetchCommonmarkSpec(src, targetAbs);
-      } else if (src.strategy === "picsum") {
-        await fetchPicsum(src, targetAbs);
-      } else if (src.strategy === "url-list") {
-        await fetchUrlList(src, targetAbs);
-      } else if (src.strategy === "synthetic-email") {
-        await generateSyntheticEmail(src, targetAbs);
-      } else if (src.strategy === "synthetic-audio") {
-        await generateSyntheticAudio(src, targetAbs);
-      } else {
-        throw new Error(`Unknown strategy: ${(src as ManifestSource).strategy}`);
+      switch (src.strategy) {
+        case "github-tarball-subdir":
+          await fetchGithubTarballSubdir(src, targetAbs);
+          break;
+        case "commonmark-spec-split":
+          await fetchCommonmarkSpec(src, targetAbs);
+          break;
+        case "picsum":
+          await fetchPicsum(src, targetAbs);
+          break;
+        case "url-list":
+          await fetchUrlList(src, targetAbs);
+          break;
+        case "synthetic-email":
+          await generateSyntheticEmail(src, targetAbs);
+          break;
+        case "synthetic-audio":
+          await generateSyntheticAudio(src, targetAbs);
+          break;
+        default:
+          throw new Error(`Unknown strategy: ${(src as ManifestSource).strategy}`);
       }
     } catch (err) {
       if (src.optional) {
@@ -106,17 +113,27 @@ async function main() {
   console.log("\nFetch complete. Run `pnpm corpus:seed` to push into Helix.");
 }
 
-async function fetchGithubTarballSubdir(src: ManifestSource, targetAbs: string) {
+/** Idempotency guard shared by every strategy: report and skip when the target
+ *  dir already holds at least `minimumFiles`, unless --force was passed.
+ *  `action` names what --force would do, so the hint reads naturally for both
+ *  downloaded and generated corpora. */
+async function isAlreadyPopulated(
+  targetAbs: string,
+  minimumFiles: number,
+  action: "refetch" | "regenerate",
+): Promise<boolean> {
+  if (FORCE) return false;
+  const existing = await countFiles(targetAbs);
+  if (existing < minimumFiles) return false;
+  console.log(`  ✓ ${existing} files already present (use --force to ${action})`);
+  return true;
+}
+
+async function fetchGithubTarballSubdir(src: ManifestSource, targetAbs: string): Promise<void> {
   const { repo, ref, subdir } = src;
   if (!repo || !ref || !subdir) throw new Error(`Missing repo/ref/subdir for ${src.id}`);
 
-  if (!FORCE) {
-    const existing = await countFiles(targetAbs);
-    if (existing > 0) {
-      console.log(`  ✓ ${existing} files already present (use --force to refetch)`);
-      return;
-    }
-  }
+  if (await isAlreadyPopulated(targetAbs, 1, "refetch")) return;
 
   const tmp = await mkdtemp(path.join(tmpdir(), `helix-corpus-${src.id}-`));
   try {
@@ -142,15 +159,10 @@ async function fetchGithubTarballSubdir(src: ManifestSource, targetAbs: string) 
   }
 }
 
-async function fetchCommonmarkSpec(src: ManifestSource, targetAbs: string) {
+async function fetchCommonmarkSpec(src: ManifestSource, targetAbs: string): Promise<void> {
   if (!src.specUrl) throw new Error(`Missing specUrl for ${src.id}`);
-  if (!FORCE) {
-    const existing = await countFiles(targetAbs);
-    if (existing > 50) {
-      console.log(`  ✓ ${existing} files already present (use --force to refetch)`);
-      return;
-    }
-  }
+  // 51+: a handful of stray files is not a real split, only a full spec run is.
+  if (await isAlreadyPopulated(targetAbs, 51, "refetch")) return;
   console.log(`  Downloading ${src.specUrl} …`);
   const res = await fetch(src.specUrl);
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${src.specUrl}`);
@@ -169,7 +181,13 @@ async function fetchCommonmarkSpec(src: ManifestSource, targetAbs: string) {
   await writeFile(path.join(targetAbs, "commonmark-spec-full.md"), text, "utf-8");
 }
 
-async function fetchPicsum(src: ManifestSource, targetAbs: string) {
+/** A previously downloaded file counts as cached only if it is plausibly whole —
+ *  curl can leave sub-1KB stubs behind when a transfer dies mid-flight. */
+function isCachedDownload(outPath: string): boolean {
+  return !FORCE && existsSync(outPath) && statSync(outPath).size > 1000;
+}
+
+async function fetchPicsum(src: ManifestSource, targetAbs: string): Promise<void> {
   const [from, to] = src.seedRange ?? [1, 100];
   const w = src.width ?? 1200;
   const h = src.height ?? 800;
@@ -183,7 +201,7 @@ async function fetchPicsum(src: ManifestSource, targetAbs: string) {
       targetAbs,
       `picsum-${seed.toString().padStart(4, "0")}-${w}x${h}.${ext}`,
     );
-    if (!FORCE && existsSync(outPath) && statSync(outPath).size > 1000) {
+    if (isCachedDownload(outPath)) {
       skipped += 1;
       continue;
     }
@@ -199,26 +217,25 @@ async function fetchPicsum(src: ManifestSource, targetAbs: string) {
   console.log(`  ✓ downloaded ${done}, skipped ${skipped} (cached)`);
 }
 
-async function downloadToFile(url: string, outPath: string) {
+async function downloadToFile(url: string, outPath: string): Promise<void> {
   // execFile, not exec — no shell interpolation. URL comes from checked-in manifest.
-  execFileSync(
-    "curl",
-    ["-fsSL", "--retry", "3", "--retry-delay", "2", "-o", outPath, url],
-    { stdio: ["ignore", "ignore", "inherit"] },
-  );
+  execFileSync("curl", ["-fsSL", "--retry", "3", "--retry-delay", "2", "-o", outPath, url], {
+    stdio: ["ignore", "ignore", "inherit"],
+  });
 }
 
 /** Fetch a static list of URLs. Used for small, hand-curated sample sets
  *  (audio/video) where we want named files rather than generated content. */
-async function fetchUrlList(src: ManifestSource, targetAbs: string) {
+async function fetchUrlList(src: ManifestSource, targetAbs: string): Promise<void> {
   const urls = src.urls ?? [];
   if (urls.length === 0) throw new Error(`url-list source ${src.id} has no urls`);
   let done = 0;
   let skipped = 0;
   for (const url of urls) {
-    const filename = decodeURIComponent(url.split("/").pop() ?? "").replace(/[^A-Za-z0-9._-]+/g, "_") || "file";
+    const filename =
+      decodeURIComponent(url.split("/").pop() ?? "").replace(/[^A-Za-z0-9._-]+/g, "_") || "file";
     const outPath = path.join(targetAbs, filename);
-    if (!FORCE && existsSync(outPath) && statSync(outPath).size > 1000) {
+    if (isCachedDownload(outPath)) {
       skipped += 1;
       continue;
     }
@@ -238,22 +255,16 @@ async function fetchUrlList(src: ManifestSource, targetAbs: string) {
  *  - 25% with attachments (PNG, PDF stub, TXT)
  *  Deterministic via a seeded PRNG so the same N always produces the same bytes
  *  — diffs and snapshot tests stay stable. */
-async function generateSyntheticEmail(src: ManifestSource, targetAbs: string) {
+async function generateSyntheticEmail(src: ManifestSource, targetAbs: string): Promise<void> {
   const count = src.emailCount ?? 300;
 
-  if (!FORCE) {
-    const existing = await countFiles(targetAbs);
-    if (existing >= count) {
-      console.log(`  ✓ ${existing} files already present (use --force to regenerate)`);
-      return;
-    }
-  }
+  if (await isAlreadyPopulated(targetAbs, count, "regenerate")) return;
 
   // Mulberry32 — small, fast, deterministic. Seed is fixed so each corpus
   // generation is byte-identical across machines.
-  let seed = 0xC0FFEE;
+  let seed = 0xc0ffee;
   const rand = () => {
-    seed = (seed + 0x6D2B79F5) >>> 0;
+    seed = (seed + 0x6d2b79f5) >>> 0;
     let t = seed;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
@@ -261,14 +272,86 @@ async function generateSyntheticEmail(src: ManifestSource, targetAbs: string) {
   };
   const pick = <T>(arr: readonly T[]): T => arr[Math.floor(rand() * arr.length)]!;
 
-  const firstNames = ["Ada","Grace","Linus","Sundar","Margaret","Bjarne","Hedy","Don","Barbara","Tim","Vint","Radia","Katherine","Brendan","Anita","Mary","Donald","Ken","Brian","Dennis"];
-  const lastNames = ["Lovelace","Hopper","Torvalds","Pichai","Hamilton","Stroustrup","Lamarr","Knuth","Liskov","Berners-Lee","Cerf","Perlman","Johnson","Eich","Borg","Jackson","Knuth","Thompson","Kernighan","Ritchie"];
-  const domains = ["acme.example","contoso.example","initech.example","umbrella.example","stark.example","wayne.example","cyberdyne.example","tyrell.example"];
+  const firstNames = [
+    "Ada",
+    "Grace",
+    "Linus",
+    "Sundar",
+    "Margaret",
+    "Bjarne",
+    "Hedy",
+    "Don",
+    "Barbara",
+    "Tim",
+    "Vint",
+    "Radia",
+    "Katherine",
+    "Brendan",
+    "Anita",
+    "Mary",
+    "Donald",
+    "Ken",
+    "Brian",
+    "Dennis",
+  ];
+  const lastNames = [
+    "Lovelace",
+    "Hopper",
+    "Torvalds",
+    "Pichai",
+    "Hamilton",
+    "Stroustrup",
+    "Lamarr",
+    "Knuth",
+    "Liskov",
+    "Berners-Lee",
+    "Cerf",
+    "Perlman",
+    "Johnson",
+    "Eich",
+    "Borg",
+    "Jackson",
+    "Knuth",
+    "Thompson",
+    "Kernighan",
+    "Ritchie",
+  ];
+  const domains = [
+    "acme.example",
+    "contoso.example",
+    "initech.example",
+    "umbrella.example",
+    "stark.example",
+    "wayne.example",
+    "cyberdyne.example",
+    "tyrell.example",
+  ];
   const subjectStems = [
-    "Q3 planning sync follow-up","Re: design review draft","Customer escalation #","RFC: API versioning","Welcome to the team",
-    "Weekly status:","Action required:","Heads up:","Quick question on","Re: invoice","FYI:","Re: roadmap","Sprint retro notes",
-    "Re: incident postmortem","New hire onboarding","Vendor contract renewal","Out of office","Re: latency regression","Re: deploy plan",
-    "Re: feature flag","[security] CVE update","Re: budget","Customer feedback summary","Re: weekly metrics","Re: pricing proposal",
+    "Q3 planning sync follow-up",
+    "Re: design review draft",
+    "Customer escalation #",
+    "RFC: API versioning",
+    "Welcome to the team",
+    "Weekly status:",
+    "Action required:",
+    "Heads up:",
+    "Quick question on",
+    "Re: invoice",
+    "FYI:",
+    "Re: roadmap",
+    "Sprint retro notes",
+    "Re: incident postmortem",
+    "New hire onboarding",
+    "Vendor contract renewal",
+    "Out of office",
+    "Re: latency regression",
+    "Re: deploy plan",
+    "Re: feature flag",
+    "[security] CVE update",
+    "Re: budget",
+    "Customer feedback summary",
+    "Re: weekly metrics",
+    "Re: pricing proposal",
   ];
   const plainBodies = [
     "Hi {name},\n\nQuick note — can you take a look at this when you have a moment? No rush, just want to make sure we're aligned before Friday.\n\nThanks,\n{author}\n",
@@ -277,7 +360,18 @@ async function generateSyntheticEmail(src: ManifestSource, targetAbs: string) {
     "{name},\n\nThe customer escalation has been resolved. Root cause was a misconfiguration in the staging environment that leaked into prod during the last release window. Mitigation deployed, incident closed.\n\nFull writeup in the postmortem doc.\n\n{author}\n",
     "Hi all,\n\nI'll be OOO from Thursday through Monday. {name} is the backup on-call. Please ping them for anything urgent during that window.\n\nCheers,\n{author}\n",
   ];
-  const topics = ["docs","auth","billing","scim","calendar","drive","ai-routing","ingest","versioning","federation"];
+  const topics = [
+    "docs",
+    "auth",
+    "billing",
+    "scim",
+    "calendar",
+    "drive",
+    "ai-routing",
+    "ingest",
+    "versioning",
+    "federation",
+  ];
 
   for (let i = 0; i < count; i++) {
     const senderFirst = pick(firstNames);
@@ -288,10 +382,10 @@ async function generateSyntheticEmail(src: ManifestSource, targetAbs: string) {
     const recvDomain = pick(domains);
     const sender = `${senderFirst} ${senderLast} <${senderFirst.toLowerCase()}.${senderLast.toLowerCase()}@${senderDomain}>`;
     const recv = `${recvFirst} ${recvLast} <${recvFirst.toLowerCase()}.${recvLast.toLowerCase()}@${recvDomain}>`;
-    const cc = rand() < 0.3
-      ? `${pick(firstNames)}.${pick(lastNames)}@${pick(domains)}`.toLowerCase()
-      : null;
-    const subject = `${pick(subjectStems)}${pick(subjectStems).startsWith("Customer escalation") ? Math.floor(rand() * 9000 + 1000) : ""}`.trim();
+    const cc =
+      rand() < 0.3 ? `${pick(firstNames)}.${pick(lastNames)}@${pick(domains)}`.toLowerCase() : null;
+    const subject =
+      `${pick(subjectStems)}${pick(subjectStems).startsWith("Customer escalation") ? Math.floor(rand() * 9000 + 1000) : ""}`.trim();
     const topic = pick(topics);
     const plainTemplate = pick(plainBodies);
     const plainBody = plainTemplate
@@ -303,36 +397,36 @@ async function generateSyntheticEmail(src: ManifestSource, targetAbs: string) {
     const date = new Date(epoch).toUTCString();
     const messageId = `<msg-${i.toString().padStart(5, "0")}.${seed.toString(16)}@${senderDomain}>`;
 
+    // Envelope headers are identical across MIME shapes; only Cc is conditional
+    // (~30% of messages), so it is dropped here rather than in every variant.
+    const envelope = [
+      `From: ${sender}`,
+      `To: ${recv}`,
+      cc ? `Cc: ${cc}` : null,
+      `Subject: ${subject}`,
+      `Date: ${date}`,
+      `Message-ID: ${messageId}`,
+      `MIME-Version: 1.0`,
+    ].filter((line): line is string => line !== null);
+
     const variant = i % 4; // 0,1,2,3 — 50% multipart, 25% plain, 25% with attachment
     let body: string;
     if (variant === 2) {
       // plain-text only
       body = [
-        `From: ${sender}`,
-        `To: ${recv}`,
-        cc ? `Cc: ${cc}` : null,
-        `Subject: ${subject}`,
-        `Date: ${date}`,
-        `Message-ID: ${messageId}`,
-        `MIME-Version: 1.0`,
+        ...envelope,
         `Content-Type: text/plain; charset=utf-8`,
         `Content-Transfer-Encoding: 8bit`,
         ``,
         plainBody,
-      ].filter((x) => x !== null).join("\r\n");
+      ].join("\r\n");
     } else if (variant === 3) {
       // multipart/mixed with attachment (small synthetic .txt)
       const boundary = `=_attach_${(seed >>> 0).toString(16)}`;
       const attachment = `Synthetic attachment ${i}\nTopic: ${topic}\nGenerated by Helix test corpus.\n`;
       const attachmentB64 = Buffer.from(attachment, "utf-8").toString("base64");
       body = [
-        `From: ${sender}`,
-        `To: ${recv}`,
-        cc ? `Cc: ${cc}` : null,
-        `Subject: ${subject}`,
-        `Date: ${date}`,
-        `Message-ID: ${messageId}`,
-        `MIME-Version: 1.0`,
+        ...envelope,
         `Content-Type: multipart/mixed; boundary="${boundary}"`,
         ``,
         `--${boundary}`,
@@ -348,7 +442,7 @@ async function generateSyntheticEmail(src: ManifestSource, targetAbs: string) {
         ``,
         attachmentB64,
         `--${boundary}--`,
-      ].filter((x) => x !== null).join("\r\n");
+      ].join("\r\n");
     } else {
       // multipart/alternative (HTML + plain) — the realistic majority case
       const boundary = `=_alt_${(seed >>> 0).toString(16)}`;
@@ -360,13 +454,7 @@ async function generateSyntheticEmail(src: ManifestSource, targetAbs: string) {
 <p style="font-size:11px;color:#888">This is a synthetic test email (#${i}) from the Helix dev corpus. Topic: ${topic}.</p>
 </body></html>`;
       body = [
-        `From: ${sender}`,
-        `To: ${recv}`,
-        cc ? `Cc: ${cc}` : null,
-        `Subject: ${subject}`,
-        `Date: ${date}`,
-        `Message-ID: ${messageId}`,
-        `MIME-Version: 1.0`,
+        ...envelope,
         `Content-Type: multipart/alternative; boundary="${boundary}"`,
         ``,
         `--${boundary}`,
@@ -381,7 +469,7 @@ async function generateSyntheticEmail(src: ManifestSource, targetAbs: string) {
         ``,
         htmlBody,
         `--${boundary}--`,
-      ].filter((x) => x !== null).join("\r\n");
+      ].join("\r\n");
     }
 
     const filename = `email-${i.toString().padStart(4, "0")}-${topic}.eml`;
@@ -390,7 +478,7 @@ async function generateSyntheticEmail(src: ManifestSource, targetAbs: string) {
   console.log(`  ✓ generated ${count} .eml files`);
 }
 
-async function moveTreeContents(srcDir: string, destDir: string) {
+async function moveTreeContents(srcDir: string, destDir: string): Promise<void> {
   const entries = await readdir(srcDir, { withFileTypes: true });
   for (const entry of entries) {
     const src = path.join(srcDir, entry.name);
@@ -407,7 +495,7 @@ async function moveTreeContents(srcDir: string, destDir: string) {
 /** Generate small playable WAV files (mono 16-bit PCM, sine wave).
  *  Pure Node — no ffmpeg dependency, deterministic. Useful for verifying the
  *  audio editor surface plays back without shipping copyrighted audio. */
-async function generateSyntheticAudio(src: ManifestSource, targetAbs: string) {
+async function generateSyntheticAudio(src: ManifestSource, targetAbs: string): Promise<void> {
   const samples = [
     { name: "tone-440hz-1s.wav", freq: 440, duration: 1.0, sampleRate: 22050 },
     { name: "tone-880hz-1s.wav", freq: 880, duration: 1.0, sampleRate: 22050 },
@@ -416,13 +504,7 @@ async function generateSyntheticAudio(src: ManifestSource, targetAbs: string) {
     { name: "chime-arpeggio-2s.wav", freq: 0, duration: 2.0, sampleRate: 22050 },
   ];
 
-  if (!FORCE) {
-    const existing = await countFiles(targetAbs);
-    if (existing >= samples.length) {
-      console.log(`  ✓ ${existing} files already present (use --force to regenerate)`);
-      return;
-    }
-  }
+  if (await isAlreadyPopulated(targetAbs, samples.length, "regenerate")) return;
 
   for (const s of samples) {
     const total = Math.round(s.duration * s.sampleRate);

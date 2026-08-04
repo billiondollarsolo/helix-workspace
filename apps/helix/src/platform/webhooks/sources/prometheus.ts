@@ -7,6 +7,7 @@ import type {
 } from "./common.js";
 import {
   arrayField,
+  bearerToken,
   getHeader,
   numberField,
   objectField,
@@ -72,13 +73,4 @@ export function parsePrometheusWebhook(options: {
     ...(commonLabels === undefined ? {} : { commonLabels }),
     payload,
   };
-}
-
-function bearerToken(headers: WebhookHeaders | undefined): string | undefined {
-  const authorization = getHeader(headers, "authorization");
-  if (authorization === undefined) {
-    return undefined;
-  }
-  const match = /^bearer\s+(.+)$/iu.exec(authorization);
-  return match?.[1]?.trim();
 }

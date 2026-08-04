@@ -4,9 +4,5 @@ import { MeetShell } from "@/features/meet/meet-shell";
 
 export const Route = createFileRoute("/_shell/meet/")({
   beforeLoad: () => enforceFullWorkspaceRoute(),
-  component: MeetRoute,
+  component: MeetShell,
 });
-
-function MeetRoute() {
-  return <MeetShell />;
-}

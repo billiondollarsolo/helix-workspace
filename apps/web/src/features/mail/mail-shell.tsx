@@ -54,6 +54,11 @@ function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
 }
 
+/** True when the beta AI/rules second pass — not spamd or a manual move — caught this thread. */
+function isBetaSpamCatch(row: Pick<MailThreadRow, "spamCatcher">): boolean {
+  return row.spamCatcher === "ai" || row.spamCatcher === "rules";
+}
+
 function MailMessageBody({
   body,
   bodyFormat,
@@ -291,11 +296,7 @@ function ThreadRow({
         padding: "var(--rd-row-py) 16px",
         borderBottom: "1px solid var(--border)",
         cursor: "pointer",
-        background: checked
-          ? "var(--accent-soft)"
-          : selected
-            ? "var(--accent-soft)"
-            : "transparent",
+        background: checked || selected ? "var(--accent-soft)" : "transparent",
         transition: "background 0.08s",
         fontSize: "var(--rd-row-fs)",
         minHeight: "var(--rd-list-row-h)",
@@ -498,6 +499,15 @@ function EmptyState({
 
 type SelectAllSubset = "all" | "none" | "read" | "unread" | "starred" | "unstarred";
 
+const SELECT_SUBSETS: ReadonlyArray<{ readonly label: string; readonly value: SelectAllSubset }> = [
+  { label: "All", value: "all" },
+  { label: "None", value: "none" },
+  { label: "Read", value: "read" },
+  { label: "Unread", value: "unread" },
+  { label: "Starred", value: "starred" },
+  { label: "Unstarred", value: "unstarred" },
+];
+
 interface ThreadListProps {
   readonly tab: MailTabId;
   readonly onTab: (tab: MailTabId) => void;
@@ -670,21 +680,19 @@ function ThreadList({
 
   // Close dropdowns on outside click
   useEffect(() => {
+    const menus = [
+      [selectDropRef, setSelectDropOpen],
+      [idleMoreRef, setIdleMoreOpen],
+      [moveMenuRef, setMoveMenuOpen],
+      [labelsMenuRef, setLabelsMenuOpen],
+      [bulkMoreRef, setBulkMoreOpen],
+    ] as const;
     function handleClickOutside(e: MouseEvent) {
-      if (selectDropRef.current && !selectDropRef.current.contains(e.target as Node)) {
-        setSelectDropOpen(false);
-      }
-      if (idleMoreRef.current && !idleMoreRef.current.contains(e.target as Node)) {
-        setIdleMoreOpen(false);
-      }
-      if (moveMenuRef.current && !moveMenuRef.current.contains(e.target as Node)) {
-        setMoveMenuOpen(false);
-      }
-      if (labelsMenuRef.current && !labelsMenuRef.current.contains(e.target as Node)) {
-        setLabelsMenuOpen(false);
-      }
-      if (bulkMoreRef.current && !bulkMoreRef.current.contains(e.target as Node)) {
-        setBulkMoreOpen(false);
+      const target = e.target as Node;
+      for (const [ref, setOpen] of menus) {
+        if (ref.current && !ref.current.contains(target)) {
+          setOpen(false);
+        }
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -762,17 +770,9 @@ function ThreadList({
 
   // Determine if a majority are unread to decide the bulk read button label
   const checkedUnreadCount = threads.filter((t) => checkedIds.has(t.threadId) && t.unread).length;
-  const bulkReadLabel = checkedUnreadCount >= checkedIds.size / 2 ? "Mark read" : "Mark unread";
-  const bulkReadUnread = !(checkedUnreadCount >= checkedIds.size / 2);
-
-  const SELECT_SUBSETS: Array<{ label: string; value: SelectAllSubset }> = [
-    { label: "All", value: "all" },
-    { label: "None", value: "none" },
-    { label: "Read", value: "read" },
-    { label: "Unread", value: "unread" },
-    { label: "Starred", value: "starred" },
-    { label: "Unstarred", value: "unstarred" },
-  ];
+  const majorityUnread = checkedUnreadCount >= checkedIds.size / 2;
+  const bulkReadLabel = majorityUnread ? "Mark read" : "Mark unread";
+  const bulkReadUnread = !majorityUnread;
 
   /* ---- Master checkbox + caret (shared by both toolbar states) ---- */
   const masterCheckboxSection = (
@@ -1440,7 +1440,7 @@ function ThreadView({
       </div>
       <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
         <div style={{ maxWidth: 880, margin: "0 auto", padding: "20px 32px" }}>
-          {row.spamCatcher === "ai" || row.spamCatcher === "rules" ? (
+          {isBetaSpamCatch(row) ? (
             <div
               role="status"
               style={{
@@ -2169,64 +2169,53 @@ export function MailShell() {
   );
 
   // Bulk actions — apply to all checked IDs, then clear selection
+  const runBulk = useCallback((ids: ReadonlySet<string>, apply: (threadId: string) => void) => {
+    for (const threadId of ids) {
+      apply(threadId);
+    }
+    setCheckedIds(new Set());
+  }, []);
+
   const handleBulkArchive = useCallback(
     (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        archiveMutation.mutate(threadId);
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => archiveMutation.mutate(threadId));
     },
-    [archiveMutation],
+    [archiveMutation, runBulk],
   );
 
   const handleBulkDelete = useCallback(
     (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        deleteMutation.mutate(threadId);
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => deleteMutation.mutate(threadId));
     },
-    [deleteMutation],
+    [deleteMutation, runBulk],
   );
 
   const handleBulkSpam = useCallback(
     (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        spamMutation.mutate(threadId);
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => spamMutation.mutate(threadId));
     },
-    [spamMutation],
+    [spamMutation, runBulk],
   );
 
   const handleBulkNotSpam = useCallback(
     (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        notSpamMutation.mutate(threadId);
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => notSpamMutation.mutate(threadId));
     },
-    [notSpamMutation],
+    [notSpamMutation, runBulk],
   );
 
   const handleBulkRead = useCallback(
     (ids: ReadonlySet<string>, unread: boolean) => {
-      for (const threadId of ids) {
-        readMutation.mutate({ threadId, unread });
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => readMutation.mutate({ threadId, unread }));
     },
-    [readMutation],
+    [readMutation, runBulk],
   );
 
   const handleBulkSnooze = useCallback(
     (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        snoozeMutation.mutate(threadId);
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => snoozeMutation.mutate(threadId));
     },
-    [snoozeMutation],
+    [snoozeMutation, runBulk],
   );
 
   const handleBulkMove = useCallback(
@@ -2400,8 +2389,7 @@ export function MailShell() {
                   : undefined
               }
               onConfirmAiSpam={
-                folder === "spam" &&
-                (selectedRow.spamCatcher === "ai" || selectedRow.spamCatcher === "rules")
+                folder === "spam" && isBetaSpamCatch(selectedRow)
                   ? () => {
                       // Re-affirm spam so durable feedback records user agreement with AI/rules.
                       spamMutation.mutate(selectedRow.threadId);

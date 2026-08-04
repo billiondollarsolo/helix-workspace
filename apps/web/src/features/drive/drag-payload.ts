@@ -23,7 +23,7 @@ export function setHelixDriveItemDragData(
   setDragData(
     dataTransfer,
     "text/html",
-    `<a href="${escapeHtmlAttribute(href)}">${escapeHtml(payload.name)}</a>`,
+    `<a href="${escapeHtml(href)}">${escapeHtml(payload.name)}</a>`,
   );
   dataTransfer.dropEffect = "copy";
   dataTransfer.effectAllowed = "copyLink";
@@ -119,8 +119,4 @@ function escapeHtml(value: string): string {
         return char;
     }
   });
-}
-
-function escapeHtmlAttribute(value: string): string {
-  return escapeHtml(value);
 }

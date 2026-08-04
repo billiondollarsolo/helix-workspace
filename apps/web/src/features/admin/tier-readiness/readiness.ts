@@ -157,14 +157,16 @@ function fallbackBackendRequirementDetail(requirement: BackendRequirement): stri
   return requirement.required ? "Required for the current tier." : "Not required for this tier.";
 }
 
+const CHECK_STATUS_BY_BACKEND_STATUS: Readonly<Record<BackendReadinessStatus, CheckStatus>> = {
+  ready: "ready",
+  not_required: "not-required",
+  missing: "blocked",
+  degraded: "warning",
+  unknown: "warning",
+};
+
 export function backendStatusToCheckStatus(status: BackendReadinessStatus): CheckStatus {
-  if (status === "ready") {
-    return "ready";
-  }
-  if (status === "not_required") {
-    return "not-required";
-  }
-  return status === "missing" ? "blocked" : "warning";
+  return CHECK_STATUS_BY_BACKEND_STATUS[status];
 }
 
 export function serviceFromBackendRequirement(
@@ -186,14 +188,16 @@ export function serviceFromBackendRequirement(
   };
 }
 
+const SERVICE_STATUS_BY_BACKEND_STATUS: Readonly<Record<BackendReadinessStatus, ServiceStatus>> = {
+  ready: "configured",
+  not_required: "configured",
+  missing: "missing",
+  degraded: "pending",
+  unknown: "pending",
+};
+
 export function serviceStatusFromBackend(status: BackendReadinessStatus): ServiceStatus {
-  if (status === "ready" || status === "not_required") {
-    return "configured";
-  }
-  if (status === "missing") {
-    return "missing";
-  }
-  return "pending";
+  return SERVICE_STATUS_BY_BACKEND_STATUS[status];
 }
 
 export function formatRequirementFields(

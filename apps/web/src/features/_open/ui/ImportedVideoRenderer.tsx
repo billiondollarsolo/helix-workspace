@@ -7,6 +7,7 @@
  */
 
 import type { ImportedVideo } from "../parsers/types.js";
+import { driveDownloadHref, formatBytes } from "./viewer-shared";
 
 export interface ImportedVideoRendererProps {
   readonly video: ImportedVideo;
@@ -33,11 +34,7 @@ export function ImportedVideoRenderer({ video, objectId, fileName }: ImportedVid
           {video.format.label} · {formatBytes(video.bytes.byteLength)}
         </span>
         <div style={{ flex: 1 }} />
-        <a
-          href={`/api/drive/objects/${objectId}/content?download=1`}
-          className="btn sm"
-          download={fileName ?? ""}
-        >
+        <a href={driveDownloadHref(objectId)} className="btn sm" download={fileName ?? ""}>
           Download
         </a>
       </div>
@@ -64,10 +61,4 @@ export function ImportedVideoRenderer({ video, objectId, fileName }: ImportedVid
       </div>
     </div>
   );
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }

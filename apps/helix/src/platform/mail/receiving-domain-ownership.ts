@@ -29,10 +29,11 @@ export class DnsTxtReceivingDomainOwnershipVerifier implements ReceivingDomainOw
     private readonly tokens: DomainOwnershipTokenSource,
     verifier?: DomainOwnershipVerifier | TxtLookup,
   ) {
-    this.#verifier =
-      typeof verifier === "function"
-        ? new DnsTxtDomainOwnershipVerifier(verifier)
-        : (verifier ?? new DnsTxtDomainOwnershipVerifier());
+    if (typeof verifier === "function") {
+      this.#verifier = new DnsTxtDomainOwnershipVerifier(verifier);
+    } else {
+      this.#verifier = verifier ?? new DnsTxtDomainOwnershipVerifier();
+    }
   }
 
   async verify(record: MailReceivingDomainRecord): Promise<boolean> {

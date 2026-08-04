@@ -27,6 +27,9 @@ export const MAIL_LIVE_SCENARIOS = [
 ];
 export const MAIL_EXTERNAL_TARGETS = ["provider_sandbox", "gmail", "microsoft365"];
 
+// Stable operator-facing code that both the suppression and retry scenarios assert on.
+const SUPPRESSION_CODE = "MAIL_RECIPIENT_SUPPRESSED";
+
 const usage = `Usage: infra/scripts/mail-live-evidence-smoke.mjs [--static|--local|--validate <report.json>]
 
 Dedicated opt-in M7 Mail evidence smoke. --static validates the evidence
@@ -129,15 +132,14 @@ export function anonymizeIdentifier(value) {
 }
 
 export function addressEvidence(address) {
-  const separator = String(address).lastIndexOf("@");
-  if (separator <= 0 || separator === String(address).length - 1) {
+  const value = String(address);
+  const separator = value.lastIndexOf("@");
+  if (separator <= 0 || separator === value.length - 1) {
     throw new Error("mail evidence address must contain a local part and domain");
   }
   return {
-    domain: String(address)
-      .slice(separator + 1)
-      .toLowerCase(),
-    addressHash: anonymizeIdentifier(String(address).toLowerCase()),
+    domain: value.slice(separator + 1).toLowerCase(),
+    addressHash: anonymizeIdentifier(value.toLowerCase()),
   };
 }
 
@@ -209,16 +211,11 @@ async function runLocalEvidence(environment) {
   evidence.local = {};
 
   const cleanMarker = `${markerPrefix}-clean`;
-  await sendSmtp({
-    ...config.smtp,
+  await sendPlainProbe(config, {
     from: "mail-live-clean@external.example",
     recipients: [config.orgA.recipient, config.orgB.recipient],
-    data: plainMessage({
-      from: "mail-live-clean@external.example",
-      recipients: [config.orgA.recipient, config.orgB.recipient],
-      subject: cleanMarker,
-      body: cleanMarker,
-    }),
+    subject: cleanMarker,
+    body: cleanMarker,
   });
   const [orgAClean, orgBClean] = await Promise.all([
     waitForSearch(config.baseUrl, config.orgA.token, cleanMarker, config.timeoutMs),
@@ -253,16 +250,11 @@ async function runLocalEvidence(environment) {
   };
 
   const spamMarker = `${markerPrefix}-spam`;
-  await sendSmtp({
-    ...config.smtp,
+  await sendPlainProbe(config, {
     from: "mail-live-spam@external.example",
     recipients: [config.orgA.recipient],
-    data: plainMessage({
-      from: "mail-live-spam@external.example",
-      recipients: [config.orgA.recipient],
-      subject: spamMarker,
-      body: `${spamMarker}\n\nXJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X`,
-    }),
+    subject: spamMarker,
+    body: `${spamMarker}\n\nXJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X`,
   });
   const spamThread = await waitForFolder(
     config.baseUrl,
@@ -321,18 +313,15 @@ async function runLocalEvidence(environment) {
     latencyMs: Date.now() - outbound.startedAt,
   };
 
-  const hardBounce = await postProviderEvent(config, {
+  const hardBounceEvent = {
     eventId: `${markerPrefix}-hard-bounce`,
     event: "failed",
     severity: "permanent",
     recipient: config.bounceRecipient,
-  });
-  const duplicateBounce = await postProviderEvent(config, {
-    eventId: `${markerPrefix}-hard-bounce`,
-    event: "failed",
-    severity: "permanent",
-    recipient: config.bounceRecipient,
-  });
+  };
+  const hardBounce = await postProviderEvent(config, hardBounceEvent);
+  // The identical event is replayed to prove the webhook deduplicates by event id.
+  const duplicateBounce = await postProviderEvent(config, hardBounceEvent);
   if (!hardBounce.suppressed || !duplicateBounce.duplicate) {
     throw new Error("hard-bounce webhook did not suppress and deduplicate");
   }
@@ -363,13 +352,13 @@ async function runLocalEvidence(environment) {
     timeoutMs: config.timeoutMs,
     expectedStatus: "failed",
   });
-  if (!String(suppressed.record.lastError).includes("MAIL_RECIPIENT_SUPPRESSED")) {
+  if (!String(suppressed.record.lastError).includes(SUPPRESSION_CODE)) {
     throw new Error("suppressed recipient failed without the stable suppression code");
   }
   evidence.local.suppression = {
     status: "passed",
     outboundIdHash: anonymizeIdentifier(suppressed.record.id),
-    operatorCode: "MAIL_RECIPIENT_SUPPRESSED",
+    operatorCode: SUPPRESSION_CODE,
   };
 
   const retried = await retryAndWait(
@@ -380,7 +369,7 @@ async function runLocalEvidence(environment) {
   );
   if (
     retried.id !== suppressed.record.id ||
-    !String(retried.lastError).includes("MAIL_RECIPIENT_SUPPRESSED")
+    !String(retried.lastError).includes(SUPPRESSION_CODE)
   ) {
     throw new Error("explicit retry did not preserve the outbound identity and terminal policy");
   }
@@ -389,7 +378,7 @@ async function runLocalEvidence(environment) {
     outboundIdHash: anonymizeIdentifier(retried.id),
     preservedIdentity: true,
     finalStatus: retried.status,
-    operatorCode: "MAIL_RECIPIENT_SUPPRESSED",
+    operatorCode: SUPPRESSION_CODE,
   };
 
   evidence.external = createEvidenceSkeleton(started).external;
@@ -451,14 +440,18 @@ async function retryAndWait(baseUrl, token, outboundId, timeoutMs) {
   return waitForOutbound(baseUrl, token, record.id, "failed", timeoutMs);
 }
 
+function authorizedJsonHeaders(token) {
+  return {
+    accept: "application/json",
+    authorization: `Bearer ${token}`,
+    "content-type": "application/json",
+  };
+}
+
 async function callTool(baseUrl, token, toolId, input) {
   const response = await fetch(new URL(`/api/tools/${toolId}`, baseUrl), {
     method: "POST",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${token}`,
-      "content-type": "application/json",
-    },
+    headers: authorizedJsonHeaders(token),
     body: JSON.stringify(input),
   });
   const parsed = await jsonResponse(response, toolId);
@@ -474,11 +467,7 @@ async function approvePending(baseUrl, token, pendingId) {
     new URL(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, baseUrl),
     {
       method: "POST",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json",
-      },
+      headers: authorizedJsonHeaders(token),
       body: "{}",
     },
   );
@@ -653,6 +642,15 @@ function eicarMessage(from, recipient, subject) {
   ].join("\r\n");
 }
 
+async function sendPlainProbe(config, { from, recipients, subject, body }) {
+  await sendSmtp({
+    ...config.smtp,
+    from,
+    recipients,
+    data: plainMessage({ from, recipients, subject, body }),
+  });
+}
+
 async function sendSmtp(input) {
   const session = await SmtpSession.connect(input.host, input.port);
   try {
@@ -820,21 +818,28 @@ function validateExternalResult(target, result) {
   }
 }
 
-function validateLocalResult(scenario, result) {
-  const hash = (value) => typeof value === "string" && /^[a-f0-9]{20}$/u.test(value);
-  const address = (value) =>
+function isEvidenceHash(value) {
+  return typeof value === "string" && /^[a-f0-9]{20}$/u.test(value);
+}
+
+function isAddressEvidence(value) {
+  return (
     typeof value === "object" &&
     value !== null &&
     typeof value.domain === "string" &&
-    hash(value.addressHash);
+    isEvidenceHash(value.addressHash)
+  );
+}
+
+function validateLocalResult(scenario, result) {
   switch (scenario) {
     case "recipient_aware_routing":
       if (
-        !hash(result.markerHash) ||
-        !address(result.orgA) ||
-        !address(result.orgB) ||
-        !hash(result.orgA.messageIdHash) ||
-        !hash(result.orgB.messageIdHash) ||
+        !isEvidenceHash(result.markerHash) ||
+        !isAddressEvidence(result.orgA) ||
+        !isAddressEvidence(result.orgB) ||
+        !isEvidenceHash(result.orgA.messageIdHash) ||
+        !isEvidenceHash(result.orgB.messageIdHash) ||
         result.tenantRecipientIsolation !== true
       ) {
         throw new Error("invalid recipient-aware routing evidence");
@@ -845,19 +850,19 @@ function validateLocalResult(scenario, result) {
         !validTimestamp(result.acceptedAt) ||
         !Array.isArray(result.messageIdHashes) ||
         result.messageIdHashes.length !== 2 ||
-        !result.messageIdHashes.every(hash)
+        !result.messageIdHashes.every(isEvidenceHash)
       ) {
         throw new Error("invalid clean inbound evidence");
       }
       return;
     case "spam_inbound":
-      if (!hash(result.messageIdHash) || result.folder !== "spam") {
+      if (!isEvidenceHash(result.messageIdHash) || result.folder !== "spam") {
         throw new Error("invalid spam inbound evidence");
       }
       return;
     case "eicar_quarantine":
       if (
-        !hash(result.quarantineIdHash) ||
+        !isEvidenceHash(result.quarantineIdHash) ||
         !Array.isArray(result.reasons) ||
         result.reasons.length === 0 ||
         result.rawMessageExposed !== false
@@ -867,10 +872,10 @@ function validateLocalResult(scenario, result) {
       return;
     case "outbound_mailpit":
       if (
-        !address(result.recipient) ||
-        !hash(result.outboundIdHash) ||
-        !hash(result.mailpitMessageIdHash) ||
-        (result.providerMessageIdHash !== null && !hash(result.providerMessageIdHash)) ||
+        !isAddressEvidence(result.recipient) ||
+        !isEvidenceHash(result.outboundIdHash) ||
+        !isEvidenceHash(result.mailpitMessageIdHash) ||
+        (result.providerMessageIdHash !== null && !isEvidenceHash(result.providerMessageIdHash)) ||
         !Number.isFinite(result.latencyMs) ||
         result.latencyMs < 0
       ) {
@@ -879,26 +884,29 @@ function validateLocalResult(scenario, result) {
       return;
     case "provider_hard_bounce":
       if (
-        !address(result.recipient) ||
-        !hash(result.eventIdHash) ||
+        !isAddressEvidence(result.recipient) ||
+        !isEvidenceHash(result.eventIdHash) ||
         result.duplicateIdempotent !== true
       ) {
         throw new Error("invalid provider hard-bounce evidence");
       }
       return;
     case "provider_complaint":
-      if (!address(result.recipient) || !hash(result.eventIdHash)) {
+      if (!isAddressEvidence(result.recipient) || !isEvidenceHash(result.eventIdHash)) {
         throw new Error("invalid provider complaint evidence");
       }
       return;
     case "suppression":
-      if (!hash(result.outboundIdHash) || result.operatorCode !== "MAIL_RECIPIENT_SUPPRESSED") {
+      if (
+        !isEvidenceHash(result.outboundIdHash) ||
+        result.operatorCode !== "MAIL_RECIPIENT_SUPPRESSED"
+      ) {
         throw new Error("invalid suppression evidence");
       }
       return;
     case "deterministic_retry":
       if (
-        !hash(result.outboundIdHash) ||
+        !isEvidenceHash(result.outboundIdHash) ||
         result.preservedIdentity !== true ||
         result.finalStatus !== "failed" ||
         result.operatorCode !== "MAIL_RECIPIENT_SUPPRESSED"

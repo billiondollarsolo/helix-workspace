@@ -212,8 +212,8 @@ export async function runDastScan(options, environment = {}) {
   // parsing, but it must cross the host/container UID boundary.
   await chmod(workDirectory, 0o777);
   const started = new Date();
-  let execution = { outcome: "scanner_error", exitCode: null, reportParsed: false };
-  let findings = [];
+  let execution;
+  let findings;
   try {
     const docker = spawnSync(
       "docker",
@@ -265,7 +265,7 @@ export function summarizeZapReport(raw) {
   if (!isRecord(raw)) {
     throw new Error("ZAP JSON report must be an object");
   }
-  const sites = Array.isArray(raw.site) ? raw.site : Array.isArray(raw.sites) ? raw.sites : null;
+  const sites = zapReportSites(raw);
   if (sites === null) {
     throw new Error("ZAP JSON report must contain a site array");
   }
@@ -296,6 +296,14 @@ export function summarizeZapReport(raw) {
   return [...findings.values()].sort((left, right) => left.alertRef.localeCompare(right.alertRef));
 }
 
+// ZAP has emitted the site inventory under both `site` and `sites` across
+// report versions, so both spellings stay accepted.
+function zapReportSites(raw) {
+  if (Array.isArray(raw.site)) return raw.site;
+  if (Array.isArray(raw.sites)) return raw.sites;
+  return null;
+}
+
 export function buildZapDockerArgs({ workDirectory, targetUrl, timeoutSeconds }) {
   return [
     "run",
@@ -318,15 +326,18 @@ export function buildZapDockerArgs({ workDirectory, targetUrl, timeoutSeconds })
 
 export function classifyZapExecution({ status, errorCode, reportParsed }) {
   return {
-    outcome:
-      errorCode === "ETIMEDOUT"
-        ? "timed_out"
-        : errorCode !== undefined || ![0, 1, 2].includes(status) || !reportParsed
-          ? "scanner_error"
-          : "completed",
+    outcome: zapOutcome({ status, errorCode, reportParsed }),
     exitCode: Number.isInteger(status) ? status : null,
     reportParsed,
   };
+}
+
+function zapOutcome({ status, errorCode, reportParsed }) {
+  if (errorCode === "ETIMEDOUT") return "timed_out";
+  if (errorCode !== undefined || ![0, 1, 2].includes(status) || !reportParsed) {
+    return "scanner_error";
+  }
+  return "completed";
 }
 
 export function buildDastEvidence({
@@ -339,11 +350,7 @@ export function buildDastEvidence({
   dispositions,
   binding,
 }) {
-  const summary = Object.fromEntries(SEVERITIES.map((severity) => [severity, 0]));
-  for (const finding of findings) {
-    summary[finding.severity] += finding.count;
-  }
-  summary.total = SEVERITIES.reduce((total, severity) => total + summary[severity], 0);
+  const summary = summarizeFindings(findings);
   const requiredDispositionRefs = findings
     .filter((finding) => DISPOSITION_SEVERITIES.includes(finding.severity))
     .map((finding) => finding.alertRef);
@@ -464,10 +471,8 @@ export function validateDastEvidence(evidence, options = {}) {
   if (evidence.status === "passed" || options.requirePass) {
     validateDispositionCoverage(findings, dispositions);
   }
-  if (summary.high > 0 || summary.critical > 0) {
-    if (evidence.status === "passed") {
-      throw new Error("passed DAST evidence cannot contain High or Critical findings");
-    }
+  if ((summary.high > 0 || summary.critical > 0) && evidence.status === "passed") {
+    throw new Error("passed DAST evidence cannot contain High or Critical findings");
   }
   if (evidence.releaseBinding !== undefined) {
     validateReleaseEvidenceBinding(evidence.releaseBinding, options.expectedBinding);
@@ -634,12 +639,19 @@ function validateDispositionReferences(findings, dispositions) {
 function validateSummary(summary, findings) {
   assertRecord(summary, "DAST summary");
   assertExactKeys(summary, [...SEVERITIES, "total"], [], "DAST summary");
-  const expected = Object.fromEntries(SEVERITIES.map((severity) => [severity, 0]));
-  for (const finding of findings) expected[finding.severity] += finding.count;
-  expected.total = SEVERITIES.reduce((total, severity) => total + expected[severity], 0);
+  const expected = summarizeFindings(findings);
   for (const [key, count] of Object.entries(expected)) {
     if (summary[key] !== count) throw new Error("DAST summary does not match sanitized findings");
   }
+  return summary;
+}
+
+function summarizeFindings(findings) {
+  const summary = Object.fromEntries(SEVERITIES.map((severity) => [severity, 0]));
+  for (const finding of findings) {
+    summary[finding.severity] += finding.count;
+  }
+  summary.total = SEVERITIES.reduce((total, severity) => total + summary[severity], 0);
   return summary;
 }
 
@@ -723,11 +735,9 @@ function safeFindingName(value) {
 
 function positiveCount(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
-  return Number.isInteger(parsed) && parsed > 0
-    ? parsed
-    : Number.isInteger(fallback) && fallback > 0
-      ? fallback
-      : 1;
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  if (Number.isInteger(fallback) && fallback > 0) return fallback;
+  return 1;
 }
 
 function isLoopbackHostname(hostname) {

@@ -110,13 +110,14 @@ export function createStaticFailureRecoveryEvidence(now = new Date()) {
     status: "not_run",
     startedAt: timestamp,
     completedAt: timestamp,
-    scenarios: Object.fromEntries(
-      FAILURE_RECOVERY_SCENARIOS.map(({ id }) => [
-        id,
-        { status: "not_run", reasonCode: "static_contract_validation_only" },
-      ]),
-    ),
+    scenarios: notRunScenarios("static_contract_validation_only"),
   };
+}
+
+function notRunScenarios(reasonCode) {
+  return Object.fromEntries(
+    FAILURE_RECOVERY_SCENARIOS.map(({ id }) => [id, { status: "not_run", reasonCode }]),
+  );
 }
 
 export function createLiveFailureRecoveryEvidence({
@@ -136,12 +137,7 @@ export function createLiveFailureRecoveryEvidence({
     status: "running",
     startedAt: startedAt.toISOString(),
     completedAt: null,
-    scenarios: Object.fromEntries(
-      FAILURE_RECOVERY_SCENARIOS.map(({ id }) => [
-        id,
-        { status: "not_run", reasonCode: "live_scenario_not_started" },
-      ]),
-    ),
+    scenarios: notRunScenarios("live_scenario_not_started"),
   };
 }
 

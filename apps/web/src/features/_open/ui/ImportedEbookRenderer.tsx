@@ -16,6 +16,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ImportedEbook } from "../parsers/types.js";
+import { driveDownloadHref, formatBytes } from "./viewer-shared";
 
 interface SpineEntry {
   readonly id: string;
@@ -182,11 +183,7 @@ export function ImportedEbookRenderer({ ebook, objectId, fileName }: ImportedEbo
         >
           Next →
         </button>
-        <a
-          href={`/api/drive/objects/${objectId}/content?download=1`}
-          className="btn sm"
-          download={fileName ?? ""}
-        >
+        <a href={driveDownloadHref(objectId)} className="btn sm" download={fileName ?? ""}>
           Download
         </a>
       </div>
@@ -400,10 +397,4 @@ function parseNcxToc(ncxXml: string): TocEntry[] {
     }
   }
   return out;
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }

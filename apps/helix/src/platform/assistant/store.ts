@@ -60,7 +60,9 @@ export class InMemoryAssistantStore implements AssistantStore {
   readonly #messages = new Map<string, AssistantMessage[]>();
   readonly #memoryPreferences = new Map<string, AssistantMemoryPreference>();
 
-  async createConversation(input: AssistantCreateConversationInput): Promise<AssistantConversation> {
+  async createConversation(
+    input: AssistantCreateConversationInput,
+  ): Promise<AssistantConversation> {
     const now = new Date().toISOString();
     const preference = await this.getMemoryPreference(input.actor);
     const conversation: AssistantConversation = {
@@ -207,7 +209,9 @@ export class InMemoryAssistantStore implements AssistantStore {
   }): Promise<readonly AssistantMessage[]> {
     const messages = this.#messages.get(input.conversationId) ?? [];
     const filtered = messages.filter((message) => message.orgId === input.orgId);
-    return input.limit === undefined ? filtered : filtered.slice(Math.max(0, filtered.length - input.limit));
+    return input.limit === undefined
+      ? filtered
+      : filtered.slice(Math.max(0, filtered.length - input.limit));
   }
 
   async appendMessage(input: AssistantAppendMessageInput): Promise<AssistantMessage> {
@@ -283,7 +287,9 @@ export class InMemoryAssistantStore implements AssistantStore {
 export class PostgresAssistantStore implements AssistantStore {
   constructor(private readonly sql: postgres.Sql) {}
 
-  async createConversation(input: AssistantCreateConversationInput): Promise<AssistantConversation> {
+  async createConversation(
+    input: AssistantCreateConversationInput,
+  ): Promise<AssistantConversation> {
     const preference = await this.getMemoryPreference(input.actor);
     const rows = await this.sql`
       insert into assistant_conversations (
@@ -319,8 +325,7 @@ export class PostgresAssistantStore implements AssistantStore {
         and archived_at is null
       limit 1
     `;
-    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
-    return row === undefined ? null : rowToConversation(row);
+    return optionalConversation(rows);
   }
 
   async listConversations(
@@ -392,8 +397,7 @@ export class PostgresAssistantStore implements AssistantStore {
         and archived_at is null
       returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
     `;
-    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
-    return row === undefined ? null : rowToConversation(row);
+    return optionalConversation(rows);
   }
 
   async renameConversation(input: {
@@ -411,8 +415,7 @@ export class PostgresAssistantStore implements AssistantStore {
         and archived_at is null
       returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
     `;
-    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
-    return row === undefined ? null : rowToConversation(row);
+    return optionalConversation(rows);
   }
 
   async deleteConversation(input: {
@@ -505,8 +508,7 @@ export class PostgresAssistantStore implements AssistantStore {
         and archived_at is null
       returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
     `;
-    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
-    return row === undefined ? null : rowToConversation(row);
+    return optionalConversation(rows);
   }
 
   async getMemoryPreference(actor: Actor): Promise<AssistantMemoryPreference | null> {
@@ -554,6 +556,12 @@ export class PostgresAssistantStore implements AssistantStore {
     }
     return rowToMemoryPreference(row);
   }
+}
+
+/** First returned conversation row, or null when the statement matched nothing. */
+function optionalConversation(rows: unknown): AssistantConversation | null {
+  const row = (rows as readonly AssistantConversationRow[])[0];
+  return row === undefined ? null : rowToConversation(row);
 }
 
 function requiredConversation(rows: unknown): AssistantConversation {

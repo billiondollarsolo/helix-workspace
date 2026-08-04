@@ -28,6 +28,19 @@ import type {
 
 const OPENAI_COMPAT_PLUGIN = "com.helix.ai-provider-openai-compat@^1.0.0";
 
+/* The console has no Select primitive, so the routing selects restate the
+   shell they share. */
+const SELECT_CLASS = "h-10 w-full rounded-md border border-border bg-background px-2 text-sm";
+
+/** The models field is one free-text line; blank entries are dropped so a
+ *  trailing comma does not become an empty model id. */
+function parseModelsCsv(csv: string): string[] {
+  return csv
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
 /** Product slots operators assign in Admin. */
 export const AI_FEATURE_SLOTS = [
   {
@@ -89,26 +102,34 @@ export function emptyProviderRow(index = 0): ProviderFormRow {
   };
 }
 
-export function editorStateFromAiConfig(ai: AIConfigStatus | undefined): AiProvidersEditorState {
+/* Named providers when the config has them; otherwise the env-bootstrapped
+   operator default shown as a single editable row, or nothing at all when there
+   is not even that. */
+function providerRowsFrom(ai: AIConfigStatus | undefined): ProviderFormRow[] {
   const providersRaw = ai?.providers ?? [];
-  const providers: ProviderFormRow[] =
-    providersRaw.length === 0
-      ? ai?.operatorLlm !== undefined
-        ? [
-            {
-              id: "openai-compatible.default",
-              displayName: "Operator default",
-              baseUrl: ai.operatorLlm.baseUrl ?? "https://api.openai.com/v1",
-              defaultModel: ai.operatorLlm.model ?? "gpt-4o-mini",
-              modelsCsv: ai.operatorLlm.model ?? "gpt-4o-mini",
-              apiKey: "",
-              enabled: true,
-              offerInChat: true,
-              apiKeyConfigured: ai.operatorLlm.apiKeyConfigured === true,
-            },
-          ]
-        : []
-      : providersRaw.map((provider, index) => providerToFormRow(provider, index));
+  if (providersRaw.length > 0) {
+    return providersRaw.map((provider, index) => providerToFormRow(provider, index));
+  }
+  if (ai?.operatorLlm === undefined) {
+    return [];
+  }
+  return [
+    {
+      id: "openai-compatible.default",
+      displayName: "Operator default",
+      baseUrl: ai.operatorLlm.baseUrl ?? "https://api.openai.com/v1",
+      defaultModel: ai.operatorLlm.model ?? "gpt-4o-mini",
+      modelsCsv: ai.operatorLlm.model ?? "gpt-4o-mini",
+      apiKey: "",
+      enabled: true,
+      offerInChat: true,
+      apiKeyConfigured: ai.operatorLlm.apiKeyConfigured === true,
+    },
+  ];
+}
+
+export function editorStateFromAiConfig(ai: AIConfigStatus | undefined): AiProvidersEditorState {
+  const providers = providerRowsFrom(ai);
 
   const rules = ai?.routing?.rules ?? [];
   const routes: FeatureRouteFormRow[] = AI_FEATURE_SLOTS.map((slot) => {
@@ -120,12 +141,11 @@ export function editorStateFromAiConfig(ai: AIConfigStatus | undefined): AiProvi
     };
   });
 
+  /* Three states, not two: an unset `betaEnabled` means the env default is
+     still in charge, which is a different answer from an explicit off. */
+  const betaEnabled = ai?.mailSpamAi?.betaEnabled;
   const spamBetaMode: AiProvidersEditorState["spamBetaMode"] =
-    ai?.mailSpamAi?.betaEnabled === true
-      ? "on"
-      : ai?.mailSpamAi?.betaEnabled === false
-        ? "off"
-        : "env";
+    betaEnabled === true ? "on" : betaEnabled === false ? "off" : "env";
 
   return { providers, routes, spamBetaMode };
 }
@@ -192,10 +212,7 @@ export function buildMultiProviderAiPatch(
   }
 
   const providers: AIProviderConfig[] = state.providers.map((provider) => {
-    const models = provider.modelsCsv
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0);
+    const models = parseModelsCsv(provider.modelsCsv);
     const defaultModel = provider.defaultModel.trim();
     const modelList = models.length > 0 ? models : [defaultModel];
     const tags = provider.offerInChat ? (["assistant"] as const) : (["backend"] as const);
@@ -540,12 +557,7 @@ export function AIProvidersManagement() {
               model: "",
             };
             const selected = providerOptions.find((provider) => provider.id === route.providerId);
-            const modelChoices = selected
-              ? selected.modelsCsv
-                  .split(",")
-                  .map((part) => part.trim())
-                  .filter((part) => part.length > 0)
-              : [];
+            const modelChoices = selected ? parseModelsCsv(selected.modelsCsv) : [];
             return (
               <div
                 key={slot.feature}
@@ -560,7 +572,7 @@ export function AIProvidersManagement() {
                   <span className="font-medium">Provider</span>
                   <select
                     aria-label={`${slot.label} provider`}
-                    className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
+                    className={SELECT_CLASS}
                     value={route.providerId}
                     onChange={(event) =>
                       updateRoute(slot.feature, { providerId: event.currentTarget.value })
@@ -579,7 +591,7 @@ export function AIProvidersManagement() {
                   {modelChoices.length > 0 ? (
                     <select
                       aria-label={`${slot.label} model`}
-                      className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
+                      className={SELECT_CLASS}
                       value={route.model}
                       onChange={(event) =>
                         updateRoute(slot.feature, { model: event.currentTarget.value })
@@ -609,7 +621,7 @@ export function AIProvidersManagement() {
           <span className="font-medium">Mail spam AI beta</span>
           <select
             aria-label="Mail spam AI beta mode"
-            className="h-10 w-full rounded-md border border-border bg-background px-2 text-sm"
+            className={SELECT_CLASS}
             value={editor.spamBetaMode}
             onChange={(event) => {
               /* Read the value before the updater, not inside it.

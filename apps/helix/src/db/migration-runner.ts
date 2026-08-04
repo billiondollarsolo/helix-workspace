@@ -65,10 +65,9 @@ export async function runMigrations(
           continue;
         }
 
-        const statement = migration.sql;
+        const statements: readonly string[] =
+          typeof migration.sql === "string" ? [migration.sql] : migration.sql;
         await runReservedTransaction(connection, async () => {
-          const statements: readonly string[] =
-            typeof statement === "string" ? [statement] : statement;
           for (const sqlStatement of statements) {
             await connection.unsafe(sqlStatement);
           }
@@ -127,10 +126,7 @@ export async function listPendingMigrations(
   const pending: PendingMigration[] = [];
   for (const source of sources) {
     const migrations = await listMigrations(source);
-    const appliedRows = await sql<{ readonly name: string }[]>`
-      select name from schema_migrations where namespace = ${source.namespace}
-    `;
-    const applied = new Set(appliedRows.map((row) => row.name));
+    const applied = await appliedMigrationNames(sql, source.namespace);
     for (const migration of migrations) {
       if (!applied.has(migration.name)) {
         pending.push({ namespace: source.namespace, name: migration.name });
@@ -153,16 +149,28 @@ export async function listUnknownAppliedMigrations(
   const unknown: UnknownAppliedMigration[] = [];
   for (const source of sources) {
     const known = new Set((await listMigrations(source)).map((migration) => migration.name));
-    const appliedRows = await sql<{ readonly name: string }[]>`
-      select name from schema_migrations where namespace = ${source.namespace}
-    `;
-    for (const row of appliedRows) {
-      if (!known.has(row.name)) {
-        unknown.push({ namespace: source.namespace, name: row.name });
+    const applied = await appliedMigrationNames(sql, source.namespace);
+    for (const name of applied) {
+      if (!known.has(name)) {
+        unknown.push({ namespace: source.namespace, name });
       }
     }
   }
   return unknown;
+}
+
+/**
+ * Names already recorded for a namespace. `schema_migrations` is keyed by
+ * `(namespace, name)`, so collapsing the rows into a set cannot lose entries.
+ */
+async function appliedMigrationNames(
+  sql: postgres.Sql,
+  namespace: string,
+): Promise<ReadonlySet<string>> {
+  const rows = await sql<{ readonly name: string }[]>`
+    select name from schema_migrations where namespace = ${namespace}
+  `;
+  return new Set(rows.map((row) => row.name));
 }
 
 async function ensureMigrationTable(sql: postgres.Sql): Promise<void> {

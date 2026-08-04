@@ -7,6 +7,7 @@
  */
 
 import type { UnsupportedFormat } from "../parsers/types.js";
+import { driveDownloadHref, formatBytes } from "./viewer-shared";
 
 export interface UnsupportedFormatPlaceholderProps {
   readonly result: UnsupportedFormat;
@@ -125,11 +126,7 @@ export function UnsupportedFormatPlaceholder({
           {byteSize !== undefined ? ` · ${formatBytes(byteSize)}` : null}
         </span>
         <div style={{ flex: 1 }} />
-        <a
-          href={`/api/drive/objects/${objectId}/content?download=1`}
-          className="btn sm"
-          download={fileName ?? ""}
-        >
+        <a href={driveDownloadHref(objectId)} className="btn sm" download={fileName ?? ""}>
           Download
         </a>
       </div>
@@ -190,11 +187,7 @@ export function UnsupportedFormatPlaceholder({
               flexWrap: "wrap",
             }}
           >
-            <a
-              href={`/api/drive/objects/${objectId}/content?download=1`}
-              className="btn primary"
-              download={fileName ?? ""}
-            >
+            <a href={driveDownloadHref(objectId)} className="btn primary" download={fileName ?? ""}>
               Download original
             </a>
           </div>
@@ -214,10 +207,4 @@ export function UnsupportedFormatPlaceholder({
       </div>
     </div>
   );
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }

@@ -3,6 +3,7 @@ import type {
   EventBus,
   JsonObject,
   MeteringClient,
+  SuggestionSlotProviderCapability,
   ToolDefinition,
   TraceContext,
 } from "@helix/sdk-types";
@@ -830,21 +831,12 @@ export function createDocsToolDefinitions(
               if (document === null) {
                 throw new Error(`Unknown Docs document: ${input.docId}`);
               }
-              const provider = createDocsSuggestionSlotProviders({ ai }).find(
-                (candidate) => candidate.slotId === input.slotId,
-              );
-              if (provider === undefined) {
-                throw new Error(`Unknown Docs suggestion slot: ${input.slotId}`);
-              }
+              const provider = requireSuggestionSlotProvider(ai, input.slotId);
               const providerInput = toJsonObject({
                 title: document.title,
                 outline: document.outline ?? [],
                 selection: input.selection,
-                ...(input.body === undefined
-                  ? (document.markdown ?? document.plainText) === undefined
-                    ? {}
-                    : { body: document.markdown ?? document.plainText }
-                  : { body: input.body }),
+                ...providerBodyProperty(input.body, document),
                 ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
                 ...(input.targetLanguage === undefined
                   ? {}
@@ -889,21 +881,12 @@ export function createDocsToolDefinitions(
               if (document === null) {
                 throw new Error(`Unknown Docs document: ${input.docId}`);
               }
-              const provider = createDocsSuggestionSlotProviders({ ai }).find(
-                (candidate) => candidate.slotId === "docs.ask-document",
-              );
-              if (provider === undefined) {
-                throw new Error("Unknown Docs suggestion slot: docs.ask-document");
-              }
+              const provider = requireSuggestionSlotProvider(ai, "docs.ask-document");
               const providerInput = toJsonObject({
                 title: document.title,
                 outline: document.outline ?? [],
                 selection: input.selection,
-                ...(input.body === undefined
-                  ? (document.markdown ?? document.plainText) === undefined
-                    ? {}
-                    : { body: document.markdown ?? document.plainText }
-                  : { body: input.body }),
+                ...providerBodyProperty(input.body, document),
                 prompt: input.question,
               });
               const context = {
@@ -1245,6 +1228,35 @@ function traceFromToolRequest(
     ...(request.traceId === undefined ? {} : { traceId: request.traceId }),
     ...(request.spanId === undefined ? {} : { spanId: request.spanId }),
   };
+}
+
+function requireSuggestionSlotProvider(
+  ai: AICapability,
+  slotId: string,
+): SuggestionSlotProviderCapability {
+  const provider = createDocsSuggestionSlotProviders({ ai }).find(
+    (candidate) => candidate.slotId === slotId,
+  );
+  if (provider === undefined) {
+    throw new Error(`Unknown Docs suggestion slot: ${slotId}`);
+  }
+  return provider;
+}
+
+/**
+ * The document body handed to a suggestion provider: an explicit `body` from the
+ * caller wins, otherwise fall back to the stored document text. The property is
+ * omitted entirely when neither is available so providers see no empty body.
+ */
+function providerBodyProperty(
+  body: string | undefined,
+  document: DocsExportDocument,
+): { readonly body?: string } {
+  if (body !== undefined) {
+    return { body };
+  }
+  const documentBody = document.markdown ?? document.plainText;
+  return documentBody === undefined ? {} : { body: documentBody };
 }
 
 function serializeDocument(document: DocsDocumentRecord) {

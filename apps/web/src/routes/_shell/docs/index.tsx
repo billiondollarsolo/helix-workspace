@@ -1,6 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DocsShell } from "@/features/docs/docs-shell";
 import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
+import {
+  optionalEnumSearchParam,
+  optionalNonBlankStringSearchParam,
+  optionalStringSearchParam,
+} from "@/lib/search-params";
+
+const OPEN_MODES = ["office"] as const;
 
 /** `?doc=<id>` opens straight into that document's editor (used by Drive's New). */
 interface DocsRouteSearch {
@@ -10,11 +17,9 @@ interface DocsRouteSearch {
 }
 
 function validateDocsRouteSearch(search: Record<string, unknown>): DocsRouteSearch {
-  const doc =
-    typeof search.doc === "string" && search.doc.trim().length > 0 ? search.doc : undefined;
-  const open = search.open === "office" ? "office" : undefined;
-  const q =
-    typeof search.q === "string" && search.q.trim().length > 0 ? search.q.trim() : undefined;
+  const doc = optionalNonBlankStringSearchParam(search.doc);
+  const open = optionalEnumSearchParam(search.open, OPEN_MODES);
+  const q = optionalStringSearchParam(search.q);
   return {
     ...(doc === undefined ? {} : { doc }),
     ...(open === undefined ? {} : { open }),

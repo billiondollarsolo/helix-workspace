@@ -4,6 +4,7 @@ import type {
   CalendarResponseStatus,
 } from "./types.js";
 import { recurrenceExceptionDates } from "./recurrence.js";
+import { formatZonedIcsLocalDate } from "./timezone.js";
 import { MailSendService } from "../mail/outbound.js";
 import type { MailOutboundRecord } from "../mail/types.js";
 import type { MailStore } from "../mail/index.js";
@@ -216,7 +217,7 @@ export function rsvpUrl(
 function attendeeToIcs(attendee: CalendarAttendeeRecord): string {
   const params = [
     `CN=${escapeIcsParam(attendee.displayName ?? attendee.email)}`,
-    `ROLE=${attendee.role === "optional" ? "OPT-PARTICIPANT" : attendee.role === "resource" ? "NON-PARTICIPANT" : "REQ-PARTICIPANT"}`,
+    `ROLE=${icsRole(attendee.role)}`,
     `PARTSTAT=${partstat(attendee.responseStatus)}`,
     `RSVP=${attendee.responseStatus === "needs_action" ? "TRUE" : "FALSE"}`,
   ];
@@ -278,9 +279,10 @@ function organizerAddress(
   return { address: `${actorId}@${defaultFromDomain ?? "localhost"}`, name: "Helix Calendar" };
 }
 
-function attendeeAddress(
-  attendee: CalendarAttendeeRecord,
-): { readonly address: string; readonly name?: string } {
+function attendeeAddress(attendee: CalendarAttendeeRecord): {
+  readonly address: string;
+  readonly name?: string;
+} {
   return {
     address: attendee.email,
     ...(attendee.displayName === null || attendee.displayName === undefined
@@ -305,6 +307,16 @@ function calendarSequence(event: CalendarEventRecord): number {
   return event.icsSequence;
 }
 
+function icsRole(role: CalendarAttendeeRecord["role"]): string {
+  if (role === "optional") {
+    return "OPT-PARTICIPANT";
+  }
+  if (role === "resource") {
+    return "NON-PARTICIPANT";
+  }
+  return "REQ-PARTICIPANT";
+}
+
 function partstat(responseStatus: CalendarResponseStatus): string {
   if (responseStatus === "accepted") {
     return "ACCEPTED";
@@ -327,7 +339,7 @@ function formatIcsDateProperty(
     return `${name};VALUE=DATE:${formatIcsDateOnly(value)}`;
   }
   if (event.timezone !== undefined && event.timezone !== "UTC") {
-    const local = formatIcsLocalDate(value, event.timezone);
+    const local = formatZonedIcsLocalDate(value, event.timezone);
     if (local !== null) {
       return `${name};TZID=${escapeIcsParam(event.timezone)}:${local}`;
     }
@@ -344,43 +356,6 @@ function formatIcsDate(value: Date): string {
 
 function formatIcsDateOnly(value: Date): string {
   return value.toISOString().slice(0, 10).replace(/-/g, "");
-}
-
-function formatIcsLocalDate(value: Date, timeZone: string): string | null {
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      hour12: false,
-      hourCycle: "h23",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    }).formatToParts(value);
-    const part = (type: Intl.DateTimeFormatPartTypes): string | undefined =>
-      parts.find((candidate) => candidate.type === type)?.value;
-    const year = part("year");
-    const month = part("month");
-    const day = part("day");
-    const hour = part("hour");
-    const minute = part("minute");
-    const second = part("second");
-    if (
-      year === undefined ||
-      month === undefined ||
-      day === undefined ||
-      hour === undefined ||
-      minute === undefined ||
-      second === undefined
-    ) {
-      return null;
-    }
-    return `${year}${month}${day}T${hour}${minute}${second}`;
-  } catch {
-    return null;
-  }
 }
 
 function escapeIcsText(value: string): string {

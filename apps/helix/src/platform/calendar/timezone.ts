@@ -16,22 +16,20 @@ export interface ZonedDateParts {
 
 /** Convert a local civil datetime in `timeZone` to a UTC `Date`. */
 export function zonedLocalDateToUtc(input: ZonedDateParts, timeZone: string): Date {
-  let date = new Date(
-    Date.UTC(input.year, input.month - 1, input.day, input.hour, input.minute, input.second),
+  const wantedUtc = Date.UTC(
+    input.year,
+    input.month - 1,
+    input.day,
+    input.hour,
+    input.minute,
+    input.second,
   );
+  let date = new Date(wantedUtc);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const local = utcToZonedParts(date, timeZone);
     if (local === null) {
       return new Date(Number.NaN);
     }
-    const wantedUtc = Date.UTC(
-      input.year,
-      input.month - 1,
-      input.day,
-      input.hour,
-      input.minute,
-      input.second,
-    );
     const actualUtc = Date.UTC(
       local.year,
       local.month - 1,

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { meteringRollupMetricKeys, type MeteringRollupMetricKey } from "@helix/sdk-types";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
 import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
+import { appendParam, parseResponse } from "@/features/admin/api-response";
 
 export type { MeteringRollupMetricKey } from "@helix/sdk-types";
 
@@ -204,9 +205,7 @@ export async function fetchInvoices(
 ): Promise<InvoicesResponse> {
   const params = new URLSearchParams();
   params.set("limit", String(input.limit ?? defaultInvoicesInput.limit));
-  if (input.cursor !== undefined && input.cursor.trim().length > 0) {
-    params.set("cursor", input.cursor.trim());
-  }
+  appendParam(params, "cursor", input.cursor);
   const response = await fetchImpl(`/api/admin/billing/invoices?${params.toString()}`, {
     method: "GET",
   });
@@ -218,15 +217,9 @@ export async function fetchUsageRollups(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<UsageRollupsResponse> {
   const params = new URLSearchParams();
-  if (input.from !== undefined && input.from.trim().length > 0) {
-    params.set("from", input.from.trim());
-  }
-  if (input.to !== undefined && input.to.trim().length > 0) {
-    params.set("to", input.to.trim());
-  }
-  if (input.metricKey !== undefined && input.metricKey.trim().length > 0) {
-    params.set("metricKey", input.metricKey.trim());
-  }
+  appendParam(params, "from", input.from);
+  appendParam(params, "to", input.to);
+  appendParam(params, "metricKey", input.metricKey);
   const query = params.toString();
   const response = await fetchImpl(
     `/api/admin/billing/usage${query.length === 0 ? "" : `?${query}`}`,
@@ -261,36 +254,4 @@ export function formatBytes(bytes: number): string {
   }
   const gb = bytes / 1_000_000_000;
   return `${gb.toFixed(0)} GB`;
-}
-
-// ---------------------------------------------------------------------------
-// Shared response handling
-// ---------------------------------------------------------------------------
-
-async function parseResponse<T>(
-  response: Response,
-  action: string,
-  schema: z.ZodType<T>,
-): Promise<T> {
-  const payload: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-  }
-  const parsed = schema.safeParse(payload);
-  if (parsed.success) {
-    return parsed.data;
-  }
-  throw new Error(`Failed to ${action}: malformed response.`);
-}
-
-function errorMessage(payload: unknown): string | undefined {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof payload.error === "string"
-  ) {
-    return payload.error;
-  }
-  return undefined;
 }

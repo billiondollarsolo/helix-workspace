@@ -51,10 +51,7 @@ export function parseSignupManualReviewCountries(value: string | undefined): rea
   if (value === undefined) {
     return [];
   }
-  return value
-    .split(",")
-    .map(normalizeCountry)
-    .filter((country) => /^[A-Z]{2}$/u.test(country));
+  return value.split(",").map(normalizeCountry).filter(isIsoCountryCode);
 }
 
 function normalizedCountrySet(countries: Iterable<string> | undefined): ReadonlySet<string> {

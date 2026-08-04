@@ -17,6 +17,14 @@ export function optionalRawStringSearchParam(value: unknown): string | undefined
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/**
+ * Keeps the value exactly as it arrived (ids must round-trip byte-for-byte)
+ * but drops whitespace-only params, which are indistinguishable from absent.
+ */
+export function optionalNonBlankStringSearchParam(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
 export function optionalUuidSearchParam(value: unknown): string | undefined {
   const candidate = optionalStringSearchParam(value);
   return candidate !== undefined && uuidPattern.test(candidate) ? candidate : undefined;

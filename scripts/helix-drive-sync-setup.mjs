@@ -97,18 +97,11 @@ export function buildMirrorCommand(localPath, remoteName = REMOTE_NAME) {
   };
 }
 
+/** First run only: same bisync as the steady-state mirror, plus --resync to
+ *  establish the initial baseline listings rclone needs. */
 export function buildMirrorResyncCommand(localPath, remoteName = REMOTE_NAME) {
-  return {
-    bin: "rclone",
-    args: [
-      "bisync",
-      localPath,
-      `${remoteName}:`,
-      "--create-empty-src-dirs",
-      "--resilient",
-      "--resync",
-    ],
-  };
+  const mirror = buildMirrorCommand(localPath, remoteName);
+  return { bin: mirror.bin, args: [...mirror.args, "--resync"] };
 }
 
 export function buildMountCommand(localPath, remoteName = REMOTE_NAME, os = platform()) {
@@ -195,24 +188,28 @@ function writeHelpers({ homeDir, mode, localPath, remoteName }) {
   if (mode === "mirror") {
     const { args } = buildMirrorCommand(localPath, remoteName);
     if (isWin) {
-      const bat = `@echo off\r\nrclone ${args.map(cmdEscapeWin).join(" ")}\r\n`;
-      writeFileSync(join(homeDir, "sync-now.cmd"), bat);
+      writeFileSync(
+        join(homeDir, "sync-now.cmd"),
+        `@echo off\r\nrclone ${args.map(cmdEscapeWin).join(" ")}\r\n`,
+      );
     } else {
-      const sh = `#!/usr/bin/env bash\nset -euo pipefail\nexec rclone ${args.map(shellQuote).join(" ")}\n`;
-      const path = join(homeDir, "sync-now.sh");
-      writeFileSync(path, sh);
-      chmodSync(path, 0o755);
+      writeShellHelper(
+        join(homeDir, "sync-now.sh"),
+        `#!/usr/bin/env bash\nset -euo pipefail\nexec rclone ${args.map(shellQuote).join(" ")}\n`,
+      );
     }
   } else {
     const { args } = buildMountCommand(localPath, remoteName);
     if (isWin) {
-      const bat = `@echo off\r\necho Mounting Helix Drive to ${localPath} ...\r\nrclone ${args.map(cmdEscapeWin).join(" ")}\r\n`;
-      writeFileSync(join(homeDir, "mount.cmd"), bat);
+      writeFileSync(
+        join(homeDir, "mount.cmd"),
+        `@echo off\r\necho Mounting Helix Drive to ${localPath} ...\r\nrclone ${args.map(cmdEscapeWin).join(" ")}\r\n`,
+      );
     } else {
-      const sh = `#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p ${shellQuote(localPath)}\necho "Mounting Helix Drive at ${localPath} (Ctrl+C to stop)..."\nexec rclone ${args.map(shellQuote).join(" ")}\n`;
-      const path = join(homeDir, "mount.sh");
-      writeFileSync(path, sh);
-      chmodSync(path, 0o755);
+      writeShellHelper(
+        join(homeDir, "mount.sh"),
+        `#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p ${shellQuote(localPath)}\necho "Mounting Helix Drive at ${localPath} (Ctrl+C to stop)..."\nexec rclone ${args.map(shellQuote).join(" ")}\n`,
+      );
     }
   }
 
@@ -223,13 +220,17 @@ function writeHelpers({ homeDir, mode, localPath, remoteName }) {
       `@echo off\r\necho Remote:\r\nrclone about ${remoteName}: 2>nul\r\nrclone lsd ${remoteName}:\r\n`,
     );
   } else {
-    const statusPath = join(homeDir, "status.sh");
-    writeFileSync(
-      statusPath,
+    writeShellHelper(
+      join(homeDir, "status.sh"),
       `#!/usr/bin/env bash\nset -euo pipefail\necho "Remote ${remoteName}:"\nrclone lsd ${shellQuote(`${remoteName}:`)} || true\n`,
     );
-    chmodSync(statusPath, 0o755);
   }
+}
+
+/** Write a POSIX re-run helper and make it directly executable. */
+function writeShellHelper(path, contents) {
+  writeFileSync(path, contents);
+  chmodSync(path, 0o755);
 }
 
 function shellQuote(s) {
@@ -244,7 +245,7 @@ function cmdEscapeWin(s) {
 }
 
 function ensureDir(path) {
-  if (path.match(/^[A-Za-z]:\\?$/u) || path.match(/^[A-Za-z]:$/u)) {
+  if (/^[A-Za-z]:\\?$/u.test(path)) {
     return; // Windows drive letter — rclone creates it
   }
   mkdirSync(path, { recursive: true });
@@ -330,6 +331,7 @@ export async function runSetup(options = {}) {
 
     const homeDir = helixHomeDir();
     writeHelpers({ homeDir, mode, localPath, remoteName: REMOTE_NAME });
+    const os = platform();
 
     if (mode === "mirror") {
       ensureDir(localPath);
@@ -343,36 +345,35 @@ export async function runSetup(options = {}) {
       log("  ✓ Helix Drive is set up.");
       log(`  Folder:  ${localPath}`);
       log(
-        platform() === "win32"
+        os === "win32"
           ? `  Later:   ${join(homeDir, "sync-now.cmd")}`
           : `  Later:   ${join(homeDir, "sync-now.sh")}`,
       );
       log("  Tip: schedule that helper to run every few minutes if you want continuous sync.");
     } else {
-      if (platform() !== "win32") {
+      if (os !== "win32") {
         ensureDir(localPath);
       }
       log("");
       log("  ✓ Helix Drive is configured.");
       log(
-        platform() === "win32"
+        os === "win32"
           ? `  Start mount:  ${join(homeDir, "mount.cmd")}`
           : `  Start mount:  ${join(homeDir, "mount.sh")}`,
       );
       log("  Leave that window open while you work; Ctrl+C unmounts.");
-      if (platform() === "darwin") {
+      if (os === "darwin") {
         log("  Note: macOS may need macFUSE or FUSE-T installed for mount mode.");
       }
-      if (platform() === "win32") {
+      if (os === "win32") {
         log("  Note: Windows needs WinFsp installed for mount mode (https://winfsp.dev/).");
       }
       const startNow =
         env.HELIX_SYNC_START_MOUNT === "1" ||
-        (!interactive
-          ? false
-          : (await prompt(rl, "Start mount now? (y/N)", { defaultValue: "n" }))
-              .toLowerCase()
-              .startsWith("y"));
+        (interactive &&
+          (await prompt(rl, "Start mount now? (y/N)", { defaultValue: "n" }))
+            .toLowerCase()
+            .startsWith("y"));
       if (startNow) {
         runRclone(buildMountCommand(localPath).args, { inherit: true });
       }

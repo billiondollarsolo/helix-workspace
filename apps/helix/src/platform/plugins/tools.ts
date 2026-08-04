@@ -53,7 +53,7 @@ export interface PluginLifecycleRecord {
   readonly pluginId: string;
   readonly version: string;
   readonly state: PluginLifecycleState;
-  readonly source: z.output<typeof installSchema>["source"];
+  readonly source: PluginLifecycleSource;
   readonly manifest: PluginManifest;
   readonly updatedAt: string;
 }
@@ -140,11 +140,7 @@ export function createPluginToolDefinitions(
       handler: async (input, ctx) => {
         const plugin = await discoverInstallablePlugin(options, input.pluginId);
         if (plugin === undefined) {
-          return {
-            status: "not_found",
-            pluginId: input.pluginId,
-            message: `Unknown installable plugin: ${input.pluginId}`,
-          };
+          return notFound(input.pluginId);
         }
         if (input.version !== undefined && plugin.manifest.version !== input.version) {
           return {
@@ -192,14 +188,11 @@ export function createPluginToolDefinitions(
       inputSchema: zodToolSchema(pluginIdSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const plugin = await discoverInstallablePlugin(options, input.pluginId);
-        if (plugin === undefined) {
-          return notFound(input.pluginId);
+        const lookup = await requireInstalledPlugin(options, lifecycleStore, input.pluginId);
+        if (!lookup.ok) {
+          return lookup.response;
         }
-        const existing = await lifecycleStore.get(plugin.manifest.id);
-        if (existing === undefined || existing.state === "uninstalled") {
-          return notInstalled(plugin);
-        }
+        const { plugin, existing } = lookup;
 
         const lifecycle = lifecycleRecord(plugin.manifest, "enabled", existing.source);
         await lifecycleStore.set(lifecycle);
@@ -223,14 +216,11 @@ export function createPluginToolDefinitions(
       inputSchema: zodToolSchema(pluginIdSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const plugin = await discoverInstallablePlugin(options, input.pluginId);
-        if (plugin === undefined) {
-          return notFound(input.pluginId);
+        const lookup = await requireInstalledPlugin(options, lifecycleStore, input.pluginId);
+        if (!lookup.ok) {
+          return lookup.response;
         }
-        const existing = await lifecycleStore.get(plugin.manifest.id);
-        if (existing === undefined || existing.state === "uninstalled") {
-          return notInstalled(plugin);
-        }
+        const { plugin, existing } = lookup;
 
         const lifecycle = lifecycleRecord(plugin.manifest, "disabled", existing.source);
         await lifecycleStore.set(lifecycle);
@@ -255,14 +245,11 @@ export function createPluginToolDefinitions(
       inputSchema: zodToolSchema(uninstallSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const plugin = await discoverInstallablePlugin(options, input.pluginId);
-        if (plugin === undefined) {
-          return notFound(input.pluginId);
+        const lookup = await requireInstalledPlugin(options, lifecycleStore, input.pluginId);
+        if (!lookup.ok) {
+          return lookup.response;
         }
-        const existing = await lifecycleStore.get(plugin.manifest.id);
-        if (existing === undefined || existing.state === "uninstalled") {
-          return notInstalled(plugin);
-        }
+        const { plugin, existing } = lookup;
 
         const requirements = uninstallConfirmationRequirements(plugin.manifest);
         const confirmedIds = new Set(input.confirmations);
@@ -404,10 +391,38 @@ async function discoverInstallablePlugin(
   );
 }
 
+type InstalledPluginLookup =
+  | {
+      readonly ok: true;
+      readonly plugin: DiscoveredPlugin;
+      readonly existing: PluginLifecycleRecord;
+    }
+  | { readonly ok: false; readonly response: JsonObject };
+
+/**
+ * Shared prologue for enable/disable/uninstall: the plugin must both be
+ * discoverable on disk and have a non-uninstalled lifecycle record.
+ */
+async function requireInstalledPlugin(
+  options: RegisterPluginToolsOptions,
+  lifecycleStore: PluginLifecycleStore,
+  pluginId: string,
+): Promise<InstalledPluginLookup> {
+  const plugin = await discoverInstallablePlugin(options, pluginId);
+  if (plugin === undefined) {
+    return { ok: false, response: notFound(pluginId) };
+  }
+  const existing = await lifecycleStore.get(plugin.manifest.id);
+  if (existing === undefined || existing.state === "uninstalled") {
+    return { ok: false, response: notInstalled(plugin) };
+  }
+  return { ok: true, plugin, existing };
+}
+
 function resolvePluginSource(
   pluginId: string,
   options: RegisterPluginToolsOptions,
-): z.output<typeof installSchema>["source"] {
+): PluginLifecycleSource {
   if (options.officialPluginIds === undefined) {
     return "official";
   }
@@ -416,7 +431,7 @@ function resolvePluginSource(
 
 function serializeInstallRequirements(
   manifest: PluginManifest,
-  source: z.output<typeof installSchema>["source"],
+  source: PluginLifecycleSource,
 ): JsonObject {
   const confirmations = confirmationRequirements(manifest, source);
   return {
@@ -440,7 +455,7 @@ function uninstallConfirmationRequirements(
 
 function confirmationRequirements(
   manifest: PluginManifest,
-  source: z.output<typeof installSchema>["source"],
+  source: PluginLifecycleSource,
 ): readonly ConfirmationRequirement[] {
   if (source === "official") {
     return [];
@@ -512,7 +527,7 @@ function confirmationRequirements(
 function lifecycleRecord(
   manifest: PluginManifest,
   state: PluginLifecycleState,
-  source: z.output<typeof installSchema>["source"],
+  source: PluginLifecycleSource,
 ): PluginLifecycleRecord {
   return {
     pluginId: manifest.id,
@@ -606,9 +621,11 @@ function persistedManifestFromUnknown(value: unknown): PersistedPluginManifest {
 }
 
 function lifecycleStateFromUnknown(value: unknown): PluginLifecycleState {
-  return typeof value === "string" && pluginLifecycleStates.includes(value as PluginLifecycleState)
-    ? (value as PluginLifecycleState)
-    : "degraded";
+  return isPluginLifecycleState(value) ? value : "degraded";
+}
+
+function isPluginLifecycleState(value: unknown): value is PluginLifecycleState {
+  return typeof value === "string" && (pluginLifecycleStates as readonly string[]).includes(value);
 }
 
 function lifecycleSourceFromUnknown(value: unknown): PluginLifecycleSource {

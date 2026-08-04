@@ -43,6 +43,7 @@ import type {
   AssistantCancelPendingToolInput,
   AssistantForgetMemoryInput,
   AssistantForgetMemoryResult,
+  AssistantMessage,
   AssistantSendMessageInput,
   AssistantSource,
   AssistantStore,
@@ -98,6 +99,43 @@ export class AssistantOrchestrator {
   }
 
   async sendMessage(input: AssistantSendMessageInput): Promise<AssistantTurnResponse> {
+    /* Buffered mode yields no events, so this drains an already event-free
+       generator; the loop exists only to reach its return value. */
+    const turn = this.#runTurn(input, "buffered");
+    let step = await turn.next();
+    while (!step.done) {
+      step = await turn.next();
+    }
+    return step.value;
+  }
+
+  /**
+   * Streaming variant of {@link sendMessage}. Yields incremental `delta`
+   * events as the model produces text, then a terminal `final` event carrying
+   * the complete {@link AssistantTurnResponse}. Tool invocation, confirmation
+   * gating, memory, and persistence behave exactly as in {@link sendMessage}.
+   */
+  async *sendMessageStream(input: AssistantSendMessageInput): AsyncGenerator<AssistantStreamEvent> {
+    const turn = yield* this.#runTurn(input, "streaming");
+    yield { type: "final", turn };
+  }
+
+  /**
+   * The assistant turn shared by {@link sendMessage} and
+   * {@link sendMessageStream}: classify the input, persist the user message,
+   * gather retrieval/memory/tool context, then run AI rounds until the model
+   * stops calling tools, `maxToolRounds` is exhausted, or a tool parks on a
+   * pending confirmation.
+   *
+   * `mode` selects only *how* each AI round is issued. `"streaming"` routes
+   * through {@link #streamChatTurn}, yields text deltas, and records
+   * `streamed: true` on the persisted assistant message; `"buffered"` makes a
+   * single non-streaming `chat` call and yields nothing.
+   */
+  async *#runTurn(
+    input: AssistantSendMessageInput,
+    mode: "buffered" | "streaming",
+  ): AsyncGenerator<AssistantStreamEvent, AssistantTurnResponse> {
     const userInputClassification =
       (await this.options.classifyUserInput?.({
         actor: input.actor,
@@ -155,11 +193,7 @@ export class AssistantOrchestrator {
       this.collectSearchContext(input.actor, searchQuery),
       this.collectMemoryContext(input.actor, conversation, searchQuery),
       this.listVisibleTools(input.actor, input.principal),
-      this.options.store.listMessages({
-        orgId: input.actor.orgId,
-        conversationId: conversation.id,
-        limit: this.#historyLimit,
-      }),
+      this.#recentMessages(input.actor.orgId, conversation.id),
     ]);
     const visibleTools = routeVisibleTools(allVisibleTools, slashHook?.toolIds);
     let effectiveClassification = effectiveClassificationForTurn({
@@ -187,24 +221,27 @@ export class AssistantOrchestrator {
     let round = 0;
 
     while (round < this.#maxToolRounds) {
-      aiResponse = await this.options.ai.chat(
-        {
-          feature: "assistant.chat",
-          messages: promptMessages,
-          tools: visibleTools.map((tool) => tool.id),
-          classification: effectiveClassification,
-          metadata: toJsonObject({
-            visibleTools,
-            sourceIds,
-            memoryIds: recalledMemory.map((memory) => memory.id),
-            effectiveClassification,
-            ...(slashCommand === null ? {} : { slashCommand }),
-            ...(slashHook?.metadata === undefined ? {} : { slashMetadata: slashHook.metadata }),
-            ...(slashHook?.toolIds === undefined ? {} : { slashToolIds: [...slashHook.toolIds] }),
-          }),
-        },
-        aiCallContext(input.actor, input.request, effectiveClassification),
-      );
+      const chatRequest = {
+        feature: "assistant.chat",
+        messages: promptMessages,
+        tools: visibleTools.map((tool) => tool.id),
+        classification: effectiveClassification,
+        metadata: toJsonObject({
+          visibleTools,
+          sourceIds,
+          memoryIds: recalledMemory.map((memory) => memory.id),
+          effectiveClassification,
+          ...(slashCommand === null ? {} : { slashCommand }),
+          ...(slashHook?.metadata === undefined ? {} : { slashMetadata: slashHook.metadata }),
+          ...(slashHook?.toolIds === undefined ? {} : { slashToolIds: [...slashHook.toolIds] }),
+        }),
+      };
+      const callContext = aiCallContext(input.actor, input.request, effectiveClassification);
+      if (mode === "streaming") {
+        aiResponse = yield* this.#streamChatTurn(chatRequest, callContext, round);
+      } else {
+        aiResponse = await this.options.ai.chat(chatRequest, callContext);
+      }
       responseMessage = await this.options.store.appendMessage({
         orgId: input.actor.orgId,
         conversationId: conversation.id,
@@ -214,6 +251,7 @@ export class AssistantOrchestrator {
           providerId: aiResponse.providerId,
           model: aiResponse.model,
           usage: aiResponse.usage ?? {},
+          ...(mode === "streaming" ? { streamed: true } : {}),
           effectiveClassification,
           ...(aiResponse.metadata === undefined ? {} : { ai: aiResponse.metadata }),
           toolCalls: aiResponse.toolCalls ?? [],
@@ -275,11 +313,7 @@ export class AssistantOrchestrator {
 
     return {
       conversation,
-      messages: await this.options.store.listMessages({
-        orgId: input.actor.orgId,
-        conversationId: conversation.id,
-        limit: this.#historyLimit,
-      }),
+      messages: await this.#recentMessages(input.actor.orgId, conversation.id),
       response: responseMessage,
       ai: aiResponse,
       toolCalls,
@@ -287,209 +321,6 @@ export class AssistantOrchestrator {
       memory: recalledMemory,
       pendingConfirmations,
       effectiveClassification,
-    };
-  }
-
-  /**
-   * Streaming variant of {@link sendMessage}. Yields incremental `delta`
-   * events as the model produces text, then a terminal `final` event carrying
-   * the complete {@link AssistantTurnResponse}. Tool invocation, confirmation
-   * gating, memory, and persistence behave exactly as in {@link sendMessage}.
-   */
-  async *sendMessageStream(input: AssistantSendMessageInput): AsyncGenerator<AssistantStreamEvent> {
-    const userInputClassification =
-      (await this.options.classifyUserInput?.({
-        actor: input.actor,
-        content: input.content,
-      })) ?? "standard";
-    let conversation = await this.getOrCreateConversation(input);
-    if (input.memoryOptIn !== undefined) {
-      await this.options.store.setMemoryPreference({
-        actor: input.actor,
-        enabled: input.memoryOptIn,
-        metadata: { source: "assistant.conversation" },
-      });
-      const updated = await this.options.store.setConversationMemoryOptIn({
-        orgId: input.actor.orgId,
-        actorId: input.actor.id,
-        conversationId: conversation.id,
-        enabled: input.memoryOptIn,
-      });
-      conversation = updated ?? conversation;
-    }
-
-    const slashCommand = parseAssistantSlashCommand(input.content);
-    const slashHook =
-      slashCommand === null
-        ? undefined
-        : this.options.slashCommands === undefined
-          ? resolveDefaultAssistantSlashCommand(slashCommand)
-          : await this.options.slashCommands.resolve({
-              actor: input.actor,
-              command: slashCommand,
-              ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
-            });
-    const userMessage = await this.options.store.appendMessage({
-      orgId: input.actor.orgId,
-      conversationId: conversation.id,
-      actorId: input.actor.id,
-      role: "user",
-      content: input.content,
-      metadata: toJsonObject({
-        ...(input.metadata ?? {}),
-        ...(slashCommand === null ? {} : { slashCommand }),
-        effectiveClassification: maxClassification(
-          userInputClassification,
-          input.classification ?? "standard",
-        ),
-      }),
-    });
-    const searchQuery =
-      slashHook?.searchQuery !== undefined
-        ? slashHook.searchQuery
-        : slashCommand === null
-          ? input.content
-          : slashCommand.args.trim();
-    const [sources, recalledMemory, allVisibleTools, history] = await Promise.all([
-      this.collectSearchContext(input.actor, searchQuery),
-      this.collectMemoryContext(input.actor, conversation, searchQuery),
-      this.listVisibleTools(input.actor, input.principal),
-      this.options.store.listMessages({
-        orgId: input.actor.orgId,
-        conversationId: conversation.id,
-        limit: this.#historyLimit,
-      }),
-    ]);
-    const visibleTools = routeVisibleTools(allVisibleTools, slashHook?.toolIds);
-    let effectiveClassification = effectiveClassificationForTurn({
-      orgId: input.actor.orgId,
-      ...(input.classification === undefined ? {} : { clientHint: input.classification }),
-      userInputClassification,
-      conversation,
-      history,
-      sources,
-      memory: recalledMemory,
-    });
-    const sourceIds = sources.map((source) => source.provenance.sourceId);
-
-    const toolCalls: AssistantToolCallResult[] = [];
-    const pendingConfirmations: PendingToolInvocation[] = [];
-    const baseSystemMessage = systemMessage({
-      sources,
-      memory: recalledMemory,
-      tools: visibleTools,
-      ...(slashHook?.instruction === undefined ? {} : { slashInstruction: slashHook.instruction }),
-    });
-    const promptMessages: AIMessage[] = [baseSystemMessage, ...history.map(toAIMessage)];
-    let aiResponse: ChatResponse | undefined;
-    let responseMessage = userMessage;
-    let round = 0;
-
-    while (round < this.#maxToolRounds) {
-      const chatRequest = {
-        feature: "assistant.chat",
-        messages: promptMessages,
-        tools: visibleTools.map((tool) => tool.id),
-        classification: effectiveClassification,
-        metadata: toJsonObject({
-          visibleTools,
-          sourceIds,
-          memoryIds: recalledMemory.map((memory) => memory.id),
-          effectiveClassification,
-          ...(slashCommand === null ? {} : { slashCommand }),
-          ...(slashHook?.metadata === undefined ? {} : { slashMetadata: slashHook.metadata }),
-          ...(slashHook?.toolIds === undefined ? {} : { slashToolIds: [...slashHook.toolIds] }),
-        }),
-      };
-      const callContext = aiCallContext(input.actor, input.request, effectiveClassification);
-      const currentRound = round;
-      aiResponse = yield* this.#streamChatTurn(chatRequest, callContext, currentRound);
-      responseMessage = await this.options.store.appendMessage({
-        orgId: input.actor.orgId,
-        conversationId: conversation.id,
-        role: "assistant",
-        content: aiResponse.message,
-        metadata: toJsonObject({
-          providerId: aiResponse.providerId,
-          model: aiResponse.model,
-          usage: aiResponse.usage ?? {},
-          streamed: true,
-          effectiveClassification,
-          ...(aiResponse.metadata === undefined ? {} : { ai: aiResponse.metadata }),
-          toolCalls: aiResponse.toolCalls ?? [],
-        }),
-      });
-      promptMessages.push(toAIMessage(responseMessage));
-
-      if (aiResponse.toolCalls === undefined || aiResponse.toolCalls.length === 0) {
-        break;
-      }
-
-      const roundResults = await Promise.all(
-        aiResponse.toolCalls.map((toolCall) =>
-          this.invokeToolCall({
-            actor: input.actor,
-            principal: principalForAssistantInput(input),
-            visibleTools,
-            toolCallId: randomUUID(),
-            toolId: toolCall.id,
-            input: toolCall.input ?? {},
-            effectiveClassification,
-            sourceIds,
-            ...(input.request === undefined ? {} : { request: input.request }),
-          }),
-        ),
-      );
-      for (const result of roundResults) {
-        toolCalls.push(result);
-        if (result.status === "executed") {
-          effectiveClassification = maxClassification(
-            effectiveClassification,
-            classificationFromToolResult(result.output),
-          );
-        }
-        if (result.pending !== undefined) {
-          pendingConfirmations.push(result.pending);
-        }
-        const toolMessage = await this.options.store.appendMessage({
-          orgId: input.actor.orgId,
-          conversationId: conversation.id,
-          role: "tool",
-          content: toolResultContent(result),
-          toolCallId: result.toolCallId,
-          metadata: toJsonObject({ toolCall: result }),
-        });
-        promptMessages.push(toAIMessage(toolMessage));
-      }
-
-      if (roundResults.some((result) => result.status === "pending_confirmation")) {
-        break;
-      }
-      round += 1;
-    }
-
-    if (aiResponse === undefined) {
-      throw new Error("Assistant did not produce a response.");
-    }
-    await this.rememberTurn(input.actor, conversation, input.content, responseMessage.content);
-
-    yield {
-      type: "final",
-      turn: {
-        conversation,
-        messages: await this.options.store.listMessages({
-          orgId: input.actor.orgId,
-          conversationId: conversation.id,
-          limit: this.#historyLimit,
-        }),
-        response: responseMessage,
-        ai: aiResponse,
-        toolCalls,
-        sources,
-        memory: recalledMemory,
-        pendingConfirmations,
-        effectiveClassification,
-      },
     };
   }
 
@@ -555,14 +386,7 @@ export class AssistantOrchestrator {
     if (this.options.confirmationGate === undefined) {
       throw new Error("Assistant confirmation gate is not configured.");
     }
-    const conversation = await this.options.store.getConversation({
-      orgId: input.actor.orgId,
-      actorId: input.actor.id,
-      conversationId: input.conversationId,
-    });
-    if (conversation === null) {
-      throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
-    }
+    const conversation = await this.#requireConversation(input.actor, input.conversationId);
 
     const pendingStatus = await this.options.tools.getPendingAction(input.pendingId, {
       actor: input.actor,
@@ -602,11 +426,7 @@ export class AssistantOrchestrator {
       }),
     });
     const visibleTools = await this.listVisibleTools(input.actor, input.principal);
-    const history = await this.options.store.listMessages({
-      orgId: input.actor.orgId,
-      conversationId: conversation.id,
-      limit: this.#historyLimit,
-    });
+    const history = await this.#recentMessages(input.actor.orgId, conversation.id);
     const effectiveClassification = effectiveClassificationForTurn({
       orgId: input.actor.orgId,
       ...(input.classification === undefined ? {} : { clientHint: input.classification }),
@@ -659,11 +479,7 @@ export class AssistantOrchestrator {
 
     return {
       conversation,
-      messages: await this.options.store.listMessages({
-        orgId: input.actor.orgId,
-        conversationId: conversation.id,
-        limit: this.#historyLimit,
-      }),
+      messages: await this.#recentMessages(input.actor.orgId, conversation.id),
       response: responseMessage,
       ai: aiResponse,
       toolCalls: [toolCall],
@@ -678,14 +494,7 @@ export class AssistantOrchestrator {
     if (this.options.confirmationGate === undefined) {
       throw new Error("Assistant confirmation gate is not configured.");
     }
-    const conversation = await this.options.store.getConversation({
-      orgId: input.actor.orgId,
-      actorId: input.actor.id,
-      conversationId: input.conversationId,
-    });
-    if (conversation === null) {
-      throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
-    }
+    const conversation = await this.#requireConversation(input.actor, input.conversationId);
 
     const cancelled = await this.options.confirmationGate.deny({
       id: input.pendingId,
@@ -716,11 +525,7 @@ export class AssistantOrchestrator {
       }),
     });
     const visibleTools = await this.listVisibleTools(input.actor, input.principal);
-    const history = await this.options.store.listMessages({
-      orgId: input.actor.orgId,
-      conversationId: conversation.id,
-      limit: this.#historyLimit,
-    });
+    const history = await this.#recentMessages(input.actor.orgId, conversation.id);
     const effectiveClassification = effectiveClassificationForTurn({
       orgId: input.actor.orgId,
       ...(input.classification === undefined ? {} : { clientHint: input.classification }),
@@ -773,11 +578,7 @@ export class AssistantOrchestrator {
 
     return {
       conversation,
-      messages: await this.options.store.listMessages({
-        orgId: input.actor.orgId,
-        conversationId: conversation.id,
-        limit: this.#historyLimit,
-      }),
+      messages: await this.#recentMessages(input.actor.orgId, conversation.id),
       response: responseMessage,
       ai: aiResponse,
       toolCalls: [toolCall],
@@ -841,15 +642,7 @@ export class AssistantOrchestrator {
     input: AssistantSendMessageInput,
   ): Promise<AssistantConversation> {
     if (input.conversationId !== undefined) {
-      const existing = await this.options.store.getConversation({
-        orgId: input.actor.orgId,
-        actorId: input.actor.id,
-        conversationId: input.conversationId,
-      });
-      if (existing === null) {
-        throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
-      }
-      return existing;
+      return this.#requireConversation(input.actor, input.conversationId);
     }
     return this.options.store.createConversation({
       actor: input.actor,
@@ -857,6 +650,27 @@ export class AssistantOrchestrator {
       ...(input.memoryOptIn === undefined ? {} : { memoryOptIn: input.memoryOptIn }),
       ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
     });
+  }
+
+  /** Loads an actor-owned conversation, or throws the standard not-found error. */
+  async #requireConversation(actor: Actor, conversationId: string): Promise<AssistantConversation> {
+    const conversation = await this.options.store.getConversation({
+      orgId: actor.orgId,
+      actorId: actor.id,
+      conversationId,
+    });
+    if (conversation === null) {
+      throw new Error(`Unknown assistant conversation: ${conversationId}`);
+    }
+    return conversation;
+  }
+
+  /** The conversation tail used both as prompt history and as turn output. */
+  async #recentMessages(
+    orgId: string,
+    conversationId: string,
+  ): Promise<readonly AssistantMessage[]> {
+    return this.options.store.listMessages({ orgId, conversationId, limit: this.#historyLimit });
   }
 
   private async collectSearchContext(

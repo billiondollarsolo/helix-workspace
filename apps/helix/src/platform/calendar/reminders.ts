@@ -75,7 +75,8 @@ export function parseEventReminders(
 
   const list = metadata["reminders"];
   if (Array.isArray(list)) {
-    const parsed = list.flatMap((entry) => {
+    // Explicit empty array = opted out of reminders.
+    return list.flatMap((entry) => {
       if (typeof entry === "number" && Number.isFinite(entry)) {
         return normalizeMinutes(entry);
       }
@@ -84,8 +85,6 @@ export function parseEventReminders(
       }
       return [];
     });
-    // Explicit empty array = opted out of reminders.
-    return parsed;
   }
 
   const single = metadata["reminderMinutesBefore"];
@@ -187,12 +186,7 @@ export function buildReminderNotifications(
   due: DueCalendarReminder,
 ): readonly NotificationInsert[] {
   const startsIso = due.startsAt.toISOString();
-  const summary =
-    due.minutesBefore === 0
-      ? `Starting now: ${due.title}`
-      : due.minutesBefore === 1
-        ? `In 1 minute: ${due.title}`
-        : `In ${String(due.minutesBefore)} minutes: ${due.title}`;
+  const summary = reminderSummary(due);
 
   return due.recipientActorIds.map((actorId) => ({
     orgId: due.orgId,
@@ -260,6 +254,16 @@ export async function dispatchDueCalendarReminders(input: {
   }
 
   return { due: dueList.length, inserted, skipped };
+}
+
+function reminderSummary(due: DueCalendarReminder): string {
+  if (due.minutesBefore === 0) {
+    return `Starting now: ${due.title}`;
+  }
+  if (due.minutesBefore === 1) {
+    return `In 1 minute: ${due.title}`;
+  }
+  return `In ${String(due.minutesBefore)} minutes: ${due.title}`;
 }
 
 function recipientActorIds(event: CalendarEventRecord): readonly string[] {

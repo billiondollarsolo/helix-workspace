@@ -61,13 +61,23 @@ export function evaluateR3(input = {}) {
     reasons: [
       ...(!structural.ok ? [`missing structural: ${structural.missing.join(", ")}`] : []),
       ...(!packaging.ok ? packaging.reasons : []),
-      ...(!allowMissingLive && !live.ok
-        ? [`missing live evidence: ${live.missing.join(", ")}`]
-        : allowMissingLive && !live.ok
-          ? [`live evidence incomplete (allowed in structural mode): ${live.missing.join(", ")}`]
-          : []),
+      ...liveEvidenceReasons(live, allowMissingLive),
     ],
   };
+}
+
+/**
+ * Missing live packs are still reported in structural mode, but with wording that
+ * records they were tolerated rather than treated as a no-go reason.
+ */
+function liveEvidenceReasons(live, allowMissingLive) {
+  if (live.ok) {
+    return [];
+  }
+  if (allowMissingLive) {
+    return [`live evidence incomplete (allowed in structural mode): ${live.missing.join(", ")}`];
+  }
+  return [`missing live evidence: ${live.missing.join(", ")}`];
 }
 
 export function evaluatePackagingFailClosed({
@@ -80,12 +90,8 @@ export function evaluatePackagingFailClosed({
     if (!/HELIX_APPS[^\n]*mail,drive,chat,assistant/.test(compose)) {
       reasons.push("compose production HELIX_APPS is not MVP allowlist");
     }
-    if (/HELIX_WORKSPACE_PROFILE[^\n]*full/.test(compose) && !/#[^\n]*full/.test(compose)) {
-      // allow comments only
-      if (!compose.includes("# HELIX_WORKSPACE_PROFILE=full")) {
-        // still ok if default is mvp
-      }
-    }
+    // A commented-out `HELIX_WORKSPACE_PROFILE=full` in the compose file is allowed:
+    // the default profile stays mvp, so it is not a packaging gate failure.
     const packaging = read("apps/helix/src/config/workspace-packaging.ts");
     if (!packaging.includes("PRODUCTION_FULL_APPS_ALLOWLIST")) {
       reasons.push("workspace-packaging missing full allowlist");

@@ -4,13 +4,14 @@
    the source app via the verb→route map below. */
 
 import { useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Icons, type IconComponent } from "@/components/icons";
 import { CORE_WORKSPACE_STORAGE_ONLY } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
 import {
   notificationsListQueryOptions,
+  notificationsQueryKey,
   useMarkAllRead,
   useMarkRead,
   type NotificationItem,
@@ -69,6 +70,25 @@ export function routeForNotification(
   return null;
 }
 
+interface RelativeTimeUnit {
+  readonly upperBound: number;
+  readonly unit: Intl.RelativeTimeFormatUnit;
+  readonly divisor: number;
+}
+
+/* Ordered finest → coarsest. Anything past the last bound reads in days. */
+const RELATIVE_TIME_UNITS: readonly RelativeTimeUnit[] = [
+  { upperBound: 60_000, unit: "second", divisor: 1_000 },
+  { upperBound: 3_600_000, unit: "minute", divisor: 60_000 },
+  { upperBound: 86_400_000, unit: "hour", divisor: 3_600_000 },
+];
+
+const RELATIVE_TIME_DAYS: RelativeTimeUnit = {
+  upperBound: Number.POSITIVE_INFINITY,
+  unit: "day",
+  divisor: 86_400_000,
+};
+
 export function formatRelativeNotificationTime(
   iso: string,
   now = Date.now(),
@@ -81,14 +101,10 @@ export function formatRelativeNotificationTime(
   }
   const elapsed = createdAt - now;
   const absoluteElapsed = Math.abs(elapsed);
-  const [unit, divisor] =
-    absoluteElapsed < 60_000
-      ? (["second", 1_000] as const)
-      : absoluteElapsed < 3_600_000
-        ? (["minute", 60_000] as const)
-        : absoluteElapsed < 86_400_000
-          ? (["hour", 3_600_000] as const)
-          : (["day", 86_400_000] as const);
+  // Coarsest unit whose threshold the elapsed time has not yet crossed.
+  const { unit, divisor } =
+    RELATIVE_TIME_UNITS.find((candidate) => absoluteElapsed < candidate.upperBound) ??
+    RELATIVE_TIME_DAYS;
   return {
     relative: new Intl.RelativeTimeFormat(locales, { numeric: "auto" }).format(
       Math.round(elapsed / divisor),
@@ -101,6 +117,15 @@ export function formatRelativeNotificationTime(
   };
 }
 
+/** Decorative bell used by the panel's loading / error / empty states. */
+function BellGlyph() {
+  return (
+    <span aria-hidden="true">
+      <Icons.Bell />
+    </span>
+  );
+}
+
 export interface NotificationsPanelProps {
   open: boolean;
   onClose: () => void;
@@ -110,9 +135,16 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
   const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [filter, setFilter] = useState<"all" | "unread">("all");
-  const { data, isLoading, isError, isFetching, refetch } = useQuery(
-    notificationsListQueryOptions(false),
-  );
+  const { data, isLoading, isError, isFetching } = useQuery(notificationsListQueryOptions(false));
+  const queryClient = useQueryClient();
+  /* Invalidate the shared key rather than this observer's own `refetch`, so a
+     recovery here also un-sticks the unread-count badge in the topbar, which
+     reads a sibling key under the same root. Destructuring `refetch` also hid
+     this call from `helix/query-refresh-discipline`, which only matched member
+     calls — the rule now catches the bare form too. */
+  const retry = () => {
+    void queryClient.invalidateQueries({ queryKey: notificationsQueryKey });
+  };
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
 
@@ -231,23 +263,20 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
       >
         {isLoading ? (
           <div className="empty" role="status" aria-live="polite" style={{ padding: 32 }}>
-            <span aria-hidden="true">
-              <Icons.Bell />
-            </span>
+            <BellGlyph />
             <div>Loading…</div>
           </div>
-        ) : isError ? (
+        ) : null}
+        {!isLoading && isError ? (
           <div className="empty" role="alert" style={{ padding: 32, color: "var(--danger)" }}>
-            <span aria-hidden="true">
-              <Icons.Bell />
-            </span>
+            <BellGlyph />
             <div>Could not load notifications. Check your connection and try again.</div>
             <button
               type="button"
               className="btn sm"
               disabled={isFetching}
               aria-busy={isFetching}
-              onClick={() => void refetch()}
+              onClick={retry}
             >
               {isFetching ? "Retrying…" : "Retry"}
             </button>
@@ -347,9 +376,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
         })}
         {!isLoading && !isError && items.length === 0 ? (
           <div className="empty" style={{ padding: 32 }}>
-            <span aria-hidden="true">
-              <Icons.Bell />
-            </span>
+            <BellGlyph />
             <div>You&apos;re all caught up</div>
           </div>
         ) : null}

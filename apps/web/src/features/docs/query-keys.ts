@@ -34,6 +34,8 @@ export const docsQueryKeys = {
     status === undefined
       ? (["docs", "suggestions", docId] as const)
       : (["docs", "suggestions", docId, status] as const),
+  /** Prefix shared by every Drive-backed docs list; invalidate to refresh them all. */
+  listFromDrive: () => ["docs", "list-from-drive"] as const,
   versions: (docId: string) => ["docs", "versions", docId] as const,
   askHistory: (docId: string) => ["docs", "ask-history", docId] as const,
   smartChipPicker: () => ["docs", "smart-chip-picker"] as const,

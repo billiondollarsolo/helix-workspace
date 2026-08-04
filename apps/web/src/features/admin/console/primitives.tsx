@@ -35,6 +35,35 @@ export function StateBanner({
   );
 }
 
+/** A mutation's error, or nothing. React Query clears `error` back to `null`
+ *  whenever a mutation is not in its error state, so the null check is the
+ *  whole condition — the same idiom every section around a write path. */
+export function MutationError({ error }: { readonly error: Error | null }) {
+  return error === null ? null : <StateBanner kind="error">{error.message}</StateBanner>;
+}
+
+/** The console's status chip: a tone class, the dot, and a label.
+ *
+ *  `tone` is interpolated exactly as the sites wrote it, so an empty tone still
+ *  produces `"chip "` and the shared `.chip` styling is unchanged. `dot` exists
+ *  because one site (an OAuth app's status) deliberately renders without it. */
+export function StatusChip({
+  tone,
+  label,
+  dot = true,
+}: {
+  readonly tone: string;
+  readonly label: ReactNode;
+  readonly dot?: boolean;
+}) {
+  return (
+    <span className={`chip ${tone}`}>
+      {dot ? <span className="chip-dot" /> : null}
+      {label}
+    </span>
+  );
+}
+
 /** Inline "nothing here" text for a table body or panel that already has its
  *  own frame and heading. For a whole empty section, use `EmptyState`. */
 export function EmptyRow({ children }: { children: ReactNode }) {

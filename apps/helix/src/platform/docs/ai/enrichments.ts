@@ -1,5 +1,9 @@
 import type { AICapability, JsonObject } from "@helix/sdk-types";
-import type { EnrichmentEvent, EnrichmentHandler, EnrichmentWorker } from "../../ai/enrichment/index.js";
+import type {
+  EnrichmentEvent,
+  EnrichmentHandler,
+  EnrichmentWorker,
+} from "../../ai/enrichment/index.js";
 import type {
   DocsActivityPayload,
   DocsOutlineEnrichmentRecord,
@@ -27,12 +31,15 @@ export function registerDocsEnrichments(
   }
 }
 
+/** Handler id / AI feature key for the docs outline enrichment. */
+const DOCS_OUTLINE_FEATURE = "docs.outline";
+
 export function createDocsOutlineEnrichmentHandler(
   options: DocsOutlineEnrichmentOptions,
 ): EnrichmentHandler<DocsActivityPayload> {
   return {
-    id: "docs.outline",
-    feature: "docs.outline",
+    id: DOCS_OUTLINE_FEATURE,
+    feature: DOCS_OUTLINE_FEATURE,
     subjects: [
       "activity.docs.document.created",
       "activity.docs.document.updated",
@@ -42,13 +49,15 @@ export function createDocsOutlineEnrichmentHandler(
     async enrich(event) {
       const document = await documentForEnrichment(event, options.store);
       if (document === null) {
-        return skipped("docs.outline", event, "document not found");
+        return skipped(DOCS_OUTLINE_FEATURE, event, "document not found");
       }
       if (document.deletedAt !== undefined) {
-        return skipped("docs.outline", event, "document deleted");
+        return skipped(DOCS_OUTLINE_FEATURE, event, "document deleted");
       }
 
-      const outline = enrichDocsOutlineFromText(document.markdown ?? document.body ?? document.plainText ?? "");
+      const outline = enrichDocsOutlineFromText(
+        document.markdown ?? document.body ?? document.plainText ?? "",
+      );
       const summary = await summarizeOutline(document, outline, options.ai);
       await options.store.recordDocsOutlineEnrichment?.({
         docId: document.id,
@@ -58,8 +67,8 @@ export function createDocsOutlineEnrichmentHandler(
       });
 
       return {
-        handlerId: "docs.outline",
-        feature: "docs.outline",
+        handlerId: DOCS_OUTLINE_FEATURE,
+        feature: DOCS_OUTLINE_FEATURE,
         status: "applied",
         resourceType: "docs.document",
         resourceId: document.id,
@@ -94,7 +103,7 @@ async function summarizeOutline(
   const classification = normalizeClassification(document.classification);
   const response = await ai.chat(
     {
-      feature: "docs.outline",
+      feature: DOCS_OUTLINE_FEATURE,
       classification,
       messages: [
         {
@@ -103,12 +112,15 @@ async function summarizeOutline(
         },
         {
           role: "user",
-          content: [`Title: ${document.title}`, ...outline.map((item) => `${"#".repeat(item.level)} ${item.title}`)].join("\n"),
+          content: [
+            `Title: ${document.title}`,
+            ...outline.map((item) => `${"#".repeat(item.level)} ${item.title}`),
+          ].join("\n"),
         },
       ],
     },
     {
-      feature: "docs.outline",
+      feature: DOCS_OUTLINE_FEATURE,
       classification,
     },
   );
@@ -116,7 +128,10 @@ async function summarizeOutline(
 }
 
 function normalizeClassification(value: string | undefined): AIClassification {
-  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
+  return value === "public" ||
+    value === "standard" ||
+    value === "confidential" ||
+    value === "restricted"
     ? value
     : "standard";
 }

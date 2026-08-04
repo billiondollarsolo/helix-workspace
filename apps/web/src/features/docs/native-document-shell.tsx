@@ -173,7 +173,7 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
               },
       );
       void queryClient.invalidateQueries({ queryKey: docsQueryKeys.document(documentId) });
-      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: docsQueryKeys.listFromDrive() });
     },
   });
   const exportMutation = useMutation({
@@ -201,7 +201,7 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
         metadata: { createdFrom: "web.native-document-shell" },
       }),
     onSuccess: (document) => {
-      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: docsQueryKeys.listFromDrive() });
       void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
       void router?.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
     },
@@ -222,7 +222,7 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
       });
     },
     onSuccess: (document) => {
-      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: docsQueryKeys.listFromDrive() });
       void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
       void router?.navigate({ to: "/docs/$documentId", params: { documentId: document.id } });
     },
@@ -232,7 +232,7 @@ export function NativeDocumentShell({ documentId }: NativeDocumentShellProps) {
     onError: () => undefined,
     mutationFn: () => trashDriveObject(documentId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["docs", "list-from-drive"] });
+      void queryClient.invalidateQueries({ queryKey: docsQueryKeys.listFromDrive() });
       void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
       void router?.navigate({ to: "/docs" });
     },

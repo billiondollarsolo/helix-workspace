@@ -86,11 +86,7 @@ export function confirmationRequiredForSideEffect(
 }
 
 function definedOverrides(overrides: TierOverrides): Partial<TierSecurityDefaults> {
-  const result: Partial<TierSecurityDefaults> = {};
-  for (const [key, value] of Object.entries(overrides) as [keyof TierOverrides, TierOverrides[keyof TierOverrides]][]) {
-    if (value !== undefined) {
-      Object.assign(result, { [key]: value });
-    }
-  }
-  return result;
+  // Explicit `undefined` override values must not shadow the tier default when
+  // spread over it, so they are dropped rather than passed through.
+  return Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined));
 }

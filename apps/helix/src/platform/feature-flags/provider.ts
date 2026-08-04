@@ -27,16 +27,21 @@ export class TenantConfigFeatureFlagProvider implements FeatureFlagProvider {
     defaultValue: T,
     context: TenantFeatureFlagContext = {},
   ): Promise<T> {
-    const environment = context.environment ?? this.options.environment;
-    const tenantConfig =
-      context.tenantConfig ??
-      (context.orgId === undefined
-        ? null
-        : await this.options.loadTenantConfig?.({
-            orgId: context.orgId,
-            context: environment === undefined ? context : { ...context, environment },
-          }));
+    const tenantConfig = context.tenantConfig ?? (await this.loadTenantConfig(context));
     return readTenantFlag(tenantConfig, key, defaultValue);
+  }
+
+  private async loadTenantConfig(
+    context: TenantFeatureFlagContext,
+  ): Promise<TenantConfig | null | undefined> {
+    if (context.orgId === undefined) {
+      return null;
+    }
+    const environment = context.environment ?? this.options.environment;
+    return this.options.loadTenantConfig?.({
+      orgId: context.orgId,
+      context: environment === undefined ? context : { ...context, environment },
+    });
   }
 }
 

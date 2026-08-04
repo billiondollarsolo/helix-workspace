@@ -226,13 +226,17 @@ export function installPki(secretsDirectory, generation) {
   return ca.caCert;
 }
 
+function newSecret() {
+  return randomBytes(48).toString("base64url");
+}
+
 export function prepareSecrets(directory) {
-  const generic = randomBytes(48).toString("base64url");
-  const postgresPassword = randomBytes(48).toString("base64url");
-  const appPassword = randomBytes(48).toString("base64url");
-  const migrationPassword = randomBytes(48).toString("base64url");
-  const redisPassword = randomBytes(48).toString("base64url");
-  const natsPassword = randomBytes(48).toString("base64url");
+  const generic = newSecret();
+  const postgresPassword = newSecret();
+  const appPassword = newSecret();
+  const migrationPassword = newSecret();
+  const redisPassword = newSecret();
+  const natsPassword = newSecret();
   for (const name of secretNames) writeSecret(directory, name, generic);
   writeSecret(directory, "postgres_password", postgresPassword);
   writeSecret(directory, "postgres_app_password", appPassword);

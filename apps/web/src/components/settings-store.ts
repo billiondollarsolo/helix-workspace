@@ -34,9 +34,9 @@ export const FONT_SCALE_OPTIONS: readonly { value: FontScale; label: string }[] 
   { value: "xl", label: "XL" },
 ];
 
-const VALID_FONT_SCALES: readonly FontScale[] = ["small", "default", "large", "xl"];
+const VALID_FONT_SCALES: readonly string[] = FONT_SCALE_OPTIONS.map((option) => option.value);
 function isValidFontScale(v: unknown): v is FontScale {
-  return typeof v === "string" && (VALID_FONT_SCALES as readonly string[]).includes(v);
+  return typeof v === "string" && VALID_FONT_SCALES.includes(v);
 }
 
 export interface AppearanceSettings {

@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { resolveAICostBudget, validateNonNegativeInteger } from "./budget.js";
 import {
-  resolveAICostBudget,
-  validateNonNegativeInteger,
-} from "./budget.js";
+  costUsage,
+  limitExceeded as usageLimitExceeded,
+  secondsUntilNextUtcDay,
+  utcDayKey,
+} from "./daily-window.js";
 import type {
-  AICostBudget,
   AICostLimitCheckInput,
   AICostLimitDecision,
   AICostLimiter,
@@ -15,7 +17,6 @@ import type {
   AICostSummaryRow,
   AICostUsage,
   AICostUsageInput,
-  AICostUsageWindow,
 } from "./types.js";
 
 export class InMemoryAICostLimiter implements AICostLimiter {
@@ -32,9 +33,12 @@ export class InMemoryAICostLimiter implements AICostLimiter {
     );
     const actorUsed = this.#actorUsed(input.orgId, input.actorId, at);
     const featureUsed = this.#featureUsed(input.orgId, input.actorId, input.feature, at);
-    const usage = costUsage({ actorUsed, featureUsed, budget, at });
+    const usage = costUsage(actorUsed, featureUsed, budget, at);
 
-    if (budget.actorDailyUsdMicros !== null && actorUsed + estimatedCostUsdMicros > budget.actorDailyUsdMicros) {
+    if (
+      budget.actorDailyUsdMicros !== null &&
+      actorUsed + estimatedCostUsdMicros > budget.actorDailyUsdMicros
+    ) {
       return {
         allowed: false,
         reason: "actor_daily_cost",
@@ -43,7 +47,10 @@ export class InMemoryAICostLimiter implements AICostLimiter {
       };
     }
 
-    if (budget.featureDailyUsdMicros !== null && featureUsed + estimatedCostUsdMicros > budget.featureDailyUsdMicros) {
+    if (
+      budget.featureDailyUsdMicros !== null &&
+      featureUsed + estimatedCostUsdMicros > budget.featureDailyUsdMicros
+    ) {
       return {
         allowed: false,
         reason: "feature_daily_cost",
@@ -72,12 +79,9 @@ export class InMemoryAICostLimiter implements AICostLimiter {
     this.#actorDailyCosts.set(actorKey, actorUsed);
     this.#featureDailyCosts.set(featureKey, featureUsed);
 
-    const usage = costUsage({ actorUsed, featureUsed, budget, at });
+    const usage = costUsage(actorUsed, featureUsed, budget, at);
     const warningReached = usage.actorDaily.warningReached || usage.featureDaily.warningReached;
-    const limitExceeded =
-      (usage.actorDaily.limitUsdMicros !== null && usage.actorDaily.usedUsdMicros >= usage.actorDaily.limitUsdMicros) ||
-      (usage.featureDaily.limitUsdMicros !== null &&
-        usage.featureDaily.usedUsdMicros >= usage.featureDaily.limitUsdMicros);
+    const limitExceeded = usageLimitExceeded(usage);
     const record: AICostRecord = {
       id: randomUUID(),
       orgId: input.orgId,
@@ -113,12 +117,12 @@ export class InMemoryAICostLimiter implements AICostLimiter {
   async getUsage(input: AICostUsageInput): Promise<AICostUsage> {
     const at = input.at ?? new Date();
     const budget = resolveAICostBudget(input.tier, input.budget);
-    return costUsage({
-      actorUsed: this.#actorUsed(input.orgId, input.actorId, at),
-      featureUsed: this.#featureUsed(input.orgId, input.actorId, input.feature, at),
+    return costUsage(
+      this.#actorUsed(input.orgId, input.actorId, at),
+      this.#featureUsed(input.orgId, input.actorId, input.feature, at),
       budget,
       at,
-    });
+    );
   }
 
   listRecords(query: AICostSummaryQuery = {}): readonly AICostRecord[] {
@@ -147,9 +151,11 @@ export class InMemoryAICostLimiter implements AICostLimiter {
       rows.set(key, existing);
     }
 
-    return [...rows.values()].sort((left, right) => summaryKey(left.orgId, left.actorId, left.feature).localeCompare(
-      summaryKey(right.orgId, right.actorId, right.feature),
-    ));
+    return [...rows.values()].sort((left, right) =>
+      summaryKey(left.orgId, left.actorId, left.feature).localeCompare(
+        summaryKey(right.orgId, right.actorId, right.feature),
+      ),
+    );
   }
 
   reset(): void {
@@ -167,13 +173,6 @@ export class InMemoryAICostLimiter implements AICostLimiter {
   }
 }
 
-interface CostUsageInput {
-  readonly actorUsed: number;
-  readonly featureUsed: number;
-  readonly budget: AICostBudget;
-  readonly at: Date;
-}
-
 interface MutableAICostSummaryRow {
   readonly orgId: string;
   readonly actorId: string;
@@ -182,36 +181,6 @@ interface MutableAICostSummaryRow {
   inputTokens: number;
   outputTokens: number;
   callCount: number;
-}
-
-function costUsage(input: CostUsageInput): AICostUsage {
-  return {
-    actorDaily: usageWindow(input.actorUsed, input.budget.actorDailyUsdMicros, input.budget.warningThresholdRatio, input.at),
-    featureDaily: usageWindow(
-      input.featureUsed,
-      input.budget.featureDailyUsdMicros,
-      input.budget.warningThresholdRatio,
-      input.at,
-    ),
-  };
-}
-
-function usageWindow(
-  usedUsdMicros: number,
-  limitUsdMicros: number | null,
-  warningThresholdRatio: number,
-  at: Date,
-): AICostUsageWindow {
-  const warningThresholdUsdMicros =
-    limitUsdMicros === null ? null : Math.floor(limitUsdMicros * warningThresholdRatio);
-  return {
-    limitUsdMicros,
-    usedUsdMicros,
-    remainingUsdMicros: limitUsdMicros === null ? null : Math.max(limitUsdMicros - usedUsdMicros, 0),
-    resetsAt: nextUtcDay(at).toISOString(),
-    warningThresholdUsdMicros,
-    warningReached: warningThresholdUsdMicros !== null && usedUsdMicros >= warningThresholdUsdMicros,
-  };
 }
 
 function recordMatches(record: AICostRecord, query: AICostSummaryQuery): boolean {
@@ -235,16 +204,4 @@ function featureDailyKey(orgId: string, actorId: string, feature: string, at: Da
 
 function summaryKey(orgId: string, actorId: string, feature: string): string {
   return `${orgId}:${actorId}:${feature}`;
-}
-
-function utcDayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function nextUtcDay(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
-}
-
-function secondsUntilNextUtcDay(date: Date): number {
-  return Math.max(1, Math.ceil((nextUtcDay(date).getTime() - date.getTime()) / 1000));
 }

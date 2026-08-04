@@ -58,28 +58,19 @@ export function validateDriveEvidence(report, { requirePass = false } = {}) {
   if (report.schemaVersion !== DRIVE_EVIDENCE_SCHEMA_VERSION) {
     throw new Error("Drive evidence report has an unsupported schema.");
   }
+  // Only a live report carries execution timing; a not-run report must not claim it.
+  const liveTimingKeys = report.mode === "live" ? ["startedAt", "completedAt", "durationMs"] : [];
   requireExactKeys(
     report,
-    report.mode === "live"
-      ? [
-          "schemaVersion",
-          "generatedAt",
-          "mode",
-          "status",
-          "startedAt",
-          "completedAt",
-          "durationMs",
-          "cases",
-          ...(report.releaseBinding === undefined ? [] : ["releaseBinding"]),
-        ]
-      : [
-          "schemaVersion",
-          "generatedAt",
-          "mode",
-          "status",
-          "cases",
-          ...(report.releaseBinding === undefined ? [] : ["releaseBinding"]),
-        ],
+    [
+      "schemaVersion",
+      "generatedAt",
+      "mode",
+      "status",
+      ...liveTimingKeys,
+      "cases",
+      ...(report.releaseBinding === undefined ? [] : ["releaseBinding"]),
+    ],
     "Drive evidence report",
   );
   validateOptionalReleaseEvidenceBinding(report.releaseBinding);
@@ -106,25 +97,26 @@ export function validateDriveEvidence(report, { requirePass = false } = {}) {
         `Drive evidence case '${String(entry.name)}' has an invalid status or evidence.`,
       );
     }
-    if (entry.status === "pass" && entry.evidence.length === 0) {
-      throw new Error(`Drive evidence case '${entry.name}' cannot pass without evidence.`);
-    }
     if (entry.status === "pass") {
+      if (entry.evidence.length === 0) {
+        throw new Error(`Drive evidence case '${entry.name}' cannot pass without evidence.`);
+      }
       requireExactKeys(
         entry,
         ["name", "status", "startedAt", "completedAt", "durationMs", "metrics", "evidence"],
         `Drive evidence case '${entry.name}'`,
       );
       validatePassedCase(entry);
-    } else if (typeof entry.reason !== "string" || entry.reason.trim().length === 0) {
-      throw new Error(`Drive evidence case '${entry.name}' requires a reason.`);
-    } else {
-      requireExactKeys(
-        entry,
-        ["name", "status", "evidence", "reason"],
-        `Drive evidence case '${entry.name}'`,
-      );
+      continue;
     }
+    if (typeof entry.reason !== "string" || entry.reason.trim().length === 0) {
+      throw new Error(`Drive evidence case '${entry.name}' requires a reason.`);
+    }
+    requireExactKeys(
+      entry,
+      ["name", "status", "evidence", "reason"],
+      `Drive evidence case '${entry.name}'`,
+    );
   }
   const passed = report.cases.every(({ status }) => status === "pass");
   if (report.mode === "not_run") {

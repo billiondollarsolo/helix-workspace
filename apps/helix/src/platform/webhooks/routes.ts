@@ -98,6 +98,7 @@ export async function registerWebhookRoutes(
           })
         : { ok: true as const };
     const accepted = verified.accepted && routed.ok;
+    const failureError = routed.ok ? verified.error : routed.error;
     const delivery = await options.store.createDelivery({
       orgId: webhook.orgId,
       direction: "inbound",
@@ -107,7 +108,7 @@ export async function registerWebhookRoutes(
       payload: verified.parsedPayload,
       signature: verified.signatureHeader ?? null,
       requestHeaders: headers,
-      error: accepted ? null : routed.ok ? verified.error : routed.error,
+      error: accepted ? null : failureError,
       deliveredAt: accepted ? receivedAt : null,
     });
     if (accepted) {
@@ -117,7 +118,7 @@ export async function registerWebhookRoutes(
     return reply.code(verified.accepted ? 422 : 401).send({
       ok: false,
       deliveryId: delivery.id,
-      error: routed.ok ? verified.error : routed.error,
+      error: failureError,
     });
   });
 }
@@ -275,16 +276,14 @@ function firstHeader(value: string | readonly string[] | undefined): string | un
   return typeof value === "string" ? value : value?.[0];
 }
 
+/** The persisted delivery record drops credential-bearing request headers. */
 function compactHeaders(
   headers: Record<string, string | string[] | undefined>,
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(headers)
-      .filter(([key]) => key !== "authorization" && key !== "cookie")
-      .flatMap(([key, value]) => {
-        const first = firstHeader(value);
-        return first === undefined ? [] : [[key, first]];
-      }),
+    Object.entries(allHeaders(headers)).filter(
+      ([key]) => key !== "authorization" && key !== "cookie",
+    ),
   );
 }
 

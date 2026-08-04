@@ -1,7 +1,7 @@
 import type { Actor, SecurityTier } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod3";
-import { resolveAICostBudget } from "./budget.js";
+import { AI_USD_MICROS, resolveAICostBudget } from "./budget.js";
 import type { AICostLimitOverride, AICostLimitStore } from "./limit-store.js";
 
 const adminAIScope = "admin.ai";
@@ -15,8 +15,6 @@ const upsertBodySchema = z
   .strict();
 
 const actorParamsSchema = z.object({ actorId: z.string().uuid() });
-
-const USD_MICROS = 1_000_000;
 
 export interface RegisterAICostLimitAdminRoutesOptions {
   readonly store: AICostLimitStore;
@@ -85,9 +83,7 @@ export function registerAICostLimitAdminRoutes(
     }
     const body = upsertBodySchema.safeParse(request.body);
     if (!body.success) {
-      return reply
-        .code(400)
-        .send({ error: "Invalid AI cost limit.", issues: body.error.issues });
+      return reply.code(400).send({ error: "Invalid AI cost limit.", issues: body.error.issues });
     }
     if (body.data.actorId !== params.data.actorId) {
       return reply.code(400).send({ error: "actorId in body and path must match." });
@@ -144,7 +140,10 @@ function toResponse(override: AICostLimitOverride): AICostLimitResponse {
 
 function effectiveLimit(
   override: AICostLimitOverride | null,
-  tierBudget: { readonly actorDailyUsdMicros: number | null; readonly featureDailyUsdMicros: number | null },
+  tierBudget: {
+    readonly actorDailyUsdMicros: number | null;
+    readonly featureDailyUsdMicros: number | null;
+  },
 ): { readonly actorDailyUsd: number | null; readonly featureDailyUsd: number | null } {
   return {
     actorDailyUsd: microsToUsd(override?.actorDailyUsdMicros ?? tierBudget.actorDailyUsdMicros),
@@ -155,11 +154,11 @@ function effectiveLimit(
 }
 
 function microsToUsd(value: number | null): number | null {
-  return value === null ? null : value / USD_MICROS;
+  return value === null ? null : value / AI_USD_MICROS;
 }
 
 function usdToMicros(value: number | null): number | null {
-  return value === null ? null : Math.round(value * USD_MICROS);
+  return value === null ? null : Math.round(value * AI_USD_MICROS);
 }
 
 function permissionDenied(): { readonly error: string; readonly requiredScope: string } {

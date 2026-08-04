@@ -170,13 +170,13 @@ function sessionUserFromOutput(output: unknown): SessionUser | null {
     id: user.id,
     email: typeof user.email === "string" ? user.email : "",
     name: typeof user.name === "string" ? user.name : "",
-    actorId:
-      typeof user.actorId === "string"
-        ? user.actorId
-        : typeof user.actor_id === "string"
-          ? user.actor_id
-          : null,
+    // Better-Auth may serialize the actor link in either casing.
+    actorId: stringOrNull(user.actorId) ?? stringOrNull(user.actor_id),
   };
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
 
 function errorMessageFromOutput(output: unknown): string | undefined {

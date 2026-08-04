@@ -18,6 +18,9 @@ import {
   passed,
 } from "./validation-primitives.mjs";
 
+// Security scans, SBOMs, and manual reviews all share one freshness budget.
+const SECURITY_EVIDENCE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+
 export function validateSecurityReview(
   report,
   referenceTime,
@@ -57,7 +60,7 @@ export function validateSecurityReview(
     freshTimestamp(
       report[field].completedAt,
       referenceTime,
-      7 * 24 * 60 * 60 * 1_000,
+      SECURITY_EVIDENCE_MAX_AGE_MS,
       `${field} completion`,
     );
   }
@@ -70,7 +73,7 @@ export function validateSecurityReview(
   freshTimestamp(
     report.sensitiveDataScan.completedAt,
     referenceTime,
-    7 * 24 * 60 * 60 * 1_000,
+    SECURITY_EVIDENCE_MAX_AGE_MS,
     "sensitiveDataScan completion",
   );
   validateNamedImageChecks(
@@ -93,7 +96,7 @@ export function validateSecurityReview(
       freshTimestamp(
         check.completedAt,
         referenceTime,
-        7 * 24 * 60 * 60 * 1_000,
+        SECURITY_EVIDENCE_MAX_AGE_MS,
         "security artifact completion",
       );
     }
@@ -112,12 +115,12 @@ export function validateSecurityReview(
     }
     findingIds.add(finding.findingIdHash);
   }
-  const blocking = report.findings.filter(
+  const blocking = report.findings.some(
     ({ severity, disposition }) =>
       ["critical", "high"].includes(severity) &&
       !["resolved", "false_positive"].includes(disposition),
   );
-  if (blocking.length > 0) throw new Error("Critical/High security findings remain open");
+  if (blocking) throw new Error("Critical/High security findings remain open");
   return {
     status: report.status,
     findingCount: report.findings.length,

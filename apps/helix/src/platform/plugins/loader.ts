@@ -99,12 +99,7 @@ export async function discoverPluginsDirectory(
   const discovered: DiscoveredPlugin[] = [];
 
   if (options.includeRootManifest === true) {
-    const rootPlugin = await discoverPlugin(pluginsDir, options).catch((error: unknown) => {
-      if (isFileNotFound(error)) {
-        return undefined;
-      }
-      throw error;
-    });
+    const rootPlugin = await discoverPluginIfPresent(pluginsDir, options);
     if (rootPlugin !== undefined) {
       discovered.push(rootPlugin);
     }
@@ -116,20 +111,26 @@ export async function discoverPluginsDirectory(
       continue;
     }
 
-    const plugin = await discoverPlugin(join(pluginsDir, entry.name), options).catch(
-      (error: unknown) => {
-        if (isFileNotFound(error)) {
-          return undefined;
-        }
-        throw error;
-      },
-    );
+    const plugin = await discoverPluginIfPresent(join(pluginsDir, entry.name), options);
     if (plugin !== undefined) {
       discovered.push(plugin);
     }
   }
 
   return resolvePluginDependencies(discovered);
+}
+
+/** Discovers a plugin directory, treating a missing `plugin.json` as "no plugin here". */
+async function discoverPluginIfPresent(
+  rootDir: string,
+  options: PluginDiscoveryOptions,
+): Promise<DiscoveredPlugin | undefined> {
+  return discoverPlugin(rootDir, options).catch((error: unknown) => {
+    if (isFileNotFound(error)) {
+      return undefined;
+    }
+    throw error;
+  });
 }
 
 export async function enforcePluginTierPolicy(
@@ -140,12 +141,12 @@ export async function enforcePluginTierPolicy(
   assertMinimumTier(manifest, policy.tier);
   assertTierRestriction(manifest, policy.tier);
 
-  if (policy.pluginSignatureRequired === true && !hasSignatureEvidence(manifest)) {
-    throw new Error(
-      `Plugin ${manifest.id} requires signed artifact evidence for ${policy.tier} tier.`,
-    );
-  }
   if (policy.pluginSignatureRequired === true) {
+    if (!hasSignatureEvidence(manifest)) {
+      throw new Error(
+        `Plugin ${manifest.id} requires signed artifact evidence for ${policy.tier} tier.`,
+      );
+    }
     await assertPluginBundleDigest(plugin);
   }
 
@@ -202,7 +203,7 @@ export function resolvePluginDependencies(
   const visiting = new Set<string>();
   const visited = new Set<string>();
 
-  const visit = (plugin: DiscoveredPlugin, stack: readonly string[]): void => {
+  function visit(plugin: DiscoveredPlugin, stack: readonly string[]): void {
     const pluginId = plugin.manifest.id;
     if (visited.has(pluginId)) {
       return;
@@ -222,7 +223,7 @@ export function resolvePluginDependencies(
     visiting.delete(pluginId);
     visited.add(pluginId);
     resolved.push(plugin);
-  };
+  }
 
   for (const plugin of plugins) {
     visit(plugin, []);

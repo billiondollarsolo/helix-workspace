@@ -7,6 +7,9 @@ import { PostgresReceivingDomainStore } from "../platform/mail/receiving-domains
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
+/** Flags that consume the following argument as their value. */
+const VALUE_FLAGS = ["--org-id", "--domain", "--created-by", "--catch-all-actor-id"];
+
 export interface ReceivingDomainBackfillCommand {
   readonly orgId: string;
   readonly domain: string;
@@ -25,16 +28,14 @@ export function parseReceivingDomainBackfillArgs(
       ownershipAttested = true;
       continue;
     }
-    if (
-      !["--org-id", "--domain", "--created-by", "--catch-all-actor-id"].includes(argument ?? "")
-    ) {
+    if (argument === undefined || !VALUE_FLAGS.includes(argument)) {
       throw new Error(`Unknown receiving-domain backfill argument: ${argument ?? ""}`);
     }
     const value = args[index + 1]?.trim();
     if (value === undefined || value.length === 0) {
-      throw new Error(`Missing value for ${argument ?? "argument"}.`);
+      throw new Error(`Missing value for ${argument}.`);
     }
-    values.set(argument as string, value);
+    values.set(argument, value);
     index += 1;
   }
 

@@ -73,40 +73,44 @@ export async function assertNoPendingStartupMigrations(
   }
 }
 
-function incompatibleMigrationErrorMessage(unknown: readonly UnknownAppliedMigration[]): string {
-  const preview = unknown
-    .slice(0, 10)
+/** How many migration names an operator-facing error lists before truncating. */
+const MIGRATION_PREVIEW_LIMIT = 10;
+
+/** Comma-joined `namespace/name` list, truncated so the error stays readable. */
+function migrationPreview(
+  migrations: readonly { readonly namespace: string; readonly name: string }[],
+): string {
+  const preview = migrations
+    .slice(0, MIGRATION_PREVIEW_LIMIT)
     .map((migration) => `${migration.namespace}/${migration.name}`)
     .join(", ");
-  const suffix = unknown.length > 10 ? `, and ${String(unknown.length - 10)} more` : "";
+  const suffix =
+    migrations.length > MIGRATION_PREVIEW_LIMIT
+      ? `, and ${String(migrations.length - MIGRATION_PREVIEW_LIMIT)} more`
+      : "";
+  return `${preview}${suffix}`;
+}
+
+function incompatibleMigrationErrorMessage(unknown: readonly UnknownAppliedMigration[]): string {
   return [
     "Database schema is newer than this Helix application image.",
-    `Unknown applied migrations: ${preview}${suffix}.`,
+    `Unknown applied migrations: ${migrationPreview(unknown)}.`,
     "Deploy a compatible image; never delete migration history or attempt an ad-hoc downgrade.",
   ].join(" ");
 }
 
 export function shouldCheckStartupMigrations(env: NodeJS.ProcessEnv): boolean {
+  // The check is on by default: only an explicit opt-out disables it, so any
+  // unrecognized value (including "true"/"1"/"on") keeps it enabled.
   const override = env.HELIX_STARTUP_MIGRATION_CHECK?.trim().toLowerCase();
-  if (override === "false" || override === "0" || override === "off") {
-    return false;
-  }
-  if (override === "true" || override === "1" || override === "on") {
-    return true;
-  }
-  return true;
+  return override !== "false" && override !== "0" && override !== "off";
 }
 
 function startupMigrationErrorMessage(pending: readonly PendingMigration[]): string {
-  const preview = pending
-    .slice(0, 10)
-    .map((migration) => `${migration.namespace}/${migration.name}`)
-    .join(", ");
-  const suffix = pending.length > 10 ? `, and ${String(pending.length - 10)} more` : "";
   return [
     "Database schema has pending migrations.",
     "Run the dedicated Helix migration job before starting application replicas.",
-    `Pending: ${preview}${suffix}.`,
+    `Pending: ${migrationPreview(pending)}.`,
     "Set HELIX_STARTUP_MIGRATION_CHECK=false only for intentional one-off diagnostics.",
   ].join(" ");
 }

@@ -1,6 +1,13 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { SlidesShell, type SlidesViewRouteState } from "@/features/slides/slides-shell";
 import { enforceFullWorkspaceRoute } from "@/components/mvp-boundary";
+import {
+  optionalEnumSearchParam,
+  optionalNonBlankStringSearchParam,
+  optionalStringSearchParam,
+} from "@/lib/search-params";
+
+const OPEN_MODES = ["office"] as const;
 
 /** `?deck=<id>` opens straight into that deck's editor (used by Drive's New). */
 interface SlidesRouteSearch {
@@ -11,15 +18,10 @@ interface SlidesRouteSearch {
 }
 
 function validateSlidesRouteSearch(search: Record<string, unknown>): SlidesRouteSearch {
-  const deck =
-    typeof search.deck === "string" && search.deck.trim().length > 0 ? search.deck : undefined;
-  const comment =
-    typeof search.comment === "string" && search.comment.trim().length > 0
-      ? search.comment
-      : undefined;
-  const open = search.open === "office" ? "office" : undefined;
-  const q =
-    typeof search.q === "string" && search.q.trim().length > 0 ? search.q.trim() : undefined;
+  const deck = optionalNonBlankStringSearchParam(search.deck);
+  const comment = optionalNonBlankStringSearchParam(search.comment);
+  const open = optionalEnumSearchParam(search.open, OPEN_MODES);
+  const q = optionalStringSearchParam(search.q);
   return {
     ...(deck === undefined ? {} : { deck }),
     ...(comment === undefined ? {} : { comment }),

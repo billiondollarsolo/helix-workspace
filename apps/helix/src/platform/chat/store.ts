@@ -581,24 +581,19 @@ export class PostgresChatStore
       }
 
       const mentionIds = parseMentions(content.body, memberHandleResolver(room.members));
+      const mentions = mentionIds.map((id) => {
+        // `@here` / `@channel` are sentinels, not actors, so they carry no member.
+        if (id.startsWith("@")) {
+          return { id, sentinel: id };
+        }
+        const displayName = room.members.find((member) => member.actorId === id)?.displayName;
+        return displayName === null || displayName === undefined || displayName.length === 0
+          ? { id }
+          : { id, displayName };
+      });
       const baseMetadata = {
         ...content.metadata,
-        ...(mentionIds.length === 0
-          ? {}
-          : {
-              mentions: mentionIds.map((id) =>
-                id.startsWith("@")
-                  ? { id, sentinel: id }
-                  : {
-                      id,
-                      ...(room.members.find((m) => m.actorId === id)?.displayName
-                        ? {
-                            displayName: room.members.find((m) => m.actorId === id)?.displayName,
-                          }
-                        : {}),
-                    },
-              ),
-            }),
+        ...(mentions.length === 0 ? {} : { mentions }),
         ...(input.clientMessageId === undefined ? {} : { clientMessageId: input.clientMessageId }),
       } as JsonObject;
       const validatedMetadata = chatMetadataSchema.parse(baseMetadata) as JsonObject;
@@ -1018,7 +1013,7 @@ export class PostgresChatStore
         and thread_id = ${input.roomId}
       order by updated_at desc
     `) as unknown as readonly ChatReadReceiptRow[];
-    return rows.map((row) => mapReadReceipt(row));
+    return rows.map(mapReadReceipt);
   }
 
   async listMessages(input: {

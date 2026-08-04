@@ -331,16 +331,16 @@ export async function runBetaSpamSecondPass(
   config: MailSpamAiConfig,
   fetchImpl: LlmFetch = globalThis.fetch,
 ): Promise<CombinedSpamDecision> {
+  const rules = evaluateSpamRules(features);
   // Hard gate: do not spend LLM budget if spamd already flagged spam.
   if (features.spamdIsSpam === true) {
     return combineSpamDecisions({
       spamdIsSpam: true,
       spamdScore: features.spamdScore,
-      rules: evaluateSpamRules(features),
+      rules,
       llm: null,
     });
   }
-  const rules = evaluateSpamRules(features);
   if (!config.enabled) {
     return combineSpamDecisions({
       spamdIsSpam: false,

@@ -367,14 +367,14 @@ export function WebhookManagement() {
       const context = snapshotWebhookQueries(queryClient);
       patchOverview(queryClient, deliveryLimit, (current) => ({
         ...current,
-        outbound: optimisticOutboundAction(current.outbound, action),
+        outbound: optimisticRowAction(current.outbound, action),
       }));
       return context;
     },
     onSuccess: async (_output, action) => {
       setPendingDelete(null);
       await invalidateWebhookQueries(queryClient);
-      toast.success(outboundActionLabel(action.type));
+      toast.success(webhookActionLabels.outbound[action.type]);
     },
     onError: (error, _action, context) => {
       rollbackWebhookQueries(queryClient, context);
@@ -400,7 +400,7 @@ export function WebhookManagement() {
       const context = snapshotWebhookQueries(queryClient);
       patchOverview(queryClient, deliveryLimit, (current) => ({
         ...current,
-        inbound: optimisticInboundAction(current.inbound, action),
+        inbound: optimisticRowAction(current.inbound, action),
       }));
       return context;
     },
@@ -410,7 +410,7 @@ export function WebhookManagement() {
         setRotatedSecret(output.secretRef);
       }
       await invalidateWebhookQueries(queryClient);
-      toast.success(inboundActionLabel(action.type));
+      toast.success(webhookActionLabels.inbound[action.type]);
     },
     onError: (error, _action, context) => {
       rollbackWebhookQueries(queryClient, context);
@@ -711,17 +711,19 @@ interface DeliveryFilterState {
   readonly limit: string;
 }
 
-type OutboundRowAction =
-  | { readonly type: "toggle"; readonly webhook: OutboundWebhook }
-  | { readonly type: "test"; readonly webhook: OutboundWebhook }
-  | { readonly type: "rotate"; readonly webhook: OutboundWebhook }
-  | { readonly type: "delete"; readonly webhook: OutboundWebhook };
+/* Both directions offer the same four row buttons, and every one of them carries
+   the same payload — the row it was pressed on. This was two four-member unions
+   whose members differed only in the literal `type`, which is a discriminant
+   with nothing to discriminate. */
+type WebhookRowActionType = "toggle" | "test" | "rotate" | "delete";
 
-type InboundRowAction =
-  | { readonly type: "toggle"; readonly webhook: InboundWebhook }
-  | { readonly type: "test"; readonly webhook: InboundWebhook }
-  | { readonly type: "rotate"; readonly webhook: InboundWebhook }
-  | { readonly type: "delete"; readonly webhook: InboundWebhook };
+interface WebhookRowAction<Webhook> {
+  readonly type: WebhookRowActionType;
+  readonly webhook: Webhook;
+}
+
+type OutboundRowAction = WebhookRowAction<OutboundWebhook>;
+type InboundRowAction = WebhookRowAction<InboundWebhook>;
 
 /* `value` is `null` when the query behind it has not answered.
  *
@@ -779,25 +781,84 @@ function webhookErrorDetail(message: string | undefined): string {
   return message.trim().toLowerCase() === "unavailable" ? fallback : message;
 }
 
-function OutboundTable({
+/** What a row needs to carry for the shared Status column and action buttons to
+ *  mean anything, whichever direction the row came from. */
+interface WebhookTableRow {
+  readonly id: string;
+  readonly name: string;
+  readonly enabled: boolean;
+}
+
+/** The three words a table calls itself when it has no rows to show. Which one
+ *  the operator sees is the difference between "nothing is configured here" and
+ *  "we could not find out", so each direction spells out its own. */
+interface WebhookTableEmptyText {
+  readonly loading: string;
+  readonly failed: string;
+  readonly empty: string;
+}
+
+function webhookTableEmptyText(
+  text: WebhookTableEmptyText,
+  isBusy: boolean,
+  failed: boolean,
+): string {
+  if (isBusy) {
+    return text.loading;
+  }
+  return failed ? text.failed : text.empty;
+}
+
+/** What the section hands a direction table: the same seven props either way,
+ *  which is why `OutboundTable` and `InboundTable` can forward them untouched. */
+interface WebhookTableProps<Webhook> {
+  /** The list request failed, so an empty table is not an empty workspace. */
+  readonly failed: boolean;
+  readonly isBusy: boolean;
+  readonly onAction: (action: WebhookRowAction<Webhook>) => void;
+  readonly onEdit: (webhook: Webhook) => void;
+  readonly pendingDelete: string | null;
+  readonly setPendingDelete: (id: string | null) => void;
+  readonly webhooks: readonly Webhook[];
+}
+
+/** The half that is fixed per direction: the wording the shared table wears,
+ *  and the columns only that direction has. */
+interface WebhookTableShape<Row> {
+  readonly ariaLabel: string;
+  readonly detail: string;
+  /** Direction-specific columns, rendered between Name and Actions. */
+  readonly detailColumns: readonly ColumnDef<Row>[];
+  readonly emptyText: WebhookTableEmptyText;
+  readonly rotateTitle: string;
+  readonly testTitle: string;
+  readonly title: string;
+}
+
+/* Outbound and inbound endpoints are the same table with a different middle:
+   both open on Status and Name, both close on the same five row buttons, and
+   only the columns in between describe something direction-specific. Those
+   columns arrive as `detailColumns`; the two verbs that differ on the shared
+   buttons ("Test fire" against "Test verify", and which secret is being
+   rotated) arrive as their own props rather than being derived from a
+   direction flag, so the wording stays visible at the call site. */
+function WebhookTable<Row extends WebhookTableRow>({
+  ariaLabel,
+  detail,
+  detailColumns,
+  emptyText,
   failed,
   isBusy,
   onAction,
   onEdit,
   pendingDelete,
+  rotateTitle,
   setPendingDelete,
+  testTitle,
+  title,
   webhooks,
-}: {
-  /** The list request failed, so an empty table is not an empty workspace. */
-  readonly failed: boolean;
-  readonly isBusy: boolean;
-  readonly onAction: (action: OutboundRowAction) => void;
-  readonly onEdit: (webhook: OutboundWebhook) => void;
-  readonly pendingDelete: string | null;
-  readonly setPendingDelete: (id: string | null) => void;
-  readonly webhooks: readonly OutboundWebhook[];
-}) {
-  const columns = useMemo<ColumnDef<OutboundWebhook>[]>(
+}: WebhookTableProps<Row> & WebhookTableShape<Row>) {
+  const columns = useMemo<ColumnDef<Row>[]>(
     () => [
       {
         id: "status",
@@ -814,6 +875,151 @@ function OutboundTable({
           </>
         ),
       },
+      ...detailColumns,
+      {
+        id: "actions",
+        header: "Actions",
+        cell: ({ row }) => {
+          const webhook = row.original;
+          return (
+            <RowActions>
+              <button
+                className="icon-button"
+                disabled={isBusy}
+                onClick={() => onEdit(webhook)}
+                title="Edit"
+                type="button"
+              >
+                <Pencil aria-hidden="true" size={15} />
+              </button>
+              <button
+                className="icon-button"
+                disabled={isBusy}
+                onClick={() => onAction({ type: "toggle", webhook })}
+                title={webhook.enabled ? "Disable" : "Enable"}
+                type="button"
+              >
+                {webhook.enabled ? "Off" : "On"}
+              </button>
+              <button
+                className="icon-button"
+                disabled={isBusy || !webhook.enabled}
+                onClick={() => onAction({ type: "test", webhook })}
+                title={testTitle}
+                type="button"
+              >
+                <Play aria-hidden="true" size={15} />
+              </button>
+              <button
+                className="icon-button"
+                disabled={isBusy}
+                onClick={() => onAction({ type: "rotate", webhook })}
+                title={rotateTitle}
+                type="button"
+              >
+                <RotateCw aria-hidden="true" size={15} />
+              </button>
+              {pendingDelete === webhook.id ? (
+                <button
+                  className="webhooks-confirm-delete"
+                  disabled={isBusy}
+                  onClick={() => onAction({ type: "delete", webhook })}
+                  type="button"
+                >
+                  Delete
+                </button>
+              ) : (
+                <button
+                  className="icon-button danger"
+                  disabled={isBusy}
+                  onClick={() => setPendingDelete(webhook.id)}
+                  title="Delete"
+                  type="button"
+                >
+                  <Trash2 aria-hidden="true" size={15} />
+                </button>
+              )}
+            </RowActions>
+          );
+        },
+      },
+    ],
+    [
+      detailColumns,
+      isBusy,
+      onAction,
+      onEdit,
+      pendingDelete,
+      rotateTitle,
+      setPendingDelete,
+      testTitle,
+    ],
+  );
+  const data = useMemo(() => [...webhooks], [webhooks]);
+  const table = useReactTable({
+    columns,
+    data,
+    getCoreRowModel: getCoreRowModel(),
+  });
+  const rows = table.getRowModel().rows;
+
+  return (
+    <div className="webhooks-panel">
+      <PanelTitle title={title} detail={detail} />
+      <div className="webhooks-table-wrap" tabIndex={0}>
+        <table className="webhooks-table" aria-label={ariaLabel}>
+          <thead>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <tr key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <th key={header.id}>
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(header.column.columnDef.header, header.getContext())}
+                  </th>
+                ))}
+              </tr>
+            ))}
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <EmptyRow
+                colSpan={columns.length}
+                text={webhookTableEmptyText(emptyText, isBusy, failed)}
+              />
+            ) : (
+              rows.map((row) => (
+                <tr key={row.id}>
+                  {row.getVisibleCells().map((cell) => (
+                    <td key={cell.id}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const outboundEmptyText: WebhookTableEmptyText = {
+  loading: "Loading outbound webhooks...",
+  failed: "Could not load outbound webhooks.",
+  empty: "No outbound webhooks configured.",
+};
+
+const inboundEmptyText: WebhookTableEmptyText = {
+  loading: "Loading inbound webhooks...",
+  failed: "Could not load inbound receivers.",
+  empty: "No inbound receivers configured.",
+};
+
+function OutboundTable(props: WebhookTableProps<OutboundWebhook>) {
+  const detailColumns = useMemo<ColumnDef<OutboundWebhook>[]>(
+    () => [
       {
         id: "url",
         header: "URL",
@@ -837,167 +1043,27 @@ function OutboundTable({
         header: "Updated",
         cell: ({ row }) => formatDate(row.original.updatedAt),
       },
-      {
-        id: "actions",
-        header: "Actions",
-        cell: ({ row }) => {
-          const webhook = row.original;
-          return (
-            <RowActions>
-              <button
-                className="icon-button"
-                disabled={isBusy}
-                onClick={() => onEdit(webhook)}
-                title="Edit"
-                type="button"
-              >
-                <Pencil aria-hidden="true" size={15} />
-              </button>
-              <button
-                className="icon-button"
-                disabled={isBusy}
-                onClick={() => onAction({ type: "toggle", webhook })}
-                title={webhook.enabled ? "Disable" : "Enable"}
-                type="button"
-              >
-                {webhook.enabled ? "Off" : "On"}
-              </button>
-              <button
-                className="icon-button"
-                disabled={isBusy || !webhook.enabled}
-                onClick={() => onAction({ type: "test", webhook })}
-                title="Test fire"
-                type="button"
-              >
-                <Play aria-hidden="true" size={15} />
-              </button>
-              <button
-                className="icon-button"
-                disabled={isBusy}
-                onClick={() => onAction({ type: "rotate", webhook })}
-                title="Rotate signing secret"
-                type="button"
-              >
-                <RotateCw aria-hidden="true" size={15} />
-              </button>
-              {pendingDelete === webhook.id ? (
-                <button
-                  className="webhooks-confirm-delete"
-                  disabled={isBusy}
-                  onClick={() => onAction({ type: "delete", webhook })}
-                  type="button"
-                >
-                  Delete
-                </button>
-              ) : (
-                <button
-                  className="icon-button danger"
-                  disabled={isBusy}
-                  onClick={() => setPendingDelete(webhook.id)}
-                  title="Delete"
-                  type="button"
-                >
-                  <Trash2 aria-hidden="true" size={15} />
-                </button>
-              )}
-            </RowActions>
-          );
-        },
-      },
     ],
-    [isBusy, onAction, onEdit, pendingDelete, setPendingDelete],
+    [],
   );
-  const data = useMemo(() => [...webhooks], [webhooks]);
-  const table = useReactTable({
-    columns,
-    data,
-    getCoreRowModel: getCoreRowModel(),
-  });
-  const rows = table.getRowModel().rows;
 
   return (
-    <div className="webhooks-panel">
-      <PanelTitle title="Outbound webhooks" detail="Helix to external systems" />
-      <div className="webhooks-table-wrap" tabIndex={0}>
-        <table className="webhooks-table" aria-label="Outbound webhooks">
-          <thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <th key={header.id}>
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
-                  </th>
-                ))}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <EmptyRow
-                colSpan={columns.length}
-                text={
-                  isBusy
-                    ? "Loading outbound webhooks..."
-                    : failed
-                      ? "Could not load outbound webhooks."
-                      : "No outbound webhooks configured."
-                }
-              />
-            ) : (
-              rows.map((row) => (
-                <tr key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <WebhookTable
+      {...props}
+      ariaLabel="Outbound webhooks"
+      detail="Helix to external systems"
+      detailColumns={detailColumns}
+      emptyText={outboundEmptyText}
+      rotateTitle="Rotate signing secret"
+      testTitle="Test fire"
+      title="Outbound webhooks"
+    />
   );
 }
 
-function InboundTable({
-  failed,
-  isBusy,
-  onAction,
-  onEdit,
-  pendingDelete,
-  setPendingDelete,
-  webhooks,
-}: {
-  /** The list request failed, so an empty table is not an empty workspace. */
-  readonly failed: boolean;
-  readonly isBusy: boolean;
-  readonly onAction: (action: InboundRowAction) => void;
-  readonly onEdit: (webhook: InboundWebhook) => void;
-  readonly pendingDelete: string | null;
-  readonly setPendingDelete: (id: string | null) => void;
-  readonly webhooks: readonly InboundWebhook[];
-}) {
-  const columns = useMemo<ColumnDef<InboundWebhook>[]>(
+function InboundTable(props: WebhookTableProps<InboundWebhook>) {
+  const detailColumns = useMemo<ColumnDef<InboundWebhook>[]>(
     () => [
-      {
-        id: "status",
-        header: "Status",
-        cell: ({ row }) => <StatusPill enabled={row.original.enabled} />,
-      },
-      {
-        id: "name",
-        header: "Name",
-        cell: ({ row }) => (
-          <>
-            <strong>{row.original.name}</strong>
-            <small>{shortId(row.original.id)}</small>
-          </>
-        ),
-      },
       {
         id: "endpoint",
         header: "Endpoint",
@@ -1018,129 +1084,21 @@ function InboundTable({
         header: "Last received",
         cell: ({ row }) => formatDate(row.original.lastReceivedAt),
       },
-      {
-        id: "actions",
-        header: "Actions",
-        cell: ({ row }) => {
-          const webhook = row.original;
-          return (
-            <RowActions>
-              <button
-                className="icon-button"
-                disabled={isBusy}
-                onClick={() => onEdit(webhook)}
-                title="Edit"
-                type="button"
-              >
-                <Pencil aria-hidden="true" size={15} />
-              </button>
-              <button
-                className="icon-button"
-                disabled={isBusy}
-                onClick={() => onAction({ type: "toggle", webhook })}
-                title={webhook.enabled ? "Disable" : "Enable"}
-                type="button"
-              >
-                {webhook.enabled ? "Off" : "On"}
-              </button>
-              <button
-                className="icon-button"
-                disabled={isBusy || !webhook.enabled}
-                onClick={() => onAction({ type: "test", webhook })}
-                title="Test verify"
-                type="button"
-              >
-                <Play aria-hidden="true" size={15} />
-              </button>
-              <button
-                className="icon-button"
-                disabled={isBusy}
-                onClick={() => onAction({ type: "rotate", webhook })}
-                title="Rotate secret"
-                type="button"
-              >
-                <RotateCw aria-hidden="true" size={15} />
-              </button>
-              {pendingDelete === webhook.id ? (
-                <button
-                  className="webhooks-confirm-delete"
-                  disabled={isBusy}
-                  onClick={() => onAction({ type: "delete", webhook })}
-                  type="button"
-                >
-                  Delete
-                </button>
-              ) : (
-                <button
-                  className="icon-button danger"
-                  disabled={isBusy}
-                  onClick={() => setPendingDelete(webhook.id)}
-                  title="Delete"
-                  type="button"
-                >
-                  <Trash2 aria-hidden="true" size={15} />
-                </button>
-              )}
-            </RowActions>
-          );
-        },
-      },
     ],
-    [isBusy, onAction, onEdit, pendingDelete, setPendingDelete],
+    [],
   );
-  const data = useMemo(() => [...webhooks], [webhooks]);
-  const table = useReactTable({
-    columns,
-    data,
-    getCoreRowModel: getCoreRowModel(),
-  });
-  const rows = table.getRowModel().rows;
 
   return (
-    <div className="webhooks-panel">
-      <PanelTitle title="Inbound webhooks" detail="External systems to Helix" />
-      <div className="webhooks-table-wrap" tabIndex={0}>
-        <table className="webhooks-table" aria-label="Inbound webhooks">
-          <thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <th key={header.id}>
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
-                  </th>
-                ))}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <EmptyRow
-                colSpan={columns.length}
-                text={
-                  isBusy
-                    ? "Loading inbound webhooks..."
-                    : failed
-                      ? "Could not load inbound receivers."
-                      : "No inbound receivers configured."
-                }
-              />
-            ) : (
-              rows.map((row) => (
-                <tr key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
+    <WebhookTable
+      {...props}
+      ariaLabel="Inbound webhooks"
+      detail="External systems to Helix"
+      detailColumns={detailColumns}
+      emptyText={inboundEmptyText}
+      rotateTitle="Rotate secret"
+      testTitle="Test verify"
+      title="Inbound webhooks"
+    />
   );
 }
 
@@ -1155,7 +1113,10 @@ function OutboundForm({
   readonly onCancel: () => void;
   readonly onSubmit: (form: OutboundFormState) => void;
 }) {
-  const [step, setStep] = useState<OutboundEditorStep>("destination");
+  const { step, setStep, isLastStep, onBack, onNext } = useEditorStepper(
+    outboundEditorSteps,
+    "destination",
+  );
   const [submitError, setSubmitError] = useState<string | null>(null);
   const editorForm = useForm({
     defaultValues: form,
@@ -1170,7 +1131,6 @@ function OutboundForm({
       onSubmit(value);
     },
   });
-  const stepIndex = outboundEditorSteps.findIndex((item) => item.id === step);
 
   return (
     <form
@@ -1312,16 +1272,10 @@ function OutboundForm({
       ) : null}
       <FormActions
         isSaving={isSaving}
-        isLastStep={stepIndex === outboundEditorSteps.length - 1}
-        onBack={
-          stepIndex > 0 ? () => setStep(outboundEditorSteps[stepIndex - 1]?.id ?? step) : undefined
-        }
+        isLastStep={isLastStep}
+        onBack={onBack}
         onCancel={onCancel}
-        onNext={
-          stepIndex < outboundEditorSteps.length - 1
-            ? () => setStep(outboundEditorSteps[stepIndex + 1]?.id ?? step)
-            : undefined
-        }
+        onNext={onNext}
       />
     </form>
   );
@@ -1338,7 +1292,10 @@ function InboundForm({
   readonly onCancel: () => void;
   readonly onSubmit: (form: InboundFormState) => void;
 }) {
-  const [step, setStep] = useState<InboundEditorStep>("receiver");
+  const { step, setStep, isLastStep, onBack, onNext } = useEditorStepper(
+    inboundEditorSteps,
+    "receiver",
+  );
   const [submitError, setSubmitError] = useState<string | null>(null);
   const editorForm = useForm({
     defaultValues: form,
@@ -1353,7 +1310,6 @@ function InboundForm({
       onSubmit(value);
     },
   });
-  const stepIndex = inboundEditorSteps.findIndex((item) => item.id === step);
 
   return (
     <form
@@ -1493,16 +1449,10 @@ function InboundForm({
       ) : null}
       <FormActions
         isSaving={isSaving}
-        isLastStep={stepIndex === inboundEditorSteps.length - 1}
-        onBack={
-          stepIndex > 0 ? () => setStep(inboundEditorSteps[stepIndex - 1]?.id ?? step) : undefined
-        }
+        isLastStep={isLastStep}
+        onBack={onBack}
         onCancel={onCancel}
-        onNext={
-          stepIndex < inboundEditorSteps.length - 1
-            ? () => setStep(inboundEditorSteps[stepIndex + 1]?.id ?? step)
-            : undefined
-        }
+        onNext={onNext}
       />
     </form>
   );
@@ -2001,6 +1951,33 @@ function FormActions({
   );
 }
 
+interface EditorStepper<Step extends string> {
+  readonly step: Step;
+  readonly setStep: (step: Step) => void;
+  readonly isLastStep: boolean;
+  /** `undefined` at the ends of the strip, where `FormActions` omits the
+   *  button entirely rather than showing a dead one. */
+  readonly onBack: (() => void) | undefined;
+  readonly onNext: (() => void) | undefined;
+}
+
+/** Position within an ordered editor strip. Both editors ran the same
+ *  find-index-then-step-one-either-way arithmetic over their own step list. */
+function useEditorStepper<Step extends string>(
+  steps: readonly { readonly id: Step; readonly label: string }[],
+  initialStep: Step,
+): EditorStepper<Step> {
+  const [step, setStep] = useState<Step>(initialStep);
+  const index = steps.findIndex((item) => item.id === step);
+  return {
+    step,
+    setStep,
+    isLastStep: index === steps.length - 1,
+    onBack: index > 0 ? () => setStep(steps[index - 1]?.id ?? step) : undefined,
+    onNext: index < steps.length - 1 ? () => setStep(steps[index + 1]?.id ?? step) : undefined,
+  };
+}
+
 function EditorSteps<Step extends string>({
   activeStep,
   ariaLabel,
@@ -2348,25 +2325,31 @@ function rollbackWebhookQueries(
   }
 }
 
+/** Where an optimistic save lands: an edit rewrites the row in place, a create
+ *  goes to the front of the list. The row itself is direction-specific, so the
+ *  two builders come from the caller. */
+function optimisticSave<Webhook extends { readonly id: string }>(
+  current: readonly Webhook[] | undefined,
+  form: Pick<OutboundFormState | InboundFormState, "id" | "mode">,
+  buildCreated: () => Webhook,
+  buildUpdated: (webhook: Webhook) => Webhook,
+): readonly Webhook[] {
+  const webhooks = current ?? [];
+  if (form.mode === "edit" && form.id !== undefined) {
+    return webhooks.map((webhook) => (webhook.id === form.id ? buildUpdated(webhook) : webhook));
+  }
+  return [buildCreated(), ...webhooks];
+}
+
 function optimisticOutboundSave(
   current: readonly OutboundWebhook[] | undefined,
   form: OutboundFormState,
 ): readonly OutboundWebhook[] {
   const input = outboundInputFromForm(form);
-  const webhooks = current ?? [];
-  if (form.mode === "edit" && form.id !== undefined) {
-    return webhooks.map((webhook) =>
-      webhook.id === form.id
-        ? {
-            ...webhook,
-            ...input,
-            updatedAt: new Date().toISOString(),
-          }
-        : webhook,
-    );
-  }
-  return [
-    {
+  return optimisticSave(
+    current,
+    form,
+    () => ({
       id: optimisticId("outbound"),
       orgId: "",
       secretRef: "inline:pending",
@@ -2374,9 +2357,13 @@ function optimisticOutboundSave(
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       ...input,
-    },
-    ...webhooks,
-  ];
+    }),
+    (webhook) => ({
+      ...webhook,
+      ...input,
+      updatedAt: new Date().toISOString(),
+    }),
+  );
 }
 
 function optimisticInboundSave(
@@ -2384,20 +2371,10 @@ function optimisticInboundSave(
   form: InboundFormState,
 ): readonly InboundWebhook[] {
   const input = inboundInputFromForm(form);
-  const webhooks = current ?? [];
-  if (form.mode === "edit" && form.id !== undefined) {
-    return webhooks.map((webhook) =>
-      webhook.id === form.id
-        ? {
-            ...webhook,
-            ...input,
-            updatedAt: new Date().toISOString(),
-          }
-        : webhook,
-    );
-  }
-  return [
-    {
+  return optimisticSave(
+    current,
+    form,
+    () => ({
       id: optimisticId("inbound"),
       orgId: "",
       secretRef: "inline:pending",
@@ -2406,40 +2383,31 @@ function optimisticInboundSave(
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       ...input,
-    },
-    ...webhooks,
-  ];
+    }),
+    (webhook) => ({
+      ...webhook,
+      ...input,
+      updatedAt: new Date().toISOString(),
+    }),
+  );
 }
 
-function optimisticOutboundAction(
-  current: readonly OutboundWebhook[] | undefined,
-  action: OutboundRowAction,
-): readonly OutboundWebhook[] {
-  const webhooks = current ?? [];
-  if (action.type === "delete") {
-    return webhooks.filter((webhook) => webhook.id !== action.webhook.id);
-  }
-  if (action.type === "toggle") {
-    return webhooks.map((webhook) =>
-      webhook.id === action.webhook.id
-        ? { ...webhook, enabled: !webhook.enabled, updatedAt: new Date().toISOString() }
-        : webhook,
-    );
-  }
-  if (action.type === "rotate") {
-    return webhooks.map((webhook) =>
-      webhook.id === action.webhook.id
-        ? { ...webhook, secretRef: "inline:pending", updatedAt: new Date().toISOString() }
-        : webhook,
-    );
-  }
-  return webhooks;
+/** The fields an optimistic row edit touches. Both webhook shapes carry them,
+ *  and nothing here reads anything direction-specific — which is why one
+ *  function serves both lists. */
+interface OptimisticWebhookRow {
+  readonly id: string;
+  readonly enabled: boolean;
+  readonly secretRef: string | null;
+  readonly updatedAt: string;
 }
 
-function optimisticInboundAction(
-  current: readonly InboundWebhook[] | undefined,
-  action: InboundRowAction,
-): readonly InboundWebhook[] {
+/* `test` falls through to the untouched list on purpose: firing a test changes
+   nothing about the endpoint, so there is no local edit to show. */
+function optimisticRowAction<Webhook extends OptimisticWebhookRow>(
+  current: readonly Webhook[] | undefined,
+  action: WebhookRowAction<Webhook>,
+): readonly Webhook[] {
   const webhooks = current ?? [];
   if (action.type === "delete") {
     return webhooks.filter((webhook) => webhook.id !== action.webhook.id);
@@ -2477,31 +2445,24 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function outboundActionLabel(type: OutboundRowAction["type"]): string {
-  if (type === "delete") {
-    return "Outbound webhook deleted";
-  }
-  if (type === "test") {
-    return "Outbound test fired";
-  }
-  if (type === "rotate") {
-    return "Outbound signing secret rotated";
-  }
-  return "Outbound webhook updated";
-}
-
-function inboundActionLabel(type: InboundRowAction["type"]): string {
-  if (type === "delete") {
-    return "Inbound webhook deleted";
-  }
-  if (type === "test") {
-    return "Inbound test verified";
-  }
-  if (type === "rotate") {
-    return "Inbound secret rotated";
-  }
-  return "Inbound webhook updated";
-}
+/* Every one of these was its own `if` in one of two near-identical functions.
+   The wording genuinely differs per direction — an outbound test is fired, an
+   inbound one is verified — so both columns are spelled out rather than built
+   from a direction word. */
+const webhookActionLabels: Record<WebhookDirection, Record<WebhookRowActionType, string>> = {
+  outbound: {
+    toggle: "Outbound webhook updated",
+    test: "Outbound test fired",
+    rotate: "Outbound signing secret rotated",
+    delete: "Outbound webhook deleted",
+  },
+  inbound: {
+    toggle: "Inbound webhook updated",
+    test: "Inbound test verified",
+    rotate: "Inbound secret rotated",
+    delete: "Inbound webhook deleted",
+  },
+};
 
 function shortId(id: string): string {
   return id.slice(0, 8);

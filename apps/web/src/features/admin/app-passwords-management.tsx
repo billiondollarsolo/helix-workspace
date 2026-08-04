@@ -1,4 +1,3 @@
-import { useDebouncedCallback } from "@tanstack/react-pacer";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
@@ -14,20 +13,25 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { adminUsersQueryOptions, type AdminUser } from "@/features/admin/admin-users";
+import type { AdminUser } from "@/features/admin/admin-users";
 import { AdminAccessRelatedNav } from "@/features/admin/admin-related-nav";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { EmptyRow, PageHeading, StateBanner } from "@/features/admin/console/primitives";
-import { AdminInput } from "@/features/admin/console/controls";
 import {
-  SELECT_CLASS,
+  ActorNoticeBanner,
+  ActorSearchField,
+  ActorSelectField,
+  ExpiresAtField,
+  ScopesField,
+  useActorPicker,
+} from "@/features/admin/credentials-form-fields";
+import {
   actorStatusOf,
   errorMessage,
   formatDateTime,
   invalidExpiresAt,
   normalizeExpiresAt,
   parseScopes,
-  toggleScope,
   type ActorStatus,
 } from "@/features/admin/credentials-shared";
 import {
@@ -89,28 +93,7 @@ export function AppPasswordsManagement() {
   const passwordsQuery = useQuery(appPasswordsQueryOptions(includeRevoked));
   /* One page of enabled actors, sharing the cache (and the route prefetch) with
      the Users section rather than issuing a second identical request. */
-  /* The picker used to show one fixed page of 50 actors, so in a workspace of
-     350 the other 300 were simply unselectable — the notice said so, which made
-     it an honest dead end rather than a silent one, but a dead end either way.
-     The directory search is server-side (`sections/users.tsx` uses the same
-     transport), so typing here narrows across the whole workspace and any actor
-     is reachable. Still one bounded page per request. */
-  const [actorSearchDraft, setActorSearchDraft] = useState("");
-  const [actorSearch, setActorSearch] = useState("");
-  /* House rule (helix/pacer-discipline): the delay is Pacer's, never a bare
-     setTimeout. */
-  const commitActorSearch = useDebouncedCallback(
-    (value: string) => {
-      setActorSearch(value.trim());
-    },
-    { wait: 300 },
-  );
-  const actorsQuery = useQuery(
-    adminUsersQueryOptions({
-      includeDisabled: false,
-      ...(actorSearch.length === 0 ? {} : { query: actorSearch }),
-    }),
-  );
+  const { actorsQuery, searchDraft: actorSearchDraft, onSearchChange } = useActorPicker();
 
   const createMutation = useMutation({
     mutationFn: (input: Parameters<typeof createAppPassword>[0]) => createAppPassword(input),
@@ -328,121 +311,60 @@ export function AppPasswordsManagement() {
           <passwordForm.Field name="actorId">
             {(field) => (
               <div className="grid gap-2">
-                <label
-                  className="grid gap-1.5 text-xs font-medium"
-                  htmlFor="app-password-actor-search"
+                <ActorSearchField
+                  id="app-password-actor-search"
+                  value={actorSearchDraft}
+                  onChange={onSearchChange}
+                />
+                <ActorSelectField
+                  id="app-password-actor-id"
+                  describedBy={actorNotice === null ? undefined : ACTOR_STATUS_ID}
+                  disabled={!canPickActor}
+                  placeholder={actorPlaceholders[actorStatus]}
+                  value={field.state.value}
+                  onBlur={field.handleBlur}
+                  onChange={(value) => field.handleChange(value)}
                 >
-                  Find actor
-                  <AdminInput
-                    id="app-password-actor-search"
-                    type="search"
-                    autoComplete="off"
-                    placeholder="Search name, email, or ID…"
-                    value={actorSearchDraft}
-                    onChange={(event) => {
-                      setActorSearchDraft(event.target.value);
-                      commitActorSearch(event.target.value);
-                    }}
-                  />
-                </label>
-                <label className="grid gap-1.5 text-xs font-medium" htmlFor="app-password-actor-id">
-                  Actor
-                  {/* A native select over the loaded actors: a labelled form
-                      control with type-ahead and platform focus behaviour, over
-                      a request that returns one bounded page. */}
-                  <select
-                    aria-describedby={actorNotice === null ? undefined : ACTOR_STATUS_ID}
-                    className={SELECT_CLASS}
-                    disabled={!canPickActor}
-                    id="app-password-actor-id"
-                    onBlur={field.handleBlur}
-                    onChange={(event) => field.handleChange(event.target.value)}
-                    required
-                    value={field.state.value}
-                  >
-                    <option value="">{actorPlaceholders[actorStatus]}</option>
-                    {actors.map((actor) => (
-                      <option key={actor.id} value={actor.id}>
-                        {actorLabel(actor)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  {actors.map((actor) => (
+                    <option key={actor.id} value={actor.id}>
+                      {actorLabel(actor)}
+                    </option>
+                  ))}
+                </ActorSelectField>
                 {actorNotice === null ? null : (
-                  <div id={ACTOR_STATUS_ID}>
-                    <StateBanner kind={actorNotice.kind}>
-                      {actorNotice.message}
-                      {actorNotice.retryable ? (
-                        <Button
-                          className="mt-2"
-                          onClick={() => void invalidateAdminUserLists(queryClient)}
-                          size="xs"
-                          type="button"
-                          variant="outline"
-                        >
-                          <RotateCcw />
-                          Retry
-                        </Button>
-                      ) : null}
-                    </StateBanner>
-                  </div>
+                  <ActorNoticeBanner
+                    id={ACTOR_STATUS_ID}
+                    kind={actorNotice.kind}
+                    message={actorNotice.message}
+                    retryable={actorNotice.retryable}
+                    onRetry={() => void invalidateAdminUserLists(queryClient)}
+                  />
                 )}
               </div>
             )}
           </passwordForm.Field>
 
           <passwordForm.Field name="scopes">
-            {(field) => {
-              const selectedScopes = new Set(parseScopes(field.state.value));
-              return (
-                <div className="grid gap-2">
-                  <label className="grid gap-1.5 text-xs font-medium" htmlFor="app-password-scopes">
-                    Scopes
-                    <textarea
-                      className="min-h-20 rounded-md border border-input bg-input/20 px-2 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                      id="app-password-scopes"
-                      onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
-                      required
-                      value={field.state.value}
-                    />
-                  </label>
-                  <div className="flex flex-wrap gap-1" aria-label="Common app password scopes">
-                    {commonScopes.map((scope) => {
-                      const selected = selectedScopes.has(scope);
-                      return (
-                        <Button
-                          aria-pressed={selected}
-                          key={scope}
-                          onClick={() =>
-                            field.handleChange(toggleScope(field.state.value, scope, selected))
-                          }
-                          size="xs"
-                          type="button"
-                          variant={selected ? "secondary" : "outline"}
-                        >
-                          {scope}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            }}
+            {(field) => (
+              <ScopesField
+                id="app-password-scopes"
+                scopes={commonScopes}
+                scopesLabel="Common app password scopes"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(value) => field.handleChange(value)}
+              />
+            )}
           </passwordForm.Field>
 
           <passwordForm.Field name="expiresAt">
             {(field) => (
-              <label className="grid gap-1.5 text-xs font-medium" htmlFor="app-password-expires-at">
-                Expires at
-                <Input
-                  id="app-password-expires-at"
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  type="datetime-local"
-                  value={field.state.value}
-                />
-              </label>
+              <ExpiresAtField
+                id="app-password-expires-at"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(value) => field.handleChange(value)}
+              />
             )}
           </passwordForm.Field>
 

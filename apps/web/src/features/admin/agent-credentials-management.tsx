@@ -1,4 +1,3 @@
-import { useDebouncedCallback } from "@tanstack/react-pacer";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
@@ -14,20 +13,25 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { adminUsersQueryOptions, type AdminUser } from "@/features/admin/admin-users";
+import type { AdminUser } from "@/features/admin/admin-users";
 import { AdminAccessRelatedNav } from "@/features/admin/admin-related-nav";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { EmptyRow, PageHeading, StateBanner } from "@/features/admin/console/primitives";
-import { AdminInput } from "@/features/admin/console/controls";
 import {
-  SELECT_CLASS,
+  ActorNoticeBanner,
+  ActorSearchField,
+  ActorSelectField,
+  ExpiresAtField,
+  ScopesField,
+  useActorPicker,
+} from "@/features/admin/credentials-form-fields";
+import {
   actorStatusOf,
   errorMessage,
   formatDateTime,
   invalidExpiresAt,
   normalizeExpiresAt,
   parseScopes,
-  toggleScope,
   type ActorStatus,
 } from "@/features/admin/credentials-shared";
 import {
@@ -105,28 +109,7 @@ export function AgentCredentialsManagement() {
   /* A credential is minted for an actor id the admin cannot be expected to know
      by heart, so the directory drives both the picker and the id -> name lookup
      that every actor id in this section is rendered through. */
-  /* The picker used to show one fixed page of 50 actors, so in a workspace of
-     350 the other 300 were simply unselectable — the notice said so, which made
-     it an honest dead end rather than a silent one, but a dead end either way.
-     The directory search is server-side (`sections/users.tsx` uses the same
-     transport), so typing here narrows across the whole workspace and any actor
-     is reachable. Still one bounded page per request. */
-  const [actorSearchDraft, setActorSearchDraft] = useState("");
-  const [actorSearch, setActorSearch] = useState("");
-  /* House rule (helix/pacer-discipline): the delay is Pacer's, never a bare
-     setTimeout. */
-  const commitActorSearch = useDebouncedCallback(
-    (value: string) => {
-      setActorSearch(value.trim());
-    },
-    { wait: 300 },
-  );
-  const actorsQuery = useQuery(
-    adminUsersQueryOptions({
-      includeDisabled: false,
-      ...(actorSearch.length === 0 ? {} : { query: actorSearch }),
-    }),
-  );
+  const { actorsQuery, searchDraft: actorSearchDraft, onSearchChange } = useActorPicker();
 
   const createMutation = useMutation({
     mutationFn: (input: Parameters<typeof createAgentCredential>[0]) =>
@@ -327,28 +310,17 @@ export function AgentCredentialsManagement() {
           </div>
 
           {actorNotice !== null ? (
-            <div id={ACTOR_STATUS_ID}>
-              <StateBanner kind={actorNotice.kind}>
-                {actorNotice.message}
-                {/* The actor query is `retry: false`, and a failed directory
-                    disables the whole form — without this the only way out is
-                    a full page reload. */}
-                {actorNotice.kind === "error" ? (
-                  <Button
-                    className="mt-2"
-                    onClick={() => {
-                      void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
-                    }}
-                    size="xs"
-                    type="button"
-                    variant="outline"
-                  >
-                    <RotateCcw />
-                    Retry
-                  </Button>
-                ) : null}
-              </StateBanner>
-            </div>
+            <ActorNoticeBanner
+              id={ACTOR_STATUS_ID}
+              kind={actorNotice.kind}
+              message={actorNotice.message}
+              /* Only the failed-directory notice has a way back to offer; the
+                 empty and truncated ones are answers, not faults. */
+              retryable={actorNotice.kind === "error"}
+              onRetry={() => {
+                void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+              }}
+            />
           ) : null}
 
           <credentialForm.Field name="actorId">
@@ -356,44 +328,30 @@ export function AgentCredentialsManagement() {
               const selectedActor = actorsById.get(field.state.value);
               return (
                 <div className="grid gap-2">
-                  <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-actor-search">
-                    Find actor
-                    <AdminInput
-                      id="agent-actor-search"
-                      type="search"
-                      autoComplete="off"
-                      placeholder="Search name, email, or ID…"
-                      value={actorSearchDraft}
-                      onChange={(event) => {
-                        setActorSearchDraft(event.target.value);
-                        commitActorSearch(event.target.value);
-                      }}
-                    />
-                  </label>
-                  <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-actor-id">
-                    Actor
-                    <select
-                      aria-describedby={actorNotice === null ? undefined : ACTOR_STATUS_ID}
-                      className={SELECT_CLASS}
-                      disabled={!canPickActor}
-                      id="agent-actor-id"
-                      onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
-                      required
-                      value={field.state.value}
-                    >
-                      <option value="">{actorPlaceholders[actorStatus]}</option>
-                      {actorGroups.map((group) => (
-                        <optgroup key={group.type} label={group.label}>
-                          {group.actors.map((actor) => (
-                            <option key={actor.id} value={actor.id}>
-                              {actorLabel(actor)}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </label>
+                  <ActorSearchField
+                    id="agent-actor-search"
+                    value={actorSearchDraft}
+                    onChange={onSearchChange}
+                  />
+                  <ActorSelectField
+                    id="agent-actor-id"
+                    describedBy={actorNotice === null ? undefined : ACTOR_STATUS_ID}
+                    disabled={!canPickActor}
+                    placeholder={actorPlaceholders[actorStatus]}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(value) => field.handleChange(value)}
+                  >
+                    {actorGroups.map((group) => (
+                      <optgroup key={group.type} label={group.label}>
+                        {group.actors.map((actor) => (
+                          <option key={actor.id} value={actor.id}>
+                            {actorLabel(actor)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </ActorSelectField>
                   {/* Client credentials for a human actor mint tokens that act as
                       that person — legal, rarely intended, and invisible once the
                       credential exists. Say so while it can still be changed. */}
@@ -409,57 +367,26 @@ export function AgentCredentialsManagement() {
           </credentialForm.Field>
 
           <credentialForm.Field name="scopes">
-            {(field) => {
-              const selectedScopes = new Set(parseScopes(field.state.value));
-              return (
-                <div className="grid gap-2">
-                  <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-scopes">
-                    Scopes
-                    <textarea
-                      className="min-h-20 rounded-md border border-input bg-input/20 px-2 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                      id="agent-scopes"
-                      onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
-                      required
-                      value={field.state.value}
-                    />
-                  </label>
-                  <div className="flex flex-wrap gap-1" aria-label="Common scopes">
-                    {commonScopes.map((scope) => {
-                      const selected = selectedScopes.has(scope);
-                      return (
-                        <Button
-                          aria-pressed={selected}
-                          key={scope}
-                          onClick={() =>
-                            field.handleChange(toggleScope(field.state.value, scope, selected))
-                          }
-                          size="xs"
-                          type="button"
-                          variant={selected ? "secondary" : "outline"}
-                        >
-                          {scope}
-                        </Button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            }}
+            {(field) => (
+              <ScopesField
+                id="agent-scopes"
+                scopes={commonScopes}
+                scopesLabel="Common scopes"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(value) => field.handleChange(value)}
+              />
+            )}
           </credentialForm.Field>
 
           <credentialForm.Field name="expiresAt">
             {(field) => (
-              <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-expires-at">
-                Expires at
-                <Input
-                  id="agent-expires-at"
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  type="datetime-local"
-                  value={field.state.value}
-                />
-              </label>
+              <ExpiresAtField
+                id="agent-expires-at"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(value) => field.handleChange(value)}
+              />
             )}
           </credentialForm.Field>
 

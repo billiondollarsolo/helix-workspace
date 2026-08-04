@@ -242,13 +242,18 @@ jobs:
           DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
         run: pnpm --filter @helix/app db:migrate
 
+      # Both properties, not one: the suite also proves permission rows do not
+      # cross tenants, and a -t filter here silently left that unproven.
       - name: Prove live PostgreSQL tenant isolation
         env:
           DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
+          # This job has a database, so a skip here means the database failed to
+          # come up — not that the suite was inapplicable. Fail instead of
+          # reporting green on a proof that never ran.
+          HELIX_REQUIRE_LIVE_SUITES: "1"
         run: >-
           pnpm --filter @helix/app exec vitest run
           src/platform/tenancy/cross-tenant-isolation.test.ts
-          -t 'does not expose beta Drive data to an acme actor'
 
       - name: Disable tenant API rate limit for synthetic load
         run: |

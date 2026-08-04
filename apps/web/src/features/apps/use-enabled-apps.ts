@@ -12,10 +12,7 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import {
-  coreAppsShellQueryOptions,
-  type CoreAppId,
-} from "@/features/admin/core-apps-api";
+import { coreAppsShellQueryOptions, type CoreAppId } from "@/features/admin/core-apps-api";
 
 export type AppId = string;
 
@@ -27,9 +24,15 @@ export interface EnabledApps {
 export function useEnabledApps(): EnabledApps {
   const query = useQuery(coreAppsShellQueryOptions());
   const apps = query.data?.apps ?? [];
-  // Map of tracked core apps → enabled flag. Anything not in this map is
-  // considered always-on so unrelated rail items (sheets/slides/admin) stay.
-  const map = new Map<CoreAppId, boolean>(apps.map((a) => [a.id, a.enabled]));
+  /* `registered`, not `enabled`. The two differ: `enabled` is the org-wide
+     admin toggle, while `registered` is `enabled && inRole` — whether the API
+     process this client talks to actually serves the app. A role-based boot
+     (`HELIX_APPS` / `HELIX_ROLE`) leaves an app enabled but unregistered, and
+     keying off `enabled` there put a launcher tile in front of routes and tools
+     that answer 404. Under MVP packaging the build-time filter in
+     `workspaceAppsForBuild` hides them anyway, which is why this never
+     surfaced; it bites any deployment that splits apps across roles. */
+  const map = new Map<CoreAppId, boolean>(apps.map((a) => [a.id, a.registered]));
   return {
     isLoading: query.isLoading,
     isEnabled: (id) => {

@@ -20,7 +20,9 @@ test-results
 playwright-report
 .playwright
 **/reports/a11y/
-/artifacts/release-readiness/
+# Generated run output: a11y screenshots, soak reports, release-readiness
+# evidence. Timestamped per run, so committing them accretes forever.
+/artifacts/
 .tmp/
 .codex-artifacts/
 .claude/

@@ -8,6 +8,7 @@ import type {
   JsonValue,
   ModelInfo,
 } from "@helix/sdk-types";
+import { outboundFetch } from "../../outbound-http.js";
 
 export interface FetchProviderConfig {
   readonly id: string;
@@ -26,8 +27,6 @@ export class AIProviderRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly statusText: string,
-    readonly responseText: string,
   ) {
     super(message);
     this.name = "AIProviderRequestError";
@@ -45,7 +44,7 @@ export function normalizeFetchConfig(config: FetchProviderConfig): {
   }
 
   return {
-    fetch: config.fetch ?? fetch,
+    fetch: config.fetch ?? outboundFetch,
     defaultModel,
     models: config.models,
   };
@@ -67,7 +66,11 @@ export function bearerHeaders(apiKey: string | undefined): Record<string, string
   return { authorization: `Bearer ${apiKey}` };
 }
 
-export async function postJson(url: URL, body: unknown, config: ProviderRequestConfig): Promise<unknown> {
+export async function postJson(
+  url: URL,
+  body: unknown,
+  config: ProviderRequestConfig,
+): Promise<unknown> {
   const response = await config.fetch(url, {
     method: "POST",
     headers: {
@@ -79,23 +82,21 @@ export async function postJson(url: URL, body: unknown, config: ProviderRequestC
   });
 
   if (!response.ok) {
-    const responseText = await safeResponseText(response);
+    await discardResponseBody(response);
     throw new AIProviderRequestError(
-      `AI provider request failed: ${String(response.status)} ${response.statusText}${responseText.length === 0 ? "" : `: ${responseText}`}`,
+      `AI provider request failed with HTTP ${String(response.status)}`,
       response.status,
-      response.statusText,
-      responseText,
     );
   }
 
   return response.json();
 }
 
-export async function safeResponseText(response: Response): Promise<string> {
+export async function discardResponseBody(response: Response): Promise<void> {
   try {
-    return await response.text();
+    await response.body?.cancel();
   } catch {
-    return "";
+    // The status is sufficient for callers; never expose an untrusted response body.
   }
 }
 
@@ -149,7 +150,9 @@ export function usageFromAnthropic(value: unknown): ChatUsage | undefined {
   const inputTokens = numberField(value, "input_tokens");
   const outputTokens = numberField(value, "output_tokens");
   const totalTokens =
-    inputTokens === undefined && outputTokens === undefined ? undefined : (inputTokens ?? 0) + (outputTokens ?? 0);
+    inputTokens === undefined && outputTokens === undefined
+      ? undefined
+      : (inputTokens ?? 0) + (outputTokens ?? 0);
   return compactUsage({ inputTokens, outputTokens, totalTokens });
 }
 
@@ -180,7 +183,9 @@ export function openAIMessage(message: AIMessage): Record<string, string> {
   };
 }
 
-export function anthropicMessages(messages: readonly AIMessage[]): readonly Record<string, string>[] {
+export function anthropicMessages(
+  messages: readonly AIMessage[],
+): readonly Record<string, string>[] {
   return messages
     .filter((message) => message.role !== "system")
     .map((message) => ({
@@ -190,7 +195,9 @@ export function anthropicMessages(messages: readonly AIMessage[]): readonly Reco
 }
 
 export function systemPrompt(messages: readonly AIMessage[]): string | undefined {
-  const systemMessages = messages.filter((message) => message.role === "system").map((message) => message.content);
+  const systemMessages = messages
+    .filter((message) => message.role === "system")
+    .map((message) => message.content);
   if (systemMessages.length === 0) {
     return undefined;
   }
@@ -229,7 +236,9 @@ export function textFromAnthropicContent(content: readonly unknown[]): string {
     .join("");
 }
 
-export function toolCallsFromAnthropicContent(content: readonly unknown[]): readonly AIToolChoice[] | undefined {
+export function toolCallsFromAnthropicContent(
+  content: readonly unknown[],
+): readonly AIToolChoice[] | undefined {
   const toolCalls = content.flatMap((part) => {
     if (!isRecord(part) || part.type !== "tool_use") {
       return [];
@@ -244,13 +253,16 @@ export function toolCallsFromAnthropicContent(content: readonly unknown[]): read
   return toolCalls.length === 0 ? undefined : toolCalls;
 }
 
-export function toolCallsFromOpenAIMessage(message: Record<string, unknown>): readonly AIToolChoice[] | undefined {
+export function toolCallsFromOpenAIMessage(
+  message: Record<string, unknown>,
+): readonly AIToolChoice[] | undefined {
   const toolCalls = arrayField(message, "tool_calls").flatMap((toolCall) => {
     if (!isRecord(toolCall)) {
       return [];
     }
     const functionCall = isRecord(toolCall.function) ? toolCall.function : undefined;
-    const id = functionCall === undefined ? stringField(toolCall, "id") : stringField(functionCall, "name");
+    const id =
+      functionCall === undefined ? stringField(toolCall, "id") : stringField(functionCall, "name");
     if (id === undefined) {
       return [];
     }
@@ -326,7 +338,9 @@ export async function* parseSseStream(
   }
 }
 
-function nextEventSeparator(buffer: string): { readonly index: number; readonly length: number } | null {
+function nextEventSeparator(
+  buffer: string,
+): { readonly index: number; readonly length: number } | null {
   const lf = buffer.indexOf("\n\n");
   const crlf = buffer.indexOf("\r\n\r\n");
   if (lf === -1 && crlf === -1) {
@@ -409,23 +423,16 @@ export async function postSse(
   });
 
   if (!response.ok) {
-    const responseText = await safeResponseText(response);
+    await discardResponseBody(response);
     throw new AIProviderRequestError(
-      `AI provider stream request failed: ${String(response.status)} ${response.statusText}${responseText.length === 0 ? "" : `: ${responseText}`}`,
+      `AI provider stream request failed with HTTP ${String(response.status)}`,
       response.status,
-      response.statusText,
-      responseText,
     );
   }
 
   const responseBody = response.body;
   if (responseBody === null) {
-    throw new AIProviderRequestError(
-      "AI provider stream response has no body",
-      response.status,
-      response.statusText,
-      "",
-    );
+    throw new AIProviderRequestError("AI provider stream response has no body", response.status);
   }
   return parseSseStream(responseBody);
 }
@@ -629,17 +636,12 @@ function mergeUsage(base: ChatUsage | undefined, next: ChatUsage): ChatUsage {
   const outputTokens = next.outputTokens ?? base?.outputTokens;
   const totalTokens =
     inputTokens === undefined && outputTokens === undefined
-      ? next.totalTokens ?? base?.totalTokens
+      ? (next.totalTokens ?? base?.totalTokens)
       : (inputTokens ?? 0) + (outputTokens ?? 0);
-  return (
-    compactUsage({ inputTokens, outputTokens, totalTokens }) ?? next
-  );
+  return compactUsage({ inputTokens, outputTokens, totalTokens }) ?? next;
 }
 
-function streamMetadata(
-  model: string,
-  toolCalls: readonly AIToolChoice[],
-): JsonObject | undefined {
+function streamMetadata(model: string, toolCalls: readonly AIToolChoice[]): JsonObject | undefined {
   return {
     model,
     ...(toolCalls.length === 0

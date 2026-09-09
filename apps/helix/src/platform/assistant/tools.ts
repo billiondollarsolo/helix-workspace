@@ -1,5 +1,5 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
-import { z } from "zod3";
+import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { AssistantOrchestrator } from "./orchestrator.js";
@@ -39,7 +39,6 @@ const chatSchema = z.object({
   message: z.string().min(1).max(100_000),
   title: z.string().min(1).max(200).optional(),
   memoryOptIn: z.boolean().optional(),
-  classification: z.enum(["public", "standard", "confidential", "restricted"]).default("standard"),
   metadata: metadataSchema,
 });
 
@@ -54,14 +53,12 @@ const forgetSchema = z.object({
 const approveConfirmationSchema = z.object({
   conversationId: uuidSchema,
   pendingId: uuidSchema,
-  classification: z.enum(["public", "standard", "confidential", "restricted"]).default("standard"),
   metadata: metadataSchema,
 });
 
 const cancelConfirmationSchema = z.object({
   conversationId: uuidSchema,
   pendingId: uuidSchema,
-  classification: z.enum(["public", "standard", "confidential", "restricted"]).default("standard"),
   metadata: metadataSchema,
 });
 
@@ -208,7 +205,6 @@ export function createAssistantToolDefinitions(
           ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.memoryOptIn === undefined ? {} : { memoryOptIn: input.memoryOptIn }),
-          classification: input.classification,
           metadata: toJsonObject(input.metadata),
           ...(ctx.request === undefined ? {} : { request: ctx.request }),
         }),
@@ -247,7 +243,6 @@ export function createAssistantToolDefinitions(
           actor: ctx.actor,
           conversationId: input.conversationId,
           pendingId: input.pendingId,
-          classification: input.classification,
           metadata: toJsonObject(input.metadata),
           ...(ctx.request === undefined ? {} : { request: ctx.request }),
         }),
@@ -265,7 +260,6 @@ export function createAssistantToolDefinitions(
           actor: ctx.actor,
           conversationId: input.conversationId,
           pendingId: input.pendingId,
-          classification: input.classification,
           metadata: toJsonObject(input.metadata),
           ...(ctx.request === undefined ? {} : { request: ctx.request }),
         }),

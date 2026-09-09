@@ -1,20 +1,11 @@
-/* Sheets TanStack Query options + keys.
-
-   Read queries hydrate the list view, the open spreadsheet, and a tab's
-   cells. All queries set `throwOnError: false` so the surface can fall back
-   to seed data when the backend is unavailable. */
+/* Sheets TanStack Query options + keys. */
 
 import { queryOptions } from "@tanstack/react-query";
 import { listDrive, searchDrive, type DriveApiEntry } from "@/features/drive/api";
 import { formatLabelFromEntry, previewFromEntry } from "@/features/drive/drive-data";
 import { driveEntryBelongsToSurface } from "@/features/drive/format-surface";
 import { entryFromSearchHit } from "@/features/drive/queries";
-import {
-  getSheet,
-  getSheetTab,
-  listSheetVersions,
-  type SheetsCellWindow,
-} from "./api";
+import { getSheet, getSheetTab, listSheetVersions, type SheetsCellWindow } from "./api";
 import { formatModified, type SheetListRow } from "./model";
 import { sheetsQueryKeys } from "./query-keys";
 
@@ -78,13 +69,15 @@ export function sheetsListFromDriveQueryOptions(
           ? (await searchDrive({ query, folderId: null, limit: searchLimit })).map(
               entryFromSearchHit,
             )
-          : await listDrive({
-              folderId: null,
-              includeTrashed: true,
-              acrossFolders: true,
-              app: "sheets",
-              limit,
-            });
+          : (
+              await listDrive({
+                folderId: null,
+                includeTrashed: true,
+                acrossFolders: true,
+                app: "sheets",
+                limit,
+              })
+            ).entries;
       return entries
         .filter((entry) => entry.type === "file" && isSpreadsheetLike(entry))
         .map((entry): SheetListRow => {

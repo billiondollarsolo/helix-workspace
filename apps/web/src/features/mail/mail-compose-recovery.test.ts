@@ -16,16 +16,18 @@ describe("mail compose recovery", () => {
 
   it("round-trips a bounded local draft and clears it explicitly", () => {
     writeMailComposeRecovery({
-      to: "mira@helix.test",
-      cc: "",
-      bcc: "",
+      to: [{ address: "mira@helix.test" }],
+      cc: [],
+      bcc: [],
       subject: "Launch",
-      body: "Recovered body",
+      bodyText: "Recovered body",
+      attachments: [{ objectId: "11111111-1111-4111-8111-111111111111", filename: "brief.pdf" }],
     });
     expect(readMailComposeRecovery()).toMatchObject({
-      to: "mira@helix.test",
+      to: [{ address: "mira@helix.test" }],
       subject: "Launch",
-      body: "Recovered body",
+      bodyText: "Recovered body",
+      attachments: [{ objectId: "11111111-1111-4111-8111-111111111111" }],
     });
 
     clearMailComposeRecovery();
@@ -36,11 +38,12 @@ describe("mail compose recovery", () => {
     window.localStorage.setItem(
       MAIL_COMPOSE_RECOVERY_KEY,
       JSON.stringify({
-        to: "mira@helix.test",
-        cc: "",
-        bcc: "",
+        to: [{ address: "mira@helix.test" }],
+        cc: [],
+        bcc: [],
         subject: "Old",
-        body: "Old",
+        bodyText: "Old",
+        attachments: [],
         updatedAt: "2020-01-01T00:00:00.000Z",
       }),
     );
@@ -54,8 +57,15 @@ describe("mail compose recovery", () => {
       "alex@helix.test",
     ]);
     expect(invalidRecipientTokens("mira@helix.test, wrong, @broken")).toEqual(["wrong", "@broken"]);
-    expect(hasMailComposeContent({ to: "", cc: "", bcc: "", subject: "", body: "Draft" })).toBe(
-      true,
-    );
+    expect(
+      hasMailComposeContent({
+        to: [],
+        cc: [],
+        bcc: [],
+        subject: "",
+        bodyText: "Draft",
+        attachments: [],
+      }),
+    ).toBe(true);
   });
 });

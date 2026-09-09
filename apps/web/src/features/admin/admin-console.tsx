@@ -46,10 +46,8 @@ import {
   securityPoliciesQueryOptions,
   securityPolicyGroup,
   securityPolicyLabels,
-  testSsoLogin,
   updateSecurityPolicy,
   type PolicyEnforcement,
-  type SsoTestLoginResponse,
   type SecurityPolicy,
   type SecurityPolicyType,
 } from "@/features/admin/security-policies-api";
@@ -76,14 +74,18 @@ import {
 } from "@/features/admin/billing-api";
 import {
   createDomain,
-  deleteDomain,
+  releaseDomain,
   domainsQueryKeys,
   domainsQueryOptions,
+  rotateDomainChallenge,
   setPrimaryDomain,
+  updateDomainCapabilities,
   upsertDnsRecord,
+  verifyDomainOwnership,
   verifyDnsRecord,
   type DnsRecordType,
   type DomainWithRecords,
+  type UpdateDomainCapabilitiesInput,
 } from "@/features/admin/domains-api";
 import {
   ADMIN_NAV,
@@ -248,44 +250,6 @@ const HEADER_CELL: React.CSSProperties = {
 };
 
 /* ------------------------------------------------------------------ */
-/* Overview                                                           */
-/* ------------------------------------------------------------------ */
-
-function AdminOverview() {
-  return (
-    <PageScroll>
-      <PageHeading title="Workspace overview" />
-      <div
-        className="panel"
-        style={{
-          padding: 32,
-          textAlign: "center",
-          color: "var(--text-3)",
-          fontSize: "var(--text-body-sm)",
-          lineHeight: 1.6,
-        }}
-      >
-        <div
-          style={{
-            fontSize: "var(--text-body)",
-            fontWeight: 600,
-            color: "var(--text-2)",
-            marginBottom: 6,
-          }}
-        >
-          Telemetry not yet wired
-        </div>
-        <div>
-          Sign-in activity, recent admin events, and security recommendations will appear here once
-          the workspace-overview telemetry endpoints are implemented. Use the sidebar to manage
-          users, groups, security policies, services, and other live admin surfaces.
-        </div>
-      </div>
-    </PageScroll>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /* Users                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -398,16 +362,6 @@ function AdminUsers() {
             {filtered.length} user{filtered.length === 1 ? "" : "s"}
           </span>
         }
-        actions={
-          <>
-            <button type="button" className="btn">
-              <Icons.Upload /> Import CSV
-            </button>
-            <button type="button" className="btn primary">
-              <Icons.Plus /> Invite users
-            </button>
-          </>
-        }
       />
 
       <div
@@ -471,12 +425,6 @@ function AdminUsers() {
             }}
           >
             <span style={{ fontSize: "var(--text-meta)" }}>{selected.size} selected</span>
-            <button type="button" className="btn sm">
-              Change role
-            </button>
-            <button type="button" className="btn sm">
-              Suspend
-            </button>
           </div>
         ) : null}
       </div>
@@ -582,9 +530,7 @@ function AdminUsers() {
                   )}
                 </span>
                 <span style={{ color: "var(--text-2)" }}>{user.lastActive}</span>
-                <button type="button" className="icon-btn" aria-label={`Actions for ${user.name}`}>
-                  <Icons.MoreV />
-                </button>
+                <span />
               </div>
             );
           })
@@ -957,6 +903,17 @@ function AdminGroups() {
 /* Security                                                           */
 /* ------------------------------------------------------------------ */
 
+const DRIVE_WORKFLOW_OPTIONS = [
+  "shortcut",
+  "file_request",
+  "approval",
+  "ownership_transfer",
+  "shared_drive",
+  "classification",
+  "hold",
+  "investigation",
+] as const;
+
 /** Map a policy's enforcement to the design's level-chip text + on/off color. */
 function policyLevel(policy: SecurityPolicy): { text: string; on: boolean } {
   if (!policy.enabled) {
@@ -1004,6 +961,10 @@ function policySettingsSummary(policy: SecurityPolicy): string {
         ? `Protected: ${apps.join(", ")}`
         : "No protected apps";
     }
+    case "drive_workflows": {
+      const kinds = get("allowedKinds");
+      return Array.isArray(kinds) ? `${String(kinds.length)} workflow types allowed` : "";
+    }
     default:
       return "";
   }
@@ -1013,19 +974,38 @@ interface PolicyEditFormProps {
   readonly policy: SecurityPolicy;
   readonly pending: boolean;
   readonly onCancel: () => void;
-  readonly onSubmit: (input: { enabled: boolean; enforcement: PolicyEnforcement }) => void;
+  readonly onSubmit: (input: {
+    enabled: boolean;
+    enforcement: PolicyEnforcement;
+    settings?: Record<string, unknown>;
+  }) => void;
 }
 
 function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormProps) {
   const [enabled, setEnabled] = useState(policy.enabled);
   const [enforcement, setEnforcement] = useState<PolicyEnforcement>(policy.enforcement);
+  const [workflowKinds, setWorkflowKinds] = useState(() =>
+    DRIVE_WORKFLOW_OPTIONS.filter((kind) => {
+      const configured = policy.settings.allowedKinds;
+      return !Array.isArray(configured) || configured.includes(kind);
+    }),
+  );
+  const [requireWorkflowDueDate, setRequireWorkflowDueDate] = useState(
+    policy.settings.requireDueDate === true,
+  );
 
   return (
     <form
       style={{ marginTop: 12, display: "grid", gap: 10 }}
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit({ enabled, enforcement });
+        onSubmit({
+          enabled,
+          enforcement,
+          ...(policy.policyType === "drive_workflows"
+            ? { settings: { allowedKinds: workflowKinds, requireDueDate: requireWorkflowDueDate } }
+            : {}),
+        });
       }}
     >
       <label className="row gap-2" style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
@@ -1067,6 +1047,41 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
           Local email/password login remains enabled
         </label>
       ) : null}
+      {policy.policyType === "drive_workflows" ? (
+        <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+          <legend style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+            Allowed workflows
+          </legend>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+            {DRIVE_WORKFLOW_OPTIONS.map((kind) => (
+              <label key={kind} className="row gap-2" style={{ fontSize: "var(--text-caption)" }}>
+                <input
+                  type="checkbox"
+                  checked={workflowKinds.includes(kind)}
+                  onChange={(event) => {
+                    setWorkflowKinds((current) =>
+                      event.target.checked
+                        ? [...current, kind]
+                        : current.filter((candidate) => candidate !== kind),
+                    );
+                  }}
+                />
+                {kind.replaceAll("_", " ")}
+              </label>
+            ))}
+          </div>
+          <label className="row gap-2" style={{ fontSize: "var(--text-caption)", marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={requireWorkflowDueDate}
+              onChange={(event) => {
+                setRequireWorkflowDueDate(event.target.checked);
+              }}
+            />
+            Require due dates
+          </label>
+        </fieldset>
+      ) : null}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button type="button" className="btn sm" onClick={onCancel}>
           Cancel
@@ -1083,36 +1098,23 @@ function AdminSecurity() {
   const queryClient = useQueryClient();
   const policiesQuery = useQuery(securityPoliciesQueryOptions());
   const [editing, setEditing] = useState<SecurityPolicyType | null>(null);
-  const [ssoTestResult, setSsoTestResult] = useState<SsoTestLoginResponse | null>(null);
 
   const updateMutation = useMutation({
     mutationFn: (input: {
       policyType: SecurityPolicyType;
       enabled: boolean;
       enforcement: PolicyEnforcement;
+      settings?: Record<string, unknown>;
     }) =>
       updateSecurityPolicy(input.policyType, {
         enabled: input.enabled,
         enforcement: input.enforcement,
+        ...(input.settings === undefined ? {} : { settings: input.settings }),
       }),
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => {
       setEditing(null);
-      void queryClient.invalidateQueries({
-        queryKey: securityPoliciesQueryKeys.list(),
-      });
-    },
-  });
-
-  const ssoTestMutation = useMutation({
-    mutationFn: () => testSsoLogin(),
-    onMutate: () => {
-      setSsoTestResult(null);
-    },
-    onError: () => undefined,
-    onSuccess: (result) => {
-      setSsoTestResult(result);
       void queryClient.invalidateQueries({
         queryKey: securityPoliciesQueryKeys.list(),
       });
@@ -1148,15 +1150,6 @@ function AdminSecurity() {
       {updateMutation.isError ? (
         <StateBanner kind="error">{updateMutation.error.message}</StateBanner>
       ) : null}
-      {ssoTestMutation.isError ? (
-        <StateBanner kind="error">{ssoTestMutation.error.message}</StateBanner>
-      ) : null}
-      {ssoTestResult === null ? null : (
-        <StateBanner kind={ssoTestResult.status === "runtime_pending" ? "info" : "error"}>
-          {ssoTestResult.message}
-        </StateBanner>
-      )}
-
       {policiesQuery.isError ? null : (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           {(["Authentication", "Access & data"] as const).map((label) => (
@@ -1217,17 +1210,6 @@ function AdminSecurity() {
                       >
                         {isEditing ? "Close" : "Edit"}
                       </button>
-                      {policy.policyType === "sso" ? (
-                        <button
-                          type="button"
-                          className="btn sm"
-                          aria-label="Test SSO login"
-                          disabled={ssoTestMutation.isPending}
-                          onClick={() => ssoTestMutation.mutate()}
-                        >
-                          {ssoTestMutation.isPending ? "Testing…" : "Test login"}
-                        </button>
-                      ) : null}
                     </div>
                     {isEditing ? (
                       <PolicyEditForm
@@ -1718,12 +1700,6 @@ function AdminBilling() {
             <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)", marginBottom: 16 }}>
               {formatDateLabel(view.account.nextInvoiceAt)}
             </div>
-            <button type="button" className="btn" style={{ width: "100%", marginBottom: 8 }}>
-              <Icons.Credit /> Update payment method
-            </button>
-            <button type="button" className="btn" style={{ width: "100%" }}>
-              <Icons.Download /> Download invoices
-            </button>
           </div>
         </div>
       ) : null}
@@ -1866,9 +1842,7 @@ function AdminBilling() {
                   {invoice.status}
                 </span>
               </span>
-              <button type="button" className="btn sm" style={{ justifySelf: "flex-end" }}>
-                PDF
-              </button>
+              <span />
             </div>
           ))
         )}
@@ -1981,7 +1955,9 @@ const DNS_RECORD_TYPES_UI: readonly DnsRecordType[] = [
   "A",
 ];
 
-function verificationVariant(status: "verified" | "pending" | "failed"): string {
+function verificationVariant(
+  status: "verified" | "pending" | "failed" | "quarantined" | "released",
+): string {
   return status === "verified" ? "success" : status === "pending" ? "warning" : "danger";
 }
 
@@ -2016,6 +1992,19 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
     onError: () => undefined,
     onSuccess: () => invalidate(),
   });
+  const ownershipMutation = useMutation({
+    mutationFn: () => verifyDomainOwnership(entry.domain.id),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => invalidate(),
+  });
+  const challengeMutation = useMutation({
+    mutationFn: () => rotateDomainChallenge(entry.domain.id),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => invalidate(),
+  });
+  const challengeExpired = Date.parse(entry.domain.verificationExpiresAt) <= Date.now();
 
   return (
     <div className="panel" style={{ overflow: "hidden", marginBottom: 16 }}>
@@ -2048,6 +2037,65 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
           <StateBanner kind="error">{verifyMutation.error.message}</StateBanner>
         </div>
       ) : null}
+      {ownershipMutation.isError ? (
+        <div style={{ padding: "8px 16px" }}>
+          <StateBanner kind="error">{ownershipMutation.error.message}</StateBanner>
+        </div>
+      ) : null}
+      {challengeMutation.isError ? (
+        <div style={{ padding: "8px 16px" }}>
+          <StateBanner kind="error">{challengeMutation.error.message}</StateBanner>
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: DOMAIN_GRID,
+          padding: "8px 16px",
+          minHeight: 38,
+          alignItems: "center",
+          fontSize: "var(--text-meta)",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>Ownership</span>
+        <span className="mono" style={{ fontSize: "var(--text-caption)" }}>
+          {entry.domain.verificationHost}
+        </span>
+        <span
+          className="mono truncate"
+          title={entry.domain.verificationValue}
+          style={{ fontSize: "var(--text-caption)", color: "var(--text-2)" }}
+        >
+          {entry.domain.verificationValue}
+        </span>
+        <span className={`chip ${verificationVariant(entry.domain.status)}`}>
+          <span className="chip-dot" />
+          {challengeExpired && entry.domain.status !== "verified" ? "expired" : entry.domain.status}
+        </span>
+        {challengeExpired && entry.domain.status !== "verified" ? (
+          <button
+            type="button"
+            className="btn sm"
+            style={{ justifySelf: "flex-end" }}
+            disabled={challengeMutation.isPending}
+            onClick={() => challengeMutation.mutate()}
+          >
+            Rotate
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn sm"
+            style={{ justifySelf: "flex-end" }}
+            disabled={ownershipMutation.isPending || entry.domain.status === "verified"}
+            onClick={() => ownershipMutation.mutate()}
+          >
+            Verify
+          </button>
+        )}
+      </div>
 
       {entry.dnsRecords.length === 0 ? (
         <EmptyRow>No DNS records for this domain yet.</EmptyRow>
@@ -2173,7 +2221,14 @@ function AdminDomain() {
     onSuccess: () => invalidate(),
   });
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteDomain(id),
+    mutationFn: (id: string) => releaseDomain(id),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => invalidate(),
+  });
+  const capabilityMutation = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateDomainCapabilitiesInput }) =>
+      updateDomainCapabilities(id, input),
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => invalidate(),
@@ -2197,6 +2252,9 @@ function AdminDomain() {
       ) : null}
       {deleteMutation.isError ? (
         <StateBanner kind="error">{deleteMutation.error.message}</StateBanner>
+      ) : null}
+      {capabilityMutation.isError ? (
+        <StateBanner kind="error">{capabilityMutation.error.message}</StateBanner>
       ) : null}
 
       {domainsQuery.isError ? null : (
@@ -2241,6 +2299,7 @@ function AdminDomain() {
                     display: "flex",
                     alignItems: "center",
                     gap: 12,
+                    flexWrap: "wrap",
                   }}
                 >
                   <span style={{ color: "var(--text-3)" }}>
@@ -2254,11 +2313,14 @@ function AdminDomain() {
                       {entry.domain.isPrimary ? "Primary domain" : "Secondary domain"}
                     </div>
                   </div>
-                  <span className={`chip ${verificationVariant(entry.domain.verificationStatus)}`}>
+                  <span className={`chip ${verificationVariant(entry.domain.status)}`}>
                     <span className="chip-dot" />
-                    {entry.domain.verificationStatus}
+                    {entry.domain.status}
                   </span>
-                  {!entry.domain.isPrimary ? (
+                  {!entry.domain.isPrimary &&
+                  entry.domain.status === "verified" &&
+                  entry.domain.identityEnabled &&
+                  entry.domain.identityMode === "secondary" ? (
                     <button
                       type="button"
                       className="btn sm"
@@ -2278,6 +2340,89 @@ function AdminDomain() {
                   >
                     <Icons.Trash />
                   </button>
+                  {entry.domain.status === "verified" ? (
+                    <div
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 8,
+                        alignItems: "center",
+                      }}
+                    >
+                      {(
+                        [
+                          ["identityEnabled", "Identity"],
+                          ["mailEnabled", "Mail"],
+                          ["aliasesEnabled", "Aliases"],
+                          ["customHostEnabled", "Custom host"],
+                          ["federationEnabled", "Federation"],
+                        ] as const
+                      ).map(([capability, label]) => (
+                        <button
+                          key={capability}
+                          type="button"
+                          className={`btn sm ${entry.domain[capability] ? "primary" : ""}`.trim()}
+                          aria-pressed={entry.domain[capability]}
+                          disabled={
+                            capabilityMutation.isPending ||
+                            ((capability === "customHostEnabled" ||
+                              capability === "federationEnabled") &&
+                              !entry.domain.identityEnabled)
+                          }
+                          onClick={() =>
+                            capabilityMutation.mutate({
+                              id: entry.domain.id,
+                              input: { [capability]: !entry.domain[capability] },
+                            })
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                      <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
+                          Identity mode
+                        </span>
+                        <select
+                          aria-label={`Identity mode for ${entry.domain.domain}`}
+                          value={entry.domain.aliasTargetDomainId ?? "secondary"}
+                          disabled={capabilityMutation.isPending || entry.domain.isPrimary}
+                          style={INPUT_STYLE}
+                          onChange={(event) => {
+                            const targetId = event.target.value;
+                            capabilityMutation.mutate({
+                              id: entry.domain.id,
+                              input:
+                                targetId === "secondary"
+                                  ? { identityMode: "secondary", aliasTargetDomainId: null }
+                                  : {
+                                      identityEnabled: true,
+                                      aliasesEnabled: true,
+                                      identityMode: "alias",
+                                      aliasTargetDomainId: targetId,
+                                    },
+                            });
+                          }}
+                        >
+                          <option value="secondary">Secondary namespace</option>
+                          {domains
+                            .filter(
+                              (candidate) =>
+                                candidate.domain.id !== entry.domain.id &&
+                                candidate.domain.status === "verified" &&
+                                candidate.domain.identityEnabled &&
+                                candidate.domain.identityMode === "secondary",
+                            )
+                            .map((candidate) => (
+                              <option key={candidate.domain.id} value={candidate.domain.id}>
+                                Alias of {candidate.domain.domain}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    </div>
+                  ) : null}
                 </div>
                 <DomainDnsPanel entry={entry} />
               </div>
@@ -2303,7 +2448,6 @@ function withPageScroll(Component: () => ReactNode): () => ReactNode {
 }
 
 const SECTION_CONTENT: Record<AdminSectionId, () => ReactNode> = {
-  overview: AdminOverview,
   users: AdminUsers,
   groups: AdminGroups,
   security: AdminSecurity,
@@ -2325,7 +2469,7 @@ const SECTION_CONTENT: Record<AdminSectionId, () => ReactNode> = {
 };
 
 export function AdminConsole() {
-  const [section, setSection] = useState<AdminSectionId>("overview");
+  const [section, setSection] = useState<AdminSectionId>("users");
   const Section = SECTION_CONTENT[section];
 
   return (

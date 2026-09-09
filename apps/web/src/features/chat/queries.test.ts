@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CHAT_MESSAGE_PAGE_SIZE, chatMessageListInfiniteQueryOptions } from "./queries";
 
 describe("chat message infinite query", () => {
-  it("getNextPageParam returns the oldest message sentAt when a full page is returned", () => {
+  it("getNextPageParam returns the oldest message's stable composite cursor", () => {
     const opts = chatMessageListInfiniteQueryOptions("11111111-1111-4111-8111-111111111111");
     const page = Array.from({ length: CHAT_MESSAGE_PAGE_SIZE }, (_, i) => ({
       id: `m${String(i)}`,
@@ -20,7 +20,10 @@ describe("chat message infinite query", () => {
       updatedAt: "2026-07-18T00:00:00.000Z",
     }));
     const next = opts.getNextPageParam(page, [page], undefined, [undefined]);
-    expect(next).toBe(page[page.length - 1]?.sentAt);
+    const oldest = page[page.length - 1];
+    expect(next).toEqual(
+      oldest === undefined ? undefined : { sentAt: oldest.sentAt, id: oldest.id },
+    );
   });
 
   it("getNextPageParam returns undefined when the page is short", () => {

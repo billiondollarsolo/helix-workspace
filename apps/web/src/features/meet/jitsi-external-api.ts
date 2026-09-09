@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import type { MeetMediaCommand, MeetRecordingAuthorization, MeetTelemetryEvent } from "./api";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -20,6 +21,21 @@ import { useEffect, useRef, useState } from "react";
 export interface JitsiParticipant {
   readonly id: string;
   readonly displayName: string;
+  readonly participantSubject: string;
+}
+
+export interface JitsiClientCapabilities {
+  readonly tileView: boolean;
+  readonly noiseSuppression: boolean;
+  readonly backgroundBlur: boolean;
+  readonly breakoutRooms: boolean;
+}
+
+export interface JitsiBreakoutRoom {
+  readonly id: string;
+  readonly name: string;
+  readonly isMainRoom: boolean;
+  readonly participantCount: number;
 }
 
 export interface JitsiCallState {
@@ -35,10 +51,22 @@ export interface JitsiCallState {
   readonly screenSharing: boolean;
   /** Local hand raised. */
   readonly handRaised: boolean;
+  /** Features the loaded Jitsi deployment says it supports. */
+  readonly capabilities: JitsiClientCapabilities;
+  /** Null until Jitsi reports the current layout. */
+  readonly tileView: boolean | null;
+  /** Null until changed through the Helix control. */
+  readonly noiseSuppressionEnabled: boolean | null;
+  /** Null until changed through the Helix control. */
+  readonly backgroundBlurred: boolean | null;
+  /** Identity-free room summaries reported by Jitsi. */
+  readonly breakoutRooms: readonly JitsiBreakoutRoom[];
   /** Recording in progress (any participant started it). */
   readonly recordingActive: boolean;
   /** Remote participants (does not include local). */
   readonly participants: readonly JitsiParticipant[];
+  /** Participants currently waiting in the server-enforced lobby. */
+  readonly knockingParticipants: readonly JitsiParticipant[];
   /** Most recent chat messages, oldest first. Truncated to last 200. */
   readonly chatMessages: readonly JitsiChatMessage[];
   /** Bumps whenever a new chat message arrives and the panel isn't open. */
@@ -63,12 +91,20 @@ export interface JitsiCallCommands {
   toggleVideo: () => void;
   toggleShareScreen: () => void;
   toggleRaiseHand: () => void;
-  startRecording: () => void;
+  toggleTileView: () => void;
+  setNoiseSuppression: (enabled: boolean) => void;
+  setBackgroundBlur: (enabled: boolean) => void;
+  addBreakoutRoom: () => void;
+  autoAssignBreakoutRooms: () => void;
+  joinBreakoutRoom: (roomId?: string) => void;
+  closeBreakoutRoom: (roomId: string) => void;
+  startRecording: (authorization: MeetRecordingAuthorization) => void;
   stopRecording: () => void;
   hangup: () => void;
   sendChatMessage: (message: string) => void;
   /** Acknowledge that the chat panel has been read; clears unread count. */
   markChatRead: () => void;
+  applyMediaCommands: (commands: readonly MeetMediaCommand[]) => void;
 }
 
 export interface JitsiCallControls {
@@ -83,6 +119,8 @@ export interface UseJitsiCallParams {
   readonly hostRef: React.RefObject<HTMLDivElement | null>;
   /** Fires once after videoConferenceLeft (user clicked hangup). */
   readonly onLeft?: () => void;
+  /** Receives only bounded numeric/error-category telemetry; never media or identity. */
+  readonly onTelemetry?: (event: MeetTelemetryEvent) => void;
 }
 
 export interface JitsiCallOptions {
@@ -90,6 +128,7 @@ export interface JitsiCallOptions {
   readonly roomName: string;
   /** Optional JWT for moderated rooms. */
   readonly jwt: string | null;
+  readonly initialRecordingActive: boolean;
   readonly userInfo: {
     readonly displayName: string;
     readonly email: string | null;
@@ -150,6 +189,9 @@ interface ExternalApiOptions {
 interface ExternalApi {
   addListener(event: string, handler: (payload: unknown) => void): void;
   executeCommand(name: string, ...args: unknown[]): void;
+  getConnectionStats?: () => Promise<unknown>;
+  getSupportedCommands?: () => readonly string[];
+  listBreakoutRooms?: () => Promise<unknown>;
   dispose(): void;
   getIFrame(): HTMLIFrameElement | null;
 }
@@ -164,6 +206,13 @@ declare global {
 // Hook
 // ---------------------------------------------------------------------------
 
+const EMPTY_CAPABILITIES: JitsiClientCapabilities = {
+  tileView: false,
+  noiseSuppression: false,
+  backgroundBlur: false,
+  breakoutRooms: false,
+};
+
 const EMPTY_STATE: JitsiCallState = {
   isReady: false,
   isJoined: false,
@@ -171,22 +220,37 @@ const EMPTY_STATE: JitsiCallState = {
   videoMuted: false,
   screenSharing: false,
   handRaised: false,
+  capabilities: EMPTY_CAPABILITIES,
+  tileView: null,
+  noiseSuppressionEnabled: null,
+  backgroundBlurred: null,
+  breakoutRooms: [],
   recordingActive: false,
   participants: [],
+  knockingParticipants: [],
   chatMessages: [],
   unreadChatCount: 0,
   loadError: null,
 };
 
-export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): JitsiCallControls {
+export function useJitsiCall({
+  options,
+  hostRef,
+  onLeft,
+  onTelemetry,
+}: UseJitsiCallParams): JitsiCallControls {
   const [state, setState] = useState<JitsiCallState>(EMPTY_STATE);
   const apiRef = useRef<ExternalApi | null>(null);
+  const capabilitiesRef = useRef<JitsiClientCapabilities>(EMPTY_CAPABILITIES);
+  const recordingActiveRef = useRef(false);
   const chatPanelReadRef = useRef(true);
   // Hold the latest onLeft so the mount effect can dispose without re-running
   // when the parent rebinds it. The parent's onLeave typically captures setState,
   // so a stable reference here matters for not tearing down the call.
   const onLeftRef = useRef(onLeft);
   onLeftRef.current = onLeft;
+  const onTelemetryRef = useRef(onTelemetry);
+  onTelemetryRef.current = onTelemetry;
 
   useEffect(() => {
     if (options === null) {
@@ -197,8 +261,12 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
     if (host === null) return;
     let disposed = false;
     let api: ExternalApi | null = null;
+    const joinStartedAt = performance.now();
+    let lastQualityAt = 0;
 
-    setState({ ...EMPTY_STATE });
+    setState({ ...EMPTY_STATE, recordingActive: options.initialRecordingActive });
+    recordingActiveRef.current = options.initialRecordingActive;
+    if (options.initialRecordingActive) announceRecordingStarted();
 
     loadExternalApiScript(options.domain)
       .then(() => {
@@ -228,6 +296,7 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
             hideParticipantsStats: true,
             disableSelfView: false,
             disableInviteFunctions: true,
+            disableRecordAudioNotification: false,
             // Keyboard shortcuts conflict with the host page.
             disableShortcuts: true,
           },
@@ -243,6 +312,11 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
           },
         });
         apiRef.current = api;
+        const capabilities = meetCapabilitiesFromCommands(
+          api.getSupportedCommands?.() ?? [],
+          api.listBreakoutRooms !== undefined,
+        );
+        capabilitiesRef.current = capabilities;
 
         // Style the iframe to fill the host.
         const iframe = api.getIFrame();
@@ -253,11 +327,45 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
           iframe.allow = "camera; microphone; fullscreen; display-capture; autoplay";
         }
 
-        setState((prev) => ({ ...prev, isReady: true }));
+        setState((prev) => ({ ...prev, isReady: true, capabilities }));
+
+        if (capabilities.breakoutRooms && api.listBreakoutRooms !== undefined) {
+          void api
+            .listBreakoutRooms()
+            .then((rooms) => {
+              if (!disposed) {
+                setState((prev) => ({ ...prev, breakoutRooms: breakoutRoomsFromJitsi(rooms) }));
+              }
+            })
+            .catch(() => undefined);
+        }
+
+        const reportQuality = () => {
+          const at = Date.now();
+          if (
+            api?.getConnectionStats === undefined ||
+            at - lastQualityAt < QUALITY_SAMPLE_INTERVAL_MS
+          ) {
+            return;
+          }
+          lastQualityAt = at;
+          void api
+            .getConnectionStats()
+            .then((stats) => {
+              const sample = qualityTelemetryFromJitsi(stats);
+              if (sample !== null) onTelemetryRef.current?.(sample);
+            })
+            .catch(() => undefined);
+        };
 
         // ---- Lifecycle ----
         api.addListener("videoConferenceJoined", () => {
           setState((prev) => ({ ...prev, isJoined: true }));
+          onTelemetryRef.current?.({
+            event: "join_latency",
+            joinLatencyMs: Math.max(0, performance.now() - joinStartedAt),
+          });
+          reportQuality();
         });
         api.addListener("videoConferenceLeft", () => {
           setState((prev) => ({ ...prev, isJoined: false }));
@@ -280,6 +388,22 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
           const on = readBool(payload, "on");
           if (on !== null) setState((prev) => ({ ...prev, screenSharing: on }));
         });
+        api.addListener("tileViewChanged", (payload: unknown) => {
+          const enabled = readBool(payload, "enabled");
+          if (enabled !== null) setState((prev) => ({ ...prev, tileView: enabled }));
+        });
+        api.addListener("breakoutRoomsUpdated", (payload: unknown) => {
+          if (!capabilities.breakoutRooms) return;
+          setState((prev) => ({ ...prev, breakoutRooms: breakoutRoomsFromJitsi(payload) }));
+        });
+        api.addListener("cameraError", () => {
+          onTelemetryRef.current?.({ event: "device_failure", device: "camera" });
+        });
+        api.addListener("micError", () => {
+          onTelemetryRef.current?.({ event: "device_failure", device: "microphone" });
+        });
+        api.addListener("videoQualityChanged", reportQuality);
+        api.addListener("peerConnectionFailure", reportQuality);
         api.addListener("raiseHandUpdated", (payload: unknown) => {
           // Jitsi sends raiseHandUpdated for every participant; only mirror it
           // when it's for the local participant (id matches the local one).
@@ -298,7 +422,10 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
         // ---- Recording ----
         api.addListener("recordingStatusChanged", (payload: unknown) => {
           const on = readBool(payload, "on");
-          if (on !== null) setState((prev) => ({ ...prev, recordingActive: on }));
+          if (on === null) return;
+          if (on && !recordingActiveRef.current) announceRecordingStarted();
+          recordingActiveRef.current = on;
+          setState((prev) => ({ ...prev, recordingActive: on }));
         });
 
         // ---- Participants ----
@@ -306,13 +433,26 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
           const id = readString(payload, "id");
           if (id === null) return;
           const displayName = readString(payload, "displayName") ?? "Guest";
+          const participantSubject = readNestedString(payload, "userContext", "id") ?? id;
           setState((prev) => {
             if (prev.participants.some((p) => p.id === id)) return prev;
             return {
               ...prev,
-              participants: [...prev.participants, { id, displayName }],
+              participants: [...prev.participants, { id, displayName, participantSubject }],
             };
           });
+        });
+        api.addListener("knockingParticipant", (payload: unknown) => {
+          const participant = readRecord(payload, "participant");
+          const id = readString(participant, "id");
+          if (id === null) return;
+          const displayName = readString(participant, "name") ?? "Guest";
+          setState((prev) => ({
+            ...prev,
+            knockingParticipants: prev.knockingParticipants.some((item) => item.id === id)
+              ? prev.knockingParticipants
+              : [...prev.knockingParticipants, { id, displayName, participantSubject: id }],
+          }));
         });
         api.addListener("participantLeft", (payload: unknown) => {
           const id = readString(payload, "id");
@@ -382,6 +522,8 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
         }
       }
       apiRef.current = null;
+      capabilitiesRef.current = EMPTY_CAPABILITIES;
+      recordingActiveRef.current = false;
       setState({ ...EMPTY_STATE });
     };
     // Re-mount only when the room identity itself changes. userInfo and the
@@ -398,7 +540,47 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
       // Optimistically flip; the raiseHandUpdated event will reconcile.
       setState((prev) => ({ ...prev, handRaised: !prev.handRaised }));
     },
-    startRecording: () => apiRef.current?.executeCommand("startRecording", { mode: "file" }),
+    toggleTileView: () => {
+      if (capabilitiesRef.current.tileView) apiRef.current?.executeCommand("toggleTileView");
+    },
+    setNoiseSuppression: (enabled) => {
+      if (!capabilitiesRef.current.noiseSuppression) return;
+      apiRef.current?.executeCommand("setNoiseSuppressionEnabled", { enabled });
+      setState((prev) => ({ ...prev, noiseSuppressionEnabled: enabled }));
+    },
+    setBackgroundBlur: (enabled) => {
+      if (!capabilitiesRef.current.backgroundBlur) return;
+      apiRef.current?.executeCommand("setBlurredBackground", enabled ? "blur" : "none");
+      setState((prev) => ({ ...prev, backgroundBlurred: enabled }));
+    },
+    addBreakoutRoom: () => {
+      if (capabilitiesRef.current.breakoutRooms) apiRef.current?.executeCommand("addBreakoutRoom");
+    },
+    autoAssignBreakoutRooms: () => {
+      if (capabilitiesRef.current.breakoutRooms) {
+        apiRef.current?.executeCommand("autoAssignToBreakoutRooms");
+      }
+    },
+    joinBreakoutRoom: (roomId) => {
+      if (capabilitiesRef.current.breakoutRooms) {
+        if (roomId === undefined) apiRef.current?.executeCommand("joinBreakoutRoom");
+        else apiRef.current?.executeCommand("joinBreakoutRoom", roomId);
+      }
+    },
+    closeBreakoutRoom: (roomId) => {
+      if (capabilitiesRef.current.breakoutRooms) {
+        apiRef.current?.executeCommand("closeBreakoutRoom", roomId);
+      }
+    },
+    startRecording: (authorization) => {
+      if (
+        !UUID_PATTERN.test(authorization.authorizationId) ||
+        Date.parse(authorization.expiresAt) <= Date.now()
+      ) {
+        return;
+      }
+      apiRef.current?.executeCommand("startRecording", { mode: "file" });
+    },
     stopRecording: () => apiRef.current?.executeCommand("stopRecording", "file"),
     hangup: () => apiRef.current?.executeCommand("hangup"),
     sendChatMessage: (message) => {
@@ -408,9 +590,10 @@ export function useJitsiCall({ options, hostRef, onLeft }: UseJitsiCallParams): 
     },
     markChatRead: () => {
       chatPanelReadRef.current = true;
-      setState((prev) =>
-        prev.unreadChatCount === 0 ? prev : { ...prev, unreadChatCount: 0 },
-      );
+      setState((prev) => (prev.unreadChatCount === 0 ? prev : { ...prev, unreadChatCount: 0 }));
+    },
+    applyMediaCommands: (mediaCommands) => {
+      for (const mediaCommand of mediaCommands) executeMediaCommand(apiRef.current, mediaCommand);
     },
   };
 
@@ -433,7 +616,223 @@ function readString(payload: unknown, key: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function readRecord(payload: unknown, key: string): Record<string, unknown> | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readNestedString(payload: unknown, parent: string, key: string): string | null {
+  return readString(readRecord(payload, parent), key);
+}
+
+export function meetCapabilitiesFromCommands(
+  commands: readonly string[],
+  canListBreakoutRooms = true,
+): JitsiClientCapabilities {
+  const supported = new Set(commands);
+  return {
+    tileView: supported.has("toggleTileView"),
+    noiseSuppression: supported.has("setNoiseSuppressionEnabled"),
+    backgroundBlur: supported.has("setBlurredBackground"),
+    breakoutRooms:
+      canListBreakoutRooms &&
+      [
+        "addBreakoutRoom",
+        "autoAssignToBreakoutRooms",
+        "closeBreakoutRoom",
+        "joinBreakoutRoom",
+      ].every((command) => supported.has(command)),
+  };
+}
+
+/** Reduce Jitsi's participant-bearing breakout payload to safe room counts. */
+export function breakoutRoomsFromJitsi(payload: unknown): readonly JitsiBreakoutRoom[] {
+  const source = readRecord(payload, "rooms") ?? payload;
+  const values = Array.isArray(source)
+    ? source
+    : isRecordValue(source)
+      ? Object.values(source)
+      : [];
+  return values
+    .slice(0, 100)
+    .flatMap((value): JitsiBreakoutRoom[] => {
+      if (!isRecordValue(value)) return [];
+      const id = typeof value.id === "string" ? value.id : null;
+      if (id === null || id.length === 0 || id.length > 512) return [];
+      const participants = value.participants;
+      const participantCount = Array.isArray(participants)
+        ? participants.length
+        : isRecordValue(participants)
+          ? Object.keys(participants).length
+          : 0;
+      return [
+        {
+          id,
+          name:
+            typeof value.name === "string" && value.name.trim().length > 0
+              ? value.name.trim().slice(0, 120)
+              : value.isMainRoom === true
+                ? "Main room"
+                : "Breakout room",
+          isMainRoom: value.isMainRoom === true,
+          participantCount: Math.min(participantCount, 10_000),
+        },
+      ];
+    })
+    .sort((left, right) =>
+      left.isMainRoom === right.isMainRoom
+        ? left.name.localeCompare(right.name)
+        : left.isMainRoom
+          ? -1
+          : 1,
+    );
+}
+
+function executeMediaCommand(api: ExternalApi | null, mediaCommand: MeetMediaCommand): void {
+  if (api === null) return;
+  switch (mediaCommand.command) {
+    case "toggleLobby":
+      api.executeCommand("toggleLobby", mediaCommand.enabled);
+      break;
+    case "answerKnockingParticipant":
+      api.executeCommand(
+        "answerKnockingParticipant",
+        mediaCommand.participantId,
+        mediaCommand.approved,
+      );
+      break;
+    case "password":
+      api.executeCommand("password", mediaCommand.password);
+      break;
+    case "kickParticipant":
+      api.executeCommand("kickParticipant", mediaCommand.participantId);
+      break;
+    case "grantModerator":
+      api.executeCommand("grantModerator", mediaCommand.participantId);
+      break;
+    case "muteRemoteParticipant":
+      api.executeCommand(
+        "muteRemoteParticipant",
+        mediaCommand.participantId,
+        mediaCommand.mediaType,
+      );
+      break;
+    case "toggleModeration":
+      api.executeCommand("toggleModeration", mediaCommand.enabled, mediaCommand.mediaType);
+      break;
+    case "approveParticipant":
+      api.executeCommand(
+        mediaCommand.mediaType === "audio" ? "askToUnmute" : "approveVideo",
+        mediaCommand.participantId,
+      );
+      break;
+    case "setChatPolicy":
+      api.executeCommand("overwriteConfig", { disableChat: mediaCommand.policy === "disabled" });
+      break;
+    case "setReactionPolicy":
+      api.executeCommand("overwriteConfig", {
+        disableReactions: mediaCommand.policy === "disabled",
+      });
+      break;
+  }
+}
+
 const MAX_CHAT_MESSAGES = 200;
+const QUALITY_SAMPLE_INTERVAL_MS = 10_000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+export function qualityTelemetryFromJitsi(payload: unknown): MeetTelemetryEvent | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const outer = payload as Record<string, unknown>;
+  const source =
+    typeof outer.stats === "object" && outer.stats !== null
+      ? (outer.stats as Record<string, unknown>)
+      : outer;
+  const packetLoss = recordValue(source.packetLoss);
+  const bitrate = recordValue(source.bitrate);
+  const transport = Array.isArray(source.transport) ? source.transport.filter(isRecordValue) : [];
+  const sample = {
+    event: "quality" as const,
+    packetLossPercent:
+      boundedNumber(source, ["packetLossPercent", "packetLoss"], 100) ??
+      boundedNumber(packetLoss, ["total"], 100),
+    jitterMs:
+      boundedNumber(source, ["jitterMs", "jitter"], 10_000) ??
+      maximumNumber(transport, "jitter", 10_000),
+    rttMs:
+      boundedNumber(source, ["rttMs", "jvbRTT", "rtt"], 60_000) ??
+      maximumNumber(transport, "rtt", 60_000),
+    bitrateKbps:
+      boundedNumber(source, ["bitrateKbps", "bitrate"], 1_000_000) ??
+      sumNumbers(bitrate, ["download", "upload"], 1_000_000),
+    connectionQuality:
+      boundedNumber(source, ["connectionQuality"], 100) ??
+      boundedNumber(outer, ["connectionQuality"], 100),
+    bridgeLoadPercent:
+      boundedNumber(source, ["bridgeLoadPercent", "bridgeLoad"], 100) ??
+      boundedNumber(outer, ["bridgeLoadPercent", "bridgeLoad"], 100),
+  };
+  return Object.values(sample).some((value) => typeof value === "number") ? sample : null;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return isRecordValue(value) ? value : {};
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function maximumNumber(
+  records: readonly Record<string, unknown>[],
+  key: string,
+  maximum: number,
+): number | undefined {
+  const values = records
+    .map((record) => boundedNumber(record, [key], maximum))
+    .filter((value): value is number => value !== undefined);
+  return values.length === 0 ? undefined : Math.max(...values);
+}
+
+function sumNumbers(
+  source: Record<string, unknown>,
+  keys: readonly string[],
+  maximum: number,
+): number | undefined {
+  const values = keys
+    .map((key) => boundedNumber(source, [key], maximum))
+    .filter((value): value is number => value !== undefined);
+  return values.length === 0
+    ? undefined
+    : Math.min(
+        maximum,
+        values.reduce((sum, value) => sum + value, 0),
+      );
+}
+
+function boundedNumber(
+  source: Record<string, unknown>,
+  keys: readonly string[],
+  maximum: number,
+): number | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+export function announceRecordingStarted(): void {
+  if (typeof window === "undefined" || typeof SpeechSynthesisUtterance === "undefined") {
+    return;
+  }
+  window.speechSynthesis.speak(new SpeechSynthesisUtterance("Recording started"));
+}
 
 function appendChat(
   existing: readonly JitsiChatMessage[],

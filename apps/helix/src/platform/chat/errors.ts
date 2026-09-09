@@ -22,6 +22,14 @@ export class ChatRoomAccessError extends ForbiddenError {
   }
 }
 
+/** Avoids revealing whether an invalid invitee exists in another tenant. */
+export class ChatMemberAccessError extends ForbiddenError {
+  constructor() {
+    super("One or more chat members are unavailable.");
+    this.name = "ChatMemberAccessError";
+  }
+}
+
 /** Thrown when a message id is unknown or not editable/deletable by the actor. */
 export class ChatMessageNotFoundError extends NotFoundError {
   readonly messageId: string;

@@ -15,11 +15,7 @@ export interface ImportedSheetRendererProps {
   readonly fileName?: string;
 }
 
-export function ImportedSheetRenderer({
-  sheet,
-  objectId,
-  fileName,
-}: ImportedSheetRendererProps) {
+export function ImportedSheetRenderer({ sheet, objectId, fileName }: ImportedSheetRendererProps) {
   const [activeTabId, setActiveTabId] = useState(sheet.tabs[0]?.id ?? "");
   const activeTab = sheet.tabs.find((t) => t.id === activeTabId) ?? sheet.tabs[0];
 
@@ -39,8 +35,12 @@ export function ImportedSheetRenderer({
           background: "var(--bg)",
         }}
       >
-        {activeTab ? <SheetTable tab={activeTab} /> : (
-          <div style={{ padding: 32, textAlign: "center", color: "var(--text-3)" }}>Empty workbook</div>
+        {activeTab ? (
+          <SheetTable tab={activeTab} />
+        ) : (
+          <div style={{ padding: 32, textAlign: "center", color: "var(--text-3)" }}>
+            Empty workbook
+          </div>
         )}
       </div>
       {sheet.tabs.length > 1 ? (
@@ -73,9 +73,7 @@ export function ImportedSheetRenderer({
 function SheetTable({ tab }: { readonly tab: ImportedSheetTab }) {
   if (tab.rows.length === 0) {
     return (
-      <div style={{ padding: 32, textAlign: "center", color: "var(--text-3)" }}>
-        Empty sheet
-      </div>
+      <div style={{ padding: 32, textAlign: "center", color: "var(--text-3)" }}>Empty sheet</div>
     );
   }
 
@@ -211,7 +209,7 @@ function ImportedBanner({
         ) : null}
       </div>
       <a
-        href={`/api/drive/objects/${objectId}/content?download=1`}
+        href={`/v1/api/drive/objects/${objectId}/content?download=1`}
         className="btn sm"
         download={fileName ?? ""}
       >

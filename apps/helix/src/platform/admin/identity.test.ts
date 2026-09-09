@@ -1,6 +1,6 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import { actorFromRequest } from "../../api/actor.js";
+import { actorFromRequest } from "../../api/test-actor.js";
 import { InMemoryTenantIdpConfigStore } from "../auth/tenant-idp-configs.js";
 import { registerAdminIdentityRoutes, testTenantIdpConfigLogin } from "./identity.js";
 
@@ -25,11 +25,6 @@ async function buildApp() {
   const app = fastify();
   await registerAdminIdentityRoutes(app, {
     idpConfigs,
-    orgs: {
-      async findById(id) {
-        return id === orgId ? orgRecord() : null;
-      },
-    },
     actorFromRequest,
     auditSink: {
       async append(record) {
@@ -37,7 +32,6 @@ async function buildApp() {
         return { id: "audit-1", thisHash: "hash-1" };
       },
     },
-    publicBaseUrl: "https://app.helix.example",
   });
   return { app, idpConfigs, auditRecords };
 }
@@ -47,7 +41,7 @@ describe("admin identity IdP config routes", () => {
     const { app, idpConfigs } = await buildApp();
     await idpConfigs.create({
       orgId,
-      protocol: "saml",
+      protocol: "oidc",
       displayName: "Acme Okta",
       config: { metadataUrl: "https://idp.example.com/metadata" },
     });
@@ -62,10 +56,9 @@ describe("admin identity IdP config routes", () => {
     expect(body(response)).toMatchObject({
       idpConfigs: [
         {
-          protocol: "saml",
+          protocol: "oidc",
           displayName: "Acme Okta",
           isPrimary: true,
-          samlSpMetadataUrl: "https://app.helix.example/api/auth/saml/acme/metadata",
         },
       ],
       localLoginRecovery: { enabled: true, scope: "owner_admin_recovery" },
@@ -81,10 +74,10 @@ describe("admin identity IdP config routes", () => {
       url: "/api/admin/identity/idp-configs",
       headers: headers("admin.console.write"),
       payload: {
-        protocol: "saml",
-        displayName: "Acme SAML",
-        config: { metadataUrl: "https://idp.example.com/metadata" },
-        signingCertVaultPath: "tenants/acme/idp/saml-signing-cert",
+        protocol: "oidc",
+        displayName: "Acme OIDC",
+        config: { issuer: "https://idp.example.com", clientId: "helix" },
+        signingCertSecretHandle: "oidc-private-key",
         attrMapping: { email: "$.email", displayName: "$.name" },
       },
     });
@@ -93,12 +86,11 @@ describe("admin identity IdP config routes", () => {
     expect(body(response)).toMatchObject({
       idpConfig: {
         orgId,
-        protocol: "saml",
-        displayName: "Acme SAML",
-        signingCertVaultPath: "tenants/acme/idp/saml-signing-cert",
+        protocol: "oidc",
+        displayName: "Acme OIDC",
+        signingCertSecretHandle: "oidc-private-key",
         attrMapping: { email: "$.email", displayName: "$.name" },
         isPrimary: true,
-        samlSpMetadataUrl: "https://app.helix.example/api/auth/saml/acme/metadata",
       },
       localLoginRecovery: { enabled: true, scope: "owner_admin_recovery" },
     });
@@ -111,7 +103,7 @@ describe("admin identity IdP config routes", () => {
     await app.close();
   });
 
-  it("rejects inline IdP secrets and points admins to Vault paths", async () => {
+  it("rejects inline IdP secrets and caller-supplied Vault paths", async () => {
     const { app } = await buildApp();
 
     const response = await app.inject({
@@ -130,6 +122,20 @@ describe("admin identity IdP config routes", () => {
       code: "invalid_request",
       error: "Invalid tenant IdP config.",
     });
+    const pathResponse = await app.inject({
+      method: "POST",
+      url: "/api/admin/identity/idp-configs",
+      headers: headers("admin.console.write"),
+      payload: {
+        protocol: "oidc",
+        displayName: "Cross-tenant OIDC",
+        config: {
+          issuer: "https://idp.example.com",
+          clientSecretVaultPath: "tenants/another-org/idp/client-secret",
+        },
+      },
+    });
+    expect(pathResponse.statusCode).toBe(400);
     await app.close();
   });
 
@@ -139,7 +145,7 @@ describe("admin identity IdP config routes", () => {
       method: "POST",
       url: "/api/admin/identity/idp-configs",
       headers: headers("admin.console.write"),
-      payload: { protocol: "saml", displayName: "Primary SAML" },
+      payload: { protocol: "oidc", displayName: "Primary OIDC" },
     });
 
     const response = await app.inject({
@@ -159,7 +165,7 @@ describe("admin identity IdP config routes", () => {
 
   it("promotes an enabled secondary IdP for the actor tenant", async () => {
     const { app, idpConfigs, auditRecords } = await buildApp();
-    await idpConfigs.create({ orgId, protocol: "saml", displayName: "Primary SAML" });
+    await idpConfigs.create({ orgId, protocol: "oidc", displayName: "Primary OIDC" });
     const secondary = await idpConfigs.create({
       orgId,
       protocol: "oidc",
@@ -191,9 +197,9 @@ describe("admin identity IdP config routes", () => {
     const { app, idpConfigs, auditRecords } = await buildApp();
     const idpConfig = await idpConfigs.create({
       orgId,
-      protocol: "saml",
-      displayName: "Acme SAML",
-      config: { metadataUrl: "https://idp.example.com/metadata" },
+      protocol: "oidc",
+      displayName: "Acme OIDC",
+      config: { issuer: "https://idp.example.com", clientId: "helix" },
     });
 
     const response = await app.inject({
@@ -201,7 +207,7 @@ describe("admin identity IdP config routes", () => {
       url: `/api/admin/identity/idp-configs/${idpConfig.id}`,
       headers: headers("admin.console.write"),
       payload: {
-        displayName: "Acme SAML disabled",
+        displayName: "Acme OIDC disabled",
         enabled: false,
         attrMapping: { email: "$.email" },
       },
@@ -211,7 +217,7 @@ describe("admin identity IdP config routes", () => {
     expect(body(response)).toMatchObject({
       idpConfig: {
         id: idpConfig.id,
-        displayName: "Acme SAML disabled",
+        displayName: "Acme OIDC disabled",
         enabled: false,
         isPrimary: false,
         attrMapping: { email: "$.email" },
@@ -223,7 +229,7 @@ describe("admin identity IdP config routes", () => {
         verb: "admin.identity.idp_config.updated",
         objectId: idpConfig.id,
         metadata: {
-          protocol: "saml",
+          protocol: "oidc",
           isPrimary: false,
           enabled: false,
           changedFields: ["attrMapping", "displayName", "enabled"],
@@ -264,8 +270,8 @@ describe("admin identity IdP config routes", () => {
     const { app, idpConfigs, auditRecords } = await buildApp();
     const idpConfig = await idpConfigs.create({
       orgId,
-      protocol: "saml",
-      displayName: "Delete SAML",
+      protocol: "oidc",
+      displayName: "Delete OIDC",
     });
 
     const response = await app.inject({
@@ -276,7 +282,7 @@ describe("admin identity IdP config routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(body(response)).toMatchObject({
-      idpConfig: { id: idpConfig.id, displayName: "Delete SAML" },
+      idpConfig: { id: idpConfig.id, displayName: "Delete OIDC" },
       localLoginRecovery: { enabled: true, scope: "owner_admin_recovery" },
     });
     await expect(idpConfigs.get(orgId, idpConfig.id)).resolves.toBeNull();
@@ -293,8 +299,8 @@ describe("admin identity IdP config routes", () => {
     const { app, idpConfigs } = await buildApp();
     const otherTenant = await idpConfigs.create({
       orgId: "33333333-3333-4333-8333-333333333333",
-      protocol: "saml",
-      displayName: "Other Tenant SAML",
+      protocol: "oidc",
+      displayName: "Other Tenant OIDC",
     });
 
     const update = await app.inject({
@@ -320,9 +326,10 @@ describe("admin identity IdP config routes", () => {
     const { app, idpConfigs, auditRecords } = await buildApp();
     const idpConfig = await idpConfigs.create({
       orgId,
-      protocol: "saml",
-      displayName: "Ready SAML",
-      config: { metadataUrl: "https://idp.example.com/metadata" },
+      protocol: "oidc",
+      displayName: "Ready OIDC",
+      config: { issuer: "https://idp.example.com", clientId: "helix" },
+      signingCertSecretHandle: "oidc-private-key",
     });
 
     const response = await app.inject({
@@ -334,7 +341,7 @@ describe("admin identity IdP config routes", () => {
     expect(response.statusCode).toBe(200);
     expect(body(response)).toMatchObject({
       testLogin: {
-        status: "runtime_pending",
+        status: "ready",
       },
       localLoginRecovery: { enabled: true, scope: "owner_admin_recovery" },
     });
@@ -342,7 +349,7 @@ describe("admin identity IdP config routes", () => {
       expect.objectContaining({
         verb: "admin.identity.idp_config.test_login_checked",
         objectId: idpConfig.id,
-        metadata: { protocol: "saml", status: "runtime_pending" },
+        metadata: { protocol: "oidc", status: "ready" },
       }),
     );
     await app.close();
@@ -378,9 +385,9 @@ describe("admin identity IdP config routes", () => {
     const { app, idpConfigs } = await buildApp();
     const otherTenant = await idpConfigs.create({
       orgId: "33333333-3333-4333-8333-333333333333",
-      protocol: "saml",
-      displayName: "Other Tenant SAML",
-      config: { metadataUrl: "https://idp.example.com/metadata" },
+      protocol: "oidc",
+      displayName: "Other Tenant OIDC",
+      config: { issuer: "https://idp.example.com", clientId: "helix" },
     });
 
     const response = await app.inject({
@@ -406,7 +413,7 @@ describe("admin identity IdP config routes", () => {
       method: "POST",
       url: "/api/admin/identity/idp-configs",
       headers: headers("admin.console.read"),
-      payload: { protocol: "saml", displayName: "Acme SAML" },
+      payload: { protocol: "oidc", displayName: "Acme OIDC" },
     });
 
     expect(read.statusCode).toBe(403);
@@ -415,44 +422,8 @@ describe("admin identity IdP config routes", () => {
   });
 });
 
-function orgRecord() {
-  return {
-    id: orgId,
-    slug: "acme",
-    displayName: "Acme",
-    status: "active" as const,
-    tier: "business" as const,
-    planId: "business",
-    region: "us-east-1",
-    byoConfig: {},
-    featureFlags: {},
-    quotas: {},
-    branding: {},
-    suspendedAt: null,
-    softDeletedAt: null,
-    hardDeletedAt: null,
-  };
-}
-
 describe("testTenantIdpConfigLogin", () => {
-  it("recognizes SAML static metadata and OIDC discovery readiness", () => {
-    expect(
-      testTenantIdpConfigLogin({
-        id: "idp-1",
-        orgId,
-        protocol: "saml",
-        isPrimary: true,
-        displayName: "Static SAML",
-        config: { entityId: "https://idp.example.com", ssoUrl: "https://idp.example.com/sso" },
-        signingCertVaultPath: null,
-        attrMapping: {},
-        jitProvisioning: true,
-        enabled: true,
-        createdAt: "2026-05-24T00:00:00.000Z",
-        updatedAt: "2026-05-24T00:00:00.000Z",
-      }),
-    ).toMatchObject({ status: "runtime_pending" });
-
+  it("reports only fully projected OIDC providers as ready", () => {
     expect(
       testTenantIdpConfigLogin({
         id: "idp-2",
@@ -460,17 +431,14 @@ describe("testTenantIdpConfigLogin", () => {
         protocol: "oidc",
         isPrimary: false,
         displayName: "OIDC",
-        config: {
-          metadataUrl: "https://idp.example.com/.well-known/openid-configuration",
-          clientId: "helix",
-        },
-        signingCertVaultPath: null,
+        config: { issuer: "https://idp.example.com", clientId: "helix" },
+        signingCertSecretHandle: "oidc-private-key",
         attrMapping: {},
-        jitProvisioning: true,
+        jitProvisioning: false,
         enabled: true,
         createdAt: "2026-05-24T00:00:00.000Z",
         updatedAt: "2026-05-24T00:00:00.000Z",
-      }),
-    ).toMatchObject({ status: "runtime_pending" });
+      }, true),
+    ).toMatchObject({ status: "ready" });
   });
 });

@@ -388,17 +388,11 @@ describe("platform config admin schema", () => {
       },
       observability: {
         enabled: true,
-        plugin: "com.helix.observability-otel@^1.0.0",
         config: {
           otlpEndpoint: "http://tempo:4317",
           metricsEndpoint: "http://prometheus:9090",
           logsEndpoint: "http://loki:3100",
           sampling: { traces: 0.1, llmCalls: 1, toolCalls: 1, permissionChecks: 0.05 },
-        },
-        bundledStack: {
-          enabled: true,
-          plugin: "com.helix.observability-grafana-stack@^1.0.0",
-          grafanaUrl: "https://grafana.helix.example.com",
         },
       },
     });

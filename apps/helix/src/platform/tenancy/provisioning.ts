@@ -69,7 +69,7 @@ export class PostgresTenantProvisioningStore implements TenantProvisioningStore 
   constructor(private readonly sql: postgres.Sql) {}
 
   async start(input: StartTenantProvisioningInput): Promise<TenantProvisioningRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<TenantProvisioningRow[]>`
       insert into tenant_provisioning_state (
         org_id,
         status,
@@ -102,7 +102,7 @@ export class PostgresTenantProvisioningStore implements TenantProvisioningStore 
         created_at,
         updated_at,
         completed_at
-    `) as unknown as readonly TenantProvisioningRow[];
+    `;
     return mapTenantProvisioningRow(rows[0]);
   }
 
@@ -110,7 +110,7 @@ export class PostgresTenantProvisioningStore implements TenantProvisioningStore 
     input: { readonly limit?: number } = {},
   ): Promise<readonly TenantProvisioningRecord[]> {
     const limit = input.limit ?? 25;
-    const rows = (await this.sql`
+    const rows = await this.sql<TenantProvisioningRow[]>`
       update tenant_provisioning_state
       set
         status = 'running',
@@ -138,12 +138,12 @@ export class PostgresTenantProvisioningStore implements TenantProvisioningStore 
         created_at,
         updated_at,
         completed_at
-    `) as unknown as readonly TenantProvisioningRow[];
+    `;
     return rows.map(mapTenantProvisioningRow);
   }
 
   async findByOrgId(orgId: string): Promise<TenantProvisioningRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<TenantProvisioningRow[]>`
       select
         org_id,
         status,
@@ -159,7 +159,7 @@ export class PostgresTenantProvisioningStore implements TenantProvisioningStore 
       from tenant_provisioning_state
       where org_id = ${orgId}
       limit 1
-    `) as unknown as readonly TenantProvisioningRow[];
+    `;
     return rows[0] === undefined ? null : mapTenantProvisioningRow(rows[0]);
   }
 
@@ -213,7 +213,7 @@ export class PostgresTenantProvisioningStore implements TenantProvisioningStore 
     readonly completedSteps: readonly string[];
     readonly lastError: string | null;
   }): Promise<TenantProvisioningRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<TenantProvisioningRow[]>`
       update tenant_provisioning_state
       set
         status = ${input.status},
@@ -235,7 +235,7 @@ export class PostgresTenantProvisioningStore implements TenantProvisioningStore 
         created_at,
         updated_at,
         completed_at
-    `) as unknown as readonly TenantProvisioningRow[];
+    `;
     return mapTenantProvisioningRow(rows[0]);
   }
 }

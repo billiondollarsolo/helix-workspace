@@ -19,7 +19,6 @@ export * from "./mail/index.js";
 export * from "./outbox/outbox.js";
 export * from "./outbox/postgres-store.js";
 export * from "./plugins/loader.js";
-export * from "./plugins/migrations.js";
 export * from "./plugins/admin-routes.js";
 export * from "./search/index.js";
 export * from "./secrets/index.js";

@@ -10,6 +10,7 @@ import type {
 import type {
   DriveAccessGrantRecord,
   DriveCommentRecord,
+  DriveCommentRevisionRecord,
   DriveEntryRecord,
   DrivePdfFormStateRecord,
   DriveSearchHit,
@@ -23,6 +24,7 @@ import type { SheetsStore, CreateSheetInput } from "../sheets/index.js";
 import type { SheetWithTabs } from "../sheets/types.js";
 import type { SlidesStore, CreateSlideDeckInput } from "../slides/index.js";
 import type { SlideDeckSummaryRecord } from "../slides/types.js";
+import type { DriveWorkflowRecord, DriveWorkflowStore } from "./workflows.js";
 
 const plainFileId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const docsFileId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -55,6 +57,7 @@ describe("drive tools", () => {
         "drive.access.update",
         "drive.comment.create",
         "drive.comment.delete",
+        "drive.comment.evidence.list",
         "drive.comment.list",
         "drive.comment.reopen",
         "drive.comment.resolve",
@@ -62,6 +65,7 @@ describe("drive tools", () => {
         "drive.create",
         "drive.delete",
         "drive.finalize",
+        "drive.folder.move",
         "drive.link.create",
         "drive.link.list",
         "drive.link.revoke",
@@ -78,8 +82,13 @@ describe("drive tools", () => {
         "drive.trash",
         "drive.upload",
         "drive.upload.complete",
+        "drive.view.get",
+        "drive.view.set",
         "drive.versions.list",
         "drive.versions.revert",
+        "drive.workflow.create",
+        "drive.workflow.list",
+        "drive.workflow.transition",
       ].sort(),
     );
     expect(registry.list().find((tool) => tool.id === "drive.comment.delete")).toMatchObject({
@@ -106,6 +115,26 @@ describe("drive tools", () => {
       actor: { id: actorId, orgId, type: "user", scopes: ["drive.read"] },
     } as never);
     expect(() => listTool.outputSchema.parse(out)).not.toThrow();
+  });
+
+  it("lets readers update only their own star and layout preferences", async () => {
+    const store = new FakeDriveStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store });
+    const actor = { id: actorId, orgId, type: "user" as const, scopes: ["drive.read"] };
+
+    await expect(
+      registry.invoke("drive.star.set", { objectId, starred: true }, { actor }),
+    ).resolves.toMatchObject({ ok: true, output: { metadata: { starred: true } } });
+    await expect(registry.invoke("drive.view.get", {}, { actor })).resolves.toMatchObject({
+      ok: true,
+      output: { view: "grid" },
+    });
+    await expect(
+      registry.invoke("drive.view.set", { view: "list" }, { actor }),
+    ).resolves.toMatchObject({ ok: true, output: { view: "list" } });
+    expect(store.starred[0]).toMatchObject({ orgId, actorId, objectId, starred: true });
+    expect(store.documentSurfaceView).toBe("list");
   });
 
   it("prepares and finalizes uploads through the shared store contract", async () => {
@@ -161,6 +190,113 @@ describe("drive tools", () => {
     });
   });
 
+  it("exposes one typed user flow for governed Drive workflows", async () => {
+    const workflows = new FakeWorkflowStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, {
+      store: new FakeDriveStore(),
+      workflows,
+      resolveShareActorRefs: async ({ refs }) => ({
+        actorIds: refs[0] === "reviewer@example.test" ? [folderId] : [],
+        unresolvedRefs: [],
+      }),
+    });
+    const actor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      scopes: ["drive.read", "drive.write"],
+    };
+
+    const created = await registry.invoke(
+      "drive.workflow.create",
+      {
+        kind: "approval",
+        resourceType: "object",
+        resourceId: objectId,
+        assignedToActorRef: "reviewer@example.test",
+        payload: { reason: "Publish" },
+      },
+      { actor },
+    );
+    expect(created).toMatchObject({ ok: true, output: { kind: "approval", state: "open" } });
+    expect(workflows.createdInput?.assignedToActorId).toBe(folderId);
+    const transitioned = await registry.invoke(
+      "drive.workflow.transition",
+      {
+        workflowId: workflows.record.id,
+        expectedVersion: "1",
+        state: "approved",
+        payload: {},
+      },
+      { actor },
+    );
+    expect(transitioned).toMatchObject({ ok: true, output: { state: "approved", version: "2" } });
+    await expect(
+      registry.invoke("drive.workflow.list", { state: "approved", limit: 100 }, { actor }),
+    ).resolves.toMatchObject({ ok: true, output: { workflows: [{ state: "approved" }] } });
+  });
+
+  it("passes sensitivity downgrade authority only from the security-admin permission", async () => {
+    const workflows = new FakeWorkflowStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store: new FakeDriveStore(), workflows });
+    const input = {
+      kind: "classification" as const,
+      resourceType: "object" as const,
+      resourceId: objectId,
+      payload: { classification: "public" },
+    };
+    await registry.invoke("drive.workflow.create", input, {
+      actor: {
+        id: actorId,
+        orgId,
+        type: "user",
+        scopes: ["drive.write", "admin.security"],
+      },
+    });
+    expect(workflows.createdInput?.allowSensitivityDowngrade).toBe(true);
+
+    await registry.invoke("drive.workflow.create", input, {
+      actor: { id: actorId, orgId, type: "user", scopes: ["drive.write"] },
+    });
+    expect(workflows.createdInput?.allowSensitivityDowngrade).toBe(false);
+  });
+
+  it("rejects inline bytes during upload finalization", async () => {
+    const store = new FakeDriveStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store });
+
+    const result = await registry.invoke(
+      "drive.finalize",
+      {
+        objectId,
+        byteSize: 3,
+        contentBase64: Buffer.from("raw").toString("base64"),
+      },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["drive.write"] } },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(store.finalized).toEqual([]);
+  });
+
+  it("rejects caller-provided finalize storage keys", async () => {
+    const store = new FakeDriveStore();
+    const registry = createToolRegistry();
+    registerDriveTools(registry, { store });
+
+    const result = await registry.invoke(
+      "drive.finalize",
+      { objectId, byteSize: 3, storageKey: "drive/untrusted" },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["drive.write"] } },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(store.finalized).toEqual([]);
+  });
+
   it("creates, lists, and resolves Drive object comments", async () => {
     const store = new FakeDriveStore();
     const registry = createToolRegistry();
@@ -169,7 +305,7 @@ describe("drive tools", () => {
       id: actorId,
       orgId,
       type: "user" as const,
-      scopes: ["drive.read", "drive.write"],
+      scopes: ["drive.read"],
     };
 
     await expect(
@@ -247,6 +383,16 @@ describe("drive tools", () => {
       output: { comments: [{ objectId, body: "Review page totals", status: "open" }] },
     });
     expect(store.listedComments[0]).toMatchObject({ orgId, actorId, objectId, status: "open" });
+
+    await expect(
+      registry.invoke("drive.comment.evidence.list", { objectId, limit: 25 }, { actor }),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: {
+        revisions: [{ commentId: "77777777-7777-4777-8777-777777777777", revision: 1 }],
+        nextCursor: null,
+      },
+    });
 
     await expect(
       registry.invoke(
@@ -782,6 +928,47 @@ describe("drive tools", () => {
   });
 });
 
+class FakeWorkflowStore implements DriveWorkflowStore {
+  createdInput: Parameters<DriveWorkflowStore["create"]>[0] | undefined;
+  record: DriveWorkflowRecord = {
+    id: "99999999-9999-4999-8999-999999999999",
+    kind: "approval",
+    resourceType: "object",
+    resourceId: objectId,
+    requestedByActorId: actorId,
+    assignedToActorId: folderId,
+    state: "open",
+    version: "1",
+    payload: { reason: "Publish" },
+    policySnapshot: { dlp: { action: "block" } },
+    dueAt: null,
+    decidedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  async create(input: Parameters<DriveWorkflowStore["create"]>[0]): Promise<DriveWorkflowRecord> {
+    this.createdInput = input;
+    return this.record;
+  }
+
+  async list(): Promise<readonly DriveWorkflowRecord[]> {
+    return [this.record];
+  }
+
+  async transition(
+    input: Parameters<DriveWorkflowStore["transition"]>[0],
+  ): Promise<DriveWorkflowRecord> {
+    this.record = {
+      ...this.record,
+      state: input.state,
+      version: "2",
+      decidedAt: now,
+    };
+    return this.record;
+  }
+}
+
 class AppFilterFakeDriveStore implements DriveStore {
   async prepareUpload(): Promise<DriveUploadRecord> {
     throw new Error("not used");
@@ -792,7 +979,7 @@ class AppFilterFakeDriveStore implements DriveStore {
   async createFolder(): Promise<DriveEntryRecord> {
     throw new Error("not used");
   }
-  async list(input: Parameters<DriveStore["list"]>[0]): Promise<readonly DriveEntryRecord[]> {
+  async list(input: Parameters<DriveStore["list"]>[0]): ReturnType<DriveStore["list"]> {
     const allEntries: DriveEntryRecord[] = [
       {
         id: plainFileId,
@@ -844,9 +1031,9 @@ class AppFilterFakeDriveStore implements DriveStore {
       },
     ];
     if (input.app !== undefined && input.app !== null) {
-      return allEntries.filter((e) => e.app === input.app);
+      return { entries: allEntries.filter((e) => e.app === input.app), nextCursor: null };
     }
-    return allEntries;
+    return { entries: allEntries, nextCursor: null };
   }
   async share(input: Parameters<DriveStore["share"]>[0]) {
     return { objectId: input.objectId, sharedWithActorIds: input.targetActorIds, role: input.role };
@@ -869,8 +1056,8 @@ class AppFilterFakeDriveStore implements DriveStore {
   async createComment(): Promise<DriveCommentRecord> {
     throw new Error("not used");
   }
-  async listComments(): Promise<readonly DriveCommentRecord[]> {
-    return [];
+  async listComments() {
+    return { comments: [], nextCursor: null };
   }
   async resolveComment(): Promise<DriveCommentRecord | null> {
     return null;
@@ -904,6 +1091,7 @@ class FakeDriveStore implements DriveStore {
   readonly removedAccess: Parameters<NonNullable<DriveStore["removeAccess"]>>[0][] = [];
   readonly updatedAccess: Parameters<NonNullable<DriveStore["updateAccess"]>>[0][] = [];
   pdfFormState: DrivePdfFormStateRecord | null = null;
+  documentSurfaceView: "grid" | "list" = "grid";
 
   async createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord> {
     this.createdFolders.push(input);
@@ -936,7 +1124,7 @@ class FakeDriveStore implements DriveStore {
       uploadUrl: "https://storage.example/upload",
       uploadHeaders: { "content-type": input.mimeType },
       mimeType: input.mimeType,
-      byteSize: input.byteSize ?? 0,
+      byteSize: input.byteSize,
       sha256: input.sha256 ?? null,
       status: "pending_upload",
       metadata: input.metadata ?? {},
@@ -952,18 +1140,18 @@ class FakeDriveStore implements DriveStore {
       orgId: input.orgId,
       objectId: input.objectId,
       versionNumber: 1,
-      storageKey: input.storageKey ?? `drive/${input.orgId}/${input.objectId}/v1/report.pdf`,
+      storageKey: `drive/${input.orgId}/${input.objectId}/v1/report.pdf`,
       mimeType: input.mimeType ?? "application/pdf",
       byteSize: input.byteSize,
-      sha256: input.sha256,
+      sha256: input.sha256 ?? "0".repeat(64),
       metadata: input.metadata ?? {},
       createdByActorId: input.actorId,
       createdAt: now,
     };
   }
 
-  async list(): Promise<readonly DriveEntryRecord[]> {
-    return [entry()];
+  async list(): ReturnType<DriveStore["list"]> {
+    return { entries: [entry()], nextCursor: null };
   }
 
   async share(input: Parameters<DriveStore["share"]>[0]) {
@@ -1015,6 +1203,17 @@ class FakeDriveStore implements DriveStore {
     return { ...entry(), metadata: { ...entry().metadata, starred: input.starred } };
   }
 
+  async getDocumentSurfaceView() {
+    return this.documentSurfaceView;
+  }
+
+  async setDocumentSurfaceView(
+    input: Parameters<NonNullable<DriveStore["setDocumentSurfaceView"]>>[0],
+  ) {
+    this.documentSurfaceView = input.view;
+    return input.view;
+  }
+
   async trash(): Promise<DriveEntryRecord | null> {
     return { ...entry(), deletedAt: now };
   }
@@ -1061,11 +1260,19 @@ class FakeDriveStore implements DriveStore {
     });
   }
 
-  async listComments(
-    input: Parameters<NonNullable<DriveStore["listComments"]>>[0],
-  ): Promise<readonly DriveCommentRecord[]> {
+  async listComments(input: Parameters<NonNullable<DriveStore["listComments"]>>[0]) {
     this.listedComments.push(input);
-    return [driveComment({ body: "Review page totals", status: "open" })];
+    return {
+      comments: [driveComment({ body: "Review page totals", status: "open" })],
+      nextCursor: null,
+    };
+  }
+
+  async listCommentRevisions() {
+    return {
+      revisions: [driveCommentRevision()],
+      nextCursor: null,
+    };
   }
 
   async resolveComment(): Promise<DriveCommentRecord | null> {
@@ -1164,9 +1371,14 @@ class FakeDriveStore implements DriveStore {
       id: "88888888-8888-4888-8888-888888888888",
       orgId: input.orgId,
       objectId: input.objectId,
-      token: "publictoken",
-      role: input.role,
+      token: "p".repeat(43),
+      role: "reader" as const,
       expiresAt: input.expiresAt ?? null,
+      passwordProtected: input.password !== undefined,
+      oneTime: input.oneTime ?? false,
+      allowedDomains: input.allowedDomains ?? [],
+      allowDownload: input.allowDownload ?? true,
+      consumedAt: null,
       createdByActorId: input.actorId,
       createdAt: now,
       revokedAt: null,
@@ -1215,6 +1427,29 @@ function driveComment(
     resolvedAt: input.resolvedAt ?? null,
     createdAt: now,
     updatedAt: input.updatedAt ?? null,
+  };
+}
+
+function driveCommentRevision(): DriveCommentRevisionRecord {
+  return {
+    id: "88888888-8888-4888-8888-888888888888",
+    orgId,
+    objectId,
+    commentId: "77777777-7777-4777-8777-777777777777",
+    revision: 1,
+    changeKind: "created",
+    parentCommentId: null,
+    commentActorId: actorId,
+    anchor: {},
+    body: "Review page totals",
+    status: "open",
+    metadata: {},
+    resolvedAt: null,
+    resolvedByActorId: null,
+    deletedAt: null,
+    deletedByActorId: null,
+    changedByActorId: actorId,
+    capturedAt: now,
   };
 }
 

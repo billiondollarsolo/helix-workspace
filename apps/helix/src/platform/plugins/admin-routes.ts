@@ -1,6 +1,6 @@
-import type { Actor } from "@helix/sdk-types";
+import { isCanonicalPluginId, type Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import type {
   RuntimeToolRegistry,
   ToolInvokeErrorResult,
@@ -10,7 +10,7 @@ import type {
 const adminPluginsScope = "admin.plugins";
 
 const pluginIdParamsSchema = z.object({
-  pluginId: z.string().min(1).max(300),
+  pluginId: z.string().max(300).refine(isCanonicalPluginId, "Invalid plugin id"),
 });
 
 const pluginListQuerySchema = z.object({
@@ -22,7 +22,6 @@ const pluginListQuerySchema = z.object({
 
 const pluginInstallBodySchema = z.object({
   version: z.string().min(1).optional(),
-  source: z.enum(["official", "sideload", "self-hosted"]).default("official"),
   confirmations: z.array(z.string().min(1)).default([]),
 });
 

@@ -62,6 +62,7 @@ export class AuditVerifierWorker {
   private readonly now: () => Date;
   private timer: NodeJS.Timeout | undefined;
   private activeRun: Promise<AuditVerifierRunResult> | undefined;
+  private lastRunHealthy = true;
 
   constructor(private readonly options: AuditVerifierWorkerOptions) {
     this.intervalMs = options.intervalMs ?? defaultDailyIntervalMs;
@@ -69,6 +70,10 @@ export class AuditVerifierWorker {
     this.onResult = options.onResult;
     this.onError = options.onError;
     this.now = options.now ?? (() => new Date());
+  }
+
+  get isHealthy(): boolean {
+    return this.timer !== undefined && this.lastRunHealthy;
   }
 
   start(): void {
@@ -154,10 +159,12 @@ export class AuditVerifierWorker {
 
     const activeRun = this.runOnce()
       .then((result) => {
+        this.lastRunHealthy = result.failedOrgCount === 0;
         this.onResult?.(result);
         return result;
       })
       .catch((error: unknown) => {
+        this.lastRunHealthy = false;
         this.onError?.(error);
         const now = this.now().toISOString();
         const result: AuditVerifierRunResult = {

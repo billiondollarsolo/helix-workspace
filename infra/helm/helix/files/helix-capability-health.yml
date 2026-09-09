@@ -1,0 +1,33 @@
+groups:
+  - name: helix.capability.health
+    rules:
+      - alert: HelixOperationalFailure
+        expr: sum by (capability, operation) (increase(helix_operational_events_total{status="error"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          priority: p2
+          owner: platform-operations
+        annotations:
+          summary: "{{ $labels.capability }} {{ $labels.operation }} is failing"
+          runbook_url: docs/runbooks/product-slo-breach.md
+      - alert: HelixMailDeliveryFailure
+        expr: sum(increase(helix_operational_events_total{capability="mail",operation="delivery",status="error"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+          priority: p1
+          owner: mail
+        annotations:
+          summary: Outbound mail reached a terminal delivery failure
+          runbook_url: docs/runbooks/product-slo-breach.md
+      - alert: HelixSearchReconciliationDrift
+        expr: max(helix_operational_state{capability="search",measure="drift_objects"}) > 0
+        for: 10m
+        labels:
+          severity: warning
+          priority: p2
+          owner: search
+        annotations:
+          summary: Search reconciliation continues to find stale projections
+          runbook_url: docs/runbooks/product-slo-breach.md

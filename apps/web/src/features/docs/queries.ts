@@ -131,7 +131,7 @@ export function docsSmartChipPickerQueryOptions() {
             : [],
         files:
           filesResult.status === "fulfilled"
-            ? filesResult.value
+            ? filesResult.value.entries
                 .filter((entry) => entry.deletedAt === null && entry.type === "file")
                 .map((entry) => ({
                   id: entry.id,
@@ -204,13 +204,15 @@ export function docsListFromDriveQueryOptions(
           ? (await searchDrive({ query, folderId: null, limit: searchLimit })).map(
               entryFromSearchHit,
             )
-          : await listDrive({
-              folderId: null,
-              includeTrashed: true,
-              acrossFolders: true,
-              app: "docs",
-              limit,
-            });
+          : (
+              await listDrive({
+                folderId: null,
+                includeTrashed: true,
+                acrossFolders: true,
+                app: "docs",
+                limit,
+              })
+            ).entries;
       return entries
         .filter((entry) => entry.type === "file" && isDocumentLike(entry))
         .map((entry): DocSummary => {

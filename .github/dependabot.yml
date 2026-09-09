@@ -1,0 +1,38 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      workspace-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+      - /plugins/com.helix.drive-preview-libreoffice
+    schedule:
+      interval: weekly
+    groups:
+      compose-images:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories:
+      - /infra/docker
+      - /infra/drive-preview-libreoffice
+      - /infra/postgres
+    schedule:
+      interval: weekly
+    groups:
+      build-images:
+        patterns: ["*"]

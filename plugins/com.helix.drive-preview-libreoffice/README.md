@@ -1,11 +1,17 @@
-# Drive LibreOffice Preview
+# Isolated content converter
 
-External-service plugin scaffold for converting Office documents to PDF previews.
+This service is the only production boundary for Office and HTML-to-PDF conversion. The API sends
+bytes over its private conversion network; LibreOffice and PDF inspection never run in the API pod.
 
-The service is intentionally separate from the main Helix container because LibreOffice conversion is heavier and benefits from an isolated filesystem, memory limits, and a narrow permission set. The compose recipe exposes port `28450` by default, contiguous with the base stack's high ports.
+Contract:
 
-Expected service contract:
+- `GET /readyz` reports process readiness.
+- `POST /convert/office-to-pdf` accepts `{ name, mimeType, contentBase64 }`.
+- `POST /convert/html-to-pdf` accepts the same shape with `text/html` content.
+- Successful conversion returns `{ pdfBase64, pageCount, generatedAt }`.
 
-- `GET /readyz` returns service readiness.
-- `POST /preview/office-to-pdf` accepts a storage object reference and returns a generated PDF preview reference.
-- The container performs conversion inside `DRIVE_PREVIEW_WORKDIR` and deletes temporary files after each request.
+The recipe has no published port or external network, runs as UID/GID 65532 with the default seccomp
+profile, drops every capability, uses a read-only root filesystem and bounded tmpfs, and applies PID,
+CPU, memory, request, source, output, archive, cell, page, and time limits. Production orchestrators
+must preserve these controls and allow ingress only from the Helix API while denying all converter
+egress.

@@ -204,8 +204,8 @@ HELIX_TRACE_TOKEN=prd-live-auth-smoke-2026-05-20 \
 W3C `traceparent` header to readiness, OAuth token minting, REST, and MCP
 tool/resource requests for trace-correlated evidence.
 
-To include backup/restore REST route evidence, keep the token scoped with
-`admin.config.write` and opt in to the dry-run calls:
+To include backup creation REST evidence, keep the token scoped with
+`admin.config.write` and opt in to the backup smoke call:
 
 ```sh
 HELIX_SMOKE_CLIENT_ID=helix-local-oauth-client \
@@ -214,13 +214,12 @@ HELIX_SMOKE_CLIENT_SECRET=helix-local-dev-secret \
 ```
 
 The smoke script sends `backupId: "helix-smoke-backup"` to
-`POST /api/admin/backups` and `POST /api/admin/restores` and expects
-`status: "dry_run"` from each response. If either call returns `403`, mint the
-token with `admin.config.write`; if either call reports `completed`, verify the
+`POST /api/admin/backups` and expects `status: "dry_run"`. If it returns `403`, mint the
+token with `admin.config.write`; if it reports `completed`, verify the
 API process was not started with `HELIX_ADMIN_BACKUP_EXECUTE=true`.
-Use `--backup-restore-encrypted` to make the restore dry-run target the
-encrypted `<backup-id>.tar.gz.age` archive path; CLI operators can use
-`helix restore --from <backup-id> --encrypted` for the same REST payload.
+Restore cannot be performed with configuration-admin authority. Follow
+[`runbooks/backup-restore-jobs.md`](runbooks/backup-restore-jobs.md) with a stepped-up
+`admin.backups.restore` operator and two separate approvers.
 With `--search-reindex`, the same smoke run also posts to
 `/api/admin/search/reindex` and expects `status: "completed"`. If that route is
 missing, restart the API with Meilisearch configured.
@@ -250,17 +249,16 @@ non-personal tier such as `HELIX_SECURITY_TIER=business`, use
 confirm the seeded actor type is `agent` or `service_account`; if metrics fail,
 check `/metrics` for `helix_agent_tool_limiter_denials_total`.
 With `--drive-docs-calendar-smoke`, the smoke run creates live workspace data:
-a Drive text object with `contentBase64` finalized into object storage and read
-back through MCP, a Docs document with title update/comment/export/MCP read, and
+a Drive text object uploaded through a presigned URL, finalized, and read back
+through MCP, a Docs document with title update/comment/export/MCP read, and
 a Calendar event that goes through pending approval, list, RSVP, free/busy, and
 MCP read. Mint the token with `drive.write`, `docs.write`, `docs.comment`,
 `calendar.write`, `calendar.write:respond`, and `calendar.read:freebusy`. If the
 Drive MCP byte read fails, check that the app was started with `RUSTFS_ENDPOINT`;
 if Calendar create returns `403`, reseed the local OAuth client.
-If `drive.finalize` returns `Drive upload content storage is not configured`,
-treat it as intended fail-closed behavior. Do not repair it by accepting
-metadata-only finalization. Start the API with `RUSTFS_ENDPOINT`, or configure
-tenant BYO storage plus `credentials_vault_path` and its secret reader before
+If `drive.upload` does not return a presigned URL, treat it as intended
+fail-closed behavior. Start the API with `RUSTFS_ENDPOINT`, or configure
+tenant BYO storage plus `credentials_secret_handle` and its tenant-scoped secret reader before
 retrying.
 With `--drive-docs-calendar-search-smoke`, the same live data smoke also runs
 `POST /api/admin/search/reindex` and verifies each created Drive, Docs, and

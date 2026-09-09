@@ -1,16 +1,15 @@
+import {
+  canonicalTimeZone,
+  instantToLocalDateTime,
+  localDateTimeToFloatingInstant,
+  localDateTimeToInstant,
+} from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
+import { RRule, RRuleSet } from "rrule";
 import type { CalendarEventRecord } from "./types.js";
 
-const dayMs = 86_400_000;
-const weekdayNumbers = new Map([
-  ["SU", 0],
-  ["MO", 1],
-  ["TU", 2],
-  ["WE", 3],
-  ["TH", 4],
-  ["FR", 5],
-  ["SA", 6],
-]);
+const maxOccurrences = 10_000;
+const maxWindowMs = 10 * 366 * 86_400_000;
 
 export interface CalendarOccurrence {
   readonly eventId: string;
@@ -19,182 +18,363 @@ export interface CalendarOccurrence {
   readonly recurrenceId?: Date | undefined;
 }
 
+export interface CalendarRecurrenceOverride {
+  readonly recurrenceId: string;
+  readonly range: "this" | "this_and_future";
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly status: "confirmed" | "tentative" | "cancelled";
+  readonly title?: string | undefined;
+  readonly description?: string | null | undefined;
+  readonly location?: string | null | undefined;
+  readonly sequence: number;
+  readonly dtstamp: string;
+  readonly attendees: readonly {
+    readonly email: string;
+    readonly displayName?: string | null | undefined;
+    readonly role?: "required" | "optional" | "resource" | undefined;
+    readonly responseStatus: "needs_action" | "accepted" | "declined" | "tentative";
+  }[];
+}
+
+export interface CalendarOccurrencePage {
+  readonly occurrences: readonly CalendarOccurrence[];
+  readonly nextCursor: string | null;
+}
+
+export class CalendarRecurrenceError extends Error {
+  override readonly name = "CalendarRecurrenceError";
+}
+
 export function expandCalendarEventOccurrences(
-  event: Pick<CalendarEventRecord, "id" | "startsAt" | "endsAt" | "recurrenceRule" | "metadata">,
+  event: RecurringEvent,
   windowStartsAt: Date,
   windowEndsAt: Date,
 ): readonly CalendarOccurrence[] {
-  if (event.endsAt <= event.startsAt || windowEndsAt <= windowStartsAt) {
-    return [];
+  const page = expandCalendarOccurrencePage(event, windowStartsAt, windowEndsAt, {
+    limit: maxOccurrences,
+  });
+  if (page.nextCursor !== null) {
+    throw new CalendarRecurrenceError(`Recurrence exceeds ${String(maxOccurrences)} occurrences.`);
   }
+  return page.occurrences;
+}
+
+export function expandCalendarOccurrencePage(
+  event: RecurringEvent,
+  windowStartsAt: Date,
+  windowEndsAt: Date,
+  options: { readonly limit?: number; readonly cursor?: string } = {},
+): CalendarOccurrencePage {
+  validateBounds(event, windowStartsAt, windowEndsAt);
   const durationMs = event.endsAt.getTime() - event.startsAt.getTime();
-  const rule = parseRecurrenceRule(event.recurrenceRule ?? null);
-  if (rule === null) {
-    return event.endsAt > windowStartsAt && event.startsAt < windowEndsAt
-      ? [{ eventId: event.id, startsAt: event.startsAt, endsAt: event.endsAt }]
-      : [];
-  }
-
-  const excludedStarts = new Set(recurrenceExceptionDates(event.metadata));
-  const occurrences: CalendarOccurrence[] = [];
-  const maxIterations = Math.max((rule.count ?? 0) + 366, 3660);
-  let generated = 0;
-  let iterations = 0;
-  let cursor = new Date(event.startsAt);
-
-  while (iterations < maxIterations) {
-    iterations += 1;
-    if (rule.until !== undefined && cursor > rule.until) {
-      break;
-    }
-    if (rule.count !== undefined && generated >= rule.count) {
-      break;
-    }
-
-    const starts = occurrenceStartsForCursor(event.startsAt, cursor, rule);
-    for (const startsAt of starts) {
-      if (startsAt < event.startsAt) {
-        continue;
-      }
-      if (rule.until !== undefined && startsAt > rule.until) {
-        continue;
-      }
-      if (rule.count !== undefined && generated >= rule.count) {
-        break;
-      }
-      generated += 1;
-      const endsAt = new Date(startsAt.getTime() + durationMs);
-      if (excludedStarts.has(startsAt.toISOString())) {
-        continue;
-      }
-      if (endsAt > windowStartsAt && startsAt < windowEndsAt) {
-        occurrences.push({ eventId: event.id, startsAt, endsAt, recurrenceId: startsAt });
-      }
-      if (startsAt >= windowEndsAt && rule.count === undefined) {
-        return occurrences;
-      }
-    }
-    cursor = nextCursor(cursor, rule);
-  }
-
-  return occurrences;
-}
-
-export function recurrenceExceptionDates(metadata: JsonObject): readonly string[] {
-  const caldav = metadata["caldav"];
-  if (!isJsonObject(caldav)) {
-    return [];
-  }
-  const exdate = caldav["exdate"];
-  if (!Array.isArray(exdate)) {
-    return [];
-  }
-  return exdate.filter((value): value is string => typeof value === "string");
-}
-
-interface ParsedRecurrenceRule {
-  readonly freq: "DAILY" | "WEEKLY" | "MONTHLY";
-  readonly interval: number;
-  readonly count?: number | undefined;
-  readonly until?: Date | undefined;
-  readonly byDay?: readonly number[] | undefined;
-}
-
-function parseRecurrenceRule(value: string | null): ParsedRecurrenceRule | null {
-  if (value === null) {
-    return null;
-  }
-  const parts = new Map(
-    value
-      .split(";")
-      .map((part) => part.split("="))
-      .filter((part): part is [string, string] => part.length === 2)
-      .map(([key, partValue]) => [key.toUpperCase(), partValue.toUpperCase()]),
+  const overrides = recurrenceOverrides(event.metadata);
+  const maximumShiftMs = overrides.reduce(
+    (maximum, override) =>
+      Math.max(
+        maximum,
+        Math.abs(
+          validDate(override.startsAt, "override DTSTART").getTime() -
+            validDate(override.recurrenceId, "RECURRENCE-ID").getTime(),
+        ),
+      ),
+    0,
   );
-  const freq = parts.get("FREQ");
-  if (freq !== "DAILY" && freq !== "WEEKLY" && freq !== "MONTHLY") {
-    return null;
+  if (maximumShiftMs > maxWindowMs) {
+    throw new CalendarRecurrenceError("Occurrence override cannot shift by more than ten years.");
   }
-  const intervalValue = Number(parts.get("INTERVAL") ?? "1");
-  const interval = Number.isInteger(intervalValue) && intervalValue > 0 ? intervalValue : 1;
-  const countValue = parts.get("COUNT");
-  const count = countValue === undefined ? undefined : Number(countValue);
-  const untilValue = parts.get("UNTIL");
-  const until = untilValue === undefined ? undefined : parseIcsDate(untilValue);
-  const byDay = parts
-    .get("BYDAY")
-    ?.split(",")
-    .flatMap((day) => {
-      const weekday = weekdayNumbers.get(day.replace(/^[+-]?\d+/u, ""));
-      return weekday === undefined ? [] : [weekday];
+  const limit = options.limit ?? 1_000;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > maxOccurrences) {
+    throw new CalendarRecurrenceError(
+      `Occurrence limit must be between 1 and ${String(maxOccurrences)}.`,
+    );
+  }
+  const cursor = options.cursor === undefined ? null : validDate(options.cursor, "cursor");
+  const rangeStart = new Date(windowStartsAt.getTime() - durationMs - maximumShiftMs);
+  const rangeEnd = new Date(windowEndsAt.getTime() + maximumShiftMs);
+  const recurrence = recurrenceSet(event);
+  const queryStart = cursor !== null && cursor > rangeStart ? cursor : rangeStart;
+  const dates = recurrence.set
+    .between(
+      recurrenceQueryDate(queryStart, recurrence),
+      recurrenceQueryDate(rangeEnd, recurrence),
+      cursor === null,
+      (_date, index) => index <= limit,
+    )
+    .map((date) => recurrenceInstant(date, recurrence));
+  const visible = dates
+    .filter((startsAt) => cursor === null || startsAt > cursor)
+    .flatMap((startsAt) => {
+      const override = applicableOverride(overrides, startsAt);
+      if (override?.status === "cancelled") return [];
+      const occurrenceStartsAt =
+        override === undefined
+          ? startsAt
+          : new Date(
+              startsAt.getTime() +
+                (validDate(override.startsAt, "override DTSTART").getTime() -
+                  validDate(override.recurrenceId, "RECURRENCE-ID").getTime()),
+            );
+      const occurrenceEndsAt =
+        override === undefined
+          ? new Date(startsAt.getTime() + durationMs)
+          : new Date(
+              occurrenceStartsAt.getTime() +
+                (validDate(override.endsAt, "override DTEND").getTime() -
+                  validDate(override.startsAt, "override DTSTART").getTime()),
+            );
+      return occurrenceEndsAt > windowStartsAt && occurrenceStartsAt < windowEndsAt
+        ? [{ startsAt: occurrenceStartsAt, endsAt: occurrenceEndsAt, recurrenceId: startsAt }]
+        : [];
     });
+  const page = visible.slice(0, limit);
   return {
-    freq,
-    interval,
-    ...(count === undefined || !Number.isInteger(count) || count < 1 ? {} : { count }),
-    ...(until === undefined ? {} : { until }),
-    ...(byDay === undefined || byDay.length === 0 ? {} : { byDay }),
+    occurrences: page.map(({ startsAt, endsAt, recurrenceId }) => ({
+      eventId: event.id,
+      startsAt,
+      endsAt,
+      ...(event.recurrenceRule === null || event.recurrenceRule === undefined
+        ? {}
+        : { recurrenceId }),
+    })),
+    nextCursor:
+      visible.length > limit ? (page.at(-1)?.recurrenceId.toISOString() ?? null) : null,
   };
 }
 
-function occurrenceStartsForCursor(
-  eventStartsAt: Date,
-  cursor: Date,
-  rule: ParsedRecurrenceRule,
-): readonly Date[] {
-  if (rule.freq !== "WEEKLY" || rule.byDay === undefined) {
-    return [new Date(cursor)];
-  }
-  const weekStart = startOfUtcWeek(cursor);
-  return rule.byDay
-    .map((day) => {
-      const startsAt = new Date(weekStart.getTime() + day * dayMs);
-      startsAt.setUTCHours(
-        eventStartsAt.getUTCHours(),
-        eventStartsAt.getUTCMinutes(),
-        eventStartsAt.getUTCSeconds(),
-        eventStartsAt.getUTCMilliseconds(),
-      );
-      return startsAt;
-    })
-    .sort((left, right) => left.getTime() - right.getTime());
+export function recurrenceExceptionDates(metadata: JsonObject): readonly string[] {
+  return recurrenceMetadataDates(metadata, "exdate");
 }
 
-function nextCursor(cursor: Date, rule: ParsedRecurrenceRule): Date {
-  const next = new Date(cursor);
-  if (rule.freq === "DAILY") {
-    next.setUTCDate(next.getUTCDate() + rule.interval);
-  } else if (rule.freq === "WEEKLY") {
-    next.setUTCDate(next.getUTCDate() + rule.interval * 7);
-  } else {
-    next.setUTCMonth(next.getUTCMonth() + rule.interval);
+export function recurrenceOverrides(metadata: JsonObject): readonly CalendarRecurrenceOverride[] {
+  const caldav = metadata.caldav;
+  if (!isJsonObject(caldav) || !Array.isArray(caldav.overrides)) return [];
+  if (caldav.overrides.length > 1_000) {
+    throw new CalendarRecurrenceError("Recurring event exceeds 1000 overrides.");
   }
-  return next;
+  return caldav.overrides.flatMap((candidate) => parseOverride(candidate));
 }
 
-function startOfUtcWeek(date: Date): Date {
-  const start = new Date(date);
-  start.setUTCHours(0, 0, 0, 0);
-  start.setUTCDate(start.getUTCDate() - start.getUTCDay());
-  return start;
+function parseOverride(value: unknown): readonly CalendarRecurrenceOverride[] {
+  if (!isJsonObject(value)) return [];
+  const recurrenceId = stringValue(value.recurrenceId);
+  const startsAt = stringValue(value.startsAt);
+  const endsAt = stringValue(value.endsAt);
+  const dtstamp = stringValue(value.dtstamp);
+  const status = value.status;
+  const range = value.range;
+  const sequence = value.sequence;
+  if (
+    recurrenceId === undefined ||
+    startsAt === undefined ||
+    endsAt === undefined ||
+    dtstamp === undefined ||
+    (status !== "confirmed" && status !== "tentative" && status !== "cancelled") ||
+    (range !== "this" && range !== "this_and_future") ||
+    typeof sequence !== "number" ||
+    !Number.isSafeInteger(sequence) ||
+    sequence < 0 ||
+    !Array.isArray(value.attendees)
+  ) {
+    return [];
+  }
+  validDate(recurrenceId, "RECURRENCE-ID");
+  const start = validDate(startsAt, "override DTSTART");
+  const end = validDate(endsAt, "override DTEND");
+  validDate(dtstamp, "override DTSTAMP");
+  if (end <= start) throw new CalendarRecurrenceError("Override DTEND must be after DTSTART.");
+  const attendees = value.attendees.flatMap(parseOverrideAttendee);
+  if (attendees.length !== value.attendees.length) return [];
+  const title = optionalString(value.title);
+  const description = optionalNullableString(value.description);
+  const location = optionalNullableString(value.location);
+  if (title === false || description === false || location === false) return [];
+  return [{
+    recurrenceId,
+    range,
+    startsAt,
+    endsAt,
+    status,
+    sequence,
+    dtstamp,
+    attendees,
+    ...(title === undefined ? {} : { title }),
+    ...(description === undefined ? {} : { description }),
+    ...(location === undefined ? {} : { location }),
+  }];
 }
 
-function parseIcsDate(value: string): Date | undefined {
-  const match = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})Z?)?$/u.exec(value);
-  if (match === null) {
-    return undefined;
-  }
-  const date = new Date(
-    Date.UTC(
-      Number(match[1]),
-      Number(match[2]) - 1,
-      Number(match[3]),
-      Number(match[4] ?? "23"),
-      Number(match[5] ?? "59"),
-      Number(match[6] ?? "59"),
-    ),
+function parseOverrideAttendee(value: unknown): readonly CalendarRecurrenceOverride["attendees"][number][] {
+  if (!isJsonObject(value)) return [];
+  const email = stringValue(value.email);
+  const responseStatus = value.responseStatus;
+  const role = value.role;
+  const displayName = optionalNullableString(value.displayName);
+  if (
+    email === undefined ||
+    (responseStatus !== "needs_action" && responseStatus !== "accepted" &&
+      responseStatus !== "declined" && responseStatus !== "tentative") ||
+    (role !== undefined && role !== "required" && role !== "optional" && role !== "resource") ||
+    displayName === false
+  ) return [];
+  return [{
+    email,
+    responseStatus,
+    ...(role === undefined ? {} : { role }),
+    ...(displayName === undefined ? {} : { displayName }),
+  }];
+}
+
+function optionalString(value: unknown): string | undefined | false {
+  return value === undefined ? undefined : typeof value === "string" ? value : false;
+}
+
+function optionalNullableString(value: unknown): string | null | undefined | false {
+  return value === undefined || value === null ? value : typeof value === "string" ? value : false;
+}
+
+function applicableOverride(
+  overrides: readonly CalendarRecurrenceOverride[],
+  recurrenceId: Date,
+): CalendarRecurrenceOverride | undefined {
+  const target = recurrenceId.getTime();
+  const exact = overrides.find(
+    (candidate) => new Date(candidate.recurrenceId).getTime() === target,
   );
-  return Number.isNaN(date.getTime()) ? undefined : date;
+  if (exact !== undefined && exact.range === "this") return exact;
+  return overrides
+    .filter(
+      (candidate) =>
+        candidate.range === "this_and_future" && new Date(candidate.recurrenceId).getTime() <= target,
+    )
+    .sort(
+      (left, right) =>
+        new Date(right.recurrenceId).getTime() - new Date(left.recurrenceId).getTime(),
+    )[0];
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+interface RecurrenceSet {
+  readonly set: RRuleSet;
+  readonly timeSemantics: "zoned" | "floating" | "all_day";
+  readonly timezone: string;
+}
+
+function recurrenceSet(event: RecurringEvent): RecurrenceSet {
+  const set = new RRuleSet(true);
+  const timeSemantics = event.allDay ? "all_day" : (event.timeSemantics ?? "zoned");
+  const timezone = canonicalTimeZone(event.timezone ?? "UTC");
+  const intentZone = timeSemantics === "zoned" ? timezone : "UTC";
+  const recurrenceStart = localDateTimeToFloatingInstant(
+    event.startsLocal ?? instantToLocalDateTime(event.startsAt, intentZone),
+  );
+  if (event.recurrenceRule !== null && event.recurrenceRule !== undefined) {
+    if (
+      event.recurrenceRule.length > 4_096 ||
+      /(?:^|\n)(?:DTSTART|RRULE|RDATE|EXDATE)[:;]/iu.test(event.recurrenceRule)
+    ) {
+      throw new CalendarRecurrenceError("recurrenceRule must contain one RRULE value.");
+    }
+    try {
+      const parsed = RRule.parseString(event.recurrenceRule);
+      if (parsed.freq === undefined) throw new Error("FREQ is required");
+      if ((parsed.count ?? 0) > maxOccurrences || (parsed.interval ?? 1) > maxOccurrences) {
+        throw new Error("COUNT or INTERVAL exceeds the supported bound");
+      }
+      set.rrule(
+        new RRule(
+          {
+            ...parsed,
+            dtstart: recurrenceStart,
+          },
+          true,
+        ),
+      );
+    } catch (error) {
+      throw new CalendarRecurrenceError(
+        `Invalid recurrence rule: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
+  }
+  set.rdate(recurrenceStart);
+  for (const value of recurrenceMetadataDates(event.metadata, "rdate")) {
+    set.rdate(recurrenceDate(validDate(value, "RDATE"), intentZone));
+  }
+  for (const value of recurrenceExceptionDates(event.metadata)) {
+    set.exdate(recurrenceDate(validDate(value, "EXDATE"), intentZone));
+  }
+  return { set, timeSemantics, timezone };
+}
+
+type RecurringEvent = Pick<
+  CalendarEventRecord,
+  "id" | "startsAt" | "endsAt" | "recurrenceRule" | "metadata"
+> &
+  Partial<Pick<CalendarEventRecord, "timezone" | "allDay" | "timeSemantics" | "startsLocal">>;
+
+function recurrenceDate(value: Date, intentZone: string): Date {
+  return localDateTimeToFloatingInstant(instantToLocalDateTime(value, intentZone));
+}
+
+function recurrenceQueryDate(value: Date, recurrence: RecurrenceSet): Date {
+  return recurrence.timeSemantics === "zoned" ? recurrenceDate(value, recurrence.timezone) : value;
+}
+
+function recurrenceInstant(value: Date, recurrence: RecurrenceSet): Date {
+  return recurrence.timeSemantics === "zoned"
+    ? localDateTimeToInstant(instantToLocalDateTime(value, "UTC"), recurrence.timezone)
+    : value;
+}
+
+function recurrenceMetadataDates(
+  metadata: JsonObject,
+  name: "rdate" | "exdate",
+): readonly string[] {
+  const caldav = metadata.caldav;
+  if (!isJsonObject(caldav)) return [];
+  const values = caldav[name];
+  if (!Array.isArray(values)) return [];
+  if (values.length > maxOccurrences) {
+    throw new CalendarRecurrenceError(
+      `${name.toUpperCase()} exceeds ${String(maxOccurrences)} values.`,
+    );
+  }
+  return values.filter((value): value is string => typeof value === "string");
+}
+
+function validateBounds(
+  event: Pick<CalendarEventRecord, "startsAt" | "endsAt">,
+  windowStartsAt: Date,
+  windowEndsAt: Date,
+): void {
+  if (
+    !validInstant(event.startsAt) ||
+    !validInstant(event.endsAt) ||
+    !validInstant(windowStartsAt) ||
+    !validInstant(windowEndsAt) ||
+    event.endsAt <= event.startsAt ||
+    windowEndsAt <= windowStartsAt
+  ) {
+    throw new CalendarRecurrenceError(
+      "Event and recurrence windows require valid increasing dates.",
+    );
+  }
+  if (windowEndsAt.getTime() - windowStartsAt.getTime() > maxWindowMs) {
+    throw new CalendarRecurrenceError("Recurrence window cannot exceed ten years.");
+  }
+}
+
+function validDate(value: string, label: string): Date {
+  const date = new Date(value);
+  if (!validInstant(date)) throw new CalendarRecurrenceError(`${label} must be an ISO date-time.`);
+  return date;
+}
+
+function validInstant(value: Date): boolean {
+  return !Number.isNaN(value.getTime());
 }
 
 function isJsonObject(value: unknown): value is JsonObject {

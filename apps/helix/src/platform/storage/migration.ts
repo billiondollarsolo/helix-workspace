@@ -180,7 +180,7 @@ export async function listTenantStorageMigrationObjects(
   sql: postgres.Sql,
   orgId: string,
 ): Promise<readonly TenantStorageMigrationObject[]> {
-  const rows = (await sql`
+  const rows = await sql<TenantStorageMigrationObjectRow[]>`
     select distinct on (stored.storage_key)
       stored.storage_key, stored.byte_size, stored.sha256
     from (
@@ -211,7 +211,7 @@ export async function listTenantStorageMigrationObjects(
     ) stored
     where stored.storage_key is not null
     order by stored.storage_key, stored.source_rank
-  `) as unknown as readonly TenantStorageMigrationObjectRow[];
+  `;
 
   return rows.flatMap((row) => {
     const storageKey = row.storage_key?.trim();
@@ -234,7 +234,7 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
   async create(
     input: CreateTenantStorageMigrationJobInput,
   ): Promise<TenantStorageMigrationJobRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<TenantStorageMigrationJobRow[]>`
       insert into tenant_storage_migration_jobs (
         org_id,
         target,
@@ -251,12 +251,12 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
         ${
           input.sourceStorage === undefined || input.sourceStorage === null
             ? null
-            : this.sql.json(input.sourceStorage as unknown as Parameters<postgres.Sql["json"]>[0])
+            : this.sql.json(toSqlJson(input.sourceStorage))
         },
         ${
           input.targetStorage === undefined || input.targetStorage === null
             ? null
-            : this.sql.json(input.targetStorage as unknown as Parameters<postgres.Sql["json"]>[0])
+            : this.sql.json(toSqlJson(input.targetStorage))
         }
       )
       returning
@@ -278,7 +278,7 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
         completed_at,
         created_at,
         updated_at
-    `) as unknown as readonly TenantStorageMigrationJobRow[];
+    `;
     return mapTenantStorageMigrationJobRow(rows[0]);
   }
 
@@ -286,7 +286,7 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
     readonly id: string;
     readonly orgId: string;
   }): Promise<TenantStorageMigrationJobRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<TenantStorageMigrationJobRow[]>`
       select
         id,
         org_id,
@@ -310,7 +310,7 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
       where id = ${input.id}
         and org_id = ${input.orgId}
       limit 1
-    `) as unknown as readonly TenantStorageMigrationJobRow[];
+    `;
     return rows[0] === undefined ? null : mapTenantStorageMigrationJobRow(rows[0]);
   }
 
@@ -318,7 +318,7 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
     input: { readonly limit?: number | undefined } = {},
   ): Promise<readonly TenantStorageMigrationJobRecord[]> {
     const limit = input.limit ?? 5;
-    const rows = (await this.sql`
+    const rows = await this.sql<TenantStorageMigrationJobRow[]>`
       update tenant_storage_migration_jobs
       set
         status = 'running',
@@ -353,7 +353,7 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
         completed_at,
         created_at,
         updated_at
-    `) as unknown as readonly TenantStorageMigrationJobRow[];
+    `;
     return rows.map(mapTenantStorageMigrationJobRow);
   }
 
@@ -361,16 +361,14 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
     readonly id: string;
     readonly result: TenantStorageMigrationResult;
   }): Promise<TenantStorageMigrationJobRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<TenantStorageMigrationJobRow[]>`
       update tenant_storage_migration_jobs
       set
         status = ${jobStatusFromMigrationResult(input.result)},
         planned_count = ${input.result.plannedCount},
         copied_count = ${input.result.copiedCount},
         verified_count = ${input.result.verifiedCount},
-        failures = ${this.sql.json([...input.result.failures] as unknown as Parameters<
-          postgres.Sql["json"]
-        >[0])},
+        failures = ${this.sql.json(toSqlJson(input.result.failures))},
         last_error = null,
         completed_at = now(),
         updated_at = now()
@@ -394,7 +392,7 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
         completed_at,
         created_at,
         updated_at
-    `) as unknown as readonly TenantStorageMigrationJobRow[];
+    `;
     return mapTenantStorageMigrationJobRow(rows[0]);
   }
 
@@ -402,7 +400,7 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
     readonly id: string;
     readonly error: string;
   }): Promise<TenantStorageMigrationJobRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<TenantStorageMigrationJobRow[]>`
       update tenant_storage_migration_jobs
       set
         status = 'failed',
@@ -429,9 +427,13 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
         completed_at,
         created_at,
         updated_at
-    `) as unknown as readonly TenantStorageMigrationJobRow[];
+    `;
     return mapTenantStorageMigrationJobRow(rows[0]);
   }
+}
+
+function toSqlJson(value: unknown): postgres.JSONValue {
+  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
 const defaultMigrationWorkerIntervalMs = 15_000;

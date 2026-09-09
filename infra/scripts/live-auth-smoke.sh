@@ -20,9 +20,9 @@ Options:
   --scope <scope>              OAuth scope string. Default includes platform, seeded app, assistant, and admin read/write scopes
   --mutate                     Also PATCH /api/admin/platform-config with --tier
   --tier <tier>                Tier to set when --mutate is used. Default: personal
-  --backup-restore             Also dry-run POST /api/admin/backups and /api/admin/restores
+  --backup-restore             Also dry-run POST /api/admin/backups (restore requires dual control)
   --backup-id <id>             Backup id for --backup-restore. Default: helix-smoke-backup
-  --backup-restore-encrypted   Restore dry-run expects an age-encrypted <backup-id>.tar.gz.age archive
+  --backup-restore-encrypted   Deprecated alias for --backup-restore
   --search-reindex             Also POST /api/admin/search/reindex with pruneStale=false
   --seeded-demo-tools          Also assert seeded mail/chat/docs/drive/calendar/search tool results
   --seeded-demo                Alias for --seeded-demo-tools
@@ -78,7 +78,7 @@ EOF
 BASE_URL=${HELIX_BASE_URL:-http://127.0.0.1:28431}
 CLIENT_ID=${HELIX_SMOKE_CLIENT_ID:-}
 CLIENT_SECRET=${HELIX_SMOKE_CLIENT_SECRET:-}
-SCOPE=${HELIX_SMOKE_SCOPE:-platform.read mail.read mail.write mail.send docs.read docs.write docs.comment drive.read drive.write calendar.read calendar.write calendar.write:respond calendar.read:freebusy chat.read chat.write meet.read meet.write assistant.write assistant.memory admin.users admin.audit admin.agents admin.plugins admin.webhooks admin.config.write}
+SCOPE=${HELIX_SMOKE_SCOPE:-platform.read mail.read mail.write mail.send docs.read docs.write docs.comment drive.read drive.write calendar.read calendar.write calendar.write:respond calendar.read:freebusy chat.read chat.post chat.create meet.read meet.write assistant.write assistant.memory admin.users admin.audit admin.agents admin.plugins admin.webhooks admin.config.write}
 MUTATE=false
 TIER=${HELIX_SMOKE_TIER:-personal}
 BACKUP_RESTORE=${HELIX_SMOKE_BACKUP_RESTORE:-false}
@@ -105,7 +105,7 @@ CHAT_REALTIME_SMOKE=${HELIX_SMOKE_CHAT_REALTIME_SMOKE:-false}
 MEET_SMOKE=${HELIX_SMOKE_MEET_SMOKE:-false}
 MEET_SMOKE_ORG_ID=${HELIX_SMOKE_MEET_ORG_ID:-${HELIX_DEFAULT_ORG_ID:-00000000-0000-4000-8000-000000000100}}
 MEET_SMOKE_JITSI_DOMAIN=${HELIX_SMOKE_MEET_JITSI_DOMAIN:-${MEET_JITSI_DOMAIN:-meet.localhost}}
-MEET_SMOKE_WEBHOOK_SECRET=${HELIX_SMOKE_MEET_WEBHOOK_SECRET:-${HELIX_SMOKE_MEET_JITSI_WEBHOOK_SECRET:-${MEET_JITSI_WEBHOOK_SHARED_SECRET:-${JITSI_WEBHOOK_SECRET:-helix_dev_jitsi_webhook_secret_change_me}}}}
+MEET_SMOKE_WEBHOOK_SECRET=${HELIX_SMOKE_MEET_WEBHOOK_SECRET:-${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}}
 ASSISTANT_SMOKE=${HELIX_SMOKE_ASSISTANT_SMOKE:-false}
 ASSISTANT_PROVIDER_SMOKE=${HELIX_SMOKE_ASSISTANT_PROVIDER_SMOKE:-false}
 ASSISTANT_PROVIDER_ID=${HELIX_SMOKE_ASSISTANT_PROVIDER_ID:-${ASSISTANT_AI_PROVIDER_ID:-${AI_DEFAULT_PROVIDER_ID:-}}}
@@ -126,7 +126,7 @@ APP_PASSWORD_ACTOR_ID=${HELIX_SMOKE_APP_PASSWORD_ACTOR_ID:-00000000-0000-4000-80
 APP_PASSWORD_USERNAME=${HELIX_SMOKE_APP_PASSWORD_USERNAME:-local-admin@helix.local}
 WEBHOOK_SMOKE=${HELIX_SMOKE_WEBHOOK_SMOKE:-false}
 PLUGIN_LIFECYCLE_SMOKE=${HELIX_SMOKE_PLUGIN_LIFECYCLE_SMOKE:-false}
-PLUGIN_LIFECYCLE_ID=${HELIX_SMOKE_PLUGIN_ID:-com.helix.core.search-meilisearch}
+PLUGIN_LIFECYCLE_ID=${HELIX_SMOKE_PLUGIN_ID:-com.helix.webhook-out-slack}
 PLUGIN_LIFECYCLE_VERSION=${HELIX_SMOKE_PLUGIN_VERSION:-1.0.0}
 K6_TARGET_SMOKE=${HELIX_SMOKE_K6_TARGET_SMOKE:-false}
 K6_WEB_BASE_URL=${HELIX_SMOKE_K6_WEB_BASE_URL:-${WEB_BASE_URL:-http://127.0.0.1:4173}}
@@ -238,6 +238,10 @@ esac
 api_url() {
   local path=${1:?missing path}
   local normalized=${BASE_URL%/}
+  case "$path" in
+    /healthz|/readyz|/v1|/v1/*) ;;
+    *) path="/v1$path" ;;
+  esac
   printf '%s%s' "$normalized" "$path"
 }
 
@@ -1141,7 +1145,8 @@ if (
 }
 
 run_drive_docs_calendar_smoke() {
-  local suffix marker drive_name drive_content drive_content_base64 drive_sha drive_upload_file drive_finalize_file drive_object_id
+  local suffix marker drive_name drive_content drive_sha drive_upload_file drive_finalize_file drive_object_id drive_upload_url drive_upload_status
+  local -a drive_upload_headers
   local docs_title docs_updated_title docs_body docs_file docs_id docs_export_file
   local starts_at ends_at window_starts_at window_ends_at calendar_title calendar_file calendar_pending_id calendar_approve_file calendar_event_id
   suffix=$(date +%Y%m%d%H%M%S)
@@ -1149,12 +1154,6 @@ run_drive_docs_calendar_smoke() {
 
   drive_name="Helix Drive smoke ${suffix}.txt"
   drive_content="Drive storage marker: ${marker}"
-  drive_content_base64=$(printf '%s' "$drive_content" | node -e '
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => { input += chunk; });
-process.stdin.on("end", () => process.stdout.write(Buffer.from(input, "utf8").toString("base64")));
-')
   drive_sha=$(printf '%s' "$drive_content" | node -e '
 const { createHash } = require("node:crypto");
 let input = "";
@@ -1183,21 +1182,36 @@ process.stdout.write(JSON.stringify({
     rm -f "$drive_upload_file"
     die "drive.upload did not return objectId"
   }
+  drive_upload_url=$(json_field_from_file "$drive_upload_file" "parsed.uploadUrl") || {
+    rm -f "$drive_upload_file"
+    die "drive.upload did not return a presigned uploadUrl"
+  }
+  drive_upload_headers=()
+  while IFS= read -r header; do
+    drive_upload_headers+=(-H "$header")
+  done < <(node -e '
+const response = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+for (const [name, value] of Object.entries(response.parsed?.uploadHeaders ?? {})) console.log(`${name}: ${value}`);
+' "$drive_upload_file")
   rm -f "$drive_upload_file"
+
+  drive_upload_status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$drive_upload_url" "${drive_upload_headers[@]}" --data-binary "$drive_content")
+  if [[ "$drive_upload_status" != 2* ]]; then
+    die "Drive presigned upload returned HTTP $drive_upload_status, expected 2xx"
+  fi
 
   drive_finalize_file=$(mktemp "${TMPDIR:-/tmp}/helix-drive-smoke.XXXXXX")
   request_capture POST /api/tools/drive.finalize 200 \
     "$(node -e '
-const [objectId, byteSize, sha256, contentBase64, marker] = process.argv.slice(1);
+const [objectId, byteSize, sha256, marker] = process.argv.slice(1);
 process.stdout.write(JSON.stringify({
   objectId,
   byteSize: Number(byteSize),
   sha256,
   mimeType: "text/plain; charset=utf-8",
-  contentBase64,
   metadata: { smoke: true, marker },
 }));
-' "$drive_object_id" "${#drive_content}" "$drive_sha" "$drive_content_base64" "$marker")" \
+' "$drive_object_id" "${#drive_content}" "$drive_sha" "$marker")" \
     "drive.finalize" \
     "$drive_finalize_file"
   rm -f "$drive_finalize_file"
@@ -1517,17 +1531,9 @@ run_cli_checks() {
   fi
 
   if bool_true "$BACKUP_RESTORE"; then
-    local restore_args=(restore --from "$BACKUP_ID")
-    if bool_true "$BACKUP_RESTORE_ENCRYPTED"; then
-      restore_args+=(--encrypted)
-    fi
     run_cli_contains "backup dry-run" \
       backup create \
       --expect dry_run backup
-
-    run_cli_contains "restore dry-run" \
-      "${restore_args[@]}" \
-      --expect dry_run "$BACKUP_ID"
   fi
 
   if bool_true "$SEEDED_DEMO"; then
@@ -1721,17 +1727,19 @@ run_events_ws_check() {
   HELIX_BASE_URL="$BASE_URL" HELIX_ACCESS_TOKEN="$ACCESS_TOKEN" node <<'NODE'
 const baseUrl = process.env.HELIX_BASE_URL;
 const token = process.env.HELIX_ACCESS_TOKEN;
+const WebSocket = require("ws");
 if (!baseUrl || !token) {
   console.error("HELIX_BASE_URL and HELIX_ACCESS_TOKEN are required.");
   process.exit(2);
 }
 
-const url = new URL("/events/ws", baseUrl);
+const url = new URL("/v1/events/ws", baseUrl);
 url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 url.searchParams.set("subject", "helix.config.changed");
-url.searchParams.set("access_token", token);
 
-const socket = new WebSocket(url.href);
+const socket = new WebSocket(url.href, {
+  headers: { authorization: `Bearer ${token}` },
+});
 let opened = false;
 let settled = false;
 
@@ -1885,6 +1893,7 @@ run_chat_realtime_smoke() {
     HELIX_CHAT_MESSAGE_FILE="$message_file" \
     node <<'NODE'
 const fs = require("node:fs");
+const WebSocket = require("ws");
 const baseUrl = process.env.HELIX_BASE_URL;
 const token = process.env.HELIX_ACCESS_TOKEN;
 const roomId = process.env.HELIX_CHAT_ROOM_ID;
@@ -1897,7 +1906,6 @@ if (!baseUrl || !token || !roomId || !marker || !messageFile) {
 
 const url = new URL("/ws/chat", baseUrl);
 url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-url.searchParams.set("access_token", token);
 
 const sockets = [];
 const timeout = setTimeout(() => {
@@ -1916,7 +1924,9 @@ function cleanup() {
 }
 
 function connect(name) {
-  const socket = new WebSocket(url.href);
+  const socket = new WebSocket(url.href, {
+    headers: { authorization: `Bearer ${token}` },
+  });
   sockets.push(socket);
   const backlog = [];
   const waiters = [];
@@ -2060,6 +2070,8 @@ NODE
 
 run_meet_smoke() {
   local suffix subject room_file room_id room_org_id room_name token_file webhook_file recording_key list_file end_file ended_list_file status
+  local recording_file recording_sha recording_size prepare_file prepare_payload upload_id upload_url completion_payload signature
+  local -a upload_headers
   suffix=$(date +%Y%m%d%H%M%S)
   subject="Helix Meet smoke $suffix"
   room_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-room.XXXXXX")
@@ -2087,7 +2099,7 @@ run_meet_smoke() {
 
   token_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-token.XXXXXX")
   request_capture POST /api/tools/meet.mint-token 200 \
-    "$(node -e 'process.stdout.write(JSON.stringify({ roomId: process.argv[1], moderator: true, expiresInSeconds: 600 }))' "$room_id")" \
+    "$(node -e 'const {randomUUID}=require("node:crypto"); process.stdout.write(JSON.stringify({ roomId: process.argv[1], expiresInSeconds: 600, recordingNoticeAccepted: true, recordingNoticeVersion: "2026-09-02", deviceId: randomUUID(), joinGrantId: randomUUID() }))' "$room_id")" \
     "meet.mint-token" \
     "$token_file"
   node -e '
@@ -2115,27 +2127,69 @@ if (
   rm -f "$token_file"
   log "ok: Meet JWT minted"
 
-  recording_key="recordings/live-smoke-${suffix}.webm"
+  recording_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-recording.XXXXXX")
+  node -e 'require("node:fs").writeFileSync(process.argv[1], Buffer.from([0x1a,0x45,0xdf,0xa3,0x42,0x86,0x81,0x01,0x42,0xf7,0x81,0x01]))' "$recording_file"
+  recording_sha=$(node -e 'const fs=require("node:fs"),{createHash}=require("node:crypto"); process.stdout.write(createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$recording_file")
+  recording_size=$(wc -c < "$recording_file" | tr -d ' ')
+
   webhook_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-webhook-bad.XXXXXX")
+  completion_payload=$(node -e 'process.stdout.write(JSON.stringify({ event: "recording.uploaded", uploadId: process.argv[1], metadata: { uploaded: true } }))' "77777777-7777-4777-8777-777777777777")
   status=$(curl_with_trace -sS \
     -o "$webhook_file" \
     -w '%{http_code}' \
     -X POST \
     -H 'accept: application/json' \
     -H 'content-type: application/json' \
-    -H "x-helix-org-id: $room_org_id" \
-    -H 'x-helix-jitsi-secret: definitely-wrong' \
-    --data "$(node -e 'process.stdout.write(JSON.stringify({ event_name: "RECORDING_UPLOAD_FINISHED", room_id: process.argv[1], storage_key: process.argv[2] }))' "$room_id" "$recording_key")" \
+    -H "x-helix-signature: $(webhook_bad_signature)" \
+    --data-binary "$completion_payload" \
     "$(api_url /webhook/jitsi)")
-  if [[ "$status" != "401" ]] || ! grep -Fq 'Invalid Jitsi webhook secret.' "$webhook_file"; then
-    log "response body from invalid /webhook/jitsi:"
+  if [[ "$status" != "401" ]] || ! grep -Fq 'Invalid Meet webhook signature.' "$webhook_file"; then
+    log "response body from invalid signed /webhook/jitsi:"
     cat "$webhook_file" >&2
-    rm -f "$webhook_file"
-    die "invalid /webhook/jitsi secret returned HTTP $status, expected 401"
+    rm -f "$webhook_file" "$recording_file"
+    die "invalid /webhook/jitsi HMAC returned HTTP $status, expected 401"
   fi
   rm -f "$webhook_file"
-  log "ok: invalid Meet recording webhook secret rejected"
+  log "ok: invalid Meet recording webhook HMAC rejected"
 
+  prepare_payload=$(node -e 'process.stdout.write(JSON.stringify({ orgId: process.argv[1], roomId: process.argv[2], mimeType: "video/webm", byteSize: Number(process.argv[3]), sha256: process.argv[4] }))' "$room_org_id" "$room_id" "$recording_size" "$recording_sha")
+  signature=$(webhook_signature "$MEET_SMOKE_WEBHOOK_SECRET" "$prepare_payload")
+  prepare_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-prepare.XXXXXX")
+  status=$(curl_with_trace -sS \
+    -o "$prepare_file" \
+    -w '%{http_code}' \
+    -X POST \
+    -H 'accept: application/json' \
+    -H 'content-type: application/json' \
+    -H "x-helix-signature: $signature" \
+    --data-binary "$prepare_payload" \
+    "$(api_url /internal/meet/recording-uploads)")
+  if [[ "$status" != "200" ]]; then
+    log "response body from Meet recording prepare:"
+    cat "$prepare_file" >&2
+    rm -f "$prepare_file" "$recording_file"
+    die "Meet recording prepare returned HTTP $status, expected 200"
+  fi
+  upload_id=$(json_field_from_file "$prepare_file" "parsed.uploadId")
+  upload_url=$(json_field_from_file "$prepare_file" "parsed.uploadUrl")
+  recording_key=$(json_field_from_file "$prepare_file" "parsed.storageKey")
+  upload_headers=()
+  while IFS= read -r header; do
+    upload_headers+=(-H "$header")
+  done < <(node -e '
+const response = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+for (const [name, value] of Object.entries(response.headers ?? {})) console.log(`${name}: ${value}`);
+' "$prepare_file")
+  rm -f "$prepare_file"
+
+  status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT "$upload_url" "${upload_headers[@]}" --upload-file "$recording_file")
+  rm -f "$recording_file"
+  if [[ "$status" != 2* ]]; then
+    die "Meet recording presigned upload returned HTTP $status, expected 2xx"
+  fi
+
+  completion_payload=$(node -e 'process.stdout.write(JSON.stringify({ event: "recording.uploaded", uploadId: process.argv[1], metadata: { uploaded: true, smoke: true } }))' "$upload_id")
+  signature=$(webhook_signature "$MEET_SMOKE_WEBHOOK_SECRET" "$completion_payload")
   webhook_file=$(mktemp "${TMPDIR:-/tmp}/helix-meet-webhook.XXXXXX")
   status=$(curl_with_trace -sS \
     -o "$webhook_file" \
@@ -2143,9 +2197,8 @@ if (
     -X POST \
     -H 'accept: application/json' \
     -H 'content-type: application/json' \
-    -H "x-helix-org-id: $room_org_id" \
-    -H "x-helix-jitsi-secret: $MEET_SMOKE_WEBHOOK_SECRET" \
-    --data "$(node -e 'process.stdout.write(JSON.stringify({ event_name: "RECORDING_UPLOAD_FINISHED", room_id: process.argv[1], room_name: process.argv[2], storage_key: process.argv[3], mime_type: "video/webm", byte_size: 128, started_at: process.argv[4], ended_at: process.argv[5], metadata: { smoke: true } }))' "$room_id" "$room_name" "$recording_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
+    -H "x-helix-signature: $signature" \
+    --data-binary "$completion_payload" \
     "$(api_url /webhook/jitsi)")
   if [[ "$status" != "200" ]]; then
     log "response body from /webhook/jitsi:"
@@ -4051,7 +4104,18 @@ run_plugin_lifecycle_smoke() {
   request_capture POST /api/tools/plugin.install 202 \
     "$(node -e '
 const [pluginId, version] = process.argv.slice(1);
-process.stdout.write(JSON.stringify({ pluginId, version, source: "official" }));
+process.stdout.write(JSON.stringify({
+  pluginId,
+  version,
+  confirmations: [
+    "source.non_official",
+    "permissions.scopes.webhooks.write",
+    "permissions.outbound-network.hooks.slack.com",
+    "capabilities.provides.webhook.out.format.slack",
+    "capabilities.consumes.webhook.engine",
+    "artifact.untrusted",
+  ],
+}));
 ' "$plugin_id" "$plugin_version")" \
     "plugin.install pending" \
     "$install_file"
@@ -4080,7 +4144,7 @@ if (
   output?.plugin?.version !== version ||
   output?.lifecycle?.state !== "installed" ||
   output?.lifecycle?.installed !== true ||
-  output?.source !== "official"
+  output?.source !== "sideload"
 ) {
   process.exit(2);
 }
@@ -4328,14 +4392,10 @@ fi
 
 if bool_true "$BACKUP_RESTORE"; then
   backup_body="{\"backupId\":\"$BACKUP_ID\"}"
-  restore_body="$backup_body"
-  if bool_true "$BACKUP_RESTORE_ENCRYPTED"; then
-    restore_body="{\"backupId\":\"$BACKUP_ID\",\"encrypted\":true}"
-  fi
   request POST /api/admin/backups 200 "$backup_body" status dry_run
-  request POST /api/admin/restores 200 "$restore_body" status dry_run
+  log "restore smoke skipped: use the stepped-up, dual-controlled restore-job runbook"
 else
-  log "skipping backup/restore dry-runs; pass --backup-restore to POST /api/admin/backups and /api/admin/restores"
+  log "skipping backup dry-run; pass --backup-restore to POST /api/admin/backups"
 fi
 
 if bool_true "$SEARCH_REINDEX"; then

@@ -1,28 +1,55 @@
 import { createHmac } from "node:crypto";
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
+import { INBOUND_WEBHOOK_BODY_LIMIT_BYTES } from "../../api/request-body.js";
 import { registerWebhookRoutes } from "./routes.js";
 import type {
   CreateWebhookDeliveryInput,
   InboundWebhookRecord,
   PostgresWebhookStore,
   WebhookDeliveryRecord,
+  WebhookSecretResolver,
 } from "./store.js";
 
 const orgId = "00000000-0000-4000-8000-000000000001";
 const inboundWebhookId = "00000000-0000-4000-8000-000000000010";
 const now = new Date("2026-05-20T12:00:00.000Z");
+const secretResolver: WebhookSecretResolver = {
+  resolveSecret: (_orgId, ciphertext) => ciphertext,
+};
 
 describe("webhook routes", () => {
+  it("rejects an oversized body before signature verification or persistence", async () => {
+    const store = new InMemoryWebhookRouteStore(inboundWebhook());
+    const app = fastify();
+    await registerWebhookRoutes(app, {
+      store: store as unknown as PostgresWebhookStore,
+      secretResolver,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/webhooks/github-deploy",
+      headers: { "content-type": "application/json" },
+      payload: JSON.stringify({ padding: "x".repeat(INBOUND_WEBHOOK_BODY_LIMIT_BYTES) }),
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(store.deliveries).toEqual([]);
+  });
+
   it("verifies provider signatures against the raw inbound request body", async () => {
     const webhook = inboundWebhook({
       source: "github",
-      secretRef: "inline:github-secret",
+      secretCiphertext: "github-secret",
       slug: "github-deploy",
     });
     const store = new InMemoryWebhookRouteStore(webhook);
     const app = fastify();
-    await registerWebhookRoutes(app, { store: store as unknown as PostgresWebhookStore });
+    await registerWebhookRoutes(app, {
+      store: store as unknown as PostgresWebhookStore,
+      secretResolver,
+    });
 
     const payload = [
       "{",
@@ -59,12 +86,15 @@ describe("webhook routes", () => {
   it("accepts GitLab source webhooks with token verification and provider event subjects", async () => {
     const webhook = inboundWebhook({
       source: "gitlab",
-      secretRef: "inline:gitlab-secret",
+      secretCiphertext: "gitlab-secret",
       slug: "gitlab-deploy",
     });
     const store = new InMemoryWebhookRouteStore(webhook);
     const app = fastify();
-    await registerWebhookRoutes(app, { store: store as unknown as PostgresWebhookStore });
+    await registerWebhookRoutes(app, {
+      store: store as unknown as PostgresWebhookStore,
+      secretResolver,
+    });
 
     const payload = JSON.stringify({
       object_kind: "push",
@@ -99,6 +129,7 @@ describe("webhook routes", () => {
         commitCount: 1,
       },
     });
+    expect(store.deliveries[0]?.requestHeaders).not.toHaveProperty("x-gitlab-token");
   });
 });
 
@@ -150,7 +181,7 @@ function inboundWebhook(overrides: Partial<InboundWebhookRecord> = {}): InboundW
     name: "GitHub deploy",
     slug: "github-deploy",
     source: "github",
-    secretRef: "inline:github-secret",
+    secretCiphertext: "github-secret",
     enabled: true,
     metadata: {},
     createdByActorId: null,

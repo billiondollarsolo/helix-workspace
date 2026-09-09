@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readCountFor, seenByForMessage, seenMarkers } from "./view-model";
+import { reactionViews, readCountFor, seenByForMessage, seenMarkers } from "./view-model";
 import type { ChatReadReceiptRecord } from "./api";
 
 const ordered = ["m1", "m2", "m3"];
@@ -53,5 +53,24 @@ describe("read receipts as seen-by markers", () => {
       ]),
     );
     expect(markers.every((m) => !m.actorIds.includes(self))).toBe(true);
+  });
+});
+
+describe("reaction projections", () => {
+  it("aggregates server reactions and marks the current actor's reaction", () => {
+    const createdAt = "2026-07-18T00:00:00.000Z";
+    expect(
+      reactionViews(
+        [
+          { messageId: "m1", actorId: self, emoji: "✅", createdAt },
+          { messageId: "m1", actorId: "peer", emoji: "✅", createdAt },
+          { messageId: "m1", actorId: "peer", emoji: "🎉", createdAt },
+        ],
+        self,
+      ),
+    ).toEqual([
+      { emoji: "✅", count: 2, mine: true },
+      { emoji: "🎉", count: 1, mine: false },
+    ]);
   });
 });

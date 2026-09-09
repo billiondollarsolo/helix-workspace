@@ -23,4 +23,38 @@ begin
       add constraint tenant_storage_migration_jobs_target_storage_object_chk
       check (target_storage is null or jsonb_typeof(target_storage) = 'object');
   end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'tenant_storage_migration_jobs_source_no_credentials'
+  ) then
+    alter table tenant_storage_migration_jobs
+      add constraint tenant_storage_migration_jobs_source_no_credentials check (
+        source_storage is null or (
+          not jsonb_path_exists(
+            source_storage,
+            '$.** ? (@.type() == "object").keyvalue() ? (@.key like_regex "^((aws[-_]?)?access[-_]?key([-_]?id)?|(aws[-_]?)?secret[-_]?access[-_]?key|secret[-_]?key|password|pass|token|access[-_]?token|refresh[-_]?token|id[-_]?token|(aws[-_]?)?session[-_]?token|api[-_]?key|client[-_]?secret|private[-_]?key|signing[-_]?(key|secret)|credential(s)?)$" flag "i")'
+          )
+          and source_storage->'storage'->>'endpoint' !~ '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@'
+        )
+      );
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'tenant_storage_migration_jobs_target_no_credentials'
+  ) then
+    alter table tenant_storage_migration_jobs
+      add constraint tenant_storage_migration_jobs_target_no_credentials check (
+        target_storage is null or (
+          not jsonb_path_exists(
+            target_storage,
+            '$.** ? (@.type() == "object").keyvalue() ? (@.key like_regex "^((aws[-_]?)?access[-_]?key([-_]?id)?|(aws[-_]?)?secret[-_]?access[-_]?key|secret[-_]?key|password|pass|token|access[-_]?token|refresh[-_]?token|id[-_]?token|(aws[-_]?)?session[-_]?token|api[-_]?key|client[-_]?secret|private[-_]?key|signing[-_]?(key|secret)|credential(s)?)$" flag "i")'
+          )
+          and target_storage->'storage'->>'endpoint' !~ '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@'
+        )
+      );
+  end if;
 end $$;

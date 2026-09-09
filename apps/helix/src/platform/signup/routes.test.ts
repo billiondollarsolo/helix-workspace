@@ -1352,7 +1352,7 @@ describe("signup route skeleton", () => {
             currentStep: "sso",
             planChoice: "personal",
             inviteCount: orgId === "11111111-1111-4111-8111-111111111111" ? 2 : 0,
-            identityChoice: "google",
+            identityChoice: "local",
             updatedAt: "2026-05-24T12:00:00.000Z",
           };
         },
@@ -1373,7 +1373,7 @@ describe("signup route skeleton", () => {
       currentStep: "sso",
       planChoice: "personal",
       inviteCount: 2,
-      identityChoice: "google",
+      identityChoice: "local",
       updatedAt: "2026-05-24T12:00:00.000Z",
     });
     await app.close();

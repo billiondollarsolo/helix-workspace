@@ -40,7 +40,7 @@ jobs:
         working-directory: helix-all/helix-workspace
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: helix-all/helix-workspace
 
@@ -51,14 +51,14 @@ jobs:
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: pnpm
           cache-dependency-path: |
             helix-all/helix-workspace/pnpm-lock.yaml
@@ -82,9 +82,12 @@ jobs:
       - name: Run E2E suite (mocked backend)
         run: pnpm --filter @helix/web test:e2e
 
+      - name: Enforce low-end web performance budgets
+        run: pnpm --filter @helix/web test:performance
+
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report-mocked
           path: |
@@ -111,7 +114,7 @@ jobs:
       HELIX_E2E_MAILPIT_API_BASE_URL: http://127.0.0.1:28458
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: helix-all/helix-workspace
 
@@ -122,14 +125,14 @@ jobs:
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: pnpm
           cache-dependency-path: |
             helix-all/helix-workspace/pnpm-lock.yaml
@@ -149,8 +152,8 @@ jobs:
         # `helix` app itself is run from source below so CI does not depend on a
         # prebuilt image.
         run: |
-          docker compose -p helix_e2e up -d \
-            postgres redis nats meilisearch rustfs cerbos mailpit
+          docker compose -p helix_e2e --profile mail-security up -d \
+            postgres redis nats meilisearch rustfs cerbos mailpit spamd clamav
 
       - name: Wait for Postgres
         run: |
@@ -161,10 +164,51 @@ jobs:
           echo "Postgres did not become ready" >&2
           exit 1
 
+      - name: Wait for mail security services
+        shell: bash
+        run: |
+          for port in 28459 28460; do
+            ready=false
+            for attempt in $(seq 1 90); do
+              if timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+                ready=true
+                break
+              fi
+              sleep 2
+            done
+            if [ "$ready" != true ]; then
+              echo "Mail security service on port $port did not become ready" >&2
+              exit 1
+            fi
+          done
+
       - name: Prepare database
         run: |
           pnpm --filter @helix/app db:migrate
           pnpm --filter @helix/app db:seed:oauth
+
+      - name: Run mandatory real-service contracts
+        env:
+          HELIX_REAL_SERVICES_INTEGRATION: "1"
+          REDIS_URL: redis://127.0.0.1:28433
+          NATS_URL: nats://127.0.0.1:28434
+          MEILI_HOST: http://127.0.0.1:28436
+          MEILI_MASTER_KEY: helix_dev_meili_master_key
+          CERBOS_HTTP_URL: http://127.0.0.1:28439
+          MAIL_SPAMD_HOST: 127.0.0.1
+          MAIL_SPAMD_PORT: "28459"
+          MAIL_CLAMAV_HOST: 127.0.0.1
+          MAIL_CLAMAV_PORT: "28460"
+          S3_CONTRACT_ENDPOINT: http://127.0.0.1:28437
+          S3_CONTRACT_ACCESS_KEY: helixrustfs
+          S3_CONTRACT_SECRET_KEY: helix_rustfs_dev_secret
+          S3_CONTRACT_BUCKET: helix-objects
+        run: |
+          pnpm --filter @helix/app exec vitest run \
+            src/platform/ops/real-services.integration.test.ts \
+            src/platform/storage/s3-compatible.contract.test.ts \
+            src/platform/tenancy/cross-tenant-isolation.test.ts \
+            --maxWorkers=1
 
       - name: Start Helix API from source
         env:
@@ -191,6 +235,12 @@ jobs:
           MAIL_SMTP_HOST: 127.0.0.1
           MAIL_SMTP_PORT: "28457"
           MAIL_SMTP_SECURE: "false"
+          MAIL_SPAMD_ENABLED: "true"
+          MAIL_SPAMD_HOST: 127.0.0.1
+          MAIL_SPAMD_PORT: "28459"
+          MAIL_CLAMAV_ENABLED: "true"
+          MAIL_CLAMAV_HOST: 127.0.0.1
+          MAIL_CLAMAV_PORT: "28460"
           MAIL_SMTP_RECEIVER_ENABLED: "true"
           MAIL_SMTP_RECEIVER_HOST: 0.0.0.0
           MAIL_SMTP_RECEIVER_PORT: "2525"
@@ -225,7 +275,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report-live
           path: |

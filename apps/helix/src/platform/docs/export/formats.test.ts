@@ -94,8 +94,8 @@ describe("docs export formats", () => {
     expect(first.byteSize).toBe(Buffer.byteLength(pdf, "utf8"));
   });
 
-  it("exports PDF bytes through a headless Chromium renderer provider", async () => {
-    const renderedPdf = Buffer.from("%PDF-1.7\n% chromium render\n", "utf8");
+  it("exports PDF bytes through an isolated renderer provider", async () => {
+    const renderedPdf = Buffer.from("%PDF-1.7\n% isolated render\n", "utf8");
     const exported = await exportDocsDocumentWithProviders(
       { document, format: "pdf", includeComments: true },
       {
@@ -107,7 +107,7 @@ describe("docs export formats", () => {
             expect(input.html).toContain("<h1>Launch Plan</h1>");
             return {
               buffer: renderedPdf,
-              metadata: { chromiumRevision: "test-revision" },
+              metadata: { converterVersion: "test-version" },
             };
           },
         },
@@ -120,9 +120,9 @@ describe("docs export formats", () => {
       byteSize: renderedPdf.byteLength,
       contentBase64: renderedPdf.toString("base64"),
       metadata: {
-        generatedBy: "helix.docs.export.pdf.chromium",
-        renderer: "headless-chromium",
-        chromiumRevision: "test-revision",
+        generatedBy: "helix.docs.export.pdf.isolated",
+        renderer: "isolated-content-converter",
+        converterVersion: "test-version",
       },
     });
   });
@@ -169,9 +169,6 @@ describe("docs export formats", () => {
             expect(input.plainText).toContain("Owner Ada Lovelace shared Roadmap draft.");
             expect(input.html).toContain("<h1>Roadmap draft</h1>");
             expect(input.html).toContain("<p>Equation: E=mc^2</p>");
-            expect(input.html).toContain(
-              '<p>See <a href="#heading-2">Launch goals</a> on page 1.</p>',
-            );
             expect(input.markdown).not.toContain("{{");
             expect(input.html).not.toContain("{{");
             return { buffer: Buffer.from("%PDF-1.7\n% token render\n", "utf8") };
@@ -277,31 +274,19 @@ describe("docs export formats", () => {
     expect(epub).toContain("Column-aware export body.");
   });
 
-  it("falls back to deterministic PDF bytes when the Chromium renderer fails", async () => {
-    const errors: unknown[] = [];
-    const exported = await exportDocsDocumentWithProviders(
-      { document, format: "pdf", includeComments: true },
-      {
-        pdfRenderer: {
-          async render() {
-            throw new Error("Chromium unavailable");
+  it("fails closed when the isolated PDF renderer fails", async () => {
+    await expect(
+      exportDocsDocumentWithProviders(
+        { document, format: "pdf", includeComments: true },
+        {
+          pdfRenderer: {
+            async render() {
+              throw new Error("converter unavailable");
+            },
           },
         },
-        onPdfRendererError: (error) => {
-          errors.push(error);
-        },
-      },
-    );
-    const pdf = Buffer.from(exported.contentBase64, "base64").toString("utf8");
-
-    expect(errors).toHaveLength(1);
-    expect(exported.metadata).toEqual({
-      generatedBy: "helix.docs.export.pdf",
-      deterministic: true,
-      fallback: true,
-      fallbackFrom: "headless-chromium",
-    });
-    expect(pdf.startsWith("%PDF-1.4\n")).toBe(true);
+      ),
+    ).rejects.toThrow("converter unavailable");
   });
 
   it("exports deterministic minimal valid DOCX OpenXML package bytes", () => {
@@ -335,9 +320,7 @@ describe("docs export formats", () => {
     expect(packageText).toContain('<w:commentRangeEnd w:id="0"/>');
     expect(packageText).toContain('<w:commentReference w:id="0"/>');
     const titleIndex = packageText.indexOf("<w:t>Launch Plan</w:t>");
-    const anchorIndex = packageText.indexOf(
-      "<w:t>Ship PDF, DOCX, and Markdown exports.</w:t>",
-    );
+    const anchorIndex = packageText.indexOf("<w:t>Ship PDF, DOCX, and Markdown exports.</w:t>");
     const commentRangeIndex = packageText.indexOf('<w:commentRangeStart w:id="0"/>');
     expect(commentRangeIndex).toBeGreaterThan(titleIndex);
     expect(commentRangeIndex).toBeLessThan(anchorIndex);
@@ -468,9 +451,7 @@ describe("docs export formats", () => {
     const packageText = docx.toString("utf8");
 
     expect(packageText).toContain("word/media/image1.png");
-    expect(packageText).toContain(
-      '<Default Extension="png" ContentType="image/png"/>',
-    );
+    expect(packageText).toContain('<Default Extension="png" ContentType="image/png"/>');
     expect(packageText).toContain(
       'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"',
     );

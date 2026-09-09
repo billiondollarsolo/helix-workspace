@@ -445,7 +445,22 @@ function imageDataFromDataUri(value: string | undefined): string | null {
     return null;
   }
   const mimeType = rawMimeType === "image/jpg" ? "image/jpeg" : rawMimeType;
+  const bytes = Buffer.from(payload, "base64");
+  if (bytes.byteLength > 10 * 1024 * 1024 || !hasExpectedImageSignature(mimeType, bytes)) {
+    return null;
+  }
   return `${mimeType};base64,${payload}`;
+}
+
+function hasExpectedImageSignature(mimeType: string, bytes: Buffer): boolean {
+  if (mimeType === "image/png") {
+    return bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  }
+  if (mimeType === "image/jpeg") {
+    return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  }
+  return bytes.subarray(0, 6).toString("ascii") === "GIF87a" ||
+    bytes.subarray(0, 6).toString("ascii") === "GIF89a";
 }
 
 function bulletLines(items: readonly string[]): string {

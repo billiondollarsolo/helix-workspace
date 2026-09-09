@@ -287,6 +287,10 @@ describe("slidesListFromDriveQueryOptions", () => {
         id: "actor-maya",
         email: "maya@example.com",
         displayName: "Maya Chen",
+        kind: "directory",
+        favorite: false,
+        avatarDataUrl: null,
+        relationship: {},
       },
     ]);
     expect(vi.mocked(fetch)).toHaveBeenCalledWith("/api/people?limit=10", {

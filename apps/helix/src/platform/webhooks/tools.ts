@@ -13,9 +13,10 @@ import type {
   WebhookDeliveryRecord,
   WebhookSecretResolver,
 } from "./store.js";
+import { containsPlaintextSecretField, webhookHeadersAreSafe } from "./store.js";
 import { jsonRecordSchema, stringRecordSchema, zodToolSchema } from "./tool-schemas.js";
 import { webhookDeliveryStatuses, webhookDirections } from "./types.js";
-import { z } from "zod3";
+import { z } from "zod";
 
 const uuidSchema = z.string().uuid();
 const slugSchema = z
@@ -28,10 +29,17 @@ const outboundCreateSchema = z.object({
   name: z.string().min(1),
   url: z.string().url(),
   eventSubjects: z.array(z.string().min(1)).default([]),
-  secretRef: z.string().min(1).optional(),
-  headers: stringRecordSchema.default({}),
+  secret: z.string().min(32).max(4_096),
+  headers: stringRecordSchema
+    .refine(webhookHeadersAreSafe, "Authentication headers belong in the encrypted secret.")
+    .default({}),
   enabled: z.boolean().default(true),
-  metadata: jsonRecordSchema.default({}),
+  metadata: jsonRecordSchema
+    .refine(
+      (value) => !containsPlaintextSecretField(value),
+      "Plaintext credential fields forbidden.",
+    )
+    .default({}),
 });
 
 const outboundUpdateSchema = outboundCreateSchema.partial().extend({
@@ -42,9 +50,14 @@ const inboundCreateSchema = z.object({
   name: z.string().min(1),
   slug: slugSchema,
   source: z.string().min(1).default("generic"),
-  secretRef: z.string().min(1).optional(),
+  secret: z.string().min(32).max(4_096),
   enabled: z.boolean().default(true),
-  metadata: jsonRecordSchema.default({}),
+  metadata: jsonRecordSchema
+    .refine(
+      (value) => !containsPlaintextSecretField(value),
+      "Plaintext credential fields forbidden.",
+    )
+    .default({}),
 });
 
 const inboundUpdateSchema = inboundCreateSchema.partial().extend({
@@ -52,6 +65,7 @@ const inboundUpdateSchema = inboundCreateSchema.partial().extend({
 });
 
 const idSchema = z.object({ id: uuidSchema });
+const rotateSecretSchema = idSchema.extend({ secret: z.string().min(32).max(4_096) });
 const outboundTestSchema = z.object({
   id: uuidSchema,
   subject: z.string().min(1).default("webhook.test"),
@@ -247,14 +261,18 @@ export function registerWebhookTools(
     description: "Rotate an inbound webhook secret.",
     permission: "admin.webhooks",
     sideEffects: "write",
-    inputSchema: zodToolSchema(idSchema, genericObjectJsonSchema),
+    inputSchema: zodToolSchema(rotateSecretSchema, genericObjectJsonSchema),
     outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
     handler: async (input, ctx) => {
-      const result = await options.store.rotateInboundSecret(ctx.actor.orgId, input.id);
+      const result = await options.store.rotateInboundSecret(
+        ctx.actor.orgId,
+        input.id,
+        input.secret,
+      );
       if (result === null) {
         throw new Error(`Unknown inbound webhook: ${input.id}`);
       }
-      return { webhook: serializeInbound(result.webhook), secretRef: result.secretRef };
+      return { webhook: serializeInbound(result), rotated: true };
     },
   });
 
@@ -313,16 +331,20 @@ function uuidOrNull(value: string): string | null {
 }
 
 function serializeOutbound(webhook: OutboundWebhookRecord) {
+  const { secretCiphertext: _secretCiphertext, ...redacted } = webhook;
   return {
-    ...webhook,
+    ...redacted,
+    hasSecret: true,
     createdAt: webhook.createdAt.toISOString(),
     updatedAt: webhook.updatedAt.toISOString(),
   };
 }
 
 function serializeInbound(webhook: InboundWebhookRecord) {
+  const { secretCiphertext: _secretCiphertext, ...redacted } = webhook;
   return {
-    ...webhook,
+    ...redacted,
+    hasSecret: true,
     lastReceivedAt: webhook.lastReceivedAt?.toISOString() ?? null,
     createdAt: webhook.createdAt.toISOString(),
     updatedAt: webhook.updatedAt.toISOString(),

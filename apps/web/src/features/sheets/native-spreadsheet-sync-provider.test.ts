@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { storeAccessToken } from "@/lib/auth";
 import type { SheetsApiTabWithCells } from "./api";
 import {
   NativeSpreadsheetSyncProvider,
@@ -35,15 +34,13 @@ describe("native spreadsheet sync provider", () => {
     vi.useRealTimers();
   });
 
-  it("normalizes Sheets sync URLs and preserves fallback realtime auth", () => {
+  it("normalizes Sheets sync URLs without credentials", () => {
     expect(sheetSyncWebSocketUrl("sheet 1")).toBe(
-      "ws://localhost:3000/sync/sheets/sheet%201?protocol=sheets-ot",
+      "ws://localhost:3000/v1/sync/sheets/sheet%201?protocol=sheets-ot",
     );
 
-    storeAccessToken("token-1");
-
     expect(sheetSyncWebSocketUrl("sheet 1")).toBe(
-      "ws://localhost:3000/sync/sheets/sheet%201?protocol=sheets-ot&access_token=token-1",
+      "ws://localhost:3000/v1/sync/sheets/sheet%201?protocol=sheets-ot",
     );
   });
 
@@ -58,7 +55,7 @@ describe("native spreadsheet sync provider", () => {
 
     provider.connect();
     const socket = MockWebSocket.instances.at(-1);
-    expect(socket?.url).toBe(`ws://localhost:3000/sync/sheets/${sheetId}?protocol=sheets-ot`);
+    expect(socket?.url).toBe(`ws://localhost:3000/v1/sync/sheets/${sheetId}?protocol=sheets-ot`);
     socket?.open();
     socket?.receive({ type: "ready", revision: 7 });
 

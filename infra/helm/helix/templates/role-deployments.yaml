@@ -24,6 +24,13 @@ spec:
   replicas: {{ $role.replicaCount | default 1 }}
   {{- end }}
   revisionHistoryLimit: 3
+  minReadySeconds: {{ $.Values.availability.minReadySeconds }}
+  progressDeadlineSeconds: {{ $.Values.availability.progressDeadlineSeconds }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       {{- include "helix.selectorLabels" $ | nindent 6 }}
@@ -33,11 +40,21 @@ spec:
       labels:
         {{- include "helix.selectorLabels" $ | nindent 8 }}
         helix.io/role: {{ $role.name | quote }}
+        helix.io/service-account: {{ include "helix.serviceAccountName" $ | quote }}
         {{- with $.Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       annotations:
         checksum/config: {{ include "helix.configJson" $ | sha256sum }}
+        {{- if $.Values.vault.agentInject }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: {{ $.Values.external.vault.role | quote }}
+        vault.hashicorp.com/agent-inject-secret-helix: {{ $.Values.vault.secretPath | quote }}
+        {{- end }}
+        {{- if $.Values.spire.enabled }}
+        spire.io/trust-domain: {{ $.Values.spire.trustDomain | quote }}
+        spire.io/workload-selector: {{ $.Values.spire.workloadSelector | quote }}
+        {{- end }}
         {{- with $.Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -49,14 +66,12 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml $.Values.podSecurityContext | nindent 8 }}
-      {{- with ($role.nodeSelector | default $.Values.nodeSelector) }}
+      {{- $nodeSelector := mergeOverwrite (deepCopy ($role.nodeSelector | default $.Values.nodeSelector)) (dict "topology.kubernetes.io/region" $.Values.external.s3.region) }}
+      {{- with $nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with ($role.affinity | default $.Values.affinity) }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "helix.podScheduling" (dict "root" $ "role" $role.name "affinity" ($role.affinity | default $.Values.affinity) "topologySpreadConstraints" ($role.topologySpreadConstraints | default $.Values.topologySpreadConstraints)) | nindent 6 }}
       {{- with ($role.tolerations | default $.Values.tolerations) }}
       tolerations:
         {{- toYaml . | nindent 8 }}
@@ -78,6 +93,19 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if $.Values.spire.enabled }}
+            - name: spire-agent-socket
+              mountPath: /run/spire/sockets
+              readOnly: true
+            {{- end }}
+            {{- if $.Values.vault.csi.enabled }}
+            - name: vault-secrets
+              mountPath: /mnt/secrets-store
+              readOnly: true
+            {{- end }}
+            {{- with $.Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /readyz
@@ -86,6 +114,12 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 6
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: {{ $.Values.availability.startupProbe.periodSeconds }}
+            failureThreshold: {{ $.Values.availability.startupProbe.failureThreshold }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -104,6 +138,41 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if $.Values.spire.enabled }}
+        - name: spire-agent-socket
+          hostPath:
+            path: {{ dir $.Values.spire.socketPath | quote }}
+            type: Directory
+        {{- end }}
+        {{- if $.Values.vault.csi.enabled }}
+        - name: vault-secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ $.Values.vault.csi.providerClassName | quote }}
+        {{- end }}
+        {{- with $.Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "helix.labels" $ | nindent 4 }}
+    helix.io/role: {{ $role.name | quote }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $.Values.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "helix.selectorLabels" $ | nindent 4 }}
+    helix.io/role: {{ $role.name | quote }}
 {{- if $autoscaling.enabled }}
 ---
 apiVersion: autoscaling/v2
@@ -128,4 +197,18 @@ spec:
           type: Utilization
           averageUtilization: {{ $autoscaling.targetCPUUtilizationPercentage | default 70 }}
 {{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "helix.labels" $ | nindent 4 }}
+    helix.io/role: {{ $role.name | quote }}
+spec:
+  minAvailable: {{ $role.minAvailable | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "helix.selectorLabels" $ | nindent 6 }}
+      helix.io/role: {{ $role.name | quote }}
 {{- end }}

@@ -148,20 +148,14 @@ export type SlideSyncOperation =
       readonly slideId: string;
       readonly content?: SlideContent | undefined;
       readonly speakerNotes?: string | undefined;
-      /**
-       * Optional per-slide CAS token. When provided, the server rejects the
-       * operation with `slide-conflict` if the slide's current revision is
-       * higher (i.e. another writer mutated the slide first). Older clients
-       * that omit this field still succeed but will silently last-write-win;
-       * the frontend ships it on every edit.
-       */
-      readonly expectedRevision?: number | undefined;
+      /** Per-slide CAS token used to reject stale writes. */
+      readonly expectedRevision: number;
     }
   | {
       readonly kind: "delete-slide";
       readonly slideId: string;
       /** See `update-slide.expectedRevision`. */
-      readonly expectedRevision?: number | undefined;
+      readonly expectedRevision: number;
     }
   | {
       readonly kind: "reorder-slides";
@@ -321,7 +315,7 @@ export class PostgresSlidesStore implements SlidesStore {
 
   async createDeck(input: CreateSlideDeckInput): Promise<SlideDeckSummaryRecord> {
     return this.sql.begin(async (tx) => {
-      const rows = (await tx`
+      const rows = await tx<SlideDeckRow[]>`
         insert into slide_decks (org_id, title, owner_actor_id, created_by_actor_id, metadata)
         values (
           ${input.orgId},
@@ -331,7 +325,7 @@ export class PostgresSlidesStore implements SlidesStore {
           ${tx.json(toSqlJson(input.metadata ?? {}))}
         )
         returning *
-      `) as unknown as readonly SlideDeckRow[];
+      `;
       const deck = mapDeck(rows[0]);
       const storageKey = `slides/${input.orgId}/${deck.id}`;
       const storedSnapshot = await writeSlideDeckStorageSnapshot({
@@ -408,14 +402,14 @@ export class PostgresSlidesStore implements SlidesStore {
         return null;
       }
       const sourceSlides = await selectSlidesForDeck(tx, input.orgId, input.deckId);
-      const sourceObjectRows = (await tx`
+      const sourceObjectRows = await tx<{ readonly metadata: JsonObject }[]>`
         select metadata
         from objects
         where id = ${input.deckId}
           and org_id = ${input.orgId}
           and metadata->>'app' = 'slides'
         limit 1
-      `) as unknown as readonly { readonly metadata: JsonObject }[];
+      `;
       const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata.folderId);
       const folderId = input.folderId === undefined ? sourceFolderId : input.folderId;
       const title = input.title?.trim() || `${source.title} (Copy)`;
@@ -425,7 +419,7 @@ export class PostgresSlidesStore implements SlidesStore {
         copiedFromDeckId: source.id,
         ...(input.metadata ?? {}),
       };
-      const rows = (await tx`
+      const rows = await tx<SlideDeckRow[]>`
         insert into slide_decks (org_id, title, owner_actor_id, created_by_actor_id, metadata)
         values (
           ${input.orgId},
@@ -435,12 +429,12 @@ export class PostgresSlidesStore implements SlidesStore {
           ${tx.json(toSqlJson(metadata))}
         )
         returning *
-      `) as unknown as readonly SlideDeckRow[];
+      `;
       const deck = mapDeck(rows[0]);
       const slides: SlideRecord[] = [];
       const now = new Date();
       for (const slide of sourceSlides) {
-        const slideRows = (await tx`
+        const slideRows = await tx<SlideRow[]>`
           insert into slides (
             org_id, deck_id, position, layout, content, speaker_notes, revision, created_at, updated_at
           )
@@ -456,7 +450,7 @@ export class PostgresSlidesStore implements SlidesStore {
             ${now}
           )
           returning *
-        `) as unknown as readonly SlideRow[];
+        `;
         slides.push(mapSlide(slideRows[0]));
       }
       const storageKey = `slides/${input.orgId}/${deck.id}`;
@@ -534,7 +528,7 @@ export class PostgresSlidesStore implements SlidesStore {
   async listDecksForActor(input: ListSlideDecksInput): Promise<ListSlideDecksResult> {
     const query = input.query?.trim();
     const titleQuery = query === undefined || query.length === 0 ? null : `%${query}%`;
-    const rows = (await this.sql`
+    const rows = await this.sql<(SlideDeckSummaryRow & { readonly total_count: string | number })[]>`
       select
         d.*,
         count(s.id) filter (where s.id is not null) as slide_count,
@@ -552,7 +546,7 @@ export class PostgresSlidesStore implements SlidesStore {
       order by d.updated_at desc
       limit ${input.limit}
       offset ${input.offset}
-    `) as unknown as readonly (SlideDeckSummaryRow & { readonly total_count: string | number })[];
+    `;
     return {
       decks: rows.map(mapDeckSummary),
       total: rows[0] === undefined ? 0 : Number(rows[0].total_count),
@@ -571,13 +565,13 @@ export class PostgresSlidesStore implements SlidesStore {
     if (deck === null) {
       return null;
     }
-    const slideRows = (await this.sql`
+    const slideRows = await this.sql<SlideRow[]>`
       select *
       from slides
       where org_id = ${input.orgId}
         and deck_id = ${input.deckId}
       order by position asc
-    `) as unknown as readonly SlideRow[];
+    `;
     const mappedSlides = slideRows.map(mapSlide);
     return { deck: { ...deck, slideCount: mappedSlides.length }, slides: mappedSlides };
   }
@@ -590,7 +584,7 @@ export class PostgresSlidesStore implements SlidesStore {
       }
       const nextTitle = input.title ?? existing.title;
       const nextMetadata = input.metadata ?? existing.metadata;
-      const rows = (await tx`
+      const rows = await tx<SlideDeckRow[]>`
         update slide_decks
         set
           title = ${nextTitle},
@@ -600,7 +594,7 @@ export class PostgresSlidesStore implements SlidesStore {
           and org_id = ${input.orgId}
           and deleted_at is null
         returning *
-      `) as unknown as readonly SlideDeckRow[];
+      `;
       if (rows[0] === undefined) {
         return null;
       }
@@ -612,9 +606,9 @@ export class PostgresSlidesStore implements SlidesStore {
         deckId: deck.id,
         payload: { title: deck.title },
       });
-      const countRows = (await tx`
+      const countRows = await tx<{ readonly slide_count: number }[]>`
         select count(*)::int as slide_count from slides where deck_id = ${input.deckId}
-      `) as unknown as readonly { readonly slide_count: number }[];
+      `;
       await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
       return { ...deck, slideCount: countRows[0]?.slide_count ?? 0 };
     });
@@ -630,14 +624,14 @@ export class PostgresSlidesStore implements SlidesStore {
       if (existing === null) {
         return false;
       }
-      const rows = (await tx`
+      const rows = await tx<{ readonly id: string }[]>`
         update slide_decks
         set deleted_at = now(), updated_at = now()
         where id = ${input.deckId}
           and org_id = ${input.orgId}
           and deleted_at is null
         returning id
-      `) as unknown as readonly { readonly id: string }[];
+      `;
       if (rows[0] === undefined) {
         return false;
       }
@@ -655,9 +649,9 @@ export class PostgresSlidesStore implements SlidesStore {
   async createSlide(input: CreateSlideInput): Promise<SlideRecord> {
     return this.sql.begin(async (tx) => {
       await requireDeckAccess(tx, input.orgId, input.actorId, input.deckId);
-      const countRows = (await tx`
+      const countRows = await tx<{ readonly slide_count: number }[]>`
         select count(*)::int as slide_count from slides where deck_id = ${input.deckId}
-      `) as unknown as readonly { readonly slide_count: number }[];
+      `;
       const slideCount = countRows[0]?.slide_count ?? 0;
       const targetPosition =
         input.position === undefined
@@ -680,7 +674,7 @@ export class PostgresSlidesStore implements SlidesStore {
         `;
       }
 
-      const rows = (await tx`
+      const rows = await tx<SlideRow[]>`
         insert into slides (org_id, deck_id, position, layout, content, speaker_notes)
         values (
           ${input.orgId},
@@ -691,7 +685,7 @@ export class PostgresSlidesStore implements SlidesStore {
           ${input.speakerNotes ?? ""}
         )
         returning *
-      `) as unknown as readonly SlideRow[];
+      `;
       const slide = mapSlide(rows[0]);
       await touchDeck(tx, input.orgId, input.deckId);
       await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
@@ -714,7 +708,7 @@ export class PostgresSlidesStore implements SlidesStore {
       }
       const nextContent = input.content ?? existing.content;
       const nextNotes = input.speakerNotes ?? existing.speakerNotes;
-      const rows = (await tx`
+      const rows = await tx<SlideRow[]>`
         update slides
         set
           layout = ${nextContent.layout},
@@ -725,7 +719,7 @@ export class PostgresSlidesStore implements SlidesStore {
         where id = ${input.slideId}
           and org_id = ${input.orgId}
         returning *
-      `) as unknown as readonly SlideRow[];
+      `;
       if (rows[0] === undefined) {
         return null;
       }
@@ -774,9 +768,9 @@ export class PostgresSlidesStore implements SlidesStore {
   async reorderSlides(input: ReorderSlidesInput): Promise<readonly SlideRecord[]> {
     return this.sql.begin(async (tx) => {
       await requireDeckAccess(tx, input.orgId, input.actorId, input.deckId);
-      const currentRows = (await tx`
+      const currentRows = await tx<{ readonly id: string }[]>`
         select id from slides where deck_id = ${input.deckId} and org_id = ${input.orgId}
-      `) as unknown as readonly { readonly id: string }[];
+      `;
       const currentIds = new Set(currentRows.map((row) => row.id));
       const requested = new Set(input.slideIds);
       if (currentIds.size !== requested.size || [...currentIds].some((id) => !requested.has(id))) {
@@ -806,12 +800,12 @@ export class PostgresSlidesStore implements SlidesStore {
         payload: { order: [...input.slideIds] },
       });
       await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.deckId);
-      const rows = (await tx`
+      const rows = await tx<SlideRow[]>`
         select *
         from slides
         where deck_id = ${input.deckId} and org_id = ${input.orgId}
         order by position asc
-      `) as unknown as readonly SlideRow[];
+      `;
       return rows.map(mapSlide);
     });
   }
@@ -826,32 +820,32 @@ export class PostgresSlidesStore implements SlidesStore {
     if (deck === null) {
       return [];
     }
-    const rows = (await this.sql`
+    const rows = await this.sql<SlideOperationLogRow[]>`
       select *
       from slides_op_log
       where org_id = ${input.orgId}
         and deck_id = ${input.deckId}
         and revision > ${input.afterRevision ?? 0}
       order by revision asc
-    `) as unknown as readonly SlideOperationLogRow[];
+    `;
     return rows.map(mapSlideOperationLog);
   }
 
   async appendOperation(input: AppendSlideOperationInput): Promise<SlideOperationLogRecord> {
     return this.sql.begin(async (tx) => {
       await requireDeckAccess(tx, input.orgId, input.actorId, input.deckId);
-      const existingRows = (await tx`
+      const existingRows = await tx<SlideOperationLogRow[]>`
         select *
         from slides_op_log
         where org_id = ${input.orgId}
           and deck_id = ${input.deckId}
           and operation_id = ${input.operationId}
         limit 1
-      `) as unknown as readonly SlideOperationLogRow[];
+      `;
       if (existingRows[0] !== undefined) {
         return mapSlideOperationLog(existingRows[0]);
       }
-      const rows = (await tx`
+      const rows = await tx<SlideOperationLogRow[]>`
         insert into slides_op_log (
           org_id, deck_id, actor_id, operation_id, revision, base_revision, operation
         )
@@ -869,7 +863,7 @@ export class PostgresSlidesStore implements SlidesStore {
           ${tx.json(toSqlJson(input.operation))}
         )
         returning *
-      `) as unknown as readonly SlideOperationLogRow[];
+      `;
       return mapSlideOperationLog(rows[0]);
     });
   }
@@ -877,14 +871,14 @@ export class PostgresSlidesStore implements SlidesStore {
   async applyOperation(input: ApplySlideOperationInput): Promise<ApplySlideOperationResult> {
     return this.sql.begin(async (tx) => {
       await requireDeckAccessForUpdate(tx, input.orgId, input.actorId, input.deckId);
-      const existingRows = (await tx`
+      const existingRows = await tx<SlideOperationLogRow[]>`
         select *
         from slides_op_log
         where org_id = ${input.orgId}
           and deck_id = ${input.deckId}
           and operation_id = ${input.operationId}
         limit 1
-      `) as unknown as readonly SlideOperationLogRow[];
+      `;
       if (existingRows[0] !== undefined) {
         return {
           status: "duplicate",
@@ -892,11 +886,11 @@ export class PostgresSlidesStore implements SlidesStore {
           revision: existingRows[0].revision,
         };
       }
-      const latestRows = (await tx`
+      const latestRows = await tx<{ readonly revision: number }[]>`
         select coalesce(max(revision), 0)::int as revision
         from slides_op_log
         where org_id = ${input.orgId} and deck_id = ${input.deckId}
-      `) as unknown as readonly { readonly revision: number }[];
+      `;
       const latestRevision = latestRows[0]?.revision ?? 0;
       if (input.baseRevision > latestRevision) {
         return { status: "ahead", operationId: input.operationId, revision: latestRevision };
@@ -908,17 +902,14 @@ export class PostgresSlidesStore implements SlidesStore {
       // overwrites the first. The slide's own `revision` is bumped on every
       // write, so a stale `expectedRevision` here means another writer beat
       // us. Reject and let the client re-fetch + retry on the fresh snapshot.
-      if (
-        (input.operation.kind === "update-slide" || input.operation.kind === "delete-slide") &&
-        input.operation.expectedRevision !== undefined
-      ) {
-        const slideRows = (await tx`
+      if (input.operation.kind === "update-slide" || input.operation.kind === "delete-slide") {
+        const slideRows = await tx<{ readonly revision: number }[]>`
           select revision
           from slides
           where id = ${input.operation.slideId}
             and org_id = ${input.orgId}
           limit 1
-        `) as unknown as readonly { readonly revision: number }[];
+        `;
         const currentSlideRevision = slideRows[0]?.revision ?? 0;
         if (currentSlideRevision !== input.operation.expectedRevision) {
           const deck = await selectDeckForActor(tx, input.orgId, input.actorId, input.deckId);
@@ -975,7 +966,7 @@ export class PostgresSlidesStore implements SlidesStore {
     if (deck === null) {
       return [];
     }
-    const rows = (await this.sql`
+    const rows = await this.sql<SlideDeckVersionRow[]>`
       select *
       from drive_versions
       where org_id = ${input.orgId}
@@ -983,7 +974,7 @@ export class PostgresSlidesStore implements SlidesStore {
         and mime_type = 'application/vnd.helix.presentation+json'
       order by version_number desc
       limit ${input.limit}
-    `) as unknown as readonly SlideDeckVersionRow[];
+    `;
     return rows.map(mapSlideDeckVersion);
   }
 
@@ -993,7 +984,7 @@ export class PostgresSlidesStore implements SlidesStore {
   } | null> {
     return this.sql.begin(async (tx) => {
       await requireDeckAccessForUpdate(tx, input.orgId, input.actorId, input.deckId);
-      const versionRows = (await tx`
+      const versionRows = await tx<SlideDeckVersionRow[]>`
         select *
         from drive_versions
         where id = ${input.versionId}
@@ -1001,7 +992,7 @@ export class PostgresSlidesStore implements SlidesStore {
           and object_id = ${input.deckId}
           and mime_type = 'application/vnd.helix.presentation+json'
         limit 1
-      `) as unknown as readonly SlideDeckVersionRow[];
+      `;
       if (versionRows[0] === undefined) {
         return null;
       }
@@ -1097,9 +1088,9 @@ export class PostgresSlidesStore implements SlidesStore {
         return;
       }
       case "create-slide": {
-        const countRows = (await tx`
+        const countRows = await tx<{ readonly slide_count: number }[]>`
           select count(*)::int as slide_count from slides where deck_id = ${input.deckId}
-        `) as unknown as readonly { readonly slide_count: number }[];
+        `;
         const slideCount = countRows[0]?.slide_count ?? 0;
         const targetPosition =
           input.operation.position === undefined
@@ -1117,7 +1108,7 @@ export class PostgresSlidesStore implements SlidesStore {
             where deck_id = ${input.deckId} and position < 0
           `;
         }
-        const rows = (await tx`
+        const rows = await tx<SlideRow[]>`
           insert into slides (org_id, deck_id, position, layout, content, speaker_notes)
           values (
             ${input.orgId},
@@ -1128,7 +1119,7 @@ export class PostgresSlidesStore implements SlidesStore {
             ${input.operation.speakerNotes ?? ""}
           )
           returning *
-        `) as unknown as readonly SlideRow[];
+        `;
         const slide = mapSlide(rows[0]);
         await touchDeck(tx, input.orgId, input.deckId);
         await appendSlidesActivity(tx, {
@@ -1203,9 +1194,9 @@ export class PostgresSlidesStore implements SlidesStore {
         return;
       }
       case "reorder-slides": {
-        const currentRows = (await tx`
+        const currentRows = await tx<{ readonly id: string }[]>`
           select id from slides where deck_id = ${input.deckId} and org_id = ${input.orgId}
-        `) as unknown as readonly { readonly id: string }[];
+        `;
         const currentIds = new Set(currentRows.map((row) => row.id));
         const requested = new Set(input.operation.slideIds);
         if (
@@ -1301,11 +1292,11 @@ export class PostgresSlidesStore implements SlidesStore {
 }
 
 async function nextDriveVersionNumber(sql: SqlLike, objectId: string): Promise<number> {
-  const rows = (await sql`
+  const rows = await sql<{ readonly version_number: number }[]>`
     select coalesce(max(version_number) + 1, 1)::int as version_number
     from drive_versions
     where object_id = ${objectId}
-  `) as unknown as readonly { readonly version_number: number }[];
+  `;
   return rows[0]?.version_number ?? 1;
 }
 
@@ -1356,14 +1347,14 @@ async function selectDeckById(
   orgId: string,
   deckId: string,
 ): Promise<SlideDeckRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<SlideDeckRow[]>`
     select *
     from slide_decks
     where id = ${deckId}
       and org_id = ${orgId}
       and deleted_at is null
     limit 1
-  `) as unknown as readonly SlideDeckRow[];
+  `;
   return rows[0] === undefined ? null : mapDeck(rows[0]);
 }
 
@@ -1373,7 +1364,7 @@ async function selectDeckForActor(
   actorId: string,
   deckId: string,
 ): Promise<SlideDeckRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<SlideDeckRow[]>`
     select *
     from slide_decks
     where id = ${deckId}
@@ -1381,7 +1372,7 @@ async function selectDeckForActor(
       and deleted_at is null
       and (owner_actor_id = ${actorId} or created_by_actor_id = ${actorId})
     limit 1
-  `) as unknown as readonly SlideDeckRow[];
+  `;
   return rows[0] === undefined ? null : mapDeck(rows[0]);
 }
 
@@ -1403,7 +1394,7 @@ async function requireDeckAccessForUpdate(
   actorId: string,
   deckId: string,
 ): Promise<void> {
-  const rows = (await sql`
+  const rows = await sql<{ readonly id: string }[]>`
     select id
     from slide_decks
     where id = ${deckId}
@@ -1414,7 +1405,7 @@ async function requireDeckAccessForUpdate(
         or created_by_actor_id = ${actorId}
       )
     for update
-  `) as unknown as readonly { readonly id: string }[];
+  `;
   if (rows[0] === undefined) {
     throw new Error(`Unknown or inaccessible deck: ${deckId}`);
   }
@@ -1426,7 +1417,7 @@ async function selectSlideForActor(
   actorId: string,
   slideId: string,
 ): Promise<SlideRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<SlideRow[]>`
     select s.*
     from slides s
     join slide_decks d on d.id = s.deck_id
@@ -1435,7 +1426,7 @@ async function selectSlideForActor(
       and d.deleted_at is null
       and (d.owner_actor_id = ${actorId} or d.created_by_actor_id = ${actorId})
     limit 1
-  `) as unknown as readonly SlideRow[];
+  `;
   return rows[0] === undefined ? null : mapSlide(rows[0]);
 }
 
@@ -1444,13 +1435,13 @@ async function selectSlidesForDeck(
   orgId: string,
   deckId: string,
 ): Promise<readonly SlideRecord[]> {
-  const rows = (await sql`
+  const rows = await sql<SlideRow[]>`
     select *
     from slides
     where org_id = ${orgId}
       and deck_id = ${deckId}
     order by position asc
-  `) as unknown as readonly SlideRow[];
+  `;
   return rows.map(mapSlide);
 }
 
@@ -1470,13 +1461,13 @@ async function appendSlidesActivity(
     readonly payload: JsonObject;
   },
 ): Promise<void> {
-  const previousRows = (await sql`
+  const previousRows = await sql<{ readonly this_hash: string }[]>`
     select this_hash
     from activity
     where org_id = ${input.orgId}
     order by created_at desc
     limit 1
-  `) as unknown as readonly { readonly this_hash: string }[];
+  `;
   const prevHash = previousRows[0]?.this_hash ?? null;
   const thisHash = `${prevHash ?? "root"}:${input.verb}:${input.deckId}:${String(Date.now())}`;
   await sql`
@@ -2142,10 +2133,7 @@ export class InMemorySlidesStore implements SlidesStore {
     if (input.baseRevision > latestRevision) {
       return { status: "ahead", operationId: input.operationId, revision: latestRevision };
     }
-    if (
-      (input.operation.kind === "update-slide" || input.operation.kind === "delete-slide") &&
-      input.operation.expectedRevision !== undefined
-    ) {
+    if (input.operation.kind === "update-slide" || input.operation.kind === "delete-slide") {
       const slide = this.slides.get(input.operation.slideId);
       const currentSlideRevision = slide?.revision ?? 0;
       if (currentSlideRevision !== input.operation.expectedRevision) {

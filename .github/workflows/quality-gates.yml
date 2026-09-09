@@ -28,7 +28,7 @@ jobs:
           - multi-tenant-saas
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: helix-all/helix-workspace
 
@@ -39,14 +39,14 @@ jobs:
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: pnpm
           cache-dependency-path: |
             helix-all/helix-workspace/pnpm-lock.yaml
@@ -69,7 +69,7 @@ jobs:
         working-directory: helix-all/helix-workspace
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: helix-all/helix-workspace
 
@@ -80,14 +80,14 @@ jobs:
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: pnpm
           cache-dependency-path: |
             helix-all/helix-workspace/pnpm-lock.yaml
@@ -96,11 +96,44 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Audit production dependencies
+        run: pnpm audit:prod
+
+      - name: Verify supply-chain policy
+        run: pnpm quality:supply-chain
+
+      - name: Verify Compose remains local-only
+        run: pnpm infra:compose:validate
+
+      - name: Verify browser and edge security headers
+        run: pnpm infra:caddy:validate
+
+      - name: Verify bounded Internet mail edge
+        run: pnpm infra:mail-edge:validate
+
       - name: Test editor boundary verifier
         run: pnpm quality:editors-boundaries:test
 
       - name: Verify editor package boundaries
         run: pnpm quality:editors-boundaries
+
+      - name: Enforce expiring unsafe-cast budgets
+        run: pnpm quality:contracts
 
   backend-live-demo-data:
     runs-on: ubuntu-latest
@@ -110,7 +143,7 @@ jobs:
         working-directory: helix-all/helix-workspace
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: helix-all/helix-workspace
 
@@ -121,14 +154,14 @@ jobs:
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: pnpm
           cache-dependency-path: |
             helix-all/helix-workspace/pnpm-lock.yaml
@@ -151,6 +184,18 @@ jobs:
           DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
         run: pnpm --filter @helix/app db:migrate
 
+      - name: Prove forced tenant RLS with constrained database roles
+        env:
+          HELIX_MIGRATION_DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
+          HELIX_RLS_APP_DATABASE_URL: postgres://helix_app:helix_app_ci@127.0.0.1:39532/helix_demo_smoke
+          HELIX_RLS_WORKER_DATABASE_URL: postgres://helix_worker:helix_worker_ci@127.0.0.1:39532/helix_demo_smoke
+          HELIX_RLS_READONLY_DATABASE_URL: postgres://helix_readonly:helix_readonly_ci@127.0.0.1:39532/helix_demo_smoke
+        run: |
+          docker compose -p helix_demo_smoke_ci_${{ github.run_id }} exec -T postgres \
+            psql -U helix -d helix_demo_smoke -v ON_ERROR_STOP=1 \
+            -c "alter role helix_app password 'helix_app_ci'; alter role helix_worker password 'helix_worker_ci'; alter role helix_readonly password 'helix_readonly_ci';"
+          pnpm --filter @helix/app test -- src/platform/tenancy/rls-hardening.integration.test.ts
+
       - name: Disable tenant API rate limit for synthetic load
         run: |
           docker compose -p helix_demo_smoke_ci_${{ github.run_id }} exec -T postgres \
@@ -162,7 +207,7 @@ jobs:
           HOST: 0.0.0.0
           PORT: "39531"
           LOG_LEVEL: error
-          DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:39532/helix_demo_smoke
+          DATABASE_URL: postgres://helix_app:helix_app_ci@127.0.0.1:39532/helix_demo_smoke
           BETTER_AUTH_ENABLED: "true"
           BETTER_AUTH_URL: http://127.0.0.1:39531
           BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:39531
@@ -229,7 +274,7 @@ jobs:
         working-directory: helix-all/helix-workspace
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: helix-all/helix-workspace
 
@@ -240,14 +285,14 @@ jobs:
           candidate-ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: pnpm
           cache-dependency-path: |
             helix-all/helix-workspace/pnpm-lock.yaml
@@ -282,7 +327,7 @@ jobs:
 
       - name: Upload accessibility report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: accessibility-report
           path: /tmp/helix-a11y

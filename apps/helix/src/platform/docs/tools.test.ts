@@ -8,6 +8,7 @@ import type {
 } from "@helix/sdk-types";
 import { createToolRegistry } from "../tool-registry.js";
 import { InMemoryTenantHourlyQuotaLimiter } from "../limits/index.js";
+import type { ImportSourceReader } from "../import-source.js";
 import type {
   CopyDocsDocumentInput,
   CreateDocsDocumentInput,
@@ -270,6 +271,7 @@ describe("docs tools", () => {
     const registry = createToolRegistry();
     registerDocsTools(registry, {
       store,
+      importSources: importSource("Launch Plan.docx", Buffer.from("docx bytes", "utf8")),
       docxToMarkdown: async (input) => ({
         markdown: `# Imported\n\nBytes: ${String(input.buffer.byteLength)}`,
         messages: [{ type: "warning", message: "Dropped unsupported shape" }],
@@ -279,8 +281,7 @@ describe("docs tools", () => {
     const result = await registry.invoke(
       "docs.import-docx",
       {
-        filename: "Launch Plan.docx",
-        contentBase64: Buffer.from("docx bytes", "utf8").toString("base64"),
+        sourceObjectId: docId,
         metadata: { source: "test" },
       },
       { actor: { id: actorId, orgId, type: "user", scopes: ["docs.write"] } },
@@ -315,6 +316,7 @@ describe("docs tools", () => {
     const registry = createToolRegistry();
     registerDocsTools(registry, {
       store,
+      importSources: importSource("Macro Template.dotm", Buffer.from("dotm bytes", "utf8")),
       docxToMarkdown: async () => ({
         markdown: "# Imported macro document",
         messages: [],
@@ -324,8 +326,7 @@ describe("docs tools", () => {
     const result = await registry.invoke(
       "docs.import-docx",
       {
-        filename: "Macro Template.dotm",
-        contentBase64: Buffer.from("dotm bytes", "utf8").toString("base64"),
+        sourceObjectId: docId,
         metadata: {
           importedFromFormat: "dotm",
           importedFromFormatLabel: "DOTM (Macro-enabled Word template)",
@@ -562,10 +563,10 @@ describe("docs tools", () => {
     expect(serializedMetering).not.toContain("test-agent");
   });
 
-  it("renders PDF exports through the configured Chromium renderer", async () => {
+  it("renders PDF exports through the configured isolated renderer", async () => {
     const store = new FakeDocsStore();
     const registry = createToolRegistry();
-    const renderedPdf = Buffer.from("%PDF-1.7\n% chromium\n", "utf8");
+    const renderedPdf = Buffer.from("%PDF-1.7\n% isolated\n", "utf8");
     const renderInputs: string[] = [];
     registerDocsTools(registry, {
       store,
@@ -574,7 +575,7 @@ describe("docs tools", () => {
           renderInputs.push(input.html);
           return {
             buffer: renderedPdf,
-            metadata: { chromiumRevision: "test" },
+            metadata: { converterVersion: "test" },
           };
         },
       },
@@ -594,9 +595,9 @@ describe("docs tools", () => {
     expect(renderInputs[0]).toContain("<h1>Board Packet</h1>");
     expect(result.output.contentBase64).toBe(renderedPdf.toString("base64"));
     expect(result.output.metadata).toMatchObject({
-      generatedBy: "helix.docs.export.pdf.chromium",
-      renderer: "headless-chromium",
-      chromiumRevision: "test",
+      generatedBy: "helix.docs.export.pdf.isolated",
+      renderer: "isolated-content-converter",
+      converterVersion: "test",
     });
   });
 
@@ -840,6 +841,18 @@ describe("docs tools", () => {
     });
   });
 });
+
+function importSource(name: string, bytes: Uint8Array): ImportSourceReader {
+  return {
+    openFile: async () =>
+      ({
+        byteSize: bytes.byteLength,
+        etag: '"test"',
+        entry: { name, mimeType: "application/octet-stream" },
+        open: async () => bytes,
+      }) as never,
+  };
+}
 
 class FakeDocsStore {
   readonly created: CreateDocsDocumentInput[] = [];

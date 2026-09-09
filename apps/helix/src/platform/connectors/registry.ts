@@ -11,18 +11,8 @@ import type {
 export class ConnectorRegistry implements ConnectorRegistrationSink {
   private readonly formats = new Map<string, ConnectorWebhookFormat>();
   private readonly sources = new Map<string, ConnectorWebhookSource>();
-  private currentConnectorId: string | undefined;
   private readonly formatOwners = new Map<string, string>();
   private readonly sourceOwners = new Map<string, string>();
-
-  /** Scope subsequent registrations to a connector id (for ownership tracking). */
-  beginConnector(connectorId: string): void {
-    this.currentConnectorId = connectorId;
-  }
-
-  endConnector(): void {
-    this.currentConnectorId = undefined;
-  }
 
   registerWebhookFormat(format: ConnectorWebhookFormat): void {
     if (this.formats.has(format.id)) {
@@ -33,9 +23,6 @@ export class ConnectorRegistry implements ConnectorRegistrationSink {
       );
     }
     this.formats.set(format.id, format);
-    if (this.currentConnectorId !== undefined) {
-      this.formatOwners.set(format.id, this.currentConnectorId);
-    }
   }
 
   registerWebhookSource(source: ConnectorWebhookSource): void {
@@ -47,8 +34,50 @@ export class ConnectorRegistry implements ConnectorRegistrationSink {
       );
     }
     this.sources.set(source.id, source);
-    if (this.currentConnectorId !== undefined) {
-      this.sourceOwners.set(source.id, this.currentConnectorId);
+  }
+
+  replaceConnector(
+    connectorId: string,
+    formats: readonly ConnectorWebhookFormat[],
+    sources: readonly ConnectorWebhookSource[],
+  ): void {
+    this.assertConnectorAvailable(connectorId, formats, sources);
+    this.removeConnector(connectorId);
+    for (const format of formats) {
+      this.formats.set(format.id, format);
+      this.formatOwners.set(format.id, connectorId);
+    }
+    for (const source of sources) {
+      this.sources.set(source.id, source);
+      this.sourceOwners.set(source.id, connectorId);
+    }
+  }
+
+  assertConnectorAvailable(
+    connectorId: string,
+    formats: readonly ConnectorWebhookFormat[],
+    sources: readonly ConnectorWebhookSource[],
+  ): void {
+    for (const format of formats) {
+      this.assertOwner(this.formats, this.formatOwners, format.id, connectorId);
+    }
+    for (const source of sources) {
+      this.assertOwner(this.sources, this.sourceOwners, source.id, connectorId);
+    }
+  }
+
+  removeConnector(connectorId: string): void {
+    for (const [id, owner] of this.formatOwners) {
+      if (owner === connectorId) {
+        this.formats.delete(id);
+        this.formatOwners.delete(id);
+      }
+    }
+    for (const [id, owner] of this.sourceOwners) {
+      if (owner === connectorId) {
+        this.sources.delete(id);
+        this.sourceOwners.delete(id);
+      }
     }
   }
 
@@ -66,5 +95,20 @@ export class ConnectorRegistry implements ConnectorRegistrationSink {
 
   webhookSources(): readonly ConnectorWebhookSource[] {
     return [...this.sources.values()];
+  }
+
+  private assertOwner(
+    values: ReadonlyMap<string, unknown>,
+    owners: ReadonlyMap<string, string>,
+    id: string,
+    connectorId: string,
+  ): void {
+    const owner = owners.get(id);
+    if (owner !== undefined && owner !== connectorId) {
+      throw new Error(`Connector hook "${id}" is already registered by ${owner}`);
+    }
+    if (owner === undefined && values.has(id)) {
+      throw new Error(`Connector hook "${id}" is already registered by the platform`);
+    }
   }
 }

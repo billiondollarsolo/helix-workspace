@@ -1,0 +1,162 @@
+name: Security Supply Chain
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+  security-events: write
+
+jobs:
+  security-supply-chain:
+    name: security-supply-chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
+    steps:
+      - name: Checkout helix-workspace
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: helix-all/helix-workspace
+          fetch-depth: 0
+
+      - name: Checkout paired helix-editors
+        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
+        with:
+          candidate-ref: ${{ github.head_ref || github.ref_name }}
+
+      - name: Determine changed security scope
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -Eeuo pipefail
+          code=false
+          dependencies=false
+          scan=false
+          if [[ "$EVENT_NAME" != pull_request ]]; then
+            code=true
+            dependencies=true
+            scan=true
+          else
+            while IFS= read -r path; do
+              case "$path" in
+                package.json|pnpm-lock.yaml|apps/*/package.json|packages/*/package.json|security/dependency-audit-exceptions.json|security/license-policy.json|THIRD_PARTY_NOTICES.md)
+                  dependencies=true
+                  scan=true
+                  ;;
+                apps/*|packages/*|plugins/*)
+                  code=true
+                  scan=true
+                  ;;
+                .github/*|infra/*|docker-compose.yml|security/*)
+                  scan=true
+                  ;;
+              esac
+            done < <(git diff --name-only "$BASE_SHA" HEAD)
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "dependencies=$dependencies" >> "$GITHUB_OUTPUT"
+          echo "scan=$scan" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+          cache-dependency-path: |
+            helix-all/helix-workspace/pnpm-lock.yaml
+            helix-all/helix-editors/pnpm-lock.yaml
+
+      - name: Install production dependency graph
+        if: steps.scope.outputs.code == 'true' || steps.scope.outputs.dependencies == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify repository security policy and seeded failures
+        run: node infra/scripts/verify-supply-chain-policy.mjs --self-test && node infra/scripts/audit-production-dependencies.mjs --self-test && node infra/scripts/verify-deployable-artifacts.mjs
+
+      - name: Reject usable secrets anywhere in Git history
+        run: pnpm security:scan-history
+
+      - name: Enforce production advisory policy
+        if: steps.scope.outputs.dependencies == 'true'
+        run: pnpm audit:prod
+
+      - name: Enforce dependency and license policy
+        if: steps.scope.outputs.code == 'true' || steps.scope.outputs.dependencies == 'true'
+        run: pnpm quality:dependencies
+
+      - name: Scan dependencies, licenses, secrets, and infrastructure
+        if: steps.scope.outputs.scan == 'true'
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: helix-all/helix-workspace
+          scanners: vuln,misconfig,secret,license
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: 1
+          skip-dirs: helix-all/helix-workspace/node_modules,helix-all/helix-workspace/test-corpus
+
+      - name: Initialize CodeQL
+        if: steps.scope.outputs.code == 'true'
+        uses: github/codeql-action/init@fddeee1a7ece751b577e409a89057319e3172939 # v4
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+
+      - name: Build analyzed source
+        if: steps.scope.outputs.code == 'true'
+        run: pnpm build
+
+      - name: Analyze with CodeQL
+        if: steps.scope.outputs.code == 'true'
+        uses: github/codeql-action/analyze@fddeee1a7ece751b577e409a89057319e3172939 # v4
+        with:
+          category: /language:javascript-typescript
+
+      - name: Generate SPDX SBOM
+        if: steps.scope.outputs.code == 'true' || steps.scope.outputs.dependencies == 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: helix-all/helix-workspace
+          format: spdx-json
+          output-file: helix-workspace.spdx.json
+          artifact-name: helix-workspace-sbom
+
+  full-image-scan:
+    name: full-image-scan
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build deployable image
+        run: docker build --file infra/docker/Dockerfile.stig --tag helix-security-scan:${{ github.sha }} .
+
+      - name: Scan deployable image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: helix-security-scan:${{ github.sha }}
+          scanners: vuln,secret,misconfig,license
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: 1

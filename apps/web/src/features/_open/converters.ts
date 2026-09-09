@@ -28,9 +28,14 @@ import {
   importXlsxSheet,
 } from "@/features/sheets/api";
 import { importPptxDeck } from "@/features/slides/api";
-import type { DriveBlob } from "./drive-fetcher.js";
 import type { FormatDescriptor } from "./format-detection.js";
 import type { ImportedDeck, ImportedDoc, ImportedSheet, TiptapNode } from "./parsers/types.js";
+
+export interface DriveObjectDescriptor {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly byteLength: number;
+}
 
 export interface ConvertedTarget {
   readonly surface: "docs" | "sheets" | "slides";
@@ -41,7 +46,7 @@ export interface ConvertedTarget {
 /** Convert a parsed imported doc into a native helix-doc via the matching
  *  server-side tool. Returns the new native document id. */
 export async function convertImportedDocToNative(
-  blob: DriveBlob,
+  blob: DriveObjectDescriptor,
   parsed: ImportedDoc,
   sourceObjectId: string,
 ): Promise<ConvertedTarget> {
@@ -53,9 +58,8 @@ export async function convertImportedDocToNative(
     // Server tool exists for DOCX — it runs through the canonical converter,
     // classifier, virus scanner.
     const created = await importDocxDocument({
-      filename: blob.name,
+      sourceObjectId,
       title,
-      contentBase64: arrayBufferToBase64(blob.bytes),
       metadata,
     });
     createdId = created.id;
@@ -83,19 +87,17 @@ export async function convertImportedDocToNative(
 
 /** Convert a parsed imported sheet into a native helix-sheet. */
 export async function convertImportedSheetToNative(
-  blob: DriveBlob,
+  blob: DriveObjectDescriptor,
   parsed: ImportedSheet,
   sourceObjectId: string,
 ): Promise<ConvertedTarget> {
   const metadata = importedFromMetadata(blob, parsed.format, sourceObjectId);
   const title = titleFromFilename(blob.name);
-  const contentBase64 = arrayBufferToBase64(blob.bytes);
 
   if (blob.name.toLowerCase().endsWith(".ods")) {
     const result = await importOdsSheet({
-      filename: blob.name,
+      sourceObjectId,
       title,
-      contentBase64,
       metadata,
     });
     return { surface: "sheets", id: result.id };
@@ -104,27 +106,24 @@ export async function convertImportedSheetToNative(
   // sheets.import-xlsx (SheetJS server-side too).
   if (parsed.format.id === "xlsx" || blob.name.toLowerCase().endsWith(".xlsx")) {
     const result = await importXlsxSheet({
-      filename: blob.name,
+      sourceObjectId,
       title,
-      contentBase64,
       metadata,
     });
     return { surface: "sheets", id: result.id };
   }
   if (parsed.format.id === "tsv" || blob.name.toLowerCase().endsWith(".tsv")) {
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(blob.bytes);
-    const result = await importTsvSheet({ filename: blob.name, title, tsvText: text, metadata });
+    const result = await importTsvSheet({ sourceObjectId, title, metadata });
     return { surface: "sheets", id: result.id };
   }
   // CSV (default for sheet-flavored text)
-  const text = new TextDecoder("utf-8", { fatal: false }).decode(blob.bytes);
-  const result = await importCsvSheet({ filename: blob.name, title, csvText: text, metadata });
+  const result = await importCsvSheet({ sourceObjectId, title, metadata });
   return { surface: "sheets", id: result.id };
 }
 
 /** Convert a parsed imported deck into a native helix-deck. */
 export async function convertImportedDeckToNative(
-  blob: DriveBlob,
+  blob: DriveObjectDescriptor,
   parsed: ImportedDeck,
   sourceObjectId: string,
 ): Promise<ConvertedTarget> {
@@ -136,9 +135,8 @@ export async function convertImportedDeckToNative(
   // does a text-only extraction similar to our client parser).
   if (parsed.format.id === "pptx" || blob.name.toLowerCase().endsWith(".pptx")) {
     const result = await importPptxDeck({
-      filename: blob.name,
+      sourceObjectId,
       title,
-      contentBase64: arrayBufferToBase64(blob.bytes),
       metadata,
     });
     return { surface: "slides", id: result.id };
@@ -160,7 +158,7 @@ export class ConverterNotAvailableError extends Error {
 }
 
 function importedFromMetadata(
-  blob: DriveBlob,
+  blob: DriveObjectDescriptor,
   format: FormatDescriptor,
   sourceObjectId: string,
 ): Record<string, unknown> {
@@ -188,16 +186,6 @@ function titleFromFilename(name: string): string {
       .replace(/\.[^.]+$/, "")
       .trim() || "Imported document"
   );
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
 }
 
 /** Minimal TipTap doc → markdown serializer. Handles paragraphs, headings,

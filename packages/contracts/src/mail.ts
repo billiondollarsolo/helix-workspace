@@ -1,18 +1,22 @@
 import { z } from "zod";
 
+export const MAIL_ATTACHMENT_MAX_FILES = 100;
+export const MAIL_ATTACHMENT_MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const MAIL_ATTACHMENT_MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+
 export const mailAddressSchema = z.object({
   address: z.string().email(),
   name: z.string().min(1).optional(),
 });
 export type MailAddress = z.infer<typeof mailAddressSchema>;
 
-export const mailAttachmentInputSchema = z.object({
-  filename: z.string().min(1).optional(),
-  contentType: z.string().min(1).optional(),
-  content: z.string().min(1).optional(),
-  objectId: z.string().uuid().optional(),
-  path: z.string().min(1).optional(),
-});
+export const mailAttachmentInputSchema = z
+  .object({
+    filename: z.string().min(1).max(255).optional(),
+    contentType: z.string().min(1).max(255).optional(),
+    objectId: z.string().uuid(),
+  })
+  .strict();
 export type MailAttachmentInput = z.infer<typeof mailAttachmentInputSchema>;
 
 export const mailSendInputSchema = z.object({
@@ -23,7 +27,7 @@ export const mailSendInputSchema = z.object({
   subject: z.string().max(998),
   bodyText: z.string(),
   bodyHtml: z.string().optional(),
-  attachments: z.array(mailAttachmentInputSchema).default([]),
+  attachments: z.array(mailAttachmentInputSchema).max(MAIL_ATTACHMENT_MAX_FILES).default([]),
   undoWindowMs: z.number().int().min(0).max(300_000).optional(),
 });
 export type MailSendInput = z.infer<typeof mailSendInputSchema>;
@@ -172,22 +176,36 @@ export const mailDraftSchema = z.object({
   bodyText: z.string().default(""),
   bodyHtml: z.string().optional(),
   attachments: z.array(mailAttachmentInputSchema).default([]),
+  revision: z.number().int().positive(),
+  expiresAt: z.string().datetime(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type MailDraft = z.infer<typeof mailDraftSchema>;
 
-export const mailDraftSaveInputSchema = z.object({
-  id: z.string().uuid().optional(),
-  threadId: z.string().uuid().optional(),
-  to: z.array(mailAddressSchema).default([]),
-  cc: z.array(mailAddressSchema).default([]),
-  bcc: z.array(mailAddressSchema).default([]),
-  subject: z.string().default(""),
-  bodyText: z.string().default(""),
-  bodyHtml: z.string().optional(),
-  attachments: z.array(mailAttachmentInputSchema).default([]),
-});
+export const mailDraftSaveInputSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    threadId: z.string().uuid().optional(),
+    expectedRevision: z.number().int().positive().optional(),
+    idempotencyKey: z.string().uuid(),
+    to: z.array(mailAddressSchema).default([]),
+    cc: z.array(mailAddressSchema).default([]),
+    bcc: z.array(mailAddressSchema).default([]),
+    subject: z.string().default(""),
+    bodyText: z.string().default(""),
+    bodyHtml: z.string().optional(),
+    attachments: z.array(mailAttachmentInputSchema).max(MAIL_ATTACHMENT_MAX_FILES).default([]),
+  })
+  .superRefine((input, context) => {
+    if ((input.id === undefined) !== (input.expectedRevision === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "id and expectedRevision must be supplied together.",
+        path: input.id === undefined ? ["id"] : ["expectedRevision"],
+      });
+    }
+  });
 export type MailDraftSaveInput = z.infer<typeof mailDraftSaveInputSchema>;
 
 export const mailDraftGetInputSchema = z.object({
@@ -210,6 +228,8 @@ export const mailAliasSchema = z.object({
   address: z.string().email(),
   displayName: z.string().nullable(),
   isPrimary: z.boolean(),
+  receiveEnabled: z.boolean(),
+  sendAsEnabled: z.boolean(),
   createdAt: z.string(),
 });
 export type MailAlias = z.infer<typeof mailAliasSchema>;
@@ -219,6 +239,8 @@ export const mailAliasCreateInputSchema = z.object({
   targetActorId: z.string().uuid(),
   displayName: z.string().min(1).optional(),
   isPrimary: z.boolean().default(false),
+  receiveEnabled: z.boolean().default(true),
+  sendAsEnabled: z.boolean().default(true),
 });
 export const mailAliasDeleteInputSchema = z.object({
   id: z.string().uuid(),

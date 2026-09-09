@@ -27,6 +27,11 @@ Options:
   --dry-run                   Print commands only
   --age-identity <path>       age identity file for .age archives
   --kms-datakey <path>        KMS-wrapped data key for .kms archives
+  --restore-objects           Require and validate an isolated object restore (default: on)
+  --skip-object-restore       DB-only drill
+  --object-target-bucket <b>  New isolated bucket used by the drill
+  --pitr                      Create/restore physical backup with marker proof
+  --pitr-data-dir <path>      Isolated recovered PGDATA for --pitr
   --reindex                   Run helix reindex --all after restore/app probes
   --skip-reindex              Do not run search reindex even if env enables it
   --reindex-base-url <url>    HELIX_BASE_URL for reindex
@@ -55,6 +60,10 @@ REINDEX=${HELIX_RESTORE_DRILL_REINDEX:-false}
 REINDEX_BASE_URL=${HELIX_REINDEX_BASE_URL:-${HELIX_VERIFY_APP_URL:-${HELIX_BASE_URL:-}}}
 REINDEX_COMMAND=${HELIX_REINDEX_COMMAND:-helix reindex --all}
 REINDEX_ACCESS_TOKEN=${HELIX_REINDEX_ACCESS_TOKEN:-${HELIX_ACCESS_TOKEN:-}}
+RESTORE_OBJECTS=${HELIX_RESTORE_DRILL_OBJECTS:-true}
+OBJECT_TARGET_BUCKET=${HELIX_RESTORE_DRILL_OBJECT_BUCKET:-}
+PITR=${HELIX_RESTORE_DRILL_PITR:-false}
+PITR_DATA_DIR=${HELIX_RESTORE_DRILL_PITR_DATA_DIR:-./backups/pitr-drill}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -69,6 +78,11 @@ while [[ $# -gt 0 ]]; do
     --dry-run) DRY_RUN=1; shift ;;
     --age-identity) AGE_IDENTITY=${2:?missing age identity}; shift 2 ;;
     --kms-datakey) KMS_DATAKEY=${2:?missing kms datakey}; shift 2 ;;
+    --restore-objects) RESTORE_OBJECTS=true; shift ;;
+    --skip-object-restore) RESTORE_OBJECTS=false; shift ;;
+    --object-target-bucket) OBJECT_TARGET_BUCKET=${2:?missing target bucket}; shift 2 ;;
+    --pitr) PITR=true; shift ;;
+    --pitr-data-dir) PITR_DATA_DIR=${2:?missing PITR data dir}; shift 2 ;;
     --reindex) REINDEX=true; shift ;;
     --skip-reindex) REINDEX=false; shift ;;
     --reindex-base-url) REINDEX_BASE_URL=${2:?missing reindex base url}; shift 2 ;;
@@ -78,6 +92,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 ensure_repo_root
+if [[ -n "$MAX_AGE_HOURS" && ! "$MAX_AGE_HOURS" =~ ^[0-9]+$ ]]; then
+  die "--max-age-hours must be a non-negative integer"
+fi
 
 list_backups() {
   [[ -d "$BACKUP_DIR" ]] || return 1
@@ -130,6 +147,7 @@ assert_backup_fresh() {
   fi
   now=$(date -u +%s)
   age_hours=$(( (now - mtime) / 3600 ))
+  (( mtime <= now + 300 )) || die "selected backup timestamp is in the future: $path"
   if (( age_hours > MAX_AGE_HOURS )); then
     die "selected backup is ${age_hours}h old, exceeds --max-age-hours ${MAX_AGE_HOURS}: $path"
   fi
@@ -139,8 +157,17 @@ assert_backup_fresh() {
 if bool_true "$CREATE_BACKUP"; then
   backup_id=${BACKUP_ID:-restore-drill-$(date -u +%Y%m%dT%H%M%SZ)}
   backup_args=(--tier personal --output-dir "$BACKUP_DIR" --backup-id "$backup_id")
+  if bool_true "$RESTORE_OBJECTS"; then
+    [[ -n "${HELIX_BACKUP_RUSTFS_BUCKET:-}" ]] || die "object restore drill backup requires HELIX_BACKUP_RUSTFS_BUCKET"
+    backup_args+=(--object-backup)
+  fi
+  bool_true "$PITR" && backup_args+=(--pitr)
   [[ "$DRY_RUN" == "0" ]] && backup_args+=(--execute) || backup_args+=(--dry-run)
-  "$SCRIPT_DIR/backup.sh" "${backup_args[@]}"
+  if bool_true "$PITR"; then
+    HELIX_BACKUP_PITR_PROOF=true "$SCRIPT_DIR/backup.sh" "${backup_args[@]}"
+  else
+    "$SCRIPT_DIR/backup.sh" "${backup_args[@]}"
+  fi
   BACKUP_PATH="$BACKUP_DIR/$backup_id.tar.gz"
 elif [[ -z "$BACKUP_PATH" ]]; then
   if bool_true "$PRIOR_DAY"; then
@@ -162,6 +189,11 @@ restore_args=(--backup "$BACKUP_PATH" --target-db "$TARGET_DB" --allow-drop-targ
 [[ "$DRY_RUN" == "0" ]] && restore_args+=(--execute) || restore_args+=(--dry-run)
 [[ -n "$AGE_IDENTITY" ]] && restore_args+=(--age-identity "$AGE_IDENTITY")
 [[ -n "$KMS_DATAKEY" ]] && restore_args+=(--kms-datakey "$KMS_DATAKEY")
+bool_true "$PITR" && restore_args+=(--pitr --pitr-data-dir "$PITR_DATA_DIR")
+if bool_true "$RESTORE_OBJECTS"; then
+  restore_args+=(--restore-objects --no-object-switch)
+  [[ -n "$OBJECT_TARGET_BUCKET" ]] && restore_args+=(--object-target-bucket "$OBJECT_TARGET_BUCKET")
+fi
 
 "$SCRIPT_DIR/restore.sh" "${restore_args[@]}"
 

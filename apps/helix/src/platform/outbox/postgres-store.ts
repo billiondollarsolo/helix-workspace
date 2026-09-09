@@ -20,7 +20,7 @@ export class PostgresOutboxStore implements OutboxStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async insert(message: OutboxMessage): Promise<string> {
-    const insertedRows = await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       insert into outbox (subject, payload, trace_id, span_id, traceparent, tracestate, deliver_after)
       values (
         ${message.subject},
@@ -33,12 +33,11 @@ export class PostgresOutboxStore implements OutboxStore {
       )
       returning id
     `;
-    const rows = insertedRows as unknown as readonly { readonly id: string }[];
     return rows[0]?.id ?? "";
   }
 
   async claimUndelivered(limit: number): Promise<readonly StoredOutboxMessage[]> {
-    const claimedRows = await this.sql`
+    const rows = await this.sql<OutboxRow[]>`
       update outbox
       set attempts = attempts + 1
       where id in (
@@ -50,7 +49,6 @@ export class PostgresOutboxStore implements OutboxStore {
       )
       returning id, subject, payload, trace_id, span_id, traceparent, tracestate, attempts, created_at, delivered_at, last_error
     `;
-    const rows = claimedRows as unknown as readonly OutboxRow[];
     return rows.map(toStoredMessage);
   }
 

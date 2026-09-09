@@ -1,27 +1,65 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import type { HelixConfig, PlatformHost, PluginManifest } from "@helix/sdk";
+import type { HelixConfig, PluginManifest } from "@helix/sdk";
 import { resolveTierDefaults } from "../config/tier.js";
 import {
   calculatePluginBundleDigest,
   discoverPlugin,
   discoverPluginsDirectory,
-  InProcessPluginRuntime,
   pluginTierPolicyFromSecurityDefaults,
+  resolvePluginArtifactPath,
 } from "./loader.js";
+import {
+  pluginCatalogPayloadBytes,
+  type PluginCatalogEntry,
+  type PluginCatalogPayload,
+  type PluginTrustOptions,
+} from "./trust.js";
 
 const tempDirs: string[] = [];
 const bundledPluginsDir = fileURLToPath(new URL("../../../../../plugins", import.meta.url));
-const localOnlyAiPolicy = {
-  tier: "sovereign",
-  pluginSignatureRequired: false,
-  localAiOnly: true,
-  airgapRequired: false,
-} as const;
-
+const removedPlaceholderIds = [
+  "com.helix.ai-provider-anthropic-compat",
+  "com.helix.ai-provider-bedrock",
+  "com.helix.ai-provider-openai-compat",
+  "com.helix.ai-provider-vertex",
+  "com.helix.audit-immutable-s3",
+  "com.helix.core.assistant",
+  "com.helix.core-asyncapi",
+  "com.helix.core.calendar",
+  "com.helix.core.chat",
+  "com.helix.core-cli",
+  "com.helix.core.docs",
+  "com.helix.core.drive",
+  "com.helix.core.mail",
+  "com.helix.core-mcp-server",
+  "com.helix.core.meet-jitsi",
+  "com.helix.core-openapi",
+  "com.helix.core.search-meilisearch",
+  "com.helix.core.storage-rustfs",
+  "com.helix.embedding-openai-compat",
+  "com.helix.observability-grafana-stack",
+  "com.helix.observability-otel",
+  "com.helix.secrets-sops",
+  "com.helix.webhook-engine",
+  "com.helix.webhook-in-generic",
+  "com.helix.webhook-in-github",
+  "com.helix.webhook-in-linear",
+  "com.helix.webhook-in-stripe",
+  "com.helix.webhook-out-custom-template",
+  "com.helix.webhook-out-discord",
+  "com.helix.webhook-out-generic",
+  "com.helix.webhook-out-teams",
+  "com.helix.vector-chroma",
+  "com.helix.vector-milvus",
+  "com.helix.vector-pgvector",
+  "com.helix.vector-qdrant",
+  "com.helix.vector-weaviate",
+] as const;
 describe("plugin tier policy enforcement", () => {
   afterEach(async () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
@@ -60,57 +98,64 @@ describe("plugin tier policy enforcement", () => {
     );
   });
 
-  it("requires signature evidence when tier defaults require signed plugins", async () => {
+  it("requires a cryptographically trusted catalog artifact when the tier requires signatures", async () => {
     const unsignedRoot = await writePlugin({ id: "com.example.unsigned" });
-    const signedRoot = await writeSignedPlugin({
-      id: "com.example.signed",
-      signature: {
-        signerIdentity: "https://issuer.example/helix-builder",
-      },
-    });
+    const signedRoot = await writePlugin({ id: "com.example.signed" });
+    const pluginTrust = await createPluginTrust([signedRoot]);
 
     await expect(
       discoverPlugin(unsignedRoot, {
         tierPolicy: { tier: "enterprise", pluginSignatureRequired: true },
       }),
-    ).rejects.toThrow("requires signed artifact evidence");
+    ).rejects.toThrow("requires a trusted catalog artifact");
     await expect(
       discoverPlugin(signedRoot, {
         tierPolicy: { tier: "enterprise", pluginSignatureRequired: true },
+        pluginTrust,
       }),
     ).resolves.toMatchObject({ manifest: { id: "com.example.signed" } });
   });
 
   it("rejects signature evidence when the declared bundle digest does not match plugin bytes", async () => {
-    const mismatchedRoot = await writePlugin({
-      id: "com.example.mismatched",
-      signature: {
-        bundleDigest: validDigestWithChar("b"),
-        signerIdentity: "https://issuer.example/helix-builder",
-      },
+    const mismatchedRoot = await writePlugin({ id: "com.example.mismatched" });
+    const pluginTrust = await createPluginTrust([mismatchedRoot], {
+      "com.example.mismatched": validDigestWithChar("b"),
     });
 
     await expect(
       discoverPlugin(mismatchedRoot, {
         tierPolicy: { tier: "enterprise", pluginSignatureRequired: true },
+        pluginTrust,
       }),
     ).rejects.toThrow("bundle digest mismatch");
   });
 
   it("rejects a signed plugin when files are tampered after digest calculation", async () => {
-    const rootDir = await writeSignedPlugin({
-      id: "com.example.tampered",
-      signature: {
-        signerIdentity: "https://issuer.example/helix-builder",
-      },
-    });
+    const rootDir = await writePlugin({ id: "com.example.tampered" });
+    const pluginTrust = await createPluginTrust([rootDir]);
     await writeFile(join(rootDir, "index.js"), "export default { tampered: true };\n", "utf8");
 
     await expect(
       discoverPlugin(rootDir, {
         tierPolicy: { tier: "enterprise", pluginSignatureRequired: true },
+        pluginTrust,
       }),
     ).rejects.toThrow("bundle digest mismatch");
+  });
+
+  it("rechecks a verified bundle immediately before resolving its entry point", async () => {
+    const rootDir = await writePlugin({ id: "com.example.load-tampered" });
+    await writePluginModule(rootDir);
+    const pluginTrust = await createPluginTrust([rootDir]);
+    const plugin = await discoverPlugin(rootDir, {
+      tierPolicy: { tier: "enterprise", pluginSignatureRequired: true },
+      pluginTrust,
+    });
+    await writeFile(join(rootDir, "extra.js"), "tampered\n", "utf8");
+
+    await expect(resolvePluginArtifactPath(plugin, "index.js")).rejects.toThrow(
+      "changed after verification",
+    );
   });
 
   it("rejects cloud AI providers under local-only policy", async () => {
@@ -172,26 +217,24 @@ describe("plugin tier policy enforcement", () => {
     ).resolves.toMatchObject({ manifest: { id: "com.example.localai" } });
   });
 
-  it("derives sovereign signature defaults when runtime loading from a directory", async () => {
+  it("derives sovereign signature defaults during directory discovery", async () => {
     const pluginsDir = await writePluginsDirectory([{ id: "com.example.unsigned" }]);
-    const runtime = new InProcessPluginRuntime({
-      async createHost() {
-        throw new Error("host should not be created for rejected plugins");
-      },
-    });
+    const errors: unknown[] = [];
 
     await expect(
-      runtime.loadFromDirectory(pluginsDir, { tierPolicy: { tier: "sovereign" } }),
-    ).rejects.toThrow("requires signed artifact evidence");
+      discoverPluginsDirectory(pluginsDir, {
+        tierPolicy: { tier: "sovereign" },
+        onError: (_artifact, error) => errors.push(error),
+      }),
+    ).resolves.toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(String(errors[0])).toContain("requires a trusted catalog artifact");
   });
 
   it("rejects signed non-local AI providers from resolved sovereign defaults during directory discovery", async () => {
-    const pluginsDir = await writeSignedPluginsDirectory([
+    const manifests: readonly PluginManifestPatch[] = [
       {
         id: "com.example.signed-cloudai",
-        signature: {
-          signerIdentity: "https://issuer.example/helix-builder",
-        },
         capabilities: {
           provides: ["ai.provider.llm", "ai.provider.anthropic-compatible"],
           consumes: ["platform.config"],
@@ -204,131 +247,85 @@ describe("plugin tier policy enforcement", () => {
         },
         ai: { protocol: "anthropic-compatible" },
       },
-    ]);
+    ];
+    const pluginsDir = await writePluginsDirectory(manifests);
+    const pluginTrust = await createPluginTrust(
+      manifests.map((manifest) => join(pluginsDir, manifest.id ?? "com.example.plugin")),
+    );
 
+    const errors: unknown[] = [];
     await expect(
       discoverPluginsDirectory(pluginsDir, {
         tierDefaults: resolveTierDefaults({ security: { tier: "sovereign" } }),
+        pluginTrust,
+        onError: (_artifact, error) => errors.push(error),
       }),
-    ).rejects.toThrow("not permitted by local-only AI policy");
+    ).resolves.toEqual([]);
+    expect(String(errors[0])).toContain("not permitted by local-only AI policy");
   });
 
-  it("rejects bundled cloud-only AI provider manifests under sovereign local-only policy", async () => {
-    const cloudOnlyProviderIds = [
-      "com.helix.ai-provider-anthropic-compat",
-      "com.helix.ai-provider-bedrock",
-      "com.helix.ai-provider-vertex",
-    ];
+  it("rejects traversal, absolute entry points, and escaping symlinks before import", async () => {
+    const traversalRoot = await writePlugin({ id: "../outside", main: "../outside.js" });
+    await expect(discoverPlugin(traversalRoot)).rejects.toThrow("canonical dotted plugin id");
 
-    for (const pluginId of cloudOnlyProviderIds) {
-      await expect(
-        discoverPlugin(bundledPluginDir(pluginId), { tierPolicy: localOnlyAiPolicy }),
-        pluginId,
-      ).rejects.toThrow(`Plugin ${pluginId} is not permitted by local-only AI policy.`);
-    }
+    const absoluteRoot = await writePlugin({ id: "com.example.absolute", main: "/tmp/outside.js" });
+    await expect(discoverPlugin(absoluteRoot)).rejects.toThrow("normalized relative artifact path");
+
+    const symlinkRoot = await writePlugin({ id: "com.example.symlink", main: "index.js" });
+    const outsideDir = await mkdtemp(join(tmpdir(), "helix-plugin-outside-"));
+    tempDirs.push(outsideDir);
+    const outside = join(outsideDir, "outside.js");
+    await writeFile(outside, "export default {};\n", "utf8");
+    await symlink(outside, join(symlinkRoot, "index.js"));
+    const plugin = await discoverPlugin(symlinkRoot);
+    await expect(resolvePluginArtifactPath(plugin, "index.js")).rejects.toThrow("symbolic link");
   });
 
-  it("allows bundled local-compatible provider manifests under sovereign local-only policy", async () => {
-    const localCompatibleProviderIds = [
-      "com.helix.ai-provider-openai-compat",
-      "com.helix.embedding-openai-compat",
-    ];
-
-    for (const pluginId of localCompatibleProviderIds) {
-      await expect(
-        discoverPlugin(bundledPluginDir(pluginId), { tierPolicy: localOnlyAiPolicy }),
-        pluginId,
-      ).resolves.toMatchObject({ manifest: { id: pluginId } });
-    }
-  });
-
-  it("fails closed for bundled unsigned provider manifests under resolved sovereign defaults", async () => {
-    await expect(
-      discoverPlugin(bundledPluginDir("com.helix.ai-provider-openai-compat"), {
-        tierDefaults: resolveTierDefaults({ security: { tier: "sovereign" } }),
-      }),
-    ).rejects.toThrow("requires signed artifact evidence");
-  });
-
-  it("classifies bundled vector manifests by air-gap compatibility", async () => {
-    const airgapPolicy = {
-      tier: "sovereign",
-      pluginSignatureRequired: false,
-      localAiOnly: true,
-      airgapRequired: true,
-    } as const;
-    const externalVectorStoreIds = [
-      "com.helix.vector-chroma",
-      "com.helix.vector-milvus",
-      "com.helix.vector-qdrant",
-      "com.helix.vector-weaviate",
-    ];
-
-    for (const pluginId of externalVectorStoreIds) {
-      await expect(
-        discoverPlugin(bundledPluginDir(pluginId), { tierPolicy: airgapPolicy }),
-        pluginId,
-      ).rejects.toThrow("declares outbound network access without air-gap compatibility");
-    }
+  it("rejects plugin directory symlinks during catalog discovery", async () => {
+    const pluginsDir = await writePluginsDirectory([]);
+    const outsideRoot = await writePlugin({ id: "com.example.outside" });
+    await symlink(outsideRoot, join(pluginsDir, "com.example.escape"));
+    const errors: unknown[] = [];
 
     await expect(
-      discoverPlugin(bundledPluginDir("com.helix.vector-pgvector"), { tierPolicy: airgapPolicy }),
-    ).resolves.toMatchObject({ manifest: { id: "com.helix.vector-pgvector" } });
-  });
-
-  it("rejects malformed signature evidence even when signature metadata is present", async () => {
-    const rootDir = await writePlugin({
-      id: "com.example.malformed-signature",
-      signature: {
-        bundleDigest: "sha256:abc",
-        signerIdentity: "not a signer identity",
-      },
-    });
-
-    await expect(
-      discoverPlugin(rootDir, {
-        tierPolicy: { tier: "enterprise", pluginSignatureRequired: true },
+      discoverPluginsDirectory(pluginsDir, {
+        onError: (_artifact, error) => errors.push(error),
       }),
-    ).rejects.toThrow("Invalid plugin manifest");
+    ).resolves.toEqual([]);
+    expect(String(errors[0])).toContain("symbolic link");
   });
 });
 
-describe("in-process plugin runtime", () => {
-  afterEach(async () => {
-    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
-  });
+describe("bundled plugin catalog", () => {
+  it("contains only executable connectors or health-checked external services", async () => {
+    const plugins = await discoverPluginsDirectory(bundledPluginsDir);
+    const ids = plugins.map((plugin) => plugin.manifest.id).sort();
 
-  it("loads real plugin modules from a directory and starts them in dependency order", async () => {
-    const pluginsDir = await writePluginsDirectory([
-      { id: "com.example.feature", dependencies: ["com.example.foundation"] },
-      { id: "com.example.foundation" },
-    ]);
-    const startedPluginIds: string[] = [];
-    const runtime = new InProcessPluginRuntime({
-      async createHost(plugin) {
-        startedPluginIds.push(plugin.manifest.id);
-        return { pluginId: plugin.manifest.id } as PlatformHost;
-      },
-    });
+    expect(ids).toEqual(["com.helix.drive-preview-libreoffice", "com.helix.webhook-out-slack"]);
+    for (const id of removedPlaceholderIds) {
+      expect(ids).not.toContain(id);
+    }
 
-    await runtime.loadFromDirectory(pluginsDir);
-    const started = await runtime.startAll();
-
-    expect(startedPluginIds).toEqual(["com.example.foundation", "com.example.feature"]);
-    expect(started.map((plugin) => [plugin.manifest.id, plugin.state])).toEqual([
-      ["com.example.foundation", "enabled"],
-      ["com.example.feature", "enabled"],
-    ]);
-    expect(runtime.list().map((plugin) => plugin.manifest.id)).toEqual([
-      "com.example.foundation",
-      "com.example.feature",
-    ]);
+    for (const plugin of plugins) {
+      if (plugin.manifest.main !== undefined && plugin.manifest.main !== null) {
+        const source = await readFile(
+          await resolvePluginArtifactPath(plugin, plugin.manifest.main),
+          "utf8",
+        );
+        expect(source).not.toMatch(/^\s*export\s+default\s+\{\s*\};?\s*$/u);
+        continue;
+      }
+      expect(plugin.manifest.kind).toBe("external-service");
+      expect(plugin.manifest.endpoint).toMatch(/^https?:\/\//u);
+      expect(plugin.manifest.composeRecipe).toBeTypeOf("string");
+      const compose = await readFile(
+        await resolvePluginArtifactPath(plugin, plugin.manifest.composeRecipe ?? ""),
+        "utf8",
+      );
+      expect(compose).toContain("healthcheck:");
+    }
   });
 });
-
-function bundledPluginDir(pluginId: string): string {
-  return join(bundledPluginsDir, pluginId);
-}
 
 function validDigestWithChar(char: string): string {
   return `sha256:${char.repeat(64)}`;
@@ -339,26 +336,6 @@ async function writePlugin(manifest: PluginManifestPatch): Promise<string> {
   tempDirs.push(rootDir);
   await writePluginManifest(rootDir, manifest);
   return rootDir;
-}
-
-async function writeSignedPlugin(manifest: PluginManifestPatch): Promise<string> {
-  const { signature: _signature, ...unsignedManifest } = manifest;
-  void _signature;
-  const rootDir = await writePlugin(unsignedManifest);
-  await signPluginManifest(rootDir, manifest);
-  return rootDir;
-}
-
-async function signPluginManifest(rootDir: string, manifest: PluginManifestPatch): Promise<void> {
-  const plugin = await discoverPlugin(rootDir);
-  const digest = await calculatePluginBundleDigest(plugin);
-  await writePluginManifest(rootDir, {
-    ...manifest,
-    signature: {
-      ...(manifest.signature ?? {}),
-      bundleDigest: digest,
-    },
-  });
 }
 
 async function writePluginsDirectory(manifests: readonly PluginManifestPatch[]): Promise<string> {
@@ -373,21 +350,70 @@ async function writePluginsDirectory(manifests: readonly PluginManifestPatch[]):
   return pluginsDir;
 }
 
-async function writeSignedPluginsDirectory(
-  manifests: readonly PluginManifestPatch[],
-): Promise<string> {
-  const pluginsDir = await writePluginsDirectory(
-    manifests.map((manifest) => {
-      const { signature: _signature, ...unsignedManifest } = manifest;
-      void _signature;
-      return unsignedManifest;
+async function createPluginTrust(
+  rootDirs: readonly string[],
+  digestOverrides: Readonly<Record<string, string>> = {},
+): Promise<PluginTrustOptions> {
+  const plugins = await Promise.all(rootDirs.map((rootDir) => discoverPlugin(rootDir)));
+  const payload: PluginCatalogPayload = {
+    version: 1,
+    issuedAt: "2026-09-02T00:00:00.000Z",
+    expiresAt: "2026-09-03T00:00:00.000Z",
+    plugins: await Promise.all(
+      plugins.map(async (plugin) => ({
+        id: plugin.manifest.id,
+        version: plugin.manifest.version,
+        ...testArtifactProof(
+          digestOverrides[plugin.manifest.id] ?? (await calculatePluginBundleDigest(plugin)),
+        ),
+      })),
+    ),
+  };
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const keyId = "test-catalog";
+  return {
+    catalog: {
+      keyId,
+      payload,
+      signature: sign(null, pluginCatalogPayloadBytes(payload), privateKey).toString("base64"),
+    },
+    trustedCatalogKeys: {
+      [keyId]: publicKey.export({ format: "pem", type: "spki" }).toString(),
+    },
+    ...testPublisherTrust(),
+    now: () => new Date("2026-09-02T12:00:00.000Z"),
+  };
+}
+
+function testArtifactProof(
+  bundleDigest: string,
+): Pick<PluginCatalogEntry, "bundleDigest" | "publisher" | "sigstoreBundle"> {
+  return {
+    bundleDigest,
+    publisher: "helix-release",
+    sigstoreBundle: { testDigest: bundleDigest } as unknown as PluginCatalogEntry["sigstoreBundle"],
+  };
+}
+
+function testPublisherTrust(): Pick<
+  PluginTrustOptions,
+  "trustedPublishers" | "createBundleVerifier"
+> {
+  return {
+    trustedPublishers: {
+      "helix-release": {
+        issuer: "https://token.actions.githubusercontent.com",
+        uri: "https://github.com/helix/workspace/.github/workflows/release.yml@refs/heads/main",
+      },
+    },
+    createBundleVerifier: async () => ({
+      verify(bundle, data) {
+        const marker = (bundle as unknown as { readonly testDigest?: string }).testDigest;
+        if (marker !== data?.toString("utf8")) throw new Error("invalid test proof");
+        return {} as never;
+      },
     }),
-  );
-  for (const manifest of manifests) {
-    const rootDir = join(pluginsDir, manifest.id ?? "com.example.plugin");
-    await signPluginManifest(rootDir, manifest);
-  }
-  return pluginsDir;
+  };
 }
 
 async function writePluginManifest(rootDir: string, manifest: PluginManifestPatch): Promise<void> {
@@ -399,16 +425,10 @@ async function writePluginManifest(rootDir: string, manifest: PluginManifestPatc
 }
 
 async function writePluginModule(rootDir: string): Promise<void> {
-  await writeFile(join(rootDir, "index.js"), "export default {};\n", "utf8");
+  await writeFile(join(rootDir, "index.js"), "export default { async onStart() {} };\n", "utf8");
 }
 
-interface PluginManifestPatch extends Partial<PluginManifest> {
-  readonly signature?: {
-    readonly bundleDigest?: string;
-    readonly sigstoreBundle?: string;
-    readonly signerIdentity?: string;
-  };
-}
+type PluginManifestPatch = Partial<PluginManifest>;
 
 function baseManifest(): PluginManifest {
   return {
@@ -416,7 +436,7 @@ function baseManifest(): PluginManifest {
     name: "Example Plugin",
     version: "1.0.0",
     sdkVersion: "^1.0.0",
-    kind: "in-process",
+    kind: "sandboxed",
     main: "index.js",
     capabilities: {
       provides: ["example.capability"],

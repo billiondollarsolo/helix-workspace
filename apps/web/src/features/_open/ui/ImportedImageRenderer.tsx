@@ -43,7 +43,7 @@ export function ImportedImageRenderer({ image, objectId, fileName }: ImportedIma
         </span>
         <div style={{ flex: 1 }} />
         <a
-          href={`/api/drive/objects/${objectId}/content?download=1`}
+          href={`/v1/api/drive/objects/${objectId}/content?download=1`}
           className="btn sm"
           download={fileName ?? ""}
         >

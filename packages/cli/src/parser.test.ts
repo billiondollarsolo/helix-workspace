@@ -123,7 +123,16 @@ describe("parseCliArgs", () => {
 
   it("parses the mail thread-state subcommands as tool calls", () => {
     expect(
-      parseCliArgs(["mail", "label", "--thread-id", threadId, "--add", "work,urgent", "--remove", "inbox"]),
+      parseCliArgs([
+        "mail",
+        "label",
+        "--thread-id",
+        threadId,
+        "--add",
+        "work,urgent",
+        "--remove",
+        "inbox",
+      ]),
     ).toEqual({
       kind: "tool-call",
       toolId: "mail.label.apply",
@@ -224,7 +233,15 @@ describe("parseCliArgs", () => {
       json: { source: "empty" },
     });
     expect(
-      parseCliArgs(["mail", "vacation-set", "--enabled", "--subject", "Away", "--body", "Back soon"]),
+      parseCliArgs([
+        "mail",
+        "vacation-set",
+        "--enabled",
+        "--subject",
+        "Away",
+        "--body",
+        "Back soon",
+      ]),
     ).toEqual({
       kind: "tool-call",
       toolId: "mail.vacation.set",
@@ -257,7 +274,9 @@ describe("parseCliArgs", () => {
       toolId: "docs.list",
       json: { source: "inline", value: '{"query":"spec","limit":5}' },
     });
-    expect(parseCliArgs(["calendar", "event-list", "--calendar-id", folderId, "--limit", "50"])).toEqual({
+    expect(
+      parseCliArgs(["calendar", "event-list", "--calendar-id", folderId, "--limit", "50"]),
+    ).toEqual({
       kind: "tool-call",
       toolId: "calendar.event.list",
       json: { source: "inline", value: `{"calendarId":"${folderId}","limit":50}` },
@@ -270,15 +289,13 @@ describe("parseCliArgs", () => {
         threadId,
         "--pending-id",
         filterId,
-        "--classification",
-        "confidential",
       ]),
     ).toEqual({
       kind: "tool-call",
       toolId: "assistant.confirmation.approve",
       json: {
         source: "inline",
-        value: `{"conversationId":"${threadId}","pendingId":"${filterId}","classification":"confidential"}`,
+        value: `{"conversationId":"${threadId}","pendingId":"${filterId}"}`,
       },
     });
     expect(() => parseCliArgs(["assistant", "approve", "--classification", "bogus"])).toThrow(
@@ -653,7 +670,13 @@ describe("parseCliArgs", () => {
         "33333333-3333-4333-8333-333333333333",
         "--expires-in-seconds",
         "900",
-        "--moderator",
+        "--accept-recording-notice",
+        "--recording-notice-version",
+        "2026-09-02",
+        "--device-id",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "--join-grant-id",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       ]),
     ).toEqual({
       kind: "tool-call",
@@ -661,7 +684,7 @@ describe("parseCliArgs", () => {
       json: {
         source: "inline",
         value:
-          '{"roomId":"33333333-3333-4333-8333-333333333333","expiresInSeconds":900,"moderator":true}',
+          '{"roomId":"33333333-3333-4333-8333-333333333333","expiresInSeconds":900,"recordingNoticeAccepted":true,"recordingNoticeVersion":"2026-09-02","deviceId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","joinGrantId":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}',
       },
     });
     expect(
@@ -853,19 +876,34 @@ describe("parseCliArgs", () => {
 
   it("parses backup and restore operator commands", () => {
     expect(parseCliArgs(["backup", "create"])).toEqual({ kind: "backup-create" });
-    expect(parseCliArgs(["restore", "--from", "backup-20260520T120000Z"])).toEqual({
+    expect(
+      parseCliArgs([
+        "restore",
+        "--from",
+        "backup-20260520T120000Z",
+        "--target-db",
+        "helix_restore_incident_42",
+        "--target-bucket",
+        "helix-restore-incident-42",
+        "--idempotency-key",
+        "incident-42",
+        "--encrypted",
+      ]),
+    ).toEqual({
       kind: "restore-from",
       backupId: "backup-20260520T120000Z",
-    });
-    expect(parseCliArgs(["restore", "--from", "backup-20260520T120000Z", "--encrypted"])).toEqual({
-      kind: "restore-from",
-      backupId: "backup-20260520T120000Z",
+      targetDatabase: "helix_restore_incident_42",
+      targetObjectBucket: "helix-restore-incident-42",
+      idempotencyKey: "incident-42",
       encrypted: true,
     });
     expect(() => parseCliArgs(["backup", "create", "--execute"])).toThrow(CliUsageError);
     expect(() => parseCliArgs(["restore", "backup-20260520T120000Z"])).toThrow(CliUsageError);
     expect(() => parseCliArgs(["restore", "--from"])).toThrow(CliUsageError);
     expect(() => parseCliArgs(["restore", "--encrypted"])).toThrow(CliUsageError);
+    expect(() => parseCliArgs(["restore", "--from", "backup-20260520T120000Z"])).toThrow(
+      CliUsageError,
+    );
   });
 
   it("parses full search reindex operator commands", () => {

@@ -91,13 +91,15 @@ export function slidesListFromDriveQueryOptions(
           ? (await searchDrive({ query, folderId: null, limit: searchLimit })).map(
               entryFromSearchHit,
             )
-          : await listDrive({
-              folderId: null,
-              includeTrashed: true,
-              acrossFolders: true,
-              app: "slides",
-              limit,
-            });
+          : (
+              await listDrive({
+                folderId: null,
+                includeTrashed: true,
+                acrossFolders: true,
+                app: "slides",
+                limit,
+              })
+            ).entries;
       return entries
         .filter((entry) => entry.type === "file" && isPresentationLike(entry))
         .map((entry): SlideDeck => {
@@ -169,8 +171,8 @@ function hasPresentationExtension(name: string): boolean {
 export function slidesDriveShapeAssetsQueryOptions(input: { readonly limit?: number } = {}) {
   return queryOptions({
     queryKey: ["slides", "drive-shape-assets", input.limit ?? 100] as const,
-    queryFn: (): Promise<readonly DriveApiEntry[]> =>
-      listDrive({ folderId: null, acrossFolders: true, limit: input.limit ?? 100 }),
+    queryFn: async (): Promise<readonly DriveApiEntry[]> =>
+      (await listDrive({ folderId: null, acrossFolders: true, limit: input.limit ?? 100 })).entries,
     staleTime: 60_000,
     throwOnError: false,
   });

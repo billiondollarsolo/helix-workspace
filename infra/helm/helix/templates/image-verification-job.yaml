@@ -1,0 +1,110 @@
+{{- include "helix.validateValues" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "helix.fullname" . }}-verify-image
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  activeDeadlineSeconds: 300
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "helix.selectorLabels" . | nindent 8 }}
+        helix.io/role: image-verifier
+        helix.io/service-account: {{ include "helix.serviceAccountName" . | quote }}
+    spec:
+      serviceAccountName: {{ include "helix.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cosign
+          image: ghcr.io/sigstore/cosign/cosign:v3.0.6@sha256:de9c65609e6bde17e6b48de485ee788407c9502fa08b8f4459f595b21f56cd00
+          imagePullPolicy: IfNotPresent
+          args:
+            - verify
+            - --key
+            - /var/run/helix-cosign/{{ required "imageVerification.publicKeySecret.key is required" .Values.imageVerification.publicKeySecret.key }}
+            - {{ include "helix.image" . | quote }}
+          env:
+            - name: HOME
+              value: /tmp/signature
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: cosign-key
+              mountPath: /var/run/helix-cosign
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+        - name: sbom-attestation
+          image: ghcr.io/sigstore/cosign/cosign:v3.0.6@sha256:de9c65609e6bde17e6b48de485ee788407c9502fa08b8f4459f595b21f56cd00
+          imagePullPolicy: IfNotPresent
+          args:
+            - verify-attestation
+            - --type
+            - spdxjson
+            - --key
+            - /var/run/helix-cosign/{{ required "imageVerification.publicKeySecret.key is required" .Values.imageVerification.publicKeySecret.key }}
+            - {{ include "helix.image" . | quote }}
+          env:
+            - name: HOME
+              value: /tmp/sbom
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: cosign-key
+              mountPath: /var/run/helix-cosign
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+        - name: provenance-attestation
+          image: ghcr.io/sigstore/cosign/cosign:v3.0.6@sha256:de9c65609e6bde17e6b48de485ee788407c9502fa08b8f4459f595b21f56cd00
+          imagePullPolicy: IfNotPresent
+          args:
+            - verify-attestation
+            - --type
+            - slsaprovenance
+            - --key
+            - /var/run/helix-cosign/{{ required "imageVerification.publicKeySecret.key is required" .Values.imageVerification.publicKeySecret.key }}
+            - {{ include "helix.image" . | quote }}
+          env:
+            - name: HOME
+              value: /tmp/provenance
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: cosign-key
+              mountPath: /var/run/helix-cosign
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: cosign-key
+          secret:
+            secretName: {{ required "imageVerification.publicKeySecret.name is required" .Values.imageVerification.publicKeySecret.name }}
+        - name: tmp
+          emptyDir: {}

@@ -9,8 +9,7 @@ import type {
 export const drivePluginId = "com.helix.core.drive";
 
 export type DriveItemKind = ContractDriveItemKind;
-/** Wire role enum from contracts. Legacy `"viewer"` is normalized to `"reader"` at the store boundary. */
-export type DriveShareRole = DriveRole | "viewer";
+export type DriveShareRole = DriveRole;
 export type DrivePreviewKind = ContractDrivePreviewKind;
 export type DrivePreviewStatus = ContractDrivePreview["status"];
 export type { DriveRole };
@@ -33,6 +32,8 @@ export interface DriveSearchRecord {
   readonly parentFolderId?: string | undefined;
   readonly path?: readonly string[] | undefined;
   readonly owner?: DriveActor | undefined;
+  /** Principals allowed to discover this record in search/RAG. */
+  readonly allowedActorIds?: readonly string[] | undefined;
   readonly tags?: readonly string[] | undefined;
   readonly summary?: string | undefined;
   readonly description?: string | undefined;
@@ -80,6 +81,7 @@ export interface DriveMultipartUploadInfo {
   readonly partSize: number;
   readonly partCount: number;
   readonly partUrls: readonly string[];
+  readonly expiresAt: string;
 }
 
 export interface DriveUploadRecord {
@@ -148,6 +150,46 @@ export interface DriveEntryRecord {
   readonly updatedAt: Date;
 }
 
+export interface DriveEntryPage {
+  readonly entries: readonly DriveEntryRecord[];
+  readonly nextCursor: string | null;
+}
+
+export interface DriveWebDavLock {
+  readonly pathKey: string;
+  readonly token: string;
+  readonly actorId: string;
+  readonly owner: string;
+  readonly depth: "0" | "infinity";
+  readonly fence: string;
+  readonly createdAt: Date;
+  readonly expiresAt: Date;
+}
+
+export interface DriveWebDavChange {
+  readonly pathKey: string;
+  readonly resourceType: "file" | "folder";
+  readonly status: 200 | 404;
+  readonly version: string;
+}
+
+export interface DriveWebDavChangePage {
+  readonly changes: readonly DriveWebDavChange[];
+  readonly version: string;
+  readonly valid: boolean;
+  readonly hasMore: boolean;
+}
+
+export interface AcquireDriveWebDavLockInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly pathKey: string;
+  readonly owner: string;
+  readonly depth: "0" | "infinity";
+  readonly timeoutSeconds: number;
+  readonly token?: string;
+}
+
 export interface DriveAccessGrantRecord {
   readonly actorId: string;
   readonly role: string;
@@ -188,6 +230,37 @@ export interface DriveCommentRecord {
 
 export interface DriveCommentListItem extends DriveCommentRecord {
   readonly author?: DriveActor | undefined;
+}
+
+export interface DriveCommentPage {
+  readonly comments: readonly DriveCommentListItem[];
+  readonly nextCursor: string | null;
+}
+
+export interface DriveCommentRevisionRecord {
+  readonly id: string;
+  readonly orgId: string;
+  readonly objectId: string;
+  readonly commentId: string;
+  readonly revision: number;
+  readonly changeKind: "created" | "edited" | "resolved" | "reopened" | "deleted";
+  readonly parentCommentId: string | null;
+  readonly commentActorId: string | null;
+  readonly anchor: JsonObject;
+  readonly body: string;
+  readonly status: "open" | "resolved";
+  readonly metadata: JsonObject;
+  readonly resolvedAt: Date | null;
+  readonly resolvedByActorId: string | null;
+  readonly deletedAt: Date | null;
+  readonly deletedByActorId: string | null;
+  readonly changedByActorId: string;
+  readonly capturedAt: Date;
+}
+
+export interface DriveCommentRevisionPage {
+  readonly revisions: readonly DriveCommentRevisionRecord[];
+  readonly nextCursor: string | null;
 }
 
 export interface DrivePdfFormStateRecord {

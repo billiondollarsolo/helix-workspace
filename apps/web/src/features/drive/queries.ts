@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import {
   listDrive,
   listDriveAccess,
+  listDriveWorkflows,
   searchDrive,
   type DriveApiEntry,
   type DriveApiSearchHit,
@@ -50,7 +51,7 @@ export function driveSuggestionsQueryOptions() {
   return queryOptions({
     queryKey: ["drive", "suggestions"],
     queryFn: async (): Promise<DriveSuggestions> => {
-      const entries = await listDrive({ folderId: null, limit: 100 });
+      const { entries } = await listDrive({ folderId: null, limit: 100 });
       return deriveDriveSuggestions(entries);
     },
     throwOnError: false,
@@ -85,6 +86,7 @@ export const defaultDriveItemsInput = {
 
 export const driveQueryKeys = {
   access: (objectId: string) => ["drive", "access", objectId] as const,
+  workflows: ["drive", "workflows"] as const,
   items: (input: DriveItemsQueryInput = defaultDriveItemsInput) =>
     [
       "drive",
@@ -97,6 +99,15 @@ export const driveQueryKeys = {
     ] as const,
   all: ["drive"] as const,
 };
+
+export function driveWorkflowsQueryOptions(enabled = true) {
+  return queryOptions({
+    queryKey: driveQueryKeys.workflows,
+    queryFn: () => listDriveWorkflows(),
+    enabled,
+    throwOnError: false,
+  });
+}
 
 export function driveAccessQueryOptions(objectId: string, enabled = true) {
   return queryOptions({
@@ -228,11 +239,13 @@ export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriv
       if (scope === "my" || scope === "trash") {
         return {
           mode: "list",
-          entries: await listDrive({
-            folderId: input.folderId ?? null,
-            includeTrashed: scope === "trash",
-            limit: input.limit ?? 100,
-          }),
+          entries: (
+            await listDrive({
+              folderId: input.folderId ?? null,
+              includeTrashed: scope === "trash",
+              limit: input.limit ?? 100,
+            })
+          ).entries,
         };
       }
 
@@ -242,21 +255,25 @@ export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriv
       if (scope === "recordings") {
         return {
           mode: "list",
-          entries: await listDrive({
-            folderId: null,
-            kind: "recording",
-            limit: input.limit ?? 100,
-          }),
+          entries: (
+            await listDrive({
+              folderId: null,
+              kind: "recording",
+              limit: input.limit ?? 100,
+            })
+          ).entries,
         };
       }
 
       return {
         mode: "list",
-        entries: await listDrive({
-          folderId: null,
-          acrossFolders: true,
-          limit: input.limit ?? 100,
-        }),
+        entries: (
+          await listDrive({
+            folderId: null,
+            acrossFolders: true,
+            limit: input.limit ?? 100,
+          })
+        ).entries,
       };
     },
     throwOnError: false,

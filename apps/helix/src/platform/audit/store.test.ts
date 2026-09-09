@@ -1,6 +1,5 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import { computeAuditHash } from "./hash.js";
 import { PostgresAuditStore } from "./store.js";
 
 interface RecordedQuery {
@@ -9,8 +8,8 @@ interface RecordedQuery {
 }
 
 describe("PostgresAuditStore", () => {
-  it("hashes appended records with the same createdAt value stored in activity", async () => {
-    const recording = createRecordingSql([[{ this_hash: "previous-hash" }], [{ id: "record-1" }]]);
+  it("returns the database-enforced audit hash", async () => {
+    const recording = createRecordingSql([[], [{ id: "record-1", this_hash: "database-hash" }]]);
     const store = new PostgresAuditStore(recording.sql);
 
     const result = await store.append({
@@ -23,33 +22,21 @@ describe("PostgresAuditStore", () => {
       metadata: { source: "test" },
     });
 
+    expect(recording.calls[0]?.text).toContain("set_config('helix.org_id'");
     const insert = recording.calls[1];
-    const createdAt = insert?.values[9];
+    const createdAt = insert?.values[7];
     expect(createdAt).toBeInstanceOf(Date);
     expect(insert?.text).toContain("created_at");
-    expect(insert?.values[7]).toBe("previous-hash");
-    expect(insert?.values[8]).toBe(
-      computeAuditHash(
-        {
-          actorId: "11111111-1111-4111-8111-111111111111",
-          verb: "object.created",
-          objectType: "object",
-          objectId: "33333333-3333-4333-8333-333333333333",
-          trace: { traceId: "trace-1" },
-          metadata: { source: "test" },
-          createdAt: (createdAt as Date).toISOString(),
-        },
-        "previous-hash",
-      ).thisHash,
-    );
-    expect(result).toEqual({ id: "record-1", thisHash: insert?.values[8] });
+    expect(insert?.text).toContain("returning id, this_hash");
+    expect(result).toEqual({ id: "record-1", thisHash: "database-hash" });
   });
 
   it("loads verification records in hash-chain order", async () => {
-    const recording = createRecordingSql([
+    const recording = createRecordingSql([[],
       [
         {
           id: "record-1",
+          org_id: "22222222-2222-4222-8222-222222222222",
           actor_id: "11111111-1111-4111-8111-111111111111",
           verb: "object.created",
           object_type: "object",
@@ -59,6 +46,8 @@ describe("PostgresAuditStore", () => {
           prev_hash: null,
           this_hash: "this-hash",
           created_at: new Date("2026-05-20T00:00:00.000Z"),
+          schema_version: 1,
+          sequence: "1",
         },
       ],
     ]);
@@ -68,10 +57,12 @@ describe("PostgresAuditStore", () => {
       orgId: "22222222-2222-4222-8222-222222222222",
     });
 
-    expect(recording.calls[0]?.text).toContain("order by created_at asc, id asc");
+    expect(recording.calls[0]?.text).toContain("set_config('helix.org_id'");
+    expect(recording.calls[1]?.text).toContain("order by activity.sequence asc");
     expect(records).toEqual([
       {
         id: "record-1",
+        orgId: "22222222-2222-4222-8222-222222222222",
         actorId: "11111111-1111-4111-8111-111111111111",
         verb: "object.created",
         objectType: "object",
@@ -80,6 +71,8 @@ describe("PostgresAuditStore", () => {
         prevHash: null,
         thisHash: "this-hash",
         createdAt: "2026-05-20T00:00:00.000Z",
+        schemaVersion: 1,
+        sequence: "1",
       },
     ]);
   });
@@ -91,8 +84,7 @@ describe("PostgresAuditStore", () => {
     const store = new PostgresAuditStore(recording.sql);
 
     await expect(store.listVerificationOrgIds()).resolves.toEqual(["org-a", "org-b"]);
-    expect(recording.calls[0]?.text).toContain("select distinct org_id");
-    expect(recording.calls[0]?.text).toContain("order by org_id asc");
+    expect(recording.calls[0]?.text).toContain("helix_list_audit_org_ids()");
   });
 
   it("loads audit shipping records after a checkpoint and persists the next checkpoint", async () => {
@@ -150,9 +142,9 @@ describe("PostgresAuditStore", () => {
 
     expect(recording.calls[0]?.text).toContain("from platform_config");
     expect(recording.calls[0]?.values).toContain("audit.shipping.immutable-s3.checkpoint");
-    expect(recording.calls[1]?.text).toContain("order by created_at asc, id asc");
+    expect(recording.calls[1]?.text).toContain("helix_list_audit_shipping_records");
     expect(recording.calls[2]?.text).toContain("insert into platform_config");
-    expect(recording.calls[3]?.text).toContain("count(*)::int as record_count");
+    expect(recording.calls[3]?.text).toContain("helix_get_audit_shipping_backlog");
   });
 });
 

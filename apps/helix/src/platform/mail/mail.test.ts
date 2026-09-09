@@ -1,12 +1,5 @@
-import { describe, expect, it } from "vitest";
-import type {
-  EventBus,
-  EventEnvelope,
-  JsonObject,
-  JsonValue,
-  TraceContext,
-  Unsubscribe,
-} from "@helix/sdk-types";
+import { describe, expect, it, vi } from "vitest";
+import type { JsonObject } from "@helix/sdk-types";
 import { createToolRegistry } from "../tool-registry.js";
 import { ingestRawMail, summarizeAuthentication, type MailAuthenticator } from "./ingest.js";
 import {
@@ -19,6 +12,8 @@ import { registerMailTools } from "./tools.js";
 import type {
   CreateMailFilterInput,
   CreateOutboundMailInput,
+  ClaimedOutboundMail,
+  MailboxDelegateRecord,
   MailStore,
   SetMailVacationInput,
   UpdateMailFilterInput,
@@ -38,6 +33,7 @@ import type {
   MailThreadListResult,
   MailThreadRowRecord,
   MailThreadStatePatch,
+  MailUserSettings,
   MailVacationRecord,
   StoredMailMessage,
 } from "./types.js";
@@ -70,7 +66,7 @@ describe("mail ingest", () => {
           {
             signingDomain: "example.net",
             selector: "s1",
-            status: { result: "pass", aligned: true },
+            status: { result: "pass", aligned: "example.net" },
             info: "dkim=pass header.d=example.net",
             algorithm: "rsa-sha256",
             canonicalization: "relaxed/relaxed",
@@ -160,8 +156,8 @@ describe("mail ingest", () => {
       authenticator: new PassingAuthenticator(),
       input: {
         orgId,
+        recipients: [{ orgId, actorId, address: "alice@example.com" }],
         envelopeFrom: "ada@example.net",
-        envelopeTo: ["alice@example.com"],
         raw: [
           "From: Ada <ada@example.net>",
           "To: Alice <alice@example.com>",
@@ -187,6 +183,14 @@ describe("mail ingest", () => {
     });
     expect(result.stored.threadId).toBe(threadId);
     expect(store.messages[0]?.subject).toBe("Quarterly plan");
+    expect(store.messages[0]?.rawSource).toMatchObject({
+      parser: "mailparser@3.9.20",
+      projectionVersion: 1,
+      byteSize: expect.any(Number),
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      projectionSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    expect(store.messages[0]?.rawSource?.bytes.toString()).toContain("Please review the plan.");
     expect(store.states.get(`${actorId}:${threadId}`)).toMatchObject({
       labels: ["vip"],
       archivedAt: now(),
@@ -200,8 +204,8 @@ describe("mail ingest", () => {
       authenticator: new PassingAuthenticator(),
       input: {
         orgId,
+        recipients: [{ orgId, actorId, address: "alice@example.com" }],
         envelopeFrom: "Ada@Example.Net",
-        envelopeTo: ["alice@example.com"],
         raw: [
           "From: Ada <Ada@Example.Net>",
           "To: Alice <alice@example.com>",
@@ -221,6 +225,115 @@ describe("mail ingest", () => {
     expect(store.outbounds).toHaveLength(1);
     expect(store.vacationResponses).toEqual(["vacation-1:ada@example.net"]);
   });
+
+  it("records a non-blocking URL verdict tag on the message", async () => {
+    const store = new InMemoryMailStore();
+    const result = await ingestRawMail({
+      store,
+      authenticator: new PassingAuthenticator(),
+      threatVerdicts: { url: "suspicious" },
+      input: {
+        orgId,
+        recipients: [{ orgId, actorId, address: "alice@example.com" }],
+        raw: "From: Ada <ada@example.net>\r\nTo: alice@example.com\r\nSubject: Link\r\n\r\nhttps://example.test",
+      },
+    });
+
+    expect(result.policy).toEqual({ disposition: "tag", reasons: ["suspicious-url"] });
+    expect(store.messages[0]?.metadata?.inboundPolicy).toEqual(result.policy);
+  });
+
+  it("does not repeat filters, vacation, or mailbox mutations for an exact redelivery", async () => {
+    const store = new InMemoryMailStore();
+    await store.createFilter({
+      orgId,
+      actorId,
+      name: "VIP",
+      criteria: { fromContains: "ada@" },
+      actions: { applyLabels: ["vip"] },
+    });
+    store.vacation = {
+      id: "vacation-1",
+      orgId,
+      actorId,
+      enabled: true,
+      subject: "Away",
+      body: "Later",
+      startsAt: null,
+      endsAt: null,
+      metadata: {},
+      createdAt: now(),
+      updatedAt: now(),
+    };
+    const listFilters = vi.spyOn(store, "listFilters");
+    const updateThreadState = vi.spyOn(store, "updateThreadState");
+    const ingress = {
+      orgId,
+      recipients: [{ orgId, actorId, address: "alice@example.com" }],
+      envelopeFrom: "ada@example.net",
+      raw: [
+        "From: Ada <ada@example.net>",
+        "To: Alice <alice@example.com>",
+        "Subject: Retry",
+        "Message-ID: <retry@example.net>",
+        "",
+        "Same bytes.",
+      ].join("\r\n"),
+      receivedAt: now(),
+    } as const;
+
+    await ingestRawMail({ store, authenticator: new PassingAuthenticator(), input: ingress });
+    const filterCalls = listFilters.mock.calls.length;
+    const stateCalls = updateThreadState.mock.calls.length;
+    const result = await ingestRawMail({
+      store,
+      authenticator: new PassingAuthenticator(),
+      input: ingress,
+    });
+
+    expect(result.stored).toMatchObject({ created: false, deliveredActorIds: [] });
+    expect(result.filterResult).toEqual({ matchedFilterIds: [], vacationQueued: false });
+    expect(store.messages).toHaveLength(1);
+    expect(store.outbounds).toHaveLength(1);
+    expect(listFilters).toHaveBeenCalledTimes(filterCalls);
+    expect(updateThreadState).toHaveBeenCalledTimes(stateCalls);
+  });
+
+  it("keeps read, label, and delete mutations independent across mailbox copies", async () => {
+    const store = new InMemoryMailStore();
+    const result = await ingestRawMail({
+      store,
+      authenticator: new PassingAuthenticator(),
+      input: {
+        orgId,
+        recipients: [
+          { orgId, actorId: "actor-to", address: "to@example.com" },
+          { orgId, actorId: "actor-cc", address: "cc@example.com" },
+          { orgId, actorId: "actor-bcc", address: "hidden@example.com" },
+        ],
+        raw: "From: sender@example.net\r\nTo: to@example.com\r\nCc: cc@example.com\r\nSubject: Shared\r\n\r\nBody",
+        receivedAt: now(),
+      },
+    });
+    const readAt = new Date("2026-05-20T12:01:00.000Z");
+    const deletedAt = new Date("2026-05-20T12:02:00.000Z");
+
+    await store.updateThreadState({
+      actorId: "actor-to",
+      threadId: result.stored.threadId,
+      patch: { addLabels: ["vip"], readAt },
+    });
+    await store.updateThreadState({
+      actorId: "actor-bcc",
+      threadId: result.stored.threadId,
+      patch: { deletedAt },
+    });
+
+    expect(store.messages).toHaveLength(1);
+    expect(store.states.get(`actor-to:${threadId}`)).toEqual({ labels: ["vip"], readAt });
+    expect(store.states.get(`actor-cc:${threadId}`)).toEqual({ labels: [] });
+    expect(store.states.get(`actor-bcc:${threadId}`)).toEqual({ labels: [], deletedAt });
+  });
 });
 
 describe("outbound mail", () => {
@@ -233,20 +346,29 @@ describe("outbound mail", () => {
       },
     } as never);
 
-    await transport.send({
-      ...envelope(),
-      attachments: [
-        {
-          filename: "invite.ics",
-          mimeType: "text/calendar",
-          contentType: "text/calendar; method=REQUEST; charset=utf-8",
-          content: { type: "Buffer", data: [66, 69, 71, 73, 78] } as never,
-        },
-      ],
-    });
+    await transport.send(
+      {
+        ...envelope(),
+        messageId: "<outbound@example.com>",
+        inReplyTo: "<parent@example.net>",
+        references: ["<root@example.net>", "<parent@example.net>"],
+        attachments: [
+          {
+            filename: "invite.ics",
+            mimeType: "text/calendar",
+            contentType: "text/calendar; method=REQUEST; charset=utf-8",
+            content: { type: "Buffer", data: [66, 69, 71, 73, 78] } as never,
+          },
+        ],
+      },
+      { idempotencyKey: "handoff-1" },
+    );
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
+      messageId: "<outbound@example.com>",
+      inReplyTo: "<parent@example.net>",
+      references: ["<root@example.net>", "<parent@example.net>"],
       attachments: [
         {
           filename: "invite.ics",
@@ -267,21 +389,21 @@ describe("outbound mail", () => {
       outboxSubject: "mail.send",
     });
     const transport = new RecordingTransport();
-    const dispatcher = new OutboundMailDispatcher(store, transport);
+    const worker = new OutboundMailWorker({
+      store,
+      dispatcher: new OutboundMailDispatcher(store, async () => transport),
+    });
 
-    await expect(dispatcher.dispatch(outbound.id)).resolves.toBeNull();
+    await expect(worker.drainOnce(store.now)).resolves.toBe(0);
     expect(transport.sent).toEqual([]);
 
     store.now = new Date("2026-05-20T12:00:31.000Z");
-    await expect(dispatcher.dispatch(outbound.id)).resolves.toMatchObject({
-      status: "sent",
-      providerMessageId: "smtp-message-id",
-      deliveryMetadata: { response: "250 queued" },
-    });
+    await expect(worker.drainOnce(store.now)).resolves.toBe(1);
+    await expect(store.getOutbound(outbound.id)).resolves.toMatchObject({ status: "accepted" });
     expect(transport.sent).toEqual([envelope()]);
   });
 
-  it("subscribes delayed mail.send events to the dispatcher", async () => {
+  it("drains durable due rows without broker delivery", async () => {
     const store = new InMemoryMailStore();
     const outbound = await store.createOutbound({
       orgId,
@@ -291,20 +413,17 @@ describe("outbound mail", () => {
       outboxSubject: "mail.send",
     });
     const transport = new RecordingTransport();
-    const events = new FakeEventBus();
     const worker = new OutboundMailWorker({
-      events,
-      dispatcher: new OutboundMailDispatcher(store, transport),
+      store,
+      dispatcher: new OutboundMailDispatcher(store, async () => transport),
     });
 
-    await worker.start();
-    await events.publish("mail.send", { mailOutboundId: outbound.id });
+    await worker.drainOnce(store.now);
 
     expect(transport.sent).toEqual([envelope()]);
-    await expect(store.getOutbound(outbound.id)).resolves.toMatchObject({ status: "sent" });
+    await expect(store.getOutbound(outbound.id)).resolves.toMatchObject({ status: "accepted" });
 
-    await worker.stop();
-    await events.publish("mail.send", { mailOutboundId: outbound.id });
+    await worker.drainOnce(store.now);
     expect(transport.sent).toHaveLength(1);
   });
 
@@ -323,17 +442,11 @@ describe("outbound mail", () => {
     store.now = new Date("2026-05-20T12:00:31.000Z");
     const transport = new RecordingTransport();
     const worker = new OutboundMailWorker({
-      events: new FakeEventBus(),
-      dispatcher: new OutboundMailDispatcher(store, transport),
+      store,
+      dispatcher: new OutboundMailDispatcher(store, async () => transport),
     });
 
-    await expect(
-      worker.handle({
-        subject: "mail.send",
-        payload: { mailOutboundId: outbound.id },
-        occurredAt: store.now.toISOString(),
-      }),
-    ).resolves.toBeNull();
+    await expect(worker.drainOnce(store.now)).resolves.toBe(0);
     expect(transport.sent).toEqual([]);
   });
 });
@@ -362,6 +475,9 @@ describe("mail tools", () => {
       "mail.alias.delete",
       "mail.alias.list",
       "mail.archive",
+      "mail.delegate.grant",
+      "mail.delegate.list",
+      "mail.delegate.revoke",
       "mail.delete",
       "mail.draft.discard",
       "mail.draft.get",
@@ -379,13 +495,18 @@ describe("mail tools", () => {
       "mail.outbound.get",
       "mail.read.set",
       "mail.reply",
+      "mail.restore",
       "mail.search",
       "mail.send",
+      "mail.settings.get",
+      "mail.settings.set",
       "mail.snooze",
       "mail.spam",
       "mail.star.set",
       "mail.thread.get",
       "mail.threads.list",
+      "mail.unarchive",
+      "mail.unsnooze",
       "mail.vacation.get",
       "mail.vacation.set",
     ]);
@@ -418,6 +539,7 @@ describe("mail tools", () => {
       "mail.inbound.accept",
       {
         messageId: "<inbound-tool@example.test>",
+        providerDeliveryId: "provider-event-42",
         from: { address: "sender@example.test", name: "Sender" },
         to: ["alice@example.com"],
         subject: "Inbound tool probe",
@@ -430,6 +552,7 @@ describe("mail tools", () => {
       ok: true,
       output: {
         ok: true,
+        created: true,
         threadId,
         messageId,
         subject: "Inbound tool probe",
@@ -437,14 +560,15 @@ describe("mail tools", () => {
       },
     });
     expect(store.messages[0]).toMatchObject({
-      actorId,
+      actorId: null,
+      mailboxActorIds: [actorId],
       subject: "Inbound tool probe",
       bodyText: expect.stringContaining("Inbound tool marker") as string,
       messageId: "<inbound-tool@example.test>",
+      providerDeliveryId: "provider-event-42",
       metadata: {
         direction: "inbound",
         envelopeFrom: "sender@example.test",
-        envelopeTo: ["alice@example.com"],
       },
     });
 
@@ -471,6 +595,39 @@ describe("mail tools", () => {
       ),
     ).resolves.toEqual({ ok: true, output: { ok: true, threadId } });
 
+    await expect(
+      registry.invoke(
+        "mail.settings.set",
+        {
+          signatureText: "Alice Example",
+          signatureHtml: "<strong>Alice Example</strong><script>bad()</script>",
+          includeSignatureOnReplies: true,
+          blockedSenders: ["blocked@example.net"],
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({
+      ok: true,
+      output: {
+        signatureText: "Alice Example",
+        signatureHtml: "<strong>Alice Example</strong>",
+        blockedSenders: ["blocked@example.net"],
+      },
+    });
+    await registry.invoke(
+      "mail.inbound.accept",
+      {
+        messageId: "<blocked@example.net>",
+        providerDeliveryId: "provider-blocked-43",
+        from: "blocked@example.net",
+        to: ["alice@example.com"],
+        subject: "Blocked sender",
+        bodyText: "This belongs in Spam",
+      },
+      { actor: smtpReceiverActor },
+    );
+    expect(store.states.get(`${actorId}:${threadId}`)?.spamAt).toBeInstanceOf(Date);
+
     const sendResult = await registry.invoke(
       "mail.send",
       {
@@ -485,6 +642,7 @@ describe("mail tools", () => {
       address: "alice@example.com",
       name: "Alice",
     });
+    expect(store.outbounds[0]?.envelope.text).toBe("Hello\n\n-- \nAlice Example");
     await expect(
       registry.invoke("mail.outbound.get", { id: store.outbounds[0]?.id }, { actor }),
     ).resolves.toMatchObject({
@@ -764,7 +922,8 @@ describe("mail tools", () => {
       },
     });
     expect(store.messages[0]).toMatchObject({
-      actorId,
+      actorId: null,
+      mailboxActorIds: [actorId],
       subject: "Hello",
       metadata: {
         auth: { spf: "pass", dkim: "pass", dmarc: "pass" },
@@ -810,7 +969,7 @@ describe("mail tools", () => {
     expect(store.messages).toEqual([]);
   });
 
-  it("persists DKIM/DMARC-fail verification verdicts on stored inbound mail (CRITICAL-4)", async () => {
+  it("rejects a published DMARC reject before mailbox persistence", async () => {
     const store = new InMemoryMailStore();
     const registry = createToolRegistry();
     registerMailTools(registry, {
@@ -838,30 +997,11 @@ describe("mail tools", () => {
       },
       { actor: serviceActor },
     );
-    // The message is still accepted — but the failure verdict is recorded so
-    // downstream spam/quarantine and the UI can refuse to display the message
-    // as authenticated.
     expect(result).toMatchObject({
-      ok: true,
-      output: {
-        ok: true,
-        auth: { spf: "pass", dkim: "fail", dmarc: "fail" },
-      },
+      ok: false,
+      error: expect.stringContaining("dmarc-reject") as string,
     });
-    expect(store.messages[0]).toMatchObject({
-      subject: "Forged",
-      metadata: {
-        direction: "inbound",
-        auth: {
-          spf: "pass",
-          dkim: "fail",
-          dmarc: "fail",
-          evidence: {
-            dmarc: { result: "fail", policy: "reject" },
-          },
-        },
-      },
-    });
+    expect(store.messages).toEqual([]);
   });
 
   it("registers mail.threads.list / mail.folders.list / mail.labels.list as read-safe tools", () => {
@@ -1009,7 +1149,12 @@ describe("mail tools", () => {
     const folders = await registry.invoke("mail.folders.list", {}, { actor });
     expect(folders).toMatchObject({
       ok: true,
-      output: { folders: [{ id: "inbox", total: 24, unread: 6 }, { id: "starred", total: 7 }] },
+      output: {
+        folders: [
+          { id: "inbox", total: 24, unread: 6 },
+          { id: "starred", total: 7 },
+        ],
+      },
     });
 
     const labels = await registry.invoke("mail.labels.list", {}, { actor });
@@ -1024,15 +1169,15 @@ describe("mail tools", () => {
 
 describe("mail category classification", () => {
   it("buckets senders into Primary / Updates / Promotions / Social", () => {
-    expect(
-      classifyMailCategory({ fromAddress: "mira@helix.io", subject: "Q3 roadmap" }),
-    ).toBe("primary");
+    expect(classifyMailCategory({ fromAddress: "mira@helix.io", subject: "Q3 roadmap" })).toBe(
+      "primary",
+    );
     expect(
       classifyMailCategory({ fromAddress: "notifications@github.com", subject: "PR merged" }),
     ).toBe("updates");
-    expect(
-      classifyMailCategory({ fromAddress: "no-reply@helix.io", subject: "Receipt" }),
-    ).toBe("updates");
+    expect(classifyMailCategory({ fromAddress: "no-reply@helix.io", subject: "Receipt" })).toBe(
+      "updates",
+    );
     expect(
       classifyMailCategory({ fromAddress: "hello@figma.com", subject: "Config 2026 — early bird" }),
     ).toBe("primary");
@@ -1123,33 +1268,6 @@ class RecordingTransport implements OutboundMailTransport {
   }
 }
 
-class FakeEventBus implements EventBus {
-  readonly handlers = new Map<string, (event: EventEnvelope) => Promise<void>>();
-
-  async publish(subject: string, payload: JsonValue, trace?: TraceContext): Promise<void> {
-    const handler = this.handlers.get(subject);
-    if (handler === undefined) {
-      return;
-    }
-    await handler({
-      subject,
-      payload,
-      ...(trace === undefined ? {} : { trace }),
-      occurredAt: now().toISOString(),
-    });
-  }
-
-  async subscribe<Payload extends JsonValue>(
-    subject: string,
-    handler: (event: EventEnvelope<Payload>) => Promise<void>,
-  ): Promise<Unsubscribe> {
-    this.handlers.set(subject, handler as (event: EventEnvelope) => Promise<void>);
-    return async () => {
-      this.handlers.delete(subject);
-    };
-  }
-}
-
 class InMemoryMailStore implements MailStore {
   readonly actors = new Map<string, string>();
   readonly messages: MailMessageInput[] = [];
@@ -1163,14 +1281,46 @@ class InMemoryMailStore implements MailStore {
       snoozedUntil?: Date;
       readAt?: Date | null;
       starred?: boolean;
+      spamAt?: Date;
     }
   >();
   readonly outbounds: MailOutboundRecord[] = [];
   readonly vacationResponses: string[] = [];
+  readonly identities = new Map<
+    string,
+    { readonly mailboxActorIds: Set<string>; readonly stored: StoredMailMessage }
+  >();
   vacation: MailVacationRecord | null = null;
+  settings: MailUserSettings = {
+    signatureText: "",
+    signatureHtml: null,
+    includeSignatureOnReplies: true,
+    blockedSenders: [],
+    updatedAt: new Date(0),
+  };
   searchHits: MailSearchHit[] = [];
   thread: MailThreadDetail | null = null;
   now = now();
+
+  async grantMailboxDelegate(input: {
+    readonly delegateActorId: string;
+  }): Promise<MailboxDelegateRecord> {
+    return {
+      id: `delegate-${input.delegateActorId}`,
+      actorId: input.delegateActorId,
+      validFrom: this.now,
+      expiresAt: null,
+      createdAt: this.now,
+    };
+  }
+
+  async listMailboxDelegates(): Promise<readonly MailboxDelegateRecord[]> {
+    return [];
+  }
+
+  async revokeMailboxDelegate(): Promise<boolean> {
+    return false;
+  }
 
   async findActorByAddress(_orgId: string, address: string) {
     const normalized = address.toLowerCase();
@@ -1179,8 +1329,46 @@ class InMemoryMailStore implements MailStore {
   }
 
   async insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage> {
+    const identityKeys = [
+      input.rawSource?.sha256,
+      input.providerDeliveryId,
+      input.messageId?.toLowerCase(),
+    ].filter((value): value is string => value !== undefined);
+    const existing = identityKeys
+      .map((key) => this.identities.get(key))
+      .find((identity) => identity !== undefined);
+    if (existing !== undefined) {
+      const deliveredActorIds = (input.mailboxActorIds ?? []).filter(
+        (mailboxActorId) => !existing.mailboxActorIds.has(mailboxActorId),
+      );
+      for (const mailboxActorId of deliveredActorIds) {
+        existing.mailboxActorIds.add(mailboxActorId);
+        this.states.set(`${mailboxActorId}:${existing.stored.threadId}`, { labels: [] });
+      }
+      return { ...existing.stored, created: false, deliveredActorIds };
+    }
     this.messages.push(input);
-    return { threadId, messageId, attachmentObjectIds: [] };
+    for (const mailboxActorId of input.mailboxActorIds ?? []) {
+      const key = `${mailboxActorId}:${threadId}`;
+      if (!this.states.has(key)) {
+        this.states.set(key, { labels: [] });
+      }
+    }
+    const stored = {
+      threadId,
+      messageId,
+      attachmentObjectIds: [],
+      created: true,
+      deliveredActorIds: input.mailboxActorIds ?? [],
+    } satisfies StoredMailMessage;
+    const identity = {
+      mailboxActorIds: new Set(input.mailboxActorIds ?? []),
+      stored,
+    };
+    for (const key of identityKeys) {
+      this.identities.set(key, identity);
+    }
+    return stored;
   }
 
   async createOutbound(input: CreateOutboundMailInput): Promise<MailOutboundRecord> {
@@ -1202,6 +1390,13 @@ class InMemoryMailStore implements MailStore {
       deliveryMetadata: {},
       createdAt: this.now,
       updatedAt: this.now,
+      attemptCount: 0,
+      nextAttemptAt: input.undoUntil,
+      deadLetteredAt: null,
+      handoffKey: `handoff-${String(this.outbounds.length + 1)}`,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
     };
     this.outbounds.push(outbound);
     return outbound;
@@ -1211,37 +1406,122 @@ class InMemoryMailStore implements MailStore {
     return this.outbounds.find((outbound) => outbound.id === id) ?? null;
   }
 
-  async markOutboundSending(id: string) {
-    return this.updateOutbound(id, (outbound) =>
-      outbound.status === "queued" && outbound.undoUntil <= this.now
-        ? { ...outbound, status: "sending" }
-        : null,
+  async claimDueOutbound(input: {
+    readonly owner: string;
+    readonly leaseMs: number;
+    readonly now?: Date;
+  }): Promise<ClaimedOutboundMail | null> {
+    const claimedAt = input.now ?? this.now;
+    const outbound = this.outbounds.find(
+      (candidate) =>
+        (candidate.status === "queued" &&
+          candidate.nextAttemptAt != null &&
+          candidate.nextAttemptAt <= claimedAt) ||
+        (candidate.status === "sending" &&
+          candidate.leaseExpiresAt != null &&
+          candidate.leaseExpiresAt <= claimedAt),
     );
+    if (outbound === undefined) return null;
+    const attemptCount = (outbound.attemptCount ?? 0) + 1;
+    return this.updateOutbound(outbound.id, (current) => ({
+      ...current,
+      status: "sending",
+      attemptCount,
+      nextAttemptAt: null,
+      leaseOwner: input.owner,
+      leaseToken: `lease-${String(attemptCount)}`,
+      leaseExpiresAt: new Date(claimedAt.getTime() + input.leaseMs),
+    })) as ClaimedOutboundMail;
   }
 
   async markOutboundSent(input: {
     readonly id: string;
-    readonly sentAt?: Date;
-    readonly providerMessageId?: string;
-    readonly deliveryMetadata?: JsonObject;
+    readonly leaseToken: string;
+    readonly sentAt?: Date | undefined;
+    readonly providerMessageId?: string | undefined;
+    readonly deliveryMetadata?: JsonObject | undefined;
   }) {
-    return this.updateOutbound(input.id, (outbound) => ({
-      ...outbound,
-      status: "sent",
-      sentAt: input.sentAt ?? this.now,
-      lastError: null,
-      providerMessageId: input.providerMessageId ?? null,
-      deliveryMetadata: input.deliveryMetadata ?? {},
-    }));
+    return this.updateOutbound(input.id, (outbound) =>
+      outbound.status === "sending" && outbound.leaseToken === input.leaseToken
+        ? {
+            ...outbound,
+            status: "accepted",
+            sentAt: input.sentAt ?? this.now,
+            lastError: null,
+            providerMessageId: input.providerMessageId ?? null,
+            deliveryMetadata: input.deliveryMetadata ?? {},
+            leaseOwner: null,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          }
+        : null,
+    );
   }
 
-  async markOutboundFailed(id: string, error: string, failedAt: Date = this.now) {
-    return this.updateOutbound(id, (outbound) => ({
-      ...outbound,
-      status: "failed",
-      failedAt,
-      lastError: error,
-    }));
+  async markOutboundRetry(input: {
+    readonly id: string;
+    readonly leaseToken: string;
+    readonly nextAttemptAt: Date;
+    readonly lastError: string;
+  }) {
+    return this.updateOutbound(input.id, (outbound) =>
+      outbound.leaseToken === input.leaseToken
+        ? {
+            ...outbound,
+            status: "queued",
+            nextAttemptAt: input.nextAttemptAt,
+            lastError: input.lastError,
+            leaseOwner: null,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          }
+        : null,
+    );
+  }
+
+  async markOutboundDeadLettered(input: {
+    readonly id: string;
+    readonly leaseToken: string;
+    readonly lastError: string;
+    readonly deadLetteredAt?: Date;
+  }) {
+    const deadLetteredAt = input.deadLetteredAt ?? this.now;
+    return this.updateOutbound(input.id, (outbound) =>
+      outbound.leaseToken === input.leaseToken
+        ? {
+            ...outbound,
+            status: "failed",
+            failedAt: deadLetteredAt,
+            deadLetteredAt,
+            lastError: input.lastError,
+            leaseOwner: null,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          }
+        : null,
+    );
+  }
+
+  async replayOutbound(input: { readonly orgId: string; readonly id: string }) {
+    return this.updateOutbound(input.id, (outbound) =>
+      outbound.orgId === input.orgId && outbound.deadLetteredAt != null
+        ? {
+            ...outbound,
+            status: "queued",
+            attemptCount: 0,
+            nextAttemptAt: this.now,
+            deadLetteredAt: null,
+            failedAt: null,
+            lastError: null,
+          }
+        : null,
+    );
+  }
+
+  async listDeadLetteredOutbound(orgIdValue: string) {
+    return this.outbounds.filter(
+      (outbound) => outbound.orgId === orgIdValue && outbound.deadLetteredAt != null,
+    );
   }
 
   async cancelOutbound(input: {
@@ -1279,17 +1559,23 @@ class InMemoryMailStore implements MailStore {
         ? current.archivedAt === undefined
           ? {}
           : { archivedAt: current.archivedAt }
-        : { archivedAt: input.patch.archivedAt ?? undefined }),
+        : input.patch.archivedAt === null
+          ? {}
+          : { archivedAt: input.patch.archivedAt }),
       ...(input.patch.deletedAt === undefined
         ? current.deletedAt === undefined
           ? {}
           : { deletedAt: current.deletedAt }
-        : { deletedAt: input.patch.deletedAt ?? undefined }),
+        : input.patch.deletedAt === null
+          ? {}
+          : { deletedAt: input.patch.deletedAt }),
       ...(input.patch.snoozedUntil === undefined
         ? current.snoozedUntil === undefined
           ? {}
           : { snoozedUntil: current.snoozedUntil }
-        : { snoozedUntil: input.patch.snoozedUntil ?? undefined }),
+        : input.patch.snoozedUntil === null
+          ? {}
+          : { snoozedUntil: input.patch.snoozedUntil }),
       ...(input.patch.readAt === undefined
         ? current.readAt === undefined
           ? {}
@@ -1300,6 +1586,11 @@ class InMemoryMailStore implements MailStore {
           ? {}
           : { starred: current.starred }
         : { starred: input.patch.starred }),
+      ...(input.patch.spamAt === undefined || input.patch.spamAt === null
+        ? current.spamAt === undefined
+          ? {}
+          : { spamAt: current.spamAt }
+        : { spamAt: input.patch.spamAt }),
     });
   }
 
@@ -1355,6 +1646,15 @@ class InMemoryMailStore implements MailStore {
     return this.filters
       .filter((filter) => filter.actorId === actorIdValue)
       .sort((left, right) => left.priority - right.priority);
+  }
+
+  async getUserSettings() {
+    return this.settings;
+  }
+
+  async setUserSettings(input: Omit<MailUserSettings, "updatedAt">) {
+    this.settings = { ...input, updatedAt: now() };
+    return this.settings;
   }
 
   async getVacation(_orgId: string, actorIdValue: string) {
@@ -1486,9 +1786,7 @@ function now(): Date {
 
 describe("SMTP span coverage (P2-6)", () => {
   it("emits an smtp.receive span for inbound mail ingestion", async () => {
-    const { installSpanCapture } = await import(
-      "../observability/span-testing.js"
-    );
+    const { installSpanCapture } = await import("../observability/span-testing.js");
     const harness = installSpanCapture();
     try {
       const store = new InMemoryMailStore();
@@ -1498,8 +1796,8 @@ describe("SMTP span coverage (P2-6)", () => {
         authenticator: new PassingAuthenticator(),
         input: {
           orgId,
+          recipients: [{ orgId, actorId, address: "alice@example.com" }],
           envelopeFrom: "ada@example.net",
-          envelopeTo: ["alice@example.com"],
           raw: [
             "From: Ada <ada@example.net>",
             "To: Alice <alice@example.com>",
@@ -1521,20 +1819,26 @@ describe("SMTP span coverage (P2-6)", () => {
   });
 
   it("emits an smtp.send span for outbound dispatch", async () => {
-    const { installSpanCapture } = await import(
-      "../observability/span-testing.js"
-    );
+    const { installSpanCapture } = await import("../observability/span-testing.js");
     const harness = installSpanCapture();
     try {
       const store = new InMemoryMailStore();
-      const outbound = await store.createOutbound({
+      await store.createOutbound({
         orgId,
         actorId,
         envelope: envelope(),
         undoUntil: new Date("2026-05-20T00:00:00.000Z"),
         outboxSubject: "mail.send",
       });
-      await new OutboundMailDispatcher(store, new RecordingTransport()).dispatch(outbound.id);
+      const claimed = await store.claimDueOutbound({
+        owner: "test",
+        leaseMs: 60_000,
+        now: store.now,
+      });
+      if (claimed === null) throw new Error("Expected due outbound mail");
+      await new OutboundMailDispatcher(store, async () => new RecordingTransport()).dispatch(
+        claimed,
+      );
       const span = harness.spans().find((candidate) => candidate.name === "smtp.send");
       expect(span).toBeDefined();
       expect(span?.attributes["helix.mail.delivery_status"]).toBe("sent");

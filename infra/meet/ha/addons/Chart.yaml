@@ -1,0 +1,4 @@
+apiVersion: v2
+name: helix-meet-ha-addons
+type: application
+version: 1.0.0

@@ -1,0 +1,5 @@
+targetRelease: helix-meet
+shardCount: 3
+minReplicas: 3
+maxReplicas: 9
+cpuTarget: 60

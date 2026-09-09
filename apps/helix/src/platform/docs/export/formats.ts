@@ -35,7 +35,6 @@ export interface PdfExportRenderer {
 
 export interface ExportDocsDocumentProviderOptions {
   readonly pdfRenderer?: PdfExportRenderer | undefined;
-  readonly onPdfRendererError?: ((error: unknown) => void) | undefined;
 }
 
 interface NativeDocumentTokenRenderOptions {
@@ -122,39 +121,26 @@ export async function exportDocsDocumentWithProviders(
   const includeComments = input.includeComments === true;
   const markdown = renderMarkdown(input.document, includeComments);
   const plainText = stripMarkdown(markdown);
-  try {
-    const rendered = await providers.pdfRenderer.render({
-      document: input.document,
-      title: renderNativeDocumentExportTokens(input.document.title),
-      markdown,
-      plainText,
-      html: renderHtmlForPdf(input.document, markdown),
-      includeComments,
-    });
-    return resultFromBuffer({
-      docId: input.document.id,
-      format: input.format,
-      filename,
-      mimeType: descriptor.mimeType,
-      buffer: rendered.buffer,
-      metadata: {
-        generatedBy: "helix.docs.export.pdf.chromium",
-        renderer: "headless-chromium",
-        ...(rendered.metadata ?? {}),
-      },
-    });
-  } catch (error) {
-    providers.onPdfRendererError?.(error);
-    const fallback = exportDocsDocument(input);
-    return {
-      ...fallback,
-      metadata: {
-        ...fallback.metadata,
-        fallback: true,
-        fallbackFrom: "headless-chromium",
-      },
-    };
-  }
+  const rendered = await providers.pdfRenderer.render({
+    document: input.document,
+    title: renderNativeDocumentExportTokens(input.document.title),
+    markdown,
+    plainText,
+    html: renderHtmlForPdf(input.document, markdown),
+    includeComments,
+  });
+  return resultFromBuffer({
+    docId: input.document.id,
+    format: input.format,
+    filename,
+    mimeType: descriptor.mimeType,
+    buffer: rendered.buffer,
+    metadata: {
+      generatedBy: "helix.docs.export.pdf.isolated",
+      renderer: "isolated-content-converter",
+      ...(rendered.metadata ?? {}),
+    },
+  });
 }
 
 export function defaultExportFilename(title: string, format: DocsExportFormat): string {
@@ -189,9 +175,7 @@ export function renderMarkdown(
         options.references === "text"
           ? title
           : `[${escapeMarkdownLinkLabel(title)}](#${epubAnchorId(item.anchor || item.id)})`;
-      lines.push(
-        `${"  ".repeat(Math.max(item.level - 1, 0))}- ${body}`,
-      );
+      lines.push(`${"  ".repeat(Math.max(item.level - 1, 0))}- ${body}`);
     }
   }
   if (includeComments && document.comments !== undefined && document.comments.length > 0) {
@@ -342,9 +326,7 @@ function nativeDocumentExportLayout(document: DocsExportDocument): NativeDocumen
   };
 }
 
-function firstNativeDocumentSection(
-  value: unknown,
-): {
+function firstNativeDocumentSection(value: unknown): {
   readonly columnCount?: 1 | 2;
   readonly pageSize?: "letter" | "a4";
   readonly orientation?: "portrait" | "landscape";
@@ -505,9 +487,7 @@ function renderDocxScaffold(
   const blocks = docxBlocksFromMarkdown(markdown);
   const images = blocks.filter(isDocxImageBlock).map((block) => block.image);
   const hyperlinks = docxHyperlinksFromBlocks(blocks);
-  const paragraphs = blocks
-    .filter(isDocxParagraphBlock)
-    .map((block) => block.text);
+  const paragraphs = blocks.filter(isDocxParagraphBlock).map((block) => block.text);
   const paragraphComments = assignDocxCommentsToParagraphs(paragraphs, comments);
   const paragraphBlocks = blocks.filter(isDocxParagraphBlock);
   const hasStyles = blocks.some(
@@ -583,15 +563,13 @@ function renderDocxScaffold(
     });
   }
   if (hasComments) {
-    entries.push(
-      {
-        name: "word/comments.xml",
-        data: xmlBuffer(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    entries.push({
+      name: "word/comments.xml",
+      data: xmlBuffer(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   ${comments.map(docxCommentXml).join("\n  ")}
 </w:comments>`),
-      },
-    );
+    });
   }
   for (const image of images) {
     entries.push({
@@ -711,7 +689,11 @@ function docxParagraphFromMarkdownLine(
     };
   }
   const inline = docxInlineRunsFromMarkdown(line, hyperlinkOffset);
-  return { text: docxTextFromRuns(inline.runs), runs: inline.runs, hyperlinkCount: inline.hyperlinkCount };
+  return {
+    text: docxTextFromRuns(inline.runs),
+    runs: inline.runs,
+    hyperlinkCount: inline.hyperlinkCount,
+  };
 }
 
 function docxInlineRunsFromMarkdown(
@@ -755,7 +737,9 @@ function nextInlineMarkdownToken(
   if (candidates.length === 0) {
     return null;
   }
-  return candidates.sort((left, right) => left.start - right.start || right.end - left.end)[0] ?? null;
+  return (
+    candidates.sort((left, right) => left.start - right.start || right.end - left.end)[0] ?? null
+  );
 }
 
 function inlineMarkdownLinkRun(
@@ -846,9 +830,7 @@ function docxHyperlinksFromBlocks(
 }
 
 function stripInlineMarkdownText(text: string): string {
-  return text
-    .replace(/[`*_~>]/gu, "")
-    .replace(/\[(.*?)\]\([^)]*\)/gu, "$1");
+  return text.replace(/[`*_~>]/gu, "").replace(/\[(.*?)\]\([^)]*\)/gu, "$1");
 }
 
 function isDocxParagraphBlock(
@@ -905,7 +887,10 @@ function docxImageFromMarkdownImage(
   };
 }
 
-function fallbackDocxImageText(image: { readonly altText: string; readonly source: string }): string {
+function fallbackDocxImageText(image: {
+  readonly altText: string;
+  readonly source: string;
+}): string {
   const altText = image.altText.trim();
   return altText.length === 0 ? `Image: ${image.source}` : `Image: ${altText}`;
 }
@@ -941,9 +926,7 @@ function markdownTableCells(line: string): readonly string[] {
 function normalizeDocxTableRows(rows: readonly (readonly string[])[]): DocxTable {
   const columnCount = Math.max(...rows.map((row) => row.length), 1);
   return {
-    rows: rows.map((row) =>
-      Array.from({ length: columnCount }, (_, index) => row[index] ?? ""),
-    ),
+    rows: rows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? "")),
   };
 }
 
@@ -1198,9 +1181,7 @@ function markdownInlineToMarkup(text: string, escapeText: (value: string) => str
     }
     const label = stripInlineMarkdownText(match[1] ?? "");
     const href = match[2] ?? "";
-    parts.push(
-      `<a href="${escapeXmlAttribute(href)}">${escapeText(label)}</a>`,
-    );
+    parts.push(`<a href="${escapeXmlAttribute(href)}">${escapeText(label)}</a>`);
     cursor = index + match[0].length;
   }
   if (cursor < text.length) {

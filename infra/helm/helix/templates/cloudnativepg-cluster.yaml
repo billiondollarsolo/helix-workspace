@@ -27,11 +27,16 @@ metadata:
 spec:
   imageName: {{ $cnpg.imageName | quote }}
   instances: {{ $cnpg.instances }}
-  {{- with $inheritedAnnotations }}
+  affinity:
+    nodeSelector:
+      topology.kubernetes.io/region: {{ .Values.external.s3.region | quote }}
   inheritedMetadata:
+    labels:
+      helix.io/service-account: {{ $cnpg.clusterName | quote }}
+    {{- with $inheritedAnnotations }}
     annotations:
       {{- toYaml . | nindent 6 }}
-  {{- end }}
+    {{- end }}
   {{- with $postgresqlParameters }}
   postgresql:
     parameters:

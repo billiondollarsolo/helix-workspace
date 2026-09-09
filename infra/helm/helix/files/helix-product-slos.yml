@@ -1,0 +1,105 @@
+groups:
+  - name: helix.product.slo.recording
+    interval: 30s
+    rules:
+      - record: helix:slo_product_errors:ratio_5m
+        expr: |
+          sum by (product) (label_replace(rate(helix_tool_invocations_total{status="error",tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[5m]), "product", "$1", "tool_id", "^([^.]+)\\..+$"))
+          / clamp_min(sum by (product) (label_replace(rate(helix_tool_invocations_total{tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[5m]), "product", "$1", "tool_id", "^([^.]+)\\..+$")), 1e-12)
+      - record: helix:slo_product_errors:ratio_30m
+        expr: |
+          sum by (product) (label_replace(rate(helix_tool_invocations_total{status="error",tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[30m]), "product", "$1", "tool_id", "^([^.]+)\\..+$"))
+          / clamp_min(sum by (product) (label_replace(rate(helix_tool_invocations_total{tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[30m]), "product", "$1", "tool_id", "^([^.]+)\\..+$")), 1e-12)
+      - record: helix:slo_product_errors:ratio_1h
+        expr: |
+          sum by (product) (label_replace(rate(helix_tool_invocations_total{status="error",tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[1h]), "product", "$1", "tool_id", "^([^.]+)\\..+$"))
+          / clamp_min(sum by (product) (label_replace(rate(helix_tool_invocations_total{tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[1h]), "product", "$1", "tool_id", "^([^.]+)\\..+$")), 1e-12)
+      - record: helix:slo_product_errors:ratio_6h
+        expr: |
+          sum by (product) (label_replace(rate(helix_tool_invocations_total{status="error",tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[6h]), "product", "$1", "tool_id", "^([^.]+)\\..+$"))
+          / clamp_min(sum by (product) (label_replace(rate(helix_tool_invocations_total{tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[6h]), "product", "$1", "tool_id", "^([^.]+)\\..+$")), 1e-12)
+      - record: helix:slo_product_availability:ratio_30d
+        expr: |
+          1 - (
+            sum by (product) (label_replace(increase(helix_tool_invocations_total{status="error",tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[30d]), "product", "$1", "tool_id", "^([^.]+)\\..+$"))
+            / clamp_min(sum by (product) (label_replace(increase(helix_tool_invocations_total{tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[30d]), "product", "$1", "tool_id", "^([^.]+)\\..+$")), 1)
+          )
+      - record: helix:slo_product_latency:p95_seconds_30d
+        expr: |
+          histogram_quantile(0.95, sum by (le, product) (label_replace(rate(helix_tool_invocation_duration_seconds_bucket{tool_id=~"(mail|chat|drive|calendar|meet|search)\\..+"}[30d]), "product", "$1", "tool_id", "^([^.]+)\\..+$")))
+      - record: helix:slo_auth_errors:ratio_5m
+        expr: sum(rate(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*",status_code=~"5.."}[5m])) / clamp_min(sum(rate(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*"}[5m])), 1e-12)
+      - record: helix:slo_auth_errors:ratio_30m
+        expr: sum(rate(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*",status_code=~"5.."}[30m])) / clamp_min(sum(rate(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*"}[30m])), 1e-12)
+      - record: helix:slo_auth_errors:ratio_1h
+        expr: sum(rate(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*",status_code=~"5.."}[1h])) / clamp_min(sum(rate(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*"}[1h])), 1e-12)
+      - record: helix:slo_auth_errors:ratio_6h
+        expr: sum(rate(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*",status_code=~"5.."}[6h])) / clamp_min(sum(rate(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*"}[6h])), 1e-12)
+      - record: helix:slo_auth_availability:ratio_30d
+        expr: 1 - (sum(increase(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*",status_code=~"5.."}[30d])) / clamp_min(sum(increase(helix_http_requests_total{route=~"/oauth/token|/api/auth/.*|/api/session.*"}[30d])), 1))
+      - record: helix:slo_auth_latency:p95_seconds_30d
+        expr: histogram_quantile(0.95, sum by (le) (rate(helix_http_request_duration_seconds_bucket{route=~"/oauth/token|/api/auth/.*|/api/session.*"}[30d])))
+      - record: helix:slo_search_freshness:seconds
+        expr: max(helix_search_projection_lag_seconds)
+      - record: helix:slo_meet_join_latency:p95_seconds_30d
+        expr: histogram_quantile(0.95, sum by (le) (rate(helix_meet_join_latency_seconds_bucket[30d])))
+      - record: helix:slo_meet_healthy_media:ratio_30d
+        expr: 1 - (sum(increase(helix_meet_degraded_samples_total[30d])) / clamp_min(sum(increase(helix_meet_quality_samples_total[30d])), 1))
+      - record: helix:slo_policy_latency:p95_seconds_30d
+        expr: histogram_quantile(0.95, sum by (le) (rate(helix_permission_check_duration_seconds_bucket[30d])))
+      - record: helix:slo_policy_errors:ratio_30d
+        expr: sum(increase(helix_permission_checks_total{decision="error"}[30d])) / clamp_min(sum(increase(helix_permission_checks_total[30d])), 1)
+
+  - name: helix.product.slo.alerts
+    rules:
+      - alert: HelixProductAvailabilityFastBurn
+        expr: helix:slo_product_errors:ratio_5m > (14.4 * 0.0005) and on (product) helix:slo_product_errors:ratio_1h > (14.4 * 0.0005)
+        for: 2m
+        labels: { severity: critical, priority: p1, owner: product-sre, slo: product_availability }
+        annotations:
+          summary: "{{ $labels.product }} availability is rapidly consuming its error budget"
+          runbook_url: docs/runbooks/product-slo-breach.md
+      - alert: HelixProductAvailabilitySlowBurn
+        expr: helix:slo_product_errors:ratio_30m > (6 * 0.0005) and on (product) helix:slo_product_errors:ratio_6h > (6 * 0.0005)
+        for: 15m
+        labels: { severity: warning, priority: p2, owner: product-sre, slo: product_availability }
+        annotations:
+          summary: "{{ $labels.product }} availability is steadily consuming its error budget"
+          runbook_url: docs/runbooks/product-slo-breach.md
+      - alert: HelixAuthAvailabilityFastBurn
+        expr: helix:slo_auth_errors:ratio_5m > (14.4 * 0.0001) and helix:slo_auth_errors:ratio_1h > (14.4 * 0.0001)
+        for: 2m
+        labels:
+          { severity: critical, priority: p1, owner: identity, service: auth, slo: availability }
+        annotations:
+          summary: Auth availability is rapidly consuming its error budget
+          runbook_url: docs/runbooks/product-slo-breach.md
+      - alert: HelixAuthAvailabilitySlowBurn
+        expr: helix:slo_auth_errors:ratio_30m > (6 * 0.0001) and helix:slo_auth_errors:ratio_6h > (6 * 0.0001)
+        for: 15m
+        labels:
+          { severity: warning, priority: p2, owner: identity, service: auth, slo: availability }
+        annotations:
+          summary: Auth availability is steadily consuming its error budget
+          runbook_url: docs/runbooks/product-slo-breach.md
+      - alert: HelixSearchFreshnessSloMiss
+        expr: helix:slo_search_freshness:seconds > 60
+        for: 10m
+        labels: { severity: warning, priority: p1, owner: search, service: search, slo: freshness }
+        annotations:
+          summary: Search freshness exceeds the strictest tier objective
+          runbook_url: docs/runbooks/product-slo-breach.md
+      - alert: HelixMeetQualityBudgetBurn
+        expr: (sum(rate(helix_meet_degraded_samples_total[5m])) / clamp_min(sum(rate(helix_meet_quality_samples_total[5m])), 1e-12)) > (14.4 * 0.005) and (sum(rate(helix_meet_degraded_samples_total[1h])) / clamp_min(sum(rate(helix_meet_quality_samples_total[1h])), 1e-12)) > (14.4 * 0.005)
+        for: 2m
+        labels:
+          {
+            severity: critical,
+            priority: p1,
+            owner: realtime-media,
+            service: meet,
+            slo: healthy_media,
+          }
+        annotations:
+          summary: Meet healthy-media budget is rapidly burning
+          runbook_url: docs/runbooks/product-slo-breach.md

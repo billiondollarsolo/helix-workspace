@@ -62,6 +62,7 @@ describe("PostgresAgentCredentialStore", () => {
     expect(credential?.policy.confirmationOverride).toBe("always");
     expect(credential?.policy.rateLimitOverrides).toEqual({ requestsPerMinute: 5 });
     expect(recording.calls[0]?.text).toContain("credential_type = 'api_key'");
+    expect(recording.calls[0]?.text).toContain("helix_credential_principal_is_active");
     expect(recording.calls[0]?.values).toContain(hashApiKey("helix_ak_test"));
   });
 
@@ -96,6 +97,7 @@ describe("PostgresAgentCredentialStore", () => {
     expect(credential?.policy.ipAllowlist).toEqual([]);
     expect(credential?.policy.confirmationOverride).toBe("inherit");
     expect(recording.calls[0]?.text).toContain("credential_type = 'mtls_cert'");
+    expect(recording.calls[0]?.text).toContain("helix_credential_principal_is_active");
   });
 
   it("returns null when no credential matches", async () => {
@@ -118,7 +120,6 @@ describe("PostgresAuthorizationCodeStore", () => {
       redirectUri: "https://app.example.com/cb",
       scopes: ["mail.read"],
       codeChallenge: "challenge",
-      codeChallengeMethod: "S256",
       state: "state-1",
       issuedAt,
       expiresAt: new Date(issuedAt.getTime() + 60_000),
@@ -142,7 +143,6 @@ describe("PostgresAuthorizationCodeStore", () => {
           redirect_uri: "https://app.example.com/cb",
           scopes: ["mail.read"],
           code_challenge: "challenge",
-          code_challenge_method: "S256",
           state: "state-1",
           issued_at: issuedAt,
           expires_at: expiresAt,

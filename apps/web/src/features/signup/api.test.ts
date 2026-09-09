@@ -24,7 +24,7 @@ describe("signup api", () => {
     const result = await checkOrgSlugAvailability("acme", fetchImpl);
 
     expect(result.available).toBe(true);
-    expect(fetchImpl).toHaveBeenCalledWith("/api/signup/org-slug/acme/availability", {
+    expect(fetchImpl).toHaveBeenCalledWith("/v1/api/signup/org-slug/acme/availability", {
       method: "GET",
       credentials: "include",
     });
@@ -110,7 +110,7 @@ describe("signup api", () => {
         referrerOrigin: "https://www.helix.example",
       },
     });
-    expect(fetchImpl).toHaveBeenCalledWith("/api/signup/form-viewed", {
+    expect(fetchImpl).toHaveBeenCalledWith("/v1/api/signup/form-viewed", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
@@ -142,7 +142,7 @@ describe("signup api", () => {
 
     expect(result.session.created).toBe(true);
     expect(result.workspace.onboardingUrl).toBe("https://acme.helix.example/onboarding");
-    expect(fetchImpl).toHaveBeenCalledWith("/api/signup/verify-email", {
+    expect(fetchImpl).toHaveBeenCalledWith("/v1/api/signup/verify-email", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
@@ -158,7 +158,7 @@ describe("signup api", () => {
     const result = await resendSignupVerification("old-token", fetchImpl);
 
     expect(result).toEqual({ status: "accepted" });
-    expect(fetchImpl).toHaveBeenCalledWith("/api/signup/resend-verification", {
+    expect(fetchImpl).toHaveBeenCalledWith("/v1/api/signup/resend-verification", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
@@ -189,7 +189,7 @@ describe("signup api", () => {
 
     expect(result.status).toBe("accepted");
     expect(result.workspace.welcomeUrl).toBe("https://acme.helix.example/welcome");
-    expect(fetchImpl).toHaveBeenCalledWith("/api/signup/onboarding-invite/accept", {
+    expect(fetchImpl).toHaveBeenCalledWith("/v1/api/signup/onboarding-invite/accept", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },

@@ -30,12 +30,12 @@ export class PostgresPlanStore implements PlanStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async findById(id: string): Promise<PlanRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<PlanRow[]>`
       select id, display_name, feature_flags_default, quotas_default
       from plans
       where id = ${id}
       limit 1
-    `) as unknown as readonly PlanRow[];
+    `;
     const row = rows[0];
     return row === undefined
       ? null

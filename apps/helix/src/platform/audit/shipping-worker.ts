@@ -26,6 +26,7 @@ export interface AuditShippingStore {
 
 export interface AuditBatchShipper {
   ship(records: readonly ImmutableAuditActivityRecord[]): Promise<ImmutableAuditShipResult>;
+  reconcile?(): Promise<void>;
 }
 
 export interface AuditShippingRunResult {
@@ -62,12 +63,17 @@ export class AuditShippingWorker {
   private readonly now: () => Date;
   private timer: NodeJS.Timeout | undefined;
   private activeRun: Promise<AuditShippingRunResult> | undefined;
+  private lastRunHealthy = true;
 
   constructor(private readonly options: AuditShippingWorkerOptions) {
     this.destination = options.destination ?? defaultDestination;
     this.batchSize = positiveInteger(options.batchSize ?? defaultBatchSize, "audit shipping batchSize");
     this.intervalMs = positiveInteger(options.intervalMs ?? defaultIntervalMs, "audit shipping intervalMs");
     this.now = options.now ?? (() => new Date());
+  }
+
+  get isHealthy(): boolean {
+    return this.timer !== undefined && this.lastRunHealthy;
   }
 
   start(): void {
@@ -105,6 +111,7 @@ export class AuditShippingWorker {
 
       if (records.length > 0) {
         const shippedRecordCount = await shipRecordsByOrg(this.options.shipper, records);
+        await this.options.shipper.reconcile?.();
         checkpoint = checkpointFromRecord(lastRecord(records));
         await this.options.store.saveAuditShippingCheckpoint(this.destination, checkpoint);
         const backlog = await this.options.store.getAuditShippingBacklog(checkpoint);
@@ -121,6 +128,7 @@ export class AuditShippingWorker {
         };
       }
 
+      await this.options.shipper.reconcile?.();
       const backlog = await this.options.store.getAuditShippingBacklog(checkpoint);
       const completedAt = this.now();
       return {
@@ -157,6 +165,7 @@ export class AuditShippingWorker {
 
     const activeRun = this.runOnce()
       .then((result) => {
+        this.lastRunHealthy = result.status !== "error";
         this.options.onResult?.(result);
         if (result.status === "error") {
           this.options.onError?.(new Error(result.error ?? "Audit shipping failed"));
@@ -196,7 +205,12 @@ function groupRecordsByOrg(
     }
     group.push(record);
   }
-  return [...groups.values()];
+  return [...groups.values()].map((group) =>
+    [...group].sort((left, right) => {
+      const difference = BigInt(left.sequence) - BigInt(right.sequence);
+      return difference < 0n ? -1 : difference > 0n ? 1 : 0;
+    }),
+  );
 }
 
 function checkpointFromRecord(record: ImmutableAuditActivityRecord): AuditShippingCheckpoint {

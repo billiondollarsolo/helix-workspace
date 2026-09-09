@@ -1,13 +1,13 @@
 import fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
+import { InMemoryDomainsStore } from "../admin/domains.js";
 import { registerMailDeliveryAdminRoutes } from "./admin-routes.js";
 import {
   InMemoryMailDkimKeyStore,
   InMemoryMailDmarcReportStore,
   InMemoryMailRoutingRuleStore,
   InMemoryOutboundProviderStore,
-  InMemorySendingDomainStore,
 } from "./admin-store.js";
 import { parseDmarcAggregateReport, DmarcReportParseError } from "./dmarc.js";
 
@@ -26,6 +26,8 @@ const unprivilegedActor: Actor = { ...adminActor, scopes: ["mail.read"] };
 
 let app: FastifyInstance;
 let currentActor: Actor;
+let domainStore: InMemoryDomainsStore;
+let dkimDnsVerified: boolean;
 const audited: { verb: string; objectType: string }[] = [];
 
 /** A Fastify inject response narrowed to a status code and a JSON payload. */
@@ -70,10 +72,12 @@ async function inject(options: InjectRequest): Promise<InjectResponse> {
 beforeEach(async () => {
   currentActor = adminActor;
   audited.length = 0;
+  dkimDnsVerified = true;
   app = fastify();
+  domainStore = new InMemoryDomainsStore();
   await registerMailDeliveryAdminRoutes(app, {
     providerStore: new InMemoryOutboundProviderStore(),
-    domainStore: new InMemorySendingDomainStore(),
+    domainStore,
     dkimStore: new InMemoryMailDkimKeyStore(),
     dmarcStore: new InMemoryMailDmarcReportStore(),
     routingStore: new InMemoryMailRoutingRuleStore(),
@@ -84,6 +88,7 @@ beforeEach(async () => {
         return { id: "audit-1", thisHash: "hash" };
       },
     },
+    verifyDkimDns: async () => dkimDnsVerified,
   });
   await app.ready();
 });
@@ -102,7 +107,7 @@ interface ProviderView {
 interface DomainView {
   readonly id: string;
   readonly domain: string;
-  readonly verifiedAt: string | null;
+  readonly mailEnabled: boolean;
 }
 interface DkimKeyView {
   readonly id: string;
@@ -136,14 +141,14 @@ describe("outbound provider admin routes", () => {
         kind: "mailgun",
         isDefault: true,
         config: { domain: "mg.helix.test" },
-        secretRef: "MAILGUN_API_KEY",
+        secretRef: "mailgun-primary",
       },
     });
     expect(created.statusCode).toBe(201);
     const provider = created.body<{ provider: ProviderView }>().provider;
     expect(provider.kind).toBe("mailgun");
     expect(provider.hasSecret).toBe(true);
-    expect(provider.secretRef).toBe("MAILGUN_API_KEY");
+    expect(provider.secretRef).toBe("mailgun-primary");
     expect(JSON.stringify(provider)).not.toContain("secret-value");
 
     const list = await inject({
@@ -208,58 +213,98 @@ describe("outbound provider admin routes", () => {
 });
 
 describe("sending domain and DKIM admin routes", () => {
-  it("registers a domain, generates and rotates DKIM keys", async () => {
+  it("enables a verified canonical domain, then generates and rotates DKIM keys", async () => {
+    const claimed = await domainStore.createDomain({
+      orgId,
+      domain: "helix.io",
+      createdBy: adminActor.id,
+      verificationHost: "_helix-verification.helix.io",
+      verificationValue: "test",
+      verificationExpiresAt: "2026-09-05T00:00:00.000Z",
+    });
+    await domainStore.recordDomainVerification({
+      orgId,
+      id: claimed.id,
+      verified: true,
+      actorId: adminActor.id,
+    });
     const domainResponse = await inject({
       method: "POST",
-      url: "/api/admin/mail/sending-domains",
-      payload: { domain: "Helix.Test", isDefault: true },
+      url: `/api/admin/mail/domains/${claimed.id}/enable`,
+      payload: { providerId: null },
     });
-    expect(domainResponse.statusCode).toBe(201);
+    expect(domainResponse.statusCode).toBe(200);
     const domain = domainResponse.body<{ domain: DomainView }>().domain;
-    expect(domain.domain).toBe("helix.test");
+    expect(domain.domain).toBe("helix.io");
+    expect(domain.mailEnabled).toBe(true);
 
-    const verify = await inject({
+    const forgedVerification = await inject({
       method: "POST",
-      url: `/api/admin/mail/sending-domains/${domain.id}/verify`,
+      url: `/api/admin/mail/domains/${domain.id}/verify`,
       payload: { verified: true },
     });
-    expect(verify.body<{ domain: DomainView }>().domain.verifiedAt).not.toBeNull();
+    expect(forgedVerification.statusCode).toBe(404);
 
     const firstKey = await inject({
       method: "POST",
-      url: `/api/admin/mail/sending-domains/${domain.id}/dkim`,
-      payload: { selector: "s1", keyBits: 1024 },
+      url: `/api/admin/mail/domains/${domain.id}/dkim`,
+      payload: { selector: "s1", keyBits: 2048 },
     });
     expect(firstKey.statusCode).toBe(201);
     const key1 = firstKey.body<{ key: DkimKeyView }>().key;
-    expect(key1.status).toBe("active");
+    expect(key1.status).toBe("pending");
     expect(key1.dnsRecord).toMatch(/^v=DKIM1; k=rsa; p=/u);
     expect(key1.dnsHost).toBe("s1._domainkey");
     // The private key must never leave the host.
     expect(JSON.stringify(key1)).not.toContain("PRIVATE KEY");
     expect(key1.privateKeyStored).toBe(true);
 
-    // Rotation: a second key becomes active, the first is demoted to retiring.
+    const firstActivation = await inject({
+      method: "POST",
+      url: `/api/admin/mail/domains/${domain.id}/dkim/${key1.id}/activate`,
+    });
+    expect(firstActivation.statusCode).toBe(200);
+    expect(firstActivation.body<{ key: DkimKeyView }>().key.status).toBe("active");
+
+    // Rotation keeps the current key active until the replacement is in DNS.
     const secondKey = await inject({
       method: "POST",
-      url: `/api/admin/mail/sending-domains/${domain.id}/dkim`,
-      payload: { selector: "s2", keyBits: 1024 },
+      url: `/api/admin/mail/domains/${domain.id}/dkim`,
+      payload: { selector: "s2", keyBits: 2048 },
     });
     expect(secondKey.statusCode).toBe(201);
+    const key2 = secondKey.body<{ key: DkimKeyView }>().key;
+    expect(key2.status).toBe("pending");
+
+    dkimDnsVerified = false;
+    const prematureActivation = await inject({
+      method: "POST",
+      url: `/api/admin/mail/domains/${domain.id}/dkim/${key2.id}/activate`,
+    });
+    expect(prematureActivation.statusCode).toBe(409);
+
+    dkimDnsVerified = true;
+    const secondActivation = await inject({
+      method: "POST",
+      url: `/api/admin/mail/domains/${domain.id}/dkim/${key2.id}/activate`,
+    });
+    expect(secondActivation.statusCode).toBe(200);
 
     const keys = await inject({
       method: "GET",
-      url: `/api/admin/mail/sending-domains/${domain.id}/dkim`,
+      url: `/api/admin/mail/domains/${domain.id}/dkim`,
     });
     const byStatus = Object.fromEntries(
       keys.body<{ keys: readonly DkimKeyView[] }>().keys.map((key) => [key.selector, key.status]),
     );
     expect(byStatus).toEqual({ s1: "retiring", s2: "active" });
 
-    const retiring = keys.body<{ keys: readonly DkimKeyView[] }>().keys.find((key) => key.status === "retiring");
+    const retiring = keys
+      .body<{ keys: readonly DkimKeyView[] }>()
+      .keys.find((key) => key.status === "retiring");
     const retired = await inject({
       method: "POST",
-      url: `/api/admin/mail/sending-domains/${domain.id}/dkim/${retiring?.id ?? ""}/retire`,
+      url: `/api/admin/mail/domains/${domain.id}/dkim/${retiring?.id ?? ""}/retire`,
     });
     expect(retired.statusCode).toBe(200);
     expect(retired.body<{ key: DkimKeyView }>().key.status).toBe("retired");
@@ -268,7 +313,7 @@ describe("sending domain and DKIM admin routes", () => {
   it("returns 404 generating a DKIM key for an unknown domain", async () => {
     const response = await inject({
       method: "POST",
-      url: "/api/admin/mail/sending-domains/00000000-0000-4000-8000-000000000999/dkim",
+      url: "/api/admin/mail/domains/00000000-0000-4000-8000-000000000999/dkim",
       payload: { selector: "s1" },
     });
     expect(response.statusCode).toBe(404);
@@ -338,7 +383,9 @@ describe("DMARC admin routes", () => {
     });
     expect(summary.statusCode).toBe(200);
     expect(summary.body<{ summary: DmarcSummaryView }>().summary.passRate).toBeCloseTo(0.8);
-    expect(summary.body<{ summary: DmarcSummaryView }>().summary.topFailingSources[0]?.sourceIp).toBe("198.51.100.7");
+    expect(
+      summary.body<{ summary: DmarcSummaryView }>().summary.topFailingSources[0]?.sourceIp,
+    ).toBe("198.51.100.7");
 
     const reports = await inject({
       method: "GET",
@@ -406,5 +453,29 @@ describe("inbound routing rule admin routes", () => {
     });
     expect(response.statusCode).toBe(400);
   });
-});
 
+  it("rejects ambiguous wildcards and incomplete header matches", async () => {
+    const wildcard = await inject({
+      method: "POST",
+      url: "/api/admin/mail/routing-rules",
+      payload: {
+        name: "Ambiguous wildcard",
+        actionKind: "drop",
+        match: { recipientPattern: "support*@helix.test" },
+        action: {},
+      },
+    });
+    const header = await inject({
+      method: "POST",
+      url: "/api/admin/mail/routing-rules",
+      payload: {
+        name: "Incomplete header",
+        actionKind: "drop",
+        match: { headerName: "X-Project" },
+        action: {},
+      },
+    });
+    expect(wildcard.statusCode).toBe(400);
+    expect(header.statusCode).toBe(400);
+  });
+});

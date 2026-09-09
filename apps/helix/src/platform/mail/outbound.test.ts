@@ -3,12 +3,13 @@ import {
   MailSendService,
   NodemailerMailTransport,
   OutboundMailDispatcher,
+  OutboundMailWorker,
   type OutboundMailTransport,
   resolveOutboundAttachments,
 } from "./outbound.js";
-import type { MailStore } from "./store.js";
+import type { ClaimedOutboundMail, MailStore, OutboundMailQueueStore } from "./store.js";
 import type { MailOutboundEnvelope, MailOutboundRecord } from "./types.js";
-import { MailOutboundPayloadError, MailProviderError } from "./errors.js";
+import { MailDeliveryError } from "./errors.js";
 
 const now = new Date("2026-05-20T12:00:00.000Z");
 
@@ -47,8 +48,127 @@ function baseOutbound(overrides: Partial<MailOutboundRecord> = {}): MailOutbound
     attemptCount: 0,
     nextAttemptAt: null,
     deadLetteredAt: null,
+    handoffKey: "handoff-1",
+    leaseOwner: null,
+    leaseToken: null,
+    leaseExpiresAt: null,
     ...overrides,
   };
+}
+
+class MemoryQueue implements OutboundMailQueueStore {
+  record = baseOutbound({ nextAttemptAt: now });
+  failNextCommit = false;
+
+  async claimDueOutbound(input: {
+    readonly owner: string;
+    readonly leaseMs: number;
+    readonly now?: Date;
+  }): Promise<ClaimedOutboundMail | null> {
+    const claimedAt = input.now ?? now;
+    const nextAttemptAt = this.record.nextAttemptAt;
+    const leaseExpiresAt = this.record.leaseExpiresAt;
+    const due =
+      (this.record.status === "queued" && nextAttemptAt != null && nextAttemptAt <= claimedAt) ||
+      (this.record.status === "sending" && leaseExpiresAt != null && leaseExpiresAt <= claimedAt);
+    if (!due) return null;
+    const attemptCount = (this.record.attemptCount ?? 0) + 1;
+    this.record = {
+      ...this.record,
+      status: "sending",
+      attemptCount,
+      nextAttemptAt: null,
+      leaseOwner: input.owner,
+      leaseToken: `lease-${String(attemptCount)}`,
+      leaseExpiresAt: new Date(claimedAt.getTime() + input.leaseMs),
+    };
+    return this.record as ClaimedOutboundMail;
+  }
+
+  async markOutboundSent(input: {
+    readonly id: string;
+    readonly leaseToken: string;
+    readonly providerMessageId?: string | undefined;
+    readonly deliveryMetadata?: Record<string, never> | undefined;
+  }) {
+    if (this.failNextCommit) {
+      this.failNextCommit = false;
+      throw new Error("process lost after provider handoff");
+    }
+    if (this.record.leaseToken !== input.leaseToken) return null;
+    this.record = {
+      ...this.record,
+      status: "accepted",
+      sentAt: now,
+      providerMessageId: input.providerMessageId ?? null,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+    };
+    return this.record;
+  }
+
+  async markOutboundRetry(input: {
+    readonly leaseToken: string;
+    readonly nextAttemptAt: Date;
+    readonly lastError: string;
+  }) {
+    if (this.record.leaseToken !== input.leaseToken) return null;
+    this.record = {
+      ...this.record,
+      status: "queued",
+      nextAttemptAt: input.nextAttemptAt,
+      lastError: input.lastError,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+    };
+    return this.record;
+  }
+
+  async markOutboundDeadLettered(input: {
+    readonly leaseToken: string;
+    readonly lastError: string;
+    readonly deadLetteredAt?: Date;
+  }) {
+    if (this.record.leaseToken !== input.leaseToken) return null;
+    const deadLetteredAt = input.deadLetteredAt ?? now;
+    this.record = {
+      ...this.record,
+      status: "failed",
+      failedAt: deadLetteredAt,
+      deadLetteredAt,
+      lastError: input.lastError,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+    };
+    return this.record;
+  }
+
+  async replayOutbound(input: { readonly orgId: string; readonly id: string }) {
+    if (
+      this.record.orgId !== input.orgId ||
+      this.record.id !== input.id ||
+      this.record.deadLetteredAt == null
+    ) {
+      return null;
+    }
+    this.record = {
+      ...this.record,
+      status: "queued",
+      attemptCount: 0,
+      nextAttemptAt: now,
+      failedAt: null,
+      deadLetteredAt: null,
+      lastError: null,
+    };
+    return this.record;
+  }
+
+  async listDeadLetteredOutbound(orgId: string) {
+    return this.record.orgId === orgId && this.record.deadLetteredAt != null ? [this.record] : [];
+  }
 }
 
 describe("resolveOutboundAttachments", () => {
@@ -94,109 +214,196 @@ describe("resolveOutboundAttachments", () => {
   });
 });
 
-describe("OutboundMailDispatcher retry + dead-letter", () => {
-  it("retries transient transport failures then succeeds", async () => {
+describe("durable outbound dispatch", () => {
+  it("recovers a stale lease after a post-handoff crash without a duplicate visible send", async () => {
+    const store = new MemoryQueue();
+    const visible = new Set<string>();
+    const handoffs: string[] = [];
+    const transport: OutboundMailTransport = {
+      async send(_message, handoff) {
+        handoffs.push(handoff.idempotencyKey);
+        visible.add(handoff.idempotencyKey);
+        return { providerMessageId: "provider-1", deliveryMetadata: {} };
+      },
+    };
+    const dispatcher = new OutboundMailDispatcher(store, async () => transport);
+    store.failNextCommit = true;
+    const worker1 = new OutboundMailWorker({
+      store,
+      dispatcher,
+      owner: "process-1",
+      leaseMs: 1_000,
+    });
+    await expect(worker1.drainOnce(now)).rejects.toThrow("process lost");
+
+    const worker2 = new OutboundMailWorker({
+      store,
+      dispatcher,
+      owner: "process-2",
+      leaseMs: 1_000,
+    });
+    await expect(worker2.drainOnce(new Date(now.getTime() + 999))).resolves.toBe(0);
+    await expect(worker2.drainOnce(new Date(now.getTime() + 1_000))).resolves.toBe(1);
+    expect(store.record.status).toBe("accepted");
+    expect(store.record.attemptCount).toBe(2);
+    expect(handoffs).toEqual(["handoff-1", "handoff-1"]);
+    expect(visible).toEqual(new Set(["handoff-1"]));
+  });
+
+  it("reclaims a crash after claim but before provider handoff", async () => {
+    const store = new MemoryQueue();
+    await store.claimDueOutbound({ owner: "dead-process", leaseMs: 1_000, now });
+    const send = vi.fn(async () => ({ providerMessageId: "provider-1", deliveryMetadata: {} }));
+    const worker = new OutboundMailWorker({
+      store,
+      leaseMs: 1_000,
+      dispatcher: new OutboundMailDispatcher(store, async () => ({ send })),
+    });
+
+    await expect(worker.drainOnce(new Date(now.getTime() + 999))).resolves.toBe(0);
+    await expect(worker.drainOnce(new Date(now.getTime() + 1_000))).resolves.toBe(1);
+    expect(send).toHaveBeenCalledOnce();
+    expect(store.record.status).toBe("accepted");
+  });
+
+  it("persists retry timing across restart and never runs early or busy-loops", async () => {
+    const store = new MemoryQueue();
     let attempts = 0;
     const transport: OutboundMailTransport = {
-      send: vi.fn(async () => {
+      async send() {
         attempts += 1;
-        if (attempts < 3) {
-          throw new Error("temporary");
-        }
-        return { providerMessageId: "p1", deliveryMetadata: {} };
-      }),
+        if (attempts === 1) throw new Error("temporary");
+        return { providerMessageId: "provider-1", deliveryMetadata: {} };
+      },
     };
-    const record = baseOutbound({ status: "sending", attemptCount: 0 });
-    const markOutboundRetry = vi
-      .fn()
-      .mockImplementation(async (input: { attemptCount: number }) => ({
-        ...record,
-        status: "queued",
-        attemptCount: input.attemptCount,
-      }));
-    const store = {
-      markOutboundSending: vi.fn().mockResolvedValue(record),
-      markOutboundSent: vi.fn().mockImplementation(async () => ({
-        ...record,
-        status: "sent",
-        providerMessageId: "p1",
-      })),
-      markOutboundFailed: vi.fn().mockImplementation(async (_id: string, error: string) => ({
-        ...record,
-        status: "failed",
-        lastError: error,
-        attemptCount: attempts,
-      })),
-      markOutboundRetry,
-      markOutboundDeadLettered: vi.fn(),
-    } as unknown as MailStore;
+    const options = { baseDelayMs: 1_000, maxDelayMs: 60_000, now: () => now, random: () => 0 };
+    await new OutboundMailWorker({
+      store,
+      owner: "process-1",
+      dispatcher: new OutboundMailDispatcher(store, async () => transport, options),
+    }).drainOnce(now);
+    expect(store.record.nextAttemptAt).toEqual(new Date(now.getTime() + 500));
 
-    const dispatcher = new OutboundMailDispatcher(store, transport, {
-      maxAttempts: 5,
-      baseDelayMs: 1,
-      maxDelayMs: 10,
-      sleep: async () => undefined,
+    const restarted = new OutboundMailWorker({
+      store,
+      owner: "process-2",
+      dispatcher: new OutboundMailDispatcher(store, async () => transport, options),
     });
-    const result = await dispatcher.dispatch("out-1");
-    expect(result?.status).toBe("sent");
-    expect(attempts).toBe(3);
-    expect(markOutboundRetry).toHaveBeenCalled();
+    await expect(restarted.drainOnce(new Date(now.getTime() + 499))).resolves.toBe(0);
+    await expect(restarted.drainOnce(new Date(now.getTime() + 500))).resolves.toBe(1);
+    expect(attempts).toBe(2);
+    expect(store.record.status).toBe("accepted");
   });
 
-  it("dead-letters after the attempt cap and wraps MailProviderError", async () => {
+  it("dead-letters terminal failures and supports an operator replay", async () => {
+    const store = new MemoryQueue();
+    const operationalEvents: { readonly operation: string; readonly status: string }[] = [];
+    let fail = true;
     const transport: OutboundMailTransport = {
-      send: vi.fn(async () => {
-        throw new Error("always fail");
-      }),
+      async send() {
+        if (fail) throw new MailDeliveryError("recipient rejected", false);
+        return { providerMessageId: "provider-1", deliveryMetadata: {} };
+      },
     };
-    const record = baseOutbound({ status: "sending", attemptCount: 0 });
-    const markOutboundDeadLettered = vi.fn().mockImplementation(async () => ({
-      ...record,
-      status: "failed",
-      deadLetteredAt: now,
-      lastError: "always fail",
-    }));
-    const store = {
-      markOutboundSending: vi.fn().mockResolvedValue(record),
-      markOutboundSent: vi.fn(),
-      markOutboundFailed: vi.fn().mockImplementation(async () => ({
-        ...record,
-        status: "failed",
-        lastError: "always fail",
-      })),
-      markOutboundRetry: vi.fn().mockImplementation(async (input: { attemptCount: number }) => ({
-        ...record,
-        status: "queued",
-        attemptCount: input.attemptCount,
-      })),
-      markOutboundDeadLettered,
-    } as unknown as MailStore;
-
-    const dispatcher = new OutboundMailDispatcher(store, transport, {
-      maxAttempts: 2,
-      baseDelayMs: 1,
-      maxDelayMs: 10,
-      sleep: async () => undefined,
+    const worker = new OutboundMailWorker({
+      store,
+      dispatcher: new OutboundMailDispatcher(store, async () => transport, {
+        metrics: {
+          recordOperationalEvent: (event) => operationalEvents.push(event),
+        },
+      }),
     });
-    const result = await dispatcher.dispatch("out-1");
-    expect(result?.deadLetteredAt).toBeTruthy();
-    expect(markOutboundDeadLettered).toHaveBeenCalled();
-    await expect(
-      Promise.reject(new MailProviderError("always fail", new Error("always fail"))),
-    ).rejects.toBeInstanceOf(MailProviderError);
+    await worker.drainOnce(now);
+    expect(await store.listDeadLetteredOutbound("o1")).toHaveLength(1);
+    expect(operationalEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ operation: "queue_wait", status: "success" }),
+        expect.objectContaining({ operation: "delivery", status: "error" }),
+      ]),
+    );
+
+    fail = false;
+    await store.replayOutbound({ orgId: "o1", id: "out-1" });
+    await worker.drainOnce(now);
+    expect(store.record.status).toBe("accepted");
+    expect(operationalEvents).toContainEqual(
+      expect.objectContaining({ operation: "delivery", status: "success" }),
+    );
   });
 
-  it("rejects invalid outbox payloads with MailOutboundPayloadError", async () => {
-    const dispatcher = new OutboundMailDispatcher({} as MailStore, {
-      send: async () => ({ providerMessageId: "x", deliveryMetadata: {} }),
+  it("dead-letters transient failures at the persisted attempt cap", async () => {
+    const store = new MemoryQueue();
+    const transport: OutboundMailTransport = {
+      async send() {
+        throw new Error("provider unavailable");
+      },
+    };
+    const dispatcher = new OutboundMailDispatcher(store, async () => transport, {
+      maxAttempts: 2,
+      baseDelayMs: 2,
+      random: () => 0,
+      now: () => now,
     });
-    await expect(dispatcher.dispatchOutboxPayload({})).rejects.toBeInstanceOf(
-      MailOutboundPayloadError,
-    );
+    const worker = new OutboundMailWorker({ store, dispatcher });
+
+    await worker.drainOnce(now);
+    await worker.drainOnce(new Date(now.getTime() + 1));
+    expect(store.record.attemptCount).toBe(2);
+    expect(store.record.deadLetteredAt).toEqual(now);
   });
 });
 
 describe("MailSendService.cancel", () => {
+  it("uses the durable queue's not-before time for a bounded scheduled send", async () => {
+    const createOutbound = vi.fn(async (input: { undoUntil: Date }) =>
+      baseOutbound({ undoUntil: input.undoUntil, nextAttemptAt: input.undoUntil }),
+    );
+    const service = new MailSendService({
+      store: { createOutbound } as unknown as MailStore,
+      undoWindowMs: 30_000,
+    });
+    const sendAt = new Date(now.getTime() + 60 * 60_000);
+
+    await service.queue({ orgId: "o1", actorId: "a1", envelope: envelope(), now, sendAt });
+
+    expect(createOutbound).toHaveBeenCalledWith(expect.objectContaining({ undoUntil: sendAt }));
+    expect(() =>
+      service.queue({
+        orgId: "o1",
+        actorId: "a1",
+        envelope: envelope(),
+        now,
+        sendAt: new Date(now.getTime() + 367 * 24 * 60 * 60_000),
+      }),
+    ).toThrow("within the next 366 days");
+  });
+
+  it("pins canonical RFC headers before the message enters the durable queue", async () => {
+    const createOutbound = vi.fn(async (input: { envelope: MailOutboundEnvelope }) =>
+      baseOutbound({ envelope: input.envelope }),
+    );
+    const service = new MailSendService({
+      store: { createOutbound } as unknown as MailStore,
+      undoWindowMs: 0,
+    });
+
+    const queued = await service.queue({
+      orgId: "o1",
+      actorId: "a1",
+      envelope: envelope(),
+      inReplyTo: "parent@EXAMPLE.NET",
+      references: ["<root@EXAMPLE.NET>", "<parent@example.net>"],
+      now,
+    });
+
+    expect(queued.envelope).toMatchObject({
+      messageId: expect.stringMatching(/^<[0-9a-f-]+@example\.com>$/u),
+      inReplyTo: "<parent@example.net>",
+      references: ["<root@example.net>", "<parent@example.net>"],
+    });
+    expect(createOutbound).toHaveBeenCalledOnce();
+  });
+
   it("delegates to store.cancelOutbound", async () => {
     const cancelOutbound = vi.fn().mockResolvedValue(baseOutbound({ status: "cancelled" }));
     const store = {
@@ -223,5 +430,27 @@ describe("NodemailerMailTransport attachment content", () => {
           secure: false,
         }),
     ).not.toThrow();
+  });
+
+  it("passes the active tenant DKIM key to Nodemailer", async () => {
+    const sendMail = vi.fn(async () => ({ messageId: "provider-1" }));
+    const transport = new NodemailerMailTransport(
+      { sendMail } as never,
+      async () => ({
+        domainName: "example.com",
+        keySelector: "s1",
+        privateKey: "kms-unwrapped-private-key",
+      }),
+    );
+    await transport.send(envelope(), { idempotencyKey: "handoff-1" });
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dkim: {
+          domainName: "example.com",
+          keySelector: "s1",
+          privateKey: "kms-unwrapped-private-key",
+        },
+      }),
+    );
   });
 });

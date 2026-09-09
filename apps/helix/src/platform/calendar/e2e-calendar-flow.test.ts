@@ -15,11 +15,20 @@ import type {
 } from "@helix/sdk-types";
 import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
 import { SearchEventIndexer } from "../search/event-indexer.js";
-import type { IndexDocument, SearchEngine, SearchRequest, SearchResponse } from "../search/types.js";
+import type {
+  IndexDocument,
+  SearchEngine,
+  SearchRequest,
+  SearchResponse,
+} from "../search/types.js";
 import { createToolRegistry } from "../tool-registry.js";
 import { getCalendarFreeBusy } from "./freebusy.js";
 import { createIcsCalendar } from "./ics.js";
-import { createCalendarSuggestionSlotProviders, registerCalendarIndexer, registerCalendarTools } from "./index.js";
+import {
+  createCalendarSuggestionSlotProviders,
+  registerCalendarIndexer,
+  registerCalendarTools,
+} from "./index.js";
 import type { CalendarAttendeeInput, CalendarStore, UpdateCalendarEventInput } from "./store.js";
 import type {
   CalendarAttendeeRecord,
@@ -29,6 +38,7 @@ import type {
   CalendarFreeBusyEvent,
   CalendarFreeBusyRequest,
   CalendarListEntry,
+  CalendarMembershipRecord,
   CalendarSearchProjectionStore,
   CalendarSearchRecord,
 } from "./types.js";
@@ -49,36 +59,48 @@ describe("calendar AI/free-busy/search flow", () => {
     registerCalendarIndexer(indexer, calendar);
     await indexer.start();
 
-    const createResult = await registry.invoke<{ readonly id: string }>("calendar.event.create", {
-      calendarId,
-      title: "Launch planning",
-      description: "Review launch risks and owner follow-up.",
-      location: "Conference Room A",
-      startsAt: "2026-05-20T15:00:00.000Z",
-      endsAt: "2026-05-20T16:00:00.000Z",
-      timezone: "UTC",
-      attendees: [{ actorId: bruno.id, email: bruno.email, displayName: bruno.displayName }],
-      metadata: { source: "e2e" },
-      sendInvitations: false,
-    }, { actor: ada });
+    const createResult = await registry.invoke<{ readonly id: string }>(
+      "calendar.event.create",
+      {
+        calendarId,
+        title: "Launch planning",
+        description: "Review launch risks and owner follow-up.",
+        location: "Conference Room A",
+        startsAt: "2026-05-20T15:00:00.000Z",
+        endsAt: "2026-05-20T16:00:00.000Z",
+        timezone: "UTC",
+        attendees: [{ actorId: bruno.id, email: bruno.email, displayName: bruno.displayName }],
+        metadata: { source: "e2e" },
+        sendInvitations: false,
+      },
+      { actor: ada },
+    );
     expect(createResult.ok).toBe(true);
     if (!createResult.ok) {
       throw new Error(createResult.error);
     }
 
     const eventId = createResult.output.id;
-    const updateResult = await registry.invoke("calendar.event.update", {
-      eventId,
-      title: "Launch planning review",
-      location: "Conference Room B",
-      sendInvitations: false,
-    }, { actor: ada });
+    const updateResult = await registry.invoke(
+      "calendar.event.update",
+      {
+        eventId,
+        title: "Launch planning review",
+        location: "Conference Room B",
+        sendInvitations: false,
+      },
+      { actor: ada },
+    );
     expect(updateResult.ok).toBe(true);
 
-    const respondResult = await registry.invoke("calendar.event.respond", {
-      eventId,
-      responseStatus: "accepted",
-    }, { actor: bruno });
+    const respondResult = await registry.invoke(
+      "calendar.event.respond",
+      {
+        eventId,
+        responseStatus: "accepted",
+      },
+      { actor: bruno },
+    );
     expect(respondResult.ok).toBe(true);
 
     await calendar.createBusyHold({
@@ -95,7 +117,9 @@ describe("calendar AI/free-busy/search flow", () => {
       startsAt: new Date("2026-05-20T14:00:00.000Z"),
       endsAt: new Date("2026-05-20T18:00:00.000Z"),
     });
-    const findTime = await registry.invoke<{ readonly slots: readonly { readonly startsAt: string; readonly endsAt: string }[] }>(
+    const findTime = await registry.invoke<{
+      readonly slots: readonly { readonly startsAt: string; readonly endsAt: string }[];
+    }>(
       "calendar.find-time",
       {
         attendeeActorIds: [bruno.id],
@@ -122,41 +146,57 @@ describe("calendar AI/free-busy/search flow", () => {
     const providers = createCalendarSuggestionSlotProviders({ ai });
     const suggestTime = requiredProvider(providers, "calendar.suggest-meeting-time");
     const draftAgenda = requiredProvider(providers, "calendar.draft-agenda");
-    const timeSuggestion = await collectSuggestion(suggestTime.generate({
-      actor: ada,
-      feature: "calendar.suggest-meeting-time",
-      resource: { type: "calendar.event", id: eventId, orgId: ada.orgId },
-      input: {
-        title: stored.title,
-        attendees: [ada.displayName, bruno.displayName].filter((name): name is string => name !== undefined),
-        durationMinutes: 30,
-        slots: findTime.output.slots,
-      },
-    }));
-    const agenda = await collectSuggestion(draftAgenda.generate({
-      actor: ada,
-      feature: "calendar.draft-agenda",
-      resource: { type: "calendar.event", id: eventId, orgId: ada.orgId },
-      input: {
-        title: stored.title,
-        purpose: "Align on launch risks and owners.",
-        attendees: stored.attendees.map((attendee) => attendee.displayName ?? attendee.email),
-        notes: stored.description ?? "",
-      },
-    }));
+    const timeSuggestion = await collectSuggestion(
+      suggestTime.generate({
+        actor: ada,
+        feature: "calendar.suggest-meeting-time",
+        resource: { type: "calendar.event", id: eventId, orgId: ada.orgId },
+        input: {
+          title: stored.title,
+          attendees: [ada.displayName, bruno.displayName].filter(
+            (name): name is string => name !== undefined,
+          ),
+          durationMinutes: 30,
+          slots: findTime.output.slots,
+        },
+      }),
+    );
+    const agenda = await collectSuggestion(
+      draftAgenda.generate({
+        actor: ada,
+        feature: "calendar.draft-agenda",
+        resource: { type: "calendar.event", id: eventId, orgId: ada.orgId },
+        input: {
+          title: stored.title,
+          purpose: "Align on launch risks and owners.",
+          attendees: stored.attendees.map((attendee) => attendee.displayName ?? attendee.email),
+          notes: stored.description ?? "",
+        },
+      }),
+    );
 
-    const deleteResult = await registry.invoke("calendar.event.delete", {
-      eventId,
-      sendCancellation: false,
-    }, { actor: ada });
+    const deleteResult = await registry.invoke(
+      "calendar.event.delete",
+      {
+        eventId,
+        sendCancellation: false,
+      },
+      { actor: ada },
+    );
     const deletedSearch = await engine.search({ query: "launch risks bruno", types: ["calendar"] });
     await indexer.stop();
 
     expect(stored.location).toBe("Conference Room B");
-    expect(stored.attendees.find((attendee) => attendee.actorId === bruno.id)?.responseStatus).toBe("accepted");
+    expect(stored.attendees.find((attendee) => attendee.actorId === bruno.id)?.responseStatus).toBe(
+      "accepted",
+    );
     expect(busy.flatMap((block) => block.eventIds)).toEqual(expect.arrayContaining([eventId]));
-    expect(findTime.output.slots.map((slot) => slot.startsAt)).toContain("2026-05-20T14:00:00.000Z");
-    expect(findTime.output.slots.map((slot) => slot.startsAt)).not.toContain("2026-05-20T15:00:00.000Z");
+    expect(findTime.output.slots.map((slot) => slot.startsAt)).toContain(
+      "2026-05-20T14:00:00.000Z",
+    );
+    expect(findTime.output.slots.map((slot) => slot.startsAt)).not.toContain(
+      "2026-05-20T15:00:00.000Z",
+    );
     expect(search.hits.map((hit) => hit.id)).toContain(`calendar:${eventId}`);
     expect(ics).toContain("BEGIN:VCALENDAR");
     expect(ics).toContain("METHOD:REQUEST");
@@ -207,16 +247,18 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
     });
     const attendees = [
       organizer,
-      ...(input.attendees ?? []).map((attendee, index) => attendeeRecord({
-        index: index + 1,
-        orgId: input.orgId,
-        eventId: id,
-        actorId: attendee.actorId ?? null,
-        email: attendee.email,
-        displayName: attendee.displayName ?? null,
-        responseStatus: attendee.responseStatus ?? "needs_action",
-        isOrganizer: false,
-      })),
+      ...(input.attendees ?? []).map((attendee, index) =>
+        attendeeRecord({
+          index: index + 1,
+          orgId: input.orgId,
+          eventId: id,
+          actorId: attendee.actorId ?? null,
+          email: attendee.email,
+          displayName: attendee.displayName ?? null,
+          responseStatus: attendee.responseStatus ?? "needs_action",
+          isOrganizer: false,
+        }),
+      ),
     ];
     const event: CalendarEventRecord = {
       id,
@@ -257,16 +299,21 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
       ...input.patch,
       allDay: input.patch.allDay ?? existing.allDay,
       metadata: input.patch.metadata ?? existing.metadata,
-      attendees: input.patch.attendees === undefined ? existing.attendees : input.patch.attendees.map((attendee, index) => attendeeRecord({
-        index,
-        orgId: existing.orgId,
-        eventId: existing.id,
-        actorId: attendee.actorId ?? null,
-        email: attendee.email,
-        displayName: attendee.displayName ?? null,
-        responseStatus: attendee.responseStatus ?? "needs_action",
-        isOrganizer: false,
-      })),
+      attendees:
+        input.patch.attendees === undefined
+          ? existing.attendees
+          : input.patch.attendees.map((attendee, index) =>
+              attendeeRecord({
+                index,
+                orgId: existing.orgId,
+                eventId: existing.id,
+                actorId: attendee.actorId ?? null,
+                email: attendee.email,
+                displayName: attendee.displayName ?? null,
+                responseStatus: attendee.responseStatus ?? "needs_action",
+                isOrganizer: false,
+              }),
+            ),
       icsSequence: existing.icsSequence + 1,
       updatedAt: new Date("2026-05-20T13:05:00.000Z"),
     };
@@ -291,6 +338,14 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
     return deleted;
   }
 
+  async listEventRevisions(): Promise<readonly []> {
+    return [];
+  }
+
+  async restoreEventRevision(): Promise<CalendarEventRecord | null> {
+    return null;
+  }
+
   async respondToEvent(input: {
     readonly actorId?: string | undefined;
     readonly eventId?: string | undefined;
@@ -305,7 +360,11 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
     }
     const attendees = existing.attendees.map((attendee) =>
       attendee.actorId === input.actorId
-        ? { ...attendee, responseStatus: input.responseStatus, respondedAt: new Date("2026-05-20T13:06:00.000Z") }
+        ? {
+            ...attendee,
+            responseStatus: input.responseStatus,
+            respondedAt: new Date("2026-05-20T13:06:00.000Z"),
+          }
         : attendee,
     );
     const updated = {
@@ -320,6 +379,35 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
       ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
     });
     return updated;
+  }
+
+  async respondToRsvpToken(input: {
+    readonly rsvpToken: string;
+    readonly responseStatus: "accepted" | "declined" | "tentative";
+  }) {
+    for (const existing of this.#events.values()) {
+      const attendee = existing.attendees.find(
+        (candidate) => candidate.rsvpToken === input.rsvpToken,
+      );
+      if (attendee === undefined) {
+        continue;
+      }
+      const responded = {
+        ...attendee,
+        responseStatus: input.responseStatus,
+        respondedAt: new Date("2026-05-20T13:06:00.000Z"),
+        rsvpToken: `consumed-${input.rsvpToken}`,
+      };
+      const event = {
+        ...existing,
+        attendees: existing.attendees.map((candidate) =>
+          candidate.rsvpToken === input.rsvpToken ? responded : candidate,
+        ),
+      };
+      this.#events.set(event.id, event);
+      return { event, attendee: responded };
+    }
+    return null;
   }
 
   async findTime(input: {
@@ -349,7 +437,9 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
       startsMs += stepMs
     ) {
       const endsMs = startsMs + durationMs;
-      const conflicts = busy.filter((interval) => interval.startsAt.getTime() < endsMs && interval.endsAt.getTime() > startsMs);
+      const conflicts = busy.filter(
+        (interval) => interval.startsAt.getTime() < endsMs && interval.endsAt.getTime() > startsMs,
+      );
       if (conflicts.length === 0) {
         slots.push({ startsAt: new Date(startsMs), endsAt: new Date(endsMs), busy: [] });
       }
@@ -365,6 +455,10 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
     return [...this.#events.values()].filter((event) => event.deletedAt === null);
   }
 
+  async listCalendarChangesForActor() {
+    return { changes: [], version: 0, latestVersion: 0, hasMore: false };
+  }
+
   async authenticateAppPassword(): Promise<Actor | null> {
     return null;
   }
@@ -373,7 +467,21 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
     return [];
   }
 
-  async listCalendarFreeBusyEvents(input: CalendarFreeBusyRequest): Promise<readonly CalendarFreeBusyEvent[]> {
+  async listCalendarMemberships(): Promise<readonly CalendarMembershipRecord[]> {
+    return [];
+  }
+
+  async setCalendarMembership(): Promise<CalendarMembershipRecord | null> {
+    return null;
+  }
+
+  async removeCalendarMembership(): Promise<boolean> {
+    return false;
+  }
+
+  async listCalendarFreeBusyEvents(
+    input: CalendarFreeBusyRequest,
+  ): Promise<readonly CalendarFreeBusyEvent[]> {
     return (await this.busyIntervals(input)).map((interval) => ({
       eventId: interval.eventId,
       actorId: interval.actorId ?? "",
@@ -442,19 +550,23 @@ class FakeCalendarService implements CalendarStore, CalendarSearchProjectionStor
     return event;
   }
 
-  private async busyIntervals(input: CalendarFreeBusyRequest): Promise<readonly CalendarBusyInterval[]> {
+  private async busyIntervals(
+    input: CalendarFreeBusyRequest,
+  ): Promise<readonly CalendarBusyInterval[]> {
     return [...this.#events.values()]
       .filter((event) => event.orgId === input.orgId)
       .filter((event) => event.deletedAt === null && event.status !== "cancelled")
       .filter((event) => event.startsAt < input.endsAt && input.startsAt < event.endsAt)
-      .flatMap((event) => eventActorIds(event).map((actorId) => ({
-        eventId: event.id,
-        startsAt: event.startsAt,
-        endsAt: event.endsAt,
-        actorId,
-        email: event.attendees.find((attendee) => attendee.actorId === actorId)?.email ?? null,
-        title: event.title,
-      })))
+      .flatMap((event) =>
+        eventActorIds(event).map((actorId) => ({
+          eventId: event.id,
+          startsAt: event.startsAt,
+          endsAt: event.endsAt,
+          actorId,
+          email: event.attendees.find((attendee) => attendee.actorId === actorId)?.email ?? null,
+          title: event.title,
+        })),
+      )
       .filter((interval) => input.actorIds.includes(interval.actorId));
   }
 }
@@ -597,7 +709,9 @@ function attendeeRecord(input: {
 
 function eventActorIds(event: CalendarEventRecord): readonly string[] {
   return [
-    ...(event.organizerActorId === null || event.organizerActorId === undefined ? [] : [event.organizerActorId]),
+    ...(event.organizerActorId === null || event.organizerActorId === undefined
+      ? []
+      : [event.organizerActorId]),
     ...event.attendees
       .filter((attendee) => attendee.responseStatus !== "declined")
       .map((attendee) => attendee.actorId)
@@ -614,7 +728,9 @@ function matchesCalendarFilter(document: IndexDocument, filter: SearchRequest["f
   });
 }
 
-async function collectSuggestion(chunks: AsyncIterable<{ readonly text: string }>): Promise<string> {
+async function collectSuggestion(
+  chunks: AsyncIterable<{ readonly text: string }>,
+): Promise<string> {
   const text: string[] = [];
   for await (const chunk of chunks) {
     text.push(chunk.text);

@@ -1,4 +1,4 @@
-import { DRIVE_ROLES, type DriveRole } from "@helix/contracts";
+import { DRIVE_ROLES, driveRoleSchema, type DriveRole } from "@helix/contracts";
 
 export { DRIVE_ROLES, type DriveRole };
 
@@ -13,13 +13,8 @@ export function driveRoleRank(role: DriveRole): number {
   return ROLE_RANK[role];
 }
 
-/** Maps legacy `"viewer"` → `"reader"`; unknown values floor to `"reader"`. */
-export function normalizeDriveRole(raw: string): DriveRole {
-  if (raw === "viewer") return "reader";
-  if ((DRIVE_ROLES as readonly string[]).includes(raw)) {
-    return raw as DriveRole;
-  }
-  return "reader";
+export function parseDriveRole(raw: string): DriveRole {
+  return driveRoleSchema.parse(raw);
 }
 
 export function hasRoleAtLeast(role: DriveRole, min: DriveRole): boolean {

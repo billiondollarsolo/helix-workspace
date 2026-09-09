@@ -31,6 +31,7 @@ import {
   nativeDocumentTokenDecorationAttributes,
   nativeDocumentTokenDecorationRanges,
   selectNativeDocumentAnchorRange,
+  type NativeDocumentCommandChain,
   type NativeDocumentEditorProps,
 } from "./native-document-editor";
 import {
@@ -457,7 +458,10 @@ describe("NativeDocumentEditor find and replace", () => {
   });
 
   it("rejects invalid or cross-document anchor ranges", () => {
-    const editor = { chain: vi.fn(() => chain) };
+    const editorChain = vi.fn<() => NativeDocumentCommandChain>(
+      () => chain as unknown as NativeDocumentCommandChain,
+    );
+    const editor = { chain: editorChain };
 
     expect(
       selectNativeDocumentAnchorRange(editor, "doc-1", {
@@ -471,7 +475,7 @@ describe("NativeDocumentEditor find and replace", () => {
         selection: { from: 11, to: 3, text: "Session" },
       }),
     ).toBe(false);
-    expect(editor.chain).not.toHaveBeenCalled();
+    expect(editorChain).not.toHaveBeenCalled();
 
     expect(
       selectNativeDocumentAnchorRange(editor, "doc-1", {

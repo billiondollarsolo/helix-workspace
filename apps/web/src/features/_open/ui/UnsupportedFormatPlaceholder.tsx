@@ -126,7 +126,7 @@ export function UnsupportedFormatPlaceholder({
         </span>
         <div style={{ flex: 1 }} />
         <a
-          href={`/api/drive/objects/${objectId}/content?download=1`}
+          href={`/v1/api/drive/objects/${objectId}/content?download=1`}
           className="btn sm"
           download={fileName ?? ""}
         >
@@ -191,7 +191,7 @@ export function UnsupportedFormatPlaceholder({
             }}
           >
             <a
-              href={`/api/drive/objects/${objectId}/content?download=1`}
+              href={`/v1/api/drive/objects/${objectId}/content?download=1`}
               className="btn primary"
               download={fileName ?? ""}
             >

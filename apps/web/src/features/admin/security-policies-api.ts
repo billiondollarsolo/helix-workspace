@@ -6,8 +6,8 @@ import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
  * Admin Console — Security policies client.
  *
  * Talks to `/api/admin/security-policies` — one record per (org, policyType)
- * across the six controls: mfa, sso, session, external_sharing, dlp,
- * device_trust. `settings` is a typed JSON blob; it is validated loosely here
+ * across the controls: mfa, sso, session, external_sharing, dlp,
+ * device_trust, drive_workflows. `settings` is a typed JSON blob; it is validated loosely here
  * (the backend owns the per-type schema) and surfaced to the UI as-is.
  *
  * Backend responses are validated at the trust boundary with Zod.
@@ -22,6 +22,7 @@ export const SECURITY_POLICY_TYPES = [
   "external_sharing",
   "dlp",
   "device_trust",
+  "drive_workflows",
 ] as const;
 export type SecurityPolicyType = (typeof SECURITY_POLICY_TYPES)[number];
 
@@ -32,6 +33,7 @@ export const securityPolicyLabels: Record<SecurityPolicyType, string> = {
   external_sharing: "External sharing",
   dlp: "DLP — Data loss prevention",
   device_trust: "Device trust",
+  drive_workflows: "Drive workflows",
 };
 
 export const securityPolicyGroup: Record<SecurityPolicyType, "Authentication" | "Access & data"> = {
@@ -41,6 +43,7 @@ export const securityPolicyGroup: Record<SecurityPolicyType, "Authentication" | 
   external_sharing: "Access & data",
   dlp: "Access & data",
   device_trust: "Access & data",
+  drive_workflows: "Access & data",
 };
 
 export const POLICY_ENFORCEMENTS = ["disabled", "optional", "required"] as const;
@@ -62,20 +65,11 @@ export type SecurityPolicy = z.infer<typeof securityPolicySchema>;
 
 const policiesResponseSchema = z.object({ policies: z.array(securityPolicySchema) });
 const policyResponseSchema = z.object({ policy: securityPolicySchema });
-const ssoTestLoginResponseSchema = z.object({
-  testLogin: z.object({
-    status: z.enum(["configuration_required", "runtime_pending"]),
-    message: z.string(),
-  }),
-});
-
 export interface UpdateSecurityPolicyInput {
   readonly enabled?: boolean;
   readonly enforcement?: PolicyEnforcement;
   readonly settings?: Record<string, unknown>;
 }
-
-export type SsoTestLoginResponse = z.infer<typeof ssoTestLoginResponseSchema>["testLogin"];
 
 // ---------------------------------------------------------------------------
 // Query keys + options
@@ -130,17 +124,6 @@ export async function updateSecurityPolicy(
     },
   );
   return (await parseResponse(response, "update security policy", policyResponseSchema)).policy;
-}
-
-export async function testSsoLogin(
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<SsoTestLoginResponse> {
-  const response = await fetchImpl("/api/admin/security-policies/sso/test-login", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: "{}",
-  });
-  return (await parseResponse(response, "test SSO login", ssoTestLoginResponseSchema)).testLogin;
 }
 
 // ---------------------------------------------------------------------------

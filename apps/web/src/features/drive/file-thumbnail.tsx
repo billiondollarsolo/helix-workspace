@@ -128,7 +128,7 @@ function previewContent(
   if (htmlPreviewKind !== null) {
     return (
       <HtmlPreviewThumbnail
-        src={`/api/drive/objects/${objectId}/preview`}
+        src={`/v1/api/drive/objects/${objectId}/preview`}
         kind={htmlPreviewKind}
         name={name}
         fallbackNode={fallbackNode}

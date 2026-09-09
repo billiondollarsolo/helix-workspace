@@ -35,6 +35,13 @@ export function DriveShareDialog({
   const [shareInput, setShareInput] = useState("");
   const [shareRole, setShareRole] = useState<DriveAccessRole>("reader");
   const [copied, setCopied] = useState(false);
+  const [publicPassword, setPublicPassword] = useState("");
+  const [publicExpiry, setPublicExpiry] = useState("");
+  const [publicDomains, setPublicDomains] = useState("");
+  const [oneTime, setOneTime] = useState(false);
+  const [allowDownload, setAllowDownload] = useState(true);
+  const [creatingPublicLink, setCreatingPublicLink] = useState(false);
+  const [publicLinkError, setPublicLinkError] = useState<string | null>(null);
   const accessQueryKey = driveQueryKeys.access(objectId);
 
   const accessQuery = useQuery(driveAccessQueryOptions(objectId, false));
@@ -106,24 +113,35 @@ export function DriveShareDialog({
     shareMutation.mutate({ targets, role: shareRole });
   };
 
-  const copyLink = () => {
-    if (navigator.clipboard === undefined) {
-      return;
-    }
-    // Prefer an explicit override URL (in-app deep link for tests/callers).
-    // Otherwise create a public share token and copy `/api/drive/share/:token`.
+  const copyLink = (publicLink = false) => {
     void (async () => {
+      setPublicLinkError(null);
+      setCreatingPublicLink(true);
       try {
-        if (shareUrl !== undefined) {
+        if (!publicLink && shareUrl !== undefined) {
           await navigator.clipboard.writeText(shareUrl);
-          setCopied(true);
-          return;
+        } else {
+          const link = await createDriveShareLink({
+            objectId,
+            ...(publicPassword.length === 0 ? {} : { password: publicPassword }),
+            expiresAt: publicExpiry.length === 0 ? null : new Date(publicExpiry).toISOString(),
+            oneTime,
+            allowedDomains: publicDomains
+              .split(/[\s,]+/u)
+              .map((domain) => domain.trim().toLowerCase())
+              .filter(Boolean),
+            allowDownload,
+          });
+          if (link.token === null) {
+            throw new Error("New share link did not return its one-time token.");
+          }
+          await navigator.clipboard.writeText(drivePublicShareUrl(link.token));
         }
-        const link = await createDriveShareLink({ objectId, role: "reader" });
-        await navigator.clipboard.writeText(drivePublicShareUrl(link.token));
         setCopied(true);
-      } catch {
-        // Surface via shareMutation-style error path is heavier; silent fail keeps dialog usable.
+      } catch (cause) {
+        setPublicLinkError(cause instanceof Error ? cause.message : "Could not create link.");
+      } finally {
+        setCreatingPublicLink(false);
       }
     })();
   };
@@ -145,7 +163,9 @@ export function DriveShareDialog({
             type="button"
             className="icon-btn"
             aria-label="Close share dialog"
-            onClick={() => onOpenChange(false)}
+            onClick={() => {
+              onOpenChange(false);
+            }}
           >
             <Icons.X />
           </button>
@@ -160,7 +180,9 @@ export function DriveShareDialog({
               id={`share-targets-${objectId}`}
               className="input"
               value={shareInput}
-              onChange={(event) => setShareInput(event.currentTarget.value)}
+              onChange={(event) => {
+                setShareInput(event.currentTarget.value);
+              }}
               placeholder="Email, name, or actor ID"
               style={{ flex: 1, minWidth: 0 }}
             />
@@ -168,7 +190,9 @@ export function DriveShareDialog({
               className="input"
               aria-label="Share role"
               value={shareRole}
-              onChange={(event) => setShareRole(event.currentTarget.value as DriveAccessRole)}
+              onChange={(event) => {
+                setShareRole(event.currentTarget.value as DriveAccessRole);
+              }}
               style={{ width: 128 }}
             >
               {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
@@ -201,19 +225,101 @@ export function DriveShareDialog({
           currentActorId={currentActorId}
           ownerActorId={ownerActorId}
           busy={busy}
-          onRemove={(actorId) => removeAccessMutation.mutate(actorId)}
-          onRoleChange={(actorId, role) => updateAccessMutation.mutate({ actorId, role })}
+          onRemove={(actorId) => {
+            removeAccessMutation.mutate(actorId);
+          }}
+          onRoleChange={(actorId, role) => {
+            updateAccessMutation.mutate({ actorId, role });
+          }}
         />
 
-        {shareUrl !== undefined ? (
-          <div style={footerStyle}>
-            <button type="button" className="btn sm" onClick={copyLink}>
+        <details style={sectionStyle}>
+          <summary>Public link settings</summary>
+          <p style={mutedStyle}>Public links are view-only and can be revoked at any time.</p>
+          <input
+            className="input"
+            type="password"
+            aria-label="Public link password"
+            placeholder="Optional password (12+ characters)"
+            value={publicPassword}
+            onChange={(event) => {
+              setPublicPassword(event.currentTarget.value);
+            }}
+          />
+          <input
+            className="input"
+            type="datetime-local"
+            aria-label="Public link expiry"
+            value={publicExpiry}
+            onChange={(event) => {
+              setPublicExpiry(event.currentTarget.value);
+            }}
+          />
+          <input
+            className="input"
+            aria-label="Allowed email domains"
+            placeholder="Optional domains, comma separated"
+            value={publicDomains}
+            onChange={(event) => {
+              setPublicDomains(event.currentTarget.value);
+            }}
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={oneTime}
+              onChange={(event) => {
+                setOneTime(event.currentTarget.checked);
+              }}
+            />{" "}
+            Expire after first access
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={allowDownload}
+              onChange={(event) => {
+                setAllowDownload(event.currentTarget.checked);
+              }}
+            />{" "}
+            Allow download
+          </label>
+        </details>
+        <div style={footerStyle}>
+          {shareUrl === undefined ? null : (
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => {
+                copyLink();
+              }}
+            >
               <Icons.Link />
               Copy link
             </button>
-            {copied ? <span style={successStyle}>Link copied.</span> : null}
-          </div>
-        ) : null}
+          )}
+          <button
+            type="button"
+            className="btn sm"
+            disabled={
+              creatingPublicLink ||
+              (publicPassword.length > 0 && publicPassword.length < 12) ||
+              (publicExpiry.length > 0 && !Number.isFinite(new Date(publicExpiry).valueOf()))
+            }
+            onClick={() => {
+              copyLink(true);
+            }}
+          >
+            <Icons.Link />
+            Create public link
+          </button>
+          {copied ? <span style={successStyle}>Link copied.</span> : null}
+          {publicLinkError === null ? null : (
+            <span role="alert" style={errorStyle}>
+              {publicLinkError}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -273,9 +379,9 @@ function AccessList({
                     aria-label={`Access role for ${label}`}
                     value={driveAccessRoleValue(grant.role)}
                     disabled={busy}
-                    onChange={(event) =>
-                      onRoleChange(grant.actorId, event.currentTarget.value as DriveAccessRole)
-                    }
+                    onChange={(event) => {
+                      onRoleChange(grant.actorId, event.currentTarget.value as DriveAccessRole);
+                    }}
                     style={{ width: 124, height: 30, fontSize: "var(--text-caption)" }}
                   >
                     {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
@@ -293,7 +399,9 @@ function AccessList({
                     className="icon-btn"
                     aria-label={`Remove access for ${label}`}
                     disabled={busy}
-                    onClick={() => onRemove(grant.actorId)}
+                    onClick={() => {
+                      onRemove(grant.actorId);
+                    }}
                   >
                     <Icons.X />
                   </button>

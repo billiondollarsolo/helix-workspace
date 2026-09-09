@@ -9,7 +9,7 @@ export type DriveItemKind = z.infer<typeof driveItemKindSchema>;
 
 export const drivePreviewKindSchema = z.enum(["text", "image", "pdf", "office", "unsupported"]);
 export type DrivePreviewKind = z.infer<typeof drivePreviewKindSchema>;
-export const drivePreviewStatusSchema = z.enum(["available", "unsupported"]);
+export const drivePreviewStatusSchema = z.enum(["pending", "available", "unsupported"]);
 export type DrivePreviewStatus = z.infer<typeof drivePreviewStatusSchema>;
 
 export const drivePreviewSchema = z.object({
@@ -51,11 +51,18 @@ export const driveEntrySchema = z.object({
 });
 export type DriveEntry = z.infer<typeof driveEntrySchema>;
 
+export const driveEntryPageSchema = z.object({
+  entries: driveEntrySchema.array(),
+  nextCursor: z.string().nullable(),
+});
+export type DriveEntryPage = z.infer<typeof driveEntryPageSchema>;
+
 export const driveMultipartInfoSchema = z.object({
   uploadId: z.string().min(1),
   partSize: z.number().int().positive(),
   partCount: z.number().int().positive(),
   partUrls: z.array(z.string().min(1)),
+  expiresAt: z.string().datetime(),
 });
 export type DriveMultipartInfo = z.infer<typeof driveMultipartInfoSchema>;
 
@@ -91,7 +98,10 @@ export const driveUploadCompleteInputSchema = z.object({
     )
     .min(1),
   byteSize: z.number().int().nonnegative(),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/i)
+    .optional(),
   mimeType: z.string().min(1).optional(),
   metadata: jsonObjectSchema.default({}),
 });
@@ -160,6 +170,28 @@ export const driveCommentSchema = z.object({
 });
 export type DriveComment = z.infer<typeof driveCommentSchema>;
 
+export const driveCommentRevisionSchema = z.object({
+  id: z.string().uuid(),
+  orgId: z.string().uuid(),
+  objectId: z.string().uuid(),
+  commentId: z.string().uuid(),
+  revision: z.number().int().positive(),
+  changeKind: z.enum(["created", "edited", "resolved", "reopened", "deleted"]),
+  parentCommentId: z.string().uuid().nullable(),
+  commentActorId: z.string().uuid().nullable(),
+  anchor: jsonObjectSchema,
+  body: z.string(),
+  status: z.enum(["open", "resolved"]),
+  metadata: jsonObjectSchema,
+  resolvedAt: z.string().nullable(),
+  resolvedByActorId: z.string().uuid().nullable(),
+  deletedAt: z.string().nullable(),
+  deletedByActorId: z.string().uuid().nullable(),
+  changedByActorId: z.string().uuid(),
+  capturedAt: z.string(),
+});
+export type DriveCommentRevision = z.infer<typeof driveCommentRevisionSchema>;
+
 export const drivePdfFormStateSchema = z.object({
   orgId: z.string().uuid(),
   objectId: z.string().uuid(),
@@ -178,9 +210,14 @@ export const driveShareLinkSchema = z.object({
   id: z.string().uuid(),
   orgId: z.string().uuid(),
   objectId: z.string().uuid(),
-  token: z.string().min(1),
-  role: driveRoleSchema,
+  token: z.string().min(43).nullable(),
+  role: z.literal("reader"),
   expiresAt: z.string().nullable(),
+  passwordProtected: z.boolean(),
+  oneTime: z.boolean(),
+  allowedDomains: z.array(z.string()).max(50),
+  allowDownload: z.boolean(),
+  consumedAt: z.string().nullable(),
   createdByActorId: z.string().uuid().nullable(),
   createdAt: z.string(),
   revokedAt: z.string().nullable(),

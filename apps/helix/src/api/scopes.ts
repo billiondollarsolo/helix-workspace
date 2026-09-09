@@ -1,15 +1,19 @@
-import type { Actor } from "@helix/sdk-types";
+import type { Actor, ResourceRef } from "@helix/sdk-types";
+import { actorHasPermission, actorRoleDecision } from "../platform/permissions/roles.js";
 import { ForbiddenError, UnauthorizedError } from "./api-error.js";
 
 /**
  * Whether an actor holds a required OAuth/tool scope.
- * System actors always pass. Wildcards `*` and `admin.*` grant all scopes.
+ * System actors always pass. Role permissions and binding scopes are exact.
  */
-export function actorHasScope(actor: Actor, scope: string): boolean {
-  if (actor.type === "system") return true;
+export function actorHasScope(actor: Actor, scope: string, resource?: ResourceRef): boolean {
+  const target = resource ?? { type: "org", orgId: actor.orgId };
+  if (actorRoleDecision(actor, scope, target) === "deny") return false;
+  if (actorHasPermission(actor, scope, target)) return true;
+  // Legacy direct admin scopes remain an issuance concern; role bindings never
+  // expand wildcard or resource-prefix strings.
   const scopes = actor.scopes ?? [];
-  if (scopes.includes("*") || scopes.includes("admin.*")) return true;
-  return scopes.includes(scope);
+  return scopes.includes("*") || scopes.includes("admin.*");
 }
 
 /**

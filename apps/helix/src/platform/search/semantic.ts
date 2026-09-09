@@ -1,10 +1,12 @@
 import type { JsonObject } from "@helix/sdk-types";
+import type { VectorItem, VectorStore, VectorVisibility } from "../ai/vector/index.js";
 import type {
-  VectorItem,
-  VectorStore,
-  VectorVisibility,
-} from "../ai/vector/index.js";
-import type { IndexDocument, SearchEngine, SearchHit, SearchRequest, SearchResponse } from "./types.js";
+  IndexDocument,
+  SearchEngine,
+  SearchHit,
+  SearchRequest,
+  SearchResponse,
+} from "./types.js";
 
 export interface SearchEmbeddingProvider {
   embed(texts: readonly string[]): Promise<readonly (readonly number[])[]>;
@@ -51,19 +53,21 @@ export class SemanticSearchEngine implements SearchEngine {
       // its own slice of vector_items (org_id, collection_name, id). Two
       // tenants reusing the same collection name no longer collide and
       // cannot read each other's embeddings.
-      await this.options.vectorStore.createCollection(orgId, this.#collection, firstVector.length, "cosine");
+      await this.options.vectorStore.createCollection(
+        orgId,
+        this.#collection,
+        firstVector.length,
+        "cosine",
+      );
       await this.options.vectorStore.upsert(orgId, this.#collection, items);
     }
   }
 
-  async delete(ids: readonly string[]): Promise<void> {
-    await this.options.keyword.delete(ids);
-    // A delete by id is rare and we don't know which tenant owns each id, so
-    // fan out across known tenants would require an extra round-trip. Today
-    // the indexer always knows the org context, so we accept the
-    // best-effort behavior: the keyword side cleans up; the vector side is
-    // pruned next time the (org, id) is upserted. Documented for now.
-    await this.deleteFromVectorStoreBestEffort(ids);
+  async delete(ids: readonly string[], orgId?: string): Promise<void> {
+    await this.options.keyword.delete(ids, orgId);
+    if (orgId !== undefined && ids.length > 0) {
+      await this.options.vectorStore.delete(orgId, this.#collection, ids);
+    }
   }
 
   async search(request: SearchRequest): Promise<SearchResponse> {
@@ -74,11 +78,16 @@ export class SemanticSearchEngine implements SearchEngine {
       limit: limit + offset,
       offset: 0,
     });
+    const keywordHits = keywordResponse.hits.filter((hit) => hitMatchesRequest(hit, request));
+    const filteredKeywordResponse =
+      keywordHits.length === keywordResponse.hits.length
+        ? keywordResponse
+        : { ...keywordResponse, hits: keywordHits, estimatedTotalHits: keywordHits.length };
     const query = request.query.trim();
     if (query.length === 0) {
       return {
-        ...keywordResponse,
-        hits: keywordResponse.hits.slice(offset, offset + limit),
+        ...filteredKeywordResponse,
+        hits: keywordHits.slice(offset, offset + limit),
       };
     }
 
@@ -88,14 +97,14 @@ export class SemanticSearchEngine implements SearchEngine {
     const requestedOrgId = orgIdFromFilter(request.filter);
     if (requestedOrgId === undefined) {
       return {
-        ...keywordResponse,
-        hits: keywordResponse.hits.slice(offset, offset + limit),
+        ...filteredKeywordResponse,
+        hits: keywordHits.slice(offset, offset + limit),
       };
     }
 
     const queryVector = (await this.options.embeddings.embed([query]))[0];
     if (queryVector === undefined) {
-      return keywordResponse;
+      return filteredKeywordResponse;
     }
 
     const semanticMatches = await this.options.vectorStore.query(
@@ -111,12 +120,12 @@ export class SemanticSearchEngine implements SearchEngine {
         ...(request.forActorId === undefined ? {} : { actorId: request.forActorId }),
       },
     );
-    const semanticRanks = semanticRankMap(semanticMatches, request);
-    const hits = reciprocalRankFuse(keywordResponse.hits, semanticRanks).slice(offset, offset + limit);
+    const semanticHits = semanticRankMap(semanticMatches, request);
+    const hits = reciprocalRankFuse(keywordHits, semanticHits).slice(offset, offset + limit);
     return {
-      ...keywordResponse,
+      ...filteredKeywordResponse,
       hits,
-      estimatedTotalHits: Math.max(keywordResponse.estimatedTotalHits ?? 0, hits.length),
+      estimatedTotalHits: Math.max(filteredKeywordResponse.estimatedTotalHits ?? 0, hits.length),
     };
   }
 
@@ -158,20 +167,11 @@ export class SemanticSearchEngine implements SearchEngine {
         vector,
         metadata: semanticMetadata(item.document),
         visibility,
-        ...(visibility === "private" && ownerActorId !== undefined
-          ? { ownerActorId }
-          : {}),
+        ...(visibility === "private" && ownerActorId !== undefined ? { ownerActorId } : {}),
       });
       grouped.set(item.orgId, list);
     });
     return grouped;
-  }
-
-  private async deleteFromVectorStoreBestEffort(_ids: readonly string[]): Promise<void> {
-    // Intentionally a no-op when no tenant context is known. Callers that
-    // need a guaranteed vector delete should use the indexer's per-org
-    // mutation surface.
-    return;
   }
 }
 
@@ -194,14 +194,14 @@ function semanticMetadata(document: IndexDocument): SemanticMetadata {
 function semanticRankMap(
   matches: ReadonlyArray<{ readonly metadata?: JsonObject; readonly score: number }>,
   request: SearchRequest,
-): Map<string, number> {
-  const ranks = new Map<string, number>();
+): Map<string, { readonly hit: SearchHit; readonly score: number }> {
+  const ranks = new Map<string, { readonly hit: SearchHit; readonly score: number }>();
   matches.forEach((match, index) => {
     const hit = semanticHit(match.metadata);
     if (hit === null || !hitMatchesRequest(hit, request)) {
       return;
     }
-    ranks.set(hit.id, 1 / (60 + index + 1));
+    ranks.set(hit.id, { hit, score: 1 / (60 + index + 1) });
   });
   return ranks;
 }
@@ -225,23 +225,37 @@ function semanticHit(metadata: JsonObject | undefined): SearchHit | null {
 
 function reciprocalRankFuse(
   keywordHits: readonly SearchHit[],
-  semanticRanks: ReadonlyMap<string, number>,
+  semanticHits: ReadonlyMap<string, { readonly hit: SearchHit; readonly score: number }>,
 ): readonly SearchHit[] {
-  const byId = new Map<string, { hit: SearchHit; score: number }>();
+  const byId = new Map<
+    string,
+    { hit: SearchHit; score: number; keyword: boolean; semantic: boolean }
+  >();
   addRankedHits(byId, keywordHits, 60);
-  for (const [id, semanticScore] of semanticRanks) {
+  for (const [id, semantic] of semanticHits) {
     const existing = byId.get(id);
-    if (existing !== undefined) {
-      byId.set(id, { hit: existing.hit, score: existing.score + semanticScore });
-    }
+    byId.set(id, {
+      hit: existing?.hit ?? semantic.hit,
+      score: (existing?.score ?? 0) + semantic.score,
+      keyword: existing?.keyword ?? false,
+      semantic: true,
+    });
   }
   return [...byId.values()]
     .sort((left, right) => right.score - left.score)
-    .map((entry) => ({ ...entry.hit, score: Number(entry.score.toFixed(6)) }));
+    .map((entry) => ({
+      ...entry.hit,
+      score: Number(entry.score.toFixed(6)),
+      attributes: {
+        ...(entry.hit.attributes ?? {}),
+        searchProvenance:
+          entry.keyword && entry.semantic ? "hybrid" : entry.semantic ? "semantic" : "keyword",
+      },
+    }));
 }
 
 function addRankedHits(
-  byId: Map<string, { hit: SearchHit; score: number }>,
+  byId: Map<string, { hit: SearchHit; score: number; keyword: boolean; semantic: boolean }>,
   hits: readonly SearchHit[],
   k: number,
 ): void {
@@ -249,16 +263,26 @@ function addRankedHits(
     const score = 1 / (k + index + 1);
     const existing = byId.get(hit.id);
     if (existing === undefined) {
-      byId.set(hit.id, { hit, score });
+      byId.set(hit.id, { hit, score, keyword: true, semantic: false });
       return;
     }
-    byId.set(hit.id, { hit: existing.hit, score: existing.score + score });
+    byId.set(hit.id, { ...existing, score: existing.score + score, keyword: true });
   });
 }
 
 function hitMatchesRequest(hit: SearchHit, request: SearchRequest): boolean {
-  if (request.types !== undefined && request.types.length > 0 && !request.types.includes(hit.type)) {
+  if (
+    request.types !== undefined &&
+    request.types.length > 0 &&
+    !request.types.includes(hit.type)
+  ) {
     return false;
+  }
+  if (hit.type === "drive" && request.forActorId !== undefined) {
+    const allowedActorIds = hit.attributes?.["allowedActorIds"];
+    if (!Array.isArray(allowedActorIds) || !allowedActorIds.includes(request.forActorId)) {
+      return false;
+    }
   }
   const requestedOrgId = orgIdFromFilter(request.filter);
   if (requestedOrgId === undefined) {

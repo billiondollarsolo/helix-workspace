@@ -1,117 +1,193 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type postgres from "postgres";
 
-export const DEFAULT_TENANT_APP_ROLE = "helix_app_role";
-export const TENANT_ROLE_PREFIX = "helix_tenant_";
-
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-const POSTGRES_IDENTIFIER_MAX_BYTES = 63;
-
-export interface TenantPostgresRoleProvisioner {
-  ensureRoleForOrg(orgId: string): Promise<void>;
-}
-
-export interface TenantRoleProvisioningInput {
-  readonly orgId: string;
-  readonly appRole?: string;
-}
 
 export interface TenantPostgresContextInput {
   readonly orgId: string;
-  readonly setRole?: boolean;
+  readonly actorId?: string | undefined;
 }
 
-export class PostgresTenantRoleProvisioner implements TenantPostgresRoleProvisioner {
-  constructor(
-    private readonly sql: postgres.Sql,
-    private readonly options: { readonly appRole?: string } = {},
-  ) {}
-
-  async ensureRoleForOrg(orgId: string): Promise<void> {
-    await this.sql.unsafe(
-      buildTenantRoleProvisioningSql({
-        orgId,
-        ...(this.options.appRole === undefined ? {} : { appRole: this.options.appRole }),
-      }),
-    );
-  }
+export interface TenantIoSagaPostgresContextInput extends TenantPostgresContextInput {
+  /** Explicitly retain an already-unset actor for a trusted tenant service phase. */
+  readonly serviceContext?: boolean | undefined;
 }
+
+interface ActiveTenantPostgresContext {
+  readonly orgId: string;
+  actorId: string | null;
+  readonly tx: postgres.TransactionSql;
+}
+
+const activeTenantContext = new AsyncLocalStorage<ActiveTenantPostgresContext>();
+const rawSqlByTenantAwareClient = new WeakMap<postgres.Sql, postgres.Sql>();
 
 export async function withTenantPostgresContext<T>(
   sql: postgres.Sql,
   input: TenantPostgresContextInput,
   callback: (tx: postgres.TransactionSql) => Promise<T>,
 ): Promise<T> {
+  const normalized = normalizeContext(input);
+  const active = activeTenantContext.getStore();
+  if (active !== undefined) {
+    if (active.orgId !== normalized.orgId) {
+      throw new Error("A PostgreSQL transaction cannot switch tenant context.");
+    }
+    if (normalized.actorId !== null) {
+      await setTenantPostgresActorId(normalized.actorId);
+    }
+    return active.tx.savepoint((tx) =>
+      activeTenantContext.run({ ...active, tx }, () => callback(tx)),
+    ) as Promise<T>;
+  }
+
   const result = await sql.begin(async (tx) => {
     await applyTenantPostgresContext(tx, input);
-    return callback(tx);
+    return activeTenantContext.run(
+      { orgId: normalized.orgId, actorId: normalized.actorId, tx },
+      () => callback(tx),
+    );
   });
   return result as T;
+}
+
+/**
+ * Run one short, RLS-scoped database phase of an external-I/O saga without
+ * inheriting the request-long transaction. The raw client stays private; an
+ * ambient request may escape only for its own tenant and authenticated actor,
+ * or through an explicit already-active tenant service context. The fresh
+ * transaction retains the same least-privileged runtime session role.
+ */
+export async function withTenantIoSagaPostgresContext<T>(
+  sql: postgres.Sql,
+  input: TenantIoSagaPostgresContextInput,
+  callback: (tx: postgres.TransactionSql) => Promise<T>,
+): Promise<T> {
+  const active = activeTenantContext.getStore();
+  if (active === undefined) {
+    return withTenantPostgresContext(sql, input, callback);
+  }
+  const normalized = normalizeContext(input);
+  if (active.orgId !== normalized.orgId) {
+    throw new Error("A PostgreSQL I/O saga cannot switch tenant context.");
+  }
+  const serviceContext = input.serviceContext === true;
+  if (serviceContext && (input.actorId !== undefined || active.actorId !== null)) {
+    throw new Error("A PostgreSQL service I/O saga requires an existing actor-free context.");
+  }
+  const actorId = serviceContext ? null : (normalized.actorId ?? active.actorId);
+  if (!serviceContext && actorId === null) {
+    throw new Error("A PostgreSQL I/O saga requires an authenticated actor context.");
+  }
+  if (actorId !== null) await setTenantPostgresActorId(actorId);
+  const rawSql = rawSqlByTenantAwareClient.get(sql);
+  if (rawSql === undefined) {
+    throw new Error("A PostgreSQL I/O saga requires the tenant-aware runtime client.");
+  }
+  return activeTenantContext.exit(() =>
+    rawSql.begin(async (tx) => {
+      await applyTenantPostgresContext(tx, {
+        orgId: normalized.orgId,
+        ...(actorId === null ? {} : { actorId }),
+      });
+      return callback(tx);
+    }),
+  ) as Promise<T>;
 }
 
 export async function applyTenantPostgresContext(
   tx: postgres.TransactionSql,
   input: TenantPostgresContextInput,
 ): Promise<void> {
-  const orgId = normalizeOrgId(input.orgId);
-  if (input.setRole !== false) {
-    await tx.unsafe(buildTenantSetLocalRoleSql(orgId));
+  const context = normalizeContext(input);
+  await tx`
+    select
+      set_config('helix.org_id', ${context.orgId}, true),
+      set_config('helix.actor_id', ${context.actorId ?? ""}, true)
+  `;
+}
+
+/** Set the authenticated actor on the active request/job transaction, if one exists. */
+export async function setTenantPostgresActorId(actorId: string): Promise<boolean> {
+  const active = activeTenantContext.getStore();
+  if (active === undefined) return false;
+  const normalizedActorId = normalizeUuid(actorId, "actorId");
+  if (active.actorId === normalizedActorId) return true;
+  if (active.actorId !== null) {
+    throw new Error("A PostgreSQL transaction cannot switch actor context.");
   }
-  await tx`select set_config('helix.org_id', ${orgId}, true)`;
+  await active.tx`select set_config('helix.actor_id', ${normalizedActorId}, true)`;
+  active.actorId = normalizedActorId;
+  return true;
 }
 
-export function buildTenantSetLocalRoleSql(orgId: string): string {
-  return `set local role ${quoteIdentifier(tenantPostgresRoleName(orgId))}`;
+/**
+ * Route every query made by a shared store to the active request/job transaction.
+ * Outside a tenant unit it behaves exactly like the original postgres.js client.
+ */
+export function tenantAwarePostgresSql(sql: postgres.Sql): postgres.Sql {
+  const tenantAware = new Proxy(sql, {
+    apply(target, _thisArg, argumentsList): unknown {
+      const active = activeTenantContext.getStore();
+      const destination = active?.tx ?? target;
+      return callPostgres(destination, argumentsList);
+    },
+    get(target, property, receiver): unknown {
+      const active = activeTenantContext.getStore();
+      if (property === "begin" && active !== undefined) {
+        return (...argumentsList: readonly unknown[]): Promise<unknown> => {
+          const callback = argumentsList.at(-1);
+          if (typeof callback !== "function") {
+            throw new TypeError("postgres.begin requires a transaction callback");
+          }
+          const run = callback as (tx: postgres.TransactionSql) => Promise<unknown>;
+          return active.tx.savepoint((tx) =>
+            activeTenantContext.run({ ...active, tx }, () => run(tx)),
+          );
+        };
+      }
+      if (
+        active !== undefined &&
+        (property === "unsafe" || property === "file" || property === "notify")
+      ) {
+        const value = Reflect.get(active.tx, property, active.tx) as unknown;
+        return bindMethod(active.tx, value);
+      }
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return bindMethod(target, value);
+    },
+  });
+  rawSqlByTenantAwareClient.set(tenantAware, sql);
+  return tenantAware;
 }
 
-export function buildTenantRoleProvisioningSql(input: TenantRoleProvisioningInput): string {
-  const roleName = tenantPostgresRoleName(input.orgId);
-  const appRole = normalizePostgresIdentifier(input.appRole ?? DEFAULT_TENANT_APP_ROLE, "appRole");
-
-  return [
-    "do $$",
-    "begin",
-    `  if not exists (select 1 from pg_roles where rolname = ${quoteLiteral(roleName)}) then`,
-    `    create role ${quoteIdentifier(roleName)} noinherit nologin;`,
-    "  end if;",
-    `  grant ${quoteIdentifier(appRole)} to ${quoteIdentifier(roleName)};`,
-    "end",
-    "$$;",
-  ].join("\n");
+function callPostgres(
+  sql: postgres.Sql | postgres.TransactionSql,
+  argumentsList: readonly unknown[],
+): unknown {
+  return Reflect.apply(sql, undefined, argumentsList);
 }
 
-export function tenantPostgresRoleName(orgId: string): string {
-  const normalizedOrgId = normalizeOrgId(orgId);
-  return normalizePostgresIdentifier(
-    `${TENANT_ROLE_PREFIX}${normalizedOrgId.replaceAll("-", "_")}`,
-    "tenantRole",
-  );
+function bindMethod(owner: unknown, value: unknown): unknown {
+  if (typeof value !== "function") return value;
+  const method = value as (...input: readonly unknown[]) => unknown;
+  return (...input: readonly unknown[]) => Reflect.apply(method, owner, input);
 }
 
-function normalizeOrgId(orgId: string): string {
-  const normalizedOrgId = orgId.toLowerCase();
-  if (!UUID_PATTERN.test(normalizedOrgId)) {
-    throw new TypeError("orgId must be a valid UUID before deriving a tenant Postgres role");
+function normalizeContext(input: TenantPostgresContextInput): {
+  readonly orgId: string;
+  readonly actorId: string | null;
+} {
+  return {
+    orgId: normalizeUuid(input.orgId, "orgId"),
+    actorId: input.actorId === undefined ? null : normalizeUuid(input.actorId, "actorId"),
+  };
+}
+
+function normalizeUuid(value: string, name: "orgId" | "actorId"): string {
+  const normalized = value.toLowerCase();
+  if (!UUID_PATTERN.test(normalized)) {
+    throw new TypeError(`${name} must be a valid UUID before entering PostgreSQL context`);
   }
-  return normalizedOrgId;
-}
-
-function normalizePostgresIdentifier(value: string, label: string): string {
-  if (value.length === 0) {
-    throw new TypeError(`${label} must not be empty`);
-  }
-  if (Buffer.byteLength(value, "utf8") > POSTGRES_IDENTIFIER_MAX_BYTES) {
-    throw new TypeError(`${label} must be ${String(POSTGRES_IDENTIFIER_MAX_BYTES)} bytes or fewer`);
-  }
-  if (value.includes("\0")) {
-    throw new TypeError(`${label} must not contain NUL bytes`);
-  }
-  return value;
-}
-
-function quoteIdentifier(identifier: string): string {
-  return `"${identifier.replaceAll('"', '""')}"`;
-}
-
-function quoteLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
+  return normalized;
 }

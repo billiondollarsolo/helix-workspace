@@ -38,6 +38,7 @@ import {
 
 export type {
   BinaryInput,
+  AesGcmEncrypted,
   CryptoProvider,
   CryptoProviderStatus,
   DigestEncoding,

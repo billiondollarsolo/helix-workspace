@@ -1,37 +1,30 @@
 import { createHash } from "node:crypto";
-import { pathToFileURL } from "node:url";
-import { readdir, readFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
-  PlatformHost,
-  PlatformPlugin,
   PluginDependencyDeclaration,
   PluginLifecycleState,
   PluginManifest,
-  PluginMigration,
   HelixConfig,
   SecurityTier,
   TierSecurityDefaults,
 } from "@helix/sdk";
-import {
-  assertPluginManifest,
-  disablePlugin,
-  enablePlugin,
-  isJsonObject,
-  startPlugin,
-  uninstallPlugin,
-} from "@helix/sdk";
+import { isCanonicalPluginId } from "@helix/sdk-types";
+import { assertPluginManifest, isJsonObject } from "@helix/sdk";
 import { resolveTierDefaults, tierDefaults as securityTierDefaults } from "../config/tier.js";
+import {
+  catalogArtifact,
+  verifyPluginArtifactSignature,
+  verifyPluginCatalog,
+  type PluginTrustOptions,
+} from "./trust.js";
 
 export interface DiscoveredPlugin {
   readonly rootDir: string;
   readonly manifestPath: string;
   readonly manifest: PluginManifest;
   readonly state: PluginLifecycleState;
-}
-
-export interface LoadedPlugin extends DiscoveredPlugin {
-  readonly module: PlatformPlugin<PlatformHost>;
+  readonly verifiedBundleDigest?: string;
 }
 
 export interface PluginDiscoveryOptions {
@@ -39,6 +32,8 @@ export interface PluginDiscoveryOptions {
   readonly tierPolicy?: PluginTierPolicy;
   readonly config?: HelixConfig;
   readonly tierDefaults?: TierSecurityDefaults;
+  readonly pluginTrust?: PluginTrustOptions;
+  readonly onError?: (artifact: string, error: unknown) => void;
 }
 
 export interface PluginTierPolicy {
@@ -46,15 +41,6 @@ export interface PluginTierPolicy {
   readonly pluginSignatureRequired?: boolean;
   readonly localAiOnly?: boolean;
   readonly airgapRequired?: boolean;
-}
-
-export interface PluginHostFactory {
-  createHost(plugin: DiscoveredPlugin): Promise<PlatformHost>;
-}
-
-interface ImportedPluginModule {
-  readonly default?: unknown;
-  readonly migrations?: readonly PluginMigration[];
 }
 
 export function pluginTierPolicyFromSecurityDefaults(
@@ -75,53 +61,61 @@ export async function discoverPlugin(
   rootDir: string,
   options: PluginDiscoveryOptions = {},
 ): Promise<DiscoveredPlugin> {
-  const manifestPath = join(rootDir, "plugin.json");
+  const canonicalRoot = await canonicalPluginRoot(rootDir);
+  const manifestPath = await resolveContainedArtifact(canonicalRoot, "plugin.json");
   const manifestText = await readFile(manifestPath, "utf8");
   const manifest = assertPluginManifest(parseManifestJson(manifestText, manifestPath));
 
   const plugin = {
-    rootDir: resolve(rootDir),
-    manifestPath: resolve(manifestPath),
+    rootDir: canonicalRoot,
+    manifestPath,
     manifest,
     state: "validated",
   } satisfies DiscoveredPlugin;
   const tierPolicy = resolvePluginDiscoveryTierPolicy(options);
-  if (tierPolicy !== undefined) {
-    await enforcePluginTierPolicy(plugin, tierPolicy);
-  }
-  return plugin;
+  const verifiedBundleDigest =
+    tierPolicy === undefined
+      ? undefined
+      : await enforcePluginTierPolicy(plugin, tierPolicy, options.pluginTrust);
+  return verifiedBundleDigest === undefined ? plugin : { ...plugin, verifiedBundleDigest };
 }
 
 export async function discoverPluginsDirectory(
   pluginsDir: string,
   options: PluginDiscoveryOptions = {},
 ): Promise<readonly DiscoveredPlugin[]> {
+  const canonicalPluginsDir = await canonicalPluginRoot(pluginsDir);
   const discovered: DiscoveredPlugin[] = [];
 
   if (options.includeRootManifest === true) {
-    const rootPlugin = await discoverPlugin(pluginsDir, options).catch((error: unknown) => {
-      if (isFileNotFound(error)) {
+    const rootPlugin = await discoverPlugin(canonicalPluginsDir, options).catch(
+      (error: unknown) => {
+        if (!isFileNotFound(error)) options.onError?.(canonicalPluginsDir, error);
         return undefined;
-      }
-      throw error;
-    });
+      },
+    );
     if (rootPlugin !== undefined) {
       discovered.push(rootPlugin);
     }
   }
 
-  const entries = await readdir(pluginsDir, { withFileTypes: true });
+  const entries = await readdir(canonicalPluginsDir, { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.isSymbolicLink()) {
+      options.onError?.(
+        entry.name,
+        new Error(`Plugin directory contains a symbolic link: ${entry.name}`),
+      );
+      continue;
+    }
     if (!entry.isDirectory()) {
       continue;
     }
 
-    const plugin = await discoverPlugin(join(pluginsDir, entry.name), options).catch(
+    const plugin = await discoverPluginById(canonicalPluginsDir, entry.name, options).catch(
       (error: unknown) => {
-        if (isFileNotFound(error)) {
-          return undefined;
-        }
-        throw error;
+        if (!isFileNotFound(error)) options.onError?.(entry.name, error);
+        return undefined;
       },
     );
     if (plugin !== undefined) {
@@ -129,25 +123,22 @@ export async function discoverPluginsDirectory(
     }
   }
 
-  return resolvePluginDependencies(discovered);
+  return resolveLoadablePluginDependencies(discovered, options.onError);
 }
 
 export async function enforcePluginTierPolicy(
   plugin: DiscoveredPlugin,
   policy: PluginTierPolicy,
-): Promise<void> {
+  trust?: PluginTrustOptions,
+): Promise<string | undefined> {
   const manifest = plugin.manifest;
   assertMinimumTier(manifest, policy.tier);
   assertTierRestriction(manifest, policy.tier);
 
-  if (policy.pluginSignatureRequired === true && !hasSignatureEvidence(manifest)) {
-    throw new Error(
-      `Plugin ${manifest.id} requires signed artifact evidence for ${policy.tier} tier.`,
-    );
-  }
-  if (policy.pluginSignatureRequired === true) {
-    await assertPluginBundleDigest(plugin);
-  }
+  const verifiedBundleDigest =
+    policy.pluginSignatureRequired === true
+      ? await assertPluginCatalogTrust(plugin, policy.tier, trust)
+      : undefined;
 
   if (
     policy.localAiOnly === true &&
@@ -166,6 +157,7 @@ export async function enforcePluginTierPolicy(
       `Plugin ${manifest.id} declares outbound network access without air-gap compatibility.`,
     );
   }
+  return verifiedBundleDigest;
 }
 
 export async function calculatePluginBundleDigest(plugin: DiscoveredPlugin): Promise<string> {
@@ -174,14 +166,43 @@ export async function calculatePluginBundleDigest(plugin: DiscoveredPlugin): Pro
   for (const file of files) {
     hash.update(file.relativePath, "utf8");
     hash.update("\0");
-    if (file.relativePath === "plugin.json") {
-      hash.update(canonicalManifestWithoutSignature(plugin.manifest), "utf8");
-    } else {
-      hash.update(await readFile(file.absolutePath));
-    }
+    hash.update(await readFile(file.absolutePath));
     hash.update("\0");
   }
   return `sha256:${hash.digest("hex")}`;
+}
+
+export async function discoverPluginById(
+  pluginsDir: string,
+  pluginId: string,
+  options: PluginDiscoveryOptions = {},
+): Promise<DiscoveredPlugin> {
+  if (!isCanonicalPluginId(pluginId)) {
+    throw new Error("Invalid canonical plugin id.");
+  }
+  const root = await canonicalPluginRoot(pluginsDir);
+  const candidate = resolve(root, pluginId);
+  assertPathContained(root, candidate);
+  const plugin = await discoverPlugin(candidate, options);
+  if (plugin.manifest.id !== pluginId) {
+    throw new Error(`Plugin directory ${pluginId} contains manifest id ${plugin.manifest.id}.`);
+  }
+  return plugin;
+}
+
+export async function resolvePluginArtifactPath(
+  plugin: DiscoveredPlugin,
+  artifactPath: string,
+): Promise<string> {
+  if (plugin.verifiedBundleDigest !== undefined) {
+    const actual = await calculatePluginBundleDigest(plugin);
+    if (actual !== plugin.verifiedBundleDigest) {
+      throw new Error(
+        `Plugin ${plugin.manifest.id} changed after verification: expected ${plugin.verifiedBundleDigest}, got ${actual}.`,
+      );
+    }
+  }
+  return resolveContainedArtifact(plugin.rootDir, artifactPath);
 }
 
 export function resolvePluginDependencies(
@@ -231,194 +252,46 @@ export function resolvePluginDependencies(
   return resolved;
 }
 
-export async function loadInProcessPlugin(plugin: DiscoveredPlugin): Promise<LoadedPlugin> {
-  if (plugin.manifest.kind !== "in-process") {
-    throw new Error(
-      `Plugin ${plugin.manifest.id} is ${plugin.manifest.kind}; only in-process loading is implemented`,
-    );
-  }
+function resolveLoadablePluginDependencies(
+  plugins: readonly DiscoveredPlugin[],
+  onError: PluginDiscoveryOptions["onError"],
+): readonly DiscoveredPlugin[] {
+  const remaining = new Map(plugins.map((plugin) => [plugin.manifest.id, plugin]));
+  const resolved: DiscoveredPlugin[] = [];
+  const resolvedIds = new Set<string>();
 
-  if (plugin.manifest.main === undefined || plugin.manifest.main === null) {
-    throw new Error(`Plugin ${plugin.manifest.id} is missing manifest.main`);
-  }
-
-  const entryUrl = pathToFileURL(resolve(plugin.rootDir, plugin.manifest.main)).href;
-  const imported = (await import(entryUrl)) as ImportedPluginModule;
-  if (imported.default === undefined || !isPlatformPlugin(imported.default)) {
-    throw new Error(`Plugin ${plugin.manifest.id} must default-export a plugin definition`);
-  }
-  const module =
-    imported.migrations === undefined
-      ? imported.default
-      : {
-          ...imported.default,
-          migrations: imported.default.migrations ?? imported.migrations,
-        };
-
-  if (module.manifest !== undefined && module.manifest.id !== plugin.manifest.id) {
-    throw new Error(
-      `Plugin module manifest id ${module.manifest.id} does not match ${plugin.manifest.id}`,
-    );
-  }
-
-  return { ...plugin, module, state: "installed" };
-}
-
-export async function startLoadedPlugin(
-  loaded: LoadedPlugin,
-  hostFactory: PluginHostFactory,
-): Promise<LoadedPlugin> {
-  const host = await hostFactory.createHost(loaded);
-  const starting: LoadedPlugin = { ...loaded, state: "starting" };
-  await startPlugin(starting.module, host);
-  await enablePlugin(starting.module, host);
-  return { ...starting, state: "enabled" };
-}
-
-export async function disableLoadedPlugin(
-  loaded: LoadedPlugin,
-  hostFactory: PluginHostFactory,
-): Promise<LoadedPlugin> {
-  const host = await hostFactory.createHost(loaded);
-  await disablePlugin(loaded.module, host);
-  return { ...loaded, state: "disabled" };
-}
-
-export async function uninstallLoadedPlugin(
-  loaded: LoadedPlugin,
-  hostFactory: PluginHostFactory,
-): Promise<LoadedPlugin> {
-  const host = await hostFactory.createHost(loaded);
-  const uninstalling: LoadedPlugin = { ...loaded, state: "uninstalling" };
-  await uninstallPlugin(uninstalling.module, host);
-  return { ...uninstalling, state: "uninstalled" };
-}
-
-export async function loadInProcessPlugins(
-  discoveredPlugins: readonly DiscoveredPlugin[],
-): Promise<readonly LoadedPlugin[]> {
-  const sortedPlugins = resolvePluginDependencies(discoveredPlugins);
-  const loaded: LoadedPlugin[] = [];
-  for (const plugin of sortedPlugins) {
-    loaded.push(await loadInProcessPlugin(plugin));
-  }
-  return loaded;
-}
-
-export class InProcessPluginRuntime {
-  private readonly loadedPlugins = new Map<string, LoadedPlugin>();
-  private readonly hosts = new Map<string, PlatformHost>();
-
-  constructor(private readonly hostFactory: PluginHostFactory) {}
-
-  async load(plugins: readonly DiscoveredPlugin[]): Promise<readonly LoadedPlugin[]> {
-    const loaded = await loadInProcessPlugins(plugins);
-    for (const plugin of loaded) {
-      this.loadedPlugins.set(plugin.manifest.id, plugin);
+  while (remaining.size > 0) {
+    let progressed = false;
+    for (const [pluginId, plugin] of remaining) {
+      const missing = requiredDependencies(plugin.manifest).find(
+        (dependency) => !remaining.has(dependency.id) && !resolvedIds.has(dependency.id),
+      );
+      if (missing !== undefined) {
+        remaining.delete(pluginId);
+        onError?.(
+          pluginId,
+          new Error(`Plugin ${pluginId} depends on missing plugin ${missing.id}`),
+        );
+        progressed = true;
+        continue;
+      }
+      if (
+        requiredDependencies(plugin.manifest).every((dependency) => resolvedIds.has(dependency.id))
+      ) {
+        remaining.delete(pluginId);
+        resolvedIds.add(pluginId);
+        resolved.push(plugin);
+        progressed = true;
+      }
     }
-    return loaded;
-  }
-
-  async loadFromDirectory(
-    pluginsDir: string,
-    options: PluginDiscoveryOptions = {},
-  ): Promise<readonly LoadedPlugin[]> {
-    return this.load(await discoverPluginsDirectory(pluginsDir, options));
-  }
-
-  async startAll(): Promise<readonly LoadedPlugin[]> {
-    const started: LoadedPlugin[] = [];
-    for (const plugin of resolveLoadedPluginDependencies([...this.loadedPlugins.values()])) {
-      started.push(await this.start(plugin.manifest.id));
+    if (progressed) continue;
+    for (const pluginId of remaining.keys()) {
+      onError?.(pluginId, new Error(`Plugin ${pluginId} has a dependency cycle.`));
     }
-    return started;
+    break;
   }
 
-  async start(pluginId: string): Promise<LoadedPlugin> {
-    const loaded = this.requireLoaded(pluginId);
-    const host = await this.hostFor(loaded);
-    const starting: LoadedPlugin = { ...loaded, state: "starting" };
-    this.loadedPlugins.set(pluginId, starting);
-    await startPlugin(starting.module, host);
-    await enablePlugin(starting.module, host);
-    const enabled: LoadedPlugin = { ...starting, state: "enabled" };
-    this.loadedPlugins.set(pluginId, enabled);
-    return enabled;
-  }
-
-  async enable(pluginId: string): Promise<LoadedPlugin> {
-    const loaded = this.requireLoaded(pluginId);
-    await enablePlugin(loaded.module, await this.hostFor(loaded));
-    const enabled: LoadedPlugin = { ...loaded, state: "enabled" };
-    this.loadedPlugins.set(pluginId, enabled);
-    return enabled;
-  }
-
-  async disable(pluginId: string): Promise<LoadedPlugin> {
-    const loaded = this.requireLoaded(pluginId);
-    await disablePlugin(loaded.module, await this.hostFor(loaded));
-    const disabled: LoadedPlugin = { ...loaded, state: "disabled" };
-    this.loadedPlugins.set(pluginId, disabled);
-    return disabled;
-  }
-
-  async uninstall(pluginId: string): Promise<LoadedPlugin> {
-    const loaded = this.requireLoaded(pluginId);
-    const uninstalling: LoadedPlugin = { ...loaded, state: "uninstalling" };
-    this.loadedPlugins.set(pluginId, uninstalling);
-    await uninstallPlugin(uninstalling.module, await this.hostFor(uninstalling));
-    const uninstalled: LoadedPlugin = { ...uninstalling, state: "uninstalled" };
-    this.loadedPlugins.set(pluginId, uninstalled);
-    this.hosts.delete(pluginId);
-    return uninstalled;
-  }
-
-  get(pluginId: string): LoadedPlugin | undefined {
-    return this.loadedPlugins.get(pluginId);
-  }
-
-  list(): readonly LoadedPlugin[] {
-    return resolveLoadedPluginDependencies([...this.loadedPlugins.values()]);
-  }
-
-  private requireLoaded(pluginId: string): LoadedPlugin {
-    const plugin = this.loadedPlugins.get(pluginId);
-    if (plugin === undefined) {
-      throw new Error(`Plugin ${pluginId} has not been loaded`);
-    }
-    return plugin;
-  }
-
-  private async hostFor(plugin: LoadedPlugin): Promise<PlatformHost> {
-    const existing = this.hosts.get(plugin.manifest.id);
-    if (existing !== undefined) {
-      return existing;
-    }
-
-    const host = await this.hostFactory.createHost(plugin);
-    this.hosts.set(plugin.manifest.id, host);
-    return host;
-  }
-}
-
-export async function discoverLoadAndStartDirectory(
-  pluginsDir: string,
-  hostFactory: PluginHostFactory,
-  options: PluginDiscoveryOptions = {},
-): Promise<readonly LoadedPlugin[]> {
-  const runtime = new InProcessPluginRuntime(hostFactory);
-  await runtime.loadFromDirectory(pluginsDir, options);
-  return runtime.startAll();
-}
-
-export async function discoverLoadAndStart(
-  rootDir: string,
-  hostFactory: PluginHostFactory,
-  options: PluginDiscoveryOptions = {},
-): Promise<LoadedPlugin> {
-  const discovered = await discoverPlugin(rootDir, options);
-  const loaded = await loadInProcessPlugin(discovered);
-  return startLoadedPlugin(loaded, hostFactory);
+  return resolved;
 }
 
 function resolvePluginDiscoveryTierPolicy(
@@ -462,18 +335,6 @@ function defaultPluginTierPolicy(options: PluginDiscoveryOptions): PluginTierPol
   return undefined;
 }
 
-function resolveLoadedPluginDependencies(
-  plugins: readonly LoadedPlugin[],
-): readonly LoadedPlugin[] {
-  return resolvePluginDependencies(plugins).map((plugin) => {
-    const loaded = plugins.find((candidate) => candidate.manifest.id === plugin.manifest.id);
-    if (loaded === undefined) {
-      throw new Error(`Plugin ${plugin.manifest.id} was resolved but is not loaded`);
-    }
-    return loaded;
-  });
-}
-
 function requiredDependencies(manifest: PluginManifest): readonly PluginDependencyDeclaration[] {
   return (manifest.dependencies ?? [])
     .map((dependency) => (typeof dependency === "string" ? { id: dependency } : dependency))
@@ -512,27 +373,26 @@ function assertTierRestriction(manifest: PluginManifest, tier: SecurityTier): vo
   }
 }
 
-function hasSignatureEvidence(manifest: PluginManifest): boolean {
-  const signature = manifest.signature;
-  return (
-    typeof signature?.bundleDigest === "string" &&
-    /^sha256:[0-9a-f]{64}$/u.test(signature.bundleDigest) &&
-    ((typeof signature.sigstoreBundle === "string" && signature.sigstoreBundle.length > 0) ||
-      isTrustedSignerIdentity(signature.signerIdentity))
-  );
-}
-
-async function assertPluginBundleDigest(plugin: DiscoveredPlugin): Promise<void> {
-  const expected = plugin.manifest.signature?.bundleDigest;
-  if (typeof expected !== "string") {
-    return;
-  }
-  const actual = await calculatePluginBundleDigest(plugin);
-  if (actual !== expected) {
+async function assertPluginCatalogTrust(
+  plugin: DiscoveredPlugin,
+  tier: SecurityTier,
+  trust: PluginTrustOptions | undefined,
+): Promise<string> {
+  if (trust === undefined) {
     throw new Error(
-      `Plugin ${plugin.manifest.id} bundle digest mismatch: expected ${expected}, got ${actual}.`,
+      `Plugin ${plugin.manifest.id} requires a trusted catalog artifact for ${tier} tier.`,
     );
   }
+  const catalog = verifyPluginCatalog(trust);
+  const artifact = catalogArtifact(catalog, plugin.manifest.id, plugin.manifest.version);
+  if (artifact === undefined) {
+    throw new Error(
+      `Plugin ${plugin.manifest.id} requires a trusted catalog artifact for ${tier} tier.`,
+    );
+  }
+  const actual = await calculatePluginBundleDigest(plugin);
+  await verifyPluginArtifactSignature(artifact, actual, trust);
+  return actual;
 }
 
 interface BundleFile {
@@ -541,7 +401,7 @@ interface BundleFile {
 }
 
 async function listBundleFiles(rootDir: string): Promise<readonly BundleFile[]> {
-  const root = resolve(rootDir);
+  const root = await canonicalPluginRoot(rootDir);
   const files: BundleFile[] = [];
   await collectBundleFiles(root, root, files);
   return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
@@ -569,37 +429,41 @@ async function collectBundleFiles(
   }
 }
 
-function canonicalManifestWithoutSignature(manifest: PluginManifest): string {
-  const { signature: _signature, ...unsignedManifest } = manifest;
-  void _signature;
-  return `${canonicalizeJson(unsignedManifest)}\n`;
+async function canonicalPluginRoot(rootDir: string): Promise<string> {
+  const stat = await lstat(rootDir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Plugin root must be a real directory: ${rootDir}`);
+  }
+  return realpath(rootDir);
 }
 
-function canonicalizeJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalizeJson).join(",")}]`;
+async function resolveContainedArtifact(rootDir: string, artifactPath: string): Promise<string> {
+  if (
+    artifactPath.length === 0 ||
+    isAbsolute(artifactPath) ||
+    artifactPath.includes("\\") ||
+    artifactPath.split("/").some((segment) => segment.length === 0 || segment === "..")
+  ) {
+    throw new Error(`Plugin artifact path must be normalized and relative: ${artifactPath}`);
   }
-  if (isJsonObject(value)) {
-    const entries = Object.entries(value).filter((entry) => entry[1] !== undefined);
-    entries.sort(([left], [right]) => left.localeCompare(right));
-    return `{${entries
-      .map(([key, entryValue]) => `${JSON.stringify(key)}:${canonicalizeJson(entryValue)}`)
-      .join(",")}}`;
+  const root = await realpath(rootDir);
+  let current = root;
+  for (const segment of artifactPath.split("/")) {
+    current = join(current, segment);
+    const stat = await lstat(current);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Plugin artifact path contains a symbolic link: ${artifactPath}`);
+    }
   }
-  return JSON.stringify(value);
+  const canonical = await realpath(current);
+  assertPathContained(root, canonical);
+  return canonical;
 }
 
-function isTrustedSignerIdentity(value: unknown): boolean {
-  if (typeof value !== "string") {
-    return false;
-  }
-  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value)) {
-    return true;
-  }
-  try {
-    return new URL(value).protocol === "https:";
-  } catch {
-    return false;
+function assertPathContained(rootDir: string, target: string): void {
+  const child = relative(rootDir, target);
+  if (child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child)) {
+    throw new Error(`Plugin artifact escapes its root: ${target}`);
   }
 }
 
@@ -672,10 +536,6 @@ function parseManifestJson(text: string, manifestPath: string): unknown {
     const message = error instanceof Error ? error.message : String(error);
     throw new SyntaxError(`Invalid plugin manifest JSON at ${manifestPath}: ${message}`);
   }
-}
-
-function isPlatformPlugin(value: unknown): value is PlatformPlugin<PlatformHost> {
-  return typeof value === "object" && value !== null;
 }
 
 function isTierSecurityDefaults(

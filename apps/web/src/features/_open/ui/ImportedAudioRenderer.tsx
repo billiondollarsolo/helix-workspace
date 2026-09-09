@@ -15,7 +15,7 @@ export interface ImportedAudioRendererProps {
 }
 
 export function ImportedAudioRenderer({ audio, objectId, fileName }: ImportedAudioRendererProps) {
-  const src = `/api/drive/objects/${objectId}/content`;
+  const src = `/v1/api/drive/objects/${objectId}/content`;
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div
@@ -34,7 +34,7 @@ export function ImportedAudioRenderer({ audio, objectId, fileName }: ImportedAud
         </span>
         <div style={{ flex: 1 }} />
         <a
-          href={`/api/drive/objects/${objectId}/content?download=1`}
+          href={`/v1/api/drive/objects/${objectId}/content?download=1`}
           className="btn sm"
           download={fileName ?? ""}
         >

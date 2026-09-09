@@ -1,22 +1,30 @@
+import type { MailAddress, MailAttachmentInput } from "@helix/contracts";
+
 export const MAIL_COMPOSE_RECOVERY_KEY = "helix-mail-compose-recovery-v1";
 
 const RECOVERY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 const EMAIL_ADDRESS_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 
 export interface MailComposeRecovery {
-  readonly to: string;
-  readonly cc: string;
-  readonly bcc: string;
+  readonly id?: string;
+  readonly threadId?: string;
+  readonly expectedRevision?: number;
+  readonly to: readonly MailAddress[];
+  readonly cc: readonly MailAddress[];
+  readonly bcc: readonly MailAddress[];
   readonly subject: string;
-  readonly body: string;
+  readonly bodyText: string;
+  readonly attachments: readonly MailAttachmentInput[];
   readonly updatedAt: string;
 }
 
 export function hasMailComposeContent(
-  draft: Pick<MailComposeRecovery, "to" | "cc" | "bcc" | "subject" | "body">,
+  draft: Pick<MailComposeRecovery, "to" | "cc" | "bcc" | "subject" | "bodyText" | "attachments">,
 ): boolean {
-  return [draft.to, draft.cc, draft.bcc, draft.subject, draft.body].some(
-    (value) => value.trim().length > 0,
+  return (
+    draft.to.length + draft.cc.length + draft.bcc.length + draft.attachments.length > 0 ||
+    draft.subject.trim().length > 0 ||
+    draft.bodyText.trim().length > 0
   );
 }
 
@@ -50,11 +58,17 @@ export function readMailComposeRecovery(
       return null;
     }
     return {
-      to: candidate.to.slice(0, 4_000),
-      cc: candidate.cc.slice(0, 4_000),
-      bcc: candidate.bcc.slice(0, 4_000),
+      ...(candidate.id === undefined ? {} : { id: candidate.id }),
+      ...(candidate.threadId === undefined ? {} : { threadId: candidate.threadId }),
+      ...(candidate.expectedRevision === undefined
+        ? {}
+        : { expectedRevision: candidate.expectedRevision }),
+      to: candidate.to.slice(0, 100),
+      cc: candidate.cc.slice(0, 100),
+      bcc: candidate.bcc.slice(0, 100),
       subject: candidate.subject.slice(0, 998),
-      body: candidate.body.slice(0, 250_000),
+      bodyText: candidate.bodyText.slice(0, 250_000),
+      attachments: candidate.attachments.slice(0, 100),
       updatedAt: candidate.updatedAt,
     };
   } catch {
@@ -101,11 +115,39 @@ function isRecoveryRecord(value: unknown): value is MailComposeRecovery {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as Partial<Record<keyof MailComposeRecovery, unknown>>;
   return (
-    typeof candidate.to === "string" &&
-    typeof candidate.cc === "string" &&
-    typeof candidate.bcc === "string" &&
+    (candidate.id === undefined || typeof candidate.id === "string") &&
+    (candidate.threadId === undefined || typeof candidate.threadId === "string") &&
+    (candidate.expectedRevision === undefined || typeof candidate.expectedRevision === "number") &&
+    isAddressArray(candidate.to) &&
+    isAddressArray(candidate.cc) &&
+    isAddressArray(candidate.bcc) &&
     typeof candidate.subject === "string" &&
-    typeof candidate.body === "string" &&
+    typeof candidate.bodyText === "string" &&
+    isAttachmentArray(candidate.attachments) &&
     typeof candidate.updatedAt === "string"
+  );
+}
+
+function isAddressArray(value: unknown): value is readonly MailAddress[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { address?: unknown }).address === "string",
+    )
+  );
+}
+
+function isAttachmentArray(value: unknown): value is readonly MailAttachmentInput[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { objectId?: unknown }).objectId === "string",
+    )
   );
 }

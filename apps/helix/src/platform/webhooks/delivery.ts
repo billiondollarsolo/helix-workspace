@@ -1,5 +1,6 @@
 import type { TraceContext } from "@helix/sdk-types";
 import { getCryptoProvider } from "../crypto/index.js";
+import { outboundFetch } from "../outbound-http.js";
 import { signWebhookPayload, verifyWebhookSignature } from "./signatures.js";
 import {
   resolveWebhookSecret,
@@ -30,20 +31,27 @@ export interface WebhookHttpClient {
   }): Promise<WebhookHttpResponse>;
 }
 
-export const fetchWebhookHttpClient: WebhookHttpClient = {
-  async post(input) {
-    const response = await fetch(input.url, {
-      method: "POST",
-      headers: input.headers,
-      body: input.body,
-    });
-    return {
-      status: response.status,
-      headers: Object.fromEntries(response.headers.entries()),
-      body: await response.text(),
-    };
-  },
-};
+export function createWebhookHttpClient(
+  fetchImpl: typeof fetch = outboundFetch,
+): WebhookHttpClient {
+  return {
+    async post(input) {
+      const response = await fetchImpl(input.url, {
+        method: "POST",
+        headers: input.headers,
+        body: input.body,
+      });
+      await response.body?.cancel().catch(() => undefined);
+      return {
+        status: response.status,
+        headers: {},
+        body: response.ok ? "" : `Remote endpoint returned HTTP ${String(response.status)}.`,
+      };
+    },
+  };
+}
+
+export const fetchWebhookHttpClient = createWebhookHttpClient();
 
 export interface WebhookRetryPolicy {
   readonly maxAttempts: number;
@@ -302,7 +310,8 @@ export function outboundWebhookBlockReason(input: {
 
 export async function verifyInboundWebhookPayload(input: {
   readonly payload: Buffer | string;
-  readonly secretRef: string | null;
+  readonly orgId: string;
+  readonly secretCiphertext: string;
   readonly secretResolver?: WebhookSecretResolver;
   readonly signatureHeader: string | undefined;
   readonly now?: Date;
@@ -312,7 +321,7 @@ export async function verifyInboundWebhookPayload(input: {
   }
   return verifyWebhookSignature({
     payload: input.payload,
-    secret: await resolveWebhookSecret(input.secretRef, input.secretResolver),
+    secret: await resolveWebhookSecret(input.orgId, input.secretCiphertext, input.secretResolver),
     header: input.signatureHeader,
     ...(input.now === undefined ? {} : { now: input.now }),
   });
@@ -330,7 +339,11 @@ async function buildOutboundRequest(input: {
   readonly requestHeaders: Record<string, string>;
   readonly signature: ReturnType<typeof signWebhookPayload>;
 }> {
-  const secret = await resolveWebhookSecret(input.webhook.secretRef, input.secretResolver);
+  const secret = await resolveWebhookSecret(
+    input.webhook.orgId,
+    input.webhook.secretCiphertext,
+    input.secretResolver,
+  );
   const signature = signWebhookPayload({
     payload: input.body,
     secret,

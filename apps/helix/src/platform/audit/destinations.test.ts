@@ -1,18 +1,29 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import type { StorageClient } from "@helix/sdk";
 import {
   auditDestinationKinds,
   createAuditDestinationShipper,
 } from "./destinations.js";
 import { SiemAuditShipper } from "./siem-syslog.js";
 import { PostgresWormAuditShipper } from "./immutable-postgres.js";
+import {
+  createHmacAuditAnchorAuthenticator,
+  type ImmutableAuditStorageClient,
+} from "./immutable-s3.js";
+import type { AuditVerificationStore } from "./verifier.js";
 
-function fakeStorage(): StorageClient {
+function fakeStorage(): ImmutableAuditStorageClient & { listKeys(prefix: string): AsyncIterable<string> } {
   return {
     put: async () => undefined,
-  } as unknown as StorageClient;
+    get: async () => null,
+    delete: async () => undefined,
+    putObjectLocked: async () => undefined,
+    async *listKeys() {},
+  };
 }
+
+const authenticator = createHmacAuditAnchorAuthenticator("audit-key-1", "a".repeat(32));
+const audit: AuditVerificationStore = { listVerificationRecords: async () => [] };
 
 function fakeSql(): postgres.Sql {
   const tag = (): Promise<unknown> => Promise.resolve([]);
@@ -36,7 +47,9 @@ describe("createAuditDestinationShipper", () => {
       destination: "immutable-s3",
       storage: fakeStorage(),
       prefix: "helix-audit",
-    });
+      signer: authenticator,
+      verifier: authenticator,
+    }, { audit });
     expect(typeof shipper.ship).toBe("function");
   });
 

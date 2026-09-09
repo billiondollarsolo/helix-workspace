@@ -15,7 +15,7 @@ describe("onboarding api", () => {
         currentStep: "sso",
         planChoice: "personal",
         inviteCount: 2,
-        identityChoice: "google",
+        identityChoice: "local",
         updatedAt: "2026-05-24T12:00:00.000Z",
       }),
     );
@@ -25,7 +25,7 @@ describe("onboarding api", () => {
       currentStep: "sso",
       planChoice: "personal",
       inviteCount: 2,
-      identityChoice: "google",
+      identityChoice: "local",
       updatedAt: "2026-05-24T12:00:00.000Z",
     });
     expect(fetchImpl).toHaveBeenCalledWith("/api/signup/onboarding-state", {

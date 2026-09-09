@@ -19,12 +19,12 @@ import {
   mailSpamResultSchema,
   mailThreadsListResultSchema,
 } from "@helix/contracts";
-import { z } from "zod3";
+import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
-import { BadRequestError } from "../../api/api-error.js";
-import type { MailStore } from "./store.js";
+import { BadRequestError, ConflictError, ForbiddenError } from "../../api/api-error.js";
+import { MailDraftConflictError, type MailStore } from "./store.js";
 import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
 import { ingestRawMail, MailauthAuthenticator, type MailAuthenticator } from "./ingest.js";
 import { MailSendService } from "./outbound.js";
@@ -33,18 +33,23 @@ import type {
   MailFilterActions,
   MailFilterCriteria,
   MailFolderSummary,
+  MailInboundRecipient,
   MailLabelRecord,
   MailOutboundEnvelope,
   MailOutboundRecord,
   MailThreadRowRecord,
+  MailUserSettings,
 } from "./types.js";
 import { MAIL_FOLDER_IDS } from "./types.js";
+import { normalizeProviderDeliveryId } from "./threading.js";
+import { sanitizeMailHtml } from "./html-rendering.js";
 
 // ponytail: tools.ts is the mail tool surface (~1100 LOC). Split draft/alias
 // tool groups into tools-drafts.ts / tools-aliases.ts when next expanding (G9).
 
 const uuidSchema = z.string().uuid();
 const emailSchema = z.string().email();
+const mailboxTargetShape = { mailboxActorId: uuidSchema.optional() } as const;
 
 const addressSchema = z.union([
   emailSchema.transform((address) => ({ address })),
@@ -54,13 +59,13 @@ const addressSchema = z.union([
   }),
 ]);
 
-const attachmentSchema = z.object({
-  filename: z.string().min(1).optional(),
-  contentType: z.string().min(1).optional(),
-  content: z.string().min(1).optional(),
-  objectId: z.string().uuid().optional(),
-  path: z.string().min(1).optional(),
-});
+const attachmentSchema = z
+  .object({
+    filename: z.string().min(1).max(255).optional(),
+    contentType: z.string().min(1).max(255).optional(),
+    objectId: z.string().uuid(),
+  })
+  .strict();
 
 const sendSchema = z.object({
   from: addressSchema.optional(),
@@ -70,8 +75,16 @@ const sendSchema = z.object({
   subject: z.string().max(998),
   bodyText: z.string(),
   bodyHtml: z.string().optional(),
-  attachments: z.array(attachmentSchema).default([]),
+  attachments: z.array(attachmentSchema).max(100).default([]),
   undoWindowMs: z.number().int().min(0).max(300_000).optional(),
+  sendAt: z
+    .string()
+    .datetime()
+    .refine((value) => {
+      const delay = Date.parse(value) - Date.now();
+      return delay > 0 && delay <= 366 * 24 * 60 * 60_000;
+    }, "Scheduled mail must be sent within the next 366 days.")
+    .optional(),
 });
 
 const headerValueSchema = z
@@ -83,9 +96,19 @@ const headerValueSchema = z
 
 const inboundAcceptSchema = z.object({
   messageId: headerValueSchema.optional(),
+  providerDeliveryId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(512)
+    .refine((value) => normalizeProviderDeliveryId(value) !== null, {
+      message: "Provider delivery IDs must not contain control characters.",
+    })
+    .optional(),
   from: addressSchema,
   to: z.array(addressSchema).min(1),
   cc: z.array(addressSchema).default([]),
+  bcc: z.array(addressSchema).default([]),
   subject: headerValueSchema.default(""),
   bodyText: z.string(),
   receivedAt: z.string().datetime().optional(),
@@ -104,26 +127,30 @@ const labelApplySchema = z.object({
   threadId: uuidSchema,
   add: z.array(z.string().min(1)).default([]),
   remove: z.array(z.string().min(1)).default([]),
+  ...mailboxTargetShape,
 });
 
-const threadIdSchema = z.object({ threadId: uuidSchema });
+const threadIdSchema = z.object({ threadId: uuidSchema, ...mailboxTargetShape });
 
 const snoozeSchema = z.object({
   threadId: uuidSchema,
   until: z.string().datetime(),
+  ...mailboxTargetShape,
 });
 
 const readStateSchema = z.object({
   threadId: uuidSchema,
   unread: z.boolean().default(false),
+  ...mailboxTargetShape,
 });
 
 const starStateSchema = z.object({
   threadId: uuidSchema,
   starred: z.boolean(),
+  ...mailboxTargetShape,
 });
 
-const spamSchema = mailSpamInputSchema;
+const spamSchema = mailSpamInputSchema.extend(mailboxTargetShape);
 
 const filterCriteriaSchema = z.object({
   fromContains: z.string().min(1).optional(),
@@ -169,14 +196,26 @@ const vacationSetSchema = z
     { message: "startsAt must be before or equal to endsAt", path: ["endsAt"] },
   );
 
+const userSettingsGetSchema = z.object({});
+const userSettingsSetSchema = z
+  .object({
+    signatureText: z.string().max(40_000).default(""),
+    signatureHtml: z.string().max(100_000).nullable().default(null),
+    includeSignatureOnReplies: z.boolean().default(true),
+    blockedSenders: z.array(emailSchema).max(1_000).default([]),
+  })
+  .strict();
+
 const searchSchema = z.object({
-  query: z.string().optional(),
+  query: z.string().trim().max(1_000).optional(),
   labels: z.array(z.string().min(1)).default([]),
   limit: z.number().int().positive().max(100).default(50),
+  ...mailboxTargetShape,
 });
 
 const outboundGetSchema = z.object({
   id: z.string().min(1),
+  ...mailboxTargetShape,
 });
 
 const folderEnum = z.enum(MAIL_FOLDER_IDS);
@@ -186,13 +225,18 @@ const threadsListSchema = z.object({
   folder: folderEnum.default("inbox"),
   tab: categoryEnum.optional(),
   label: z.string().min(1).optional(),
-  query: z.string().min(1).optional(),
+  query: z.string().trim().min(1).max(1_000).optional(),
   limit: z.number().int().positive().max(200).default(50),
   offset: z.number().int().min(0).default(0),
+  ...mailboxTargetShape,
 });
 
-const foldersListSchema = z.object({});
-const labelsListSchema = z.object({});
+const foldersListSchema = z.object(mailboxTargetShape);
+const labelsListSchema = z.object(mailboxTargetShape);
+const mailboxDelegateSchema = z.object({ actorId: uuidSchema });
+const mailboxDelegateGrantSchema = mailboxDelegateSchema.extend({
+  expiresAt: z.string().datetime().nullable().optional(),
+});
 
 const genericObjectJsonSchema = {
   type: "object",
@@ -226,6 +270,13 @@ const mailLabelsListOutputSchema = z.object({
   labels: z.array(mailJsonObjectSchema),
 });
 const mailVacationOutputSchema = mailJsonObjectSchema.nullable();
+const mailUserSettingsOutputSchema = z.object({
+  signatureText: z.string(),
+  signatureHtml: z.string().nullable(),
+  includeSignatureOnReplies: z.boolean(),
+  blockedSenders: z.array(z.string()),
+  updatedAt: z.string().nullable(),
+});
 const mailOutboundGetOutputSchema = z.object({
   outbound: mailJsonObjectSchema.nullable(),
 });
@@ -243,6 +294,7 @@ const mailFilterDeleteOutputSchema = z.object({
 });
 const mailInboundAcceptOutputSchema = z.object({
   ok: z.literal(true),
+  created: z.boolean(),
   threadId: z.string(),
   messageId: z.string(),
   attachmentObjectIds: z.array(z.string()),
@@ -258,6 +310,15 @@ const mailLabelApplyOutputSchema = z.object({
 const mailAliasDeleteOutputSchema = z.object({
   deleted: z.boolean(),
 });
+const mailboxDelegateOutputSchema = z.object({
+  id: uuidSchema,
+  actorId: uuidSchema,
+  validFrom: z.string().datetime(),
+  expiresAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+});
+const mailboxDelegatesOutputSchema = z.object({ delegates: z.array(mailboxDelegateOutputSchema) });
+const mailboxDelegateRevokeOutputSchema = z.object({ revoked: z.boolean() });
 
 export interface CreateMailToolDefinitionsOptions {
   readonly store: MailStore;
@@ -346,7 +407,7 @@ export function createMailToolDefinitions(
   return [
     defineTool<z.output<typeof sendSchema>, unknown>({
       id: "mail.send",
-      description: "Send an email on behalf of the user after the undo-send delay.",
+      description: "Send now after the undo delay, or schedule delivery for a future time.",
       permission: "mail.send",
       sideEffects: "external_communication",
       confirmationRequired: true,
@@ -355,13 +416,16 @@ export function createMailToolDefinitions(
       inputSchema: zodToolSchema(sendSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        const from = await authorizedFrom(input.from, ctx.actor, options);
+        const settings = await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id);
         const outbound = await new MailSendService({
           store: options.store,
           undoWindowMs: input.undoWindowMs ?? options.undoWindowMs ?? 30_000,
         }).queue({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
-          envelope: toEnvelope(input, actorFrom(ctx.actor, options.defaultFromDomain)),
+          envelope: applySignature(toEnvelope(input, from), settings, false),
+          ...(input.sendAt === undefined ? {} : { sendAt: new Date(input.sendAt) }),
         });
         await options.classifyResource?.({
           actor: ctx.actor,
@@ -374,7 +438,7 @@ export function createMailToolDefinitions(
     }),
     defineTool<z.output<typeof replySchema>, unknown>({
       id: "mail.reply",
-      description: "Reply to an existing mail thread after the undo-send delay.",
+      description: "Reply after the undo delay, or schedule the reply for a future time.",
       permission: "mail.send",
       sideEffects: "external_communication",
       confirmationRequired: true,
@@ -382,18 +446,25 @@ export function createMailToolDefinitions(
       inputSchema: zodToolSchema(replySchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        const from = await authorizedFrom(input.from, ctx.actor, options);
+        const settings = await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id);
         const outbound = await sendService.queue({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           threadId: input.threadId,
           ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
           references: input.references,
-          envelope: toEnvelope(
-            {
-              ...input,
-              subject: input.subject ?? "Re:",
-            },
-            actorFrom(ctx.actor, options.defaultFromDomain),
+          ...(input.sendAt === undefined ? {} : { sendAt: new Date(input.sendAt) }),
+          envelope: applySignature(
+            toEnvelope(
+              {
+                ...input,
+                subject: input.subject ?? "Re:",
+              },
+              from,
+            ),
+            settings,
+            true,
           ),
         });
         await options.classifyResource?.({
@@ -414,9 +485,8 @@ export function createMailToolDefinitions(
         "Accept an inbound RFC822 payload on behalf of the SMTP receiver. " +
         "Service-only: requires the `mail.system` scope and a service-account / " +
         "system actor. SPF/DKIM/DMARC are always verified against the raw " +
-        "message; the verification result is persisted on the stored message " +
-        "and used downstream — auth failures do not drop the message but do " +
-        "mean the From header is not trusted.",
+        "message; published DMARC policy is enforced before mailbox persistence " +
+        "and non-rejected verdicts are recorded on the stored message.",
       // CRITICAL-4 (REVIEW.md): previously `mail.write` — any user could
       // forge inbound mail. Now `mail.system`, a service-only scope that is
       // explicitly NOT in agentCredentialScopeCatalog or
@@ -435,6 +505,22 @@ export function createMailToolDefinitions(
         }
         const receivedAt = input.receivedAt === undefined ? new Date() : new Date(input.receivedAt);
         const raw = structuredInboundInputToRfc822(input, receivedAt);
+        const resolved = await Promise.all(
+          [...input.to, ...input.cc, ...input.bcc].map(async ({ address }) => {
+            const actor = await options.store.findActorByAddress(ctx.actor.orgId, address);
+            if (actor === null) {
+              throw new Error(`Unknown inbound mailbox: ${address}`);
+            }
+            return {
+              orgId: ctx.actor.orgId,
+              actorId: actor.actorId,
+              address,
+            } satisfies MailInboundRecipient;
+          }),
+        );
+        const recipients = [
+          ...new Map(resolved.map((recipient) => [recipient.actorId, recipient])).values(),
+        ];
         // Always verify with the real authenticator (MailauthAuthenticator by
         // default). Tests may inject a fake to control the *result*, but the
         // verification step itself is unskippable.
@@ -443,17 +529,21 @@ export function createMailToolDefinitions(
           store: options.store,
           input: {
             orgId: ctx.actor.orgId,
+            recipients,
             raw,
             envelopeFrom: input.from.address,
-            envelopeTo: input.to.map((recipient) => recipient.address),
             ...(input.remoteAddress === undefined ? {} : { remoteAddress: input.remoteAddress }),
             ...(input.helo === undefined ? {} : { helo: input.helo }),
+            ...(input.providerDeliveryId === undefined
+              ? {}
+              : { providerDeliveryId: input.providerDeliveryId }),
             receivedAt,
           },
           authenticator,
         });
         return {
           ok: true,
+          created: result.stored.created,
           threadId: result.stored.threadId,
           messageId: result.stored.messageId,
           attachmentObjectIds: [...result.stored.attachmentObjectIds],
@@ -474,7 +564,7 @@ export function createMailToolDefinitions(
       handler: async (input, ctx) => {
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
           threadId: input.threadId,
           patch: { addLabels: input.add, removeLabels: input.remove },
         });
@@ -484,12 +574,26 @@ export function createMailToolDefinitions(
     threadStateTool("mail.archive", "Archive a mail thread.", "mail.write", async (input, ctx) => {
       await options.store.updateThreadState({
         orgId: ctx.actor.orgId,
-        actorId: ctx.actor.id,
+        actorId: input.mailboxActorId ?? ctx.actor.id,
         threadId: input.threadId,
         patch: { archivedAt: new Date() },
       });
       return { ok: true, threadId: input.threadId };
     }),
+    threadStateTool(
+      "mail.unarchive",
+      "Move an archived mail thread back to its previous mailbox view.",
+      "mail.write",
+      async (input, ctx) => {
+        await options.store.updateThreadState({
+          orgId: ctx.actor.orgId,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
+          threadId: input.threadId,
+          patch: { archivedAt: null },
+        });
+        return { ok: true, threadId: input.threadId };
+      },
+    ),
     threadStateTool(
       "mail.delete",
       "Move a mail thread to trash.",
@@ -497,9 +601,23 @@ export function createMailToolDefinitions(
       async (input, ctx) => {
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
           threadId: input.threadId,
           patch: { deletedAt: new Date() },
+        });
+        return { ok: true, threadId: input.threadId };
+      },
+    ),
+    threadStateTool(
+      "mail.restore",
+      "Restore a mail thread from trash.",
+      "mail.write",
+      async (input, ctx) => {
+        await options.store.updateThreadState({
+          orgId: ctx.actor.orgId,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
+          threadId: input.threadId,
+          patch: { deletedAt: null },
         });
         return { ok: true, threadId: input.threadId };
       },
@@ -515,7 +633,7 @@ export function createMailToolDefinitions(
         const spamAt = input.spam ? new Date() : null;
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
           threadId: input.threadId,
           patch: { spamAt },
         });
@@ -536,7 +654,7 @@ export function createMailToolDefinitions(
       handler: async (input, ctx) => {
         const thread = await options.store.getThread({
           orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
           threadId: input.threadId,
         });
         return { thread: thread === null ? null : serializeThread(thread) };
@@ -552,7 +670,7 @@ export function createMailToolDefinitions(
       handler: async (input, ctx) => {
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
           threadId: input.threadId,
           patch: { readAt: input.unread ? null : new Date() },
         });
@@ -569,7 +687,7 @@ export function createMailToolDefinitions(
       handler: async (input, ctx) => {
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
           threadId: input.threadId,
           patch: { starred: input.starred },
         });
@@ -586,13 +704,27 @@ export function createMailToolDefinitions(
       handler: async (input, ctx) => {
         await options.store.updateThreadState({
           orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
           threadId: input.threadId,
           patch: { snoozedUntil: new Date(input.until) },
         });
         return { ok: true, threadId: input.threadId, snoozedUntil: input.until };
       },
     }),
+    threadStateTool(
+      "mail.unsnooze",
+      "Return a snoozed mail thread to its mailbox now.",
+      "mail.write",
+      async (input, ctx) => {
+        await options.store.updateThreadState({
+          orgId: ctx.actor.orgId,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
+          threadId: input.threadId,
+          patch: { snoozedUntil: null },
+        });
+        return { ok: true, threadId: input.threadId };
+      },
+    ),
     defineTool<Record<string, never>, z.output<typeof mailFiltersListResultSchema>>({
       id: "mail.filter.list",
       description: "List mail filters for the current actor.",
@@ -694,6 +826,47 @@ export function createMailToolDefinitions(
         ),
       }),
     }),
+    defineTool<Record<string, never>, z.output<typeof mailUserSettingsOutputSchema>>({
+      id: "mail.settings.get",
+      description: "Fetch the current user's server-enforced mail signature and block list.",
+      permission: "mail.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(userSettingsGetSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailUserSettingsOutputSchema, genericObjectJsonSchema),
+      handler: async (_input, ctx) =>
+        serializeUserSettings(
+          await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id),
+        ),
+    }),
+    defineTool<
+      z.output<typeof userSettingsSetSchema>,
+      z.output<typeof mailUserSettingsOutputSchema>
+    >({
+      id: "mail.settings.set",
+      description: "Save the current user's server-enforced mail signature and block list.",
+      permission: "mail.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(userSettingsSetSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailUserSettingsOutputSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.setUserSettings === undefined) {
+          throw new BadRequestError("Mail settings are not available.");
+        }
+        return serializeUserSettings(
+          await options.store.setUserSettings({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            signatureText: input.signatureText.trim(),
+            signatureHtml:
+              input.signatureHtml === null
+                ? null
+                : sanitizeMailHtml(input.signatureHtml).html,
+            includeSignatureOnReplies: input.includeSignatureOnReplies,
+            blockedSenders: [...new Set(input.blockedSenders.map((address) => address.toLowerCase()))],
+          }),
+        );
+      },
+    }),
     defineTool<z.output<typeof searchSchema>, unknown>({
       id: "mail.search",
       description: "Search mail visible to the current actor.",
@@ -705,7 +878,7 @@ export function createMailToolDefinitions(
         hits: (
           await options.store.search({
             orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
+            actorId: input.mailboxActorId ?? ctx.actor.id,
             query: input.query,
             labels: input.labels,
             limit: input.limit,
@@ -727,7 +900,7 @@ export function createMailToolDefinitions(
       handler: async (input, ctx) => {
         const result = await options.store.listThreads({
           orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
+          actorId: input.mailboxActorId ?? ctx.actor.id,
           folder: input.folder,
           ...(input.tab === undefined ? {} : { tab: input.tab }),
           ...(input.label === undefined ? {} : { label: input.label }),
@@ -751,11 +924,11 @@ export function createMailToolDefinitions(
       sideEffects: "read",
       inputSchema: zodToolSchema(foldersListSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailFoldersListOutputSchema, genericObjectJsonSchema),
-      handler: async (_input, ctx) => ({
+      handler: async (input, ctx) => ({
         folders: (
           await options.store.listFolders({
             orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
+            actorId: input.mailboxActorId ?? ctx.actor.id,
           })
         ).map(serializeFolder),
       }),
@@ -768,11 +941,11 @@ export function createMailToolDefinitions(
       sideEffects: "read",
       inputSchema: zodToolSchema(labelsListSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailLabelsListOutputSchema, genericObjectJsonSchema),
-      handler: async (_input, ctx) => ({
+      handler: async (input, ctx) => ({
         labels: (
           await options.store.listLabels({
             orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
+            actorId: input.mailboxActorId ?? ctx.actor.id,
           })
         ).map(serializeLabel),
       }),
@@ -789,12 +962,60 @@ export function createMailToolDefinitions(
         if (
           outbound === null ||
           outbound.orgId !== ctx.actor.orgId ||
-          outbound.actorId !== ctx.actor.id
+          outbound.actorId !== (input.mailboxActorId ?? ctx.actor.id)
         ) {
           return { outbound: null };
         }
         return { outbound: serializeOutboundDetail(outbound) };
       },
+    }),
+    defineTool<z.output<typeof mailboxDelegateGrantSchema>, unknown>({
+      id: "mail.delegate.grant",
+      description: "Grant time-bounded manager access to the current user's mailbox.",
+      permission: "mail.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(mailboxDelegateGrantSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailboxDelegateOutputSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) =>
+        serializeMailboxDelegate(
+          await options.store.grantMailboxDelegate({
+            orgId: ctx.actor.orgId,
+            ownerActorId: ctx.actor.id,
+            delegateActorId: input.actorId,
+            expiresAt:
+              input.expiresAt === undefined || input.expiresAt === null
+                ? null
+                : new Date(input.expiresAt),
+          }),
+        ),
+    }),
+    defineTool<Record<string, never>, unknown>({
+      id: "mail.delegate.list",
+      description: "List active managers of the current user's mailbox.",
+      permission: "mail.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(z.object({}).default({}), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailboxDelegatesOutputSchema, genericObjectJsonSchema),
+      handler: async (_input, ctx) => ({
+        delegates: (await options.store.listMailboxDelegates(ctx.actor.orgId, ctx.actor.id)).map(
+          serializeMailboxDelegate,
+        ),
+      }),
+    }),
+    defineTool<z.output<typeof mailboxDelegateSchema>, unknown>({
+      id: "mail.delegate.revoke",
+      description: "Revoke a manager's access to the current user's mailbox immediately.",
+      permission: "mail.write",
+      sideEffects: "destructive",
+      inputSchema: zodToolSchema(mailboxDelegateSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailboxDelegateRevokeOutputSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => ({
+        revoked: await options.store.revokeMailboxDelegate({
+          orgId: ctx.actor.orgId,
+          ownerActorId: ctx.actor.id,
+          delegateActorId: input.actorId,
+        }),
+      }),
     }),
     defineTool<
       z.output<typeof mailOutboundCancelInputSchema>,
@@ -828,21 +1049,32 @@ export function createMailToolDefinitions(
         if (options.store.saveDraft === undefined) {
           throw new BadRequestError("Draft persistence is not available.");
         }
-        const draft = await options.store.saveDraft({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          ...(input.id === undefined ? {} : { id: input.id }),
-          ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-          envelope: {
-            to: input.to,
-            cc: input.cc,
-            bcc: input.bcc,
-            subject: input.subject,
-            bodyText: input.bodyText,
-            ...(input.bodyHtml === undefined ? {} : { bodyHtml: input.bodyHtml }),
-            attachments: input.attachments,
-          } as JsonObject,
-        });
+        let draft;
+        try {
+          draft = await options.store.saveDraft({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            ...(input.id === undefined ? {} : { id: input.id }),
+            ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+            ...(input.expectedRevision === undefined
+              ? {}
+              : { expectedRevision: input.expectedRevision }),
+            idempotencyKey: input.idempotencyKey,
+            attachmentObjectIds: input.attachments.map(({ objectId }) => objectId),
+            envelope: {
+              to: input.to,
+              cc: input.cc,
+              bcc: input.bcc,
+              subject: input.subject,
+              bodyText: input.bodyText,
+              ...(input.bodyHtml === undefined ? {} : { bodyHtml: input.bodyHtml }),
+              attachments: input.attachments,
+            } as JsonObject,
+          });
+        } catch (error) {
+          if (error instanceof MailDraftConflictError) throw new ConflictError(error.message);
+          throw error;
+        }
         return serializeDraft(draft, input);
       },
     }),
@@ -941,6 +1173,8 @@ export function createMailToolDefinitions(
           email: input.address,
           ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
           isPrimary: input.isPrimary,
+          receiveEnabled: input.receiveEnabled,
+          sendAsEnabled: input.sendAsEnabled,
         });
         return serializeAlias(alias);
       },
@@ -1002,12 +1236,26 @@ function defineTool<Input, Output>(
   return tool;
 }
 
+function serializeMailboxDelegate(delegate: {
+  readonly id: string;
+  readonly actorId: string;
+  readonly validFrom: Date;
+  readonly expiresAt: Date | null;
+  readonly createdAt: Date;
+}): z.output<typeof mailboxDelegateOutputSchema> {
+  return {
+    id: delegate.id,
+    actorId: delegate.actorId,
+    validFrom: delegate.validFrom.toISOString(),
+    expiresAt: delegate.expiresAt?.toISOString() ?? null,
+    createdAt: delegate.createdAt.toISOString(),
+  };
+}
+
 function toEnvelope(
   input: z.output<typeof sendSchema> | z.output<typeof replySchema>,
-  defaultFrom: MailOutboundEnvelope["from"],
+  from: MailOutboundEnvelope["from"],
 ): MailOutboundEnvelope {
-  const from =
-    "from" in input && input.from !== undefined ? normalizeAddress(input.from) : defaultFrom;
   return {
     from,
     to: input.to.map(normalizeAddress),
@@ -1019,13 +1267,114 @@ function toEnvelope(
     attachments: input.attachments.map((attachment) => ({
       ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
       mimeType: attachment.contentType ?? "application/octet-stream",
-      ...(attachment.content === undefined
-        ? { content: Buffer.alloc(0) }
-        : { content: Buffer.from(attachment.content, "base64") }),
       ...(attachment.contentType === undefined ? {} : { contentType: attachment.contentType }),
-      ...(attachment.path === undefined ? {} : { path: attachment.path }),
-      ...(attachment.objectId === undefined ? {} : { objectId: attachment.objectId }),
+      objectId: attachment.objectId,
     })),
+  };
+}
+
+async function mailUserSettings(
+  store: MailStore,
+  orgId: string,
+  actorId: string,
+): Promise<MailUserSettings> {
+  return (
+    (await store.getUserSettings?.(orgId, actorId)) ?? {
+      signatureText: "",
+      signatureHtml: null,
+      includeSignatureOnReplies: true,
+      blockedSenders: [],
+      updatedAt: new Date(0),
+    }
+  );
+}
+
+function applySignature(
+  envelope: MailOutboundEnvelope,
+  settings: MailUserSettings,
+  reply: boolean,
+): MailOutboundEnvelope {
+  if (
+    (reply && !settings.includeSignatureOnReplies) ||
+    (settings.signatureText.length === 0 && settings.signatureHtml === null)
+  ) {
+    return envelope;
+  }
+  const signatureHtml =
+    settings.signatureHtml ??
+    settings.signatureText
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;")
+      .replaceAll("\n", "<br>");
+  return {
+    ...envelope,
+    text: `${envelope.text}\n\n-- \n${settings.signatureText}`,
+    ...(envelope.html === undefined
+      ? {}
+      : { html: `${envelope.html}<br><div class="helix-mail-signature">${signatureHtml}</div>` }),
+  };
+}
+
+function serializeUserSettings(settings: MailUserSettings) {
+  return {
+    signatureText: settings.signatureText,
+    signatureHtml: settings.signatureHtml,
+    includeSignatureOnReplies: settings.includeSignatureOnReplies,
+    blockedSenders: [...settings.blockedSenders],
+    updatedAt: settings.updatedAt.getTime() === 0 ? null : settings.updatedAt.toISOString(),
+  };
+}
+
+async function authorizedFrom(
+  requested: z.output<typeof addressSchema> | undefined,
+  actor: {
+    readonly id: string;
+    readonly orgId: string;
+    readonly email?: string;
+    readonly displayName?: string;
+  },
+  options: CreateMailToolDefinitionsOptions,
+): Promise<MailOutboundEnvelope["from"]> {
+  const primary = actorFrom(actor, options.defaultFromDomain);
+  const candidate = requested?.address ?? primary.address;
+  if (options.store.resolveAuthorizedSender !== undefined) {
+    const authorized = await options.store.resolveAuthorizedSender(
+      actor.orgId,
+      actor.id,
+      candidate,
+    );
+    if (authorized === null) {
+      throw new ForbiddenError("The requested From address is not an authorized sending identity.");
+    }
+    const requestedName =
+      requested !== undefined && "name" in requested ? requested.name : undefined;
+    return {
+      address: authorized,
+      ...((requestedName ?? actor.displayName) === undefined
+        ? {}
+        : { name: requestedName ?? actor.displayName }),
+    };
+  }
+  if (
+    requested === undefined ||
+    requested.address.toLowerCase() === primary.address.toLowerCase()
+  ) {
+    return primary;
+  }
+  const alias = (await options.store.listAliases?.(actor.orgId, actor.id))?.find(
+    (candidate) => candidate.email.toLowerCase() === requested.address.toLowerCase(),
+  );
+  if (alias === undefined) {
+    throw new ForbiddenError("The requested From address is not an authorized sending identity.");
+  }
+  return {
+    address: alias.email,
+    ...(alias.displayName === null && actor.displayName === undefined
+      ? {}
+      : { name: alias.displayName ?? actor.displayName }),
   };
 }
 
@@ -1246,6 +1595,8 @@ function serializeDraft(
     readonly actorId: string;
     readonly threadId: string | null;
     readonly envelope: JsonObject;
+    readonly revision: number;
+    readonly expiresAt: Date;
     readonly createdAt: Date;
     readonly updatedAt: Date;
   },
@@ -1278,6 +1629,8 @@ function serializeDraft(
     bodyText,
     ...(bodyHtml === undefined ? {} : { bodyHtml }),
     attachments: attachments as z.output<typeof mailDraftSchema>["attachments"],
+    revision: draft.revision,
+    expiresAt: draft.expiresAt.toISOString(),
     createdAt: draft.createdAt.toISOString(),
     updatedAt: draft.updatedAt.toISOString(),
   };
@@ -1290,6 +1643,8 @@ function serializeAlias(alias: {
   readonly email: string;
   readonly displayName: string | null;
   readonly isPrimary: boolean;
+  readonly receiveEnabled?: boolean;
+  readonly sendAsEnabled?: boolean;
   readonly createdAt: Date;
 }) {
   return {
@@ -1299,6 +1654,8 @@ function serializeAlias(alias: {
     address: alias.email,
     displayName: alias.displayName,
     isPrimary: alias.isPrimary,
+    receiveEnabled: alias.receiveEnabled ?? true,
+    sendAsEnabled: alias.sendAsEnabled ?? true,
     createdAt: alias.createdAt.toISOString(),
   };
 }
@@ -1317,6 +1674,7 @@ function serializeThread(thread: {
     readonly sentAt: Date;
     readonly body: string;
     readonly bodyFormat: string;
+    readonly plainBody?: string | undefined;
     readonly hasAttachment: boolean;
     readonly attachments: readonly unknown[];
   }[];
@@ -1331,10 +1689,19 @@ function serializeThread(thread: {
 }) {
   return {
     ...thread,
-    messages: thread.messages.map((message) => ({
-      ...message,
-      sentAt: message.sentAt.toISOString(),
-    })),
+    messages: thread.messages.map((message) => {
+      const serialized = { ...message, sentAt: message.sentAt.toISOString() };
+      if (message.bodyFormat !== "html") {
+        return serialized;
+      }
+      const sanitized = sanitizeMailHtml(message.body);
+      return {
+        ...serialized,
+        body: sanitized.html,
+        source: message.body,
+        remoteContentBlocked: sanitized.remoteContentBlocked,
+      };
+    }),
     archivedAt: thread.archivedAt?.toISOString() ?? null,
     deletedAt: thread.deletedAt?.toISOString() ?? null,
     snoozedUntil: thread.snoozedUntil?.toISOString() ?? null,

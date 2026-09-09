@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { storeAccessToken } from "@/lib/auth";
 import {
   NativePresentationSyncProvider,
   presentationSyncWebSocketUrl,
@@ -33,15 +32,13 @@ describe("native presentation sync provider", () => {
     vi.useRealTimers();
   });
 
-  it("normalizes Slides sync URLs and preserves fallback realtime auth", () => {
+  it("normalizes Slides sync URLs without credentials", () => {
     expect(presentationSyncWebSocketUrl("deck 1")).toBe(
-      "ws://localhost:3000/sync/slides/deck%201?protocol=slides-sync",
+      "ws://localhost:3000/v1/sync/slides/deck%201?protocol=slides-sync",
     );
 
-    storeAccessToken("token-1");
-
     expect(presentationSyncWebSocketUrl("deck 1")).toBe(
-      "ws://localhost:3000/sync/slides/deck%201?protocol=slides-sync&access_token=token-1",
+      "ws://localhost:3000/v1/sync/slides/deck%201?protocol=slides-sync",
     );
   });
 
@@ -54,13 +51,14 @@ describe("native presentation sync provider", () => {
 
     provider.connect();
     const socket = MockWebSocket.instances.at(-1);
-    expect(socket?.url).toBe(`ws://localhost:3000/sync/slides/${deckId}?protocol=slides-sync`);
+    expect(socket?.url).toBe(`ws://localhost:3000/v1/sync/slides/${deckId}?protocol=slides-sync`);
     socket?.open();
 
     expect(
       provider.sendOperation({
         kind: "update-slide",
         slideId,
+        expectedRevision: 1,
         content: { layout: "title", title: "Updated" },
         speakerNotes: "Notes",
       }),
@@ -73,6 +71,7 @@ describe("native presentation sync provider", () => {
         operation: {
           kind: "update-slide",
           slideId,
+          expectedRevision: 1,
           content: { layout: "title", title: "Updated" },
           speakerNotes: "Notes",
         },
@@ -102,6 +101,7 @@ describe("native presentation sync provider", () => {
       provider.sendOperation({
         kind: "update-slide",
         slideId,
+        expectedRevision: 1,
         content: { layout: "title", title: "Fallback" },
         speakerNotes: "",
       }),
@@ -224,6 +224,7 @@ describe("native presentation sync provider", () => {
     provider.sendOperation({
       kind: "update-slide",
       slideId,
+      expectedRevision: 1,
       content: { layout: "title", title: "Local" },
     });
     expect(socket?.sent.at(-1)).toMatchObject({
@@ -241,6 +242,7 @@ describe("native presentation sync provider", () => {
       operation: {
         kind: "update-slide",
         slideId,
+        expectedRevision: 1,
         content: { layout: "title", title: "Remote" },
       },
       deck: deck(),
@@ -249,6 +251,7 @@ describe("native presentation sync provider", () => {
     provider.sendOperation({
       kind: "update-slide",
       slideId,
+      expectedRevision: 2,
       content: { layout: "title", title: "After remote" },
     });
 

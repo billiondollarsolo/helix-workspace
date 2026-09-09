@@ -40,6 +40,22 @@ export const HELIX_API_MAJOR_VERSION = (() => {
 /** Route prefix for the versioned API surface, e.g. `/v1`. */
 export const HELIX_API_VERSION_PREFIX = `/v${String(HELIX_API_MAJOR_VERSION)}`;
 
+/** Adds the canonical major-version prefix to a root-relative public route. */
+export function versionedApiPath(path: string): string {
+  if (!path.startsWith("/")) throw new Error("API paths must be root-relative.");
+  return path === HELIX_API_VERSION_PREFIX || path.startsWith(`${HELIX_API_VERSION_PREFIX}/`)
+    ? path
+    : `${HELIX_API_VERSION_PREFIX}${path}`;
+}
+
+/** Removes the deployment prefix after Fastify has selected a versioned route. */
+export function internalApiUrl(rawUrl: string): string {
+  if (rawUrl === HELIX_API_VERSION_PREFIX) return "/";
+  return rawUrl.startsWith(`${HELIX_API_VERSION_PREFIX}/`)
+    ? rawUrl.slice(HELIX_API_VERSION_PREFIX.length)
+    : rawUrl;
+}
+
 /** Value emitted in the `api-version` response header. */
 export const HELIX_API_VERSION_HEADER_VALUE = `v${String(HELIX_API_MAJOR_VERSION)}`;
 

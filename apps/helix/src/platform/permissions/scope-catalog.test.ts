@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_SCOPES,
+  PERMISSION_CATALOG_VERSION,
   SCOPE_CATALOG,
   agentCredentialScopeCatalog,
   appPasswordScopeCatalog,
@@ -8,11 +9,15 @@ import {
   isCompositeScope,
   isKnownScope,
   openApiScopeCatalog,
+  permissionSchema,
+  permissionsSchema,
   scopesForSurface,
+  validatedPermissions,
 } from "./scope-catalog.js";
 
 describe("canonical scope catalog", () => {
   it("has no duplicate scope tokens", () => {
+    expect(PERMISSION_CATALOG_VERSION).toBe(2);
     const seen = new Set<string>();
     for (const entry of SCOPE_CATALOG) {
       expect(seen.has(entry.scope), `duplicate scope: ${entry.scope}`).toBe(false);
@@ -40,12 +45,16 @@ describe("canonical scope catalog", () => {
   it("rejects unknown scopes", () => {
     expect(isKnownScope("not.a.scope")).toBe(false);
     expect(getScopeDefinition("not.a.scope")).toBeUndefined();
+    expect(permissionSchema.safeParse("not.a.scope").success).toBe(false);
+    expect(permissionsSchema.parse(["mail.read", "mail.read"])).toEqual(["mail.read"]);
+    expect(validatedPermissions(["mail.read", "not.a.scope"])).toEqual([]);
   });
 
-  it("derives the agent credential catalog from the agent + platform + admin surfaces", () => {
+  it("derives the agent credential catalog from non-admin agent and platform surfaces", () => {
     expect(agentCredentialScopeCatalog).toContain("mail.send");
     expect(agentCredentialScopeCatalog).toContain("mail.external");
-    expect(agentCredentialScopeCatalog).toContain("admin.agents");
+    expect(agentCredentialScopeCatalog).not.toContain("admin.agents");
+    expect(agentCredentialScopeCatalog).not.toContain("admin.audit");
     expect(agentCredentialScopeCatalog).toContain("tools:write");
     // Legacy DAV protocol scopes are not issuable on agent OAuth credentials.
     expect(agentCredentialScopeCatalog).not.toContain("caldav");
@@ -57,7 +66,10 @@ describe("canonical scope catalog", () => {
 
   it("derives the app-password catalog from the app_password surface", () => {
     expect(appPasswordScopeCatalog).toContain("caldav");
-    expect(appPasswordScopeCatalog).toContain("imap");
+    expect(appPasswordScopeCatalog).not.toContain("carddav");
+    expect(appPasswordScopeCatalog).toContain("carddav.read");
+    expect(appPasswordScopeCatalog).toContain("carddav.write");
+    expect(appPasswordScopeCatalog).not.toContain("imap");
     expect(appPasswordScopeCatalog).toContain("smtp");
     expect(appPasswordScopeCatalog).toContain("mail.send");
     // Composite/agent-only scopes are not issuable on app passwords.
@@ -74,8 +86,8 @@ describe("canonical scope catalog", () => {
     expect(map["mail.external"]).toBe(
       "Send mail to recipients outside the organization's domains.",
     );
-    // A transitional tool permission not yet in the catalog still gets documented.
-    const withUnknown = openApiScopeCatalog(["legacy.permission"]);
-    expect(withUnknown["legacy.permission"]).toBe("Allows legacy.permission tool operations.");
+    expect(() => openApiScopeCatalog(["legacy.permission"])).toThrow(
+      "Unknown tool permission: legacy.permission",
+    );
   });
 });

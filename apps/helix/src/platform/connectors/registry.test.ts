@@ -20,12 +20,9 @@ describe("ConnectorRegistry", () => {
 
   it("rejects a duplicate webhook format id", () => {
     const registry = new ConnectorRegistry();
-    registry.beginConnector("connector.a");
-    registry.registerWebhookFormat(noopFormat);
-    registry.endConnector();
-    registry.beginConnector("connector.b");
+    registry.replaceConnector("connector.a", [noopFormat], []);
     expect(() => {
-      registry.registerWebhookFormat(noopFormat);
+      registry.replaceConnector("connector.b", [noopFormat], []);
     }).toThrow(/already registered/u);
   });
 

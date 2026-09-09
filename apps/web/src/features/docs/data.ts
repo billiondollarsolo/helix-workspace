@@ -65,14 +65,6 @@ export const DOC_FOLDERS: readonly DocFolder[] = [
   { id: "trash", label: "Trash", icon: Icons.Trash },
 ];
 
-export const DOC_TEMPLATES: readonly string[] = [
-  "Meeting notes",
-  "PRD",
-  "RFC",
-  "Brainstorm",
-  "1:1 doc",
-];
-
 export const SLASH_ITEMS: readonly SlashItem[] = [
   { id: "h1", title: "Heading 1", sub: "Large section title", icon: Icons.H1 },
   { id: "h2", title: "Heading 2", sub: "Subsection title", icon: Icons.H2 },

@@ -1,6 +1,6 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { openApiScopeCatalog } from "../platform/permissions/scope-catalog.js";
-import { HELIX_SERVER_VERSION } from "./version.js";
+import { HELIX_API_VERSION_PREFIX, HELIX_SERVER_VERSION } from "./version.js";
 
 type MutableOpenApiObject = Record<string, unknown>;
 
@@ -44,14 +44,16 @@ export function buildOpenApiDocument(
   // Pin the real server version so the published spec never advertises 0.0.0.
   document.info = {
     ...(isRecord(document.info) ? document.info : {}),
-    title: isRecord(document.info) && typeof document.info.title === "string"
-      ? document.info.title
-      : "Helix Platform API",
+    title:
+      isRecord(document.info) && typeof document.info.title === "string"
+        ? document.info.title
+        : "Helix Platform API",
     version: HELIX_SERVER_VERSION,
   };
 
-  paths["/api/tools"] = {
-    ...asPathItem(paths["/api/tools"]),
+  const toolCatalogPath = `${HELIX_API_VERSION_PREFIX}/api/tools`;
+  paths[toolCatalogPath] = {
+    ...asPathItem(paths[toolCatalogPath]),
     get: {
       tags: ["Tools"],
       operationId: "listTools",
@@ -81,8 +83,9 @@ export function buildOpenApiDocument(
     },
   };
 
-  paths["/actions/{pendingId}"] = {
-    ...asPathItem(paths["/actions/{pendingId}"]),
+  const actionStatusPath = `${HELIX_API_VERSION_PREFIX}/actions/{pendingId}`;
+  paths[actionStatusPath] = {
+    ...asPathItem(paths[actionStatusPath]),
     get: {
       tags: ["Actions"],
       operationId: "getActionStatus",
@@ -113,8 +116,9 @@ export function buildOpenApiDocument(
     },
   };
 
-  paths["/api/tools/pending/{pendingId}/approve"] = {
-    ...asPathItem(paths["/api/tools/pending/{pendingId}/approve"]),
+  const approvePath = `${HELIX_API_VERSION_PREFIX}/api/tools/pending/{pendingId}/approve`;
+  paths[approvePath] = {
+    ...asPathItem(paths[approvePath]),
     post: pendingActionMutationOperation(
       "approvePendingAction",
       "Approve pending action",
@@ -122,8 +126,9 @@ export function buildOpenApiDocument(
     ),
   };
 
-  paths["/api/tools/pending/{pendingId}/cancel"] = {
-    ...asPathItem(paths["/api/tools/pending/{pendingId}/cancel"]),
+  const cancelPath = `${HELIX_API_VERSION_PREFIX}/api/tools/pending/{pendingId}/cancel`;
+  paths[cancelPath] = {
+    ...asPathItem(paths[cancelPath]),
     post: pendingActionMutationOperation(
       "cancelPendingAction",
       "Cancel pending action",
@@ -135,7 +140,7 @@ export function buildOpenApiDocument(
   for (const tool of tools) {
     const feature = featureForTool(tool.id);
     featureTags.add(feature);
-    const path = `/api/tools/${encodeURIComponent(tool.id)}`;
+    const path = `${HELIX_API_VERSION_PREFIX}/api/tools/${encodeURIComponent(tool.id)}`;
     paths[path] = {
       ...asPathItem(paths[path]),
       post: toolOperation(tool, "post"),
@@ -149,7 +154,7 @@ export function buildOpenApiDocument(
     description: "OAuth 2.1 client credentials flow for agents, CLI, and integrations.",
     flows: {
       clientCredentials: {
-        tokenUrl: "/oauth/token",
+        tokenUrl: `${HELIX_API_VERSION_PREFIX}/oauth/token`,
         scopes,
       },
     },
@@ -429,9 +434,15 @@ function exampleForSchema(schema: JsonObject): JsonValueForExample {
   return buildExample(schema, 0);
 }
 
-type JsonValueForExample = string | number | boolean | null | JsonValueForExample[] | {
-  [key: string]: JsonValueForExample;
-};
+type JsonValueForExample =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValueForExample[]
+  | {
+      [key: string]: JsonValueForExample;
+    };
 
 function buildExample(schema: Record<string, unknown>, depth: number): JsonValueForExample {
   if (depth > 4) {
@@ -445,11 +456,12 @@ function buildExample(schema: Record<string, unknown>, depth: number): JsonValue
     return jsonExampleValue(enumValues[0]);
   }
   const rawType = schema.type;
-  const type = typeof rawType === "string"
-    ? rawType
-    : Array.isArray(rawType) && typeof rawType[0] === "string"
-      ? rawType[0]
-      : undefined;
+  const type =
+    typeof rawType === "string"
+      ? rawType
+      : Array.isArray(rawType) && typeof rawType[0] === "string"
+        ? rawType[0]
+        : undefined;
   switch (type) {
     case "object": {
       const properties = isRecord(schema.properties) ? schema.properties : {};
@@ -670,9 +682,7 @@ function yamlValue(value: unknown, indent: number): string {
       return "[]";
     }
     const pad = "  ".repeat(indent);
-    return value
-      .map((item) => `\n${pad}- ${yamlInline(item, indent + 1)}`)
-      .join("");
+    return value.map((item) => `\n${pad}- ${yamlInline(item, indent + 1)}`).join("");
   }
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>).filter(

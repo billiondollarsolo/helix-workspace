@@ -28,8 +28,7 @@ export interface SlideDeck {
   readonly preview?: DriveApiPreview | undefined;
   /** Native Helix decks open in-app; uploaded decks use explicit copy/preview open flow. */
   readonly openMode?: "native" | "office";
-  /** `"backend"` rows are persisted decks; `"seed"` rows are the offline fallback. */
-  readonly source?: "backend" | "seed";
+  readonly source?: "backend";
 }
 
 /** Background treatment for a `title` slide. */

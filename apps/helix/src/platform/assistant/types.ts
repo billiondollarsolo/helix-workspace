@@ -1,6 +1,5 @@
 import type {
   Actor,
-  AIClassification,
   ChatResponse,
   JsonObject,
   JsonValue,
@@ -112,9 +111,7 @@ export interface AssistantStore {
    * List the actor's non-archived conversations for the UI thread list, ordered
    * pinned-first then by recency, with optional search and keyset pagination.
    */
-  listConversations(
-    input: AssistantListConversationsInput,
-  ): Promise<AssistantConversationListPage>;
+  listConversations(input: AssistantListConversationsInput): Promise<AssistantConversationListPage>;
   /** Pin (`pinned: true`) or unpin a conversation; returns null when not found. */
   setConversationPinned(input: {
     readonly orgId: string;
@@ -210,7 +207,6 @@ export interface AssistantSendMessageInput {
   readonly conversationId?: string;
   readonly title?: string;
   readonly memoryOptIn?: boolean;
-  readonly classification?: AIClassification;
   readonly request?: RequestContext;
   readonly metadata?: JsonObject;
 }
@@ -219,7 +215,6 @@ export interface AssistantApprovePendingToolInput {
   readonly actor: Actor;
   readonly conversationId: string;
   readonly pendingId: string;
-  readonly classification?: AIClassification;
   readonly request?: RequestContext;
   readonly metadata?: JsonObject;
 }
@@ -228,7 +223,6 @@ export interface AssistantCancelPendingToolInput {
   readonly actor: Actor;
   readonly conversationId: string;
   readonly pendingId: string;
-  readonly classification?: AIClassification;
   readonly request?: RequestContext;
   readonly metadata?: JsonObject;
 }

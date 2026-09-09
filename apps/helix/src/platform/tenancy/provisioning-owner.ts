@@ -41,7 +41,7 @@ export class PostgresTenantOwnerActorStore implements TenantOwnerActorStore {
   async ensureInitialOwnerActor(input: InitialOwnerActorInput): Promise<InitialOwnerActorRecord> {
     const email = normalizeOwnerEmail(input.email);
     const metadata = initialOwnerMetadata(input.metadata);
-    const rows = (await this.sql`
+    const rows = await this.sql<InitialOwnerActorRow[]>`
       insert into actors (
         org_id,
         type,
@@ -70,7 +70,7 @@ export class PostgresTenantOwnerActorStore implements TenantOwnerActorStore {
         metadata = actors.metadata || excluded.metadata,
         updated_at = now()
       returning id, org_id, type, email, display_name, scopes, metadata
-    `) as unknown as readonly InitialOwnerActorRow[];
+    `;
     return mapInitialOwnerActorRow(rows[0]);
   }
 }

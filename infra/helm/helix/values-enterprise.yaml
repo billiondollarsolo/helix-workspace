@@ -11,24 +11,36 @@ security:
     networkEgress: required-allowlist
     pluginSignatureRequired: true
 
+# Operator-managed catalog keyring, publisher allowlist, revocations, and
+# Sigstore bundles. Keep this integrity-critical policy separate from the app
+# ConfigMap and rotate it by replacing the immutable Secret.
+env:
+  - name: HELIX_PLUGIN_TRUST_FILE
+    value: /run/helix/plugin-trust/trust.json
+extraVolumes:
+  - name: plugin-trust
+    secret:
+      secretName: helix-plugin-trust
+      items:
+        - key: trust.json
+          path: trust.json
+extraVolumeMounts:
+  - name: plugin-trust
+    mountPath: /run/helix/plugin-trust
+    readOnly: true
+
 external:
   postgres:
     url: ""
     urlSecret:
-      name: helix-postgres-app
-      key: uri
+      name: helix-postgres-runtime
+      key: DATABASE_URL
   vault:
     enabled: true
   kms:
     enabled: true
   siem:
     enabled: true
-
-networkPolicy:
-  egress:
-    allowAll: false
-    cidrs:
-      - 10.0.0.0/8
 
 spire:
   enabled: true
@@ -41,6 +53,8 @@ siem:
 
 cloudnativepg:
   enabled: true
+  bootstrap:
+    owner: helix_migrator
   instances: 3
   storage:
     size: 200Gi
@@ -56,7 +70,7 @@ cloudnativepg:
     target: prefer-standby
     retentionPolicy: 30d
     barmanObjectStore:
-      destinationPath: s3://helix-postgres-backups/enterprise
+      destinationPath: s3://helix-postgres-backups/us-east-1/enterprise
       endpointURL: https://s3.example.internal
       serverName: helix-postgres
       s3Credentials:
@@ -101,6 +115,9 @@ cloudnativepg:
 autoscaling:
   minReplicas: 3
   maxReplicas: 20
+
+availability:
+  priorityClassName: helix-workspace-critical
 
 podDisruptionBudget:
   minAvailable: 2

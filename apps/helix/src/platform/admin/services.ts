@@ -1,6 +1,7 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
+import { HELIX_API_VERSION_PREFIX } from "../../api/version.js";
 import type {
   AdminServiceRuntimeStatus,
   AdminServiceRuntimeStatusStore,
@@ -70,7 +71,6 @@ export interface AdminServiceAction {
 
 export interface AdminServiceSurface {
   readonly id: string;
-  readonly pluginId: string;
   readonly label: string;
   readonly summary: string;
   readonly category: AdminServiceCategory;
@@ -208,7 +208,6 @@ export interface AdminServiceStatusResponse {
 
 interface AdminServiceDefinition {
   readonly id: string;
-  readonly pluginId: string;
   readonly label: string;
   readonly summary: string;
   readonly category: AdminServiceCategory;
@@ -818,7 +817,6 @@ function renderServiceSurface(
   const status = enabled ? serviceStatus(dependencies, configuration) : "disabled";
   return {
     id: definition.id,
-    pluginId: definition.pluginId,
     label: definition.label,
     summary: definition.summary,
     category: definition.category,
@@ -828,8 +826,8 @@ function renderServiceSurface(
     scopes: definition.scopes,
     adminScopes: definition.adminScopes,
     uiRoutes: definition.uiRoutes,
-    apiRoutes: definition.apiRoutes,
-    realtimeRoutes: definition.realtimeRoutes,
+    apiRoutes: definition.apiRoutes.map(versionedRoute),
+    realtimeRoutes: definition.realtimeRoutes.map(versionedRoute),
     tools: definition.tools,
     capabilities: definition.capabilities,
     consumes: definition.consumes,
@@ -838,9 +836,18 @@ function renderServiceSurface(
     configuration,
     aiSlots: definition.aiSlots,
     enrichments: definition.enrichments,
-    adminActions: definition.adminActions,
+    adminActions: definition.adminActions.map((item) => ({
+      ...item,
+      path: versionedRoute(item.path),
+    })),
     metrics: definition.metrics,
   };
+}
+
+function versionedRoute(route: string): string {
+  return route === HELIX_API_VERSION_PREFIX || route.startsWith(`${HELIX_API_VERSION_PREFIX}/`)
+    ? route
+    : `${HELIX_API_VERSION_PREFIX}${route}`;
 }
 
 function renderDependency(
@@ -1023,7 +1030,6 @@ const publicBaseUrlConfig = config({
 const serviceDefinitions: readonly AdminServiceDefinition[] = [
   {
     id: "mail",
-    pluginId: "com.helix.core.mail",
     label: "Mail",
     summary: "SMTP ingress, outbound relay, filters, labels, vacation responders, and mail search.",
     category: "communication",
@@ -1177,11 +1183,10 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "chat",
-    pluginId: "com.helix.core.chat",
     label: "Chat",
     summary: "Rooms, DMs, message history, reactions, presence, and room search.",
     category: "communication",
-    scopes: ["chat.read", "chat.write", "chat.post", "chat.create"],
+    scopes: ["chat.read", "chat.post", "chat.create"],
     adminScopes: ["chat.admin", adminConfigReadScope],
     uiRoutes: ["/chat"],
     apiRoutes: ["/api/tools", "/api/tools/:toolId", "/api/tools/chat.*", "/openapi.json"],
@@ -1239,7 +1244,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "drive",
-    pluginId: "com.helix.core.drive",
     label: "Drive",
     summary: "Files, folders, versions, previews, sharing, trash, and Drive search.",
     category: "workspace",
@@ -1330,7 +1334,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "docs",
-    pluginId: "com.helix.core.docs",
     label: "Docs",
     summary: "Collaborative documents, Yjs sync, comments, export, and document search.",
     category: "workspace",
@@ -1374,16 +1377,22 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "calendar",
-    pluginId: "com.helix.core.calendar",
     label: "Calendar",
     summary: "Calendars, events, attendees, invitations, RSVP links, and free/busy.",
     category: "workspace",
-    scopes: ["calendar.read", "calendar.read:freebusy", "calendar.write", "calendar.write:respond"],
-    adminScopes: ["calendar.admin", adminConfigReadScope],
+    scopes: [
+      "calendar.read",
+      "calendar.read:freebusy",
+      "calendar.write",
+      "calendar.manage",
+      "calendar.write:respond",
+    ],
+    adminScopes: ["calendar.manage", adminConfigReadScope],
     uiRoutes: ["/calendar"],
     apiRoutes: [
       "/dav/cal/*",
       "/dav/cal/rsvp/:token",
+      "/api/calendar/calendars/:calendarId/memberships",
       "/api/tools",
       "/api/tools/:toolId",
       "/api/tools/calendar.*",
@@ -1425,7 +1434,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "meet",
-    pluginId: "com.helix.core.meet-jitsi",
     label: "Meet",
     summary: "Jitsi-backed rooms, JWT token minting, webhooks, and call lifecycle.",
     category: "communication",
@@ -1440,16 +1448,31 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       "/openapi.json",
     ],
     realtimeRoutes: [],
-    tools: ["meet.create-room", "meet.room.list", "meet.mint-token", "meet.end-room"],
+    tools: [
+      "meet.create-room",
+      "meet.room.list",
+      "meet.mint-token",
+      "meet.telemetry.record",
+      "meet.recording.authorize-start",
+      "meet.end-room",
+    ],
     capabilities: [
       "video:jitsi",
       "jwt-minting",
       "room-lifecycle",
+      "quality-telemetry",
       "recording-ingest",
+      "recording-consent",
       "webhook:jitsi",
     ],
     consumes: ["storage", "event-bus", "chat"],
-    dataStores: ["meet_rooms", "threads", "activity"],
+    dataStores: [
+      "meet_rooms",
+      "meet_recording_consents",
+      "meet_recording_authorizations",
+      "threads",
+      "activity",
+    ],
     dependencies: [
       postgresDependency,
       storageDependency,
@@ -1465,7 +1488,7 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         label: "Jitsi JWT secret",
         type: "secret",
         required: false,
-        envAnyOf: ["MEET_JITSI_JWT_SECRET", "JITSI_JWT_SECRET"],
+        envAnyOf: ["MEET_JITSI_JWT_SECRET"],
       }),
     ],
     configuration: [
@@ -1473,20 +1496,14 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       config({
         key: "jitsiWebhookSecret",
         label: "Jitsi webhook shared secret",
-        envAnyOf: ["MEET_JITSI_WEBHOOK_SHARED_SECRET", "JITSI_WEBHOOK_SECRET"],
+        envAnyOf: ["MEET_JITSI_WEBHOOK_SHARED_SECRET"],
         required: false,
         sensitive: true,
       }),
       config({
         key: "jitsiJwtClaims",
         label: "Jitsi JWT claims",
-        envAnyOf: [
-          "MEET_JITSI_JWT_APP_ID",
-          "JITSI_JWT_APP_ID",
-          "MEET_JITSI_JWT_ISSUER",
-          "JITSI_JWT_ISSUER",
-          "MEET_JITSI_JWT_AUDIENCE",
-        ],
+        envAnyOf: ["MEET_JITSI_JWT_APP_ID", "MEET_JITSI_JWT_ISSUER", "MEET_JITSI_JWT_AUDIENCE"],
         required: false,
       }),
     ],
@@ -1498,11 +1515,21 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       'helix_tool_invocation_duration_seconds{tool_id="meet.*"}',
       'helix_permission_checks_total{resource_type="tool",action="meet.*"}',
       'helix_audit_activity_total{object_type="tool"}',
+      "helix_meet_participant_events_total",
+      "helix_meet_quality_samples_total",
+      "helix_meet_degraded_samples_total",
+      "helix_meet_join_latency_seconds",
+      "helix_meet_call_duration_seconds",
+      "helix_meet_packet_loss_percent",
+      "helix_meet_jitter_seconds",
+      "helix_meet_rtt_seconds",
+      "helix_meet_bitrate_kbps",
+      "helix_meet_bridge_load_percent",
+      "helix_meet_bridge_participant_load",
     ],
   },
   {
     id: "search",
-    pluginId: "com.helix.core.search-meilisearch",
     label: "Search",
     summary: "Unified keyword and semantic search across mail, chat, drive, docs, and calendar.",
     category: "platform",
@@ -1589,7 +1616,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "storage",
-    pluginId: "com.helix.core.storage-rustfs",
     label: "Storage",
     summary:
       "S3-compatible object storage for Drive files, mail attachments, previews, and recordings.",
@@ -1647,7 +1673,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "ai",
-    pluginId: "com.helix.core-ai-routing",
     label: "AI routing",
     summary:
       "Provider routing, cost limits, embeddings, vector stores, provenance, and enrichment workers.",
@@ -1684,7 +1709,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       "vector_collections",
       "vector_items",
       "installed_plugins",
-      "plugin_migrations",
     ],
     dependencies: [
       postgresDependency,
@@ -1808,7 +1832,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "assistant",
-    pluginId: "com.helix.core.assistant",
     label: "Assistant",
     summary:
       "Conversational assistant, slash commands, memories, and tool-call confirmation workflow.",
@@ -1898,7 +1921,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "webhooks",
-    pluginId: "com.helix.webhook-engine",
     label: "Webhooks",
     summary:
       "Outbound deliveries, inbound HMAC sources, retry worker, replay, and verification docs.",
@@ -1986,7 +2008,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "auth",
-    pluginId: "com.helix.core.auth-better-auth",
     label: "Auth and actors",
     summary: "Better-Auth sessions, users, agents, app passwords, OAuth clients, and scopes.",
     category: "security",
@@ -2007,6 +2028,7 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
     tools: [
       "agent.credentials.create",
       "agent.credentials.list",
+      "agent.credentials.rotate",
       "agent.credentials.revoke",
       "app.passwords.create",
       "app.passwords.list",
@@ -2071,11 +2093,19 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       }),
       action({
         id: "agent.credentials.create",
-        label: "Create scoped agent credential",
+        label: "Create scoped non-human credential",
         method: "POST",
         path: "/api/tools/agent.credentials.create",
         requiredScope: "admin.agents",
         destructive: false,
+      }),
+      action({
+        id: "agent.credentials.rotate",
+        label: "Rotate non-human credential",
+        method: "POST",
+        path: "/api/tools/agent.credentials.rotate",
+        requiredScope: "admin.agents",
+        destructive: true,
       }),
       action({
         id: "app.passwords.create",
@@ -2091,13 +2121,12 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       'helix_tool_invocations_total{tool_id="app.passwords.*"}',
       'helix_permission_checks_total{resource_type="tool",action="admin.users"}',
       'helix_permission_checks_total{resource_type="tool",action="admin.agents"}',
-      'helix_audit_activity_total{verb="agent.credential.*",object_type="tool"}',
+      'helix_audit_activity_total{verb="nonhuman.credential.*"}',
       'helix_audit_activity_total{verb="app.password.*",object_type="tool"}',
     ],
   },
   {
     id: "audit",
-    pluginId: "com.helix.core.audit",
     label: "Audit",
     summary: "Immutable activity records, hash-chain verification, shipping, and restore evidence.",
     category: "security",
@@ -2166,6 +2195,13 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         required: false,
       }),
       config({
+        key: "immutableShippingAnchorKey",
+        label: "Immutable audit external anchor key",
+        envAnyOf: ["AUDIT_IMMUTABLE_S3_ANCHOR_KEY_ID", "AUDIT_IMMUTABLE_S3_ANCHOR_SECRET"],
+        required: false,
+        sensitive: true,
+      }),
+      config({
         key: "verifierCadence",
         label: "Audit verifier cadence",
         envAnyOf: [
@@ -2200,13 +2236,11 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   },
   {
     id: "backups",
-    pluginId: "com.helix.core.backups",
     label: "Backups and restore",
-    summary:
-      "Scripted backup and restore orchestration for Postgres, object storage, and audit evidence.",
+    summary: "Scripted backup creation plus durable, dual-controlled isolated restore jobs.",
     category: "platform",
     scopes: [],
-    adminScopes: [adminConfigWriteScope],
+    adminScopes: [adminConfigWriteScope, "admin.backups.restore"],
     uiRoutes: ["/admin#security"],
     apiRoutes: ["/api/admin/backups", "/api/admin/restores", "/openapi.json"],
     realtimeRoutes: [],
@@ -2214,13 +2248,15 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
     capabilities: [
       "backup-orchestration",
       "restore-orchestration",
+      "leased-restore-jobs",
+      "dual-control",
       "dry-run-by-default",
       "postgres-backup",
       "object-storage-backup",
       "audit-evidence-backup",
     ],
     consumes: ["database", "storage", "audit"],
-    dataStores: ["backup archives", "restore logs", "objects", "activity"],
+    dataStores: ["backup archives", "backup_restore_jobs", "objects", "activity"],
     dependencies: [
       dependency({
         id: "backup-script",
@@ -2275,7 +2311,7 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         label: "Restore backup",
         method: "POST",
         path: "/api/admin/restores",
-        requiredScope: adminConfigWriteScope,
+        requiredScope: "admin.backups.restore",
         destructive: true,
       }),
     ],

@@ -8,7 +8,7 @@ import {
   type OrgRecord,
   type OrgStore,
 } from "./orgs.js";
-import { extractTenantSlug, resolveTenantContext } from "./context.js";
+import { extractTenantSlug, resolveTenantContext, signTenantProxyAssertion } from "./context.js";
 
 const defaultOrg = orgRecord({
   id: DEFAULT_ORG_ID,
@@ -18,14 +18,20 @@ const defaultOrg = orgRecord({
 });
 
 describe("tenant slug extraction", () => {
-  it("uses the explicit API tenant header before host inference", () => {
+  it("ignores an unsigned tenant header and uses only an exact configured host", () => {
     expect(
-      extractTenantSlug(requestWith({ host: "beta.helix.app", "x-helix-tenant": "acme-co" })),
-    ).toBe("acme-co");
+      extractTenantSlug(requestWith({ host: "beta.helix.app", "x-helix-tenant": "acme-co" }), {
+        rootHosts: ["helix.app"],
+      }),
+    ).toBe("beta");
   });
 
-  it("extracts the first subdomain from configured root hosts", () => {
-    expect(extractTenantSlug(requestWith({ host: "acme.helix.app" }))).toBe("acme");
+  it("extracts one subdomain from an explicitly configured root host", () => {
+    expect(
+      extractTenantSlug(requestWith({ host: "acme.helix.app" }), {
+        rootHosts: ["helix.app"],
+      }),
+    ).toBe("acme");
     expect(
       extractTenantSlug(requestWith({ host: "acme.preview.helix.example" }), {
         rootHosts: ["preview.helix.example"],
@@ -37,10 +43,70 @@ describe("tenant slug extraction", () => {
     expect(extractTenantSlug(requestWith({ host: "localhost:3000" }))).toBeNull();
     expect(extractTenantSlug(requestWith({ host: "127.0.0.1:3000" }))).toBeNull();
     expect(extractTenantSlug(requestWith({ host: "-bad.helix.app" }))).toBeNull();
+    expect(
+      extractTenantSlug(requestWith({ host: "ignored@acme.helix.app" }), {
+        rootHosts: ["helix.app"],
+      }),
+    ).toBeNull();
+    expect(
+      extractTenantSlug(requestWith({ host: "acme.attacker.example" }), {
+        rootHosts: ["helix.app"],
+      }),
+    ).toBeNull();
+    expect(
+      extractTenantSlug(requestWith({ host: "nested.acme.helix.app" }), {
+        rootHosts: ["helix.app"],
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts only a fresh, request-bound signed proxy tenant assertion", () => {
+    const secret = "tenant-proxy-secret-with-at-least-32-bytes";
+    const timestamp = "1788364800";
+    const base = {
+      secret,
+      timestamp,
+      method: "POST",
+      url: "/api/tools?one=1",
+      host: "gateway.internal.example",
+      tenantSlug: "acme",
+    };
+    const signature = signTenantProxyAssertion(base);
+    const request = requestWith(
+      {
+        host: base.host,
+        "x-helix-tenant": base.tenantSlug,
+        "x-helix-tenant-timestamp": timestamp,
+        "x-helix-tenant-signature": signature,
+      },
+      { method: base.method, url: base.url },
+    );
+    const options = {
+      proxyAssertion: { secret, now: () => new Date("2026-09-02T16:00:00.000Z") },
+    };
+
+    expect(extractTenantSlug(request, options)).toBe("acme");
+    expect(extractTenantSlug({ ...request, url: "/api/admin" }, options)).toBeNull();
+    expect(
+      extractTenantSlug(request, {
+        proxyAssertion: { secret, now: () => new Date("2026-09-02T16:02:00.000Z") },
+      }),
+    ).toBeNull();
   });
 });
 
 describe("resolveTenantContext", () => {
+  it("fails closed when routing reaches the wrong regional cell", async () => {
+    await expect(
+      resolveTenantContext({
+        config: { mode: "single-tenant" },
+        orgs: storeWith({ defaultOrg: orgRecord({ region: "eu-west-1" }) }),
+        request: requestWith({ host: "anything.example" }),
+        deploymentRegion: "us-east-1",
+      }),
+    ).rejects.toMatchObject({ statusCode: 421, code: "tenant-region-mismatch" });
+  });
+
   it("single-tenant mode always resolves the default org", async () => {
     const store = storeWith({ defaultOrg });
     const context = await resolveTenantContext({
@@ -80,6 +146,7 @@ describe("resolveTenantContext", () => {
         },
       },
       request: requestWith({ host: "acme.helix.app" }),
+      rootHosts: ["helix.app"],
     });
 
     expect(context.orgId).toBe(acme.id);
@@ -94,6 +161,7 @@ describe("resolveTenantContext", () => {
         config: { mode: "multi-tenant-saas" },
         orgs: storeWith({}),
         request: requestWith({ host: "localhost:3000" }),
+        rootHosts: ["helix.app"],
       }),
     ).rejects.toMatchObject({ statusCode: 400, code: "tenant-required" });
   });
@@ -104,6 +172,7 @@ describe("resolveTenantContext", () => {
         config: { mode: "multi-tenant-saas" },
         orgs: storeWith({}),
         request: requestWith({ host: "missing.helix.app" }),
+        rootHosts: ["helix.app"],
       }),
     ).rejects.toMatchObject({ statusCode: 404, code: "tenant-not-found" });
 
@@ -114,6 +183,7 @@ describe("resolveTenantContext", () => {
           orgsBySlug: { acme: orgRecord({ slug: "acme", status: "provisioning" }) },
         }),
         request: requestWith({ host: "acme.helix.app" }),
+        rootHosts: ["helix.app"],
       }),
     ).rejects.toMatchObject({ statusCode: 423, code: "tenant-provisioning" });
 
@@ -124,6 +194,7 @@ describe("resolveTenantContext", () => {
           orgsBySlug: { acme: orgRecord({ slug: "acme", status: "suspended" }) },
         }),
         request: requestWith({ host: "acme.helix.app" }, { method: "GET", url: "/api/tools" }),
+        rootHosts: ["helix.app"],
       }),
     ).rejects.toMatchObject({ statusCode: 402, code: "tenant-suspended" });
   });
@@ -139,6 +210,7 @@ describe("resolveTenantContext", () => {
           { host: "acme.helix.app" },
           { method: "POST", url: "/api/admin/tenants/acme/unsuspend" },
         ),
+        rootHosts: ["helix.app"],
       }),
     ).resolves.toMatchObject({ orgSlug: "acme" });
 
@@ -152,6 +224,7 @@ describe("resolveTenantContext", () => {
           { host: "acme.helix.app" },
           { method: "GET", url: "/api/admin/tenants/acme/export" },
         ),
+        rootHosts: ["helix.app"],
       }),
     ).resolves.toMatchObject({ orgSlug: "acme" });
 
@@ -165,6 +238,7 @@ describe("resolveTenantContext", () => {
           { host: "acme.helix.app" },
           { method: "GET", url: "/api/admin/tenants/acme/export/manifest" },
         ),
+        rootHosts: ["helix.app"],
       }),
     ).resolves.toMatchObject({ orgSlug: "acme" });
 
@@ -178,6 +252,7 @@ describe("resolveTenantContext", () => {
           { host: "acme.helix.app" },
           { method: "POST", url: "/api/admin/tenants/acme/restore" },
         ),
+        rootHosts: ["helix.app"],
       }),
     ).resolves.toMatchObject({ orgSlug: "acme" });
 
@@ -191,6 +266,7 @@ describe("resolveTenantContext", () => {
           { host: "acme.helix.app" },
           { method: "GET", url: "/api/admin/tenants/acme/export" },
         ),
+        rootHosts: ["helix.app"],
       }),
     ).resolves.toMatchObject({ orgSlug: "acme" });
 
@@ -204,6 +280,7 @@ describe("resolveTenantContext", () => {
           { host: "acme.helix.app" },
           { method: "GET", url: "/api/admin/tenants/acme/export/manifest" },
         ),
+        rootHosts: ["helix.app"],
       }),
     ).resolves.toMatchObject({ orgSlug: "acme" });
 
@@ -214,6 +291,7 @@ describe("resolveTenantContext", () => {
           orgsBySlug: { acme: orgRecord({ slug: "acme", status: "soft_deleted" }) },
         }),
         request: requestWith({ host: "acme.helix.app" }, { method: "GET", url: "/api/tools" }),
+        rootHosts: ["helix.app"],
       }),
     ).rejects.toMatchObject({ statusCode: 410, code: "tenant-soft-deleted" });
 
@@ -227,8 +305,27 @@ describe("resolveTenantContext", () => {
           { host: "acme.helix.app" },
           { method: "POST", url: "/api/admin/tenants/acme/restore" },
         ),
+        rootHosts: ["helix.app"],
       }),
     ).rejects.toMatchObject({ statusCode: 404, code: "tenant-not-found" });
+  });
+
+  it("maps only a verified custom domain to its owning organization", async () => {
+    const acme = orgRecord({ id: "11111111-1111-4111-8111-111111111111", slug: "acme" });
+    await expect(
+      resolveTenantContext({
+        config: { mode: "multi-tenant-saas" },
+        orgs: storeWith({ orgsBySlug: { acme } }),
+        request: requestWith({ host: "workspace.example.org" }),
+        rootHosts: ["helix.app"],
+        domains: {
+          async findVerifiedOrgId(hostname) {
+            expect(hostname).toBe("workspace.example.org");
+            return acme.id;
+          },
+        },
+      }),
+    ).resolves.toMatchObject({ orgId: acme.id });
   });
 });
 

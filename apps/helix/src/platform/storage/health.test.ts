@@ -8,6 +8,33 @@ import {
 const orgId = "11111111-1111-4111-8111-111111111111";
 
 describe("tenant storage health", () => {
+  it("uses the immutable bucket-policy check without creating retained probe objects", async () => {
+    let checks = 0;
+    const health = await testTenantStorageConnection({
+      orgId,
+      storageResolver: async () => ({
+        client: {
+          async checkHealth() {
+            checks += 1;
+          },
+          async put() {},
+          async get() {
+            return null;
+          },
+          async delete() {},
+        },
+        managedBy: "byo",
+        prefix: "tenants/acme/",
+      }),
+    });
+
+    expect(health).toMatchObject({
+      status: "healthy",
+      message: "Tenant object storage security policy check succeeded.",
+    });
+    expect(checks).toBe(1);
+  });
+
   it("runs a write-read-delete probe and returns diagnostics", async () => {
     const storage = new RecordingStorageClient();
 

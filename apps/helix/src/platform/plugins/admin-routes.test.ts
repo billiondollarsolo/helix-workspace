@@ -1,3 +1,4 @@
+import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +8,14 @@ import type { Actor, PluginManifest } from "@helix/sdk-types";
 import type { FastifyInstance } from "fastify";
 import { createToolRegistry } from "../tool-registry.js";
 import { registerPluginAdminRoutes } from "./admin-routes.js";
+import { calculatePluginBundleDigest, discoverPlugin } from "./loader.js";
 import { registerPluginTools } from "./tools.js";
+import {
+  pluginCatalogPayloadBytes,
+  type PluginCatalogEntry,
+  type PluginCatalogPayload,
+  type PluginTrustOptions,
+} from "./trust.js";
 
 const tempDirs: string[] = [];
 const adminActor: Actor = {
@@ -64,7 +72,7 @@ describe("plugin admin routes", () => {
 
   it("wraps plugin lifecycle tools for install, enable, disable, and uninstall", async () => {
     const pluginsDir = await writePluginsDirectory([{ id: "com.example.lifecycle" }]);
-    const app = await appWithPlugins(pluginsDir, adminActor);
+    const app = await appWithPlugins(pluginsDir, adminActor, ["com.example.lifecycle"]);
 
     const installed = await app.inject({
       method: "POST",
@@ -148,7 +156,7 @@ describe("plugin admin routes", () => {
     const blocked = await adminApp.inject({
       method: "POST",
       url: "/api/admin/plugins/com.example.community/install",
-      payload: { source: "sideload" },
+      payload: { source: "official" },
     });
     expect(blocked.statusCode).toBe(200);
     expect(blocked.json<PluginActionResponse>()).toMatchObject({
@@ -160,7 +168,7 @@ describe("plugin admin routes", () => {
       "permissions.scopes.drive.write",
       "permissions.outbound-network.api.example.com",
       "capabilities.provides.example.capability",
-      "signature.missing",
+      "artifact.untrusted",
     ]);
 
     await adminApp.close();
@@ -170,13 +178,17 @@ describe("plugin admin routes", () => {
 async function appWithPlugins(
   pluginsDir: string,
   actor: Actor,
-  officialPluginIds?: readonly string[],
+  trustedPluginIds: readonly string[] = [],
 ): Promise<FastifyInstance> {
   const app = fastify();
   const tools = createToolRegistry();
+  const pluginTrust =
+    trustedPluginIds.length === 0
+      ? undefined
+      : await createPluginTrust(pluginsDir, trustedPluginIds);
   registerPluginTools(tools, {
     pluginsDir,
-    ...(officialPluginIds === undefined ? {} : { officialPluginIds }),
+    ...(pluginTrust === undefined ? {} : { discovery: { pluginTrust } }),
   });
   await registerPluginAdminRoutes(app, {
     tools,
@@ -198,6 +210,72 @@ async function writePluginsDirectory(manifests: readonly PluginManifestPatch[]):
     );
   }
   return pluginsDir;
+}
+
+async function createPluginTrust(
+  pluginsDir: string,
+  pluginIds: readonly string[],
+): Promise<PluginTrustOptions> {
+  const plugins = await Promise.all(
+    pluginIds.map((pluginId) => discoverPlugin(join(pluginsDir, pluginId))),
+  );
+  const payload: PluginCatalogPayload = {
+    version: 1,
+    issuedAt: "2026-09-02T00:00:00.000Z",
+    expiresAt: "2026-09-03T00:00:00.000Z",
+    plugins: await Promise.all(
+      plugins.map(async (plugin) => ({
+        id: plugin.manifest.id,
+        version: plugin.manifest.version,
+        ...testArtifactProof(await calculatePluginBundleDigest(plugin)),
+      })),
+    ),
+  };
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const keyId = "test-catalog";
+  return {
+    catalog: {
+      keyId,
+      payload,
+      signature: sign(null, pluginCatalogPayloadBytes(payload), privateKey).toString("base64"),
+    },
+    trustedCatalogKeys: {
+      [keyId]: publicKey.export({ format: "pem", type: "spki" }).toString(),
+    },
+    ...testPublisherTrust(),
+    now: () => new Date("2026-09-02T12:00:00.000Z"),
+  };
+}
+
+function testArtifactProof(
+  bundleDigest: string,
+): Pick<PluginCatalogEntry, "bundleDigest" | "publisher" | "sigstoreBundle"> {
+  return {
+    bundleDigest,
+    publisher: "helix-release",
+    sigstoreBundle: { testDigest: bundleDigest } as unknown as PluginCatalogEntry["sigstoreBundle"],
+  };
+}
+
+function testPublisherTrust(): Pick<
+  PluginTrustOptions,
+  "trustedPublishers" | "createBundleVerifier"
+> {
+  return {
+    trustedPublishers: {
+      "helix-release": {
+        issuer: "https://token.actions.githubusercontent.com",
+        uri: "https://github.com/helix/workspace/.github/workflows/release.yml@refs/heads/main",
+      },
+    },
+    createBundleVerifier: async () => ({
+      verify(bundle, data) {
+        const marker = (bundle as unknown as { readonly testDigest?: string }).testDigest;
+        if (marker !== data?.toString("utf8")) throw new Error("invalid test proof");
+        return {} as never;
+      },
+    }),
+  };
 }
 
 interface PluginManifestPatch extends Partial<PluginManifest> {
@@ -239,7 +317,7 @@ function baseManifest(): PluginManifest {
     name: "Example Plugin",
     version: "1.0.0",
     sdkVersion: "^1.0.0",
-    kind: "in-process",
+    kind: "sandboxed",
     main: "index.js",
     capabilities: {
       provides: ["example.capability"],

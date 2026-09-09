@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
 import { insertNotification } from "../notifications/index.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import type { TenantStorageResolver } from "../storage/index.js";
@@ -353,11 +354,11 @@ export class PostgresDocsStore
 
   async create(input: CreateDocsDocumentInput): Promise<DocsDocumentRecord> {
     return this.sql.begin(async (tx) => {
-      const threadRows = (await tx`
+      const threadRows = await tx<{ readonly id: string }[]>`
         insert into threads (org_id, kind, subject, created_by_actor_id, metadata)
         values (${input.orgId}, 'doc', ${input.title}, ${input.actorId}, ${tx.json(toSqlJson({ documentTitle: input.title }))})
         returning id
-      `) as unknown as readonly { readonly id: string }[];
+      `;
       const threadId = threadRows[0]?.id;
       if (threadId === undefined) {
         throw new Error("Unable to create docs thread.");
@@ -370,7 +371,7 @@ export class PostgresDocsStore
               state: Buffer.from(input.initialMarkdown ?? "", "utf8"),
               stateVector: null,
             };
-      const documentRows = (await tx`
+      const documentRows = await tx<DocsDocumentRow[]>`
         insert into docs_documents (
           org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, ydoc_state_vector, update_seq, editor_engine, format_version, metadata
         )
@@ -388,7 +389,7 @@ export class PostgresDocsStore
           ${tx.json(toSqlJson(input.metadata ?? {}))}
         )
         returning *
-      `) as unknown as readonly DocsDocumentRow[];
+      `;
       const document = mapDocument(documentRows[0]);
       const storageKey = docsDocumentStorageKey(input.orgId, document.id);
       const stateSha256 = sha256Hex(initialState.state);
@@ -481,14 +482,14 @@ export class PostgresDocsStore
         return null;
       }
 
-      const sourceObjectRows = (await tx`
+      const sourceObjectRows = await tx<{ readonly metadata: JsonObject }[]>`
         select metadata
         from objects
         where id = ${input.documentId}
           and org_id = ${input.orgId}
           and metadata->>'app' = 'docs'
         limit 1
-      `) as unknown as readonly { readonly metadata: JsonObject }[];
+      `;
       const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata.folderId);
       const folderId = input.folderId === undefined ? sourceFolderId : input.folderId;
       const title = input.title?.trim() || `${existing.title} (Copy)`;
@@ -501,7 +502,7 @@ export class PostgresDocsStore
         ...(input.metadata ?? {}),
       };
 
-      const threadRows = (await tx`
+      const threadRows = await tx<{ readonly id: string }[]>`
         insert into threads (org_id, kind, subject, created_by_actor_id, metadata)
         values (${input.orgId}, 'doc', ${title}, ${input.actorId}, ${tx.json(
           toSqlJson({
@@ -510,13 +511,13 @@ export class PostgresDocsStore
           }),
         )})
         returning id
-      `) as unknown as readonly { readonly id: string }[];
+      `;
       const threadId = threadRows[0]?.id;
       if (threadId === undefined) {
         throw new Error("Unable to create docs thread.");
       }
 
-      const documentRows = (await tx`
+      const documentRows = await tx<DocsDocumentRow[]>`
         insert into docs_documents (
           org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, ydoc_state_vector, update_seq, editor_engine, format_version, metadata
         )
@@ -534,7 +535,7 @@ export class PostgresDocsStore
           ${tx.json(toSqlJson(metadata))}
         )
         returning *
-      `) as unknown as readonly DocsDocumentRow[];
+      `;
       const document = mapDocument(documentRows[0]);
       const storageKey = docsDocumentStorageKey(input.orgId, document.id);
       const stateSha256 = sha256Hex(state);
@@ -621,7 +622,7 @@ export class PostgresDocsStore
   }): Promise<readonly DocsDocumentRecord[]> {
     const query = input.query?.trim();
     const titleQuery = query === undefined || query.length === 0 ? null : `%${query}%`;
-    const rows = (await this.sql`
+    const rows = await this.sql<DocsDocumentRow[]>`
       select *
       from docs_documents
       where org_id = ${input.orgId}
@@ -641,7 +642,7 @@ export class PostgresDocsStore
         and (${titleQuery}::text is null or title ilike ${titleQuery})
       order by updated_at desc
       limit ${input.limit}
-    `) as unknown as readonly DocsDocumentRow[];
+    `;
     return rows.map(mapDocument);
   }
 
@@ -653,14 +654,14 @@ export class PostgresDocsStore
   }): Promise<DocsDocumentRecord | null> {
     return this.sql.begin(async (tx) => {
       await requireDocumentAccess(tx, input.orgId, input.actorId, input.documentId);
-      const rows = (await tx`
+      const rows = await tx<DocsDocumentRow[]>`
         update docs_documents
         set title = ${input.title}, updated_at = now()
         where id = ${input.documentId}
           and org_id = ${input.orgId}
           and deleted_at is null
         returning *
-      `) as unknown as readonly DocsDocumentRow[];
+      `;
       const document = rows[0] === undefined ? null : mapDocument(rows[0]);
       if (document !== null) {
         await tx`
@@ -715,7 +716,7 @@ export class PostgresDocsStore
   }): Promise<DocsDocumentRecord | null> {
     return this.sql.begin(async (tx) => {
       await requireDocumentAccess(tx, input.orgId, input.actorId, input.documentId);
-      const rows = (await tx`
+      const rows = await tx<DocsDocumentRow[]>`
         update docs_documents
         set
           metadata = jsonb_set(
@@ -729,7 +730,7 @@ export class PostgresDocsStore
           and org_id = ${input.orgId}
           and deleted_at is null
         returning *
-      `) as unknown as readonly DocsDocumentRow[];
+      `;
       const document = rows[0] === undefined ? null : mapDocument(rows[0]);
       if (document !== null) {
         await appendDocsActivity(tx, {
@@ -804,7 +805,7 @@ export class PostgresDocsStore
       const nativeState = createNativeDocumentState(text);
       const storageKey = docsDocumentStorageKey(input.orgId, input.documentId);
       const stateSha256 = sha256Hex(nativeState.state);
-      const rows = (await tx`
+      const rows = await tx<DocsDocumentRow[]>`
         update docs_documents
         set
           ydoc_state = ${nativeState.state},
@@ -823,7 +824,7 @@ export class PostgresDocsStore
           and org_id = ${input.orgId}
           and deleted_at is null
         returning *
-      `) as unknown as readonly DocsDocumentRow[];
+      `;
       const migrated = rows[0] === undefined ? null : mapDocument(rows[0]);
       if (migrated === null) {
         return null;
@@ -890,7 +891,7 @@ export class PostgresDocsStore
   }
 
   async getDocsSearchRecord(docId: string): Promise<DocsSearchRecord | null> {
-    const documentRows = (await this.sql`
+    const documentRows = await this.sql<DocsSearchProjectionRow[]>`
       select
         d.*,
         a.display_name as owner_display_name,
@@ -899,13 +900,13 @@ export class PostgresDocsStore
       left join actors a on a.id = d.owner_actor_id and a.org_id = d.org_id
       where d.id = ${docId}
       limit 1
-    `) as unknown as readonly DocsSearchProjectionRow[];
+    `;
     const document = documentRows[0];
     if (document === undefined) {
       return null;
     }
 
-    const comments = (await this.sql`
+    const comments = await this.sql<DocsCommentProjectionRow[]>`
       select
         c.*,
         a.display_name as actor_display_name,
@@ -916,9 +917,9 @@ export class PostgresDocsStore
         and c.document_id = ${docId}
         and c.status = 'open'
       order by c.created_at asc
-    `) as unknown as readonly DocsCommentProjectionRow[];
+    `;
 
-    const collaborators = (await this.sql`
+    const collaborators = await this.sql<DocsActorRow[]>`
       select distinct a.id, a.display_name, a.email
       from permissions p
       join actors a on a.id = p.actor_id and a.org_id = p.org_id
@@ -928,7 +929,7 @@ export class PostgresDocsStore
         and (p.expires_at is null or p.expires_at > now())
         and (${document.owner_actor_id ?? null}::uuid is null or p.actor_id <> ${document.owner_actor_id ?? null})
       order by a.display_name asc
-    `) as unknown as readonly DocsActorRow[];
+    `;
 
     return mapDocsSearchRecord(document, comments, collaborators);
   }
@@ -993,7 +994,7 @@ export class PostgresDocsStore
           parentCommentId: input.parentCommentId,
         });
       }
-      const rows = (await tx`
+      const rows = await tx<DocsCommentRow[]>`
         insert into docs_comments
           (org_id, document_id, parent_comment_id, actor_id, anchor, body, metadata)
         values (
@@ -1006,7 +1007,7 @@ export class PostgresDocsStore
           ${tx.json(toSqlJson(input.metadata ?? {}))}
         )
         returning *
-      `) as unknown as readonly DocsCommentRow[];
+      `;
       await appendDocsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -1035,7 +1036,7 @@ export class PostgresDocsStore
     readonly status?: string | undefined;
   }): Promise<readonly DocsCommentListItem[]> {
     await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
-    const rows = (await this.sql`
+    const rows = await this.sql<DocsCommentProjectionRow[]>`
       select
         c.*,
         a.display_name as actor_display_name,
@@ -1050,7 +1051,7 @@ export class PostgresDocsStore
             : this.sql`and c.status = ${input.status}`
         }
       order by c.created_at asc, c.id asc
-    `) as unknown as readonly DocsCommentProjectionRow[];
+    `;
     return rows.map(mapCommentListItem);
   }
 
@@ -1060,13 +1061,13 @@ export class PostgresDocsStore
     readonly commentId: string;
   }): Promise<DocsCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
+      const existingRows = await tx<DocsCommentRow[]>`
         select *
         from docs_comments
         where id = ${input.commentId}
           and org_id = ${input.orgId}
         limit 1
-      `) as unknown as readonly DocsCommentRow[];
+      `;
       const existing = existingRows[0];
       if (existing === undefined) {
         return null;
@@ -1075,13 +1076,13 @@ export class PostgresDocsStore
       if (existing.status === "resolved") {
         return mapComment(existing);
       }
-      const rows = (await tx`
+      const rows = await tx<DocsCommentRow[]>`
         update docs_comments
         set status = 'resolved', resolved_at = now(), updated_at = now()
         where id = ${input.commentId}
           and org_id = ${input.orgId}
         returning *
-      `) as unknown as readonly DocsCommentRow[];
+      `;
       await appendDocsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -1099,13 +1100,13 @@ export class PostgresDocsStore
     readonly commentId: string;
   }): Promise<DocsCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
+      const existingRows = await tx<DocsCommentRow[]>`
         select *
         from docs_comments
         where id = ${input.commentId}
           and org_id = ${input.orgId}
         limit 1
-      `) as unknown as readonly DocsCommentRow[];
+      `;
       const existing = existingRows[0];
       if (existing === undefined) {
         return null;
@@ -1114,13 +1115,13 @@ export class PostgresDocsStore
       if (existing.status === "open") {
         return mapComment(existing);
       }
-      const rows = (await tx`
+      const rows = await tx<DocsCommentRow[]>`
         update docs_comments
         set status = 'open', resolved_at = null, updated_at = now()
         where id = ${input.commentId}
           and org_id = ${input.orgId}
         returning *
-      `) as unknown as readonly DocsCommentRow[];
+      `;
       await appendDocsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -1139,25 +1140,25 @@ export class PostgresDocsStore
     readonly body: string;
   }): Promise<DocsCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
+      const existingRows = await tx<DocsCommentRow[]>`
         select *
         from docs_comments
         where id = ${input.commentId}
           and org_id = ${input.orgId}
         limit 1
-      `) as unknown as readonly DocsCommentRow[];
+      `;
       const existing = existingRows[0];
       if (existing === undefined) {
         return null;
       }
       await requireDocumentAccess(tx, input.orgId, input.actorId, existing.document_id);
-      const rows = (await tx`
+      const rows = await tx<DocsCommentRow[]>`
         update docs_comments
         set body = ${input.body}, updated_at = now()
         where id = ${input.commentId}
           and org_id = ${input.orgId}
         returning *
-      `) as unknown as readonly DocsCommentRow[];
+      `;
       await appendDocsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -1175,24 +1176,24 @@ export class PostgresDocsStore
     readonly commentId: string;
   }): Promise<DocsCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
+      const existingRows = await tx<DocsCommentRow[]>`
         select *
         from docs_comments
         where id = ${input.commentId}
           and org_id = ${input.orgId}
         limit 1
-      `) as unknown as readonly DocsCommentRow[];
+      `;
       const existing = existingRows[0];
       if (existing === undefined) {
         return null;
       }
       await requireDocumentAccess(tx, input.orgId, input.actorId, existing.document_id);
-      const rows = (await tx`
+      const rows = await tx<DocsCommentRow[]>`
         delete from docs_comments
         where id = ${input.commentId}
           and org_id = ${input.orgId}
         returning *
-      `) as unknown as readonly DocsCommentRow[];
+      `;
       await appendDocsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -1216,7 +1217,7 @@ export class PostgresDocsStore
   }): Promise<DocsSuggestionRecord> {
     return this.sql.begin(async (tx) => {
       await requireDocumentAccess(tx, input.orgId, input.actorId, input.documentId);
-      const rows = (await tx`
+      const rows = await tx<DocsSuggestionRow[]>`
         insert into docs_suggestions
           (org_id, document_id, actor_id, anchor, before_text, after_text, reason, metadata)
         values (
@@ -1230,7 +1231,7 @@ export class PostgresDocsStore
           ${tx.json(toSqlJson(input.metadata ?? {}))}
         )
         returning *
-      `) as unknown as readonly DocsSuggestionRow[];
+      `;
       await appendDocsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -1250,14 +1251,14 @@ export class PostgresDocsStore
   }): Promise<readonly DocsSuggestionRecord[]> {
     await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
     const status = input.status ?? null;
-    const rows = (await this.sql`
+    const rows = await this.sql<DocsSuggestionRow[]>`
       select *
       from docs_suggestions
       where org_id = ${input.orgId}
         and document_id = ${input.documentId}
         and (${status}::text is null or status = ${status})
       order by created_at asc
-    `) as unknown as readonly DocsSuggestionRow[];
+    `;
     return rows.map(mapSuggestion);
   }
 
@@ -1268,13 +1269,13 @@ export class PostgresDocsStore
     readonly status: "accepted" | "rejected";
   }): Promise<DocsSuggestionRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
+      const existingRows = await tx<DocsSuggestionRow[]>`
         select *
         from docs_suggestions
         where id = ${input.suggestionId}
           and org_id = ${input.orgId}
         limit 1
-      `) as unknown as readonly DocsSuggestionRow[];
+      `;
       const existing = existingRows[0];
       if (existing === undefined) {
         return null;
@@ -1295,7 +1296,7 @@ export class PostgresDocsStore
         });
       }
 
-      const rows = (await tx`
+      const rows = await tx<DocsSuggestionRow[]>`
         update docs_suggestions
         set
           status = ${input.status},
@@ -1305,7 +1306,7 @@ export class PostgresDocsStore
         where id = ${input.suggestionId}
           and org_id = ${input.orgId}
         returning *
-      `) as unknown as readonly DocsSuggestionRow[];
+      `;
       await appendDocsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -1331,14 +1332,14 @@ export class PostgresDocsStore
 
     return this.sql.begin(async (tx) => {
       await requireDocumentAccess(tx, input.orgId, input.actorId, input.documentId);
-      const existingRows = (await tx`
+      const existingRows = await tx<DocsSuggestionRow[]>`
         select *
         from docs_suggestions
         where org_id = ${input.orgId}
           and document_id = ${input.documentId}
           and id = any(${tx.array(suggestionIds)}::uuid[])
         for update
-      `) as unknown as readonly DocsSuggestionRow[];
+      `;
       if (existingRows.length !== suggestionIds.length) {
         return null;
       }
@@ -1366,7 +1367,7 @@ export class PostgresDocsStore
           });
         }
 
-        const rows = (await tx`
+        const rows = await tx<DocsSuggestionRow[]>`
           update docs_suggestions
           set
             status = ${input.status},
@@ -1377,7 +1378,7 @@ export class PostgresDocsStore
             and org_id = ${input.orgId}
             and document_id = ${input.documentId}
           returning *
-        `) as unknown as readonly DocsSuggestionRow[];
+        `;
         await appendDocsActivity(tx, {
           orgId: input.orgId,
           actorId: input.actorId,
@@ -1406,7 +1407,7 @@ export class PostgresDocsStore
     readonly metadata?: JsonObject | undefined;
   }): Promise<DocsAskHistoryRecord> {
     await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
-    const rows = (await this.sql`
+    const rows = await this.sql<DocsAskHistoryRow[]>`
       insert into docs_ask_history (
         org_id, document_id, actor_id, question, answer, source_scope, source_excerpt, metadata
       )
@@ -1421,7 +1422,7 @@ export class PostgresDocsStore
         ${this.sql.json(toSqlJson(input.metadata ?? {}))}
       )
       returning *
-    `) as unknown as readonly DocsAskHistoryRow[];
+    `;
     return mapAskHistory(rows[0]);
   }
 
@@ -1432,7 +1433,7 @@ export class PostgresDocsStore
     readonly limit: number;
   }): Promise<readonly DocsAskHistoryRecord[]> {
     await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
-    const rows = (await this.sql`
+    const rows = await this.sql<DocsAskHistoryRow[]>`
       select *
       from docs_ask_history
       where org_id = ${input.orgId}
@@ -1440,7 +1441,7 @@ export class PostgresDocsStore
         and actor_id = ${input.actorId}
       order by created_at desc
       limit ${input.limit}
-    `) as unknown as readonly DocsAskHistoryRow[];
+    `;
     return rows.map(mapAskHistory);
   }
 
@@ -1450,7 +1451,7 @@ export class PostgresDocsStore
     readonly documentId: string;
   }): Promise<number> {
     await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly count: number }[]>`
       with deleted as (
         delete from docs_ask_history
         where org_id = ${input.orgId}
@@ -1459,7 +1460,7 @@ export class PostgresDocsStore
         returning id
       )
       select count(*)::integer as count from deleted
-    `) as unknown as readonly { readonly count: number }[];
+    `;
     return rows[0]?.count ?? 0;
   }
 
@@ -1484,7 +1485,7 @@ export class PostgresDocsStore
     if (document === null) {
       return null;
     }
-    const comments = (await this.sql`
+    const comments = await this.sql<DocsCommentProjectionRow[]>`
       select
         c.*,
         a.display_name as actor_display_name,
@@ -1495,7 +1496,7 @@ export class PostgresDocsStore
         and c.document_id = ${input.docId}
         and c.status = 'open'
       order by c.created_at asc
-    `) as unknown as readonly DocsCommentProjectionRow[];
+    `;
     return {
       id: document.id,
       orgId: document.orgId,
@@ -1514,19 +1515,19 @@ export class PostgresDocsStore
       } else {
         await requireDocumentExists(tx, input.orgId, input.documentId);
       }
-      const seqRows = (await tx`
+      const seqRows = await tx<{ readonly update_seq: number }[]>`
         update docs_documents
         set update_seq = update_seq + 1, updated_at = now()
         where id = ${input.documentId}
           and org_id = ${input.orgId}
           and deleted_at is null
         returning update_seq
-      `) as unknown as readonly { readonly update_seq: number }[];
+      `;
       const seq = seqRows[0]?.update_seq;
       if (seq === undefined) {
         throw new Error(`Unknown document: ${input.documentId}`);
       }
-      const rows = (await tx`
+      const rows = await tx<DocsUpdateRow[]>`
         insert into docs_updates (org_id, document_id, actor_id, seq, update, metadata)
         values (
           ${input.orgId},
@@ -1537,7 +1538,7 @@ export class PostgresDocsStore
           ${tx.json(toSqlJson(input.metadata ?? {}))}
         )
         returning *
-      `) as unknown as readonly DocsUpdateRow[];
+      `;
       return mapUpdate(rows[0]);
     });
   }
@@ -1550,7 +1551,7 @@ export class PostgresDocsStore
     readonly beforeSeq?: number | undefined;
   }): Promise<readonly DocsUpdateRecord[]> {
     await requireDocumentAccess(this.sql, input.orgId, input.actorId, input.documentId);
-    const rows = (await this.sql`
+    const rows = await this.sql<DocsUpdateRow[]>`
       select *
       from docs_updates
       where org_id = ${input.orgId}
@@ -1558,7 +1559,7 @@ export class PostgresDocsStore
         ${input.beforeSeq === undefined ? this.sql`` : this.sql`and seq < ${input.beforeSeq}`}
       order by seq desc
       limit ${input.limit}
-    `) as unknown as readonly DocsUpdateRow[];
+    `;
     return rows.map(mapUpdate);
   }
 
@@ -1569,25 +1570,25 @@ export class PostgresDocsStore
     readonly name: string;
   }): Promise<DocsUpdateRecord | null> {
     return this.sql.begin(async (tx) => {
-      const versionRows = (await tx`
+      const versionRows = await tx<DocsUpdateRow[]>`
         select *
         from docs_updates
         where org_id = ${input.orgId}
           and id = ${input.versionId}
         for update
-      `) as unknown as readonly DocsUpdateRow[];
+      `;
       const version = versionRows[0];
       if (version === undefined) {
         return null;
       }
       await requireDocumentAccess(tx, input.orgId, input.actorId, version.document_id);
-      const rows = (await tx`
+      const rows = await tx<DocsUpdateRow[]>`
         update docs_updates
         set metadata = metadata || ${tx.json(toSqlJson({ name: input.name }))}::jsonb
         where org_id = ${input.orgId}
           and id = ${input.versionId}
         returning *
-      `) as unknown as readonly DocsUpdateRow[];
+      `;
       await appendDocsActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -1604,13 +1605,13 @@ export class PostgresDocsStore
     readonly actorId: string;
     readonly versionId: string;
   }): Promise<DocsVersionPreviewRecord | null> {
-    const versionRows = (await this.sql`
+    const versionRows = await this.sql<DocsUpdateRow[]>`
       select *
       from docs_updates
       where org_id = ${input.orgId}
         and id = ${input.versionId}
       limit 1
-    `) as unknown as readonly DocsUpdateRow[];
+    `;
     const versionRow = versionRows[0];
     if (versionRow === undefined) {
       return null;
@@ -1675,14 +1676,14 @@ export class PostgresDocsStore
     readonly skippedCount: number;
     readonly hasBaseline: boolean;
   }> {
-    const rows = (await input.sql`
+    const rows = await input.sql<DocsUpdateRow[]>`
       select *
       from docs_updates
       where org_id = ${input.orgId}
         and document_id = ${input.documentId}
         and seq <= ${input.seq}
       order by seq asc, created_at asc, id asc
-    `) as unknown as readonly DocsUpdateRow[];
+    `;
     const reconstructed = documentStateFromStoredUpdates(rows.map((row) => row.update));
     if (reconstructed.skippedCount > 0) {
       input.warnings.push(
@@ -1711,13 +1712,13 @@ export class PostgresDocsStore
     readonly expectedCurrentUpdateSeq?: number | undefined;
   }): Promise<DocsVersionRestoreRecord | null> {
     return this.sql.begin(async (tx) => {
-      const versionRows = (await tx`
+      const versionRows = await tx<DocsUpdateRow[]>`
         select *
         from docs_updates
         where org_id = ${input.orgId}
           and id = ${input.versionId}
         for update
-      `) as unknown as readonly DocsUpdateRow[];
+      `;
       const versionRow = versionRows[0];
       if (versionRow === undefined) {
         return null;
@@ -1767,7 +1768,7 @@ export class PostgresDocsStore
       const stateSha256 = sha256Hex(reconstruction.state);
       const stateVector = stateVectorFromStoredState(reconstruction.state);
       const storageKey = docsDocumentStorageKey(input.orgId, versionRow.document_id);
-      const seqRows = (await tx`
+      const seqRows = await tx<DocsDocumentRow[]>`
         update docs_documents
         set
           update_seq = update_seq + 1,
@@ -1783,13 +1784,13 @@ export class PostgresDocsStore
               : tx`and update_seq = ${input.expectedCurrentUpdateSeq}`
           }
         returning *
-      `) as unknown as readonly DocsDocumentRow[];
+      `;
       const restoredRow = seqRows[0];
       if (restoredRow === undefined) {
         throw new Error("Cannot restore Docs version because the document changed after preview.");
       }
       const restoredDocument = mapDocument(restoredRow);
-      const restoreRows = (await tx`
+      const restoreRows = await tx<DocsUpdateRow[]>`
         insert into docs_updates (org_id, document_id, actor_id, seq, update, metadata)
         values (
           ${input.orgId},
@@ -1807,7 +1808,7 @@ export class PostgresDocsStore
           )}
         )
         returning *
-      `) as unknown as readonly DocsUpdateRow[];
+      `;
       await tx`
         update objects
         set
@@ -1863,7 +1864,7 @@ export class PostgresDocsStore
     return this.sql.begin(async (tx) => {
       const stateSha256 = sha256Hex(input.state);
       const storageKey = docsDocumentStorageKey(input.orgId, input.documentId);
-      const rows = (await tx`
+      const rows = await tx<DocsDocumentRow[]>`
         update docs_documents
         set
           ydoc_state = ${input.state},
@@ -1873,7 +1874,7 @@ export class PostgresDocsStore
           and org_id = ${input.orgId}
           and deleted_at is null
         returning *
-      `) as unknown as readonly DocsDocumentRow[];
+      `;
       const document = rows[0] === undefined ? null : mapDocument(rows[0]);
       if (document === null) {
         return null;
@@ -2039,7 +2040,7 @@ async function selectDocumentForActor(
   actorId: string,
   documentId: string,
 ): Promise<DocsDocumentRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<DocsDocumentRow[]>`
     select *
     from docs_documents
     where id = ${documentId}
@@ -2058,7 +2059,7 @@ async function selectDocumentForActor(
         )
       )
     limit 1
-  `) as unknown as readonly DocsDocumentRow[];
+  `;
   return rows[0] === undefined ? null : mapDocument(rows[0]);
 }
 
@@ -2082,14 +2083,14 @@ async function requireCommentParent(
     readonly parentCommentId: string;
   },
 ): Promise<void> {
-  const rows = (await sql`
+  const rows = await sql<{ readonly id: string }[]>`
     select id
     from docs_comments
     where id = ${input.parentCommentId}
       and org_id = ${input.orgId}
       and document_id = ${input.documentId}
     limit 1
-  `) as unknown as readonly { readonly id: string }[];
+  `;
   if (rows[0] === undefined) {
     throw new Error(`Unknown parent comment: ${input.parentCommentId}`);
   }
@@ -2100,14 +2101,14 @@ async function requireDocumentExists(
   orgId: string,
   documentId: string,
 ): Promise<void> {
-  const rows = (await sql`
+  const rows = await sql<{ readonly id: string }[]>`
     select id
     from docs_documents
     where id = ${documentId}
       and org_id = ${orgId}
       and deleted_at is null
     limit 1
-  `) as unknown as readonly { readonly id: string }[];
+  `;
   if (rows[0] === undefined) {
     throw new Error(`Unknown document: ${documentId}`);
   }
@@ -2157,13 +2158,13 @@ async function appendDocsActivity(
     readonly payload: JsonObject;
   },
 ): Promise<void> {
-  const previousRows = (await sql`
+  const previousRows = await sql<{ readonly this_hash: string }[]>`
     select this_hash
     from activity
     where org_id = ${input.orgId}
     order by created_at desc
     limit 1
-  `) as unknown as readonly { readonly this_hash: string }[];
+  `;
   const prevHash = previousRows[0]?.this_hash ?? null;
   const thisHash = `${prevHash ?? "root"}:${input.verb}:${input.documentId}:${String(Date.now())}`;
   await sql`
@@ -2209,7 +2210,11 @@ async function notifyCommentMentions(
   if (tokens.length === 0) {
     return;
   }
-  const actorRows = (await sql`
+  const actorRows = await sql<{
+    readonly id: string;
+    readonly display_name: string;
+    readonly email: string | null;
+  }[]>`
     select id, display_name, email
     from actors
     where org_id = ${input.orgId}
@@ -2237,11 +2242,7 @@ async function notifyCommentMentions(
             and (p.expires_at is null or p.expires_at > now())
         )
       )
-  `) as unknown as readonly {
-    readonly id: string;
-    readonly display_name: string;
-    readonly email: string | null;
-  }[];
+  `;
   const recipients = mentionedActorIds({
     actors: actorRows,
     authorActorId: input.actorId,
@@ -2250,13 +2251,13 @@ async function notifyCommentMentions(
   if (recipients.length === 0) {
     return;
   }
-  const titleRows = (await sql`
+  const titleRows = await sql<{ readonly title: string }[]>`
     select title
     from docs_documents
     where id = ${input.documentId}
       and org_id = ${input.orgId}
     limit 1
-  `) as unknown as readonly { readonly title: string }[];
+  `;
   const authorName =
     actorRows.find((actor) => actor.id === input.actorId)?.display_name ?? "Someone";
   const title = titleRows[0]?.title ?? "a document";
@@ -2423,14 +2424,14 @@ async function applySuggestionToDocument(
   if (input.beforeText.length === 0 || input.beforeText === input.afterText) {
     return;
   }
-  const documentRows = (await sql`
+  const documentRows = await sql<{ readonly ydoc_state: Buffer | null }[]>`
     select ydoc_state
     from docs_documents
     where id = ${input.documentId}
       and org_id = ${input.orgId}
       and deleted_at is null
     for update
-  `) as unknown as readonly { readonly ydoc_state: Buffer | null }[];
+  `;
   const stored = documentRows[0]?.ydoc_state ?? null;
 
   const replacement = replaceFirstTextInStoredState({
@@ -2443,7 +2444,7 @@ async function applySuggestionToDocument(
     throw new Error("Suggestion no longer matches the document text.");
   }
 
-  const seqRows = (await sql`
+  const seqRows = await sql<{ readonly update_seq: number }[]>`
     update docs_documents
     set
       update_seq = update_seq + 1,
@@ -2454,7 +2455,7 @@ async function applySuggestionToDocument(
       and org_id = ${input.orgId}
       and deleted_at is null
     returning update_seq
-  `) as unknown as readonly { readonly update_seq: number }[];
+  `;
   const seq = seqRows[0]?.update_seq;
   if (seq === undefined) {
     throw new Error(`Unknown document: ${input.documentId}`);
@@ -2663,13 +2664,8 @@ function metadataStringArrayProperty(
 function metadataClassificationProperty(
   metadata: JsonObject,
 ): Pick<DocsSearchRecord, "classification"> {
-  const value = metadata.classification;
-  return value === "public" ||
-    value === "standard" ||
-    value === "confidential" ||
-    value === "restricted"
-    ? { classification: value }
-    : {};
+  const classification = sensitivityClassificationFromMetadata(metadata);
+  return classification === undefined ? {} : { classification };
 }
 
 function metadataOutlineProperty(metadata: JsonObject): Pick<DocsSearchRecord, "outline"> {

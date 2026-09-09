@@ -27,7 +27,6 @@ import {
   createBetterAuthRuntime,
   createBetterAuthSessionActorResolver,
   PostgresBetterAuthActorStore,
-  PostgresBetterAuthUserLinkStore,
 } from "../platform/auth/better-auth.js";
 import { createS3CompatibleStorage } from "../platform/storage/index.js";
 import { PostgresCalendarStore } from "../platform/calendar/index.js";
@@ -146,15 +145,27 @@ export async function verifyLocalDemo(
         limit 1
       `,
     sql<{ readonly id: string }[]>`
-        select id from "user"
-        where actor_id = ${actorId}
+        select auth_user.id
+        from "user" auth_user
+        join identity_provider_subjects provider
+          on provider.provider = 'better-auth'
+         and provider.provider_subject = auth_user.id
+        join organization_memberships membership
+          on membership.subject_id = provider.subject_id
+        where membership.org_id = ${orgId}
+          and membership.actor_id = ${actorId}
         limit 1
       `,
     sql<{ readonly password: string | null }[]>`
         select account.password
         from account
-        join "user" on "user".id = account."userId"
-        where "user".actor_id = ${actorId}
+        join identity_provider_subjects provider
+          on provider.provider = 'better-auth'
+         and provider.provider_subject = account."userId"
+        join organization_memberships membership
+          on membership.subject_id = provider.subject_id
+        where membership.org_id = ${orgId}
+          and membership.actor_id = ${actorId}
           and account."providerId" = 'credential'
           and account.password is not null
         limit 1
@@ -218,8 +229,8 @@ export async function verifyLocalDemo(
     mailHitCount: renovateMailHits.length + amazonMailHits.length,
     mailThreadMessageCount: mailThread?.messages.length ?? 0,
     docsCount: docs.length,
-    rootDriveEntryCount: rootDriveEntries.length,
-    projectDriveEntryCount: projectDriveEntries.length,
+    rootDriveEntryCount: rootDriveEntries.entries.length,
+    projectDriveEntryCount: projectDriveEntries.entries.length,
     calendarEventCount: calendarEvents.length,
     chatRoomCount: chatRooms.length,
     chatMessageHitCount: chatHits.length,
@@ -228,12 +239,14 @@ export async function verifyLocalDemo(
       amazonMailHits.some((hit) => hit.subject.includes("Amazon")) &&
       (mailThread?.messages.some((message) => message.hasAttachment) ?? false),
     hasQuarterlyPlanningDoc: docs.some((doc) => doc.title === "Quarterly Planning Notes"),
-    hasAiServicesDriveFile: rootDriveEntries.some((entry) => entry.name === "AI Services and Keys"),
-    hasProjectsDriveFolder: rootDriveEntries.some(
+    hasAiServicesDriveFile: rootDriveEntries.entries.some(
+      (entry) => entry.name === "AI Services and Keys",
+    ),
+    hasProjectsDriveFolder: rootDriveEntries.entries.some(
       (entry) => entry.name === "Projects" && entry.type === "folder",
     ),
     hasTrainingCourseDriveFile:
-      projectDriveEntries.some((entry) => entry.name === "Training Course Links") ||
+      projectDriveEntries.entries.some((entry) => entry.name === "Training Course Links") ||
       trainingDriveHits.some((hit) => hit.name === "Training Course Links"),
     hasOrderMatchCalendarEvent: calendarEvents.some((event) => event.title === "Order match ball"),
     hasProductPlanningCalendarEvent: calendarEvents.some(
@@ -421,7 +434,7 @@ export function isExpectedVolumeSearchHit(
   const attributes = hit.attributes ?? {};
   const metadata = attributes.metadata;
   return (
-    hit.id.startsWith("mail:00000000-0000-4200-8000-") &&
+    hit.id.split(":")[2]?.startsWith("00000000-0000-4200-8000-") === true &&
     hit.type === "mail" &&
     hit.title?.includes(LOCAL_DEMO_VOLUME_MAIL_MARKER) === true &&
     hit.body?.includes(LOCAL_DEMO_VOLUME_MAIL_MARKER) === true &&
@@ -619,11 +632,12 @@ async function verifyBetterAuthSignIn(
     databaseUrl,
     secret: process.env.BETTER_AUTH_SECRET ?? "helix_local_better_auth_secret_change_me_32_chars",
     baseUrl,
+    secureCookies: false,
     trustedOrigins: parseCsv(process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? origin),
   });
   try {
     const response = await runtime.auth.handler(
-      new Request(`${baseUrl}/api/auth/sign-in/email`, {
+      new Request(`${baseUrl}/v1/api/auth/sign-in/email`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -652,7 +666,6 @@ async function verifyBetterAuthSignIn(
     }
     const module = createBetterAuthPlatformModule({
       actorStore: new PostgresBetterAuthActorStore(sql),
-      userLinkStore: new PostgresBetterAuthUserLinkStore(sql),
       defaultOrgId: input.orgId,
     });
     const resolver = createBetterAuthSessionActorResolver(module, runtime.sessionVerifier);

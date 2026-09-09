@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import type { JsonObject } from "@helix/sdk-types";
-import type { IndexDocument, SearchEngine, SearchHit, SearchRequest, SearchResponse } from "./types.js";
+import type {
+  IndexDocument,
+  SearchEngine,
+  SearchHit,
+  SearchRequest,
+  SearchResponse,
+} from "./types.js";
 
 export interface MeilisearchAdapterOptions {
   readonly indexUid: string;
@@ -10,10 +16,15 @@ export interface MeilisearchAdapterOptions {
 export interface MeilisearchClientLike {
   index(uid: string): MeilisearchIndexLike;
   createIndex?: (uid: string, options?: { readonly primaryKey?: string }) => Promise<unknown>;
+  waitForTask?: (uid: number) => Promise<void>;
+  swapIndexes?: (indexes: readonly [string, string]) => Promise<unknown>;
 }
 
 export interface MeilisearchIndexLike {
-  addDocuments(documents: readonly IndexDocument[], options?: { readonly primaryKey?: string }): Promise<unknown>;
+  addDocuments(
+    documents: readonly IndexDocument[],
+    options?: { readonly primaryKey?: string },
+  ): Promise<unknown>;
   deleteDocuments(ids: readonly string[]): Promise<unknown>;
   search(query: string, options?: MeilisearchSearchOptions): Promise<MeilisearchSearchResponse>;
   updateSettings?(settings: MeilisearchIndexSettings): Promise<unknown>;
@@ -62,11 +73,23 @@ export class MeilisearchSearchEngine implements SearchEngine {
   }
 
   async ensureIndex(): Promise<void> {
-    await this.client.createIndex?.(this.indexUid, { primaryKey: this.primaryKey });
-    await this.indexHandle.updateSettings?.({
-      filterableAttributes: ["type", "attributes.orgId"],
-      searchableAttributes: ["title", "body"],
-    });
+    await this.wait(
+      await this.client.createIndex?.(this.indexUid, { primaryKey: this.primaryKey }),
+    );
+    await this.wait(
+      await this.indexHandle.updateSettings?.({
+        filterableAttributes: ["type", "attributes.orgId", "attributes.allowedActorIds"],
+        searchableAttributes: ["title", "body"],
+      }),
+    );
+  }
+
+  forIndex(indexUid: string): MeilisearchSearchEngine {
+    return new MeilisearchSearchEngine(this.client, { indexUid, primaryKey: this.primaryKey });
+  }
+
+  async swapWith(indexUid: string): Promise<void> {
+    await this.wait(await this.client.swapIndexes?.([this.indexUid, indexUid]));
   }
 
   index(document: IndexDocument): Promise<void> {
@@ -78,7 +101,11 @@ export class MeilisearchSearchEngine implements SearchEngine {
       return;
     }
 
-    await this.indexHandle.addDocuments(documents.map(toStoredDocument), { primaryKey: this.primaryKey });
+    await this.wait(
+      await this.indexHandle.addDocuments(documents.map(toStoredDocument), {
+        primaryKey: this.primaryKey,
+      }),
+    );
   }
 
   async delete(ids: readonly string[]): Promise<void> {
@@ -86,7 +113,7 @@ export class MeilisearchSearchEngine implements SearchEngine {
       return;
     }
 
-    await this.indexHandle.deleteDocuments(ids.map(documentKey));
+    await this.wait(await this.indexHandle.deleteDocuments(ids.map(documentKey)));
   }
 
   async search(request: SearchRequest): Promise<SearchResponse> {
@@ -95,14 +122,29 @@ export class MeilisearchSearchEngine implements SearchEngine {
     return {
       hits: response.hits.map(toSearchHit),
       query: response.query ?? request.query,
-      ...(response.estimatedTotalHits === undefined ? {} : { estimatedTotalHits: response.estimatedTotalHits }),
-      ...(response.processingTimeMs === undefined ? {} : { processingTimeMs: response.processingTimeMs }),
+      ...(response.estimatedTotalHits === undefined
+        ? {}
+        : { estimatedTotalHits: response.estimatedTotalHits }),
+      ...(response.processingTimeMs === undefined
+        ? {}
+        : { processingTimeMs: response.processingTimeMs }),
     };
   }
 
   private get indexHandle(): MeilisearchIndexLike {
     return this.client.index(this.indexUid);
   }
+
+  private async wait(task: unknown): Promise<void> {
+    const uid = taskUid(task);
+    if (uid !== undefined) await this.client.waitForTask?.(uid);
+  }
+}
+
+function taskUid(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const uid = (value as { readonly taskUid?: unknown }).taskUid;
+  return typeof uid === "number" && Number.isInteger(uid) ? uid : undefined;
 }
 
 function toMeilisearchOptions(request: SearchRequest): MeilisearchSearchOptions {
@@ -111,7 +153,9 @@ function toMeilisearchOptions(request: SearchRequest): MeilisearchSearchOptions 
   return {
     ...(request.limit === undefined ? {} : { limit: request.limit }),
     ...(request.offset === undefined ? {} : { offset: request.offset }),
-    ...(request.attributesToRetrieve === undefined ? {} : { attributesToRetrieve: request.attributesToRetrieve }),
+    ...(request.attributesToRetrieve === undefined
+      ? {}
+      : { attributesToRetrieve: request.attributesToRetrieve }),
     ...(filter === undefined ? {} : { filter }),
   };
 }

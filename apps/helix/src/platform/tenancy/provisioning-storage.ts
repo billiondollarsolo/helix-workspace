@@ -49,7 +49,7 @@ async function seedDefaultObjectStorePrefix(
   orgId: string,
 ): Promise<TenantStorageNamespaceRecord> {
   const storageConfig = defaultObjectStoreConfig(orgId);
-  const rows = (await sql`
+  const rows = await sql<TenantStorageNamespaceRow[]>`
     with target as (
       select id, byo_config, byo_config ? 'storage' as had_storage
       from orgs
@@ -68,7 +68,7 @@ async function seedDefaultObjectStorePrefix(
     from target
     where orgs.id = target.id
     returning orgs.id, orgs.byo_config -> 'storage' as storage, target.had_storage
-  `) as unknown as readonly TenantStorageNamespaceRow[];
+  `;
   const record = mapTenantStorageNamespaceRow(rows[0]);
 
   if (rows[0]?.had_storage === false) {

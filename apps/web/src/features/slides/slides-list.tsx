@@ -1,21 +1,14 @@
 /* SlidesList — the Slides surface list view.
    Card grid or table driven by the shared document view preference. Ported from the handoff,
    wired to the Slides backend (`slides.deck.*` tools) via TanStack Query.
-
-   Live backend decks are merged over the typed handoff seed; when the
-   backend is unavailable the surface falls back to seed data only. Seed
-   rows are read-only — create / rename act on native backend decks; trash
-   lifecycle actions operate on Drive-backed presentation files. */
+   Backend failures are explicit; every row is a live Drive-backed deck. */
 
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Avatar } from "@/components/ui/avatar";
 import { Icons } from "@/components/icons";
-import {
-  EditorsAlphaBadge,
-  EditorsAlphaDisabledNotice,
-} from "@/features/apps/editors-alpha";
+import { EditorsAlphaBadge, EditorsAlphaDisabledNotice } from "@/features/apps/editors-alpha";
 import {
   deleteDriveObject,
   restoreDriveObject,
@@ -32,12 +25,7 @@ import {
   useDocumentSurfaceViewPreference,
 } from "@/features/drive/view-preference";
 import { createSlidesDeck, createSlidesSlide, updateSlidesDeck } from "./api";
-import {
-  SLIDES_FOLDERS,
-  SLIDES_TEMPLATES,
-  headingForSlidesFolder,
-  type SlidesFolderId,
-} from "./list-taxonomy";
+import { SLIDES_FOLDERS, headingForSlidesFolder, type SlidesFolderId } from "./list-taxonomy";
 import { generatePresentationDeck } from "./presentation-ai";
 import { slidesListFromDriveQueryOptions, slidesQueryKeys } from "./queries";
 import type { SlideDeck } from "./seed";
@@ -441,9 +429,6 @@ export function SlidesList({ onOpen, query, editorsEnabled = true }: SlidesListP
           <h1 style={{ margin: 0, fontSize: "var(--text-h2)", fontWeight: 600 }}>{heading}</h1>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <DocumentSurfaceViewToggle view={view} onViewChange={setView} />
-            <button type="button" className="btn">
-              <Icons.Filter /> Filter
-            </button>
             <button
               type="button"
               className="btn"
@@ -492,7 +477,7 @@ export function SlidesList({ onOpen, query, editorsEnabled = true }: SlidesListP
             }}
           >
             <Icons.Globe />
-            Slides backend unavailable — showing seeded presentations only.
+            Slides unavailable — try again later.
           </div>
         ) : null}
 
@@ -717,14 +702,6 @@ function SlidesSidebar({
             </button>
           );
         })}
-
-        <div className="surf-section-label">Templates</div>
-        {SLIDES_TEMPLATES.map((template) => (
-          <button key={template} type="button" className="surf-nav-row">
-            <Icons.Image />
-            <span className="label">{template}</span>
-          </button>
-        ))}
       </nav>
     </aside>
   );

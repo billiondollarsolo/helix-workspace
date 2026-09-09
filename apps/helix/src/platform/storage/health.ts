@@ -32,6 +32,16 @@ export async function testTenantStorageConnection(input: {
     if (resolved === undefined) {
       return degradedStorageHealth(checkedAt, "Tenant object storage is not configured.");
     }
+    if (resolved.client.checkHealth !== undefined) {
+      await resolved.client.checkHealth();
+      return {
+        status: "healthy",
+        checked_at: checkedAt,
+        message: "Tenant object storage security policy check succeeded.",
+        managedBy: resolved.managedBy,
+        prefix: resolved.prefix,
+      };
+    }
     const key = `.helix-health/byo-storage/${randomUUID()}.txt`;
     const body = new TextEncoder().encode("helix-storage-health");
     await resolved.client.put({

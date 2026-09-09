@@ -60,7 +60,6 @@ export interface AdminServiceAction {
 
 export interface AdminServiceSurface {
   readonly id: string;
-  readonly pluginId: string;
   readonly label: string;
   readonly summary: string;
   readonly category: AdminServiceCategory;
@@ -180,7 +179,6 @@ export function AdminServicesOverview() {
         <TableHeader>
           <TableRow role="row">
             <TableHead role="columnheader">Service</TableHead>
-            <TableHead role="columnheader">Plugin</TableHead>
             <TableHead role="columnheader">Status</TableHead>
             <TableHead role="columnheader">Category</TableHead>
             <TableHead role="columnheader">Dependencies</TableHead>
@@ -192,7 +190,7 @@ export function AdminServicesOverview() {
         <TableBody>
           {services.length === 0 ? (
             <TableRow role="row">
-              <TableCell colSpan={8} role="cell">
+              <TableCell colSpan={7} role="cell">
                 {servicesQuery.isPending ? "Loading service catalog..." : "No services reported."}
               </TableCell>
             </TableRow>
@@ -201,13 +199,17 @@ export function AdminServicesOverview() {
               <TableRow
                 aria-selected={selectedService?.id === service.id}
                 key={service.id}
-                onClick={() => setSelectedServiceId(service.id)}
+                onClick={() => {
+                  setSelectedServiceId(service.id);
+                }}
                 role="row"
               >
                 <TableCell role="cell">
                   <button
                     className="text-left font-medium text-foreground"
-                    onClick={() => setSelectedServiceId(service.id)}
+                    onClick={() => {
+                      setSelectedServiceId(service.id);
+                    }}
                     type="button"
                   >
                     {service.label}
@@ -215,9 +217,6 @@ export function AdminServicesOverview() {
                       {service.id}
                     </span>
                   </button>
-                </TableCell>
-                <TableCell className="max-w-[220px] truncate" role="cell">
-                  {service.pluginId}
                 </TableCell>
                 <TableCell role="cell">
                   {statusLabel(service.status)} / {service.enabled ? "Enabled" : "Disabled"}
@@ -243,7 +242,7 @@ async function fetchAdminServices(): Promise<AdminServicesResponse> {
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(
-      errorMessageFromOutput(output) ?? `Admin services failed with ${response.status}`,
+      errorMessageFromOutput(output) ?? `Admin services failed with ${String(response.status)}`,
     );
   }
   if (!isAdminServicesResponse(output)) {
@@ -288,7 +287,7 @@ function ServiceDetail({ service }: { readonly service: AdminServiceSurface }) {
     >
       <div className="mb-3 flex flex-col gap-1 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="admin-tier-kicker">{service.pluginId}</p>
+          <p className="admin-tier-kicker">{service.id}</p>
           <h3 id="admin-service-detail-title" className="text-lg font-semibold">
             {service.label} detail
           </h3>
@@ -562,7 +561,6 @@ function isAdminServiceSurface(value: unknown): value is AdminServiceSurface {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
-    typeof value.pluginId === "string" &&
     typeof value.label === "string" &&
     typeof value.summary === "string" &&
     isAdminServiceCategory(value.category) &&

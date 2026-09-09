@@ -11,8 +11,6 @@ import { OAuthError } from "./oauth.js";
 
 export const DEFAULT_AUTHORIZATION_CODE_TTL_SECONDS = 60;
 
-export type CodeChallengeMethod = "S256" | "plain";
-
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/u;
 const CODE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/u;
 
@@ -25,7 +23,6 @@ export interface AuthorizationCodeRecord {
   readonly redirectUri: string;
   readonly scopes: readonly string[];
   readonly codeChallenge: string;
-  readonly codeChallengeMethod: CodeChallengeMethod;
   readonly state: string | null;
   readonly issuedAt: Date;
   readonly expiresAt: Date;
@@ -49,7 +46,6 @@ export interface AuthorizationCodeIssueInput {
   readonly redirectUri: string;
   readonly scopes: readonly string[];
   readonly codeChallenge: string;
-  readonly codeChallengeMethod: CodeChallengeMethod;
   readonly state?: string | null;
 }
 
@@ -92,7 +88,6 @@ export class AuthorizationCodeService {
       redirectUri: input.redirectUri,
       scopes: [...new Set(input.scopes)],
       codeChallenge: input.codeChallenge,
-      codeChallengeMethod: input.codeChallengeMethod,
       state: input.state ?? null,
       issuedAt,
       expiresAt: new Date(issuedAt.getTime() + this.#ttlSeconds * 1000),
@@ -129,7 +124,7 @@ export class AuthorizationCodeService {
     if (!constantTimeEquals(record.redirectUri, input.redirectUri)) {
       throw new OAuthError("invalid_grant", "redirect_uri does not match the authorization request.", 400);
     }
-    if (!verifyPkce(record.codeChallenge, record.codeChallengeMethod, input.codeVerifier)) {
+    if (!verifyPkce(record.codeChallenge, input.codeVerifier)) {
       throw new OAuthError("invalid_grant", "PKCE verification failed.", 400);
     }
     return record;
@@ -171,23 +166,8 @@ export function isValidCodeChallenge(challenge: string): boolean {
   return CODE_CHALLENGE_PATTERN.test(challenge);
 }
 
-export function isValidCodeChallengeMethod(method: string): method is CodeChallengeMethod {
-  return method === "S256" || method === "plain";
-}
-
-/**
- * Verify a PKCE `code_verifier` against the stored `code_challenge`
- * (RFC 7636). For `S256` the verifier is SHA-256 hashed and base64url-encoded;
- * for `plain` it is compared directly. Comparison is constant-time.
- */
-export function verifyPkce(
-  codeChallenge: string,
-  method: CodeChallengeMethod,
-  codeVerifier: string,
-): boolean {
-  if (method === "plain") {
-    return constantTimeEquals(codeChallenge, codeVerifier);
-  }
+/** Verify the sole supported S256 PKCE challenge in constant time. */
+export function verifyPkce(codeChallenge: string, codeVerifier: string): boolean {
   const derived = getCryptoProvider().hash("sha256", codeVerifier, "base64url");
   return constantTimeEquals(codeChallenge, derived);
 }

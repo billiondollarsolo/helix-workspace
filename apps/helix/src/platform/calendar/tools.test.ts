@@ -3,11 +3,12 @@ import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
 import type { CalendarInvitationSender } from "./ics.js";
 import type { CalendarStore } from "./store.js";
-import { registerCalendarTools } from "./tools.js";
+import { createCalendarToolDefinitions, registerCalendarTools } from "./tools.js";
 import type {
   CalendarEventRecord,
   CalendarFindTimeSlot,
   CalendarListEntry,
+  CalendarMembershipRecord,
 } from "./types.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
@@ -99,13 +100,13 @@ describe("calendar tools", () => {
 
     expect(result.ok).toBe(true);
     expect(result.ok ? result.output.invitationsQueued : 0).toBe(1);
-    expect(invitationSender.inputs).toHaveLength(1);
-    expect(invitationSender.inputs[0]).toMatchObject({
+    expect(store.createInputs[0]).toMatchObject({
       orgId,
       actorId,
-      method: "REQUEST",
+      sendInvitations: true,
       rsvpBaseUrl: "https://helix.example.com",
     });
+    expect(invitationSender.inputs).toHaveLength(0);
   });
 
   it("updates and cancels events through the store and invitation sender", async () => {
@@ -150,13 +151,14 @@ describe("calendar tools", () => {
       orgId,
       actorId,
       eventId,
+      sendInvitations: true,
       patch: { title: "Updated planning" },
     });
     expect(store.updateInputs[0]?.patch.startsAt?.toISOString()).toBe("2026-05-20T15:00:00.000Z");
     expect(deleteResult.ok).toBe(true);
     expect(deleteResult.ok ? deleteResult.output.cancellationsQueued : 0).toBe(1);
-    expect(store.deleteInputs[0]).toMatchObject({ orgId, actorId, eventId });
-    expect(invitationSender.inputs.map((input) => input.method)).toEqual(["REQUEST", "CANCEL"]);
+    expect(store.deleteInputs[0]).toMatchObject({ orgId, actorId, eventId, sendInvitations: true });
+    expect(invitationSender.inputs).toHaveLength(0);
   });
 
   it("records attendee responses and serializes find-time slots", async () => {
@@ -170,6 +172,19 @@ describe("calendar tools", () => {
       type: "user",
       scopes: ["calendar.write:respond", "calendar.read:freebusy"],
     };
+    const respondTool = createCalendarToolDefinitions({ store }).find(
+      (tool) => tool.id === "calendar.event.respond",
+    );
+    expect(() =>
+      respondTool?.inputSchema.parse({
+        eventId,
+        attendeeEmail: "victim@example.com",
+        responseStatus: "accepted",
+      }),
+    ).toThrow();
+    expect(() =>
+      respondTool?.inputSchema.parse({ rsvpToken: "external-token", responseStatus: "accepted" }),
+    ).toThrow();
 
     const responseResult = await registry.invoke<{
       readonly attendees: readonly unknown[];
@@ -178,7 +193,6 @@ describe("calendar tools", () => {
       "calendar.event.respond",
       {
         eventId,
-        attendeeEmail: "bruno@example.com",
         responseStatus: "accepted",
       },
       { actor },
@@ -202,7 +216,6 @@ describe("calendar tools", () => {
       orgId,
       actorId,
       eventId,
-      attendeeEmail: "bruno@example.com",
       responseStatus: "accepted",
     });
     expect(responseResult.ok ? responseResult.output.attendees : []).toMatchObject([
@@ -277,6 +290,7 @@ describe("calendar tools", () => {
         writable: true,
         sortOrder: 0,
         eventCount: 12,
+        syncVersion: 0,
       },
       {
         id: "55555555-5555-4555-8555-555555555555",
@@ -293,6 +307,7 @@ describe("calendar tools", () => {
         writable: false,
         sortOrder: 100,
         eventCount: 4,
+        syncVersion: 0,
       },
     ];
     const registry = createToolRegistry();
@@ -315,9 +330,23 @@ describe("calendar tools", () => {
       expect.objectContaining({ group: "team", visible: false, color: "#7c3aed" }),
     ]);
   });
+
+  it("exposes membership changes only through the calendar.manage permission", () => {
+    const definitions = createCalendarToolDefinitions({ store: new FakeCalendarStore() });
+    expect(
+      definitions
+        .filter((tool) => tool.id.startsWith("calendar.memberships."))
+        .map((tool) => [tool.id, tool.permission, tool.sideEffects]),
+    ).toEqual([
+      ["calendar.memberships.list", "calendar.manage", "read"],
+      ["calendar.memberships.set", "calendar.manage", "write"],
+      ["calendar.memberships.remove", "calendar.manage", "destructive"],
+    ]);
+  });
 });
 
 class FakeCalendarStore implements CalendarStore {
+  readonly createInputs: Parameters<CalendarStore["createEvent"]>[0][] = [];
   readonly listInputs: Parameters<CalendarStore["listCalendarEventsForActor"]>[0][] = [];
   readonly updateInputs: Parameters<CalendarStore["updateEvent"]>[0][] = [];
   readonly deleteInputs: Parameters<CalendarStore["deleteEvent"]>[0][] = [];
@@ -327,22 +356,29 @@ class FakeCalendarStore implements CalendarStore {
   async createEvent(
     input: Parameters<CalendarStore["createEvent"]>[0],
   ): Promise<CalendarEventRecord> {
-    return eventRecord({
+    this.createInputs.push(input);
+    return {
+      ...eventRecord({
       title: input.title,
       startsAt: input.startsAt,
       endsAt: input.endsAt,
-    });
+      }),
+      invitationDeliveriesQueued: input.sendInvitations ? 1 : 0,
+    };
   }
 
   async updateEvent(
     input: Parameters<CalendarStore["updateEvent"]>[0],
   ): Promise<CalendarEventRecord | null> {
     this.updateInputs.push(input);
-    return eventRecord({
-      title: input.patch.title,
-      startsAt: input.patch.startsAt,
-      endsAt: input.patch.endsAt,
-    });
+    return {
+      ...eventRecord({
+        title: input.patch.title,
+        startsAt: input.patch.startsAt,
+        endsAt: input.patch.endsAt,
+      }),
+      invitationDeliveriesQueued: input.sendInvitations ? 1 : 0,
+    };
   }
 
   async deleteEvent(
@@ -353,7 +389,16 @@ class FakeCalendarStore implements CalendarStore {
       ...eventRecord(),
       status: "cancelled",
       deletedAt: new Date("2026-05-20T14:00:00.000Z"),
+      invitationDeliveriesQueued: input.sendInvitations ? 1 : 0,
     };
+  }
+
+  async listEventRevisions(): Promise<readonly []> {
+    return [];
+  }
+
+  async restoreEventRevision(): Promise<CalendarEventRecord | null> {
+    return eventRecord();
   }
 
   async respondToEvent(
@@ -361,6 +406,10 @@ class FakeCalendarStore implements CalendarStore {
   ): Promise<CalendarEventRecord | null> {
     this.respondInputs.push(input);
     return eventRecord({ attendeeResponseStatus: input.responseStatus });
+  }
+
+  async respondToRsvpToken(): Promise<null> {
+    return null;
   }
 
   async findTime(
@@ -395,6 +444,10 @@ class FakeCalendarStore implements CalendarStore {
     return [eventRecord()];
   }
 
+  async listCalendarChangesForActor() {
+    return { changes: [], version: 0, latestVersion: 0, hasMore: false };
+  }
+
   async authenticateAppPassword(): Promise<Actor | null> {
     return null;
   }
@@ -403,6 +456,18 @@ class FakeCalendarStore implements CalendarStore {
 
   async listCalendarsForActor(): Promise<readonly CalendarListEntry[]> {
     return this.calendars;
+  }
+
+  async listCalendarMemberships(): Promise<readonly CalendarMembershipRecord[]> {
+    return [];
+  }
+
+  async setCalendarMembership(): Promise<CalendarMembershipRecord | null> {
+    return null;
+  }
+
+  async removeCalendarMembership(): Promise<boolean> {
+    return false;
   }
 }
 
@@ -467,7 +532,7 @@ function eventRecord(
       {
         id: "66666666-6666-4666-8666-666666666666",
         eventId,
-        actorId: null,
+        actorId,
         email: "bruno@example.com",
         displayName: "Bruno",
         role: "required",

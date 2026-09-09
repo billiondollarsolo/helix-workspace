@@ -1,9 +1,11 @@
-import {
-  ApiError,
-  BadRequestError,
-  ForbiddenError,
-  NotFoundError,
-} from "../../api/api-error.js";
+import { ApiError, BadRequestError, ForbiddenError, NotFoundError } from "../../api/api-error.js";
+
+export class MailAttachmentQuotaError extends BadRequestError {
+  constructor(message: string) {
+    super(message, { details: { mailCode: "mail.attachment_quota_exceeded" } });
+    this.name = "MailAttachmentQuotaError";
+  }
+}
 
 export class MailThreadNotFoundError extends NotFoundError {
   constructor(threadId: string) {
@@ -25,22 +27,42 @@ export class MailFilterNotFoundError extends NotFoundError {
 
 export class MailInboundActorForbiddenError extends ForbiddenError {
   constructor(actorType: string) {
-    super(
-      `mail.inbound.accept requires a service-account or system actor; got ${actorType}.`,
-      {
-        details: { mailCode: "mail.inbound_forbidden", actorType },
-      },
-    );
+    super(`mail.inbound.accept requires a service-account or system actor; got ${actorType}.`, {
+      details: { mailCode: "mail.inbound_forbidden", actorType },
+    });
     this.name = "MailInboundActorForbiddenError";
   }
 }
 
-export class MailOutboundPayloadError extends BadRequestError {
+export class MailInboundQuotaExceededError extends Error {
   constructor() {
-    super("Invalid mail.send outbox payload.", {
-      details: { mailCode: "mail.outbox_payload_invalid" },
+    super("Inbound mailbox storage quota exceeded.");
+    this.name = "MailInboundQuotaExceededError";
+  }
+}
+
+export class MailRawSourceIntegrityError extends ApiError {
+  constructor() {
+    super("internal_error", "Mail source integrity verification failed.", {
+      details: { mailCode: "mail.raw_source_integrity_failed" },
     });
-    this.name = "MailOutboundPayloadError";
+    this.name = "MailRawSourceIntegrityError";
+  }
+}
+
+export class MailQuarantineIntegrityError extends ApiError {
+  constructor() {
+    super("internal_error", "Mail quarantine integrity verification failed.", {
+      details: { mailCode: "mail.quarantine_integrity_failed" },
+    });
+    this.name = "MailQuarantineIntegrityError";
+  }
+}
+
+export class MailMalwareRejectedError extends Error {
+  constructor(readonly signature: string) {
+    super("Mail still violates malware policy and cannot be released.");
+    this.name = "MailMalwareRejectedError";
   }
 }
 
@@ -51,6 +73,24 @@ export class MailProviderError extends ApiError {
       cause,
     });
     this.name = "MailProviderError";
+  }
+}
+
+export class MailDeliveryError extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "MailDeliveryError";
+  }
+}
+
+export class MailRecipientSuppressedError extends Error {
+  constructor(readonly recipients: readonly string[]) {
+    super(`Mail cannot be sent to suppressed recipient${recipients.length === 1 ? "" : "s"}.`);
+    this.name = "MailRecipientSuppressedError";
   }
 }
 

@@ -1,7 +1,14 @@
 {
-	admin 127.0.0.1:2019
+	admin off
 	servers {
 		protocols h1 h2 h3
+		max_header_size 32KB
+		keepalive_interval 30s
+		timeouts {
+			read_header 10s
+			read_body 2m
+			idle 2m
+		}
 	}
 }
 
@@ -27,19 +34,56 @@
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
-		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Permissions-Policy "camera=(self), microphone=(self), display-capture=(self), fullscreen=(self), geolocation=(), payment=(), usb=()"
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' https: wss:; worker-src 'self' blob:; frame-src 'self' {$HELIX_JITSI_ORIGIN:https://meet.example.com}"
+		Cross-Origin-Opener-Policy "same-origin-allow-popups"
+		Cross-Origin-Resource-Policy "same-origin"
+		Origin-Agent-Cluster "?1"
 		-Server
 	}
 
-	@health path /healthz /readyz
-	respond @health "ok" 200
+	@content_upload {
+		method PUT
+		path /v1/dav/files/*
+	}
+	@bulk_body {
+		method POST
+		path /v1/api/tools/drive.finalize /v1/api/tools/docs.import-docx /v1/api/tools/sheets.import-csv /v1/api/tools/sheets.import-tsv /v1/api/tools/sheets.import-xlsx /v1/api/tools/sheets.import-ods /v1/api/tools/slides.import-pptx /v1/api/tools/mail.send
+	}
+	@standard_body {
+		not {
+			method PUT
+			path /v1/dav/files/*
+		}
+		not {
+			method POST
+			path /v1/api/tools/drive.finalize /v1/api/tools/docs.import-docx /v1/api/tools/sheets.import-csv /v1/api/tools/sheets.import-tsv /v1/api/tools/sheets.import-xlsx /v1/api/tools/sheets.import-ods /v1/api/tools/slides.import-pptx /v1/api/tools/mail.send
+		}
+	}
+	request_body @standard_body {
+		max_size 2MB
+	}
+	request_body @bulk_body {
+		max_size 32MB
+	}
+	request_body @content_upload {
+		max_size 64MB
+	}
 
 	reverse_proxy https://{$HELIX_UPSTREAM:helix.helix.svc.cluster.local:3000} {
 		header_up X-Forwarded-Proto https
 		header_up X-Forwarded-Host {host}
 		header_up X-Request-ID {http.request.header.X-Request-ID}
+		stream_timeout 24h
+		stream_close_delay 5m
 
 		transport http {
+			dial_timeout 5s
+			response_header_timeout 2m
+			read_timeout 5m
+			write_timeout 2m
+			max_response_header 64KB
+			max_conns_per_host 2048
 			tls
 			tls_server_name {$HELIX_UPSTREAM_SNI:helix.internal}
 			tls_trusted_ca_certs /etc/caddy/mtls/ca.crt

@@ -1,6 +1,6 @@
 import type { JsonObject, JsonValue } from "@helix/sdk-types";
 import type { EventDirection, EventSchemaDefinition } from "../platform/events/schema-registry.js";
-import { HELIX_SERVER_VERSION } from "./version.js";
+import { HELIX_API_VERSION_PREFIX, HELIX_SERVER_VERSION } from "./version.js";
 
 type MutableAsyncApiObject = Record<string, unknown>;
 
@@ -58,7 +58,7 @@ export function buildAsyncApiDocument(
         "x-helix-delivery": {
           websocket: {
             server: "eventsWebSocket",
-            path: "/events/ws",
+            path: `${HELIX_API_VERSION_PREFIX}/events/ws`,
             subjectQueryParam: "subject",
           },
           webhook: {
@@ -73,7 +73,7 @@ export function buildAsyncApiDocument(
   servers.eventsWebSocket = {
     ...asServer(servers.eventsWebSocket),
     host: "{host}",
-    pathname: "/events/ws",
+    pathname: `${HELIX_API_VERSION_PREFIX}/events/ws`,
     protocol: "wss",
     description: "OAuth-authenticated WebSocket event stream for agents.",
     security: [{ oauthClientCredentials: [] }],
@@ -104,7 +104,7 @@ export function buildAsyncApiDocument(
     description: "OAuth 2.1 client credentials bearer token for agents and automation.",
     flows: {
       clientCredentials: {
-        tokenUrl: "/oauth/token",
+        tokenUrl: `${HELIX_API_VERSION_PREFIX}/oauth/token`,
         scopes: {},
       },
     },

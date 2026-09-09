@@ -1,0 +1,35 @@
+# The public edge is an inbound relay only. It never trusts a container subnet.
+mynetworks = 127.0.0.0/8 [::1]/128
+smtpd_relay_restrictions = reject_unauth_destination
+smtpd_recipient_restrictions = reject_non_fqdn_recipient, reject_unauth_destination, reject_unverified_recipient
+disable_vrfy_command = yes
+smtpd_helo_required = yes
+strict_rfc821_envelopes = yes
+smtpd_delay_reject = yes
+
+# Bound abusive clients before the Helix application sees message bytes.
+anvil_rate_time_unit = 60s
+smtpd_client_connection_count_limit = 10
+smtpd_client_connection_rate_limit = 30
+smtpd_client_message_rate_limit = 60
+smtpd_client_recipient_rate_limit = 200
+smtpd_recipient_limit = 100
+smtpd_soft_error_limit = 5
+smtpd_hard_error_limit = 10
+smtpd_error_sleep_time = 2s
+smtpd_timeout = 60s
+
+# Reject invalid recipients during RCPT, not later via a backscatter bounce.
+unverified_recipient_reject_code = 550
+unverified_recipient_reject_reason = Mailbox unavailable
+address_verify_negative_refresh_time = 60s
+address_verify_positive_refresh_time = 5m
+address_verify_poll_count = 3
+address_verify_poll_delay = 1s
+
+# Internet SMTP offers STARTTLS; delivery to the private Helix hop is isolated by the backend network.
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtpd_tls_received_header = yes
+smtp_tls_security_level = may
+smtp_tls_loglevel = 1

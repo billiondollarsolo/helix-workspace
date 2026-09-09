@@ -16,7 +16,9 @@ interface FetchCall {
 
 type FetchResponseFactory = (call: FetchCall) => Response;
 
-function createFetchStub(factory: FetchResponseFactory = () => jsonResponse({ ok: true })): FetchStub {
+function createFetchStub(
+  factory: FetchResponseFactory = () => jsonResponse({ ok: true }),
+): FetchStub {
   const calls: FetchCall[] = [];
   const fetchImpl: typeof fetch = async (input, init) => {
     if (!(input instanceof URL) || init === undefined) {
@@ -56,6 +58,26 @@ const MILVUS_DOCS_ORG_A = `org_${ORG_A}__docs`;
 const WEAVIATE_DOCS_ORG_A = `Helix_org_${ORG_A.replace(/-/g, "_")}__docs`;
 
 describe("HTTP vector adapters", () => {
+  it("does not expose an untrusted response body in failures", async () => {
+    const stub = createFetchStub(
+      () =>
+        new Response("remote-body-secret", {
+          status: 500,
+          statusText: "remote-status-secret",
+        }),
+    );
+    const store = new QdrantVectorStore({
+      baseUrl: "https://qdrant.example",
+      fetch: stub.fetch,
+    });
+
+    const failure = await store
+      .createCollection(ORG_A, "docs", 2, "cosine")
+      .catch((error: unknown) => error);
+    expect(String(failure)).not.toMatch(/remote-(?:body|status)-secret/u);
+    expect(failure).toMatchObject({ status: 500 });
+  });
+
   it("maps Qdrant collection, point, search, and delete requests", async () => {
     const stub = createFetchStub((call) => {
       if (call.url.pathname.endsWith("/points/search")) {
@@ -65,22 +87,42 @@ describe("HTTP vector adapters", () => {
       }
       return jsonResponse({ result: true });
     });
-    const store = new QdrantVectorStore({ baseUrl: "http://qdrant.local", apiKey: "secret", fetch: stub.fetch });
+    const store = new QdrantVectorStore({
+      baseUrl: "http://qdrant.local",
+      apiKey: "secret",
+      fetch: stub.fetch,
+    });
 
     await store.createCollection(ORG_A, "docs", 2, "cosine");
-    await store.upsert(ORG_A, "docs", [{ id: "doc-1", vector: [0.1, 0.2], metadata: { type: "doc" } }]);
-    const matches = await store.query(ORG_A, "docs", [0.1, 0.2], { limit: 3, filter: { type: "doc" }, includeVectors: true });
+    await store.upsert(ORG_A, "docs", [
+      { id: "doc-1", vector: [0.1, 0.2], metadata: { type: "doc" } },
+    ]);
+    const matches = await store.query(ORG_A, "docs", [0.1, 0.2], {
+      limit: 3,
+      filter: { type: "doc" },
+      includeVectors: true,
+    });
     await store.delete(ORG_A, "docs", ["doc-1"]);
 
-    expect(stub.calls.map((call) => [call.init.method, call.url.pathname + call.url.search])).toEqual([
+    expect(
+      stub.calls.map((call) => [call.init.method, call.url.pathname + call.url.search]),
+    ).toEqual([
       ["PUT", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}`],
       ["PUT", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}/points?wait=true`],
       ["POST", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}/points/search`],
       ["POST", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}/points/delete?wait=true`],
     ]);
-    expect(requestBody(stub.calls[0] ?? failCall())).toEqual({ vectors: { size: 2, distance: "Cosine" } });
-    expect(requestBody(stub.calls[2] ?? failCall())).toMatchObject({ limit: 3, with_payload: true, with_vector: true });
-    expect(matches).toEqual([{ id: "doc-1", score: 0.82, metadata: { type: "doc" }, vector: [0.1, 0.2] }]);
+    expect(requestBody(stub.calls[0] ?? failCall())).toEqual({
+      vectors: { size: 2, distance: "Cosine" },
+    });
+    expect(requestBody(stub.calls[2] ?? failCall())).toMatchObject({
+      limit: 3,
+      with_payload: true,
+      with_vector: true,
+    });
+    expect(matches).toEqual([
+      { id: "doc-1", score: 0.82, metadata: { type: "doc" }, vector: [0.1, 0.2] },
+    ]);
   });
 
   it("isolates tenants by namespacing Qdrant collection names", async () => {
@@ -100,7 +142,9 @@ describe("HTTP vector adapters", () => {
   it("maps Milvus REST requests and responses", async () => {
     const stub = createFetchStub((call) => {
       if (call.url.pathname.endsWith("/entities/search")) {
-        return jsonResponse({ data: { data: [{ id: "doc-1", score: 0.7, metadata: { type: "doc" }, vector: [1, 2] }] } });
+        return jsonResponse({
+          data: { data: [{ id: "doc-1", score: 0.7, metadata: { type: "doc" }, vector: [1, 2] }] },
+        });
       }
       return jsonResponse({ code: 0 });
     });
@@ -117,8 +161,14 @@ describe("HTTP vector adapters", () => {
       "/v2/vectordb/entities/search",
       "/v2/vectordb/entities/delete",
     ]);
-    expect(requestBody(stub.calls[0] ?? failCall())).toMatchObject({ collectionName: MILVUS_DOCS_ORG_A, dimension: 2, metricType: "IP" });
-    expect(matches).toEqual([{ id: "doc-1", score: 0.7, metadata: { type: "doc" }, vector: [1, 2] }]);
+    expect(requestBody(stub.calls[0] ?? failCall())).toMatchObject({
+      collectionName: MILVUS_DOCS_ORG_A,
+      dimension: 2,
+      metricType: "IP",
+    });
+    expect(matches).toEqual([
+      { id: "doc-1", score: 0.7, metadata: { type: "doc" }, vector: [1, 2] },
+    ]);
   });
 
   it("maps Chroma collection, upsert, query, and delete requests", async () => {
@@ -146,8 +196,13 @@ describe("HTTP vector adapters", () => {
       `/api/v1/collections/${encodeURIComponent(CHROMA_DOCS_ORG_A)}/query`,
       `/api/v1/collections/${encodeURIComponent(CHROMA_DOCS_ORG_A)}/delete`,
     ]);
-    expect(requestBody(stub.calls[2] ?? failCall())).toMatchObject({ n_results: 10, include: ["metadatas", "distances", "embeddings"] });
-    expect(matches).toEqual([{ id: "doc-1", score: 0.8, metadata: { type: "doc" }, vector: [1, 2] }]);
+    expect(requestBody(stub.calls[2] ?? failCall())).toMatchObject({
+      n_results: 10,
+      include: ["metadatas", "distances", "embeddings"],
+    });
+    expect(matches).toEqual([
+      { id: "doc-1", score: 0.8, metadata: { type: "doc" }, vector: [1, 2] },
+    ]);
   });
 
   it("maps Weaviate schema, batch, GraphQL, and object delete requests", async () => {
@@ -156,7 +211,14 @@ describe("HTTP vector adapters", () => {
         return jsonResponse({
           data: {
             Get: {
-              [WEAVIATE_DOCS_ORG_A]: [{ helixId: "doc-1", metadata: { type: "doc" }, vector: [1, 2], _additional: { score: 0.9 } }],
+              [WEAVIATE_DOCS_ORG_A]: [
+                {
+                  helixId: "doc-1",
+                  metadata: { type: "doc" },
+                  vector: [1, 2],
+                  _additional: { score: 0.9 },
+                },
+              ],
             },
           },
         });
@@ -167,7 +229,10 @@ describe("HTTP vector adapters", () => {
 
     await store.createCollection(ORG_A, "docs", 2, "cosine");
     await store.upsert(ORG_A, "docs", [{ id: "doc-1", vector: [1, 2], metadata: { type: "doc" } }]);
-    const matches = await store.query(ORG_A, "docs", [1, 2], { filter: { type: "doc" }, includeVectors: true });
+    const matches = await store.query(ORG_A, "docs", [1, 2], {
+      filter: { type: "doc" },
+      includeVectors: true,
+    });
     await store.delete(ORG_A, "docs", ["doc-1"]);
 
     expect(stub.calls.map((call) => [call.init.method, call.url.pathname])).toEqual([
@@ -176,12 +241,16 @@ describe("HTTP vector adapters", () => {
       ["POST", "/v1/graphql"],
       ["DELETE", `/v1/objects/${WEAVIATE_DOCS_ORG_A}/doc-1`],
     ]);
-    expect(requestBody(stub.calls[0] ?? failCall())).toMatchObject({ class: WEAVIATE_DOCS_ORG_A, vectorizer: "none" });
-    expect(matches).toEqual([{ id: "doc-1", score: 0.9, metadata: { type: "doc" }, vector: [1, 2] }]);
+    expect(requestBody(stub.calls[0] ?? failCall())).toMatchObject({
+      class: WEAVIATE_DOCS_ORG_A,
+      vectorizer: "none",
+    });
+    expect(matches).toEqual([
+      { id: "doc-1", score: 0.9, metadata: { type: "doc" }, vector: [1, 2] },
+    ]);
   });
 });
 
 function failCall(): FetchCall {
   throw new Error("Expected fetch call");
 }
-

@@ -286,11 +286,57 @@ describe("createStoreBackedMcpResourceProvider", () => {
       docsExportJobLimit: () => 0,
     });
 
-    await expect(resources.read(agentActor, "helix://mail/thread/thread-1")).resolves.toMatchObject({
-      uri: "helix://mail/thread/thread-1",
-      mimeType: "text/markdown",
-    });
+    await expect(resources.read(agentActor, "helix://mail/thread/thread-1")).resolves.toMatchObject(
+      {
+        uri: "helix://mail/thread/thread-1",
+        mimeType: "text/markdown",
+      },
+    );
     expect(mail.threadReads).toHaveLength(1);
+  });
+
+  it("bounds Drive MCP text reads and never opens large binary content", async () => {
+    const ranges: unknown[] = [];
+    let binaryOpened = false;
+    const resources = createStoreBackedMcpResourceProvider({
+      drive: {
+        async search() {
+          return [];
+        },
+        async openFile(input) {
+          const binary = input.objectId === "large-binary";
+          return {
+            entry: {
+              ...driveEntry(
+                input.objectId,
+                binary ? "archive.bin" : "notes.txt",
+                binary ? "application/octet-stream" : "text/plain",
+              ),
+              byteSize: 20 * 1024 ** 3,
+            },
+            byteSize: 20 * 1024 ** 3,
+            etag: '"large"',
+            async open(range) {
+              if (binary) binaryOpened = true;
+              ranges.push(range);
+              return new TextEncoder().encode("bounded");
+            },
+          };
+        },
+      },
+    });
+
+    await expect(
+      resources.read(agentActor, "helix://drive/file/large-text"),
+    ).resolves.toMatchObject({
+      mimeType: "text/plain",
+      text: expect.stringContaining("[Truncated after 7 bytes]"),
+    });
+    await expect(
+      resources.read(agentActor, "helix://drive/file/large-binary"),
+    ).resolves.toMatchObject({ mimeType: "text/markdown" });
+    expect(ranges).toEqual([{ start: 0, end: 1024 * 1024 - 1 }]);
+    expect(binaryOpened).toBe(false);
   });
 
   it("denies unreadable chat and calendar resources before calling stores", async () => {
@@ -490,7 +536,14 @@ function chatRoomRecord(): ChatRoomRecord {
       orgId: "org-mcp",
       name: "Daily standup",
       topic: "Launch status",
-      isPrivate: false,
+      privacy: "restricted",
+      readReceiptsEnabled: true,
+      spaceType: "conversation",
+      historyPolicy: "full",
+      retentionDays: null,
+      legalHold: false,
+      notificationPolicy: "all",
+      externalAccess: "guests",
       metadata: {},
       createdAt: new Date("2026-05-20T12:00:00.000Z"),
       updatedAt: new Date("2026-05-20T12:10:00.000Z"),

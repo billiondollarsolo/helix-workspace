@@ -2,7 +2,7 @@
   "id": "com.helix.drive-preview-libreoffice",
   "name": "Drive LibreOffice Preview",
   "version": "1.0.0",
-  "description": "Converts Office documents to PDF for Drive previews using a separate headless LibreOffice service.",
+  "description": "Converts Office documents and sanitized HTML to PDF in a bounded, no-egress LibreOffice service.",
   "vendor": {
     "name": "Helix"
   },
@@ -17,7 +17,8 @@
       "preview-renderer:application/vnd.ms-powerpoint",
       "preview-renderer:application/vnd.oasis.opendocument.*",
       "preview-renderer:application/vnd.openxmlformats-officedocument.*",
-      "drive-preview:office-to-pdf"
+      "drive-preview:office-to-pdf",
+      "docs-export:html-to-pdf"
     ],
     "consumes": ["storage", "permissions"]
   },
@@ -26,8 +27,15 @@
     "outbound-network": [],
     "filesystem": ["/tmp/helix-drive-preview"],
     "envVars": [
-      "DRIVE_PREVIEW_LIBREOFFICE_PORT",
+      "DRIVE_PREVIEW_REQUEST_BYTES",
       "DRIVE_PREVIEW_MAX_BYTES",
+      "DRIVE_PREVIEW_MAX_OUTPUT_BYTES",
+      "DRIVE_PREVIEW_MAX_TEXT_BYTES",
+      "DRIVE_PREVIEW_MAX_ARCHIVE_ENTRIES",
+      "DRIVE_PREVIEW_MAX_ARCHIVE_BYTES",
+      "DRIVE_PREVIEW_MAX_ARCHIVE_RATIO",
+      "DRIVE_PREVIEW_MAX_CELLS",
+      "DRIVE_PREVIEW_MAX_PAGES",
       "DRIVE_PREVIEW_WORKDIR",
       "DRIVE_PREVIEW_TIMEOUT_MS"
     ]

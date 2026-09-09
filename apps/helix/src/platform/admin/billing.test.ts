@@ -1,6 +1,6 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import { actorFromRequest } from "../../api/actor.js";
+import { actorFromRequest } from "../../api/test-actor.js";
 import {
   InMemoryBillingStore,
   buildBillingAccountView,

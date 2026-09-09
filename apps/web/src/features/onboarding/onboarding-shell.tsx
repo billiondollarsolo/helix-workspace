@@ -18,25 +18,12 @@ import {
 
 type OnboardingStep = "plan" | "invite" | "sso";
 type PlanChoice = "pro-trial" | "personal" | "sales";
-type SsoProvider = "google" | "microsoft" | "okta" | "oidc" | "saml";
-type IdentityChoice = "local" | SsoProvider;
+type IdentityChoice = "local";
 
 const steps: ReadonlyArray<{ readonly id: OnboardingStep; readonly label: string }> = [
   { id: "plan", label: "Plan" },
   { id: "invite", label: "Invite" },
   { id: "sso", label: "Sign-in" },
-];
-
-const ssoChoices: ReadonlyArray<{
-  readonly id: SsoProvider;
-  readonly label: string;
-  readonly meta: string;
-}> = [
-  { id: "google", label: "Google SSO", meta: "Basic SSO" },
-  { id: "microsoft", label: "Microsoft SSO", meta: "Basic SSO" },
-  { id: "okta", label: "Okta SSO", meta: "Business SSO" },
-  { id: "oidc", label: "OIDC", meta: "Business SSO" },
-  { id: "saml", label: "SAML", meta: "Business SSO" },
 ];
 
 export interface OnboardingShellProps {
@@ -62,7 +49,6 @@ export function OnboardingShell({
   const inviteRecipients = useMemo(() => parseInviteEmails(inviteEmails), [inviteEmails]);
   const inviteCount = inviteRecipients.length;
   const effectiveInviteCount = inviteCount > 0 ? inviteCount : savedInviteCount;
-  const availableSsoChoices = useMemo(() => ssoChoicesForPlan(plan), [plan]);
 
   useEffect(() => {
     let active = true;
@@ -74,7 +60,7 @@ export function OnboardingShell({
         setStep(state.currentStep);
         setPlan(state.planChoice);
         setSavedInviteCount(state.inviteCount);
-        setIdentityChoice(identityChoiceForPlan(state.planChoice, state.identityChoice));
+        setIdentityChoice("local");
       })
       .catch(() => undefined);
     void sendEvent({ event: "started" }).catch(() => undefined);
@@ -119,27 +105,12 @@ export function OnboardingShell({
   }
 
   function choosePlan(nextPlan: PlanChoice): void {
-    const nextIdentityChoice = identityChoiceForPlan(nextPlan, identityChoice);
     setPlan(nextPlan);
-    setIdentityChoice(nextIdentityChoice);
     void saveProgress({
       currentStep: step,
       planChoice: nextPlan,
       inviteCount: Math.min(effectiveInviteCount, 10),
-      identityChoice: nextIdentityChoice,
-    }).catch(() => undefined);
-  }
-
-  function chooseIdentity(nextIdentityChoice: IdentityChoice): void {
-    if (!isIdentityChoiceAllowedForPlan(plan, nextIdentityChoice)) {
-      return;
-    }
-    setIdentityChoice(nextIdentityChoice);
-    void saveProgress({
-      currentStep: step,
-      planChoice: plan,
-      inviteCount: Math.min(effectiveInviteCount, 10),
-      identityChoice: nextIdentityChoice,
+      identityChoice,
     }).catch(() => undefined);
   }
 
@@ -262,7 +233,7 @@ export function OnboardingShell({
               <Icons.Shield />
               <div>
                 <h2 id="onboarding-sso-title">Choose sign-in method</h2>
-                <p>Use local email/password by default. Add SSO now, or return to it later.</p>
+                <p>Finish with local sign-in, then configure verified-domain OIDC in Identity.</p>
               </div>
             </div>
             <div className="onboarding-options compact">
@@ -270,23 +241,12 @@ export function OnboardingShell({
                 active={identityChoice === "local"}
                 label="Local email/password login"
                 meta="Built-in login for owners, admins, and members"
-                onClick={() => chooseIdentity("local")}
+                onClick={() => undefined}
               />
-              {availableSsoChoices.map((choice) => (
-                <OptionButton
-                  key={choice.id}
-                  active={choice.id === identityChoice}
-                  label={choice.label}
-                  meta={choice.meta}
-                  onClick={() => chooseIdentity(choice.id)}
-                />
-              ))}
             </div>
-            {availableSsoChoices.length === 0 ? (
-              <p className="onboarding-status" role="status">
-                SSO setup is available after upgrading to a team plan.
-              </p>
-            ) : null}
+            <p className="onboarding-status" role="status">
+              Enterprise OIDC setup is available to administrators after onboarding.
+            </p>
             <Link
               className="btn primary onboarding-next"
               to="/welcome"
@@ -300,24 +260,6 @@ export function OnboardingShell({
       </div>
     </SurfaceFrame>
   );
-}
-
-function ssoChoicesForPlan(plan: PlanChoice): readonly (typeof ssoChoices)[number][] {
-  if (plan === "personal") {
-    return [];
-  }
-  if (plan === "pro-trial") {
-    return ssoChoices.filter((choice) => choice.id === "google" || choice.id === "microsoft");
-  }
-  return ssoChoices;
-}
-
-function isIdentityChoiceAllowedForPlan(plan: PlanChoice, identity: IdentityChoice): boolean {
-  return identity === "local" || ssoChoicesForPlan(plan).some((choice) => choice.id === identity);
-}
-
-function identityChoiceForPlan(plan: PlanChoice, identity: IdentityChoice): IdentityChoice {
-  return isIdentityChoiceAllowedForPlan(plan, identity) ? identity : "local";
 }
 
 function parseInviteEmails(value: string): readonly string[] {

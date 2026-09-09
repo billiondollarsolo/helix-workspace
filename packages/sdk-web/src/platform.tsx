@@ -12,18 +12,6 @@ import {
 } from "react";
 import type { ColorMode, ColorModeApi } from "./theme";
 
-export interface Actor {
-  id: string;
-  displayName: string;
-  email: string;
-  roles: readonly string[];
-}
-
-export interface Session {
-  actor: Actor;
-  authenticated: boolean;
-}
-
 export interface TRPCClient {
   readonly endpoint: string;
 }
@@ -132,8 +120,6 @@ export interface PreviewRenderer {
 }
 
 export interface WebPlatformHost {
-  useSession(): Session;
-  useActor(): Actor;
   useColorMode(): ColorModeApi;
   readonly trpc: TRPCClient;
   readonly queryClient: QueryClient;
@@ -163,22 +149,9 @@ export interface WebPlatformHost {
 export interface CreateWebPlatformHostOptions {
   queryClient: QueryClient;
   trpc?: TRPCClient;
-  session?: Session;
   tokens?: Partial<PresetTokens>;
   getColorMode: () => ColorMode;
 }
-
-const fallbackActor: Actor = {
-  id: "local-user",
-  displayName: "Local User",
-  email: "user@helix.local",
-  roles: ["admin"],
-};
-
-const fallbackSession: Session = {
-  actor: fallbackActor,
-  authenticated: true,
-};
 
 const defaultTokens: PresetTokens = {
   background: "var(--background)",
@@ -218,12 +191,6 @@ export function createWebPlatformHost(options: CreateWebPlatformHostOptions): We
     tokens: { ...defaultTokens, ...options.tokens },
     get colorMode() {
       return options.getColorMode();
-    },
-    useSession() {
-      return options.session ?? fallbackSession;
-    },
-    useActor() {
-      return (options.session ?? fallbackSession).actor;
     },
     useColorMode() {
       throw new Error("useColorMode must be provided by ColorModeProvider.");

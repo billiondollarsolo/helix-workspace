@@ -2,10 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import fastify, { type FastifyInstance } from "fastify";
 import type { Actor } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
-import {
-  AuthorizationCodeService,
-  InMemoryAuthorizationCodeStore,
-} from "./authorization-code.js";
+import { AuthorizationCodeService, InMemoryAuthorizationCodeStore } from "./authorization-code.js";
+import { InMemoryOAuthAuthorizationStore } from "./authorization-store.js";
 import { InMemoryOAuthClientStore, OAuthTokenService, hashSecret } from "./oauth.js";
 import { registerOAuthRoutes, type OAuthAuthorizeActorResolver } from "./routes.js";
 
@@ -20,6 +18,7 @@ const testActor: Actor = {
   orgId: "org-1",
   type: "user",
   displayName: "Test User",
+  scopes: ["mail.read", "chat.read"],
 };
 
 interface RecordedRejection {
@@ -34,13 +33,15 @@ async function buildApp(options: {
   readonly clientSecretHash?: string;
   readonly actorResolver?: OAuthAuthorizeActorResolver;
   readonly consentPagePath?: string;
+  readonly clientApproved?: boolean;
 }): Promise<{
   readonly app: FastifyInstance;
   readonly codeStore: InMemoryAuthorizationCodeStore;
   readonly clientStore: InMemoryOAuthClientStore;
+  readonly authorizationStore: InMemoryOAuthAuthorizationStore;
   readonly rejections: readonly RecordedRejection[];
 }> {
-  const clientStore = new InMemoryOAuthClientStore();
+  const clientStore = new InMemoryOAuthClientStore("https://helix.example.test");
   await clientStore.createClient({
     clientId: "client-1",
     clientSecretHash: options.clientSecretHash ?? "",
@@ -52,19 +53,27 @@ async function buildApp(options: {
     redirectUris: ["https://app.example.com/callback"],
   });
   const codeStore = new InMemoryAuthorizationCodeStore();
+  const authorizationStore = new InMemoryOAuthAuthorizationStore();
+  if (options.clientApproved !== false) {
+    authorizationStore.approveClient("org-1", "client-1");
+  }
   const authorizationCodeService = new AuthorizationCodeService({ codeStore });
   const tokenService = new OAuthTokenService({
     clientStore,
     tokenStore: clientStore,
+    issuer: "https://helix.example.test",
     authorizationCodeService,
     tokenTtlSeconds: 120,
   });
   const app = fastify();
   const rejections: RecordedRejection[] = [];
   await registerOAuthRoutes(app, {
+    issuer: "https://helix.example.test",
     tokenService,
     authorizationCodeService,
     clientStore,
+    authorizationStore,
+    consentSecret: "test-only-oauth-consent-secret-32-bytes",
     authorizeAuditSink: {
       recordRejection: async (input) => {
         rejections.push({
@@ -79,7 +88,7 @@ async function buildApp(options: {
     ...(options.actorResolver === undefined ? {} : { actorResolver: options.actorResolver }),
     ...(options.consentPagePath === undefined ? {} : { consentPagePath: options.consentPagePath }),
   });
-  return { app, codeStore, clientStore, rejections };
+  return { app, codeStore, clientStore, authorizationStore, rejections };
 }
 
 const resolverFor = (actor: Actor | null): OAuthAuthorizeActorResolver => ({
@@ -96,7 +105,85 @@ const authorizeQuery = (challenge: string): Record<string, string> => ({
   state: "state-123",
 });
 
+async function getConsentToken(
+  app: FastifyInstance,
+  challenge: string,
+  overrides: Record<string, string> = {},
+): Promise<string> {
+  const response = await app.inject({
+    method: "GET",
+    url: "/oauth/authorize",
+    query: { ...authorizeQuery(challenge), ...overrides },
+  });
+  expect(response.statusCode).toBe(200);
+  const token = /name="consent_token" value="([^"]+)"/u.exec(response.body)?.[1];
+  expect(token).toBeDefined();
+  return token ?? "";
+}
+
+async function submitConsent(
+  app: FastifyInstance,
+  challenge: string,
+  decision: "approve" | "deny",
+) {
+  const consentToken = await getConsentToken(app, challenge);
+  return app.inject({
+    method: "POST",
+    url: "/oauth/authorize",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    payload: new URLSearchParams({ consent_token: consentToken, decision }).toString(),
+  });
+}
+
 describe("GET /oauth/authorize", () => {
+  it("publishes OAuth authorization-server discovery without Host inference", async () => {
+    const { app } = await buildApp({ actorResolver: resolverFor(testActor) });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/.well-known/oauth-authorization-server",
+      headers: { host: "attacker.example" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      issuer: "https://helix.example.test",
+      authorization_endpoint: "https://helix.example.test/v1/oauth/authorize",
+      token_endpoint: "https://helix.example.test/v1/oauth/token",
+      grant_types_supported: expect.arrayContaining(["authorization_code", "refresh_token"]),
+      code_challenge_methods_supported: ["S256"],
+    });
+  });
+
+  it("refuses to enable authorization routes with hidden ephemeral dependencies", async () => {
+    const clientStore = new InMemoryOAuthClientStore();
+    const tokenService = new OAuthTokenService({
+      clientStore,
+      tokenStore: clientStore,
+      issuer: "https://helix.example.test",
+    });
+
+    await expect(
+      registerOAuthRoutes(fastify(), {
+        issuer: "https://helix.example.test",
+        clientStore,
+        tokenService,
+        actorResolver: resolverFor(testActor),
+      }),
+    ).rejects.toThrow("durable authorization-code service");
+    await expect(
+      registerOAuthRoutes(fastify(), {
+        issuer: "https://helix.example.test",
+        clientStore,
+        tokenService,
+        authorizationCodeService: new AuthorizationCodeService({
+          codeStore: new InMemoryAuthorizationCodeStore(),
+        }),
+        actorResolver: resolverFor(testActor),
+      }),
+    ).rejects.toThrow("audit sink");
+  });
+
   it("renders the built-in consent screen for an authenticated user", async () => {
     const { challenge } = pkcePair();
     const { app } = await buildApp({ actorResolver: resolverFor(testActor) });
@@ -129,13 +216,14 @@ describe("GET /oauth/authorize", () => {
 
   it("requires a logged-in user", async () => {
     const { challenge } = pkcePair();
-    const { app } = await buildApp({ actorResolver: resolverFor(null) });
+    const { app, rejections } = await buildApp({ actorResolver: resolverFor(null) });
     const response = await app.inject({
       method: "GET",
       url: "/oauth/authorize",
       query: authorizeQuery(challenge),
     });
     expect(response.statusCode).toBe(401);
+    expect(rejections.at(-1)?.reason).toBe("login_required");
   });
 
   it("rejects an invalid code_challenge", async () => {
@@ -153,19 +241,19 @@ describe("GET /oauth/authorize", () => {
 describe("POST /oauth/authorize + authorization_code grant", () => {
   it("completes the full PKCE happy path for a public client", async () => {
     const { verifier, challenge } = pkcePair();
-    const { app } = await buildApp({ actorResolver: resolverFor(testActor) });
-
-    const approve = await app.inject({
-      method: "POST",
-      url: "/oauth/authorize",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: new URLSearchParams({ ...authorizeQuery(challenge), decision: "approve" }).toString(),
+    const { app, authorizationStore } = await buildApp({
+      actorResolver: resolverFor(testActor),
     });
+
+    const approve = await submitConsent(app, challenge, "approve");
     expect(approve.statusCode).toBe(302);
     const redirect = new URL(approve.headers.location as string);
     expect(redirect.searchParams.get("state")).toBe("state-123");
     const code = redirect.searchParams.get("code");
     expect(code).not.toBeNull();
+    expect(authorizationStore.findGrant("org-1", "actor-1", "client-1")).toMatchObject({
+      scopes: ["mail.read", "chat.read"],
+    });
 
     const token = await app.inject({
       method: "POST",
@@ -179,7 +267,7 @@ describe("POST /oauth/authorize + authorization_code grant", () => {
         code_verifier: verifier,
       }).toString(),
     });
-    expect(token.statusCode).toBe(200);
+    expect(token.statusCode, token.body).toBe(200);
     expect(token.json()).toMatchObject({
       token_type: "Bearer",
       expires_in: 120,
@@ -190,12 +278,7 @@ describe("POST /oauth/authorize + authorization_code grant", () => {
   it("rejects token exchange with a tampered code_verifier", async () => {
     const { challenge } = pkcePair();
     const { app } = await buildApp({ actorResolver: resolverFor(testActor) });
-    const approve = await app.inject({
-      method: "POST",
-      url: "/oauth/authorize",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: new URLSearchParams({ ...authorizeQuery(challenge), decision: "approve" }).toString(),
-    });
+    const approve = await submitConsent(app, challenge, "approve");
     const code = new URL(approve.headers.location as string).searchParams.get("code") as string;
 
     const token = await app.inject({
@@ -217,12 +300,7 @@ describe("POST /oauth/authorize + authorization_code grant", () => {
   it("rejects reusing an authorization code", async () => {
     const { verifier, challenge } = pkcePair();
     const { app } = await buildApp({ actorResolver: resolverFor(testActor) });
-    const approve = await app.inject({
-      method: "POST",
-      url: "/oauth/authorize",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: new URLSearchParams({ ...authorizeQuery(challenge), decision: "approve" }).toString(),
-    });
+    const approve = await submitConsent(app, challenge, "approve");
     const code = new URL(approve.headers.location as string).searchParams.get("code") as string;
     const exchange = () =>
       app.inject({
@@ -247,12 +325,7 @@ describe("POST /oauth/authorize + authorization_code grant", () => {
       actorResolver: resolverFor(testActor),
       clientSecretHash: await hashSecret("client-secret"),
     });
-    const approve = await app.inject({
-      method: "POST",
-      url: "/oauth/authorize",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: new URLSearchParams({ ...authorizeQuery(challenge), decision: "approve" }).toString(),
-    });
+    const approve = await submitConsent(app, challenge, "approve");
     const code = new URL(approve.headers.location as string).searchParams.get("code") as string;
 
     const withoutSecret = await app.inject({
@@ -288,17 +361,13 @@ describe("POST /oauth/authorize + authorization_code grant", () => {
 
   it("redirects with access_denied when the user denies consent", async () => {
     const { challenge } = pkcePair();
-    const { app } = await buildApp({ actorResolver: resolverFor(testActor) });
-    const response = await app.inject({
-      method: "POST",
-      url: "/oauth/authorize",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: new URLSearchParams({ ...authorizeQuery(challenge), decision: "deny" }).toString(),
-    });
+    const { app, rejections } = await buildApp({ actorResolver: resolverFor(testActor) });
+    const response = await submitConsent(app, challenge, "deny");
     expect(response.statusCode).toBe(302);
     const redirect = new URL(response.headers.location as string);
     expect(redirect.searchParams.get("error")).toBe("access_denied");
     expect(redirect.searchParams.get("state")).toBe("state-123");
+    expect(rejections.at(-1)?.reason).toBe("access_denied");
   });
 });
 
@@ -306,6 +375,88 @@ describe("POST /oauth/authorize + authorization_code grant", () => {
 // rejection. These tests pin both the open-redirect and the
 // `code_challenge_method=plain` defences.
 describe("/oauth/authorize CRITICAL-3 defences", () => {
+  it("enforces the tenant administrator's OAuth installation policy", async () => {
+    const { challenge } = pkcePair();
+    const { app, rejections } = await buildApp({
+      actorResolver: resolverFor(testActor),
+      clientApproved: false,
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/oauth/authorize",
+      query: authorizeQuery(challenge),
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.headers.location).toBeUndefined();
+    expect(rejections.at(-1)?.reason).toBe("installation_not_approved");
+  });
+
+  it("rejects a tenant A client authorizing a tenant B subject", async () => {
+    const { challenge } = pkcePair();
+    const tenantBActor: Actor = {
+      ...testActor,
+      id: "actor-tenant-b",
+      orgId: "org-2",
+    };
+    let activeActor: Actor = testActor;
+    const { app, rejections } = await buildApp({
+      actorResolver: { resolve: async () => activeActor },
+    });
+    const consentToken = await getConsentToken(app, challenge);
+    activeActor = tenantBActor;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/oauth/authorize",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({
+        consent_token: consentToken,
+        decision: "approve",
+      }).toString(),
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.headers.location).toBeUndefined();
+    expect(rejections.at(-1)).toMatchObject({
+      actorId: tenantBActor.id,
+      orgId: tenantBActor.orgId,
+      reason: "tenant_mismatch",
+    });
+  });
+
+  it("rejects scopes outside either the client grant or current user authority", async () => {
+    const { challenge } = pkcePair();
+    const { app, rejections } = await buildApp({ actorResolver: resolverFor(testActor) });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/oauth/authorize",
+      query: {
+        ...authorizeQuery(challenge),
+        scope: "mail.read drive.read",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.headers.location).toBeUndefined();
+    expect(rejections.at(-1)?.reason).toBe("invalid_scope");
+  });
+
+  it("audits malformed authorization requests", async () => {
+    const { app, rejections } = await buildApp({ actorResolver: resolverFor(testActor) });
+
+    const response = await app.inject({ method: "GET", url: "/oauth/authorize" });
+
+    expect(response.statusCode).toBe(400);
+    expect(rejections.at(-1)).toMatchObject({
+      clientId: "<missing>",
+      redirectUri: "<missing>",
+      reason: "invalid_request",
+    });
+  });
+
   it("rejects a redirect_uri not on the client's registered allowlist", async () => {
     const { challenge } = pkcePair();
     const { app, rejections } = await buildApp({
@@ -330,34 +481,73 @@ describe("/oauth/authorize CRITICAL-3 defences", () => {
         redirectUri: "https://attacker.example.com/cb",
         reason: "redirect_uri_mismatch",
         orgId: "org-1",
-        actorId: null,
+        actorId: "actor-1",
       },
     ]);
   });
 
-  it("rejects POST /oauth/authorize when redirect_uri is off the allowlist, with no code issued", async () => {
+  it("rejects consent-field injection instead of trusting replayed browser fields", async () => {
     const { challenge } = pkcePair();
     const { app, rejections } = await buildApp({
       actorResolver: resolverFor(testActor),
     });
+    const consentToken = await getConsentToken(app, challenge);
 
     const response = await app.inject({
       method: "POST",
       url: "/oauth/authorize",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       payload: new URLSearchParams({
-        ...authorizeQuery(challenge),
+        consent_token: consentToken,
         redirect_uri: "https://app.example.com/callback.evil",
         decision: "approve",
       }).toString(),
     });
 
     expect(response.statusCode).toBe(400);
-    // No redirect issued: the attacker doesn't get a code emitted at any URL.
     expect(response.headers.location).toBeUndefined();
-    expect(response.body).toContain("Invalid redirect_uri");
-    expect(rejections.at(-1)?.reason).toBe("redirect_uri_mismatch");
-    expect(rejections.at(-1)?.actorId).toBe("actor-1");
+    expect(rejections.at(-1)?.reason).toBe("invalid_request");
+  });
+
+  it("rejects tampering with the signed consent payload", async () => {
+    const { challenge } = pkcePair();
+    const { app, rejections } = await buildApp({ actorResolver: resolverFor(testActor) });
+    const consentToken = await getConsentToken(app, challenge);
+    const tampered = `${consentToken[0] === "A" ? "B" : "A"}${consentToken.slice(1)}`;
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/oauth/authorize",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      payload: new URLSearchParams({
+        consent_token: tampered,
+        decision: "approve",
+      }).toString(),
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.headers.location).toBeUndefined();
+    expect(rejections.at(-1)?.reason).toBe("invalid_request");
+  });
+
+  it("consumes each server-bound consent nonce exactly once", async () => {
+    const { challenge } = pkcePair();
+    const { app, rejections } = await buildApp({ actorResolver: resolverFor(testActor) });
+    const consentToken = await getConsentToken(app, challenge);
+    const decide = () =>
+      app.inject({
+        method: "POST",
+        url: "/oauth/authorize",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: new URLSearchParams({
+          consent_token: consentToken,
+          decision: "approve",
+        }).toString(),
+      });
+
+    expect((await decide()).statusCode).toBe(302);
+    expect((await decide()).statusCode).toBe(400);
+    expect(rejections.at(-1)?.reason).toBe("invalid_request");
   });
 
   it("treats redirect-URI matching as exact string equality (no prefix / wildcard expansion)", async () => {
@@ -453,12 +643,7 @@ describe("/oauth/authorize CRITICAL-3 defences", () => {
     const { verifier, challenge } = pkcePair();
     const { app } = await buildApp({ actorResolver: resolverFor(testActor) });
 
-    const approve = await app.inject({
-      method: "POST",
-      url: "/oauth/authorize",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      payload: new URLSearchParams({ ...authorizeQuery(challenge), decision: "approve" }).toString(),
-    });
+    const approve = await submitConsent(app, challenge, "approve");
     expect(approve.statusCode).toBe(302);
     const code = new URL(approve.headers.location as string).searchParams.get("code");
     expect(code).not.toBeNull();
@@ -478,4 +663,3 @@ describe("/oauth/authorize CRITICAL-3 defences", () => {
     expect(token.statusCode).toBe(200);
   });
 });
-

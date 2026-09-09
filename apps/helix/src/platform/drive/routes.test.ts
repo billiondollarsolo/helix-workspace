@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fastify, { type FastifyInstance, type InjectOptions } from "fastify";
 import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
@@ -34,6 +34,8 @@ import type {
   DriveSearchHit,
   DriveUploadRecord,
   DriveVersionRecord,
+  DriveWebDavChange,
+  DriveWebDavLock,
 } from "./types.js";
 
 const now = new Date("2026-05-20T12:00:00.000Z");
@@ -46,7 +48,25 @@ const reportId = "44444444-4444-4444-8444-444444444444";
 const uploadId = "55555555-5555-4555-8555-555555555555";
 
 describe("Drive WebDAV routes", () => {
-  it("advertises WebDAV methods and challenges unauthenticated clients", async () => {
+  it("maps malformed PROPFIND XML to a bounded client error", async () => {
+    const app = fastify();
+    await registerDriveRoutes(app, {
+      store: new FakeWebDavDriveStore(),
+      appPasswords: new FakeAppPasswordAuthenticator(),
+    });
+    const response = await app.inject({
+      method: "PROPFIND",
+      url: "/dav/files/",
+      headers: {
+        authorization: basic("ada@example.test", "read"),
+        "content-type": "application/xml",
+      },
+      payload: '<D:propfind xmlns:D="DAV:"><D:prop></D:propfind>',
+    } as unknown as InjectOptions);
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("advertises only implemented methods and the implemented sync compliance token", async () => {
     const app = fastify();
     await registerDriveRoutes(app, {
       store: new FakeWebDavDriveStore(),
@@ -60,10 +80,11 @@ describe("Drive WebDAV routes", () => {
     } as unknown as InjectOptions);
 
     expect(options.statusCode).toBe(204);
-    expect(options.headers.dav).toBe("1, 2");
+    expect(options.headers.dav).toBe("sync-collection");
     expect(options.headers.allow).toContain("MKCOL");
     expect(options.headers.allow).toContain("LOCK");
     expect(options.headers.allow).toContain("UNLOCK");
+    expect(options.headers.allow).toContain("REPORT");
     expect(propfind.statusCode).toBe(401);
     expect(propfind.headers["www-authenticate"]).toBe('Basic realm="Helix WebDAV"');
   });
@@ -91,12 +112,88 @@ describe("Drive WebDAV routes", () => {
     expect(response.body).toContain("<D:displayname>report.txt</D:displayname>");
     expect(response.body).toContain("<D:getcontenttype>text/plain</D:getcontenttype>");
     expect(response.body).toContain("<D:supportedlock>");
+    expect(response.body).toContain("<D:supported-report-set>");
+    expect(response.body).toContain("<D:sync-token>urn:helix:webdav-sync:");
     expect(response.body).toContain("<D:lockscope><D:exclusive/></D:lockscope>");
     expect(response.body).toContain("<D:lockdiscovery/>");
     expect(response.body).toContain("<D:quota-used-bytes>0</D:quota-used-bytes>");
     expect(response.body).toContain(
       "<D:quota-available-bytes>10995116277760</D:quota-available-bytes>",
     );
+  });
+
+  it("walks every cursor page for collections larger than 250 entries", async () => {
+    const store = new FakeWebDavDriveStore();
+    for (let index = 0; index < 300; index += 1) {
+      const name = `page-${String(index).padStart(3, "0")}.txt`;
+      store.files.set(name, fileEntry({ id: randomUUID(), name, content: name }));
+    }
+    const app = fastify();
+    await registerDriveRoutes(app, {
+      store,
+      appPasswords: new FakeAppPasswordAuthenticator(),
+    });
+
+    const response = await app.inject({
+      method: "PROPFIND",
+      url: "/dav/files/",
+      headers: {
+        authorization: basic("ada@example.test", "read"),
+        depth: "1",
+      },
+    } as unknown as InjectOptions);
+
+    expect(response.statusCode).toBe(207);
+    expect(response.body).toContain("page-299.txt");
+    expect(response.body.match(/<D:response>/gu)).toHaveLength(304);
+  });
+
+  it("pages collection-bound sync REPORT changes and rejects stale or foreign tokens", async () => {
+    const store = new FakeWebDavDriveStore();
+    const app = fastify();
+    await registerDriveRoutes(app, {
+      store,
+      appPasswords: new FakeAppPasswordAuthenticator(),
+    });
+    const report = (url: string, token = "", limit = 100) =>
+      app.inject({
+        method: "REPORT",
+        url,
+        headers: {
+          authorization: basic("ada@example.test", "read"),
+          "content-type": "application/xml",
+        },
+        payload: `<D:sync-collection xmlns:D="DAV:"><D:sync-token>${token}</D:sync-token><D:sync-level>1</D:sync-level><D:limit><D:nresults>${String(limit)}</D:nresults></D:limit></D:sync-collection>`,
+      } as unknown as InjectOptions);
+
+    const initial = await report("/dav/files/");
+    const initialToken = /<D:sync-token>([^<]+)<\/D:sync-token>/u.exec(initial.body)?.[1] ?? "";
+    store.changes.push(
+      { pathKey: "/alpha.txt", resourceType: "file", status: 200, version: "1" },
+      { pathKey: "/folder", resourceType: "folder", status: 200, version: "2" },
+      { pathKey: "/gone.txt", resourceType: "file", status: 404, version: "3" },
+    );
+    const firstPage = await report("/dav/files/", initialToken, 2);
+    const nextToken = /<D:sync-token>([^<]+)<\/D:sync-token>/u.exec(firstPage.body)?.[1] ?? "";
+    const secondPage = await report("/dav/files/", nextToken, 2);
+    const foreign = await report("/dav/files/Projects/", initialToken);
+    store.syncMinimum = "2";
+    const stale = await report("/dav/files/", initialToken);
+
+    expect(initial.statusCode).toBe(207);
+    expect(initial.body).toContain("/dav/files/report.txt");
+    expect(initialToken).toMatch(/^urn:helix:webdav-sync:[0-9a-f]{24}:0$/u);
+    expect(firstPage.statusCode).toBe(207);
+    expect(firstPage.body).toContain("/dav/files/alpha.txt");
+    expect(firstPage.body).toContain("/dav/files/folder/");
+    expect(firstPage.body).not.toContain("gone.txt");
+    expect(firstPage.body).toContain("number-of-matches-within-limits");
+    expect(nextToken).toMatch(/:2$/u);
+    expect(secondPage.body).toContain("/dav/files/gone.txt");
+    expect(secondPage.body).toContain("HTTP/1.1 404 Not Found");
+    expect(foreign.statusCode).toBe(409);
+    expect(stale.statusCode).toBe(409);
+    expect(stale.body).toContain("valid-sync-token");
   });
 
   it("filters requested PROPFIND properties and reports unsupported properties in multistatus", async () => {
@@ -348,16 +445,53 @@ describe("Drive WebDAV routes", () => {
     expect(missingIfMatch.statusCode).toBe(412);
     expect(staleIfMatch.statusCode).toBe(412);
     expect(currentIfMatch.statusCode).toBe(204);
+    expect(store.uploads).toHaveLength(0);
     expect(store.finalized.at(-1)).toMatchObject({
+      objectId: reportId,
       byteSize: 11,
       sha256: createHash("sha256").update("replacement").digest("hex"),
     });
+  });
+
+  it("keeps the prior file visible when an overwrite is interrupted", async () => {
+    const store = new FakeWebDavDriveStore();
+    store.failFinalize = true;
+    const app = fastify();
+    await registerDriveRoutes(app, {
+      store,
+      appPasswords: new FakeAppPasswordAuthenticator(),
+    });
+
+    const failed = await app.inject({
+      method: "PUT",
+      url: "/dav/files/report.txt",
+      headers: {
+        authorization: basic("ada@example.test", "write"),
+        "content-type": "text/plain",
+      },
+      payload: "replacement",
+    });
+    const original = await app.inject({
+      method: "GET",
+      url: "/dav/files/report.txt",
+      headers: { authorization: basic("ada@example.test", "read") },
+    });
+
+    expect(failed.statusCode).toBe(500);
+    expect(original.statusCode).toBe(200);
+    expect(original.body).toBe("quarterly report");
+    expect(store.trashed).toEqual([]);
   });
 
   it("supports exclusive WebDAV LOCK and UNLOCK tokens for mutations", async () => {
     const store = new FakeWebDavDriveStore();
     const app = fastify();
     await registerDriveRoutes(app, {
+      store,
+      appPasswords: new FakeAppPasswordAuthenticator(),
+    });
+    const replica = fastify();
+    await registerDriveRoutes(replica, {
       store,
       appPasswords: new FakeAppPasswordAuthenticator(),
     });
@@ -385,11 +519,21 @@ describe("Drive WebDAV routes", () => {
       },
       payload: '<D:propfind xmlns:D="DAV:"><D:prop><D:lockdiscovery/></D:prop></D:propfind>',
     } as unknown as InjectOptions);
-    const blockedPut = await app.inject({
+    const blockedPut = await replica.inject({
       method: "PUT",
       url: "/dav/files/report.txt",
       headers: {
         authorization: basic("ada@example.test", "write"),
+        "content-type": "text/plain",
+      },
+      payload: "blocked",
+    });
+    const substringTokenPut = await app.inject({
+      method: "PUT",
+      url: "/dav/files/report.txt",
+      headers: {
+        authorization: basic("ada@example.test", "write"),
+        if: `(<${lockToken.replace(/^<|>$/gu, "")}-suffix>)`,
         "content-type": "text/plain",
       },
       payload: "blocked",
@@ -439,6 +583,7 @@ describe("Drive WebDAV routes", () => {
     expect(propfindLocked.body).toContain("<D:activelock>");
     expect(propfindLocked.body).toContain(lockToken.replace(/^<|>$/gu, ""));
     expect(blockedPut.statusCode).toBe(423);
+    expect(substringTokenPut.statusCode).toBe(423);
     expect(tokenPut.statusCode).toBe(204);
     expect(wrongUnlock.statusCode).toBe(409);
     expect(unlocked.statusCode).toBe(204);
@@ -521,6 +666,14 @@ describe("Drive WebDAV routes", () => {
       appPasswords: new FakeAppPasswordAuthenticator(),
     });
 
+    const staleDelete = await app.inject({
+      method: "DELETE",
+      url: "/dav/files/report.txt",
+      headers: {
+        authorization: basic("ada@example.test", "delete"),
+        "if-match": '"stale"',
+      },
+    });
     const rootDelete = await app.inject({
       method: "DELETE",
       url: "/dav/files/",
@@ -542,6 +695,8 @@ describe("Drive WebDAV routes", () => {
       headers: { authorization: basic("ada@example.test", "read") },
     } as unknown as InjectOptions);
 
+    expect(staleDelete.statusCode).toBe(412);
+    expect(store.trashed).not.toContain(reportId);
     expect(rootDelete.statusCode).toBe(405);
     expect(nonEmptyFolderDelete.statusCode).toBe(204);
     expect(emptyFolderDelete.statusCode).toBe(204);
@@ -559,17 +714,21 @@ describe("Drive public share-link route", () => {
     const app = withApiErrorHandler(fastify());
     await registerDriveShareLinkRoute(app, {
       store: {
-        readFileByShareToken: async (token) => {
-          if (token !== "goodtoken") {
+        openFileByShareToken: async (input) => {
+          if (input.token !== "goodtoken") {
             return null;
           }
+          const content = Buffer.from("public bytes");
           return {
             entry: fileEntry({
               id: reportId,
               name: "shared-report.txt",
               content: "public bytes",
             }),
-            content: Buffer.from("public bytes"),
+            byteSize: content.byteLength,
+            etag: '"shared-report"',
+            open: async (range) =>
+              range === undefined ? content : content.subarray(range.start, range.end + 1),
           };
         },
       },
@@ -584,20 +743,27 @@ describe("Drive public share-link route", () => {
     expect(response.headers["content-type"]).toContain("text/plain");
     expect(response.body).toBe("public bytes");
     expect(response.headers["content-disposition"] ?? "").toContain("shared-report.txt");
+    expect(response.headers["cache-control"]).toBe("private, no-store, max-age=0");
   });
 
   it("supports Range requests on share-link content", async () => {
     const app = withApiErrorHandler(fastify());
     await registerDriveShareLinkRoute(app, {
       store: {
-        readFileByShareToken: async () => ({
-          entry: fileEntry({
-            id: reportId,
-            name: "shared-report.txt",
-            content: "public bytes",
-          }),
-          content: Buffer.from("public bytes"),
-        }),
+        openFileByShareToken: async () => {
+          const content = Buffer.from("public bytes");
+          return {
+            entry: fileEntry({
+              id: reportId,
+              name: "shared-report.txt",
+              content: "public bytes",
+            }),
+            byteSize: content.byteLength,
+            etag: '"shared-report"',
+            open: async (range) =>
+              range === undefined ? content : content.subarray(range.start, range.end + 1),
+          };
+        },
       },
     });
 
@@ -612,11 +778,40 @@ describe("Drive public share-link route", () => {
     expect(response.body).toBe("public");
   });
 
-  it("returns 404 for unknown/revoked/expired tokens", async () => {
+  it("forces shared active HTML to download as inert bytes", async () => {
     const app = withApiErrorHandler(fastify());
     await registerDriveShareLinkRoute(app, {
       store: {
-        readFileByShareToken: async () => null,
+        openFileByShareToken: async () => {
+          const content = Buffer.from("<script>fetch('/api/admin')</script>");
+          return {
+            entry: fileEntry({
+              id: reportId,
+              name: "attack.html",
+              content: "<script>fetch('/api/admin')</script>",
+              mimeType: "text/html",
+            }),
+            byteSize: content.byteLength,
+            etag: '"active-html"',
+            open: async (range) =>
+              range === undefined ? content : content.subarray(range.start, range.end + 1),
+          };
+        },
+      },
+    });
+
+    const response = await app.inject("/api/drive/share/goodtoken");
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["content-type"]).toContain("application/octet-stream");
+    expect(response.headers["content-disposition"]).toMatch(/^attachment;/u);
+  });
+
+  it("uses one credential challenge for unknown, revoked, expired, and protected tokens", async () => {
+    const app = withApiErrorHandler(fastify());
+    await registerDriveShareLinkRoute(app, {
+      store: {
+        openFileByShareToken: async () => null,
       },
     });
 
@@ -625,24 +820,56 @@ describe("Drive public share-link route", () => {
       url: "/api/drive/share/missing-token",
     });
 
-    expect(response.statusCode).toBe(404);
+    expect(response.statusCode).toBe(401);
+    expect(response.headers["www-authenticate"]).toContain("Helix shared file");
     expect(response.json()).toMatchObject({
-      error: { code: "not_found", message: "Share link not found." },
+      error: { code: "unauthenticated" },
     });
   });
 
-  it("returns metadata when content bytes are unavailable", async () => {
+  it("accepts a password through the browser-native Basic challenge", async () => {
     const app = withApiErrorHandler(fastify());
     await registerDriveShareLinkRoute(app, {
       store: {
-        readFileByShareToken: async () => ({
+        openFileByShareToken: async (input) => {
+          if (input.password !== "open sesame password") return null;
+          const content = Buffer.from("protected");
+          return {
+            entry: fileEntry({ id: reportId, name: "protected.txt", content: "protected" }),
+            byteSize: content.byteLength,
+            etag: '"protected"',
+            open: async () => content,
+          };
+        },
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/drive/share/protected-token",
+      headers: {
+        authorization: `Basic ${Buffer.from("shared:open sesame password").toString("base64")}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("protected");
+  });
+
+  it("returns 404 when backing content bytes are unavailable", async () => {
+    const app = withApiErrorHandler(fastify());
+    await registerDriveShareLinkRoute(app, {
+      store: {
+        openFileByShareToken: async () => ({
           entry: fileEntry({
             id: reportId,
             name: "pending.bin",
             content: "",
             mimeType: "application/octet-stream",
           }),
-          content: null,
+          byteSize: 1,
+          etag: '"missing"',
+          open: async () => null,
         }),
       },
     });
@@ -652,12 +879,8 @@ describe("Drive public share-link route", () => {
       url: "/api/drive/share/pending-token",
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      objectId: reportId,
-      name: "pending.bin",
-      contentAvailable: false,
-    });
+    expect(response.statusCode).toBe(404);
+    expect(response.body).toBe("");
   });
 });
 
@@ -701,6 +924,10 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
   readonly deleted: string[] = [];
   readonly trashed: string[] = [];
   readonly trashedFolders: string[] = [];
+  readonly locks = new Map<string, DriveWebDavLock>();
+  readonly changes: DriveWebDavChange[] = [];
+  syncMinimum = "0";
+  failFinalize = false;
   readonly folders: DriveEntryRecord[] = [
     folderEntry("Projects", folderId, null),
     folderEntry("Empty", emptyFolderId, null),
@@ -733,6 +960,101 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
     ["99999999-9999-4999-8999-999999999999", Buffer.from("archive")],
   ]);
 
+  async acquireWebDavLock(
+    input: Parameters<WebDavDriveStore["acquireWebDavLock"]>[0],
+  ): Promise<DriveWebDavLock | null> {
+    for (const [path, lock] of this.locks) {
+      if (lock.expiresAt <= new Date()) this.locks.delete(path);
+    }
+    const direct = this.locks.get(input.pathKey);
+    if (input.token !== undefined) {
+      if (
+        direct === undefined ||
+        direct.actorId !== input.actorId ||
+        direct.token !== input.token
+      ) {
+        return null;
+      }
+      const refreshed = {
+        ...direct,
+        expiresAt: new Date(Date.now() + input.timeoutSeconds * 1_000),
+      };
+      this.locks.set(input.pathKey, refreshed);
+      return refreshed;
+    }
+    const conflict = [...this.locks.values()].some(
+      (lock) =>
+        lock.pathKey === input.pathKey ||
+        (lock.depth === "infinity" &&
+          (lock.pathKey === "/" || input.pathKey.startsWith(`${lock.pathKey}/`))) ||
+        (input.depth === "infinity" &&
+          (input.pathKey === "/" || lock.pathKey.startsWith(`${input.pathKey}/`))),
+    );
+    if (conflict) return null;
+    const createdAt = new Date();
+    const lock: DriveWebDavLock = {
+      pathKey: input.pathKey,
+      token: `opaquelocktoken:${randomUUID()}`,
+      actorId: input.actorId,
+      owner: input.owner,
+      depth: input.depth,
+      fence: String(this.locks.size + 1),
+      createdAt,
+      expiresAt: new Date(createdAt.getTime() + input.timeoutSeconds * 1_000),
+    };
+    this.locks.set(input.pathKey, lock);
+    return lock;
+  }
+
+  async listWebDavLocks(
+    input: Parameters<WebDavDriveStore["listWebDavLocks"]>[0],
+  ): Promise<readonly DriveWebDavLock[]> {
+    return [...this.locks.values()].filter(
+      (lock) =>
+        lock.expiresAt > new Date() &&
+        input.pathKeys.some(
+          (path) =>
+            lock.pathKey === path ||
+            (lock.depth === "infinity" &&
+              (lock.pathKey === "/" || path.startsWith(`${lock.pathKey}/`))),
+        ),
+    );
+  }
+
+  async releaseWebDavLock(
+    input: Parameters<WebDavDriveStore["releaseWebDavLock"]>[0],
+  ): Promise<boolean> {
+    const lock = this.locks.get(input.pathKey);
+    if (lock?.actorId !== input.actorId || lock.token !== input.token) return false;
+    return this.locks.delete(input.pathKey);
+  }
+
+  async listWebDavChanges(
+    input: Parameters<WebDavDriveStore["listWebDavChanges"]>[0],
+  ): ReturnType<WebDavDriveStore["listWebDavChanges"]> {
+    const current = this.changes.at(-1)?.version ?? "0";
+    if (input.afterVersion === undefined) {
+      return { changes: [], version: current, valid: true, hasMore: false };
+    }
+    if (
+      BigInt(input.afterVersion) < BigInt(this.syncMinimum) ||
+      BigInt(input.afterVersion) > BigInt(current)
+    ) {
+      return { changes: [], version: current, valid: false, hasMore: false };
+    }
+    const changes = this.changes.filter(
+      (change) => BigInt(change.version) > BigInt(input.afterVersion ?? "0"),
+    );
+    const page = changes.slice(0, input.limit);
+    const hasMore = changes.length > page.length;
+    return {
+      changes: page,
+      version: hasMore ? (page.at(-1)?.version ?? input.afterVersion) : current,
+      valid: true,
+      hasMore,
+    };
+  }
+
   async prepareUpload(input: PrepareDriveUploadInput): Promise<DriveUploadRecord> {
     this.uploads.push(input);
     const entry = fileEntry({
@@ -740,7 +1062,7 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
       name: input.name,
       content: "",
       folderId: input.folderId ?? null,
-      byteSize: input.byteSize ?? 0,
+      byteSize: input.byteSize,
       sha256: input.sha256 ?? null,
     });
     this.files.set(fileKey(input.folderId ?? null, input.name), entry);
@@ -752,7 +1074,7 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
       folderId: input.folderId ?? null,
       storageKey: `drive/${input.orgId}/${uploadId}/v1/${input.name}`,
       mimeType: input.mimeType,
-      byteSize: input.byteSize ?? 0,
+      byteSize: input.byteSize,
       sha256: input.sha256 ?? null,
       status: "pending_upload",
       uploadUrl: null,
@@ -765,6 +1087,7 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
 
   async finalizeUpload(input: FinalizeDriveUploadInput): Promise<DriveVersionRecord> {
     this.finalized.push(input);
+    if (this.failFinalize) throw new Error("interrupted upload");
     const existing = [...this.files.values()].find((file) => file.id === input.objectId);
     if (existing !== undefined && input.content !== undefined) {
       this.files.set(fileKey(existing.folderId ?? null, existing.name), {
@@ -781,19 +1104,21 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
       orgId: input.orgId,
       objectId: input.objectId,
       versionNumber: 1,
-      storageKey: input.storageKey ?? `drive/${input.orgId}/${input.objectId}/v1/new.txt`,
+      storageKey: `drive/${input.orgId}/${input.objectId}/v1/new.txt`,
       mimeType: input.mimeType ?? "text/plain",
       byteSize: input.byteSize,
-      sha256: input.sha256,
+      sha256: input.sha256 ?? "0".repeat(64),
       metadata: input.metadata ?? {},
       createdByActorId: input.actorId,
       createdAt: now,
     };
   }
 
-  async list(input: Parameters<WebDavDriveStore["list"]>[0]): Promise<readonly DriveEntryRecord[]> {
+  async list(input: Parameters<WebDavDriveStore["list"]>[0]): ReturnType<WebDavDriveStore["list"]> {
     const folderIdValue = input.folderId ?? null;
-    return [
+    const start = Number.parseInt(input.cursor ?? "0", 10);
+    const limit = input.limit ?? 100;
+    const entries = [
       ...this.folders.filter(
         (folder) =>
           folder.folderId === folderIdValue &&
@@ -805,6 +1130,10 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
           (input.includeTrashed === true || file.deletedAt === null),
       ),
     ];
+    return {
+      entries: entries.slice(start, start + limit),
+      nextCursor: start + limit < entries.length ? String(start + limit) : null,
+    };
   }
 
   async createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord> {

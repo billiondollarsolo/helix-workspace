@@ -114,8 +114,7 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("--thread-id --add --remove --json");
     expect(stdout.output).toContain("--name --priority --enabled --disabled --criteria --actions");
     expect(stdout.output).toContain("--room-id --before --limit --json");
-    expect(stdout.output).toContain("--conversation-id --pending-id --classification --json");
-    expect(stdout.output).toContain("public standard confidential restricted");
+    expect(stdout.output).toContain("--conversation-id --pending-id --json");
     expect(stdout.output).toContain("login logout auth");
     expect(stderr.output).toBe("");
   });
@@ -290,7 +289,18 @@ describe("runCli backup and restore operator commands", () => {
 
     await expect(
       runCli(
-        ["restore", "--from", "backup-20260520T120000Z", "--encrypted"],
+        [
+          "restore",
+          "--from",
+          "backup-20260520T120000Z",
+          "--target-db",
+          "helix_restore_incident_42",
+          "--target-bucket",
+          "helix-restore-incident-42",
+          "--idempotency-key",
+          "incident-42",
+          "--encrypted",
+        ],
         { HELIX_BASE_URL: "https://helix.example" },
         {
           stdin: Readable.from([]),
@@ -310,7 +320,7 @@ describe("runCli backup and restore operator commands", () => {
             accept: "application/json",
             "content-type": "application/json",
           },
-          body: '{"backupId":"backup-20260520T120000Z","encrypted":true}',
+          body: '{"backupId":"backup-20260520T120000Z","targetDatabase":"helix_restore_incident_42","targetObjectBucket":"helix-restore-incident-42","idempotencyKey":"incident-42","encrypted":true}',
         },
       },
     ]);
@@ -453,7 +463,9 @@ describe("runCli action status commands", () => {
         },
       },
     ]);
-    expect(stdout.output).toBe('{\n  "status": "executed",\n  "output": {\n    "ok": true\n  }\n}\n');
+    expect(stdout.output).toBe(
+      '{\n  "status": "executed",\n  "output": {\n    "ok": true\n  }\n}\n',
+    );
     expect(stderr.output).toBe("");
   });
 

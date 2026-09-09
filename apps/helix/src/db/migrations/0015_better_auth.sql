@@ -39,7 +39,16 @@ create table if not exists account (
   scope text,
   password text,
   "createdAt" timestamptz not null default now(),
-  "updatedAt" timestamptz not null default now()
+  "updatedAt" timestamptz not null default now(),
+  constraint better_auth_account_access_token_encrypted check (
+    "accessToken" is null or "accessToken" ~ '^[$]ba[$][1-9][0-9]*[$][0-9a-f]{80,}$'
+  ),
+  constraint better_auth_account_refresh_token_encrypted check (
+    "refreshToken" is null or "refreshToken" ~ '^[$]ba[$][1-9][0-9]*[$][0-9a-f]{80,}$'
+  ),
+  constraint better_auth_account_id_token_encrypted check (
+    "idToken" is null or "idToken" ~ '^[$]ba[$][1-9][0-9]*[$][0-9a-f]{80,}$'
+  )
 );
 
 create index if not exists better_auth_account_user_idx on account ("userId");

@@ -54,7 +54,15 @@ export function freeBusyEventsToBusyBlocks(
               id: event.eventId,
               startsAt: event.startsAt,
               endsAt: event.endsAt,
-              recurrenceRule: event.recurrenceRule,
+              ...(event.timezone === undefined ? {} : { timezone: event.timezone }),
+              ...(event.allDay === undefined ? {} : { allDay: event.allDay }),
+              ...(event.timeSemantics === undefined
+                ? {}
+                : { timeSemantics: event.timeSemantics }),
+              ...(event.startsLocal === undefined ? {} : { startsLocal: event.startsLocal }),
+              ...(event.recurrenceRule === undefined
+                ? {}
+                : { recurrenceRule: event.recurrenceRule }),
               metadata: event.metadata ?? {},
             },
             window.startsAt,
@@ -104,6 +112,7 @@ export function findAvailableSlots(input: {
   readonly incrementMinutes?: number | undefined;
   readonly limit?: number | undefined;
   readonly workingHours?: CalendarWorkingHours | undefined;
+  readonly workingHoursByActorId?: Readonly<Record<string, CalendarWorkingHours>> | undefined;
 }): readonly CalendarAvailabilitySlot[] {
   if (input.durationMinutes <= 0) {
     throw new RangeError("durationMinutes must be greater than zero.");
@@ -124,7 +133,17 @@ export function findAvailableSlots(input: {
   ) {
     const startsAt = new Date(startsAtMs);
     const endsAt = new Date(startsAtMs + durationMs);
-    if (!withinWorkingHours(startsAt, endsAt, input.workingHours)) {
+    if (
+      !calendarSlotWithinWorkingHours(startsAt, endsAt, input.workingHours) ||
+      input.actorIds.some(
+        (actorId) =>
+          !calendarSlotWithinWorkingHours(
+            startsAt,
+            endsAt,
+            input.workingHoursByActorId?.[actorId],
+          ),
+      )
+    ) {
       continue;
     }
 
@@ -154,7 +173,7 @@ function overlaps(leftStart: Date, leftEnd: Date, rightStart: Date, rightEnd: Da
   return leftStart < rightEnd && rightStart < leftEnd;
 }
 
-function withinWorkingHours(
+export function calendarSlotWithinWorkingHours(
   startsAt: Date,
   endsAt: Date,
   workingHours: CalendarWorkingHours | undefined,
@@ -162,13 +181,50 @@ function withinWorkingHours(
   if (workingHours === undefined) {
     return true;
   }
-  const day = startsAt.getUTCDay();
+  const timezone = workingHours.timezone ?? "UTC";
+  const start = localSlotParts(startsAt, timezone);
+  const end = localSlotParts(new Date(endsAt.getTime() - 1), timezone);
+  if (start === null || end === null || start.date !== end.date) return false;
+  const day = start.day;
   if (workingHours.daysOfWeek !== undefined && !workingHours.daysOfWeek.includes(day)) {
     return false;
   }
-  const startsHour = startsAt.getUTCHours() + startsAt.getUTCMinutes() / 60;
-  const endsHour = endsAt.getUTCHours() + endsAt.getUTCMinutes() / 60;
+  const startsHour = start.hour + start.minute / 60;
+  const endsHour = end.hour + (end.minute + 1 / 60_000) / 60;
   return startsHour >= workingHours.startsAtHour && endsHour <= workingHours.endsAtHour;
+}
+
+function localSlotParts(
+  value: Date,
+  timezone: string,
+): { readonly date: string; readonly day: number; readonly hour: number; readonly minute: number } | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour12: false,
+      hourCycle: "h23",
+      weekday: "short",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).formatToParts(value);
+    const part = (type: Intl.DateTimeFormatPartTypes): string | undefined =>
+      parts.find((candidate) => candidate.type === type)?.value;
+    const weekday = part("weekday");
+    const year = part("year");
+    const month = part("month");
+    const day = part("day");
+    const hour = Number(part("hour"));
+    const minute = Number(part("minute"));
+    const weekdayIndex = weekday === undefined ? -1 : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekday);
+    return year === undefined || month === undefined || day === undefined || weekdayIndex < 0
+      ? null
+      : { date: `${year}-${month}-${day}`, day: weekdayIndex, hour, minute };
+  } catch {
+    return null;
+  }
 }
 
 function maxDate(left: Date, right: Date): Date {

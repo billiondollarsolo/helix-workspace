@@ -101,9 +101,7 @@ function ImportedDocumentBanner({
             <span>{doc.warnings[0]}</span>
             {doc.warnings.length > 1 ? (
               <details style={{ marginTop: 4 }}>
-                <summary style={{ cursor: "pointer" }}>
-                  +{doc.warnings.length - 1} more
-                </summary>
+                <summary style={{ cursor: "pointer" }}>+{doc.warnings.length - 1} more</summary>
                 <ul
                   style={{
                     marginTop: 8,
@@ -121,7 +119,7 @@ function ImportedDocumentBanner({
         ) : null}
       </div>
       <a
-        href={`/api/drive/objects/${objectId}/content?download=1`}
+        href={`/v1/api/drive/objects/${objectId}/content?download=1`}
         className="btn sm"
         download={fileName ?? ""}
       >

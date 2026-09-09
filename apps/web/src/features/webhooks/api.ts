@@ -174,7 +174,7 @@ export async function testInboundWebhook(
   const body = JSON.stringify(payload);
   const secret = secretValue(webhook.secretRef);
   const headers = await inboundTestHeaders(webhook.source, secret, body);
-  const response = await fetch(`/webhooks/${encodeURIComponent(webhook.slug)}`, {
+  const response = await fetch(`/v1/webhooks/${encodeURIComponent(webhook.slug)}`, {
     method: "POST",
     headers,
     body,

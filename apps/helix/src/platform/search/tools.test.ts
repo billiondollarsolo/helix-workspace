@@ -12,6 +12,7 @@ const actor: Actor = {
   type: "user",
   scopes: ["platform.read", "mail.read", "drive.read"],
 };
+const driveAclFilter = `(type != "drive" OR attributes.allowedActorIds = ${JSON.stringify(actor.id)})`;
 
 describe("search tools", () => {
   it("registers a unified global search tool", () => {
@@ -57,7 +58,7 @@ describe("search tools", () => {
         types: ["mail", "drive"],
         limit: 5,
         offset: 10,
-        filter: `attributes.orgId = ${JSON.stringify(orgId)}`,
+        filter: [`attributes.orgId = ${JSON.stringify(orgId)}`, driveAclFilter],
         // Server-set RAG actor identity (see createScopedSearchRequest).
         forActorId: actor.id,
       },
@@ -94,7 +95,9 @@ describe("search tools", () => {
           types: expectedTypes,
           limit: 5,
           offset: 10,
-          filter: `attributes.orgId = ${JSON.stringify(orgId)}`,
+          filter: expectedTypes.includes("drive")
+            ? [`attributes.orgId = ${JSON.stringify(orgId)}`, driveAclFilter]
+            : `attributes.orgId = ${JSON.stringify(orgId)}`,
           forActorId: actor.id,
         },
       ]);
@@ -128,8 +131,33 @@ describe("createScopedSearchRequest", () => {
       types: ["mail", "drive"],
       filter: [
         `attributes.orgId = ${JSON.stringify(orgId)}`,
+        driveAclFilter,
         "attributes.classification = internal",
       ],
+    });
+  });
+
+  it("requires the caller principal for Drive-only discovery", () => {
+    expect(createScopedSearchRequest(actor, { query: "secret", types: ["drive"] })).toMatchObject({
+      filter: [
+        `attributes.orgId = ${JSON.stringify(orgId)}`,
+        `attributes.allowedActorIds = ${JSON.stringify(actor.id)}`,
+      ],
+    });
+  });
+
+  it("requires the caller principal for Chat retrieval", () => {
+    expect(
+      createScopedSearchRequest(
+        { ...actor, scopes: ["chat.read"] },
+        { query: "incident", types: ["chat"] },
+      ),
+    ).toMatchObject({
+      filter: [
+        `attributes.orgId = ${JSON.stringify(orgId)}`,
+        `attributes.allowedActorIds = ${JSON.stringify(actor.id)}`,
+      ],
+      forActorId: actor.id,
     });
   });
 });

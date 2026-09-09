@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
+import { TLSSocket } from "node:tls";
 import type { FastifyRequest } from "fastify";
 import type { Actor } from "@helix/sdk-types";
 import type { AccessTokenStore } from "../platform/auth/oauth.js";
+import { validatedPermissions } from "../platform/permissions/scope-catalog.js";
+import { limitRoleBindings } from "../platform/permissions/roles.js";
 import {
   authenticateApiKey,
   authenticateMtlsCertificate,
@@ -30,7 +34,12 @@ export function credentialPolicyOf(actor: Actor): AgentCredentialPolicy | undefi
 /** Result of API-key / mTLS authentication on the request path. */
 export type CredentialResolution =
   | { readonly ok: true; readonly actor: Actor }
-  | { readonly ok: false; readonly statusCode: number; readonly code: string; readonly message: string };
+  | {
+      readonly ok: false;
+      readonly statusCode: number;
+      readonly code: string;
+      readonly message: string;
+    };
 
 export const systemActor: Actor = {
   id: "system",
@@ -47,25 +56,20 @@ export const unauthenticatedActor: Actor = {
   scopes: [],
 };
 
-export function actorFromRequest(request: FastifyRequest): Actor {
-  const actorId = firstHeaderValue(request.headers["x-helix-actor-id"]);
-  const actorType = firstHeaderValue(request.headers["x-helix-actor-type"]);
-  const orgId = firstHeaderValue(request.headers["x-helix-org-id"]);
-  const scopes = parseScopes(firstHeaderValue(request.headers["x-helix-scopes"]));
+const RESERVED_IDENTITY_HEADERS = [
+  "x-helix-actor-id",
+  "x-helix-actor-type",
+  "x-helix-org-id",
+  "x-helix-scopes",
+  "x-helix-mfa-verified",
+  "x-helix-client-cert-fingerprint",
+] as const;
 
-  if (actorId === undefined || orgId === undefined) {
-    return unauthenticatedActor;
-  }
-
-  return {
-    id: actorId,
-    orgId,
-    type:
-      actorType === "agent" || actorType === "service_account" || actorType === "user"
-        ? actorType
-        : "user",
-    ...(scopes.length === 0 ? {} : { scopes }),
-  };
+/** Return the first client-controlled identity assertion header, if present. */
+export function untrustedIdentityHeader(
+  headers: FastifyRequest["headers"],
+): (typeof RESERVED_IDENTITY_HEADERS)[number] | undefined {
+  return RESERVED_IDENTITY_HEADERS.find((name) => headers[name] !== undefined);
 }
 
 export async function actorFromRequestWithAccessToken(
@@ -84,18 +88,23 @@ export async function actorFromRequestWithAccessTokenAndSession(
   if (token !== undefined) {
     const accessToken = await tokenStore.findToken(token);
     if (accessToken !== null) {
+      const scopes = validatedPermissions(accessToken.scopes);
+      const roleBindings = limitRoleBindings(accessToken.roleBindings ?? [], scopes);
       const actor: Actor = {
         id: accessToken.actorId,
         orgId: accessToken.orgId,
         type: accessToken.actorType ?? "agent",
-        scopes: accessToken.scopes,
+        scopes,
+        ...(roleBindings.length === 0 ? {} : { roleBindings }),
       };
       if (accessToken.actorDisplayName !== undefined) {
         return accessToken.actorEmail === undefined
           ? { ...actor, displayName: accessToken.actorDisplayName }
           : { ...actor, displayName: accessToken.actorDisplayName, email: accessToken.actorEmail };
       }
-      return accessToken.actorEmail === undefined ? actor : { ...actor, email: accessToken.actorEmail };
+      return accessToken.actorEmail === undefined
+        ? actor
+        : { ...actor, email: accessToken.actorEmail };
     }
   }
 
@@ -104,7 +113,7 @@ export async function actorFromRequestWithAccessTokenAndSession(
     return sessionActor;
   }
 
-  return actorFromRequest(request);
+  return unauthenticatedActor;
 }
 
 /**
@@ -115,8 +124,8 @@ export async function actorFromRequestWithAccessTokenAndSession(
  * is missing, unknown, or fails policy enforcement.
  *
  * An API key is taken from the `Authorization: Bearer helix_ak_…` header or
- * the `x-api-key` header. A client certificate fingerprint is read from the
- * `x-helix-client-cert-fingerprint` header (set by the TLS terminator).
+ * the `x-api-key` header. A client certificate fingerprint is derived only
+ * from a certificate authenticated by the request's TLS socket.
  */
 export async function resolveCredentialAuthenticatedActor(
   request: FastifyRequest,
@@ -154,6 +163,15 @@ export async function resolveCredentialAuthenticatedActor(
     return { ok: true, actor: credentialActor(result.credential) };
   }
 
+  if (firstHeaderValue(request.headers["x-helix-client-cert-fingerprint"]) !== undefined) {
+    return {
+      ok: false,
+      statusCode: 401,
+      code: "invalid_certificate",
+      message: "Client certificate authentication requires a verified TLS peer certificate.",
+    };
+  }
+
   return null;
 }
 
@@ -161,13 +179,17 @@ function credentialActor(credential: {
   readonly actorId: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
+  readonly roleBindings?: Actor["roleBindings"];
   readonly policy: AgentCredentialPolicy;
 }): Actor {
+  const scopes = validatedPermissions(credential.scopes);
+  const roleBindings = limitRoleBindings(credential.roleBindings ?? [], scopes);
   const actor: Actor = {
     id: credential.actorId,
     orgId: credential.orgId,
     type: "agent",
-    scopes: credential.scopes,
+    scopes,
+    ...(roleBindings.length === 0 ? {} : { roleBindings }),
   };
   credentialPolicyByActor.set(actor, credential.policy);
   return actor;
@@ -189,7 +211,15 @@ function apiKeyFromRequest(request: FastifyRequest): string | undefined {
 }
 
 function clientCertFingerprintFromRequest(request: FastifyRequest): string | undefined {
-  return firstHeaderValue(request.headers["x-helix-client-cert-fingerprint"]);
+  const socket = request.raw.socket;
+  if (!(socket instanceof TLSSocket) || !socket.authorized) {
+    return undefined;
+  }
+  const certificate = socket.getPeerCertificate();
+  if (!Buffer.isBuffer(certificate.raw) || certificate.raw.length === 0) {
+    return undefined;
+  }
+  return createHash("sha256").update(certificate.raw).digest("hex");
 }
 
 export function bearerTokenFromRequest(request: FastifyRequest): string | undefined {
@@ -200,16 +230,7 @@ export function bearerTokenFromRequest(request: FastifyRequest): string | undefi
       return token;
     }
   }
-
-  const queryToken = accessTokenFromQuery(request.query);
-  return queryToken ?? undefined;
-}
-
-function parseScopes(value: string | undefined): readonly string[] {
-  if (value === undefined || value.trim().length === 0) {
-    return [];
-  }
-  return [...new Set(value.split(/[,\s]+/u).filter(Boolean))];
+  return undefined;
 }
 
 function firstHeaderValue(value: string | readonly string[] | undefined): string | undefined {
@@ -217,20 +238,4 @@ function firstHeaderValue(value: string | readonly string[] | undefined): string
     return value;
   }
   return value?.[0];
-}
-
-function accessTokenFromQuery(query: unknown): string | null {
-  if (typeof query !== "object" || query === null || !("access_token" in query)) {
-    return null;
-  }
-  const value = (query as { readonly access_token?: unknown }).access_token;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length === 0 ? null : trimmed;
-  }
-  if (Array.isArray(value) && typeof value[0] === "string") {
-    const trimmed = value[0].trim();
-    return trimmed.length === 0 ? null : trimmed;
-  }
-  return null;
 }

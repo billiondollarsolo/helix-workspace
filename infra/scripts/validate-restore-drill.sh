@@ -22,7 +22,7 @@ Checks:
   - encrypted business dry-run backup command path (age)
   - PITR base-backup + WAL capture dry-run command path
   - KMS-encrypted enterprise dry-run backup command path
-  - object-store sync dry-run command path
+  - immutable object-snapshot dry-run command path
   - restore dry-run command path into a drill database
   - PITR / KMS restore dry-run command paths
   - restore-drill dry-run command path with application health probes
@@ -49,6 +49,8 @@ require_cmd bash
 require_cmd tar
 require_cmd grep
 require_cmd mktemp
+require_cmd node
+require_cmd python3
 
 if [[ -z "$BACKUP_DIR" ]]; then
   BACKUP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/helix-restore-validation.XXXXXX")
@@ -86,17 +88,26 @@ bash -n \
   infra/scripts/live-restore-drill-smoke.sh \
   infra/scripts/validate-restore-drill.sh
 
+log "checking safe archive extraction"
+python3 infra/scripts/test_safe_extract_tar.py
+node infra/scripts/aes-gcm-file.test.mjs
+node infra/scripts/backup-manifest.test.mjs
+node infra/scripts/object-snapshot.test.mjs
+
 log "checking personal backup dry-run"
 personal_output=$("$SCRIPT_DIR/backup.sh" \
   --tier personal \
   --output-dir "$BACKUP_DIR" \
   --backup-id validation-personal \
   --dry-run)
-assert_output_contains "$personal_output" "pg_dump --format=custom" "personal backup dry-run did not include pg_dump"
+assert_output_contains "$personal_output" "pg_dump --snapshot=" "personal backup dry-run did not use the exported snapshot"
+assert_output_contains "$personal_output" "--format=custom" "personal backup dry-run did not include pg_dump"
 assert_output_contains "$personal_output" "tar -C" "personal backup dry-run did not include archive creation"
+assert_output_contains "$personal_output" "signed SHA-256 manifest" "backup dry-run did not sign its integrity manifest"
 
 log "checking encrypted business backup dry-run"
-business_output=$("$SCRIPT_DIR/backup.sh" \
+business_output=$(HELIX_BACKUP_RUSTFS_BUCKET=helix-business \
+  "$SCRIPT_DIR/backup.sh" \
   --tier business \
   --output-dir "$BACKUP_DIR" \
   --backup-id validation-business \
@@ -117,17 +128,18 @@ assert_output_contains "$pitr_output" "pg_basebackup" "PITR backup dry-run did n
 assert_output_contains "$pitr_output" "tar -C $WAL_ARCHIVE_PATTERN" "PITR backup dry-run did not capture WAL segments"
 
 log "checking KMS-encrypted enterprise backup dry-run"
-kms_output=$("$SCRIPT_DIR/backup.sh" \
+kms_output=$(HELIX_BACKUP_RUSTFS_BUCKET=helix-enterprise \
+  "$SCRIPT_DIR/backup.sh" \
   --tier enterprise \
   --output-dir "$BACKUP_DIR" \
   --backup-id validation-kms \
   --kms-key-id alias/helix-backup \
   --dry-run)
 assert_output_contains "$kms_output" "aws kms generate-data-key --key-id" "KMS backup dry-run did not call KMS generate-data-key"
-assert_output_contains "$kms_output" "openssl enc -aes-256-cbc" "KMS backup dry-run did not envelope-encrypt the archive"
+assert_output_contains "$kms_output" "aes-gcm-file.mjs encrypt" "KMS backup dry-run did not use authenticated envelope encryption"
 assert_output_contains "$kms_output" ".datakey" "KMS backup dry-run did not write the wrapped data key"
 
-log "checking object-store sync dry-run"
+log "checking immutable object snapshot dry-run"
 object_output=$(HELIX_BACKUP_RUSTFS_BUCKET=helix-objects \
   "$SCRIPT_DIR/backup.sh" \
   --tier personal \
@@ -135,7 +147,13 @@ object_output=$(HELIX_BACKUP_RUSTFS_BUCKET=helix-objects \
   --backup-id validation-objects \
   --object-backup \
   --dry-run)
-assert_output_contains "$object_output" "s3 sync s3://helix-objects" "object backup dry-run did not sync the object bucket"
+assert_output_contains "$object_output" "require bucket versioning Enabled" "object backup dry-run did not require versioning"
+assert_output_contains "$object_output" "exactly one immutable version" "object backup dry-run did not reconcile DB references"
+
+log "checking business backup fails closed without object storage"
+if "$SCRIPT_DIR/backup.sh" --tier business --age-recipient age1test --dry-run >/dev/null 2>&1; then
+  die "business backup accepted omitted object storage"
+fi
 
 log "checking restore dry-run"
 restore_output=$("$SCRIPT_DIR/restore.sh" \
@@ -146,6 +164,7 @@ restore_output=$("$SCRIPT_DIR/restore.sh" \
   --dry-run)
 assert_output_contains "$restore_output" "createdb -U" "restore dry-run did not include target database creation"
 assert_output_contains "$restore_output" "pg_restore --no-owner --no-acl --exit-on-error" "restore dry-run did not include pg_restore"
+assert_output_contains "$restore_output" "verify Ed25519 signature" "restore dry-run did not verify the signed manifest"
 assert_output_contains "$restore_output" "public.actors" "restore dry-run did not include core table verification"
 
 log "checking PITR restore dry-run"
@@ -157,6 +176,8 @@ pitr_restore_output=$("$SCRIPT_DIR/restore.sh" \
 assert_output_contains "$pitr_restore_output" "restore_command" "PITR restore dry-run did not configure restore_command"
 assert_output_contains "$pitr_restore_output" "recovery_target_time = '2026-05-21T00:00:00Z'" "PITR restore dry-run did not set the recovery target"
 assert_output_contains "$pitr_restore_output" "recovery.signal" "PITR restore dry-run did not create recovery.signal"
+assert_output_contains "$pitr_restore_output" "start isolated Postgres" "PITR restore dry-run did not launch Postgres"
+assert_output_contains "$pitr_restore_output" "before/after proof markers" "PITR restore dry-run did not prove recovery boundaries"
 
 log "checking KMS restore dry-run"
 kms_restore_output=$("$SCRIPT_DIR/restore.sh" \
@@ -180,6 +201,8 @@ assert_output_contains "$drill_output" "/readyz" "restore-drill dry-run did not 
 assert_output_contains "$drill_output" "/openapi.json" "restore-drill dry-run did not include OpenAPI probe"
 assert_output_contains "$drill_output" "helix reindex --all" "restore-drill dry-run did not include search reindex"
 assert_output_contains "$drill_output" "HELIX_ACCESS_TOKEN=<redacted>" "restore-drill dry-run did not redact reindex token"
+assert_output_contains "$drill_output" "create new versioned bucket" "restore drill did not stage objects in a new bucket"
+assert_output_contains "$drill_output" "without changing routing" "restore drill did not isolate object routing"
 if grep -Fq "validation-secret-token" <<<"$drill_output"; then
   printf '%s\n' "$drill_output" >&2
   die "restore-drill dry-run leaked the reindex access token"
@@ -203,6 +226,29 @@ else
   log "skipping prior-day check: could not set a prior-day mtime on this platform"
 fi
 rm -rf "$PRIOR_DIR"
+
+log "checking missing and stale independent backups fail closed"
+EMPTY_PRIOR_DIR=$(mktemp -d "${TMPDIR:-/tmp}/helix-missing-prior.XXXXXX")
+if "$SCRIPT_DIR/restore-drill.sh" --backup-dir "$EMPTY_PRIOR_DIR" --prior-day --dry-run >/dev/null 2>&1; then
+  die "restore drill accepted a missing prior artifact"
+fi
+stale_archive="$EMPTY_PRIOR_DIR/stale.tar.gz"
+: >"$stale_archive"
+if touch -d "3 days ago" "$stale_archive" 2>/dev/null \
+   || touch -t "$(date -u -v-3d +%Y%m%d1200 2>/dev/null || date -u -d '3 days ago' +%Y%m%d1200)" "$stale_archive" 2>/dev/null; then
+  if "$SCRIPT_DIR/restore-drill.sh" --backup "$stale_archive" --max-age-hours 36 --dry-run >/dev/null 2>&1; then
+    die "restore drill accepted a stale independent artifact"
+  fi
+fi
+rm -rf "$EMPTY_PRIOR_DIR"
+
+log "checking nightly workflow consumes an earlier run and restores objects"
+assert_output_contains "$(cat .github/workflows/restore-drill.yml)" \
+  'select((.id | tostring) != $current' "nightly workflow does not exclude the current run"
+assert_output_contains "$(cat .github/workflows/restore-drill.yml)" \
+  'Previous backup artifact is missing or expired' "nightly workflow does not fail on a missing artifact"
+assert_output_contains "$(cat .github/workflows/restore-drill.yml)" \
+  '--restore-objects' "nightly workflow does not restore objects"
 
 log "checking live restore-drill smoke dry-run"
 live_drill_output=$("$SCRIPT_DIR/live-restore-drill-smoke.sh" \

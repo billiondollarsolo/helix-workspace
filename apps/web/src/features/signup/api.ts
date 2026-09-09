@@ -177,7 +177,7 @@ export async function checkOrgSlugAvailability(
   fetchImpl: SignupFetch = fetch,
 ): Promise<SignupSlugAvailability> {
   const response = await fetchImpl(
-    `/api/signup/org-slug/${encodeURIComponent(slug)}/availability`,
+    `/v1/api/signup/org-slug/${encodeURIComponent(slug)}/availability`,
     {
       method: "GET",
       credentials: "include",
@@ -190,7 +190,7 @@ export async function startSignup(
   input: SignupRequest,
   fetchImpl: SignupFetch = fetch,
 ): Promise<SignupResponse> {
-  const response = await fetchImpl("/api/signup", {
+  const response = await fetchImpl("/v1/api/signup", {
     method: "POST",
     credentials: "include",
     headers: jsonHeaders,
@@ -204,7 +204,7 @@ export async function verifySignupEmail(
   fetchImpl: SignupFetch = fetch,
   options: { readonly signal?: AbortSignal } = {},
 ): Promise<SignupVerifyEmailResponse> {
-  const response = await fetchImpl("/api/signup/verify-email", {
+  const response = await fetchImpl("/v1/api/signup/verify-email", {
     method: "POST",
     credentials: "include",
     headers: jsonHeaders,
@@ -218,7 +218,7 @@ export async function resendSignupVerification(
   token: string,
   fetchImpl: SignupFetch = fetch,
 ): Promise<SignupResendVerificationResponse> {
-  const response = await fetchImpl("/api/signup/resend-verification", {
+  const response = await fetchImpl("/v1/api/signup/resend-verification", {
     method: "POST",
     credentials: "include",
     headers: jsonHeaders,
@@ -235,7 +235,7 @@ export async function recordSignupFormViewed(
   input: SignupFormViewedInput,
   fetchImpl: SignupFetch = fetch,
 ): Promise<SignupFormViewedResponse> {
-  const response = await fetchImpl("/api/signup/form-viewed", {
+  const response = await fetchImpl("/v1/api/signup/form-viewed", {
     method: "POST",
     credentials: "include",
     headers: jsonHeaders,
@@ -249,7 +249,7 @@ export async function acceptSignupOnboardingInvite(
   fetchImpl: SignupFetch = fetch,
   options: { readonly signal?: AbortSignal } = {},
 ): Promise<SignupOnboardingInviteAcceptResponse> {
-  const response = await fetchImpl("/api/signup/onboarding-invite/accept", {
+  const response = await fetchImpl("/v1/api/signup/onboarding-invite/accept", {
     method: "POST",
     credentials: "include",
     headers: jsonHeaders,

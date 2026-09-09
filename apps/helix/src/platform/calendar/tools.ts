@@ -1,5 +1,6 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
-import { z } from "zod3";
+import { canonicalTimeZone } from "@helix/contracts";
+import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { findCalendarMeetingTimes } from "./freebusy.js";
@@ -9,6 +10,7 @@ import type {
   CalendarEventRecord,
   CalendarFreeBusyStore,
   CalendarListEntry,
+  CalendarMembershipRecord,
 } from "./types.js";
 import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
 
@@ -24,6 +26,9 @@ const attendeeSchema = z.object({
   metadata: metadataSchema,
 });
 
+const timeSemanticsSchema = z.enum(["zoned", "floating", "all_day"]);
+const timezoneSchema = z.string().min(1).refine(isIanaTimeZone, "timezone must be an IANA zone");
+
 const createSchema = z.object({
   calendarId: uuidSchema.nullable().optional(),
   title: z.string().min(1).max(512),
@@ -31,8 +36,9 @@ const createSchema = z.object({
   location: z.string().max(2048).nullable().optional(),
   startsAt: z.string().datetime(),
   endsAt: z.string().datetime(),
-  timezone: z.string().min(1).default("UTC"),
+  timezone: timezoneSchema.default("UTC"),
   allDay: z.boolean().default(false),
+  timeSemantics: timeSemanticsSchema.optional(),
   recurrenceRule: z.string().min(1).nullable().optional(),
   attendees: z.array(attendeeSchema).default([]),
   metadata: metadataSchema,
@@ -57,12 +63,12 @@ const deleteSchema = z.object({
   sendCancellation: z.boolean().default(true),
 });
 
-const respondSchema = z.object({
-  eventId: uuidSchema.optional(),
-  attendeeEmail: z.string().email().optional(),
-  rsvpToken: z.string().min(1).optional(),
-  responseStatus: z.enum(["accepted", "declined", "tentative"]),
-});
+const respondSchema = z
+  .object({
+    eventId: uuidSchema,
+    responseStatus: z.enum(["accepted", "declined", "tentative"]),
+  })
+  .strict();
 
 const listSchema = z.object({
   calendarId: uuidSchema.nullable().optional(),
@@ -86,6 +92,16 @@ const findTimeSchema = z.object({
 });
 
 const calendarsListSchema = z.object({});
+const calendarMembershipsListSchema = z.object({ calendarId: uuidSchema });
+const calendarMembershipSetSchema = z.object({
+  calendarId: uuidSchema,
+  actorId: uuidSchema,
+  role: z.enum(["manager", "writer", "reader"]),
+});
+const calendarMembershipRemoveSchema = calendarMembershipSetSchema.pick({
+  calendarId: true,
+  actorId: true,
+});
 
 const genericObjectJsonSchema = {
   type: "object",
@@ -170,13 +186,14 @@ export function createCalendarToolDefinitions(
           endsAt: new Date(input.endsAt),
           timezone: input.timezone,
           allDay: input.allDay,
+          ...(input.timeSemantics === undefined ? {} : { timeSemantics: input.timeSemantics }),
           recurrenceRule: input.recurrenceRule ?? null,
           attendees: attendeeInputs(input.attendees),
           metadata: toJsonObject(input.metadata),
+          sendInvitations: input.sendInvitations,
+          ...(options.rsvpBaseUrl === undefined ? {} : { rsvpBaseUrl: options.rsvpBaseUrl }),
         });
-        const invitationsQueued = input.sendInvitations
-          ? await sendInvitations(options, ctx.actor.id, event, "REQUEST")
-          : 0;
+        const invitationsQueued = event.invitationDeliveriesQueued ?? 0;
         return { ...serializeEvent(event), invitationsQueued };
       },
     }),
@@ -199,13 +216,13 @@ export function createCalendarToolDefinitions(
           actorId: ctx.actor.id,
           eventId,
           patch: updatePatchFromInput(patch),
+          sendInvitations: shouldSend,
+          ...(options.rsvpBaseUrl === undefined ? {} : { rsvpBaseUrl: options.rsvpBaseUrl }),
         });
         if (event === null) {
           throw new Error(`Unknown calendar event: ${eventId}`);
         }
-        const invitationsQueued = shouldSend
-          ? await sendInvitations(options, ctx.actor.id, event, "REQUEST")
-          : 0;
+        const invitationsQueued = event.invitationDeliveriesQueued ?? 0;
         return { ...serializeEvent(event), invitationsQueued };
       },
     }),
@@ -218,18 +235,17 @@ export function createCalendarToolDefinitions(
       inputSchema: zodToolSchema(deleteSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const event = (await options.store.deleteEvent({
+        const event = await options.store.deleteEvent({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           eventId: input.eventId,
-        })) as unknown as CalendarEventRecord | null | boolean;
-        if (event === null || event === false) {
+          sendInvitations: input.sendCancellation,
+          ...(options.rsvpBaseUrl === undefined ? {} : { rsvpBaseUrl: options.rsvpBaseUrl }),
+        });
+        if (event === null) {
           throw new Error(`Unknown calendar event: ${input.eventId}`);
         }
-        const cancellationsQueued =
-          input.sendCancellation && event !== true
-            ? await sendInvitations(options, ctx.actor.id, event, "CANCEL")
-            : 0;
+        const cancellationsQueued = event.invitationDeliveriesQueued ?? 0;
         return { deleted: true, eventId: input.eventId, cancellationsQueued };
       },
     }),
@@ -245,8 +261,6 @@ export function createCalendarToolDefinitions(
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           eventId: input.eventId,
-          attendeeEmail: input.attendeeEmail,
-          rsvpToken: input.rsvpToken,
           responseStatus: input.responseStatus,
         });
         if (event === null) {
@@ -256,7 +270,7 @@ export function createCalendarToolDefinitions(
           options,
           ctx.actor.id,
           event,
-          replyAttendeeFromInput(event, input),
+          replyAttendeeForActor(event, ctx.actor.id),
         );
         return { ...serializeEvent(event), rsvpRepliesQueued };
       },
@@ -304,6 +318,60 @@ export function createCalendarToolDefinitions(
           team: calendars.filter((calendar) => calendar.group === "team"),
         };
       },
+    }),
+    defineTool<z.output<typeof calendarMembershipsListSchema>, unknown>({
+      id: "calendar.memberships.list",
+      description: "List members of a calendar the current actor manages.",
+      permission: "calendar.manage",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(calendarMembershipsListSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const memberships = await options.store.listCalendarMemberships({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          calendarId: input.calendarId,
+        });
+        if (memberships === null) throw new Error(`Unknown calendar: ${input.calendarId}`);
+        return { memberships: memberships.map(serializeCalendarMembership) };
+      },
+    }),
+    defineTool<z.output<typeof calendarMembershipSetSchema>, unknown>({
+      id: "calendar.memberships.set",
+      description: "Add or update a calendar member.",
+      permission: "calendar.manage",
+      sideEffects: "write",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(calendarMembershipSetSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const membership = await options.store.setCalendarMembership({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          calendarId: input.calendarId,
+          memberActorId: input.actorId,
+          role: input.role,
+        });
+        if (membership === null) throw new Error("Calendar or active member was not found.");
+        return serializeCalendarMembership(membership);
+      },
+    }),
+    defineTool<z.output<typeof calendarMembershipRemoveSchema>, unknown>({
+      id: "calendar.memberships.remove",
+      description: "Remove a non-owner calendar member.",
+      permission: "calendar.manage",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(calendarMembershipRemoveSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: async (input, ctx) => ({
+        removed: await options.store.removeCalendarMembership({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          calendarId: input.calendarId,
+          memberActorId: input.actorId,
+        }),
+      }),
     }),
     defineTool<z.output<typeof findTimeSchema>, unknown>({
       id: "calendar.find-time",
@@ -380,18 +448,11 @@ async function sendReply(
   return queued.length;
 }
 
-function replyAttendeeFromInput(
+function replyAttendeeForActor(
   event: CalendarEventRecord,
-  input: z.output<typeof respondSchema>,
+  actorId: string,
 ): CalendarAttendeeRecord | null {
-  return (
-    event.attendees.find(
-      (attendee) =>
-        (input.rsvpToken !== undefined && attendee.rsvpToken === input.rsvpToken) ||
-        (input.attendeeEmail !== undefined &&
-          attendee.email.toLowerCase() === input.attendeeEmail.toLowerCase()),
-    ) ?? null
-  );
+  return event.attendees.find((attendee) => attendee.actorId === actorId) ?? null;
 }
 
 export function registerCalendarTools(
@@ -409,22 +470,6 @@ function defineTool<Input, Output>(
   return tool;
 }
 
-async function sendInvitations(
-  options: CreateCalendarToolDefinitionsOptions,
-  actorId: string,
-  event: CalendarEventRecord,
-  method: "REQUEST" | "CANCEL",
-): Promise<number> {
-  const queued = await options.invitationSender?.sendInvitation({
-    orgId: event.orgId,
-    actorId,
-    event,
-    method,
-    ...(options.rsvpBaseUrl === undefined ? {} : { rsvpBaseUrl: options.rsvpBaseUrl }),
-  });
-  return queued?.length ?? 0;
-}
-
 function serializeCalendarEntry(entry: CalendarListEntry) {
   return {
     id: entry.id,
@@ -440,6 +485,16 @@ function serializeCalendarEntry(entry: CalendarListEntry) {
     writable: entry.writable,
     sortOrder: entry.sortOrder,
     eventCount: entry.eventCount,
+  };
+}
+
+function serializeCalendarMembership(membership: CalendarMembershipRecord) {
+  return {
+    calendarId: membership.calendarId,
+    actorId: membership.actorId,
+    displayName: membership.displayName,
+    email: membership.email,
+    role: membership.role,
   };
 }
 
@@ -484,6 +539,7 @@ function updatePatchFromInput(
     ...(input.endsAt === undefined ? {} : { endsAt: new Date(input.endsAt) }),
     ...(input.timezone === undefined ? {} : { timezone: input.timezone }),
     ...(input.allDay === undefined ? {} : { allDay: input.allDay }),
+    ...(input.timeSemantics === undefined ? {} : { timeSemantics: input.timeSemantics }),
     ...(input.recurrenceRule === undefined ? {} : { recurrenceRule: input.recurrenceRule }),
     ...(input.attendees === undefined ? {} : { attendees: attendeeInputs(input.attendees) }),
     ...(input.metadata === undefined ? {} : { metadata: toJsonObject(input.metadata) }),
@@ -492,6 +548,15 @@ function updatePatchFromInput(
 
 function toJsonObject(value: Record<string, unknown> | undefined): JsonObject {
   return JSON.parse(JSON.stringify(value ?? {})) as JsonObject;
+}
+
+function isIanaTimeZone(value: string): boolean {
+  try {
+    canonicalTimeZone(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function hasFreeBusyStore(store: CalendarStore): store is CalendarStore & CalendarFreeBusyStore {

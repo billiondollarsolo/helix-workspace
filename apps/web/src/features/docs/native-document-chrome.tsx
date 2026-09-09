@@ -183,11 +183,7 @@ function runChain(
   apply: (chain: DocsChromeChain) => DocsChromeChain,
 ): void {
   if (editor === null) return;
-  try {
-    apply(editor.chain().focus()).run();
-  } catch {
-    // ignore; editor commands are best-effort from chrome.
-  }
+  apply(editor.chain().focus()).run();
 }
 
 function isActive(

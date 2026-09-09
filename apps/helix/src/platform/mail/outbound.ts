@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import nodemailer, { type Transporter } from "nodemailer";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import type { EventBus, EventEnvelope, JsonObject, Unsubscribe } from "@helix/sdk-types";
+import type { JsonObject } from "@helix/sdk-types";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import type {
   MailAttachmentInput,
@@ -8,8 +9,9 @@ import type {
   MailOutboundEnvelope,
   MailOutboundRecord,
 } from "./types.js";
-import type { MailStore } from "./store.js";
-import { MailOutboundPayloadError, MailProviderError } from "./errors.js";
+import type { ClaimedOutboundMail, MailStore, OutboundMailQueueStore } from "./store.js";
+import { MailDeliveryError, MailProviderError } from "./errors.js";
+import { prepareOutboundEnvelope } from "./threading.js";
 
 export interface OutboundMailConfig {
   readonly host: string;
@@ -20,8 +22,25 @@ export interface OutboundMailConfig {
 }
 
 export interface OutboundMailTransport {
-  send(envelope: MailOutboundEnvelope): Promise<MailOutboundDeliveryResult>;
+  /** Repeated calls with the same key must represent one provider submission. */
+  send(
+    envelope: MailOutboundEnvelope,
+    handoff: { readonly idempotencyKey: string },
+  ): Promise<MailOutboundDeliveryResult>;
 }
+
+export type DkimOptionsResolver = (fromAddress: string) => Promise<
+  | {
+      readonly domainName: string;
+      readonly keySelector: string;
+      readonly privateKey: string;
+    }
+  | null
+>;
+
+export type OutboundMailTransportResolver = (
+  outbound: MailOutboundRecord,
+) => Promise<OutboundMailTransport>;
 
 /** Resolve Drive objectId attachments to bytes before SMTP send. */
 export type AttachmentObjectResolver = (
@@ -36,9 +55,12 @@ export interface MailSendServiceOptions {
 }
 
 export interface OutboundMailWorkerOptions {
-  readonly events: EventBus;
+  readonly store: OutboundMailQueueStore;
   readonly dispatcher: OutboundMailDispatcher;
-  readonly subject?: string;
+  readonly owner?: string;
+  readonly leaseMs?: number;
+  readonly intervalMs?: number;
+  readonly batchSize?: number;
   readonly onError?: (error: unknown) => void;
 }
 
@@ -50,24 +72,40 @@ export interface QueueMailInput {
   readonly references?: readonly string[];
   readonly envelope: MailOutboundEnvelope;
   readonly now?: Date;
+  readonly sendAt?: Date;
 }
 
 export interface OutboundDispatchOptions {
   readonly maxAttempts?: number;
   readonly baseDelayMs?: number;
   readonly maxDelayMs?: number;
-  readonly sleep?: (ms: number) => Promise<void>;
+  readonly now?: () => Date;
+  readonly random?: () => number;
   readonly resolveAttachment?: AttachmentObjectResolver;
+  readonly metrics?:
+    | {
+        recordOperationalEvent(input: {
+          readonly capability: "mail";
+          readonly operation: "queue_wait" | "delivery";
+          readonly status: "success" | "error" | "retry" | "blocked" | "dry_run";
+          readonly durationSeconds?: number;
+        }): void;
+      }
+    | undefined;
 }
 
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 60_000;
+const DEFAULT_LEASE_MS = 5 * 60_000;
 
 export class NodemailerMailTransport implements OutboundMailTransport {
   private readonly transporter: Transporter<SMTPTransport.SentMessageInfo>;
 
-  constructor(config: OutboundMailConfig | Transporter<SMTPTransport.SentMessageInfo>) {
+  constructor(
+    config: OutboundMailConfig | Transporter<SMTPTransport.SentMessageInfo>,
+    private readonly resolveDkim?: DkimOptionsResolver,
+  ) {
     this.transporter =
       "sendMail" in config
         ? config
@@ -86,21 +124,29 @@ export class NodemailerMailTransport implements OutboundMailTransport {
           });
   }
 
-  async send(envelope: MailOutboundEnvelope): Promise<MailOutboundDeliveryResult> {
+  async send(
+    envelope: MailOutboundEnvelope,
+    handoff: { readonly idempotencyKey: string },
+  ): Promise<MailOutboundDeliveryResult> {
+    const dkim = await this.resolveDkim?.(envelope.from.address);
     const info = await this.transporter.sendMail({
       from: formatAddress(envelope.from),
       to: envelope.to.map(formatAddress),
       cc: envelope.cc.map(formatAddress),
       bcc: envelope.bcc.map(formatAddress),
       subject: envelope.subject,
+      messageId: envelope.messageId,
+      inReplyTo: envelope.inReplyTo,
+      references: envelope.references === undefined ? undefined : [...envelope.references],
+      headers: { "X-Helix-Idempotency-Key": handoff.idempotencyKey },
       text: envelope.text,
       html: envelope.html,
       attachments: envelope.attachments.map((attachment) => ({
         filename: attachment.filename,
         contentType: attachment.contentType,
         content: attachmentContent(attachment.content),
-        path: attachment.path,
       })),
+      ...(dkim === undefined || dkim === null ? {} : { dkim }),
     });
     return {
       providerMessageId: info.messageId,
@@ -110,9 +156,6 @@ export class NodemailerMailTransport implements OutboundMailTransport {
 }
 
 function attachmentContent(value: unknown): Buffer {
-  if (value === undefined || value === null) {
-    return Buffer.alloc(0);
-  }
   if (Buffer.isBuffer(value)) {
     return value;
   }
@@ -136,8 +179,7 @@ function isSerializedBuffer(value: unknown): value is { readonly data: readonly 
 }
 
 /**
- * Resolve any `objectId` attachments via the Drive storage resolver while
- * preserving inline base64/buffer content (back-compat).
+ * Resolve Drive object references and reject malformed attachment envelopes.
  */
 export async function resolveOutboundAttachments(
   envelope: MailOutboundEnvelope,
@@ -151,9 +193,10 @@ export async function resolveOutboundAttachments(
   for (const attachment of envelope.attachments) {
     if (attachment.objectId !== undefined && attachment.objectId.length > 0) {
       if (resolveObject === undefined || context === undefined) {
-        throw new MailProviderError(
+        throw new MailDeliveryError(
           `Attachment objectId ${attachment.objectId} requires a Drive resolver.`,
-          new Error("missing_attachment_resolver"),
+          false,
+          { cause: new Error("missing_attachment_resolver") },
         );
       }
       const content = await resolveObject(attachment.objectId, context);
@@ -163,10 +206,12 @@ export async function resolveOutboundAttachments(
       });
       continue;
     }
-    attachments.push({
-      ...attachment,
-      content: attachment.content ?? Buffer.alloc(0),
-    });
+    if (attachment.content === undefined) {
+      throw new MailDeliveryError("Outbound mail attachment is missing content.", false, {
+        cause: new Error("missing_attachment_content"),
+      });
+    }
+    attachments.push(attachment);
   }
   return { ...envelope, attachments };
 }
@@ -182,14 +227,26 @@ export class MailSendService {
 
   queue(input: QueueMailInput): Promise<MailOutboundRecord> {
     const now = input.now ?? new Date();
+    const sendAt = input.sendAt;
+    if (
+      sendAt !== undefined &&
+      (!Number.isFinite(sendAt.getTime()) ||
+        sendAt <= now ||
+        sendAt.getTime() - now.getTime() > 366 * 24 * 60 * 60_000)
+    ) {
+      throw new RangeError("Scheduled mail must be sent within the next 366 days.");
+    }
+    const envelope = prepareOutboundEnvelope({
+      ...input.envelope,
+      ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
+      ...(input.references === undefined ? {} : { references: input.references }),
+    });
     return this.options.store.createOutbound({
       orgId: input.orgId,
       actorId: input.actorId,
       ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-      ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
-      ...(input.references === undefined ? {} : { references: input.references }),
-      envelope: input.envelope,
-      undoUntil: new Date(now.getTime() + this.undoWindowMs),
+      envelope,
+      undoUntil: sendAt ?? new Date(now.getTime() + this.undoWindowMs),
       outboxSubject: this.outboxSubject,
     });
   }
@@ -207,161 +264,181 @@ export class OutboundMailDispatcher {
   private readonly maxAttempts: number;
   private readonly baseDelayMs: number;
   private readonly maxDelayMs: number;
-  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly now: () => Date;
+  private readonly random: () => number;
   private readonly resolveAttachment: AttachmentObjectResolver | undefined;
+  private readonly metrics: OutboundDispatchOptions["metrics"];
 
   constructor(
-    private readonly store: MailStore,
-    private readonly transport: OutboundMailTransport,
+    private readonly store: OutboundMailQueueStore,
+    private readonly resolveTransport: OutboundMailTransportResolver,
     options: OutboundDispatchOptions = {},
   ) {
     this.maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
     this.baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
-    this.sleep =
-      options.sleep ??
-      ((ms) =>
-        new Promise((resolve) => {
-          setTimeout(resolve, ms);
-        }));
+    this.now = options.now ?? (() => new Date());
+    this.random = options.random ?? Math.random;
     this.resolveAttachment = options.resolveAttachment;
+    this.metrics = options.metrics;
   }
 
-  async dispatch(outboundId: string): Promise<MailOutboundRecord | null> {
+  async dispatch(outbound: ClaimedOutboundMail): Promise<MailOutboundRecord | null> {
+    const startedAt = Date.now();
+    this.metrics?.recordOperationalEvent({
+      capability: "mail",
+      operation: "queue_wait",
+      status: "success",
+      durationSeconds: Math.max(0, this.now().getTime() - outbound.undoUntil.getTime()) / 1_000,
+    });
+    const recordDelivery = (status: "success" | "error" | "retry") =>
+      this.metrics?.recordOperationalEvent({
+        capability: "mail",
+        operation: "delivery",
+        status,
+        durationSeconds: (Date.now() - startedAt) / 1_000,
+      });
     // P2-6: an `smtp.send` span covers the SMTP delivery of one queued message.
     return trace
       .getTracer("helix.mail")
       .startActiveSpan(
         "smtp.send",
-        { attributes: { "helix.mail.outbound_id": outboundId } },
+        { attributes: { "helix.mail.outbound_id": outbound.id } },
         async (span) => {
           try {
-            const outbound = await this.store.markOutboundSending(outboundId);
-            if (outbound === null) {
-              span.setAttribute("helix.mail.dispatch_skipped", true);
-              return null;
-            }
-
-            let attempt = outbound.attemptCount ?? 0;
-            let lastError: unknown;
-
-            while (attempt < this.maxAttempts) {
-              attempt += 1;
-              span.setAttribute("helix.mail.attempt", attempt);
-              try {
-                const resolved = await resolveOutboundAttachments(
-                  outbound.envelope,
-                  this.resolveAttachment,
-                  { orgId: outbound.orgId, actorId: outbound.actorId },
-                );
-                const delivery = await this.transport.send(resolved);
-                span.setAttribute("helix.mail.delivery_status", "sent");
-                return await this.store.markOutboundSent({
+            span.setAttribute("helix.mail.attempt", outbound.attemptCount);
+            let delivery: MailOutboundDeliveryResult;
+            try {
+              const resolved = await resolveOutboundAttachments(
+                outbound.envelope,
+                this.resolveAttachment,
+                { orgId: outbound.orgId, actorId: outbound.actorId },
+              );
+              const transport = await this.resolveTransport(outbound);
+              delivery = await transport.send(resolved, {
+                idempotencyKey: outbound.handoffKey,
+              });
+            } catch (error) {
+              span.recordException(error instanceof Error ? error : new Error(String(error)));
+              span.setStatus({ code: SpanStatusCode.ERROR });
+              const message = error instanceof Error ? error.message : String(error);
+              if (outbound.attemptCount >= this.maxAttempts || isTerminalDeliveryError(error)) {
+                span.setAttribute("helix.mail.delivery_status", "dead_lettered");
+                recordDelivery("error");
+                return await this.store.markOutboundDeadLettered({
                   id: outbound.id,
-                  providerMessageId: delivery.providerMessageId,
-                  deliveryMetadata: delivery.deliveryMetadata,
+                  leaseToken: outbound.leaseToken,
+                  lastError: new MailProviderError(message, error).message,
                 });
-              } catch (error) {
-                lastError = error;
-                span.recordException(error instanceof Error ? error : new Error(String(error)));
-                const message = error instanceof Error ? error.message : String(error);
-
-                if (attempt >= this.maxAttempts) {
-                  span.setAttribute("helix.mail.delivery_status", "dead_lettered");
-                  span.setStatus({ code: SpanStatusCode.ERROR });
-                  const wrapped = new MailProviderError(message, error);
-                  if (this.store.markOutboundDeadLettered !== undefined) {
-                    return await this.store.markOutboundDeadLettered({
-                      id: outbound.id,
-                      lastError: wrapped.message,
-                    });
-                  }
-                  return await this.store.markOutboundFailed(outbound.id, wrapped.message);
-                }
-
-                const delay = computeBackoffMs(attempt, this.baseDelayMs, this.maxDelayMs);
-                span.setAttribute("helix.mail.delivery_status", "retry");
-                span.setAttribute("helix.mail.next_delay_ms", delay);
-                if (this.store.markOutboundRetry !== undefined) {
-                  await this.store.markOutboundRetry({
-                    id: outbound.id,
-                    attemptCount: attempt,
-                    nextAttemptAt: new Date(Date.now() + delay),
-                    lastError: message,
-                  });
-                } else {
-                  await this.store.markOutboundFailed(outbound.id, message);
-                }
-                await this.sleep(delay);
               }
+              const delay = computeBackoffMs(
+                outbound.attemptCount,
+                this.baseDelayMs,
+                this.maxDelayMs,
+                this.random,
+              );
+              span.setAttribute("helix.mail.delivery_status", "retry");
+              span.setAttribute("helix.mail.next_delay_ms", delay);
+              recordDelivery("retry");
+              return await this.store.markOutboundRetry({
+                id: outbound.id,
+                leaseToken: outbound.leaseToken,
+                nextAttemptAt: new Date(this.now().getTime() + delay),
+                lastError: message,
+              });
             }
-
-            const message =
-              lastError instanceof Error
-                ? lastError.message
-                : typeof lastError === "string"
-                  ? lastError
-                  : "unknown";
-            span.setAttribute("helix.mail.delivery_status", "failed");
-            span.setStatus({ code: SpanStatusCode.ERROR });
-            return await this.store.markOutboundFailed(outbound.id, message);
+            span.setAttribute("helix.mail.delivery_status", "sent");
+            recordDelivery("success");
+            return await this.store.markOutboundSent({
+              id: outbound.id,
+              leaseToken: outbound.leaseToken,
+              providerMessageId: delivery.providerMessageId,
+              deliveryMetadata: delivery.deliveryMetadata,
+            });
           } finally {
             span.end();
           }
         },
       );
   }
-
-  async dispatchOutboxPayload(payload: unknown): Promise<MailOutboundRecord | null> {
-    const parsed = mailOutboxPayloadSchema(payload);
-    return this.dispatch(parsed.mailOutboundId);
-  }
 }
 
-/** Exponential backoff with full jitter, capped at maxDelayMs. */
-export function computeBackoffMs(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
+/** Exponential backoff with equal jitter: bounded away from zero to prevent hot loops. */
+export function computeBackoffMs(
+  attempt: number,
+  baseDelayMs: number,
+  maxDelayMs: number,
+  random: () => number = Math.random,
+): number {
   const exp = Math.min(maxDelayMs, baseDelayMs * 2 ** Math.max(0, attempt - 1));
-  return Math.floor(Math.random() * exp);
+  return Math.max(1, Math.floor(exp / 2 + random() * (exp / 2)));
 }
 
 export class OutboundMailWorker {
-  private readonly subject: string;
+  private readonly owner: string;
+  private readonly leaseMs: number;
+  private readonly intervalMs: number;
+  private readonly batchSize: number;
   private readonly onError: ((error: unknown) => void) | undefined;
-  private unsubscribe: Unsubscribe | undefined;
+  private timer: NodeJS.Timeout | undefined;
+  private activeDrain: Promise<number> | undefined;
 
   constructor(private readonly options: OutboundMailWorkerOptions) {
-    this.subject = options.subject ?? "mail.send";
+    this.owner = options.owner ?? randomUUID();
+    this.leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
+    this.intervalMs = options.intervalMs ?? 1_000;
+    this.batchSize = options.batchSize ?? 100;
     this.onError = options.onError;
   }
 
-  async start(): Promise<void> {
-    if (this.unsubscribe !== undefined) {
-      return;
-    }
-
-    this.unsubscribe = await this.options.events.subscribe(this.subject, async (event) => {
-      await this.handle(event);
-    });
+  start(): void {
+    if (this.timer !== undefined) return;
+    this.timer = setInterval(() => void this.runScheduledDrain(), this.intervalMs);
+    void this.runScheduledDrain();
   }
 
   async stop(): Promise<void> {
-    if (this.unsubscribe === undefined) {
-      return;
-    }
-
-    const unsubscribe = this.unsubscribe;
-    this.unsubscribe = undefined;
-    await unsubscribe();
+    if (this.timer !== undefined) clearInterval(this.timer);
+    this.timer = undefined;
+    await this.activeDrain;
   }
 
-  async handle(event: EventEnvelope): Promise<MailOutboundRecord | null> {
-    try {
-      return await this.options.dispatcher.dispatchOutboxPayload(event.payload);
-    } catch (error) {
-      this.onError?.(error);
-      throw error;
+  async drainOnce(now?: Date): Promise<number> {
+    let attempted = 0;
+    while (attempted < this.batchSize) {
+      const outbound = await this.options.store.claimDueOutbound({
+        owner: this.owner,
+        leaseMs: this.leaseMs,
+        ...(now === undefined ? {} : { now }),
+      });
+      if (outbound === null) break;
+      await this.options.dispatcher.dispatch(outbound);
+      attempted += 1;
     }
+    return attempted;
   }
+
+  private runScheduledDrain(): Promise<number> {
+    if (this.activeDrain !== undefined) return this.activeDrain;
+    this.activeDrain = this.drainOnce()
+      .catch((error: unknown) => {
+        this.onError?.(error);
+        return 0;
+      })
+      .finally(() => {
+        this.activeDrain = undefined;
+      });
+    return this.activeDrain;
+  }
+}
+
+export function isTerminalDeliveryError(error: unknown): boolean {
+  if (error instanceof MailDeliveryError) return !error.retryable;
+  if (error instanceof TypeError) return true;
+  if (typeof error !== "object" || error === null) return false;
+  const value = error as { readonly retryable?: unknown; readonly responseCode?: unknown };
+  if (typeof value.retryable === "boolean") return !value.retryable;
+  return typeof value.responseCode === "number" && value.responseCode >= 500;
 }
 
 function formatAddress(address: { readonly address: string; readonly name?: string }): string {
@@ -389,16 +466,4 @@ function normalizeDeliveryMetadata(info: SMTPTransport.SentMessageInfo): JsonObj
     }),
   );
   return metadata as JsonObject;
-}
-
-function mailOutboxPayloadSchema(value: unknown): { readonly mailOutboundId: string } {
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    "mailOutboundId" in value &&
-    typeof value.mailOutboundId === "string"
-  ) {
-    return { mailOutboundId: value.mailOutboundId };
-  }
-  throw new MailOutboundPayloadError();
 }

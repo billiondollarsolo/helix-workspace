@@ -1,5 +1,6 @@
 export {
   assertPluginManifest,
+  isCanonicalPluginId,
   pluginManifestJsonSchema,
   validatePluginManifest,
 } from "@helix/sdk-types";

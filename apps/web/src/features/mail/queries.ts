@@ -6,6 +6,7 @@ import {
 } from "@/lib/search-params";
 import {
   getMailThread,
+  getMailUserSettings,
   getMailVacation,
   listMailFilters,
   listMailFolders,
@@ -87,6 +88,7 @@ export const mailQueryKeys = {
   labels: () => ["mail", "labels"] as const,
   filters: () => ["mail", "filters"] as const,
   vacation: () => ["mail", "vacation"] as const,
+  settings: () => ["mail", "settings"] as const,
 };
 
 export function mailThreadsQueryOptions(input: MailThreadsListInput) {
@@ -193,6 +195,14 @@ export function mailFiltersQueryOptions() {
   return queryOptions({
     queryKey: mailQueryKeys.filters(),
     queryFn: () => listMailFilters(),
+    throwOnError: false,
+  });
+}
+
+export function mailUserSettingsQueryOptions() {
+  return queryOptions({
+    queryKey: mailQueryKeys.settings(),
+    queryFn: () => getMailUserSettings(),
     throwOnError: false,
   });
 }

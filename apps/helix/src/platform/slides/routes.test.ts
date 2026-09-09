@@ -43,6 +43,7 @@ describe("slides sync routes", () => {
       operation: {
         kind: "update-slide",
         slideId: slide.id,
+        expectedRevision: 1,
         content: { layout: "bullets", title: "Updated", items: ["Plan", "Risks"] },
         speakerNotes: "Updated notes",
       },
@@ -106,6 +107,7 @@ describe("slides sync routes", () => {
       operation: {
         kind: "update-slide",
         slideId: slide.id,
+        expectedRevision: 1,
         content: { layout: "title", title: "Accepted" },
       },
     });
@@ -117,6 +119,7 @@ describe("slides sync routes", () => {
       operation: {
         kind: "update-slide",
         slideId: slide.id,
+        expectedRevision: 2,
         content: { layout: "title", title: "Duplicate" },
       },
     });
@@ -143,6 +146,7 @@ describe("slides sync routes", () => {
       operation: {
         kind: "update-slide",
         slideId: slide.id,
+        expectedRevision: 2,
         content: { layout: "title", title: "Duplicate after restart" },
       },
     });
@@ -176,6 +180,7 @@ describe("slides sync routes", () => {
       operation: {
         kind: "update-slide",
         slideId: slide.id,
+        expectedRevision: 1,
         content: { layout: "title", title: "Future" },
       },
     });
@@ -267,6 +272,7 @@ describe("slides sync routes", () => {
       operation: {
         kind: "update-slide",
         slideId: secondSlide.id,
+        expectedRevision: 1,
         content: { layout: "title", title: "Wrong room" },
       },
     });

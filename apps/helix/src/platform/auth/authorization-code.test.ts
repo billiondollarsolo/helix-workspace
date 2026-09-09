@@ -15,33 +15,26 @@ function pkcePair(): { readonly verifier: string; readonly challenge: string } {
   return { verifier, challenge };
 }
 
-const baseIssueInput = (challenge: string, method: "S256" | "plain" = "S256") => ({
+const baseIssueInput = (challenge: string) => ({
   clientId: "client-1",
   actorId: "actor-1",
   orgId: "org-1",
   redirectUri: "https://app.example.com/callback",
   scopes: ["mail.read", "chat.read"],
   codeChallenge: challenge,
-  codeChallengeMethod: method,
   state: "xyz",
 });
 
 describe("PKCE verification", () => {
   it("verifies an S256 challenge against its verifier", () => {
     const { verifier, challenge } = pkcePair();
-    expect(verifyPkce(challenge, "S256", verifier)).toBe(true);
+    expect(verifyPkce(challenge, verifier)).toBe(true);
   });
 
   it("rejects a tampered verifier", () => {
     const { challenge } = pkcePair();
     const wrong = randomBytes(48).toString("base64url");
-    expect(verifyPkce(challenge, "S256", wrong)).toBe(false);
-  });
-
-  it("supports the plain method", () => {
-    const verifier = randomBytes(48).toString("base64url");
-    expect(verifyPkce(verifier, "plain", verifier)).toBe(true);
-    expect(verifyPkce(verifier, "plain", `${verifier}x`)).toBe(false);
+    expect(verifyPkce(challenge, wrong)).toBe(false);
   });
 
   it("validates code_challenge length and charset", () => {

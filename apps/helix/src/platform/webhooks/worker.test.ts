@@ -27,6 +27,7 @@ import type { WebhookHttpClient, WebhookHttpResponse } from "./delivery.js";
 const orgId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
 const outboundWebhookId = "00000000-0000-4000-8000-000000000010";
+const secretResolver = { resolveSecret: (_orgId: string, ciphertext: string) => ciphertext };
 
 describe("OutboundWebhookWorker", () => {
   it("dispatches an event to enabled outbound webhooks matching the subject", async () => {
@@ -49,6 +50,7 @@ describe("OutboundWebhookWorker", () => {
       store,
       events: new NoopEventBus(),
       httpClient,
+      secretResolver,
     });
 
     await expect(
@@ -99,6 +101,7 @@ describe("OutboundWebhookWorker", () => {
       store,
       events: new NoopEventBus(),
       httpClient,
+      secretResolver,
     });
 
     await expect(
@@ -126,6 +129,7 @@ describe("OutboundWebhookWorker", () => {
       store,
       events: new NoopEventBus(),
       httpClient,
+      secretResolver,
       retryPolicy: { maxAttempts: 3, delaysMs: [1_000] },
     });
 
@@ -197,6 +201,7 @@ describe("OutboundWebhookWorker", () => {
       store,
       events: new NoopEventBus(),
       httpClient,
+      secretResolver,
     });
 
     await expect(worker.drainRetries(now)).resolves.toEqual({
@@ -234,7 +239,7 @@ describe("OutboundWebhookWorker", () => {
     });
     const httpClient = new RecordingHttpClient([{ status: 204, headers: {}, body: "" }]);
     const registry = createToolRegistry();
-    registerWebhookTools(registry, { store, httpClient });
+    registerWebhookTools(registry, { store, httpClient, secretResolver });
 
     const result = await registry.invoke(
       "webhook.outbound.replay",
@@ -284,7 +289,7 @@ describe("OutboundWebhookWorker", () => {
     });
     const httpClient = new RecordingHttpClient([{ status: 204, headers: {}, body: "" }]);
     const registry = createToolRegistry();
-    registerWebhookTools(registry, { store, httpClient });
+    registerWebhookTools(registry, { store, httpClient, secretResolver });
 
     const result = await registry.invoke(
       "webhook.outbound.replay",
@@ -320,7 +325,7 @@ class InMemoryWebhookStore implements OutboundWebhookWorkerStore, WebhookToolSto
       name: input.name,
       url: input.url,
       eventSubjects: input.eventSubjects,
-      secretRef: input.secretRef ?? null,
+      secretCiphertext: input.secret,
       headers: input.headers ?? {},
       enabled: input.enabled ?? true,
       metadata: input.metadata ?? {},
@@ -344,7 +349,8 @@ class InMemoryWebhookStore implements OutboundWebhookWorkerStore, WebhookToolSto
       name: input.patch.name ?? current.name,
       url: input.patch.url ?? current.url,
       eventSubjects: input.patch.eventSubjects ?? current.eventSubjects,
-      secretRef: input.patch.secretRef === undefined ? current.secretRef : input.patch.secretRef,
+      secretCiphertext:
+        input.patch.secret === undefined ? current.secretCiphertext : input.patch.secret,
       headers: input.patch.headers ?? current.headers,
       enabled: input.patch.enabled ?? current.enabled,
       metadata: input.patch.metadata ?? current.metadata,
@@ -379,7 +385,7 @@ class InMemoryWebhookStore implements OutboundWebhookWorkerStore, WebhookToolSto
       name: input.name,
       slug: input.slug,
       source: input.source,
-      secretRef: input.secretRef ?? null,
+      secretCiphertext: input.secret,
       enabled: input.enabled ?? true,
       metadata: input.metadata ?? {},
       createdByActorId: input.createdByActorId ?? null,
@@ -404,9 +410,11 @@ class InMemoryWebhookStore implements OutboundWebhookWorkerStore, WebhookToolSto
   async rotateInboundSecret(
     orgIdValue: string,
     id: string,
-  ): Promise<{ readonly webhook: InboundWebhookRecord; readonly secretRef: string } | null> {
+    secret: string,
+  ): Promise<InboundWebhookRecord | null> {
     void orgIdValue;
     void id;
+    void secret;
     return null;
   }
 
@@ -565,7 +573,7 @@ function outboundWebhook(overrides: Partial<OutboundWebhookRecord>): OutboundWeb
     name: "Webhook",
     url: "https://example.test/webhook",
     eventSubjects: ["ticket.created"],
-    secretRef: "inline:test-secret",
+    secretCiphertext: "test-secret",
     headers: {},
     enabled: true,
     metadata: {},
@@ -583,7 +591,7 @@ function inboundWebhook(overrides: Partial<InboundWebhookRecord>): InboundWebhoo
     name: "Inbound",
     slug: "inbound",
     source: "generic",
-    secretRef: "inline:test-secret",
+    secretCiphertext: "test-secret",
     enabled: true,
     metadata: {},
     createdByActorId: actorId,

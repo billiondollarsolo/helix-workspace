@@ -1,113 +1,77 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { assertPluginManifest } from "@helix/sdk";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 const repoRoot = process.cwd().replace(/\/apps\/helix$/u, "");
-const grafanaPluginRoot = join(repoRoot, "plugins/com.helix.observability-grafana-stack");
-const otelPluginRoot = join(repoRoot, "plugins/com.helix.observability-otel");
 const alertmanagerRoot = join(repoRoot, "infra/observability/alertmanager");
 const prometheusRoot = join(repoRoot, "infra/observability/prometheus");
+const grafanaRoot = join(repoRoot, "infra/observability/grafana/dashboards");
+const observabilityRoot = join(repoRoot, "infra/observability");
 const rootComposePath = join(repoRoot, "docker-compose.yml");
 
-const dashboardFiles = [
-  "platform-overview.json",
-  "mail.json",
-  "chat.json",
-  "drive.json",
-  "docs.json",
-  "ai.json",
-  "signup.json",
-  "agent.json",
-  "security.json",
-  "audit.json",
-  "plugins.json",
-  "tenant-overview.json",
-  "tenant-finops.json",
-] as const;
+describe("observability infrastructure assets", () => {
+  it("keeps capability dashboards and alerts on metrics with real producers", async () => {
+    const dashboard = JSON.parse(
+      await readFile(join(grafanaRoot, "capability-health.json"), "utf8"),
+    ) as unknown;
+    const dashboardText = JSON.stringify(dashboard);
+    const metricDefinitions = await readFile(
+      join(repoRoot, "apps/helix/src/api/metrics.ts"),
+      "utf8",
+    );
+    const producerText = await Promise.all(
+      [
+        "apps/helix/src/platform/mail/outbound.ts",
+        "apps/helix/src/platform/chat/realtime.ts",
+        "apps/helix/src/platform/drive/store.ts",
+        "apps/helix/src/server.ts",
+      ].map((file) => readFile(join(repoRoot, file), "utf8")),
+    ).then((files) => files.join("\n"));
+    const alerts = await readFile(
+      join(repoRoot, "infra/helm/helix/files/helix-capability-health.yml"),
+      "utf8",
+    );
 
-describe("observability plugin assets", () => {
-  it("ships valid plugin manifests", async () => {
-    for (const root of [otelPluginRoot, grafanaPluginRoot]) {
-      const manifest = JSON.parse(await readFile(join(root, "plugin.json"), "utf8")) as unknown;
-      expect(() => assertPluginManifest(manifest)).not.toThrow();
-    }
-  });
-
-  it("ships parseable Grafana dashboards with stable uids and panels", async () => {
-    const seenUids = new Set<string>();
-
-    for (const file of dashboardFiles) {
-      const dashboard = JSON.parse(
-        await readFile(join(grafanaPluginRoot, "dashboards", file), "utf8"),
-      ) as {
-        readonly uid?: unknown;
-        readonly title?: unknown;
-        readonly panels?: unknown;
-      };
-
-      expect(typeof dashboard.uid).toBe("string");
-      expect(typeof dashboard.title).toBe("string");
-      expect(Array.isArray(dashboard.panels)).toBe(true);
-      expect((dashboard.panels as readonly unknown[]).length).toBeGreaterThan(0);
-      expect(seenUids.has(dashboard.uid as string)).toBe(false);
-      seenUids.add(dashboard.uid as string);
-    }
-  });
-
-  it("keeps the AI dashboard aligned with PRD observability dimensions", async () => {
-    const panelText = await dashboardPanelText("ai.json");
-
-    for (const expected of [
-      "provider",
-      "model",
-      "feature",
-      "helix_llm_cost_usd_micros_total",
-      "helix_llm_errors_total",
-      "helix_llm_latency_seconds_bucket",
-      "helix_llm_routing_fallback_total",
-    ]) {
-      expect(panelText).toContain(expected);
-    }
-  });
-
-  it("keeps the audit dashboard aligned with PRD audit operations", async () => {
-    const panelText = await dashboardPanelText("audit.json");
-
-    for (const expected of [
-      "Activity rate",
-      "Hash-chain verification failures",
-      "Latest hash-chain verification",
-      "Shipping lag",
-      "Immutable shipping backlog",
-      "helix_audit_activity_total",
+    for (const metric of [
+      "helix_http_requests_total",
+      "helix_http_request_duration_seconds",
+      "helix_tool_invocations_total",
+      "helix_tool_invocation_duration_seconds",
+      "helix_operational_events_total",
+      "helix_operational_duration_seconds",
+      "helix_operational_units_total",
+      "helix_operational_state",
+      "helix_search_projection_lag_seconds",
+      "helix_meet_degraded_samples_total",
+      "helix_permission_checks_total",
       "helix_audit_hash_chain_failures_total",
-      "helix_audit_hash_chain_last_verified_timestamp_seconds",
-      "helix_audit_shipping_lag_seconds",
-      "helix_audit_shipping_backlog_records",
     ]) {
-      expect(panelText).toContain(expected);
+      expect(dashboardText).toContain(metric);
+      expect(metricDefinitions).toContain(`name: "${metric}"`);
     }
-  });
-
-  it("keeps the signup dashboard aligned with signup funnel and activation SLO metrics", async () => {
-    const panelText = await dashboardPanelText("signup.json");
-
-    for (const expected of [
-      "Signup funnel event rate",
-      "Signup activation p95",
-      "Signup activation SLO misses",
-      "helix_signup_funnel_events_total",
-      "helix_signup_activation_duration_seconds_bucket",
-      "helix_signup_activation_duration_seconds_count",
-      "histogram_quantile",
-      "within_target",
-      "plan_id",
-      "helix-prometheus",
+    for (const expectedProducer of [
+      'operation: "queue_wait"',
+      'operation: "delivery"',
+      'this.record("fanout"',
+      'this.record("replay"',
+      'operation: "virus_scan"',
+      'operation: "quota"',
+      'operation: "download"',
+      'measure: "drift_objects"',
     ]) {
-      expect(panelText).toContain(expected);
+      expect(producerText).toContain(expectedProducer);
     }
+    for (const alert of [
+      "HelixOperationalFailure",
+      "HelixMailDeliveryFailure",
+      "HelixSearchReconciliationDrift",
+    ]) {
+      expect(alerts).toContain(alert);
+    }
+    expect(`${dashboardText}\n${alerts}`).not.toMatch(
+      /org_id|actor_id|email_address|user_agent|ip_address/u,
+    );
   });
 
   it("ships signup activation SLO alert rules with low-cardinality labels", async () => {
@@ -133,7 +97,6 @@ describe("observability plugin assets", () => {
         }[];
       }[];
     };
-    const pluginCompose = await readFile(join(grafanaPluginRoot, "compose.yaml"), "utf8");
     const rootCompose = await readFile(rootComposePath, "utf8");
 
     expect(prometheusConfig.rule_files).toContain("/etc/prometheus/rules/*.yml");
@@ -142,9 +105,6 @@ describe("observability plugin assets", () => {
         (manager) => manager.static_configs?.flatMap((config) => config.targets ?? []) ?? [],
       ),
     ).toContain("alertmanager:9093");
-    expect(pluginCompose).toContain(
-      "../../infra/observability/prometheus/rules:/etc/prometheus/rules:ro",
-    );
     expect(rootCompose).toContain(
       "./infra/observability/prometheus/rules:/etc/prometheus/rules:ro",
     );
@@ -228,16 +188,11 @@ describe("observability plugin assets", () => {
         }[];
       }[];
     };
-    const pluginCompose = await readFile(join(grafanaPluginRoot, "compose.yaml"), "utf8");
     const rootCompose = await readFile(rootComposePath, "utf8");
 
     expect(rootCompose).toContain("alertmanager:");
     expect(rootCompose).toContain(
       "./infra/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro",
-    );
-    expect(pluginCompose).toContain("alertmanager:");
-    expect(pluginCompose).toContain(
-      "../../infra/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro",
     );
     expect(alertmanager.route?.group_by).toEqual(
       expect.arrayContaining([
@@ -292,80 +247,127 @@ describe("observability plugin assets", () => {
     }
   });
 
-  it("ships per-tenant dashboards with an org_id template variable", async () => {
-    for (const file of ["tenant-overview.json", "tenant-finops.json"] as const) {
-      const dashboard = await readDashboard(file);
-      const variables =
-        isRecord(dashboard) && isRecord(dashboard.templating)
-          ? dashboard.templating.list
-          : undefined;
+  it("ships a fail-closed production telemetry profile", async () => {
+    const [
+      collectorText,
+      lokiText,
+      tempoText,
+      datasourcesText,
+      grafanaText,
+      contractText,
+      networkText,
+    ] = await Promise.all([
+      readFile(join(observabilityRoot, "otel-collector/config.production.yaml"), "utf8"),
+      readFile(join(observabilityRoot, "loki/loki.production.yaml"), "utf8"),
+      readFile(join(observabilityRoot, "tempo/tempo.production.yaml"), "utf8"),
+      readFile(
+        join(observabilityRoot, "grafana/provisioning/datasources/datasources.production.yml"),
+        "utf8",
+      ),
+      readFile(join(observabilityRoot, "grafana/grafana.production.ini"), "utf8"),
+      readFile(join(observabilityRoot, "production/deployment-contract.yml"), "utf8"),
+      readFile(join(observabilityRoot, "production/network-policies.yml"), "utf8"),
+    ]);
+    const collector = YAML.parse(collectorText) as Record<string, unknown>;
+    const loki = YAML.parse(lokiText) as Record<string, unknown>;
+    const tempo = YAML.parse(tempoText) as Record<string, unknown>;
+    const datasources = YAML.parse(datasourcesText) as {
+      readonly datasources: readonly { readonly url?: string; readonly jsonData?: unknown }[];
+    };
+    const contract = YAML.parse(contractText) as {
+      readonly spec: {
+        readonly availability: Record<string, unknown>;
+        readonly storage: {
+          readonly retentionHours: number;
+          readonly buckets: readonly Record<string, unknown>[];
+        };
+        readonly workloadIdentity: Record<string, unknown>;
+      };
+    };
+    const policies = YAML.parseAllDocuments(networkText).map((document) => document.toJS()) as {
+      readonly metadata?: { readonly name?: string };
+      readonly spec?: { readonly policyTypes?: readonly string[] };
+    }[];
 
-      expect(Array.isArray(variables)).toBe(true);
-      expect(variables).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            name: "org_id",
-            type: "textbox",
-          }),
-        ]),
-      );
-
-      const panelText = await dashboardPanelText(file);
-      expect(panelText).toContain('org_id="$org_id"');
-      expect(panelText).toContain("helix-prometheus");
+    expect(collector).toHaveProperty("receivers.otlp.protocols.http.tls.client_ca_file");
+    expect(collector).toHaveProperty("processors.memory_limiter");
+    expect(collector).toHaveProperty("processors.filter/tenant");
+    expect(collectorText).toContain("X-Scope-OrgID: ${env:HELIX_OBSERVABILITY_TENANT_ID}");
+    for (const secretAttribute of [
+      "authorization",
+      "cookie",
+      "user.email",
+      "message.body",
+      "file.name",
+      "gen_ai.prompt",
+      "token",
+    ]) {
+      expect(collectorText).toContain(secretAttribute);
     }
-  });
 
-  it("provisions dashboards and datasources for the bundled Grafana stack", async () => {
-    const dashboardsProvider = await readFile(
-      join(grafanaPluginRoot, "provisioning/dashboards/helix.yml"),
-      "utf8",
-    );
-    const datasources = await readFile(
-      join(grafanaPluginRoot, "provisioning/datasources/helix.yml"),
-      "utf8",
+    expect(loki.auth_enabled).toBe(true);
+    expect(loki).toHaveProperty("common.replication_factor", 3);
+    expect(loki).toHaveProperty("common.storage.s3");
+    expect(loki).toHaveProperty("compactor.retention_enabled", true);
+    expect(loki).toHaveProperty("limits_config.retention_period", "720h");
+    expect(loki).toHaveProperty("limits_config.max_global_streams_per_user", 10000);
+    expect(loki).toHaveProperty(
+      "server.http_tls_config.client_auth_type",
+      "RequireAndVerifyClientCert",
     );
 
-    expect(dashboardsProvider).toContain("/var/lib/grafana/dashboards/helix");
-    expect(datasources).toContain("helix-prometheus");
-    expect(datasources).toContain("helix-tempo");
-    expect(datasources).toContain("helix-loki");
+    expect(tempo.multitenancy_enabled).toBe(true);
+    expect(tempo).toHaveProperty("ingest.kafka.auto_create_topic_enabled", false);
+    expect(tempo).toHaveProperty("live_store.partition_ring.min_partition_owners_count", 3);
+    expect(tempo).toHaveProperty("storage.trace.backend", "s3");
+    expect(tempo).toHaveProperty(
+      "backend_scheduler.provider.compaction.compaction.block_retention",
+      "720h",
+    );
+    expect(tempo).toHaveProperty(
+      "server.http_tls_config.client_auth_type",
+      "RequireAndVerifyClientCert",
+    );
+    expect(tempo).toHaveProperty("query_frontend.log_query_request_headers", "X-Scope-OrgID");
+
+    expect(datasources.datasources).toHaveLength(2);
+    for (const datasource of datasources.datasources) {
+      expect(datasource.url).toMatch(/^https:\/\//u);
+      expect(datasource.jsonData).toMatchObject({
+        httpHeaderName1: "X-Scope-OrgID",
+        tlsAuth: true,
+        tlsAuthWithCACert: true,
+      });
+    }
+    expect(grafanaText).toContain("enabled = false");
+    expect(grafanaText).toContain("router_logging = true");
+
+    expect(contract.spec.workloadIdentity).toMatchObject({
+      mode: "mutual-tls",
+      internalTransport: "service-mesh-strict-mtls",
+      unauthorizedIngestResult: "tls-handshake-failure",
+      unauthorizedQueryResult: "tls-handshake-failure",
+    });
+    expect(contract.spec.availability).toMatchObject({
+      lokiReplicas: 3,
+      tempoDistributorReplicas: 3,
+      tempoKafkaReplicas: 3,
+      tempoKafkaReplicationFactor: 3,
+      tempoKafkaMinimumInSyncReplicas: 2,
+      tempoPartitionConsumers: 3,
+      collectorReplicas: 3,
+      spreadAcrossZones: true,
+      walPersistentVolume: true,
+      kafkaTransport: "service-mesh-strict-mtls",
+    });
+    expect(contract.spec.storage.retentionHours).toBe(720);
+    expect(contract.spec.storage.buckets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ versioning: "Enabled", replication: "required" }),
+      ]),
+    );
+    expect(
+      policies.find((policy) => policy.metadata?.name === "observability-default-deny")?.spec,
+    ).toMatchObject({ policyTypes: ["Ingress", "Egress"] });
   });
 });
-
-async function dashboardPanelText(file: string): Promise<string> {
-  const dashboard = await readDashboard(file);
-  const panels = isRecord(dashboard) && Array.isArray(dashboard.panels) ? dashboard.panels : [];
-  const panelTextParts: string[] = [];
-  for (const panel of panels) {
-    if (!isRecord(panel)) {
-      continue;
-    }
-    if (typeof panel.title === "string") {
-      panelTextParts.push(panel.title);
-    }
-    if (isRecord(panel.datasource) && typeof panel.datasource.uid === "string") {
-      panelTextParts.push(panel.datasource.uid);
-    }
-    if (!Array.isArray(panel.targets)) {
-      continue;
-    }
-    for (const target of panel.targets) {
-      if (isRecord(target) && typeof target.expr === "string") {
-        panelTextParts.push(target.expr);
-      }
-      if (isRecord(target) && typeof target.query === "string") {
-        panelTextParts.push(target.query);
-      }
-    }
-  }
-  return panelTextParts.join("\n");
-}
-
-async function readDashboard(file: string): Promise<unknown> {
-  return JSON.parse(await readFile(join(grafanaPluginRoot, "dashboards", file), "utf8")) as unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}

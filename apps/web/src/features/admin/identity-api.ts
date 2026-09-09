@@ -8,15 +8,14 @@ const jsonObjectSchema = z.record(z.unknown());
 const tenantIdpConfigSchema = z.object({
   id: z.string(),
   orgId: z.string(),
-  protocol: z.enum(["saml", "oidc"]),
+  protocol: z.literal("oidc"),
   isPrimary: z.boolean(),
   displayName: z.string(),
   config: jsonObjectSchema,
-  signingCertVaultPath: z.string().nullable(),
+  signingCertSecretHandle: z.string().nullable(),
   attrMapping: jsonObjectSchema,
   jitProvisioning: z.boolean(),
   enabled: z.boolean(),
-  samlSpMetadataUrl: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -37,7 +36,7 @@ const idpConfigResponseSchema = z.object({
 });
 const idpTestLoginResponseSchema = z.object({
   testLogin: z.object({
-    status: z.enum(["configuration_required", "runtime_pending"]),
+    status: z.enum(["configuration_required", "ready"]),
     message: z.string(),
   }),
   localLoginRecovery: localLoginRecoverySchema,
@@ -52,7 +51,7 @@ export interface CreateTenantIdpConfigInput {
   readonly protocol: TenantIdpProtocol;
   readonly displayName: string;
   readonly config?: Record<string, unknown>;
-  readonly signingCertVaultPath?: string | null;
+  readonly signingCertSecretHandle?: string | null;
   readonly attrMapping?: Record<string, unknown>;
   readonly isPrimary?: boolean;
   readonly jitProvisioning?: boolean;
@@ -63,7 +62,7 @@ export interface UpdateTenantIdpConfigInput {
   readonly protocol?: TenantIdpProtocol;
   readonly displayName?: string;
   readonly config?: Record<string, unknown>;
-  readonly signingCertVaultPath?: string | null;
+  readonly signingCertSecretHandle?: string | null;
   readonly attrMapping?: Record<string, unknown>;
   readonly isPrimary?: boolean;
   readonly jitProvisioning?: boolean;

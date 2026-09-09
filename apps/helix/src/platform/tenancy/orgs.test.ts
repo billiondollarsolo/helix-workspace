@@ -28,7 +28,7 @@ describe("resolveDefaultOrgInput", () => {
         HELIX_DEFAULT_ORG_ID: "11111111-1111-4111-8111-111111111111",
         HELIX_DEFAULT_ORG_SLUG: "acme",
         HELIX_DEFAULT_ORG_NAME: "Acme Corp",
-        HELIX_DEFAULT_ORG_REGION: "us-east-1",
+        HELIX_REGION: "us-east-1",
       }),
     ).toEqual({
       id: "11111111-1111-4111-8111-111111111111",
@@ -81,31 +81,18 @@ describe("ensureDefaultOrgForMode", () => {
 });
 
 describe("PostgresOrgStore", () => {
-  it("provisions a tenant Postgres role after default org creation", async () => {
-    const provisionedOrgIds: string[] = [];
-    const store = new PostgresOrgStore(sqlReturningOrg(), {
-      tenantRoleProvisioner: {
-        async ensureRoleForOrg(orgId) {
-          provisionedOrgIds.push(orgId);
-        },
-      },
-    });
-
-    const org = await store.getOrCreateDefaultOrg({ id: DEFAULT_ORG_ID });
-
-    expect(org.id).toBe(DEFAULT_ORG_ID);
-    expect(provisionedOrgIds).toEqual([DEFAULT_ORG_ID]);
+  it("rejects creating a tenant in another physical region", async () => {
+    const store = new PostgresOrgStore(
+      sqlReturningOrg({ status: "provisioning", slug: "acme" }),
+      "us-east-1",
+    );
+    await expect(
+      store.createOrg({ slug: "acme", displayName: "Acme", region: "eu-west-1" }),
+    ).rejects.toThrow(/does not match deployment region/u);
   });
 
-  it("creates SaaS orgs in provisioning status and provisions their tenant role", async () => {
-    const provisionedOrgIds: string[] = [];
-    const store = new PostgresOrgStore(sqlReturningOrg({ status: "provisioning", slug: "acme" }), {
-      tenantRoleProvisioner: {
-        async ensureRoleForOrg(orgId) {
-          provisionedOrgIds.push(orgId);
-        },
-      },
-    });
+  it("creates SaaS orgs in provisioning status", async () => {
+    const store = new PostgresOrgStore(sqlReturningOrg({ status: "provisioning", slug: "acme" }));
 
     const org = await store.createOrg({
       id: "11111111-1111-4111-8111-111111111111",
@@ -118,7 +105,6 @@ describe("PostgresOrgStore", () => {
       slug: "acme",
       status: "provisioning",
     });
-    expect(provisionedOrgIds).toEqual([DEFAULT_ORG_ID]);
   });
 
   it("activates only provisioning orgs", async () => {
@@ -180,7 +166,17 @@ describe("PostgresOrgStore", () => {
         orgRow({ id: "org-a", slug: "acme", status: "soft_deleted", softDeletedAt }),
         orgRow({ id: "org-b", slug: "beta", status: "soft_deleted", softDeletedAt }),
       ],
+      [],
+      [
+        {
+          system_actor_id: "22222222-2222-4222-8222-222222222222",
+          manifest_sha256: "a".repeat(64),
+          proof_object_key: "compliance/tenant-deletions/org-a/proof.json",
+        },
+      ],
       [orgRow({ id: "org-a", slug: "acme", status: "hard_deleted", hardDeletedAt })],
+      [],
+      [],
       [],
     ]);
     const store = new PostgresOrgStore(recording.sql);
@@ -199,15 +195,19 @@ describe("PostgresOrgStore", () => {
       status: "hard_deleted",
       hardDeletedAt,
     });
-    await expect(store.markTenantHardDeleted({ orgId: "org-missing" })).resolves.toBeNull();
+    await expect(store.markTenantHardDeleted({ orgId: "org-missing" })).rejects.toThrow(
+      "completed deletion proof",
+    );
 
     expect(recording.calls[0]?.text).toContain("soft_deleted_at <= ?");
     expect(recording.calls[0]?.text).toContain("hard_deleted_at is null");
     expect(recording.calls[0]?.text).toContain("limit ?");
     expect(recording.calls[0]?.values).toEqual([new Date("2026-04-24T00:00:00.000Z"), 2]);
-    expect(recording.calls[1]?.text).toContain("status = 'hard_deleted'");
-    expect(recording.calls[1]?.text).toContain("and status = 'soft_deleted'");
-    expect(recording.calls[1]?.text).toContain("hard_deleted_at is null");
+    expect(recording.calls[2]?.text).toContain("tenant_deletion_proofs");
+    expect(recording.calls[3]?.text).toContain("status = 'hard_deleted'");
+    expect(recording.calls[3]?.text).toContain("and status = 'soft_deleted'");
+    expect(recording.calls[3]?.text).toContain("hard_deleted_at is null");
+    expect(recording.calls[4]?.text).toContain("tenant.lifecycle.hard_deleted");
   });
 
   it("updates tenant config sections with audit trigger context", async () => {
@@ -324,10 +324,7 @@ function orgRecord(overrides: Partial<OrgRecord>): OrgRecord {
 }
 
 function sqlReturningOrg(overrides: Partial<OrgRecord> = {}): postgres.Sql {
-  const tag = () =>
-    Promise.resolve([
-      orgRow(overrides),
-    ]);
+  const tag = () => Promise.resolve([orgRow(overrides)]);
   const sql = Object.assign(tag, {
     json: (value: unknown) => value,
     array: (value: unknown) => value,

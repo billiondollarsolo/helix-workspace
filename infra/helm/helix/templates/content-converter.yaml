@@ -1,0 +1,181 @@
+{{- include "helix.validateValues" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "helix.fullname" . }}-content-converter
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+    helix.io/role: content-converter
+spec:
+  replicas: {{ .Values.contentConverter.replicaCount }}
+  revisionHistoryLimit: 2
+  minReadySeconds: {{ .Values.availability.minReadySeconds }}
+  progressDeadlineSeconds: {{ .Values.availability.progressDeadlineSeconds }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "helix.selectorLabels" . | nindent 6 }}
+      helix.io/role: content-converter
+  template:
+    metadata:
+      labels:
+        {{- include "helix.selectorLabels" . | nindent 8 }}
+        helix.io/role: content-converter
+        helix.io/service-account: {{ include "helix.serviceAccountName" . | quote }}
+    spec:
+      automountServiceAccountToken: false
+      serviceAccountName: {{ include "helix.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      nodeSelector:
+        topology.kubernetes.io/region: {{ .Values.external.s3.region | quote }}
+      {{- include "helix.podScheduling" (dict "root" . "role" "content-converter" "affinity" dict "topologySpreadConstraints" list) | nindent 6 }}
+      containers:
+        - name: content-converter
+          image: "{{ .Values.contentConverter.image.repository }}@{{ .Values.contentConverter.image.digest }}"
+          imagePullPolicy: {{ .Values.contentConverter.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          ports:
+            - name: http
+              containerPort: {{ .Values.contentConverter.port }}
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: HOST
+              value: 0.0.0.0
+            - name: PORT
+              value: {{ .Values.contentConverter.port | quote }}
+            - name: HELIX_REGION
+              value: {{ .Values.external.s3.region | quote }}
+            - name: DRIVE_PREVIEW_WORKDIR
+              value: /tmp/helix-content-converter
+            - name: DRIVE_PREVIEW_TIMEOUT_MS
+              value: {{ .Values.contentConverter.timeoutMs | quote }}
+            - name: DRIVE_PREVIEW_REQUEST_BYTES
+              value: {{ .Values.contentConverter.limits.requestBytes | quote }}
+            - name: DRIVE_PREVIEW_MAX_BYTES
+              value: {{ .Values.contentConverter.limits.sourceBytes | quote }}
+            - name: DRIVE_PREVIEW_MAX_OUTPUT_BYTES
+              value: {{ .Values.contentConverter.limits.outputBytes | quote }}
+            - name: DRIVE_PREVIEW_MAX_TEXT_BYTES
+              value: {{ .Values.contentConverter.limits.textBytes | quote }}
+            - name: DRIVE_PREVIEW_MAX_ARCHIVE_ENTRIES
+              value: {{ .Values.contentConverter.limits.archiveEntries | quote }}
+            - name: DRIVE_PREVIEW_MAX_ARCHIVE_BYTES
+              value: {{ .Values.contentConverter.limits.archiveBytes | quote }}
+            - name: DRIVE_PREVIEW_MAX_ARCHIVE_RATIO
+              value: {{ .Values.contentConverter.limits.archiveRatio | quote }}
+            - name: DRIVE_PREVIEW_MAX_CELLS
+              value: {{ .Values.contentConverter.limits.cells | quote }}
+            - name: DRIVE_PREVIEW_MAX_PAGES
+              value: {{ .Values.contentConverter.limits.pages | quote }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: {{ .Values.availability.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.availability.startupProbe.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.contentConverter.resources | nindent 12 }}
+      terminationGracePeriodSeconds: 5
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.contentConverter.tmpSizeLimit }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "helix.fullname" . }}-content-converter
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+    helix.io/role: content-converter
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "helix.selectorLabels" . | nindent 6 }}
+      helix.io/role: content-converter
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "helix.fullname" . }}-content-converter
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+    helix.io/role: content-converter
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "helix.selectorLabels" . | nindent 4 }}
+    helix.io/role: content-converter
+  ports:
+    - name: http
+      port: {{ .Values.contentConverter.port }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "helix.fullname" . }}-content-converter-network
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+    helix.io/role: content-converter
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "helix.selectorLabels" . | nindent 6 }}
+      helix.io/role: content-converter
+      helix.io/service-account: {{ include "helix.serviceAccountName" . | quote }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- include "helix.selectorLabels" . | nindent 14 }}
+              helix.io/role: default
+              helix.io/service-account: {{ include "helix.serviceAccountName" . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.contentConverter.port }}
+  egress: []

@@ -1,6 +1,6 @@
 import type { Actor, EventBus, MeteringClient, TraceContext } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import {
   adminWildcardScope,
   auditAdminAction,
@@ -30,7 +30,7 @@ export interface RegisterTenantLifecycleRoutesOptions {
   readonly orgs: TenantLifecycleStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly exportPlanner: TenantExportManifestPlanner;
-  readonly auditSink?: AdminConsoleAuditSink | undefined;
+  readonly auditSink: AdminConsoleAuditSink;
   readonly exportJobLimiter?: TenantHourlyQuotaLimiter | undefined;
   readonly exportJobLimit?: (input: {
     readonly org: OrgRecord;

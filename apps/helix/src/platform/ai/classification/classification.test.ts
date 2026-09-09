@@ -213,6 +213,29 @@ describe("ResourceClassificationService", () => {
     });
     expect(resolved.classification).toBe("restricted");
   });
+
+  it("uses one Drive identity for editor content and never silently downgrades", async () => {
+    const store = new InMemoryResourceClassificationStore();
+    const service = new ResourceClassificationService(store);
+    await service.classify({
+      orgId: "org-1",
+      resourceType: "docs.document",
+      resourceId: "file-1",
+      derivation: { explicit: "restricted" },
+    });
+    const second = await service.classify({
+      orgId: "org-1",
+      resourceType: "slides.deck",
+      resourceId: "file-1",
+      derivation: { explicit: "public" },
+    });
+
+    expect(second.record).toMatchObject({
+      resourceType: "drive.file",
+      classification: "restricted",
+    });
+    expect(store.list()).toHaveLength(1);
+  });
 });
 
 describe("PostgresResourceClassificationStore", () => {

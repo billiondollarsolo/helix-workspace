@@ -1,0 +1,6 @@
+chart=ghcr.io/jitsi-contrib/jitsi-scaler
+version=1.11.0
+oci_digest=sha256:515011d64deaee160beb1a43e7a8723c4146f6b4da168309b3607f3d02d42640
+archive_sha256=818b102bc8c0ebb020d113dda950beb81de45ba6ac9c19b1700ba59817f7aa4b
+certificate_identity=^https://github.com/jitsi-contrib/jitsi-scaler/
+certificate_issuer=https://token.actions.githubusercontent.com

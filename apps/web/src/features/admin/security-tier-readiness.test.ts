@@ -307,7 +307,6 @@ describe("SecurityTierReadiness admin UI", () => {
     renderAdminUI();
     await waitForText("Community importer");
     expect(tableByLabel("Plugin catalog").textContent).toContain("Community importer");
-    await setSelectValue("Plugin source", "sideload");
     await waitForText("Install from a non-official source");
     expect(buttonByText("Install plugin").disabled).toBe(true);
 
@@ -322,13 +321,12 @@ describe("SecurityTierReadiness admin UI", () => {
     expect(requestBodyForCall(installCall)).toMatchObject({
       pluginId: "com.example.community",
       version: "1.2.3",
-      source: "sideload",
       confirmations: [
         "source.non_official",
         "permissions.scopes.drive.write",
         "permissions.outbound-network.api.example.com",
         "capabilities.provides.example.importer",
-        "signature.missing",
+        "artifact.untrusted",
       ],
     });
     expect(alertMock).not.toHaveBeenCalled();
@@ -412,7 +410,6 @@ describe("SecurityTierReadiness admin UI", () => {
 
     renderAdminUI();
     await waitForText("Community importer");
-    await setSelectValue("Plugin source", "sideload");
     await clickAllPluginConfirmations();
     await clickButton("Install plugin");
 
@@ -420,7 +417,6 @@ describe("SecurityTierReadiness admin UI", () => {
       expect(pluginInstallCall()).toBeDefined();
       expect(communityPluginCache()?.install).toMatchObject({
         optimisticStatus: "installing",
-        source: "sideload",
       });
     });
 
@@ -498,24 +494,6 @@ describe("SecurityTierReadiness admin UI", () => {
     }
     act(() => {
       button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
-
-  async function setSelectValue(label: string, value: string) {
-    const select = container.querySelector(`select[aria-label="${label}"]`);
-    if (!(select instanceof HTMLSelectElement)) {
-      throw new Error(`Select not found: ${label}`);
-    }
-    act(() => {
-      const valueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
-        ?.set as ((this: HTMLSelectElement, value: string) => void) | undefined;
-      if (valueSetter !== undefined) {
-        Reflect.apply(valueSetter, select, [value]);
-      }
-      select.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await act(async () => {
       await Promise.resolve();
@@ -855,12 +833,45 @@ function pluginCatalog() {
           filesystem: [],
           envVars: [],
         },
-        install: null,
+        install: {
+          confirmationRequired: true,
+          confirmations: [
+            {
+              id: "source.non_official",
+              label: "Install from a non-official source",
+              category: "source",
+              detail: "No signed catalog entry authenticates this artifact.",
+            },
+            {
+              id: "permissions.scopes.drive.write",
+              label: "Scope",
+              category: "scope",
+              detail: "drive.write",
+            },
+            {
+              id: "permissions.outbound-network.api.example.com",
+              label: "Outbound network",
+              category: "outbound-network",
+              detail: "api.example.com",
+            },
+            {
+              id: "capabilities.provides.example.importer",
+              label: "Provided capability",
+              category: "capability",
+              detail: "example.importer",
+            },
+            {
+              id: "artifact.untrusted",
+              label: "Untrusted plugin artifact",
+              category: "signature",
+              detail: "No valid signed catalog entry authenticates this exact plugin artifact.",
+            },
+          ],
+        },
         lifecycle: {
           state: "disabled",
           installed: true,
         },
-        signature: null,
         tierRequirements: null,
       },
       {
@@ -883,7 +894,6 @@ function pluginCatalog() {
           state: "enabled",
           installed: true,
         },
-        signature: { verified: true },
         tierRequirements: null,
       },
     ],

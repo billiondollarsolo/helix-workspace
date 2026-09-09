@@ -113,8 +113,6 @@ create table if not exists oauth_authorization_codes (
   redirect_uri text not null,
   scopes text[] not null default '{}',
   code_challenge text not null,
-  code_challenge_method text not null
-    check (code_challenge_method in ('S256', 'plain')),
   state text,
   issued_at timestamptz not null default now(),
   expires_at timestamptz not null,

@@ -57,44 +57,38 @@ export_object_store_credentials() {
 }
 
 # Encrypt a file with a cloud KMS-issued data key (envelope encryption).
-# AWS KMS: generate-data-key -> AES-256-CBC with openssl -> store wrapped key.
+# The plaintext key travels only through a pipe into the authenticated AES-GCM helper.
 # Produces "<dest>" (ciphertext) and "<dest>.datakey" (KMS-wrapped data key).
 kms_encrypt_file() {
   local src=$1 dest=$2 key_id=$3
   require_cmd aws
-  require_cmd openssl
-  local datakey_json plaintext_key ciphertext_key
-  datakey_json=$(aws kms generate-data-key \
+  require_cmd node
+  local endpoint_args=()
+  [[ -n "${HELIX_KMS_ENDPOINT:-}" ]] && endpoint_args=(--endpoint-url "$HELIX_KMS_ENDPOINT")
+  aws kms generate-data-key \
     --key-id "$key_id" \
     --key-spec AES_256 \
-    --output json ${HELIX_KMS_ENDPOINT:+--endpoint-url "$HELIX_KMS_ENDPOINT"})
-  plaintext_key=$(printf '%s' "$datakey_json" | python3 -c 'import json,sys;print(json.load(sys.stdin)["Plaintext"])')
-  ciphertext_key=$(printf '%s' "$datakey_json" | python3 -c 'import json,sys;print(json.load(sys.stdin)["CiphertextBlob"])')
-  printf '%s' "$ciphertext_key" >"$dest.datakey"
-  openssl enc -aes-256-cbc -salt -pbkdf2 \
-    -in "$src" -out "$dest" \
-    -pass "pass:$plaintext_key"
-  unset plaintext_key
+    --output json \
+    "${endpoint_args[@]}" | node "$SCRIPT_DIR/aes-gcm-file.mjs" encrypt "$src" "$dest" "$dest.datakey"
 }
 
 # Decrypt a KMS-envelope-encrypted file produced by kms_encrypt_file.
 kms_decrypt_file() {
   local src=$1 dest=$2 datakey_file=$3
   require_cmd aws
-  require_cmd openssl
+  require_cmd node
   [[ -f "$datakey_file" ]] || die "KMS data key file not found: $datakey_file"
-  local plaintext_key tmp_blob endpoint_args=()
+  local tmp_blob endpoint_args=()
   [[ -n "${HELIX_KMS_ENDPOINT:-}" ]] && endpoint_args=(--endpoint-url "$HELIX_KMS_ENDPOINT")
   # Decode the base64-stored ciphertext blob to a temp file for `fileb://`.
   tmp_blob=$(mktemp "${TMPDIR:-/tmp}/helix-kms.XXXXXX")
   base64 -d <"$datakey_file" >"$tmp_blob"
-  plaintext_key=$(aws kms decrypt \
+  if ! aws kms decrypt \
     --ciphertext-blob "fileb://$tmp_blob" \
     --output text --query Plaintext \
-    "${endpoint_args[@]}")
+    "${endpoint_args[@]}" | node "$SCRIPT_DIR/aes-gcm-file.mjs" decrypt "$src" "$dest"; then
+    rm -f "$tmp_blob"
+    return 1
+  fi
   rm -f "$tmp_blob"
-  openssl enc -d -aes-256-cbc -pbkdf2 \
-    -in "$src" -out "$dest" \
-    -pass "pass:$plaintext_key"
-  unset plaintext_key
 }

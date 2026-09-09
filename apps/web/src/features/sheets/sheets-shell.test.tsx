@@ -50,6 +50,7 @@ let driveEntries: readonly unknown[];
 
 describe("SheetsShell", () => {
   beforeEach(() => {
+    document.cookie = "helix_csrf=test-csrf; path=/";
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -115,6 +116,12 @@ describe("SheetsShell", () => {
       }
       if (url === "/api/tools/drive.list") {
         return Promise.resolve(Response.json({ entries: driveEntries }));
+      }
+      if (url === "/api/tools/drive.view.get") {
+        return Promise.resolve(Response.json({ view: "grid" }));
+      }
+      if (url === "/api/tools/drive.view.set") {
+        return Promise.resolve(Response.json({ view: (body as { view?: string }).view }));
       }
       if (url === "/api/tools/drive.trash") {
         return Promise.resolve(Response.json({ id: (body as { objectId?: string }).objectId }));

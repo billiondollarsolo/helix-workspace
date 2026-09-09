@@ -53,7 +53,7 @@ export class PostgresMeteringEventStore implements MeteringEventStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async insertEvent(event: MeteringEventInsert): Promise<StoredMeteringEvent> {
-    const rows = await this.sql`
+    const rows = await this.sql<MeteringEventRow[]>`
       insert into metering_events (org_id, event_type, quantity, metadata, occurred_at)
       values (
         ${event.orgId},
@@ -64,7 +64,7 @@ export class PostgresMeteringEventStore implements MeteringEventStore {
       )
       returning id, org_id, event_type, quantity::text as quantity, metadata, occurred_at, rolled_up_at
     `;
-    return toStoredMeteringEvent((rows as unknown as readonly MeteringEventRow[])[0]);
+    return toStoredMeteringEvent(rows[0]);
   }
 
   async insertEvents(
@@ -82,7 +82,7 @@ export class PostgresMeteringRollupStore implements MeteringRollupStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async rollupCompletedPeriods(input: MeteringRollupRunInput): Promise<MeteringRollupRunResult> {
-    const rows = await this.sql`
+    const rows = await this.sql<MeteringRollupRunRow[]>`
       with candidate_periods as (
         select distinct
           org_id,
@@ -300,7 +300,7 @@ export class PostgresMeteringRollupStore implements MeteringRollupStore {
         (select count(*)::int from upserted) as rollup_count,
         (select count(*)::int from marked) as event_count
     `;
-    const row = (rows as unknown as readonly MeteringRollupRunRow[])[0];
+    const row = rows[0];
     return {
       periodCount: row?.period_count ?? 0,
       rollupCount: row?.rollup_count ?? 0,

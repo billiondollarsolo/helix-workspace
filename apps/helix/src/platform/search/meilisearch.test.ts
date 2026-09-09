@@ -15,6 +15,13 @@ describe("MeilisearchSearchEngine", () => {
     await engine.ensureIndex();
 
     expect(client.createdIndexes).toEqual([{ uid: "helix_search", primaryKey: "_key" }]);
+    expect(client.index("helix_search").settings).toEqual([
+      {
+        filterableAttributes: ["type", "attributes.orgId", "attributes.allowedActorIds"],
+        searchableAttributes: ["title", "body"],
+      },
+    ]);
+    expect(client.waitedTasks).toEqual([1, 2]);
   });
 
   it("indexes a single document through upsert", async () => {
@@ -40,9 +47,14 @@ describe("MeilisearchSearchEngine", () => {
     await engine.delete(["mail:1"]);
 
     const index = client.index("helix_search");
-    expect(index.addedDocuments[0]?.map(({ id, type, title, body }) => ({ id, type, title, body }))).toEqual(documents);
-    expect(index.addedDocuments[0]?.every((document) => /^h_[a-f0-9]{64}$/u.test(document._key ?? ""))).toBe(true);
+    expect(
+      index.addedDocuments[0]?.map(({ id, type, title, body }) => ({ id, type, title, body })),
+    ).toEqual(documents);
+    expect(
+      index.addedDocuments[0]?.every((document) => /^h_[a-f0-9]{64}$/u.test(document._key ?? "")),
+    ).toBe(true);
     expect(index.deletedIds[0]?.[0]).toMatch(/^h_[a-f0-9]{64}$/u);
+    expect(client.waitedTasks).toEqual([3, 4]);
   });
 
   it("skips empty upsert and delete batches", async () => {
@@ -55,6 +67,19 @@ describe("MeilisearchSearchEngine", () => {
     const index = client.index("helix_search");
     expect(index.addedDocuments).toEqual([]);
     expect(index.deletedIds).toEqual([]);
+  });
+
+  it("writes a shadow index and waits for its atomic swap", async () => {
+    const client = new FakeMeilisearchClient();
+    const live = new MeilisearchSearchEngine(client, { indexUid: "helix_search" });
+    const shadow = live.forIndex("helix_search_shadow_job");
+
+    await shadow.upsert([{ id: "drive:1", type: "drive" }]);
+    await live.swapWith("helix_search_shadow_job");
+
+    expect(client.index("helix_search_shadow_job").addedDocuments).toHaveLength(1);
+    expect(client.swaps).toEqual([["helix_search", "helix_search_shadow_job"]]);
+    expect(client.waitedTasks).toEqual([3, 5]);
   });
 
   it("maps search requests and Meilisearch hits into engine responses", async () => {
@@ -114,8 +139,13 @@ describe("MeilisearchSearchEngine", () => {
 });
 
 class FakeMeilisearchClient implements MeilisearchClientLike {
-  readonly createdIndexes: Array<{ readonly uid: string; readonly primaryKey: string | undefined }> = [];
+  readonly createdIndexes: Array<{
+    readonly uid: string;
+    readonly primaryKey: string | undefined;
+  }> = [];
   readonly indexes = new Map<string, FakeMeilisearchIndex>();
+  readonly waitedTasks: number[] = [];
+  readonly swaps: Array<readonly [string, string]> = [];
 
   index(uid: string): FakeMeilisearchIndex {
     const existing = this.indexes.get(uid);
@@ -128,8 +158,18 @@ class FakeMeilisearchClient implements MeilisearchClientLike {
     return index;
   }
 
-  async createIndex(uid: string, options?: { readonly primaryKey?: string }): Promise<void> {
+  async createIndex(uid: string, options?: { readonly primaryKey?: string }): Promise<unknown> {
     this.createdIndexes.push({ uid, primaryKey: options?.primaryKey });
+    return { taskUid: 1 };
+  }
+
+  async waitForTask(uid: number): Promise<void> {
+    this.waitedTasks.push(uid);
+  }
+
+  async swapIndexes(indexes: readonly [string, string]): Promise<unknown> {
+    this.swaps.push(indexes);
+    return { taskUid: 5 };
   }
 }
 
@@ -138,13 +178,21 @@ class FakeMeilisearchIndex implements MeilisearchIndexLike {
   readonly deletedIds: string[][] = [];
   readonly searches: Array<{ readonly query: string; readonly options: unknown }> = [];
   nextSearchResponse: MeilisearchSearchResponse = { hits: [] };
+  readonly settings: unknown[] = [];
 
-  async addDocuments(documents: readonly IndexDocument[]): Promise<void> {
-    this.addedDocuments.push([...documents]);
+  async updateSettings(settings: unknown): Promise<unknown> {
+    this.settings.push(settings);
+    return { taskUid: 2 };
   }
 
-  async deleteDocuments(ids: readonly string[]): Promise<void> {
+  async addDocuments(documents: readonly IndexDocument[]): Promise<unknown> {
+    this.addedDocuments.push([...documents]);
+    return { taskUid: 3 };
+  }
+
+  async deleteDocuments(ids: readonly string[]): Promise<unknown> {
     this.deletedIds.push([...ids]);
+    return { taskUid: 4 };
   }
 
   async search(query: string, options?: unknown): Promise<MeilisearchSearchResponse> {

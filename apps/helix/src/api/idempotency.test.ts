@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   InMemoryIdempotencyStore,
+  RedisIdempotencyStore,
   fingerprintRequestPayload,
   idempotencyStorageKey,
   resolveIdempotency,
@@ -30,7 +31,12 @@ describe("idempotency", () => {
   it("replays a stored result for a duplicate key with the same payload", async () => {
     const store = new InMemoryIdempotencyStore();
     const hash = fingerprintRequestPayload({ a: 1 });
-    await store.set("k", { result: okResult, statusCode: 200, requestHash: hash, expiresAt: Date.now() + 60_000 });
+    await store.set("k", {
+      result: okResult,
+      statusCode: 200,
+      requestHash: hash,
+      expiresAt: Date.now() + 60_000,
+    });
 
     const outcome = await resolveIdempotency(store, "k", hash);
     expect(outcome.kind).toBe("replay");
@@ -56,10 +62,45 @@ describe("idempotency", () => {
     let now = 1_000;
     const store = new InMemoryIdempotencyStore(() => now);
     const hash = fingerprintRequestPayload({});
-    await store.set("k", { result: okResult, statusCode: 200, requestHash: hash, expiresAt: 2_000 });
+    await store.set("k", {
+      result: okResult,
+      statusCode: 200,
+      requestHash: hash,
+      expiresAt: 2_000,
+    });
 
     expect((await resolveIdempotency(store, "k", hash)).kind).toBe("replay");
     now = 3_000;
     expect((await resolveIdempotency(store, "k", hash)).kind).toBe("miss");
   });
+
+  it("persists idempotency results in Redis with the remaining TTL", async () => {
+    const redis = new FakeRedis();
+    const store = new RedisIdempotencyStore(redis, () => 1_000);
+    const record = {
+      result: okResult,
+      statusCode: 200,
+      requestHash: "hash",
+      expiresAt: 2_000,
+    };
+
+    await store.set("key", record);
+
+    expect(redis.ttlMs).toBe(1_000);
+    await expect(store.get("key")).resolves.toEqual(record);
+  });
 });
+
+class FakeRedis {
+  value: string | null = null;
+  ttlMs: number | undefined;
+
+  async get(): Promise<string | null> {
+    return this.value;
+  }
+
+  async set(_key: string, value: string, _mode: "PX", ttlMs: number): Promise<void> {
+    this.value = value;
+    this.ttlMs = ttlMs;
+  }
+}

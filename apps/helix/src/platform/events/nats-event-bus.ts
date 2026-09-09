@@ -1,6 +1,17 @@
 import { connect, headers } from "@nats-io/transport-node";
-import type { EventBus, EventEnvelope, JsonValue, TraceContext, Unsubscribe } from "@helix/sdk-types";
-import type { MsgHdrs, NatsConnection, NodeConnectionOptions, Subscription } from "@nats-io/transport-node";
+import type {
+  EventBus,
+  EventEnvelope,
+  JsonValue,
+  TraceContext,
+  Unsubscribe,
+} from "@helix/sdk-types";
+import type {
+  MsgHdrs,
+  NatsConnection,
+  NodeConnectionOptions,
+  Subscription,
+} from "@nats-io/transport-node";
 
 export interface NatsEventBusOptions {
   readonly subjectPrefix?: string;
@@ -38,6 +49,11 @@ export class NatsEventBus implements EventBus {
     const messageHeaders = trace === undefined ? undefined : traceContextToNatsHeaders(trace);
     const publishOptions = messageHeaders === undefined ? undefined : { headers: messageHeaders };
     this.connection.publish(this.toNatsSubject(subject), encodeJson(payload), publishOptions);
+    await this.connection.flush();
+  }
+
+  /** Resolves only after the server has acknowledged all prior protocol traffic. */
+  async checkHealth(): Promise<void> {
     await this.connection.flush();
   }
 
@@ -99,7 +115,9 @@ export class NatsEventBus implements EventBus {
 
   private fromNatsSubject(subject: string): string {
     const prefix = `${this.subjectPrefix}.`;
-    return this.subjectPrefix.length > 0 && subject.startsWith(prefix) ? subject.slice(prefix.length) : subject;
+    return this.subjectPrefix.length > 0 && subject.startsWith(prefix)
+      ? subject.slice(prefix.length)
+      : subject;
   }
 }
 
@@ -121,7 +139,9 @@ export function traceContextToNatsHeaders(trace: TraceContext): MsgHdrs | undefi
   return messageHeaders;
 }
 
-export function traceContextFromNatsHeaders(messageHeaders: MsgHdrs | undefined): TraceContext | undefined {
+export function traceContextFromNatsHeaders(
+  messageHeaders: MsgHdrs | undefined,
+): TraceContext | undefined {
   const traceparent = normalizeHeaderValue(messageHeaders?.get("traceparent"));
   const tracestate = normalizeHeaderValue(messageHeaders?.get("tracestate"));
 
@@ -160,7 +180,9 @@ function normalizeTraceparent(trace: TraceContext): string | undefined {
   return `00-${trace.traceId}-${trace.spanId}-01`;
 }
 
-function parseTraceparent(traceparent: string): Pick<TraceContext, "traceId" | "spanId"> | undefined {
+function parseTraceparent(
+  traceparent: string,
+): Pick<TraceContext, "traceId" | "spanId"> | undefined {
   const match = traceparentPattern.exec(traceparent);
   if (match === null) {
     return undefined;

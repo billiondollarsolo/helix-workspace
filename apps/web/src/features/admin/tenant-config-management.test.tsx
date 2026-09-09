@@ -20,11 +20,12 @@ const tenantConfigPayload = {
         region: "us-east-1",
         bucket: "acme-helix-data",
         prefix: "helix/",
-        credentials_vault_path: "tenants/org-1/byo-storage/s3",
+        credentials_secret_handle: "s3",
         force_path_style: true,
         encryption: {
           sse_kms_key_arn: "arn:aws:kms:us-east-1:123456789012:key/acme",
         },
+        lifecycle: { object_lock: "compliance", retention_days: 30 },
       },
     },
     features: {
@@ -89,7 +90,7 @@ const storageMigrationPayload = {
         region: "us-east-1",
         bucket: "acme-helix-data",
         prefix: "helix/",
-        credentials_vault_path: "tenants/org-1/byo-storage/s3",
+        credentials_secret_handle: "s3",
         force_path_style: true,
       },
     },
@@ -131,6 +132,7 @@ describe("TenantConfigManagement", () => {
   let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
 
   beforeEach(() => {
+    document.cookie = `helix_csrf=${"c".repeat(43)}; Path=/`;
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -153,6 +155,7 @@ describe("TenantConfigManagement", () => {
   });
 
   afterEach(() => {
+    document.cookie = "helix_csrf=; Max-Age=0; Path=/";
     act(() => {
       root.unmount();
     });
@@ -178,10 +181,12 @@ describe("TenantConfigManagement", () => {
     expect(selectByLabel("Storage mode").value).toBe("byo");
     expect(selectByLabel("Provider").value).toBe("s3-compatible");
     expect(inputByLabel("Bucket").value).toBe("acme-helix-data");
-    expect(inputByLabel("Credentials Vault path").value).toBe("tenants/org-1/byo-storage/s3");
+    expect(inputByLabel("Credentials secret handle").value).toBe("s3");
     expect(inputByLabel("SSE-KMS key ARN").value).toBe(
       "arn:aws:kms:us-east-1:123456789012:key/acme",
     );
+    expect(selectByLabel("Object-lock mode").value).toBe("compliance");
+    expect(inputByLabel("Object-lock retention days").value).toBe("30");
     expect(requestUrlOf(fetchMock.mock.calls[0]?.[0])).toContain("/api/admin/tenant-config");
   });
 
@@ -277,7 +282,7 @@ describe("TenantConfigManagement", () => {
       setInputValue(inputByLabel("Endpoint"), "https://account.r2.cloudflarestorage.com");
       setInputValue(inputByLabel("Bucket"), "acme-r2-data");
       setInputValue(inputByLabel("Prefix"), "docs/");
-      setInputValue(inputByLabel("Credentials Vault path"), "tenants/org-1/byo-storage/r2");
+      setInputValue(inputByLabel("Credentials secret handle"), "r2");
       setInputValue(inputByLabel("SSE-KMS key ARN"), "arn:aws:kms:us-east-1:123456789012:key/r2");
       buttonByLabel("Save BYO storage").click();
       await Promise.resolve();
@@ -293,11 +298,12 @@ describe("TenantConfigManagement", () => {
             region: "us-east-1",
             bucket: "acme-r2-data",
             prefix: "docs/",
-            credentials_vault_path: "tenants/org-1/byo-storage/r2",
+            credentials_secret_handle: "r2",
             force_path_style: true,
             encryption: {
               sse_kms_key_arn: "arn:aws:kms:us-east-1:123456789012:key/r2",
             },
+            lifecycle: { object_lock: "compliance", retention_days: 30 },
           },
         },
         reason: "admin settings update: byo storage",
@@ -380,7 +386,7 @@ describe("TenantConfigManagement", () => {
         kind: "byo",
         provider: "s3-compatible",
         bucket: "acme-helix-data",
-        credentials_vault_path: "tenants/org-1/byo-storage/s3",
+        credentials_secret_handle: "s3",
       },
     });
     expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
@@ -632,13 +638,13 @@ describe("TenantConfigManagement", () => {
 
     await act(async () => {
       setSelectValue(selectByLabel("Provider"), "aws-s3");
-      setInputValue(inputByLabel("Credentials Vault path"), "secret/aws");
+      setInputValue(inputByLabel("Credentials secret handle"), "secret/aws");
       buttonByLabel("Save BYO storage").click();
       await Promise.resolve();
     });
 
     expect(container.textContent).toContain(
-      "Credentials Vault path must be scoped under tenants/{tenant}/byo-storage/.",
+      "Credentials secret handle must be a lowercase identifier.",
     );
     expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
   });
@@ -713,7 +719,7 @@ describe("TenantConfigManagement", () => {
 
   function fieldByLabel(label: string, selector: "input" | "select"): Element {
     const match = [...container.querySelectorAll("label")].find((candidate) =>
-      candidate.textContent?.includes(label),
+      candidate.textContent.includes(label),
     );
     const field = match?.querySelector(selector);
     if (field === undefined || field === null) {
@@ -724,7 +730,7 @@ describe("TenantConfigManagement", () => {
 
   function buttonByLabel(label: string): HTMLButtonElement {
     const button = [...container.querySelectorAll("button")].find(
-      (candidate) => candidate.textContent?.trim() === label,
+      (candidate) => candidate.textContent.trim() === label,
     );
     if (button === undefined) {
       throw new Error(`Button "${label}" not found.`);

@@ -48,15 +48,12 @@ export interface SpamdScannerOptions {
 
 const DEFAULT_SPAMD_TIMEOUT_MS = 10_000;
 const DEFAULT_SPAMD_MAX_BYTES = 25 * 1024 * 1024;
-const DEFAULT_SPAMD_PORT = 783;
-const DEFAULT_SPAMD_THRESHOLD = 5;
 
 /**
  * Spam scanner backed by a SpamAssassin `spamd` daemon over TCP.
  *
- * Scanning is best-effort from ingest's point of view: a daemon outage or
- * timeout surfaces as a thrown error that the ingest pipeline catches and
- * treats as "unscored" rather than failing the message.
+ * Daemon outages surface as errors; ingest applies the receiving tenant's
+ * explicit delivery or temporary-deferral policy.
  */
 export class SpamdScanner implements SpamScanner {
   readonly #host: string;
@@ -237,61 +234,4 @@ export function parseSpamdResponse(response: string): ParsedSpamdResponse {
     threshold: threshold !== null && Number.isFinite(threshold) ? threshold : null,
     symbols,
   };
-}
-
-/**
- * Resolve a {@link SpamdScanner} from the environment. Returns `undefined`
- * (scanning disabled) unless `MAIL_SPAMD_ENABLED` is truthy — matching the
- * config-gated ClamAV antivirus hook.
- *
- *   MAIL_SPAMD_ENABLED    enable inbound spam scoring
- *   MAIL_SPAMD_HOST       spamd host (default `spamd`)
- *   MAIL_SPAMD_PORT       spamd port (default 783)
- *   MAIL_SPAMD_THRESHOLD  routing threshold (default 5.0)
- *   MAIL_SPAMD_TIMEOUT_MS per-scan socket timeout (default 10000)
- */
-/**
- * @deprecated Prefer `mailConfig(env).spamd` from `./config.js` (G3).
- * Kept for unit tests that pass a plain env record.
- */
-export function getSpamdScannerConfig(
-  env: Readonly<Record<string, string | undefined>>,
-): SpamdScannerOptions | undefined {
-  if (!envFlag(env.MAIL_SPAMD_ENABLED)) {
-    return undefined;
-  }
-  const host = env.MAIL_SPAMD_HOST ?? "spamd";
-  const port = parsePositiveInt(env.MAIL_SPAMD_PORT) ?? DEFAULT_SPAMD_PORT;
-  const threshold = parseFloatConfig(env.MAIL_SPAMD_THRESHOLD) ?? DEFAULT_SPAMD_THRESHOLD;
-  const timeoutMs = parsePositiveInt(env.MAIL_SPAMD_TIMEOUT_MS);
-  return {
-    host,
-    port,
-    threshold,
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
-  };
-}
-
-function envFlag(value: string | undefined): boolean {
-  if (value === undefined) {
-    return false;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
-}
-
-function parsePositiveInt(value: string | undefined): number | undefined {
-  if (value === undefined || value.trim().length === 0) {
-    return undefined;
-  }
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function parseFloatConfig(value: string | undefined): number | undefined {
-  if (value === undefined || value.trim().length === 0) {
-    return undefined;
-  }
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }

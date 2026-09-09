@@ -31,6 +31,7 @@ export interface MigrationRunResult {
 export async function runMigrations(
   sql: postgres.Sql,
   sources: readonly MigrationSource[],
+  options: { readonly deploymentRegion?: string } = {},
 ): Promise<MigrationRunResult> {
   const applied: AppliedMigration[] = [];
   const skipped: AppliedMigration[] = [];
@@ -55,6 +56,24 @@ export async function runMigrations(
 
         const statement = migration.sql;
         await sql.begin(async (tx) => {
+          if (options.deploymentRegion !== undefined) {
+            await tx`select set_config('helix.deployment_region', ${options.deploymentRegion}, true)`;
+          }
+          const ownerRows = await tx<{ readonly available: boolean }[]>`
+            select exists (
+              select 1 from pg_roles
+              where rolname = 'helix_migration_owner'
+                and pg_has_role(current_user, oid, 'MEMBER')
+                and exists (
+                  select 1 from schema_migrations
+                  where namespace = 'platform'
+                    and name = '0090_postgres_runtime_roles.sql'
+                )
+            ) as available
+          `;
+          if (ownerRows[0]?.available === true) {
+            await tx.unsafe("set local role helix_migration_owner");
+          }
           const statements: readonly string[] =
             typeof statement === "string" ? [statement] : statement;
           for (const sqlStatement of statements) {

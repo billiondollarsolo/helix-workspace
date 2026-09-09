@@ -1,7 +1,60 @@
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import { z } from "zod";
 
-export type TenantIdpProtocol = "saml" | "oidc";
+export type TenantIdpProtocol = "oidc";
+
+const httpsUrl = z
+  .string()
+  .url()
+  .refine(isCredentialFreeHttpsUrl, "Credential-free HTTPS URL required");
+const oidcPublicConfig = z
+  .object({
+    issuer: httpsUrl.optional(),
+    metadataUrl: httpsUrl.optional(),
+    clientId: z.string().trim().min(1).max(500).optional(),
+    scopes: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+    authorizationEndpoint: httpsUrl.optional(),
+    tokenEndpoint: httpsUrl.optional(),
+    jwksUri: httpsUrl.optional(),
+  })
+  .strict();
+const claimSelector = z
+  .string()
+  .trim()
+  .max(1_000)
+  .regex(/^\$\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/u);
+const idpAttributeMapping = z
+  .object({
+    email: claimSelector.optional(),
+    displayName: claimSelector.optional(),
+    givenName: claimSelector.optional(),
+    familyName: claimSelector.optional(),
+    groups: claimSelector.optional(),
+    externalId: claimSelector.optional(),
+  })
+  .strict();
+
+/** Only public protocol settings are allowed; credentials use the opaque secret handle. */
+export function parseTenantIdpPublicConfig(
+  _protocol: TenantIdpProtocol,
+  value: unknown,
+): JsonObject {
+  return oidcPublicConfig.parse(value) as JsonObject;
+}
+
+export function parseTenantIdpAttributeMapping(value: unknown): JsonObject {
+  return idpAttributeMapping.parse(value) as JsonObject;
+}
+
+function isCredentialFreeHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
+}
 
 export interface TenantIdpConfigRecord {
   readonly id: string;
@@ -10,7 +63,7 @@ export interface TenantIdpConfigRecord {
   readonly isPrimary: boolean;
   readonly displayName: string;
   readonly config: JsonObject;
-  readonly signingCertVaultPath: string | null;
+  readonly signingCertSecretHandle: string | null;
   readonly attrMapping: JsonObject;
   readonly jitProvisioning: boolean;
   readonly enabled: boolean;
@@ -23,7 +76,7 @@ export interface CreateTenantIdpConfigInput {
   readonly protocol: TenantIdpProtocol;
   readonly displayName: string;
   readonly config?: JsonObject | undefined;
-  readonly signingCertVaultPath?: string | null | undefined;
+  readonly signingCertSecretHandle?: string | null | undefined;
   readonly attrMapping?: JsonObject | undefined;
   readonly isPrimary?: boolean | undefined;
   readonly jitProvisioning?: boolean | undefined;
@@ -36,7 +89,7 @@ export interface UpdateTenantIdpConfigInput {
   readonly protocol?: TenantIdpProtocol | undefined;
   readonly displayName?: string | undefined;
   readonly config?: JsonObject | undefined;
-  readonly signingCertVaultPath?: string | null | undefined;
+  readonly signingCertSecretHandle?: string | null | undefined;
   readonly attrMapping?: JsonObject | undefined;
   readonly isPrimary?: boolean | undefined;
   readonly jitProvisioning?: boolean | undefined;
@@ -47,6 +100,7 @@ export interface TenantIdpConfigStore {
   list(orgId: string): Promise<readonly TenantIdpConfigRecord[]>;
   get(orgId: string, id: string): Promise<TenantIdpConfigRecord | null>;
   getPrimary(orgId: string): Promise<TenantIdpConfigRecord | null>;
+  runtimeReady(orgId: string, id: string): Promise<boolean>;
   create(input: CreateTenantIdpConfigInput): Promise<TenantIdpConfigRecord>;
   update(input: UpdateTenantIdpConfigInput): Promise<TenantIdpConfigRecord | null>;
   delete(orgId: string, id: string): Promise<TenantIdpConfigRecord | null>;
@@ -60,7 +114,7 @@ interface TenantIdpConfigRow {
   readonly is_primary: boolean;
   readonly display_name: string;
   readonly config: unknown;
-  readonly signing_cert_vault_path: string | null;
+  readonly signing_cert_secret_handle: string | null;
   readonly attr_mapping: unknown;
   readonly jit_provisioning: boolean;
   readonly enabled: boolean;
@@ -72,48 +126,60 @@ export class PostgresTenantIdpConfigStore implements TenantIdpConfigStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async list(orgId: string): Promise<readonly TenantIdpConfigRecord[]> {
-    const selectedRows = await this.sql`
-      select id, org_id, protocol, is_primary, display_name, config, signing_cert_vault_path,
+    const rows = await this.sql<TenantIdpConfigRow[]>`
+      select id, org_id, protocol, is_primary, display_name, config, signing_cert_secret_handle,
              attr_mapping, jit_provisioning, enabled, created_at, updated_at
       from tenant_idp_configs
       where org_id = ${orgId}
+        and protocol = 'oidc'
       order by is_primary desc, enabled desc, created_at desc, id asc
     `;
-    const rows = selectedRows as unknown as readonly TenantIdpConfigRow[];
     return rows.map(mapTenantIdpConfigRow);
   }
 
   async get(orgId: string, id: string): Promise<TenantIdpConfigRecord | null> {
-    const selectedRows = await this.sql`
-      select id, org_id, protocol, is_primary, display_name, config, signing_cert_vault_path,
+    const rows = await this.sql<TenantIdpConfigRow[]>`
+      select id, org_id, protocol, is_primary, display_name, config, signing_cert_secret_handle,
              attr_mapping, jit_provisioning, enabled, created_at, updated_at
       from tenant_idp_configs
       where org_id = ${orgId}
         and id = ${id}
+        and protocol = 'oidc'
       limit 1
     `;
-    const rows = selectedRows as unknown as readonly TenantIdpConfigRow[];
     return rowOrNull(rows[0]);
   }
 
   async getPrimary(orgId: string): Promise<TenantIdpConfigRecord | null> {
-    const selectedRows = await this.sql`
-      select id, org_id, protocol, is_primary, display_name, config, signing_cert_vault_path,
+    const rows = await this.sql<TenantIdpConfigRow[]>`
+      select id, org_id, protocol, is_primary, display_name, config, signing_cert_secret_handle,
              attr_mapping, jit_provisioning, enabled, created_at, updated_at
       from tenant_idp_configs
       where org_id = ${orgId}
+        and protocol = 'oidc'
         and is_primary
         and enabled
       limit 1
     `;
-    const rows = selectedRows as unknown as readonly TenantIdpConfigRow[];
     return rowOrNull(rows[0]);
   }
 
+  async runtimeReady(orgId: string, id: string): Promise<boolean> {
+    const rows = await this.sql<{ readonly ready: boolean }[]>`
+      select exists (
+        select 1 from "ssoProvider"
+        where id = ${id} and "organizationId" = ${orgId}
+      ) as ready
+    `;
+    return rows[0]?.ready === true;
+  }
+
   async create(input: CreateTenantIdpConfigInput): Promise<TenantIdpConfigRecord> {
-    const insertedRows = await this.sql`
+    const publicConfig = parseTenantIdpPublicConfig(input.protocol, input.config ?? {});
+    const attrMapping = parseTenantIdpAttributeMapping(input.attrMapping ?? {});
+    const rows = await this.sql<TenantIdpConfigRow[]>`
       insert into tenant_idp_configs (
-        org_id, protocol, is_primary, display_name, config, signing_cert_vault_path,
+        org_id, protocol, is_primary, display_name, config, signing_cert_secret_handle,
         attr_mapping, jit_provisioning, enabled
       )
       values (
@@ -121,23 +187,22 @@ export class PostgresTenantIdpConfigStore implements TenantIdpConfigStore {
         ${input.protocol},
         ${input.isPrimary ?? true},
         ${input.displayName},
-        ${this.sql.json(input.config ?? {})},
-        ${input.signingCertVaultPath ?? null},
-        ${this.sql.json(input.attrMapping ?? {})},
-        ${input.jitProvisioning ?? true},
+        ${this.sql.json(publicConfig)},
+        ${input.signingCertSecretHandle ?? null},
+        ${this.sql.json(attrMapping)},
+        ${input.jitProvisioning ?? false},
         ${input.enabled ?? true}
       )
-      returning id, org_id, protocol, is_primary, display_name, config, signing_cert_vault_path,
+      returning id, org_id, protocol, is_primary, display_name, config, signing_cert_secret_handle,
                 attr_mapping, jit_provisioning, enabled, created_at, updated_at
     `;
-    const rows = insertedRows as unknown as readonly TenantIdpConfigRow[];
     return mapTenantIdpConfigRow(rows[0]);
   }
 
   async update(input: UpdateTenantIdpConfigInput): Promise<TenantIdpConfigRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = await tx`
-        select id, org_id, protocol, is_primary, display_name, config, signing_cert_vault_path,
+      const existingRows = await tx<TenantIdpConfigRow[]>`
+        select id, org_id, protocol, is_primary, display_name, config, signing_cert_secret_handle,
                attr_mapping, jit_provisioning, enabled, created_at, updated_at
         from tenant_idp_configs
         where org_id = ${input.orgId}
@@ -145,12 +210,15 @@ export class PostgresTenantIdpConfigStore implements TenantIdpConfigStore {
         for update
         limit 1
       `;
-      const existing = rowOrNull(existingRows[0] as TenantIdpConfigRow | undefined);
+      const existing = rowOrNull(existingRows[0]);
       if (existing === null) {
         return null;
       }
 
       const enabled = input.enabled ?? existing.enabled;
+      const protocol = input.protocol ?? existing.protocol;
+      const publicConfig = parseTenantIdpPublicConfig(protocol, input.config ?? existing.config);
+      const attrMapping = parseTenantIdpAttributeMapping(input.attrMapping ?? existing.attrMapping);
       const isPrimary = enabled && (input.isPrimary ?? existing.isPrimary);
       if (isPrimary) {
         await tx`
@@ -162,44 +230,43 @@ export class PostgresTenantIdpConfigStore implements TenantIdpConfigStore {
         `;
       }
 
-      const updatedRows = await tx`
+      const updatedRows = await tx<TenantIdpConfigRow[]>`
         update tenant_idp_configs
-        set protocol = ${input.protocol ?? existing.protocol},
+        set protocol = ${protocol},
             is_primary = ${isPrimary},
             display_name = ${input.displayName ?? existing.displayName},
-            config = ${tx.json(input.config ?? existing.config)},
-            signing_cert_vault_path = ${
-              input.signingCertVaultPath === undefined
-                ? existing.signingCertVaultPath
-                : input.signingCertVaultPath
+            config = ${tx.json(publicConfig)},
+            signing_cert_secret_handle = ${
+              input.signingCertSecretHandle === undefined
+                ? existing.signingCertSecretHandle
+                : input.signingCertSecretHandle
             },
-            attr_mapping = ${tx.json(input.attrMapping ?? existing.attrMapping)},
+            attr_mapping = ${tx.json(attrMapping)},
             jit_provisioning = ${input.jitProvisioning ?? existing.jitProvisioning},
             enabled = ${enabled},
             updated_at = now()
         where org_id = ${input.orgId}
           and id = ${input.id}
-        returning id, org_id, protocol, is_primary, display_name, config, signing_cert_vault_path,
+        returning id, org_id, protocol, is_primary, display_name, config, signing_cert_secret_handle,
                   attr_mapping, jit_provisioning, enabled, created_at, updated_at
       `;
-      return rowOrNull(updatedRows[0] as TenantIdpConfigRow | undefined);
+      return rowOrNull(updatedRows[0]);
     });
   }
 
   async delete(orgId: string, id: string): Promise<TenantIdpConfigRecord | null> {
-    const deletedRows = await this.sql`
+    const rows = await this.sql<TenantIdpConfigRow[]>`
       delete from tenant_idp_configs
       where org_id = ${orgId}
         and id = ${id}
-      returning id, org_id, protocol, is_primary, display_name, config, signing_cert_vault_path,
+      returning id, org_id, protocol, is_primary, display_name, config, signing_cert_secret_handle,
                 attr_mapping, jit_provisioning, enabled, created_at, updated_at
     `;
-    const rows = deletedRows as unknown as readonly TenantIdpConfigRow[];
     return rowOrNull(rows[0]);
   }
 
   async setPrimary(orgId: string, id: string): Promise<TenantIdpConfigRecord | null> {
-    const updatedRows = await this.sql`
+    const rows = await this.sql<TenantIdpConfigRow[]>`
       with selected as (
         select id
         from tenant_idp_configs
@@ -219,10 +286,9 @@ export class PostgresTenantIdpConfigStore implements TenantIdpConfigStore {
       set is_primary = true,
           updated_at = now()
       where id in (select id from selected)
-      returning id, org_id, protocol, is_primary, display_name, config, signing_cert_vault_path,
+      returning id, org_id, protocol, is_primary, display_name, config, signing_cert_secret_handle,
                 attr_mapping, jit_provisioning, enabled, created_at, updated_at
     `;
-    const rows = updatedRows as unknown as readonly TenantIdpConfigRow[];
     return rowOrNull(rows[0]);
   }
 }
@@ -246,6 +312,18 @@ export class InMemoryTenantIdpConfigStore implements TenantIdpConfigStore {
     return this.#orgRecords(orgId).find((record) => record.enabled && record.isPrimary) ?? null;
   }
 
+  async runtimeReady(orgId: string, id: string): Promise<boolean> {
+    const config = await this.get(orgId, id);
+    return (
+      config !== null &&
+      config.enabled &&
+      config.isPrimary &&
+      config.signingCertSecretHandle !== null &&
+      typeof config.config.issuer === "string" &&
+      typeof config.config.clientId === "string"
+    );
+  }
+
   async create(input: CreateTenantIdpConfigInput): Promise<TenantIdpConfigRecord> {
     if (
       input.enabled !== false &&
@@ -255,16 +333,18 @@ export class InMemoryTenantIdpConfigStore implements TenantIdpConfigStore {
       throw new Error("Tenant already has an enabled primary IdP config.");
     }
     const now = this.#now();
+    const publicConfig = parseTenantIdpPublicConfig(input.protocol, input.config ?? {});
+    const attrMapping = parseTenantIdpAttributeMapping(input.attrMapping ?? {});
     const record: TenantIdpConfigRecord = {
       id: `idp-${(this.#seq += 1).toString()}`,
       orgId: input.orgId,
       protocol: input.protocol,
       isPrimary: input.isPrimary ?? true,
       displayName: input.displayName,
-      config: input.config ?? {},
-      signingCertVaultPath: input.signingCertVaultPath ?? null,
-      attrMapping: input.attrMapping ?? {},
-      jitProvisioning: input.jitProvisioning ?? true,
+      config: publicConfig,
+      signingCertSecretHandle: input.signingCertSecretHandle ?? null,
+      attrMapping,
+      jitProvisioning: input.jitProvisioning ?? false,
       enabled: input.enabled ?? true,
       createdAt: now,
       updatedAt: now,
@@ -280,6 +360,9 @@ export class InMemoryTenantIdpConfigStore implements TenantIdpConfigStore {
     }
     const now = this.#now();
     const enabled = input.enabled ?? existing.enabled;
+    const protocol = input.protocol ?? existing.protocol;
+    const publicConfig = parseTenantIdpPublicConfig(protocol, input.config ?? existing.config);
+    const attrMapping = parseTenantIdpAttributeMapping(input.attrMapping ?? existing.attrMapping);
     const isPrimary = enabled && (input.isPrimary ?? existing.isPrimary);
     if (isPrimary) {
       for (const record of this.#orgRecords(input.orgId)) {
@@ -290,14 +373,14 @@ export class InMemoryTenantIdpConfigStore implements TenantIdpConfigStore {
     }
     const updated: TenantIdpConfigRecord = {
       ...existing,
-      protocol: input.protocol ?? existing.protocol,
+      protocol,
       displayName: input.displayName ?? existing.displayName,
-      config: input.config ?? existing.config,
-      signingCertVaultPath:
-        input.signingCertVaultPath === undefined
-          ? existing.signingCertVaultPath
-          : input.signingCertVaultPath,
-      attrMapping: input.attrMapping ?? existing.attrMapping,
+      config: publicConfig,
+      signingCertSecretHandle:
+        input.signingCertSecretHandle === undefined
+          ? existing.signingCertSecretHandle
+          : input.signingCertSecretHandle,
+      attrMapping,
       isPrimary,
       jitProvisioning: input.jitProvisioning ?? existing.jitProvisioning,
       enabled,
@@ -347,7 +430,7 @@ function mapTenantIdpConfigRow(row: TenantIdpConfigRow | undefined): TenantIdpCo
   if (row === undefined) {
     throw new Error("Tenant IdP config query returned no rows.");
   }
-  if (row.protocol !== "saml" && row.protocol !== "oidc") {
+  if (row.protocol !== "oidc") {
     throw new Error(`Unsupported tenant IdP protocol: ${row.protocol}`);
   }
   return {
@@ -356,9 +439,9 @@ function mapTenantIdpConfigRow(row: TenantIdpConfigRow | undefined): TenantIdpCo
     protocol: row.protocol,
     isPrimary: row.is_primary,
     displayName: row.display_name,
-    config: jsonObjectOrEmpty(row.config),
-    signingCertVaultPath: row.signing_cert_vault_path,
-    attrMapping: jsonObjectOrEmpty(row.attr_mapping),
+    config: parseTenantIdpPublicConfig(row.protocol, row.config),
+    signingCertSecretHandle: row.signing_cert_secret_handle,
+    attrMapping: parseTenantIdpAttributeMapping(row.attr_mapping),
     jitProvisioning: row.jit_provisioning,
     enabled: row.enabled,
     createdAt: row.created_at.toISOString(),
@@ -368,12 +451,6 @@ function mapTenantIdpConfigRow(row: TenantIdpConfigRow | undefined): TenantIdpCo
 
 function rowOrNull(row: TenantIdpConfigRow | undefined): TenantIdpConfigRecord | null {
   return row === undefined ? null : mapTenantIdpConfigRow(row);
-}
-
-function jsonObjectOrEmpty(value: unknown): JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as JsonObject)
-    : {};
 }
 
 function compareTenantIdpConfigs(

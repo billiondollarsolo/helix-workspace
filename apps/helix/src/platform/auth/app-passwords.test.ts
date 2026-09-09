@@ -92,7 +92,7 @@ describe("app password tools", () => {
     });
   });
 
-  it("rejects unsupported scopes before creating an app password", async () => {
+  it("rejects the unimplemented IMAP scope before creating an app password", async () => {
     const store = new InMemoryAppPasswordStore();
     const auditSink = new RecordingAuditSink();
     const registry = createToolRegistry({ auditSink });
@@ -100,7 +100,7 @@ describe("app password tools", () => {
 
     const result = await registry.invoke(
       "app.passwords.create",
-      { actorId, label: "Bad client", scopes: ["calendar.read", "unknown.scope"] },
+      { actorId, label: "Unsupported client", scopes: ["imap"] },
       { actor: adminActor, skipConfirmation: true },
     );
 
@@ -109,6 +109,94 @@ describe("app password tools", () => {
       statusCode: 400,
     });
     expect(await store.listAppPasswords({ orgId })).toEqual([]);
+  });
+
+  it("keeps a mail-only password restrictive for an owner with ambient admin access", async () => {
+    const store = new InMemoryAppPasswordStore();
+    const manager = new AppPasswordManager(store);
+    const owner: Actor = {
+      id: actorId,
+      orgId,
+      type: "user",
+      email: "owner@example.test",
+      displayName: "Owner",
+      scopes: ["admin.*", "mail.read", "drive.read"],
+    };
+    store.addActor(owner);
+    const registration = await manager.create({
+      actorId,
+      orgId,
+      label: "Mail client",
+      scopes: ["mail.read"],
+    });
+
+    await expect(
+      store.authenticateAppPassword({
+        username: owner.email ?? "",
+        password: registration.password,
+        requiredScope: "mail.read",
+      }),
+    ).resolves.toMatchObject({ scopes: ["mail.read"] });
+    await expect(
+      store.authenticateAppPassword({
+        username: owner.email ?? "",
+        password: registration.password,
+        requiredScope: "drive.read",
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      store.authenticateAppPassword({
+        username: owner.email ?? "",
+        password: registration.password,
+        requiredScope: "admin.users",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("rechecks current user authority and refuses service-account app passwords", async () => {
+    const store = new InMemoryAppPasswordStore();
+    const manager = new AppPasswordManager(store);
+    const user: Actor = {
+      id: actorId,
+      orgId,
+      type: "user",
+      email: "user@example.test",
+      displayName: "User",
+      scopes: ["mail.read"],
+    };
+    store.addActor(user);
+    const registration = await manager.create({
+      actorId,
+      orgId,
+      label: "Mail client",
+      scopes: ["mail.read"],
+    });
+
+    store.addActor({ ...user, scopes: [] });
+    await expect(
+      store.authenticateAppPassword({
+        username: user.email ?? "",
+        password: registration.password,
+        requiredScope: "mail.read",
+      }),
+    ).resolves.toBeNull();
+
+    store.addActor({ ...user, type: "service_account", scopes: ["mail.read"] });
+    await expect(
+      store.authenticateAppPassword({
+        username: user.email ?? "",
+        password: registration.password,
+        requiredScope: "mail.read",
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects privileged scopes even when the manager is called directly", async () => {
+    const manager = new AppPasswordManager(new InMemoryAppPasswordStore());
+
+    await expect(
+      manager.create({ actorId, orgId, label: "Privileged", scopes: ["admin.users"] }),
+    ).rejects.toThrow("supported user protocol scopes");
   });
 
   it("lists app passwords only in the invoking admin org", async () => {

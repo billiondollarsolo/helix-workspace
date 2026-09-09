@@ -1,17 +1,32 @@
 // ponytail: WebDAV bodies stay plain-text per RFC 4918; not the JSON error envelope. File still >400 LOC with PROPFIND XML.
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { ApiError, NotFoundError } from "../../api/api-error.js";
+import { ApiError, NotFoundError, UnauthorizedError } from "../../api/api-error.js";
+import { versionedApiPath } from "../../api/version.js";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
+import {
+  DavStandardsParseError,
+  davElements,
+  davText,
+  decodePathSegment,
+  parseDavXml,
+} from "../dav/standards.js";
 import type {
   DriveFileReadInput,
   DriveFileReadResult,
   DriveFolderCreateInput,
   DriveStore,
 } from "./store.js";
-import type { DriveEntryRecord } from "./types.js";
-import { sendBytesWithRangeSupport } from "./range-response.js";
+import type {
+  AcquireDriveWebDavLockInput,
+  DriveEntryRecord,
+  DriveWebDavChangePage,
+  DriveWebDavLock,
+} from "./types.js";
+import { safeDriveContentHeaders } from "./preview-security.js";
+import { sendBytesWithRangeSupport, sendStreamWithRangeSupport } from "./range-response.js";
+import { dlpDecisionError, type DlpGuard } from "../dlp.js";
 
 export interface WebDavDriveStore extends DriveStore {
   createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord>;
@@ -21,23 +36,49 @@ export interface WebDavDriveStore extends DriveStore {
     readonly actorId: string;
     readonly folderId: string;
   }): Promise<DriveEntryRecord | null>;
+  acquireWebDavLock(input: AcquireDriveWebDavLockInput): Promise<DriveWebDavLock | null>;
+  listWebDavLocks(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly pathKeys: readonly string[];
+  }): Promise<readonly DriveWebDavLock[]>;
+  releaseWebDavLock(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly pathKey: string;
+    readonly token: string;
+  }): Promise<boolean>;
+  listWebDavChanges(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly collectionPathKey: string;
+    readonly afterVersion?: string;
+    readonly limit: number;
+  }): Promise<DriveWebDavChangePage>;
 }
 
 export interface RegisterDriveRoutesOptions {
   readonly store: WebDavDriveStore;
   readonly appPasswords: AppPasswordAuthenticator;
+  /** WebDAV PUT is the bounded compatibility path; large browser uploads use
+   * direct-to-storage multipart URLs and never cross the API body parser. */
+  readonly bodyLimitBytes?: number;
+  readonly dlp?: DlpGuard;
 }
 
 export interface RegisterDriveShareLinkRouteOptions {
-  readonly store: Pick<DriveStore, "readFileByShareToken">;
+  readonly store: Pick<DriveStore, "openFileByShareToken">;
+  readonly actorFromRequest?: ((request: FastifyRequest) => Promise<Actor>) | undefined;
+  readonly dlp?: DlpGuard;
 }
 
-type WebDavMethod = "PROPFIND" | "GET" | "PUT" | "DELETE" | "MKCOL" | "LOCK" | "UNLOCK";
+type WebDavMethod = "PROPFIND" | "REPORT" | "GET" | "PUT" | "DELETE" | "MKCOL" | "LOCK" | "UNLOCK";
 
 /**
  * Unauthenticated public share-link resolver. The token is the credential;
- * no session cookie or scope is required. Streams bytes with Range support
- * when content is available; otherwise returns JSON metadata for the object.
+ * no session is required unless the owner restricts the link to verified
+ * tenant domains. Streams bytes with Range support and fails closed when the
+ * backing object cannot be integrity-checked.
  */
 export async function registerDriveShareLinkRoute(
   app: FastifyInstance,
@@ -45,43 +86,78 @@ export async function registerDriveShareLinkRoute(
 ): Promise<void> {
   app.get<{ Params: { token: string } }>("/api/drive/share/:token", async (request, reply) => {
     const token = request.params.token.trim();
+    reply
+      .header("cache-control", "private, no-store, max-age=0")
+      .header("pragma", "no-cache")
+      .header("x-content-type-options", "nosniff");
     if (token.length === 0) {
       throw new NotFoundError("Share link not found.");
     }
-    if (options.store.readFileByShareToken === undefined) {
+    if (options.store.openFileByShareToken === undefined) {
       // No dedicated not_implemented code in the envelope taxonomy; 500 is honest.
       throw new ApiError("internal_error", "Share links are not configured.");
     }
-    const file = await options.store.readFileByShareToken(token);
-    if (file === null) {
-      throw new NotFoundError("Share link not found.");
-    }
-
-    const filename = file.entry.name;
-    const asciiFallback = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, '\\"');
-    const utf8Encoded = encodeURIComponent(filename);
     const download = (request.query as { download?: string }).download === "1";
-    const disposition = `${download ? "attachment" : "inline"}; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
-
-    if (file.content !== null) {
-      return sendBytesWithRangeSupport({
-        reply,
-        request,
-        bytes: Buffer.from(file.content),
-        mimeType: file.entry.mimeType ?? "application/octet-stream",
-        disposition,
+    const actor = await options.actorFromRequest?.(request);
+    const password = sharePasswordFromRequest(request);
+    const streamed = await options.store.openFileByShareToken({
+      token,
+      clientKey: createHmac("sha256", token)
+        .update(request.ip || "unknown")
+        .digest("hex"),
+      ...(password === undefined ? {} : { password }),
+      ...(actor === undefined ? {} : { actor }),
+      download,
+    });
+    if (streamed === null) {
+      reply.header("www-authenticate", 'Basic realm="Helix shared file", charset="UTF-8"');
+      throw new UnauthorizedError("Share link is unavailable or requires credentials.");
+    }
+    if (options.dlp !== undefined && streamed.orgId !== undefined) {
+      await enforceDriveDlp(options.dlp, reply, {
+        orgId: streamed.orgId,
+        actorId: actor?.id ?? "anonymous",
+        boundary: "external_guest",
+        resourceId: streamed.entry.id,
+        traceId: request.id,
       });
     }
-
-    // Content unavailable (no blob yet / storage miss) — return metadata only.
-    return reply.code(200).send({
-      objectId: file.entry.id,
-      name: file.entry.name,
-      mimeType: file.entry.mimeType ?? "application/octet-stream",
-      byteSize: file.entry.byteSize ?? 0,
-      contentAvailable: false,
+    const responseHeaders = safeDriveContentHeaders(
+      streamed.entry.name,
+      streamed.entry.mimeType ?? "application/octet-stream",
+      !download,
+    );
+    return sendStreamWithRangeSupport({
+      reply,
+      request,
+      byteSize: streamed.byteSize,
+      etag: streamed.etag,
+      open: streamed.open,
+      ...responseHeaders,
+      lastModified: streamed.entry.updatedAt,
     });
   });
+}
+
+function sharePasswordFromRequest(request: FastifyRequest): string | undefined {
+  const authorization = request.headers.authorization;
+  if (typeof authorization !== "string") return undefined;
+  try {
+    const basic = authorization.startsWith("Basic ");
+    const encoded = basic
+      ? authorization.slice("Basic ".length)
+      : authorization.startsWith("SharePassword ")
+        ? authorization.slice("SharePassword ".length)
+        : null;
+    if (encoded === null) return undefined;
+    const decoded = Buffer.from(encoded, "base64url").toString("utf8");
+    const separator = decoded.indexOf(":");
+    if (basic && separator < 0) return undefined;
+    const password = basic ? decoded.slice(separator + 1) : decoded;
+    return password.length <= 256 ? password : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function registerDriveRoutes(
@@ -89,6 +165,7 @@ export async function registerDriveRoutes(
   options: RegisterDriveRoutesOptions,
 ): Promise<void> {
   safeAddHttpMethod(app, "PROPFIND", { hasBody: true });
+  safeAddHttpMethod(app, "REPORT", { hasBody: true });
   safeAddHttpMethod(app, "MKCOL", { hasBody: true });
   safeAddHttpMethod(app, "LOCK", { hasBody: true });
   safeAddHttpMethod(app, "UNLOCK", { hasBody: false });
@@ -96,22 +173,21 @@ export async function registerDriveRoutes(
   safeAddContentTypeParser(app, "application/octet-stream");
   safeAddContentTypeParser(app, "text/xml");
 
-  const locks = new Map<string, WebDavLock>();
-
   app.route({
     method: "OPTIONS",
     url: "/dav/files/*",
     handler: async (_request, reply) =>
       reply
-        .header("DAV", "1, 2")
-        .header("Allow", "OPTIONS, PROPFIND, GET, PUT, DELETE, MKCOL, LOCK, UNLOCK")
+        .header("DAV", "sync-collection")
+        .header("Allow", "OPTIONS, PROPFIND, REPORT, GET, PUT, DELETE, MKCOL, LOCK, UNLOCK")
         .code(204)
         .send(),
   });
 
   app.route({
-    method: ["PROPFIND", "GET", "PUT", "DELETE", "MKCOL", "LOCK", "UNLOCK"],
+    method: ["PROPFIND", "REPORT", "GET", "PUT", "DELETE", "MKCOL", "LOCK", "UNLOCK"],
     url: "/dav/files/*",
+    bodyLimit: options.bodyLimitBytes ?? 128 * 1024 * 1024,
     handler: async (request, reply) => {
       const method = request.method as WebDavMethod;
       const actor = await authenticateWebDav(request, options.appPasswords, requiredScope(method));
@@ -128,6 +204,13 @@ export async function registerDriveRoutes(
       }
 
       if (method === "PROPFIND") {
+        const bodyText = bodyToString(request.body);
+        try {
+          if (bodyText.trim().length > 0) parseDavXml(bodyText);
+        } catch (error) {
+          if (error instanceof DavStandardsParseError) return reply.code(400).send(error.message);
+          throw error;
+        }
         const target = await resolveTarget(options.store, actor, path);
         if (target === null) {
           return reply.code(404).send("Unknown WebDAV resource.");
@@ -135,23 +218,134 @@ export async function registerDriveRoutes(
         const depth = propfindDepth(headerString(request.headers.depth));
         const children =
           depth === 1 && target.kind === "folder"
-            ? await options.store.list({
+            ? await listWebDavChildren(options.store, actor, target.folderId)
+            : [];
+        const requestedPathKeys = [
+          pathKey(target.path),
+          ...children.map((child) => pathKey([...target.path, child.name])),
+        ];
+        const locks = locksByRequestedPath(
+          requestedPathKeys,
+          await options.store.listWebDavLocks({
+            orgId: actor.orgId,
+            actorId: actor.id,
+            pathKeys: requestedPathKeys,
+          }),
+        );
+        const sync =
+          target.kind === "folder"
+            ? await options.store.listWebDavChanges({
                 orgId: actor.orgId,
                 actorId: actor.id,
-                folderId: target.folderId,
-                limit: 250,
+                collectionPathKey: pathKey(target.path),
+                limit: 1,
               })
-            : [];
+            : undefined;
         return reply
           .code(207)
           .type("application/xml; charset=utf-8")
-          .send(propfindMultistatusXml(target, children, bodyToString(request.body), locks));
+          .send(
+            propfindMultistatusXml(
+              target,
+              children,
+              bodyText,
+              locks,
+              sync === undefined
+                ? undefined
+                : webDavSyncToken(actor.orgId, pathKey(path), sync.version),
+            ),
+          );
+      }
+
+      if (method === "REPORT") {
+        const bodyText = bodyToString(request.body);
+        try {
+          parseDavXml(bodyText);
+        } catch (error) {
+          if (error instanceof DavStandardsParseError) return reply.code(400).send(error.message);
+          throw error;
+        }
+        const target = await resolveTarget(options.store, actor, path);
+        if (target?.kind !== "folder") {
+          return reply.code(404).send("Unknown WebDAV collection.");
+        }
+        const collectionPathKey = pathKey(path);
+        const report = syncCollectionRequest(bodyText, actor.orgId, collectionPathKey);
+        if (report === null) {
+          return reply.code(400).send("Invalid sync-collection REPORT.");
+        }
+        if ("invalidToken" in report) {
+          return reply
+            .code(409)
+            .type("application/xml; charset=utf-8")
+            .send(xmlDocument('<D:error xmlns:D="DAV:"><D:valid-sync-token/></D:error>'));
+        }
+        const page = await options.store.listWebDavChanges({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          collectionPathKey,
+          ...(report.afterVersion === undefined ? {} : { afterVersion: report.afterVersion }),
+          limit: report.limit,
+        });
+        if (!page.valid) {
+          return reply
+            .code(409)
+            .type("application/xml; charset=utf-8")
+            .send(xmlDocument('<D:error xmlns:D="DAV:"><D:valid-sync-token/></D:error>'));
+        }
+        const changes =
+          report.afterVersion === undefined
+            ? (await listWebDavChildren(options.store, actor, target.folderId)).map((entry) => ({
+                pathKey: pathKey([...path, entry.name]),
+                status: 200 as const,
+                resourceType: entry.type,
+              }))
+            : page.changes;
+        return reply
+          .code(207)
+          .type("application/xml; charset=utf-8")
+          .send(
+            syncMultistatusXml(
+              changes,
+              webDavSyncToken(actor.orgId, collectionPathKey, page.version),
+              page.hasMore,
+              folderHref(path),
+            ),
+          );
       }
 
       if (method === "GET") {
         const target = await resolveTarget(options.store, actor, path);
         if (target === null || target.kind !== "file" || target.entry === undefined) {
           return reply.code(404).send("Unknown WebDAV file.");
+        }
+        const streamed = await options.store.openFile?.({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          objectId: target.entry.id,
+        });
+        if (streamed !== undefined && streamed !== null) {
+          await enforceDriveDlp(options.dlp, reply, {
+            orgId: actor.orgId,
+            actorId: actor.id,
+            boundary: "drive_download",
+            resourceId: target.entry.id,
+            traceId: request.id,
+          });
+          const responseHeaders = safeDriveContentHeaders(
+            streamed.entry.name,
+            streamed.entry.mimeType ?? "application/octet-stream",
+            true,
+          );
+          return sendStreamWithRangeSupport({
+            reply,
+            request,
+            byteSize: streamed.byteSize,
+            etag: streamed.etag,
+            open: streamed.open,
+            ...responseHeaders,
+            lastModified: streamed.entry.updatedAt,
+          });
         }
         const file = await options.store.readFile({
           orgId: actor.orgId,
@@ -161,19 +355,31 @@ export async function registerDriveRoutes(
         if (file?.content === null || file === null) {
           return reply.code(404).send("WebDAV file content is not available.");
         }
+        await enforceDriveDlp(options.dlp, reply, {
+          orgId: actor.orgId,
+          actorId: actor.id,
+          boundary: "drive_download",
+          resourceId: target.entry.id,
+          content: file.content,
+          traceId: request.id,
+        });
         reply.header("ETag", entryEtag(file.entry));
-        const fileName = file.entry.name.replaceAll('"', "");
+        const responseHeaders = safeDriveContentHeaders(
+          file.entry.name,
+          file.entry.mimeType ?? "application/octet-stream",
+          true,
+        );
         return sendBytesWithRangeSupport({
           reply,
           request,
           bytes: Buffer.from(file.content),
-          mimeType: file.entry.mimeType ?? "application/octet-stream",
-          disposition: `inline; filename="${fileName}"`,
+          ...responseHeaders,
+          lastModified: file.entry.updatedAt,
         });
       }
 
       if (method === "DELETE") {
-        const locked = lockedPreconditionFailure(request, locks, path);
+        const locked = await lockedPreconditionFailure(request, options.store, actor, path);
         if (locked !== null) {
           return reply.code(423).send(locked);
         }
@@ -183,6 +389,10 @@ export async function registerDriveRoutes(
         const target = await resolveTarget(options.store, actor, path);
         if (target === null || target.entry === undefined) {
           return reply.code(404).send("Unknown WebDAV resource.");
+        }
+        const preconditionFailure = putPreconditionFailure(request, target.entry);
+        if (preconditionFailure !== null) {
+          return reply.code(412).send(preconditionFailure);
         }
         if (target.kind === "folder") {
           const trashedFolder = await options.store.trashFolder({
@@ -205,7 +415,7 @@ export async function registerDriveRoutes(
       }
 
       if (method === "MKCOL") {
-        const locked = lockedPreconditionFailure(request, locks, path);
+        const locked = await lockedPreconditionFailure(request, options.store, actor, path);
         if (locked !== null) {
           return reply.code(423).send(locked);
         }
@@ -219,6 +429,8 @@ export async function registerDriveRoutes(
         }
         const existing = await findChild(options.store, actor, parent.folderId, name);
         if (existing !== null) {
+          const preconditionFailure = putPreconditionFailure(request, existing);
+          if (preconditionFailure !== null) return reply.code(412).send(preconditionFailure);
           return reply.code(405).send("WebDAV collection already exists.");
         }
         await options.store.createFolder({
@@ -231,18 +443,30 @@ export async function registerDriveRoutes(
       }
 
       if (method === "LOCK") {
+        const bodyText = bodyToString(request.body);
+        try {
+          if (bodyText.trim().length > 0) parseDavXml(bodyText);
+        } catch (error) {
+          if (error instanceof DavStandardsParseError) return reply.code(400).send(error.message);
+          throw error;
+        }
         const target = await resolveTarget(options.store, actor, path);
         const parent =
           target === null ? await resolveParentFolder(options.store, actor, path) : null;
         if (target === null && parent === null) {
           return reply.code(409).send("Unknown WebDAV parent collection.");
         }
-        const existingLock = findLockForPath(locks, path);
-        if (existingLock !== undefined && !requestIncludesLockToken(request, existingLock.token)) {
-          return reply.code(423).send("WebDAV resource is locked.");
-        }
-        const lock = existingLock ?? createWebDavLock(request, actor, path);
-        locks.set(lock.pathKey, lock);
+        const refreshToken = lockTokenFromRequest(request);
+        const lock = await options.store.acquireWebDavLock({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          pathKey: pathKey(path),
+          owner: lockOwner(bodyText),
+          depth: lockDepth(headerString(request.headers.depth)),
+          timeoutSeconds: lockTimeoutSeconds(headerString(request.headers.timeout)),
+          ...(refreshToken === null ? {} : { token: refreshToken }),
+        });
+        if (lock === null) return reply.code(423).send("WebDAV resource is locked.");
         const href =
           target?.kind === "folder" || request.url.endsWith("/")
             ? folderHref(path)
@@ -259,11 +483,15 @@ export async function registerDriveRoutes(
         if (token === null) {
           return reply.code(400).send("UNLOCK requires a Lock-Token header.");
         }
-        const lock = locks.get(pathKey(path));
-        if (lock === undefined || lock.token !== token) {
+        const released = await options.store.releaseWebDavLock({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          pathKey: pathKey(path),
+          token,
+        });
+        if (!released) {
           return reply.code(409).send("Unknown WebDAV lock token.");
         }
-        locks.delete(lock.pathKey);
         return reply.code(204).send();
       }
 
@@ -279,7 +507,7 @@ export async function registerDriveRoutes(
       if (existing?.type === "folder") {
         return reply.code(409).send("Cannot overwrite a WebDAV collection with a file.");
       }
-      const locked = lockedPreconditionFailure(request, locks, path);
+      const locked = await lockedPreconditionFailure(request, options.store, actor, path);
       if (locked !== null) {
         return reply.code(423).send(locked);
       }
@@ -287,41 +515,68 @@ export async function registerDriveRoutes(
       if (preconditionFailure !== null) {
         return reply.code(412).send(preconditionFailure);
       }
-      if (existing?.type === "file") {
-        await options.store.delete({
-          orgId: actor.orgId,
-          actorId: actor.id,
-          objectId: existing.id,
-        });
-      }
       const body = bodyToBuffer(request.body);
       const sha256 = createHash("sha256").update(body).digest("hex");
-      const upload = await options.store.prepareUpload({
-        orgId: actor.orgId,
-        actorId: actor.id,
-        name,
-        folderId: parent.folderId,
-        mimeType: headerString(request.headers["content-type"]) ?? "application/octet-stream",
-        byteSize: body.byteLength,
-        sha256,
-        metadata: { source: "webdav" },
-      });
+      const mimeType = headerString(request.headers["content-type"]) ?? "application/octet-stream";
+      const objectId =
+        existing?.id ??
+        (
+          await options.store.prepareUpload({
+            orgId: actor.orgId,
+            actorId: actor.id,
+            name,
+            folderId: parent.folderId,
+            mimeType,
+            byteSize: body.byteLength,
+            sha256,
+            metadata: { source: "webdav" },
+          })
+        ).objectId;
       const version = await options.store.finalizeUpload({
         orgId: actor.orgId,
         actorId: actor.id,
-        objectId: upload.objectId,
+        objectId,
         byteSize: body.byteLength,
         sha256,
-        mimeType: upload.mimeType,
+        mimeType,
         content: body,
         metadata: { source: "webdav" },
       });
       return reply
-        .header("ETag", `"${upload.objectId}-${String(version.versionNumber)}-${sha256}"`)
+        .header("ETag", `"${objectId}-${String(version.versionNumber)}-${sha256}"`)
         .code(existing === null ? 201 : 204)
         .send();
     },
   });
+}
+
+async function enforceDriveDlp(
+  guard: DlpGuard | undefined,
+  reply: { header(name: string, value: string): unknown },
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly boundary: "drive_download" | "external_guest";
+    readonly resourceId?: string;
+    readonly content?: unknown;
+    readonly traceId?: string;
+  },
+): Promise<void> {
+  if (guard === undefined) return;
+  const decision = await guard.evaluate({
+    orgId: input.orgId,
+    actorId: input.actorId,
+    boundary: input.boundary,
+    ...(input.content === undefined ? {} : { content: input.content }),
+    ...(input.resourceId === undefined
+      ? {}
+      : { resources: [{ resourceType: "drive.file", resourceId: input.resourceId }] }),
+    ...(input.traceId === undefined ? {} : { traceId: input.traceId }),
+  });
+  if (decision.action === "block" || decision.action === "quarantine") {
+    throw dlpDecisionError(decision);
+  }
+  if (decision.action === "warn") reply.header("x-helix-dlp-warning", decision.classification);
 }
 
 async function authenticateWebDav(
@@ -408,13 +663,41 @@ async function findChild(
   folderId: string | null,
   name: string,
 ): Promise<DriveEntryRecord | null> {
-  const children = await store.list({
-    orgId: actor.orgId,
-    actorId: actor.id,
-    folderId,
-    limit: 250,
-  });
-  return children.find((entry) => entry.name === name) ?? null;
+  let cursor: string | undefined;
+  do {
+    const page = await store.list({
+      orgId: actor.orgId,
+      actorId: actor.id,
+      folderId,
+      limit: 250,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    const found = page.entries.find((entry) => entry.name === name);
+    if (found !== undefined) return found;
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor !== undefined);
+  return null;
+}
+
+async function listWebDavChildren(
+  store: WebDavDriveStore,
+  actor: Actor,
+  folderId: string | null,
+): Promise<readonly DriveEntryRecord[]> {
+  const entries: DriveEntryRecord[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await store.list({
+      orgId: actor.orgId,
+      actorId: actor.id,
+      folderId,
+      limit: 250,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    entries.push(...page.entries);
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor !== undefined);
+  return entries;
 }
 
 function propfindMultistatusXml(
@@ -422,10 +705,11 @@ function propfindMultistatusXml(
   children: readonly DriveEntryRecord[],
   body: string,
   locks: ReadonlyMap<string, WebDavLock>,
+  syncToken?: string,
 ) {
   const request = propfindRequest(body);
   const entries = [
-    targetResponseXml(target, request, locks),
+    targetResponseXml(target, request, locks, syncToken),
     ...children.map((child) => childResponseXml(target.path, child, request, locks)),
   ];
   return xmlDocument(`<D:multistatus xmlns:D="DAV:">${entries.join("")}</D:multistatus>`);
@@ -435,6 +719,7 @@ function targetResponseXml(
   target: ResolvedTarget,
   request: PropfindRequest,
   locks: ReadonlyMap<string, WebDavLock>,
+  syncToken?: string,
 ): string {
   const href = target.kind === "folder" ? folderHref(target.path) : fileHref(target.path);
   const entry = target.entry;
@@ -449,6 +734,7 @@ function targetResponseXml(
     contentType: entry?.mimeType,
     etag: entry === undefined ? undefined : entryEtag(entry),
     lock: locks.get(pathKey(target.path)),
+    syncToken,
   });
 }
 
@@ -484,6 +770,8 @@ type WebDavProperty =
   | "quota-available-bytes"
   | "quota-used-bytes"
   | "resourcetype"
+  | "sync-token"
+  | "supported-report-set"
   | "supportedlock";
 
 type PropfindRequest =
@@ -502,20 +790,14 @@ const supportedWebDavProperties = new Set<WebDavProperty>([
   "quota-available-bytes",
   "quota-used-bytes",
   "resourcetype",
+  "sync-token",
+  "supported-report-set",
   "supportedlock",
 ]);
 
 const webDavQuotaAvailableBytes = 10 * 1024 * 1024 * 1024 * 1024;
 
-interface WebDavLock {
-  readonly pathKey: string;
-  readonly token: string;
-  readonly owner: string | null;
-  readonly actorId: string;
-  readonly depth: "0" | "infinity";
-  readonly createdAt: Date;
-  readonly expiresAt: Date;
-}
+type WebDavLock = DriveWebDavLock;
 
 function responseXml(input: {
   readonly request: PropfindRequest;
@@ -528,6 +810,7 @@ function responseXml(input: {
   readonly contentType?: string | undefined;
   readonly etag?: string | undefined;
   readonly lock?: WebDavLock | undefined;
+  readonly syncToken?: string | undefined;
 }): string {
   const values: Partial<Record<WebDavProperty, string | undefined>> = {
     creationdate:
@@ -553,6 +836,13 @@ function responseXml(input: {
     "quota-available-bytes": `<D:quota-available-bytes>${String(webDavQuotaAvailableBytes)}</D:quota-available-bytes>`,
     "quota-used-bytes": `<D:quota-used-bytes>${String(input.contentLength ?? 0)}</D:quota-used-bytes>`,
     resourcetype: `<D:resourcetype>${input.isCollection ? "<D:collection/>" : ""}</D:resourcetype>`,
+    "sync-token":
+      input.syncToken === undefined
+        ? undefined
+        : `<D:sync-token>${xmlEscape(input.syncToken)}</D:sync-token>`,
+    "supported-report-set": input.isCollection
+      ? "<D:supported-report-set><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report></D:supported-report-set>"
+      : undefined,
     supportedlock:
       "<D:supportedlock><D:lockentry><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockentry></D:supportedlock>",
   };
@@ -583,71 +873,52 @@ function responseXml(input: {
   return `<D:response><D:href>${xmlEscape(input.href)}</D:href>${okPropstat}${missingPropstat}</D:response>`;
 }
 
-function createWebDavLock(
+async function lockedPreconditionFailure(
   request: FastifyRequest,
+  store: WebDavDriveStore,
   actor: Actor,
   path: readonly string[],
-): WebDavLock {
-  const timeoutSeconds = lockTimeoutSeconds(headerString(request.headers.timeout));
-  const createdAt = new Date();
-  return {
-    pathKey: pathKey(path),
-    token: `opaquelocktoken:${randomUUID()}`,
-    owner: lockOwner(bodyToString(request.body)),
-    actorId: actor.id,
-    depth: lockDepth(headerString(request.headers.depth)),
-    createdAt,
-    expiresAt: new Date(createdAt.getTime() + timeoutSeconds * 1000),
-  };
-}
-
-function lockedPreconditionFailure(
-  request: FastifyRequest,
-  locks: Map<string, WebDavLock>,
-  path: readonly string[],
-): string | null {
-  const lock = findLockForPath(locks, path);
-  if (lock === undefined || requestIncludesLockToken(request, lock.token)) {
+): Promise<string | null> {
+  const lock = (
+    await store.listWebDavLocks({
+      orgId: actor.orgId,
+      actorId: actor.id,
+      pathKeys: [pathKey(path)],
+    })
+  )[0];
+  if (
+    lock === undefined ||
+    (lock.actorId === actor.id && requestIncludesLockToken(request, lock.token))
+  ) {
     return null;
   }
   return "WebDAV resource is locked.";
 }
 
-function findLockForPath(
-  locks: Map<string, WebDavLock>,
-  path: readonly string[],
-): WebDavLock | undefined {
-  cleanupExpiredLocks(locks);
-  const direct = locks.get(pathKey(path));
-  if (direct !== undefined) {
-    return direct;
+function locksByRequestedPath(
+  pathKeys: readonly string[],
+  locks: readonly WebDavLock[],
+): ReadonlyMap<string, WebDavLock> {
+  const mapped = new Map<string, WebDavLock>();
+  for (const requested of pathKeys) {
+    const lock = locks.find(
+      (candidate) =>
+        candidate.pathKey === requested ||
+        (candidate.depth === "infinity" &&
+          (candidate.pathKey === "/" || requested.startsWith(`${candidate.pathKey}/`))),
+    );
+    if (lock !== undefined) mapped.set(requested, lock);
   }
-  for (let index = path.length - 1; index >= 0; index -= 1) {
-    const candidate = locks.get(pathKey(path.slice(0, index)));
-    if (candidate?.depth === "infinity") {
-      return candidate;
-    }
-  }
-  return undefined;
-}
-
-function cleanupExpiredLocks(locks: Map<string, WebDavLock>): void {
-  const nowMs = Date.now();
-  for (const [key, lock] of locks.entries()) {
-    if (lock.expiresAt.getTime() <= nowMs) {
-      locks.delete(key);
-    }
-  }
+  return mapped;
 }
 
 function requestIncludesLockToken(request: FastifyRequest, token: string): boolean {
   const ifHeader = headerString(request.headers.if);
   const lockTokenHeader = parseLockTokenHeader(headerString(request.headers["lock-token"]));
-  return (
-    lockTokenHeader === token ||
-    ifHeader?.includes(`<${token}>`) === true ||
-    ifHeader?.includes(token) === true
+  const ifTokens = [...(ifHeader ?? "").matchAll(/<(?<token>[^>]+)>/gu)].map(
+    (match) => match.groups?.token,
   );
+  return lockTokenHeader === token || ifTokens.includes(token);
 }
 
 function parseLockTokenHeader(value: string | undefined): string | null {
@@ -659,6 +930,14 @@ function parseLockTokenHeader(value: string | undefined): string | null {
     return null;
   }
   return trimmed.replace(/^<|>$/gu, "");
+}
+
+function lockTokenFromRequest(request: FastifyRequest): string | null {
+  const token = parseLockTokenHeader(headerString(request.headers["lock-token"]));
+  if (token !== null) return token;
+  return (
+    /opaquelocktoken:[0-9a-f-]{36}/iu.exec(headerString(request.headers.if) ?? "")?.[0] ?? null
+  );
 }
 
 function pathKey(path: readonly string[]): string {
@@ -681,13 +960,11 @@ function lockTimeoutSeconds(value: string | undefined): number {
   return Math.min(parsed, 3600);
 }
 
-function lockOwner(body: string): string | null {
-  const owner = /<[^>]*owner\b[^>]*>(?<owner>[\s\S]*?)<\/[^>]*owner>/iu.exec(body)?.groups?.owner;
-  if (owner === undefined) {
-    return null;
-  }
-  const text = owner.replaceAll(/<[^>]+>/gu, "").trim();
-  return text.length === 0 ? null : text;
+function lockOwner(body: string): string {
+  if (body.trim().length === 0) return "";
+  return davText(davElements(parseDavXml(body), "owner")[0])
+    .trim()
+    .slice(0, 1_024);
 }
 
 function lockDiscoveryDocument(lock: WebDavLock, href: string): string {
@@ -708,7 +985,7 @@ function activeLockXml(lock: WebDavLock, href: string): string {
     "<D:locktype><D:write/></D:locktype>",
     "<D:lockscope><D:exclusive/></D:lockscope>",
     `<D:depth>${lock.depth === "0" ? "0" : "Infinity"}</D:depth>`,
-    lock.owner === null ? "" : `<D:owner>${xmlEscape(lock.owner)}</D:owner>`,
+    lock.owner.length === 0 ? "" : `<D:owner>${xmlEscape(lock.owner)}</D:owner>`,
     `<D:timeout>Second-${String(timeoutSeconds)}</D:timeout>`,
     `<D:locktoken><D:href>${xmlEscape(lock.token)}</D:href></D:locktoken>`,
     `<D:lockroot><D:href>${xmlEscape(href)}</D:href></D:lockroot>`,
@@ -731,22 +1008,86 @@ function isWebDavProperty(name: string): name is WebDavProperty {
 }
 
 function propfindRequest(body: string): PropfindRequest {
-  if (/<[^>]*propname[\s/>]/iu.test(body)) {
-    return { mode: "propname" };
-  }
-  const propMatch = /<[^>]*prop\b[^>]*>(?<body>[\s\S]*?)<\/[^>]*prop>/iu.exec(body);
-  if (propMatch?.groups?.body === undefined) {
-    return { mode: "allprop" };
-  }
-  const names = [
-    ...propMatch.groups.body.matchAll(
-      /<(?<name>[A-Za-z0-9_-]+:)?(?<local>[A-Za-z0-9_-]+)\b[^>]*\/?>/gu,
-    ),
-  ]
-    .map((match) => match.groups?.local)
-    .filter((name): name is string => name !== undefined)
-    .filter((name) => name !== "prop");
+  if (body.trim().length === 0) return { mode: "allprop" };
+  const root = parseDavXml(body);
+  if (davElements(root, "propname").length > 0) return { mode: "propname" };
+  const prop = davElements(root, "prop")[0];
+  if (prop === undefined) return { mode: "allprop" };
+  const names = prop.children.map((child) => child.name);
   return names.length === 0 ? { mode: "allprop" } : { mode: "prop", names };
+}
+
+function syncCollectionRequest(
+  body: string,
+  orgId: string,
+  collectionPathKey: string,
+):
+  | { readonly afterVersion?: string; readonly limit: number }
+  | { readonly invalidToken: true }
+  | null {
+  const root = parseDavXml(body);
+  if (davElements(root, "sync-collection").length === 0) return null;
+  const syncLevel = davText(davElements(root, "sync-level")[0]);
+  if (syncLevel.length > 0 && syncLevel.trim() !== "1") return null;
+  const rawToken = davText(davElements(root, "sync-token")[0]).trim();
+  const limitText = davText(davElements(root, "nresults")[0]).trim();
+  const parsedLimit = limitText.length === 0 ? 100 : Number.parseInt(limitText, 10);
+  if (!Number.isSafeInteger(parsedLimit) || parsedLimit < 1) return null;
+  if (rawToken.length === 0) {
+    return { limit: Math.min(parsedLimit, 250) };
+  }
+  const prefix = webDavSyncTokenPrefix(orgId, collectionPathKey);
+  const match = new RegExp(`^${prefix}:(?<version>0|[1-9][0-9]{0,18})$`, "u").exec(rawToken);
+  const afterVersion = match?.groups?.version;
+  return afterVersion === undefined
+    ? { invalidToken: true }
+    : { afterVersion, limit: Math.min(parsedLimit, 250) };
+}
+
+function webDavSyncToken(orgId: string, collectionPathKey: string, version: string): string {
+  return `${webDavSyncTokenPrefix(orgId, collectionPathKey)}:${version}`;
+}
+
+function webDavSyncTokenPrefix(orgId: string, collectionPathKey: string): string {
+  const collection = createHash("sha256")
+    .update(orgId)
+    .update("\0")
+    .update(collectionPathKey)
+    .digest("hex")
+    .slice(0, 24);
+  return `urn:helix:webdav-sync:${collection}`;
+}
+
+function syncMultistatusXml(
+  changes: readonly {
+    readonly pathKey: string;
+    readonly resourceType: "file" | "folder";
+    readonly status: 200 | 404;
+  }[],
+  token: string,
+  hasMore: boolean,
+  collectionHref: string,
+): string {
+  const responses = changes.map((change) => {
+    const href = hrefFromPathKey(change.pathKey, change.resourceType);
+    return `<D:response><D:href>${xmlEscape(href)}</D:href><D:status>HTTP/1.1 ${String(change.status)} ${change.status === 200 ? "OK" : "Not Found"}</D:status></D:response>`;
+  });
+  if (hasMore) {
+    responses.push(
+      `<D:response><D:href>${xmlEscape(collectionHref)}</D:href><D:status>HTTP/1.1 507 Insufficient Storage</D:status><D:error><D:number-of-matches-within-limits/></D:error></D:response>`,
+    );
+  }
+  return xmlDocument(
+    `<D:multistatus xmlns:D="DAV:">${responses.join("")}<D:sync-token>${xmlEscape(token)}</D:sync-token></D:multistatus>`,
+  );
+}
+
+function hrefFromPathKey(value: string, resourceType: "file" | "folder"): string {
+  const path = value
+    .slice(1)
+    .split("/")
+    .filter((segment) => segment.length > 0);
+  return resourceType === "folder" ? folderHref(path) : fileHref(path);
 }
 
 function parseDavFilePath(url: string): readonly string[] | null {
@@ -760,18 +1101,20 @@ function parseDavFilePath(url: string): readonly string[] | null {
     return [];
   }
   try {
-    return suffix.split("/").map((segment) => decodeURIComponent(segment));
+    return suffix.split("/").map(decodePathSegment);
   } catch {
     return null;
   }
 }
 
 function folderHref(path: readonly string[]): string {
-  return `/dav/files/${path.map(encodeURIComponent).join("/")}${path.length === 0 ? "" : "/"}`;
+  return versionedApiPath(
+    `/dav/files/${path.map(encodeURIComponent).join("/")}${path.length === 0 ? "" : "/"}`,
+  );
 }
 
 function fileHref(path: readonly string[]): string {
-  return `/dav/files/${path.map(encodeURIComponent).join("/")}`;
+  return versionedApiPath(`/dav/files/${path.map(encodeURIComponent).join("/")}`);
 }
 
 function entryEtag(entry: DriveEntryRecord): string {

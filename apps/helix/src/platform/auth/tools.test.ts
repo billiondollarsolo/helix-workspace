@@ -1,233 +1,286 @@
-import type { AuditRecord, Actor } from "@helix/sdk-types";
+import type { Actor, AuditRecord } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import { createToolRegistry, type ToolAuditSink } from "../tool-registry.js";
-import { InMemoryOAuthClientStore, hashSecret } from "./oauth.js";
+import {
+  EMPTY_CREDENTIAL_POLICY,
+  type AgentCredentialInventoryRecord,
+  type AgentCredentialLifecycleStore,
+  type IssueAgentCredentialInput,
+  type RotateAgentCredentialInput,
+} from "./credentials.js";
 import { registerAgentCredentialTools } from "./tools.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
-const agentActorId = "11111111-1111-4111-8111-111111111111";
-const otherOrgId = "33333333-3333-4333-8333-333333333333";
-const adminActor: Actor = {
+const agentId = "11111111-1111-4111-8111-111111111111";
+const serviceId = "33333333-3333-4333-8333-333333333333";
+const admin: Actor = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   orgId,
   type: "user",
-  displayName: "Agent Admin",
-  scopes: ["admin.agents"],
+  displayName: "Credential Owner",
+  scopes: ["admin.agents", "mail.read", "drive.write"],
 };
+const expiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
 
-describe("agent credential tools", () => {
-  it("registers create, list, and revoke backend tools", () => {
+describe("non-human credential tools", () => {
+  it("registers one lifecycle for issuance, inventory, rotation, and revocation", () => {
     const registry = createToolRegistry();
-    registerAgentCredentialTools(registry, { clientStore: new InMemoryOAuthClientStore() });
-
+    registerAgentCredentialTools(registry, { store: new MemoryCredentialStore() });
     expect(
       registry
         .list()
         .filter((tool) => tool.id.startsWith("agent.credentials."))
         .map((tool) => tool.id),
-    ).toEqual(["agent.credentials.create", "agent.credentials.list", "agent.credentials.revoke"]);
-  });
-
-  it("creates a scoped OAuth client without exposing the stored secret hash and records admin audit", async () => {
-    const store = new InMemoryOAuthClientStore();
-    const auditSink = new RecordingAuditSink();
-    const registry = createToolRegistry({ auditSink });
-    registerAgentCredentialTools(registry, { clientStore: store });
-
-    const result = await registry.invoke(
-      "agent.credentials.create",
-      {
-        actorId: agentActorId,
-        scopes: ["mail.read", "mail.read", "drive.write"],
-        expiresAt: "2026-05-20T18:00:00.000Z",
-      },
-      {
-        actor: adminActor,
-        request: { requestId: "req-1", traceId: "trace-1" },
-        skipConfirmation: true,
-      },
-    );
-
-    expect(result.ok).toBe(true);
-    const output = result.ok ? (result.output as AgentCredentialCreateOutput) : undefined;
-    expect(output?.credential).toMatchObject({
-      actorId: agentActorId,
-      orgId,
-      scopes: ["mail.read", "drive.write"],
-      expiresAt: "2026-05-20T18:00:00.000Z",
-      revokedAt: null,
-    });
-    expect(output?.credential.clientSecretHash).toBeUndefined();
-    expect(output?.clientSecret).toMatch(/^helix_cs_/u);
-    expect(await store.findClient(output?.credential.clientId ?? "")).toMatchObject({
-      actorId: agentActorId,
-      orgId,
-      scopes: ["mail.read", "drive.write"],
-    });
-    expect(auditSink.records).toHaveLength(1);
-    expect(auditSink.records[0]).toMatchObject({
-      orgId,
-      actorId: adminActor.id,
-      verb: "agent.credential.created",
-      objectType: "tool",
-      toolId: "agent.credentials.create",
-      trace: { traceId: "trace-1" },
-      metadata: {
-        actorType: "user",
-        toolPermission: "admin.agents",
-        credentialType: "oauth_client",
-        targetActorId: agentActorId,
-        targetOrgId: orgId,
-        scopes: ["mail.read", "drive.write"],
-      },
-    });
-  });
-
-  it("rejects unsupported scopes before creating a credential", async () => {
-    const store = new InMemoryOAuthClientStore();
-    const registry = createToolRegistry();
-    registerAgentCredentialTools(registry, { clientStore: store });
-
-    const result = await registry.invoke(
-      "agent.credentials.create",
-      { actorId: agentActorId, scopes: ["mail.read", "unknown.scope"] },
-      { actor: adminActor, skipConfirmation: true },
-    );
-
-    expect(result).toMatchObject({
-      ok: false,
-      statusCode: 400,
-    });
-    expect(await store.listClients({ orgId })).toEqual([]);
-  });
-
-  it("lists only credentials in the invoking admin org and can include revoked credentials", async () => {
-    const store = new InMemoryOAuthClientStore();
-    await store.createClient({
-      clientId: "client-active",
-      clientSecretHash: await hashSecret("secret-active"),
-      actorId: agentActorId,
-      orgId,
-      scopes: ["mail.read"],
-    });
-    await store.createClient({
-      clientId: "client-other-org",
-      clientSecretHash: await hashSecret("secret-other"),
-      actorId: "44444444-4444-4444-8444-444444444444",
-      orgId: otherOrgId,
-      scopes: ["mail.read"],
-    });
-    await store.createClient({
-      clientId: "client-revoked",
-      clientSecretHash: await hashSecret("secret-revoked"),
-      actorId: agentActorId,
-      orgId,
-      scopes: ["drive.read"],
-    });
-    await store.revokeClient("client-revoked", new Date("2026-05-20T19:00:00.000Z"));
-    const auditSink = new RecordingAuditSink();
-    const registry = createToolRegistry({ auditSink });
-    registerAgentCredentialTools(registry, { clientStore: store });
-
-    const activeOnly = await registry.invoke("agent.credentials.list", {}, { actor: adminActor });
-    const withRevoked = await registry.invoke(
-      "agent.credentials.list",
-      { includeRevoked: true },
-      { actor: adminActor, request: { requestId: "req-list", traceId: "trace-list" } },
-    );
-
-    expect(
-      activeOnly.ok ? (activeOnly.output as AgentCredentialListOutput).credentials : [],
-    ).toEqual([expect.objectContaining({ clientId: "client-active", orgId, revokedAt: null })]);
-    expect(
-      withRevoked.ok ? (withRevoked.output as AgentCredentialListOutput).credentials : [],
     ).toEqual([
-      expect.objectContaining({ clientId: "client-active", orgId, revokedAt: null }),
-      expect.objectContaining({
-        clientId: "client-revoked",
-        orgId,
-        revokedAt: "2026-05-20T19:00:00.000Z",
-      }),
+      "agent.credentials.create",
+      "agent.credentials.list",
+      "agent.credentials.revoke",
+      "agent.credentials.rotate",
     ]);
-    expect(auditSink.records.map((record) => record.verb)).toEqual([
-      "agent.credential.listed",
-      "agent.credential.listed",
-    ]);
-    expect(auditSink.records[0]).toMatchObject({
-      actorId: adminActor.id,
-      toolId: "agent.credentials.list",
-      metadata: {
-        actorType: "user",
-        credentialType: "oauth_client",
-        includeRevoked: false,
-        resultCount: 1,
-      },
-    });
-    expect(auditSink.records[1]).toMatchObject({
-      trace: { traceId: "trace-list" },
-      metadata: {
-        credentialType: "oauth_client",
-        includeRevoked: true,
-        resultCount: 2,
-      },
-    });
   });
 
-  it("revokes credentials only inside the invoking admin org and records destructive audit", async () => {
-    const store = new InMemoryOAuthClientStore();
-    await store.createClient({
-      clientId: "client-same-org",
-      clientSecretHash: await hashSecret("secret-same"),
-      actorId: agentActorId,
-      orgId,
-      scopes: ["mail.read"],
-    });
-    await store.createClient({
-      clientId: "client-other-org",
-      clientSecretHash: await hashSecret("secret-other"),
-      actorId: "44444444-4444-4444-8444-444444444444",
-      orgId: otherOrgId,
-      scopes: ["mail.read"],
-    });
-    const auditSink = new RecordingAuditSink();
-    const registry = createToolRegistry({ auditSink });
-    registerAgentCredentialTools(registry, { clientStore: store });
+  it("issues distinct OAuth, API-key, and certificate material with accountable inventory", async () => {
+    const store = new MemoryCredentialStore();
+    const registry = createToolRegistry();
+    registerAgentCredentialTools(registry, { store });
 
-    const blocked = await registry.invoke(
-      "agent.credentials.revoke",
-      { clientId: "client-other-org" },
-      { actor: adminActor, skipConfirmation: true },
+    const oauth = await invokeCreate(registry, {
+      actorId: agentId,
+      credentialType: "oauth_client",
+      label: "Mail bot OAuth",
+      purpose: "Process support mail",
+      scopes: ["mail.read"],
+    });
+    const apiKey = await invokeCreate(registry, {
+      actorId: serviceId,
+      credentialType: "api_key",
+      label: "Drive importer",
+      purpose: "Import customer files",
+      scopes: ["drive.write"],
+    });
+    const certificate = await invokeCreate(registry, {
+      actorId: serviceId,
+      credentialType: "mtls_cert",
+      label: "Warehouse certificate",
+      purpose: "Mutual TLS ingestion",
+      scopes: ["mail.read"],
+      certificateFingerprint: `sha256:${"A".repeat(64)}`,
+    });
+
+    expect(oauth.secret).toMatch(/^helix_cs_/u);
+    expect(oauth.credential).toMatchObject({
+      principalType: "agent",
+      ownerActorId: admin.id,
+      purpose: "Process support mail",
+    });
+    expect(apiKey.secret).toMatch(/^helix_ak_/u);
+    expect(apiKey.credential).toMatchObject({ principalType: "service_account" });
+    expect(certificate.secret).toBeUndefined();
+    expect(certificate.credential).toMatchObject({
+      credentialType: "mtls_cert",
+      certFingerprint: "a".repeat(64),
+    });
+    expect(await store.list({ orgId, includeRevoked: false })).toHaveLength(3);
+  });
+
+  it("rejects unknown, excessive, and expired grants before persistence", async () => {
+    const store = new MemoryCredentialStore();
+    const registry = createToolRegistry();
+    registerAgentCredentialTools(registry, { store });
+
+    const unknown = await registry.invoke(
+      "agent.credentials.create",
+      createInput({ scopes: ["unknown.scope"] }),
+      { actor: admin, skipConfirmation: true },
     );
+    const excessive = await registry.invoke(
+      "agent.credentials.create",
+      createInput({ scopes: ["admin.audit"] }),
+      { actor: admin, skipConfirmation: true },
+    );
+    const expired = await registry.invoke(
+      "agent.credentials.create",
+      createInput({ expiresAt: "2020-01-01T00:00:00.000Z" }),
+      { actor: admin, skipConfirmation: true },
+    );
+
+    expect(unknown).toMatchObject({ ok: false, statusCode: 400 });
+    expect(excessive).toMatchObject({ ok: false, statusCode: 400 });
+    expect(expired).toMatchObject({ ok: false, statusCode: 400 });
+    expect(await store.list({ orgId, includeRevoked: true })).toEqual([]);
+  });
+
+  it("rotates one-time key material, preserves inventory, and revokes immediately", async () => {
+    const store = new MemoryCredentialStore();
+    const registry = createToolRegistry();
+    registerAgentCredentialTools(registry, { store });
+    const issued = await invokeCreate(registry, {
+      actorId: serviceId,
+      credentialType: "api_key",
+      label: "Importer",
+      purpose: "Nightly import",
+      scopes: ["drive.write"],
+    });
+    const credentialId = issued.credential.id as string;
+
+    const rotated = await registry.invoke(
+      "agent.credentials.rotate",
+      { credentialId, expiresAt },
+      { actor: admin, skipConfirmation: true },
+    );
+    const rotation = rotated.ok ? (rotated.output as CredentialOutput) : undefined;
+    expect(rotation?.status).toBe("rotated");
+    expect(rotation?.secret).toMatch(/^helix_ak_/u);
+    expect(rotation?.secret).not.toBe(issued.secret);
+
     const revoked = await registry.invoke(
       "agent.credentials.revoke",
-      { clientId: "client-same-org" },
-      { actor: adminActor, skipConfirmation: true },
+      { credentialId },
+      { actor: admin, skipConfirmation: true },
     );
-
-    expect(blocked.ok ? blocked.output : undefined).toEqual({
-      status: "not_found",
-      clientId: "client-other-org",
-    });
-    expect(await store.findClient("client-other-org")).toMatchObject({ revokedAt: null });
     expect(revoked.ok ? revoked.output : undefined).toMatchObject({
       status: "revoked",
-      credential: {
-        clientId: "client-same-org",
-        actorId: agentActorId,
-        orgId,
-      },
+      credential: { id: credentialId },
     });
-    const revokedClient = await store.findClient("client-same-org");
-    expect(revokedClient?.revokedAt).toBeInstanceOf(Date);
-    expect(auditSink.records.map((record) => record.verb)).toEqual(["agent.credential.revoked"]);
-    expect(auditSink.records[0]?.metadata).toMatchObject({
-      actorType: "user",
-      credentialType: "oauth_client",
-      targetActorId: agentActorId,
-      clientId: "client-same-org",
+    expect(await store.list({ orgId, includeRevoked: false })).toEqual([]);
+    expect(await store.list({ orgId, includeRevoked: true })).toHaveLength(1);
+  });
+
+  it("audits inventory access without exposing credential material", async () => {
+    const audit = new RecordingAuditSink();
+    const registry = createToolRegistry({ auditSink: audit });
+    registerAgentCredentialTools(registry, { store: new MemoryCredentialStore() });
+    await registry.invoke(
+      "agent.credentials.list",
+      {},
+      { actor: admin, request: { requestId: "req", traceId: "trace" } },
+    );
+    expect(audit.records[0]).toMatchObject({
+      verb: "nonhuman.credential.inventory.viewed",
+      metadata: { resultCount: 0, includeRevoked: false },
+      trace: { traceId: "trace" },
     });
   });
 });
+
+function createInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    actorId: agentId,
+    credentialType: "oauth_client",
+    label: "Mail bot",
+    purpose: "Process mail",
+    scopes: ["mail.read"],
+    expiresAt,
+    ...overrides,
+  };
+}
+
+async function invokeCreate(
+  registry: ReturnType<typeof createToolRegistry>,
+  input: Record<string, unknown>,
+): Promise<CredentialOutput> {
+  const result = await registry.invoke(
+    "agent.credentials.create",
+    { ...input, expiresAt },
+    { actor: admin, skipConfirmation: true },
+  );
+  expect(result.ok).toBe(true);
+  return (result as { readonly output: CredentialOutput }).output;
+}
+
+interface CredentialOutput {
+  readonly status?: string;
+  readonly secret?: string;
+  readonly credential: Record<string, unknown>;
+}
+
+class MemoryCredentialStore implements AgentCredentialLifecycleStore {
+  readonly #records = new Map<string, AgentCredentialInventoryRecord>();
+
+  async issue(input: IssueAgentCredentialInput): Promise<AgentCredentialInventoryRecord> {
+    const id = `00000000-0000-4000-8000-${String(this.#records.size + 1).padStart(12, "0")}`;
+    const record: AgentCredentialInventoryRecord = {
+      id,
+      credentialType: input.credentialType,
+      principalType: input.principalActorId === agentId ? "agent" : "service_account",
+      actorId: input.principalActorId,
+      orgId: input.orgId,
+      ownerActorId: input.operatorActorId,
+      scopes: [...input.scopes],
+      clientId: input.clientId ?? null,
+      secretHash: input.secretHash ?? null,
+      apiKeyHash: input.apiKeyHash ?? null,
+      certFingerprint: input.certFingerprint ?? null,
+      label: input.label,
+      purpose: input.purpose,
+      policy: EMPTY_CREDENTIAL_POLICY,
+      expiresAt: input.expiresAt,
+      revokedAt: null,
+      createdAt: new Date(),
+      rotatedAt: null,
+      lastUsedAt: null,
+    };
+    this.#records.set(id, record);
+    return record;
+  }
+
+  async list(input: {
+    readonly orgId: string;
+    readonly principalActorId?: string;
+    readonly includeRevoked: boolean;
+  }): Promise<readonly AgentCredentialInventoryRecord[]> {
+    return [...this.#records.values()].filter(
+      (record) =>
+        record.orgId === input.orgId &&
+        (input.principalActorId === undefined || record.actorId === input.principalActorId) &&
+        (input.includeRevoked || record.revokedAt === null),
+    );
+  }
+
+  async rotate(input: RotateAgentCredentialInput): Promise<AgentCredentialInventoryRecord | null> {
+    const record = this.#owned(input.orgId, input.operatorActorId, input.credentialId);
+    if (record === null) return null;
+    const rotated = {
+      ...record,
+      secretHash: input.secretHash ?? null,
+      apiKeyHash: input.apiKeyHash ?? null,
+      certFingerprint: input.certFingerprint ?? null,
+      expiresAt: input.expiresAt,
+      rotatedAt: new Date(),
+    };
+    this.#records.set(record.id, rotated);
+    return rotated;
+  }
+
+  async revoke(input: {
+    readonly orgId: string;
+    readonly operatorActorId: string;
+    readonly credentialId: string;
+  }): Promise<AgentCredentialInventoryRecord | null> {
+    const record = this.#owned(input.orgId, input.operatorActorId, input.credentialId);
+    if (record === null) return null;
+    const revoked = { ...record, revokedAt: new Date() };
+    this.#records.set(record.id, revoked);
+    return revoked;
+  }
+
+  async findByApiKeyHash(apiKeyHash: string): Promise<AgentCredentialInventoryRecord | null> {
+    return [...this.#records.values()].find((record) => record.apiKeyHash === apiKeyHash) ?? null;
+  }
+
+  async findByCertFingerprint(fingerprint: string): Promise<AgentCredentialInventoryRecord | null> {
+    return (
+      [...this.#records.values()].find((record) => record.certFingerprint === fingerprint) ?? null
+    );
+  }
+
+  #owned(org: string, owner: string, id: string): AgentCredentialInventoryRecord | null {
+    const record = this.#records.get(id);
+    return record?.orgId === org && record.ownerActorId === owner && record.revokedAt === null
+      ? record
+      : null;
+  }
+}
 
 class RecordingAuditSink implements ToolAuditSink {
   readonly records: (AuditRecord & { readonly orgId: string })[] = [];
@@ -235,20 +288,4 @@ class RecordingAuditSink implements ToolAuditSink {
   async append(record: AuditRecord & { readonly orgId: string }): Promise<void> {
     this.records.push(record);
   }
-}
-
-interface AgentCredentialCreateOutput {
-  readonly credential: {
-    readonly clientId: string;
-    readonly clientSecretHash?: string;
-  };
-  readonly clientSecret: string;
-}
-
-interface AgentCredentialListOutput {
-  readonly credentials: readonly {
-    readonly clientId: string;
-    readonly orgId: string;
-    readonly revokedAt: string | null;
-  }[];
 }

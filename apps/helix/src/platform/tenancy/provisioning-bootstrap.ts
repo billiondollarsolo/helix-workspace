@@ -47,7 +47,7 @@ async function seedTenantBootstrap(
   },
 ): Promise<TenantBootstrapSeedRecord> {
   const owner = await findOwnerActor(sql, input);
-  const permissionRows = (await sql`
+  const permissionRows = await sql<InsertedRow[]>`
     insert into permissions (
       org_id,
       actor_id,
@@ -73,7 +73,7 @@ async function seedTenantBootstrap(
         and role = 'owner'
     )
     returning id
-  `) as unknown as readonly InsertedRow[];
+  `;
 
   const activitySeeded = await ensureBootstrapActivity(sql, {
     orgId: input.orgId,
@@ -95,7 +95,7 @@ async function findOwnerActor(
     readonly ownerEmail: string;
   },
 ): Promise<OwnerActorRow> {
-  const rows = (await sql`
+  const rows = await sql<OwnerActorRow[]>`
     select id
     from actors
     where org_id = ${input.orgId}
@@ -103,7 +103,7 @@ async function findOwnerActor(
       and disabled_at is null
     order by created_at asc
     limit 1
-  `) as unknown as readonly OwnerActorRow[];
+  `;
   const owner = rows[0];
   if (owner === undefined) {
     throw new Error("tenant bootstrap seed requires an existing owner actor");
@@ -118,7 +118,7 @@ async function ensureBootstrapActivity(
     readonly ownerActorId: string;
   },
 ): Promise<boolean> {
-  const existingRows = (await sql`
+  const existingRows = await sql<InsertedRow[]>`
     select id
     from activity
     where org_id = ${input.orgId}
@@ -126,18 +126,18 @@ async function ensureBootstrapActivity(
       and object_type = 'tenant'
       and object_id = ${input.orgId}
     limit 1
-  `) as unknown as readonly InsertedRow[];
+  `;
   if (existingRows.length > 0) {
     return false;
   }
 
-  const previousRows = (await sql`
+  const previousRows = await sql<{ readonly this_hash: string }[]>`
     select this_hash from activity
     where org_id = ${input.orgId}
     order by created_at desc, id desc
     limit 1
     for update
-  `) as unknown as readonly { readonly this_hash: string }[];
+  `;
   const prevHash = previousRows[0]?.this_hash ?? null;
   const createdAt = new Date();
   const payload = bootstrapActivityPayload();

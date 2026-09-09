@@ -10,6 +10,8 @@
  */
 
 import {
+  createCipheriv,
+  createDecipheriv,
   createHash,
   createHmac,
   getFips,
@@ -25,6 +27,7 @@ import type {
   CryptoProviderStatus,
   DigestEncoding,
   HkdfOptions,
+  AesGcmEncrypted,
   Pbkdf2Options,
 } from "./provider.js";
 
@@ -97,6 +100,33 @@ export class NodeCryptoProvider implements CryptoProvider {
       options.keyLength,
     );
     return Buffer.from(derived);
+  }
+
+  aes256GcmEncrypt(input: {
+    readonly key: BinaryInput;
+    readonly iv: BinaryInput;
+    readonly plaintext: BinaryInput;
+    readonly aad: BinaryInput;
+  }): AesGcmEncrypted {
+    const cipher = createCipheriv("aes-256-gcm", toBuffer(input.key), toBuffer(input.iv));
+    cipher.setAAD(toBuffer(input.aad));
+    return {
+      ciphertext: Buffer.concat([cipher.update(toBuffer(input.plaintext)), cipher.final()]),
+      tag: cipher.getAuthTag(),
+    };
+  }
+
+  aes256GcmDecrypt(input: {
+    readonly key: BinaryInput;
+    readonly iv: BinaryInput;
+    readonly ciphertext: BinaryInput;
+    readonly tag: BinaryInput;
+    readonly aad: BinaryInput;
+  }): Buffer {
+    const decipher = createDecipheriv("aes-256-gcm", toBuffer(input.key), toBuffer(input.iv));
+    decipher.setAAD(toBuffer(input.aad));
+    decipher.setAuthTag(toBuffer(input.tag));
+    return Buffer.concat([decipher.update(toBuffer(input.ciphertext)), decipher.final()]);
   }
 
   status(): CryptoProviderStatus {

@@ -1,5 +1,4 @@
 import { Debouncer } from "@tanstack/pacer";
-import { addAccessTokenSearchParam } from "@/lib/auth";
 import type { SlidesApiDeck, SlidesApiDeckDetail, SlidesApiSlide } from "./api";
 import type { SlideContent } from "./seed";
 
@@ -29,12 +28,12 @@ export type NativePresentationOperation =
       readonly content?: SlideContent;
       readonly speakerNotes?: string;
       /** Per-slide CAS token; see SlidesApiSlide.revision. */
-      readonly expectedRevision?: number;
+      readonly expectedRevision: number;
     }
   | {
       readonly kind: "delete-slide";
       readonly slideId: string;
-      readonly expectedRevision?: number;
+      readonly expectedRevision: number;
     }
   | {
       readonly kind: "reorder-slides";
@@ -376,13 +375,13 @@ export class NativePresentationSyncProvider {
 }
 
 export function presentationSyncWebSocketUrl(deckId: string): string {
-  const path = `/sync/slides/${encodeURIComponent(deckId)}?protocol=${protocol}`;
+  const path = `/v1/sync/slides/${encodeURIComponent(deckId)}?protocol=${protocol}`;
   if (typeof window === "undefined") {
-    return addAccessTokenSearchParam(`ws://localhost${path}`);
+    return `ws://localhost${path}`;
   }
   const resolved = new URL(path, window.location.href);
   resolved.protocol = resolved.protocol === "https:" ? "wss:" : "ws:";
-  return addAccessTokenSearchParam(resolved.toString());
+  return resolved.toString();
 }
 
 function parseSocketMessage(data: unknown): unknown {
@@ -526,5 +525,5 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function randomOperationId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `op-${Date.now().toString(36)}`;
+  return globalThis.crypto.randomUUID();
 }

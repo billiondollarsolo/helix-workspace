@@ -6,6 +6,10 @@ export interface PeopleDirectoryPerson {
   readonly id: string;
   readonly email: string | null;
   readonly displayName: string;
+  readonly kind: "personal" | "directory" | "group";
+  readonly favorite: boolean;
+  readonly avatarDataUrl: string | null;
+  readonly relationship: Readonly<Record<string, string>>;
 }
 
 export interface PeopleDirectoryListResponse {
@@ -15,6 +19,14 @@ export interface PeopleDirectoryListResponse {
 export interface PeopleDirectoryListInput {
   readonly limit?: number;
   readonly query?: string;
+}
+
+export function peopleDirectoryQueryOptions(input: PeopleDirectoryListInput = {}) {
+  return {
+    queryKey: ["people", "directory", input] as const,
+    queryFn: () => listPeopleDirectory(input),
+    staleTime: 30_000,
+  };
 }
 
 export async function listPeopleDirectory(
@@ -32,13 +44,13 @@ export async function listPeopleDirectory(
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(
-      errorMessageFromOutput(output) ?? `People directory failed with ${response.status}`,
+      errorMessageFromOutput(output) ?? `People directory failed with ${String(response.status)}`,
     );
   }
   if (!isPeopleDirectoryListResponse(output)) {
     throw new Error("People directory response was missing required fields.");
   }
-  return output.people;
+  return output.people.map(normalizePerson);
 }
 
 function isPeopleDirectoryListResponse(value: unknown): value is PeopleDirectoryListResponse {
@@ -54,6 +66,22 @@ function isPeopleDirectoryPerson(value: unknown): value is PeopleDirectoryPerson
     (typeof value.email === "string" || value.email === null) &&
     typeof value.displayName === "string"
   );
+}
+
+function normalizePerson(value: PeopleDirectoryPerson): PeopleDirectoryPerson {
+  return {
+    id: value.id,
+    email: value.email,
+    displayName: value.displayName,
+    kind: value.kind === "personal" || value.kind === "group" ? value.kind : "directory",
+    favorite: value.favorite === true,
+    avatarDataUrl: typeof value.avatarDataUrl === "string" ? value.avatarDataUrl : null,
+    relationship: isStringRecord(value.relationship) ? value.relationship : {},
+  };
+}
+
+function isStringRecord(value: unknown): value is Readonly<Record<string, string>> {
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 
 function errorMessageFromOutput(output: unknown): string | undefined {

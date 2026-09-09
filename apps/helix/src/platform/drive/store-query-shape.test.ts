@@ -21,8 +21,14 @@ function createRecordingSql(responses: readonly (readonly unknown[])[] = []): {
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join("?");
     calls.push({ text, values });
-    if (text.includes("objects.owner_actor_id") || text.includes("drive_folders.owner_actor_id")) {
+    if (
+      !/^(select|with|update|insert|delete|set)\b/iu.test(text.trimStart()) &&
+      text.includes("helix_drive_effective_role")
+    ) {
       return { text, values };
+    }
+    if (text.includes("set_config('helix.org_id'")) {
+      return Promise.resolve([]);
     }
     return Promise.resolve(responses[callIndex++] ?? []);
   };
@@ -46,11 +52,46 @@ describe("PostgresDriveStore query shape", () => {
     await store.list({ orgId, actorId, limit: 10 });
 
     const permissionQueries = recording.calls.filter((call) =>
-      call.text.includes("from permissions p"),
+      call.text.includes("helix_drive_effective_role"),
     );
     expect(permissionQueries).toHaveLength(2);
-    expect(permissionQueries.every((call) => call.text.includes("p.org_id = ?"))).toBe(true);
     expect(permissionQueries.every((call) => call.values.includes(orgId))).toBe(true);
+    const fileQuery = recording.calls.find((call) => call.text.includes("from objects o"));
+    expect(fileQuery?.text).toContain("coalesce(o.metadata->>'status', 'ready') = 'ready'");
+  });
+
+  it("keeps public links and asynchronous AI writes clean-only", async () => {
+    const recording = createRecordingSql([[{ allowed: true }], [{ allowed: true }], []]);
+    const store = new PostgresDriveStore(recording.sql);
+
+    await expect(
+      store.resolveShareLink({ token: "s".repeat(43), clientKey: "0".repeat(64) }),
+    ).resolves.toBeNull();
+    await store.recordDriveEnrichment({
+      fileId: objectId,
+      feature: "drive.test",
+      data: { label: "safe" },
+    });
+    await store.setDriveAutoTags({
+      fileId: objectId,
+      source: "test",
+      tags: ["safe"],
+    });
+
+    const linkQuery = recording.calls.find((call) =>
+      call.text.includes("helix_drive_share_link_by_token_hash"),
+    );
+    expect(linkQuery?.values).toEqual([expect.stringMatching(/^[a-f0-9]{64}$/u)]);
+    expect(linkQuery?.values).not.toContain("s".repeat(43));
+    const writes = recording.calls.filter(
+      (call) => call.text.includes("update objects") && call.values.includes(objectId),
+    );
+    expect(writes).toHaveLength(2);
+    expect(
+      writes.every((call) =>
+        call.text.includes("coalesce(metadata->>'status', 'ready') = 'ready'"),
+      ),
+    ).toBe(true);
   });
 
   it("projects mine and shared count metadata from Drive list permissions", async () => {
@@ -73,22 +114,35 @@ describe("PostgresDriveStore query shape", () => {
           deleted_at: null,
           created_at: now,
           updated_at: now,
+          entry_type: "file",
+          name: "shared.pdf",
+          folder_id: null,
+          app: null,
+          sort_name: "shared.pdf",
+          sort_type: 1,
+          snapshot_at: now,
+          starred: false,
         },
       ],
     ]);
     const store = new PostgresDriveStore(recording.sql);
 
-    await expect(store.list({ orgId, actorId, acrossFolders: true })).resolves.toMatchObject([
-      {
-        id: objectId,
-        metadata: { name: "shared.pdf", mine: false, sharedCount: 2 },
-      },
-    ]);
+    await expect(store.list({ orgId, actorId, acrossFolders: true })).resolves.toMatchObject({
+      entries: [
+        {
+          id: objectId,
+          metadata: { name: "shared.pdf", mine: false, sharedCount: 2 },
+        },
+      ],
+      nextCursor: null,
+    });
 
     const fileQuery = recording.calls.find((call) => call.text.includes("from objects o"));
     expect(fileQuery?.text).toContain("as mine");
     expect(fileQuery?.text).toContain("as shared_count");
-    expect(fileQuery?.text).toContain("count(distinct p.actor_id)");
+    expect(fileQuery?.text).toContain("from drive_member_stars star");
+    expect(fileQuery?.text).toContain("membership.actor_id = ?");
+    expect(fileQuery?.text).toContain("helix_drive_visible_actor_ids");
     expect(fileQuery?.values).toEqual(expect.arrayContaining([orgId, actorId]));
   });
 
@@ -98,8 +152,8 @@ describe("PostgresDriveStore query shape", () => {
 
     await store.search({ orgId, actorId, query: "plan" });
 
-    const query = recording.calls.find((call) => call.text.includes("from permissions p"));
-    expect(query?.text).toContain("p.org_id = ?");
+    const query = recording.calls.find((call) => call.text.includes("helix_drive_effective_role"));
+    expect(query?.text).toContain("helix_drive_effective_role");
     expect(query?.values).toContain(orgId);
   });
 
@@ -111,15 +165,14 @@ describe("PostgresDriveStore query shape", () => {
       "Unknown or inaccessible Drive object",
     );
 
-    const query = recording.calls.find((call) => call.text.includes("from permissions p"));
-    expect(query?.text).toContain("p.org_id = ?");
+    const query = recording.calls.find((call) => call.text.includes("helix_drive_effective_role"));
+    expect(query?.text).toContain("helix_drive_effective_role");
     expect(query?.values).toContain(orgId);
   });
 
   it("updates access roles only for owner-managed object grants in the request org", async () => {
     const now = new Date("2026-05-20T12:00:00.000Z");
-    // First response: requireObjectAccess (owner path → requireObjectRole passes).
-    // Second response: update CTE returns no rows → null grant.
+    // Object visibility, authoritative effective role, then the update CTE.
     const recording = createRecordingSql([
       [
         {
@@ -153,7 +206,7 @@ describe("PostgresDriveStore query shape", () => {
 
     const query = recording.calls.find((call) => call.text.includes("update permissions p"));
     expect(query?.text).toContain("p.org_id = ?");
-    expect(query?.text).toContain("o.owner_actor_id = ?");
+    expect(query?.text).toContain("p.source_group_grant_id is null");
     expect(query?.text).toContain("p.actor_id <> o.owner_actor_id");
     expect(query?.values).toEqual(expect.arrayContaining([orgId, actorId, objectId, "editor"]));
   });
@@ -183,9 +236,9 @@ describe("PostgresDriveStore query shape", () => {
     await expect(store.getPdfFormState({ orgId, actorId, objectId })).resolves.toBeNull();
 
     const permissionQuery = recording.calls.find((call) =>
-      call.text.includes("from permissions p"),
+      call.text.includes("helix_drive_effective_role"),
     );
-    expect(permissionQuery?.text).toContain("p.org_id = ?");
+    expect(permissionQuery?.text).toContain("helix_drive_effective_role");
     expect(permissionQuery?.values).toContain(orgId);
 
     const stateQuery = recording.calls.find((call) =>
@@ -276,11 +329,8 @@ describe("PostgresDriveStore query shape", () => {
       metadata: { mentionsText: ["Maya Chen", "missing"] },
     });
 
-    const actorLookup = recording.calls.find(
-      (call) => call.text.includes("from actors") && call.text.includes("permissions"),
-    );
-    expect(actorLookup?.text).toContain("p.resource_type = 'object'");
-    expect(actorLookup?.text).toContain("p.resource_id = ?");
+    const actorLookup = recording.calls.find((call) => call.text.includes("from actors"));
+    expect(actorLookup?.text).toContain("drive_comment_actor_role_rank");
     expect(actorLookup?.values).toEqual(expect.arrayContaining([orgId, objectId]));
 
     const notificationInsert = recording.calls.find((call) =>
@@ -315,8 +365,8 @@ describe("PostgresDriveStore query shape", () => {
       "Unknown or inaccessible Drive folder",
     );
 
-    const query = recording.calls.find((call) => call.text.includes("from permissions p"));
-    expect(query?.text).toContain("p.org_id = ?");
+    const query = recording.calls.find((call) => call.text.includes("helix_drive_effective_role"));
+    expect(query?.text).toContain("helix_drive_effective_role");
     expect(query?.values).toContain(orgId);
   });
 });

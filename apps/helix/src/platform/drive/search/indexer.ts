@@ -1,11 +1,23 @@
 import type { JsonObject } from "@helix/sdk-types";
-import type { IndexDocument, SearchEventIndexer, SearchIndexer, SearchIndexerEvent } from "../../search/index.js";
-import type { DriveActivityPayload, DriveActor, DriveSearchProjectionStore, DriveSearchRecord } from "../types.js";
+import type {
+  IndexDocument,
+  SearchEventIndexer,
+  SearchIndexer,
+  SearchIndexerEvent,
+} from "../../search/index.js";
+import type {
+  DriveActivityPayload,
+  DriveActor,
+  DriveSearchProjectionStore,
+  DriveSearchRecord,
+} from "../types.js";
 
 export const driveSearchIndexerId = "drive";
 export const driveSearchSubjects = ["activity.drive.>", "com.helix.core.drive.>"] as const;
 
-export function createDriveSearchIndexer(store: DriveSearchProjectionStore): SearchIndexer<DriveActivityPayload> {
+export function createDriveSearchIndexer(
+  store: DriveSearchProjectionStore,
+): SearchIndexer<DriveActivityPayload> {
   return {
     id: driveSearchIndexerId,
     subjects: driveSearchSubjects,
@@ -29,7 +41,10 @@ export function createDriveSearchIndexer(store: DriveSearchProjectionStore): Sea
   };
 }
 
-export function registerDriveIndexer(indexer: SearchEventIndexer, store: DriveSearchProjectionStore): void {
+export function registerDriveIndexer(
+  indexer: SearchEventIndexer,
+  store: DriveSearchProjectionStore,
+): void {
   indexer.register(createDriveSearchIndexer(store));
 }
 
@@ -61,26 +76,17 @@ export function driveRecordToIndexDocument(record: DriveSearchRecord): IndexDocu
       kind: record.kind,
       mimeType: record.mimeType,
       byteSize: record.byteSize,
-      storageKey: record.storageKey,
-      sha256: record.sha256,
       parentFolderId: record.parentFolderId,
       path,
       ownerId: record.owner?.id,
       ownerName: record.owner?.displayName,
-      ownerEmail: record.owner?.email,
+      allowedActorIds: record.allowedActorIds ?? [],
       tags,
       classification: record.classification,
       createdAt: record.createdAt,
-      trashedAt: record.trashedAt,
-      metadata: record.metadata,
-      // RAG visibility — Drive files are owner-private by default. Files
-      // marked as org-shared (classification === "org" or future explicit
-      // share-with-everyone flag) become visibility="org" so any member of
-      // the tenant can RAG them. Without an owner, default to org so
-      // legacy / system-uploaded files remain retrievable.
-      ...(record.classification === "public" || record.owner?.id === undefined
-        ? { ragVisibility: "org" }
-        : { ragVisibility: "private", ragOwnerActorId: record.owner.id }),
+      // Tenant isolation happens in the vector store; object ACLs are applied
+      // from allowedActorIds by the semantic search layer.
+      ragVisibility: "org",
     }),
     updatedAt: record.updatedAt ?? record.createdAt,
   };

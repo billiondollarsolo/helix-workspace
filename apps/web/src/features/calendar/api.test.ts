@@ -93,10 +93,7 @@ describe("calendar API", () => {
       },
       fetchImpl,
     );
-    await respondToCalendarEvent(
-      { eventId, attendeeEmail: "sam@helix.test", responseStatus: "accepted" },
-      fetchImpl,
-    );
+    await respondToCalendarEvent({ eventId, responseStatus: "accepted" }, fetchImpl);
 
     expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/calendar.event.update", {
       method: "POST",
@@ -115,7 +112,6 @@ describe("calendar API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         eventId,
-        attendeeEmail: "sam@helix.test",
         responseStatus: "accepted",
       }),
     });
@@ -265,7 +261,7 @@ describe("calendar route search", () => {
   it("falls back to safe defaults and derives week/month event windows", () => {
     const defaultSearch = validateCalendarRouteSearch({
       date: "2026-02-31",
-      view: "agenda",
+      view: "year",
       query: " backend ",
     });
 
@@ -284,6 +280,11 @@ describe("calendar route search", () => {
       startsAt: "2026-06-01T00:00:00.000Z",
       endsAt: "2026-06-30T23:59:59.999Z",
       limit: 100,
+    });
+    expect(calendarEventsInputFromRouteSearch({ date: "2026-06-15", view: "agenda" })).toEqual({
+      startsAt: "2026-06-15T00:00:00.000Z",
+      endsAt: "2026-07-14T23:59:59.999Z",
+      limit: 250,
     });
   });
 

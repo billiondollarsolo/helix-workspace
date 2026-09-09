@@ -3,9 +3,16 @@ import type { McpResource, McpResourceContent, McpResourceProvider } from "./mcp
 import type { CalendarEventRecord } from "../platform/calendar/types.js";
 import type { ChatMessageRecord, ChatRoomRecord } from "../platform/chat/types.js";
 import type { DriveEntryRecord, DriveSearchHit } from "../platform/drive/types.js";
-import type { DriveFileReadInput, DriveFileReadResult } from "../platform/drive/store.js";
+import type {
+  DriveFileReadInput,
+  DriveFileReadResult,
+  DriveFileStreamResult,
+} from "../platform/drive/store.js";
 import type { DocsDocumentRecord, DocsExportDocument } from "../platform/docs/types.js";
-import type { TenantHourlyQuotaExceeded, TenantHourlyQuotaLimiter } from "../platform/limits/index.js";
+import type {
+  TenantHourlyQuotaExceeded,
+  TenantHourlyQuotaLimiter,
+} from "../platform/limits/index.js";
 import { emitTenantQuotaExceededEvent } from "../platform/limits/index.js";
 import type { MailSearchHit, MailThreadDetail, MailThreadMessage } from "../platform/mail/types.js";
 
@@ -63,7 +70,8 @@ export interface StoreBackedMcpResourceProviderOptions {
       readonly query?: string;
       readonly limit?: number;
     }): Promise<readonly DriveSearchHit[]>;
-    readFile(input: DriveFileReadInput): Promise<DriveFileReadResult | null>;
+    readFile?(input: DriveFileReadInput): Promise<DriveFileReadResult | null>;
+    openFile?(input: DriveFileReadInput): Promise<DriveFileStreamResult | null>;
   };
   readonly docs?: {
     listDocumentsForActor(input: {
@@ -172,11 +180,17 @@ export function createStoreBackedMcpResourceProvider(
         if (options.drive === undefined || !canRead(actor, "drive.read")) {
           return null;
         }
-        const file = await options.drive.readFile({
+        const input = {
           orgId: actor.orgId,
           actorId: actor.id,
           objectId: parsed.id,
-        });
+        };
+        if (options.drive.openFile !== undefined) {
+          const file = await options.drive.openFile(input);
+          return file === null ? null : driveStreamToContent(uri, file);
+        }
+        if (options.drive.readFile === undefined) return null;
+        const file = await options.drive.readFile(input);
         return file === null ? null : driveFileToContent(uri, file);
       }
       if (parsed.kind === "docs") {
@@ -538,6 +552,57 @@ function driveFileToContent(uri: string, file: DriveFileReadResult): McpResource
     mimeType: "text/markdown",
     text: driveFileToMarkdown(file.entry),
   };
+}
+
+const MAX_MCP_DRIVE_TEXT_BYTES = 1024 * 1024;
+
+async function driveStreamToContent(
+  uri: string,
+  file: DriveFileStreamResult,
+): Promise<McpResourceContent> {
+  if (!isTextLikeMimeType(file.entry.mimeType)) {
+    return { uri, mimeType: "text/markdown", text: driveFileToMarkdown(file.entry) };
+  }
+  const length = Math.min(file.byteSize, MAX_MCP_DRIVE_TEXT_BYTES);
+  const body = await file.open(
+    length === 0 ? undefined : { start: 0, end: Math.max(0, length - 1) },
+  );
+  if (body === null)
+    return { uri, mimeType: "text/markdown", text: driveFileToMarkdown(file.entry) };
+  const bytes = await collectDriveText(body, MAX_MCP_DRIVE_TEXT_BYTES);
+  const text = new TextDecoder().decode(bytes);
+  return {
+    uri,
+    mimeType: file.entry.mimeType ?? "text/plain",
+    text:
+      file.byteSize > bytes.byteLength
+        ? `${text}\n\n[Truncated after ${String(bytes.byteLength)} bytes]`
+        : text,
+  };
+}
+
+async function collectDriveText(
+  body: Uint8Array | AsyncIterable<Uint8Array>,
+  limit: number,
+): Promise<Uint8Array> {
+  if (body instanceof Uint8Array) return body.subarray(0, limit);
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of body) {
+    const remaining = limit - size;
+    if (remaining <= 0) break;
+    const bounded = chunk.subarray(0, remaining);
+    chunks.push(bounded);
+    size += bounded.byteLength;
+    if (bounded.byteLength < chunk.byteLength || size === limit) break;
+  }
+  const output = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
 }
 
 function isTextLikeMimeType(mimeType: string | undefined): boolean {

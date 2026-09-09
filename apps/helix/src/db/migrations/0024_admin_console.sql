@@ -200,16 +200,27 @@ create table if not exists admin_domains (
   is_primary boolean not null default false,
   verification_status text not null default 'pending'
     check (verification_status in ('verified', 'pending', 'failed')),
+  constraint admin_domains_primary_verified_check
+    check (not is_primary or verification_status = 'verified'),
   verified_at timestamptz,
+  verification_host text not null,
+  verification_value text not null,
+  verification_expires_at timestamptz not null,
+  verification_attempts integer not null default 0 check (verification_attempts >= 0),
+  verification_last_attempt_at timestamptz,
   created_by uuid,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
-create unique index if not exists admin_domains_org_domain_idx
-  on admin_domains (org_id, lower(domain));
+-- A DNS name can be claimed by only one tenant, including while verification
+-- is pending, so a second org cannot race or reuse the same proof.
+create unique index if not exists admin_domains_domain_idx
+  on admin_domains (lower(domain));
 create index if not exists admin_domains_org_idx
   on admin_domains (org_id, created_at desc, id desc);
+create unique index if not exists admin_domains_org_primary_idx
+  on admin_domains (org_id) where is_primary;
 
 -- DNS records associated with a domain (MX / SPF / DKIM / DMARC / TXT / CNAME).
 -- `status` reflects whether the live DNS lookup matched the expected value.

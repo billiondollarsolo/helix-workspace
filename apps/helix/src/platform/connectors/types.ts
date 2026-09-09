@@ -7,11 +7,11 @@
  * calendar, meet, assistant) are NOT plugins — they are toggleable platform
  * modules wired directly into the server.
  *
- * A connector is a `kind: "in-process"` plugin whose manifest declares the
- * `connector` category. It is discovered from `/plugins`, validated, loaded,
- * and started by {@link ../connectors/runtime.ts} at server startup. At least
- * one connector ships realized (the Slack outbound-webhook connector) to prove
- * the path end-to-end.
+ * A connector is an isolated plugin whose manifest declares the `connector`
+ * category. It is discovered from `/plugins`, validated, and run by
+ * {@link ../connectors/runtime.ts} in a permission-denied child process. At
+ * least one connector ships realized (the Slack outbound-webhook connector)
+ * to prove the path end-to-end.
  *
  * Connectors contribute to two bounded extension points:
  *  - **outbound webhook formats** — render a Helix event into a third-party
@@ -22,16 +22,10 @@
  * monolith's internals.
  */
 
-import type {
-  OutboundWebhookEvent,
-  RenderedWebhookRequest,
-} from "../webhooks/formats/types.js";
+import type { OutboundWebhookEvent, RenderedWebhookRequest } from "../webhooks/formats/types.js";
 
 /** The manifest category that marks a plugin as an external connector. */
 export const CONNECTOR_MANIFEST_CATEGORY = "connector";
-
-/** The manifest category that marks a first-party core-app placeholder. */
-export const CORE_APP_MANIFEST_CATEGORY = "core-app";
 
 /**
  * An outbound-webhook format contributed by a connector. Mirrors the platform's
@@ -41,7 +35,9 @@ export const CORE_APP_MANIFEST_CATEGORY = "core-app";
 export interface ConnectorWebhookFormat {
   /** Stable id, e.g. `slack`. Used as the format key in webhook config. */
   readonly id: string;
-  readonly render: (event: OutboundWebhookEvent) => RenderedWebhookRequest;
+  readonly render: (
+    event: OutboundWebhookEvent,
+  ) => RenderedWebhookRequest | Promise<RenderedWebhookRequest>;
 }
 
 /** An inbound-webhook source contributed by a connector. */
@@ -53,7 +49,7 @@ export interface ConnectorWebhookSource {
     readonly headers: Readonly<Record<string, string>>;
     readonly rawBody: string;
     readonly secret: string;
-  }) => boolean;
+  }) => boolean | Promise<boolean>;
 }
 
 /**

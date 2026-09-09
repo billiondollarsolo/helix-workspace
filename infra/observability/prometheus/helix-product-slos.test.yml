@@ -1,0 +1,65 @@
+rule_files:
+  - ../../helm/helix/files/helix-product-slos.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'helix_tool_invocations_total{tool_id="mail.list",status="error"}'
+        values: "0+1x70"
+      - series: 'helix_http_requests_total{route="/oauth/token",status_code="500"}'
+        values: "0+1x70"
+      - series: 'helix_search_projection_lag_seconds{indexer="mail"}'
+        values: "120x70"
+      - series: 'helix_meet_degraded_samples_total{signal="packet_loss"}'
+        values: "0+1x70"
+      - series: "helix_meet_quality_samples_total"
+        values: "0+1x70"
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: HelixProductAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels:
+              product: mail
+              severity: critical
+              priority: p1
+              owner: product-sre
+              slo: product_availability
+            exp_annotations:
+              summary: mail availability is rapidly consuming its error budget
+              runbook_url: docs/runbooks/product-slo-breach.md
+      - eval_time: 65m
+        alertname: HelixAuthAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              priority: p1
+              owner: identity
+              service: auth
+              slo: availability
+            exp_annotations:
+              summary: Auth availability is rapidly consuming its error budget
+              runbook_url: docs/runbooks/product-slo-breach.md
+      - eval_time: 65m
+        alertname: HelixSearchFreshnessSloMiss
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              priority: p1
+              owner: search
+              service: search
+              slo: freshness
+            exp_annotations:
+              summary: Search freshness exceeds the strictest tier objective
+              runbook_url: docs/runbooks/product-slo-breach.md
+      - eval_time: 65m
+        alertname: HelixMeetQualityBudgetBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              priority: p1
+              owner: realtime-media
+              service: meet
+              slo: healthy_media
+            exp_annotations:
+              summary: Meet healthy-media budget is rapidly burning
+              runbook_url: docs/runbooks/product-slo-breach.md

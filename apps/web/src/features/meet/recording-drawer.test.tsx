@@ -78,6 +78,7 @@ describe("RecordingDrawer", () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="Close"]'),
     );
     expect(container.querySelector("video")?.getAttribute("aria-label")).toBe("Recording 1 of 1");
+    expect(container.querySelector("track")).toBeNull();
 
     act(() => {
       document.dispatchEvent(
@@ -89,5 +90,20 @@ describe("RecordingDrawer", () => {
     act(() => root.render(null));
     expect(document.body.style.overflow).toBe("");
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("does not offer export when meeting governance disables it", async () => {
+    const restricted: MeetMeetingRecord = {
+      ...meeting,
+      recordingArtifacts: meeting.recordingArtifacts.map((artifact) => ({
+        ...artifact,
+        exportAllowed: false,
+      })),
+    };
+    act(() => root.render(<RecordingDrawer meeting={restricted} onClose={() => undefined} />));
+    await act(async () => Promise.resolve());
+
+    expect(container.textContent).toContain("Download disabled");
+    expect(container.querySelector("a[download]")).toBeNull();
   });
 });

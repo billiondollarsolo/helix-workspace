@@ -23,6 +23,9 @@ function fakeConnectorResult(): ConnectorLoadResult {
   });
   return {
     registry,
+    prepare: async () => undefined,
+    disable: () => {},
+    close: () => {},
     loaded: [
       {
         rootDir: "/plugins/com.helix.webhook-out-slack",
@@ -31,7 +34,7 @@ function fakeConnectorResult(): ConnectorLoadResult {
           name: "Slack Outbound Webhooks",
           version: "1.0.0",
           sdkVersion: "^1.0.0",
-          kind: "in-process",
+          kind: "sandboxed",
           capabilities: { provides: ["webhook.out.format.slack"], consumes: ["webhook.engine"] },
           permissions: {
             scopes: ["webhooks.write"],
@@ -62,10 +65,8 @@ describe("connectors admin route", () => {
     const response = await app.inject({ method: "GET", url: "/api/admin/connectors" });
     expect(response.statusCode).toBe(200);
     const body = response.json<ConnectorsAdminStatus>();
-    expect(body.loaded.map((connector) => connector.id)).toEqual([
-      "com.helix.webhook-out-slack",
-    ]);
-    expect(body.loaded[0]).toMatchObject({ category: "connector", kind: "in-process" });
+    expect(body.loaded.map((connector) => connector.id)).toEqual(["com.helix.webhook-out-slack"]);
+    expect(body.loaded[0]).toMatchObject({ category: "connector", kind: "sandboxed" });
     expect(body.webhookFormats).toEqual(["slack"]);
     await app.close();
   });

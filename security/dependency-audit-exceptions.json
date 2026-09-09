@@ -1,0 +1,18 @@
+[
+  {
+    "advisory": "GHSA-w3rx-r6r6-pgpr",
+    "owner": "workspace-security",
+    "expires": "2026-10-02",
+    "dependency": "image-size via pptxgenjs",
+    "reason": "No patched image-size release exists. Runtime PPTX export accepts only size-bounded PNG, JPEG, or GIF payloads whose magic bytes match the declared type; the vulnerable ICNS parser is unreachable.",
+    "evidence": "apps/helix/src/platform/slides/export-pptx.ts and its disguised-ICNS regression test"
+  },
+  {
+    "advisory": "GHSA-5p2g-fcmc-qvqq",
+    "owner": "workspace-security",
+    "expires": "2026-10-02",
+    "dependency": "image-size via pptxgenjs",
+    "reason": "No patched image-size release exists. Runtime PPTX export accepts only size-bounded PNG, JPEG, or GIF payloads whose magic bytes match the declared type; the vulnerable JXL and HEIF parsers are unreachable.",
+    "evidence": "apps/helix/src/platform/slides/export-pptx.ts and its disguised-ICNS regression test"
+  }
+]

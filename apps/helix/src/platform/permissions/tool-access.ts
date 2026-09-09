@@ -1,5 +1,7 @@
 import type { Actor, JsonObject, ResourceRef, ToolDefinition } from "@helix/sdk-types";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { isKnownScope } from "./scope-catalog.js";
+import { actorHasPermission, actorRoleDecision } from "./roles.js";
 
 /**
  * Resolve every scope an actor must hold to invoke {@link tool} for a specific
@@ -64,8 +66,10 @@ export function checkScopeComposition(
   if (actor.type === "system") {
     return { ok: true };
   }
-  const held = new Set(actor.scopes ?? []);
-  const missing = requiredScopesForCall(tool, input).filter((scope) => !held.has(scope));
+  const resource = toolResource(tool);
+  const missing = requiredScopesForCall(tool, input).filter(
+    (scope) => !isKnownScope(scope) || !actorHasPermission(actor, scope, resource),
+  );
   return missing.length === 0 ? { ok: true } : { ok: false, missingScopes: missing };
 }
 
@@ -85,11 +89,12 @@ export interface PermissionCheckMetrics {
 }
 
 export class ScopeToolAccessPolicy implements ToolAccessPolicy {
-  async can(actor: Actor, action: string): Promise<boolean> {
-    if (actor.type === "system") {
-      return true;
-    }
-    return actor.scopes?.includes(action) ?? false;
+  async can(
+    actor: Actor,
+    action: string,
+    resource: ResourceRef = { type: "org", orgId: actor.orgId },
+  ): Promise<boolean> {
+    return actorHasPermission(actor, action, resource);
   }
 }
 
@@ -187,13 +192,20 @@ export class CerbosToolAccessPolicy implements ToolAccessPolicy {
     if (actor.type === "system") {
       return true;
     }
+    if (!isKnownScope(action)) {
+      return false;
+    }
+    const roleDecision = actorRoleDecision(actor, action, resource);
+    if (roleDecision === "deny") {
+      return false;
+    }
 
     const response = await this.#fetch(`${this.#endpoint}/api/check/resources`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         requestId: `${this.#requestIdPrefix}:${actor.orgId}:${actor.id}:${action}`,
-        principal: principalForActor(actor),
+        principal: principalForActor(actor, roleDecision === "allow" ? action : undefined),
         resources: [
           {
             resource: resourceForCerbos(actor, resource),
@@ -222,24 +234,18 @@ export function toolResource(tool: ToolDefinition): ResourceRef {
   };
 }
 
-function principalForActor(actor: Actor): JsonObject {
+function principalForActor(actor: Actor, authorizedAction?: string): JsonObject {
+  const scopes = new Set(actor.scopes ?? []);
+  if (authorizedAction !== undefined) scopes.add(authorizedAction);
   return {
     id: actor.id,
-    roles: rolesForActor(actor),
+    roles: [actor.type],
     attr: {
       org_id: actor.orgId,
       type: actor.type,
-      scopes: [...(actor.scopes ?? [])],
+      scopes: [...scopes],
     },
   };
-}
-
-function rolesForActor(actor: Actor): readonly string[] {
-  const roles = new Set<string>([actor.type]);
-  if (actor.scopes?.some((scope) => scope === "admin" || scope.startsWith("admin."))) {
-    roles.add("admin");
-  }
-  return [...roles];
 }
 
 function resourceForCerbos(actor: Actor, resource: ResourceRef): JsonObject {

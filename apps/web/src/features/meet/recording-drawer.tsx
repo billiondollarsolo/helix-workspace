@@ -201,7 +201,7 @@ function RecordingCard({
   readonly index: number;
   readonly total: number;
 }) {
-  const src = `/api/drive/objects/${artifact.objectId}/content`;
+  const src = `/v1/api/drive/objects/${artifact.objectId}/content`;
   const driveHref = `/drive?file=${encodeURIComponent(artifact.objectId)}`;
   const captured = artifact.startedAt ?? artifact.createdAt;
   const duration = formatDurationFromRange(artifact.startedAt, artifact.endedAt);
@@ -221,9 +221,7 @@ function RecordingCard({
           preload="metadata"
           src={src}
           style={{ width: "100%", display: "block", maxHeight: 320, background: "#000" }}
-        >
-          <track kind="captions" />
-        </video>
+        />
       </div>
       <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
         <div
@@ -263,14 +261,20 @@ function RecordingCard({
           <dd style={{ margin: 0 }}>{prettyMime(artifact.mimeType)}</dd>
         </dl>
         <div style={{ display: "flex", gap: 8, paddingTop: 4 }}>
-          <a
-            className="btn sm"
-            href={`${src}?download=1`}
-            download
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-          >
-            Download
-          </a>
+          {artifact.exportAllowed !== false ? (
+            <a
+              className="btn sm"
+              href={`${src}?download=1`}
+              download
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              Download
+            </a>
+          ) : (
+            <span style={{ color: "var(--text-3)", fontSize: "var(--text-meta)" }}>
+              Download disabled
+            </span>
+          )}
           <a
             className="btn sm"
             href={driveHref}

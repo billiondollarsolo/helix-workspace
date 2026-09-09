@@ -5,7 +5,8 @@
  * driven by the system clock, and mappers from the calendar backend's
  * `CalendarApiEvent` onto the UI shape. No fabricated event data lives here. */
 
-import type { CalendarApiCalendar, CalendarApiEvent } from "./api";
+import { instantToLocalDateTime, localDateTimeToInstant } from "@helix/contracts";
+import type { CalendarApiCalendar, CalendarApiEvent, CalendarListEventsInput } from "./api";
 
 /** First hour shown in the week grid (7 AM). */
 export const GRID_START_HOUR = 7;
@@ -58,6 +59,7 @@ export interface CalendarSidebarEntry {
   readonly visible: boolean;
   readonly role: string;
   readonly writable: boolean;
+  readonly timezone: string;
 }
 
 /** ISO `yyyy-mm-dd` for today, using the system clock. */
@@ -84,7 +86,14 @@ export function dateNumberForDay(weekStartIso: string, dayIndex: number): number
   return base.getUTCDate();
 }
 
-const BACKEND_EVENT_COLORS = ["var(--accent)", "#0891b2", "#7c3aed", "#dc2626", "#ea580c", "#059669"];
+const BACKEND_EVENT_COLORS = [
+  "var(--accent)",
+  "#0891b2",
+  "#7c3aed",
+  "#dc2626",
+  "#ea580c",
+  "#059669",
+];
 
 /** Stable hash → index in [0, mod) for deterministic colour assignment. */
 function hashIndex(value: string, mod: number): number {
@@ -96,16 +105,15 @@ function hashIndex(value: string, mod: number): number {
 }
 
 /** Monday-relative day index (0-6) for an ISO timestamp. */
-function dayIndexForIso(iso: string): number {
-  const date = new Date(iso);
+function dayIndexForLocal(local: string): number {
+  const date = new Date(`${local.slice(0, 10)}T00:00:00.000Z`);
   const weekday = date.getUTCDay();
   return weekday === 0 ? 6 : weekday - 1;
 }
 
 /** Decimal hour (UTC) for an ISO timestamp. */
-function decimalHourForIso(iso: string): number {
-  const date = new Date(iso);
-  return date.getUTCHours() + date.getUTCMinutes() / 60;
+function decimalHourForLocal(local: string): number {
+  return Number(local.slice(11, 13)) + Number(local.slice(14, 16)) / 60;
 }
 
 /**
@@ -116,10 +124,18 @@ function decimalHourForIso(iso: string): number {
 export function gridEventFromApiEvent(
   event: CalendarApiEvent,
   calendarColors: ReadonlyMap<string, string> = new Map(),
+  viewerTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
 ): CalendarGridEvent {
-  const day = dayIndexForIso(event.startsAt);
-  const start = decimalHourForIso(event.startsAt);
-  const end = decimalHourForIso(event.endsAt);
+  const fixedLocal = event.timeSemantics === "floating" || event.allDay;
+  const startsLocal =
+    (fixedLocal ? event.startsLocal : undefined) ??
+    instantToLocalDateTime(event.startsAt, fixedLocal ? "UTC" : viewerTimeZone);
+  const endsLocal =
+    (fixedLocal ? event.endsLocal : undefined) ??
+    instantToLocalDateTime(event.endsAt, fixedLocal ? "UTC" : viewerTimeZone);
+  const day = dayIndexForLocal(startsLocal);
+  const start = decimalHourForLocal(startsLocal);
+  const end = decimalHourForLocal(endsLocal);
   const calendarColor = calendarColors.get(event.calendarId);
   return {
     id: event.id,
@@ -135,7 +151,7 @@ export function gridEventFromApiEvent(
       BACKEND_EVENT_COLORS[hashIndex(event.id, BACKEND_EVENT_COLORS.length)] ??
       "var(--accent)",
     location: event.location ?? undefined,
-    date: event.startsAt.slice(0, 10),
+    date: startsLocal.slice(0, 10),
     calendarId: event.calendarId,
     apiEvent: event,
   };
@@ -150,7 +166,31 @@ export function sidebarEntryFromApiCalendar(calendar: CalendarApiCalendar): Cale
     group: calendar.group,
     visible: calendar.visible,
     role: calendar.role,
-    writable: calendar.writable ?? calendar.role !== "viewer",
+    writable: calendar.writable ?? calendar.role !== "reader",
+    timezone: calendar.timezone ?? "UTC",
+  };
+}
+
+/** Resolve a date-based display window to the viewer's real boundary instants. */
+export function eventQueryWindowForTimeZone(
+  input: CalendarListEventsInput,
+  viewerTimeZone: string,
+): CalendarListEventsInput {
+  if (input.startsAt === undefined || input.endsAt === undefined) return input;
+  const startsAt = localDateTimeToInstant(
+    `${input.startsAt.slice(0, 10)}T00:00:00`,
+    viewerTimeZone,
+  );
+  const dayAfterEnd = new Date(`${input.endsAt.slice(0, 10)}T00:00:00.000Z`);
+  dayAfterEnd.setUTCDate(dayAfterEnd.getUTCDate() + 1);
+  const exclusiveEnd = localDateTimeToInstant(
+    `${dayAfterEnd.toISOString().slice(0, 10)}T00:00:00`,
+    viewerTimeZone,
+  );
+  return {
+    ...input,
+    startsAt: startsAt.toISOString(),
+    endsAt: new Date(exclusiveEnd.getTime() - 1).toISOString(),
   };
 }
 

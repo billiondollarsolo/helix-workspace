@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -134,6 +134,7 @@ export interface GroupsStore {
   deleteGroup(orgId: string, id: string): Promise<boolean>;
 
   listGroupMembers(orgId: string, groupId: string): Promise<readonly GroupMemberRecord[]>;
+  hasActiveActor(orgId: string, actorId: string): Promise<boolean>;
   addGroupMember(input: AddGroupMemberInput): Promise<GroupMemberRecord>;
   removeGroupMember(orgId: string, groupId: string, actorId: string): Promise<boolean>;
 }
@@ -215,7 +216,7 @@ const groupMemberParams = z.object({ id: uuid, actorId: uuid });
 export interface RegisterAdminGroupsRoutesOptions {
   readonly store: GroupsStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
-  readonly auditSink?: AdminConsoleAuditSink | undefined;
+  readonly auditSink: AdminConsoleAuditSink;
 }
 
 /**
@@ -243,7 +244,7 @@ export async function registerAdminGroupsRoutes(
 
   app.get("/api/admin/org-units", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
+    if (!canReadAdminConsole(actor, "admin.groups")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
     return { orgUnits: await store.listOrgUnits(actor.orgId) };
@@ -251,7 +252,7 @@ export async function registerAdminGroupsRoutes(
 
   app.post("/api/admin/org-units", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
+    if (!canWriteAdminConsole(actor, "admin.groups")) {
       return sendForbidden(reply, adminConsoleWriteScope);
     }
     const body = createOrgUnitBody.safeParse(request.body);
@@ -286,16 +287,34 @@ export async function registerAdminGroupsRoutes(
 
   app.patch("/api/admin/org-units/:id", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
     const params = idParams.safeParse(request.params);
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid org unit id."));
     }
+    if (
+      !canWriteAdminConsole(actor, "admin.groups", {
+        type: "org_unit",
+        id: params.data.id,
+        orgId: actor.orgId,
+      })
+    ) {
+      return sendForbidden(reply, adminConsoleWriteScope);
+    }
     const body = updateOrgUnitBody.safeParse(request.body);
     if (!body.success) {
       return reply.code(400).send(invalidRequest("Invalid org unit update.", body.error.issues));
+    }
+    if (
+      body.data.parentId !== undefined &&
+      !canWriteAdminConsole(
+        actor,
+        "admin.groups",
+        body.data.parentId === null
+          ? { type: "org", orgId: actor.orgId }
+          : { type: "org_unit", id: body.data.parentId, orgId: actor.orgId },
+      )
+    ) {
+      return sendForbidden(reply, adminConsoleWriteScope);
     }
     let orgUnit: OrgUnitRecord | null;
     try {
@@ -328,12 +347,18 @@ export async function registerAdminGroupsRoutes(
 
   app.delete("/api/admin/org-units/:id", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
     const params = idParams.safeParse(request.params);
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid org unit id."));
+    }
+    if (
+      !canWriteAdminConsole(actor, "admin.groups", {
+        type: "org_unit",
+        id: params.data.id,
+        orgId: actor.orgId,
+      })
+    ) {
+      return sendForbidden(reply, adminConsoleWriteScope);
     }
     const result = await store.deleteOrgUnit(actor.orgId, params.data.id);
     if (result === "not_found") {
@@ -358,7 +383,7 @@ export async function registerAdminGroupsRoutes(
 
   app.get("/api/admin/groups", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
+    if (!canReadAdminConsole(actor, "admin.groups")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
     return { groups: await store.listGroups(actor.orgId) };
@@ -366,12 +391,20 @@ export async function registerAdminGroupsRoutes(
 
   app.post("/api/admin/groups", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
     const body = createGroupBody.safeParse(request.body);
     if (!body.success) {
       return reply.code(400).send(invalidRequest("Invalid group.", body.error.issues));
+    }
+    if (
+      !canWriteAdminConsole(
+        actor,
+        "admin.groups",
+        body.data.orgUnitId === null
+          ? { type: "org", orgId: actor.orgId }
+          : { type: "org_unit", id: body.data.orgUnitId, orgId: actor.orgId },
+      )
+    ) {
+      return sendForbidden(reply, adminConsoleWriteScope);
     }
     let group: GroupRecord;
     try {
@@ -403,16 +436,34 @@ export async function registerAdminGroupsRoutes(
 
   app.patch("/api/admin/groups/:id", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
     const params = idParams.safeParse(request.params);
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid group id."));
     }
+    if (
+      !canWriteAdminConsole(actor, "admin.groups", {
+        type: "group",
+        id: params.data.id,
+        orgId: actor.orgId,
+      })
+    ) {
+      return sendForbidden(reply, adminConsoleWriteScope);
+    }
     const body = updateGroupBody.safeParse(request.body);
     if (!body.success) {
       return reply.code(400).send(invalidRequest("Invalid group update.", body.error.issues));
+    }
+    if (
+      body.data.orgUnitId !== undefined &&
+      !canWriteAdminConsole(
+        actor,
+        "admin.groups",
+        body.data.orgUnitId === null
+          ? { type: "org", orgId: actor.orgId }
+          : { type: "org_unit", id: body.data.orgUnitId, orgId: actor.orgId },
+      )
+    ) {
+      return sendForbidden(reply, adminConsoleWriteScope);
     }
     let group: GroupRecord | null;
     try {
@@ -447,12 +498,18 @@ export async function registerAdminGroupsRoutes(
 
   app.delete("/api/admin/groups/:id", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
     const params = idParams.safeParse(request.params);
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid group id."));
+    }
+    if (
+      !canWriteAdminConsole(actor, "admin.groups", {
+        type: "group",
+        id: params.data.id,
+        orgId: actor.orgId,
+      })
+    ) {
+      return sendForbidden(reply, adminConsoleWriteScope);
     }
     const deleted = await store.deleteGroup(actor.orgId, params.data.id);
     if (!deleted) {
@@ -472,12 +529,18 @@ export async function registerAdminGroupsRoutes(
 
   app.get("/api/admin/groups/:id/members", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleReadScope);
-    }
     const params = idParams.safeParse(request.params);
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid group id."));
+    }
+    if (
+      !canReadAdminConsole(actor, "admin.groups", {
+        type: "group",
+        id: params.data.id,
+        orgId: actor.orgId,
+      })
+    ) {
+      return sendForbidden(reply, adminConsoleReadScope);
     }
     const group = await store.getGroup(actor.orgId, params.data.id);
     if (group === null) {
@@ -488,12 +551,18 @@ export async function registerAdminGroupsRoutes(
 
   app.post("/api/admin/groups/:id/members", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
     const params = idParams.safeParse(request.params);
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid group id."));
+    }
+    if (
+      !canWriteAdminConsole(actor, "admin.groups", {
+        type: "group",
+        id: params.data.id,
+        orgId: actor.orgId,
+      })
+    ) {
+      return sendForbidden(reply, adminConsoleWriteScope);
     }
     const body = addMemberBody.safeParse(request.body);
     if (!body.success) {
@@ -502,6 +571,9 @@ export async function registerAdminGroupsRoutes(
     const group = await store.getGroup(actor.orgId, params.data.id);
     if (group === null) {
       return reply.code(404).send(notFound("Group not found."));
+    }
+    if (!(await store.hasActiveActor(actor.orgId, body.data.actorId))) {
+      return reply.code(404).send(notFound("Active actor not found in this organization."));
     }
     let member: GroupMemberRecord;
     try {
@@ -531,12 +603,18 @@ export async function registerAdminGroupsRoutes(
 
   app.delete("/api/admin/groups/:id/members/:actorId", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
     const params = groupMemberParams.safeParse(request.params);
     if (!params.success) {
       return reply.code(400).send(invalidRequest("Invalid group member identifiers."));
+    }
+    if (
+      !canWriteAdminConsole(actor, "admin.groups", {
+        type: "group",
+        id: params.data.id,
+        orgId: actor.orgId,
+      })
+    ) {
+      return sendForbidden(reply, adminConsoleWriteScope);
     }
     const removed = await store.removeGroupMember(actor.orgId, params.data.id, params.data.actorId);
     if (!removed) {
@@ -597,7 +675,7 @@ export class PostgresGroupsStore implements GroupsStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async listOrgUnits(orgId: string): Promise<readonly OrgUnitRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OrgUnitRow[]>`
       select
         u.id, u.org_id, u.parent_id, u.name, u.path, u.description,
         coalesce(m.member_count, 0) as member_count,
@@ -605,48 +683,57 @@ export class PostgresGroupsStore implements GroupsStore {
         u.created_at, u.updated_at
       from admin_org_units u
       left join (
-        select g.org_unit_id, count(gm.id) as member_count
+        select g.org_id, g.org_unit_id, count(a.id) as member_count
         from admin_groups g
-        join admin_group_members gm on gm.group_id = g.id
+        join admin_group_members gm on gm.org_id = g.org_id and gm.group_id = g.id
+        join actors a on a.org_id = gm.org_id and a.id = gm.actor_id and a.disabled_at is null
         where g.org_id = ${orgId}
-        group by g.org_unit_id
-      ) m on m.org_unit_id = u.id
+        group by g.org_id, g.org_unit_id
+      ) m on m.org_id = u.org_id and m.org_unit_id = u.id
       left join (
-        select parent_id, count(*) as child_count
+        select org_id, parent_id, count(*) as child_count
         from admin_org_units
         where org_id = ${orgId} and parent_id is not null
-        group by parent_id
-      ) c on c.parent_id = u.id
+        group by org_id, parent_id
+      ) c on c.org_id = u.org_id and c.parent_id = u.id
       where u.org_id = ${orgId}
       order by u.path asc, u.created_at asc
-    `) as unknown as readonly OrgUnitRow[];
+    `;
     return rows.map(mapOrgUnitRow);
   }
 
   async getOrgUnit(orgId: string, id: string): Promise<OrgUnitRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OrgUnitRow[]>`
       select
         u.id, u.org_id, u.parent_id, u.name, u.path, u.description,
         0 as member_count,
-        (select count(*) from admin_org_units c where c.parent_id = u.id) as child_count,
+        (select count(*) from admin_org_units c
+         where c.org_id = u.org_id and c.parent_id = u.id) as child_count,
         u.created_at, u.updated_at
       from admin_org_units u
       where u.org_id = ${orgId} and u.id = ${id}
-    `) as unknown as readonly OrgUnitRow[];
+    `;
     const row = rows[0];
     return row === undefined ? null : mapOrgUnitRow(row);
   }
 
   async createOrgUnit(input: CreateOrgUnitInput): Promise<OrgUnitRecord> {
-    const path = await this.#computePath(input.orgId, input.parentId, input.name);
-    const rows = (await this.sql`
-      insert into admin_org_units (org_id, parent_id, name, path, description, created_by)
-      values (${input.orgId}, ${input.parentId}, ${input.name}, ${path},
-              ${input.description}, ${input.createdBy})
-      on conflict do nothing
-      returning id, org_id, parent_id, name, path, description,
-                0 as member_count, 0 as child_count, created_at, updated_at
-    `) as unknown as readonly OrgUnitRow[];
+    let rows: readonly OrgUnitRow[];
+    try {
+      rows = await this.sql<OrgUnitRow[]>`
+        insert into admin_org_units (org_id, parent_id, name, description, created_by)
+        values (${input.orgId}, ${input.parentId}, ${input.name},
+                ${input.description}, ${input.createdBy})
+        on conflict do nothing
+        returning id, org_id, parent_id, name, path, description,
+                  0 as member_count, 0 as child_count, created_at, updated_at
+      `;
+    } catch (error) {
+      if (isOrgUnitConstraintViolation(error)) {
+        throw new GroupsConflictError("Invalid org unit hierarchy.");
+      }
+      throw error;
+    }
     const row = rows[0];
     if (row === undefined) {
       throw new GroupsConflictError("An org unit with this name already exists at this level.");
@@ -655,25 +742,27 @@ export class PostgresGroupsStore implements GroupsStore {
   }
 
   async updateOrgUnit(input: UpdateOrgUnitInput): Promise<OrgUnitRecord | null> {
-    const existing = await this.getOrgUnit(input.orgId, input.id);
-    if (existing === null) {
-      return null;
+    let rows: readonly OrgUnitRow[];
+    try {
+      rows = await this.sql<OrgUnitRow[]>`
+        update admin_org_units
+        set name = coalesce(${input.name ?? null}, name),
+            description = coalesce(${input.description ?? null}, description),
+            parent_id = case
+              when ${input.parentId === undefined} then parent_id
+              else ${input.parentId ?? null}
+            end,
+            updated_at = now()
+        where org_id = ${input.orgId} and id = ${input.id}
+        returning id, org_id, parent_id, name, path, description,
+                  0 as member_count, 0 as child_count, created_at, updated_at
+      `;
+    } catch (error) {
+      if (isOrgUnitConstraintViolation(error)) {
+        throw new GroupsConflictError("Invalid org unit hierarchy.");
+      }
+      throw error;
     }
-    const nextParentId = input.parentId === undefined ? existing.parentId : input.parentId;
-    if (nextParentId === input.id) {
-      throw new GroupsConflictError("An org unit cannot be its own parent.");
-    }
-    const nextName = input.name ?? existing.name;
-    const nextDescription = input.description ?? existing.description;
-    const path = await this.#computePath(input.orgId, nextParentId, nextName);
-    const rows = (await this.sql`
-      update admin_org_units
-      set name = ${nextName}, description = ${nextDescription},
-          parent_id = ${nextParentId}, path = ${path}, updated_at = now()
-      where org_id = ${input.orgId} and id = ${input.id}
-      returning id, org_id, parent_id, name, path, description,
-                0 as member_count, 0 as child_count, created_at, updated_at
-    `) as unknown as readonly OrgUnitRow[];
     const row = rows[0];
     return row === undefined ? null : mapOrgUnitRow(row);
   }
@@ -682,57 +771,68 @@ export class PostgresGroupsStore implements GroupsStore {
     orgId: string,
     id: string,
   ): Promise<"deleted" | "not_found" | "has_children"> {
-    const children = (await this.sql`
-      select 1 from admin_org_units where org_id = ${orgId} and parent_id = ${id} limit 1
-    `) as unknown as readonly unknown[];
-    if (children.length > 0) {
-      return "has_children";
+    try {
+      const rows = await this.sql<{ readonly id: string }[]>`
+        delete from admin_org_units where org_id = ${orgId} and id = ${id} returning id
+      `;
+      return rows.length > 0 ? "deleted" : "not_found";
+    } catch (error) {
+      if (postgresErrorCode(error) === "23503") {
+        return "has_children";
+      }
+      throw error;
     }
-    const rows = (await this.sql`
-      delete from admin_org_units where org_id = ${orgId} and id = ${id} returning id
-    `) as unknown as readonly { readonly id: string }[];
-    return rows.length > 0 ? "deleted" : "not_found";
   }
 
   async listGroups(orgId: string): Promise<readonly GroupRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<GroupRow[]>`
       select
         g.id, g.org_id, g.name, g.email, g.kind, g.description, g.org_unit_id,
-        coalesce(count(gm.id), 0) as member_count,
+        coalesce(count(a.id), 0) as member_count,
         g.created_at, g.updated_at
       from admin_groups g
-      left join admin_group_members gm on gm.group_id = g.id
+      left join admin_group_members gm on gm.org_id = g.org_id and gm.group_id = g.id
+      left join actors a
+        on a.org_id = gm.org_id and a.id = gm.actor_id and a.disabled_at is null
       where g.org_id = ${orgId}
       group by g.id
       order by g.created_at desc, g.id desc
-    `) as unknown as readonly GroupRow[];
+    `;
     return rows.map(mapGroupRow);
   }
 
   async getGroup(orgId: string, id: string): Promise<GroupRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<GroupRow[]>`
       select
         g.id, g.org_id, g.name, g.email, g.kind, g.description, g.org_unit_id,
-        coalesce(count(gm.id), 0) as member_count,
+        coalesce(count(a.id), 0) as member_count,
         g.created_at, g.updated_at
       from admin_groups g
-      left join admin_group_members gm on gm.group_id = g.id
+      left join admin_group_members gm on gm.org_id = g.org_id and gm.group_id = g.id
+      left join actors a
+        on a.org_id = gm.org_id and a.id = gm.actor_id and a.disabled_at is null
       where g.org_id = ${orgId} and g.id = ${id}
       group by g.id
-    `) as unknown as readonly GroupRow[];
+    `;
     const row = rows[0];
     return row === undefined ? null : mapGroupRow(row);
   }
 
   async createGroup(input: CreateGroupInput): Promise<GroupRecord> {
-    const rows = (await this.sql`
+    if (
+      input.orgUnitId !== null &&
+      (await this.getOrgUnit(input.orgId, input.orgUnitId)) === null
+    ) {
+      throw new GroupsConflictError("Org unit not found in this organization.");
+    }
+    const rows = await this.sql<GroupRow[]>`
       insert into admin_groups (org_id, name, email, kind, description, org_unit_id, created_by)
       values (${input.orgId}, ${input.name}, ${input.email}, ${input.kind},
               ${input.description}, ${input.orgUnitId}, ${input.createdBy})
       on conflict do nothing
       returning id, org_id, name, email, kind, description, org_unit_id,
                 0 as member_count, created_at, updated_at
-    `) as unknown as readonly GroupRow[];
+    `;
     const row = rows[0];
     if (row === undefined) {
       throw new GroupsConflictError("A group with this name already exists.");
@@ -745,7 +845,14 @@ export class PostgresGroupsStore implements GroupsStore {
     if (existing === null) {
       return null;
     }
-    const rows = (await this.sql`
+    if (
+      input.orgUnitId !== undefined &&
+      input.orgUnitId !== null &&
+      (await this.getOrgUnit(input.orgId, input.orgUnitId)) === null
+    ) {
+      throw new GroupsConflictError("Org unit not found in this organization.");
+    }
+    const rows = await this.sql<GroupRow[]>`
       update admin_groups
       set name = ${input.name ?? existing.name},
           email = ${input.email === undefined ? existing.email : input.email},
@@ -756,7 +863,7 @@ export class PostgresGroupsStore implements GroupsStore {
       where org_id = ${input.orgId} and id = ${input.id}
       returning id, org_id, name, email, kind, description, org_unit_id,
                 0 as member_count, created_at, updated_at
-    `) as unknown as readonly GroupRow[];
+    `;
     const row = rows[0];
     if (row === undefined) {
       return null;
@@ -765,29 +872,41 @@ export class PostgresGroupsStore implements GroupsStore {
   }
 
   async deleteGroup(orgId: string, id: string): Promise<boolean> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       delete from admin_groups where org_id = ${orgId} and id = ${id} returning id
-    `) as unknown as readonly { readonly id: string }[];
+    `;
     return rows.length > 0;
   }
 
   async listGroupMembers(orgId: string, groupId: string): Promise<readonly GroupMemberRecord[]> {
-    const rows = (await this.sql`
-      select id, org_id, group_id, actor_id, role, created_at
-      from admin_group_members
-      where org_id = ${orgId} and group_id = ${groupId}
-      order by created_at asc, id asc
-    `) as unknown as readonly GroupMemberRow[];
+    const rows = await this.sql<GroupMemberRow[]>`
+      select gm.id, gm.org_id, gm.group_id, gm.actor_id, gm.role, gm.created_at
+      from admin_group_members gm
+      join admin_groups g on g.org_id = gm.org_id and g.id = gm.group_id
+      join actors a on a.org_id = gm.org_id and a.id = gm.actor_id and a.disabled_at is null
+      where gm.org_id = ${orgId} and gm.group_id = ${groupId}
+      order by gm.created_at asc, gm.id asc
+    `;
     return rows.map(mapGroupMemberRow);
   }
 
+  async hasActiveActor(orgId: string, actorId: string): Promise<boolean> {
+    const rows = await this.sql`
+      select 1
+      from actors
+      where org_id = ${orgId} and id = ${actorId} and disabled_at is null
+      limit 1
+    `;
+    return rows.length > 0;
+  }
+
   async addGroupMember(input: AddGroupMemberInput): Promise<GroupMemberRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<GroupMemberRow[]>`
       insert into admin_group_members (org_id, group_id, actor_id, role, added_by)
       values (${input.orgId}, ${input.groupId}, ${input.actorId}, ${input.role}, ${input.addedBy})
       on conflict (group_id, actor_id) do nothing
       returning id, org_id, group_id, actor_id, role, created_at
-    `) as unknown as readonly GroupMemberRow[];
+    `;
     const row = rows[0];
     if (row === undefined) {
       throw new GroupsConflictError("This actor is already a member of the group.");
@@ -796,31 +915,21 @@ export class PostgresGroupsStore implements GroupsStore {
   }
 
   async removeGroupMember(orgId: string, groupId: string, actorId: string): Promise<boolean> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       delete from admin_group_members
       where org_id = ${orgId} and group_id = ${groupId} and actor_id = ${actorId}
       returning id
-    `) as unknown as readonly { readonly id: string }[];
+    `;
     return rows.length > 0;
   }
+}
 
-  async #computePath(
-    orgId: string,
-    parentId: string | null,
-    name: string,
-  ): Promise<string> {
-    if (parentId === null) {
-      return name;
-    }
-    const rows = (await this.sql`
-      select path from admin_org_units where org_id = ${orgId} and id = ${parentId}
-    `) as unknown as readonly { readonly path: string }[];
-    const parentPath = rows[0]?.path;
-    if (parentPath === undefined) {
-      throw new GroupsConflictError("Parent org unit not found.");
-    }
-    return `${parentPath} > ${name}`;
-  }
+function postgresErrorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+}
+
+function isOrgUnitConstraintViolation(error: unknown): boolean {
+  return ["23503", "23505", "23514"].includes(String(postgresErrorCode(error)));
 }
 
 function mapOrgUnitRow(row: OrgUnitRow): OrgUnitRecord {
@@ -898,14 +1007,24 @@ export class InMemoryGroupsStore implements GroupsStore {
   readonly #orgUnits = new Map<string, MemOrgUnit>();
   readonly #groups = new Map<string, MemGroup>();
   readonly #members: GroupMemberRecord[] = [];
+  readonly #actors = new Map<string, { readonly orgId: string; readonly disabled: boolean }>();
   #seq = 0;
 
   constructor(
     private readonly options: {
       readonly now?: () => Date;
       readonly nextId?: () => string;
+      readonly actors?: readonly {
+        readonly id: string;
+        readonly orgId: string;
+        readonly disabled?: boolean;
+      }[];
     } = {},
-  ) {}
+  ) {
+    for (const actor of options.actors ?? []) {
+      this.#actors.set(actor.id, { orgId: actor.orgId, disabled: actor.disabled ?? false });
+    }
+  }
 
   #now(): string {
     return (this.options.now ?? (() => new Date("2026-05-21T00:00:00.000Z")))().toISOString();
@@ -919,7 +1038,12 @@ export class InMemoryGroupsStore implements GroupsStore {
     return `00000000-0000-4000-8000-${this.#seq.toString(16).padStart(12, "0")}`;
   }
 
-  #path(orgId: string, parentId: string | null, name: string): string {
+  #path(
+    orgId: string,
+    parentId: string | null,
+    name: string,
+    ancestors = new Set<string>(),
+  ): string {
     if (parentId === null) {
       return name;
     }
@@ -927,7 +1051,11 @@ export class InMemoryGroupsStore implements GroupsStore {
     if (parent === undefined || parent.orgId !== orgId) {
       throw new GroupsConflictError("Parent org unit not found.");
     }
-    return `${this.#path(orgId, parent.parentId, parent.name)} > ${name}`;
+    if (ancestors.has(parent.id)) {
+      throw new GroupsConflictError("An org unit cannot be moved below its descendant.");
+    }
+    ancestors.add(parent.id);
+    return `${this.#path(orgId, parent.parentId, parent.name, ancestors)} > ${name}`;
   }
 
   #renderOrgUnit(unit: MemOrgUnit): OrgUnitRecord {
@@ -992,12 +1120,7 @@ export class InMemoryGroupsStore implements GroupsStore {
     if (clash) {
       throw new GroupsConflictError("An org unit with this name already exists at this level.");
     }
-    if (input.parentId !== null) {
-      const parent = this.#orgUnits.get(input.parentId);
-      if (parent === undefined || parent.orgId !== input.orgId) {
-        throw new GroupsConflictError("Parent org unit not found.");
-      }
-    }
+    this.#path(input.orgId, input.parentId, input.name);
     const now = this.#now();
     const unit: MemOrgUnit = {
       id: this.#id(),
@@ -1017,9 +1140,15 @@ export class InMemoryGroupsStore implements GroupsStore {
     if (unit === undefined || unit.orgId !== input.orgId) {
       return null;
     }
-    if (input.parentId !== undefined && input.parentId === input.id) {
+    if (input.parentId === input.id) {
       throw new GroupsConflictError("An org unit cannot be its own parent.");
     }
+    this.#path(
+      input.orgId,
+      input.parentId === undefined ? unit.parentId : input.parentId,
+      input.name ?? unit.name,
+      new Set([unit.id]),
+    );
     if (input.name !== undefined) {
       unit.name = input.name;
     }
@@ -1076,6 +1205,9 @@ export class InMemoryGroupsStore implements GroupsStore {
     if (clash) {
       throw new GroupsConflictError("A group with this name already exists.");
     }
+    if (input.orgUnitId !== null && this.#orgUnits.get(input.orgUnitId)?.orgId !== input.orgId) {
+      throw new GroupsConflictError("Org unit not found in this organization.");
+    }
     const now = this.#now();
     const group: MemGroup = {
       id: this.#id(),
@@ -1096,6 +1228,13 @@ export class InMemoryGroupsStore implements GroupsStore {
     const group = this.#groups.get(input.id);
     if (group === undefined || group.orgId !== input.orgId) {
       return null;
+    }
+    if (
+      input.orgUnitId !== undefined &&
+      input.orgUnitId !== null &&
+      this.#orgUnits.get(input.orgUnitId)?.orgId !== input.orgId
+    ) {
+      throw new GroupsConflictError("Org unit not found in this organization.");
     }
     if (input.name !== undefined) {
       group.name = input.name;
@@ -1132,11 +1271,29 @@ export class InMemoryGroupsStore implements GroupsStore {
 
   async listGroupMembers(orgId: string, groupId: string): Promise<readonly GroupMemberRecord[]> {
     return this.#members
-      .filter((member) => member.orgId === orgId && member.groupId === groupId)
+      .filter(
+        (member) =>
+          member.orgId === orgId &&
+          member.groupId === groupId &&
+          this.#groups.get(member.groupId)?.orgId === orgId &&
+          this.#actors.get(member.actorId)?.orgId === orgId &&
+          !this.#actors.get(member.actorId)?.disabled,
+      )
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   }
 
+  async hasActiveActor(orgId: string, actorId: string): Promise<boolean> {
+    const actor = this.#actors.get(actorId);
+    return actor?.orgId === orgId && !actor.disabled;
+  }
+
   async addGroupMember(input: AddGroupMemberInput): Promise<GroupMemberRecord> {
+    if (this.#groups.get(input.groupId)?.orgId !== input.orgId) {
+      throw new GroupsConflictError("Group not found in this organization.");
+    }
+    if (!(await this.hasActiveActor(input.orgId, input.actorId))) {
+      throw new GroupsConflictError("Active actor not found in this organization.");
+    }
     const exists = this.#members.some(
       (member) => member.groupId === input.groupId && member.actorId === input.actorId,
     );

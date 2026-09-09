@@ -7,7 +7,6 @@ import type {
   ChatResponse,
   EventBus,
   EventEnvelope,
-  JsonObject,
   JsonValue,
   TraceContext,
   Unsubscribe,
@@ -30,6 +29,7 @@ import { MailSendService } from "./outbound.js";
 import type {
   CreateMailFilterInput,
   CreateOutboundMailInput,
+  MailboxDelegateRecord,
   MailStore,
   SetMailVacationInput,
   UpdateMailFilterInput,
@@ -152,11 +152,16 @@ describe("mail AI/search flow", () => {
     await enrichmentWorker.stop();
     await indexer.stop();
 
-    await expect(mail.getMailSearchRecord(received.id)).resolves.toMatchObject({
+    await expect(
+      mail.getMailSearchRecord({ orgId: actor.orgId, actorId: actor.id, messageId: received.id }),
+    ).resolves.toMatchObject({
       labels: ["important", "work"],
     });
+    await expect(
+      mail.getMailSearchRecord({ orgId: actor.orgId, actorId: "actor-2", messageId: received.id }),
+    ).resolves.toBeNull();
     expect(reply.threadId).toBe(received.threadId);
-    expect(search.hits.map((hit) => hit.id)).toContain(`mail:${received.id}`);
+    expect(search.hits.map((hit) => hit.id)).toContain(`mail:${actor.id}:${received.id}`);
     expect(search.hits.every((hit) => hit.type === "mail")).toBe(true);
     expect(chunks.join("")).toContain("Draft:");
     expect(ai.calls.map((call) => call.feature)).toContain("mail.compose-help");
@@ -214,6 +219,26 @@ class InMemoryMailPlatformStore
 
   constructor(private readonly events: EventBus) {}
 
+  async grantMailboxDelegate(input: {
+    readonly delegateActorId: string;
+  }): Promise<MailboxDelegateRecord> {
+    return {
+      id: `delegate-${input.delegateActorId}`,
+      actorId: input.delegateActorId,
+      validFrom: now,
+      expiresAt: null,
+      createdAt: now,
+    };
+  }
+
+  async listMailboxDelegates(): Promise<readonly MailboxDelegateRecord[]> {
+    return [];
+  }
+
+  async revokeMailboxDelegate(): Promise<boolean> {
+    return false;
+  }
+
   seedActorAddress(orgId: string, address: string, actorId: string): void {
     this.#actorByAddress.set(`${orgId}:${address.toLowerCase()}`, actorId);
   }
@@ -242,9 +267,13 @@ class InMemoryMailPlatformStore
       recipient === undefined
         ? null
         : await this.findActorByAddress("org-1", addressEmail(recipient));
+    if (recipient === undefined || resolvedActor === null) {
+      throw new Error("Inbound test mail requires a local recipient.");
+    }
     const message: MailMessageInput = {
       orgId: "org-1",
-      ...(resolvedActor?.actorId === undefined ? {} : { actorId: resolvedActor.actorId }),
+      actorId: null,
+      mailboxActorIds: [resolvedActor.actorId],
       from: input.from,
       to: input.to,
       subject: input.subject,
@@ -256,10 +285,19 @@ class InMemoryMailPlatformStore
     await evaluateInboundMail(this, {
       message,
       stored,
-      recipientActorId: resolvedActor?.actorId ?? null,
+      recipientActorId: resolvedActor.actorId,
+      recipientAddress: addressEmail(recipient),
       now,
     });
-    return this.requireRecord(stored.messageId);
+    const record = await this.getMailSearchRecord({
+      orgId: message.orgId,
+      actorId: resolvedActor.actorId,
+      messageId: stored.messageId,
+    });
+    if (record === null) {
+      throw new Error("Inbound mailbox copy was not created.");
+    }
+    return record;
   }
 
   async reply(input: MailReplyInput): Promise<MailSearchRecord> {
@@ -301,12 +339,14 @@ class InMemoryMailPlatformStore
 
   async insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage> {
     const stored = await this.insertMessage(input);
-    await this.events.publish("activity.mail.received", {
-      orgId: input.orgId,
-      actorId: input.actorId ?? null,
-      threadId: stored.threadId,
-      messageId: stored.messageId,
-    });
+    for (const actorId of input.mailboxActorIds ?? []) {
+      await this.events.publish("activity.mail.received", {
+        orgId: input.orgId,
+        actorId,
+        threadId: stored.threadId,
+        messageId: stored.messageId,
+      });
+    }
     return stored;
   }
 
@@ -322,8 +362,9 @@ class InMemoryMailPlatformStore
       subject: input.envelope.subject,
       bodyText: input.envelope.text,
       ...(input.envelope.html === undefined ? {} : { bodyHtml: input.envelope.html }),
-      ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
-      ...(input.references === undefined ? {} : { references: input.references }),
+      ...(input.envelope.messageId === undefined ? {} : { messageId: input.envelope.messageId }),
+      ...(input.envelope.inReplyTo === undefined ? {} : { inReplyTo: input.envelope.inReplyTo }),
+      ...(input.envelope.references === undefined ? {} : { references: input.envelope.references }),
       attachments: input.envelope.attachments,
       receivedAt: now,
       metadata: { direction: "outbound" },
@@ -361,43 +402,6 @@ class InMemoryMailPlatformStore
 
   async getOutbound(id: string): Promise<MailOutboundRecord | null> {
     return this.outbounds.find((outbound) => outbound.id === id) ?? null;
-  }
-
-  async markOutboundSending(id: string): Promise<MailOutboundRecord | null> {
-    return this.updateOutbound(id, (outbound) =>
-      outbound.status === "queued" && outbound.undoUntil <= now
-        ? { ...outbound, status: "sending" }
-        : null,
-    );
-  }
-
-  async markOutboundSent(input: {
-    readonly id: string;
-    readonly sentAt?: Date;
-    readonly providerMessageId?: string;
-    readonly deliveryMetadata?: JsonObject;
-  }): Promise<MailOutboundRecord | null> {
-    return this.updateOutbound(input.id, (outbound) => ({
-      ...outbound,
-      status: "sent",
-      sentAt: input.sentAt ?? now,
-      lastError: null,
-      providerMessageId: input.providerMessageId ?? null,
-      deliveryMetadata: input.deliveryMetadata ?? {},
-    }));
-  }
-
-  async markOutboundFailed(
-    id: string,
-    error: string,
-    failedAt: Date = now,
-  ): Promise<MailOutboundRecord | null> {
-    return this.updateOutbound(id, (outbound) => ({
-      ...outbound,
-      status: "failed",
-      failedAt,
-      lastError: error,
-    }));
   }
 
   async cancelOutbound(input: {
@@ -595,7 +599,11 @@ class InMemoryMailPlatformStore
     const requestedLabels = new Set(input.labels ?? []);
     const query = input.query?.toLowerCase() ?? "";
     return [...this.#messages.values()]
-      .filter((record) => record.orgId === input.orgId)
+      .filter(
+        (record) =>
+          record.orgId === input.orgId &&
+          this.#states.has(threadStateKey(input.actorId, record.threadId)),
+      )
       .filter(
         (record) =>
           query.length === 0 || `${record.subject}\n${record.body}`.toLowerCase().includes(query),
@@ -620,13 +628,16 @@ class InMemoryMailPlatformStore
   }
 
   async getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null> {
+    const state = this.#states.get(threadStateKey(input.actorId, input.threadId));
+    if (state === undefined) {
+      return null;
+    }
     const messages = [...this.#messages.values()]
       .filter((record) => record.orgId === input.orgId && record.threadId === input.threadId)
       .sort((left, right) => left.sentAt.localeCompare(right.sentAt));
     if (messages.length === 0) {
       return null;
     }
-    const state = this.#states.get(threadStateKey(input.actorId, input.threadId));
     const last = messages.at(-1);
     if (last === undefined) {
       return null;
@@ -652,16 +663,14 @@ class InMemoryMailPlatformStore
         hasAttachment: false,
         attachments: [],
       })),
-      labels: state?.labels ?? [],
-      archivedAt: state?.archivedAt ?? null,
-      deletedAt: state?.deletedAt ?? null,
-      snoozedUntil: state?.snoozedUntil ?? null,
+      labels: state.labels,
+      archivedAt: state.archivedAt ?? null,
+      deletedAt: state.deletedAt ?? null,
+      snoozedUntil: state.snoozedUntil ?? null,
       lastActivity: new Date(last.sentAt),
       unread:
-        state?.readAt === undefined ||
-        state.readAt === null ||
-        state.readAt < new Date(last.sentAt),
-      starred: state?.starred ?? false,
+        state.readAt === undefined || state.readAt === null || state.readAt < new Date(last.sentAt),
+      starred: state.starred ?? false,
       direction: directions.size === 1 && onlyDirection !== undefined ? onlyDirection : "mixed",
     };
   }
@@ -685,12 +694,27 @@ class InMemoryMailPlatformStore
     return [];
   }
 
-  async getMailSearchRecord(messageId: string): Promise<MailSearchRecord | null> {
-    return this.#messages.get(messageId) ?? null;
+  async getMailSearchRecord(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly messageId: string;
+  }): Promise<MailSearchRecord | null> {
+    const record = this.#messages.get(input.messageId);
+    if (record?.orgId !== input.orgId) {
+      return null;
+    }
+    const state = this.#states.get(threadStateKey(input.actorId, record.threadId));
+    return state === undefined
+      ? null
+      : { ...record, labels: state.labels, ownerActorId: input.actorId };
   }
 
-  async getMailEnrichmentRecord(messageId: string): Promise<MailEnrichmentRecord | null> {
-    return this.#messages.get(messageId) ?? null;
+  async getMailEnrichmentRecord(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly messageId: string;
+  }): Promise<MailEnrichmentRecord | null> {
+    return this.getMailSearchRecord(input);
   }
 
   async recordMailEnrichment(input: MailEnrichmentWrite): Promise<void> {
@@ -713,6 +737,10 @@ class InMemoryMailPlatformStore
     const id = `message-${String(this.#nextMessage)}`;
     this.#nextMessage += 1;
     const direction = input.metadata?.direction === "outbound" ? "outbound" : "inbound";
+    const ownerActorId = input.actorId ?? input.mailboxActorIds?.[0];
+    if (ownerActorId === undefined) {
+      throw new Error("Mail test record requires a mailbox owner.");
+    }
     const labels =
       input.actorId === undefined || input.actorId === null
         ? []
@@ -731,10 +759,23 @@ class InMemoryMailPlatformStore
       direction,
       sentAt: (input.receivedAt ?? now).toISOString(),
       metadata: input.metadata ?? {},
-      ownerActorId: input.actorId ?? null,
+      ownerActorId,
     };
     this.#messages.set(id, message);
-    return { threadId, messageId: id, attachmentObjectIds: [] };
+    const mailboxActorIds = input.mailboxActorIds ?? (input.actorId == null ? [] : [input.actorId]);
+    for (const mailboxActorId of mailboxActorIds) {
+      const key = threadStateKey(mailboxActorId, threadId);
+      if (!this.#states.has(key)) {
+        this.#states.set(key, { labels: [] });
+      }
+    }
+    return {
+      threadId,
+      messageId: id,
+      attachmentObjectIds: [],
+      created: true,
+      deliveredActorIds: mailboxActorIds,
+    };
   }
 
   private requireRecord(messageId: string): MailSearchRecord {

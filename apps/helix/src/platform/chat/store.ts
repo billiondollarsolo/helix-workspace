@@ -1,23 +1,43 @@
+import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
+import { insertNotification } from "../notifications/index.js";
+import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
 import { memberHandleResolver, parseMentions } from "./core/mentions.js";
-import { ChatMessageNotFoundError, ChatRoomAccessError } from "./errors.js";
+import { ChatMemberAccessError, ChatMessageNotFoundError, ChatRoomAccessError } from "./errors.js";
+import {
+  canInviteChatGuest,
+  canPostToChatSpace,
+  chatGovernanceMetadata,
+  readChatGovernance,
+  shouldNotifyChatMember,
+} from "./governance.js";
+import type { ChatRoomEvent } from "./realtime.js";
 import type {
   ChatEnrichmentProjectionStore,
   ChatEnrichmentRecord,
   ChatEnrichmentWrite,
+  ChatExternalAccess,
+  ChatHistoryPolicy,
   ChatMessageRecord,
+  ChatNotificationPolicy,
   ChatPinRecord,
   ChatReactionOperation,
+  ChatReactionMutationRecord,
   ChatReactionRecord,
   ChatReadReceiptRecord,
+  ChatInvitableRole,
   ChatRoomKind,
+  ChatRoomRole,
   ChatRoomRecord,
+  ChatRoomExportRecord,
   ChatSearchHit,
   ChatSearchProjectionStore,
   ChatSearchRequest,
   ChatSearchReactionRecord,
   ChatSearchRecord,
+  ChatSpaceType,
 } from "./types.js";
 
 export interface CreateChatRoomInput {
@@ -27,7 +47,14 @@ export interface CreateChatRoomInput {
   readonly subject?: string | undefined;
   readonly memberActorIds?: readonly string[] | undefined;
   readonly topic?: string | undefined;
-  readonly isPrivate?: boolean | undefined;
+  readonly privacy?: "discoverable" | "restricted" | "private" | undefined;
+  readonly readReceiptsEnabled?: boolean | undefined;
+  readonly spaceType?: Exclude<ChatSpaceType, "direct"> | undefined;
+  readonly historyPolicy?: ChatHistoryPolicy | undefined;
+  readonly retentionDays?: number | null | undefined;
+  readonly legalHold?: boolean | undefined;
+  readonly notificationPolicy?: ChatNotificationPolicy | undefined;
+  readonly externalAccess?: ChatExternalAccess | undefined;
   readonly metadata?: JsonObject | undefined;
 }
 
@@ -41,9 +68,20 @@ export interface SendChatMessageInput {
   readonly attachmentObjectIds?: readonly string[] | undefined;
   readonly parentMessageId?: string | undefined;
   readonly clientMessageId?: string | undefined;
+  readonly suppressNotifications?: boolean | undefined;
+}
+
+export interface ChatMessageCursor {
+  readonly sentAt: Date;
+  readonly id: string;
 }
 
 export interface ChatStore {
+  /** Runs long-lived realtime callbacks in a fresh transaction-local tenant context. */
+  withActorContext?<T>(
+    input: { readonly orgId: string; readonly actorId: string },
+    callback: (store: ChatStore) => Promise<T>,
+  ): Promise<T>;
   createRoom(input: CreateChatRoomInput): Promise<ChatRoomRecord>;
   listRooms(input: {
     readonly orgId: string;
@@ -51,12 +89,23 @@ export interface ChatStore {
     readonly query?: string | undefined;
     readonly limit?: number | undefined;
   }): Promise<readonly ChatRoomRecord[]>;
+  discoverRooms(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly query?: string | undefined;
+    readonly limit?: number | undefined;
+  }): Promise<readonly ChatRoomRecord[]>;
+  joinRoom(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+  }): Promise<ChatRoomRecord | null>;
   invite(input: {
     readonly orgId: string;
     readonly actorId: string;
     readonly roomId: string;
     readonly actorIds: readonly string[];
-    readonly role?: string | undefined;
+    readonly role?: ChatInvitableRole | undefined;
   }): Promise<{ readonly roomId: string; readonly invitedActorIds: readonly string[] }>;
   sendMessage(input: SendChatMessageInput): Promise<ChatMessageRecord>;
   listThreadReplies(input: {
@@ -64,7 +113,8 @@ export interface ChatStore {
     readonly actorId: string;
     readonly roomId: string;
     readonly parentMessageId: string;
-    readonly before?: Date | undefined;
+    readonly before?: ChatMessageCursor | undefined;
+    readonly direction?: "older" | "newer" | undefined;
     readonly limit?: number | undefined;
   }): Promise<readonly ChatMessageRecord[]>;
   pinMessage(input: {
@@ -90,7 +140,7 @@ export interface ChatStore {
     readonly messageId: string;
     readonly emoji: string;
     readonly op: ChatReactionOperation;
-  }): Promise<ChatReactionRecord | null>;
+  }): Promise<ChatReactionMutationRecord>;
   editMessage(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -106,8 +156,7 @@ export interface ChatStore {
     readonly orgId: string;
     readonly actorId: string;
     readonly roomId: string;
-    readonly messageId?: string | undefined;
-    readonly readAt?: Date | undefined;
+    readonly messageId: string;
   }): Promise<ChatReadReceiptRecord>;
   /**
    * Lists per-actor last-read markers for a room. Optional: stores that predate read
@@ -122,15 +171,38 @@ export interface ChatStore {
     readonly orgId: string;
     readonly actorId: string;
     readonly roomId: string;
-    readonly before?: Date | undefined;
+    readonly before?: ChatMessageCursor | undefined;
+    readonly direction?: "older" | "newer" | undefined;
     readonly limit?: number | undefined;
   }): Promise<readonly ChatMessageRecord[]>;
+  exportRoom?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+  }): Promise<ChatRoomExportRecord>;
+  importMessages?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+    readonly messages: readonly {
+      readonly sourceMessageId: string;
+      readonly body: string;
+      readonly bodyFormat: "plain" | "markdown";
+      readonly sentAt?: string | undefined;
+      readonly metadata: JsonObject;
+    }[];
+  }): Promise<{ readonly roomId: string; readonly messageIds: readonly string[] }>;
   search(input: ChatSearchRequest): Promise<readonly ChatSearchHit[]>;
   getRoomForActor(input: {
     readonly orgId: string;
     readonly actorId: string;
     readonly roomId: string;
   }): Promise<ChatRoomRecord | null>;
+  listPresenceBlockedActorIds?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly candidateActorIds: readonly string[];
+  }): Promise<readonly string[]>;
 }
 
 interface ChatRoomRow {
@@ -146,7 +218,8 @@ interface ChatRoomRow {
   readonly settings_org_id: string | null;
   readonly settings_name: string | null;
   readonly settings_topic: string | null;
-  readonly settings_is_private: boolean | null;
+  readonly settings_privacy: "discoverable" | "restricted" | "private" | null;
+  readonly settings_read_receipts_enabled: boolean | null;
   readonly settings_metadata: JsonObject | null;
   readonly settings_created_at: Date | null;
   readonly settings_updated_at: Date | null;
@@ -160,6 +233,8 @@ interface ChatMessageRow {
   readonly actor_id: string | null;
   readonly body: string;
   readonly body_format: string;
+  readonly client_message_id: string | null;
+  readonly chat_revision?: number | string;
   readonly metadata: JsonObject;
   readonly attachment_object_ids: readonly string[] | null;
   readonly parent_message_id?: string | null;
@@ -168,6 +243,32 @@ interface ChatMessageRow {
   readonly deleted_at: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
+}
+
+interface ChatMessageStateRow {
+  readonly message_id: string;
+  readonly reactions: readonly {
+    readonly messageId: string;
+    readonly actorId: string;
+    readonly orgId: string;
+    readonly emoji: string;
+    readonly createdAt: string | Date;
+  }[];
+  readonly reply_count: number | string;
+  readonly pin: {
+    readonly roomId: string;
+    readonly messageId: string;
+    readonly orgId: string;
+    readonly pinnedByActorId: string | null;
+    readonly createdAt: string | Date;
+  } | null;
+  readonly attachments: readonly {
+    readonly objectId: string;
+    readonly source: "chat" | "drive";
+    readonly filename: string;
+    readonly mimeType: string;
+    readonly byteSize: number | string;
+  }[];
 }
 
 interface ChatPinRow {
@@ -193,6 +294,8 @@ interface ChatReadReceiptRow {
   readonly last_read_message_id: string | null;
   readonly last_read_at: Date;
   readonly updated_at: Date;
+  readonly is_shared: boolean;
+  readonly realtime_cursor?: number | string | null;
 }
 
 interface ChatSearchRow {
@@ -218,6 +321,8 @@ interface ChatSearchRecordRow {
   readonly room_subject: string | null;
   readonly room_kind: ChatRoomKind;
   readonly room_name: string | null;
+  readonly room_acl_version: number | string;
+  readonly allowed_actor_ids: readonly string[] | null;
   readonly actor_display_name: string | null;
   readonly actor_email: string | null;
 }
@@ -229,33 +334,85 @@ export class PostgresChatStore
 {
   constructor(private readonly sql: postgres.Sql) {}
 
+  withActorContext<T>(
+    input: { readonly orgId: string; readonly actorId: string },
+    callback: (store: ChatStore) => Promise<T>,
+  ): Promise<T> {
+    return withTenantIoSagaPostgresContext(this.sql, input, async (tx) =>
+      callback(new PostgresChatStore(chatTransactionSql(tx))),
+    );
+  }
+
   async createRoom(input: CreateChatRoomInput): Promise<ChatRoomRecord> {
     return this.sql.begin(async (tx) => {
-      const threadRows = (await tx`
+      const memberActorIds = [...new Set([input.actorId, ...(input.memberActorIds ?? [])])];
+      await requireActiveOrgActors(tx, input.orgId, memberActorIds);
+      const kind = input.kind ?? "chat_room";
+      const governance = chatGovernanceMetadata(kind, {
+        ...(input.spaceType === undefined ? {} : { spaceType: input.spaceType }),
+        ...(input.historyPolicy === undefined ? {} : { historyPolicy: input.historyPolicy }),
+        ...(input.retentionDays === undefined ? {} : { retentionDays: input.retentionDays }),
+        ...(input.legalHold === undefined ? {} : { legalHold: input.legalHold }),
+        ...(input.notificationPolicy === undefined
+          ? {}
+          : { notificationPolicy: input.notificationPolicy }),
+        ...(input.externalAccess === undefined ? {} : { externalAccess: input.externalAccess }),
+      });
+      await requireAllowedExternalActors(
+        tx,
+        input.orgId,
+        memberActorIds,
+        readChatGovernance(kind, governance).externalAccess,
+      );
+      const participantKey = kind === "chat_dm" ? directParticipantKey(memberActorIds) : null;
+      if (participantKey !== null) {
+        if (memberActorIds.length < 2)
+          throw new TypeError("A direct message needs two participants.");
+        await tx`select pg_advisory_xact_lock(hashtextextended(${`${input.orgId}:${participantKey}`}, 0))`;
+        const existing = await selectRoomByParticipantKey(
+          tx,
+          input.orgId,
+          input.actorId,
+          participantKey,
+        );
+        if (existing !== null) return existing;
+      }
+      const threadRows = await tx<{ readonly id: string }[]>`
         insert into threads (org_id, kind, subject, created_by_actor_id, metadata)
         values (
           ${input.orgId},
-          ${input.kind ?? "chat_room"},
+          ${kind},
           ${input.subject ?? null},
           ${input.actorId},
           ${tx.json(toSqlJson(input.metadata ?? {}))}
         )
         returning id
-      `) as unknown as readonly { readonly id: string }[];
+      `;
       const roomId = threadRows[0]?.id;
       if (roomId === undefined) {
         throw new Error("Unable to create chat room.");
       }
 
       await tx`
-        insert into chat_room_settings (thread_id, org_id, name, topic, is_private, metadata)
+        insert into chat_room_settings (
+          thread_id,
+          org_id,
+          name,
+          topic,
+          privacy,
+          participant_key,
+          read_receipts_enabled,
+          metadata
+        )
         values (
           ${roomId},
           ${input.orgId},
           ${input.subject ?? null},
           ${input.topic ?? null},
-          ${input.isPrivate ?? false},
-          ${tx.json(toSqlJson({}))}
+          ${kind === "chat_dm" ? "private" : (input.privacy ?? "restricted")},
+          ${participantKey},
+          ${input.readReceiptsEnabled ?? true},
+          ${tx.json(toSqlJson(governance))}
         )
       `;
 
@@ -266,7 +423,8 @@ export class PostgresChatStore
         role: "owner",
         grantedByActorId: input.actorId,
       });
-      for (const memberActorId of new Set(input.memberActorIds ?? [])) {
+      for (const memberActorId of memberActorIds) {
+        if (memberActorId === input.actorId) continue;
         await grantRoomAccess(tx, {
           orgId: input.orgId,
           roomId,
@@ -285,17 +443,35 @@ export class PostgresChatStore
     readonly actorId: string;
     readonly roomId: string;
     readonly actorIds: readonly string[];
-    readonly role?: string | undefined;
+    readonly role?: ChatInvitableRole | undefined;
   }): Promise<{ readonly roomId: string; readonly invitedActorIds: readonly string[] }> {
-    await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
     const invitedActorIds = [...new Set(input.actorIds)];
     await this.sql.begin(async (tx) => {
+      const room = await selectRoomForActor(tx, input.orgId, input.actorId, input.roomId);
+      const inviterRole =
+        room?.members.find(({ actorId }) => actorId === input.actorId)?.role ?? null;
+      const role = input.role ?? "member";
+      if (
+        room?.kind === "chat_dm" ||
+        inviterRole === null ||
+        inviterRole === "member" ||
+        (role === "moderator" && inviterRole !== "owner")
+      ) {
+        throw new ChatRoomAccessError(input.roomId);
+      }
+      await requireActiveOrgActors(tx, input.orgId, invitedActorIds);
+      await requireAllowedExternalActors(
+        tx,
+        input.orgId,
+        invitedActorIds,
+        room?.settings?.externalAccess ?? "guests",
+      );
       for (const invitedActorId of invitedActorIds) {
         await grantRoomAccess(tx, {
           orgId: input.orgId,
           roomId: input.roomId,
           actorId: invitedActorId,
-          role: input.role ?? "member",
+          role,
           grantedByActorId: input.actorId,
         });
       }
@@ -310,14 +486,15 @@ export class PostgresChatStore
     readonly limit?: number | undefined;
   }): Promise<readonly ChatRoomRecord[]> {
     const query = input.query ?? "";
-    const rows = (await this.sql`
+    const rows = await this.sql<ChatRoomRow[]>`
       select
         t.*,
         s.thread_id as settings_thread_id,
         s.org_id as settings_org_id,
         s.name as settings_name,
         s.topic as settings_topic,
-        s.is_private as settings_is_private,
+        s.privacy as settings_privacy,
+        s.read_receipts_enabled as settings_read_receipts_enabled,
         s.metadata as settings_metadata,
         s.created_at as settings_created_at,
         s.updated_at as settings_updated_at,
@@ -335,32 +512,119 @@ export class PostgresChatStore
             '[]'::jsonb
           )
           from permissions p
-          left join actors a on a.id = p.actor_id
-          where p.resource_type = 'thread'
-            and p.resource_id = t.id
-            and p.org_id = ${input.orgId}
-            and (p.expires_at is null or p.expires_at > now())
+          join actors a on a.id = p.actor_id and a.org_id = p.org_id
+          where chat_permission_is_valid(p, ${input.orgId}, p.actor_id, t.id)
         ) as members
       from threads t
       left join chat_room_settings s on s.thread_id = t.id
       where t.org_id = ${input.orgId}
         and t.kind in ('chat_room', 'chat_dm')
         and (${query} = '' or coalesce(s.name, t.subject, '') ilike ${`%${query}%`} or coalesce(s.topic, '') ilike ${`%${query}%`})
-        and (
-          t.created_by_actor_id = ${input.actorId}
-          or exists (
-            select 1 from permissions p
-            where p.resource_type = 'thread'
-              and p.resource_id = t.id
-              and p.org_id = ${input.orgId}
-              and p.actor_id = ${input.actorId}
-              and (p.expires_at is null or p.expires_at > now())
+        and exists (
+          select 1 from permissions access_grant
+          where chat_permission_is_valid(
+            access_grant, ${input.orgId}, ${input.actorId}, t.id
           )
         )
       order by t.updated_at desc
       limit ${input.limit ?? 50}
-    `) as unknown as readonly ChatRoomRow[];
+    `;
     return rows.map(mapRoom);
+  }
+
+  async discoverRooms(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly query?: string | undefined;
+    readonly limit?: number | undefined;
+  }): Promise<readonly ChatRoomRecord[]> {
+    await requireActiveOrgActors(this.sql, input.orgId, [input.actorId]);
+    const query = input.query ?? "";
+    const rows = await this.sql<ChatRoomRow[]>`
+      select
+        t.*,
+        s.thread_id as settings_thread_id,
+        s.org_id as settings_org_id,
+        s.name as settings_name,
+        s.topic as settings_topic,
+        s.privacy as settings_privacy,
+        s.read_receipts_enabled as settings_read_receipts_enabled,
+        s.metadata as settings_metadata,
+        s.created_at as settings_created_at,
+        s.updated_at as settings_updated_at,
+        '[]'::jsonb as members
+      from chat_room_settings s
+      join threads t on t.id = s.thread_id and t.org_id = s.org_id
+      where s.org_id = ${input.orgId}
+        and t.kind = 'chat_room'
+        and s.privacy in ('discoverable', 'restricted')
+        and exists (
+          select 1
+          from actors requester
+          left join organization_memberships membership
+            on membership.org_id = requester.org_id
+           and membership.actor_id = requester.id
+           and membership.status = 'active'
+          where requester.org_id = ${input.orgId}
+            and requester.id = ${input.actorId}
+            and requester.disabled_at is null
+            and (
+              requester.type <> 'user'
+              or membership.guest_type = 'member'
+              or (
+                membership.guest_type = 'external'
+                and coalesce(s.metadata->>'externalAccess', 'guests') <> 'internal'
+              )
+              or (
+                membership.guest_type = 'partner'
+                and coalesce(s.metadata->>'externalAccess', 'guests') = 'federated'
+              )
+            )
+        )
+        and (${query} = '' or coalesce(s.name, t.subject, '') ilike ${`%${query}%`} or coalesce(s.topic, '') ilike ${`%${query}%`})
+      order by s.updated_at desc, s.thread_id
+      limit ${input.limit ?? 50}
+    `;
+    return rows.map(mapRoom);
+  }
+
+  async joinRoom(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+  }): Promise<ChatRoomRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const current = await selectRoomForActor(tx, input.orgId, input.actorId, input.roomId);
+      if (current !== null) return current;
+      await requireActiveOrgActors(tx, input.orgId, [input.actorId]);
+      const rows = await tx<{ readonly id: string; readonly metadata: JsonObject }[]>`
+        select thread.id, settings.metadata
+        from threads thread
+        join chat_room_settings settings
+          on settings.thread_id = thread.id and settings.org_id = thread.org_id
+        where thread.id = ${input.roomId}
+          and thread.org_id = ${input.orgId}
+          and thread.kind = 'chat_room'
+          and settings.privacy = 'discoverable'
+        for update of settings
+      `;
+      const row = rows[0];
+      if (row === undefined) return null;
+      await requireAllowedExternalActors(
+        tx,
+        input.orgId,
+        [input.actorId],
+        readChatGovernance("chat_room", row.metadata).externalAccess,
+      );
+      await grantRoomAccess(tx, {
+        orgId: input.orgId,
+        roomId: input.roomId,
+        actorId: input.actorId,
+        role: "member",
+        grantedByActorId: input.actorId,
+      });
+      return selectRoomForActor(tx, input.orgId, input.actorId, input.roomId);
+    });
   }
 
   async sendMessage(input: SendChatMessageInput): Promise<ChatMessageRecord> {
@@ -369,18 +633,33 @@ export class PostgresChatStore
       if (room === null) {
         throw new ChatRoomAccessError(input.roomId);
       }
+      const senderRole = room.members.find(({ actorId }) => actorId === input.actorId)?.role;
+      if (
+        senderRole === undefined ||
+        !canPostToChatSpace(room.settings?.spaceType ?? "conversation", senderRole)
+      ) {
+        throw new ChatRoomAccessError(input.roomId);
+      }
 
       if (input.parentMessageId !== undefined) {
-        const parent = await selectMessage(tx, input.orgId, input.parentMessageId);
-        if (parent === null || parent.roomId !== input.roomId) {
+        const parents = await tx`
+          select message.id
+          from messages message
+          where message.id = ${input.parentMessageId}
+            and message.org_id = ${input.orgId}
+            and message.thread_id = ${input.roomId}
+            and message.kind = 'chat'
+            and message.deleted_at is null
+            and helix_chat_message_visible_to(
+              ${input.orgId}, ${input.actorId}, message.thread_id, message.sent_at
+            )
+        `;
+        if (parents.length === 0) {
           throw new ChatMessageNotFoundError(input.parentMessageId);
         }
       }
 
-      const mentionIds = parseMentions(
-        input.body,
-        memberHandleResolver(room.members),
-      );
+      const mentionIds = parseMentions(input.body, memberHandleResolver(room.members));
       const baseMetadata = {
         ...(input.metadata ?? {}),
         ...(mentionIds.length === 0
@@ -393,44 +672,92 @@ export class PostgresChatStore
                       id,
                       ...(room.members.find((m) => m.actorId === id)?.displayName
                         ? {
-                            displayName: room.members.find((m) => m.actorId === id)
-                              ?.displayName,
+                            displayName: room.members.find((m) => m.actorId === id)?.displayName,
                           }
                         : {}),
                     },
               ),
             }),
-        ...(input.clientMessageId === undefined
-          ? {}
-          : { clientMessageId: input.clientMessageId }),
       } as JsonObject;
 
-      const messageRows = (await tx`
+      const messageRows = await tx<{ readonly id: string }[]>`
         insert into messages (
-          org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at, parent_message_id
+          org_id, thread_id, actor_id, kind, body, body_format, client_message_id, metadata,
+          sent_at, parent_message_id
         )
-        values (
+        select
           ${input.orgId},
           ${input.roomId},
           ${input.actorId},
           'chat',
           ${input.body},
           ${input.bodyFormat ?? "plain"},
+          ${input.clientMessageId ?? null},
           ${tx.json(toSqlJson(baseMetadata))},
           now(),
           ${input.parentMessageId ?? null}
+        where exists (
+          select 1
+          from permissions grant_row
+          where chat_permission_is_valid(
+            grant_row,
+            ${input.orgId},
+            ${input.actorId},
+            ${input.roomId}
+          )
         )
+        on conflict (org_id, actor_id, thread_id, client_message_id)
+          where kind = 'chat' and client_message_id is not null
+          do nothing
         returning id
-      `) as unknown as readonly { readonly id: string }[];
+      `;
       const messageId = messageRows[0]?.id;
       if (messageId === undefined) {
-        throw new Error("Unable to insert chat message.");
+        const existingRows = await tx<{ readonly id: string }[]>`
+          select id
+          from messages
+          where org_id = ${input.orgId}
+            and actor_id = ${input.actorId}
+            and thread_id = ${input.roomId}
+            and kind = 'chat'
+            and client_message_id = ${input.clientMessageId ?? null}
+            and exists (
+              select 1
+              from permissions grant_row
+              where chat_permission_is_valid(
+                grant_row,
+                ${input.orgId},
+                ${input.actorId},
+                messages.thread_id
+              )
+            )
+          limit 1
+        `;
+        const existingId = existingRows[0]?.id;
+        if (existingId === undefined) {
+          await requireRoomAccess(tx, input.orgId, input.actorId, input.roomId);
+          throw new Error("Unable to insert or locate idempotent chat message.");
+        }
+        const existing = await selectMessage(tx, input.orgId, existingId);
+        if (existing === null) {
+          throw new Error("Unable to load idempotent chat message.");
+        }
+        const realtimeCursor = await selectMessageCreatedCursor(
+          tx,
+          input.orgId,
+          input.roomId,
+          existingId,
+        );
+        if (realtimeCursor === undefined) {
+          throw new Error("Idempotent chat message is missing its durable event.");
+        }
+        return { ...existing, realtimeCursor };
       }
 
       for (const objectId of input.attachmentObjectIds ?? []) {
         await tx`
-          insert into message_attachments (message_id, object_id, disposition)
-          values (${messageId}, ${objectId}, 'attachment')
+          insert into message_attachments (org_id, message_id, object_id, disposition)
+          values (${input.orgId}, ${messageId}, ${objectId}, 'attachment')
           on conflict do nothing
         `;
       }
@@ -441,16 +768,21 @@ export class PostgresChatStore
         where id = ${input.roomId}
       `;
 
+      const aclVersion = await selectRoomAclVersion(tx, input.orgId, input.roomId);
+
       await tx`
         insert into outbox (subject, payload)
         values (${"activity.chat.message.created"}, ${tx.json(
           toSqlJson({
+            version: 1,
             orgId: input.orgId,
             actorId: input.actorId,
             roomId: input.roomId,
             threadId: input.roomId,
             messageId,
             id: messageId,
+            revision: 1,
+            aclVersion,
             attachmentObjectIds: input.attachmentObjectIds ?? [],
             ...(input.parentMessageId === undefined
               ? {}
@@ -480,16 +812,39 @@ export class PostgresChatStore
         `;
       }
 
+      if (input.suppressNotifications !== true) {
+        const notificationPolicy = room.settings?.notificationPolicy ?? "all";
+        for (const member of room.members) {
+          if (
+            !shouldNotifyChatMember(notificationPolicy, member.actorId, input.actorId, mentionIds)
+          ) {
+            continue;
+          }
+          await insertNotification(tx, {
+            orgId: input.orgId,
+            actorId: member.actorId,
+            verb: mentionIds.includes(member.actorId) ? "chat.mentioned" : "chat.message.created",
+            objectType: "chat.message",
+            objectId: messageId,
+            summary: room.subject ?? room.settings?.name ?? "New Chat message",
+            body: input.body.slice(0, 500),
+            payload: { roomId: input.roomId, messageId },
+          });
+        }
+      }
+
       const message = await selectMessage(tx, input.orgId, messageId);
       if (message === null) {
         throw new Error("Unable to load inserted chat message.");
       }
-      return {
-        ...message,
-        ...(input.clientMessageId === undefined
-          ? {}
-          : { clientMessageId: input.clientMessageId }),
-      };
+      const realtimeCursor = await appendChatRoomEvent(tx, chatMessageCreatedEvent(message));
+      if (input.parentMessageId !== undefined) {
+        const parent = await selectMessage(tx, input.orgId, input.parentMessageId);
+        if (parent !== null) {
+          await recordChatProjectionMutation(tx, "replied", input.actorId, parent);
+        }
+      }
+      return { ...message, realtimeCursor };
     });
   }
 
@@ -498,11 +853,12 @@ export class PostgresChatStore
     readonly actorId: string;
     readonly roomId: string;
     readonly parentMessageId: string;
-    readonly before?: Date | undefined;
+    readonly before?: ChatMessageCursor | undefined;
+    readonly direction?: "older" | "newer" | undefined;
     readonly limit?: number | undefined;
   }): Promise<readonly ChatMessageRecord[]> {
     await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
-    const rows = (await this.sql`
+    const rows = await this.sql<ChatMessageRow[]>`
       select
         m.*,
         (select array_agg(ma.object_id::text order by ma.object_id::text) from message_attachments ma where ma.message_id = m.id) as attachment_object_ids
@@ -512,11 +868,28 @@ export class PostgresChatStore
         and m.kind = 'chat'
         and m.deleted_at is null
         and m.parent_message_id = ${input.parentMessageId}
-        and (${input.before ?? null}::timestamptz is null or m.sent_at < ${input.before ?? null})
-      order by m.sent_at asc
+        and (
+          ${input.before?.sentAt ?? null}::timestamptz is null
+          or (
+            ${input.direction === "newer"}
+            and (m.sent_at, m.id) > (${input.before?.sentAt ?? null}, ${input.before?.id ?? null}::uuid)
+          )
+          or (
+            ${input.direction !== "newer"}
+            and (m.sent_at, m.id) < (${input.before?.sentAt ?? null}, ${input.before?.id ?? null}::uuid)
+          )
+        )
+        and helix_chat_message_visible_to(
+          ${input.orgId}, ${input.actorId}, m.thread_id, m.sent_at
+        )
+      order by
+        case when ${input.direction === "newer"} then m.sent_at end asc,
+        case when ${input.direction === "newer"} then m.id end asc,
+        case when ${input.direction !== "newer"} then m.sent_at end desc,
+        case when ${input.direction !== "newer"} then m.id end desc
       limit ${input.limit ?? 50}
-    `) as unknown as readonly ChatMessageRow[];
-    return rows.map(mapMessage);
+    `;
+    return enrichChatMessages(this.sql, rows.map(mapMessage));
   }
 
   async pinMessage(input: {
@@ -525,31 +898,32 @@ export class PostgresChatStore
     readonly roomId: string;
     readonly messageId: string;
   }): Promise<ChatPinRecord> {
-    await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
-    const message = await selectMessage(this.sql, input.orgId, input.messageId);
-    if (message === null || message.roomId !== input.roomId) {
-      throw new ChatMessageNotFoundError(input.messageId);
-    }
-    const rows = (await this.sql`
-      insert into chat_pins (message_id, thread_id, org_id, pinned_by_actor_id)
-      values (${input.messageId}, ${input.roomId}, ${input.orgId}, ${input.actorId})
-      on conflict (thread_id, message_id) do update
-      set pinned_by_actor_id = excluded.pinned_by_actor_id
-      returning *
-    `) as unknown as readonly ChatPinRow[];
-    await this.touchRoom(input.roomId);
-    await this.sql`
-      insert into outbox (subject, payload)
-      values (${"activity.chat.message.pinned"}, ${this.sql.json(
-        toSqlJson({
-          orgId: input.orgId,
-          actorId: input.actorId,
-          roomId: input.roomId,
-          messageId: input.messageId,
-        }),
-      )})
-    `;
-    return mapPin(rows[0]);
+    return this.sql.begin(async (tx) => {
+      const rows = await tx<ChatPinRow[]>`
+        insert into chat_pins (message_id, thread_id, org_id, pinned_by_actor_id)
+        select ${input.messageId}, ${input.roomId}, ${input.orgId}, ${input.actorId}
+        from messages message
+        where message.id = ${input.messageId}
+          and message.org_id = ${input.orgId}
+          and message.thread_id = ${input.roomId}
+          and message.kind = 'chat'
+          and message.deleted_at is null
+          and helix_chat_message_visible_to(
+            ${input.orgId}, ${input.actorId}, message.thread_id, message.sent_at
+          )
+        on conflict (thread_id, message_id) do update
+        set pinned_by_actor_id = excluded.pinned_by_actor_id
+        returning *
+      `;
+      if (rows[0] === undefined) {
+        await requireRoomAccess(tx, input.orgId, input.actorId, input.roomId);
+        throw new ChatMessageNotFoundError(input.messageId);
+      }
+      const message = await selectMessage(tx, input.orgId, input.messageId);
+      if (message === null) throw new ChatMessageNotFoundError(input.messageId);
+      await recordChatProjectionMutation(tx, "pinned", input.actorId, message);
+      return mapPin(rows[0]);
+    });
   }
 
   async unpinMessage(input: {
@@ -558,26 +932,30 @@ export class PostgresChatStore
     readonly roomId: string;
     readonly messageId: string;
   }): Promise<{ readonly ok: true }> {
-    await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
-    await this.sql`
-      delete from chat_pins
-      where thread_id = ${input.roomId}
-        and message_id = ${input.messageId}
-        and org_id = ${input.orgId}
-    `;
-    await this.touchRoom(input.roomId);
-    await this.sql`
-      insert into outbox (subject, payload)
-      values (${"activity.chat.message.unpinned"}, ${this.sql.json(
-        toSqlJson({
-          orgId: input.orgId,
-          actorId: input.actorId,
-          roomId: input.roomId,
-          messageId: input.messageId,
-        }),
-      )})
-    `;
-    return { ok: true };
+    return this.sql.begin(async (tx) => {
+      const deleted = await tx`
+        delete from chat_pins pin
+        where pin.thread_id = ${input.roomId}
+          and pin.message_id = ${input.messageId}
+          and pin.org_id = ${input.orgId}
+          and exists (
+            select 1 from permissions grant_row
+            where chat_permission_is_valid(
+              grant_row, ${input.orgId}, ${input.actorId}, pin.thread_id
+            )
+          )
+        returning pin.message_id
+      `;
+      if (deleted.length === 0) {
+        await requireRoomAccess(tx, input.orgId, input.actorId, input.roomId);
+        return { ok: true };
+      }
+      const message = await selectMessage(tx, input.orgId, input.messageId);
+      if (message !== null) {
+        await recordChatProjectionMutation(tx, "unpinned", input.actorId, message);
+      }
+      return { ok: true };
+    });
   }
 
   async listPins(input: {
@@ -586,13 +964,18 @@ export class PostgresChatStore
     readonly roomId: string;
   }): Promise<readonly ChatPinRecord[]> {
     await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
-    const rows = (await this.sql`
-      select *
-      from chat_pins
-      where org_id = ${input.orgId}
-        and thread_id = ${input.roomId}
-      order by created_at desc
-    `) as unknown as readonly ChatPinRow[];
+    const rows = await this.sql<ChatPinRow[]>`
+      select pin.*
+      from chat_pins pin
+      join messages message on message.id = pin.message_id
+      where pin.org_id = ${input.orgId}
+        and pin.thread_id = ${input.roomId}
+        and message.deleted_at is null
+        and helix_chat_message_visible_to(
+          ${input.orgId}, ${input.actorId}, pin.thread_id, message.sent_at
+        )
+      order by pin.created_at desc
+    `;
     return rows.map(mapPin);
   }
 
@@ -602,27 +985,50 @@ export class PostgresChatStore
     readonly messageId: string;
     readonly emoji: string;
     readonly op: ChatReactionOperation;
-  }): Promise<ChatReactionRecord | null> {
-    const roomId = await this.roomIdForMessage(input.orgId, input.actorId, input.messageId);
-    if (input.op === "remove") {
-      await this.sql`
-        delete from chat_reactions
-        where message_id = ${input.messageId}
-          and actor_id = ${input.actorId}
-          and emoji = ${input.emoji}
+  }): Promise<ChatReactionMutationRecord> {
+    return this.sql.begin(async (tx) => {
+      const candidates = await tx<{ readonly thread_id: string }[]>`
+        select message.thread_id
+        from messages message
+        where message.id = ${input.messageId}
+          and message.org_id = ${input.orgId}
+          and message.kind = 'chat'
+          and message.deleted_at is null
+          and helix_chat_message_visible_to(
+            ${input.orgId}, ${input.actorId}, message.thread_id, message.sent_at
+          )
+        for update
       `;
-      return null;
-    }
+      if (candidates[0] === undefined) throw new ChatMessageNotFoundError(input.messageId);
 
-    const rows = (await this.sql`
-      insert into chat_reactions (message_id, actor_id, org_id, emoji)
-      values (${input.messageId}, ${input.actorId}, ${input.orgId}, ${input.emoji})
-      on conflict (message_id, actor_id, emoji) do update
-      set created_at = chat_reactions.created_at
-      returning *
-    `) as unknown as readonly ChatReactionRow[];
-    await this.touchRoom(roomId);
-    return mapReaction(rows[0]);
+      let reaction: ChatReactionRecord | null = null;
+      if (input.op === "remove") {
+        await tx`
+          delete from chat_reactions
+          where message_id = ${input.messageId}
+            and actor_id = ${input.actorId}
+            and emoji = ${input.emoji}
+        `;
+      } else {
+        const rows = await tx<ChatReactionRow[]>`
+          insert into chat_reactions (message_id, actor_id, org_id, emoji)
+          values (${input.messageId}, ${input.actorId}, ${input.orgId}, ${input.emoji})
+          on conflict (message_id, actor_id, emoji) do update
+          set created_at = chat_reactions.created_at
+          returning *
+        `;
+        reaction = mapReaction(rows[0]);
+      }
+      const message = await selectMessage(tx, input.orgId, input.messageId);
+      if (message === null) throw new ChatMessageNotFoundError(input.messageId);
+      const realtimeCursor = await recordChatProjectionMutation(
+        tx,
+        input.op === "remove" ? "reaction.removed" : "reaction.added",
+        input.actorId,
+        message,
+      );
+      return { reaction, message: { ...message, realtimeCursor } };
+    });
   }
 
   async editMessage(input: {
@@ -631,30 +1037,30 @@ export class PostgresChatStore
     readonly messageId: string;
     readonly body: string;
   }): Promise<ChatMessageRecord | null> {
-    const rows = (await this.sql`
-      update messages
-      set body = ${input.body}, edited_at = now(), updated_at = now()
-      where id = ${input.messageId}
-        and org_id = ${input.orgId}
-        and actor_id = ${input.actorId}
-        and kind = 'chat'
-        and deleted_at is null
-        and exists (
-          select 1 from permissions p
-          where p.resource_type = 'thread'
-            and p.resource_id = messages.thread_id
-            and p.actor_id = ${input.actorId}
-            and p.org_id = ${input.orgId}
-        )
-      returning
-        messages.*,
-        (select array_agg(ma.object_id::text order by ma.object_id::text) from message_attachments ma where ma.message_id = messages.id) as attachment_object_ids
-    `) as unknown as readonly ChatMessageRow[];
-    const message = rows[0] === undefined ? null : mapMessage(rows[0]);
-    if (message !== null) {
-      await this.touchRoom(message.roomId);
-    }
-    return message;
+    return this.sql.begin(async (tx) => {
+      const rows = await tx<ChatMessageRow[]>`
+        update messages
+        set body = ${input.body}, edited_at = now(), updated_at = now()
+        where id = ${input.messageId}
+          and org_id = ${input.orgId}
+          and actor_id = ${input.actorId}
+          and kind = 'chat'
+          and deleted_at is null
+          and helix_chat_message_visible_to(
+            ${input.orgId}, ${input.actorId}, messages.thread_id, messages.sent_at
+          )
+        returning
+          messages.*,
+          (select array_agg(ma.object_id::text order by ma.object_id::text) from message_attachments ma where ma.message_id = messages.id) as attachment_object_ids
+      `;
+      const message =
+        rows[0] === undefined
+          ? null
+          : ((await enrichChatMessages(tx, [mapMessage(rows[0])]))[0] ?? null);
+      if (message === null) return null;
+      const realtimeCursor = await recordChatMessageMutation(tx, message, "updated", input.actorId);
+      return { ...message, realtimeCursor };
+    });
   }
 
   async deleteMessage(input: {
@@ -662,57 +1068,149 @@ export class PostgresChatStore
     readonly actorId: string;
     readonly messageId: string;
   }): Promise<ChatMessageRecord | null> {
-    const rows = (await this.sql`
-      update messages
-      set deleted_at = now(), updated_at = now()
-      where id = ${input.messageId}
-        and org_id = ${input.orgId}
-        and actor_id = ${input.actorId}
-        and kind = 'chat'
-        and deleted_at is null
-        and exists (
-          select 1 from permissions p
-          where p.resource_type = 'thread'
-            and p.resource_id = messages.thread_id
-            and p.actor_id = ${input.actorId}
-            and p.org_id = ${input.orgId}
-        )
-      returning
-        messages.*,
-        (select array_agg(ma.object_id::text order by ma.object_id::text) from message_attachments ma where ma.message_id = messages.id) as attachment_object_ids
-    `) as unknown as readonly ChatMessageRow[];
-    const message = rows[0] === undefined ? null : mapMessage(rows[0]);
-    if (message !== null) {
-      await this.touchRoom(message.roomId);
-    }
-    return message;
+    return this.sql.begin(async (tx) => {
+      const rows = await tx<ChatMessageRow[]>`
+        update messages
+        set deleted_at = now(), updated_at = now()
+        where id = ${input.messageId}
+          and org_id = ${input.orgId}
+          and actor_id = ${input.actorId}
+          and kind = 'chat'
+          and deleted_at is null
+          and helix_chat_message_visible_to(
+            ${input.orgId}, ${input.actorId}, messages.thread_id, messages.sent_at
+          )
+          and not exists (
+            select 1
+            from chat_room_settings held_room
+            where held_room.org_id = messages.org_id
+              and held_room.thread_id = messages.thread_id
+              and coalesce((held_room.metadata->>'legalHold')::boolean, false)
+          )
+        returning
+          messages.*,
+          (select array_agg(ma.object_id::text order by ma.object_id::text) from message_attachments ma where ma.message_id = messages.id) as attachment_object_ids
+      `;
+      const message =
+        rows[0] === undefined
+          ? null
+          : ((await enrichChatMessages(tx, [mapMessage(rows[0])]))[0] ?? null);
+      if (message === null) return null;
+      const realtimeCursor = await recordChatMessageMutation(tx, message, "deleted", input.actorId);
+      return { ...message, realtimeCursor };
+    });
   }
 
   async markRead(input: {
     readonly orgId: string;
     readonly actorId: string;
     readonly roomId: string;
-    readonly messageId?: string | undefined;
-    readonly readAt?: Date | undefined;
+    readonly messageId: string;
   }): Promise<ChatReadReceiptRecord> {
-    await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
-    const rows = (await this.sql`
-      insert into chat_read_receipts (thread_id, actor_id, org_id, last_read_message_id, last_read_at, updated_at)
-      values (
-        ${input.roomId},
-        ${input.actorId},
-        ${input.orgId},
-        ${input.messageId ?? null},
-        ${input.readAt ?? new Date()},
-        now()
+    const rows = await this.sql<ChatReadReceiptRow[]>`
+      with candidate as materialized (
+        select
+          message.id,
+          message.chat_room_sequence,
+          coalesce(settings.read_receipts_enabled, true) as is_shared
+        from messages message
+        join threads thread
+          on thread.id = message.thread_id
+         and thread.org_id = message.org_id
+         and thread.kind in ('chat_room', 'chat_dm')
+        left join chat_room_settings settings
+          on settings.thread_id = thread.id
+         and settings.org_id = thread.org_id
+        join permissions membership
+          on chat_permission_is_valid(
+            membership,
+            ${input.orgId},
+            ${input.actorId},
+            thread.id
+          )
+        where message.id = ${input.messageId}
+          and message.org_id = ${input.orgId}
+          and message.thread_id = ${input.roomId}
+          and message.kind = 'chat'
+          and message.deleted_at is null
+          and message.chat_room_sequence is not null
+          and helix_chat_message_visible_to(
+            ${input.orgId}, ${input.actorId}, message.thread_id, message.sent_at
+          )
+        limit 1
+      ), upserted as (
+        insert into chat_read_receipts (
+          thread_id,
+          actor_id,
+          org_id,
+          last_read_message_id,
+          last_read_sequence,
+          last_read_at,
+          updated_at
+        )
+        select
+          ${input.roomId},
+          ${input.actorId},
+          ${input.orgId},
+          candidate.id,
+          candidate.chat_room_sequence,
+          now(),
+          now()
+        from candidate
+        on conflict (thread_id, actor_id) do update
+        set
+          last_read_message_id = excluded.last_read_message_id,
+          last_read_sequence = excluded.last_read_sequence,
+          last_read_at = excluded.last_read_at,
+          updated_at = now()
+        where chat_read_receipts.org_id = excluded.org_id
+          and (
+            chat_read_receipts.last_read_sequence is null
+            or excluded.last_read_sequence > chat_read_receipts.last_read_sequence
+          )
+        returning chat_read_receipts.*
+      ), resolved as materialized (
+        select upserted.*, candidate.is_shared, true as advanced
+        from upserted
+        cross join candidate
+        union all
+        select receipt.*, candidate.is_shared, false as advanced
+        from candidate
+        join chat_read_receipts receipt
+          on receipt.thread_id = ${input.roomId}
+         and receipt.actor_id = ${input.actorId}
+         and receipt.org_id = ${input.orgId}
+        where not exists (select 1 from upserted)
+        limit 1
       )
-      on conflict (thread_id, actor_id) do update
-      set
-        last_read_message_id = excluded.last_read_message_id,
-        last_read_at = excluded.last_read_at,
-        updated_at = now()
-      returning *
-    `) as unknown as readonly ChatReadReceiptRow[];
+      select
+        resolved.*,
+        case when resolved.advanced and resolved.is_shared then (
+          select event_sequence
+          from append_chat_room_event(
+            resolved.org_id,
+            resolved.thread_id,
+            jsonb_build_object(
+              'type', 'read',
+              'actorId', resolved.actor_id,
+              'messageId', resolved.last_read_message_id,
+              'receipt', jsonb_build_object(
+                'roomId', resolved.thread_id,
+                'actorId', resolved.actor_id,
+                'orgId', resolved.org_id,
+                'lastReadMessageId', resolved.last_read_message_id,
+                'lastReadAt', resolved.last_read_at,
+                'updatedAt', resolved.updated_at
+              )
+            )
+          )
+        )
+        end as realtime_cursor
+      from resolved
+    `;
+    if (rows[0] === undefined) {
+      throw new ChatMessageNotFoundError(input.messageId);
+    }
     return mapReadReceipt(rows[0]);
   }
 
@@ -722,13 +1220,42 @@ export class PostgresChatStore
     readonly roomId: string;
   }): Promise<readonly ChatReadReceiptRecord[]> {
     await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
-    const rows = (await this.sql`
-      select *
-      from chat_read_receipts
-      where org_id = ${input.orgId}
-        and thread_id = ${input.roomId}
-      order by updated_at desc
-    `) as unknown as readonly ChatReadReceiptRow[];
+    const rows = await this.sql<ChatReadReceiptRow[]>`
+      select
+        receipt.*,
+        coalesce(settings.read_receipts_enabled, true) as is_shared
+      from chat_read_receipts receipt
+      left join chat_room_settings settings
+        on settings.thread_id = receipt.thread_id
+       and settings.org_id = receipt.org_id
+      where receipt.org_id = ${input.orgId}
+        and receipt.thread_id = ${input.roomId}
+        and exists (
+          select 1
+          from permissions requester
+          where chat_permission_is_valid(
+            requester,
+            ${input.orgId},
+            ${input.actorId},
+            receipt.thread_id
+          )
+        )
+        and (
+          coalesce(settings.read_receipts_enabled, true)
+          or receipt.actor_id = ${input.actorId}
+        )
+        and exists (
+          select 1
+          from permissions membership
+          where chat_permission_is_valid(
+            membership,
+            receipt.org_id,
+            receipt.actor_id,
+            receipt.thread_id
+          )
+        )
+      order by receipt.updated_at desc
+    `;
     return rows.map((row) => mapReadReceipt(row));
   }
 
@@ -736,11 +1263,12 @@ export class PostgresChatStore
     readonly orgId: string;
     readonly actorId: string;
     readonly roomId: string;
-    readonly before?: Date | undefined;
+    readonly before?: ChatMessageCursor | undefined;
+    readonly direction?: "older" | "newer" | undefined;
     readonly limit?: number | undefined;
   }): Promise<readonly ChatMessageRecord[]> {
     await this.requireRoomAccess(input.orgId, input.actorId, input.roomId);
-    const rows = (await this.sql`
+    const rows = await this.sql<ChatMessageRow[]>`
       select
         m.*,
         (select array_agg(ma.object_id::text order by ma.object_id::text) from message_attachments ma where ma.message_id = m.id) as attachment_object_ids
@@ -749,15 +1277,103 @@ export class PostgresChatStore
         and m.thread_id = ${input.roomId}
         and m.kind = 'chat'
         and m.deleted_at is null
-        and (${input.before ?? null}::timestamptz is null or m.sent_at < ${input.before ?? null})
-      order by m.sent_at desc
+        and (
+          ${input.before?.sentAt ?? null}::timestamptz is null
+          or (
+            ${input.direction === "newer"}
+            and (m.sent_at, m.id) > (${input.before?.sentAt ?? null}, ${input.before?.id ?? null}::uuid)
+          )
+          or (
+            ${input.direction !== "newer"}
+            and (m.sent_at, m.id) < (${input.before?.sentAt ?? null}, ${input.before?.id ?? null}::uuid)
+          )
+        )
+        and helix_chat_message_visible_to(
+          ${input.orgId}, ${input.actorId}, m.thread_id, m.sent_at
+        )
+      order by
+        case when ${input.direction === "newer"} then m.sent_at end asc,
+        case when ${input.direction === "newer"} then m.id end asc,
+        case when ${input.direction !== "newer"} then m.sent_at end desc,
+        case when ${input.direction !== "newer"} then m.id end desc
       limit ${input.limit ?? 50}
-    `) as unknown as readonly ChatMessageRow[];
-    return rows.map(mapMessage);
+    `;
+    return enrichChatMessages(this.sql, rows.map(mapMessage));
+  }
+
+  async exportRoom(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+  }): Promise<ChatRoomExportRecord> {
+    const room = await this.getRoomForActor(input);
+    if (room === null) throw new ChatRoomAccessError(input.roomId);
+    const rows = await this.sql<ChatMessageRow[]>`
+      select
+        message.*,
+        (
+          select array_agg(attachment.object_id::text order by attachment.object_id::text)
+          from message_attachments attachment
+          where attachment.message_id = message.id
+        ) as attachment_object_ids
+      from messages message
+      where message.org_id = ${input.orgId}
+        and message.thread_id = ${input.roomId}
+        and message.kind = 'chat'
+        and message.deleted_at is null
+        and helix_chat_message_visible_to(
+          ${input.orgId}, ${input.actorId}, message.thread_id, message.sent_at
+        )
+      order by message.sent_at, message.id
+    `;
+    return {
+      version: 1,
+      exportedAt: new Date(),
+      room,
+      messages: await enrichChatMessages(this.sql, rows.map(mapMessage)),
+    };
+  }
+
+  async importMessages(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly roomId: string;
+    readonly messages: readonly {
+      readonly sourceMessageId: string;
+      readonly body: string;
+      readonly bodyFormat: "plain" | "markdown";
+      readonly sentAt?: string | undefined;
+      readonly metadata: JsonObject;
+    }[];
+  }): Promise<{ readonly roomId: string; readonly messageIds: readonly string[] }> {
+    const room = await this.getRoomForActor(input);
+    const role = room?.members.find((member) => member.actorId === input.actorId)?.role;
+    if (role !== "owner" && role !== "moderator") {
+      throw new ChatRoomAccessError(input.roomId);
+    }
+    const messageIds: string[] = [];
+    for (const message of input.messages) {
+      const record = await this.sendMessage({
+        orgId: input.orgId,
+        actorId: input.actorId,
+        roomId: input.roomId,
+        body: message.body,
+        bodyFormat: message.bodyFormat,
+        clientMessageId: `import:${message.sourceMessageId}`,
+        suppressNotifications: true,
+        metadata: {
+          ...message.metadata,
+          imported: true,
+          ...(message.sentAt === undefined ? {} : { importedSentAt: message.sentAt }),
+        },
+      });
+      messageIds.push(record.id);
+    }
+    return { roomId: input.roomId, messageIds };
   }
 
   async search(input: ChatSearchRequest): Promise<readonly ChatSearchHit[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<ChatSearchRow[]>`
       select
         m.thread_id,
         m.id as message_id,
@@ -772,24 +1388,17 @@ export class PostgresChatStore
         and m.deleted_at is null
         and (${input.roomId ?? null}::uuid is null or m.thread_id = ${input.roomId ?? null})
         and (${input.query ?? ""} = '' or t.subject ilike ${`%${input.query ?? ""}%`} or m.body ilike ${`%${input.query ?? ""}%`})
-        and (
-          t.created_by_actor_id = ${input.actorId}
-          or exists (
-            select 1 from permissions p
-            where p.resource_type = 'thread'
-              and p.resource_id = t.id
-              and p.actor_id = ${input.actorId}
-              and p.org_id = ${input.orgId}
-          )
+        and helix_chat_message_visible_to(
+          ${input.orgId}, ${input.actorId}, m.thread_id, m.sent_at
         )
       order by m.sent_at desc
       limit ${input.limit ?? 50}
-    `) as unknown as readonly ChatSearchRow[];
+    `;
     return rows.map(mapSearchHit);
   }
 
   async getChatSearchRecord(messageId: string): Promise<ChatSearchRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<ChatSearchRecordRow[]>`
       select
         m.id,
         m.org_id,
@@ -804,6 +1413,21 @@ export class PostgresChatStore
         t.subject as room_subject,
         t.kind as room_kind,
         s.name as room_name,
+        coalesce(s.acl_version, 0) as room_acl_version,
+        array(
+          select distinct permission.actor_id::text
+          from permissions permission
+          where chat_permission_is_valid(
+            permission,
+            m.org_id,
+            permission.actor_id,
+            m.thread_id
+          )
+            and helix_chat_message_visible_to(
+              m.org_id, permission.actor_id, m.thread_id, m.sent_at
+            )
+          order by permission.actor_id::text
+        ) as allowed_actor_ids,
         a.display_name as actor_display_name,
         a.email as actor_email
       from messages m
@@ -813,17 +1437,17 @@ export class PostgresChatStore
       where m.id = ${messageId}
         and m.kind = 'chat'
       limit 1
-    `) as unknown as readonly ChatSearchRecordRow[];
+    `;
     const row = rows[0];
     if (row === undefined) {
       return null;
     }
-    const reactionRows = (await this.sql`
+    const reactionRows = await this.sql<ChatReactionRow[]>`
       select message_id, actor_id, org_id, emoji, created_at
       from chat_reactions
       where message_id = ${messageId}
       order by created_at, emoji, actor_id
-    `) as unknown as readonly ChatReactionRow[];
+    `;
     return mapChatSearchRecord(row, reactionRows);
   }
 
@@ -857,30 +1481,22 @@ export class PostgresChatStore
     return selectRoomForActor(this.sql, input.orgId, input.actorId, input.roomId);
   }
 
-  private async requireRoomAccess(orgId: string, actorId: string, roomId: string): Promise<void> {
-    await requireRoomAccess(this.sql, orgId, actorId, roomId);
+  async listPresenceBlockedActorIds(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly candidateActorIds: readonly string[];
+  }): Promise<readonly string[]> {
+    if (input.candidateActorIds.length === 0) return [];
+    const rows = await this.sql<{ readonly actor_id: string }[]>`
+      select actor_id from helix_chat_presence_blocked_actor_ids(
+        ${input.orgId}, ${input.actorId}, ${this.sql.array([...input.candidateActorIds])}::uuid[]
+      )
+    `;
+    return rows.map((row) => row.actor_id);
   }
 
-  private async roomIdForMessage(
-    orgId: string,
-    actorId: string,
-    messageId: string,
-  ): Promise<string> {
-    const rows = (await this.sql`
-      select thread_id
-      from messages
-      where id = ${messageId}
-        and org_id = ${orgId}
-        and kind = 'chat'
-        and deleted_at is null
-      limit 1
-    `) as unknown as readonly { readonly thread_id: string }[];
-    const roomId = rows[0]?.thread_id;
-    if (roomId === undefined) {
-      throw new ChatMessageNotFoundError(messageId);
-    }
-    await this.requireRoomAccess(orgId, actorId, roomId);
-    return roomId;
+  private async requireRoomAccess(orgId: string, actorId: string, roomId: string): Promise<void> {
+    await requireRoomAccess(this.sql, orgId, actorId, roomId);
   }
 
   private async touchRoom(roomId: string): Promise<void> {
@@ -894,14 +1510,15 @@ async function selectRoomForActor(
   actorId: string,
   roomId: string,
 ): Promise<ChatRoomRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<ChatRoomRow[]>`
     select
       t.*,
       s.thread_id as settings_thread_id,
       s.org_id as settings_org_id,
       s.name as settings_name,
       s.topic as settings_topic,
-      s.is_private as settings_is_private,
+      s.privacy as settings_privacy,
+      s.read_receipts_enabled as settings_read_receipts_enabled,
       s.metadata as settings_metadata,
       s.created_at as settings_created_at,
       s.updated_at as settings_updated_at,
@@ -919,29 +1536,38 @@ async function selectRoomForActor(
           '[]'::jsonb
         )
         from permissions p
-        left join actors a on a.id = p.actor_id
-        where p.resource_type = 'thread'
-          and p.resource_id = t.id
-          and p.org_id = ${orgId}
-          and (p.expires_at is null or p.expires_at > now())
+        join actors a on a.id = p.actor_id and a.org_id = p.org_id
+        where chat_permission_is_valid(p, ${orgId}, p.actor_id, t.id)
       ) as members
     from threads t
     left join chat_room_settings s on s.thread_id = t.id
     where t.id = ${roomId}
       and t.org_id = ${orgId}
       and t.kind in ('chat_room', 'chat_dm')
-      and (
-        t.created_by_actor_id = ${actorId}
-        or exists (
-          select 1 from permissions p
-          where p.resource_type = 'thread'
-            and p.resource_id = t.id
-            and p.actor_id = ${actorId}
-        )
+      and exists (
+        select 1 from permissions access_grant
+        where chat_permission_is_valid(access_grant, ${orgId}, ${actorId}, t.id)
       )
     limit 1
-  `) as unknown as readonly ChatRoomRow[];
+  `;
   return rows[0] === undefined ? null : mapRoom(rows[0]);
+}
+
+async function selectRoomByParticipantKey(
+  sql: SqlLike,
+  orgId: string,
+  actorId: string,
+  participantKey: string,
+): Promise<ChatRoomRecord | null> {
+  const rows = await sql<{ readonly thread_id: string }[]>`
+    select thread_id
+    from chat_room_settings
+    where org_id = ${orgId}
+      and participant_key = ${participantKey}
+    limit 1
+  `;
+  const roomId = rows[0]?.thread_id;
+  return roomId === undefined ? null : selectRoomForActor(sql, orgId, actorId, roomId);
 }
 
 async function requireRoomAccess(
@@ -961,7 +1587,7 @@ async function selectMessage(
   orgId: string,
   messageId: string,
 ): Promise<ChatMessageRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<ChatMessageRow[]>`
     select
       m.*,
       (select array_agg(ma.object_id::text order by ma.object_id::text) from message_attachments ma where ma.message_id = m.id) as attachment_object_ids
@@ -970,8 +1596,204 @@ async function selectMessage(
       and m.org_id = ${orgId}
       and m.kind = 'chat'
     limit 1
-  `) as unknown as readonly ChatMessageRow[];
-  return rows[0] === undefined ? null : mapMessage(rows[0]);
+  `;
+  if (rows[0] === undefined) return null;
+  return (await enrichChatMessages(sql, [mapMessage(rows[0])]))[0] ?? null;
+}
+
+async function enrichChatMessages(
+  sql: SqlLike,
+  messages: readonly ChatMessageRecord[],
+): Promise<readonly ChatMessageRecord[]> {
+  if (messages.length === 0) return [];
+  const rows = await sql<ChatMessageStateRow[]>`
+    select
+      source.id as message_id,
+      coalesce((
+        select jsonb_agg(
+          jsonb_build_object(
+            'messageId', reaction.message_id,
+            'actorId', reaction.actor_id,
+            'orgId', reaction.org_id,
+            'emoji', reaction.emoji,
+            'createdAt', reaction.created_at
+          )
+          order by reaction.emoji, reaction.created_at, reaction.actor_id
+        )
+        from chat_reactions reaction
+        where reaction.message_id = source.id
+      ), '[]'::jsonb) as reactions,
+      (
+        select count(*)::int
+        from messages reply
+        where reply.parent_message_id = source.id
+          and reply.kind = 'chat'
+          and reply.deleted_at is null
+      ) as reply_count,
+      (
+        select jsonb_build_object(
+          'roomId', pin.thread_id,
+          'messageId', pin.message_id,
+          'orgId', pin.org_id,
+          'pinnedByActorId', pin.pinned_by_actor_id,
+          'createdAt', pin.created_at
+        )
+        from chat_pins pin
+        where pin.message_id = source.id
+      ) as pin,
+      coalesce((
+        select jsonb_agg(
+          jsonb_build_object(
+            'objectId', object.id,
+            'source', case when object.kind::text = 'chat_attachment' then 'chat' else 'drive' end,
+            'filename', linked.snapshot->>'filename',
+            'mimeType', linked.snapshot->>'mimeType',
+            'byteSize', (linked.snapshot->>'byteSize')::bigint
+          ) order by linked.object_id
+        )
+        from message_attachments linked
+        join objects object
+          on object.org_id = linked.org_id and object.id = linked.object_id
+        left join chat_attachments attachment
+          on attachment.org_id = linked.org_id and attachment.object_id = linked.object_id
+        where linked.message_id = source.id
+          and object.deleted_at is null
+          and (
+            object.kind::text in ('file', 'recording')
+            or (object.kind::text = 'chat_attachment' and attachment.status = 'ready')
+          )
+      ), '[]'::jsonb) as attachments
+    from unnest(${sql.array(messages.map(({ id }) => id))}::uuid[]) as source(id)
+  `;
+  const states = new Map(rows.map((row) => [row.message_id, row]));
+  return messages.map((message) => {
+    const state = states.get(message.id);
+    return {
+      ...message,
+      reactions: (state?.reactions ?? []).map((reaction) => ({
+        messageId: reaction.messageId,
+        actorId: reaction.actorId,
+        orgId: reaction.orgId,
+        emoji: reaction.emoji,
+        createdAt: new Date(reaction.createdAt),
+      })),
+      replyCount: Number(state?.reply_count ?? 0),
+      attachments: (state?.attachments ?? []).map((attachment) => ({
+        objectId: attachment.objectId,
+        source: attachment.source,
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        byteSize: Number(attachment.byteSize),
+      })),
+      pin:
+        state?.pin === undefined || state.pin === null
+          ? null
+          : {
+              roomId: state.pin.roomId,
+              messageId: state.pin.messageId,
+              orgId: state.pin.orgId,
+              pinnedByActorId: state.pin.pinnedByActorId,
+              createdAt: new Date(state.pin.createdAt),
+            },
+    };
+  });
+}
+
+async function appendChatRoomEvent(sql: SqlLike, event: ChatRoomEvent): Promise<number> {
+  const rows = await sql<{ readonly event_sequence: number | string }[]>`
+    select event_sequence
+    from append_chat_room_event(
+      ${event.orgId},
+      ${event.roomId},
+      ${sql.json(toSqlJson(event))}
+    )
+  `;
+  return safeChatEventCursor(rows[0]?.event_sequence);
+}
+
+async function recordChatMessageMutation(
+  sql: SqlLike,
+  message: ChatMessageRecord,
+  operation: "updated" | "deleted",
+  actorId: string,
+): Promise<number> {
+  await sql`update threads set updated_at = now() where id = ${message.roomId}`;
+  const aclVersion = await selectRoomAclVersion(sql, message.orgId, message.roomId);
+  await sql`
+    insert into outbox (subject, payload)
+    values (
+      ${`activity.chat.message.${operation}`},
+      ${sql.json(
+        toSqlJson({
+          version: 1,
+          orgId: message.orgId,
+          actorId,
+          roomId: message.roomId,
+          messageId: message.id,
+          revision: message.revision ?? 1,
+          aclVersion,
+        }),
+      )}
+    )
+  `;
+  return appendChatRoomEvent(
+    sql,
+    operation === "updated"
+      ? chatMessageUpdatedEvent(message)
+      : chatMessageDeletedEvent(message, actorId),
+  );
+}
+
+async function recordChatProjectionMutation(
+  sql: SqlLike,
+  operation: "pinned" | "unpinned" | "reaction.added" | "reaction.removed" | "replied",
+  actorId: string,
+  message: ChatMessageRecord,
+): Promise<number> {
+  await sql`update threads set updated_at = now() where id = ${message.roomId}`;
+  await sql`
+    insert into outbox (subject, payload)
+    values (
+      ${`activity.chat.message.${operation}`},
+      ${sql.json(
+        toSqlJson({
+          version: 1,
+          orgId: message.orgId,
+          roomId: message.roomId,
+          actorId,
+          messageId: message.id,
+        }),
+      )}
+    )
+  `;
+  return appendChatRoomEvent(sql, chatMessageUpdatedEvent(message));
+}
+
+async function selectRoomAclVersion(sql: SqlLike, orgId: string, roomId: string): Promise<number> {
+  const settings = await sql<{ readonly acl_version: number | string }[]>`
+    select acl_version
+    from chat_room_settings
+    where org_id = ${orgId} and thread_id = ${roomId}
+  `;
+  return Number(settings[0]?.acl_version ?? 0);
+}
+
+async function selectMessageCreatedCursor(
+  sql: SqlLike,
+  orgId: string,
+  roomId: string,
+  messageId: string,
+): Promise<number | undefined> {
+  const rows = await sql<{ readonly sequence: number | string }[]>`
+    select sequence
+    from chat_room_events
+    where org_id = ${orgId}
+      and room_id = ${roomId}
+      and event->>'type' = 'message.created'
+      and event->'message'->>'id' = ${messageId}
+    limit 1
+  `;
+  return rows[0] === undefined ? undefined : safeChatEventCursor(rows[0].sequence);
 }
 
 async function grantRoomAccess(
@@ -980,15 +1802,153 @@ async function grantRoomAccess(
     readonly orgId: string;
     readonly roomId: string;
     readonly actorId: string;
-    readonly role: string;
+    readonly role: ChatRoomRole;
     readonly grantedByActorId: string;
   },
 ): Promise<void> {
   await sql`
-    insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
-    values (${input.orgId}, ${input.actorId}, 'thread', ${input.roomId}, ${input.role}, ${input.grantedByActorId})
-    on conflict do nothing
+    delete from permissions
+    where org_id = ${input.orgId}
+      and actor_id = ${input.actorId}
+      and resource_type = 'thread'
+      and resource_id = ${input.roomId}
+      and (
+        ${input.role} = 'owner'
+        or role <> 'owner'
+        or not chat_permission_is_valid(
+          permissions,
+          ${input.orgId},
+          ${input.actorId},
+          ${input.roomId}
+        )
+      )
   `;
+  const rows = await sql`
+    insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
+    select ${input.orgId}, actor.id, 'thread', ${input.roomId}, ${input.role}, ${input.grantedByActorId}
+    from actors actor
+    where actor.id = ${input.actorId}
+      and actor.org_id = ${input.orgId}
+      and actor.disabled_at is null
+      and (
+        (
+          ${input.role} = 'owner'
+          and actor.id = ${input.grantedByActorId}
+          and exists (
+            select 1
+            from threads room
+            where room.id = ${input.roomId}
+              and room.org_id = ${input.orgId}
+              and room.created_by_actor_id = ${input.grantedByActorId}
+              and room.kind in ('chat_room', 'chat_dm')
+          )
+        )
+        or exists (
+          select 1
+          from permissions grantor_grant
+          where chat_permission_is_valid(
+            grantor_grant,
+            ${input.orgId},
+            ${input.grantedByActorId},
+            ${input.roomId}
+          )
+            and (
+              grantor_grant.role = 'owner'
+              or (${input.role} = 'member' and grantor_grant.role = 'moderator')
+            )
+        )
+        or (
+          actor.id = ${input.grantedByActorId}
+          and ${input.role} = 'member'
+          and exists (
+            select 1
+            from chat_room_settings settings
+            join threads room
+              on room.id = settings.thread_id and room.org_id = settings.org_id
+            where room.id = ${input.roomId}
+              and room.org_id = ${input.orgId}
+              and room.kind = 'chat_room'
+              and settings.privacy = 'discoverable'
+          )
+        )
+      )
+      and (
+        ${input.role} = 'owner'
+        or not exists (
+          select 1 from permissions existing
+          where chat_permission_is_valid(
+            existing,
+            ${input.orgId},
+            ${input.actorId},
+            ${input.roomId}
+          )
+            and existing.role = 'owner'
+        )
+      )
+    returning id
+  `;
+  if (rows.length === 0) {
+    throw new ChatMemberAccessError();
+  }
+}
+
+function directParticipantKey(actorIds: readonly string[]): string {
+  return createHash("sha256")
+    .update([...actorIds].sort().join(","))
+    .digest("hex");
+}
+
+async function requireActiveOrgActors(
+  sql: SqlLike,
+  orgId: string,
+  actorIds: readonly string[],
+): Promise<void> {
+  if (actorIds.length === 0) return;
+  const rows = await sql<{ readonly id: string }[]>`
+    select id
+    from actors
+    where org_id = ${orgId}
+      and id = any(${sql.array([...actorIds])}::uuid[])
+      and disabled_at is null
+  `;
+  if (new Set(rows.map((row) => row.id)).size !== new Set(actorIds).size) {
+    throw new ChatMemberAccessError();
+  }
+}
+
+async function requireAllowedExternalActors(
+  sql: SqlLike,
+  orgId: string,
+  actorIds: readonly string[],
+  externalAccess: ChatExternalAccess,
+): Promise<void> {
+  if (actorIds.length === 0) return;
+  const rows = await sql<
+    { readonly id: string; readonly guest_type: "member" | "external" | "partner" | null }[]
+  >`
+    select
+      actor.id,
+      case
+        when actor.type = 'user' then membership.guest_type
+        else 'member'
+      end as guest_type
+    from actors actor
+    left join organization_memberships membership
+      on membership.org_id = actor.org_id
+     and membership.actor_id = actor.id
+     and membership.status = 'active'
+    where actor.org_id = ${orgId}
+      and actor.id = any(${sql.array([...actorIds])}::uuid[])
+      and actor.disabled_at is null
+  `;
+  if (
+    new Set(rows.map((row) => row.id)).size !== new Set(actorIds).size ||
+    rows.some(
+      (row) => row.guest_type === null || !canInviteChatGuest(externalAccess, row.guest_type),
+    )
+  ) {
+    throw new ChatMemberAccessError();
+  }
 }
 
 function expectRoom(room: ChatRoomRecord | null, roomId: string): ChatRoomRecord {
@@ -999,6 +1959,8 @@ function expectRoom(room: ChatRoomRecord | null, roomId: string): ChatRoomRecord
 }
 
 function mapRoom(row: ChatRoomRow): ChatRoomRecord {
+  const settingsMetadata = row.settings_metadata ?? {};
+  const governance = readChatGovernance(row.kind, settingsMetadata);
   return {
     id: row.id,
     orgId: row.org_id,
@@ -1015,8 +1977,10 @@ function mapRoom(row: ChatRoomRow): ChatRoomRecord {
             orgId: row.settings_org_id ?? row.org_id,
             name: row.settings_name,
             topic: row.settings_topic,
-            isPrivate: row.settings_is_private ?? false,
-            metadata: row.settings_metadata ?? {},
+            privacy: row.settings_privacy ?? "restricted",
+            readReceiptsEnabled: row.settings_read_receipts_enabled ?? true,
+            ...governance,
+            metadata: settingsMetadata,
             createdAt: row.settings_created_at ?? row.created_at,
             updatedAt: row.settings_updated_at ?? row.updated_at,
           },
@@ -1035,7 +1999,7 @@ function chatRoomMembers(value: unknown): ChatRoomRecord["members"] {
       return [];
     }
     const record = candidate as Record<string, unknown>;
-    return typeof record.actorId === "string" && typeof record.role === "string"
+    return typeof record.actorId === "string" && isChatRoomRole(record.role)
       ? [
           {
             actorId: record.actorId,
@@ -1048,11 +2012,11 @@ function chatRoomMembers(value: unknown): ChatRoomRecord["members"] {
   });
 }
 
+function isChatRoomRole(value: unknown): value is ChatRoomRole {
+  return value === "owner" || value === "moderator" || value === "member";
+}
+
 function mapMessage(row: ChatMessageRow): ChatMessageRecord {
-  const clientMessageId =
-    typeof row.metadata.clientMessageId === "string"
-      ? row.metadata.clientMessageId
-      : undefined;
   return {
     id: row.id,
     orgId: row.org_id,
@@ -1063,7 +2027,8 @@ function mapMessage(row: ChatMessageRow): ChatMessageRecord {
     metadata: row.metadata,
     attachmentObjectIds: row.attachment_object_ids ?? [],
     parentMessageId: row.parent_message_id ?? null,
-    ...(clientMessageId === undefined ? {} : { clientMessageId }),
+    ...(row.client_message_id === null ? {} : { clientMessageId: row.client_message_id }),
+    revision: Number(row.chat_revision ?? 1),
     sentAt: row.sent_at,
     editedAt: row.edited_at,
     deletedAt: row.deleted_at,
@@ -1109,6 +2074,111 @@ function mapReadReceipt(row: ChatReadReceiptRow | undefined): ChatReadReceiptRec
     lastReadMessageId: row.last_read_message_id,
     lastReadAt: row.last_read_at,
     updatedAt: row.updated_at,
+    isShared: row.is_shared,
+    ...(row.realtime_cursor === undefined
+      ? {}
+      : {
+          realtimeCursor:
+            row.realtime_cursor === null ? null : safeChatEventCursor(row.realtime_cursor),
+        }),
+  };
+}
+
+export function chatMessageCreatedEvent(message: ChatMessageRecord): ChatRoomEvent {
+  return {
+    version: 1,
+    type: "message.created",
+    roomId: message.roomId,
+    orgId: message.orgId,
+    ...(message.actorId === null ? {} : { actorId: message.actorId }),
+    message: {
+      id: message.id,
+      orgId: message.orgId,
+      roomId: message.roomId,
+      actorId: message.actorId,
+      body: message.body,
+      bodyFormat: message.bodyFormat,
+      metadata: message.metadata,
+      attachmentObjectIds: [...message.attachmentObjectIds],
+      attachments: (message.attachments ?? []).map((attachment) => ({
+        objectId: attachment.objectId,
+        source: attachment.source,
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        byteSize: attachment.byteSize,
+      })),
+      reactions: (message.reactions ?? []).map((reaction) => ({
+        messageId: reaction.messageId,
+        actorId: reaction.actorId,
+        orgId: reaction.orgId,
+        emoji: reaction.emoji,
+        createdAt: reaction.createdAt.toISOString(),
+      })),
+      replyCount: message.replyCount ?? 0,
+      pin:
+        message.pin === undefined || message.pin === null
+          ? null
+          : {
+              roomId: message.pin.roomId,
+              messageId: message.pin.messageId,
+              orgId: message.pin.orgId,
+              pinnedByActorId: message.pin.pinnedByActorId,
+              createdAt: message.pin.createdAt.toISOString(),
+            },
+      parentMessageId: message.parentMessageId ?? null,
+      ...(message.clientMessageId === undefined
+        ? {}
+        : { clientMessageId: message.clientMessageId }),
+      revision: message.revision ?? 1,
+      sentAt: message.sentAt.toISOString(),
+      editedAt: message.editedAt?.toISOString() ?? null,
+      deletedAt: message.deletedAt?.toISOString() ?? null,
+      createdAt: message.createdAt.toISOString(),
+      updatedAt: message.updatedAt.toISOString(),
+    },
+    ...(message.realtimeCursor === undefined ? {} : { cursor: message.realtimeCursor }),
+  };
+}
+
+export function chatMessageUpdatedEvent(message: ChatMessageRecord): ChatRoomEvent {
+  return { ...chatMessageCreatedEvent(message), type: "message.updated" };
+}
+
+export function chatMessageDeletedEvent(
+  message: ChatMessageRecord,
+  actorId: string,
+): ChatRoomEvent {
+  return {
+    version: 1,
+    type: "message.deleted",
+    orgId: message.orgId,
+    roomId: message.roomId,
+    actorId,
+    messageId: message.id,
+    revision: message.revision ?? 1,
+    deletedAt: message.deletedAt?.toISOString() ?? new Date().toISOString(),
+    ...(message.realtimeCursor === undefined ? {} : { cursor: message.realtimeCursor }),
+  };
+}
+
+export function chatReadEvent(receipt: ChatReadReceiptRecord): ChatRoomEvent {
+  return {
+    type: "read",
+    roomId: receipt.roomId,
+    orgId: receipt.orgId,
+    actorId: receipt.actorId,
+    messageId: receipt.lastReadMessageId,
+    receipt: {
+      roomId: receipt.roomId,
+      actorId: receipt.actorId,
+      orgId: receipt.orgId,
+      lastReadMessageId: receipt.lastReadMessageId,
+      lastReadAt: receipt.lastReadAt.toISOString(),
+      updatedAt: receipt.updatedAt.toISOString(),
+    },
+    ...(receipt.realtimeCursor === undefined || receipt.realtimeCursor === null
+      ? {}
+      : { cursor: receipt.realtimeCursor }),
   };
 }
 
@@ -1127,7 +2197,7 @@ function mapChatSearchRecord(
   row: ChatSearchRecordRow,
   reactions: readonly ChatReactionRow[],
 ): ChatSearchRecord {
-  const classification = chatClassification(row.metadata.classification);
+  const classification = chatClassification(sensitivityClassificationFromMetadata(row.metadata));
   const mentions = chatParticipants(row.metadata.mentions);
   const roomName = row.room_name ?? row.room_subject ?? undefined;
   return {
@@ -1136,6 +2206,8 @@ function mapChatSearchRecord(
     roomId: row.thread_id,
     ...(roomName === undefined ? {} : { roomName }),
     roomKind: row.room_kind,
+    aclVersion: Number(row.room_acl_version),
+    allowedActorIds: row.allowed_actor_ids ?? [],
     body: row.body,
     author: {
       id: row.actor_id ?? "unknown",
@@ -1195,4 +2267,39 @@ function chatClassification(value: unknown): ChatSearchRecord["classification"] 
 
 function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
+}
+
+function safeChatEventCursor(value: number | string | undefined): number {
+  const cursor = Number(value);
+  if (!Number.isSafeInteger(cursor) || cursor <= 0) {
+    throw new RangeError("Chat event cursor is outside the safe integer range.");
+  }
+  return cursor;
+}
+
+function chatTransactionSql(tx: postgres.TransactionSql): postgres.Sql {
+  const sql = new Proxy(tx, {
+    apply(target, _thisArg, args): unknown {
+      return Reflect.apply(target, tx, args);
+    },
+    has(target, property): boolean {
+      return property === "begin" || Reflect.has(target, property);
+    },
+    get(target, property, receiver): unknown {
+      if (property === "begin") {
+        return <T>(callback: (nested: postgres.TransactionSql) => Promise<T>) =>
+          tx.savepoint(callback) as Promise<T>;
+      }
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === "function" ? value.bind(tx) : value;
+    },
+  });
+  if (!isPostgresSql(sql)) {
+    throw new TypeError("Chat transaction adapter is invalid.");
+  }
+  return sql;
+}
+
+function isPostgresSql(value: unknown): value is postgres.Sql {
+  return typeof value === "function" && "begin" in value && typeof value.begin === "function";
 }

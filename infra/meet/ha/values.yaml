@@ -1,0 +1,203 @@
+# Production profile for the signed jitsi-scaler 1.11.0 chart. Deployment replaces
+# the .invalid registry/hosts and verifies the mirrored images before Helm runs.
+global:
+  clusterDomain: cluster.local
+
+haproxy:
+  replicaCount: 3
+  image:
+    repository: registry.helix.invalid/meet/haproxy
+    tag: 3.4-alpine@sha256:c0afc4864dca9c68694cd1290433f0ee79b5c55be80f6745a165ffe373b9a564
+    pullPolicy: IfNotPresent
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    host: meet.helix.invalid
+    tls:
+      enabled: true
+      secretName: helix-meet-ingress-tls
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: haproxy
+          topologyKey: kubernetes.io/hostname
+
+.eastAffinity: &eastAffinity
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: topology.kubernetes.io/region
+              operator: In
+              values: [us-east-1]
+.centralAffinity: &centralAffinity
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: topology.kubernetes.io/region
+              operator: In
+              values: [us-east-2]
+.westAffinity: &westAffinity
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: topology.kubernetes.io/region
+              operator: In
+              values: [us-west-2]
+
+.web: &web
+  replicaCount: 2
+  image:
+    repository: registry.helix.invalid/meet/web
+    tag: stable-11146-2@sha256:4231d5ff7318ff71d12ffd41afc36adae3c319b40cf79cde39b009b0c68295dc
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+.prosody: &prosody
+  image:
+    repository: registry.helix.invalid/meet/prosody
+    tag: stable-11146-2@sha256:9e341b10134d947e49ca338b9efe8d70ac9d6e8d89d621da2246dfa79fe50363
+  jwt:
+    existingSecretName: helix-meet-runtime
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+.jicofo: &jicofo
+  image:
+    repository: registry.helix.invalid/meet/jicofo
+    tag: stable-11146-2@sha256:a8d64e46eaa340751a2b5530a4abd4175adf05bff07e9775fc48daae6364cfe9
+  xmpp:
+    existingSecretName: helix-meet-runtime
+  extraEnvs:
+    MAX_BRIDGE_PARTICIPANTS: "80"
+    BRIDGE_STRESS_THRESHOLD: "0.75"
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+.jvb: &jvb
+  replicaCount: 3
+  portRangeSize: 1
+  useHostPort: true
+  useNodeIP: true
+  disableStun: true
+  service:
+    enabled: false
+  image:
+    repository: registry.helix.invalid/meet/jvb
+    tag: stable-11146-2@sha256:d7dc646d21af07530ae6acf1ace23ea4782445d0362004621a32a5a632a964e9
+  xmpp:
+    existingSecretName: helix-meet-runtime
+  extraEnvs:
+    JVB_REQUIRE_VALID_ADDRESS: "true"
+    SHUTDOWN_REST_ENABLED: "true"
+    VIDEOBRIDGE_MAX_MEMORY: 6144m
+  resources:
+    requests: { cpu: "2", memory: 4Gi }
+    limits: { cpu: "8", memory: 8Gi }
+.coturn: &coturn
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: registry.helix.invalid/meet/coturn
+    tag: 4.17.2@sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e
+  initContainers:
+    busybox:
+      image: registry.helix.invalid/meet/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+  staticAuth:
+    existingSecretName: helix-meet-runtime
+  turns:
+    enabled: true
+    relayPortRange: { min: 50000, max: 54999 }
+    certificate:
+      create: false
+      existingSecretName: helix-meet-turn-tls
+  service:
+    type: LoadBalancer
+    allocateLoadBalancerNodePorts: false
+    ports: { turn: 3478, turns: 443 }
+  custom:
+    configs:
+      _turnserver_conf: |
+        stale-nonce=600
+        user-quota=12
+        total-quota=1200
+        max-bps=1000000000
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "2", memory: 1Gi }
+
+.jitsi: &jitsi
+  publicURL: https://meet.helix.invalid
+  enableAuth: true
+  enableGuests: false
+  extraCommonEnvs:
+    AUTH_TYPE: jwt
+    JWT_APP_ID: helix
+  websockets:
+    xmpp:
+      enabled: true
+  web: *web
+  prosody: *prosody
+  jicofo: *jicofo
+  jvb: *jvb
+  coturn: *coturn
+  octo:
+    enabled: true
+
+shard0:
+  enabled: true
+  <<: *jitsi
+  turnHost: turn-us-east-1.helix.invalid
+  web: { <<: *web, affinity: *eastAffinity }
+  prosody: { <<: *prosody, affinity: *eastAffinity }
+  jicofo: { <<: *jicofo, affinity: *eastAffinity }
+  jvb: { <<: *jvb, UDPPort: 10000, affinity: *eastAffinity }
+  coturn:
+    <<: *coturn
+    affinity: *eastAffinity
+    staticAuth: { existingSecretName: helix-meet-turn-us-east-1 }
+    turns:
+      enabled: true
+      relayPortRange: { min: 50000, max: 54999 }
+      certificate: { create: false, existingSecretName: helix-meet-turn-us-east-1-tls }
+
+shard1:
+  enabled: true
+  <<: *jitsi
+  turnHost: turn-us-east-2.helix.invalid
+  web: { <<: *web, affinity: *centralAffinity }
+  prosody: { <<: *prosody, affinity: *centralAffinity }
+  jicofo: { <<: *jicofo, affinity: *centralAffinity }
+  jvb: { <<: *jvb, UDPPort: 10100, affinity: *centralAffinity }
+  coturn:
+    <<: *coturn
+    affinity: *centralAffinity
+    staticAuth: { existingSecretName: helix-meet-turn-us-east-2 }
+    turns:
+      enabled: true
+      relayPortRange: { min: 50000, max: 54999 }
+      certificate: { create: false, existingSecretName: helix-meet-turn-us-east-2-tls }
+
+shard2:
+  enabled: true
+  <<: *jitsi
+  turnHost: turn-us-west-2.helix.invalid
+  web: { <<: *web, affinity: *westAffinity }
+  prosody: { <<: *prosody, affinity: *westAffinity }
+  jicofo: { <<: *jicofo, affinity: *westAffinity }
+  jvb: { <<: *jvb, UDPPort: 10200, affinity: *westAffinity }
+  coturn:
+    <<: *coturn
+    affinity: *westAffinity
+    staticAuth: { existingSecretName: helix-meet-turn-us-west-2 }
+    turns:
+      enabled: true
+      relayPortRange: { min: 50000, max: 54999 }
+      certificate: { create: false, existingSecretName: helix-meet-turn-us-west-2-tls }

@@ -285,7 +285,7 @@ export class PostgresAssistantStore implements AssistantStore {
 
   async createConversation(input: AssistantCreateConversationInput): Promise<AssistantConversation> {
     const preference = await this.getMemoryPreference(input.actor);
-    const rows = await this.sql`
+    const rows = await this.sql<AssistantConversationRow[]>`
       insert into assistant_conversations (
         org_id,
         actor_id,
@@ -310,7 +310,7 @@ export class PostgresAssistantStore implements AssistantStore {
     readonly actorId: string;
     readonly conversationId: string;
   }): Promise<AssistantConversation | null> {
-    const rows = await this.sql`
+    const rows = await this.sql<AssistantConversationRow[]>`
       select id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
       from assistant_conversations
       where org_id = ${input.orgId}
@@ -319,7 +319,7 @@ export class PostgresAssistantStore implements AssistantStore {
         and archived_at is null
       limit 1
     `;
-    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
+    const row = rows[0];
     return row === undefined ? null : rowToConversation(row);
   }
 
@@ -330,7 +330,7 @@ export class PostgresAssistantStore implements AssistantStore {
     const pattern = query.length === 0 ? null : `%${escapeLike(query)}%`;
     // Fetch one extra row to compute the keyset cursor.
     const fetchLimit = input.limit + 1;
-    const rows = (await this.sql`
+    const rows = await this.sql<AssistantConversationListRow[]>`
       with conversation_summary as (
         select
           c.id, c.org_id, c.actor_id, c.title, c.memory_opt_in, c.pinned_at,
@@ -369,7 +369,7 @@ export class PostgresAssistantStore implements AssistantStore {
         or last_activity_at < ${input.cursor ?? null}::timestamptz)
       order by (pinned_at is not null) desc, pinned_at desc nulls last, last_activity_at desc, id desc
       limit ${fetchLimit}
-    `) as unknown as readonly AssistantConversationListRow[];
+    `;
     const hasMore = rows.length > input.limit;
     const page = rows.slice(0, input.limit).map(rowToConversationListItem);
     const nextCursor = hasMore ? (page[page.length - 1]?.updatedAt ?? null) : null;
@@ -382,7 +382,7 @@ export class PostgresAssistantStore implements AssistantStore {
     readonly conversationId: string;
     readonly pinned: boolean;
   }): Promise<AssistantConversation | null> {
-    const rows = await this.sql`
+    const rows = await this.sql<AssistantConversationRow[]>`
       update assistant_conversations
       set pinned_at = ${input.pinned ? this.sql`coalesce(pinned_at, now())` : this.sql`null`},
           updated_at = now()
@@ -392,7 +392,7 @@ export class PostgresAssistantStore implements AssistantStore {
         and archived_at is null
       returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
     `;
-    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
+    const row = rows[0];
     return row === undefined ? null : rowToConversation(row);
   }
 
@@ -402,7 +402,7 @@ export class PostgresAssistantStore implements AssistantStore {
     readonly conversationId: string;
     readonly title: string;
   }): Promise<AssistantConversation | null> {
-    const rows = await this.sql`
+    const rows = await this.sql<AssistantConversationRow[]>`
       update assistant_conversations
       set title = ${input.title}, updated_at = now()
       where org_id = ${input.orgId}
@@ -411,7 +411,7 @@ export class PostgresAssistantStore implements AssistantStore {
         and archived_at is null
       returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
     `;
-    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
+    const row = rows[0];
     return row === undefined ? null : rowToConversation(row);
   }
 
@@ -420,7 +420,7 @@ export class PostgresAssistantStore implements AssistantStore {
     readonly actorId: string;
     readonly conversationId: string;
   }): Promise<boolean> {
-    const rows = await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       update assistant_conversations
       set archived_at = now(), updated_at = now()
       where org_id = ${input.orgId}
@@ -429,7 +429,7 @@ export class PostgresAssistantStore implements AssistantStore {
         and archived_at is null
       returning id
     `;
-    return (rows as unknown as readonly { readonly id: string }[]).length > 0;
+    return rows.length > 0;
   }
 
   async listMessages(input: {
@@ -438,7 +438,7 @@ export class PostgresAssistantStore implements AssistantStore {
     readonly limit?: number;
   }): Promise<readonly AssistantMessage[]> {
     const limit = input.limit ?? 100;
-    const rows = await this.sql`
+    const rows = await this.sql<AssistantMessageRow[]>`
       select id, org_id, conversation_id, actor_id, role, content, tool_call_id, metadata, created_at
       from (
         select id, org_id, conversation_id, actor_id, role, content, tool_call_id, metadata, created_at
@@ -450,11 +450,11 @@ export class PostgresAssistantStore implements AssistantStore {
       ) recent
       order by created_at asc, id asc
     `;
-    return (rows as unknown as readonly AssistantMessageRow[]).map(rowToMessage);
+    return rows.map(rowToMessage);
   }
 
   async appendMessage(input: AssistantAppendMessageInput): Promise<AssistantMessage> {
-    const rows = await this.sql`
+    const rows = await this.sql<AssistantMessageRow[]>`
       insert into assistant_messages (
         org_id,
         conversation_id,
@@ -483,7 +483,7 @@ export class PostgresAssistantStore implements AssistantStore {
       where org_id = ${input.orgId}
         and id = ${input.conversationId}
     `;
-    const row = (rows as unknown as readonly AssistantMessageRow[])[0];
+    const row = rows[0];
     if (row === undefined) {
       throw new Error("Failed to append assistant message.");
     }
@@ -496,7 +496,7 @@ export class PostgresAssistantStore implements AssistantStore {
     readonly conversationId: string;
     readonly enabled: boolean;
   }): Promise<AssistantConversation | null> {
-    const rows = await this.sql`
+    const rows = await this.sql<AssistantConversationRow[]>`
       update assistant_conversations
       set memory_opt_in = ${input.enabled}, updated_at = now()
       where org_id = ${input.orgId}
@@ -505,19 +505,19 @@ export class PostgresAssistantStore implements AssistantStore {
         and archived_at is null
       returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
     `;
-    const row = (rows as unknown as readonly AssistantConversationRow[])[0];
+    const row = rows[0];
     return row === undefined ? null : rowToConversation(row);
   }
 
   async getMemoryPreference(actor: Actor): Promise<AssistantMemoryPreference | null> {
-    const rows = await this.sql`
+    const rows = await this.sql<AssistantMemoryPreferenceRow[]>`
       select org_id, actor_id, enabled, metadata, updated_at
       from assistant_memory_preferences
       where org_id = ${actor.orgId}
         and actor_id = ${actor.id}
       limit 1
     `;
-    const row = (rows as unknown as readonly AssistantMemoryPreferenceRow[])[0];
+    const row = rows[0];
     return row === undefined ? null : rowToMemoryPreference(row);
   }
 
@@ -526,7 +526,7 @@ export class PostgresAssistantStore implements AssistantStore {
     readonly enabled: boolean;
     readonly metadata?: JsonObject;
   }): Promise<AssistantMemoryPreference> {
-    const rows = await this.sql`
+    const rows = await this.sql<AssistantMemoryPreferenceRow[]>`
       insert into assistant_memory_preferences (
         org_id,
         actor_id,
@@ -548,7 +548,7 @@ export class PostgresAssistantStore implements AssistantStore {
         updated_at = now()
       returning org_id, actor_id, enabled, metadata, updated_at
     `;
-    const row = (rows as unknown as readonly AssistantMemoryPreferenceRow[])[0];
+    const row = rows[0];
     if (row === undefined) {
       throw new Error("Failed to persist assistant memory preference.");
     }
@@ -556,8 +556,8 @@ export class PostgresAssistantStore implements AssistantStore {
   }
 }
 
-function requiredConversation(rows: unknown): AssistantConversation {
-  const row = (rows as readonly AssistantConversationRow[])[0];
+function requiredConversation(rows: readonly AssistantConversationRow[]): AssistantConversation {
+  const row = rows[0];
   if (row === undefined) {
     throw new Error("Failed to persist assistant conversation.");
   }

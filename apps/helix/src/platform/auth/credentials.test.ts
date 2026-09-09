@@ -43,6 +43,7 @@ function credential(
 class FakeCredentialStore implements AgentCredentialStore {
   readonly #byApiKey = new Map<string, AgentCredentialRecord>();
   readonly #byCert = new Map<string, AgentCredentialRecord>();
+  readonly used: { readonly credentialId: string; readonly at: Date }[] = [];
 
   addApiKey(hash: string, record: AgentCredentialRecord): void {
     this.#byApiKey.set(hash, record);
@@ -58,6 +59,10 @@ class FakeCredentialStore implements AgentCredentialStore {
 
   async findByCertFingerprint(fingerprint: string): Promise<AgentCredentialRecord | null> {
     return this.#byCert.get(fingerprint) ?? null;
+  }
+
+  async markUsed(credentialId: string, at: Date): Promise<void> {
+    this.used.push({ credentialId, at });
   }
 }
 
@@ -194,6 +199,8 @@ describe("authenticateApiKey", () => {
     await expect(
       authenticateApiKey(store, apiKey, { ip: "8.8.8.8" }),
     ).resolves.toMatchObject({ ok: false, code: "ip_not_allowed" });
+    expect(store.used).toHaveLength(1);
+    expect(store.used[0]?.credentialId).toBe("cred-1");
   });
 
   it("rejects an unknown API key", async () => {
@@ -216,6 +223,7 @@ describe("authenticateMtlsCertificate", () => {
     await expect(
       authenticateMtlsCertificate(store, "AA:BB:CC", {}),
     ).resolves.toMatchObject({ ok: true });
+    expect(store.used).toHaveLength(1);
   });
 
   it("rejects an unregistered certificate", async () => {

@@ -12,6 +12,7 @@ export interface TrashSyncInput {
   readonly sql: TrashSyncSql;
   readonly orgId: string;
   readonly objectId: string;
+  readonly action: "trash" | "restore" | "purge";
   readonly deletedAt: Date | null;
 }
 
@@ -42,19 +43,31 @@ export function createTrashSyncRegistry(
 /** Default editor handlers that mirror the historical hardcoded switch. */
 export function createDefaultEditorTrashSyncHandlers(): Record<string, TrashSyncHandler> {
   return {
-    docs: async ({ sql, orgId, objectId, deletedAt }) => {
+    docs: async ({ sql, orgId, objectId, action, deletedAt }) => {
+      if (action === "purge") {
+        await sql`delete from docs_documents where id = ${objectId} and org_id = ${orgId}`;
+        return;
+      }
       await sql`
         update docs_documents set deleted_at = ${deletedAt}, updated_at = now()
         where id = ${objectId} and org_id = ${orgId}
       `;
     },
-    sheets: async ({ sql, orgId, objectId, deletedAt }) => {
+    sheets: async ({ sql, orgId, objectId, action, deletedAt }) => {
+      if (action === "purge") {
+        await sql`delete from sheets where id = ${objectId} and org_id = ${orgId}`;
+        return;
+      }
       await sql`
         update sheets set deleted_at = ${deletedAt}, updated_at = now()
         where id = ${objectId} and org_id = ${orgId}
       `;
     },
-    slides: async ({ sql, orgId, objectId, deletedAt }) => {
+    slides: async ({ sql, orgId, objectId, action, deletedAt }) => {
+      if (action === "purge") {
+        await sql`delete from slide_decks where id = ${objectId} and org_id = ${orgId}`;
+        return;
+      }
       await sql`
         update slide_decks set deleted_at = ${deletedAt}, updated_at = now()
         where id = ${objectId} and org_id = ${orgId}

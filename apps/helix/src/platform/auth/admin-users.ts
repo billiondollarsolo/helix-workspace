@@ -1,7 +1,8 @@
 import type postgres from "postgres";
 import type { Actor, ActorType } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
+import { actorHasScope } from "../../api/scopes.js";
 
 const adminUsersScope = "admin.users";
 const actorTypeSchema = z.enum(["user", "agent", "service_account", "system"]);
@@ -56,6 +57,11 @@ export interface ListAdminUsersInput {
 
 export interface AdminUsersStore {
   listUsers(input: ListAdminUsersInput): Promise<readonly AdminUserRecord[]>;
+  resetMfa(input: {
+    readonly orgId: string;
+    readonly targetActorId: string;
+    readonly performedByActorId: string;
+  }): Promise<boolean>;
 }
 
 export interface RegisterAdminUsersRoutesOptions {
@@ -78,7 +84,7 @@ export class PostgresAdminUsersStore implements AdminUsersStore {
     const query = input.query?.trim().toLowerCase() ?? null;
     const queryPattern = query === null ? null : `%${escapeLikePattern(query)}%`;
     const type = input.type ?? null;
-    const rows = (await this.sql`
+    const rows = await this.sql<AdminUserRow[]>`
       select
         id,
         org_id,
@@ -105,8 +111,47 @@ export class PostgresAdminUsersStore implements AdminUsersStore {
         )
       order by created_at desc, id desc
       limit ${input.limit}
-    `) as unknown as readonly AdminUserRow[];
+    `;
     return rows.map(mapAdminUserRow);
+  }
+
+  async resetMfa(input: {
+    readonly orgId: string;
+    readonly targetActorId: string;
+    readonly performedByActorId: string;
+  }): Promise<boolean> {
+    return this.sql.begin(async (tx) => {
+      await tx`select set_config('helix.org_id', ${input.orgId}, true)`;
+      await tx`select set_config('helix.actor_id', ${input.performedByActorId}, true)`;
+      const rows = await tx<{ readonly auth_user_id: string }[]>`
+        select provider.provider_subject as auth_user_id
+        from organization_memberships membership
+        join identity_provider_subjects provider on provider.subject_id = membership.subject_id
+        where membership.org_id = ${input.orgId}
+          and membership.actor_id = ${input.targetActorId}
+          and membership.status = 'active'
+          and provider.provider = 'better-auth'
+        limit 1
+        for update of membership
+      `;
+      const userId = rows[0]?.auth_user_id;
+      if (userId === undefined) return false;
+      await tx`delete from auth_recovery_codes where auth_user_id = ${userId}`;
+      await tx`delete from passkey where "userId" = ${userId}`;
+      await tx`delete from "twoFactor" where "userId" = ${userId}`;
+      await tx`delete from "session" where "userId" = ${userId}`;
+      await tx`update "user" set "twoFactorEnabled" = false, "updatedAt" = now() where id = ${userId}`;
+      await tx`
+        insert into activity (org_id, actor_id, verb, object_type, object_id, payload, prev_hash, this_hash)
+        values (
+          ${input.orgId}, ${input.performedByActorId}, 'identity.mfa.reset', 'actor',
+          ${input.targetActorId},
+          ${tx.json({ sessionsRevoked: true, factorsRevoked: true })},
+          null, ''
+        )
+      `;
+      return true;
+    });
   }
 }
 
@@ -122,10 +167,13 @@ export async function registerAdminUsersRoutes(
 
     const parsed = adminUsersQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      return reply.code(400).send({ error: "Invalid admin users query.", issues: parsed.error.issues });
+      return reply
+        .code(400)
+        .send({ error: "Invalid admin users query.", issues: parsed.error.issues });
     }
 
-    const cursor = parsed.data.cursor === undefined ? undefined : decodeAdminUsersCursor(parsed.data.cursor);
+    const cursor =
+      parsed.data.cursor === undefined ? undefined : decodeAdminUsersCursor(parsed.data.cursor);
     if (cursor === null) {
       return reply.code(400).send({ error: "Invalid admin users cursor." });
     }
@@ -149,6 +197,32 @@ export async function registerAdminUsersRoutes(
       nextCursor,
     };
   });
+
+  app.post<{ Params: { actorId: string } }>(
+    "/api/admin/users/:actorId/mfa/reset",
+    async (request, reply) => {
+      const actor = await options.actorFromRequest(request);
+      const target = uuidSchema.safeParse(request.params.actorId);
+      if (!actorHasScope(actor, "admin.security")) {
+        return reply.code(403).send({
+          error: "Security administration permission denied.",
+          requiredScope: "admin.security",
+        });
+      }
+      if (!target.success) return reply.code(400).send({ error: "Invalid actor id." });
+      if (target.data === actor.id) {
+        return reply.code(409).send({ error: "Administrators cannot reset their own MFA." });
+      }
+      if (!(await options.store.resetMfa({
+        orgId: actor.orgId,
+        targetActorId: target.data,
+        performedByActorId: actor.id,
+      }))) {
+        return reply.code(404).send({ error: "User identity not found." });
+      }
+      return reply.code(204).send();
+    },
+  );
 }
 
 export async function registerPeopleDirectoryRoutes(
@@ -159,7 +233,9 @@ export async function registerPeopleDirectoryRoutes(
     const actor = await options.actorFromRequest(request);
     const parsed = peopleDirectoryQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      return reply.code(400).send({ error: "Invalid people directory query.", issues: parsed.error.issues });
+      return reply
+        .code(400)
+        .send({ error: "Invalid people directory query.", issues: parsed.error.issues });
     }
 
     const users = await options.store.listUsers({
@@ -177,14 +253,14 @@ export async function registerPeopleDirectoryRoutes(
 }
 
 export function canReadAdminUsers(actor: Actor): boolean {
-  const scopes = actor.scopes ?? [];
-  return scopes.includes(adminUsersScope) || scopes.includes("admin.*");
+  return actorHasScope(actor, adminUsersScope);
 }
 
 export function encodeAdminUsersCursor(record: Pick<AdminUserRecord, "createdAt" | "id">): string {
-  return Buffer.from(JSON.stringify({ createdAt: record.createdAt, id: record.id }), "utf8").toString(
-    "base64url",
-  );
+  return Buffer.from(
+    JSON.stringify({ createdAt: record.createdAt, id: record.id }),
+    "utf8",
+  ).toString("base64url");
 }
 
 export function decodeAdminUsersCursor(cursor: string): AdminUsersCursor | null {
@@ -208,7 +284,11 @@ export function decodeAdminUsersCursor(cursor: string): AdminUsersCursor | null 
   }
 }
 
-function booleanQuerySchema(): z.ZodEffects<z.ZodOptional<z.ZodBoolean>, boolean | undefined, unknown> {
+function booleanQuerySchema(): z.ZodEffects<
+  z.ZodOptional<z.ZodBoolean>,
+  boolean | undefined,
+  unknown
+> {
   return z.preprocess((value) => {
     if (value === "true" || value === true) {
       return true;
@@ -220,7 +300,9 @@ function booleanQuerySchema(): z.ZodEffects<z.ZodOptional<z.ZodBoolean>, boolean
   }, z.boolean().optional());
 }
 
-function emptyStringToUndefined<T extends z.ZodTypeAny>(schema: T): z.ZodEffects<T, z.output<T>, unknown> {
+function emptyStringToUndefined<T extends z.ZodTypeAny>(
+  schema: T,
+): z.ZodEffects<T, z.output<T>, unknown> {
   return z.preprocess((value) => (value === "" ? undefined : value), schema);
 }
 

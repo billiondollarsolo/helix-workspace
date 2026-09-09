@@ -1,8 +1,10 @@
-import { z } from "zod3";
+import { z } from "zod";
 import {
   driveAccessGrantSchema,
   driveCommentSchema,
+  driveCommentRevisionSchema,
   driveEntrySchema,
+  driveEntryPageSchema,
   drivePdfFormStateSchema,
   driveSearchHitSchema,
   driveShareLinkSchema,
@@ -18,7 +20,7 @@ export const driveCreateOutputSchema = z.union([
 
 export const driveUploadOutputSchema = driveUploadResultSchema;
 export const driveFinalizeOutputSchema = driveVersionSchema;
-export const driveListOutputSchema = z.object({ entries: driveEntrySchema.array() });
+export const driveListOutputSchema = driveEntryPageSchema;
 export const driveShareOutputSchema = z.object({
   objectId: z.string().uuid(),
   sharedWithActorIds: z.string().uuid().array(),
@@ -41,7 +43,14 @@ export const driveEntryOrNullOutputSchema = driveEntrySchema.nullable();
 export const driveDeleteOutputSchema = z.object({ deleted: z.boolean() });
 export const driveSearchOutputSchema = z.object({ hits: driveSearchHitSchema.array() });
 export const driveCommentOutputSchema = driveCommentSchema;
-export const driveCommentListOutputSchema = z.object({ comments: driveCommentSchema.array() });
+export const driveCommentListOutputSchema = z.object({
+  comments: driveCommentSchema.array(),
+  nextCursor: z.string().nullable(),
+});
+export const driveCommentRevisionListOutputSchema = z.object({
+  revisions: driveCommentRevisionSchema.array(),
+  nextCursor: z.string().nullable(),
+});
 export const drivePdfFormStateGetOutputSchema = z.object({
   state: drivePdfFormStateSchema.nullable(),
 });
@@ -60,3 +69,33 @@ export const driveShareLinkRevokeOutputSchema = z.object({
   id: z.string().uuid(),
   revoked: z.boolean(),
 });
+export const driveDocumentSurfaceViewOutputSchema = z.object({
+  view: z.enum(["grid", "list"]),
+});
+
+export const driveWorkflowSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum([
+    "shortcut",
+    "file_request",
+    "approval",
+    "ownership_transfer",
+    "shared_drive",
+    "classification",
+    "hold",
+    "investigation",
+  ]),
+  resourceType: z.enum(["object", "folder"]),
+  resourceId: z.string().uuid(),
+  requestedByActorId: z.string().uuid(),
+  assignedToActorId: z.string().uuid().nullable(),
+  state: z.enum(["open", "approved", "rejected", "cancelled", "completed"]),
+  version: z.string(),
+  payload: z.record(z.unknown()),
+  policySnapshot: z.record(z.unknown()),
+  dueAt: z.string().datetime().nullable(),
+  decidedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+export const driveWorkflowListOutputSchema = z.object({ workflows: driveWorkflowSchema.array() });

@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Actor, JsonObject } from "@helix/sdk-types";
-import { z } from "zod3";
+import { z } from "zod";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -13,28 +13,25 @@ import {
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "./console-shared.js";
-import type {
-  CreateTenantIdpConfigInput,
-  TenantIdpConfigRecord,
-  TenantIdpConfigStore,
-  UpdateTenantIdpConfigInput,
+import {
+  parseTenantIdpAttributeMapping,
+  parseTenantIdpPublicConfig,
+  type CreateTenantIdpConfigInput,
+  type TenantIdpConfigRecord,
+  type TenantIdpConfigStore,
+  type UpdateTenantIdpConfigInput,
 } from "../auth/tenant-idp-configs.js";
-import type { OrgRecord, OrgStore } from "../tenancy/orgs.js";
 
 export interface RegisterAdminIdentityRoutesOptions {
   readonly idpConfigs: Pick<
     TenantIdpConfigStore,
-    "list" | "get" | "create" | "update" | "delete" | "setPrimary"
+    "list" | "get" | "create" | "update" | "delete" | "setPrimary" | "runtimeReady"
   >;
-  readonly orgs?: Pick<OrgStore, "findById"> | undefined;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
-  readonly auditSink?: AdminConsoleAuditSink | undefined;
-  readonly publicBaseUrl?: string | undefined;
+  readonly auditSink: AdminConsoleAuditSink;
 }
 
-export type AdminIdentityIdpConfigView = TenantIdpConfigRecord & {
-  readonly samlSpMetadataUrl: string | null;
-};
+export type AdminIdentityIdpConfigView = TenantIdpConfigRecord;
 
 export interface AdminIdentityView {
   readonly idpConfigs: readonly AdminIdentityIdpConfigView[];
@@ -44,7 +41,7 @@ export interface AdminIdentityView {
   };
 }
 
-export type AdminIdentityTestLoginStatus = "configuration_required" | "runtime_pending";
+export type AdminIdentityTestLoginStatus = "configuration_required" | "ready";
 
 export interface AdminIdentityTestLoginResult {
   readonly status: AdminIdentityTestLoginStatus;
@@ -63,46 +60,43 @@ const jsonObjectSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path,
-        message: "IdP config must reference secrets by Vault path, not inline secret values.",
+        message:
+          "IdP config must use the dedicated opaque secret handle, not secret values or paths.",
       });
     }
   });
 
-const tenantVaultPathSchema = z
+const tenantSecretHandleSchema = z
   .string()
   .trim()
   .min(1)
-  .max(500)
-  .regex(/^tenants\/[A-Za-z0-9_-]+\/(?:idp|byo-identity)\/[A-Za-z0-9_./-]+$/u, {
-    message:
-      "Vault path must be scoped under tenants/{tenant}/idp/ or tenants/{tenant}/byo-identity/.",
-  })
-  .refine((value) => !value.includes("..") && !value.includes("//"), {
-    message: "Vault path must not contain traversal or repeated separators.",
+  .max(100)
+  .regex(/^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/u, {
+    message: "Secret handle must be a canonical lowercase identifier.",
   });
 
 const createIdpConfigBody = z
   .object({
-    protocol: z.enum(["saml", "oidc"]),
+    protocol: z.literal("oidc"),
     displayName: z.string().trim().min(1).max(120),
     config: jsonObjectSchema.optional(),
-    signingCertVaultPath: tenantVaultPathSchema.nullable().optional(),
+    signingCertSecretHandle: tenantSecretHandleSchema.nullable().optional(),
     attrMapping: jsonObjectSchema.optional(),
     isPrimary: z.boolean().optional(),
-    jitProvisioning: z.boolean().optional(),
+    jitProvisioning: z.literal(false).optional(),
     enabled: z.boolean().optional(),
   })
   .strict();
 
 const updateIdpConfigBody = z
   .object({
-    protocol: z.enum(["saml", "oidc"]).optional(),
+    protocol: z.literal("oidc").optional(),
     displayName: z.string().trim().min(1).max(120).optional(),
     config: jsonObjectSchema.optional(),
-    signingCertVaultPath: tenantVaultPathSchema.nullable().optional(),
+    signingCertSecretHandle: tenantSecretHandleSchema.nullable().optional(),
     attrMapping: jsonObjectSchema.optional(),
     isPrimary: z.boolean().optional(),
-    jitProvisioning: z.boolean().optional(),
+    jitProvisioning: z.literal(false).optional(),
     enabled: z.boolean().optional(),
   })
   .strict()
@@ -116,20 +110,17 @@ export async function registerAdminIdentityRoutes(
 ): Promise<void> {
   app.get("/api/admin/identity/idp-configs", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
+    if (!canReadAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
 
     const configs = await options.idpConfigs.list(actor.orgId);
-    return identityView(configs, {
-      org: await options.orgs?.findById(actor.orgId),
-      publicBaseUrl: options.publicBaseUrl,
-    });
+    return identityView(configs);
   });
 
   app.post("/api/admin/identity/idp-configs", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
+    if (!canWriteAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleWriteScope);
     }
     const body = createIdpConfigBody.safeParse(request.body);
@@ -137,13 +128,23 @@ export async function registerAdminIdentityRoutes(
       return reply.code(400).send(invalidRequest("Invalid tenant IdP config.", body.error.issues));
     }
 
+    let publicConfig: JsonObject;
+    let attrMapping: JsonObject;
+    try {
+      publicConfig = parseTenantIdpPublicConfig(body.data.protocol, body.data.config ?? {});
+      attrMapping = parseTenantIdpAttributeMapping(body.data.attrMapping ?? {});
+    } catch (error) {
+      return reply
+        .code(400)
+        .send(invalidRequest(error instanceof Error ? error.message : "Invalid IdP config."));
+    }
     const input: CreateTenantIdpConfigInput = {
       orgId: actor.orgId,
       protocol: body.data.protocol,
       displayName: body.data.displayName,
-      config: toJsonObject(body.data.config ?? {}),
-      signingCertVaultPath: body.data.signingCertVaultPath ?? null,
-      attrMapping: toJsonObject(body.data.attrMapping ?? {}),
+      config: publicConfig,
+      signingCertSecretHandle: body.data.signingCertSecretHandle ?? null,
+      attrMapping,
       ...(body.data.isPrimary === undefined ? {} : { isPrimary: body.data.isPrimary }),
       ...(body.data.jitProvisioning === undefined
         ? {}
@@ -172,17 +173,14 @@ export async function registerAdminIdentityRoutes(
     });
 
     return reply.code(201).send({
-      idpConfig: idpConfigView(config, {
-        org: await options.orgs?.findById(actor.orgId),
-        publicBaseUrl: options.publicBaseUrl,
-      }),
+      idpConfig: config,
       localLoginRecovery: localLoginRecoveryView(),
     });
   });
 
   app.patch("/api/admin/identity/idp-configs/:id", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
+    if (!canWriteAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleWriteScope);
     }
     const params = idpConfigIdParams.safeParse(request.params);
@@ -196,18 +194,37 @@ export async function registerAdminIdentityRoutes(
       return reply.code(400).send(invalidRequest("Invalid tenant IdP config.", body.error.issues));
     }
 
+    const current = await options.idpConfigs.get(actor.orgId, params.data.id);
+    if (current === null) {
+      return reply.code(404).send(notFound("Tenant IdP config not found."));
+    }
+    let publicConfig: JsonObject;
+    let attrMapping: JsonObject | undefined;
+    try {
+      publicConfig = parseTenantIdpPublicConfig(
+        body.data.protocol ?? current.protocol,
+        body.data.config ?? current.config,
+      );
+      attrMapping =
+        body.data.attrMapping === undefined
+          ? undefined
+          : parseTenantIdpAttributeMapping(body.data.attrMapping);
+    } catch (error) {
+      return reply
+        .code(400)
+        .send(invalidRequest(error instanceof Error ? error.message : "Invalid IdP config."));
+    }
+
     const input: UpdateTenantIdpConfigInput = {
       orgId: actor.orgId,
       id: params.data.id,
       ...(body.data.protocol === undefined ? {} : { protocol: body.data.protocol }),
       ...(body.data.displayName === undefined ? {} : { displayName: body.data.displayName }),
-      ...(body.data.config === undefined ? {} : { config: toJsonObject(body.data.config) }),
-      ...(body.data.signingCertVaultPath === undefined
+      config: publicConfig,
+      ...(body.data.signingCertSecretHandle === undefined
         ? {}
-        : { signingCertVaultPath: body.data.signingCertVaultPath }),
-      ...(body.data.attrMapping === undefined
-        ? {}
-        : { attrMapping: toJsonObject(body.data.attrMapping) }),
+        : { signingCertSecretHandle: body.data.signingCertSecretHandle }),
+      ...(body.data.attrMapping === undefined ? {} : { attrMapping }),
       ...(body.data.isPrimary === undefined ? {} : { isPrimary: body.data.isPrimary }),
       ...(body.data.jitProvisioning === undefined
         ? {}
@@ -235,17 +252,14 @@ export async function registerAdminIdentityRoutes(
     });
 
     return {
-      idpConfig: idpConfigView(config, {
-        org: await options.orgs?.findById(actor.orgId),
-        publicBaseUrl: options.publicBaseUrl,
-      }),
+      idpConfig: config,
       localLoginRecovery: localLoginRecoveryView(),
     };
   });
 
   app.delete("/api/admin/identity/idp-configs/:id", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
+    if (!canWriteAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleWriteScope);
     }
     const params = idpConfigIdParams.safeParse(request.params);
@@ -274,17 +288,14 @@ export async function registerAdminIdentityRoutes(
     });
 
     return {
-      idpConfig: idpConfigView(config, {
-        org: await options.orgs?.findById(actor.orgId),
-        publicBaseUrl: options.publicBaseUrl,
-      }),
+      idpConfig: config,
       localLoginRecovery: localLoginRecoveryView(),
     };
   });
 
   app.post("/api/admin/identity/idp-configs/:id/primary", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
+    if (!canWriteAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleWriteScope);
     }
     const params = idpConfigIdParams.safeParse(request.params);
@@ -311,17 +322,14 @@ export async function registerAdminIdentityRoutes(
     });
 
     return {
-      idpConfig: idpConfigView(config, {
-        org: await options.orgs?.findById(actor.orgId),
-        publicBaseUrl: options.publicBaseUrl,
-      }),
+      idpConfig: config,
       localLoginRecovery: localLoginRecoveryView(),
     };
   });
 
   app.post("/api/admin/identity/idp-configs/:id/test-login", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
+    if (!canWriteAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleWriteScope);
     }
     const params = idpConfigIdParams.safeParse(request.params);
@@ -336,7 +344,10 @@ export async function registerAdminIdentityRoutes(
       return reply.code(404).send(notFound("Tenant IdP config not found."));
     }
 
-    const testLogin = testTenantIdpConfigLogin(config);
+    const testLogin = testTenantIdpConfigLogin(
+      config,
+      await options.idpConfigs.runtimeReady(actor.orgId, config.id),
+    );
     await auditAdminAction(options.auditSink, {
       orgId: actor.orgId,
       actorId: actor.id,
@@ -358,47 +369,11 @@ export async function registerAdminIdentityRoutes(
 
 function identityView(
   configs: readonly TenantIdpConfigRecord[],
-  options: {
-    readonly org?: OrgRecord | null | undefined;
-    readonly publicBaseUrl?: string | undefined;
-  },
 ): AdminIdentityView {
   return {
-    idpConfigs: configs.map((config) => idpConfigView(config, options)),
+    idpConfigs: configs,
     localLoginRecovery: localLoginRecoveryView(),
   };
-}
-
-function idpConfigView(
-  config: TenantIdpConfigRecord,
-  options: {
-    readonly org?: Pick<OrgRecord, "slug"> | null | undefined;
-    readonly publicBaseUrl?: string | undefined;
-  },
-): AdminIdentityIdpConfigView {
-  return {
-    ...config,
-    samlSpMetadataUrl: samlSpMetadataUrl(config, options),
-  };
-}
-
-function samlSpMetadataUrl(
-  config: TenantIdpConfigRecord,
-  options: {
-    readonly org?: Pick<OrgRecord, "slug"> | null | undefined;
-    readonly publicBaseUrl?: string | undefined;
-  },
-): string | null {
-  if (config.protocol !== "saml" || !config.enabled || !config.isPrimary || options.org === null) {
-    return null;
-  }
-  const slug = options.org?.slug;
-  if (slug === undefined || slug.length === 0) {
-    return null;
-  }
-  const baseUrl = (options.publicBaseUrl ?? "").replace(/\/+$/u, "");
-  const path = `/api/auth/saml/${encodeURIComponent(slug)}/metadata`;
-  return baseUrl.length === 0 ? path : `${baseUrl}${path}`;
 }
 
 function localLoginRecoveryView(): AdminIdentityView["localLoginRecovery"] {
@@ -406,10 +381,6 @@ function localLoginRecoveryView(): AdminIdentityView["localLoginRecovery"] {
     enabled: true,
     scope: "owner_admin_recovery",
   };
-}
-
-function toJsonObject(value: unknown): JsonObject {
-  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
 function idpConfigConflictMessage(error: unknown): string {
@@ -420,6 +391,7 @@ function idpConfigConflictMessage(error: unknown): string {
 
 export function testTenantIdpConfigLogin(
   config: TenantIdpConfigRecord,
+  runtimeReady: boolean,
 ): AdminIdentityTestLoginResult {
   if (!config.enabled) {
     return {
@@ -427,23 +399,6 @@ export function testTenantIdpConfigLogin(
       message: "Enable this IdP config before testing login readiness.",
     };
   }
-  if (config.protocol === "saml") {
-    const metadataUrl = stringConfig(config.config, "metadataUrl");
-    const entityId = stringConfig(config.config, "entityId");
-    const ssoUrl = stringConfig(config.config, "ssoUrl");
-    if (metadataUrl === undefined && (entityId === undefined || ssoUrl === undefined)) {
-      return {
-        status: "configuration_required",
-        message: "SAML metadata URL or static entity ID and SSO URL are required.",
-      };
-    }
-    return {
-      status: "runtime_pending",
-      message:
-        "SAML configuration is ready. Runtime AuthnRequest/ACS handling is not connected yet.",
-    };
-  }
-
   const issuer =
     stringConfig(config.config, "issuer") ?? stringConfig(config.config, "metadataUrl");
   const clientId = stringConfig(config.config, "clientId");
@@ -453,10 +408,21 @@ export function testTenantIdpConfigLogin(
       message: "OIDC issuer/discovery URL and client ID are required.",
     };
   }
+  if (config.signingCertSecretHandle === null) {
+    return {
+      status: "configuration_required",
+      message: "A tenant Vault handle for the OIDC private-key client credential is required.",
+    };
+  }
+  if (!runtimeReady) {
+    return {
+      status: "configuration_required",
+      message: "Enable this primary IdP on a verified federation domain before testing login.",
+    };
+  }
   return {
-    status: "runtime_pending",
-    message:
-      "OIDC configuration is ready. Runtime authorization callback handling is not connected yet.",
+    status: "ready",
+    message: "OIDC discovery, PKCE, signed callback validation, and tenant session routing are ready.",
   };
 }
 
@@ -489,10 +455,10 @@ function visitSecretKeys(
     const childPath = [...path, key];
     const normalized = key.toLowerCase();
     if (
-      (normalized.includes("secret") ||
-        normalized.includes("password") ||
-        normalized.includes("private_key")) &&
-      !normalized.endsWith("vault_path")
+      normalized.includes("secret") ||
+      normalized.includes("password") ||
+      normalized.includes("private_key") ||
+      normalized.includes("vault")
     ) {
       paths.push(childPath);
     }

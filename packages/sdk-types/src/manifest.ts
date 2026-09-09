@@ -2,7 +2,7 @@ import { isJsonObject } from "./json.js";
 import type { JsonObject } from "./json.js";
 import type { SecurityTier } from "./config.js";
 
-export type PluginKind = "in-process" | "external-service" | "wasm";
+export type PluginKind = "sandboxed" | "in-process" | "external-service" | "wasm";
 
 export interface PluginVendor {
   readonly name: string;
@@ -32,13 +32,6 @@ export interface PluginTierRequirements {
   readonly tierRestrictions?: Partial<Record<SecurityTier, JsonObject | "prohibited">>;
 }
 
-export interface PluginSignatureEvidence {
-  readonly bundleDigest?: string;
-  readonly sigstoreBundle?: string;
-  readonly signerIdentity?: string;
-  readonly signedAt?: string;
-}
-
 export interface PluginManifest {
   readonly id: string;
   readonly name: string;
@@ -50,6 +43,7 @@ export interface PluginManifest {
   readonly kind: PluginKind;
   readonly main?: string | null;
   readonly endpoint?: string | null;
+  readonly composeRecipe?: string | null;
   readonly dependencies?: readonly (string | PluginDependencyDeclaration)[];
   readonly capabilities: PluginCapabilitiesDeclaration;
   readonly permissions: PluginPermissionsDeclaration;
@@ -57,7 +51,6 @@ export interface PluginManifest {
   readonly policies?: string | null;
   readonly uiContribution?: JsonObject;
   readonly tierRequirements?: PluginTierRequirements;
-  readonly signature?: PluginSignatureEvidence;
   readonly ai?: JsonObject;
 }
 
@@ -91,13 +84,17 @@ export const pluginManifestJsonSchema = {
   required: ["id", "name", "version", "sdkVersion", "kind", "capabilities", "permissions"],
   additionalProperties: true,
   properties: {
-    id: { type: "string", pattern: "^[a-z0-9]+(\\.[a-z0-9-]+)+$" },
+    id: {
+      type: "string",
+      pattern: "^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?)+$",
+    },
     name: { type: "string", minLength: 1 },
     version: { type: "string", minLength: 1 },
     sdkVersion: { type: "string", minLength: 1 },
-    kind: { enum: ["in-process", "external-service", "wasm"] },
+    kind: { enum: ["sandboxed", "in-process", "external-service", "wasm"] },
     main: { type: ["string", "null"] },
     endpoint: { type: ["string", "null"] },
+    composeRecipe: { type: ["string", "null"] },
     dependencies: {
       type: "array",
       items: {
@@ -107,7 +104,11 @@ export const pluginManifestJsonSchema = {
             type: "object",
             required: ["id"],
             properties: {
-              id: { type: "string", minLength: 1 },
+              id: {
+                type: "string",
+                pattern:
+                  "^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?)+$",
+              },
               version: { type: "string" },
               optional: { type: "boolean" },
             },
@@ -143,21 +144,34 @@ export function validatePluginManifest(value: unknown): ManifestValidationResult
     return { valid: false, issues: [{ path: "$", message: "manifest must be an object" }] };
   }
 
-  requireString(value, "id", issues);
+  if (!isCanonicalPluginId(value.id)) {
+    issues.push({ path: "$.id", message: "must be a canonical dotted plugin id" });
+  }
   requireString(value, "name", issues);
   requireString(value, "version", issues);
   requireString(value, "sdkVersion", issues);
 
   const kind = value.kind;
-  if (kind !== "in-process" && kind !== "external-service" && kind !== "wasm") {
-    issues.push({ path: "$.kind", message: "kind must be in-process, external-service, or wasm" });
+  if (
+    kind !== "sandboxed" &&
+    kind !== "in-process" &&
+    kind !== "external-service" &&
+    kind !== "wasm"
+  ) {
+    issues.push({
+      path: "$.kind",
+      message: "kind must be sandboxed, in-process, external-service, or wasm",
+    });
   }
 
   validateCapabilities(value.capabilities, issues);
   validatePermissions(value.permissions, issues);
   validateDependencies(value.dependencies, issues);
+  validateArtifactPath(value.main, "$.main", issues);
+  validateArtifactPath(value.composeRecipe, "$.composeRecipe", issues);
+  validateArtifactPath(value.migrations, "$.migrations", issues);
+  validateArtifactPath(value.policies, "$.policies", issues);
   validateTierRequirements(value.tierRequirements, issues);
-  validateSignature(value.signature, issues);
 
   return { valid: issues.length === 0, issues };
 }
@@ -217,8 +231,8 @@ function validateDependencies(value: unknown, issues: ManifestValidationIssue[])
   value.forEach((dependency, index) => {
     const path = `$.dependencies[${String(index)}]`;
     if (typeof dependency === "string") {
-      if (dependency.length === 0) {
-        issues.push({ path, message: "must be a non-empty string" });
+      if (!isCanonicalPluginId(dependency)) {
+        issues.push({ path, message: "must be a canonical dotted plugin id" });
       }
       return;
     }
@@ -228,8 +242,8 @@ function validateDependencies(value: unknown, issues: ManifestValidationIssue[])
       return;
     }
 
-    if (typeof dependency.id !== "string" || dependency.id.length === 0) {
-      issues.push({ path: `${path}.id`, message: "must be a non-empty string" });
+    if (!isCanonicalPluginId(dependency.id)) {
+      issues.push({ path: `${path}.id`, message: "must be a canonical dotted plugin id" });
     }
     if (dependency.version !== undefined && typeof dependency.version !== "string") {
       issues.push({ path: `${path}.version`, message: "must be a string" });
@@ -276,37 +290,19 @@ function validateTierRequirements(value: unknown, issues: ManifestValidationIssu
   }
 }
 
-function validateSignature(value: unknown, issues: ManifestValidationIssue[]): void {
+function validateArtifactPath(
+  value: unknown,
+  path: string,
+  issues: ManifestValidationIssue[],
+): void {
   if (value === undefined) {
     return;
   }
-  if (!isJsonObject(value)) {
-    issues.push({ path: "$.signature", message: "must be an object" });
+  if (value === null) {
     return;
   }
-  requireOptionalString(value, "bundleDigest", "$.signature.bundleDigest", issues);
-  requireOptionalString(value, "sigstoreBundle", "$.signature.sigstoreBundle", issues);
-  requireOptionalString(value, "signerIdentity", "$.signature.signerIdentity", issues);
-  requireOptionalString(value, "signedAt", "$.signature.signedAt", issues);
-
-  if (typeof value.bundleDigest === "string" && !isSha256Digest(value.bundleDigest)) {
-    issues.push({
-      path: "$.signature.bundleDigest",
-      message: "must be a sha256:<64 lowercase hex> digest",
-    });
-  }
-  if (
-    typeof value.signerIdentity === "string" &&
-    !isHttpsUrl(value.signerIdentity) &&
-    !isEmailIdentity(value.signerIdentity)
-  ) {
-    issues.push({
-      path: "$.signature.signerIdentity",
-      message: "must be an HTTPS URL or email identity",
-    });
-  }
-  if (typeof value.signedAt === "string" && Number.isNaN(Date.parse(value.signedAt))) {
-    issues.push({ path: "$.signature.signedAt", message: "must be an ISO date-time string" });
+  if (typeof value !== "string" || !isSafeArtifactPath(value)) {
+    issues.push({ path, message: "must be a normalized relative artifact path" });
   }
 }
 
@@ -322,35 +318,26 @@ function requireStringArray(
   }
 }
 
-function requireOptionalString(
-  value: Record<string, unknown>,
-  key: string,
-  path: string,
-  issues: ManifestValidationIssue[],
-): void {
-  if (value[key] !== undefined && typeof value[key] !== "string") {
-    issues.push({ path, message: "must be a string" });
-  }
-}
-
 function isSecurityTier(value: unknown): value is SecurityTier {
   return (
     value === "personal" || value === "business" || value === "enterprise" || value === "sovereign"
   );
 }
 
-function isSha256Digest(value: string): boolean {
-  return /^sha256:[0-9a-f]{64}$/u.test(value);
+export function isCanonicalPluginId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?)+$/u.test(value)
+  );
 }
 
-function isHttpsUrl(value: string): boolean {
-  try {
-    return new URL(value).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function isEmailIdentity(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value);
+function isSafeArtifactPath(value: string): boolean {
+  return (
+    value.length > 0 &&
+    !value.startsWith("/") &&
+    !value.startsWith("\\") &&
+    !/^[A-Za-z]:[\\/]/u.test(value) &&
+    !value.includes("\\") &&
+    value.split("/").every((segment) => segment.length > 0 && segment !== "..")
+  );
 }

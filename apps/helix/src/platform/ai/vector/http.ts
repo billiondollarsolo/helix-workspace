@@ -1,4 +1,5 @@
 import type { JsonObject } from "@helix/sdk-types";
+import { outboundFetch } from "../../outbound-http.js";
 import type { VectorMatch } from "./types.js";
 
 export interface HttpVectorAdapterConfig {
@@ -17,10 +18,8 @@ export class VectorHttpError extends Error {
   constructor(
     readonly adapterId: string,
     readonly status: number,
-    readonly statusText: string,
-    readonly body: string,
   ) {
-    super(`${adapterId} vector request failed with ${String(status)} ${statusText}`);
+    super(`${adapterId} vector request failed with HTTP ${String(status)}`);
     this.name = "VectorHttpError";
   }
 }
@@ -33,7 +32,7 @@ export function normalizeHttpConfig(config: HttpVectorAdapterConfig): Normalized
   return {
     baseUrl: new URL(config.baseUrl),
     ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
-    fetch: config.fetch ?? fetch,
+    fetch: config.fetch ?? outboundFetch,
   };
 }
 
@@ -55,10 +54,11 @@ export async function requestJson(
     headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  const text = await response.text();
   if (!response.ok) {
-    throw new VectorHttpError(adapterId, response.status, response.statusText, text);
+    await response.body?.cancel().catch(() => undefined);
+    throw new VectorHttpError(adapterId, response.status);
   }
+  const text = await response.text();
   if (text.length === 0) {
     return null;
   }
@@ -85,7 +85,9 @@ export function optionalVector(value: unknown): readonly number[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
   }
-  const numbers = value.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+  const numbers = value.filter(
+    (item): item is number => typeof item === "number" && Number.isFinite(item),
+  );
   return numbers.length === value.length ? numbers : undefined;
 }
 

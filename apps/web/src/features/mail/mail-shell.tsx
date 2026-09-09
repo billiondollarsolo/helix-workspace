@@ -25,6 +25,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { SurfaceFrame } from "@/components/shell";
 import { Dialog } from "@/components/ui/helix-dialog";
 import { useUnsavedChangesWarning } from "@/lib/use-unsaved-changes-warning";
+import { trashDriveObject, uploadDriveFile } from "@/features/drive/api";
 import {
   applyMailLabels,
   archiveMailThread,
@@ -32,12 +33,16 @@ import {
   createMailFilter,
   deleteMailThread,
   replyToMail,
+  restoreMailThread,
   saveMailDraft,
   sendMail,
   setMailThreadRead,
   setMailThreadStarred,
   snoozeMailThread,
   spamMailThread,
+  unarchiveMailThread,
+  unsnoozeMailThread,
+  validateMailAttachmentSelection,
   type MailAttachment,
   type MailFolderKey,
   type MailFolderSummary,
@@ -55,6 +60,7 @@ import {
   mailThreadsQueryOptions,
 } from "./queries";
 import { useMailRealtime } from "./use-mail-realtime";
+import { MailHtmlBody } from "./mail-html-body";
 import {
   clearMailComposeRecovery,
   hasMailComposeContent,
@@ -92,6 +98,20 @@ const FOLDER_ORDER: readonly MailFolderKey[] = [
   "archive",
   "trash",
 ];
+
+function restoreActionLabel(folder: MailFolderKey): string | null {
+  if (folder === "trash") return "Restore";
+  if (folder === "archive") return "Unarchive";
+  if (folder === "snoozed") return "Unsnooze";
+  return null;
+}
+
+function reverseMailboxState(folder: MailFolderKey, threadId: string): Promise<void> {
+  if (folder === "trash") return restoreMailThread(threadId);
+  if (folder === "archive") return unarchiveMailThread(threadId);
+  if (folder === "snoozed") return unsnoozeMailThread(threadId);
+  return Promise.resolve();
+}
 
 /** Renders an ISO timestamp into a compact, mailbox-style display string. */
 function formatThreadTime(value: string): string {
@@ -198,10 +218,6 @@ function MailSidebar({
             </button>
           );
         })}
-        <button type="button" className="surf-nav-row" style={{ color: "var(--text-3)" }}>
-          <Icons.Plus />
-          <span className="label">New label</span>
-        </button>
         <div className="surf-section-label">Filters</div>
         <div style={{ padding: "0 var(--nav-row-px)" }}>
           <span className="chip">has:attachment</span>
@@ -224,6 +240,8 @@ interface ThreadRowProps {
   readonly onArchive: () => void;
   readonly onDelete: () => void;
   readonly onSnooze: () => void;
+  readonly restoreLabel: string | null;
+  readonly onRestore: () => void;
   readonly onToggleRead: () => void;
   readonly busy: boolean;
 }
@@ -239,6 +257,8 @@ function ThreadRow({
   onArchive,
   onDelete,
   onSnooze,
+  restoreLabel,
+  onRestore,
   onToggleRead,
   busy,
 }: ThreadRowProps) {
@@ -382,6 +402,22 @@ function ThreadRow({
           role="toolbar"
           aria-label={`Actions for ${thread.subject}`}
         >
+          {restoreLabel !== null && (
+            <button
+              type="button"
+              className="mail-row-action-btn"
+              aria-label={restoreLabel}
+              title={restoreLabel}
+              tabIndex={0}
+              disabled={busy}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRestore();
+              }}
+            >
+              <Icons.Inbox />
+            </button>
+          )}
           <button
             type="button"
             className="mail-row-action-btn"
@@ -497,6 +533,7 @@ interface ThreadListProps {
   readonly onArchive: (threadId: string) => void;
   readonly onDelete: (threadId: string) => void;
   readonly onSnooze: (threadId: string) => void;
+  readonly onRestore: (threadId: string) => void;
   readonly onToggleRead: (thread: MailThreadRow) => void;
   // Bulk
   readonly checkedIds: ReadonlySet<string>;
@@ -600,6 +637,7 @@ function ThreadList({
   onArchive,
   onDelete,
   onSnooze,
+  onRestore,
   onToggleRead,
   checkedIds,
   onCheckedChange,
@@ -1182,6 +1220,10 @@ function ThreadList({
               onSnooze={() => {
                 onSnooze(thread.threadId);
               }}
+              restoreLabel={restoreActionLabel(folder)}
+              onRestore={() => {
+                onRestore(thread.threadId);
+              }}
               onToggleRead={() => {
                 onToggleRead(thread);
               }}
@@ -1207,6 +1249,8 @@ interface ThreadViewProps {
   readonly onArchive: () => void;
   readonly onDelete: () => void;
   readonly onSnooze: () => void;
+  readonly restoreLabel: string | null;
+  readonly onRestore: () => void;
   readonly onToggleLabel: () => void;
   readonly actionBusy: boolean;
   readonly actionError: string | null;
@@ -1222,11 +1266,12 @@ function ThreadView({
   onArchive,
   onDelete,
   onSnooze,
+  restoreLabel,
+  onRestore,
   onToggleLabel,
   actionBusy,
   actionError,
 }: ThreadViewProps) {
-  const [aiSummary, setAiSummary] = useState(false);
   const [replyMode, setReplyMode] = useState<ReplyMode | null>(null);
   const [replyText, setReplyText] = useState("");
   const [replyTo, setReplyTo] = useState("");
@@ -1325,6 +1370,18 @@ function ThreadView({
         >
           <Icons.Snooze />
         </button>
+        {restoreLabel !== null && (
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label={restoreLabel}
+            title={restoreLabel}
+            disabled={actionBusy}
+            onClick={onRestore}
+          >
+            <Icons.Inbox />
+          </button>
+        )}
         <div className="v-divider" style={{ height: 18, margin: "0 4px" }} />
         <button
           type="button"
@@ -1335,20 +1392,11 @@ function ThreadView({
         >
           <Icons.Tag />
         </button>
-        <button type="button" className="icon-btn" aria-label="More actions">
-          <Icons.MoreV />
-        </button>
         <span
           style={{ marginLeft: "auto", fontSize: "var(--text-caption)", color: "var(--text-3)" }}
         >
           {messages.length > 0 ? `${String(messages.length)} messages` : ""}
         </span>
-        <button type="button" className="icon-btn" aria-label="Previous conversation">
-          <Icons.ChevronLeft />
-        </button>
-        <button type="button" className="icon-btn" aria-label="Next conversation">
-          <Icons.ChevronRight />
-        </button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
         <div style={{ maxWidth: 880, margin: "0 auto", padding: "20px 32px" }}>
@@ -1394,59 +1442,6 @@ function ThreadView({
               style={{ marginBottom: 12, fontSize: "var(--text-caption)", color: "var(--danger)" }}
             >
               {actionError}
-            </div>
-          )}
-
-          <button
-            type="button"
-            className="btn sm"
-            style={{ marginBottom: 16 }}
-            onClick={() => {
-              setAiSummary((value) => !value);
-            }}
-          >
-            <Icons.Sparkles /> {aiSummary ? "Hide AI summary" : "Summarize with Helix AI"}
-          </button>
-          {aiSummary && (
-            <div
-              style={{
-                background: "var(--accent-soft)",
-                border: "1px solid var(--accent-soft-border)",
-                borderRadius: 8,
-                padding: 12,
-                fontSize: "var(--text-meta)",
-                marginBottom: 16,
-                lineHeight: 1.55,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontWeight: 600,
-                  marginBottom: 6,
-                  color: "var(--accent)",
-                }}
-              >
-                <Icons.Sparkles /> Summary
-              </div>
-              {senderName} is asking for sign-off on this thread. Key open items and requested next
-              steps are highlighted below — review before replying.
-              <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-                <button
-                  type="button"
-                  className="btn sm"
-                  onClick={() => {
-                    setReplyMode("reply");
-                  }}
-                >
-                  Draft reply
-                </button>
-                <button type="button" className="btn sm">
-                  Schedule meeting
-                </button>
-              </div>
             </div>
           )}
 
@@ -1534,15 +1529,24 @@ function ThreadView({
                         ? message.to.map((addr) => addr.name ?? addr.address).join(", ")
                         : "me"}
                     </div>
-                    <div
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        fontSize: "var(--text-body-sm)",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      {message.body}
-                    </div>
+                    {message.bodyFormat === "html" && message.source !== undefined ? (
+                      <MailHtmlBody
+                        html={message.body}
+                        source={message.source}
+                        plainBody={message.plainBody}
+                        remoteContentBlocked={message.remoteContentBlocked ?? false}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          fontSize: "var(--text-body-sm)",
+                          lineHeight: 1.6,
+                        }}
+                      >
+                        {message.body}
+                      </div>
+                    )}
                     {message.hasAttachment && (
                       <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
                         <div
@@ -1599,9 +1603,6 @@ function ThreadView({
               }}
             >
               <Icons.Forward /> Forward
-            </button>
-            <button type="button" className="btn">
-              <Icons.Sparkles /> Smart reply
             </button>
           </div>
 
@@ -1715,18 +1716,6 @@ function ThreadView({
                 >
                   <Icons.Send /> {replyMutation.isPending ? "Sending…" : "Send"}
                 </button>
-                <button type="button" className="icon-btn" aria-label="Attach">
-                  <Icons.Paperclip />
-                </button>
-                <button type="button" className="icon-btn" aria-label="Insert link">
-                  <Icons.Link />
-                </button>
-                <button type="button" className="icon-btn" aria-label="Emoji">
-                  <Icons.Smile />
-                </button>
-                <button type="button" className="icon-btn" aria-label="AI assist">
-                  <Icons.Sparkles />
-                </button>
                 <button
                   type="button"
                   className="btn ghost"
@@ -1756,50 +1745,40 @@ function parseRecipients(raw: string): MailSendInput["to"] {
   return recipientTokens(raw).map((address) => ({ address }));
 }
 
-/**
- * Reads a File into a base-64 string asynchronously.
- * Strips the "data:<type>;base64," prefix produced by FileReader so the
- * backend receives a plain base-64 payload.
- */
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        reject(new Error("FileReader did not return a string"));
-        return;
-      }
-      // "data:<mime>;base64,<data>" → keep only <data>
-      const comma = result.indexOf(",");
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => {
-      reject(reader.error ?? new Error("FileReader error"));
-    };
-    reader.readAsDataURL(file);
-  });
+function addressesText(addresses: readonly { readonly address: string }[] | undefined): string {
+  return addresses?.map(({ address }) => address).join(", ") ?? "";
 }
 
 function Compose({ onClose, onSent }: ComposeProps) {
   const [recoveredDraft] = useState(readMailComposeRecovery);
-  const [to, setTo] = useState(recoveredDraft?.to ?? "");
-  const [cc, setCc] = useState(recoveredDraft?.cc ?? "");
-  const [bcc, setBcc] = useState(recoveredDraft?.bcc ?? "");
+  const [to, setTo] = useState(addressesText(recoveredDraft?.to));
+  const [cc, setCc] = useState(addressesText(recoveredDraft?.cc));
+  const [bcc, setBcc] = useState(addressesText(recoveredDraft?.bcc));
   const [showCc, setShowCc] = useState((recoveredDraft?.cc.length ?? 0) > 0);
   const [showBcc, setShowBcc] = useState((recoveredDraft?.bcc.length ?? 0) > 0);
   const [subject, setSubject] = useState(recoveredDraft?.subject ?? "");
-  const [body, setBody] = useState(recoveredDraft?.body ?? "");
+  const [body, setBody] = useState(recoveredDraft?.bodyText ?? "");
+  const [sendAt, setSendAt] = useState("");
   const [showRecoveryNotice, setShowRecoveryNotice] = useState(recoveredDraft !== null);
   const [minimized, setMinimized] = useState(false);
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
   const [recipientError, setRecipientError] = useState<string | null>(null);
   const [sendFailed, setSendFailed] = useState(false);
-  const [attachments, setAttachments] = useState<readonly MailAttachment[]>([]);
-  const [draftId, setDraftId] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<readonly MailAttachment[]>(
+    recoveredDraft?.attachments ?? [],
+  );
+  const [attaching, setAttaching] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const draftRef = useRef<{ readonly id: string; readonly revision: number } | null>(
+    recoveredDraft?.id === undefined || recoveredDraft.expectedRevision === undefined
+      ? null
+      : { id: recoveredDraft.id, revision: recoveredDraft.expectedRevision },
+  );
+  const saveQueueRef = useRef(Promise.resolve());
   const [undo, setUndo] = useState<{
     readonly outboundId: string;
     readonly untilMs: number;
+    readonly scheduledAt?: string;
   } | null>(null);
   /** Drag-enter depth counter — incremented on dragenter, decremented on
    *  dragleave.  The overlay shows while > 0, which prevents flickering when
@@ -1808,13 +1787,22 @@ function Compose({ onClose, onSent }: ComposeProps) {
   const dragDepth = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachmentUploadRef = useRef<AbortController | null>(null);
   const toInputRef = useRef<HTMLInputElement>(null);
   const ccInputRef = useRef<HTMLInputElement>(null);
   const bccInputRef = useRef<HTMLInputElement>(null);
   const skipRecoveryFlushRef = useRef(false);
-  const hasDraft = hasMailComposeContent({ to, cc, bcc, subject, body }) || attachments.length > 0;
+  const canonicalDraft = {
+    to: parseRecipients(to),
+    cc: parseRecipients(cc),
+    bcc: parseRecipients(bcc),
+    subject,
+    bodyText: body,
+    attachments,
+  };
+  const hasDraft = hasMailComposeContent(canonicalDraft);
   const recoveryDebouncer = useDebouncer(
-    (draft: { to: string; cc: string; bcc: string; subject: string; body: string }) => {
+    (draft: typeof canonicalDraft) => {
       writeMailComposeRecovery(draft);
     },
     {
@@ -1836,12 +1824,18 @@ function Compose({ onClose, onSent }: ComposeProps) {
 
   useEffect(() => {
     if (hasDraft) {
-      recoveryDebouncer.maybeExecute({ to, cc, bcc, subject, body });
+      const current = draftRef.current;
+      recoveryDebouncer.maybeExecute({
+        ...canonicalDraft,
+        ...(current === null ? {} : { id: current.id, expectedRevision: current.revision }),
+      });
     } else {
       recoveryDebouncer.cancel();
       clearMailComposeRecovery();
     }
-  }, [bcc, body, cc, hasDraft, recoveryDebouncer, subject, to]);
+  }, [attachments, bcc, body, cc, hasDraft, recoveryDebouncer, subject, to]);
+
+  useEffect(() => () => attachmentUploadRef.current?.abort(), []);
 
   const sendMutation = useMutation({
     mutationFn: (input: MailSendInput) => sendMail(input),
@@ -1851,7 +1845,7 @@ function Compose({ onClose, onSent }: ComposeProps) {
     onError: () => {
       setSendFailed(true);
     },
-    onSuccess: (result: MailSendResult) => {
+    onSuccess: (result: MailSendResult, input: MailSendInput) => {
       skipRecoveryFlushRef.current = true;
       recoveryDebouncer.cancel();
       clearMailComposeRecovery();
@@ -1865,7 +1859,11 @@ function Compose({ onClose, onSent }: ComposeProps) {
       ) {
         const untilMs = Date.parse(undoUntil);
         if (Number.isFinite(untilMs) && untilMs > Date.now()) {
-          setUndo({ outboundId, untilMs });
+          setUndo({
+            outboundId,
+            untilMs,
+            ...(input.sendAt === undefined ? {} : { scheduledAt: input.sendAt }),
+          });
           return;
         }
       }
@@ -1874,8 +1872,12 @@ function Compose({ onClose, onSent }: ComposeProps) {
   });
 
   const cancelMutation = useMutation({
-    onMutate: () => undefined,
-    onError: () => undefined,
+    onMutate: () => {
+      setAttachmentError(null);
+    },
+    onError: (error: unknown) => {
+      setAttachmentError(error instanceof Error ? error.message : "Could not undo send.");
+    },
     mutationFn: (outboundId: string) => cancelOutboundMail(outboundId),
     onSuccess: () => {
       setUndo(null);
@@ -1884,31 +1886,30 @@ function Compose({ onClose, onSent }: ComposeProps) {
   });
 
   const saveDraft = useCallback(() => {
-    if (to.trim().length === 0 && subject.trim().length === 0 && body.trim().length === 0) {
-      return;
-    }
-    void saveMailDraft({
-      ...(draftId === null ? {} : { id: draftId }),
-      envelope: {
-        to: parseRecipients(to),
-        cc: parseRecipients(cc),
-        bcc: parseRecipients(bcc),
-        subject,
-        text: body,
-      },
-    }).then((saved) => {
-      const id =
-        typeof saved === "object" && saved !== null && "id" in saved && typeof saved.id === "string"
-          ? (saved as { id: string }).id
-          : null;
-      if (id !== null) {
-        setDraftId(id);
-      }
-    });
-  }, [bcc, body, cc, draftId, subject, to]);
+    if (!hasDraft) return;
+    const snapshot = canonicalDraft;
+    saveQueueRef.current = saveQueueRef.current
+      .then(async () => {
+        const current = draftRef.current;
+        const saved = await saveMailDraft({
+          ...snapshot,
+          to: [...snapshot.to],
+          cc: [...snapshot.cc],
+          bcc: [...snapshot.bcc],
+          attachments: [...snapshot.attachments],
+          idempotencyKey: crypto.randomUUID(),
+          ...(current === null ? {} : { id: current.id, expectedRevision: current.revision }),
+        });
+        draftRef.current = { id: saved.id, revision: saved.revision };
+        writeMailComposeRecovery({ ...snapshot, id: saved.id, expectedRevision: saved.revision });
+      })
+      .catch((error: unknown) => {
+        setAttachmentError(error instanceof Error ? error.message : "Draft save failed.");
+      });
+  }, [attachments, bcc, body, cc, hasDraft, subject, to]);
 
   const recipients = parseRecipients(to);
-  const canSend = !sendMutation.isPending;
+  const canSend = !sendMutation.isPending && !attaching;
 
   const handleSend = useCallback(() => {
     if (recipients.length === 0) {
@@ -1938,9 +1939,10 @@ function Compose({ onClose, onSent }: ComposeProps) {
       bcc: parseRecipients(bcc),
       subject,
       bodyText: body,
+      ...(sendAt === "" ? {} : { sendAt: new Date(sendAt).toISOString() }),
       attachments: attachments.length > 0 ? attachments : undefined,
     });
-  }, [attachments, bcc, body, cc, recipients, sendMutation, subject, to]);
+  }, [attachments, bcc, body, cc, recipients, sendAt, sendMutation, subject, to]);
 
   const requestClose = useCallback(() => {
     if (hasDraft) {
@@ -1951,30 +1953,64 @@ function Compose({ onClose, onSent }: ComposeProps) {
   }, [hasDraft, onClose]);
 
   const discardDraft = useCallback(() => {
+    attachmentUploadRef.current?.abort();
+    for (const attachment of attachments) void trashDriveObject(attachment.objectId);
     skipRecoveryFlushRef.current = true;
     recoveryDebouncer.cancel();
     clearMailComposeRecovery();
     setConfirmDiscardOpen(false);
     onClose();
-  }, [onClose, recoveryDebouncer]);
+  }, [attachments, onClose, recoveryDebouncer]);
 
   /** Convert a FileList (from picker or drop) into MailAttachment records and
    *  append them to the current attachment list. */
-  const attachFiles = useCallback(async (files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const resolved = await Promise.all(
-      fileArray.map(async (file) => {
-        const content = await fileToBase64(file);
-        const attachment: MailAttachment = {
-          filename: file.name,
-          contentType: file.type !== "" ? file.type : "application/octet-stream",
-          content,
-        };
-        return attachment;
-      }),
-    );
-    setAttachments((prev) => [...prev, ...resolved]);
-  }, []);
+  const attachFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const selected = Array.from(files);
+      const policyError = validateMailAttachmentSelection(attachments, selected);
+      if (policyError !== null) {
+        setAttachmentError(policyError);
+        return;
+      }
+      attachmentUploadRef.current?.abort();
+      const controller = new AbortController();
+      attachmentUploadRef.current = controller;
+      setAttaching(true);
+      setAttachmentError(null);
+      try {
+        for (const file of selected) {
+          const uploaded = await uploadDriveFile({
+            file,
+            folderId: null,
+            signal: controller.signal,
+          });
+          setAttachments((prev) => [
+            ...prev,
+            {
+              filename: file.name,
+              contentType: file.type !== "" ? file.type : "application/octet-stream",
+              objectId: uploaded.objectId,
+              byteSize: file.size,
+            },
+          ]);
+        }
+      } catch (error) {
+        setAttachmentError(
+          controller.signal.aborted
+            ? "Attachment upload cancelled; selecting the same file will resume it."
+            : error instanceof Error
+              ? error.message
+              : "Attachment upload failed.",
+        );
+      } finally {
+        if (attachmentUploadRef.current === controller) {
+          attachmentUploadRef.current = null;
+          setAttaching(false);
+        }
+      }
+    },
+    [attachments],
+  );
 
   const handleDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -2025,7 +2061,15 @@ function Compose({ onClose, onSent }: ComposeProps) {
   );
 
   const removeAttachment = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, idx) => idx !== index));
+    setAttachments((prev) => {
+      const removed = prev[index];
+      if (removed !== undefined) {
+        void trashDriveObject(removed.objectId).catch((error: unknown) => {
+          setAttachmentError(error instanceof Error ? error.message : "Attachment cleanup failed.");
+        });
+      }
+      return prev.filter((_, idx) => idx !== index);
+    });
   }, []);
 
   return (
@@ -2248,6 +2292,19 @@ function Compose({ onClose, onSent }: ComposeProps) {
                 }}
               />
             </div>
+            <label
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
+            >
+              <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 72 }}>
+                Send later
+              </span>
+              <input
+                type="datetime-local"
+                aria-label="Send later"
+                value={sendAt}
+                onChange={(event) => setSendAt(event.target.value)}
+              />
+            </label>
           </div>
           <textarea
             name="mail-compose-body"
@@ -2277,6 +2334,20 @@ function Compose({ onClose, onSent }: ComposeProps) {
               {recipientError}
             </p>
           )}
+          {attachmentError === null ? null : (
+            <p className="compose-inline-error" role="alert">
+              {attachmentError}
+            </p>
+          )}
+          {attaching ? (
+            <button
+              type="button"
+              className="btn secondary"
+              onClick={() => attachmentUploadRef.current?.abort()}
+            >
+              Cancel attachment upload
+            </button>
+          ) : null}
           {attachments.length > 0 && (
             <div className="compose-attachments" aria-label="Attached files">
               {attachments.map((attachment, index) => (
@@ -2314,7 +2385,11 @@ function Compose({ onClose, onSent }: ComposeProps) {
                 fontSize: "var(--text-body-sm)",
               }}
             >
-              <span>Message queued — you can undo send for a few seconds.</span>
+              <span>
+                {undo.scheduledAt === undefined
+                  ? "Message queued — you can undo send for a few seconds."
+                  : `Message scheduled for ${new Date(undo.scheduledAt).toLocaleString()}.`}
+              </span>
               <button
                 type="button"
                 onClick={() => {
@@ -2353,70 +2428,19 @@ function Compose({ onClose, onSent }: ComposeProps) {
                 disabled={!canSend}
                 onClick={handleSend}
               >
-                <Icons.Send /> {sendMutation.isPending ? "Sending…" : "Send"}
-              </button>
-              <button
-                type="button"
-                className="btn primary icon"
-                aria-label="Schedule send unavailable"
-                aria-description="Scheduled send is not connected in this build yet."
-                title="Scheduled send is not connected in this build yet."
-                disabled
-                style={{
-                  borderLeft: "1px solid rgba(255,255,255,0.2)",
-                  marginLeft: 1,
-                  borderRadius: "0 6px 6px 0",
-                }}
-              >
-                <Icons.ChevronDown />
+                <Icons.Send /> {sendMutation.isPending ? "Sending…" : sendAt === "" ? "Send" : "Schedule"}
               </button>
             </div>
             <button
               type="button"
               className="icon-btn"
               aria-label="Attach"
+              disabled={attaching}
               onClick={() => {
                 fileInputRef.current?.click();
               }}
             >
               <Icons.Paperclip />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Insert link unavailable"
-              aria-description="Rich compose tools are not connected in this build yet."
-              title="Rich compose tools are not connected in this build yet."
-              disabled
-            >
-              <Icons.Link />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Emoji unavailable"
-              title="Emoji insertion is not connected in this build yet."
-              disabled
-            >
-              <Icons.Smile />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Insert image unavailable"
-              title="Use Attach to add an image in this build."
-              disabled
-            >
-              <Icons.Image />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="AI assist unavailable"
-              title="AI compose assistance is not connected in this build yet."
-              disabled
-            >
-              <Icons.Sparkles />
             </button>
             <button
               type="button"
@@ -2613,6 +2637,18 @@ export function MailShell() {
     },
   });
 
+  const restoreMutation = useMutation({
+    mutationFn: (threadId: string) => reverseMailboxState(folder, threadId),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not restore the thread. Try again.");
+    },
+    onSuccess: () => {
+      invalidateLists();
+      setSelected(null);
+    },
+  });
+
   const readMutation = useMutation({
     mutationFn: (input: { readonly threadId: string; readonly unread: boolean }) =>
       setMailThreadRead(input),
@@ -2696,6 +2732,13 @@ export function MailShell() {
       snoozeMutation.mutate(threadId);
     },
     [snoozeMutation],
+  );
+
+  const handleRowRestore = useCallback(
+    (threadId: string) => {
+      restoreMutation.mutate(threadId);
+    },
+    [restoreMutation],
   );
 
   const handleRowToggleRead = useCallback(
@@ -2828,6 +2871,7 @@ export function MailShell() {
     archiveMutation.isPending ||
     deleteMutation.isPending ||
     snoozeMutation.isPending ||
+    restoreMutation.isPending ||
     labelMutation.isPending ||
     spamMutation.isPending;
 
@@ -2842,11 +2886,6 @@ export function MailShell() {
           setQuery(next);
           setOffset(0);
         }}
-        actions={
-          <button type="button" className="btn">
-            <Icons.Filter /> Filters
-          </button>
-        }
       >
         <div style={{ display: "contents" }}>
           <MailSidebar
@@ -2888,6 +2927,10 @@ export function MailShell() {
               }}
               onSnooze={() => {
                 snoozeMutation.mutate(selectedRow.threadId);
+              }}
+              restoreLabel={restoreActionLabel(folder)}
+              onRestore={() => {
+                restoreMutation.mutate(selectedRow.threadId);
               }}
               onToggleLabel={() => {
                 const firstLabel = labels[0];
@@ -2942,6 +2985,7 @@ export function MailShell() {
               onArchive={handleRowArchive}
               onDelete={handleRowDelete}
               onSnooze={handleRowSnooze}
+              onRestore={handleRowRestore}
               onToggleRead={handleRowToggleRead}
               checkedIds={checkedIds}
               onCheckedChange={setCheckedIds}

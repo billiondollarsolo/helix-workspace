@@ -1,4 +1,5 @@
 import { getCryptoProvider } from "../crypto/index.js";
+import type { ActorRoleBinding } from "@helix/sdk-types";
 
 /**
  * Expanded agent credential model (PRD §9.2).
@@ -11,6 +12,7 @@ import { getCryptoProvider } from "../crypto/index.js";
  */
 
 export type AgentCredentialType = "oauth_client" | "api_key" | "mtls_cert";
+export type NonHumanPrincipalType = "agent" | "service_account";
 
 /**
  * Per-credential override for the tier confirmation gate. `"always"` forces
@@ -55,6 +57,7 @@ export interface AgentCredentialRecord {
   readonly actorId: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
+  readonly roleBindings?: readonly ActorRoleBinding[];
   /** Present for `oauth_client` credentials. */
   readonly clientId: string | null;
   /** Present for `oauth_client` credentials (PHC argon2id hash). */
@@ -81,6 +84,56 @@ export const EMPTY_CREDENTIAL_POLICY: AgentCredentialPolicy = {
 export interface AgentCredentialStore {
   findByApiKeyHash(apiKeyHash: string): Promise<AgentCredentialRecord | null>;
   findByCertFingerprint(fingerprint: string): Promise<AgentCredentialRecord | null>;
+  markUsed?(credentialId: string, usedAt: Date): Promise<void>;
+}
+
+export interface AgentCredentialInventoryRecord extends AgentCredentialRecord {
+  readonly principalType: NonHumanPrincipalType;
+  readonly ownerActorId: string;
+  readonly purpose: string;
+  readonly createdAt: Date;
+  readonly rotatedAt: Date | null;
+  readonly lastUsedAt: Date | null;
+}
+
+export interface IssueAgentCredentialInput {
+  readonly orgId: string;
+  readonly operatorActorId: string;
+  readonly principalActorId: string;
+  readonly credentialType: AgentCredentialType;
+  readonly label: string;
+  readonly purpose: string;
+  readonly scopes: readonly string[];
+  readonly expiresAt: Date;
+  readonly clientId?: string;
+  readonly secretHash?: string;
+  readonly apiKeyHash?: string;
+  readonly certFingerprint?: string;
+}
+
+export interface RotateAgentCredentialInput {
+  readonly orgId: string;
+  readonly operatorActorId: string;
+  readonly credentialId: string;
+  readonly expiresAt: Date;
+  readonly secretHash?: string;
+  readonly apiKeyHash?: string;
+  readonly certFingerprint?: string;
+}
+
+export interface AgentCredentialLifecycleStore extends AgentCredentialStore {
+  issue(input: IssueAgentCredentialInput): Promise<AgentCredentialInventoryRecord>;
+  list(input: {
+    readonly orgId: string;
+    readonly principalActorId?: string;
+    readonly includeRevoked: boolean;
+  }): Promise<readonly AgentCredentialInventoryRecord[]>;
+  rotate(input: RotateAgentCredentialInput): Promise<AgentCredentialInventoryRecord | null>;
+  revoke(input: {
+    readonly orgId: string;
+    readonly operatorActorId: string;
+    readonly credentialId: string;
+  }): Promise<AgentCredentialInventoryRecord | null>;
 }
 
 // --- API key hashing --------------------------------------------------------
@@ -181,7 +234,10 @@ export function enforceCredentialPolicy(
   }
 
   if (credential.policy.ipAllowlist.length > 0) {
-    if (context.ip === undefined || !ipMatchesAllowlist(context.ip, credential.policy.ipAllowlist)) {
+    if (
+      context.ip === undefined ||
+      !ipMatchesAllowlist(context.ip, credential.policy.ipAllowlist)
+    ) {
       return {
         ok: false,
         code: "ip_not_allowed",
@@ -214,7 +270,11 @@ export async function authenticateApiKey(
   context: CredentialRequestContext,
 ): Promise<
   | { readonly ok: true; readonly credential: AgentCredentialRecord }
-  | { readonly ok: false; readonly code: CredentialEnforcementCode | "invalid_api_key"; readonly message: string }
+  | {
+      readonly ok: false;
+      readonly code: CredentialEnforcementCode | "invalid_api_key";
+      readonly message: string;
+    }
 > {
   const credential = await store.findByApiKeyHash(hashApiKey(apiKey));
   if (credential === null || credential.credentialType !== "api_key") {
@@ -224,6 +284,7 @@ export async function authenticateApiKey(
   if (!enforcement.ok) {
     return enforcement;
   }
+  await store.markUsed?.(credential.id, context.at ?? new Date());
   return { ok: true, credential };
 }
 
@@ -237,7 +298,11 @@ export async function authenticateMtlsCertificate(
   context: CredentialRequestContext,
 ): Promise<
   | { readonly ok: true; readonly credential: AgentCredentialRecord }
-  | { readonly ok: false; readonly code: CredentialEnforcementCode | "invalid_certificate"; readonly message: string }
+  | {
+      readonly ok: false;
+      readonly code: CredentialEnforcementCode | "invalid_certificate";
+      readonly message: string;
+    }
 > {
   const normalized = normalizeCertFingerprint(fingerprint);
   if (normalized.length === 0) {
@@ -258,6 +323,7 @@ export async function authenticateMtlsCertificate(
   if (!enforcement.ok) {
     return enforcement;
   }
+  await store.markUsed?.(credential.id, context.at ?? new Date());
   return { ok: true, credential };
 }
 
@@ -444,8 +510,5 @@ export function createApiKeyMaterial(): ApiKeyCreateResult {
 }
 
 function timingSafeStringEquals(left: string, right: string): boolean {
-  return getCryptoProvider().timingSafeEqual(
-    Buffer.from(left, "utf8"),
-    Buffer.from(right, "utf8"),
-  );
+  return getCryptoProvider().timingSafeEqual(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }

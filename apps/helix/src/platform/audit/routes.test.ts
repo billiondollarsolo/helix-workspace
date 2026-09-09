@@ -1,7 +1,8 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import { actorFromRequest } from "../../api/actor.js";
+import { actorFromRequest } from "../../api/test-actor.js";
 import {
+  canReadAuditLog,
   decodeAuditLogCursor,
   encodeAuditLogCursor,
   registerAuditLogAdminRoutes,
@@ -15,6 +16,25 @@ const actorId = "11111111-1111-4111-8111-111111111111";
 const objectId = "33333333-3333-4333-8333-333333333333";
 
 describe("admin audit log routes", () => {
+  it("consumes the audit-admin role binding", () => {
+    expect(
+      canReadAuditLog({
+        id: actorId,
+        orgId,
+        type: "user",
+        scopes: [],
+        roleBindings: [
+          {
+            roleId: "77777777-7777-4777-8777-777777777777",
+            allow: ["admin.audit"],
+            deny: [],
+            scope: { type: "org" },
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
   it("returns org-scoped audit records with filters and cursor pagination", async () => {
     const store = new FakeAuditLogStore([
       auditRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"),

@@ -1,11 +1,6 @@
-/**
- * Thin multipart-upload helpers for resumable Drive uploads.
- * Full S3 CreateMultipartUpload / UploadPart / Complete wiring is a follow-up;
- * these pure helpers plan part boundaries and shape complete-upload payloads.
- */
-
 export const DEFAULT_MULTIPART_PART_SIZE = 8 * 1024 * 1024; // 8 MiB
 export const DEFAULT_MULTIPART_THRESHOLD = 8 * 1024 * 1024;
+export const MAX_MULTIPART_PARTS = 1_000;
 
 export interface MultipartPartPlan {
   readonly partNumber: number;
@@ -41,11 +36,18 @@ export function shouldUseMultipartUpload(
 export function planMultipartParts(
   byteSize: number,
   partSize: number = DEFAULT_MULTIPART_PART_SIZE,
+  maxParts: number = MAX_MULTIPART_PARTS,
 ): MultipartUploadPlan {
   if (byteSize <= 0) {
     return { partSize, partCount: 0, parts: [] };
   }
   const safePartSize = Math.max(1, partSize);
+  const partCount = Math.ceil(byteSize / safePartSize);
+  if (partCount > maxParts) {
+    throw new RangeError(
+      `Multipart upload requires ${String(partCount)} parts; maximum is ${String(maxParts)}.`,
+    );
+  }
   const parts: MultipartPartPlan[] = [];
   let offset = 0;
   let partNumber = 1;
@@ -62,7 +64,7 @@ export function planMultipartParts(
   }
   return {
     partSize: safePartSize,
-    partCount: parts.length,
+    partCount,
     parts,
   };
 }

@@ -8,6 +8,7 @@ import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
 import { MeetHub } from "./meet-hub";
 import { MeetCall } from "./meet-call";
+import type { MeetControlState } from "./api";
 
 /** An active call session — a real backend room plus its minted join token. */
 export interface MeetCallSession {
@@ -20,6 +21,16 @@ export interface MeetCallSession {
   readonly token: string | null;
   /** Full Jitsi join URL (with `?jwt=`), when minted. */
   readonly joinUrl: string | null;
+  /** Live Jibri readiness sampled when the join token was minted. */
+  readonly recordingAvailable: boolean;
+  /** Server-proven moderator capability; participants never receive a start control. */
+  readonly canStartRecording: boolean;
+  /** Recording disclosure version accepted before this join token was issued. */
+  readonly recordingNoticeVersion: string;
+  /** Authoritative server state used to warn late joiners before Jitsi emits an event. */
+  readonly recordingActive: boolean;
+  readonly controls: MeetControlState;
+  readonly canModerate: boolean;
   /** Wall-clock start (epoch ms) for the elapsed timer. */
   readonly startedAtMs: number;
 }

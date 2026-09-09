@@ -1,0 +1,39 @@
+apiVersion: 1
+
+deleteDatasources:
+  - { name: Loki, orgId: 1 }
+  - { name: Tempo, orgId: 1 }
+
+datasources:
+  - name: Tempo
+    uid: Tempo
+    type: tempo
+    access: proxy
+    url: https://tempo.helix-observability.svc.cluster.local:3200
+    editable: false
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+      tlsAuth: true
+      tlsAuthWithCACert: true
+    secureJsonData:
+      httpHeaderValue1: ${HELIX_OBSERVABILITY_TENANT_ID}
+      tlsCACert: ${OBSERVABILITY_BACKEND_CA_PEM}
+      tlsClientCert: ${GRAFANA_CLIENT_CERT_PEM}
+      tlsClientKey: ${GRAFANA_CLIENT_KEY_PEM}
+
+  - name: Loki
+    uid: Loki
+    type: loki
+    access: proxy
+    url: https://loki.helix-observability.svc.cluster.local:3100
+    editable: false
+    jsonData:
+      httpHeaderName1: X-Scope-OrgID
+      tlsAuth: true
+      tlsAuthWithCACert: true
+      maxLines: 5000
+    secureJsonData:
+      httpHeaderValue1: ${HELIX_OBSERVABILITY_TENANT_ID}
+      tlsCACert: ${OBSERVABILITY_BACKEND_CA_PEM}
+      tlsClientCert: ${GRAFANA_CLIENT_CERT_PEM}
+      tlsClientKey: ${GRAFANA_CLIENT_KEY_PEM}

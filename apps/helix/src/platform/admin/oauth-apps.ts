@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -147,13 +147,14 @@ const idParams = z.object({ id: z.string().uuid() });
 export interface RegisterAdminOAuthAppsRoutesOptions {
   readonly store: OAuthAppsStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
-  readonly auditSink?: AdminConsoleAuditSink | undefined;
+  readonly auditSink: AdminConsoleAuditSink;
   /**
    * Optional hook invoked after a row is revoked, carrying the row's
    * `clientId` (if any) so the lead can revoke the matching OAuth credential.
    */
   readonly onRevoke?: (input: {
     readonly orgId: string;
+    readonly actorId: string;
     readonly app: OAuthAppRecord;
   }) => Promise<void> | void;
 }
@@ -299,7 +300,7 @@ export async function registerAdminOAuthAppsRoutes(
       return reply.code(404).send(notFound("OAuth app not found."));
     }
     if (onRevoke !== undefined) {
-      await onRevoke({ orgId: actor.orgId, app: oauthApp });
+      await onRevoke({ orgId: actor.orgId, actorId: actor.id, app: oauthApp });
     }
     await auditAdminAction(auditSink, {
       orgId: actor.orgId,
@@ -346,7 +347,7 @@ export class PostgresOAuthAppsStore implements OAuthAppsStore {
     const risk = input.risk ?? null;
     const query = input.query?.trim().toLowerCase() ?? null;
     const queryPattern = query === null ? null : `%${escapeLike(query)}%`;
-    const rows = (await this.sql`
+    const rows = await this.sql<OAuthAppRow[]>`
       select id, org_id, name, client_id, publisher, scopes, scope_summary,
              risk, status, user_count, first_authorized_at, last_authorized_at,
              reviewed_by, reviewed_at, created_at, updated_at
@@ -365,24 +366,24 @@ export class PostgresOAuthAppsStore implements OAuthAppsStore {
         )
       order by created_at desc, id desc
       limit ${input.limit}
-    `) as unknown as readonly OAuthAppRow[];
+    `;
     return rows.map(mapOAuthAppRow);
   }
 
   async get(orgId: string, id: string): Promise<OAuthAppRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OAuthAppRow[]>`
       select id, org_id, name, client_id, publisher, scopes, scope_summary,
              risk, status, user_count, first_authorized_at, last_authorized_at,
              reviewed_by, reviewed_at, created_at, updated_at
       from admin_oauth_apps
       where org_id = ${orgId} and id = ${id}
-    `) as unknown as readonly OAuthAppRow[];
+    `;
     const row = rows[0];
     return row === undefined ? null : mapOAuthAppRow(row);
   }
 
   async create(input: CreateOAuthAppInput): Promise<OAuthAppRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OAuthAppRow[]>`
       insert into admin_oauth_apps
         (org_id, name, client_id, publisher, scopes, scope_summary, risk, status, user_count)
       values
@@ -392,7 +393,7 @@ export class PostgresOAuthAppsStore implements OAuthAppsStore {
       returning id, org_id, name, client_id, publisher, scopes, scope_summary,
                 risk, status, user_count, first_authorized_at, last_authorized_at,
                 reviewed_by, reviewed_at, created_at, updated_at
-    `) as unknown as readonly OAuthAppRow[];
+    `;
     const row = rows[0];
     if (row === undefined) {
       throw new Error("Failed to create OAuth app.");
@@ -401,7 +402,7 @@ export class PostgresOAuthAppsStore implements OAuthAppsStore {
   }
 
   async setStatus(input: SetOAuthAppStatusInput): Promise<OAuthAppRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OAuthAppRow[]>`
       update admin_oauth_apps
       set status = ${input.status}, reviewed_by = ${input.reviewedBy},
           reviewed_at = now(), updated_at = now()
@@ -409,7 +410,7 @@ export class PostgresOAuthAppsStore implements OAuthAppsStore {
       returning id, org_id, name, client_id, publisher, scopes, scope_summary,
                 risk, status, user_count, first_authorized_at, last_authorized_at,
                 reviewed_by, reviewed_at, created_at, updated_at
-    `) as unknown as readonly OAuthAppRow[];
+    `;
     const row = rows[0];
     return row === undefined ? null : mapOAuthAppRow(row);
   }

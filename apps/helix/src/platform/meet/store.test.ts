@@ -1,11 +1,5 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import type {
-  MeteringClient,
-  MeteringEmitInput,
-  MeteringEvent,
-  TraceContext,
-} from "@helix/sdk-types";
 import { PostgresMeetStore } from "./store.js";
 
 interface RecordedQuery {
@@ -23,9 +17,10 @@ const objectId = "66666666-6666-4666-8666-666666666666";
 
 describe("Postgres Meet store recording attachments", () => {
   it("creates recording object state, attaches it to the call thread, and grants participant object access", async () => {
-    const metering = new RecordingMeteringClient();
     const recording = createRecordingSql([
+      [],
       [roomRow()],
+      [],
       [],
       [],
       [],
@@ -35,7 +30,7 @@ describe("Postgres Meet store recording attachments", () => {
       [],
       [],
     ]);
-    const store = new PostgresMeetStore(recording.sql, { metering });
+    const store = new PostgresMeetStore(recording.sql);
 
     const attachment = await store.attachRecording({
       orgId,
@@ -54,48 +49,34 @@ describe("Postgres Meet store recording attachments", () => {
       messageId,
       storageKey: "recordings/launch-review.mp4",
     });
-    expect(recording.calls[1]?.text).toContain("for update");
-    expect(recording.calls[2]?.text).toContain("o.storage_key");
-    expect(recording.calls[3]?.text).toContain("insert into objects");
-    expect(recording.calls[3]?.text).toContain("'recording'");
-    expect(recording.calls[4]?.text).toContain("insert into messages");
-    expect(recording.calls[4]?.values).toContain(threadId);
-    expect(recording.calls[5]?.text).toContain("insert into message_attachments");
-    expect(recording.calls[5]?.values).toContain(attachment?.objectId);
-    expect(recording.calls[6]?.text).toContain("insert into permissions");
-    expect(recording.calls[6]?.text).toContain("resource_type in ('meet_room', 'thread')");
-    expect(recording.calls[6]?.values).toContain(attachment?.objectId);
-    expect(recording.calls[6]?.values).toContain(roomId);
-    expect(recording.calls[6]?.values).toContain(threadId);
-    expect(metering.records).toEqual([
-      {
-        orgId,
-        event: {
-          type: "storage.delta",
-          quantity: 4096,
-          metadata: {
-            bucket: "meet_recordings",
-            byte_delta: 4096,
-          },
-        },
-      },
+    expect(recording.calls[0]?.text).toContain("set_config('helix.org_id'");
+    expect(recording.calls[2]?.text).toContain("for update");
+    expect(recording.calls[3]?.text).toContain("o.storage_key");
+    expect(recording.calls[4]?.text).toContain("insert into objects");
+    expect(recording.calls[4]?.text).toContain("'recording'");
+    expect(recording.calls[5]?.text).toContain("insert into meet_recording_governance");
+    expect(recording.calls[5]?.values).toEqual(
+      expect.arrayContaining([attachment?.objectId, roomId, threadId]),
+    );
+    expect(recording.calls[6]?.text).toContain("helix_commit_storage_usage");
+    expect(recording.calls[6]?.values).toEqual([
+      orgId,
+      attachment?.objectId,
+      4096,
+      "meet_recordings",
     ]);
-
-    const metadataJson = JSON.stringify(metering.records[0]?.event.metadata);
-    expect(metadataJson).not.toContain(roomId);
-    expect(metadataJson).not.toContain(threadId);
-    expect(metadataJson).not.toContain(String(attachment?.objectId));
-    expect(metadataJson).not.toContain(actorId);
-    expect(metadataJson).not.toContain("recordings/launch-review.mp4");
-    expect(metadataJson).not.toContain("Launch review");
-    expect(metadataJson).not.toContain("jibri");
+    expect(recording.calls[7]?.text).toContain("insert into messages");
+    expect(recording.calls[7]?.values).toContain(threadId);
+    expect(recording.calls[8]?.text).toContain("insert into message_attachments");
+    expect(recording.calls[8]?.values).toContain(attachment?.objectId);
+    expect(recording.calls.some((call) => call.text.includes("'object'"))).toBe(false);
   });
 
-  it("does not fail recording attachment when storage metering emission fails", async () => {
-    const errors: unknown[] = [];
-    const metering = new RecordingMeteringClient({ reject: true });
+  it("persists recording usage through the transactional quota function", async () => {
     const recording = createRecordingSql([
+      [],
       [roomRow()],
+      [],
       [],
       [],
       [],
@@ -105,12 +86,7 @@ describe("Postgres Meet store recording attachments", () => {
       [],
       [],
     ]);
-    const store = new PostgresMeetStore(recording.sql, {
-      metering,
-      onMeteringError(error) {
-        errors.push(error);
-      },
-    });
+    const store = new PostgresMeetStore(recording.sql);
 
     await expect(
       store.attachRecording({
@@ -125,15 +101,14 @@ describe("Postgres Meet store recording attachments", () => {
       threadId,
       messageId,
     });
-    await Promise.resolve();
-
-    expect(metering.records).toHaveLength(1);
-    expect(errors).toHaveLength(1);
+    expect(recording.calls.some((call) => call.text.includes("helix_commit_storage_usage"))).toBe(
+      true,
+    );
   });
 
   it("returns an existing recording attachment for duplicate completion payloads", async () => {
-    const metering = new RecordingMeteringClient();
     const recording = createRecordingSql([
+      [],
       [roomRow()],
       [],
       [
@@ -144,7 +119,7 @@ describe("Postgres Meet store recording attachments", () => {
         },
       ],
     ]);
-    const store = new PostgresMeetStore(recording.sql, { metering });
+    const store = new PostgresMeetStore(recording.sql);
 
     await expect(
       store.attachRecording({
@@ -162,15 +137,13 @@ describe("Postgres Meet store recording attachments", () => {
       storageKey: "recordings/launch-review.mp4",
     });
 
-    expect(recording.calls).toHaveLength(3);
-    expect(recording.calls[2]?.text).toContain("o.storage_key");
-    expect(metering.records).toEqual([]);
+    expect(recording.calls).toHaveLength(4);
+    expect(recording.calls[3]?.text).toContain("o.storage_key");
   });
 
-  it("does not emit storage metering when recording attachment cannot resolve a room", async () => {
-    const metering = new RecordingMeteringClient();
-    const recording = createRecordingSql([[]]);
-    const store = new PostgresMeetStore(recording.sql, { metering });
+  it("does not commit storage usage when recording attachment cannot resolve a room", async () => {
+    const recording = createRecordingSql([[], []]);
+    const store = new PostgresMeetStore(recording.sql);
 
     await expect(
       store.attachRecording({
@@ -182,7 +155,9 @@ describe("Postgres Meet store recording attachments", () => {
       }),
     ).resolves.toBeNull();
 
-    expect(metering.records).toHaveLength(0);
+    expect(recording.calls.some((call) => call.text.includes("helix_commit_storage_usage"))).toBe(
+      false,
+    );
   });
 
   it("loads recording artifact summaries with visible room lists", async () => {
@@ -224,6 +199,26 @@ describe("Postgres Meet store recording attachments", () => {
     expect(recording.calls[0]?.text).toContain("message_attachments");
     expect(recording.calls[0]?.text).toContain("o.kind = 'recording'");
   });
+
+  it("derives moderation from the authoritative same-org host/cohost state", async () => {
+    const recording = createRecordingSql([[{ id: roomId }]]);
+    const store = new PostgresMeetStore(recording.sql);
+
+    await expect(store.canModerateRoom({ orgId, actorId, roomId })).resolves.toBe(true);
+    expect(recording.calls[0]?.text).toContain("actor.org_id = r.org_id");
+    expect(recording.calls[0]?.text).toContain("actor.disabled_at is null");
+    expect(recording.calls[0]?.text).toContain("r.host_actor_id");
+    expect(recording.calls[0]?.text).toContain("any(r.cohost_actor_ids)");
+  });
+
+  it("does not end a room for an attendee without a moderator grant", async () => {
+    const recording = createRecordingSql([[]]);
+    const store = new PostgresMeetStore(recording.sql);
+
+    await expect(store.endRoom({ orgId, actorId, roomId })).resolves.toBeNull();
+    expect(recording.calls).toHaveLength(1);
+    expect(recording.calls[0]?.text).not.toContain("update meet_rooms");
+  });
 });
 
 function roomRow() {
@@ -251,7 +246,19 @@ function createRecordingSql(responses: readonly (readonly unknown[])[]): {
   const calls: RecordedQuery[] = [];
   const queue = [...responses];
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
+    const text = strings.join("$");
+    calls.push({ text, values });
+    if (text.includes("helix_commit_storage_usage")) {
+      return Promise.resolve([
+        {
+          accepted: true,
+          used_bytes: String(values[2]),
+          reserved_bytes: "0",
+          limit_bytes: null,
+          projected_bytes: String(values[2]),
+        },
+      ]);
+    }
     return Promise.resolve(queue.shift() ?? []);
   };
   const sql = Object.assign(tag, {
@@ -260,27 +267,4 @@ function createRecordingSql(responses: readonly (readonly unknown[])[]): {
     json: (value: unknown) => value,
   }) as unknown as postgres.Sql;
   return { sql, calls };
-}
-
-class RecordingMeteringClient implements MeteringClient {
-  readonly records: {
-    readonly orgId: string;
-    readonly event: MeteringEvent;
-    readonly trace?: TraceContext | undefined;
-  }[] = [];
-
-  constructor(private readonly options: { readonly reject?: boolean } = {}) {}
-
-  async emit(orgId: string, event: MeteringEvent, trace?: TraceContext): Promise<void> {
-    this.records.push({ orgId, event, ...(trace === undefined ? {} : { trace }) });
-    if (this.options.reject === true) {
-      throw new Error("metering unavailable");
-    }
-  }
-
-  async emitBatch(events: readonly MeteringEmitInput[]): Promise<void> {
-    for (const input of events) {
-      await this.emit(input.orgId, input.event, input.trace);
-    }
-  }
 }

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import zxcvbn from "zxcvbn";
+import { outboundFetch } from "../outbound-http.js";
 
 export interface SignupPasswordScreeningInput {
   readonly password: string;
@@ -103,7 +104,7 @@ export class HaveIBeenPwnedPasswordChecker implements PwnedPasswordChecker {
   private readonly userAgent: string;
 
   constructor(options: HaveIBeenPwnedPasswordCheckerOptions = {}) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? outboundFetch;
     this.baseUrl = options.baseUrl ?? "https://api.pwnedpasswords.com/range";
     this.userAgent = options.userAgent ?? "helix-signup-password-screening";
   }

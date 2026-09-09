@@ -3,11 +3,14 @@ global:
 
 route:
   receiver: helix-null
-  group_by: ["alertname", "severity", "priority", "service", "slo", "tier", "plan_id", "region"]
+  group_by: ["alertname", "severity", "priority", "owner", "service", "product", "slo", "tier", "plan_id", "region"]
   group_wait: 10s
   group_interval: 5m
   repeat_interval: 4h
   routes:
+    - receiver: helix-product-slo-paging
+      matchers:
+        - slo=~"product_availability|availability|freshness|healthy_media"
     - receiver: helix-signup-slo-webhook
       matchers:
         - service="signup"
@@ -20,6 +23,10 @@ route:
 
 receivers:
   - name: helix-null
+  - name: helix-product-slo-paging
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/product-slo-paging-webhook-url
+        send_resolved: true
   - name: helix-signup-slo-webhook
     webhook_configs:
       - url: http://host.docker.internal:28462/alertmanager/signup

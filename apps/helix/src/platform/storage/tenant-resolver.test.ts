@@ -7,7 +7,33 @@ import {
   type TenantStorageClient,
 } from "./tenant-resolver.js";
 
+const secureByoStorage = {
+  region: "us-east-1",
+  encryption: { sse_kms_key_arn: "arn:aws:kms:us-east-1:123456789012:key/test" },
+  lifecycle: { object_lock: "compliance", retention_days: 30 },
+} as const;
+
 describe("tenant storage resolver", () => {
+  it("fails closed before resolving cross-region tenant storage", async () => {
+    const resolver = createTenantStorageResolver({
+      defaultClient: undefined,
+      deploymentRegion: "us-east-1",
+      loadByoConfig: () => ({
+        storage: {
+          kind: "byo",
+          ...secureByoStorage,
+          region: "eu-west-1",
+          encryption: { sse_kms_key_arn: "arn:aws:kms:eu-west-1:123:key/acme" },
+          provider: "aws-s3",
+          bucket: "acme",
+          credentials_secret_handle: "aws",
+        },
+      }),
+    });
+
+    await expect(resolver({ orgId: "org-acme" })).rejects.toThrow(/tenant object storage/u);
+  });
+
   it("prefixes object operations while preserving logical keys to callers", async () => {
     const storage = new RecordingStorageClient();
     const scoped = createPrefixedStorageClient(storage, "/tenants/org-1");
@@ -25,6 +51,17 @@ describe("tenant storage resolver", () => {
       metadata: { Upload: "demo" },
     });
     const getUrl = await scoped.presignGetUrl?.("drive/file.txt", { expiresSeconds: 60 });
+    const ranged = await scoped.getRange?.("drive/file.txt", 4, 8);
+    await scoped.copy?.("drive/file.txt", "drive/copy.txt");
+    const multipart = await scoped.createMultipartUpload?.("drive/large.bin");
+    const partUrl = await scoped.presignUploadPart?.(
+      "drive/large.bin",
+      multipart?.uploadId ?? "",
+      1,
+    );
+    await scoped.completeMultipartUpload?.("drive/large.bin", multipart?.uploadId ?? "", [
+      { partNumber: 1, etag: '"part"' },
+    ]);
 
     expect(storage.calls).toEqual([
       "put:tenants/org-1/drive/file.txt",
@@ -33,6 +70,11 @@ describe("tenant storage resolver", () => {
       "presign-put:tenants/org-1/drive/file.txt:text/plain",
       "presign-put-request:tenants/org-1/drive/file.txt:text/plain:demo",
       "presign-get:tenants/org-1/drive/file.txt:60",
+      "range:tenants/org-1/drive/file.txt:4-8",
+      "copy:tenants/org-1/drive/file.txt:tenants/org-1/drive/copy.txt",
+      "multipart-create:tenants/org-1/drive/large.bin",
+      "multipart-part:tenants/org-1/drive/large.bin:upload:1",
+      "multipart-complete:tenants/org-1/drive/large.bin:upload:1",
     ]);
     expect(object?.key).toBe("drive/file.txt");
     expect(putUrl).toBe("put://tenants/org-1/drive/file.txt");
@@ -44,6 +86,8 @@ describe("tenant storage resolver", () => {
       },
     });
     expect(getUrl).toBe("get://tenants/org-1/drive/file.txt");
+    expect(ranged?.key).toBe("drive/file.txt");
+    expect(partUrl).toBe("part://tenants/org-1/drive/large.bin/1");
   });
 
   it("creates helix-default tenant resolvers with the standard tenant prefix", async () => {
@@ -76,7 +120,7 @@ describe("tenant storage resolver", () => {
     expect(storage.calls).toEqual(["put:tenants/org-configured/drive/file.txt"]);
   });
 
-  it("keeps existing unscoped default storage behavior when no tenant storage config exists", async () => {
+  it("does not fall back to unscoped default storage when tenant config is missing", async () => {
     const storage = new RecordingStorageClient();
     const resolver = createTenantStorageResolver({
       defaultClient: storage,
@@ -84,19 +128,18 @@ describe("tenant storage resolver", () => {
     });
     const resolved = await resolver({ orgId: "org-legacy" });
 
-    expect(resolved?.prefix).toBe("");
-    await resolved?.client.delete("drive/file.txt");
-    expect(storage.calls).toEqual(["delete:drive/file.txt"]);
+    expect(resolved).toBeUndefined();
+    expect(storage.calls).toEqual([]);
   });
 
-  it("resolves BYO s3-compatible storage from a Vault-path secret without changing logical keys", async () => {
+  it("derives a tenant-scoped secret path from an opaque handle", async () => {
     const created: unknown[] = [];
     const storage = new RecordingStorageClient();
     const resolver = createTenantStorageResolver({
       defaultClient: undefined,
       secretReader: {
-        async read(path) {
-          expect(path).toBe("tenants/acme/byo-storage/s3");
+        async read(reference) {
+          expect(reference).toEqual({ orgId: "org-byo", scope: "byo-storage", handle: "s3" });
           return {
             accessKeyId: "access-key",
             secretAccessKey: "secret-key",
@@ -111,12 +154,13 @@ describe("tenant storage resolver", () => {
       loadByoConfig: () => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "s3-compatible",
           endpoint: "https://storage.example.com",
           region: "us-west-2",
           bucket: "acme-bucket",
           prefix: "helix/",
-          credentials_vault_path: "tenants/acme/byo-storage/s3",
+          credentials_secret_handle: "s3",
           encryption: {
             sse_kms_key_arn: "arn:aws:kms:us-west-2:123456789012:key/acme",
           },
@@ -131,7 +175,7 @@ describe("tenant storage resolver", () => {
 
     expect(storage.calls).toEqual(["put:helix/drive/file.txt"]);
     expect(created).toEqual([
-      {
+      expect.objectContaining({
         endpoint: "https://storage.example.com",
         region: "us-west-2",
         bucket: "acme-bucket",
@@ -143,7 +187,7 @@ describe("tenant storage resolver", () => {
         forcePathStyle: true,
         serverSideEncryption: "aws:kms",
         serverSideEncryptionAwsKmsKeyId: "arn:aws:kms:us-west-2:123456789012:key/acme",
-      },
+      }),
     ]);
   });
 
@@ -169,11 +213,12 @@ describe("tenant storage resolver", () => {
       loadByoConfig: () => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "s3-compatible",
           endpoint: "https://storage.example.com",
           bucket: "acme-bucket",
           prefix: "helix/",
-          credentials_vault_path: "tenants/acme/byo-storage/s3",
+          credentials_secret_handle: "s3",
         },
       }),
     });
@@ -194,13 +239,13 @@ describe("tenant storage resolver", () => {
     const firstStorage = new RecordingStorageClient();
     const secondStorage = new RecordingStorageClient();
     let prefix = "first/";
-    let credentialsVaultPath = "tenants/acme/byo-storage/first";
+    let credentialsSecretHandle = "first";
     const resolver = createTenantStorageResolver({
       defaultClient: undefined,
       secretReader: {
-        async read(path) {
+        async read({ handle }) {
           return {
-            accessKeyId: path,
+            accessKeyId: handle,
             secretAccessKey: "secret-key",
           };
         },
@@ -212,11 +257,12 @@ describe("tenant storage resolver", () => {
       loadByoConfig: () => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "s3-compatible",
           endpoint: "https://storage.example.com",
           bucket: "acme-bucket",
           prefix,
-          credentials_vault_path: credentialsVaultPath,
+          credentials_secret_handle: credentialsSecretHandle,
         },
       }),
     });
@@ -224,7 +270,7 @@ describe("tenant storage resolver", () => {
     const first = await resolver({ orgId: "org-byo" });
     await first?.client.delete("drive/file.txt");
     prefix = "second/";
-    credentialsVaultPath = "tenants/acme/byo-storage/second";
+    credentialsSecretHandle = "second";
     const second = await resolver({ orgId: "org-byo" });
     await second?.client.delete("drive/file.txt");
 
@@ -256,9 +302,10 @@ describe("tenant storage resolver", () => {
       loadByoConfig: () => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "aws-s3",
           bucket: "acme-bucket",
-          credentials_vault_path: "tenants/acme/byo-storage/aws",
+          credentials_secret_handle: "aws",
           encryption: {
             sse_kms_key_arn: sseKmsKeyArn,
           },
@@ -279,13 +326,16 @@ describe("tenant storage resolver", () => {
     ]);
   });
 
-  it("refreshes the cached BYO client on demand when credentials rotate in place", async () => {
+  it("invalidates the cached BYO client when credentials rotate in place", async () => {
     let secretAccessKey = "first-secret";
+    let now = 0;
     const created: unknown[] = [];
     const firstStorage = new RecordingStorageClient();
     const secondStorage = new RecordingStorageClient();
     const resolver = createTenantStorageResolver({
       defaultClient: undefined,
+      cacheNow: () => now,
+      secretRefreshIntervalMs: 10,
       secretReader: {
         async read() {
           return {
@@ -301,11 +351,12 @@ describe("tenant storage resolver", () => {
       loadByoConfig: () => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "s3-compatible",
           endpoint: "https://storage.example.com",
           bucket: "acme-bucket",
           prefix: "helix/",
-          credentials_vault_path: "tenants/acme/byo-storage/s3",
+          credentials_secret_handle: "s3",
         },
       }),
     });
@@ -313,7 +364,8 @@ describe("tenant storage resolver", () => {
     const first = await resolver({ orgId: "org-byo" });
     await first?.client.delete("drive/a.txt");
     secretAccessKey = "rotated-secret";
-    const refreshed = await resolver({ orgId: "org-byo", refresh: true });
+    now = 11;
+    const refreshed = await resolver({ orgId: "org-byo" });
     await refreshed?.client.delete("drive/b.txt");
     const cachedAfterRefresh = await resolver({ orgId: "org-byo" });
     await cachedAfterRefresh?.client.delete("drive/c.txt");
@@ -350,11 +402,12 @@ describe("tenant storage resolver", () => {
       loadByoConfig: (orgId) => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "s3-compatible",
           endpoint: "https://storage.example.com",
           bucket: `${orgId}-bucket`,
           prefix: `${orgId}/`,
-          credentials_vault_path: `tenants/${orgId}/byo-storage/s3`,
+          credentials_secret_handle: "s3",
         },
       }),
     });
@@ -392,11 +445,12 @@ describe("tenant storage resolver", () => {
       loadByoConfig: () => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "s3-compatible",
           endpoint: "https://storage.example.com",
           bucket: "acme-bucket",
           prefix: "helix/",
-          credentials_vault_path: "tenants/acme/byo-storage/s3",
+          credentials_secret_handle: "s3",
         },
       }),
     });
@@ -418,10 +472,11 @@ describe("tenant storage resolver", () => {
       loadByoConfig: () => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "r2",
           endpoint: "https://account.r2.cloudflarestorage.com",
           bucket: "acme-bucket",
-          credentials_vault_path: "tenants/acme/byo-storage/r2",
+          credentials_secret_handle: "r2",
         },
       }),
     });
@@ -450,9 +505,10 @@ describe("tenant storage resolver", () => {
       loadByoConfig: () => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "aws-s3",
           bucket: "acme-bucket",
-          credentials_vault_path: "tenants/acme/byo-storage/aws",
+          credentials_secret_handle: "aws",
         },
       }),
     });
@@ -489,11 +545,12 @@ describe("tenant storage resolver", () => {
       loadByoConfig: () => ({
         storage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "r2",
           endpoint: "https://account-id.r2.cloudflarestorage.com",
           region: "auto",
           bucket: "acme-r2-bucket",
-          credentials_vault_path: "tenants/acme/byo-storage/r2",
+          credentials_secret_handle: "r2",
         },
       }),
     });
@@ -517,7 +574,7 @@ describe("tenant storage resolver", () => {
 
   it("resolves helix-default storage snapshots with standard and explicit prefixes", async () => {
     const standard = new RecordingStorageClient();
-    const standardResolved = resolveTenantStorageSnapshot({
+    const standardResolved = await resolveTenantStorageSnapshot({
       orgId: "org-default",
       state: { managedBy: "helix-default", storage: null },
       defaultClient: standard,
@@ -529,7 +586,7 @@ describe("tenant storage resolver", () => {
     expect(standard.calls).toEqual(["delete:tenants/org-default/drive/file.txt"]);
 
     const explicit = new RecordingStorageClient();
-    const explicitResolved = resolveTenantStorageSnapshot({
+    const explicitResolved = await resolveTenantStorageSnapshot({
       orgId: "org-explicit",
       state: {
         managedBy: "helix-default",
@@ -543,11 +600,11 @@ describe("tenant storage resolver", () => {
     expect(explicit.calls).toEqual(["put:custom/prefix/drive/file.txt"]);
   });
 
-  it("resolves BYO storage snapshots lazily through the secret reader", async () => {
+  it("resolves BYO storage snapshots through the versioned credential cache", async () => {
     let secretReads = 0;
     const created: unknown[] = [];
     const storage = new RecordingStorageClient();
-    const resolved = resolveTenantStorageSnapshot({
+    const resolved = await resolveTenantStorageSnapshot({
       orgId: "org-byo",
       state: {
         managedBy: "byo",
@@ -558,14 +615,16 @@ describe("tenant storage resolver", () => {
           region: "us-west-2",
           bucket: "acme-bucket",
           prefix: "customer/",
-          credentials_vault_path: "tenants/acme/byo-storage/s3",
+          credentials_secret_handle: "s3",
+          encryption: { sse_kms_key_arn: "arn:aws:kms:us-west-2:123:key/acme" },
+          lifecycle: { object_lock: "compliance", retention_days: 30 },
         },
       },
       defaultClient: undefined,
       secretReader: {
-        async read(path) {
+        async read(reference) {
           secretReads += 1;
-          expect(path).toBe("tenants/acme/byo-storage/s3");
+          expect(reference).toEqual({ orgId: "org-byo", scope: "byo-storage", handle: "s3" });
           return {
             accessKeyId: "access-key",
             secretAccessKey: "secret-key",
@@ -580,7 +639,7 @@ describe("tenant storage resolver", () => {
 
     expect(resolved?.managedBy).toBe("byo");
     expect(resolved?.prefix).toBe("customer/");
-    expect(secretReads).toBe(0);
+    expect(secretReads).toBe(1);
     await resolved?.client.put({ key: "drive/file.txt", body: new Uint8Array([1]) });
 
     expect(secretReads).toBe(1);
@@ -598,8 +657,8 @@ describe("tenant storage resolver", () => {
     ]);
   });
 
-  it("rejects storage snapshot manager/kind mismatches", () => {
-    expect(() =>
+  it("rejects storage snapshot manager/kind mismatches", async () => {
+    await expect(
       resolveTenantStorageSnapshot({
         orgId: "org-1",
         state: {
@@ -608,14 +667,14 @@ describe("tenant storage resolver", () => {
             kind: "byo",
             provider: "aws-s3",
             bucket: "acme-bucket",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
         defaultClient: new RecordingStorageClient(),
       }),
-    ).toThrow("Helix-default storage snapshot must use kind helix-default.");
+    ).rejects.toThrow("Helix-default storage snapshot must use kind helix-default.");
 
-    expect(() =>
+    await expect(
       resolveTenantStorageSnapshot({
         orgId: "org-1",
         state: {
@@ -624,7 +683,7 @@ describe("tenant storage resolver", () => {
         },
         defaultClient: new RecordingStorageClient(),
       }),
-    ).toThrow("BYO storage snapshot must use kind byo.");
+    ).rejects.toThrow("BYO storage snapshot must use kind byo.");
   });
 });
 
@@ -642,6 +701,33 @@ class RecordingStorageClient implements TenantStorageClient {
 
   async delete(key: string): Promise<void> {
     this.calls.push(`delete:${key}`);
+  }
+
+  async getRange(key: string, start: number, end: number) {
+    this.calls.push(`range:${key}:${String(start)}-${String(end)}`);
+    return { key, body: new Uint8Array([1]) };
+  }
+
+  async copy(sourceKey: string, destinationKey: string): Promise<void> {
+    this.calls.push(`copy:${sourceKey}:${destinationKey}`);
+  }
+
+  async createMultipartUpload(key: string) {
+    this.calls.push(`multipart-create:${key}`);
+    return { uploadId: "upload" };
+  }
+
+  async presignUploadPart(key: string, uploadId: string, partNumber: number) {
+    this.calls.push(`multipart-part:${key}:${uploadId}:${String(partNumber)}`);
+    return `part://${key}/${String(partNumber)}`;
+  }
+
+  async completeMultipartUpload(
+    key: string,
+    uploadId: string,
+    parts: readonly { readonly partNumber: number }[],
+  ): Promise<void> {
+    this.calls.push(`multipart-complete:${key}:${uploadId}:${String(parts.length)}`);
   }
 
   async presignPutUrl(key: string, options?: { readonly contentType?: string }): Promise<string> {

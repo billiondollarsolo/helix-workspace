@@ -10,7 +10,7 @@ import { isLiveBackend, mintLiveAccessToken } from "./support/backend-mode";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 
 const accessTokenStorageKey = "helix.accessToken";
-const chatScope = "platform.read chat.read chat.write";
+const chatScope = "platform.read chat.read chat.post chat.create";
 const roomId = "00000000-0000-4000-8000-000000000501";
 
 test.describe("/chat feature flow", () => {
@@ -35,10 +35,10 @@ test.describe("/chat feature flow", () => {
 
 async function seedAccessToken(page: Page, scope: string, mockToken: string): Promise<string> {
   const token = isLiveBackend() ? await mintLiveAccessToken(scope) : mockToken;
-  await page.addInitScript(
-    ({ key, value }) => window.localStorage.setItem(key, value),
-    { key: accessTokenStorageKey, value: token },
-  );
+  await page.addInitScript(({ key, value }) => window.localStorage.setItem(key, value), {
+    key: accessTokenStorageKey,
+    value: token,
+  });
   return token;
 }
 

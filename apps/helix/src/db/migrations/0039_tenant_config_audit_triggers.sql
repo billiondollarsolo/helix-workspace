@@ -1,6 +1,8 @@
 create or replace function orgs_tenant_config_audit()
 returns trigger
 language plpgsql
+security definer
+set search_path = pg_catalog, public
 as $$
 declare
   changed_by_setting text := nullif(current_setting('helix.tenant_config_changed_by', true), '');

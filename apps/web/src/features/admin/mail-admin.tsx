@@ -1,12 +1,10 @@
 /* Helix Admin — Mail section.
  *
- * Production TSX for the Admin console's "Mail" section. Five sub-views wired
+ * Production TSX for the Admin console's "Mail" section. Four sub-views wired
  * to the mail-delivery admin backend (`/api/admin/mail/*`) via TanStack Query:
  *   - Outbound providers  — list, add (kind-specific config), choose default
- *   - Sending domains     — list/add/delete, per-domain DKIM gen + rotate,
- *                           SPF/DKIM/DMARC verification badges
+ *   - Mail domains        — canonical verified domains and DKIM rotation
  *   - Deliverability      — DMARC aggregate report summary (pass/fail rates)
- *   - Routing rules       — list/add/edit/delete inbound rules
  *   - Spam filtering      — spamd threshold + daemon status (read view)
  *
  * Visual style matches the rest of the Admin console: tokens-only inline
@@ -19,28 +17,30 @@ import { Icons } from "@/components/icons";
 import {
   createMailProvider,
   createRoutingRule,
-  createSendingDomain,
+  disableMailDomain,
   deleteRoutingRule,
-  deleteSendingDomain,
   generateDkimKey,
   mailAdminQueryKeys,
   mailDmarcQueryOptions,
+  mailOperationsQueryOptions,
   mailProviderKindLabels,
   mailProvidersQueryOptions,
   MAIL_PROVIDER_KINDS,
   patchRoutingRule,
-  rotateDkimKey,
+  removeMailSuppression,
+  replayDeadLetter,
+  saveMailJournalSettings,
+  mailDomainsQueryOptions,
   routingActionLabels,
   routingRulesQueryOptions,
   ROUTING_ACTIONS,
-  sendingDomainsQueryOptions,
   setDefaultMailProvider,
   spamSettingsQueryOptions,
   type MailProviderConfig,
   type MailProviderKind,
+  type MailOperations as MailOperationsData,
   type RoutingAction,
   type RoutingRule,
-  type VerificationState,
 } from "@/features/admin/mail-admin-api";
 
 /* ------------------------------------------------------------------ */
@@ -49,22 +49,21 @@ import {
 
 export const MAIL_SUBVIEWS = [
   { id: "providers", label: "Outbound providers" },
-  { id: "domains", label: "Sending domains" },
+  { id: "domains", label: "Mail domains" },
   { id: "deliverability", label: "Deliverability" },
   { id: "routing", label: "Routing rules" },
+  { id: "operations", label: "Operations" },
   { id: "spam", label: "Spam filtering" },
 ] as const;
 
-export type MailSubviewId = (typeof MAIL_SUBVIEWS)[number]["id"];
+type MailSubviewId = (typeof MAIL_SUBVIEWS)[number]["id"];
 
 /* ------------------------------------------------------------------ */
 /* Shared layout primitives (mirror admin-console.tsx)                */
 /* ------------------------------------------------------------------ */
 
 function PageScroll({ children }: { children: ReactNode }) {
-  return (
-    <div style={{ padding: 24, overflowY: "auto", flex: 1 }}>{children}</div>
-  );
+  return <div style={{ padding: 24, overflowY: "auto", flex: 1 }}>{children}</div>;
 }
 
 function PageHeading({
@@ -81,9 +80,7 @@ function PageHeading({
       <div style={{ display: "flex", alignItems: "center" }}>
         <h1 style={{ fontSize: "var(--text-h2)", fontWeight: 600, margin: 0 }}>{title}</h1>
         {actions ? (
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            {actions}
-          </div>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>{actions}</div>
         ) : null}
       </div>
       {subtitle ? (
@@ -147,17 +144,6 @@ function EmptyRow({ children }: { children: ReactNode }) {
   );
 }
 
-function VerificationBadge({ label, state }: { label: string; state: VerificationState }) {
-  const variant =
-    state === "verified" ? "success" : state === "pending" ? "warning" : "danger";
-  return (
-    <span className={`chip ${variant}`} title={`${label}: ${state}`}>
-      <span className="chip-dot" />
-      {label}
-    </span>
-  );
-}
-
 /* ================================================================== */
 /* Outbound providers                                                 */
 /* ================================================================== */
@@ -207,7 +193,11 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
     }));
   };
 
-  const fieldLabel: CSSProperties = { fontSize: "var(--text-caption)", color: "var(--text-3)", display: "block" };
+  const fieldLabel: CSSProperties = {
+    fontSize: "var(--text-caption)",
+    color: "var(--text-3)",
+    display: "block",
+  };
 
   return (
     <form
@@ -336,8 +326,7 @@ function MailProviders() {
     queryClient.invalidateQueries({ queryKey: mailAdminQueryKeys.providers() });
 
   const createMutation = useMutation({
-    mutationFn: (input: Parameters<typeof createMailProvider>[0]) =>
-      createMailProvider(input),
+    mutationFn: (input: Parameters<typeof createMailProvider>[0]) => createMailProvider(input),
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => {
@@ -415,9 +404,7 @@ function MailProviders() {
         </div>
         {providers.length === 0 ? (
           <EmptyRow>
-            {providersQuery.isPending
-              ? "Loading providers…"
-              : "No outbound providers configured."}
+            {providersQuery.isPending ? "Loading providers…" : "No outbound providers configured."}
           </EmptyRow>
         ) : (
           providers.map((provider) => (
@@ -475,132 +462,79 @@ function MailProviders() {
 }
 
 /* ================================================================== */
-/* Sending domains                                                    */
+/* Mail domains                                                       */
 /* ================================================================== */
 
 function dkimStatusVariant(status: "active" | "retiring" | "retired"): string {
   return status === "active" ? "success" : status === "retiring" ? "warning" : "";
 }
 
-function SendingDomains() {
+function MailDomains() {
   const queryClient = useQueryClient();
-  const domainsQuery = useQuery(sendingDomainsQueryOptions());
-  const [newDomain, setNewDomain] = useState("");
+  const domainsQuery = useQuery(mailDomainsQueryOptions());
 
   const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: mailAdminQueryKeys.sendingDomains() });
+    queryClient.invalidateQueries({ queryKey: mailAdminQueryKeys.domains() });
 
-  const addMutation = useMutation({
-    mutationFn: (domain: string) => createSendingDomain(domain),
-    onMutate: () => undefined,
-    onError: () => undefined,
-    onSuccess: () => {
-      setNewDomain("");
-      void invalidate();
-    },
-  });
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteSendingDomain(id),
+    mutationFn: (id: string) => disableMailDomain(id),
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => void invalidate(),
   });
   const generateMutation = useMutation({
-    mutationFn: (domainId: string) => generateDkimKey(domainId),
-    onMutate: () => undefined,
-    onError: () => undefined,
-    onSuccess: () => void invalidate(),
-  });
-  const rotateMutation = useMutation({
-    mutationFn: (domainId: string) => rotateDkimKey(domainId),
+    mutationFn: (domainId: string) => generateDkimKey(domainId, `helix-${Date.now().toString(36)}`),
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => void invalidate(),
   });
 
   const domains = domainsQuery.data?.domains ?? [];
-  const dkimBusy = generateMutation.isPending || rotateMutation.isPending;
+  const dkimBusy = generateMutation.isPending;
 
   return (
     <PageScroll>
       <PageHeading
-        title="Sending domains"
-        subtitle="Domains authorized to send mail, with DKIM keys and SPF/DKIM/DMARC status"
+        title="Mail domains"
+        subtitle="Verified workspace domains authorized to send mail"
       />
 
       {domainsQuery.isPending ? (
-        <StateBanner kind="loading">Loading sending domains…</StateBanner>
+        <StateBanner kind="loading">Loading mail domains…</StateBanner>
       ) : null}
       {domainsQuery.isError ? (
         <StateBanner kind="error">
-          Sending domains are unavailable or you lack the mail admin scope.
+          Mail domains are unavailable or you lack the mail admin scope.
         </StateBanner>
       ) : null}
-      {addMutation.isError ? (
-        <StateBanner kind="error">{addMutation.error.message}</StateBanner>
-      ) : null}
-
-      <form
-        className="panel"
-        style={{
-          padding: 12,
-          marginBottom: 12,
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-        }}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (newDomain.trim().length === 0) {
-            return;
-          }
-          addMutation.mutate(newDomain.trim());
-        }}
-      >
-        <input
-          aria-label="New sending domain"
-          value={newDomain}
-          onChange={(event) => setNewDomain(event.target.value)}
-          placeholder="mail.helix.io"
-          style={{ ...INPUT_STYLE, flex: 1 }}
-        />
-        <button type="submit" className="btn primary" disabled={addMutation.isPending}>
-          <Icons.Plus /> Add domain
-        </button>
-      </form>
+      <p style={{ color: "var(--text-2)", marginBottom: 12 }}>
+        Verify and enable mail capability in Domain settings before configuring DKIM here.
+      </p>
 
       {domains.length === 0 ? (
         <div className="panel">
           <EmptyRow>
-            {domainsQuery.isPending ? "Loading domains…" : "No sending domains configured."}
+            {domainsQuery.isPending ? "Loading domains…" : "No mail-enabled domains configured."}
           </EmptyRow>
         </div>
       ) : (
         domains.map((domain) => (
-          <div
-            key={domain.id}
-            className="panel"
-            style={{ padding: 16, marginBottom: 12 }}
-          >
+          <div key={domain.id} className="panel" style={{ padding: 16, marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ color: "var(--text-3)" }}>
                 <Icons.Globe />
               </span>
               <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>{domain.domain}</span>
-              <div style={{ display: "flex", gap: 6, marginLeft: 8 }}>
-                <VerificationBadge label="SPF" state={domain.spf} />
-                <VerificationBadge label="DKIM" state={domain.dkim} />
-                <VerificationBadge label="DMARC" state={domain.dmarc} />
-              </div>
+              {domain.isPrimary ? <span className="chip success">Primary</span> : null}
               <button
                 type="button"
                 className="btn sm"
                 style={{ marginLeft: "auto" }}
-                aria-label={`Remove ${domain.domain}`}
+                aria-label={`Disable mail for ${domain.domain}`}
                 disabled={deleteMutation.isPending}
                 onClick={() => deleteMutation.mutate(domain.id)}
               >
-                <Icons.Trash /> Remove
+                <Icons.Trash /> Disable mail
               </button>
             </div>
 
@@ -621,22 +555,14 @@ function SendingDomains() {
                 disabled={dkimBusy}
                 onClick={() => generateMutation.mutate(domain.id)}
               >
-                <Icons.Key /> Generate key
-              </button>
-              <button
-                type="button"
-                className="btn sm"
-                style={{ marginLeft: 6 }}
-                aria-label={`Rotate DKIM key for ${domain.domain}`}
-                disabled={dkimBusy || domain.dkimKeys.length === 0}
-                onClick={() => rotateMutation.mutate(domain.id)}
-              >
-                <Icons.History /> Rotate
+                <Icons.Key /> {domain.dkimKeys.length === 0 ? "Generate key" : "Rotate key"}
               </button>
             </div>
 
             {domain.dkimKeys.length === 0 ? (
-              <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", padding: "4px 0" }}>
+              <div
+                style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", padding: "4px 0" }}
+              >
                 No DKIM keys — generate one to start signing mail.
               </div>
             ) : (
@@ -814,22 +740,38 @@ const ROUTING_GRID = "60px 1.4fr 130px 1.4fr 90px 150px";
 interface RoutingFormProps {
   readonly onCancel: () => void;
   readonly onSubmit: (input: {
-    matchPattern: string;
-    action: RoutingAction;
-    destination: string;
-    enabled: boolean;
+    name: string;
+    recipientPattern?: string;
+    senderPattern?: string;
+    subjectContains?: string;
+    headerName?: string;
+    headerContains?: string;
+    actionKind: RoutingAction;
+    destination?: string;
+    stopProcessing?: boolean;
+    isEnabled: boolean;
     priority: number;
   }) => void;
   readonly pending: boolean;
 }
 
 function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
-  const [matchPattern, setMatchPattern] = useState("");
+  const [name, setName] = useState("");
+  const [recipientPattern, setRecipientPattern] = useState("");
+  const [senderPattern, setSenderPattern] = useState("");
+  const [subjectContains, setSubjectContains] = useState("");
+  const [headerName, setHeaderName] = useState("");
+  const [headerContains, setHeaderContains] = useState("");
   const [action, setAction] = useState<RoutingAction>("mailbox");
   const [destination, setDestination] = useState("");
   const [priority, setPriority] = useState("100");
+  const [stopProcessing, setStopProcessing] = useState(false);
 
-  const fieldLabel: CSSProperties = { fontSize: "var(--text-caption)", color: "var(--text-3)", display: "block" };
+  const fieldLabel: CSSProperties = {
+    fontSize: "var(--text-caption)",
+    color: "var(--text-3)",
+    display: "block",
+  };
 
   return (
     <form
@@ -837,28 +779,50 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
       style={{ padding: 16, marginBottom: 12, display: "grid", gap: 10 }}
       onSubmit={(event) => {
         event.preventDefault();
-        if (matchPattern.trim().length === 0 || destination.trim().length === 0) {
+        if (name.trim().length === 0 || (action !== "drop" && destination.trim().length === 0)) {
           return;
         }
+        if ((headerName.trim().length === 0) !== (headerContains.trim().length === 0)) return;
         onSubmit({
-          matchPattern: matchPattern.trim(),
-          action,
-          destination: destination.trim(),
-          enabled: true,
+          name: name.trim(),
+          ...(recipientPattern.trim().length === 0
+            ? {}
+            : { recipientPattern: recipientPattern.trim() }),
+          ...(senderPattern.trim().length === 0 ? {} : { senderPattern: senderPattern.trim() }),
+          ...(subjectContains.trim().length === 0
+            ? {}
+            : { subjectContains: subjectContains.trim() }),
+          ...(headerName.trim().length === 0
+            ? {}
+            : { headerName: headerName.trim(), headerContains: headerContains.trim() }),
+          actionKind: action,
+          ...(action === "drop" ? {} : { destination: destination.trim() }),
+          ...(stopProcessing ? { stopProcessing: true } : {}),
+          isEnabled: true,
           priority: Number(priority) || 0,
         });
       }}
     >
-      <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>Add inbound routing rule</div>
-      <div
-        style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1.4fr 80px", gap: 10 }}
-      >
+      <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>
+        Add inbound routing rule
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr 1.4fr 80px", gap: 10 }}>
         <label>
-          <span style={fieldLabel}>Match pattern</span>
+          <span style={fieldLabel}>Name</span>
           <input
-            aria-label="Match pattern"
-            value={matchPattern}
-            onChange={(event) => setMatchPattern(event.target.value)}
+            aria-label="Rule name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Support catch-all"
+            style={{ ...INPUT_STYLE, width: "100%" }}
+          />
+        </label>
+        <label>
+          <span style={fieldLabel}>Recipient pattern</span>
+          <input
+            aria-label="Recipient pattern"
+            value={recipientPattern}
+            onChange={(event) => setRecipientPattern(event.target.value)}
             placeholder="*@support.helix.io"
             style={{ ...INPUT_STYLE, width: "100%" }}
           />
@@ -884,7 +848,14 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
             aria-label="Destination"
             value={destination}
             onChange={(event) => setDestination(event.target.value)}
-            placeholder="support-team or https://hook"
+            disabled={action === "drop"}
+            placeholder={
+              action === "alias"
+                ? "User actor UUID"
+                : action === "tag"
+                  ? "Tag"
+                  : "Mailbox or forwarding address"
+            }
             style={{ ...INPUT_STYLE, width: "100%" }}
           />
         </label>
@@ -899,6 +870,55 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
           />
         </label>
       </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 10 }}>
+        <label>
+          <span style={fieldLabel}>Sender pattern</span>
+          <input
+            aria-label="Sender pattern"
+            value={senderPattern}
+            onChange={(event) => setSenderPattern(event.target.value)}
+            placeholder="*@customer.example"
+            style={{ ...INPUT_STYLE, width: "100%" }}
+          />
+        </label>
+        <label>
+          <span style={fieldLabel}>Subject contains</span>
+          <input
+            aria-label="Subject contains"
+            value={subjectContains}
+            onChange={(event) => setSubjectContains(event.target.value)}
+            style={{ ...INPUT_STYLE, width: "100%" }}
+          />
+        </label>
+        <label>
+          <span style={fieldLabel}>Header name</span>
+          <input
+            aria-label="Header name"
+            value={headerName}
+            onChange={(event) => setHeaderName(event.target.value)}
+            placeholder="X-Project"
+            style={{ ...INPUT_STYLE, width: "100%" }}
+          />
+        </label>
+        <label>
+          <span style={fieldLabel}>Header contains</span>
+          <input
+            aria-label="Header contains"
+            value={headerContains}
+            onChange={(event) => setHeaderContains(event.target.value)}
+            style={{ ...INPUT_STYLE, width: "100%" }}
+          />
+        </label>
+        <label style={{ display: "flex", alignItems: "end", gap: 6, paddingBottom: 8 }}>
+          <input
+            aria-label="Stop processing"
+            type="checkbox"
+            checked={stopProcessing}
+            onChange={(event) => setStopProcessing(event.target.checked)}
+          />
+          Stop
+        </label>
+      </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button type="button" className="btn" onClick={onCancel}>
           Cancel
@@ -911,6 +931,38 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
   );
 }
 
+function routingRuleDestination(rule: RoutingRule): string {
+  switch (rule.actionKind) {
+    case "forward":
+      return rule.action.forwardTo ?? "—";
+    case "alias":
+      return rule.action.aliasActorId ?? "—";
+    case "tag":
+      return rule.action.tag ?? "—";
+    case "mailbox":
+      return rule.action.mailbox ?? "—";
+    case "drop":
+      return "—";
+  }
+}
+
+function routingRuleMatch(rule: RoutingRule): string {
+  return (
+    [
+      rule.match.recipientPattern,
+      rule.match.senderPattern === undefined ? undefined : `from:${rule.match.senderPattern}`,
+      rule.match.subjectContains === undefined
+        ? undefined
+        : `subject:${rule.match.subjectContains}`,
+      rule.match.headerName === undefined
+        ? undefined
+        : `${rule.match.headerName}:${rule.match.headerContains ?? ""}`,
+    ]
+      .filter((value): value is string => value !== undefined)
+      .join(" · ") || "All known recipients"
+  );
+}
+
 function RoutingRules() {
   const queryClient = useQueryClient();
   const rulesQuery = useQuery(routingRulesQueryOptions());
@@ -920,8 +972,7 @@ function RoutingRules() {
     queryClient.invalidateQueries({ queryKey: mailAdminQueryKeys.routingRules() });
 
   const createMutation = useMutation({
-    mutationFn: (input: Parameters<typeof createRoutingRule>[0]) =>
-      createRoutingRule(input),
+    mutationFn: (input: Parameters<typeof createRoutingRule>[0]) => createRoutingRule(input),
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => {
@@ -931,7 +982,7 @@ function RoutingRules() {
   });
   const patchMutation = useMutation({
     mutationFn: (input: { id: string; enabled: boolean }) =>
-      patchRoutingRule(input.id, { enabled: input.enabled }),
+      patchRoutingRule(input.id, { isEnabled: input.enabled }),
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => void invalidate(),
@@ -974,6 +1025,12 @@ function RoutingRules() {
       ) : null}
       {createMutation.isError ? (
         <StateBanner kind="error">{createMutation.error.message}</StateBanner>
+      ) : null}
+      {patchMutation.isError || deleteMutation.isError ? (
+        <StateBanner kind="error">
+          {(patchMutation.error ?? deleteMutation.error)?.message ??
+            "Could not update routing rule."}
+        </StateBanner>
       ) : null}
 
       {showForm ? (
@@ -1022,40 +1079,41 @@ function RoutingRules() {
                 borderBottom: "1px solid var(--border)",
               }}
             >
-              <span className="mono" style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+              <span
+                className="mono"
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
+              >
                 {rule.priority}
               </span>
               <span className="mono truncate" style={{ fontSize: "var(--text-caption)" }}>
-                {rule.matchPattern}
+                {routingRuleMatch(rule)}
               </span>
               <span>
-                <span className="chip">{routingActionLabels[rule.action]}</span>
+                <span className="chip">{routingActionLabels[rule.actionKind]}</span>
               </span>
               <span className="truncate" style={{ color: "var(--text-2)" }}>
-                {rule.destination}
+                {routingRuleDestination(rule)}
               </span>
               <span>
-                <span className={`chip ${rule.enabled ? "success" : "warning"}`}>
+                <span className={`chip ${rule.isEnabled ? "success" : "warning"}`}>
                   <span className="chip-dot" />
-                  {rule.enabled ? "Active" : "Off"}
+                  {rule.isEnabled ? "Active" : "Off"}
                 </span>
               </span>
               <div style={{ display: "flex", gap: 6, justifySelf: "flex-end" }}>
                 <button
                   type="button"
                   className="btn sm"
-                  aria-label={`${rule.enabled ? "Disable" : "Enable"} rule ${rule.matchPattern}`}
+                  aria-label={`${rule.isEnabled ? "Disable" : "Enable"} rule ${rule.name}`}
                   disabled={patchMutation.isPending}
-                  onClick={() =>
-                    patchMutation.mutate({ id: rule.id, enabled: !rule.enabled })
-                  }
+                  onClick={() => patchMutation.mutate({ id: rule.id, enabled: !rule.isEnabled })}
                 >
-                  {rule.enabled ? "Disable" : "Enable"}
+                  {rule.isEnabled ? "Disable" : "Enable"}
                 </button>
                 <button
                   type="button"
                   className="btn sm"
-                  aria-label={`Delete rule ${rule.matchPattern}`}
+                  aria-label={`Delete rule ${rule.name}`}
                   disabled={deleteMutation.isPending}
                   onClick={() => deleteMutation.mutate(rule.id)}
                 >
@@ -1144,7 +1202,9 @@ function SpamFiltering() {
               <div style={{ fontSize: "var(--text-h1)", fontWeight: 700, marginTop: 8 }}>
                 {settings.threshold.toFixed(1)}
               </div>
-              <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}>
+              <div
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}
+              >
                 Score above which mail is tagged as spam
               </div>
             </div>
@@ -1155,7 +1215,9 @@ function SpamFiltering() {
                   ? "—"
                   : settings.rejectThreshold.toFixed(1)}
               </div>
-              <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}>
+              <div
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}
+              >
                 Score above which mail is rejected outright
               </div>
             </div>
@@ -1166,7 +1228,9 @@ function SpamFiltering() {
                   ? "—"
                   : new Intl.NumberFormat("en-US").format(settings.taggedLast24h)}
               </div>
-              <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}>
+              <div
+                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 4 }}
+              >
                 Messages flagged as spam in the last day
               </div>
             </div>
@@ -1177,15 +1241,215 @@ function SpamFiltering() {
   );
 }
 
+function JournalSettings({
+  journal,
+  pending,
+  onSave,
+}: {
+  readonly journal: MailOperationsData["journal"];
+  readonly pending: boolean;
+  readonly onSave: (input: { enabled: boolean; retentionDays: number }) => void;
+}) {
+  const [enabled, setEnabled] = useState(journal.enabled);
+  const [retentionDays, setRetentionDays] = useState(String(journal.retentionDays));
+  return (
+    <form
+      className="panel"
+      style={{ padding: 16, marginBottom: 12, display: "flex", gap: 12, alignItems: "end" }}
+      onSubmit={(event) => {
+        event.preventDefault();
+        const days = Number(retentionDays);
+        if (Number.isInteger(days) && days >= 1 && days <= 36_500) {
+          onSave({ enabled, retentionDays: days });
+        }
+      }}
+    >
+      <label style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
+        <input
+          aria-label="Enable compliance journal"
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => setEnabled(event.target.checked)}
+        />
+        <span>
+          <strong>Immutable compliance journal</strong>
+          <span style={{ display: "block", color: "var(--text-3)" }}>
+            {String(journal.entryCount)} captured messages
+            {journal.lastJournaledAt === null
+              ? ""
+              : ` · last ${new Date(journal.lastJournaledAt).toLocaleString()}`}
+          </span>
+        </span>
+      </label>
+      <label>
+        <span style={HEADER_CELL}>Retention days</span>
+        <input
+          aria-label="Journal retention days"
+          type="number"
+          min={1}
+          max={36_500}
+          value={retentionDays}
+          onChange={(event) => setRetentionDays(event.target.value)}
+          style={{ ...INPUT_STYLE, width: 140 }}
+        />
+      </label>
+      <button type="submit" className="btn primary" disabled={pending}>
+        {pending ? "Saving…" : "Save journal"}
+      </button>
+    </form>
+  );
+}
+
+function MailOperations() {
+  const queryClient = useQueryClient();
+  const operations = useQuery(mailOperationsQueryOptions());
+  const [reason, setReason] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const refresh = () =>
+    queryClient.invalidateQueries({ queryKey: mailAdminQueryKeys.operations() });
+  const replay = useMutation({
+    mutationFn: (id: string) => replayDeadLetter(id, reason),
+    onMutate: () => setActionError(null),
+    onError: (error) => setActionError(error.message),
+    onSuccess: refresh,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => removeMailSuppression(id, reason),
+    onMutate: () => setActionError(null),
+    onError: (error) => setActionError(error.message),
+    onSuccess: refresh,
+  });
+  const saveJournal = useMutation({
+    mutationFn: (input: { enabled: boolean; retentionDays: number }) =>
+      saveMailJournalSettings(input),
+    onMutate: () => setActionError(null),
+    onError: (error) => setActionError(error.message),
+    onSuccess: refresh,
+  });
+
+  return (
+    <PageScroll>
+      <PageHeading
+        title="Mail operations"
+        subtitle="Tenant-scoped delivery trace, dead-letter recovery, and recipient suppressions"
+      />
+      <label htmlFor="mail-operation-reason" style={HEADER_CELL}>
+        Reason for recovery action
+      </label>
+      <input
+        id="mail-operation-reason"
+        className="input"
+        value={reason}
+        maxLength={500}
+        onChange={(event) => setReason(event.target.value)}
+        style={{ ...INPUT_STYLE, width: "100%", margin: "8px 0 16px" }}
+      />
+      {operations.isPending ? (
+        <StateBanner kind="loading">Loading mail operations…</StateBanner>
+      ) : null}
+      {operations.isError ? (
+        <StateBanner kind="error">{operations.error.message}</StateBanner>
+      ) : null}
+      {actionError !== null ? <StateBanner kind="error">{actionError}</StateBanner> : null}
+
+      {operations.data === undefined ? null : (
+        <JournalSettings
+          journal={operations.data.journal}
+          pending={saveJournal.isPending}
+          onSave={(input) => saveJournal.mutate(input)}
+        />
+      )}
+
+      <section className="panel" style={{ padding: 16, marginBottom: 12 }}>
+        <h2 style={{ marginTop: 0 }}>Dead letters</h2>
+        {operations.data?.deadLetters.length === 0 ? <EmptyRow>No dead letters.</EmptyRow> : null}
+        {operations.data?.deadLetters.map((message) => (
+          <div
+            key={message.id}
+            style={{
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+              padding: "8px 0",
+              borderTop: "1px solid var(--border)",
+            }}
+          >
+            <div style={{ flex: 1 }}>
+              <strong>{message.messageId}</strong>
+              <div style={{ color: "var(--text-3)" }}>
+                {message.lastError ?? "No diagnostic"} · {String(message.attemptCount)} attempts
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn sm"
+              disabled={reason.trim() === "" || replay.isPending}
+              onClick={() => replay.mutate(message.id)}
+            >
+              Replay
+            </button>
+          </div>
+        ))}
+      </section>
+
+      <section className="panel" style={{ padding: 16, marginBottom: 12 }}>
+        <h2 style={{ marginTop: 0 }}>Delivery trace</h2>
+        {operations.data?.events.length === 0 ? <EmptyRow>No delivery events.</EmptyRow> : null}
+        {operations.data?.events.map((event) => (
+          <div key={event.id} style={{ padding: "8px 0", borderTop: "1px solid var(--border)" }}>
+            <strong>{event.kind}</strong> · {event.recipient} ·{" "}
+            {new Date(event.occurredAt).toLocaleString()}
+            {event.diagnostic === null ? null : (
+              <div style={{ color: "var(--text-3)" }}>{event.diagnostic}</div>
+            )}
+          </div>
+        ))}
+      </section>
+
+      <section className="panel" style={{ padding: 16 }}>
+        <h2 style={{ marginTop: 0 }}>Suppressions</h2>
+        {operations.data?.suppressions.length === 0 ? (
+          <EmptyRow>No active suppressions.</EmptyRow>
+        ) : null}
+        {operations.data?.suppressions.map((suppression) => (
+          <div
+            key={suppression.id}
+            style={{
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+              padding: "8px 0",
+              borderTop: "1px solid var(--border)",
+            }}
+          >
+            <div style={{ flex: 1 }}>
+              <strong>{suppression.address}</strong> · {suppression.reason}
+            </div>
+            <button
+              type="button"
+              className="btn sm"
+              disabled={reason.trim() === "" || remove.isPending}
+              onClick={() => remove.mutate(suppression.id)}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </section>
+    </PageScroll>
+  );
+}
+
 /* ================================================================== */
 /* Mail section shell                                                 */
 /* ================================================================== */
 
 const MAIL_SUBVIEW_CONTENT: Record<MailSubviewId, () => ReactNode> = {
   providers: MailProviders,
-  domains: SendingDomains,
+  domains: MailDomains,
   deliverability: Deliverability,
   routing: RoutingRules,
+  operations: MailOperations,
   spam: SpamFiltering,
 };
 
@@ -1222,9 +1486,7 @@ export function MailAdminSection() {
                 fontWeight: active ? 600 : 400,
                 color: active ? "var(--accent)" : "var(--text-2)",
                 background: "transparent",
-                borderBottom: active
-                  ? "2px solid var(--accent)"
-                  : "2px solid transparent",
+                borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
               }}
             >
               {view.label}

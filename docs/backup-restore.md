@@ -4,21 +4,35 @@ Phase 9 TASK-A04/A05 artifacts live under `infra/scripts/` and are safe by defau
 
 ## Backup Tiers
 
-| Tier       | Backup workflow                                                                                                                                                                          |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Personal   | Local `pg_dump` logical archive plus a real `aws s3 sync` object-store copy. Copy the resulting archive off-host with scp/restic.                                                         |
-| Business   | Physical `pg_basebackup` + archived WAL (PITR-capable) and an object-store copy, encrypted with `age` before upload to S3-compatible storage with versioning.                             |
-| Enterprise | PITR base backup + WAL, object-store copy, **KMS-envelope-encrypted** archive (`--kms-key-id`); or CloudNativePG HA Postgres with `barmanObjectStore` continuous WAL/PITR and SSE-KMS.    |
-| Sovereign  | Enterprise workflow with **mandatory** KMS/HSM-backed encryption and a WORM destination.                                                                                                 |
+| Tier       | Backup workflow                                                                                                                                                                        |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Personal   | Exported-snapshot `pg_dump` plus the exact immutable version of every ready object reference. Copy the resulting archive off-host.                                                     |
+| Business   | The coherent logical backup plus optional `pg_basebackup`/WAL PITR evidence, encrypted with `age`; object storage is mandatory and must have versioning enabled.                       |
+| Enterprise | PITR base backup + WAL, object-store copy, **KMS-envelope-encrypted** archive (`--kms-key-id`); or CloudNativePG HA Postgres with `barmanObjectStore` continuous WAL/PITR and SSE-KMS. |
+| Sovereign  | Enterprise workflow with **mandatory** KMS/HSM-backed encryption and a WORM destination.                                                                                               |
 
-Postgres is the source of truth for Helix metadata, auth, documents, plugin state, and audit state. The `backup.sh --object-backup` flag now performs a real byte-for-byte `aws s3 sync` of the RustFS/S3 object bucket into the archive (it is no longer metadata-only); the restore path re-syncs it back. Bucket versioning and replication remain recommended for defence in depth.
+Postgres is the source of truth for Helix metadata and object references. Backup opens one
+repeatable-read transaction, exports its snapshot, and uses that snapshot for both `pg_dump` and the
+ready-reference query. For every unique referenced key, it selects the newest immutable S3 version
+whose `LastModified` is no later than the database boundary and downloads that version by ID. A
+missing version, disabled bucket versioning, duplicate/conflicting reference, size mismatch, or digest
+mismatch aborts the backup. Objects created after the boundary are never claimed. Business and higher
+tiers fail closed when the bucket is omitted.
+
+Every executed backup requires an Ed25519 manifest-signing key. Generate or provision the key pair
+outside the backup destination, set `HELIX_BACKUP_SIGNING_PRIVATE_KEY` for backup jobs and
+`HELIX_BACKUP_SIGNING_PUBLIC_KEY` for restore jobs, and protect/rotate them like other recovery
+credentials. Restore verifies the signature and SHA-256/size inventory for every file before touching
+PostgreSQL or object storage. `HELIX_RESTORE_EXPECTED_APP_VERSION` can pin a compatible source build.
 
 ## Continuous WAL Archiving and PITR
 
 `backup.sh` supports two Postgres capture modes:
 
 - **Logical dump** (default): `pg_dump` custom format. Portable, restores into any target database. No PITR.
-- **Physical base backup** (`--pitr`): `pg_basebackup -Ft -z -Xs` streams a consistent cluster snapshot. Combined with archived WAL it allows point-in-time recovery to any moment after the backup start LSN.
+- **Physical PITR artifact** (`--pitr`): in addition to the coherent logical backup,
+  `pg_basebackup -Ft -z -X fetch` captures the cluster and archived WAL. PITR restore is selected explicitly
+  with `restore.sh --pitr`.
 
 Continuous WAL archiving is a one-time operator setup on the Postgres server (Compose or self-managed). Set in `postgresql.conf`:
 
@@ -39,7 +53,7 @@ Three encryption options, selected per tier:
 
 - **None** — Tier 1 / personal only.
 - **`age`** — `AGE_RECIPIENTS` / `--age-recipient`. Tier 2 default. Produces `<archive>.tar.gz.age`.
-- **KMS envelope encryption** (Tier 3 option) — `--kms-key-id <alias|arn>` or `HELIX_BACKUP_KMS_KEY_ID`. `backup.sh` calls `aws kms generate-data-key`, encrypts the archive with the plaintext data key via `openssl enc -aes-256-cbc -pbkdf2`, and stores the KMS-wrapped data key next to the ciphertext as `<archive>.tar.gz.kms.datakey`. Restore calls `aws kms decrypt` to unwrap the key. Set `HELIX_KMS_ENDPOINT` to target LocalStack or an on-prem KMS. Sovereign tier **requires** this path.
+- **KMS envelope encryption** (Tier 3 option) — `--kms-key-id <alias|arn>` or `HELIX_BACKUP_KMS_KEY_ID`. `backup.sh` calls `aws kms generate-data-key`, streams the plaintext data key directly into the AES-256-GCM helper, and stores the KMS-wrapped data key next to the authenticated ciphertext as `<archive>.tar.gz.kms.datakey`. Restore pipes the unwrapped key directly from `aws kms decrypt`; plaintext keys never appear in process arguments. Set `HELIX_KMS_ENDPOINT` to target LocalStack or an on-prem KMS. Sovereign tier **requires** this path.
 
 `age` and KMS encryption are mutually exclusive. Business+ backups fail closed if neither is configured.
 
@@ -54,7 +68,8 @@ infra/scripts/backup.sh --tier personal
 Execute a Tier 1 local backup:
 
 ```sh
-infra/scripts/backup.sh --tier personal --execute
+HELIX_BACKUP_SIGNING_PRIVATE_KEY=/secure/helix-backup-signing-private.pem \
+  infra/scripts/backup.sh --tier personal --execute
 ```
 
 Execute an encrypted Tier 2 PITR backup with an object-store copy:
@@ -78,8 +93,14 @@ Artifacts (staged under `backups/<backup-id>/`, then archived):
 - `postgres.dump`: custom-format `pg_dump` (logical mode).
 - `postgres-basebackup/`: `pg_basebackup` cluster snapshot (`--pitr` mode).
 - `wal/`: archived WAL segments for PITR replay (`--include-wal`/`--pitr`).
-- `objects/<bucket>/`: byte-for-byte `aws s3 sync` of the object bucket (`--object-backup`), plus `<bucket>.inventory.json`.
-- `manifest.json`: tier, capture mode, encryption method, and artifact metadata (`schema_version: 2`).
+- `object-references.json`: every ready storage reference read from the exported DB snapshot.
+- `object-versions.json`: immutable S3 version evidence captured after the DB boundary.
+- `objects/inventory.json` and `objects/blobs/*`: exactly one versioned, SHA-256-verified blob per
+  unique ready reference.
+- `manifest.json`: tier, build, exported snapshot boundary, database LSN/applied migrations,
+  capture/encryption metadata, and a
+  sorted SHA-256/size inventory for every backup file (`schema_version: 3`).
+- `manifest.sig`: Ed25519 signature plus trusted public-key identity for the exact manifest bytes.
 - `backups/<backup-id>.tar.gz`, `.tar.gz.age`, or `.tar.gz.kms` (+ `.kms.datakey`): final archive.
 
 ## Enterprise CloudNativePG PITR
@@ -96,6 +117,10 @@ For PITR drills, create a restore values file that enables `cloudnativepg.bootst
 
 ## Restore
 
+Production restore requests use the durable, dual-controlled Admin API workflow documented in
+[`runbooks/backup-restore-jobs.md`](runbooks/backup-restore-jobs.md). The commands below invoke the
+lower-level script directly and are intended for isolated drills and break-glass operator work.
+
 Dry-run:
 
 ```sh
@@ -107,6 +132,7 @@ Restore into a clean drill database:
 ```sh
 infra/scripts/restore.sh \
   --backup backups/<backup-id>.tar.gz \
+  --manifest-public-key /secure/helix-backup-signing-public.pem \
   --target-db helix_restore_drill \
   --allow-drop-target \
   --verify \
@@ -134,9 +160,9 @@ The data key file defaults to `<archive>.datakey` next to the archive, so
 
 ## Point-in-Time Recovery (script path)
 
-When the backup was taken with `--pitr`, `restore.sh` auto-detects the physical
-base backup and switches to the PITR path. It materializes a recovered Postgres
-data directory and configures archive recovery:
+When the backup was taken with `--pitr`, select the physical recovery path explicitly. Restore
+materializes the data directory, starts a network-isolated Postgres container, waits for WAL replay
+and promotion, verifies core schema/invariants, and removes the container:
 
 ```sh
 infra/scripts/restore.sh \
@@ -147,8 +173,7 @@ infra/scripts/restore.sh \
   --execute
 ```
 
-This copies the base backup into `--pitr-data-dir`, stages the archived WAL into
-`pg_wal_restore/`, and appends to `postgresql.auto.conf`:
+This stages WAL and appends to `postgresql.auto.conf`:
 
 ```ini
 restore_command = 'cp "<data-dir>/pg_wal_restore/%f" "%p"'
@@ -156,24 +181,42 @@ recovery_target_time = '2026-05-21T03:30:00Z'   # or recovery_target = 'immediat
 recovery_target_action = 'promote'
 ```
 
-plus an empty `recovery.signal`. Start a Postgres 17 server on that directory
-(for example `docker run -v <data-dir>:/var/lib/postgresql/data
-helix/postgres-pgvector:17-alpine`); it replays WAL to the target time and
-promotes. Then `pg_dump` the recovered cluster and load it normally, or repoint
-`DATABASE_URL` at the recovered instance. CloudNativePG recovery (below) is the
-preferred PITR path on Kubernetes.
+plus an empty `recovery.signal`. `HELIX_BACKUP_PITR_PROOF=true` makes the backup write one marker
+before the recorded recovery target and one after it. The restore then proves the first row exists and
+the second does not; a replay that stops early, runs through the target, or never promotes fails.
+The live wrapper configures WAL archiving and exercises this path in an explicitly isolated Compose
+project (required so cleanup cannot touch the default stack):
+
+```sh
+POSTGRES_PORT=39432 RUSTFS_API_PORT=39437 RUSTFS_CONSOLE_PORT=39438 \
+  pnpm quality:live-restore-drill -- \
+    --pitr --compose-project helix_pitr_drill --execute
+```
 
 ## Object-Store Restore
 
-Re-sync the RustFS/S3 object bucket from the backup:
+Restore into a new versioned bucket and atomically switch the deployment's object route:
 
 ```sh
 HELIX_BACKUP_RUSTFS_BUCKET=helix-objects \
-  infra/scripts/restore.sh --backup backups/<backup-id>.tar.gz --restore-objects --execute
+HELIX_OBJECT_ROUTE_COMMAND=/usr/local/bin/helix-object-route \
+  infra/scripts/restore.sh --backup backups/<backup-id>.tar.gz \
+    --restore-objects --object-rollback-state /secure/object-restore-state.json --execute
 ```
 
-`--restore-objects` runs `aws s3 sync objects/<bucket> s3://<bucket> --delete`
-against the endpoint from `RUSTFS_ENDPOINT`, creating the bucket if needed.
+The route adapter has a deliberately small compare-and-swap contract: `current` prints the active
+bucket, `switch <expected-old> <new>` atomically changes it, and `rollback <expected-new> <old>`
+reverses it. Restore refuses an existing target bucket, enables versioning, uploads every signed
+inventory blob, downloads and hashes every result, then calls `switch`. An interruption before that
+call cannot change production. The durable receipt preserves both targets; rollback is explicit:
+
+```sh
+infra/scripts/restore.sh --rollback-objects /secure/object-restore-state.json \
+  --object-route-command /usr/local/bin/helix-object-route --execute
+```
+
+Drills pass `--no-object-switch` and therefore validate a new isolated bucket without changing live
+routing.
 
 The restore script never targets the live `helix` database by default. Dropping an existing target database requires `--allow-drop-target`.
 If an emergency restore must target the live database name from `POSTGRES_DB`, the command must also include `--allow-live-target`; routine restore drills should always use a separate target such as `helix_restore_drill`.
@@ -196,7 +239,8 @@ Execute against local Compose Postgres:
 
 ```sh
 docker compose up -d postgres
-infra/scripts/restore-drill.sh --create-backup --execute
+HELIX_BACKUP_RUSTFS_BUCKET=helix-objects \
+  infra/scripts/restore-drill.sh --create-backup --execute
 ```
 
 Live smoke wrapper with migrations, deterministic OAuth seed, isolated restore
@@ -235,17 +279,15 @@ infra/scripts/restore-drill.sh --backup backups/<backup-id>.tar.gz --execute
 **not** drill a freshly created backup — it restores the **prior day's** backup
 artifact, satisfying PRD §2.3/§16.5:
 
-1. It downloads the most recent `helix-nightly-backup` artifact published by the
-   previous night's run.
-2. The artifact's mtime is set to "yesterday" and `restore-drill.sh --prior-day`
-   selects the newest backup whose timestamp falls in the prior UTC calendar day.
-3. `--max-age-hours 36` fails the drill if the selected backup is stale (a
-   missed nightly backup).
-4. After the drill, the workflow creates tonight's backup and uploads it as the
-   next `helix-nightly-backup` artifact, closing the loop.
-
-On the very first run (no prior artifact) the workflow synthesizes a backup and
-backdates it so the `--prior-day` path is still exercised.
+1. It queries completed earlier workflow runs and downloads that run's immutable
+   `helix-nightly-backup` artifact; the current run can never supply the input.
+2. Missing, expired, incomplete, or older-than-36-hour artifacts fail the job and surface through the
+   repository's workflow-failure paging integration.
+3. The signed archive restores into a clean DB and a new versioned object bucket. Signature/file
+   verification catches corruption, and every referenced blob is downloaded and SHA-256 checked.
+4. A separate `if: always()` job creates tonight's independent backup, including a referenced run-unique
+   proof blob, and uploads it for the next run. The first-ever run intentionally fails the missing-
+   previous-backup check while bootstrapping the next artifact.
 
 Run the prior-day selection manually:
 

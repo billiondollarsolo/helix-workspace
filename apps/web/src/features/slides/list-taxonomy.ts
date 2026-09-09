@@ -1,9 +1,4 @@
-/* Slides list view — static folder + template taxonomy.
- *
- * Mirrors `apps/web/src/features/docs/data.ts` (DOC_FOLDERS / DOC_TEMPLATES)
- * so the Slides list-page sidebar (SlidesSidebar) has the same shape as the
- * Docs sidebar. Kept as a separate file so the visual taxonomy doesn't get
- * tangled with the deck/layout types in `./seed`. */
+/* Slides list view — static folder taxonomy. */
 
 import type { IconComponent } from "@/components/icons";
 import { Icons } from "@/components/icons";
@@ -26,15 +21,6 @@ export const SLIDES_FOLDERS: readonly SlidesFolder[] = [
   { id: "shared", label: "Shared with me", icon: Icons.Users },
   { id: "starred", label: "Starred", icon: Icons.Star },
   { id: "trash", label: "Trash", icon: Icons.Trash },
-];
-
-export const SLIDES_TEMPLATES: readonly string[] = [
-  "Pitch deck",
-  "All-hands",
-  "Quarterly review",
-  "Onboarding",
-  "Lookbook",
-  "Tutorial",
 ];
 
 /** Heading shown above the main pane for each folder. */

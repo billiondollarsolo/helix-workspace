@@ -115,26 +115,72 @@ export type MailAddress = JsonObject & {
   readonly name?: string;
 };
 
+/** Canonical active mailbox selected from a verified inbound domain. */
+export interface MailInboundRecipient {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly address: string;
+}
+
+export type MailInboundRoutingAction = "forward" | "alias" | "drop" | "tag" | "mailbox";
+
+/** A tenant-owned routing rule resolved at SMTP RCPT time and evaluated after parsing. */
+export interface MailInboundRoutingRule {
+  readonly id: string;
+  readonly orgId: string;
+  readonly priority: number;
+  readonly match: JsonObject;
+  readonly actionKind: MailInboundRoutingAction;
+  readonly action: JsonObject;
+  readonly targetRecipients: readonly MailInboundRecipient[];
+  readonly sourceRecipient?: MailInboundRecipient | undefined;
+}
+
+/** Full decision material for one envelope recipient. */
+export interface MailInboundAddressResolution {
+  readonly address: string;
+  readonly recipients: readonly MailInboundRecipient[];
+  readonly rules: readonly MailInboundRoutingRule[];
+}
+
 export type MailEnvelopeAddress = MailAddress;
 
 export interface MailAttachmentInput {
   readonly filename?: string | undefined;
   readonly mimeType: string;
   readonly contentType?: string | undefined;
-  /** Inline bytes (legacy small attachments). Optional when `objectId` is set. */
+  /** Bounded inline bytes. Optional when an authorized `objectId` is set. */
   readonly content?: Buffer | undefined;
   /** Drive object reference — resolved to a stream/buffer at dispatch time. */
   readonly objectId?: string | undefined;
-  readonly path?: string | undefined;
   readonly contentId?: string | undefined;
   readonly disposition?: string | undefined;
+}
+
+/** Immutable evidence prepared from the exact RFC822 bytes accepted by ingress. */
+export interface MailRawSourceInput {
+  readonly bytes: Buffer;
+  readonly byteSize: number;
+  readonly sha256: string;
+  readonly parser: string;
+  readonly projectionVersion: number;
+  readonly projection: JsonObject;
+  readonly projectionSha256: string;
+}
+
+export interface MailRawSourceRecord extends MailRawSourceInput {
+  readonly messageId: string;
 }
 
 export interface MailMessageInput {
   readonly orgId: string;
   readonly actorId?: string | null | undefined;
+  /** Mailboxes that own independent state for this canonical message/thread. */
+  readonly mailboxActorIds?: readonly string[] | undefined;
   readonly threadId?: string | undefined;
   readonly messageId?: string | undefined;
+  /** Opaque, tenant-scoped delivery receipt supplied by a trusted ingress provider. */
+  readonly providerDeliveryId?: string | undefined;
   readonly from: MailEnvelopeAddress;
   readonly to: readonly MailEnvelopeAddress[];
   readonly cc?: readonly MailEnvelopeAddress[] | undefined;
@@ -145,11 +191,22 @@ export interface MailMessageInput {
   readonly inReplyTo?: string | undefined;
   readonly references?: readonly string[] | undefined;
   readonly attachments?: readonly MailAttachmentInput[] | undefined;
+  /** Present only for received mail; never synthesized from the parsed message. */
+  readonly rawSource?: MailRawSourceInput | undefined;
   readonly receivedAt?: Date | undefined;
   readonly metadata?: JsonObject | undefined;
 }
 
-export type MailOutboundStatus = "queued" | "sending" | "sent" | "failed" | "cancelled";
+export type MailOutboundStatus =
+  | "queued"
+  | "cancelled"
+  | "sending"
+  | "accepted"
+  | "delivered"
+  | "deferred"
+  | "bounced"
+  | "complained"
+  | "failed";
 
 export interface MailOutboundEnvelope {
   readonly from: MailEnvelopeAddress;
@@ -160,12 +217,19 @@ export interface MailOutboundEnvelope {
   readonly text: string;
   readonly html?: string | undefined;
   readonly attachments: readonly MailAttachmentInput[];
+  readonly messageId?: string | undefined;
+  readonly inReplyTo?: string | undefined;
+  readonly references?: readonly string[] | undefined;
 }
 
 export interface StoredMailMessage {
   readonly threadId: string;
   readonly messageId: string;
   readonly attachmentObjectIds: readonly string[];
+  /** False only when a durable RFC/raw/provider identity resolved an existing message. */
+  readonly created: boolean;
+  /** Mailboxes newly delivered by this call; empty on an exact retry. */
+  readonly deliveredActorIds: readonly string[];
 }
 
 export type MailFilterCriteria = JsonObject & {
@@ -196,12 +260,20 @@ export interface MailFilterRecord {
   readonly updatedAt: Date;
 }
 
+export interface MailUserSettings {
+  readonly signatureText: string;
+  readonly signatureHtml: string | null;
+  readonly includeSignatureOnReplies: boolean;
+  readonly blockedSenders: readonly string[];
+  readonly updatedAt: Date;
+}
+
 export interface MailThreadStatePatch {
   readonly addLabels?: readonly string[] | undefined;
   readonly removeLabels?: readonly string[] | undefined;
-  readonly archivedAt?: Date | undefined;
-  readonly deletedAt?: Date | undefined;
-  readonly snoozedUntil?: Date | undefined;
+  readonly archivedAt?: Date | null | undefined;
+  readonly deletedAt?: Date | null | undefined;
+  readonly snoozedUntil?: Date | null | undefined;
   readonly readAt?: Date | null | undefined;
   readonly starred?: boolean | undefined;
   /** Stamps (or, when `null`, clears) the per-actor Spam-folder routing flag. */
@@ -244,6 +316,11 @@ export interface MailOutboundRecord {
   readonly attemptCount?: number;
   readonly nextAttemptAt?: Date | null;
   readonly deadLetteredAt?: Date | null;
+  /** Stable across lease recovery; transports must deduplicate this key. */
+  readonly handoffKey?: string;
+  readonly leaseOwner?: string | null;
+  readonly leaseToken?: string | null;
+  readonly leaseExpiresAt?: Date | null;
 }
 
 /** Persisted draft envelope (first-class drafts, not undo-window outbox rows). */
@@ -253,6 +330,8 @@ export interface MailDraftRecord {
   readonly actorId: string;
   readonly threadId: string | null;
   readonly envelope: JsonObject;
+  readonly revision: number;
+  readonly expiresAt: Date;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -264,6 +343,8 @@ export interface MailAliasRecord {
   readonly email: string;
   readonly displayName: string | null;
   readonly isPrimary: boolean;
+  readonly receiveEnabled?: boolean;
+  readonly sendAsEnabled?: boolean;
   readonly createdAt: Date;
 }
 
@@ -310,6 +391,7 @@ export interface MailThreadMessage {
   readonly sentAt: Date;
   readonly body: string;
   readonly bodyFormat: "plain" | "html";
+  readonly plainBody?: string | undefined;
   readonly hasAttachment: boolean;
   readonly attachments: readonly MailThreadAttachment[];
 }
@@ -357,36 +439,39 @@ export interface MailSearchRecord {
   readonly sentAt: string;
   readonly updatedAt?: string | undefined;
   readonly metadata?: JsonObject | undefined;
-  /**
-   * RAG owner — the actor whose mailbox owns this message copy. For outbound
-   * mail this is the sender; for inbound, the recipient mailbox owner.
-   * Indexed embeddings are scoped to this actor (visibility="private"); other
-   * users in the org cannot retrieve this mail via RAG. Null only for system
-   * mail (announcements, status notifications) which then index as
-   * visibility="org".
-   */
-  readonly ownerActorId: string | null;
+  /** Actor whose mailbox owns this private projection of the canonical message. */
+  readonly ownerActorId: string;
 }
 
 export interface MailSearchProjectionStore {
-  getMailSearchRecord(messageId: string): Promise<MailSearchRecord | null>;
+  getMailSearchRecord(input: MailProjectionRequest): Promise<MailSearchRecord | null>;
 }
 
 export type MailEnrichmentRecord = MailSearchRecord;
 
 export interface MailEnrichmentProjectionStore {
-  getMailEnrichmentRecord(messageId: string): Promise<MailEnrichmentRecord | null>;
+  getMailEnrichmentRecord(input: MailProjectionRequest): Promise<MailEnrichmentRecord | null>;
   recordMailEnrichment?(input: MailEnrichmentWrite): Promise<void>;
   setMailClassification?(input: MailClassificationWrite): Promise<void>;
 }
 
+export interface MailProjectionRequest {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly messageId: string;
+}
+
 export interface MailEnrichmentWrite {
+  readonly orgId: string;
+  readonly actorId: string;
   readonly messageId: string;
   readonly feature: string;
   readonly data: JsonObject;
 }
 
 export interface MailClassificationWrite {
+  readonly orgId: string;
+  readonly actorId: string;
   readonly messageId: string;
   readonly classification: AIClassification;
   readonly source: string;

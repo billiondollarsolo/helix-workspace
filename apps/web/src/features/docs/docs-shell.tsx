@@ -5,10 +5,9 @@
    `initialDocumentId`; in that mode the list view and back button are hidden.
 
    Backend wiring:
-   - List   → `drive.list` with `app:"docs"` (TanStack Query) merged over the
-              handoff seed list.
+   - List   → `drive.list` with `app:"docs"` (TanStack Query).
    - New    → `docs.create` — creates a real backend document and opens it.
-   When the backend is unavailable the surface falls back to seed data only. */
+   Backend failures are shown explicitly; no demo rows are substituted. */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

@@ -3,7 +3,10 @@ import { sha256Hex } from "../crypto/index.js";
 
 export interface HashableAuditRecord extends AuditRecord {
   readonly id?: string;
+  readonly orgId?: string;
   readonly prevHash?: string | null;
+  readonly schemaVersion?: number;
+  readonly sequence?: string;
 }
 
 export interface AuditHashResult {
@@ -39,11 +42,15 @@ export function computeAuditHash(record: HashableAuditRecord, previousHash: stri
   const normalized = {
     actorId: record.actorId,
     createdAt: record.createdAt ?? null,
+    ...(record.id === undefined ? {} : { eventId: record.id }),
     metadata: record.metadata ?? {},
     objectId: record.objectId ?? null,
     objectType: record.objectType,
     onBehalfOfActorId: record.onBehalfOfActorId ?? null,
+    ...(record.orgId === undefined ? {} : { orgId: record.orgId }),
     prevHash: previousHash,
+    ...(record.schemaVersion === undefined ? {} : { schemaVersion: record.schemaVersion }),
+    ...(record.sequence === undefined ? {} : { sequence: record.sequence }),
     spanId: record.trace?.spanId ?? null,
     toolId: record.toolId ?? null,
     traceId: record.trace?.traceId ?? null,

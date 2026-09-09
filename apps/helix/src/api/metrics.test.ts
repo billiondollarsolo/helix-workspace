@@ -112,6 +112,18 @@ describe("platform metrics", () => {
     expect(output).not.toContain("actor_id=");
   });
 
+  it("records SCIM authentication failures without tenant, IP, or token labels", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordScimAuthFailure({ reason: "credential_expired" });
+
+    const output = await metrics.registry.metrics();
+    expect(output).toContain('helix_scim_auth_failures_total{reason="credential_expired"} 1');
+    expect(output).not.toContain("org_id=");
+    expect(output).not.toContain("source_ip=");
+    expect(output).not.toContain("token=");
+  });
+
   it("records signup funnel and activation SLO metrics without tenant or actor labels", async () => {
     const metrics = createPlatformMetrics();
 
@@ -177,5 +189,82 @@ describe("platform metrics", () => {
 
     expect(output).toContain("helix_storage_pool_size 1");
     expect(output).toContain("helix_storage_pool_evictions_total 2");
+  });
+
+  it("records bounded-label search projection lag and failures", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordSearchProjection?.({ indexerId: "chat", status: "success", lagSeconds: 7 });
+    metrics.recordSearchProjection?.({ indexerId: "chat", status: "error", lagSeconds: 12 });
+
+    const output = await metrics.registry.metrics();
+    expect(output).toContain('helix_search_projection_lag_seconds{indexer="chat"} 12');
+    expect(output).toContain('helix_search_projection_errors_total{indexer="chat"} 1');
+  });
+
+  it("records bounded internal capability events, units, and state", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordOperationalEvent({
+      capability: "mail",
+      operation: "delivery",
+      status: "error",
+      durationSeconds: 2,
+    });
+    metrics.addOperationalUnits({ capability: "drive", measure: "uploaded_bytes", value: 42 });
+    metrics.setOperationalState({ capability: "search", measure: "drift_objects", value: 3 });
+
+    const output = await metrics.registry.metrics();
+    expect(output).toContain(
+      'helix_operational_events_total{capability="mail",operation="delivery",status="error"} 1',
+    );
+    expect(output).toContain(
+      'helix_operational_duration_seconds_sum{capability="mail",operation="delivery",status="error"} 2',
+    );
+    expect(output).toContain(
+      'helix_operational_units_total{capability="drive",measure="uploaded_bytes"} 42',
+    );
+    expect(output).toContain(
+      'helix_operational_state{capability="search",measure="drift_objects"} 3',
+    );
+  });
+
+  it("records privacy-safe Meet degradation without participant, room, media, or secret labels", async () => {
+    const metrics = createPlatformMetrics();
+
+    metrics.recordMeetParticipantEvent({ event: "joined" });
+    metrics.recordMeetParticipantEvent({ event: "left", durationSeconds: 900 });
+    metrics.recordMeetParticipantEvent({ event: "reconnected" });
+    metrics.recordMeetParticipantEvent({ event: "device_failure", device: "camera" });
+    metrics.recordMeetQuality({
+      joinLatencySeconds: 4,
+      packetLossPercent: 12,
+      jitterSeconds: 0.25,
+      rttSeconds: 0.8,
+      bitrateKbps: 50,
+      connectionQuality: 20,
+      bridgeLoadPercent: 95,
+      bridgeParticipantCount: 72,
+    });
+
+    const output = await metrics.registry.metrics();
+    expect(output).toContain('helix_meet_participant_events_total{event="left",device="none"} 1');
+    expect(output).toContain(
+      'helix_meet_participant_events_total{event="device_failure",device="camera"} 1',
+    );
+    expect(output).toContain("helix_meet_call_duration_seconds_sum 900");
+    expect(output).toContain("helix_meet_packet_loss_percent_sum 12");
+    expect(output).toContain("helix_meet_jitter_seconds_sum 0.25");
+    expect(output).toContain("helix_meet_rtt_seconds_sum 0.8");
+    expect(output).toContain("helix_meet_bitrate_kbps_sum 50");
+    expect(output).toContain("helix_meet_bridge_participant_load_sum 72");
+    for (const signal of ["packet_loss", "jitter", "rtt", "bitrate", "bridge_load"]) {
+      expect(output).toContain(`helix_meet_degraded_samples_total{signal="${signal}"} 1`);
+    }
+    expect(output).not.toContain("org_id=");
+    expect(output).not.toContain("room_id=");
+    expect(output).not.toContain("participant_id=");
+    expect(output).not.toContain("token=");
+    expect(output).not.toContain("secret=");
   });
 });

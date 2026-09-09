@@ -4,6 +4,8 @@ import { join } from "node:path";
 
 import type { HelixCommand } from "./parser.js";
 
+const API_VERSION_PREFIX = "/v1";
+
 export interface HelixCliEnv {
   readonly HELIX_BASE_URL?: string;
   readonly HELIX_ACCESS_TOKEN?: string;
@@ -91,6 +93,9 @@ export function buildHelixRequest(
     case "restore-from":
       return createRequest(env, "POST", "/api/admin/restores", {
         backupId: command.backupId,
+        targetDatabase: command.targetDatabase,
+        targetObjectBucket: command.targetObjectBucket,
+        idempotencyKey: command.idempotencyKey,
         ...(command.encrypted === true ? { encrypted: true } : {}),
       });
     case "reindex-all":
@@ -189,7 +194,7 @@ function createFormRequest(
     "content-type": "application/x-www-form-urlencoded",
   };
   return {
-    url: new URL(path, baseUrl(env).href).href,
+    url: new URL(versionedPath(path), baseUrl(env).href).href,
     init: {
       method: "POST",
       headers,
@@ -229,14 +234,14 @@ function createRequest(
         };
 
   return {
-    url: new URL(path, baseUrl(env).href).href,
+    url: new URL(versionedPath(path), baseUrl(env).href).href,
     init,
   };
 }
 
 function createRawJsonRequest(env: HelixCliEnv, path: string, body: string): HelixRequest {
   return {
-    url: new URL(path, baseUrl(env).href).href,
+    url: new URL(versionedPath(path), baseUrl(env).href).href,
     init: {
       method: "POST",
       headers: {
@@ -316,6 +321,12 @@ function baseUrl(env: HelixCliEnv): URL {
   } catch {
     throw new Error("HELIX_BASE_URL must be a valid URL");
   }
+}
+
+function versionedPath(path: string): string {
+  return path === API_VERSION_PREFIX || path.startsWith(`${API_VERSION_PREFIX}/`)
+    ? path
+    : `${API_VERSION_PREFIX}${path}`;
 }
 
 function withQuery(path: string, params: Record<string, unknown>): string {

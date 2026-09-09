@@ -3,10 +3,17 @@ import { callTool } from "@/lib/tool-call";
 import type {
   MailAddress,
   MailAttachmentInput,
+  MailDraft,
+  MailDraftSaveInput,
   MailFilter,
   MailOutboundRecord,
   MailThreadRow as MailThreadRowContract,
   MailThreadsListResult as MailThreadsListResultContract,
+} from "@helix/contracts";
+import {
+  MAIL_ATTACHMENT_MAX_FILE_BYTES,
+  MAIL_ATTACHMENT_MAX_FILES,
+  MAIL_ATTACHMENT_MAX_TOTAL_BYTES,
 } from "@helix/contracts";
 
 export type MailApiAddress = MailAddress;
@@ -41,7 +48,7 @@ export type MailThreadsListResult = Omit<MailThreadsListResultContract, "threads
   readonly threads: readonly MailThreadRow[];
   readonly limit: number;
   readonly offset: number;
-}
+};
 
 export interface MailFolderSummary {
   readonly id: MailFolderKey;
@@ -81,6 +88,9 @@ export interface MailThreadMessage {
   readonly sentAt: string;
   readonly body: string;
   readonly bodyFormat: "plain" | "html";
+  readonly plainBody?: string;
+  readonly source?: string;
+  readonly remoteContentBlocked?: boolean;
   readonly hasAttachment: boolean;
 }
 
@@ -100,13 +110,32 @@ export interface MailThreadDetail {
   readonly direction: "inbound" | "outbound" | "mixed";
 }
 
-/** Prefer Drive `objectId` for large files; base64 `content` remains for small inline attachments. */
 export type MailAttachment = MailAttachmentInput & {
   readonly filename?: string;
   readonly contentType?: string;
-  readonly content?: string;
-  readonly objectId?: string;
+  /** Local-only upload accounting; stripped from the wire contract. */
+  readonly byteSize?: number;
 };
+
+export function validateMailAttachmentSelection(
+  current: readonly MailAttachment[],
+  selected: readonly Pick<File, "name" | "size">[],
+): string | null {
+  if (current.length + selected.length > MAIL_ATTACHMENT_MAX_FILES) {
+    return `A message can have at most ${String(MAIL_ATTACHMENT_MAX_FILES)} attachments.`;
+  }
+  const oversized = selected.find((file) => file.size > MAIL_ATTACHMENT_MAX_FILE_BYTES);
+  if (oversized !== undefined) {
+    return `${oversized.name} exceeds the 25 MiB per-file limit.`;
+  }
+  const total = [
+    ...current.map((attachment) => attachment.byteSize ?? 0),
+    ...selected.map((file) => file.size),
+  ].reduce((sum, bytes) => sum + bytes, 0);
+  return total > MAIL_ATTACHMENT_MAX_TOTAL_BYTES
+    ? "Attachments exceed the 25 MiB message limit."
+    : null;
+}
 
 export interface MailSendInput {
   readonly to: readonly MailApiAddress[];
@@ -115,6 +144,7 @@ export interface MailSendInput {
   readonly subject: string;
   readonly bodyText: string;
   readonly attachments?: readonly MailAttachment[];
+  readonly sendAt?: string;
 }
 
 export interface MailReplyInput extends MailSendInput {
@@ -176,6 +206,14 @@ export interface MailVacationSetInput {
   readonly body: string;
   readonly startsAt?: string | null;
   readonly endsAt?: string | null;
+}
+
+export interface MailUserSettings {
+  readonly signatureText: string;
+  readonly signatureHtml: string | null;
+  readonly includeSignatureOnReplies: boolean;
+  readonly blockedSenders: readonly string[];
+  readonly updatedAt: string | null;
 }
 
 export type MailApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -257,8 +295,17 @@ export async function sendMail(
       bcc: input.bcc ?? [],
       subject: input.subject,
       bodyText: input.bodyText,
+      ...(input.sendAt === undefined ? {} : { sendAt: input.sendAt }),
       ...(input.attachments !== undefined && input.attachments.length > 0
-        ? { attachments: input.attachments }
+        ? {
+            attachments: input.attachments.map((attachment) => ({
+              objectId: attachment.objectId,
+              ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
+              ...(attachment.contentType === undefined
+                ? {}
+                : { contentType: attachment.contentType }),
+            })),
+          }
         : {}),
     },
     fetchImpl,
@@ -290,6 +337,7 @@ export async function replyToMail(
       bcc: input.bcc ?? [],
       subject: input.subject,
       bodyText: input.bodyText,
+      ...(input.sendAt === undefined ? {} : { sendAt: input.sendAt }),
     },
     fetchImpl,
   );
@@ -302,11 +350,25 @@ export async function archiveMailThread(
   await callMailTool("mail.archive", { threadId }, fetchImpl);
 }
 
+export async function unarchiveMailThread(
+  threadId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callMailTool("mail.unarchive", { threadId }, fetchImpl);
+}
+
 export async function deleteMailThread(
   threadId: string,
   fetchImpl: MailApiFetch = authenticatedFetch,
 ): Promise<void> {
   await callMailTool("mail.delete", { threadId }, fetchImpl);
+}
+
+export async function restoreMailThread(
+  threadId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callMailTool("mail.restore", { threadId }, fetchImpl);
 }
 
 export async function spamMailThread(
@@ -330,8 +392,8 @@ export async function cancelOutboundMail(
 
 export async function listMailDrafts(
   fetchImpl: MailApiFetch = authenticatedFetch,
-): Promise<readonly unknown[]> {
-  const output = await callMailTool<{ readonly drafts?: readonly unknown[] }>(
+): Promise<readonly MailDraft[]> {
+  const output = await callMailTool<{ readonly drafts?: readonly MailDraft[] }>(
     "mail.draft.list",
     {},
     fetchImpl,
@@ -340,10 +402,10 @@ export async function listMailDrafts(
 }
 
 export async function saveMailDraft(
-  input: Record<string, unknown>,
+  input: MailDraftSaveInput,
   fetchImpl: MailApiFetch = authenticatedFetch,
-): Promise<unknown> {
-  return callMailTool("mail.draft.save", input, fetchImpl);
+): Promise<MailDraft> {
+  return callMailTool<MailDraft>("mail.draft.save", input, fetchImpl);
 }
 
 export async function discardMailDraft(
@@ -363,6 +425,13 @@ export async function snoozeMailThread(
   fetchImpl: MailApiFetch = authenticatedFetch,
 ): Promise<void> {
   await callMailTool("mail.snooze", input, fetchImpl);
+}
+
+export async function unsnoozeMailThread(
+  threadId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callMailTool("mail.unsnooze", { threadId }, fetchImpl);
 }
 
 export async function setMailThreadRead(
@@ -487,6 +556,19 @@ export async function setMailVacation(
     throw new Error("mail.vacation.set response was missing vacation settings.");
   }
   return output.vacation;
+}
+
+export async function getMailUserSettings(
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<MailUserSettings> {
+  return callMailTool<MailUserSettings>("mail.settings.get", {}, fetchImpl);
+}
+
+export async function setMailUserSettings(
+  input: Omit<MailUserSettings, "updatedAt">,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<MailUserSettings> {
+  return callMailTool<MailUserSettings>("mail.settings.set", input, fetchImpl);
 }
 
 async function callMailTool<Output = unknown>(

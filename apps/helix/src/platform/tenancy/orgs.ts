@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { HelixConfig, JsonObject } from "@helix/sdk-types";
 import { isSingleTenant } from "../mode/index.js";
-import type { TenantPostgresRoleProvisioner } from "./postgres-roles.js";
 
 export const DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000000";
 export const DEFAULT_ORG_SLUG = "default";
@@ -78,7 +77,7 @@ export function resolveDefaultOrgInput(env: NodeJS.ProcessEnv): Required<Default
     id: env.HELIX_DEFAULT_ORG_ID ?? DEFAULT_ORG_ID,
     slug: env.HELIX_DEFAULT_ORG_SLUG ?? DEFAULT_ORG_SLUG,
     displayName: env.HELIX_DEFAULT_ORG_NAME ?? DEFAULT_ORG_DISPLAY_NAME,
-    region: env.HELIX_DEFAULT_ORG_REGION ?? DEFAULT_ORG_REGION,
+    region: env.HELIX_REGION ?? DEFAULT_ORG_REGION,
   };
 }
 
@@ -88,10 +87,6 @@ export interface OrgStore {
   activateProvisionedOrg(id: string): Promise<OrgRecord | null>;
   findById(id: string): Promise<OrgRecord | null>;
   findBySlug(slug: string): Promise<OrgRecord | null>;
-}
-
-export interface PostgresOrgStoreOptions {
-  readonly tenantRoleProvisioner?: TenantPostgresRoleProvisioner;
 }
 
 export async function ensureDefaultOrgForMode(input: {
@@ -125,12 +120,13 @@ interface OrgRow {
 export class PostgresOrgStore implements OrgStore {
   constructor(
     private readonly sql: postgres.Sql,
-    private readonly options: PostgresOrgStoreOptions = {},
+    private readonly deploymentRegion = DEFAULT_ORG_REGION,
   ) {}
 
   async createOrg(input: CreateOrgInput): Promise<OrgRecord> {
     const id = input.id ?? randomUUID();
-    const rows = (await this.sql`
+    const region = this.regionForWrite(input.region);
+    const rows = await this.sql<OrgRow[]>`
       insert into orgs (
         id,
         slug,
@@ -151,7 +147,7 @@ export class PostgresOrgStore implements OrgStore {
         ${input.status ?? "provisioning"},
         ${input.tier ?? "personal"},
         ${input.planId ?? "personal"},
-        ${input.region ?? DEFAULT_ORG_REGION},
+        ${region},
         ${this.sql.json(input.byoConfig ?? {})},
         ${this.sql.json(input.featureFlags ?? {})},
         ${this.sql.json(input.quotas ?? {})},
@@ -172,18 +168,16 @@ export class PostgresOrgStore implements OrgStore {
         suspended_at,
         soft_deleted_at,
         hard_deleted_at
-    `) as unknown as readonly OrgRow[];
-    const org = mapOrgRow(rows[0]);
-    await this.options.tenantRoleProvisioner?.ensureRoleForOrg(org.id);
-    return org;
+    `;
+    return mapOrgRow(rows[0]);
   }
 
   async getOrCreateDefaultOrg(input: DefaultOrgInput = {}): Promise<OrgRecord> {
     const id = input.id ?? DEFAULT_ORG_ID;
     const slug = input.slug ?? DEFAULT_ORG_SLUG;
     const displayName = input.displayName ?? DEFAULT_ORG_DISPLAY_NAME;
-    const region = input.region ?? DEFAULT_ORG_REGION;
-    const rows = (await this.sql`
+    const region = this.regionForWrite(input.region);
+    const rows = await this.sql<OrgRow[]>`
       insert into orgs (id, slug, display_name, status, tier, plan_id, region)
       values (${id}, ${slug}, ${displayName}, 'active', 'personal', 'personal', ${region})
       on conflict (id) do update
@@ -203,14 +197,22 @@ export class PostgresOrgStore implements OrgStore {
         suspended_at,
         soft_deleted_at,
         hard_deleted_at
-    `) as unknown as readonly OrgRow[];
-    const org = mapOrgRow(rows[0]);
-    await this.options.tenantRoleProvisioner?.ensureRoleForOrg(org.id);
-    return org;
+    `;
+    return mapOrgRow(rows[0]);
+  }
+
+  private regionForWrite(requested: string | undefined): string {
+    const region = requested ?? this.deploymentRegion;
+    if (this.deploymentRegion !== DEFAULT_ORG_REGION && region !== this.deploymentRegion) {
+      throw new Error(
+        `Tenant region '${region}' does not match deployment region '${this.deploymentRegion}'.`,
+      );
+    }
+    return region;
   }
 
   async activateProvisionedOrg(id: string): Promise<OrgRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OrgRow[]>`
       update orgs
       set
         status = 'active',
@@ -232,12 +234,12 @@ export class PostgresOrgStore implements OrgStore {
         suspended_at,
         soft_deleted_at,
         hard_deleted_at
-    `) as unknown as readonly OrgRow[];
+    `;
     return rows[0] === undefined ? null : mapOrgRow(rows[0]);
   }
 
   async findById(id: string): Promise<OrgRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OrgRow[]>`
       select
         id,
         slug,
@@ -256,12 +258,12 @@ export class PostgresOrgStore implements OrgStore {
       from orgs
       where id = ${id}
       limit 1
-    `) as unknown as readonly OrgRow[];
+    `;
     return rows[0] === undefined ? null : mapOrgRow(rows[0]);
   }
 
   async findBySlug(slug: string): Promise<OrgRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OrgRow[]>`
       select
         id,
         slug,
@@ -280,7 +282,7 @@ export class PostgresOrgStore implements OrgStore {
       from orgs
       where slug = ${slug}
       limit 1
-    `) as unknown as readonly OrgRow[];
+    `;
     return rows[0] === undefined ? null : mapOrgRow(rows[0]);
   }
 
@@ -289,7 +291,7 @@ export class PostgresOrgStore implements OrgStore {
     readonly action: TenantLifecycleAction;
   }): Promise<OrgRecord | null> {
     if (input.action === "suspend") {
-      const rows = (await this.sql`
+      const rows = await this.sql<OrgRow[]>`
         update orgs
         set
           status = 'suspended',
@@ -312,12 +314,12 @@ export class PostgresOrgStore implements OrgStore {
           suspended_at,
           soft_deleted_at,
           hard_deleted_at
-      `) as unknown as readonly OrgRow[];
+      `;
       return rows[0] === undefined ? null : mapOrgRow(rows[0]);
     }
 
     if (input.action === "unsuspend") {
-      const rows = (await this.sql`
+      const rows = await this.sql<OrgRow[]>`
         update orgs
         set
           status = 'active',
@@ -340,12 +342,12 @@ export class PostgresOrgStore implements OrgStore {
           suspended_at,
           soft_deleted_at,
           hard_deleted_at
-      `) as unknown as readonly OrgRow[];
+      `;
       return rows[0] === undefined ? null : mapOrgRow(rows[0]);
     }
 
     if (input.action === "soft-delete") {
-      const rows = (await this.sql`
+      const rows = await this.sql<OrgRow[]>`
         update orgs
         set
           status = 'soft_deleted',
@@ -369,11 +371,11 @@ export class PostgresOrgStore implements OrgStore {
           suspended_at,
           soft_deleted_at,
           hard_deleted_at
-      `) as unknown as readonly OrgRow[];
+      `;
       return rows[0] === undefined ? null : mapOrgRow(rows[0]);
     }
 
-    const rows = (await this.sql`
+    const rows = await this.sql<OrgRow[]>`
       update orgs
       set
         status = 'active',
@@ -398,7 +400,7 @@ export class PostgresOrgStore implements OrgStore {
         suspended_at,
         soft_deleted_at,
         hard_deleted_at
-    `) as unknown as readonly OrgRow[];
+    `;
     return rows[0] === undefined ? null : mapOrgRow(rows[0]);
   }
 
@@ -406,7 +408,7 @@ export class PostgresOrgStore implements OrgStore {
     readonly before: Date;
     readonly limit?: number | undefined;
   }): Promise<readonly OrgRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OrgRow[]>`
       select
         id,
         slug,
@@ -429,37 +431,59 @@ export class PostgresOrgStore implements OrgStore {
         and hard_deleted_at is null
       order by soft_deleted_at asc, updated_at asc
       limit ${input.limit ?? 10}
-    `) as unknown as readonly OrgRow[];
+    `;
     return rows.map(mapOrgRow);
   }
 
   async markTenantHardDeleted(input: { readonly orgId: string }): Promise<OrgRecord | null> {
-    const rows = (await this.sql`
-      update orgs
-      set
-        status = 'hard_deleted',
-        hard_deleted_at = coalesce(hard_deleted_at, now()),
-        updated_at = now()
-      where id = ${input.orgId}
-        and status = 'soft_deleted'
-        and hard_deleted_at is null
-      returning
-        id,
-        slug,
-        display_name,
-        status,
-        tier,
-        plan_id,
-        region,
-        byo_config,
-        feature_flags,
-        quotas,
-        branding,
-        suspended_at,
-        soft_deleted_at,
-        hard_deleted_at
-    `) as unknown as readonly OrgRow[];
-    return rows[0] === undefined ? null : mapOrgRow(rows[0]);
+    return this.sql.begin(async (tx) => {
+      await tx`select set_config('helix.org_id', ${input.orgId}, true)`;
+      const proofRows = await tx`
+        select system_actor_id, manifest_sha256, proof_object_key
+        from tenant_deletion_proofs
+        where org_id = ${input.orgId} and status = 'completed'
+        for update
+      `;
+      const proof = proofRows[0] as
+        | {
+            readonly system_actor_id: string;
+            readonly manifest_sha256: string;
+            readonly proof_object_key: string;
+          }
+        | undefined;
+      if (proof === undefined) {
+        throw new Error("Tenant cannot be hard-deleted without a completed deletion proof.");
+      }
+      const rows = await tx<OrgRow[]>`
+        update orgs
+        set
+          status = 'hard_deleted',
+          hard_deleted_at = coalesce(hard_deleted_at, now()),
+          updated_at = now()
+        where id = ${input.orgId}
+          and status = 'soft_deleted'
+          and hard_deleted_at is null
+        returning
+          id, slug, display_name, status, tier, plan_id, region,
+          byo_config, feature_flags, quotas, branding,
+          suspended_at, soft_deleted_at, hard_deleted_at
+      `;
+      const updated = rows[0];
+      if (updated === undefined) return null;
+      await tx`
+        insert into activity (
+          org_id, actor_id, verb, object_type, object_id, payload, this_hash
+        ) values (
+          ${input.orgId}, ${proof.system_actor_id}, 'tenant.lifecycle.hard_deleted',
+          'tenant', ${input.orgId},
+          ${tx.json({
+            manifestSha256: proof.manifest_sha256,
+            proofObjectKey: proof.proof_object_key,
+          })}, ''
+        )
+      `;
+      return mapOrgRow(updated);
+    });
   }
 
   async updateTenantConfig(input: UpdateTenantConfigInput): Promise<OrgRecord | null> {
@@ -467,11 +491,9 @@ export class PostgresOrgStore implements OrgStore {
       await tx`
         select
           set_config('helix.tenant_config_changed_by', ${input.changedByActorId ?? ""}, true),
-          set_config('helix.tenant_config_reason', ${
-            input.reason ?? "tenant-config:update"
-          }, true)
+          set_config('helix.tenant_config_reason', ${input.reason ?? "tenant-config:update"}, true)
       `;
-      const rows = (await tx`
+      const rows = await tx<OrgRow[]>`
         update orgs
         set
           byo_config = case
@@ -507,7 +529,7 @@ export class PostgresOrgStore implements OrgStore {
           suspended_at,
           soft_deleted_at,
           hard_deleted_at
-      `) as unknown as readonly OrgRow[];
+      `;
       return rows[0] === undefined ? null : mapOrgRow(rows[0]);
     });
   }
@@ -515,7 +537,7 @@ export class PostgresOrgStore implements OrgStore {
   async listByoStorageOrgIds(
     input: { readonly limit?: number | undefined } = {},
   ): Promise<readonly string[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       select id
       from orgs
       where status = 'active'
@@ -523,13 +545,11 @@ export class PostgresOrgStore implements OrgStore {
         and byo_config->'storage'->>'kind' = 'byo'
       order by updated_at asc
       limit ${input.limit ?? 100}
-    `) as unknown as readonly { readonly id: string }[];
+    `;
     return rows.map((row) => row.id);
   }
 
-  async updateByoStorageHealth(
-    input: UpdateByoStorageHealthInput,
-  ): Promise<OrgRecord | null> {
+  async updateByoStorageHealth(input: UpdateByoStorageHealthInput): Promise<OrgRecord | null> {
     return this.sql.begin(async (tx) => {
       await tx`
         select set_config(
@@ -538,7 +558,7 @@ export class PostgresOrgStore implements OrgStore {
           true
         )
       `;
-      const rows = (await tx`
+      const rows = await tx<OrgRow[]>`
         update orgs
         set
           byo_config = jsonb_set(
@@ -565,7 +585,7 @@ export class PostgresOrgStore implements OrgStore {
           suspended_at,
           soft_deleted_at,
           hard_deleted_at
-      `) as unknown as readonly OrgRow[];
+      `;
       return rows[0] === undefined ? null : mapOrgRow(rows[0]);
     });
   }

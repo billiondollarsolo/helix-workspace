@@ -33,10 +33,13 @@ describe("DriveShareDialog", () => {
     fetchMock = vi.fn<typeof fetch>((input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-      if (url !== "/api/auth/get-session") {
+      if (url !== "/v1/api/auth/get-session" && url !== "/v1/api/auth/csrf-token") {
         toolCalls.push({ url, body });
       }
-      if (url === "/api/auth/get-session") {
+      if (url === "/v1/api/auth/csrf-token") {
+        return Promise.resolve(Response.json({ csrfToken: "test-csrf" }));
+      }
+      if (url === "/v1/api/auth/get-session") {
         return Promise.resolve(
           Response.json({
             user: {
@@ -48,7 +51,7 @@ describe("DriveShareDialog", () => {
           }),
         );
       }
-      if (url === "/api/tools/drive.access.list") {
+      if (url === "/v1/api/tools/drive.access.list") {
         return Promise.resolve(
           Response.json({
             grants: [
@@ -66,10 +69,10 @@ describe("DriveShareDialog", () => {
           }),
         );
       }
-      if (url === "/api/tools/drive.share") {
+      if (url === "/v1/api/tools/drive.share") {
         return Promise.resolve(Response.json({ shared: true }));
       }
-      if (url === "/api/tools/drive.access.update") {
+      if (url === "/v1/api/tools/drive.access.update") {
         return Promise.resolve(
           Response.json({
             objectId: "file-1",
@@ -78,12 +81,32 @@ describe("DriveShareDialog", () => {
           }),
         );
       }
-      if (url === "/api/tools/drive.access.remove") {
+      if (url === "/v1/api/tools/drive.access.remove") {
         return Promise.resolve(
           Response.json({
             objectId: "file-1",
             actorId: "66666666-6666-4666-8666-666666666666",
             removed: true,
+          }),
+        );
+      }
+      if (url === "/v1/api/tools/drive.link.create") {
+        return Promise.resolve(
+          Response.json({
+            id: "55555555-5555-4555-8555-555555555555",
+            orgId: "11111111-1111-4111-8111-111111111111",
+            objectId: "file-1",
+            token: "p".repeat(43),
+            role: "reader",
+            expiresAt: null,
+            passwordProtected: true,
+            oneTime: false,
+            allowedDomains: ["example.test"],
+            allowDownload: true,
+            consumedAt: null,
+            createdByActorId: "owner-1",
+            createdAt: "2026-05-20T12:00:00.000Z",
+            revokedAt: null,
           }),
         );
       }
@@ -105,20 +128,23 @@ describe("DriveShareDialog", () => {
     render();
     await settle();
 
-    setInput("Email, name, or actor ID", "maya@helix.local 66666666-6666-4666-8666-666666666666 Maya");
+    setInput(
+      "Email, name, or actor ID",
+      "maya@helix.local 66666666-6666-4666-8666-666666666666 Maya",
+    );
     setSelect("Share role", "commenter");
     clickButton("Share");
     await settle();
 
-    expect(toolCalls.find((call) => call.url === "/api/tools/drive.share")?.body).toEqual({
+    expect(toolCalls.find((call) => call.url === "/v1/api/tools/drive.share")?.body).toEqual({
       objectId: "file-1",
       actorIds: ["66666666-6666-4666-8666-666666666666"],
       actorRefs: ["maya@helix.local", "Maya"],
       role: "commenter",
       expiresAt: null,
     });
-    expect(container.textContent ?? "").toContain("People with access");
-    expect(container.textContent ?? "").toContain("Maya Chen");
+    expect(container.textContent).toContain("People with access");
+    expect(container.textContent).toContain("Maya Chen");
   });
 
   it("updates, removes, and copies links from the same dialog", async () => {
@@ -130,13 +156,13 @@ describe("DriveShareDialog", () => {
     clickButton("Copy link");
     await settle();
 
-    expect(toolCalls.find((call) => call.url === "/api/tools/drive.access.update")?.body).toEqual({
+    expect(toolCalls.find((call) => call.url === "/v1/api/tools/drive.access.update")?.body).toEqual({
       objectId: "file-1",
       actorId: "66666666-6666-4666-8666-666666666666",
       role: "editor",
       expiresAt: null,
     });
-    expect(toolCalls.find((call) => call.url === "/api/tools/drive.access.remove")?.body).toEqual({
+    expect(toolCalls.find((call) => call.url === "/v1/api/tools/drive.access.remove")?.body).toEqual({
       objectId: "file-1",
       actorId: "66666666-6666-4666-8666-666666666666",
     });
@@ -147,16 +173,38 @@ describe("DriveShareDialog", () => {
     render(false);
     await settle();
 
-    expect(toolCalls.some((call) => call.url === "/api/tools/drive.access.list")).toBe(false);
+    expect(toolCalls.some((call) => call.url === "/v1/api/tools/drive.access.list")).toBe(false);
 
     render(true);
     await settle();
 
     expect(toolCalls).toContainEqual({
-      url: "/api/tools/drive.access.list",
+      url: "/v1/api/tools/drive.access.list",
       body: { objectId: "file-1" },
     });
-    expect(container.textContent ?? "").toContain("Maya Chen");
+    expect(container.textContent).toContain("Maya Chen");
+  });
+
+  it("creates a reader-only governed public link", async () => {
+    render();
+    await settle();
+
+    setInput("Optional password (12+ characters)", "correct horse battery staple");
+    setInput("Optional domains, comma separated", "Example.Test");
+    clickButton("Create public link");
+    await settle();
+
+    expect(toolCalls.find((call) => call.url === "/v1/api/tools/drive.link.create")?.body).toEqual({
+      objectId: "file-1",
+      password: "correct horse battery staple",
+      expiresAt: null,
+      oneTime: false,
+      allowedDomains: ["example.test"],
+      allowDownload: true,
+    });
+    expect(clipboardWriteText).toHaveBeenCalledWith(
+      `http://localhost:3000/v1/api/drive/share/${"p".repeat(43)}`,
+    );
   });
 
   function render(open = true) {
@@ -215,8 +263,7 @@ describe("DriveShareDialog", () => {
     const target =
       Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
         (button) =>
-          button.textContent?.includes(label) === true ||
-          button.getAttribute("aria-label") === label,
+          button.textContent.includes(label) || button.getAttribute("aria-label") === label,
       ) ?? null;
     if (target === null) {
       throw new Error(`Missing button: ${label}`);

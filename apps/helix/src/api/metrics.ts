@@ -9,6 +9,25 @@ import {
 } from "prom-client";
 
 export type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
+export type OperationalMetricStatus = "success" | "error" | "retry" | "blocked" | "dry_run";
+export type OperationalCapability = "mail" | "drive" | "chat" | "search";
+export type OperationalOperation =
+  | "queue_wait"
+  | "delivery"
+  | "fanout"
+  | "replay"
+  | "finalize"
+  | "download"
+  | "virus_scan"
+  | "quota"
+  | "reconcile";
+export type OperationalMeasure =
+  | "replayed_events"
+  | "uploaded_bytes"
+  | "downloaded_bytes"
+  | "quarantined_bytes"
+  | "reconciled_documents"
+  | "drift_objects";
 
 export interface PlatformMetrics {
   readonly registry: Registry;
@@ -33,6 +52,7 @@ export interface PlatformMetrics {
     readonly actorType: string;
     readonly reason: string;
   }): void;
+  recordScimAuthFailure(input: { readonly reason: string }): void;
   recordSignupFunnelEvent(input: {
     readonly step: string;
     readonly tier?: string | undefined;
@@ -79,6 +99,42 @@ export interface PlatformMetrics {
   recordWebsocketConnectionClosed(input: { readonly route: string }): void;
   setStoragePoolSize(input: { readonly size: number }): void;
   recordStoragePoolEviction(): void;
+  recordMeetParticipantEvent(input: {
+    readonly event: "joined" | "left" | "reconnected" | "device_failure";
+    readonly device?: "camera" | "microphone" | "screen" | undefined;
+    readonly durationSeconds?: number | undefined;
+  }): void;
+  recordMeetQuality(input: {
+    readonly joinLatencySeconds?: number | undefined;
+    readonly packetLossPercent?: number | undefined;
+    readonly jitterSeconds?: number | undefined;
+    readonly rttSeconds?: number | undefined;
+    readonly bitrateKbps?: number | undefined;
+    readonly connectionQuality?: number | undefined;
+    readonly bridgeLoadPercent?: number | undefined;
+    readonly bridgeParticipantCount?: number | undefined;
+  }): void;
+  readonly recordSearchProjection?: (input: {
+    readonly indexerId: string;
+    readonly status: "success" | "error";
+    readonly lagSeconds: number;
+  }) => void;
+  recordOperationalEvent(input: {
+    readonly capability: OperationalCapability;
+    readonly operation: OperationalOperation;
+    readonly status: OperationalMetricStatus;
+    readonly durationSeconds?: number | undefined;
+  }): void;
+  addOperationalUnits(input: {
+    readonly capability: OperationalCapability;
+    readonly measure: OperationalMeasure;
+    readonly value?: number | undefined;
+  }): void;
+  setOperationalState(input: {
+    readonly capability: OperationalCapability;
+    readonly measure: OperationalMeasure;
+    readonly value: number;
+  }): void;
 }
 
 export function createPlatformMetrics(): PlatformMetrics {
@@ -103,6 +159,12 @@ export function createPlatformMetrics(): PlatformMetrics {
     name: "helix_agent_tool_limiter_denials_total",
     help: "Total denied agent or service-account tool invocations by limiter reason.",
     labelNames: ["tool_id", "tier", "actor_type", "reason"],
+    registers: [registry],
+  });
+  const scimAuthFailures = new Counter({
+    name: "helix_scim_auth_failures_total",
+    help: "Total rejected SCIM authentication and authorization attempts by reason.",
+    labelNames: ["reason"],
     registers: [registry],
   });
   const signupFunnelEvents = new Counter({
@@ -218,6 +280,114 @@ export function createPlatformMetrics(): PlatformMetrics {
     buckets: [0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
     registers: [registry],
   });
+  const searchProjectionLag = new Gauge({
+    name: "helix_search_projection_lag_seconds",
+    help: "Age of the latest search projection event when processing completed.",
+    labelNames: ["indexer"],
+    registers: [registry],
+  });
+  const searchProjectionErrors = new Counter({
+    name: "helix_search_projection_errors_total",
+    help: "Total search projection failures by indexer.",
+    labelNames: ["indexer"],
+    registers: [registry],
+  });
+  const operationalEvents = new Counter({
+    name: "helix_operational_events_total",
+    help: "Bounded internal capability outcomes not represented by HTTP or tool requests.",
+    labelNames: ["capability", "operation", "status"],
+    registers: [registry],
+  });
+  const operationalDuration = new Histogram({
+    name: "helix_operational_duration_seconds",
+    help: "Duration of bounded internal capability operations.",
+    labelNames: ["capability", "operation", "status"],
+    buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300],
+    registers: [registry],
+  });
+  const operationalUnits = new Counter({
+    name: "helix_operational_units_total",
+    help: "Bounded business units processed by internal capabilities.",
+    labelNames: ["capability", "measure"],
+    registers: [registry],
+  });
+  const operationalState = new Gauge({
+    name: "helix_operational_state",
+    help: "Current bounded operational state such as detected reconciliation drift.",
+    labelNames: ["capability", "measure"],
+    registers: [registry],
+  });
+  const meetParticipantEvents = new Counter({
+    name: "helix_meet_participant_events_total",
+    help: "Privacy-safe Meet participant events from signed media or Jitsi lifecycle signals.",
+    labelNames: ["event", "device"],
+    registers: [registry],
+  });
+  const meetQualitySamples = new Counter({
+    name: "helix_meet_quality_samples_total",
+    help: "Accepted bounded Meet quality samples.",
+    registers: [registry],
+  });
+  const meetDegradedSamples = new Counter({
+    name: "helix_meet_degraded_samples_total",
+    help: "Meet quality samples crossing an operational degradation threshold.",
+    labelNames: ["signal"],
+    registers: [registry],
+  });
+  const meetJoinLatency = meetHistogram(
+    registry,
+    "join_latency_seconds",
+    "Meet media join latency in seconds.",
+    [0.1, 0.25, 0.5, 1, 2, 5, 10, 30],
+  );
+  const meetCallDuration = meetHistogram(
+    registry,
+    "call_duration_seconds",
+    "Participant duration derived from signed media join and leave events.",
+    [5, 30, 60, 300, 900, 1800, 3600, 7200, 14400],
+  );
+  const meetPacketLoss = meetHistogram(
+    registry,
+    "packet_loss_percent",
+    "Bounded WebRTC packet loss percentage.",
+    [0.5, 1, 2, 5, 10, 25, 50, 100],
+  );
+  const meetJitter = meetHistogram(
+    registry,
+    "jitter_seconds",
+    "Bounded WebRTC jitter in seconds.",
+    [0.005, 0.01, 0.03, 0.05, 0.1, 0.25, 0.5, 1],
+  );
+  const meetRtt = meetHistogram(
+    registry,
+    "rtt_seconds",
+    "Bounded WebRTC round-trip time in seconds.",
+    [0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 2, 5],
+  );
+  const meetBitrate = meetHistogram(
+    registry,
+    "bitrate_kbps",
+    "Bounded aggregate WebRTC bitrate in kilobits per second.",
+    [50, 100, 250, 500, 1000, 2500, 5000, 10000],
+  );
+  const meetConnectionQuality = meetHistogram(
+    registry,
+    "connection_quality_percent",
+    "Jitsi connection quality score.",
+    [10, 25, 50, 75, 90, 100],
+  );
+  const meetBridgeLoad = meetHistogram(
+    registry,
+    "bridge_load_percent",
+    "Bounded Jitsi bridge load percentage reported with QoS.",
+    [25, 50, 70, 85, 95, 100],
+  );
+  const meetBridgeParticipants = meetHistogram(
+    registry,
+    "bridge_participant_load",
+    "Active participant load observed from signed media lifecycle events.",
+    [1, 2, 5, 10, 25, 50, 75, 100, 250],
+  );
 
   return {
     registry,
@@ -268,6 +438,9 @@ export function createPlatformMetrics(): PlatformMetrics {
         reason: input.reason,
       };
       agentToolLimiterDenials.inc(labels);
+    },
+    recordScimAuthFailure(input) {
+      scimAuthFailures.inc({ reason: input.reason });
     },
     recordSignupFunnelEvent(input) {
       const labels: LabelValues<"step" | "tier" | "plan_id" | "region"> = {
@@ -337,7 +510,85 @@ export function createPlatformMetrics(): PlatformMetrics {
     recordStoragePoolEviction() {
       storagePoolEvictions.inc();
     },
+    recordMeetParticipantEvent(input) {
+      meetParticipantEvents.inc({ event: input.event, device: input.device ?? "none" });
+      observeBounded(meetCallDuration, input.durationSeconds, 7 * 24 * 60 * 60);
+    },
+    recordMeetQuality(input) {
+      meetQualitySamples.inc();
+      observeBounded(meetJoinLatency, input.joinLatencySeconds, 300);
+      observeBounded(meetPacketLoss, input.packetLossPercent, 100);
+      observeBounded(meetJitter, input.jitterSeconds, 10);
+      observeBounded(meetRtt, input.rttSeconds, 60);
+      observeBounded(meetBitrate, input.bitrateKbps, 1_000_000);
+      observeBounded(meetConnectionQuality, input.connectionQuality, 100);
+      observeBounded(meetBridgeLoad, input.bridgeLoadPercent, 100);
+      observeBounded(meetBridgeParticipants, input.bridgeParticipantCount, 10_000);
+      if ((input.packetLossPercent ?? 0) > 5) meetDegradedSamples.inc({ signal: "packet_loss" });
+      if ((input.jitterSeconds ?? 0) > 0.1) meetDegradedSamples.inc({ signal: "jitter" });
+      if ((input.rttSeconds ?? 0) > 0.4) meetDegradedSamples.inc({ signal: "rtt" });
+      if (input.bitrateKbps !== undefined && input.bitrateKbps > 0 && input.bitrateKbps < 100) {
+        meetDegradedSamples.inc({ signal: "bitrate" });
+      }
+      if ((input.bridgeLoadPercent ?? 0) > 85) {
+        meetDegradedSamples.inc({ signal: "bridge_load" });
+      }
+    },
+    recordSearchProjection(input) {
+      searchProjectionLag.set({ indexer: input.indexerId }, input.lagSeconds);
+      if (input.status === "error") searchProjectionErrors.inc({ indexer: input.indexerId });
+    },
+    recordOperationalEvent(input) {
+      const labels = {
+        capability: input.capability,
+        operation: input.operation,
+        status: input.status,
+      };
+      operationalEvents.inc(labels);
+      observeBounded(operationalDuration, input.durationSeconds, 24 * 60 * 60, labels);
+    },
+    addOperationalUnits(input) {
+      const value = input.value ?? 1;
+      if (Number.isFinite(value) && value >= 0) {
+        operationalUnits.inc({ capability: input.capability, measure: input.measure }, value);
+      }
+    },
+    setOperationalState(input) {
+      if (Number.isFinite(input.value)) {
+        operationalState.set(
+          { capability: input.capability, measure: input.measure },
+          Math.max(0, input.value),
+        );
+      }
+    },
   };
+}
+
+function meetHistogram(
+  registry: Registry,
+  name: string,
+  help: string,
+  buckets: readonly number[],
+): Histogram {
+  return new Histogram({
+    name: `helix_meet_${name}`,
+    help,
+    buckets: [...buckets],
+    registers: [registry],
+  });
+}
+
+function observeBounded<T extends string>(
+  histogram: Histogram<T>,
+  value: number | undefined,
+  maximum: number,
+  labels?: LabelValues<T>,
+): void {
+  if (value !== undefined && Number.isFinite(value)) {
+    const bounded = Math.max(0, Math.min(value, maximum));
+    if (labels === undefined) histogram.observe(bounded);
+    else histogram.observe(labels, bounded);
+  }
 }
 
 export function installHttpMetrics(app: FastifyInstance, metrics: PlatformMetrics): void {

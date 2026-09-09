@@ -36,6 +36,11 @@ export interface HkdfOptions {
   readonly digest: string;
 }
 
+export interface AesGcmEncrypted {
+  readonly ciphertext: Buffer;
+  readonly tag: Buffer;
+}
+
 /** Diagnostic snapshot of the active provider, used by readiness reporting. */
 export interface CryptoProviderStatus {
   readonly providerId: "node" | "node-openssl-fips";
@@ -87,6 +92,23 @@ export interface CryptoProvider {
 
   /** HKDF key derivation. Throws under FIPS when the inner hash is not approved. */
   hkdf(options: HkdfOptions): Buffer;
+
+  /** Authenticated AES-256-GCM; callers own nonce generation and AAD. */
+  aes256GcmEncrypt(input: {
+    readonly key: BinaryInput;
+    readonly iv: BinaryInput;
+    readonly plaintext: BinaryInput;
+    readonly aad: BinaryInput;
+  }): AesGcmEncrypted;
+
+  /** Verify and decrypt an AES-256-GCM envelope. */
+  aes256GcmDecrypt(input: {
+    readonly key: BinaryInput;
+    readonly iv: BinaryInput;
+    readonly ciphertext: BinaryInput;
+    readonly tag: BinaryInput;
+    readonly aad: BinaryInput;
+  }): Buffer;
 
   /** Current provider status — for the FIPS readiness check / attestation. */
   status(): CryptoProviderStatus;

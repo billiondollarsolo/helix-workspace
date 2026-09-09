@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Actor, ToolDefinition } from "@helix/sdk-types";
+import { ALL_SCOPES } from "./scope-catalog.js";
 import {
   CerbosToolAccessPolicy,
   ObservedToolAccessPolicy,
@@ -17,26 +18,35 @@ const schema = {
 
 const tools: readonly ToolDefinition[] = [
   {
-    id: "visible.read",
+    id: "mail.read",
     description: "Visible",
     inputSchema: schema,
     outputSchema: schema,
-    permission: "visible.read",
+    permission: "mail.read",
     sideEffects: "read",
     handler: async () => ({}),
   },
   {
-    id: "hidden.write",
+    id: "mail.write",
     description: "Hidden",
     inputSchema: schema,
     outputSchema: schema,
-    permission: "hidden.write",
+    permission: "mail.write",
     sideEffects: "write",
     handler: async () => ({}),
   },
 ];
 
 describe("filterToolsForActor", () => {
+  it("enforces the complete permission matrix and rejects unknown actions", async () => {
+    const policy = new ScopeToolAccessPolicy();
+    for (const permission of ALL_SCOPES) {
+      await expect(policy.can(agent([permission]), permission)).resolves.toBe(true);
+      await expect(policy.can(agent([]), permission)).resolves.toBe(false);
+    }
+    await expect(policy.can(agent(["invented.admin"]), "invented.admin")).resolves.toBe(false);
+  });
+
   it("filters tools by actor scopes", async () => {
     const filtered = await filterToolsForActor(
       tools,
@@ -44,12 +54,41 @@ describe("filterToolsForActor", () => {
         id: "agent-1",
         orgId: "org-1",
         type: "agent",
-        scopes: ["visible.read"],
+        scopes: ["mail.read"],
       },
       new ScopeToolAccessPolicy(),
     );
 
-    expect(filtered.map((tool) => tool.id)).toEqual(["visible.read"]);
+    expect(filtered.map((tool) => tool.id)).toEqual(["mail.read"]);
+  });
+
+  it("consumes exact role grants and deny precedence", async () => {
+    const policy = new ScopeToolAccessPolicy();
+    const actor: Actor = {
+      id: "agent-1",
+      orgId: "org-1",
+      type: "agent",
+      scopes: ["mail.write"],
+      roleBindings: [
+        {
+          roleId: "00000000-0000-4000-8000-000000000001",
+          allow: ["mail.read"],
+          deny: ["mail.write"],
+          scope: { type: "resource", resourceType: "tool", id: "mail.read" },
+        },
+      ],
+    };
+
+    await expect(policy.can(actor, "mail.read", toolResourceForTest(firstTool()))).resolves.toBe(
+      true,
+    );
+    await expect(
+      policy.can(
+        actor,
+        "mail.write",
+        toolResourceForTest({ ...firstTool(), id: "mail.read", permission: "mail.write" }),
+      ),
+    ).resolves.toBe(false);
   });
 
   it("allows system actors to see every tool", async () => {
@@ -63,7 +102,7 @@ describe("filterToolsForActor", () => {
       new ScopeToolAccessPolicy(),
     );
 
-    expect(filtered.map((tool) => tool.id)).toEqual(["visible.read", "hidden.write"]);
+    expect(filtered.map((tool) => tool.id)).toEqual(["mail.read", "mail.write"]);
   });
 
   it("checks tool permissions through Cerbos when configured", async () => {
@@ -79,7 +118,7 @@ describe("filterToolsForActor", () => {
           results: [
             {
               actions: {
-                "visible.read": "EFFECT_ALLOW",
+                "mail.read": "EFFECT_ALLOW",
               },
             },
           ],
@@ -93,37 +132,37 @@ describe("filterToolsForActor", () => {
           id: "agent-1",
           orgId: "org-1",
           type: "agent",
-          scopes: ["visible.read"],
+          scopes: ["mail.read"],
         },
-        "visible.read",
+        "mail.read",
         toolResourceForTest(firstTool()),
       ),
     ).resolves.toBe(true);
 
     expect(requests).toEqual([
       {
-        requestId: "helix-tool-access:org-1:agent-1:visible.read",
+        requestId: "helix-tool-access:org-1:agent-1:mail.read",
         principal: {
           id: "agent-1",
           roles: ["agent"],
           attr: {
             org_id: "org-1",
             type: "agent",
-            scopes: ["visible.read"],
+            scopes: ["mail.read"],
           },
         },
         resources: [
           {
             resource: {
-              id: "visible.read",
+              id: "mail.read",
               kind: "tool",
               attr: {
                 org_id: "org-1",
-                permission: "visible.read",
+                permission: "mail.read",
                 sideEffects: "read",
               },
             },
-            actions: ["visible.read"],
+            actions: ["mail.read"],
           },
         ],
       },
@@ -142,12 +181,48 @@ describe("filterToolsForActor", () => {
           id: "agent-1",
           orgId: "org-1",
           type: "agent",
-          scopes: ["visible.read"],
+          scopes: ["mail.read"],
         },
-        "visible.read",
+        "mail.read",
         toolResourceForTest(firstTool()),
       ),
     ).resolves.toBe(false);
+  });
+
+  it("rejects unknown actions before consulting Cerbos", async () => {
+    let called = false;
+    const policy = new CerbosToolAccessPolicy({
+      endpoint: "http://cerbos.local",
+      fetch: async () => {
+        called = true;
+        return Response.json({ results: [{ actions: { "invented.admin": "EFFECT_ALLOW" } }] });
+      },
+    });
+
+    await expect(
+      policy.can(agent(["invented.admin"]), "invented.admin", { type: "tool" }),
+    ).resolves.toBe(false);
+    expect(called).toBe(false);
+  });
+
+  it("does not promote a narrow admin scope to an omnipotent Cerbos role", async () => {
+    let requestBody: unknown;
+    const policy = new CerbosToolAccessPolicy({
+      endpoint: "http://cerbos.local",
+      fetch: async (_input, init) => {
+        requestBody = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+        return Response.json({ results: [{ actions: { "drive.delete": "EFFECT_DENY" } }] });
+      },
+    });
+
+    await expect(
+      policy.can(
+        { id: "auditor", orgId: "org-1", type: "user", scopes: ["admin.audit"] },
+        "drive.delete",
+        toolResourceForTest({ ...firstTool(), permission: "drive.delete" }),
+      ),
+    ).resolves.toBe(false);
+    expect(requestBody).toMatchObject({ principal: { roles: ["user"] } });
   });
 
   it("records observed permission decisions and fails closed on policy errors", async () => {
@@ -167,16 +242,16 @@ describe("filterToolsForActor", () => {
           id: "agent-1",
           orgId: "org-1",
           type: "agent",
-          scopes: ["visible.read"],
+          scopes: ["mail.read"],
         },
-        "visible.read",
+        "mail.read",
         toolResourceForTest(firstTool()),
       ),
     ).resolves.toBe(false);
 
     expect(metrics.records).toEqual([
       expect.objectContaining({
-        action: "visible.read",
+        action: "mail.read",
         actorType: "agent",
         decision: "error",
         policy: "test-pdp",
@@ -214,7 +289,7 @@ function agent(scopes: readonly string[]): Actor {
 
 describe("requiredScopesForCall", () => {
   it("returns only the base permission when no composition is declared", () => {
-    expect(requiredScopesForCall(firstTool(), {})).toEqual(["visible.read"]);
+    expect(requiredScopesForCall(firstTool(), {})).toEqual(["mail.read"]);
   });
 
   it("includes unconditional required scopes", () => {
@@ -222,7 +297,7 @@ describe("requiredScopesForCall", () => {
       ...firstTool(),
       scopeComposition: { requiredScopes: ["extra.scope"] },
     };
-    expect(requiredScopesForCall(tool, {})).toEqual(["visible.read", "extra.scope"]);
+    expect(requiredScopesForCall(tool, {})).toEqual(["mail.read", "extra.scope"]);
   });
 
   it("adds a conditional scope only when its predicate matches the input", () => {
@@ -289,6 +364,14 @@ describe("checkScopeComposition", () => {
       to: [{ address: "bob@partner.com" }],
     });
     expect(result).toEqual({ ok: false, missingScopes: ["mail.send", "mail.external"] });
+  });
+
+  it("rejects unknown permissions even when the actor claims them", () => {
+    const tool = { ...firstTool(), permission: "invented.admin" };
+    expect(checkScopeComposition(agent(["invented.admin"]), tool, {})).toEqual({
+      ok: false,
+      missingScopes: ["invented.admin"],
+    });
   });
 });
 

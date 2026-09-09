@@ -62,6 +62,9 @@ describe("CalendarShell", () => {
 
   const mockEvents = (events: readonly CalendarApiEvent[]) => {
     fetchMock = vi.fn<typeof fetch>((input) => {
+      if (input === "/api/auth/csrf-token") {
+        return Promise.resolve(Response.json({ csrfToken: "calendar-test-csrf" }));
+      }
       if (input === "/api/tools/calendar.event.list") {
         return Promise.resolve(Response.json({ events }));
       }
@@ -114,7 +117,7 @@ describe("CalendarShell", () => {
     expect(container.textContent).not.toContain("Eng standup");
   });
 
-  it("renders the sidebar mini-month and surfaces an unavailable banner offline", async () => {
+  it("surfaces a sidebar unavailable banner offline", async () => {
     mockOffline();
     render();
     await flush();
@@ -147,7 +150,7 @@ describe("CalendarShell", () => {
   });
 
   it("opens the event popover when an event card is clicked", async () => {
-    const event = backendEvent("Eng standup");
+    const event = { ...backendEvent("Eng standup"), location: "https://meet.helix.test/standup" };
     mockEvents([event]);
     let state: CalendarRouteState = defaultCalendarRouteState;
     render(state, (next) => {
@@ -176,6 +179,12 @@ describe("CalendarShell", () => {
     const popover = document.querySelector("[data-calendar-popover]");
     expect(popover).not.toBeNull();
     expect(popover?.textContent).toContain("attendees");
+    expect(
+      popover?.querySelector<HTMLAnchorElement>('a[href="https://meet.helix.test/standup"]'),
+    ).toMatchObject({ target: "_blank", rel: "noopener noreferrer" });
+    expect(popover?.querySelector<HTMLAnchorElement>('a[aria-label="Email attendees"]')?.href).toBe(
+      "mailto:sam%40helix.test",
+    );
   });
 
   it("closes the popover when Escape is pressed", async () => {
@@ -210,5 +219,29 @@ describe("CalendarShell", () => {
       (monthButton as HTMLButtonElement).click();
     });
     expect(state.view).toBe("month");
+  });
+
+  it("renders day, month, and agenda as scoped lists instead of relabeled week grids", async () => {
+    mockEvents([backendEvent("Backend planning")]);
+    for (const view of ["day", "month", "agenda"] as const) {
+      render({ ...defaultCalendarRouteState, date: "2026-05-20", view });
+      await flush();
+      expect(container.querySelector(`[aria-label="${view} events"]`)).not.toBeNull();
+      expect(container.textContent).toContain("Backend planning");
+      expect(container.querySelector("[data-calendar-day]")).toBeNull();
+    }
+  });
+
+  it("edits attendees, recurrence, and reminders in the persisted event form", async () => {
+    mockEvents([]);
+    render({ ...defaultCalendarRouteState, date: "2026-05-20" });
+    await flush();
+    const create = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Create",
+    );
+    act(() => create?.click());
+    expect(container.querySelector('input[placeholder^="name@example.com"]')).not.toBeNull();
+    expect(container.querySelector('input[placeholder^="FREQ=WEEKLY"]')).not.toBeNull();
+    expect(container.querySelector('input[type="number"][max="40320"]')).not.toBeNull();
   });
 });

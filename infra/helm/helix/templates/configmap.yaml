@@ -8,7 +8,13 @@ data:
   HELIX_CONFIG_JSON: {{ include "helix.configJson" . | quote }}
   HELIX_SECURITY_TIER: {{ .Values.security.tier | quote }}
   HELIX_PUBLIC_URL: {{ .Values.publicUrl | quote }}
+  HELIX_TENANT_ROOT_HOSTS: {{ join "," .Values.tenantRootHosts | quote }}
+  HELIX_REGION: {{ .Values.external.s3.region | quote }}
+  HELIX_OTEL_REGION: {{ .Values.external.s3.region | quote }}
+  HELIX_SIEM_REGION: {{ .Values.external.s3.region | quote }}
+  MEET_JITSI_REGION: {{ .Values.external.s3.region | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
+  HELIX_TRUSTED_PROXIES: {{ join "," .Values.trustedProxies | quote }}
   {{- /*
     FIPS is opt-in. The Helix crypto adapter treats an explicit
     HELIX_CRYPTO_ADAPTER as an override that selects the FipsCryptoProvider
@@ -27,7 +33,11 @@ data:
   HELIX_AIRGAP_MODE: {{ ternary "required" "disabled" .Values.airgap.enabled | quote }}
   RUSTFS_ENDPOINT: {{ .Values.external.s3.endpoint | quote }}
   RUSTFS_BUCKET: {{ .Values.external.s3.bucket | quote }}
-  AWS_REGION: {{ .Values.external.s3.region | quote }}
+  RUSTFS_REGION: {{ .Values.external.s3.region | quote }}
+  RUSTFS_SERVER_SIDE_ENCRYPTION: "aws:kms"
+  RUSTFS_SSE_KMS_KEY_ID: {{ .Values.external.s3.kmsKeyId | quote }}
+  RUSTFS_OBJECT_LOCK_MODE: {{ .Values.external.s3.objectLockMode | quote }}
+  RUSTFS_OBJECT_LOCK_RETENTION_DAYS: {{ .Values.external.s3.objectLockRetentionDays | quote }}
   KMS_ENDPOINT: {{ .Values.external.kms.endpoint | quote }}
   KMS_KEY_ID: {{ .Values.external.kms.keyId | quote }}
   VAULT_ADDR: {{ .Values.external.vault.address | quote }}

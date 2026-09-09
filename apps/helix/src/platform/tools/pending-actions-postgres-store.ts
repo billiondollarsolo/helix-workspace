@@ -25,7 +25,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async create(input: PendingActionCreateInput): Promise<PendingActionRecord> {
-    const insertedRows = await this.sql`
+    const rows = await this.sql<PendingActionRow[]>`
       insert into pending_actions (
         org_id,
         actor_id,
@@ -54,7 +54,6 @@ export class PostgresPendingActionStore implements PendingActionStore {
       )
       returning id, org_id, actor_id, tool_id, input, status, expires_at, created_at, decided_at, trace_id, result, error
     `;
-    const rows = insertedRows as unknown as readonly PendingActionRow[];
     const row = rows[0];
     if (row === undefined) {
       throw new Error("Failed to create pending action.");
@@ -63,13 +62,12 @@ export class PostgresPendingActionStore implements PendingActionStore {
   }
 
   async get(id: string): Promise<PendingActionRecord | null> {
-    const selectedRows = await this.sql`
+    const rows = await this.sql<PendingActionRow[]>`
       select id, org_id, actor_id, tool_id, input, status, expires_at, created_at, decided_at, trace_id, result, error
       from pending_actions
       where id = ${id}
       limit 1
     `;
-    const rows = selectedRows as unknown as readonly PendingActionRow[];
     const row = rows[0];
     return row === undefined ? null : toPendingActionRecord(row);
   }
@@ -80,7 +78,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
     readonly status: "confirmed" | "cancelled";
     readonly decidedAt: Date;
   }): Promise<PendingActionRecord | null> {
-    const updatedRows = await this.sql`
+    const rows = await this.sql<PendingActionRow[]>`
       update pending_actions
       set status = ${input.status}, decided_at = ${input.decidedAt}
       where id = ${input.id}
@@ -88,7 +86,6 @@ export class PostgresPendingActionStore implements PendingActionStore {
         and status = 'pending_confirmation'
       returning id, org_id, actor_id, tool_id, input, status, expires_at, created_at, decided_at, trace_id, result, error
     `;
-    const rows = updatedRows as unknown as readonly PendingActionRow[];
     const row = rows[0];
     return row === undefined ? null : toPendingActionRecord(row);
   }
@@ -100,7 +97,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
     readonly result?: JsonValue;
     readonly error?: string;
   }): Promise<PendingActionRecord | null> {
-    const updatedRows = await this.sql`
+    const rows = await this.sql<PendingActionRow[]>`
       update pending_actions
       set
         trace_id = coalesce(${input.traceId ?? null}, trace_id),
@@ -111,7 +108,6 @@ export class PostgresPendingActionStore implements PendingActionStore {
         and status = 'confirmed'
       returning id, org_id, actor_id, tool_id, input, status, expires_at, created_at, decided_at, trace_id, result, error
     `;
-    const rows = updatedRows as unknown as readonly PendingActionRow[];
     const row = rows[0];
     return row === undefined ? null : toPendingActionRecord(row);
   }
@@ -124,7 +120,7 @@ export class PostgresPendingActionStore implements PendingActionStore {
     // Single statement: `for update skip locked` keeps the expiry worker
     // concurrency-safe even though it is leader-gated, and the join-update
     // pattern lets us return the affected rows.
-    const updatedRows = await this.sql`
+    const rows = await this.sql<PendingActionRow[]>`
       update pending_actions
       set status = 'expired', decided_at = ${input.now}
       where id in (
@@ -138,7 +134,6 @@ export class PostgresPendingActionStore implements PendingActionStore {
       )
       returning id, org_id, actor_id, tool_id, input, status, expires_at, created_at, decided_at, trace_id, result, error
     `;
-    const rows = updatedRows as unknown as readonly PendingActionRow[];
     return rows.map(toPendingActionRecord);
   }
 }

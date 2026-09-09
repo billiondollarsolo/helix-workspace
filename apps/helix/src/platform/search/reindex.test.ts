@@ -1,5 +1,13 @@
+import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import { SearchReindexService, type SearchReindexSource } from "./reindex.js";
+import {
+  createPostgresSearchReindexSources,
+  SearchReconciliationWorker,
+  SearchReindexService,
+  type SearchReindexRequest,
+  type SearchReindexResult,
+  type SearchReindexSource,
+} from "./reindex.js";
 import type { IndexDocument, SearchEngine, SearchRequest, SearchResponse } from "./types.js";
 
 describe("SearchReindexService", () => {
@@ -64,6 +72,7 @@ describe("SearchReindexService", () => {
     });
 
     expect(engine.deletes).toEqual([["mail:stale", "drive:stale"]]);
+    expect(engine.deleteOrgIds).toEqual(["11111111-1111-4111-8111-111111111111"]);
     expect(engine.searches).toEqual([
       {
         query: "",
@@ -97,6 +106,20 @@ describe("SearchReindexService", () => {
     });
     expect(engine.searches).toEqual([]);
     expect(engine.deletes).toEqual([]);
+  });
+
+  it("deletes unscoped stale vectors from each owning tenant", async () => {
+    const engine = new FakeSearchEngine([
+      { id: "drive:a", type: "drive", attributes: { orgId: "org-a" } },
+      { id: "drive:b", type: "drive", attributes: { orgId: "org-b" } },
+    ]);
+    const service = new SearchReindexService({ engine, sources: [source("drive", [])] });
+
+    await expect(service.reindex({ types: ["drive"] })).resolves.toMatchObject({
+      deletedDocuments: 2,
+    });
+    expect(engine.deletes).toEqual([["drive:a"], ["drive:b"]]);
+    expect(engine.deleteOrgIds).toEqual(["org-a", "org-b"]);
   });
 
   it("streams source batches without materializing all documents up front", async () => {
@@ -163,6 +186,68 @@ describe("SearchReindexService", () => {
       "calendar:11111111-1111-4111-8111-111111111111",
     ]);
   });
+
+  it("reindexes every mailbox projection of one canonical mail message", async () => {
+    const messageId = "33333333-3333-4333-8333-333333333333";
+    const rows = ["actor-a", "actor-b"].map((actorId) => ({
+      org_id: "11111111-1111-4111-8111-111111111111",
+      thread_id: "22222222-2222-4222-8222-222222222222",
+      message_id: messageId,
+      subject: "Shared message",
+      body: "One body",
+      metadata: {
+        direction: "inbound",
+        from: { address: "sender@example.net" },
+        to: [{ address: "to@example.test" }],
+        cc: [],
+        bcc: [],
+      },
+      sent_at: new Date("2026-09-02T00:00:00.000Z"),
+      updated_at: new Date("2026-09-02T00:00:00.000Z"),
+      actor_id: actorId,
+      labels: [],
+    }));
+    const tag = () => Promise.resolve(rows);
+    const sql = Object.assign(tag, {
+      unsafe: () => Promise.resolve([{ id: messageId }]),
+    }) as unknown as postgres.Sql;
+    const mailSource = createPostgresSearchReindexSources(sql).find(
+      (source) => source.type === "mail",
+    );
+    if (mailSource === undefined) throw new Error("Mail reindex source missing");
+
+    const documents = await mailSource.collect({});
+
+    expect(documents.map((document) => document.id)).toEqual([
+      `mail:actor-a:${messageId}`,
+      `mail:actor-b:${messageId}`,
+    ]);
+  });
+});
+
+describe("SearchReconciliationWorker", () => {
+  it("repairs and prunes Drive projections without overlapping runs", async () => {
+    const calls: SearchReindexRequest[] = [];
+    const service = {
+      reindex: async (input: SearchReindexRequest = {}): Promise<SearchReindexResult> => {
+        calls.push(input);
+        return {
+          status: "completed",
+          engineId: "fake-search",
+          types: ["drive"],
+          totalDocuments: 0,
+          deletedDocuments: 0,
+          counts: { mail: 0, chat: 0, docs: 0, drive: 0, calendar: 0 },
+          batchSize: 100,
+        };
+      },
+    };
+    const worker = new SearchReconciliationWorker({ service });
+
+    await Promise.all([worker.reconcileOnce(), worker.reconcileOnce()]);
+
+    expect(calls).toEqual([{ types: ["drive"], pruneStale: true }]);
+  });
 });
 
 function source(type: SearchReindexSource["type"], ids: readonly string[]): SearchReindexSource {
@@ -176,6 +261,7 @@ class FakeSearchEngine implements SearchEngine {
   readonly id = "fake-search";
   readonly batches: readonly IndexDocument[][] = [];
   readonly deletes: readonly string[][] = [];
+  readonly deleteOrgIds: Array<string | undefined> = [];
   readonly searches: SearchRequest[] = [];
 
   constructor(private readonly indexedDocuments: readonly IndexDocument[] = []) {}
@@ -188,15 +274,18 @@ class FakeSearchEngine implements SearchEngine {
     (this.batches as IndexDocument[][]).push([...documents]);
   }
 
-  async delete(ids: readonly string[]): Promise<void> {
+  async delete(ids: readonly string[], orgId?: string): Promise<void> {
     (this.deletes as string[][]).push([...ids]);
+    this.deleteOrgIds.push(orgId);
   }
 
   async search(request: SearchRequest): Promise<SearchResponse> {
     this.searches.push(request);
     const types = new Set(request.types ?? []);
     return {
-      hits: this.indexedDocuments.filter((document) => types.size === 0 || types.has(document.type)),
+      hits: this.indexedDocuments.filter(
+        (document) => types.size === 0 || types.has(document.type),
+      ),
       query: request.query,
     };
   }

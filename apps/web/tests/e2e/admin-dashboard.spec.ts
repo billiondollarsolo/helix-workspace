@@ -441,10 +441,6 @@ function pluginListResponse() {
           confirmations: [],
           source: "official",
         },
-        signature: {
-          digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          signer: "helix",
-        },
         tierRequirements: null,
       },
     ],

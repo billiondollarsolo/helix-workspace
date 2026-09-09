@@ -1,9 +1,10 @@
 import fastify from "fastify";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import { actorFromRequest } from "../../api/actor.js";
+import { actorFromRequest } from "../../api/test-actor.js";
 import {
   PostgresAdminUsersStore,
+  canReadAdminUsers,
   decodeAdminUsersCursor,
   encodeAdminUsersCursor,
   registerAdminUsersRoutes,
@@ -22,6 +23,60 @@ const orgId = "22222222-2222-4222-8222-222222222222";
 const actorId = "11111111-1111-4111-8111-111111111111";
 
 describe("admin users routes", () => {
+  it("audits a security-admin reset and refuses self-reset", async () => {
+    const targetId = "55555555-5555-4555-8555-555555555555";
+    const store = new FakeAdminUsersStore([], true);
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store,
+      actorFromRequest,
+    });
+    const headers = {
+      "x-helix-actor-id": actorId,
+      "x-helix-org-id": orgId,
+      "x-helix-scopes": "admin.security",
+    };
+
+    const reset = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${targetId}/mfa/reset`,
+      headers,
+    });
+    expect(reset.statusCode).toBe(204);
+    expect(store.resets).toEqual([{
+      orgId,
+      targetActorId: targetId,
+      performedByActorId: actorId,
+    }]);
+
+    const self = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${actorId}/mfa/reset`,
+      headers,
+    });
+    expect(self.statusCode).toBe(409);
+    expect(store.resets).toHaveLength(1);
+  });
+
+  it("consumes the user-admin role binding", () => {
+    expect(
+      canReadAdminUsers({
+        id: actorId,
+        orgId,
+        type: "user",
+        scopes: [],
+        roleBindings: [
+          {
+            roleId: "77777777-7777-4777-8777-777777777778",
+            allow: ["admin.users"],
+            deny: [],
+            scope: { type: "org" },
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
   it("returns org-scoped users with filters and cursor pagination", async () => {
     const store = new FakeAdminUsersStore([
       userRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"),
@@ -136,8 +191,16 @@ describe("admin users routes", () => {
 describe("people directory routes", () => {
   it("returns active org users for authenticated non-admin actors", async () => {
     const store = new FakeAdminUsersStore([
-      { ...userRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"), displayName: "Mina Park", email: "mina@example.com" },
-      { ...userRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"), displayName: "", email: "fallback@example.com" },
+      {
+        ...userRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"),
+        displayName: "Mina Park",
+        email: "mina@example.com",
+      },
+      {
+        ...userRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"),
+        displayName: "",
+        email: "fallback@example.com",
+      },
     ]);
     const app = fastify();
     await registerPeopleDirectoryRoutes(app, { store, actorFromRequest });
@@ -263,12 +326,29 @@ describe("PostgresAdminUsersStore", () => {
 
 class FakeAdminUsersStore implements AdminUsersStore {
   readonly calls: ListAdminUsersInput[] = [];
+  readonly resets: {
+    readonly orgId: string;
+    readonly targetActorId: string;
+    readonly performedByActorId: string;
+  }[] = [];
 
-  constructor(private readonly users: readonly AdminUserRecord[]) {}
+  constructor(
+    private readonly users: readonly AdminUserRecord[],
+    private readonly resetResult = false,
+  ) {}
 
   async listUsers(input: ListAdminUsersInput): Promise<readonly AdminUserRecord[]> {
     this.calls.push(input);
     return this.users;
+  }
+
+  async resetMfa(input: {
+    readonly orgId: string;
+    readonly targetActorId: string;
+    readonly performedByActorId: string;
+  }): Promise<boolean> {
+    this.resets.push(input);
+    return this.resetResult;
   }
 }
 

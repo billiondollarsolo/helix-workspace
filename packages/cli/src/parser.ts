@@ -46,7 +46,14 @@ export type HelixCommand =
       readonly cursor?: string;
     }
   | { readonly kind: "backup-create" }
-  | { readonly kind: "restore-from"; readonly backupId: string; readonly encrypted?: boolean }
+  | {
+      readonly kind: "restore-from";
+      readonly backupId: string;
+      readonly targetDatabase: string;
+      readonly targetObjectBucket: string;
+      readonly idempotencyKey: string;
+      readonly encrypted?: boolean;
+    }
   | { readonly kind: "reindex-all" }
   | { readonly kind: "action-status"; readonly actionId: string }
   | { readonly kind: "action-approve"; readonly actionId: string }
@@ -503,8 +510,7 @@ const mailDeleteUsage = "Usage: helix mail delete [--thread-id <id>] [--json [JS
 const mailThreadGetUsage = "Usage: helix mail thread-get [--thread-id <id>] [--json [JSON]]";
 const mailSnoozeUsage =
   "Usage: helix mail snooze [--thread-id <id>] [--until <iso>] [--json [JSON]]";
-const mailReadSetUsage =
-  "Usage: helix mail read [--thread-id <id>] [--unread] [--json [JSON]]";
+const mailReadSetUsage = "Usage: helix mail read [--thread-id <id>] [--unread] [--json [JSON]]";
 const mailStarSetUsage =
   "Usage: helix mail star [--thread-id <id>] [--starred] [--unstarred] [--json [JSON]]";
 const mailFilterCreateUsage =
@@ -1572,7 +1578,7 @@ const meetCreateRoomUsage =
 const meetRoomListUsage =
   "Usage: helix meet list [--status <active|ended>] [--limit <n>] [--json [JSON]]";
 const meetMintTokenUsage =
-  "Usage: helix meet mint-token [--room-id <id>] [--expires-in-seconds <n>] [--moderator] [--json [JSON]]";
+  "Usage: helix meet mint-token [--room-id <id>] [--expires-in-seconds <n>] --accept-recording-notice --recording-notice-version <version> --device-id <id> --join-grant-id <id> [--json [JSON]]";
 const meetEndRoomUsage = "Usage: helix meet end-room [--room-id <id>] [--json [JSON]]";
 
 const meetCreateRoomOptions = {
@@ -1599,9 +1605,14 @@ const meetRoomListOptions = {
 
 const meetMintTokenOptions = {
   arrays: new Map<string, string>(),
-  strings: new Map([["--room-id", "roomId"]]),
+  strings: new Map([
+    ["--room-id", "roomId"],
+    ["--recording-notice-version", "recordingNoticeVersion"],
+    ["--device-id", "deviceId"],
+    ["--join-grant-id", "joinGrantId"],
+  ]),
   numbers: new Map([["--expires-in-seconds", "expiresInSeconds"]]),
-  booleans: new Map([["--moderator", "moderator"]]),
+  booleans: new Map([["--accept-recording-notice", "recordingNoticeAccepted"]]),
 } as const;
 
 const meetEndRoomOptions = {
@@ -1657,23 +1668,19 @@ function parseAssistantCommand(
   }
 }
 
-const assistantUsage =
-  "Usage: helix assistant <chat|new|forget|approve|cancel> [--json [JSON]]";
+const assistantUsage = "Usage: helix assistant <chat|new|forget|approve|cancel> [--json [JSON]]";
 const assistantConfirmationUsage =
-  "Usage: helix assistant <approve|cancel> [--conversation-id <id>] [--pending-id <id>] [--classification <public|standard|confidential|restricted>] [--json [JSON]]";
+  "Usage: helix assistant <approve|cancel> [--conversation-id <id>] [--pending-id <id>] [--json [JSON]]";
 
 const assistantConfirmationOptions = {
   arrays: new Map<string, string>(),
   strings: new Map([
     ["--conversation-id", "conversationId"],
     ["--pending-id", "pendingId"],
-    ["--classification", "classification"],
   ]),
   numbers: new Map<string, string>(),
   booleans: new Map<string, string>(),
-  enums: new Map([
-    ["--classification", new Set(["public", "standard", "confidential", "restricted"])],
-  ]),
+  enums: new Map<string, ReadonlySet<string>>(),
 } as const;
 
 function parseSearchCommand(args: readonly string[]): HelixCommand {
@@ -1994,6 +2001,9 @@ function parseBackupCommand(
 
 function parseRestoreCommand(args: readonly string[]): HelixCommand {
   let backupId: string | undefined;
+  let targetDatabase: string | undefined;
+  let targetObjectBucket: string | undefined;
+  let idempotencyKey: string | undefined;
   let encrypted = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -2004,20 +2014,41 @@ function parseRestoreCommand(args: readonly string[]): HelixCommand {
       }
       backupId = value;
       index += 1;
+    } else if (arg === "--target-db" || arg === "--target-bucket" || arg === "--idempotency-key") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) throw new CliUsageError(restoreFromUsage);
+      if (arg === "--target-db") targetDatabase = value;
+      else if (arg === "--target-bucket") targetObjectBucket = value;
+      else idempotencyKey = value;
+      index += 1;
     } else if (arg === "--encrypted") {
       encrypted = true;
     } else {
       throw new CliUsageError(restoreFromUsage);
     }
   }
-  if (backupId === undefined || backupId.trim().length === 0) {
+  if (
+    backupId === undefined ||
+    backupId.trim().length === 0 ||
+    targetDatabase === undefined ||
+    targetObjectBucket === undefined ||
+    idempotencyKey === undefined
+  ) {
     throw new CliUsageError(restoreFromUsage);
   }
-  return { kind: "restore-from", backupId, ...(encrypted ? { encrypted } : {}) };
+  return {
+    kind: "restore-from",
+    backupId,
+    targetDatabase,
+    targetObjectBucket,
+    idempotencyKey,
+    ...(encrypted ? { encrypted } : {}),
+  };
 }
 
 const backupCreateUsage = "Usage: helix backup create";
-const restoreFromUsage = "Usage: helix restore --from <backup-id> [--encrypted]";
+const restoreFromUsage =
+  "Usage: helix restore --from <backup-id> --target-db <isolated-db> --target-bucket <isolated-bucket> --idempotency-key <key> [--encrypted]";
 const reindexAllUsage = "Usage: helix reindex --all";
 
 function parseReindexCommand(args: readonly string[]): HelixCommand {
@@ -2756,7 +2787,7 @@ export const usage = `Usage:
   helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]
   helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]
   helix backup create
-  helix restore --from <backup-id> [--encrypted]
+  helix restore --from <backup-id> --target-db <isolated-db> --target-bucket <isolated-bucket> --idempotency-key <key> [--encrypted]
   helix reindex --all
   helix action status <action-id>
   helix action approve <action-id>
@@ -2765,8 +2796,8 @@ export const usage = `Usage:
   helix assistant chat [--json [JSON]]
   helix assistant new [--json [JSON]]
   helix assistant forget [--json [JSON]]
-  helix assistant approve [--conversation-id <id>] [--pending-id <id>] [--classification <public|standard|confidential|restricted>] [--json [JSON]]
-  helix assistant cancel [--conversation-id <id>] [--pending-id <id>] [--classification <public|standard|confidential|restricted>] [--json [JSON]]
+  helix assistant approve [--conversation-id <id>] [--pending-id <id>] [--json [JSON]]
+  helix assistant cancel [--conversation-id <id>] [--pending-id <id>] [--json [JSON]]
   helix login --client-id <id> --client-secret <secret> [--scope <scopes>]
   helix logout
   helix auth token --client-id <id> --client-secret <secret> [--scope <scopes>]

@@ -104,6 +104,7 @@ describe("DriveShell", () => {
   let toolCalls: Array<{ url: string; body: unknown }>;
 
   beforeEach(() => {
+    document.cookie = "helix_csrf=test-csrf; path=/";
     navigateMock.mockClear();
     routerMocks.search = {};
     container = document.createElement("div");
@@ -145,6 +146,12 @@ describe("DriveShell", () => {
         const folderId = (body as { folderId?: string | null }).folderId ?? null;
         const entries = folderId === "folder-eng" ? FOLDER_CHILDREN : ROOT_ENTRIES;
         return Promise.resolve(Response.json({ entries }));
+      }
+      if (url === "/api/tools/drive.view.get") {
+        return Promise.resolve(Response.json({ view: "grid" }));
+      }
+      if (url === "/api/tools/drive.view.set") {
+        return Promise.resolve(Response.json({ view: (body as { view?: string }).view }));
       }
       if (url === "/api/tools/drive.search") {
         return Promise.resolve(Response.json({ hits: [] }));

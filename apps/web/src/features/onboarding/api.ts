@@ -7,7 +7,7 @@ const jsonHeaders = { "content-type": "application/json" } as const;
 export type OnboardingEvent = "started" | "completed";
 export type OnboardingStep = "plan" | "invite" | "sso";
 export type OnboardingPlanChoice = "pro-trial" | "personal" | "sales";
-export type OnboardingIdentityChoice = "local" | "google" | "microsoft" | "okta" | "oidc" | "saml";
+export type OnboardingIdentityChoice = "local";
 
 export interface SendOnboardingEventInput {
   readonly event: OnboardingEvent;
@@ -52,7 +52,7 @@ const onboardingStateSchema = z.object({
   currentStep: z.enum(["plan", "invite", "sso"]),
   planChoice: z.enum(["pro-trial", "personal", "sales"]),
   inviteCount: z.number().int().min(0).max(10),
-  identityChoice: z.enum(["local", "google", "microsoft", "okta", "oidc", "saml"]),
+  identityChoice: z.literal("local"),
   skipped: z.boolean().optional(),
   updatedAt: z.string().optional(),
   completedAt: z.string().optional(),

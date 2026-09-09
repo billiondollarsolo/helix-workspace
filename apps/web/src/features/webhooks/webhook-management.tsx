@@ -1797,7 +1797,7 @@ function InboundReview({ values }: { readonly values: InboundFormState }) {
     <>
       <DetailRow
         label="Endpoint"
-        value={values.slug.trim() === "" ? "-" : `/webhooks/${values.slug.trim()}`}
+        value={values.slug.trim() === "" ? "-" : `/v1/webhooks/${values.slug.trim()}`}
       />
       <DetailRow label="Source" value={values.source} />
       <DetailRow label="Action" value={toolId === "" ? "Record only" : toolId} />

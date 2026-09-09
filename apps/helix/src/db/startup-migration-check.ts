@@ -40,7 +40,8 @@ export async function assertNoPendingStartupMigrations(
   const sql = options.createSql?.() ?? createSqlClient(resolveMigrationDatabaseUrl());
   try {
     const sources = await (options.resolveSources?.() ?? resolvePlatformMigrationSources());
-    const pending = await (options.listPending?.(sql, sources) ?? listPendingMigrations(sql, sources));
+    const pending = await (options.listPending?.(sql, sources) ??
+      listPendingMigrations(sql, sources));
     if (pending.length > 0) {
       throw new PendingStartupMigrationsError(pending);
     }
@@ -58,7 +59,7 @@ export function shouldCheckStartupMigrations(env: NodeJS.ProcessEnv): boolean {
   if (override === "true" || override === "1" || override === "on") {
     return true;
   }
-  return env.NODE_ENV !== "production";
+  return true;
 }
 
 function startupMigrationErrorMessage(pending: readonly PendingMigration[]): string {
@@ -66,8 +67,7 @@ function startupMigrationErrorMessage(pending: readonly PendingMigration[]): str
     .slice(0, 10)
     .map((migration) => `${migration.namespace}/${migration.name}`)
     .join(", ");
-  const suffix =
-    pending.length > 10 ? `, and ${String(pending.length - 10)} more` : "";
+  const suffix = pending.length > 10 ? `, and ${String(pending.length - 10)} more` : "";
   return [
     "Database schema has pending migrations.",
     "Run `pnpm --filter @helix/app db:migrate` before starting Helix so realtime editors do not run against stale tables.",

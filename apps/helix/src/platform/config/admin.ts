@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type postgres from "postgres";
-import { z } from "zod3";
+import { z } from "zod";
 import type {
   Actor,
   EventBus,
@@ -153,7 +153,6 @@ const aiConfigUpdateSchema = z
 const observabilityConfigUpdateSchema = z
   .object({
     enabled: z.boolean().optional(),
-    plugin: z.string().min(1).max(300).optional(),
     config: z
       .object({
         otlpEndpoint: z.string().min(1).max(500).optional(),
@@ -169,14 +168,6 @@ const observabilityConfigUpdateSchema = z
           })
           .strict()
           .optional(),
-      })
-      .strict()
-      .optional(),
-    bundledStack: z
-      .object({
-        enabled: z.boolean().optional(),
-        plugin: z.string().min(1).max(300).optional(),
-        grafanaUrl: z.string().min(1).max(500).optional(),
       })
       .strict()
       .optional(),
@@ -394,12 +385,12 @@ export class PostgresPlatformConfigStore implements PostgresConfigOverrideStore 
   }
 
   private async loadRows(): Promise<readonly PlatformConfigRow[]> {
-    const rows = await this.sql`
+    const rows = await this.sql<PlatformConfigRow[]>`
       select key, value
       from platform_config
       where key = any(${this.sql.array([...platformConfigKeys], 1009)})
     `;
-    return rows as unknown as readonly PlatformConfigRow[];
+    return rows;
   }
 
   private async upsert(
@@ -848,7 +839,16 @@ function normalizeModulesConfig(
 ): NonNullable<PartialHelixConfig["modules"]> {
   const object = normalizeJsonObject(value, label);
   const parsed = z.record(moduleConfigUpdateSchema).parse(object);
-  return jsonObjectFromDefined(parsed) as unknown as NonNullable<PartialHelixConfig["modules"]>;
+  return Object.fromEntries(
+    Object.entries(parsed).map(([id, module]) => [
+      id,
+      {
+        ...(module.enabled === undefined ? {} : { enabled: module.enabled }),
+        ...(module.plugin === undefined ? {} : { plugin: module.plugin }),
+        ...(module.config === undefined ? {} : { config: module.config }),
+      },
+    ]),
+  );
 }
 
 function normalizeAiConfig(value: unknown, label: string): NonNullable<PartialHelixConfig["ai"]> {

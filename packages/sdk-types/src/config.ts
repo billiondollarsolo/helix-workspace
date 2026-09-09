@@ -121,14 +121,8 @@ export interface ObservabilityEndpointsConfig {
 
 export interface ObservabilityConfig {
   readonly enabled?: boolean;
-  readonly plugin?: string;
   readonly config?: ObservabilityEndpointsConfig & {
     readonly sampling?: ObservabilitySamplingConfig;
-  };
-  readonly bundledStack?: {
-    readonly enabled?: boolean;
-    readonly plugin?: string;
-    readonly grafanaUrl?: string;
   };
 }
 

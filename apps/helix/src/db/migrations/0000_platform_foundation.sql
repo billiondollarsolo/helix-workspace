@@ -91,6 +91,7 @@ create index if not exists messages_thread_sent_idx on messages (thread_id, sent
 create index if not exists messages_org_kind_idx on messages (org_id, kind);
 
 create table if not exists message_attachments (
+  org_id uuid not null,
   message_id uuid not null references messages(id),
   object_id uuid not null references objects(id),
   disposition text not null default 'attachment',
@@ -214,17 +215,13 @@ create table if not exists installed_plugins (
   version text not null,
   enabled boolean not null default false,
   manifest jsonb not null,
-  state text not null default 'discovered',
-  migrations_applied text[] not null default '{}',
+  state text not null default 'installed',
   installed_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists plugin_migrations (
-  plugin_id text not null references installed_plugins(id) on delete cascade,
-  name text not null,
-  applied_at timestamptz not null default now(),
-  primary key (plugin_id, name)
+  updated_at timestamptz not null default now(),
+  constraint installed_plugins_state_check check (
+    state in ('installed', 'enabled', 'disabled', 'degraded', 'uninstalled')
+  ),
+  constraint installed_plugins_enabled_state_check check (enabled = (state = 'enabled'))
 );
 
 create table if not exists agent_credentials (

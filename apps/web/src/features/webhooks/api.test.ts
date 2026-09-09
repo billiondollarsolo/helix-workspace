@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HELIX_ACCESS_TOKEN_STORAGE_KEY } from "@/lib/auth";
 import {
   createInboundWebhook,
   listOutboundWebhooks,
@@ -15,7 +14,7 @@ describe("webhook API helpers", () => {
   let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
 
   beforeEach(() => {
-    window.localStorage.setItem(HELIX_ACCESS_TOKEN_STORAGE_KEY, "webhook-admin-token");
+    document.cookie = `helix_csrf=${"c".repeat(43)}; Path=/`;
     fetchMock = vi.fn<typeof fetch>((input) => {
       if (input === "/api/tools/webhook.outbound.list") {
         return Promise.resolve(
@@ -68,7 +67,7 @@ describe("webhook API helpers", () => {
           }),
         );
       }
-      if (typeof input === "string" && input.startsWith("/webhooks/")) {
+      if (typeof input === "string" && input.startsWith("/v1/webhooks/")) {
         return Promise.resolve(Response.json({ deliveryId: "delivery-1", ok: true }));
       }
       return Promise.resolve(Response.json({ ok: true }));
@@ -77,11 +76,11 @@ describe("webhook API helpers", () => {
   });
 
   afterEach(() => {
-    window.localStorage.clear();
+    document.cookie = "helix_csrf=; Max-Age=0; Path=/";
     vi.unstubAllGlobals();
   });
 
-  it("calls webhook tool endpoints with bearer auth and typed JSON payloads", async () => {
+  it("calls webhook tool endpoints with session auth and typed JSON payloads", async () => {
     await expect(listOutboundWebhooks()).resolves.toHaveLength(1);
     await updateOutboundWebhook({
       id: "11111111-1111-4111-8111-111111111111",
@@ -128,9 +127,7 @@ describe("webhook API helpers", () => {
       createdBefore: "2026-05-20T13:00:00.000Z",
       limit: 50,
     });
-    expect(headersForCall("/api/tools/webhook.outbound.list").get("authorization")).toBe(
-      "Bearer webhook-admin-token",
-    );
+    expect(headersForCall("/api/tools/webhook.outbound.list").get("authorization")).toBeNull();
   });
 
   it("posts inbound verification probes to the public webhook endpoint with source-specific signatures", async () => {
@@ -138,7 +135,7 @@ describe("webhook API helpers", () => {
 
     expect(result).toEqual({ deliveryId: "delivery-1", ok: true });
     const call = fetchMock.mock.calls.find(
-      (candidate) => candidate[0] === "/webhooks/github-deploy",
+      (candidate) => candidate[0] === "/v1/webhooks/github-deploy",
     );
     expect(call?.[1]?.method).toBe("POST");
     const headers = new Headers(call?.[1]?.headers);
@@ -205,7 +202,7 @@ describe("webhook API helpers", () => {
   }
 
   function callForWebhook(slug: string): Parameters<typeof fetch> | undefined {
-    return fetchMock.mock.calls.find((call) => call[0] === `/webhooks/${slug}`);
+    return fetchMock.mock.calls.find((call) => call[0] === `/v1/webhooks/${slug}`);
   }
 
   function jsonBodyForWebhook(slug: string): unknown {

@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createDriveShareLink,
+  createDriveWorkflow,
   deleteDriveObject,
   driveDownloadResult,
   drivePublicShareUrl,
@@ -9,6 +10,7 @@ import {
   listDriveAccess,
   listDriveShareLinks,
   listDriveVersions,
+  listDriveWorkflows,
   prepareDriveUpload,
   removeDriveAccess,
   renameDriveObject,
@@ -17,13 +19,110 @@ import {
   searchDrive,
   shareDrive,
   trashDriveObject,
+  transitionDriveWorkflow,
   updateDriveAccessRole,
   uploadDriveFile,
   type DriveApiEntry,
 } from "./api";
 import { driveItemsInputFromRouteSearch, validateDriveRouteSearch } from "./queries";
 
+const localValues = new Map<string, string>();
+const DRIVE_OBJECT_ID = "33333333-3333-4333-8333-333333333333";
+
+function preparedBrowserUpload(
+  file: File,
+  input: {
+    readonly storageKey: string;
+    readonly uploadUrl?: string | null;
+    readonly multipart?: {
+      readonly uploadId: string;
+      readonly partSize: number;
+      readonly partCount: number;
+      readonly partUrls: readonly string[];
+      readonly expiresAt: string;
+    };
+  },
+) {
+  return {
+    objectId: DRIVE_OBJECT_ID,
+    orgId: "11111111-1111-4111-8111-111111111111",
+    ownerActorId: "22222222-2222-4222-8222-222222222222",
+    name: file.name,
+    folderId: null,
+    storageKey: input.storageKey,
+    mimeType: file.type,
+    byteSize: file.size,
+    sha256: null,
+    status: "prepared",
+    uploadUrl: input.uploadUrl ?? null,
+    uploadHeaders: {},
+    metadata: {},
+    createdAt: "2026-05-20T12:00:00.000Z",
+    updatedAt: "2026-05-20T12:00:00.000Z",
+    ...(input.multipart === undefined ? {} : { multipart: input.multipart }),
+  };
+}
+
+beforeEach(() => {
+  localValues.clear();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => localValues.get(key) ?? null,
+    setItem: (key: string, value: string) => localValues.set(key, value),
+    removeItem: (key: string) => localValues.delete(key),
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("drive API", () => {
+  it("uses the shared Drive workflow tool contract", async () => {
+    const record = {
+      id: "99999999-9999-4999-8999-999999999999",
+      kind: "approval",
+      resourceType: "object",
+      resourceId: DRIVE_OBJECT_ID,
+      requestedByActorId: "22222222-2222-4222-8222-222222222222",
+      assignedToActorId: "66666666-6666-4666-8666-666666666666",
+      state: "open",
+      version: "1",
+      payload: {},
+      policySnapshot: {},
+      dueAt: null,
+      decidedAt: null,
+      createdAt: "2026-09-03T12:00:00.000Z",
+      updatedAt: "2026-09-03T12:00:00.000Z",
+    } as const;
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(record))
+      .mockResolvedValueOnce(Response.json({ workflows: [record] }))
+      .mockResolvedValueOnce(Response.json({ ...record, state: "approved", version: "2" }));
+
+    const created = await createDriveWorkflow(
+      {
+        kind: "approval",
+        resourceType: "object",
+        resourceId: DRIVE_OBJECT_ID,
+        assignedToActorId: record.assignedToActorId,
+      },
+      fetchImpl,
+    );
+    await expect(listDriveWorkflows("open", fetchImpl)).resolves.toEqual([record]);
+    await expect(
+      transitionDriveWorkflow(created, "approved", {}, fetchImpl),
+    ).resolves.toMatchObject({
+      state: "approved",
+      version: "2",
+    });
+    expect(fetchImpl.mock.calls.map((call) => call[0])).toEqual([
+      "/api/tools/drive.workflow.create",
+      "/api/tools/drive.workflow.list",
+      "/api/tools/drive.workflow.transition",
+    ]);
+  });
+
   it("lists Drive entries through the drive.list tool", async () => {
     const fetchImpl = vi.fn(() =>
       Promise.resolve(
@@ -50,16 +149,20 @@ describe("drive API", () => {
               updatedAt: "2026-05-20T12:00:00.000Z",
             },
           ],
+          nextCursor: "next-page",
         }),
       ),
     );
 
-    await expect(listDrive({ folderId: null }, fetchImpl)).resolves.toMatchObject([
-      {
-        id: "33333333-3333-4333-8333-333333333333",
-        preview: { kind: "pdf", status: "available", url: "https://cdn.example/report.pdf" },
-      },
-    ]);
+    await expect(listDrive({ folderId: null }, fetchImpl)).resolves.toMatchObject({
+      entries: [
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          preview: { kind: "pdf", status: "available", url: "https://cdn.example/report.pdf" },
+        },
+      ],
+      nextCursor: "next-page",
+    });
     expect(fetchImpl).toHaveBeenCalledWith("/api/tools/drive.list", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -163,8 +266,6 @@ describe("drive API", () => {
           byteSize: 128,
           sha256,
           mimeType: "application/pdf",
-          storageKey: "drive/111/report.pdf",
-          contentBase64: "cGRm",
           metadata: { source: "web-shell" },
         },
         fetchImpl,
@@ -195,17 +296,13 @@ describe("drive API", () => {
         byteSize: 128,
         sha256,
         mimeType: "application/pdf",
-        storageKey: "drive/111/report.pdf",
-        contentBase64: "cGRm",
         metadata: { source: "web-shell" },
       }),
     });
   });
 
-  it("commits browser uploads through finalize when presigned storage PUT is unavailable", async () => {
-    const storageFetch = vi
-      .spyOn(globalThis, "fetch")
-      .mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  it("streams browser uploads directly to storage without hashing or a base64 fallback", async () => {
+    const storageFetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null));
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(
@@ -243,35 +340,210 @@ describe("drive API", () => {
         }),
       );
 
+    const file = new File(["png"], "Roadmap_photo.png", { type: "image/png" });
+    const arrayBuffer = vi.spyOn(file, "arrayBuffer");
     try {
-      await expect(
-        uploadDriveFile(
-          { file: new File(["png"], "Roadmap_photo.png", { type: "image/png" }), folderId: null },
-          fetchImpl,
-        ),
-      ).resolves.toMatchObject({ objectId: "33333333-3333-4333-8333-333333333333" });
+      await expect(uploadDriveFile({ file, folderId: null }, fetchImpl)).resolves.toMatchObject({
+        objectId: "33333333-3333-4333-8333-333333333333",
+      });
 
       expect(storageFetch).toHaveBeenCalledWith("https://storage.example/upload", {
         method: "PUT",
         headers: { "content-type": "image/png" },
-        body: expect.any(ArrayBuffer),
+        body: file,
       });
       const finalizeBody = JSON.parse(fetchImpl.mock.calls[1]?.[1]?.body as string) as Record<
         string,
         unknown
       >;
-      expect(finalizeBody).toMatchObject({
+      expect(finalizeBody).toEqual({
         objectId: "33333333-3333-4333-8333-333333333333",
         byteSize: 3,
         mimeType: "image/png",
-        storageKey: "drive/111/Roadmap_photo.png",
-        contentBase64: "cG5n",
+        idempotencyKey: "upload:33333333-3333-4333-8333-333333333333",
         metadata: { source: "web-shell" },
       });
-      expect(finalizeBody.sha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(arrayBuffer).not.toHaveBeenCalled();
     } finally {
       storageFetch.mockRestore();
     }
+  });
+
+  it("uploads Blob slices with bounded concurrency, retry, and authoritative part ETags", async () => {
+    const file = new File(["abcdefghijklmn"], "archive.bin", {
+      type: "application/octet-stream",
+      lastModified: 1,
+    });
+    const urls = [
+      "https://storage.example/1",
+      "https://storage.example/2",
+      "https://storage.example/3",
+      "https://storage.example/4",
+    ];
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          preparedBrowserUpload(file, {
+            storageKey: "drive/111/archive.bin",
+            multipart: {
+              uploadId: "upload-1",
+              partSize: 4,
+              partCount: 4,
+              partUrls: urls,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(Response.json({}));
+    const attempts = new Map<string, number>();
+    const bodies: Blob[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const storageFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (request, init) => {
+      const url =
+        typeof request === "string" ? request : request instanceof URL ? request.href : request.url;
+      attempts.set(url, (attempts.get(url) ?? 0) + 1);
+      bodies.push(init?.body as Blob);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await Promise.resolve();
+      active -= 1;
+      if (url === urls[1] && attempts.get(url) === 1) {
+        return new Response(null, { status: 503 });
+      }
+      return new Response(null, {
+        headers: { etag: `"etag-${String(urls.indexOf(url) + 1)}"` },
+      });
+    });
+    const arrayBuffer = vi.spyOn(file, "arrayBuffer");
+
+    try {
+      await uploadDriveFile({ file, folderId: null }, fetchImpl);
+
+      expect(maxActive).toBeLessThanOrEqual(3);
+      expect(attempts.get(urls[1] ?? "")).toBe(2);
+      expect(bodies.every((body) => body instanceof Blob && body.size <= 4)).toBe(true);
+      expect(arrayBuffer).not.toHaveBeenCalled();
+      const completion = JSON.parse(fetchImpl.mock.calls[1]?.[1]?.body as string) as {
+        parts: readonly { partNumber: number; etag: string }[];
+        sha256?: string;
+      };
+      expect(completion.parts).toEqual([
+        { partNumber: 1, etag: '"etag-1"' },
+        { partNumber: 2, etag: '"etag-2"' },
+        { partNumber: 3, etag: '"etag-3"' },
+        { partNumber: 4, etag: '"etag-4"' },
+      ]);
+      expect(completion).not.toHaveProperty("sha256");
+      expect(localValues.size).toBe(0);
+    } finally {
+      storageFetch.mockRestore();
+    }
+  });
+
+  it("persists multipart progress, resumes without preparing again, and rejects a missing ETag", async () => {
+    const file = new File(["abcdefgh"], "resume.bin", {
+      type: "application/octet-stream",
+      lastModified: 2,
+    });
+    const urls = ["https://storage.example/resume-1", "https://storage.example/resume-2"];
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(
+          preparedBrowserUpload(file, {
+            storageKey: "drive/111/resume.bin",
+            multipart: {
+              uploadId: "upload-resume",
+              partSize: 4,
+              partCount: 2,
+              partUrls: urls,
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            },
+          }),
+        ),
+      )
+      .mockResolvedValueOnce(Response.json({}));
+    const attempts = new Map<string, number>();
+    const storageFetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (request) => {
+      const url =
+        typeof request === "string" ? request : request instanceof URL ? request.href : request.url;
+      attempts.set(url, (attempts.get(url) ?? 0) + 1);
+      if (url === urls[1] && attempts.get(url) === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        return new Response(null);
+      }
+      return new Response(null, {
+        headers: { etag: url === urls[0] ? '"etag-1"' : '"etag-2"' },
+      });
+    });
+
+    try {
+      await expect(uploadDriveFile({ file, folderId: null }, fetchImpl)).rejects.toThrow(
+        "did not return an ETag",
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(localValues.size).toBe(1);
+      const saved = JSON.parse([...localValues.values()][0] ?? "{}") as {
+        completed?: readonly { partNumber: number; etag: string }[];
+      };
+      expect(saved.completed).toEqual([{ partNumber: 1, etag: '"etag-1"' }]);
+
+      await expect(uploadDriveFile({ file, folderId: null }, fetchImpl)).resolves.toMatchObject({
+        objectId: "33333333-3333-4333-8333-333333333333",
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(fetchImpl.mock.calls[1]?.[0]).toBe("/api/tools/drive.upload.complete");
+      expect(attempts.get(urls[0] ?? "")).toBe(1);
+      expect(attempts.get(urls[1] ?? "")).toBe(2);
+      expect(localValues.size).toBe(0);
+    } finally {
+      storageFetch.mockRestore();
+    }
+  });
+
+  it("cancels an active storage upload and refuses an upload without a storage URL", async () => {
+    const file = new File(["x"], "cancel.bin", { type: "application/octet-stream" });
+    const controller = new AbortController();
+    const cancelledFetch = vi.fn().mockResolvedValueOnce(
+      Response.json(
+        preparedBrowserUpload(file, {
+          storageKey: "drive/111/cancel.bin",
+          uploadUrl: "https://storage.example/cancel",
+        }),
+      ),
+    );
+    const storageFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (_request, init) => {
+        expect(init?.signal).toBe(controller.signal);
+        await Promise.resolve();
+        controller.abort();
+        init?.signal?.throwIfAborted();
+        return new Response(null);
+      });
+
+    try {
+      await expect(
+        uploadDriveFile({ file, folderId: null, signal: controller.signal }, cancelledFetch),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(cancelledFetch).toHaveBeenCalledTimes(1);
+      expect(storageFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      storageFetch.mockRestore();
+    }
+
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json(preparedBrowserUpload(file, { storageKey: "drive/111/cancel.bin" })),
+      );
+    await expect(uploadDriveFile({ file, folderId: null }, fetchImpl)).rejects.toThrow(
+      "did not provide an upload URL",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("approves a confirmation-gated share inline and uses the executed output", async () => {
@@ -469,9 +741,14 @@ describe("drive API", () => {
       id: "55555555-5555-4555-8555-555555555555",
       orgId: "11111111-1111-4111-8111-111111111111",
       objectId,
-      token: "pubtoken123",
+      token: "p".repeat(43),
       role: "reader",
       expiresAt: null,
+      passwordProtected: false,
+      oneTime: false,
+      allowedDomains: [],
+      allowDownload: true,
+      consumedAt: null,
       createdByActorId: "22222222-2222-4222-8222-222222222222",
       createdAt: "2026-05-20T12:02:00.000Z",
       revokedAt: null,
@@ -497,26 +774,38 @@ describe("drive API", () => {
       .mockResolvedValueOnce(Response.json({ links: [link] }))
       .mockResolvedValueOnce(Response.json({ id: link.id, revoked: true }));
 
-    await expect(renameDriveObject({ objectId, name: "renamed.pdf" }, fetchImpl)).resolves.toMatchObject({
+    await expect(
+      renameDriveObject({ objectId, name: "renamed.pdf" }, fetchImpl),
+    ).resolves.toMatchObject({
       name: "renamed.pdf",
     });
     await expect(listDriveVersions(objectId, fetchImpl)).resolves.toEqual([version]);
-    await expect(revertDriveVersion(objectId, 2, fetchImpl)).resolves.toMatchObject({ versionNumber: 2 });
-    await expect(createDriveShareLink({ objectId, role: "reader" }, fetchImpl)).resolves.toMatchObject({
-      token: "pubtoken123",
+    await expect(revertDriveVersion(objectId, 2, fetchImpl)).resolves.toMatchObject({
+      versionNumber: 2,
+    });
+    await expect(createDriveShareLink({ objectId }, fetchImpl)).resolves.toMatchObject({
+      token: "p".repeat(43),
     });
     await expect(listDriveShareLinks(objectId, fetchImpl)).resolves.toEqual([link]);
     await expect(revokeDriveShareLink(link.id, fetchImpl)).resolves.toEqual({
       id: link.id,
       revoked: true,
     });
-    expect(drivePublicShareUrl("pubtoken123", "https://app.example")).toBe(
-      "https://app.example/api/drive/share/pubtoken123",
+    expect(drivePublicShareUrl("p".repeat(43), "https://app.example")).toBe(
+      `https://app.example/v1/api/drive/share/${"p".repeat(43)}`,
     );
 
     expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/drive.rename", expect.anything());
-    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/drive.versions.list", expect.anything());
-    expect(fetchImpl).toHaveBeenNthCalledWith(3, "/api/tools/drive.versions.revert", expect.anything());
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "/api/tools/drive.versions.list",
+      expect.anything(),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      "/api/tools/drive.versions.revert",
+      expect.anything(),
+    );
     expect(fetchImpl).toHaveBeenNthCalledWith(4, "/api/tools/drive.link.create", expect.anything());
     expect(fetchImpl).toHaveBeenNthCalledWith(5, "/api/tools/drive.link.list", expect.anything());
     expect(fetchImpl).toHaveBeenNthCalledWith(6, "/api/tools/drive.link.revoke", expect.anything());
@@ -598,7 +887,6 @@ describe("drive API", () => {
           objectId: "33333333-3333-4333-8333-333333333333",
           byteSize: 128,
           sha256: "not-a-sha",
-          contentBase64: "cGRm",
         },
         fetchImpl,
       ),

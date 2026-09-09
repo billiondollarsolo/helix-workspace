@@ -1,11 +1,16 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import { actorFromRequest } from "../../api/actor.js";
+import type { Actor } from "@helix/sdk-types";
+import { actorFromRequest } from "../../api/test-actor.js";
 import { InMemoryGroupsStore, registerAdminGroupsRoutes } from "./groups.js";
 import type { AdminConsoleAuditSink } from "./console-shared.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
+const foreignOrgId = "99999999-9999-4999-8999-999999999999";
 const actorId = "11111111-1111-4111-8111-111111111111";
+const memberId = "33333333-3333-4333-8333-333333333333";
+const foreignMemberId = "44444444-4444-4444-8444-444444444444";
+const disabledMemberId = "55555555-5555-4555-8555-555555555555";
 
 function headers(scopes: string): Record<string, string> {
   return {
@@ -38,13 +43,20 @@ class RecordingAuditSink implements AdminConsoleAuditSink {
   }
 }
 
-async function buildApp(options?: { auditSink?: AdminConsoleAuditSink }) {
-  const store = new InMemoryGroupsStore();
+async function buildApp(options?: { auditSink?: AdminConsoleAuditSink; actor?: Actor }) {
+  const store = new InMemoryGroupsStore({
+    actors: [
+      { id: memberId, orgId },
+      { id: foreignMemberId, orgId: foreignOrgId },
+      { id: disabledMemberId, orgId, disabled: true },
+    ],
+  });
   const app = fastify();
   await registerAdminGroupsRoutes(app, {
     store,
-    actorFromRequest,
-    ...(options?.auditSink === undefined ? {} : { auditSink: options.auditSink }),
+    actorFromRequest:
+      options?.actor === undefined ? actorFromRequest : async () => options.actor as Actor,
+    auditSink: options?.auditSink ?? new RecordingAuditSink(),
   });
   return { app, store };
 }
@@ -60,7 +72,7 @@ describe("admin org units", () => {
       payload: { name: "Engineering", description: "Eng org" },
     });
     expect(root.statusCode).toBe(201);
-    const rootUnit = (field(root, "orgUnit") as { id: string; path: string });
+    const rootUnit = field(root, "orgUnit") as { id: string; path: string };
     expect(rootUnit.path).toBe("Engineering");
 
     const child = await app.inject({
@@ -78,7 +90,7 @@ describe("admin org units", () => {
       headers: headers("admin.console.read"),
     });
     expect(list.statusCode).toBe(200);
-    const units = (field(list, "orgUnits") as { name: string; childCount: number }[]);
+    const units = field(list, "orgUnits") as { name: string; childCount: number }[];
     expect(units.map((unit) => unit.name)).toEqual(["Engineering", "Platform"]);
     expect(units.find((unit) => unit.name === "Engineering")?.childCount).toBe(1);
   });
@@ -124,6 +136,68 @@ describe("admin org units", () => {
     expect(del.statusCode).toBe(409);
   });
 
+  it("rejects ancestor cycles and updates every descendant path on reparent", async () => {
+    const { app } = await buildApp();
+    const create = async (name: string, parentId?: string) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/admin/org-units",
+        headers: headers("admin.console.write"),
+        payload: { name, ...(parentId === undefined ? {} : { parentId }) },
+      });
+      expect(response.statusCode).toBe(201);
+      return field(response, "orgUnit") as { id: string; path: string };
+    };
+
+    const root = await create("Engineering");
+    const child = await create("Platform", root.id);
+    const grandchild = await create("Runtime", child.id);
+    const destination = await create("Product");
+
+    const cycle = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/org-units/${root.id}`,
+      headers: headers("admin.console.write"),
+      payload: { parentId: grandchild.id },
+    });
+    expect(cycle.statusCode).toBe(409);
+
+    const moved = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/org-units/${child.id}`,
+      headers: headers("admin.console.write"),
+      payload: { name: "Infrastructure", parentId: destination.id },
+    });
+    expect(moved.statusCode).toBe(200);
+    expect((field(moved, "orgUnit") as { path: string }).path).toBe("Product > Infrastructure");
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/admin/org-units",
+      headers: headers("admin.console.read"),
+    });
+    const paths = Object.fromEntries(
+      (field(listed, "orgUnits") as { id: string; path: string }[]).map((unit) => [
+        unit.id,
+        unit.path,
+      ]),
+    );
+    expect(paths).toMatchObject({
+      [root.id]: "Engineering",
+      [child.id]: "Product > Infrastructure",
+      [grandchild.id]: "Product > Infrastructure > Runtime",
+    });
+
+    for (const id of [grandchild.id, child.id]) {
+      const deleted = await app.inject({
+        method: "DELETE",
+        url: `/api/admin/org-units/${id}`,
+        headers: headers("admin.console.write"),
+      });
+      expect(deleted.statusCode).toBe(200);
+    }
+  });
+
   it("requires the write scope for mutations", async () => {
     const { app } = await buildApp();
     const response = await app.inject({
@@ -134,6 +208,41 @@ describe("admin org units", () => {
     });
     expect(response.statusCode).toBe(403);
     expect(body(response).requiredScope).toBe("admin.console.write");
+  });
+
+  it("rejects a foreign-tenant parent on create and update", async () => {
+    const { app, store } = await buildApp();
+    const foreignParent = await store.createOrgUnit({
+      orgId: foreignOrgId,
+      parentId: null,
+      name: "Foreign",
+      description: "",
+      createdBy: foreignMemberId,
+    });
+
+    const rejectedCreate = await app.inject({
+      method: "POST",
+      url: "/api/admin/org-units",
+      headers: headers("admin.console.write"),
+      payload: { name: "Injected", parentId: foreignParent.id },
+    });
+    expect(rejectedCreate.statusCode).toBe(409);
+
+    const localRoot = await app.inject({
+      method: "POST",
+      url: "/api/admin/org-units",
+      headers: headers("admin.console.write"),
+      payload: { name: "Local" },
+    });
+    const localRootId = (field(localRoot, "orgUnit") as { id: string }).id;
+    const rejectedUpdate = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/org-units/${localRootId}`,
+      headers: headers("admin.console.write"),
+      payload: { parentId: foreignParent.id },
+    });
+    expect(rejectedUpdate.statusCode).toBe(409);
+    expect((await store.getOrgUnit(orgId, localRootId))?.parentId).toBeNull();
   });
 });
 
@@ -151,7 +260,6 @@ describe("admin groups and membership", () => {
     expect(created.statusCode).toBe(201);
     const groupId = (field(created, "group") as { id: string }).id;
 
-    const memberId = "33333333-3333-4333-8333-333333333333";
     const added = await app.inject({
       method: "POST",
       url: `/api/admin/groups/${groupId}/members`,
@@ -203,6 +311,72 @@ describe("admin groups and membership", () => {
     expect(body(response).code).toBe("not_found");
   });
 
+  it("rejects foreign-tenant and disabled actors before adding group membership", async () => {
+    const { app } = await buildApp();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/groups",
+      headers: headers("admin.console.write"),
+      payload: { name: "Security" },
+    });
+    const groupId = (field(created, "group") as { id: string }).id;
+
+    for (const rejectedActorId of [foreignMemberId, disabledMemberId]) {
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/admin/groups/${groupId}/members`,
+        headers: headers("admin.console.write"),
+        payload: { actorId: rejectedActorId },
+      });
+      expect(response.statusCode).toBe(404);
+      expect(body(response).code).toBe("not_found");
+    }
+    expect(
+      await app
+        .inject({
+          method: "GET",
+          url: `/api/admin/groups/${groupId}/members`,
+          headers: headers("admin.console.read"),
+        })
+        .then((response) => field(response, "members")),
+    ).toEqual([]);
+  });
+
+  it("rejects a foreign-tenant org unit on group create and update", async () => {
+    const { app, store } = await buildApp();
+    const foreignUnit = await store.createOrgUnit({
+      orgId: foreignOrgId,
+      parentId: null,
+      name: "Foreign",
+      description: "",
+      createdBy: foreignMemberId,
+    });
+
+    const rejectedCreate = await app.inject({
+      method: "POST",
+      url: "/api/admin/groups",
+      headers: headers("admin.console.write"),
+      payload: { name: "Injected", orgUnitId: foreignUnit.id },
+    });
+    expect(rejectedCreate.statusCode).toBe(409);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/groups",
+      headers: headers("admin.console.write"),
+      payload: { name: "Local" },
+    });
+    const groupId = (field(created, "group") as { id: string }).id;
+    const rejectedUpdate = await app.inject({
+      method: "PATCH",
+      url: `/api/admin/groups/${groupId}`,
+      headers: headers("admin.console.write"),
+      payload: { orgUnitId: foreignUnit.id },
+    });
+    expect(rejectedUpdate.statusCode).toBe(409);
+    expect((await store.getGroup(orgId, groupId))?.orgUnitId).toBeNull();
+  });
+
   it("honors the legacy admin.* scope for reads", async () => {
     const { app } = await buildApp();
     const response = await app.inject({
@@ -211,6 +385,116 @@ describe("admin groups and membership", () => {
       headers: headers("admin.*"),
     });
     expect(response.statusCode).toBe(200);
+  });
+
+  it("keeps delegated group and OU mutations inside exact bindings", async () => {
+    const { app, store } = await buildApp();
+    const unit = await store.createOrgUnit({
+      orgId,
+      parentId: null,
+      name: "Scoped",
+      description: "",
+      createdBy: actorId,
+    });
+    const peerUnit = await store.createOrgUnit({
+      orgId,
+      parentId: null,
+      name: "Peer",
+      description: "",
+      createdBy: actorId,
+    });
+    const group = await store.createGroup({
+      orgId,
+      name: "Scoped group",
+      email: null,
+      kind: "group",
+      description: "",
+      orgUnitId: unit.id,
+      createdBy: actorId,
+    });
+    const peerGroup = await store.createGroup({
+      orgId,
+      name: "Peer group",
+      email: null,
+      kind: "group",
+      description: "",
+      orgUnitId: peerUnit.id,
+      createdBy: actorId,
+    });
+    const delegated: Actor = {
+      id: actorId,
+      orgId,
+      type: "user",
+      scopes: [],
+      roleBindings: [
+        {
+          roleId: "00000000-0000-4000-8000-000000000041",
+          allow: ["admin.groups"],
+          deny: [],
+          scope: { type: "org_unit", id: unit.id },
+        },
+        {
+          roleId: "00000000-0000-4000-8000-000000000042",
+          allow: ["admin.groups"],
+          deny: [],
+          scope: { type: "group", id: group.id },
+        },
+      ],
+    };
+    await app.close();
+
+    const scopedApp = fastify();
+    await registerAdminGroupsRoutes(scopedApp, {
+      store,
+      actorFromRequest: async () => delegated,
+      auditSink: new RecordingAuditSink(),
+    });
+
+    expect(
+      (
+        await scopedApp.inject({
+          method: "PATCH",
+          url: `/api/admin/groups/${group.id}`,
+          payload: { description: "allowed" },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await scopedApp.inject({
+          method: "PATCH",
+          url: `/api/admin/groups/${peerGroup.id}`,
+          payload: { description: "denied" },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await scopedApp.inject({
+          method: "PATCH",
+          url: `/api/admin/groups/${group.id}`,
+          payload: { orgUnitId: peerUnit.id },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await scopedApp.inject({
+          method: "PATCH",
+          url: `/api/admin/org-units/${unit.id}`,
+          payload: { parentId: peerUnit.id },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await scopedApp.inject({
+          method: "DELETE",
+          url: `/api/admin/org-units/${peerUnit.id}`,
+        })
+      ).statusCode,
+    ).toBe(403);
+    await scopedApp.close();
   });
 });
 
@@ -230,9 +514,9 @@ describe("InMemoryGroupsStore", () => {
       name: "Growth",
     });
     expect(updated?.name).toBe("Growth");
-    await expect(
-      store.updateOrgUnit({ orgId, id: unit.id, parentId: unit.id }),
-    ).rejects.toThrow(/own parent/u);
+    await expect(store.updateOrgUnit({ orgId, id: unit.id, parentId: unit.id })).rejects.toThrow(
+      /own parent/u,
+    );
   });
 
   it("isolates records by org", async () => {
@@ -246,7 +530,46 @@ describe("InMemoryGroupsStore", () => {
       orgUnitId: null,
       createdBy: actorId,
     });
-    const otherOrg = await store.listGroups("99999999-9999-4999-8999-999999999999");
+    const otherOrg = await store.listGroups(foreignOrgId);
     expect(otherOrg).toEqual([]);
+  });
+
+  it("guards membership when callers bypass the HTTP route", async () => {
+    const store = new InMemoryGroupsStore({
+      actors: [
+        { id: memberId, orgId },
+        { id: foreignMemberId, orgId: foreignOrgId },
+        { id: disabledMemberId, orgId, disabled: true },
+      ],
+    });
+    const localGroup = await store.createGroup({
+      orgId,
+      name: "Local",
+      email: null,
+      kind: "group",
+      description: "",
+      orgUnitId: null,
+      createdBy: actorId,
+    });
+    const foreignGroup = await store.createGroup({
+      orgId: foreignOrgId,
+      name: "Foreign",
+      email: null,
+      kind: "group",
+      description: "",
+      orgUnitId: null,
+      createdBy: foreignMemberId,
+    });
+
+    for (const input of [
+      { orgId, groupId: foreignGroup.id, actorId: memberId },
+      { orgId, groupId: localGroup.id, actorId: foreignMemberId },
+      { orgId, groupId: localGroup.id, actorId: disabledMemberId },
+    ]) {
+      await expect(
+        store.addGroupMember({ ...input, role: "member", addedBy: actorId }),
+      ).rejects.toThrow(/organization/u);
+    }
+    expect(await store.listGroupMembers(orgId, localGroup.id)).toEqual([]);
   });
 });

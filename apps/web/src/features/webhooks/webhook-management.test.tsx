@@ -135,7 +135,7 @@ describe("WebhookManagement", () => {
 
     await clickTab("Inbound");
     await waitForText("GitHub deploy hook");
-    expect(container.textContent).toContain("/webhooks/github-deploy");
+    expect(container.textContent).toContain("/v1/webhooks/github-deploy");
 
     await clickTab("Deliveries");
     await waitForText("activity.webhook.0");
@@ -230,7 +230,7 @@ describe("WebhookManagement", () => {
     await setFieldValue("Action input JSON", '{ "channel": "ops" }');
     await clickEditorAction("Continue");
     await setFieldValue("Metadata JSON", '{ "owner": "platform" }');
-    expect(container.textContent).toContain("/webhooks/linear-intake");
+    expect(container.textContent).toContain("/v1/webhooks/linear-intake");
     expect(container.textContent).toContain("chat.send");
     await submitEditor();
 

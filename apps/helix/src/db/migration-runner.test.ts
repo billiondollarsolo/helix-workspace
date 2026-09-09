@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 
 describe("platform foundation migration", () => {
+  it("seeds the bootstrap organization in the regional migration cell", async () => {
+    const sql = await readFile(
+      new URL("./migrations/0031_platform_v2_orgs.sql", import.meta.url),
+      "utf8",
+    );
+    const runner = await readFile(new URL("./migration-runner.ts", import.meta.url), "utf8");
+
+    expect(runner).toContain("set_config('helix.deployment_region'");
+    expect(sql).toContain("current_setting('helix.deployment_region', true)");
+  });
+
   it("declares every Phase -1 platform table", async () => {
     const sql = await readFile(
       new URL("./migrations/0000_platform_foundation.sql", import.meta.url),
@@ -120,6 +131,19 @@ describe("platform foundation migration", () => {
     expect(sql).toContain("alter type org_status add value if not exists 'provisioning'");
   });
 
+  it("stores only canonical opaque tenant secret handles", async () => {
+    const [orgsSql, idpSql] = await Promise.all([
+      readFile(new URL("./migrations/0031_platform_v2_orgs.sql", import.meta.url), "utf8"),
+      readFile(new URL("./migrations/0044_tenant_idp_configs.sql", import.meta.url), "utf8"),
+    ]);
+
+    expect(orgsSql).toContain("credentials_secret_handle");
+    expect(orgsSql).toContain("orgs_byo_storage_secret_handle");
+    expect(idpSql).toContain("signing_cert_secret_handle");
+    expect(idpSql).toContain("tenant_idp_configs_signing_cert_secret_handle");
+    expect(`${orgsSql}\n${idpSql}`).not.toContain("vault_path");
+  });
+
   it("declares durable tenant provisioning workflow state", async () => {
     const sql = await readFile(
       new URL("./migrations/0035_tenant_provisioning_state.sql", import.meta.url),
@@ -186,6 +210,8 @@ describe("platform foundation migration", () => {
     );
 
     expect(sql).toContain("create or replace function orgs_tenant_config_audit()");
+    expect(sql).toContain("security definer");
+    expect(sql).toContain("set search_path = pg_catalog, public");
     expect(sql).toContain("current_setting('helix.tenant_config_changed_by', true)");
     expect(sql).toContain("current_setting('helix.tenant_config_reason', true)");
     expect(sql).toContain("clock_timestamp()");
@@ -229,5 +255,26 @@ describe("platform foundation migration", () => {
     expect(sql).toContain("create unique index if not exists slides_op_log_deck_operation_idx");
     expect(sql).toContain("alter table slides_op_log enable row level security");
     expect(sql).toContain("create policy helix_tenant_isolation on slides_op_log");
+  });
+
+  it("enforces same-tenant directory relationships and active group membership", async () => {
+    const sql = await readFile(
+      new URL("./migrations/0075_group_membership_tenant_integrity.sql", import.meta.url),
+      "utf8",
+    );
+
+    expect(sql).toContain("on actors (org_id, id)");
+    expect(sql).toContain("on admin_org_units (org_id, id)");
+    expect(sql).toContain("on admin_groups (org_id, id)");
+    expect(sql).toContain(
+      "foreign key (org_id, parent_id) references admin_org_units (org_id, id)",
+    );
+    expect(sql).toContain(
+      "foreign key (org_id, org_unit_id) references admin_org_units (org_id, id)",
+    );
+    expect(sql).toContain("foreign key (org_id, group_id) references admin_groups (org_id, id)");
+    expect(sql).toContain("foreign key (org_id, actor_id) references actors (org_id, id)");
+    expect(sql).toContain("admin_group_members_require_active_actor");
+    expect(sql).toContain("and disabled_at is null");
   });
 });

@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryTenantIdpConfigStore } from "./tenant-idp-configs.js";
+import {
+  InMemoryTenantIdpConfigStore,
+  parseTenantIdpAttributeMapping,
+  parseTenantIdpPublicConfig,
+} from "./tenant-idp-configs.js";
+
+describe("tenant IdP public configuration", () => {
+  it("accepts only typed public settings and claim selectors", () => {
+    expect(() =>
+      parseTenantIdpPublicConfig("oidc", {
+        issuer: "https://user:secret@idp.example.com",
+        clientId: "helix",
+      }),
+    ).toThrow();
+    expect(() =>
+      parseTenantIdpPublicConfig("oidc", { clientId: "helix", clientSecret: "secret" }),
+    ).toThrow();
+    expect(() => parseTenantIdpAttributeMapping({ email: "$.email", apiKey: "secret" })).toThrow();
+    expect(() => parseTenantIdpAttributeMapping({ email: "${claims.email}" })).toThrow();
+  });
+});
 
 describe("InMemoryTenantIdpConfigStore", () => {
   it("creates tenant IdP configs with safe BYO-Identity defaults", async () => {
@@ -7,22 +27,22 @@ describe("InMemoryTenantIdpConfigStore", () => {
 
     const config = await store.create({
       orgId: "org-1",
-      protocol: "saml",
+      protocol: "oidc",
       displayName: "Acme Okta",
       config: { metadataUrl: "https://idp.example.com/metadata" },
-      signingCertVaultPath: "tenants/org-1/idp/acme-okta/signing-cert",
+      signingCertSecretHandle: "acme-okta-signing-cert",
       attrMapping: { email: "$.email", displayName: "$.name" },
     });
 
     expect(config).toMatchObject({
       orgId: "org-1",
-      protocol: "saml",
+      protocol: "oidc",
       isPrimary: true,
       displayName: "Acme Okta",
       config: { metadataUrl: "https://idp.example.com/metadata" },
-      signingCertVaultPath: "tenants/org-1/idp/acme-okta/signing-cert",
+      signingCertSecretHandle: "acme-okta-signing-cert",
       attrMapping: { email: "$.email", displayName: "$.name" },
-      jitProvisioning: true,
+      jitProvisioning: false,
       enabled: true,
     });
     await expect(store.get("org-1", config.id)).resolves.toEqual(config);
@@ -41,8 +61,8 @@ describe("InMemoryTenantIdpConfigStore", () => {
     await expect(
       store.create({
         orgId: "org-1",
-        protocol: "saml",
-        displayName: "Acme SAML",
+        protocol: "oidc",
+        displayName: "Acme OIDC",
       }),
     ).rejects.toThrow("Tenant already has an enabled primary IdP config.");
   });
@@ -58,8 +78,8 @@ describe("InMemoryTenantIdpConfigStore", () => {
     });
     const secondary = await store.create({
       orgId: "org-1",
-      protocol: "saml",
-      displayName: "Secondary SAML",
+      protocol: "oidc",
+      displayName: "Secondary OIDC",
       isPrimary: false,
     });
 
@@ -79,8 +99,8 @@ describe("InMemoryTenantIdpConfigStore", () => {
     const store = new InMemoryTenantIdpConfigStore();
     const disabled = await store.create({
       orgId: "org-1",
-      protocol: "saml",
-      displayName: "Disabled SAML",
+      protocol: "oidc",
+      displayName: "Disabled OIDC",
       enabled: false,
     });
     const otherTenant = await store.create({
@@ -101,8 +121,8 @@ describe("InMemoryTenantIdpConfigStore", () => {
     });
     const primary = await store.create({
       orgId: "org-1",
-      protocol: "saml",
-      displayName: "Primary SAML",
+      protocol: "oidc",
+      displayName: "Primary OIDC",
     });
     const secondary = await store.create({
       orgId: "org-1",
@@ -118,7 +138,7 @@ describe("InMemoryTenantIdpConfigStore", () => {
         id: secondary.id,
         displayName: "Updated OIDC",
         config: { issuer: "https://idp.example.com", clientId: "helix" },
-        signingCertVaultPath: null,
+        signingCertSecretHandle: null,
         attrMapping: { email: "$.email" },
         enabled: true,
         isPrimary: true,
@@ -130,7 +150,7 @@ describe("InMemoryTenantIdpConfigStore", () => {
       isPrimary: true,
       config: { issuer: "https://idp.example.com", clientId: "helix" },
       attrMapping: { email: "$.email" },
-      signingCertVaultPath: null,
+      signingCertSecretHandle: null,
     });
     await expect(store.get("org-1", primary.id)).resolves.toMatchObject({ isPrimary: false });
     await expect(store.getPrimary("org-1")).resolves.toMatchObject({ id: secondary.id });
@@ -140,8 +160,8 @@ describe("InMemoryTenantIdpConfigStore", () => {
     const store = new InMemoryTenantIdpConfigStore();
     const primary = await store.create({
       orgId: "org-1",
-      protocol: "saml",
-      displayName: "Primary SAML",
+      protocol: "oidc",
+      displayName: "Primary OIDC",
     });
     const otherTenant = await store.create({
       orgId: "org-2",

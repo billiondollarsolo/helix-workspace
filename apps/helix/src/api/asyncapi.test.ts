@@ -46,7 +46,7 @@ describe("buildAsyncApiDocument", () => {
     expect(document.servers).toMatchObject({
       eventsWebSocket: {
         host: "{host}",
-        pathname: "/events/ws",
+        pathname: "/v1/events/ws",
         protocol: "wss",
         security: [{ oauthClientCredentials: [] }],
       },
@@ -77,7 +77,7 @@ describe("buildAsyncApiDocument", () => {
         "x-helix-delivery": {
           websocket: {
             server: "eventsWebSocket",
-            path: "/events/ws",
+            path: "/v1/events/ws",
             subjectQueryParam: "subject",
           },
           webhook: {
@@ -118,7 +118,7 @@ describe("buildAsyncApiDocument", () => {
           type: "oauth2",
           flows: {
             clientCredentials: {
-              tokenUrl: "/oauth/token",
+              tokenUrl: "/v1/oauth/token",
             },
           },
         },

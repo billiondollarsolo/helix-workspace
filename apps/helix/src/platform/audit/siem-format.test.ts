@@ -24,6 +24,8 @@ function record(
     objectId: "doc-1",
     createdAt: "2026-05-21T12:00:00.000Z",
     metadata: {},
+    schemaVersion: 1,
+    sequence: "1",
     thisHash: digest("rec-1"),
     prevHash: digest("rec-0"),
     trace: { traceId: "trace-1", spanId: "span-1" },

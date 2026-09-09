@@ -1,0 +1,32 @@
+{
+  "allowed": [
+    "(MIT AND Zlib)",
+    "(MIT OR CC0-1.0)",
+    "(MIT OR EUPL-1.1+)",
+    "(MIT OR GPL-3.0-or-later)",
+    "0BSD",
+    "Apache-2.0",
+    "BSD",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BlueOak-1.0.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MIT/X11",
+    "MPL-2.0",
+    "OFL-1.1",
+    "Python-2.0",
+    "Unlicense"
+  ],
+  "licenseOverrides": {
+    "buffers": {
+      "license": "MIT",
+      "source": "https://sources.debian.org/copyright/license/node-buffers/0.1.1-2/"
+    }
+  },
+  "unknownPackages": {
+    "@helix/editors-*": "Private first-party packages from the paired helix-editors repository."
+  }
+}

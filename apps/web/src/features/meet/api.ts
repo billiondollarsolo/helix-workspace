@@ -8,9 +8,13 @@ export interface MeetRoomRecord {
   readonly orgId?: string;
   readonly threadId: string;
   readonly roomName: string;
+  readonly joinCode: string;
   readonly subject: string;
   readonly jitsiDomain: string;
   readonly status: MeetRoomStatus;
+  readonly guestPolicy: "disabled" | "invite" | "domain";
+  readonly guestDomains: readonly string[];
+  readonly lobbyEnabled: boolean;
   readonly createdByActorId: string | null;
   readonly startedAt: string;
   readonly endedAt: string | null;
@@ -28,6 +32,7 @@ export interface MeetRecordingArtifactRecord {
   readonly storageKey: string;
   readonly mimeType: string;
   readonly byteSize: number;
+  readonly exportAllowed?: boolean;
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly endedAt: string | null;
@@ -97,16 +102,141 @@ export interface MeetTokenRecord {
   readonly token: string;
   readonly joinUrl: string;
   readonly expiresAt: string;
+  readonly recordingAvailable: boolean;
+  readonly canStartRecording: boolean;
+  readonly recordingNoticeVersion: string;
+  readonly recordingActive: boolean;
+  readonly controls: MeetControlState;
+  readonly canModerate: boolean;
+  readonly subject?: string;
+  readonly code?: string;
 }
 
-export type MeetApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+export type MeetAudiencePolicy = "everyone" | "hosts" | "disabled";
+export interface MeetControlState {
+  readonly roomId: string;
+  readonly hostActorId: string | null;
+  readonly cohostActorIds: readonly string[];
+  readonly lobbyEnabled: boolean;
+  readonly locked: boolean;
+  readonly mutePolicy: "open" | "moderated";
+  readonly presenterPolicy: "everyone" | "hosts" | "selected";
+  readonly presenterSubject: string | null;
+  readonly chatPolicy: MeetAudiencePolicy;
+  readonly reactionPolicy: MeetAudiencePolicy;
+  readonly version: number;
+}
 
-const DEFAULT_JITSI_DOMAIN = "meet.localhost";
+export type MeetMediaCommand =
+  | { readonly command: "toggleLobby"; readonly enabled: boolean }
+  | {
+      readonly command: "answerKnockingParticipant";
+      readonly participantId: string;
+      readonly approved: boolean;
+    }
+  | { readonly command: "password"; readonly password: string }
+  | { readonly command: "kickParticipant"; readonly participantId: string }
+  | { readonly command: "grantModerator"; readonly participantId: string }
+  | {
+      readonly command: "muteRemoteParticipant";
+      readonly participantId: string;
+      readonly mediaType: "audio" | "video";
+    }
+  | {
+      readonly command: "toggleModeration";
+      readonly enabled: boolean;
+      readonly mediaType: "audio" | "video" | "desktop";
+    }
+  | {
+      readonly command: "approveParticipant";
+      readonly participantId: string;
+      readonly mediaType: "audio" | "video" | "desktop";
+    }
+  | { readonly command: "setChatPolicy"; readonly policy: MeetAudiencePolicy }
+  | { readonly command: "setReactionPolicy"; readonly policy: MeetAudiencePolicy };
+
+export interface MeetControlResult {
+  readonly state: MeetControlState;
+  readonly mediaCommands: readonly MeetMediaCommand[];
+}
+
+export type MeetHostControl =
+  | { readonly action: "set_lobby"; readonly enabled: boolean }
+  | {
+      readonly action: "admit";
+      readonly participantSubject: string;
+      readonly mediaParticipantId: string;
+    }
+  | { readonly action: "set_lock"; readonly locked: boolean }
+  | {
+      readonly action: "remove";
+      readonly participantSubject: string;
+      readonly mediaParticipantId: string;
+      readonly ban: boolean;
+    }
+  | { readonly action: "set_mute_policy"; readonly policy: "open" | "moderated" }
+  | {
+      readonly action: "mute";
+      readonly participantSubject: string;
+      readonly mediaParticipantId: string;
+      readonly mediaType: "audio" | "video";
+    }
+  | {
+      readonly action: "set_presenter";
+      readonly policy: "everyone" | "hosts" | "selected";
+      readonly participantSubject?: string;
+      readonly mediaParticipantId?: string;
+    }
+  | {
+      readonly action: "set_cohost";
+      readonly actorId: string;
+      readonly mediaParticipantId: string;
+      readonly enabled: boolean;
+    }
+  | { readonly action: "set_chat_policy"; readonly policy: MeetAudiencePolicy }
+  | { readonly action: "set_reaction_policy"; readonly policy: MeetAudiencePolicy }
+  | {
+      readonly action: "transfer_host";
+      readonly actorId: string;
+      readonly mediaParticipantId: string;
+    };
+
+export const MEET_RECORDING_NOTICE_VERSION = "2026-09-02";
+
+export interface MeetRecordingConsent {
+  readonly recordingNoticeAccepted: true;
+  readonly recordingNoticeVersion: typeof MEET_RECORDING_NOTICE_VERSION;
+  readonly deviceId: string;
+  readonly joinGrantId: string;
+}
+
+export interface MeetRecordingAuthorization {
+  readonly authorizationId: string;
+  readonly expiresAt: string;
+  readonly participantSubjects: readonly string[];
+}
+
+export type MeetTelemetryEvent =
+  | { readonly event: "join_latency"; readonly joinLatencyMs: number }
+  | {
+      readonly event: "device_failure";
+      readonly device: "camera" | "microphone" | "screen";
+    }
+  | {
+      readonly event: "quality";
+      readonly packetLossPercent?: number;
+      readonly jitterMs?: number;
+      readonly rttMs?: number;
+      readonly bitrateKbps?: number;
+      readonly connectionQuality?: number;
+      readonly bridgeLoadPercent?: number;
+    };
+
+export type MeetApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export interface CreateMeetRoomInput {
   readonly subject: string;
   readonly roomName?: string;
-  readonly jitsiDomain?: string;
   readonly participantActorIds?: readonly string[];
   /** When set, the room is created in the `scheduled` lifecycle state. */
   readonly scheduledStartAt?: string;
@@ -123,7 +253,6 @@ export async function createMeetRoom(
     {
       subject: input.subject,
       ...(input.roomName === undefined ? {} : { roomName: input.roomName }),
-      jitsiDomain: input.jitsiDomain ?? DEFAULT_JITSI_DOMAIN,
       participantActorIds: input.participantActorIds ?? [],
       ...(input.scheduledStartAt === undefined ? {} : { scheduledStartAt: input.scheduledStartAt }),
       ...(input.scheduledEndAt === undefined ? {} : { scheduledEndAt: input.scheduledEndAt }),
@@ -183,19 +312,59 @@ export async function mintMeetToken(
   input: {
     readonly roomId: string;
     readonly expiresInSeconds?: number;
-    readonly moderator?: boolean;
-  },
+  } & MeetRecordingConsent,
   fetchImpl: MeetApiFetch = authenticatedFetch,
 ): Promise<MeetTokenRecord> {
   return callMeetTool<MeetTokenRecord>(
     "meet.mint-token",
     {
       roomId: input.roomId,
-      expiresInSeconds: input.expiresInSeconds ?? 3600,
-      moderator: input.moderator ?? false,
+      expiresInSeconds: input.expiresInSeconds ?? 300,
+      recordingNoticeAccepted: input.recordingNoticeAccepted,
+      recordingNoticeVersion: input.recordingNoticeVersion,
+      deviceId: input.deviceId,
+      joinGrantId: input.joinGrantId,
     },
     fetchImpl,
   );
+}
+
+export async function joinMeetByCode(
+  input: { readonly code: string } & MeetRecordingConsent,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<MeetTokenRecord> {
+  return callMeetTool<MeetTokenRecord>("meet.join-by-code", input, fetchImpl);
+}
+
+export async function authorizeMeetRecordingStart(
+  roomId: string,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<MeetRecordingAuthorization> {
+  return callMeetTool<MeetRecordingAuthorization>(
+    "meet.recording.authorize-start",
+    { roomId },
+    fetchImpl,
+  );
+}
+
+export async function applyMeetHostControl(
+  roomId: string,
+  control: MeetHostControl,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<MeetControlResult> {
+  return callMeetTool<MeetControlResult>(
+    "meet.host-controls.apply",
+    { roomId, ...control },
+    fetchImpl,
+  );
+}
+
+export async function recordMeetTelemetry(
+  roomId: string,
+  event: MeetTelemetryEvent,
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callMeetTool("meet.telemetry.record", { roomId, ...event }, fetchImpl);
 }
 
 export async function endMeetRoom(

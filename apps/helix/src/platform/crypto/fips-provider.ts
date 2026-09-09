@@ -33,6 +33,7 @@ import {
   CryptoInitializationError,
   UnsupportedAlgorithmError,
   type BinaryInput,
+  type AesGcmEncrypted,
   type CryptoProvider,
   type CryptoProviderStatus,
   type DigestEncoding,
@@ -107,10 +108,8 @@ export class FipsCryptoProvider implements CryptoProvider {
     try {
       const digest = this.delegate.hash("sha256", "helix-fips-self-test", "hex");
       const mac = this.delegate.hmac("sha256", "helix-fips-key", "helix-fips-self-test", "hex");
-      const expectedDigest =
-        "259c64d02d1c7de6a7191c11e09ff66cdce5e8db878d39401f2f2a05644bcb80";
-      const expectedMac =
-        "130d62c789c556ffbefb55d50d0547b2aa5acb0bd578a8346f8e49aa0449ff96";
+      const expectedDigest = "259c64d02d1c7de6a7191c11e09ff66cdce5e8db878d39401f2f2a05644bcb80";
+      const expectedMac = "130d62c789c556ffbefb55d50d0547b2aa5acb0bd578a8346f8e49aa0449ff96";
       return digest === expectedDigest && mac === expectedMac;
     } catch {
       return false;
@@ -197,6 +196,34 @@ export class FipsCryptoProvider implements CryptoProvider {
     }
     this.assertHash(options.digest, "hmac");
     return this.delegate.hkdf(options);
+  }
+
+  aes256GcmEncrypt(input: {
+    readonly key: BinaryInput;
+    readonly iv: BinaryInput;
+    readonly plaintext: BinaryInput;
+    readonly aad: BinaryInput;
+  }): AesGcmEncrypted {
+    this.assertAesKey(input.key);
+    return this.delegate.aes256GcmEncrypt(input);
+  }
+
+  aes256GcmDecrypt(input: {
+    readonly key: BinaryInput;
+    readonly iv: BinaryInput;
+    readonly ciphertext: BinaryInput;
+    readonly tag: BinaryInput;
+    readonly aad: BinaryInput;
+  }): Buffer {
+    this.assertAesKey(input.key);
+    return this.delegate.aes256GcmDecrypt(input);
+  }
+
+  private assertAesKey(key: BinaryInput): void {
+    const bytes = typeof key === "string" ? Buffer.byteLength(key) : key.byteLength;
+    if (bytes !== 32) {
+      throw new UnsupportedAlgorithmError("AES-256-GCM requires a 256-bit key.");
+    }
   }
 
   status(): CryptoProviderStatus {

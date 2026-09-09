@@ -99,7 +99,7 @@ export const commandActions: Record<string, readonly string[]> = {
   search: ["--query", "--type", "--limit", "--json"],
   admin: ["app-passwords", "agent-credentials", "credentials", "users", "audit", "audit-log"],
   backup: ["create"],
-  restore: ["--from", "--encrypted"],
+  restore: ["--from", "--target-db", "--target-bucket", "--idempotency-key", "--encrypted"],
   reindex: ["--all"],
   action: ["status", "approve", "cancel"],
   tier: ["set"],
@@ -153,15 +153,7 @@ const mailActionFlags: Record<string, readonly string[]> = {
   ],
   "filter-delete": ["--id", "--json"],
   "vacation-get": ["--json"],
-  "vacation-set": [
-    "--enabled",
-    "--disabled",
-    "--subject",
-    "--body",
-    "--start",
-    "--end",
-    "--json",
-  ],
+  "vacation-set": ["--enabled", "--disabled", "--subject", "--body", "--start", "--end", "--json"],
 };
 
 const chatActionFlags: Record<string, readonly string[]> = {
@@ -291,13 +283,6 @@ const meetActionFlags: Record<string, readonly string[]> = {
   end: ["--room-id", "--json"],
 };
 
-const assistantClassificationValues = [
-  "public",
-  "standard",
-  "confidential",
-  "restricted",
-] as const;
-
 const assistantActionFlags: Record<string, readonly string[]> = {
   chat: ["--json"],
   ask: ["--json"],
@@ -305,10 +290,10 @@ const assistantActionFlags: Record<string, readonly string[]> = {
   "conversation-create": ["--json"],
   forget: ["--json"],
   "memory-forget": ["--json"],
-  approve: ["--conversation-id", "--pending-id", "--classification", "--json"],
-  "confirmation-approve": ["--conversation-id", "--pending-id", "--classification", "--json"],
-  cancel: ["--conversation-id", "--pending-id", "--classification", "--json"],
-  "confirmation-cancel": ["--conversation-id", "--pending-id", "--classification", "--json"],
+  approve: ["--conversation-id", "--pending-id", "--json"],
+  "confirmation-approve": ["--conversation-id", "--pending-id", "--json"],
+  cancel: ["--conversation-id", "--pending-id", "--json"],
+  "confirmation-cancel": ["--conversation-id", "--pending-id", "--json"],
 };
 
 const webhookFamilyActions: Record<string, readonly string[]> = {
@@ -432,7 +417,6 @@ function generateBashCompletion(): string {
     `    --transport) COMPREPLY=( $(compgen -W "${wordList(["rest", "mcp"])}" -- "$cur") ); return ;;`,
     `    --type) [[ $scope == search ]] && COMPREPLY=( $(compgen -W "${wordList(["mail", "chat", "docs", "drive", "calendar"])}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["user", "agent", "service_account", "system"])}" -- "$cur") ); return ;;`,
     `    --direction) COMPREPLY=( $(compgen -W "${wordList(["outbound", "inbound"])}" -- "$cur") ); return ;;`,
-    `    --classification) COMPREPLY=( $(compgen -W "${wordList(assistantClassificationValues)}" -- "$cur") ); return ;;`,
     `    --response) COMPREPLY=( $(compgen -W "${wordList(["accepted", "declined", "tentative"])}" -- "$cur") ); return ;;`,
     `    --status) [[ $scope == meet ]] && COMPREPLY=( $(compgen -W "${wordList(["active", "ended"])}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["pending", "in_progress", "delivered", "failed", "abandoned"])}" -- "$cur") ); return ;;`,
     "    --client-id|--client-secret|--scope|--json|--from) return ;;",
@@ -535,7 +519,7 @@ function generateBashCompletion(): string {
     "  fi",
     "",
     "  if [[ $scope == restore ]]; then",
-    `    COMPREPLY=( $(compgen -W "--from --encrypted" -- "$cur") )`,
+    `    COMPREPLY=( $(compgen -W "--from --target-db --target-bucket --idempotency-key --encrypted" -- "$cur") )`,
     "    return",
     "  fi",
     "",
@@ -565,7 +549,7 @@ function generateZshCompletion(): string {
     "",
     "_helix() {",
     "  local -a top source_values transport_values search_type_values admin_user_type_values tier_values auth_flags json_flag",
-    "  local -a direction_values webhook_status_values meet_status_values classification_values",
+    "  local -a direction_values webhook_status_values meet_status_values",
     `  top=(${zshWords(topLevelCommands)})`,
     "  source_values=(api openapi mcp)",
     "  transport_values=(rest mcp)",
@@ -575,7 +559,6 @@ function generateZshCompletion(): string {
     "  direction_values=(outbound inbound)",
     "  webhook_status_values=(pending in_progress delivered failed abandoned)",
     "  meet_status_values=(active ended)",
-    `  classification_values=(${assistantClassificationValues.join(" ")})`,
     "  auth_flags=(--client-id --client-secret --scope)",
     "  json_flag=(--json)",
     "",
@@ -644,11 +627,7 @@ function generateZshCompletion(): string {
     "      fi",
     "      ;;",
     "    assistant)",
-    "      if [[ ${words[CURRENT-1]} == --classification ]]; then",
-    "        compadd -- $classification_values",
-    "      else",
     zshActionFlagCases(assistantActionFlags),
-    "      fi",
     "      ;;",
     "    webhook)",
     "      if (( CURRENT == 4 )); then",
@@ -685,7 +664,7 @@ function generateZshCompletion(): string {
     "      if [[ ${words[3]} == resources && CURRENT == 4 ]]; then compadd -- list read; fi",
     "      ;;",
     "    restore)",
-    "      compadd -- --from --encrypted",
+    "      compadd -- --from --target-db --target-bucket --idempotency-key --encrypted",
     "      ;;",
     "    tier)",
     "      if [[ ${words[3]} == set ]]; then compadd -- $tier_values; fi",
@@ -923,13 +902,10 @@ function fishAdminFlagCompletions(): string[] {
 
 function fishAssistantFlagCompletions(): string[] {
   return Object.entries(assistantActionFlags).flatMap(([action, flags]) =>
-    flags.map((flag) => {
-      const values =
-        flag === "--classification"
-          ? ` -a "${wordList(assistantClassificationValues)}"`
-          : "";
-      return `complete -c helix -n "__fish_seen_subcommand_from assistant; and __fish_seen_subcommand_from ${action}" -l ${flag.slice(2)} -x${values}`;
-    }),
+    flags.map(
+      (flag) =>
+        `complete -c helix -n "__fish_seen_subcommand_from assistant; and __fish_seen_subcommand_from ${action}" -l ${flag.slice(2)} -x`,
+    ),
   );
 }
 

@@ -134,10 +134,9 @@ describe("sheets API", () => {
     await expect(
       importCsvSheet(
         {
-          filename: "Renewals.csv",
+          sourceObjectId: "44444444-4444-4444-8444-444444444444",
           title: "Renewals",
           folderId: "33333333-3333-4333-8333-333333333333",
-          csvText: "Customer,ARR\nAcme,1200",
           metadata: { source: "test" },
         },
         fetchImpl,
@@ -147,10 +146,9 @@ describe("sheets API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        filename: "Renewals.csv",
+        sourceObjectId: "44444444-4444-4444-8444-444444444444",
         title: "Renewals",
         folderId: "33333333-3333-4333-8333-333333333333",
-        csvText: "Customer,ARR\nAcme,1200",
         metadata: { source: "test" },
       }),
     });
@@ -173,10 +171,9 @@ describe("sheets API", () => {
     await expect(
       importXlsxSheet(
         {
-          filename: "Forecast.xlsx",
+          sourceObjectId: "44444444-4444-4444-8444-444444444444",
           title: "Forecast",
           folderId: "33333333-3333-4333-8333-333333333333",
-          contentBase64: "eGxzeA==",
           metadata: { source: "test" },
         },
         fetchImpl,
@@ -186,10 +183,9 @@ describe("sheets API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        filename: "Forecast.xlsx",
+        sourceObjectId: "44444444-4444-4444-8444-444444444444",
         title: "Forecast",
         folderId: "33333333-3333-4333-8333-333333333333",
-        contentBase64: "eGxzeA==",
         metadata: { source: "test" },
       }),
     });
@@ -212,10 +208,9 @@ describe("sheets API", () => {
     await expect(
       importOdsSheet(
         {
-          filename: "Forecast.ods",
+          sourceObjectId: "44444444-4444-4444-8444-444444444444",
           title: "Forecast",
           folderId: "33333333-3333-4333-8333-333333333333",
-          contentBase64: "b2Rz",
           metadata: { source: "test" },
         },
         fetchImpl,
@@ -225,10 +220,9 @@ describe("sheets API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        filename: "Forecast.ods",
+        sourceObjectId: "44444444-4444-4444-8444-444444444444",
         title: "Forecast",
         folderId: "33333333-3333-4333-8333-333333333333",
-        contentBase64: "b2Rz",
         metadata: { source: "test" },
       }),
     });
@@ -250,10 +244,9 @@ describe("sheets API", () => {
     await expect(
       importTsvSheet(
         {
-          filename: "Renewals.tsv",
+          sourceObjectId: "44444444-4444-4444-8444-444444444444",
           title: "Renewals",
           folderId: "33333333-3333-4333-8333-333333333333",
-          tsvText: "Customer\tARR\nAcme\t1200",
           metadata: { source: "test" },
         },
         fetchImpl,
@@ -263,10 +256,9 @@ describe("sheets API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        filename: "Renewals.tsv",
+        sourceObjectId: "44444444-4444-4444-8444-444444444444",
         title: "Renewals",
         folderId: "33333333-3333-4333-8333-333333333333",
-        tsvText: "Customer\tARR\nAcme\t1200",
         metadata: { source: "test" },
       }),
     });

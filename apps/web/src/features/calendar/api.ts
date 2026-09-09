@@ -1,3 +1,4 @@
+import type { CalendarTimeSemantics } from "@helix/contracts";
 import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
 
@@ -41,6 +42,9 @@ export interface CalendarApiEvent {
   readonly endsAt: string;
   readonly timezone?: string;
   readonly allDay: boolean;
+  readonly timeSemantics?: CalendarTimeSemantics;
+  readonly startsLocal?: string;
+  readonly endsLocal?: string;
   readonly status: CalendarApiEventStatus;
   readonly recurrenceRule?: string | null;
   readonly icsSequence?: number;
@@ -60,6 +64,7 @@ export interface CalendarCreateEventInput {
   readonly endsAt: string;
   readonly timezone?: string;
   readonly allDay?: boolean;
+  readonly timeSemantics?: CalendarTimeSemantics;
   readonly recurrenceRule?: string | null;
   readonly attendees?: readonly CalendarApiAttendeeInput[];
   readonly metadata?: Record<string, unknown>;
@@ -86,9 +91,7 @@ export interface CalendarDeleteEventOutput {
 }
 
 export interface CalendarRespondInput {
-  readonly eventId?: string;
-  readonly attendeeEmail?: string;
-  readonly rsvpToken?: string;
+  readonly eventId: string;
   readonly responseStatus: Exclude<CalendarApiResponseStatus, "needs_action">;
 }
 
@@ -122,7 +125,7 @@ export interface CalendarFindTimeSlot {
   }[];
 }
 
-export type CalendarApiMembershipRole = "owner" | "editor" | "viewer";
+export type CalendarApiMembershipRole = "owner" | "writer" | "reader";
 
 /** A calendar as returned by `calendar.calendars.list` for the sidebar. */
 export interface CalendarApiCalendar {
@@ -163,6 +166,7 @@ export async function createCalendarEvent(
       endsAt: input.endsAt,
       timezone: input.timezone ?? "UTC",
       allDay: input.allDay ?? false,
+      ...(input.timeSemantics === undefined ? {} : { timeSemantics: input.timeSemantics }),
       recurrenceRule: input.recurrenceRule ?? null,
       attendees: input.attendees ?? [],
       metadata: input.metadata ?? {},
@@ -209,8 +213,6 @@ export async function respondToCalendarEvent(
     "calendar.event.respond",
     {
       eventId: input.eventId,
-      attendeeEmail: input.attendeeEmail,
-      rsvpToken: input.rsvpToken,
       responseStatus: input.responseStatus,
     },
     fetchImpl,

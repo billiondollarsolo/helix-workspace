@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import type postgres from "postgres";
+import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
 import { hashSecret } from "../platform/auth/oauth.js";
 
@@ -16,7 +17,8 @@ export const DEFAULT_LOCAL_OAUTH_SCOPES = [
   "mail.send",
   "mail.write",
   "chat.read",
-  "chat.write",
+  "chat.post",
+  "chat.create",
   "docs.read",
   "docs.write",
   "docs.comment",
@@ -26,6 +28,7 @@ export const DEFAULT_LOCAL_OAUTH_SCOPES = [
   "calendar.read",
   "calendar.read:freebusy",
   "calendar.write",
+  "calendar.manage",
   "calendar.write:respond",
   "assistant.read",
   "assistant.write",
@@ -85,7 +88,8 @@ export async function seedLocalOAuth(
     options.apiBaseUrl ?? process.env.HELIX_API_BASE_URL ?? "http://127.0.0.1:3000";
   const secretHash = await hashSecret(clientSecret);
 
-  await sql`
+  await withTenantPostgresContext(sql, { orgId }, async (tx) => {
+    await tx`
     insert into actors (
       id,
       org_id,
@@ -102,7 +106,7 @@ export async function seedLocalOAuth(
       ${actorType},
       ${email},
       ${displayName},
-      ${sql.array(scopes, 1009)},
+      ${tx.array(scopes, 1009)},
       null,
       ${JSON.stringify({ source: "local-seed" })}::jsonb
     )
@@ -118,40 +122,51 @@ export async function seedLocalOAuth(
       updated_at = now()
   `;
 
-  await sql`
+    await tx`
     insert into agent_credentials (
+      org_id,
       actor_id,
+      owner_actor_id,
       credential_type,
       client_id,
       secret_hash,
+      label,
+      purpose,
       scopes,
       expires_at,
       revoked_at,
-      created_by,
       metadata
     )
     values (
+      ${orgId},
+      ${actorId},
       ${actorId},
       ${"oauth_client"},
       ${clientId},
       ${secretHash},
-      ${sql.array(scopes, 1009)},
+      ${"Local OAuth client"},
+      ${"Local development API access"},
+      ${tx.array(scopes, 1009)},
+      now() + interval '90 days',
       null,
-      null,
-      ${actorId},
       ${JSON.stringify({ source: "local-seed" })}::jsonb
     )
-    on conflict (client_id) where revoked_at is null do update
+    on conflict (client_id) where credential_type = 'oauth_client' do update
     set
+      org_id = excluded.org_id,
       actor_id = excluded.actor_id,
+      owner_actor_id = excluded.owner_actor_id,
       credential_type = excluded.credential_type,
       secret_hash = excluded.secret_hash,
+      label = excluded.label,
+      purpose = excluded.purpose,
       scopes = excluded.scopes,
-      expires_at = null,
+      expires_at = excluded.expires_at,
       revoked_at = null,
-      created_by = excluded.created_by,
+      updated_at = now(),
       metadata = agent_credentials.metadata || excluded.metadata
-  `;
+    `;
+  });
 
   return {
     clientId,
@@ -175,7 +190,7 @@ function buildSampleTokenCommand(input: {
   readonly clientSecret: string;
   readonly scopes: readonly string[];
 }): string {
-  const url = `${input.apiBaseUrl.replace(/\/+$/, "")}/oauth/token`;
+  const url = `${input.apiBaseUrl.replace(/\/+$/, "")}/v1/oauth/token`;
   const body = new URLSearchParams({
     grant_type: "client_credentials",
     scope: input.scopes.join(" "),

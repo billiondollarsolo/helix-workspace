@@ -363,10 +363,7 @@ function mergeTypedJsonObject<T extends object>(
   if (left === undefined && right === undefined) {
     return undefined;
   }
-  return mergeJsonObjects(
-    left as JsonObject | undefined,
-    right as JsonObject | undefined,
-  ) as unknown as T;
+  return mergeJsonObjects(left as JsonObject | undefined, right as JsonObject | undefined) as T;
 }
 
 function mergeJsonObjects(left: JsonObject | undefined, right: JsonObject | undefined): JsonObject {

@@ -7,17 +7,25 @@
    The view is wired to a real backend room carried in via `session`: the
    subject/code come from `meet.create-room`/`meet.meetings.list`, the embed
    loads through JitsiMeetExternalAPI from the configured Jitsi domain, and
-   Leave ends the room through `meet.end-room`. */
+   Leave disconnects only the local participant. */
 
-import { useMemo, useRef, useState, type CSSProperties } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { sessionUserQueryOptions } from "@/lib/auth";
-import { endMeetRoom } from "./api";
-import { meetCallElapsedQueryOptions, meetQueryKeys } from "./queries";
+import { meetCallElapsedQueryOptions } from "./queries";
+import {
+  applyMeetHostControl,
+  authorizeMeetRecordingStart,
+  recordMeetTelemetry,
+  type MeetTelemetryEvent,
+  type MeetHostControl,
+} from "./api";
 import {
   useJitsiCall,
+  type JitsiCallCommands,
   type JitsiCallOptions,
+  type JitsiCallState,
   type JitsiChatMessage,
 } from "./jitsi-external-api";
 import type { MeetCallSession } from "./meet-shell";
@@ -44,29 +52,31 @@ export interface MeetCallProps {
 }
 
 export function MeetCall({ session, onLeave }: MeetCallProps) {
-  const queryClient = useQueryClient();
   const sessionQuery = useQuery(sessionUserQueryOptions());
   const [chatOpen, setChatOpen] = useState(false);
   const [participantsOpen, setParticipantsOpen] = useState(false);
-  const [leaveError, setLeaveError] = useState<string | null>(null);
+  const [hostControlsOpen, setHostControlsOpen] = useState(false);
+  const [callOptionsOpen, setCallOptionsOpen] = useState(false);
+  const [controls, setControls] = useState(session.controls);
+  const leftRef = useRef(false);
 
   const callStartRef = useRef(session.startedAtMs);
   const elapsedQuery = useQuery(meetCallElapsedQueryOptions(callStartRef.current));
   const elapsed = elapsedQuery.data ?? 0;
 
-  const hasLiveRoom = session.roomId.length > 0 && session.token !== null;
+  const hasLiveRoom = session.roomId.length > 0;
   const jitsiHostRef = useRef<HTMLDivElement | null>(null);
 
   // Build the External API options only once we have a token; pass null
   // otherwise so the hook keeps the call torn down.
   const jitsiOptions = useMemo<JitsiCallOptions | null>(() => {
     if (!hasLiveRoom || session.token === null) return null;
-    const displayName =
-      sessionQuery.data?.name ?? sessionQuery.data?.email ?? "Helix user";
+    const displayName = sessionQuery.data?.name ?? sessionQuery.data?.email ?? "Helix user";
     return {
       domain: session.jitsiDomain,
       roomName: session.roomName,
       jwt: session.token,
+      initialRecordingActive: session.recordingActive,
       userInfo: {
         displayName,
         email: sessionQuery.data?.email ?? null,
@@ -77,40 +87,47 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
     session.token,
     session.jitsiDomain,
     session.roomName,
+    session.recordingActive,
     sessionQuery.data?.name,
     sessionQuery.data?.email,
   ]);
 
-  // Leave → end the backend room (only when we own a real room), then exit.
-  const leaveMutation = useMutation({
-    mutationFn: async () => {
-      if (hasLiveRoom) {
-        await endMeetRoom(session.roomId);
-      }
+  const leave = useCallback(() => {
+    if (leftRef.current) return;
+    leftRef.current = true;
+    onLeave();
+  }, [onLeave]);
+  const reportTelemetry = useCallback(
+    (event: MeetTelemetryEvent) => {
+      void recordMeetTelemetry(session.roomId, event).catch(() => undefined);
     },
-    onMutate: () => {
-      setLeaveError(null);
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: meetQueryKeys.all });
-      onLeave();
-    },
-    onError: (error: unknown) => {
-      setLeaveError(error instanceof Error ? error.message : "Could not end the meeting.");
-    },
-  });
+    [session.roomId],
+  );
 
   const { state: call, commands } = useJitsiCall({
     options: jitsiOptions,
     hostRef: jitsiHostRef,
-    onLeft: () => {
-      // Jitsi hangup or readyToClose → run the same backend cleanup as the
-      // Leave button so we don't leave a zombie room behind.
-      if (!leaveMutation.isPending) {
-        leaveMutation.mutate();
-      }
-    },
+    onLeft: leave,
+    onTelemetry: reportTelemetry,
   });
+  const recordingAuthorization = useMutation({
+    mutationFn: () => authorizeMeetRecordingStart(session.roomId),
+    onMutate: () => undefined,
+    onSuccess: commands.startRecording,
+    onError: () => undefined,
+  });
+  const hostControl = useMutation({
+    mutationFn: (control: MeetHostControl) => applyMeetHostControl(session.roomId, control),
+    onMutate: () => undefined,
+    onSuccess: (result) => {
+      setControls(result.state);
+      commands.applyMediaCommands(result.mediaCommands);
+    },
+    onError: () => undefined,
+  });
+  const applyControl = (control: MeetHostControl) => {
+    if (!hostControl.isPending) hostControl.mutate(control);
+  };
 
   return (
     <div
@@ -167,11 +184,21 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           <span style={{ fontVariantNumeric: "tabular-nums" }} aria-label="Elapsed time">
             {formatElapsed(elapsed)}
           </span>
-          <button className="icon-btn" type="button" aria-label="Meeting settings">
+          <button
+            className="icon-btn"
+            type="button"
+            aria-label="Meeting settings"
+            disabled={!session.canModerate}
+            onClick={() => {
+              setHostControlsOpen((value) => !value);
+            }}
+          >
             <Icons.Settings />
           </button>
         </div>
       </div>
+
+      <RecordingNotice active={call.recordingActive} />
 
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         {/* Main stage — Jitsi External API mounts its iframe inside the host
@@ -204,10 +231,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             {jitsiOptions === null ? (
               <Overlay message="Waiting for the meeting room to connect…" />
             ) : call.loadError !== null ? (
-              <Overlay
-                message={`Couldn't load Jitsi: ${call.loadError}`}
-                tone="error"
-              />
+              <Overlay message={`Couldn't load Jitsi: ${call.loadError}`} tone="error" />
             ) : !call.isReady ? (
               <Overlay message="Loading meeting room…" />
             ) : !call.isJoined ? (
@@ -233,7 +257,83 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                 />
               ) : null}
               {call.participants.map((p) => (
-                <ParticipantRow key={p.id} name={p.displayName} />
+                <ParticipantRow key={p.id} name={p.displayName}>
+                  {session.canModerate ? (
+                    <span style={{ display: "flex", gap: 4 }}>
+                      <MiniAction
+                        label="Mute"
+                        onClick={() => {
+                          applyControl({
+                            action: "mute",
+                            participantSubject: p.participantSubject,
+                            mediaParticipantId: p.id,
+                            mediaType: "audio",
+                          });
+                        }}
+                      />
+                      <MiniAction
+                        label="Present"
+                        onClick={() => {
+                          applyControl({
+                            action: "set_presenter",
+                            policy: "selected",
+                            participantSubject: p.participantSubject,
+                            mediaParticipantId: p.id,
+                          });
+                        }}
+                      />
+                      {UUID_PATTERN.test(p.participantSubject) ? (
+                        <>
+                          <MiniAction
+                            label="Cohost"
+                            onClick={() => {
+                              applyControl({
+                                action: "set_cohost",
+                                actorId: p.participantSubject,
+                                mediaParticipantId: p.id,
+                                enabled: true,
+                              });
+                            }}
+                          />
+                          {controls.hostActorId === sessionQuery.data?.actorId ? (
+                            <MiniAction
+                              label="Transfer host"
+                              onClick={() => {
+                                applyControl({
+                                  action: "transfer_host",
+                                  actorId: p.participantSubject,
+                                  mediaParticipantId: p.id,
+                                });
+                              }}
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                      <MiniAction
+                        label="Remove"
+                        onClick={() => {
+                          applyControl({
+                            action: "remove",
+                            participantSubject: p.participantSubject,
+                            mediaParticipantId: p.id,
+                            ban: false,
+                          });
+                        }}
+                      />
+                      <MiniAction
+                        label="Ban"
+                        onClick={() => {
+                          applyControl({
+                            action: "remove",
+                            participantSubject: p.participantSubject,
+                            mediaParticipantId: p.id,
+                            ban: true,
+                          });
+                        }}
+                      />
+                    </span>
+                  ) : null}
+                </ParticipantRow>
               ))}
               {call.participants.length === 0 && call.isJoined ? (
                 <li
@@ -248,6 +348,92 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
               ) : null}
             </ul>
           </SidePanel>
+        ) : null}
+
+        {session.canModerate && hostControlsOpen ? (
+          <SidePanel
+            title="Host controls"
+            onClose={() => {
+              setHostControlsOpen(false);
+            }}
+            icon={<Icons.Settings />}
+          >
+            <div style={{ padding: 12, display: "grid", gap: 8 }}>
+              <PolicyButton
+                label={`Lobby: ${controls.lobbyEnabled ? "on" : "off"}`}
+                onClick={() => {
+                  applyControl({ action: "set_lobby", enabled: !controls.lobbyEnabled });
+                }}
+              />
+              <PolicyButton
+                label={`Meeting: ${controls.locked ? "locked" : "open"}`}
+                onClick={() => {
+                  applyControl({ action: "set_lock", locked: !controls.locked });
+                }}
+              />
+              <PolicyButton
+                label={`Microphones: ${controls.mutePolicy}`}
+                onClick={() => {
+                  applyControl({
+                    action: "set_mute_policy",
+                    policy: controls.mutePolicy === "open" ? "moderated" : "open",
+                  });
+                }}
+              />
+              <PolicyButton
+                label={`Presenters: ${controls.presenterPolicy}`}
+                onClick={() => {
+                  applyControl({
+                    action: "set_presenter",
+                    policy: controls.presenterPolicy === "everyone" ? "hosts" : "everyone",
+                  });
+                }}
+              />
+              <PolicyButton
+                label={`Chat: ${controls.chatPolicy}`}
+                onClick={() => {
+                  applyControl({
+                    action: "set_chat_policy",
+                    policy: controls.chatPolicy === "everyone" ? "disabled" : "everyone",
+                  });
+                }}
+              />
+              <PolicyButton
+                label={`Reactions: ${controls.reactionPolicy}`}
+                onClick={() => {
+                  applyControl({
+                    action: "set_reaction_policy",
+                    policy: controls.reactionPolicy === "everyone" ? "disabled" : "everyone",
+                  });
+                }}
+              />
+              {call.knockingParticipants.map((participant) => (
+                <PolicyButton
+                  key={participant.id}
+                  label={`Admit ${participant.displayName}`}
+                  onClick={() => {
+                    applyControl({
+                      action: "admit",
+                      participantSubject: participant.participantSubject,
+                      mediaParticipantId: participant.id,
+                    });
+                  }}
+                />
+              ))}
+              <small style={{ color: "#a1a1aa" }}>Policy version {controls.version}</small>
+            </div>
+          </SidePanel>
+        ) : null}
+
+        {callOptionsOpen ? (
+          <CallOptionsPanel
+            call={call}
+            commands={commands}
+            canModerate={session.canModerate}
+            onClose={() => {
+              setCallOptionsOpen(false);
+            }}
+          />
         ) : null}
 
         {/* In-call chat panel */}
@@ -310,17 +496,27 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
         >
           <Icons.Hand />
         </CallControl>
-        <CallControl
-          label={call.recordingActive ? "Stop recording" : "Start recording"}
-          danger={call.recordingActive}
-          disabled={!call.isJoined}
-          onClick={() => {
-            if (call.recordingActive) commands.stopRecording();
-            else commands.startRecording();
-          }}
-        >
-          <RecordIcon />
-        </CallControl>
+        {session.canStartRecording ? (
+          <CallControl
+            label={
+              !session.recordingAvailable
+                ? "Recording unavailable"
+                : call.recordingActive
+                  ? "Stop recording"
+                  : "Start recording"
+            }
+            danger={call.recordingActive}
+            disabled={
+              !call.isJoined || !session.recordingAvailable || recordingAuthorization.isPending
+            }
+            onClick={() => {
+              if (call.recordingActive) commands.stopRecording();
+              else recordingAuthorization.mutate();
+            }}
+          >
+            <RecordIcon />
+          </CallControl>
+        ) : null}
         <CallControl
           label={chatOpen ? "Hide in-call messages" : "Show in-call messages"}
           active={chatOpen}
@@ -340,13 +536,9 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
 
         <button
           type="button"
-          disabled={leaveMutation.isPending}
           onClick={() => {
-            setLeaveError(null);
             commands.hangup();
-            // hangup fires videoConferenceLeft which triggers backend cleanup
-            // via onLeft; this is a belt-and-suspenders direct call too.
-            leaveMutation.mutate();
+            leave();
           }}
           style={{
             height: 44,
@@ -359,26 +551,11 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             gap: 6,
             fontWeight: 500,
             border: "none",
-            cursor: leaveMutation.isPending ? "default" : "pointer",
-            opacity: leaveMutation.isPending ? 0.7 : 1,
+            cursor: "pointer",
           }}
         >
-          <Icons.Phone /> {leaveMutation.isPending ? "Leaving…" : "Leave"}
+          <Icons.Phone /> Leave
         </button>
-
-        {leaveError !== null ? (
-          <span
-            role="alert"
-            style={{
-              position: "absolute",
-              left: 16,
-              fontSize: "var(--text-caption)",
-              color: "#f87171",
-            }}
-          >
-            {leaveError}
-          </span>
-        ) : null}
 
         <div
           style={{
@@ -392,9 +569,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           <button
             className="btn sm"
             type="button"
-            aria-label={
-              participantsOpen ? "Hide participants" : "Show participants"
-            }
+            aria-label={participantsOpen ? "Hide participants" : "Show participants"}
             onClick={() => {
               setParticipantsOpen((v) => !v);
             }}
@@ -406,8 +581,147 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           >
             <Icons.Users />
           </button>
+          {Object.values(call.capabilities).some(Boolean) ? (
+            <button
+              className="btn sm"
+              type="button"
+              aria-label={callOptionsOpen ? "Hide call options" : "Show call options"}
+              disabled={!call.isJoined}
+              onClick={() => {
+                setCallOptionsOpen((value) => !value);
+              }}
+              style={{
+                background: callOptionsOpen ? "var(--accent)" : "transparent",
+                borderColor: DARK_BORDER,
+                color: "#ededee",
+              }}
+            >
+              <Icons.Settings />
+            </button>
+          ) : null}
         </div>
       </div>
+      {recordingAuthorization.isError ? (
+        <div role="alert" style={{ padding: "8px 16px", color: "#fecaca" }}>
+          {recordingAuthorization.error instanceof Error
+            ? recordingAuthorization.error.message
+            : "Recording could not be authorized."}
+        </div>
+      ) : null}
+      {hostControl.isError ? (
+        <div role="alert" style={{ padding: "8px 16px", color: "#fecaca" }}>
+          {hostControl.error instanceof Error
+            ? hostControl.error.message
+            : "Host control was rejected."}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CallOptionsPanel({
+  call,
+  commands,
+  canModerate,
+  onClose,
+}: {
+  readonly call: JitsiCallState;
+  readonly commands: JitsiCallCommands;
+  readonly canModerate: boolean;
+  readonly onClose: () => void;
+}) {
+  const breakoutRooms = call.breakoutRooms.filter((room) => !room.isMainRoom);
+  return (
+    <SidePanel title="Call options" icon={<Icons.Settings />} onClose={onClose}>
+      <div style={{ padding: 12, display: "grid", gap: 8 }}>
+        {call.capabilities.tileView ? (
+          <PolicyButton
+            label={call.tileView === true ? "Use speaker layout" : "Use tile layout"}
+            onClick={commands.toggleTileView}
+          />
+        ) : null}
+        {call.capabilities.noiseSuppression ? (
+          <PolicyButton
+            label={
+              call.noiseSuppressionEnabled === true
+                ? "Disable noise suppression"
+                : "Enable noise suppression"
+            }
+            onClick={() => {
+              commands.setNoiseSuppression(call.noiseSuppressionEnabled !== true);
+            }}
+          />
+        ) : null}
+        {call.capabilities.backgroundBlur ? (
+          <PolicyButton
+            label={call.backgroundBlurred === true ? "Remove background blur" : "Blur background"}
+            onClick={() => {
+              commands.setBackgroundBlur(call.backgroundBlurred !== true);
+            }}
+          />
+        ) : null}
+        {call.capabilities.breakoutRooms && canModerate ? (
+          <section aria-label="Breakout rooms" style={{ display: "grid", gap: 8, marginTop: 8 }}>
+            <strong style={{ fontSize: "var(--text-body-sm)" }}>Breakout rooms</strong>
+            <PolicyButton label="Add breakout room" onClick={commands.addBreakoutRoom} />
+            <PolicyButton
+              label="Auto-assign participants"
+              onClick={commands.autoAssignBreakoutRooms}
+            />
+            {breakoutRooms.length > 0 ? (
+              <PolicyButton
+                label="Return to main room"
+                onClick={() => {
+                  commands.joinBreakoutRoom();
+                }}
+              />
+            ) : null}
+            {breakoutRooms.map((room) => (
+              <div
+                key={room.id}
+                style={{ display: "grid", gap: 6, padding: 8, border: `1px solid ${DARK_BORDER}` }}
+              >
+                <span style={{ fontSize: "var(--text-meta)" }}>
+                  {room.name} ({String(room.participantCount)})
+                </span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <MiniAction
+                    label={`Join ${room.name}`}
+                    onClick={() => {
+                      commands.joinBreakoutRoom(room.id);
+                    }}
+                  />
+                  <MiniAction
+                    label={`Close ${room.name}`}
+                    onClick={() => {
+                      commands.closeBreakoutRoom(room.id);
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </section>
+        ) : null}
+      </div>
+    </SidePanel>
+  );
+}
+
+export function RecordingNotice({ active }: { readonly active: boolean }) {
+  if (!active) return null;
+  return (
+    <div
+      role="alert"
+      aria-live="assertive"
+      style={{
+        padding: "10px 16px",
+        background: "#991b1b",
+        color: "white",
+        fontWeight: 700,
+        textAlign: "center",
+      }}
+    >
+      Recording in progress — audio, video, and shared content are being captured.
     </div>
   );
 }
@@ -488,7 +802,15 @@ function SidePanel({
   );
 }
 
-function ParticipantRow({ name, badge }: { readonly name: string; readonly badge?: string | null }) {
+function ParticipantRow({
+  name,
+  badge,
+  children,
+}: {
+  readonly name: string;
+  readonly badge?: string | null;
+  readonly children?: React.ReactNode;
+}) {
   return (
     <li
       style={{
@@ -525,9 +847,34 @@ function ParticipantRow({ name, badge }: { readonly name: string; readonly badge
           {badge}
         </span>
       ) : null}
+      {children}
     </li>
   );
 }
+
+function MiniAction({ label, onClick }: { readonly label: string; readonly onClick: () => void }) {
+  return (
+    <button type="button" className="btn sm" onClick={onClick} aria-label={label}>
+      {label}
+    </button>
+  );
+}
+
+function PolicyButton({
+  label,
+  onClick,
+}: {
+  readonly label: string;
+  readonly onClick: () => void;
+}) {
+  return (
+    <button type="button" className="btn" onClick={onClick}>
+      {label}
+    </button>
+  );
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);

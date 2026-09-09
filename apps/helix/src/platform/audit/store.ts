@@ -1,6 +1,5 @@
 import type postgres from "postgres";
 import type { AuditRecord, JsonObject } from "@helix/sdk";
-import { computeAuditHash } from "./hash.js";
 import type { AuditLogRecord, AuditLogStore, ListAuditLogInput } from "./routes.js";
 import type {
   AuditVerificationRecord,
@@ -32,22 +31,10 @@ export class PostgresAuditStore implements AuditLogStore, AuditVerificationStore
 
   async append(record: AuditRecord & { readonly orgId: string }): Promise<AuditAppendResult> {
     return this.sql.begin(async (tx) => {
-      const previousRows = await tx`
-        select this_hash from activity
-        where org_id = ${record.orgId}
-        order by created_at desc, id desc
-        limit 1
-        for update
-      `;
-      const previous = previousRows as unknown as readonly { readonly this_hash: string }[];
-      const prevHash = previous[0]?.this_hash ?? null;
-      const createdAt = new Date();
-      const hashableRecord = {
-        ...record,
-        createdAt: createdAt.toISOString(),
-      };
-      const { thisHash } = computeAuditHash(hashableRecord, prevHash);
-      const insertedRows = await tx`
+      await tx`select set_config('helix.org_id', ${record.orgId}, true)`;
+      const rows = await tx<
+        { readonly id: string; readonly this_hash: string }[]
+      >`
         insert into activity (
           org_id,
           actor_id,
@@ -68,18 +55,17 @@ export class PostgresAuditStore implements AuditLogStore, AuditVerificationStore
           ${record.objectId ?? null},
           ${record.trace?.traceId ?? null},
           ${tx.json(record.metadata ?? ({} satisfies JsonObject))},
-          ${prevHash},
-          ${thisHash},
-          ${createdAt}
+          null,
+          '',
+          ${new Date()}
         )
-        returning id
+        returning id, this_hash
       `;
-      const rows = insertedRows as unknown as readonly { readonly id: string }[];
       this.options.onAppend?.(record);
 
       return {
         id: rows[0]?.id ?? "",
-        thisHash,
+        thisHash: rows[0]?.this_hash ?? "",
       };
     });
   }
@@ -91,73 +77,81 @@ export class PostgresAuditStore implements AuditLogStore, AuditVerificationStore
     const objectType = input.objectType ?? null;
     const cursorCreatedAt = input.cursor?.createdAt ?? null;
     const cursorId = input.cursor?.id ?? null;
-    const rows = (await this.sql`
-      select
-        id,
-        org_id,
-        actor_id,
-        verb,
-        object_type,
-        object_id,
-        trace_id,
-        payload,
-        prev_hash,
-        this_hash,
-        created_at
-      from activity
-      where org_id = ${input.orgId}
-        and (${actorId}::uuid is null or actor_id = ${actorId}::uuid)
-        and (${objectId}::uuid is null or object_id = ${objectId}::uuid)
-        and (${verb}::text is null or verb = ${verb}::text)
-        and (${objectType}::text is null or object_type = ${objectType}::text)
-        and (
-          ${cursorCreatedAt}::timestamptz is null
-          or (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
-        )
-      order by created_at desc, id desc
-      limit ${input.limit}
-    `) as unknown as readonly AuditLogRow[];
-    return rows.map(mapAuditLogRow);
+    return this.sql.begin(async (tx) => {
+      await tx`select set_config('helix.org_id', ${input.orgId}, true)`;
+      const rows = await tx<AuditLogRow[]>`
+        select
+          id,
+          org_id,
+          actor_id,
+          verb,
+          object_type,
+          object_id,
+          trace_id,
+          payload,
+          prev_hash,
+          this_hash,
+          created_at
+        from activity
+        where org_id = ${input.orgId}
+          and (${actorId}::uuid is null or actor_id = ${actorId}::uuid)
+          and (${objectId}::uuid is null or object_id = ${objectId}::uuid)
+          and (${verb}::text is null or verb = ${verb}::text)
+          and (${objectType}::text is null or object_type = ${objectType}::text)
+          and (
+            ${cursorCreatedAt}::timestamptz is null
+            or (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
+          )
+        order by created_at desc, id desc
+        limit ${input.limit}
+      `;
+      return rows.map(mapAuditLogRow);
+    });
   }
 
   async listVerificationRecords(
     input: ListAuditVerificationRecordsInput,
   ): Promise<readonly AuditVerificationRecord[]> {
-    const rows = (await this.sql`
-      select
-        id,
-        actor_id,
-        verb,
-        object_type,
-        object_id,
-        trace_id,
-        payload,
-        prev_hash,
-        this_hash,
-        created_at
-      from activity
-      where org_id = ${input.orgId}
-      order by created_at asc, id asc
-    `) as unknown as readonly AuditVerificationRow[];
-    return rows.map(mapAuditVerificationRow);
+    return this.sql.begin(async (tx) => {
+      await tx`select set_config('helix.org_id', ${input.orgId}, true)`;
+      const rows = await tx<AuditVerificationRow[]>`
+        select
+          id,
+          org_id,
+          actor_id,
+          verb,
+          object_type,
+          object_id,
+          trace_id,
+          payload,
+          prev_hash,
+          this_hash,
+          created_at,
+          schema_version,
+          sequence::text as sequence
+        from activity
+        where org_id = ${input.orgId}
+        order by activity.sequence asc
+      `;
+      return rows.map(mapAuditVerificationRow);
+    });
   }
 
   async listVerificationOrgIds(): Promise<readonly string[]> {
-    const rows = (await this.sql`
-      select distinct org_id
-      from activity
-      order by org_id asc
-    `) as unknown as readonly { readonly org_id: string }[];
+    const rows = await this.sql<{ readonly org_id: string }[]>`
+      select org_id
+      from helix_list_audit_org_ids()
+    `;
     return rows.map((row) => row.org_id);
   }
 
   async loadAuditShippingCheckpoint(destination: string): Promise<AuditShippingCheckpoint | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly value: unknown }[]>`
       select value
       from platform_config
       where key = ${checkpointKey(destination)}
       limit 1
-    `) as unknown as readonly { readonly value: unknown }[];
+    `;
     return parseCheckpoint(rows[0]?.value);
   }
 
@@ -185,7 +179,7 @@ export class PostgresAuditStore implements AuditLogStore, AuditVerificationStore
   ): Promise<readonly ImmutableAuditActivityRecord[]> {
     const cursorCreatedAt = input.after?.createdAt ?? null;
     const cursorId = input.after?.id ?? null;
-    const rows = (await this.sql`
+    const rows = await this.sql<AuditShippingRow[]>`
       select
         id,
         org_id,
@@ -197,32 +191,31 @@ export class PostgresAuditStore implements AuditLogStore, AuditVerificationStore
         payload,
         prev_hash,
         this_hash,
-        created_at
-      from activity
-      where (
-        ${cursorCreatedAt}::timestamptz is null
-        or (created_at, id) > (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
+        created_at,
+        schema_version,
+        sequence::text as sequence
+      from helix_list_audit_shipping_records(
+        ${cursorCreatedAt}::timestamptz,
+        ${cursorId}::uuid,
+        ${input.limit}
       )
-      order by created_at asc, id asc
-      limit ${input.limit}
-    `) as unknown as readonly AuditLogRow[];
+    `;
     return rows.map(mapImmutableAuditActivityRow);
   }
 
   async getAuditShippingBacklog(after: AuditShippingCheckpoint | null): Promise<AuditShippingBacklog> {
     const cursorCreatedAt = after?.createdAt ?? null;
     const cursorId = after?.id ?? null;
-    const rows = (await this.sql`
-      select count(*)::int as record_count, min(created_at) as oldest_created_at
-      from activity
-      where (
-        ${cursorCreatedAt}::timestamptz is null
-        or (created_at, id) > (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
-      )
-    `) as unknown as readonly {
+    const rows = await this.sql<{
       readonly record_count: number;
       readonly oldest_created_at: Date | null;
-    }[];
+    }[]>`
+      select record_count::int, oldest_created_at
+      from helix_get_audit_shipping_backlog(
+        ${cursorCreatedAt}::timestamptz,
+        ${cursorId}::uuid
+      )
+    `;
     const row = rows[0];
     return {
       recordCount: row?.record_count ?? 0,
@@ -263,24 +256,17 @@ function mapAuditLogRow(row: AuditLogRow): AuditLogRecord {
   };
 }
 
-type AuditVerificationRow = Omit<AuditLogRow, "org_id">;
-
-function mapAuditVerificationRow(row: AuditVerificationRow): AuditVerificationRecord {
-  return {
-    id: row.id,
-    actorId: row.actor_id ?? "",
-    verb: row.verb,
-    objectType: row.object_type,
-    metadata: row.payload,
-    prevHash: row.prev_hash,
-    thisHash: row.this_hash,
-    createdAt: row.created_at.toISOString(),
-    ...(row.object_id === null ? {} : { objectId: row.object_id }),
-    ...(row.trace_id === null ? {} : { trace: { traceId: row.trace_id } }),
-  };
+interface AuditVerificationRow extends AuditLogRow {
+  readonly schema_version: number;
+  readonly sequence: string;
 }
 
-function mapImmutableAuditActivityRow(row: AuditLogRow): ImmutableAuditActivityRecord {
+interface AuditShippingRow extends AuditLogRow {
+  readonly schema_version: number;
+  readonly sequence: string;
+}
+
+function mapAuditVerificationRow(row: AuditVerificationRow): AuditVerificationRecord {
   return {
     id: row.id,
     orgId: row.org_id,
@@ -291,6 +277,26 @@ function mapImmutableAuditActivityRow(row: AuditLogRow): ImmutableAuditActivityR
     prevHash: row.prev_hash,
     thisHash: row.this_hash,
     createdAt: row.created_at.toISOString(),
+    schemaVersion: row.schema_version,
+    sequence: row.sequence,
+    ...(row.object_id === null ? {} : { objectId: row.object_id }),
+    ...(row.trace_id === null ? {} : { trace: { traceId: row.trace_id } }),
+  };
+}
+
+function mapImmutableAuditActivityRow(row: AuditShippingRow): ImmutableAuditActivityRecord {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    actorId: row.actor_id ?? "system",
+    verb: row.verb,
+    objectType: row.object_type,
+    metadata: row.payload,
+    prevHash: row.prev_hash,
+    thisHash: row.this_hash,
+    createdAt: row.created_at.toISOString(),
+    schemaVersion: row.schema_version,
+    sequence: row.sequence,
     ...(row.object_id === null ? {} : { objectId: row.object_id }),
     ...(row.trace_id === null ? {} : { trace: { traceId: row.trace_id } }),
   };

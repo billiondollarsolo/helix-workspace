@@ -2,7 +2,6 @@ import {
   ConflictError,
   ForbiddenError,
   NotFoundError,
-  BadRequestError,
   type ApiErrorOptions,
 } from "../../api/api-error.js";
 
@@ -24,13 +23,6 @@ export class DriveConflictError extends ConflictError {
   constructor(message: string, o?: ApiErrorOptions) {
     super(message, o);
     this.name = "DriveConflictError";
-  }
-}
-
-export class DriveInvalidStorageKeyError extends BadRequestError {
-  constructor(message: string, o?: ApiErrorOptions) {
-    super(message, o);
-    this.name = "DriveInvalidStorageKeyError";
   }
 }
 

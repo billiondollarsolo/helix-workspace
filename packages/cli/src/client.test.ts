@@ -18,7 +18,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
       ),
     ).toEqual({
-      url: "https://helix.example/api/tools",
+      url: "https://helix.example/v1/api/tools",
       init: {
         method: "GET",
         headers: {
@@ -41,7 +41,7 @@ describe("buildHelixRequest", () => {
         { ok: true },
       ),
     ).toEqual({
-      url: "http://localhost:3000/api/tools/platform%2Fping",
+      url: "http://localhost:3000/v1/api/tools/platform%2Fping",
       init: {
         method: "POST",
         headers: {
@@ -65,7 +65,7 @@ describe("buildHelixRequest", () => {
         { mailbox: "inbox" },
       ),
     ).toMatchObject({
-      url: "https://helix.example/api/tools/mail.list",
+      url: "https://helix.example/v1/api/tools/mail.list",
       init: {
         method: "POST",
         body: '{"mailbox":"inbox"}',
@@ -85,7 +85,7 @@ describe("buildHelixRequest", () => {
         { limit: 25 },
       ),
     ).toMatchObject({
-      url: "https://helix.example/api/tools/drive.list",
+      url: "https://helix.example/v1/api/tools/drive.list",
       init: {
         method: "POST",
         body: '{"limit":25}',
@@ -105,7 +105,7 @@ describe("buildHelixRequest", () => {
         { roomId: "room-1", body: "Hello" },
       ),
     ).toMatchObject({
-      url: "https://helix.example/api/tools/chat.send",
+      url: "https://helix.example/v1/api/tools/chat.send",
       init: {
         method: "POST",
         body: '{"roomId":"room-1","body":"Hello"}',
@@ -125,7 +125,7 @@ describe("buildHelixRequest", () => {
         { durationMinutes: 30 },
       ),
     ).toMatchObject({
-      url: "https://helix.example/api/tools/calendar.find-time",
+      url: "https://helix.example/v1/api/tools/calendar.find-time",
       init: {
         method: "POST",
         body: '{"durationMinutes":30}',
@@ -153,7 +153,7 @@ describe("buildHelixRequest", () => {
         },
       ),
     ).toMatchObject({
-      url: "https://helix.example/api/tools/webhook.outbound.create",
+      url: "https://helix.example/v1/api/tools/webhook.outbound.create",
       init: {
         method: "POST",
         body: '{"name":"Build events","url":"https://hooks.example/build","eventSubjects":["build.finished"]}',
@@ -165,7 +165,7 @@ describe("buildHelixRequest", () => {
     expect(
       buildHelixRequest({ kind: "openapi-get" }, { HELIX_BASE_URL: "http://localhost:3000" }),
     ).toMatchObject({
-      url: "http://localhost:3000/openapi.json",
+      url: "http://localhost:3000/v1/openapi.json",
       init: { method: "GET" },
     });
   });
@@ -174,7 +174,7 @@ describe("buildHelixRequest", () => {
     expect(
       buildHelixRequest({ kind: "asyncapi-get" }, { HELIX_BASE_URL: "http://localhost:3000" }),
     ).toMatchObject({
-      url: "http://localhost:3000/asyncapi.json",
+      url: "http://localhost:3000/v1/asyncapi.json",
       init: { method: "GET" },
     });
   });
@@ -191,7 +191,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example" },
       ),
     ).toEqual({
-      url: "https://helix.example/oauth/token",
+      url: "https://helix.example/v1/oauth/token",
       init: {
         method: "POST",
         headers: {
@@ -209,7 +209,7 @@ describe("buildHelixRequest", () => {
         { version: "1.0.0" },
       ),
     ).toMatchObject({
-      url: "https://helix.example/api/tools/plugin.install",
+      url: "https://helix.example/v1/api/tools/plugin.install",
       init: {
         method: "POST",
         body: '{"version":"1.0.0","pluginId":"com.helix.core.mail"}',
@@ -227,7 +227,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example" },
       ),
     ).toMatchObject({
-      url: "https://helix.example/api/tools/plugin.install",
+      url: "https://helix.example/v1/api/tools/plugin.install",
       init: {
         method: "POST",
         body: '{"pluginId":"com.helix.core.mail","version":"1.2.3"}',
@@ -246,7 +246,7 @@ describe("buildHelixRequest", () => {
         { reason: "maintenance" },
       ),
     ).toMatchObject({
-      url: "https://helix.example/api/tools/plugin.disable",
+      url: "https://helix.example/v1/api/tools/plugin.disable",
       init: {
         method: "POST",
         body: '{"reason":"maintenance","pluginId":"com.helix.core.mail"}',
@@ -268,7 +268,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
       ),
     ).toEqual({
-      url: "https://helix.example/api/admin/users?query=Mina&type=user&includeDisabled=true&limit=25&cursor=cursor-1",
+      url: "https://helix.example/v1/api/admin/users?query=Mina&type=user&includeDisabled=true&limit=25&cursor=cursor-1",
       init: {
         method: "GET",
         headers: {
@@ -291,7 +291,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example" },
       ),
     ).toMatchObject({
-      url: "https://helix.example/api/admin/audit-log?actorId=88888888-8888-4888-8888-888888888888&objectId=66666666-6666-4666-8666-666666666666&objectType=webhook&verb=webhook.created&limit=10",
+      url: "https://helix.example/v1/api/admin/audit-log?actorId=88888888-8888-4888-8888-888888888888&objectId=66666666-6666-4666-8666-666666666666&objectType=webhook&verb=webhook.created&limit=10",
       init: {
         method: "GET",
       },
@@ -305,7 +305,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
       ),
     ).toEqual({
-      url: "https://helix.example/api/admin/platform-config",
+      url: "https://helix.example/v1/api/admin/platform-config",
       init: {
         method: "PATCH",
         headers: {
@@ -325,7 +325,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
       ),
     ).toEqual({
-      url: "https://helix.example/api/admin/backups",
+      url: "https://helix.example/v1/api/admin/backups",
       init: {
         method: "POST",
         headers: {
@@ -339,18 +339,25 @@ describe("buildHelixRequest", () => {
 
     expect(
       buildHelixRequest(
-        { kind: "restore-from", backupId: "backup-20260520T120000Z", encrypted: true },
+        {
+          kind: "restore-from",
+          backupId: "backup-20260520T120000Z",
+          targetDatabase: "helix_restore_incident_42",
+          targetObjectBucket: "helix-restore-incident-42",
+          idempotencyKey: "incident-42",
+          encrypted: true,
+        },
         { HELIX_BASE_URL: "https://helix.example" },
       ),
     ).toEqual({
-      url: "https://helix.example/api/admin/restores",
+      url: "https://helix.example/v1/api/admin/restores",
       init: {
         method: "POST",
         headers: {
           accept: "application/json",
           "content-type": "application/json",
         },
-        body: '{"backupId":"backup-20260520T120000Z","encrypted":true}',
+        body: '{"backupId":"backup-20260520T120000Z","targetDatabase":"helix_restore_incident_42","targetObjectBucket":"helix-restore-incident-42","idempotencyKey":"incident-42","encrypted":true}',
       },
     });
 
@@ -360,7 +367,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
       ),
     ).toEqual({
-      url: "https://helix.example/api/admin/search/reindex",
+      url: "https://helix.example/v1/api/admin/search/reindex",
       init: {
         method: "POST",
         headers: {
@@ -380,7 +387,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
       ),
     ).toEqual({
-      url: "https://helix.example/actions/action%2F1",
+      url: "https://helix.example/v1/actions/action%2F1",
       init: {
         method: "GET",
         headers: {
@@ -396,7 +403,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
       ),
     ).toEqual({
-      url: "https://helix.example/api/tools/pending/action%2F1/approve",
+      url: "https://helix.example/v1/api/tools/pending/action%2F1/approve",
       init: {
         method: "POST",
         headers: {
@@ -414,7 +421,7 @@ describe("buildHelixRequest", () => {
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
       ),
     ).toEqual({
-      url: "https://helix.example/api/tools/pending/action%2F1/cancel",
+      url: "https://helix.example/v1/api/tools/pending/action%2F1/cancel",
       init: {
         method: "POST",
         headers: {
@@ -434,7 +441,7 @@ describe("buildHelixRequest", () => {
         '{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
       ),
     ).toEqual({
-      url: "https://helix.example/mcp",
+      url: "https://helix.example/v1/mcp",
       init: {
         method: "POST",
         headers: {
@@ -454,7 +461,7 @@ describe("buildHelixRequest", () => {
         HELIX_ACCESS_TOKEN: "token-1",
       }),
     ).toMatchObject({
-      url: "https://helix.example/mcp",
+      url: "https://helix.example/v1/mcp",
       init: {
         method: "POST",
         body: '{"jsonrpc":"2.0","id":"helix-tool-list","method":"tools/list"}',
@@ -466,7 +473,7 @@ describe("buildHelixRequest", () => {
         ok: true,
       }),
     ).toMatchObject({
-      url: "https://helix.example/mcp",
+      url: "https://helix.example/v1/mcp",
       init: {
         method: "POST",
         body: '{"jsonrpc":"2.0","id":"helix-tool-call","method":"tools/call","params":{"name":"platform.ping","arguments":{"ok":true}}}',
@@ -481,7 +488,7 @@ describe("buildHelixRequest", () => {
         HELIX_ACCESS_TOKEN: "token-1",
       }),
     ).toMatchObject({
-      url: "https://helix.example/mcp",
+      url: "https://helix.example/v1/mcp",
       init: {
         method: "POST",
         body: '{"jsonrpc":"2.0","id":"helix-resource-list","method":"resources/list"}',
@@ -494,7 +501,7 @@ describe("buildHelixRequest", () => {
         "helix://chat/room/room-1",
       ),
     ).toMatchObject({
-      url: "https://helix.example/mcp",
+      url: "https://helix.example/v1/mcp",
       init: {
         method: "POST",
         body: '{"jsonrpc":"2.0","id":"helix-resource-read","method":"resources/read","params":{"uri":"helix://chat/room/room-1"}}',

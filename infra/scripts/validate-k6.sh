@@ -24,8 +24,8 @@ Options:
   -h, --help
 
 Environment:
-  K6_IMAGE                       Default: grafana/k6:latest
-  HELIX_K6_MOCK_IMAGE            Default: caddy:2-alpine
+  K6_IMAGE                       Defaults to the reviewed k6 v2.2.0 digest
+  HELIX_K6_MOCK_IMAGE            Defaults to the reviewed Caddy 2.11.4 digest
   WEB_BASE_URL, API_BASE_URL     Required when --no-mock is used
   HELIX_K6_DOCKER_WEB_BASE_URL   Docker-only WEB_BASE_URL override
   HELIX_K6_DOCKER_API_BASE_URL   Docker-only API_BASE_URL override
@@ -46,8 +46,8 @@ STATIC_ONLY=false
 WEB_PORT=${HELIX_K6_WEB_PORT:-39180}
 API_PORT=${HELIX_K6_API_PORT:-39181}
 DURATION=${HELIX_K6_DURATION:-3s}
-K6_IMAGE=${K6_IMAGE:-grafana/k6:latest}
-MOCK_IMAGE=${HELIX_K6_MOCK_IMAGE:-caddy:2-alpine}
+K6_IMAGE=${K6_IMAGE:-grafana/k6:2.2.0@sha256:9bd01d6941fca969cb61bb57d2da5ee9b385fe2aa8881df3798c196564d6ace6}
+MOCK_IMAGE=${HELIX_K6_MOCK_IMAGE:-caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648}
 MOCK_CONTAINER=${HELIX_K6_MOCK_CONTAINER:-helix-k6-mock}
 TMP_DIR=
 MOCK_PID=
@@ -333,8 +333,6 @@ else
     -e PLUGIN_INSTALL_EXPECT \
     -e PLUGIN_INSTALL_PLUGIN_ID \
     -e PLUGIN_INSTALL_VERSION \
-    -e PLUGIN_INSTALL_SOURCE \
-    -e PLUGIN_INSTALL_REGISTRY_URL \
     -e PLUGIN_INSTALL_P95_MS \
     -e ASSISTANT_TOOL_ID \
     -e ASSISTANT_BODY \

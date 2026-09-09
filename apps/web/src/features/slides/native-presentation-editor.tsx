@@ -1098,11 +1098,14 @@ export function NativePresentationEditor({
   }
 
   function removeSlide(slideId: string) {
-    const slideRevision = slides.find((slide) => slide.id === slideId)?.revision;
+    const slide = slides.find((candidate) => candidate.id === slideId);
+    if (slide === undefined) {
+      return;
+    }
     const operationId = syncProviderRef.current?.sendOperation({
       kind: "delete-slide",
       slideId,
-      ...(typeof slideRevision === "number" ? { expectedRevision: slideRevision } : {}),
+      expectedRevision: slide.revision,
     });
     if (operationId !== null && operationId !== undefined) {
       return;
@@ -1190,13 +1193,16 @@ export function NativePresentationEditor({
     // a concurrent edit to the same slide can't silently overwrite us. The
     // server rejects with `slide-conflict` if another writer beat us, and
     // the provider refreshes our local snapshot from the server's payload.
-    const slideRevision = slides.find((slide) => slide.id === slideId)?.revision;
+    const slide = slides.find((candidate) => candidate.id === slideId);
+    if (slide === undefined) {
+      return;
+    }
     const operationId = syncProviderRef.current?.sendOperation({
       kind: "update-slide",
       slideId,
       content,
       speakerNotes,
-      ...(typeof slideRevision === "number" ? { expectedRevision: slideRevision } : {}),
+      expectedRevision: slide.revision,
     });
     if (operationId !== null && operationId !== undefined) {
       return;
@@ -7054,7 +7060,7 @@ function mediaTypeFromFile(file: File, fallback: SlideMediaType): SlideMediaType
 }
 
 function driveObjectContentUrl(objectId: string): string {
-  return `/api/drive/objects/${encodeURIComponent(objectId)}/content`;
+  return `/v1/api/drive/objects/${encodeURIComponent(objectId)}/content`;
 }
 
 export function driveAssetSelectValue(

@@ -73,13 +73,4 @@ describe("createHelixTRPCRouter — per-tool projection (P1-3)", () => {
     const result = await caller.tools.byId.mail.send({ to: "a@example.com" });
     expect(result).toEqual({ delivered: true });
   });
-
-  it("keeps the generic tools.invoke procedure for back-compat", async () => {
-    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
-    const router = createHelixTRPCRouter({ tools, metrics: createPlatformMetrics() });
-
-    const caller = router.createCaller(context());
-    const result = await caller.tools.invoke({ toolId: "platform.ping", input: {} });
-    expect(result).toMatchObject({ ok: true, service: "helix-app" });
-  });
 });

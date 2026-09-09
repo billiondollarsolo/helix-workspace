@@ -711,8 +711,8 @@ async function seedMail(sql: SeedSql, orgId: string): Promise<number> {
           )
         `;
         await sql`
-          insert into message_attachments (message_id, object_id, disposition)
-          values (${messageId}, ${objectId}, 'attachment')
+          insert into message_attachments (org_id, message_id, object_id, disposition)
+          values (${orgId}, ${messageId}, ${objectId}, 'attachment')
         `;
         await grantBoth(sql, orgId, "object", objectId, "owner");
       }
@@ -1889,8 +1889,8 @@ async function seedMeet(sql: SeedSql, orgId: string): Promise<{ rooms: number; r
         )
       `;
       await sql`
-        insert into message_attachments (message_id, object_id, disposition)
-        values (${messageId}, ${objectId}, 'recording')
+        insert into message_attachments (org_id, message_id, object_id, disposition)
+        values (${orgId}, ${messageId}, ${objectId}, 'recording')
       `;
       await grantBoth(sql, orgId, "object", objectId, "reader");
       recordingCount += 1;

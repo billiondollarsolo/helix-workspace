@@ -1,23 +1,18 @@
 import { pathToFileURL } from "node:url";
 import { hashPassword } from "@better-auth/utils/password";
 import type postgres from "postgres";
+import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
 import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 
 /**
  * Seeds two real email/password login accounts for the web app.
  *
- * Each account is a fully-linked trio:
+ * Each account is a fully-linked identity:
  *   1. an `actors` row (type='user') whose `scopes` drive authorization,
- *   2. a Better-Auth `"user"` row linked back to the actor via `actor_id`,
+ *   2. a global identity subject plus tenant membership,
  *   3. a Better-Auth `account` row holding the hashed credential password.
- *
- * The actor metadata also carries `betterAuth.userId` so the backend's
- * `findUserActorByBetterAuthId` resolver links the session to the actor.
- *
- * Idempotent: re-running repairs/relinks existing rows. Orphaned Better-Auth
- * users sharing an account email (e.g. a prior sign-up with actorId=null) are
- * deleted and recreated correctly linked.
+ * Idempotent: re-running repairs the same provider-subject membership.
  */
 
 export const LOGIN_SEED_SOURCE = "login-seed";
@@ -37,9 +32,9 @@ const ADMIN_SCOPES = [
   "docs.comment",
   "calendar.read",
   "calendar.write",
+  "calendar.manage",
   "calendar.external",
   "chat.read",
-  "chat.write",
   "chat.post",
   "chat.create",
   "meet.read",
@@ -83,8 +78,10 @@ const USER_SCOPES = [
   "docs.comment",
   "calendar.read",
   "calendar.write",
+  "calendar.manage",
   "chat.read",
-  "chat.write",
+  "chat.post",
+  "chat.create",
   "meet.read",
   "meet.write",
   "assistant.read",
@@ -153,11 +150,19 @@ export async function seedLoginAccounts(
   for (const spec of LOGIN_ACCOUNTS) {
     const passwordHash = await hashPassword(spec.password);
     const betterAuthUserId = `login-${spec.actorId}`;
-    await sql.begin(async (tx) => {
-      await upsertActor(tx, orgId, spec, betterAuthUserId);
+    await withTenantPostgresContext(sql, { orgId }, async (tx) => {
+      await upsertActor(tx, orgId, spec);
       await repairOrphanedBetterAuthUsers(tx, spec.email, betterAuthUserId);
       await upsertBetterAuthUser(tx, betterAuthUserId, spec);
       await upsertCredentialAccount(tx, betterAuthUserId, passwordHash);
+      const linked = await tx<{ readonly actor_id: string | null }[]>`
+        select helix_activate_identity_membership(
+          'better-auth', ${betterAuthUserId}, ${orgId}, ${spec.email}, ${spec.displayName}
+        ) as actor_id
+      `;
+      if (linked[0]?.actor_id !== spec.actorId) {
+        throw new Error(`Failed to link seeded login ${spec.email}.`);
+      }
     });
     accounts.push({
       email: spec.email,
@@ -172,16 +177,7 @@ export async function seedLoginAccounts(
   return { orgId, accounts };
 }
 
-async function upsertActor(
-  sql: SeedSql,
-  orgId: string,
-  spec: LoginAccountSpec,
-  betterAuthUserId: string,
-): Promise<void> {
-  const metadata = {
-    source: LOGIN_SEED_SOURCE,
-    betterAuth: { userId: betterAuthUserId, emailVerified: true },
-  };
+async function upsertActor(sql: SeedSql, orgId: string, spec: LoginAccountSpec): Promise<void> {
   await sql`
     insert into actors (id, org_id, type, email, display_name, scopes, disabled_at, metadata)
     values (
@@ -192,7 +188,7 @@ async function upsertActor(
       ${spec.displayName},
       ${sql.array([...spec.scopes], 1009)},
       null,
-      ${sql.json(metadata)}
+      ${sql.json({ source: LOGIN_SEED_SOURCE })}
     )
     on conflict (id) do update
     set
@@ -209,7 +205,7 @@ async function upsertActor(
 
 /**
  * Removes any pre-existing Better-Auth `"user"` rows that collide on email but
- * are not the canonical seed user (e.g. an orphaned sign-up with actorId=null).
+ * are not the canonical seed user.
  * Their dependent `account`/`session` rows are cleared first.
  */
 async function repairOrphanedBetterAuthUsers(
@@ -237,14 +233,13 @@ async function upsertBetterAuthUser(
   spec: LoginAccountSpec,
 ): Promise<void> {
   await sql`
-    insert into "user" (id, name, email, "emailVerified", actor_id, "createdAt", "updatedAt")
-    values (${userId}, ${spec.displayName}, ${spec.email}, true, ${spec.actorId}, now(), now())
+    insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+    values (${userId}, ${spec.displayName}, ${spec.email}, true, now(), now())
     on conflict (id) do update
     set
       name = excluded.name,
       email = excluded.email,
       "emailVerified" = true,
-      actor_id = excluded.actor_id,
       "updatedAt" = now()
   `;
 }

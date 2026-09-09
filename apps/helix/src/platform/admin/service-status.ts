@@ -709,15 +709,14 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         `,
         this.#sql<CountRow[]>`
         select count(*)::bigint as count
-        from agent_credentials c
-        join actors a on a.id = c.actor_id
-        where a.org_id = ${orgId} and c.revoked_at is null
+        from agent_credentials
+        where org_id = ${orgId} and revoked_at is null
       `,
         this.#sql<TimestampRow[]>`
           select greatest(
             coalesce((select max(updated_at) from actors where org_id = ${orgId}), 'epoch'::timestamptz),
             coalesce((select max(p.created_at) from app_passwords p join actors a on a.id = p.actor_id where a.org_id = ${orgId}), 'epoch'::timestamptz),
-            coalesce((select max(c.created_at) from agent_credentials c join actors a on a.id = c.actor_id where a.org_id = ${orgId}), 'epoch'::timestamptz)
+            coalesce((select max(created_at) from agent_credentials where org_id = ${orgId}), 'epoch'::timestamptz)
           ) as value
         `,
       ]);
@@ -725,13 +724,13 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
     return runtimeStatus({
       now: this.#now,
       serviceId: "auth",
-      evidence: "Actors, app passwords, and agent credentials were counted from Postgres.",
+      evidence: "Actors, app passwords, and non-human credentials were counted from Postgres.",
       counters: [
         counter("users", "Users", countValue(userRows[0])),
         counter("agents", "Agents", countValue(agentRows[0])),
         counter("disabledActors", "Disabled actors", countValue(disabledRows[0])),
         counter("appPasswords", "Active app passwords", countValue(passwordRows[0])),
-        counter("agentCredentials", "Active agent credentials", countValue(credentialRows[0])),
+        counter("agentCredentials", "Active non-human credentials", countValue(credentialRows[0])),
       ],
       checks: [
         envCheck("betterAuthSecret", "Better Auth secret", this.#env, ["BETTER_AUTH_SECRET"], true),

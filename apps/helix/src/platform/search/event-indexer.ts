@@ -1,11 +1,27 @@
 import type { EventBus, EventEnvelope, JsonValue, Unsubscribe } from "@helix/sdk-types";
-import type { SearchEngine, SearchIndexer, SearchIndexerEvent, SearchIndexMutation } from "./types.js";
+import type {
+  SearchEngine,
+  SearchIndexer,
+  SearchIndexerEvent,
+  SearchIndexMutation,
+} from "./types.js";
+import { applyMutation, type SearchMutationQueue } from "./durable.js";
 
 export interface SearchEventIndexerOptions {
   readonly events: EventBus;
   readonly engine: SearchEngine;
+  readonly queue?: SearchMutationQueue | undefined;
   readonly subject?: string;
   readonly onError?: (error: unknown) => void;
+  readonly metrics?:
+    | {
+        recordSearchProjection?(input: {
+          readonly indexerId: string;
+          readonly status: "success" | "error";
+          readonly lagSeconds: number;
+        }): void;
+      }
+    | undefined;
 }
 
 export class SearchIndexerRegistry {
@@ -24,7 +40,9 @@ export class SearchIndexerRegistry {
   }
 
   matching(subject: string): readonly SearchIndexer[] {
-    return this.list().filter((indexer) => indexer.subjects.some((pattern) => subjectMatches(pattern, subject)));
+    return this.list().filter((indexer) =>
+      indexer.subjects.some((pattern) => subjectMatches(pattern, subject)),
+    );
   }
 }
 
@@ -71,28 +89,59 @@ export class SearchEventIndexer {
   async handle(event: EventEnvelope): Promise<void> {
     const indexerEvent = toIndexerEvent(event);
     for (const indexer of this.registry.matching(event.subject)) {
+      const lagSeconds = Math.max(0, (Date.now() - Date.parse(event.occurredAt)) / 1000);
       try {
-        await this.applyMutation(await indexer.route(indexerEvent));
+        const mutation = await indexer.route(indexerEvent);
+        const orgId = mutationOrgId(mutation) ?? eventOrgId(indexerEvent);
+        if (mutation !== undefined && this.options.queue !== undefined) {
+          if (orgId === undefined)
+            throw new Error(`Search mutation from ${indexer.id} has no orgId.`);
+          await this.options.queue.enqueue({
+            orgId,
+            indexerId: indexer.id,
+            mutation,
+            occurredAt: event.occurredAt,
+          });
+        } else if (mutation !== undefined) {
+          await applyMutation(this.options.engine, mutation, orgId);
+        }
+        this.options.metrics?.recordSearchProjection?.({
+          indexerId: indexer.id,
+          status: "success",
+          lagSeconds,
+        });
       } catch (error) {
+        this.options.metrics?.recordSearchProjection?.({
+          indexerId: indexer.id,
+          status: "error",
+          lagSeconds,
+        });
         this.onError?.(error);
       }
     }
   }
-
-  private async applyMutation(mutation: SearchIndexMutation | undefined): Promise<void> {
-    if (mutation === undefined) {
-      return;
-    }
-    if (mutation.upsert !== undefined && mutation.upsert.length > 0) {
-      await this.options.engine.upsert(mutation.upsert);
-    }
-    if (mutation.delete !== undefined && mutation.delete.length > 0) {
-      await this.options.engine.delete(mutation.delete);
-    }
-  }
 }
 
-function toIndexerEvent<Payload extends JsonValue>(event: EventEnvelope<Payload>): SearchIndexerEvent<Payload> {
+function mutationOrgId(mutation: SearchIndexMutation | undefined): string | undefined {
+  if (mutation?.orgId !== undefined) return mutation.orgId;
+  const orgIds = new Set(
+    (mutation?.upsert ?? [])
+      .map((document) => document.attributes?.orgId)
+      .filter((value): value is string => typeof value === "string" && value.length > 0),
+  );
+  return orgIds.size === 1 ? [...orgIds][0] : undefined;
+}
+
+function eventOrgId(event: SearchIndexerEvent): string | undefined {
+  const payload = event.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+  const orgId = (payload as { readonly orgId?: unknown }).orgId;
+  return typeof orgId === "string" && orgId.length > 0 ? orgId : undefined;
+}
+
+function toIndexerEvent<Payload extends JsonValue>(
+  event: EventEnvelope<Payload>,
+): SearchIndexerEvent<Payload> {
   return {
     subject: event.subject,
     payload: event.payload,

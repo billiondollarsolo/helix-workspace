@@ -43,13 +43,14 @@ export interface SearchEngine {
   readonly id: string;
   index(document: IndexDocument): Promise<void>;
   upsert(documents: readonly IndexDocument[]): Promise<void>;
-  delete(ids: readonly string[]): Promise<void>;
+  delete(ids: readonly string[], orgId?: string): Promise<void>;
   search(request: SearchRequest): Promise<SearchResponse>;
 }
 
 export interface SearchIndexMutation {
   readonly upsert?: readonly IndexDocument[];
   readonly delete?: readonly string[];
+  readonly orgId?: string;
 }
 
 export interface SearchIndexer<EventPayload extends JsonValue = JsonValue> {

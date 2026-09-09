@@ -233,5 +233,21 @@ create table if not exists tenant_config_audit (
   changed_by uuid references actors(id),
   changed_at timestamptz not null default now(),
   reason text,
-  primary key (org_id, key, changed_at)
+  primary key (org_id, key, changed_at),
+  constraint tenant_config_audit_values_no_credentials check (
+    (old_value is null or (
+      not jsonb_path_exists(
+        old_value,
+        '$.** ? (@.type() == "object").keyvalue() ? (@.key like_regex "^((aws[-_]?)?access[-_]?key([-_]?id)?|(aws[-_]?)?secret[-_]?access[-_]?key|secret[-_]?key|password|pass|token|access[-_]?token|refresh[-_]?token|id[-_]?token|(aws[-_]?)?session[-_]?token|api[-_]?key|client[-_]?secret|private[-_]?key|signing[-_]?(key|secret)|credential(s)?)$" flag "i")'
+      )
+      and old_value->'storage'->>'endpoint' !~ '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@'
+    ))
+    and (new_value is null or (
+      not jsonb_path_exists(
+        new_value,
+        '$.** ? (@.type() == "object").keyvalue() ? (@.key like_regex "^((aws[-_]?)?access[-_]?key([-_]?id)?|(aws[-_]?)?secret[-_]?access[-_]?key|secret[-_]?key|password|pass|token|access[-_]?token|refresh[-_]?token|id[-_]?token|(aws[-_]?)?session[-_]?token|api[-_]?key|client[-_]?secret|private[-_]?key|signing[-_]?(key|secret)|credential(s)?)$" flag "i")'
+      )
+      and new_value->'storage'->>'endpoint' !~ '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@'
+    ))
+  )
 );

@@ -9,10 +9,11 @@ import type {
   Style,
   Worksheet,
 } from "exceljs";
-import { z } from "zod3";
+import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
+import { readImportSource, type ImportSourceReader } from "../import-source.js";
 import type { SheetsStore, SheetVersionRecord } from "./store.js";
 import type {
   SheetCellEdit,
@@ -27,6 +28,8 @@ import type {
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.unknown()).default({});
+const TEXT_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
+const WORKBOOK_IMPORT_MAX_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_CUSTOM_NUMBER_FORMATS = [
   "#,##0",
   "#,##0.00",
@@ -128,35 +131,10 @@ const copySchema = z.object({
   metadata: metadataSchema,
 });
 
-const importCsvSchema = z.object({
-  filename: z.string().min(1).max(255),
+const importFileSchema = z.object({
+  sourceObjectId: uuidSchema,
   title: z.string().min(1).max(255).optional(),
   folderId: uuidSchema.nullable().optional(),
-  csvText: z.string().max(5_000_000),
-  metadata: metadataSchema,
-});
-
-const importTsvSchema = z.object({
-  filename: z.string().min(1).max(255),
-  title: z.string().min(1).max(255).optional(),
-  folderId: uuidSchema.nullable().optional(),
-  tsvText: z.string().max(5_000_000),
-  metadata: metadataSchema,
-});
-
-const importXlsxSchema = z.object({
-  filename: z.string().min(1).max(255),
-  title: z.string().min(1).max(255).optional(),
-  folderId: uuidSchema.nullable().optional(),
-  contentBase64: z.string().min(1).max(25_000_000),
-  metadata: metadataSchema,
-});
-
-const importOdsSchema = z.object({
-  filename: z.string().min(1).max(255),
-  title: z.string().min(1).max(255).optional(),
-  folderId: uuidSchema.nullable().optional(),
-  contentBase64: z.string().min(1).max(25_000_000),
   metadata: metadataSchema,
 });
 
@@ -284,12 +262,20 @@ const genericObjectJsonSchema = {
 
 export interface CreateSheetsToolDefinitionsOptions {
   readonly store: SheetsStore;
+  readonly importSources?: ImportSourceReader;
+  readonly officeTextExtractor?: OfficeTextExtractor;
   /**
    * Auto-classifies newly created spreadsheets. Best-effort: classification
    * never fails the create.
    */
   readonly classifyResource?: ResourceClassifier;
 }
+
+export type OfficeTextExtractor = (input: {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly content: Uint8Array;
+}) => Promise<{ readonly text: string }>;
 
 /** Build the Sheets tool definitions. */
 export function createSheetsToolDefinitions(
@@ -422,17 +408,24 @@ export function createSheetsToolDefinitions(
         return serializeSheetWithTabs(sheet);
       },
     }),
-    defineTool<z.output<typeof importCsvSchema>, unknown>({
+    defineTool<z.output<typeof importFileSchema>, unknown>({
       id: "sheets.import-csv",
       description: "Import a CSV file into a native Helix spreadsheet.",
       permission: "sheets.write",
       sideEffects: "write",
-      inputSchema: zodToolSchema(importCsvSchema, genericObjectJsonSchema),
+      inputSchema: zodToolSchema(importFileSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const parsed = parseCsvForImport(input.csvText);
-        const title = input.title ?? titleFromCsvFilename(input.filename);
-        const tabName = tabNameFromCsvFilename(input.filename);
+        const source = await readImportSource(options.importSources, {
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.sourceObjectId,
+          maxBytes: TEXT_IMPORT_MAX_BYTES,
+        });
+        const text = new TextDecoder().decode(source.bytes);
+        const parsed = parseCsvForImport(text);
+        const title = input.title ?? titleFromCsvFilename(source.name);
+        const tabName = tabNameFromCsvFilename(source.name);
         const sheet = await store.createSheet({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -442,7 +435,8 @@ export function createSheetsToolDefinitions(
           metadata: toJsonObject({
             ...input.metadata,
             importedFrom: "csv",
-            sourceFilename: input.filename,
+            importedFromDriveObjectId: input.sourceObjectId,
+            sourceFilename: source.name,
           }),
         });
         const firstTab = sheet.tabs[0];
@@ -461,7 +455,7 @@ export function createSheetsToolDefinitions(
           actor: ctx.actor,
           resourceType: "sheets.sheet",
           resourceId: sheet.id,
-          derivation: { content: `${title}\n${input.csvText.slice(0, 8_000)}`, scanContent: true },
+          derivation: { content: `${title}\n${text.slice(0, 8_000)}`, scanContent: true },
         });
         const imported = await store.getSheet({
           orgId: ctx.actor.orgId,
@@ -475,7 +469,7 @@ export function createSheetsToolDefinitions(
           ...serializeSheetWithTabs(imported),
           import: {
             format: "csv",
-            filename: input.filename,
+            filename: source.name,
             rowCount: parsed.rowCount,
             columnCount: parsed.columnCount,
             populatedCellCount: parsed.edits.length,
@@ -483,17 +477,24 @@ export function createSheetsToolDefinitions(
         };
       },
     }),
-    defineTool<z.output<typeof importTsvSchema>, unknown>({
+    defineTool<z.output<typeof importFileSchema>, unknown>({
       id: "sheets.import-tsv",
       description: "Import a TSV file into a native Helix spreadsheet.",
       permission: "sheets.write",
       sideEffects: "write",
-      inputSchema: zodToolSchema(importTsvSchema, genericObjectJsonSchema),
+      inputSchema: zodToolSchema(importFileSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const parsed = parseTsvForImport(input.tsvText);
-        const title = input.title ?? titleFromTsvFilename(input.filename);
-        const tabName = tabNameFromTsvFilename(input.filename);
+        const source = await readImportSource(options.importSources, {
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.sourceObjectId,
+          maxBytes: TEXT_IMPORT_MAX_BYTES,
+        });
+        const text = new TextDecoder().decode(source.bytes);
+        const parsed = parseTsvForImport(text);
+        const title = input.title ?? titleFromTsvFilename(source.name);
+        const tabName = tabNameFromTsvFilename(source.name);
         const sheet = await store.createSheet({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -503,7 +504,8 @@ export function createSheetsToolDefinitions(
           metadata: toJsonObject({
             ...input.metadata,
             importedFrom: "tsv",
-            sourceFilename: input.filename,
+            importedFromDriveObjectId: input.sourceObjectId,
+            sourceFilename: source.name,
           }),
         });
         const firstTab = sheet.tabs[0];
@@ -522,7 +524,7 @@ export function createSheetsToolDefinitions(
           actor: ctx.actor,
           resourceType: "sheets.sheet",
           resourceId: sheet.id,
-          derivation: { content: `${title}\n${input.tsvText.slice(0, 8_000)}`, scanContent: true },
+          derivation: { content: `${title}\n${text.slice(0, 8_000)}`, scanContent: true },
         });
         const imported = await store.getSheet({
           orgId: ctx.actor.orgId,
@@ -536,7 +538,7 @@ export function createSheetsToolDefinitions(
           ...serializeSheetWithTabs(imported),
           import: {
             format: "tsv",
-            filename: input.filename,
+            filename: source.name,
             rowCount: parsed.rowCount,
             columnCount: parsed.columnCount,
             populatedCellCount: parsed.edits.length,
@@ -544,17 +546,27 @@ export function createSheetsToolDefinitions(
         };
       },
     }),
-    defineTool<z.output<typeof importXlsxSchema>, unknown>({
+    defineTool<z.output<typeof importFileSchema>, unknown>({
       id: "sheets.import-xlsx",
       description: "Import an XLSX workbook into a native Helix spreadsheet.",
       permission: "sheets.write",
       sideEffects: "write",
-      inputSchema: zodToolSchema(importXlsxSchema, genericObjectJsonSchema),
+      inputSchema: zodToolSchema(importFileSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const parsed = await parseXlsxForImport(input.contentBase64);
-        const title = input.title ?? titleFromWorkbookFilename(input.filename);
-        const sourceFormat = spreadsheetWorkbookSourceFormat(input.filename);
+        const source = await readImportSource(options.importSources, {
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.sourceObjectId,
+          maxBytes: WORKBOOK_IMPORT_MAX_BYTES,
+        });
+        const parsed = await extractWorkbookForImport(options.officeTextExtractor, {
+          name: source.name,
+          mimeType: source.mimeType,
+          content: source.bytes,
+        });
+        const title = input.title ?? titleFromWorkbookFilename(source.name);
+        const sourceFormat = spreadsheetWorkbookSourceFormat(source.name);
         const sheet = await store.createSheet({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -564,7 +576,8 @@ export function createSheetsToolDefinitions(
           metadata: toJsonObject({
             ...input.metadata,
             importedFrom: sourceFormat,
-            sourceFilename: input.filename,
+            importedFromDriveObjectId: input.sourceObjectId,
+            sourceFilename: source.name,
           }),
         });
         for (const [index, importedTab] of parsed.tabs.entries()) {
@@ -597,7 +610,7 @@ export function createSheetsToolDefinitions(
           ...serializeSheetWithTabs(imported),
           import: {
             format: sourceFormat,
-            filename: input.filename,
+            filename: source.name,
             sheetCount: parsed.tabs.length,
             rowCount: parsed.rowCount,
             columnCount: parsed.columnCount,
@@ -606,16 +619,26 @@ export function createSheetsToolDefinitions(
         };
       },
     }),
-    defineTool<z.output<typeof importOdsSchema>, unknown>({
+    defineTool<z.output<typeof importFileSchema>, unknown>({
       id: "sheets.import-ods",
       description: "Import an ODS workbook into a native Helix spreadsheet.",
       permission: "sheets.write",
       sideEffects: "write",
-      inputSchema: zodToolSchema(importOdsSchema, genericObjectJsonSchema),
+      inputSchema: zodToolSchema(importFileSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const parsed = await parseOdsForImport(input.contentBase64);
-        const title = input.title ?? titleFromWorkbookFilename(input.filename);
+        const source = await readImportSource(options.importSources, {
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.sourceObjectId,
+          maxBytes: WORKBOOK_IMPORT_MAX_BYTES,
+        });
+        const parsed = await extractWorkbookForImport(options.officeTextExtractor, {
+          name: source.name,
+          mimeType: source.mimeType,
+          content: source.bytes,
+        });
+        const title = input.title ?? titleFromWorkbookFilename(source.name);
         const sheet = await store.createSheet({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -625,7 +648,8 @@ export function createSheetsToolDefinitions(
           metadata: toJsonObject({
             ...input.metadata,
             importedFrom: "ods",
-            sourceFilename: input.filename,
+            importedFromDriveObjectId: input.sourceObjectId,
+            sourceFilename: source.name,
           }),
         });
         for (const [index, importedTab] of parsed.tabs.entries()) {
@@ -658,7 +682,7 @@ export function createSheetsToolDefinitions(
           ...serializeSheetWithTabs(imported),
           import: {
             format: "ods",
-            filename: input.filename,
+            filename: source.name,
             sheetCount: parsed.tabs.length,
             rowCount: parsed.rowCount,
             columnCount: parsed.columnCount,
@@ -2588,292 +2612,53 @@ interface ImportedWorkbookTab {
   readonly edits: readonly SheetCellEdit[];
 }
 
-async function parseXlsxForImport(contentBase64: string): Promise<{
+async function extractWorkbookForImport(
+  extractor: OfficeTextExtractor | undefined,
+  input: { readonly name: string; readonly mimeType: string; readonly content: Uint8Array },
+): Promise<{
   readonly tabs: readonly ImportedWorkbookTab[];
   readonly rowCount: number;
   readonly columnCount: number;
   readonly populatedCellCount: number;
 }> {
-  const XLSX = await import("xlsx");
-  const bytes = Buffer.from(contentBase64, "base64");
-  const workbook = XLSX.read(bytes, {
-    type: "buffer",
-    cellDates: true,
-    cellFormula: true,
-    cellNF: true,
-    sheetStubs: true,
+  if (extractor === undefined) {
+    throw new Error("Office workbook import requires the isolated content converter.");
+  }
+  const extracted = await extractor({
+    name: input.name,
+    mimeType: input.mimeType,
+    content: input.content,
   });
-
-  const tabs: ImportedWorkbookTab[] = [];
+  const pages = extracted.text
+    .split("\f")
+    .map((page) => page.trim())
+    .filter((page) => page.length > 0);
+  if (pages.length === 0) {
+    throw new Error("Office workbook contains no importable text.");
+  }
+  let populatedCellCount = 0;
   let rowCount = 0;
   let columnCount = 0;
-  let populatedCellCount = 0;
-
-  for (const sheetName of workbook.SheetNames) {
-    const worksheet = workbook.Sheets[sheetName];
-    const edits: SheetCellEdit[] = [];
-    let tabRowCount = 0;
-    let tabColumnCount = 0;
-    const range = typeof worksheet?.["!ref"] === "string" ? worksheet["!ref"] : undefined;
-    if (worksheet !== undefined && range !== undefined) {
-      const decoded = XLSX.utils.decode_range(range);
-      for (let rowIndex = decoded.s.r; rowIndex <= decoded.e.r; rowIndex += 1) {
-        tabRowCount = Math.max(tabRowCount, rowIndex + 1);
-        for (let colIndex = decoded.s.c; colIndex <= decoded.e.c; colIndex += 1) {
-          const address = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
-          const cell = worksheet[address] as SheetJsCell | undefined;
-          if (cell === undefined) {
-            continue;
-          }
-          const value = sheetJsCellValueText(cell);
-          if (value.length === 0) {
-            continue;
-          }
-          tabColumnCount = Math.max(tabColumnCount, colIndex + 1);
-          const format = xlsxCellFormat(cell);
-          edits.push({
-            row: rowIndex,
-            col: colIndex,
-            value,
-            ...(format === undefined ? {} : { format }),
-          });
-        }
-      }
-    }
-    rowCount = Math.max(rowCount, tabRowCount);
-    columnCount = Math.max(columnCount, tabColumnCount);
-    populatedCellCount += edits.length;
+  const tabs = pages.map((page, index) => {
+    const rows = page
+      .split(/\r?\n/u)
+      .map((line) =>
+        line
+          .trimEnd()
+          .split(/\t|\s{2,}/u)
+          .map((cell) => cell.trim()),
+      )
+      .filter((row) => row.some((cell) => cell.length > 0));
+    const parsed = parsedRowsForImport(rows, "TSV");
+    populatedCellCount += parsed.edits.length;
     if (populatedCellCount > 5_000) {
-      throw new Error("XLSX import is limited to 5,000 populated cells for this first pass.");
+      throw new Error("Office workbook import is limited to 5,000 populated cells.");
     }
-    tabs.push({
-      name: importedWorkbookTabName(sheetName, tabs.length),
-      rowCount: tabRowCount,
-      columnCount: tabColumnCount,
-      edits,
-    });
-  }
-
-  if (tabs.length === 0) {
-    throw new Error("XLSX workbook must contain at least one worksheet.");
-  }
-  return { tabs, rowCount, columnCount, populatedCellCount };
-}
-
-interface SheetJsCell {
-  readonly t?: string;
-  readonly v?: unknown;
-  readonly f?: string;
-  readonly z?: string;
-  readonly w?: string;
-  readonly numFmt?: string;
-  readonly l?: { readonly Target?: unknown };
-}
-
-function sheetJsCellValueText(cell: SheetJsCell): string {
-  if (typeof cell.f === "string" && cell.f.length > 0) {
-    const formula = sanitizeImportedSpreadsheetText(cell.f);
-    return formula.length > 0 ? `=${formula}` : "";
-  }
-  const value = sanitizeImportedSpreadsheetText(xlsxCellValueText(cell.v));
-  if (value.length > 0) {
-    return value;
-  }
-  if (cell.t === "e" && typeof cell.w === "string") {
-    return sanitizeImportedSpreadsheetText(cell.w);
-  }
-  return "";
-}
-
-function importedWorkbookTabName(rawName: string, index: number): string {
-  const fallback = `Sheet ${String(index + 1)}`;
-  if (hasWorkbookTabControlCharacter(rawName)) {
-    return fallback;
-  }
-  return sanitizeImportedSpreadsheetText(rawName).trim().slice(0, 120) || fallback;
-}
-
-function hasWorkbookTabControlCharacter(value: string): boolean {
-  for (const char of value) {
-    const code = char.charCodeAt(0);
-    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function sanitizeImportedSpreadsheetText(value: string): string {
-  return value.replaceAll("\u0000", "");
-}
-
-async function parseOdsForImport(contentBase64: string): Promise<{
-  readonly tabs: readonly ImportedWorkbookTab[];
-  readonly rowCount: number;
-  readonly columnCount: number;
-  readonly populatedCellCount: number;
-}> {
-  const [{ XMLParser }, JSZip] = await Promise.all([
-    import("fast-xml-parser"),
-    import("jszip").then((module) => module.default),
-  ]);
-  const zip = await JSZip.loadAsync(Buffer.from(contentBase64, "base64"));
-  const contentFile = zip.file("content.xml");
-  if (contentFile === null) {
-    throw new Error("ODS workbook is missing content.xml.");
-  }
-  const contentXml = await contentFile.async("string");
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: "@_",
-    trimValues: false,
+    rowCount = Math.max(rowCount, parsed.rowCount);
+    columnCount = Math.max(columnCount, parsed.columnCount);
+    return { name: `Sheet ${String(index + 1)}`, ...parsed };
   });
-  const parsed = asRecord(parser.parse(contentXml));
-  const documentContent = asRecord(parsed["office:document-content"]);
-  const body = asRecord(documentContent["office:body"]);
-  const spreadsheet = asRecord(body["office:spreadsheet"]);
-  const tables = toArray(spreadsheet["table:table"]).map(asRecord);
-  if (tables.length === 0) {
-    throw new Error("ODS workbook must contain at least one worksheet.");
-  }
-
-  const tabs: ImportedWorkbookTab[] = [];
-  let rowCount = 0;
-  let columnCount = 0;
-  let populatedCellCount = 0;
-
-  for (const table of tables) {
-    const edits: SheetCellEdit[] = [];
-    let tabRowCount = 0;
-    let tabColumnCount = 0;
-    let rowIndex = 0;
-    for (const row of toArray(table["table:table-row"]).map(asRecord)) {
-      const rowRepeat = limitedOdsRepeatCount(row["@_table:number-rows-repeated"]);
-      for (let repeatedRow = 0; repeatedRow < rowRepeat; repeatedRow += 1) {
-        let colIndex = 0;
-        const cells = toArray(row["table:table-cell"]).map(asRecord);
-        for (const cell of cells) {
-          const colRepeat = limitedOdsRepeatCount(cell["@_table:number-columns-repeated"]);
-          const value = odsCellValueText(cell);
-          if (value.length > 0) {
-            for (let repeatedCol = 0; repeatedCol < colRepeat; repeatedCol += 1) {
-              edits.push({ row: rowIndex, col: colIndex + repeatedCol, value });
-            }
-            tabColumnCount = Math.max(tabColumnCount, colIndex + colRepeat);
-          }
-          colIndex += colRepeat;
-        }
-        tabRowCount = Math.max(tabRowCount, rowIndex + 1);
-        rowIndex += 1;
-      }
-    }
-    populatedCellCount += edits.length;
-    if (populatedCellCount > 5_000) {
-      throw new Error("ODS import is limited to 5,000 populated cells for this first pass.");
-    }
-    rowCount = Math.max(rowCount, tabRowCount);
-    columnCount = Math.max(columnCount, tabColumnCount);
-    const name = stringValue(table["@_table:name"]).trim();
-    tabs.push({
-      name: name.slice(0, 120) || `Sheet ${String(tabs.length + 1)}`,
-      rowCount: tabRowCount,
-      columnCount: tabColumnCount,
-      edits,
-    });
-  }
   return { tabs, rowCount, columnCount, populatedCellCount };
-}
-
-function xlsxCellFormat(cell: {
-  readonly numFmt?: string | undefined;
-  readonly z?: string | undefined;
-  readonly l?: { readonly Target?: unknown } | undefined;
-}): JsonObject | undefined {
-  const format: Record<string, string> = {};
-  const linkUrl = normalizedSafeSheetLinkUrl(cell.l?.Target);
-  if (linkUrl !== undefined) {
-    format["linkUrl"] = linkUrl;
-  }
-  const numFmt = (cell.numFmt ?? cell.z)?.trim();
-  if (numFmt !== undefined && SUPPORTED_CUSTOM_NUMBER_FORMAT_SET.has(numFmt)) {
-    format["numberFormat"] = "custom";
-    format["customNumberFormat"] = numFmt;
-  }
-  return Object.keys(format).length === 0 ? undefined : format;
-}
-
-function xlsxCellValueText(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    if (typeof record["formula"] === "string") {
-      return `=${record["formula"]}`;
-    }
-    if (typeof record["text"] === "string") {
-      return record["text"];
-    }
-    if (Array.isArray(record["richText"])) {
-      return record["richText"]
-        .map((part) =>
-          typeof part === "object" &&
-          part !== null &&
-          typeof (part as Record<string, unknown>)["text"] === "string"
-            ? String((part as Record<string, unknown>)["text"])
-            : "",
-        )
-        .join("");
-    }
-    if (record["result"] !== undefined && record["result"] !== null) {
-      return xlsxCellValueText(record["result"]);
-    }
-    return "";
-  }
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    typeof value === "bigint"
-  ) {
-    return String(value);
-  }
-  return "";
-}
-
-function odsCellValueText(cell: Record<string, unknown>): string {
-  const formula = stringValue(cell["@_table:formula"]).trim();
-  if (formula.length > 0) {
-    return odsFormulaValueText(formula);
-  }
-  const valueType = stringValue(cell["@_office:value-type"]);
-  if (valueType === "float" || valueType === "currency" || valueType === "percentage") {
-    const value = stringValue(cell["@_office:value"]);
-    return value.length > 0 ? value : odsParagraphText(cell["text:p"]);
-  }
-  if (valueType === "date") {
-    const value = stringValue(cell["@_office:date-value"]);
-    return value.length > 0 ? value : odsParagraphText(cell["text:p"]);
-  }
-  if (valueType === "boolean") {
-    const value = stringValue(cell["@_office:boolean-value"]);
-    return value.length > 0 ? value : odsParagraphText(cell["text:p"]);
-  }
-  const text = odsParagraphText(cell["text:p"]);
-  if (text.length > 0) {
-    return text;
-  }
-  return stringValue(cell["@_office:string-value"]);
-}
-
-function odsFormulaValueText(value: string): string {
-  const trimmed = value.trim();
-  const withoutNamespace = trimmed.startsWith("of:") ? trimmed.slice(3) : trimmed;
-  const formula = withoutNamespace.startsWith("=") ? withoutNamespace : `=${withoutNamespace}`;
-  return helixFormulaFromOdsFormula(formula);
 }
 
 function odsFormulaFromHelixFormula(value: string): string {
@@ -2894,54 +2679,6 @@ function odsFormulaFromHelixFormula(value: string): string {
   );
 }
 
-function helixFormulaFromOdsFormula(value: string): string {
-  return value.replace(
-    /\[\.([A-Z]+[1-9][0-9]*)(?::\.?([A-Z]+[1-9][0-9]*))?\]/gu,
-    (_match, start: string, end: string | undefined) =>
-      end === undefined ? start : `${start}:${end}`,
-  );
-}
-
-function odsParagraphText(value: unknown): string {
-  return toArray(value)
-    .map((part) => {
-      if (typeof part === "string" || typeof part === "number" || typeof part === "boolean") {
-        return String(part);
-      }
-      const record = asRecord(part);
-      return stringValue(record["#text"]);
-    })
-    .join("\n");
-}
-
-function limitedOdsRepeatCount(value: unknown): number {
-  const numeric = Number(value ?? 1);
-  if (!Number.isSafeInteger(numeric) || numeric < 1) {
-    return 1;
-  }
-  return Math.min(numeric, 5_000);
-}
-
-function toArray(value: unknown): readonly unknown[] {
-  if (value === undefined || value === null) {
-    return [];
-  }
-  return Array.isArray(value) ? value : [value];
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function stringValue(value: unknown): string {
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return "";
-}
-
 function xmlText(value: string): string {
   return value.replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
 }
@@ -2959,14 +2696,12 @@ function titleFromTsvFilename(filename: string): string {
 }
 
 function titleFromWorkbookFilename(filename: string): string {
-  return filename.replace(/\.(xlsx|xlsm|xlsb|xltx|xltm|xls|ods)$/iu, "").trim() || "Imported workbook";
+  return filename.replace(/\.(xlsx|xlsm|xltx|xltm|ods)$/iu, "").trim() || "Imported workbook";
 }
 
 function spreadsheetWorkbookSourceFormat(filename: string): string {
   const extension = /\.([^.]+)$/u.exec(filename.trim())?.[1]?.toLowerCase();
   switch (extension) {
-    case "xls":
-    case "xlsb":
     case "xlsm":
     case "xltx":
     case "xltm":

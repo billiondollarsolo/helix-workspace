@@ -1,36 +1,46 @@
-import { join } from "node:path";
-import { z } from "zod3";
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import type postgres from "postgres";
 import type {
+  EventBus,
   JsonObject,
   JsonValue,
-  PluginLifecycleState,
   PluginManifest,
   ToolDefinition,
 } from "@helix/sdk-types";
+import { isCanonicalPluginId } from "@helix/sdk-types";
 import { assertPluginManifest } from "@helix/sdk";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import {
-  discoverPlugin,
+  calculatePluginBundleDigest,
+  discoverPluginById,
   discoverPluginsDirectory,
   type DiscoveredPlugin,
   type PluginDiscoveryOptions,
 } from "./loader.js";
+import {
+  catalogArtifact,
+  verifyPluginArtifactSignature,
+  verifyPluginCatalog,
+  type PluginCatalogPayload,
+  type PluginTrustOptions,
+} from "./trust.js";
 
 const listSchema = z.object({
   includeConfirmations: z.boolean().default(true),
 });
 
+const canonicalPluginIdSchema = z.string().refine(isCanonicalPluginId, "Invalid plugin id");
+
 const installSchema = z.object({
-  pluginId: z.string().min(1),
+  pluginId: canonicalPluginIdSchema,
   version: z.string().min(1).optional(),
-  source: z.enum(["official", "sideload", "self-hosted"]).default("official"),
   confirmations: z.array(z.string().min(1)).default([]),
 });
 
 const pluginIdSchema = z.object({
-  pluginId: z.string().min(1),
+  pluginId: canonicalPluginIdSchema,
 });
 
 const uninstallSchema = pluginIdSchema.extend({
@@ -45,25 +55,31 @@ const genericObjectJsonSchema = {
 export interface RegisterPluginToolsOptions {
   readonly pluginsDir: string;
   readonly discovery?: PluginDiscoveryOptions;
-  readonly officialPluginIds?: readonly string[];
-  readonly lifecycleStore?: PluginLifecycleStore;
+  readonly lifecycle?: PluginLifecycle;
 }
 
 export interface PluginLifecycleRecord {
   readonly pluginId: string;
   readonly version: string;
-  readonly state: PluginLifecycleState;
-  readonly source: z.output<typeof installSchema>["source"];
+  readonly state: PersistedPluginLifecycleState;
+  readonly source: PluginLifecycleSource;
   readonly manifest: PluginManifest;
   readonly updatedAt: string;
 }
 
 export interface PluginLifecycleStore {
   get(pluginId: string): Promise<PluginLifecycleRecord | undefined>;
+  list(): Promise<readonly PluginLifecycleRecord[]>;
   set(record: PluginLifecycleRecord): Promise<void>;
 }
 
-type PluginLifecycleSource = z.output<typeof installSchema>["source"];
+export type PluginLifecycleSource = "official" | "sideload";
+export type PersistedPluginLifecycleState =
+  | "installed"
+  | "enabled"
+  | "disabled"
+  | "degraded"
+  | "uninstalled";
 type PersistedPluginManifest = PluginManifest & {
   readonly helixLifecycleSource?: PluginLifecycleSource | undefined;
 };
@@ -86,7 +102,13 @@ interface ConfirmationRequirement {
 export function createPluginToolDefinitions(
   options: RegisterPluginToolsOptions,
 ): readonly ToolDefinition[] {
-  const lifecycleStore = options.lifecycleStore ?? new InMemoryPluginLifecycleStore();
+  const lifecycle =
+    options.lifecycle ??
+    new PluginLifecycle({
+      store: new InMemoryPluginLifecycleStore(),
+      pluginsDir: options.pluginsDir,
+      ...(options.discovery === undefined ? {} : { discovery: options.discovery }),
+    });
 
   return [
     defineTool<z.output<typeof listSchema>, unknown>({
@@ -98,18 +120,35 @@ export function createPluginToolDefinitions(
       inputSchema: zodToolSchema(listSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input) => {
-        const plugins = await discoverInstallablePlugins(options);
+        const trustedCatalog = verifyPluginCatalog(options.discovery?.pluginTrust);
+        const plugins: Array<{
+          readonly plugin: DiscoveredPlugin;
+          readonly source: PluginLifecycleSource;
+        }> = [];
+        for (const plugin of await discoverInstallablePlugins(options)) {
+          try {
+            plugins.push({
+              plugin,
+              source: await resolvePluginSource(
+                plugin,
+                trustedCatalog,
+                options.discovery?.pluginTrust,
+              ),
+            });
+          } catch (error) {
+            options.discovery?.onError?.(plugin.manifest.id, error);
+          }
+        }
         const lifecycleRecords = new Map(
           await Promise.all(
             plugins.map(
-              async (plugin) =>
-                [plugin.manifest.id, await lifecycleStore.get(plugin.manifest.id)] as const,
+              async ({ plugin }) =>
+                [plugin.manifest.id, await lifecycle.get(plugin.manifest.id)] as const,
             ),
           ),
         );
         return {
-          plugins: plugins.map((plugin) => {
-            const source = resolvePluginSource(plugin.manifest.id, options);
+          plugins: plugins.map(({ plugin, source }) => {
             const lifecycle = lifecycleRecords.get(plugin.manifest.id);
             return {
               ...serializePlugin(plugin),
@@ -155,14 +194,19 @@ export function createPluginToolDefinitions(
           };
         }
 
-        const requirements = confirmationRequirements(plugin.manifest, input.source);
+        const source = await resolvePluginSource(
+          plugin,
+          verifyPluginCatalog(options.discovery?.pluginTrust),
+          options.discovery?.pluginTrust,
+        );
+        const requirements = confirmationRequirements(plugin.manifest, source);
         const confirmedIds = new Set(input.confirmations);
         const missing = requirements.filter((requirement) => !confirmedIds.has(requirement.id));
         if (missing.length > 0) {
           return {
             status: "blocked_confirmation_required",
             plugin: serializePlugin(plugin),
-            source: input.source,
+            source,
             confirmations: missing,
           };
         }
@@ -170,16 +214,23 @@ export function createPluginToolDefinitions(
         await ctx.audit("plugin.install.validated", {
           pluginId: plugin.manifest.id,
           version: plugin.manifest.version,
-          source: input.source,
+          source,
         });
-        const lifecycle = lifecycleRecord(plugin.manifest, "installed", input.source);
-        await lifecycleStore.set(lifecycle);
+        const existing = await lifecycle.get(plugin.manifest.id);
+        const record = await lifecycle.transition(
+          plugin,
+          existing?.state === "enabled" ? "enabled" : "installed",
+          source,
+        );
 
         return {
-          status: "installed",
+          status:
+            existing !== undefined && existing.version !== plugin.manifest.version
+              ? "upgraded"
+              : "installed",
           plugin: serializePlugin(plugin),
-          lifecycle: serializeLifecycleRecord(lifecycle),
-          source: input.source,
+          lifecycle: serializeLifecycleRecord(record),
+          source,
           confirmations: requirements,
         };
       },
@@ -196,13 +247,12 @@ export function createPluginToolDefinitions(
         if (plugin === undefined) {
           return notFound(input.pluginId);
         }
-        const existing = await lifecycleStore.get(plugin.manifest.id);
+        const existing = await lifecycle.get(plugin.manifest.id);
         if (existing === undefined || existing.state === "uninstalled") {
           return notInstalled(plugin);
         }
 
-        const lifecycle = lifecycleRecord(plugin.manifest, "enabled", existing.source);
-        await lifecycleStore.set(lifecycle);
+        const record = await lifecycle.transition(plugin, "enabled", existing.source);
         await ctx.audit("plugin.enable.validated", {
           pluginId: plugin.manifest.id,
           version: plugin.manifest.version,
@@ -211,7 +261,7 @@ export function createPluginToolDefinitions(
         return {
           status: "enabled",
           plugin: serializePlugin(plugin),
-          lifecycle: serializeLifecycleRecord(lifecycle),
+          lifecycle: serializeLifecycleRecord(record),
         };
       },
     }),
@@ -227,13 +277,12 @@ export function createPluginToolDefinitions(
         if (plugin === undefined) {
           return notFound(input.pluginId);
         }
-        const existing = await lifecycleStore.get(plugin.manifest.id);
+        const existing = await lifecycle.get(plugin.manifest.id);
         if (existing === undefined || existing.state === "uninstalled") {
           return notInstalled(plugin);
         }
 
-        const lifecycle = lifecycleRecord(plugin.manifest, "disabled", existing.source);
-        await lifecycleStore.set(lifecycle);
+        const record = await lifecycle.transition(plugin, "disabled", existing.source);
         await ctx.audit("plugin.disable.validated", {
           pluginId: plugin.manifest.id,
           version: plugin.manifest.version,
@@ -242,7 +291,7 @@ export function createPluginToolDefinitions(
         return {
           status: "disabled",
           plugin: serializePlugin(plugin),
-          lifecycle: serializeLifecycleRecord(lifecycle),
+          lifecycle: serializeLifecycleRecord(record),
         };
       },
     }),
@@ -259,7 +308,7 @@ export function createPluginToolDefinitions(
         if (plugin === undefined) {
           return notFound(input.pluginId);
         }
-        const existing = await lifecycleStore.get(plugin.manifest.id);
+        const existing = await lifecycle.get(plugin.manifest.id);
         if (existing === undefined || existing.state === "uninstalled") {
           return notInstalled(plugin);
         }
@@ -275,8 +324,7 @@ export function createPluginToolDefinitions(
           };
         }
 
-        const lifecycle = lifecycleRecord(plugin.manifest, "uninstalled", existing.source);
-        await lifecycleStore.set(lifecycle);
+        const record = await lifecycle.transition(plugin, "uninstalled", existing.source);
         await ctx.audit("plugin.uninstall.validated", {
           pluginId: plugin.manifest.id,
           version: plugin.manifest.version,
@@ -285,7 +333,7 @@ export function createPluginToolDefinitions(
         return {
           status: "uninstalled",
           plugin: serializePlugin(plugin),
-          lifecycle: serializeLifecycleRecord(lifecycle),
+          lifecycle: serializeLifecycleRecord(record),
           confirmations: requirements,
         };
       },
@@ -315,6 +363,10 @@ export class InMemoryPluginLifecycleStore implements PluginLifecycleStore {
     return this.records.get(pluginId);
   }
 
+  async list(): Promise<readonly PluginLifecycleRecord[]> {
+    return [...this.records.values()];
+  }
+
   async set(record: PluginLifecycleRecord): Promise<void> {
     this.records.set(record.pluginId, record);
   }
@@ -342,16 +394,24 @@ export class PostgresPluginLifecycleStore implements PluginLifecycleStore {
     if (row === undefined) {
       return undefined;
     }
-    const persistedManifest = persistedManifestFromUnknown(row.manifest);
-    const manifest = assertPluginManifest(persistedManifest);
-    return {
-      pluginId: row.id,
-      version: row.version,
-      state: lifecycleStateFromUnknown(row.state),
-      source: lifecycleSourceFromUnknown(persistedManifest.helixLifecycleSource),
-      manifest,
-      updatedAt: timestampToIso(row.updated_at),
-    };
+    return lifecycleRecordFromRow(row);
+  }
+
+  async list(): Promise<readonly PluginLifecycleRecord[]> {
+    const rows = await this.sql<
+      Array<{
+        readonly id: string;
+        readonly version: string;
+        readonly state: string;
+        readonly manifest: unknown;
+        readonly updated_at: Date | string;
+      }>
+    >`
+      select id, version, state, manifest, updated_at
+      from installed_plugins
+      order by id
+    `;
+    return rows.map(lifecycleRecordFromRow);
   }
 
   async set(record: PluginLifecycleRecord): Promise<void> {
@@ -379,6 +439,147 @@ export class PostgresPluginLifecycleStore implements PluginLifecycleStore {
   }
 }
 
+export interface PluginRuntimeLifecycle {
+  prepare(plugin: DiscoveredPlugin): Promise<
+    | {
+        commit(): void;
+        rollback(): void;
+      }
+    | undefined
+  >;
+  disable(pluginId: string): void;
+}
+
+export interface PluginLifecycleOptions {
+  readonly store: PluginLifecycleStore;
+  readonly pluginsDir: string;
+  readonly discovery?: PluginDiscoveryOptions;
+  readonly runtime?: PluginRuntimeLifecycle;
+  readonly events?: EventBus;
+  readonly onError?: (error: unknown, pluginId: string) => void;
+}
+
+const pluginLifecycleSubject = "plugin.lifecycle.changed";
+
+export class PluginLifecycle {
+  readonly #instanceId = randomUUID();
+  readonly #options: PluginLifecycleOptions;
+  #queue = Promise.resolve();
+  #unsubscribe: (() => Promise<void> | void) | undefined;
+
+  constructor(options: PluginLifecycleOptions) {
+    this.#options = options;
+  }
+
+  get(pluginId: string): Promise<PluginLifecycleRecord | undefined> {
+    return this.#options.store.get(pluginId);
+  }
+
+  async start(): Promise<void> {
+    if (this.#unsubscribe !== undefined || this.#options.events === undefined) {
+      await this.#reconcileAll();
+      return;
+    }
+    this.#unsubscribe = await this.#options.events.subscribe(
+      pluginLifecycleSubject,
+      async (event) => {
+        if (!isRecord(event.payload) || event.payload.origin === this.#instanceId) return;
+        const pluginId = event.payload.pluginId;
+        if (typeof pluginId === "string" && isCanonicalPluginId(pluginId)) {
+          await this.#enqueue(() => this.#reconcile(pluginId));
+        }
+      },
+    );
+    await this.#reconcileAll();
+  }
+
+  async close(): Promise<void> {
+    await this.#unsubscribe?.();
+    this.#unsubscribe = undefined;
+  }
+
+  async transition(
+    plugin: DiscoveredPlugin,
+    state: PersistedPluginLifecycleState,
+    source: PluginLifecycleSource,
+  ): Promise<PluginLifecycleRecord> {
+    const record = await this.#enqueue(async () => {
+      const next = lifecycleRecord(plugin.manifest, state, source);
+      const prepared =
+        state === "enabled" ? await this.#options.runtime?.prepare(plugin) : undefined;
+      try {
+        await this.#options.store.set(next);
+        prepared?.commit();
+        if (state !== "enabled") this.#options.runtime?.disable(plugin.manifest.id);
+        return next;
+      } catch (error) {
+        prepared?.rollback();
+        throw error;
+      }
+    });
+    await this.#options.events?.publish(pluginLifecycleSubject, {
+      origin: this.#instanceId,
+      pluginId: record.pluginId,
+      updatedAt: record.updatedAt,
+    });
+    return record;
+  }
+
+  async #reconcileAll(): Promise<void> {
+    for (const record of await this.#options.store.list()) {
+      await this.#enqueue(() => this.#reconcile(record.pluginId));
+    }
+  }
+
+  async #reconcile(pluginId: string): Promise<void> {
+    const record = await this.#options.store.get(pluginId);
+    if (record?.state !== "enabled") {
+      this.#options.runtime?.disable(pluginId);
+      return;
+    }
+    try {
+      const plugin = await discoverPluginById(
+        this.#options.pluginsDir,
+        pluginId,
+        this.#options.discovery,
+      );
+      if (plugin.manifest.version !== record.version) {
+        throw new Error(
+          `Enabled plugin ${pluginId} requires ${record.version}, found ${plugin.manifest.version}.`,
+        );
+      }
+      const prepared = await this.#options.runtime?.prepare(plugin);
+      try {
+        prepared?.commit();
+      } catch (error) {
+        prepared?.rollback();
+        throw error;
+      }
+    } catch (error) {
+      this.#options.runtime?.disable(pluginId);
+      await this.#options.store.set({
+        ...record,
+        state: "degraded",
+        updatedAt: new Date().toISOString(),
+      });
+      await this.#options.events?.publish(pluginLifecycleSubject, {
+        origin: this.#instanceId,
+        pluginId,
+      });
+      this.#options.onError?.(error, pluginId);
+    }
+  }
+
+  #enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#queue.then(operation, operation);
+    this.#queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+}
+
 async function discoverInstallablePlugins(
   options: RegisterPluginToolsOptions,
 ): Promise<readonly DiscoveredPlugin[]> {
@@ -394,7 +595,7 @@ async function discoverInstallablePlugin(
   options: RegisterPluginToolsOptions,
   pluginId: string,
 ): Promise<DiscoveredPlugin | undefined> {
-  return discoverPlugin(join(options.pluginsDir, pluginId), options.discovery).catch(
+  return discoverPluginById(options.pluginsDir, pluginId, options.discovery).catch(
     (error: unknown) => {
       if (isFileNotFound(error)) {
         return undefined;
@@ -404,19 +605,26 @@ async function discoverInstallablePlugin(
   );
 }
 
-function resolvePluginSource(
-  pluginId: string,
-  options: RegisterPluginToolsOptions,
-): z.output<typeof installSchema>["source"] {
-  if (options.officialPluginIds === undefined) {
-    return "official";
+async function resolvePluginSource(
+  plugin: DiscoveredPlugin,
+  catalog: PluginCatalogPayload | undefined,
+  trust: PluginTrustOptions | undefined,
+): Promise<PluginLifecycleSource> {
+  const artifact = catalogArtifact(catalog, plugin.manifest.id, plugin.manifest.version);
+  if (artifact === undefined) {
+    return "sideload";
   }
-  return options.officialPluginIds.includes(pluginId) ? "official" : "sideload";
+  if (trust === undefined) {
+    throw new Error(`Plugin ${plugin.manifest.id} is catalogued without publisher trust.`);
+  }
+  const actual = await calculatePluginBundleDigest(plugin);
+  await verifyPluginArtifactSignature(artifact, actual, trust);
+  return "official";
 }
 
 function serializeInstallRequirements(
   manifest: PluginManifest,
-  source: z.output<typeof installSchema>["source"],
+  source: PluginLifecycleSource,
 ): JsonObject {
   const confirmations = confirmationRequirements(manifest, source);
   return {
@@ -440,7 +648,7 @@ function uninstallConfirmationRequirements(
 
 function confirmationRequirements(
   manifest: PluginManifest,
-  source: z.output<typeof installSchema>["source"],
+  source: PluginLifecycleSource,
 ): readonly ConfirmationRequirement[] {
   if (source === "official") {
     return [];
@@ -451,7 +659,7 @@ function confirmationRequirements(
       id: "source.non_official",
       label: "Install from a non-official source",
       category: "source",
-      detail: `Plugin ${manifest.id} is declared as ${source}.`,
+      detail: `No signed catalog entry authenticates ${manifest.id}; it is treated as ${source}.`,
     },
   ];
   appendArrayConfirmations(
@@ -490,14 +698,12 @@ function confirmationRequirements(
     "capabilities.consumes",
     manifest.capabilities.consumes,
   );
-  if (manifest.signature === undefined) {
-    requirements.push({
-      id: "signature.missing",
-      label: "Unsigned plugin artifact",
-      category: "signature",
-      detail: "The manifest does not include signed artifact evidence.",
-    });
-  }
+  requirements.push({
+    id: "artifact.untrusted",
+    label: "Untrusted plugin artifact",
+    category: "signature",
+    detail: "No valid signed catalog entry authenticates this exact plugin artifact.",
+  });
   if (manifest.tierRequirements !== undefined) {
     requirements.push({
       id: "tier.requirements",
@@ -511,8 +717,8 @@ function confirmationRequirements(
 
 function lifecycleRecord(
   manifest: PluginManifest,
-  state: PluginLifecycleState,
-  source: z.output<typeof installSchema>["source"],
+  state: PersistedPluginLifecycleState,
+  source: PluginLifecycleSource,
 ): PluginLifecycleRecord {
   return {
     pluginId: manifest.id,
@@ -586,7 +792,6 @@ function serializePlugin(plugin: DiscoveredPlugin): JsonObject {
       filesystem: [...plugin.manifest.permissions.filesystem],
       envVars: [...plugin.manifest.permissions.envVars],
     },
-    signature: toJsonValue(plugin.manifest.signature ?? null),
     tierRequirements: toJsonValue(plugin.manifest.tierRequirements ?? null),
   };
 }
@@ -595,26 +800,43 @@ function toJsonValue(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
-function persistedManifestFromUnknown(value: unknown): PersistedPluginManifest {
+function persistedManifestFromUnknown(value: unknown): Record<string, unknown> {
   if (typeof value === "string") {
     return persistedManifestFromUnknown(JSON.parse(value) as unknown);
   }
   if (!isRecord(value)) {
     throw new Error("Installed plugin manifest must be a JSON object.");
   }
-  return value as unknown as PersistedPluginManifest;
+  return value;
 }
 
-function lifecycleStateFromUnknown(value: unknown): PluginLifecycleState {
-  return typeof value === "string" && pluginLifecycleStates.includes(value as PluginLifecycleState)
-    ? (value as PluginLifecycleState)
+function lifecycleRecordFromRow(row: {
+  readonly id: string;
+  readonly version: string;
+  readonly state: string;
+  readonly manifest: unknown;
+  readonly updated_at: Date | string;
+}): PluginLifecycleRecord {
+  const persistedManifest = persistedManifestFromUnknown(row.manifest);
+  return {
+    pluginId: row.id,
+    version: row.version,
+    state: lifecycleStateFromUnknown(row.state),
+    source: lifecycleSourceFromUnknown(persistedManifest.helixLifecycleSource),
+    manifest: assertPluginManifest(persistedManifest),
+    updatedAt: timestampToIso(row.updated_at),
+  };
+}
+
+function lifecycleStateFromUnknown(value: unknown): PersistedPluginLifecycleState {
+  return typeof value === "string" &&
+    pluginLifecycleStates.includes(value as PersistedPluginLifecycleState)
+    ? (value as PersistedPluginLifecycleState)
     : "degraded";
 }
 
 function lifecycleSourceFromUnknown(value: unknown): PluginLifecycleSource {
-  return value === "official" || value === "sideload" || value === "self-hosted"
-    ? value
-    : "official";
+  return value === "official" ? "official" : "sideload";
 }
 
 function timestampToIso(value: Date | string): string {
@@ -626,17 +848,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const pluginLifecycleStates: readonly PluginLifecycleState[] = [
-  "discovered",
-  "validated",
+const pluginLifecycleStates: readonly PersistedPluginLifecycleState[] = [
   "installed",
-  "migrating",
-  "migrated",
-  "starting",
   "enabled",
   "disabled",
   "degraded",
-  "uninstalling",
   "uninstalled",
 ];
 

@@ -34,9 +34,11 @@ describe("Meilisearch HTTP client", () => {
       filterableAttributes: ["type", "attributes.orgId"],
       searchableAttributes: ["title", "body"],
     });
-    await client.index("helix_search").addDocuments([{ id: "mail:1", type: "mail", title: "Hello" }], {
-      primaryKey: "id",
-    });
+    await client
+      .index("helix_search")
+      .addDocuments([{ id: "mail:1", type: "mail", title: "Hello" }], {
+        primaryKey: "id",
+      });
     await client.index("helix_search").deleteDocuments(["mail:1"]);
     const result = await client.index("helix_search").search("hello", {
       limit: 5,
@@ -117,9 +119,33 @@ describe("Meilisearch HTTP client", () => {
       MeilisearchHttpError,
     );
   });
+
+  it("waits for task completion and fails closed on rejected tasks", async () => {
+    const fetch = new FakeFetch([
+      response({ status: "processing" }),
+      response({ status: "succeeded" }),
+      response({ status: "failed" }),
+    ]);
+    const client = createMeilisearchHttpClient({
+      baseUrl: "http://127.0.0.1:7799",
+      fetch: fetch.fetch,
+      taskPollIntervalMs: 0,
+    });
+
+    await expect(client.waitForTask?.(7)).resolves.toBeUndefined();
+    await expect(client.waitForTask?.(8)).rejects.toThrow("Meilisearch task 8 failed");
+    expect(fetch.calls.map((call) => call.url)).toEqual([
+      "http://127.0.0.1:7799/tasks/7",
+      "http://127.0.0.1:7799/tasks/7",
+      "http://127.0.0.1:7799/tasks/8",
+    ]);
+  });
 });
 
-function response(body: unknown, options?: { readonly status?: number; readonly statusText?: string }): Response {
+function response(
+  body: unknown,
+  options?: { readonly status?: number; readonly statusText?: string },
+): Response {
   return new Response(JSON.stringify(body), {
     status: options?.status ?? 200,
     statusText: options?.statusText ?? "OK",

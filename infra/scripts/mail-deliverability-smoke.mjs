@@ -2,6 +2,13 @@
 import net from "node:net";
 import tls from "node:tls";
 import { writeFile } from "node:fs/promises";
+import process from "node:process";
+import { setTimeout as sleep } from "node:timers/promises";
+import { URL, URLSearchParams } from "node:url";
+import {
+  evaluateAuthenticationResults,
+  isProviderAcceptedStatus,
+} from "./mail-deliverability-evidence.mjs";
 
 const usage = `Usage: infra/scripts/mail-deliverability-smoke.mjs [--static]
 
@@ -16,6 +23,7 @@ Environment:
   HELIX_SMOKE_CLIENT_SECRET              OAuth client secret when AUTH_TOKEN is absent
   HELIX_SMOKE_SCOPE                      Default: platform.read mail.read mail.send
   HELIX_DELIVERABILITY_RECIPIENT         Required external recipient address
+  HELIX_DELIVERABILITY_FROM_DOMAIN       Required RFC5322 From domain expected to align
   HELIX_DELIVERABILITY_IMAP_HOST         Required IMAP host for recipient mailbox
   HELIX_DELIVERABILITY_IMAP_PORT         Default: 993
   HELIX_DELIVERABILITY_IMAP_SECURE       Default: true
@@ -43,6 +51,7 @@ const baseUrl = env("HELIX_BASE_URL", "http://127.0.0.1:28431");
 const timeoutMs = positiveIntEnv("HELIX_DELIVERABILITY_TIMEOUT_MS", 30_000);
 const thresholdMs = positiveIntEnv("HELIX_DELIVERABILITY_THRESHOLD_MS", 30_000);
 const recipient = requiredEnv("HELIX_DELIVERABILITY_RECIPIENT");
+const fromDomain = requiredEnv("HELIX_DELIVERABILITY_FROM_DOMAIN");
 const imapConfig = {
   host: requiredEnv("HELIX_DELIVERABILITY_IMAP_HOST"),
   port: positiveIntEnv("HELIX_DELIVERABILITY_IMAP_PORT", 993),
@@ -71,11 +80,19 @@ const pendingId = await queueMail(baseUrl, token, {
 const approvalOutput = await approvePending(baseUrl, token, pendingId);
 const outboundId = approvalOutput?.id;
 if (typeof outboundId !== "string" || outboundId.length === 0) {
-  throw new Error(`pending approve output did not include outbound id: ${JSON.stringify(approvalOutput)}`);
+  throw new Error(
+    `pending approve output did not include outbound id: ${JSON.stringify(approvalOutput)}`,
+  );
 }
-const outbound = await waitForOutboundSent(baseUrl, token, outboundId, timeoutMs);
+const outbound = await waitForOutboundAccepted(baseUrl, token, outboundId, timeoutMs);
 
 const delivered = await waitForImapMarker(imapConfig, marker, timeoutMs);
+const authentication = evaluateAuthenticationResults(delivered.authenticationHeaders, fromDomain);
+if (authentication.status !== "passed") {
+  throw new Error(
+    `External receiver did not report aligned authentication: ${JSON.stringify(authentication)}`,
+  );
+}
 const completedAt = Date.now();
 const latencyMs = completedAt - startedAt;
 const evidence = {
@@ -89,6 +106,7 @@ const evidence = {
   pendingId,
   outbound,
   delivered,
+  authentication,
   latencyMs,
   thresholdMs,
   startedAt: new Date(startedAt).toISOString(),
@@ -118,7 +136,7 @@ async function getAccessToken(apiBaseUrl) {
     client_secret: clientSecret,
     scope: env("HELIX_SMOKE_SCOPE", "platform.read mail.read mail.send"),
   });
-  const response = await fetch(new URL("/oauth/token", apiBaseUrl), {
+  const response = await globalThis.fetch(new URL("/oauth/token", apiBaseUrl), {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
     body,
@@ -131,7 +149,7 @@ async function getAccessToken(apiBaseUrl) {
 }
 
 async function queueMail(apiBaseUrl, accessToken, body) {
-  const response = await fetch(new URL("/api/tools/mail.send", apiBaseUrl), {
+  const response = await globalThis.fetch(new URL("/api/tools/mail.send", apiBaseUrl), {
     method: "POST",
     headers: {
       accept: "application/json",
@@ -149,15 +167,18 @@ async function queueMail(apiBaseUrl, accessToken, body) {
 }
 
 async function approvePending(apiBaseUrl, accessToken, pendingId) {
-  const response = await fetch(new URL(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, apiBaseUrl), {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
+  const response = await globalThis.fetch(
+    new URL(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, apiBaseUrl),
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${accessToken}`,
+        "content-type": "application/json",
+      },
+      body: "{}",
     },
-    body: "{}",
-  });
+  );
   const parsed = await readJsonResponse(response, "pending approve");
   if (response.status !== 200 || parsed.status !== "executed") {
     throw new Error(`pending approve did not execute: ${JSON.stringify(parsed)}`);
@@ -165,12 +186,12 @@ async function approvePending(apiBaseUrl, accessToken, pendingId) {
   return parsed.output;
 }
 
-async function waitForOutboundSent(apiBaseUrl, accessToken, outboundId, timeoutMsValue) {
+async function waitForOutboundAccepted(apiBaseUrl, accessToken, outboundId, timeoutMsValue) {
   const deadline = Date.now() + timeoutMsValue;
   let lastSeen = null;
   while (Date.now() < deadline) {
     const outbound = await getOutbound(apiBaseUrl, accessToken, outboundId);
-    if (outbound?.status === "sent") {
+    if (isProviderAcceptedStatus(outbound?.status)) {
       return {
         id: outbound.id,
         messageId: outbound.messageId,
@@ -184,11 +205,13 @@ async function waitForOutboundSent(apiBaseUrl, accessToken, outboundId, timeoutM
     lastSeen = outbound;
     await sleep(1_000);
   }
-  throw new Error(`Timed out waiting for outbound ${outboundId} to be sent. Last seen: ${JSON.stringify(lastSeen)}`);
+  throw new Error(
+    `Timed out waiting for outbound ${outboundId} to reach provider acceptance. Last seen: ${JSON.stringify(lastSeen)}`,
+  );
 }
 
 async function getOutbound(apiBaseUrl, accessToken, outboundId) {
-  const response = await fetch(new URL("/api/tools/mail.outbound.get", apiBaseUrl), {
+  const response = await globalThis.fetch(new URL("/api/tools/mail.outbound.get", apiBaseUrl), {
     method: "POST",
     headers: {
       accept: "application/json",
@@ -199,7 +222,9 @@ async function getOutbound(apiBaseUrl, accessToken, outboundId) {
   });
   const parsed = await readJsonResponse(response, "mail.outbound.get");
   if (response.status !== 200) {
-    throw new Error(`mail.outbound.get returned HTTP ${response.status}: ${JSON.stringify(parsed)}`);
+    throw new Error(
+      `mail.outbound.get returned HTTP ${response.status}: ${JSON.stringify(parsed)}`,
+    );
   }
   return parsed.output?.outbound ?? null;
 }
@@ -228,8 +253,11 @@ async function searchImapMailbox(config, searchText) {
     await client.login(config.user, config.password);
     await client.select(config.mailbox);
     const ids = await client.uidSearchText(searchText);
+    const latestUid = ids.at(-1) ?? null;
+    const authenticationHeaders =
+      latestUid === null ? "" : await client.uidFetchAuthenticationHeaders(latestUid);
     await client.logout();
-    return { found: ids.length > 0, uidCount: ids.length, latestUid: ids.at(-1) ?? null };
+    return { found: ids.length > 0, uidCount: ids.length, latestUid, authenticationHeaders };
   } finally {
     client.close();
   }
@@ -287,10 +315,19 @@ class ImapClient {
       .map(Number);
   }
 
+  async uidFetchAuthenticationHeaders(uid) {
+    const lines = await this.command(
+      `UID FETCH ${String(uid)} (BODY.PEEK[HEADER.FIELDS (AUTHENTICATION-RESULTS RECEIVED-SPF)])`,
+    );
+    return lines.filter((line) => !/^\*?\s*\d*\s*FETCH|^A\d+\s+OK|^\)$/iu.test(line)).join("\n");
+  }
+
   async logout() {
     try {
       await this.command("LOGOUT");
-    } catch {}
+    } catch {
+      // The connection is destroyed below; a failed logout does not hide probe evidence.
+    }
   }
 
   close() {
@@ -300,7 +337,10 @@ class ImapClient {
   command(commandText) {
     const tag = `A${String(++this.tag).padStart(4, "0")}`;
     this.socket.write(`${tag} ${commandText}\r\n`);
-    return this.readUntil((line) => line.startsWith(`${tag} OK`), (line) => line.startsWith(`${tag} NO`) || line.startsWith(`${tag} BAD`));
+    return this.readUntil(
+      (line) => line.startsWith(`${tag} OK`),
+      (line) => line.startsWith(`${tag} NO`) || line.startsWith(`${tag} BAD`),
+    );
   }
 
   readUntil(done, failed = () => false) {
@@ -414,10 +454,6 @@ function redact(value) {
   return output;
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function validateStaticEnvironmentNames() {
   for (const name of [
     "HELIX_BASE_URL",
@@ -426,6 +462,7 @@ function validateStaticEnvironmentNames() {
     "HELIX_SMOKE_CLIENT_SECRET",
     "HELIX_SMOKE_SCOPE",
     "HELIX_DELIVERABILITY_RECIPIENT",
+    "HELIX_DELIVERABILITY_FROM_DOMAIN",
     "HELIX_DELIVERABILITY_IMAP_HOST",
     "HELIX_DELIVERABILITY_IMAP_PORT",
     "HELIX_DELIVERABILITY_IMAP_SECURE",

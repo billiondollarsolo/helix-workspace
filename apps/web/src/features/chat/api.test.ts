@@ -1,16 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  chatAttachmentContentUrl,
   chatRealtimeUrl,
   createChatRealtimeClient,
   createChatRoom,
   deleteChatMessage,
   editChatMessage,
+  issueChatWebSocketTicket,
   inviteToRoom,
   listChatMessages,
   listChatRooms,
   reactToChatMessage,
   searchChat,
+  saveChatAttachmentToDrive,
   sendChatMessage,
+  uploadChatAttachment,
 } from "./api";
 
 describe("chat API", () => {
@@ -87,7 +91,12 @@ describe("chat API", () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/chat.message.list", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ roomId: room.id, before: undefined, limit: 25 }),
+      body: JSON.stringify({
+        roomId: room.id,
+        before: undefined,
+        direction: undefined,
+        limit: 25,
+      }),
     });
   });
 
@@ -210,7 +219,14 @@ describe("chat API", () => {
       body: JSON.stringify({
         kind: "chat_dm",
         memberActorIds: ["55555555-5555-4555-8555-555555555555"],
-        isPrivate: false,
+        privacy: "restricted",
+        readReceiptsEnabled: true,
+        spaceType: "conversation",
+        historyPolicy: "full",
+        retentionDays: null,
+        legalHold: false,
+        notificationPolicy: "all",
+        externalAccess: "guests",
         metadata: {},
       }),
     });
@@ -230,9 +246,57 @@ describe("chat API", () => {
     expect(url).not.toContain("access_token");
   });
 
+  it("mints a room-bound ticket over the authenticated HTTP channel", async () => {
+    const fetchImpl = vi.fn(() => Promise.resolve(Response.json({ ticket: "t".repeat(43) })));
+
+    await expect(
+      issueChatWebSocketTicket("33333333-3333-4333-8333-333333333333", fetchImpl),
+    ).resolves.toBe("t".repeat(43));
+    expect(fetchImpl).toHaveBeenCalledWith("/api/chat/ws-ticket", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: "33333333-3333-4333-8333-333333333333" }),
+    });
+  });
+
+  it("uploads raw Chat images and exposes explicit content and Drive-promotion URLs", async () => {
+    const objectId = "44444444-4444-4444-8444-444444444444";
+    const file = new File(["GIF89a"], "animated.gif", { type: "image/gif" });
+    const attachment = {
+      objectId,
+      source: "chat" as const,
+      filename: file.name,
+      mimeType: file.type,
+      byteSize: file.size,
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(attachment, { status: 201 }))
+      .mockResolvedValueOnce(
+        Response.json({ objectId: "55555555-5555-4555-8555-555555555555" }, { status: 201 }),
+      );
+
+    await expect(
+      uploadChatAttachment("33333333-3333-4333-8333-333333333333", file, fetchImpl),
+    ).resolves.toEqual(attachment);
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      "/api/chat/rooms/33333333-3333-4333-8333-333333333333/attachments?filename=animated.gif",
+      { method: "POST", headers: { "content-type": "image/gif" }, body: file },
+    );
+    await expect(saveChatAttachmentToDrive(objectId, fetchImpl)).resolves.toEqual({
+      objectId: "55555555-5555-4555-8555-555555555555",
+    });
+    expect(chatAttachmentContentUrl(objectId)).toBe(`/v1/api/chat/attachments/${objectId}/content`);
+    expect(chatAttachmentContentUrl(objectId, true)).toBe(
+      `/v1/api/chat/attachments/${objectId}/content?download=1`,
+    );
+  });
+
   it("serializes chat websocket messages and parses realtime events", () => {
     const events: unknown[] = [];
     const client = createChatRealtimeClient({
+      ticket: "t".repeat(43),
       url: "ws://localhost/ws/chat",
       WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
       onEvent: (event) => events.push(event),
@@ -241,8 +305,10 @@ describe("chat API", () => {
     if (socket === undefined) {
       throw new Error("Expected websocket instance.");
     }
+    expect(socket.url).toBe("ws://localhost/ws/chat");
+    expect(socket.protocols).toEqual(["helix.chat.v1", `helix.ticket.${"t".repeat(43)}`]);
 
-    client.subscribe("33333333-3333-4333-8333-333333333333");
+    client.subscribe("33333333-3333-4333-8333-333333333333", 7);
     client.setTyping("33333333-3333-4333-8333-333333333333", true);
     client.markRead("33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444");
     client.requestPresence("33333333-3333-4333-8333-333333333333");
@@ -254,7 +320,7 @@ describe("chat API", () => {
     });
 
     expect(socket.sent.map((payload) => JSON.parse(payload) as unknown)).toEqual([
-      { type: "subscribe", roomId: "33333333-3333-4333-8333-333333333333" },
+      { type: "subscribe", roomId: "33333333-3333-4333-8333-333333333333", cursor: 7 },
       {
         type: "typing",
         roomId: "33333333-3333-4333-8333-333333333333",
@@ -277,6 +343,28 @@ describe("chat API", () => {
 
     socket.receive({ type: "typing", roomId: "room", actorId: "sam", isTyping: true });
     expect(events).toEqual([{ type: "typing", roomId: "room", actorId: "sam", isTyping: true }]);
+    client.close();
+  });
+
+  it("heartbeats an open chat socket until it closes", () => {
+    vi.useFakeTimers();
+    try {
+      const client = createChatRealtimeClient({
+        ticket: "h".repeat(43),
+        WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+        onEvent: () => undefined,
+      });
+      const socket = FakeWebSocket.instances.at(-1);
+      if (socket === undefined) throw new Error("Expected websocket instance.");
+      socket.open();
+      vi.advanceTimersByTime(15_000);
+      expect(socket.sent.at(-1)).toBe('{"type":"heartbeat"}');
+      client.close();
+      vi.advanceTimersByTime(30_000);
+      expect(socket.sent.filter((frame) => frame.includes("heartbeat"))).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -316,6 +404,11 @@ class FakeWebSocket {
 
   receive(payload: unknown): void {
     this.emit("message", { data: JSON.stringify(payload) });
+  }
+
+  open(): void {
+    this.readyState = FakeWebSocket.OPEN;
+    this.emit("open", {});
   }
 
   private emit(type: string, event: { readonly data?: string }): void {

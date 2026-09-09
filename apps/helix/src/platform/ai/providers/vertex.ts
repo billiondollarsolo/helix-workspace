@@ -4,9 +4,9 @@ import { anthropicChatResponse } from "./anthropic-compatible.js";
 import {
   anthropicRequestBody,
   approximateTokenCount,
+  discardResponseBody,
   modelForRequest,
   normalizeFetchConfig,
-  safeResponseText,
 } from "./shared.js";
 
 /**
@@ -98,7 +98,9 @@ class VertexProvider implements LLMProviderCapability {
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
     const model = modelForRequest(req.model, this.#defaultModel);
-    const body = JSON.stringify(anthropicRequestBody(model, req.messages, this.#maxTokens, this.#anthropicVersion));
+    const body = JSON.stringify(
+      anthropicRequestBody(model, req.messages, this.#maxTokens, this.#anthropicVersion),
+    );
     const url = vertexRawPredictUrl({
       endpoint: this.#endpoint,
       project: this.#project,
@@ -117,10 +119,8 @@ class VertexProvider implements LLMProviderCapability {
       body,
     });
     if (!response.ok) {
-      const responseText = await safeResponseText(response);
-      throw new Error(
-        `Vertex provider request failed: ${String(response.status)} ${response.statusText}${responseText.length === 0 ? "" : `: ${responseText}`}`,
-      );
+      await discardResponseBody(response);
+      throw new Error(`Vertex provider request failed with HTTP ${String(response.status)}`);
     }
 
     const payload: unknown = await response.json();
@@ -187,16 +187,15 @@ class VertexProvider implements LLMProviderCapability {
       }).toString(),
     });
     if (!response.ok) {
-      const responseText = await safeResponseText(response);
-      throw new Error(
-        `Vertex token exchange failed: ${String(response.status)} ${response.statusText}${responseText.length === 0 ? "" : `: ${responseText}`}`,
-      );
+      await discardResponseBody(response);
+      throw new Error(`Vertex token exchange failed with HTTP ${String(response.status)}`);
     }
 
     const payload: unknown = await response.json();
     const token = parseTokenResponse(payload);
     const refreshAfterMs =
-      this.#now().getTime() + Math.max(token.expiresInSeconds - TOKEN_EXPIRY_SKEW_SECONDS, 1) * 1000;
+      this.#now().getTime() +
+      Math.max(token.expiresInSeconds - TOKEN_EXPIRY_SKEW_SECONDS, 1) * 1000;
     return { token: token.accessToken, refreshAfterMs };
   }
 }

@@ -19,6 +19,7 @@ interface RecordedQuery {
 }
 
 const orgId = "22222222-2222-4222-8222-222222222222";
+const actorId = "11111111-1111-4111-8111-111111111111";
 
 function createRecordingSql(responses: readonly (readonly unknown[])[]): {
   readonly sql: postgres.Sql;
@@ -34,7 +35,10 @@ function createRecordingSql(responses: readonly (readonly unknown[])[]): {
     json: (value: unknown) => value,
     array: (value: unknown) => value,
   };
-  return { sql: Object.assign(tag, helpers) as unknown as postgres.Sql, calls };
+  const sql = Object.assign(tag, helpers, {
+    begin: async <T>(callback: (tx: typeof tag) => Promise<T>) => callback(tag),
+  }) as unknown as postgres.Sql;
+  return { sql, calls };
 }
 
 describe("PostgresGroupsStore", () => {
@@ -45,6 +49,8 @@ describe("PostgresGroupsStore", () => {
     expect(recording.calls[0]?.text).toContain("from admin_org_units");
     expect(recording.calls[0]?.text).toContain("member_count");
     expect(recording.calls[0]?.text).toContain("child_count");
+    expect(recording.calls[0]?.text).toContain("gm.org_id = g.org_id");
+    expect(recording.calls[0]?.text).toContain("a.disabled_at is null");
     expect(recording.calls[0]?.values).toContain(orgId);
   });
 
@@ -54,6 +60,18 @@ describe("PostgresGroupsStore", () => {
     await store.listGroups(orgId);
     expect(recording.calls[0]?.text).toContain("from admin_groups");
     expect(recording.calls[0]?.text).toContain("left join admin_group_members");
+    expect(recording.calls[0]?.text).toContain("gm.org_id = g.org_id");
+    expect(recording.calls[0]?.text).toContain("a.disabled_at is null");
+    expect(recording.calls[0]?.values).toContain(orgId);
+  });
+
+  it("lists only active same-tenant members of the requested group", async () => {
+    const recording = createRecordingSql([[]]);
+    const store = new PostgresGroupsStore(recording.sql);
+    await store.listGroupMembers(orgId, "33333333-3333-4333-8333-333333333333");
+    expect(recording.calls[0]?.text).toContain("g.org_id = gm.org_id");
+    expect(recording.calls[0]?.text).toContain("a.org_id = gm.org_id");
+    expect(recording.calls[0]?.text).toContain("a.disabled_at is null");
     expect(recording.calls[0]?.values).toContain(orgId);
   });
 });
@@ -192,6 +210,14 @@ describe("PostgresBillingStore", () => {
 });
 
 describe("PostgresDomainsStore", () => {
+  it("resolves tenant routing only through a verified exact domain", async () => {
+    const recording = createRecordingSql([[]]);
+    const store = new PostgresDomainsStore(recording.sql);
+    await expect(store.findVerifiedDomain("workspace.example.org")).resolves.toBeNull();
+    expect(recording.calls[0]?.text).toContain("helix_verified_tenant_domain");
+    expect(recording.calls[0]?.values).toContain("workspace.example.org");
+  });
+
   it("lists domains org-scoped with the primary domain first", async () => {
     const recording = createRecordingSql([[]]);
     const store = new PostgresDomainsStore(recording.sql);
@@ -201,38 +227,47 @@ describe("PostgresDomainsStore", () => {
     expect(recording.calls[0]?.values).toContain(orgId);
   });
 
-  it("clears sibling primary flags when promoting a domain", async () => {
+  it("promotes through the serialized audited transition function", async () => {
     const recording = createRecordingSql([
       [
         {
           id: "55555555-5555-4555-8555-555555555555",
           org_id: orgId,
           domain: "helix.io",
-          is_primary: false,
-          verification_status: "verified",
-          verified_at: null,
-          created_at: new Date("2026-05-21T00:00:00.000Z"),
-          updated_at: new Date("2026-05-21T00:00:00.000Z"),
-        },
-      ],
-      [],
-      [
-        {
-          id: "55555555-5555-4555-8555-555555555555",
-          org_id: orgId,
-          domain: "helix.io",
           is_primary: true,
-          verification_status: "verified",
-          verified_at: null,
+          status: "verified",
+          verified_at: new Date("2026-05-21T00:00:00.000Z"),
+          identity_enabled: true,
+          mail_enabled: true,
+          aliases_enabled: true,
+          custom_host_enabled: true,
+          federation_enabled: false,
+          provider_id: null,
+          identity_mode: "secondary",
+          alias_target_domain_id: null,
+          verification_host: "_helix-verification.helix.io",
+          verification_value: "helix-domain-verification=test",
+          verification_expires_at: new Date("2026-05-24T00:00:00.000Z"),
+          verification_attempts: 1,
+          verification_last_attempt_at: new Date("2026-05-21T00:00:00.000Z"),
+          quarantined_at: null,
+          released_at: null,
+          claimable_after: null,
           created_at: new Date("2026-05-21T00:00:00.000Z"),
           updated_at: new Date("2026-05-21T00:00:00.000Z"),
         },
       ],
     ]);
     const store = new PostgresDomainsStore(recording.sql);
-    const domain = await store.setPrimaryDomain(orgId, "55555555-5555-4555-8555-555555555555");
-    expect(recording.calls[1]?.text).toContain("set is_primary = false");
-    expect(recording.calls[2]?.text).toContain("set is_primary = true");
+    const domain = await store.setPrimaryDomain(
+      orgId,
+      "55555555-5555-4555-8555-555555555555",
+      actorId,
+    );
+    expect(recording.calls[0]?.text).toContain("helix_set_primary_domain");
+    expect(recording.calls[0]?.values).toEqual(
+      expect.arrayContaining([orgId, "55555555-5555-4555-8555-555555555555", actorId]),
+    );
     expect(domain?.isPrimary).toBe(true);
   });
 });

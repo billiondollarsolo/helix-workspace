@@ -38,11 +38,26 @@ describe("NatsEventBus", () => {
     expect(publications).toHaveLength(1);
     expect(publications[0]?.subject).toBe("helix.platform.config.changed");
     expect(publications[0]?.payload).toBeInstanceOf(Uint8Array);
-    expect(JSON.parse(new TextDecoder().decode(publications[0]?.payload as Uint8Array))).toEqual({ ok: true });
+    expect(JSON.parse(new TextDecoder().decode(publications[0]?.payload as Uint8Array))).toEqual({
+      ok: true,
+    });
     expect(publications[0]?.options?.headers?.get("traceparent")).toBe(
       "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     );
     expect(publications[0]?.options?.headers?.get("tracestate")).toBe("vendor=value");
+  });
+
+  it("uses a server round trip for health checks", async () => {
+    let flushes = 0;
+    const bus = new NatsEventBus({
+      flush: async () => {
+        flushes += 1;
+      },
+    } as unknown as NatsConnection);
+
+    await bus.checkHealth();
+
+    expect(flushes).toBe(1);
   });
 
   it("round-trips W3C trace context through NATS headers", () => {

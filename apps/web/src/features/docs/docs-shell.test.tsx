@@ -44,6 +44,7 @@ let digestSpy: { mockRestore: () => void };
 
 describe("DocsShell", () => {
   beforeEach(() => {
+    document.cookie = "helix_csrf=test-csrf; path=/";
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -68,6 +69,12 @@ describe("DocsShell", () => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
       toolCalls.push({ url, body });
+      if (url === "/api/tools/drive.view.get") {
+        return Promise.resolve(Response.json({ view: "list" }));
+      }
+      if (url === "/api/tools/drive.view.set") {
+        return Promise.resolve(Response.json({ view: (body as { view?: string }).view }));
+      }
       if (url === "/api/tools/docs.create") {
         if (createShouldFail) {
           return Promise.resolve(
@@ -492,11 +499,15 @@ function dispatchDocumentFile(filename: string, bytes: readonly number[], mimeTy
 
 function clickButton(label: string): void {
   const target =
-    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find((candidate) =>
-      candidate.textContent?.includes(label) || candidate.getAttribute("aria-label")?.includes(label),
+    Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+      (candidate) =>
+        candidate.textContent?.includes(label) ||
+        candidate.getAttribute("aria-label")?.includes(label),
     ) ??
-    Array.from(container.querySelectorAll<HTMLElement>('[role="button"]')).find((candidate) =>
-      candidate.textContent?.includes(label) || candidate.getAttribute("aria-label")?.includes(label),
+    Array.from(container.querySelectorAll<HTMLElement>('[role="button"]')).find(
+      (candidate) =>
+        candidate.textContent?.includes(label) ||
+        candidate.getAttribute("aria-label")?.includes(label),
     );
   if (target === undefined) {
     throw new Error(`Missing button: ${label}`);
@@ -507,9 +518,9 @@ function clickButton(label: string): void {
 }
 
 function clickMenuItem(label: string): void {
-  const target = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menu"] button')).find(
-    (candidate) => candidate.textContent?.trim().includes(label),
-  );
+  const target = Array.from(
+    container.querySelectorAll<HTMLButtonElement>('[role="menu"] button'),
+  ).find((candidate) => candidate.textContent?.trim().includes(label));
   if (target === undefined) {
     throw new Error(`Missing menu item: ${label}`);
   }

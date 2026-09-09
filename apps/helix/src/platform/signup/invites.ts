@@ -65,7 +65,7 @@ export class PostgresSignupOnboardingInviteTokenStore implements SignupOnboardin
     const token = generateSignupOnboardingInviteToken();
     const issuedAt = input.now ?? new Date();
     const expiresAt = new Date(issuedAt.getTime() + signupOnboardingInviteTtlSeconds * 1000);
-    const rows = (await this.sql`
+    const rows = await this.sql<SignupOnboardingInviteRow[]>`
       insert into signup_onboarding_invites (
         org_id,
         invited_by_actor_id,
@@ -87,7 +87,7 @@ export class PostgresSignupOnboardingInviteTokenStore implements SignupOnboardin
         ${this.sql.json(input.metadata ?? {})}
       )
       returning org_id, invited_by_actor_id, email, expires_at, accepted_at, accepted_by_actor_id, metadata
-    `) as unknown as readonly SignupOnboardingInviteRow[];
+    `;
     return { ...mapSignupOnboardingInviteRow(rows[0]), token };
   }
 
@@ -97,14 +97,14 @@ export class PostgresSignupOnboardingInviteTokenStore implements SignupOnboardin
     readonly now?: Date | undefined;
   }): Promise<SignupOnboardingInviteAcceptResult> {
     const now = input.now ?? new Date();
-    const rows = (await this.sql`
+    const rows = await this.sql<SignupOnboardingInviteRow[]>`
       select org_id, invited_by_actor_id, email, expires_at, accepted_at, accepted_by_actor_id, metadata
       from signup_onboarding_invites
       where token_hash = ${hashSignupOnboardingInviteToken(input.token)}
         and accepted_at is null
         and expires_at > ${now}
       limit 1
-    `) as unknown as readonly SignupOnboardingInviteRow[];
+    `;
     const invite = rows[0];
     if (invite === undefined) {
       return { status: "not_found" };
@@ -115,7 +115,7 @@ export class PostgresSignupOnboardingInviteTokenStore implements SignupOnboardin
       return { status: "email_mismatch" };
     }
 
-    const acceptedRows = (await this.sql`
+    const acceptedRows = await this.sql<SignupOnboardingInviteRow[]>`
       update signup_onboarding_invites
       set
         accepted_at = ${now},
@@ -131,7 +131,7 @@ export class PostgresSignupOnboardingInviteTokenStore implements SignupOnboardin
         and accepted_at is null
         and expires_at > ${now}
       returning org_id, invited_by_actor_id, email, expires_at, accepted_at, accepted_by_actor_id, metadata
-    `) as unknown as readonly SignupOnboardingInviteRow[];
+    `;
     const accepted = acceptedRows[0];
     if (accepted === undefined) {
       return { status: "not_found" };

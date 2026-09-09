@@ -1,0 +1,75 @@
+{{- range $i := until (int .Values.shardCount) }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $.Values.targetRelease }}-shard{{ $i }}-jvb
+  labels:
+    app.kubernetes.io/component: jvb
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $.Values.targetRelease }}-shard{{ $i }}-jvb-0
+  minReplicas: {{ $.Values.minReplicas }}
+  maxReplicas: {{ $.Values.maxReplicas }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 900
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $.Values.cpuTarget }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $.Values.targetRelease }}-shard{{ $i }}-jvb
+  labels:
+    app.kubernetes.io/component: jvb
+spec:
+  minAvailable: {{ sub (int $.Values.minReplicas) 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: shard{{ $i }}
+      app.kubernetes.io/instance: {{ $.Values.targetRelease }}
+      app.kubernetes.io/component: jvb
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Values.targetRelease }}-haproxy
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Values.targetRelease }}
+      app.kubernetes.io/component: haproxy
+{{- range $i := until (int .Values.shardCount) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $.Values.targetRelease }}-shard{{ $i }}-coturn
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: shard{{ $i }}
+      app.kubernetes.io/instance: {{ $.Values.targetRelease }}
+      app.kubernetes.io/component: coturn
+{{- end }}

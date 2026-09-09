@@ -3,6 +3,9 @@ import {
   chatCreateRoomInputSchema,
   chatDeleteInputSchema,
   chatEditInputSchema,
+  chatExportInputSchema,
+  chatImportInputSchema,
+  chatImportResultSchema,
   chatInviteInputSchema,
   chatListMessagesInputSchema,
   chatMessageSchema,
@@ -11,16 +14,23 @@ import {
   chatReactionSchema,
   chatReplyInThreadInputSchema,
   chatRoomSchema,
+  chatRoomExportSchema,
   chatSearchHitSchema,
   chatSearchInputSchema,
   chatSendInputSchema,
 } from "@helix/contracts";
-import { z } from "zod3";
+import { z } from "zod";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
-import { ChatMessageNotFoundError } from "./errors.js";
-import type { ChatStore } from "./store.js";
+import { ChatMessageNotFoundError, ChatRoomAccessError } from "./errors.js";
+import {
+  chatMessageCreatedEvent,
+  chatMessageDeletedEvent,
+  chatMessageUpdatedEvent,
+  type ChatStore,
+} from "./store.js";
+import type { ChatRoomBus } from "./realtime.js";
 import type {
   ChatMessageRecord,
   ChatPinRecord,
@@ -35,10 +45,18 @@ const listRoomsSchema = z.object({
   limit: z.number().int().positive().max(100).default(50),
 });
 
+const joinRoomSchema = z.object({ roomId: z.string().uuid() });
+
 const listThreadSchema = z.object({
   roomId: z.string().uuid(),
   parentMessageId: z.string().uuid(),
-  before: z.string().datetime().optional(),
+  before: z
+    .object({
+      sentAt: z.string().datetime(),
+      id: z.string().uuid(),
+    })
+    .optional(),
+  direction: z.enum(["older", "newer"]).default("older"),
   limit: z.number().int().positive().max(100).default(50),
 });
 
@@ -88,6 +106,7 @@ const genericObjectJsonSchema = {
 
 export interface CreateChatToolDefinitionsOptions {
   readonly store: ChatStore;
+  readonly bus?: Pick<ChatRoomBus, "publish"> | undefined;
   /**
    * Auto-classifies newly sent chat messages (PRD §8.4). When provided, the
    * `chat.send` handler classifies the resulting message from its body.
@@ -123,6 +142,7 @@ export function createChatToolDefinitions(
             ? {}
             : { clientMessageId: input.clientMessageId }),
         });
+        await options.bus?.publish(message.roomId, chatMessageCreatedEvent(message));
         await options.classifyResource?.({
           actor: ctx.actor,
           resourceType: "chat.message",
@@ -132,10 +152,7 @@ export function createChatToolDefinitions(
         return serializeMessage(message);
       },
     }),
-    defineTool<
-      z.output<typeof chatReplyInThreadInputSchema>,
-      z.output<typeof chatMessageSchema>
-    >({
+    defineTool<z.output<typeof chatReplyInThreadInputSchema>, z.output<typeof chatMessageSchema>>({
       id: "chat.reply_in_thread",
       description: "Reply to a chat message in a thread.",
       permission: "chat.post",
@@ -155,6 +172,7 @@ export function createChatToolDefinitions(
             ? {}
             : { clientMessageId: input.clientMessageId }),
         });
+        await options.bus?.publish(message.roomId, chatMessageCreatedEvent(message));
         return serializeMessage(message);
       },
     }),
@@ -172,7 +190,10 @@ export function createChatToolDefinitions(
             actorId: ctx.actor.id,
             roomId: input.roomId,
             parentMessageId: input.parentMessageId,
-            ...(input.before === undefined ? {} : { before: new Date(input.before) }),
+            ...(input.before === undefined
+              ? {}
+              : { before: { sentAt: new Date(input.before.sentAt), id: input.before.id } }),
+            direction: input.direction,
             limit: input.limit,
           })
         ).map(serializeMessage),
@@ -227,10 +248,7 @@ export function createChatToolDefinitions(
         ).map(serializePin),
       }),
     }),
-    defineTool<
-      z.output<typeof chatReactInputSchema>,
-      z.output<typeof chatReactResultSchema>
-    >({
+    defineTool<z.output<typeof chatReactInputSchema>, z.output<typeof chatReactResultSchema>>({
       id: "chat.react",
       description: "Add or remove a reaction on a chat message.",
       permission: "chat.post",
@@ -238,14 +256,17 @@ export function createChatToolDefinitions(
       inputSchema: zodToolSchema(chatReactInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(chatReactResultSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const reaction = await options.store.react({
+        const result = await options.store.react({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           messageId: input.messageId,
           emoji: input.emoji,
           op: input.op,
         });
-        return { reaction: reaction === null ? null : serializeReaction(reaction) };
+        await options.bus?.publish(result.message.roomId, chatMessageUpdatedEvent(result.message));
+        return {
+          reaction: result.reaction === null ? null : serializeReaction(result.reaction),
+        };
       },
     }),
     defineTool<z.output<typeof listRoomsSchema>, z.output<typeof chatRoomsResultSchema>>({
@@ -266,6 +287,41 @@ export function createChatToolDefinitions(
         ).map(serializeRoom),
       }),
     }),
+    defineTool<z.output<typeof listRoomsSchema>, z.output<typeof chatRoomsResultSchema>>({
+      id: "chat.room.discover",
+      description: "Discover public and invitation-only chat rooms in the organization.",
+      permission: "chat.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(listRoomsSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRoomsResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => ({
+        rooms: (
+          await options.store.discoverRooms({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            query: input.query,
+            limit: input.limit,
+          })
+        ).map(serializeRoom),
+      }),
+    }),
+    defineTool<z.output<typeof joinRoomSchema>, z.output<typeof chatRoomSchema>>({
+      id: "chat.room.join",
+      description: "Join a discoverable chat room.",
+      permission: "chat.create",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(joinRoomSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRoomSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const room = await options.store.joinRoom({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          roomId: input.roomId,
+        });
+        if (room === null) throw new ChatRoomAccessError(input.roomId);
+        return serializeRoom(room);
+      },
+    }),
     defineTool<
       z.output<typeof chatListMessagesInputSchema>,
       z.output<typeof chatMessagesResultSchema>
@@ -282,7 +338,10 @@ export function createChatToolDefinitions(
             orgId: ctx.actor.orgId,
             actorId: ctx.actor.id,
             roomId: input.roomId,
-            ...(input.before === undefined ? {} : { before: new Date(input.before) }),
+            ...(input.before === undefined
+              ? {}
+              : { before: { sentAt: new Date(input.before.sentAt), id: input.before.id } }),
+            direction: input.direction,
             limit: input.limit,
           })
         ).map(serializeMessage),
@@ -305,6 +364,7 @@ export function createChatToolDefinitions(
         if (message === null) {
           throw new ChatMessageNotFoundError(input.messageId);
         }
+        await options.bus?.publish(message.roomId, chatMessageUpdatedEvent(message));
         return serializeMessage(message);
       },
     }),
@@ -324,6 +384,7 @@ export function createChatToolDefinitions(
         if (message === null) {
           throw new ChatMessageNotFoundError(input.messageId);
         }
+        await options.bus?.publish(message.roomId, chatMessageDeletedEvent(message, ctx.actor.id));
         return serializeMessage(message);
       },
     }),
@@ -343,10 +404,67 @@ export function createChatToolDefinitions(
             ...(input.subject === undefined ? {} : { subject: input.subject }),
             memberActorIds: input.memberActorIds,
             ...(input.topic === undefined ? {} : { topic: input.topic }),
-            isPrivate: input.isPrivate,
+            privacy: input.privacy,
+            readReceiptsEnabled: input.readReceiptsEnabled,
+            spaceType: input.spaceType,
+            historyPolicy: input.historyPolicy,
+            retentionDays: input.retentionDays,
+            legalHold: input.legalHold,
+            notificationPolicy: input.notificationPolicy,
+            externalAccess: input.externalAccess,
             metadata: toJsonObject(input.metadata),
           }),
         ),
+    }),
+    defineTool<z.output<typeof chatExportInputSchema>, z.output<typeof chatRoomExportSchema>>({
+      id: "chat.export",
+      description: "Export the room history visible to the current actor.",
+      permission: "chat.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(chatExportInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRoomExportSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.exportRoom === undefined) {
+          throw new Error("Chat export is unavailable.");
+        }
+        const exported = await options.store.exportRoom({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          roomId: input.roomId,
+        });
+        return {
+          version: exported.version,
+          exportedAt: exported.exportedAt.toISOString(),
+          room: serializeRoom(exported.room),
+          messages: exported.messages.map(serializeMessage),
+        };
+      },
+    }),
+    defineTool<z.output<typeof chatImportInputSchema>, z.output<typeof chatImportResultSchema>>({
+      id: "chat.import",
+      description: "Import messages into a room as its owner or moderator.",
+      permission: "chat.create",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(chatImportInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatImportResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.importMessages === undefined) {
+          throw new Error("Chat import is unavailable.");
+        }
+        const imported = await options.store.importMessages({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          roomId: input.roomId,
+          messages: input.messages.map((message) => ({
+            sourceMessageId: message.sourceMessageId,
+            body: message.body,
+            bodyFormat: message.bodyFormat,
+            metadata: toJsonObject(message.metadata),
+            ...(message.sentAt === undefined ? {} : { sentAt: message.sentAt }),
+          })),
+        });
+        return { roomId: imported.roomId, messageIds: [...imported.messageIds] };
+      },
     }),
     defineTool<z.output<typeof chatInviteInputSchema>, z.output<typeof chatInviteResultSchema>>({
       id: "chat.invite",
@@ -422,7 +540,6 @@ function serializeRoom(room: ChatRoomRecord) {
     })),
     createdAt: room.createdAt.toISOString(),
     updatedAt: room.updatedAt.toISOString(),
-    // Extra fields kept for web compatibility (not in chatRoomSchema strictly).
     settings:
       room.settings === null
         ? null
@@ -444,10 +561,13 @@ function serializeMessage(message: ChatMessageRecord) {
     bodyFormat: message.bodyFormat,
     metadata: message.metadata,
     attachmentObjectIds: [...message.attachmentObjectIds],
+    attachments: [...(message.attachments ?? [])],
+    reactions: (message.reactions ?? []).map(serializeReaction),
+    replyCount: message.replyCount ?? 0,
+    pin: message.pin === undefined || message.pin === null ? null : serializePin(message.pin),
     parentMessageId: message.parentMessageId ?? null,
-    ...(message.clientMessageId === undefined
-      ? {}
-      : { clientMessageId: message.clientMessageId }),
+    ...(message.clientMessageId === undefined ? {} : { clientMessageId: message.clientMessageId }),
+    revision: message.revision ?? 1,
     sentAt: message.sentAt.toISOString(),
     editedAt: message.editedAt?.toISOString() ?? null,
     deletedAt: message.deletedAt?.toISOString() ?? null,
@@ -501,5 +621,3 @@ function serializeSearchHit(hit: ChatSearchHit) {
 function toJsonObject(value: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
-
-

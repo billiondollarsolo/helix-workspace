@@ -6,7 +6,6 @@ import { defineConfig, type Plugin } from "vite";
 
 const standardChunkBudgetBytes = 500_000;
 const initialGraphBudgetBytes = 450_000;
-const passwordStrengthChunkBudgetBytes = 850_000;
 const devApiTarget =
   process.env.HELIX_E2E_API_BASE_URL ?? process.env.HELIX_API_BASE_URL ?? "http://localhost:3000";
 
@@ -32,33 +31,17 @@ export default defineConfig({
     },
   },
   server: {
-    // Dev: proxy the Helix backend surfaces to the local API server (:3000)
-    // so the SPA's relative `/api`, `/oauth`, `/trpc`, … calls reach it.
+    // Dev: proxy the canonical versioned API plus unversioned lifecycle probes
+    // to the local backend. Legacy product-route aliases are intentionally absent.
     proxy: Object.fromEntries(
-      [
-        "/api",
-        "/oauth",
-        "/trpc",
-        "/mcp",
-        "/v1",
-        "/healthz",
-        "/openapi.json",
-        "/openapi.yaml",
-        "/asyncapi.json",
-        "/metrics",
-        "/events",
-        "/ws",
-        "/sync",
-        "/dav",
-        "/.well-known",
-      ].map((path) => [path, { target: devApiTarget, changeOrigin: true, ws: true }]),
+      ["/v1", "/healthz", "/readyz"].map((path) => [
+        path,
+        { target: devApiTarget, changeOrigin: true, ws: true },
+      ]),
     ),
   },
   build: {
-    // The only intentionally larger lazy chunk is zxcvbn's password corpus.
-    // `enforceBundleBudgets` applies stricter graph-aware limits to every
-    // initial and non-password chunk.
-    chunkSizeWarningLimit: passwordStrengthChunkBudgetBytes / 1_000,
+    chunkSizeWarningLimit: standardChunkBudgetBytes / 1_000,
     rollupOptions: {
       output: {
         manualChunks: semanticVendorChunk,
@@ -94,9 +77,6 @@ function semanticVendorChunk(moduleId: string): string | undefined {
   }
   if (moduleId.includes("/@pdf-lib+") || isDependency(moduleId, "pako")) {
     return "vendor-pdf-codecs";
-  }
-  if (isDependency(moduleId, "zxcvbn")) {
-    return "password-strength";
   }
   return undefined;
 }
@@ -148,15 +128,9 @@ function enforceBundleBudgets(): Plugin {
 
       for (const chunk of chunks) {
         const bytes = Buffer.byteLength(chunk.code, "utf8");
-        const isPasswordStrengthChunk = Object.keys(chunk.modules).some((moduleId) =>
-          isDependency(moduleId, "zxcvbn"),
-        );
-        const budget = isPasswordStrengthChunk
-          ? passwordStrengthChunkBudgetBytes
-          : standardChunkBudgetBytes;
-        if (bytes > budget) {
+        if (bytes > standardChunkBudgetBytes) {
           violations.push(
-            `${chunk.fileName} is ${formatBytes(bytes)} (budget ${formatBytes(budget)})`,
+            `${chunk.fileName} is ${formatBytes(bytes)} (budget ${formatBytes(standardChunkBudgetBytes)})`,
           );
         }
       }

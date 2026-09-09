@@ -17,10 +17,9 @@
    - On API error, the sidebar renders an "offline" notice instead of any
      fabricated rows. */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Avatar } from "@/components/ui/avatar";
 import { Icons } from "@/components/icons";
@@ -38,6 +37,8 @@ import {
   type ChatMessageRecord,
   type ChatRoomRecord,
 } from "./api";
+import { ChatComposer, type ChatComposerSubmission } from "./chat-composer";
+import { ChatAttachmentGallery, ChatMessageContent } from "./message-content";
 import {
   chatMessageListInfiniteQueryOptions,
   chatPinsQueryOptions,
@@ -58,7 +59,6 @@ import {
   type ChatAboutView,
   type ChatMemberView,
   type ChatMessageView,
-  type ChatReactionView,
 } from "./view-model";
 import "./chat-shell.css";
 
@@ -144,12 +144,6 @@ export function ChatShell() {
     [activeRoom, selfActorId, realtime.presence],
   );
 
-  // Locally-applied reactions: the list/WS payloads carry no reactions, so we
-  // optimistically reflect the current actor's own reactions (see REPORT).
-  const [localReactions, setLocalReactions] = useState<Readonly<Record<string, readonly string[]>>>(
-    {},
-  );
-
   // History (infinite pages, each newest-first) + live (WS) + pending, oldest-first.
   const messageRecords = useMemo<readonly ChatMessageRecord[]>(() => {
     const pages = messagesQuery.data?.pages ?? [];
@@ -164,29 +158,22 @@ export function ChatShell() {
       byId.set(record.id, record);
     }
     return [...byId.values()]
-      .filter((m) => m.deletedAt === null)
+      .filter((m) => m.deletedAt === null && !realtime.deletedMessageIds.has(m.id))
       .sort((a, b) => Date.parse(a.sentAt) - Date.parse(b.sentAt));
-  }, [messagesQuery.data, realtime.liveMessages]);
+  }, [messagesQuery.data, realtime.liveMessages, realtime.deletedMessageIds]);
 
   const orderedIds = useMemo(() => messageRecords.map((m) => m.id), [messageRecords]);
 
   const messages = useMemo<readonly ChatMessageView[]>(() => {
-    const confirmed = messageRecords.map((record) => {
-      const mine = localReactions[record.id] ?? [];
-      const reactions: readonly ChatReactionView[] = mine.map((emoji) => ({
-        emoji,
-        count: 1,
-        mine: true,
-      }));
-      return toMessageView({
+    const confirmed = messageRecords.map((record) =>
+      toMessageView({
         record,
         selfActorId,
         nameForActor,
-        reactions,
         readBy: readCountFor(record.id, orderedIds, realtime.receipts, selfActorId),
         seenByActorIds: seenByForMessage(record.id, orderedIds, realtime.receipts, selfActorId),
-      });
-    });
+      }),
+    );
     const pending = realtime.pendingMessages
       .filter((p) => p.roomId === activeRoomId)
       .map((p) =>
@@ -197,9 +184,10 @@ export function ChatShell() {
             roomId: p.roomId,
             actorId: selfActorId,
             body: p.body,
-            bodyFormat: "plain",
+            bodyFormat: p.bodyFormat,
             metadata: {},
-            attachmentObjectIds: [],
+            attachmentObjectIds: p.attachmentObjectIds,
+            attachments: p.attachments,
             sentAt: p.createdAt,
             editedAt: null,
             deletedAt: null,
@@ -209,7 +197,6 @@ export function ChatShell() {
           },
           selfActorId,
           nameForActor,
-          reactions: [],
           readBy: 0,
           seenByActorIds: [],
           pending: p.status === "pending",
@@ -220,7 +207,6 @@ export function ChatShell() {
     return [...confirmed, ...pending];
   }, [
     messageRecords,
-    localReactions,
     selfActorId,
     nameForActor,
     orderedIds,
@@ -242,6 +228,11 @@ export function ChatShell() {
   const about: ChatAboutView = useMemo(() => roomAbout(activeRoom), [activeRoom]);
   const members: readonly ChatMemberView[] = useMemo(() => roomMembers(activeRoom), [activeRoom]);
   const roomName = activeRoom ? roomDisplayName(activeRoom, selfActorId) : "Chat";
+  const activeRole = activeRoom?.members.find((member) => member.actorId === selfActorId)?.role;
+  const canPost =
+    activeRoom?.settings?.spaceType !== "announcement" ||
+    activeRole === "owner" ||
+    activeRole === "moderator";
 
   const threadMessage = threadId ? (messages.find((m) => m.id === threadId) ?? null) : null;
 
@@ -263,11 +254,11 @@ export function ChatShell() {
   }, [queryClient]);
 
   const sendMutation = useMutation({
-    mutationFn: (body: string) => {
+    mutationFn: (submission: ChatComposerSubmission) => {
       if (activeRoomId === undefined) {
         return Promise.reject(new Error("No room selected"));
       }
-      return sendChatMessage({ roomId: activeRoomId, body });
+      return sendChatMessage({ roomId: activeRoomId, ...submission });
     },
     onMutate: clearActionError,
     onError: () => {
@@ -277,12 +268,16 @@ export function ChatShell() {
   });
 
   const reactMutation = useMutation({
-    mutationFn: (input: { readonly messageId: string; readonly emoji: string }) =>
-      reactToChatMessage({ messageId: input.messageId, emoji: input.emoji, op: "add" }),
+    mutationFn: (input: {
+      readonly messageId: string;
+      readonly emoji: string;
+      readonly op: "add" | "remove";
+    }) => reactToChatMessage(input),
     onMutate: clearActionError,
     onError: () => {
-      setActionError("Couldn’t add the reaction. Try again.");
+      setActionError("Couldn’t update the reaction. Try again.");
     },
+    onSuccess: invalidateMessages,
   });
 
   const editMutation = useMutation({
@@ -305,14 +300,18 @@ export function ChatShell() {
   });
 
   const handleSend = useCallback(
-    (body: string) => {
-      const trimmed = body.trim();
-      if (trimmed.length === 0 || activeRoomId === undefined) {
+    (submission: ChatComposerSubmission) => {
+      const body = submission.body.trim();
+      if (
+        (body.length === 0 && submission.attachmentObjectIds.length === 0) ||
+        activeRoomId === undefined
+      ) {
         return;
       }
+      const message = { ...submission, body };
       // Prefer the live socket; fall back to the REST tool when it is closed.
-      if (!realtime.sendMessage(trimmed)) {
-        sendMutation.mutate(trimmed);
+      if (!realtime.sendMessage(message)) {
+        sendMutation.mutate(message);
       }
     },
     [activeRoomId, realtime, sendMutation],
@@ -320,16 +319,12 @@ export function ChatShell() {
 
   const handleReact = useCallback(
     (messageId: string, emoji: string) => {
-      setLocalReactions((prev) => {
-        const current = prev[messageId] ?? [];
-        if (current.includes(emoji)) {
-          return prev;
-        }
-        return { ...prev, [messageId]: [...current, emoji] };
-      });
-      reactMutation.mutate({ messageId, emoji });
+      const mine = messages
+        .find((message) => message.id === messageId)
+        ?.reactions.some((reaction) => reaction.emoji === emoji && reaction.mine);
+      reactMutation.mutate({ messageId, emoji, op: mine === true ? "remove" : "add" });
     },
-    [reactMutation],
+    [messages, reactMutation],
   );
 
   const handleEdit = useCallback(
@@ -358,10 +353,24 @@ export function ChatShell() {
       readonly kind: "chat_room" | "chat_dm";
       readonly subject?: string;
       readonly memberActorIds: readonly string[];
+      readonly readReceiptsEnabled: boolean;
+      readonly spaceType?: "conversation" | "announcement" | "project";
+      readonly historyPolicy: "full" | "since_join" | "off";
+      readonly retentionDays: number | null;
+      readonly legalHold: boolean;
+      readonly notificationPolicy: "all" | "mentions" | "none";
+      readonly externalAccess: "internal" | "guests" | "federated";
     }) =>
       createChatRoom({
         kind: input.kind,
         memberActorIds: [...input.memberActorIds],
+        readReceiptsEnabled: input.readReceiptsEnabled,
+        ...(input.spaceType === undefined ? {} : { spaceType: input.spaceType }),
+        historyPolicy: input.historyPolicy,
+        retentionDays: input.retentionDays,
+        legalHold: input.legalHold,
+        notificationPolicy: input.notificationPolicy,
+        externalAccess: input.externalAccess,
         ...(input.subject === undefined ? {} : { subject: input.subject }),
       }),
     onSuccess: (room) => {
@@ -408,14 +417,16 @@ export function ChatShell() {
   });
 
   const handleThreadReply = useCallback(
-    (body: string) => {
+    (submission: ChatComposerSubmission) => {
       if (activeRoomId === undefined || threadId === null) {
         return;
       }
       void replyInThread({
         roomId: activeRoomId,
         parentMessageId: threadId,
-        body,
+        body: submission.body,
+        bodyFormat: submission.bodyFormat,
+        attachmentObjectIds: submission.attachmentObjectIds,
       }).then(() => {
         invalidateMessages();
       });
@@ -475,7 +486,7 @@ export function ChatShell() {
             offline={offline}
             messages={messages}
             threadId={threadId}
-            hasOlder={messagesQuery.hasNextPage === true}
+            hasOlder={messagesQuery.hasNextPage}
             loadingOlder={messagesQuery.isFetchingNextPage}
             onLoadOlder={() => {
               void messagesQuery.fetchNextPage();
@@ -500,8 +511,9 @@ export function ChatShell() {
           <ChatTypingIndicator names={realtime.typingActorIds.map((id) => nameForActor(id))} />
 
           <ChatComposer
-            placeholder={`Message #${roomName}`}
-            disabled={activeRoomId === undefined && !offline}
+            roomId={activeRoomId}
+            placeholder={canPost ? `Message #${roomName}` : "Only announcers can post here"}
+            disabled={activeRoomId === undefined || offline || !canPost}
             onSend={handleSend}
             onTyping={realtime.setTyping}
           />
@@ -509,12 +521,14 @@ export function ChatShell() {
 
         {threadMessage ? (
           <ChatThreadPanel
+            roomId={activeRoomId}
             spaceName={roomName}
             parent={threadMessage}
             onClose={() => {
               setThreadId(null);
             }}
             onReply={handleThreadReply}
+            onTyping={realtime.setTyping}
           />
         ) : (
           <ChatInfoPanel
@@ -568,6 +582,13 @@ interface ChatSidebarProps {
     readonly kind: "chat_room" | "chat_dm";
     readonly subject?: string;
     readonly memberActorIds: readonly string[];
+    readonly readReceiptsEnabled: boolean;
+    readonly spaceType?: "conversation" | "announcement" | "project";
+    readonly historyPolicy: "full" | "since_join" | "off";
+    readonly retentionDays: number | null;
+    readonly legalHold: boolean;
+    readonly notificationPolicy: "all" | "mentions" | "none";
+    readonly externalAccess: "internal" | "guests" | "federated";
   }) => void;
 }
 
@@ -583,6 +604,25 @@ function ChatSidebar({
   const [creating, setCreating] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftKind, setDraftKind] = useState<"chat_room" | "chat_dm">("chat_room");
+  const [draftSpaceType, setDraftSpaceType] = useState<"conversation" | "announcement" | "project">(
+    "conversation",
+  );
+  const [draftReadReceipts, setDraftReadReceipts] = useState(true);
+  const [draftHistoryPolicy, setDraftHistoryPolicy] = useState<"full" | "since_join" | "off">(
+    "full",
+  );
+  const [draftRetentionDays, setDraftRetentionDays] = useState("");
+  const [draftLegalHold, setDraftLegalHold] = useState(false);
+  const [draftNotificationPolicy, setDraftNotificationPolicy] = useState<
+    "all" | "mentions" | "none"
+  >("all");
+  const [draftExternalAccess, setDraftExternalAccess] = useState<
+    "internal" | "guests" | "federated"
+  >("guests");
+  const retentionDays = draftRetentionDays === "" ? null : Number(draftRetentionDays);
+  const retentionIsValid =
+    retentionDays === null ||
+    (Number.isInteger(retentionDays) && retentionDays >= 1 && retentionDays <= 36_500);
 
   return (
     <aside className="surf-sidebar chat-sidebar" aria-label="Spaces and direct messages">
@@ -612,6 +652,75 @@ function ChatSidebar({
             <option value="chat_room">Space</option>
             <option value="chat_dm">Direct message</option>
           </select>
+          {draftKind === "chat_room" ? (
+            <select
+              aria-label="Space type"
+              value={draftSpaceType}
+              onChange={(event) => {
+                setDraftSpaceType(
+                  event.target.value as "conversation" | "announcement" | "project",
+                );
+              }}
+            >
+              <option value="conversation">Conversation</option>
+              <option value="announcement">Announcement</option>
+              <option value="project">Project</option>
+            </select>
+          ) : null}
+          <select
+            aria-label="History policy"
+            value={draftHistoryPolicy}
+            onChange={(event) => {
+              setDraftHistoryPolicy(event.target.value as "full" | "since_join" | "off");
+            }}
+          >
+            <option value="full">Full history</option>
+            <option value="since_join">History since joining</option>
+            <option value="off">History off</option>
+          </select>
+          <select
+            aria-label="Notification policy"
+            value={draftNotificationPolicy}
+            onChange={(event) => {
+              setDraftNotificationPolicy(event.target.value as "all" | "mentions" | "none");
+            }}
+          >
+            <option value="all">All messages</option>
+            <option value="mentions">Mentions only</option>
+            <option value="none">No notifications</option>
+          </select>
+          <select
+            aria-label="External access"
+            value={draftExternalAccess}
+            onChange={(event) => {
+              setDraftExternalAccess(event.target.value as "internal" | "guests" | "federated");
+            }}
+          >
+            <option value="internal">Internal only</option>
+            <option value="guests">Guests allowed</option>
+            <option value="federated">Federated partners</option>
+          </select>
+          <input
+            type="number"
+            min={1}
+            max={36_500}
+            aria-label="Retention days"
+            placeholder="Retention days (optional)"
+            value={draftRetentionDays}
+            onChange={(event) => {
+              setDraftRetentionDays(event.target.value);
+            }}
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={draftLegalHold}
+              onChange={(event) => {
+                setDraftLegalHold(event.target.checked);
+              }}
+            />
+            Legal hold
+          </label>
           <input
             type="text"
             aria-label="Name or member actor id"
@@ -621,19 +730,56 @@ function ChatSidebar({
               setDraftName(e.target.value);
             }}
           />
+          <label>
+            <input
+              type="checkbox"
+              checked={draftReadReceipts}
+              onChange={(event) => {
+                setDraftReadReceipts(event.target.checked);
+              }}
+            />
+            Share read receipts
+          </label>
           <button
             type="button"
             className="btn primary sm"
-            disabled={draftName.trim().length === 0}
+            disabled={draftName.trim().length === 0 || !retentionIsValid}
             onClick={() => {
               const name = draftName.trim();
               if (name.length === 0) return;
               if (draftKind === "chat_dm") {
-                onCreateRoom({ kind: "chat_dm", memberActorIds: [name] });
+                onCreateRoom({
+                  kind: "chat_dm",
+                  memberActorIds: [name],
+                  readReceiptsEnabled: draftReadReceipts,
+                  historyPolicy: draftHistoryPolicy,
+                  retentionDays,
+                  legalHold: draftLegalHold,
+                  notificationPolicy: draftNotificationPolicy,
+                  externalAccess: draftExternalAccess,
+                });
               } else {
-                onCreateRoom({ kind: "chat_room", subject: name, memberActorIds: [] });
+                onCreateRoom({
+                  kind: "chat_room",
+                  subject: name,
+                  memberActorIds: [],
+                  readReceiptsEnabled: draftReadReceipts,
+                  spaceType: draftSpaceType,
+                  historyPolicy: draftHistoryPolicy,
+                  retentionDays,
+                  legalHold: draftLegalHold,
+                  notificationPolicy: draftNotificationPolicy,
+                  externalAccess: draftExternalAccess,
+                });
               }
               setDraftName("");
+              setDraftReadReceipts(true);
+              setDraftSpaceType("conversation");
+              setDraftHistoryPolicy("full");
+              setDraftRetentionDays("");
+              setDraftLegalHold(false);
+              setDraftNotificationPolicy("all");
+              setDraftExternalAccess("guests");
               setCreating(false);
             }}
           >
@@ -754,16 +900,6 @@ function ChatChannelHeader({ name, memberCount, onInvite }: ChatChannelHeaderPro
             }}
           >
             <Icons.Plus size={16} />
-          </button>
-        </Tooltip>
-        <Tooltip label="Pinned" side="bottom">
-          <button type="button" className="icon-btn" aria-label="Pinned messages">
-            <Icons.Pin size={16} />
-          </button>
-        </Tooltip>
-        <Tooltip label="Notifications" side="bottom">
-          <button type="button" className="icon-btn" aria-label="Notification settings">
-            <Icons.Bell size={16} />
           </button>
         </Tooltip>
       </div>
@@ -1135,7 +1271,13 @@ function ChatMessageRow({
             </div>
           </div>
         ) : (
-          <p className="chat-msg-line">{message.body}</p>
+          <>
+            <ChatMessageContent body={message.body} bodyFormat={message.bodyFormat} />
+            <ChatAttachmentGallery
+              attachments={message.attachments}
+              attachmentObjectIds={message.attachmentObjectIds}
+            />
+          </>
         )}
 
         {message.reactions.length > 0 ? (
@@ -1292,159 +1434,26 @@ function ChatTypingIndicator({ names }: { readonly names: readonly string[] }) {
 }
 
 /* ----------------------------------------------------------------
-   Composer (channel)
-   ---------------------------------------------------------------- */
-
-interface ChatComposerProps {
-  readonly placeholder: string;
-  readonly disabled: boolean;
-  readonly onSend: (body: string) => void;
-  readonly onTyping: (isTyping: boolean) => void;
-}
-
-function ChatComposer({ placeholder, disabled, onSend, onTyping }: ChatComposerProps) {
-  const [draft, setDraft] = useState("");
-  const typingRef = useRef(false);
-
-  const stopTyping = useCallback(() => {
-    if (typingRef.current) {
-      typingRef.current = false;
-      onTyping(false);
-    }
-  }, [onTyping]);
-
-  // A debounced "stop typing" — re-armed on every keystroke, fires once the
-  // composer goes quiet (replaces a native timeout, per Pacer discipline).
-  const scheduleStopTyping = useDebouncedCallback(stopTyping, { wait: 3000 });
-
-  useEffect(() => stopTyping, [stopTyping]);
-
-  const handleChange = (value: string) => {
-    setDraft(value);
-    if (value.trim().length > 0) {
-      if (!typingRef.current) {
-        typingRef.current = true;
-        onTyping(true);
-      }
-      scheduleStopTyping();
-    } else {
-      stopTyping();
-    }
-  };
-
-  const submit = () => {
-    const trimmed = draft.trim();
-    if (trimmed.length === 0) {
-      return;
-    }
-    onSend(trimmed);
-    setDraft("");
-    stopTyping();
-  };
-
-  return (
-    <div className="chat-composer-wrap">
-      <div className="chat-composer">
-        <div className="chat-composer-toolbar chat-composer-toolbar-top">
-          <ToolbarButton label="Bold">
-            <Icons.Bold size={16} />
-          </ToolbarButton>
-          <ToolbarButton label="Italic">
-            <Icons.Italic size={16} />
-          </ToolbarButton>
-          <ToolbarButton label="Link">
-            <Icons.Link size={16} />
-          </ToolbarButton>
-          <ToolbarButton label="List">
-            <Icons.List size={16} />
-          </ToolbarButton>
-          <ToolbarButton label="Code">
-            <Icons.Code size={16} />
-          </ToolbarButton>
-        </div>
-        <textarea
-          className="chat-composer-input"
-          rows={4}
-          placeholder={placeholder}
-          aria-label={placeholder}
-          value={draft}
-          disabled={disabled}
-          onChange={(event) => {
-            handleChange(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              submit();
-            }
-          }}
-        />
-        <div className="chat-composer-toolbar">
-          <ToolbarButton label="Attach">
-            <Icons.Paperclip size={16} />
-          </ToolbarButton>
-          <ToolbarButton label="Emoji">
-            <Icons.Smile size={16} />
-          </ToolbarButton>
-          <ToolbarButton label="Helix AI">
-            <Icons.Sparkles size={16} />
-          </ToolbarButton>
-          <div className="chat-composer-spacer" />
-          <button
-            type="button"
-            className="btn primary sm"
-            disabled={disabled || draft.trim().length === 0}
-            onClick={submit}
-          >
-            <Icons.Send size={14} />
-            Send
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ToolbarButton({
-  label,
-  children,
-}: {
-  readonly label: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    <Tooltip label={label} side="bottom">
-      <button type="button" className="icon-btn" aria-label={label}>
-        {children}
-      </button>
-    </Tooltip>
-  );
-}
-
-/* ----------------------------------------------------------------
    Thread panel — 360px
    ---------------------------------------------------------------- */
 
 interface ChatThreadPanelProps {
+  readonly roomId: string | undefined;
   readonly spaceName: string;
   readonly parent: ChatMessageView;
   readonly onClose: () => void;
-  readonly onReply: (body: string) => void;
+  readonly onReply: (submission: ChatComposerSubmission) => void;
+  readonly onTyping: (isTyping: boolean) => void;
 }
 
-function ChatThreadPanel({ spaceName, parent, onClose, onReply }: ChatThreadPanelProps) {
-  const [reply, setReply] = useState("");
-
-  const submit = () => {
-    const trimmed = reply.trim();
-    if (trimmed.length === 0) {
-      return;
-    }
-    // Threads share the room channel — replies post into the active room.
-    onReply(trimmed);
-    setReply("");
-  };
-
+function ChatThreadPanel({
+  roomId,
+  spaceName,
+  parent,
+  onClose,
+  onReply,
+  onTyping,
+}: ChatThreadPanelProps) {
   return (
     <aside className="chat-thread-panel" aria-label="Thread">
       <header className="chat-thread-header">
@@ -1470,51 +1479,25 @@ function ChatThreadPanel({ spaceName, parent, onClose, onReply }: ChatThreadPane
               <span className="chat-thread-author">{parent.authorName}</span>
               <span className="chat-thread-time">{parent.time}</span>
             </div>
-            <p className="chat-thread-line">{parent.body}</p>
+            <ChatMessageContent body={parent.body} bodyFormat={parent.bodyFormat} />
+            <ChatAttachmentGallery
+              attachments={parent.attachments}
+              attachmentObjectIds={parent.attachmentObjectIds}
+            />
           </div>
         </div>
 
         <div className="chat-thread-divider">Reply in #{spaceName}</div>
       </div>
 
-      <div className="chat-thread-composer-wrap">
-        <div className="chat-thread-composer">
-          <textarea
-            className="chat-thread-composer-input"
-            rows={2}
-            placeholder="Reply…"
-            aria-label="Reply to thread"
-            value={reply}
-            onChange={(event) => {
-              setReply(event.target.value);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                submit();
-              }
-            }}
-          />
-          <div className="chat-composer-toolbar">
-            <ToolbarButton label="Attach">
-              <Icons.Paperclip size={13} />
-            </ToolbarButton>
-            <ToolbarButton label="Emoji">
-              <Icons.Smile size={13} />
-            </ToolbarButton>
-            <div className="chat-composer-spacer" />
-            <button
-              type="button"
-              className="btn primary sm chat-thread-send"
-              aria-label="Send reply"
-              disabled={reply.trim().length === 0}
-              onClick={submit}
-            >
-              <Icons.Send size={12} />
-            </button>
-          </div>
-        </div>
-      </div>
+      <ChatComposer
+        roomId={roomId}
+        placeholder="Reply to thread…"
+        disabled={roomId === undefined}
+        compact
+        onSend={onReply}
+        onTyping={onTyping}
+      />
     </aside>
   );
 }
@@ -1568,16 +1551,6 @@ function ChatInfoPanel({ tab, onTabChange, about, members, pins, onInvite }: Cha
               Created by {about.createdBy}
               {about.createdAt.length > 0 ? ` · ${about.createdAt}` : ""}
             </p>
-            <div className="chat-info-about-actions">
-              <button type="button" className="btn sm">
-                <Icons.Bell size={13} />
-                Notify
-              </button>
-              <button type="button" className="btn sm">
-                <Icons.Pin size={13} />
-                Pinned
-              </button>
-            </div>
           </>
         ) : null}
 

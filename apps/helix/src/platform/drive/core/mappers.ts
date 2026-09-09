@@ -28,7 +28,7 @@ export interface MapObjectEntryInput {
   readonly owner_actor_id: string | null;
   readonly storage_key: string;
   readonly mime_type: string;
-  readonly byte_size: number;
+  readonly byte_size: string | number;
   readonly sha256: string | null;
   readonly metadata: JsonObject;
   readonly deleted_at: Date | null;
@@ -37,20 +37,22 @@ export interface MapObjectEntryInput {
   readonly version_number?: number | null;
   readonly mine?: boolean;
   readonly shared_count?: string | number | null;
+  readonly starred?: boolean;
   readonly preview?: DrivePreview;
 }
 
 export function mapObjectEntry(row: MapObjectEntryInput): DriveEntryRecord {
-  const metadata =
-    row.mine === undefined && row.shared_count === undefined
-      ? row.metadata
-      : {
-          ...row.metadata,
-          ...(typeof row.mine === "boolean" ? { mine: row.mine } : {}),
-          ...(row.shared_count === undefined || row.shared_count === null
-            ? {}
-            : { sharedCount: bytesFromDatabase(row.shared_count) }),
-        };
+  const metadataWithoutLegacyStar = Object.fromEntries(
+    Object.entries(row.metadata).filter(([key]) => key !== "starred"),
+  );
+  const metadata: JsonObject = {
+    ...metadataWithoutLegacyStar,
+    ...(row.starred === true ? { starred: true } : {}),
+    ...(typeof row.mine === "boolean" ? { mine: row.mine } : {}),
+    ...(row.shared_count === undefined || row.shared_count === null
+      ? {}
+      : { sharedCount: bytesFromDatabase(row.shared_count) }),
+  };
   return {
     id: row.id,
     type: "file",
@@ -59,7 +61,7 @@ export function mapObjectEntry(row: MapObjectEntryInput): DriveEntryRecord {
     ownerActorId: row.owner_actor_id,
     app: stringMetadata(row.metadata, "app") ?? null,
     mimeType: row.mime_type,
-    byteSize: row.byte_size,
+    byteSize: bytesFromDatabase(row.byte_size),
     sha256: row.sha256,
     storageKey: row.storage_key,
     versionNumber: row.version_number ?? undefined,
@@ -102,7 +104,7 @@ export interface MapVersionInput {
   readonly version_number: number;
   readonly storage_key: string;
   readonly mime_type: string;
-  readonly byte_size: number;
+  readonly byte_size: string | number;
   readonly sha256: string;
   readonly metadata: JsonObject;
   readonly created_by_actor_id: string | null;
@@ -117,7 +119,7 @@ export function mapVersion(row: MapVersionInput): DriveVersionRecord {
     versionNumber: row.version_number,
     storageKey: row.storage_key,
     mimeType: row.mime_type,
-    byteSize: row.byte_size,
+    byteSize: bytesFromDatabase(row.byte_size),
     sha256: row.sha256,
     metadata: row.metadata,
     createdByActorId: row.created_by_actor_id,
@@ -129,7 +131,7 @@ export interface MapSearchHitInput {
   readonly id: string;
   readonly storage_key: string;
   readonly mime_type: string;
-  readonly byte_size: number;
+  readonly byte_size: string | number;
   readonly sha256: string | null;
   readonly metadata: JsonObject;
   readonly updated_at: Date;
@@ -142,7 +144,7 @@ export function mapSearchHit(row: MapSearchHitInput): DriveSearchHit {
     objectId: row.id,
     name,
     mimeType: row.mime_type,
-    byteSize: row.byte_size,
+    byteSize: bytesFromDatabase(row.byte_size),
     sha256: row.sha256,
     folderId: nullableStringMetadata(row.metadata, "folderId"),
     preview: `${name} ${row.mime_type}`.slice(0, 240),

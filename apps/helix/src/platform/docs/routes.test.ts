@@ -37,53 +37,6 @@ const actor: Actor = {
 };
 
 describe("docs sync routes", () => {
-  it("sends ready state, broadcasts updates, and compacts the latest state", async () => {
-    const store = new FakeDocsStore();
-    const firstSocket = new FakeSocket();
-    const secondSocket = new FakeSocket();
-    const state = {
-      rooms: new Map<string, Set<Parameters<typeof handleDocsSocket>[0]>>(),
-      compactions: new Map<string, NodeJS.Timeout>(),
-    };
-
-    await handleDocsSocket(firstSocket, requestFor(docId), options(store), state);
-    await handleDocsSocket(secondSocket, requestFor(docId), options(store), state);
-    firstSocket.receive({
-      type: "update",
-      updateBase64: Buffer.from("incremental update", "utf8").toString("base64"),
-      stateBase64: Buffer.from("# Synced title\n", "utf8").toString("base64"),
-      metadata: { source: "test" },
-    });
-    await settle();
-    await vi.waitFor(() => {
-      expect(store.compactions).toHaveLength(1);
-    });
-
-    expect(firstSocket.messages[0]).toMatchObject({
-      type: "ready",
-      documentId: docId,
-      updateSeq: 4,
-      stateBase64: Buffer.from("# Initial title\n", "utf8").toString("base64"),
-    });
-    expect(secondSocket.messages[0]).toMatchObject({ type: "ready", documentId: docId });
-    expect(firstSocket.messages.map((message) => message.type)).toContain("update");
-    expect(secondSocket.messages.map((message) => message.type)).toContain("update");
-    expect(store.updates).toEqual([
-      {
-        actorId: actor.id,
-        documentId: docId,
-        metadata: {
-          source: "test",
-          stateBase64: Buffer.from("# Synced title\n", "utf8").toString("base64"),
-        },
-        text: "incremental update",
-      },
-    ]);
-    expect(store.compactions).toEqual([
-      { documentId: docId, stateVectorPersisted: false, text: "# Synced title\n" },
-    ]);
-  });
-
   it("closes inaccessible documents before registering message handlers", async () => {
     const store = new FakeDocsStore({ accessible: false });
     const socket = new FakeSocket();
@@ -98,33 +51,32 @@ describe("docs sync routes", () => {
     expect(socket.messageHandlerCount).toBe(0);
   });
 
-  it("enforces the concurrent editor quota across legacy and Yjs sockets", async () => {
+  it("enforces the concurrent editor quota across Yjs sockets", async () => {
     const store = new FakeDocsStore();
-    const legacySocket = new FakeSocket();
-    const blockedYjsSocket = new FakeSocket();
+    const firstSocket = new FakeSocket();
+    const blockedSocket = new FakeSocket();
     const state = {
-      rooms: new Map<string, Set<Parameters<typeof handleDocsSocket>[0]>>(),
+      rooms: new Map(),
       compactions: new Map<string, NodeJS.Timeout>(),
-      yjsRooms: new Map(),
     };
     const routeOptions = options(store, { concurrentEditorLimit: 1 });
 
-    await handleDocsSocket(legacySocket, requestFor(docId), routeOptions, state);
-    await handleDocsSocket(blockedYjsSocket, yjsRequestFor(docId), routeOptions, state);
+    await handleDocsSocket(firstSocket, requestFor(docId), routeOptions, state);
+    await handleDocsSocket(blockedSocket, requestFor(docId), routeOptions, state);
 
-    expect(legacySocket.closed).toBeNull();
-    expect(blockedYjsSocket.closed).toEqual({
+    expect(firstSocket.closed).toBeNull();
+    expect(blockedSocket.closed).toEqual({
       code: 1008,
       reason: "Concurrent editor quota exceeded",
     });
-    expect(blockedYjsSocket.messageHandlerCount).toBe(0);
+    expect(blockedSocket.messageHandlerCount).toBe(0);
 
-    legacySocket.close();
-    const nextYjsSocket = new FakeSocket();
-    await handleDocsSocket(nextYjsSocket, yjsRequestFor(docId), routeOptions, state);
+    firstSocket.close();
+    const nextSocket = new FakeSocket();
+    await handleDocsSocket(nextSocket, requestFor(docId), routeOptions, state);
 
-    expect(nextYjsSocket.closed).toBeNull();
-    expect(nextYjsSocket.binaryMessages.length).toBeGreaterThan(0);
+    expect(nextSocket.closed).toBeNull();
+    expect(nextSocket.binaryMessages.length).toBeGreaterThan(0);
   });
 
   it("treats a null concurrent editor quota as unlimited", async () => {
@@ -132,9 +84,8 @@ describe("docs sync routes", () => {
     const firstSocket = new FakeSocket();
     const secondSocket = new FakeSocket();
     const state = {
-      rooms: new Map<string, Set<Parameters<typeof handleDocsSocket>[0]>>(),
+      rooms: new Map(),
       compactions: new Map<string, NodeJS.Timeout>(),
-      yjsRooms: new Map(),
     };
 
     await handleDocsSocket(
@@ -145,7 +96,7 @@ describe("docs sync routes", () => {
     );
     await handleDocsSocket(
       secondSocket,
-      yjsRequestFor(docId),
+      requestFor(docId),
       options(store, { concurrentEditorLimit: null }),
       state,
     );
@@ -181,7 +132,7 @@ describe("docs sync routes", () => {
           quantity: 3,
           metadata: {
             surface: "docs.sync",
-            protocol: "legacy-json",
+            protocol: "yjs",
             duration_seconds: 3,
           },
         },
@@ -210,12 +161,12 @@ describe("docs sync routes", () => {
     const firstSocket = new FakeSocket();
     const secondSocket = new FakeSocket();
     const state = {
-      rooms: new Map<string, Set<Parameters<typeof handleDocsSocket>[0]>>(),
+      rooms: new Map(),
       compactions: new Map<string, NodeJS.Timeout>(),
     };
 
-    await handleDocsSocket(firstSocket, yjsRequestFor(docId), options(store), state);
-    await handleDocsSocket(secondSocket, yjsRequestFor(docId), options(store), state);
+    await handleDocsSocket(firstSocket, requestFor(docId), options(store), state);
+    await handleDocsSocket(secondSocket, requestFor(docId), options(store), state);
 
     expect(firstSocket.messages).toEqual([]);
     expect(firstSocket.binaryMessages.length).toBeGreaterThan(0);
@@ -301,30 +252,13 @@ function captureWebsocketApp(): {
 }
 
 describe("docs graceful-shutdown broadcast (PRD §16.3 step 4)", () => {
-  it("sends a host-shutting-down frame and closes plain-JSON sync sockets", async () => {
+  it("closes Yjs sockets cleanly with the shutdown close frame", async () => {
     const store = new FakeDocsStore();
     const { app, connect } = captureWebsocketApp();
     const handle = await registerDocsRoutes(app, options(store));
 
     const socket = new FakeSocket();
     await connect(socket, requestFor(docId));
-
-    handle.broadcastShutdown();
-
-    expect(socket.messages.at(-1)).toEqual({
-      type: "shutdown",
-      reason: "host shutting down",
-    });
-    expect(socket.closed).toEqual({ code: 1001, reason: "host shutting down" });
-  });
-
-  it("closes Yjs-protocol sockets cleanly with the shutdown close frame", async () => {
-    const store = new FakeDocsStore();
-    const { app, connect } = captureWebsocketApp();
-    const handle = await registerDocsRoutes(app, options(store));
-
-    const socket = new FakeSocket();
-    await connect(socket, yjsRequestFor(docId));
 
     handle.broadcastShutdown();
 
@@ -364,11 +298,7 @@ describe("docs yjs.sync span coverage (P2-6)", () => {
         rooms: new Map(),
         compactions: new Map(),
       });
-      socket.receive({
-        type: "update",
-        updateBase64: Buffer.from("trace update", "utf8").toString("base64"),
-        metadata: {},
-      });
+      socket.receiveRaw(syncStep1Message(new Y.Doc()));
       await settle();
 
       const span = harness.spans().find((candidate) => candidate.name === "yjs.sync");
@@ -383,10 +313,6 @@ describe("docs yjs.sync span coverage (P2-6)", () => {
 
 function requestFor(documentId: string): FastifyRequest {
   return { params: { docId: documentId } } as FastifyRequest;
-}
-
-function yjsRequestFor(documentId: string): FastifyRequest {
-  return { params: { docId: documentId }, query: { protocol: "yjs" } } as FastifyRequest;
 }
 
 class FakeSocket {
@@ -436,12 +362,6 @@ class FakeSocket {
       return;
     }
     this.#errorHandlers.push(handler as (error: Error) => void);
-  }
-
-  receive(payload: unknown): void {
-    for (const handler of this.#messageHandlers) {
-      handler(JSON.stringify(payload));
-    }
   }
 
   receiveRaw(payload: Buffer): void {
@@ -703,10 +623,10 @@ function documentRecord(
     threadId: null,
     ownerActorId: actor.id,
     createdByActorId: actor.id,
-    ydocState: overrides.state ?? Buffer.from("# Initial title\n", "utf8"),
+    ydocState: overrides.state ?? yjsState("# Initial title\n"),
     ydocStateVector: null,
     updateSeq: overrides.updateSeq ?? 4,
-    editorEngine: overrides.editorEngine ?? "legacy-yjs",
+    editorEngine: overrides.editorEngine ?? "helix-native-document",
     formatVersion: 1,
     metadata: {},
     deletedAt: null,
@@ -724,6 +644,12 @@ function syncStep1Message(doc: Y.Doc): Buffer {
   encoding.writeVarUint(encoder, 0);
   syncProtocol.writeSyncStep1(encoder, doc);
   return Buffer.from(encoding.toUint8Array(encoder));
+}
+
+function yjsState(markdown: string): Buffer {
+  const doc = new Y.Doc();
+  doc.getText("markdown").insert(0, markdown);
+  return Buffer.from(Y.encodeStateAsUpdate(doc));
 }
 
 function syncUpdateMessage(update: Uint8Array): Buffer {

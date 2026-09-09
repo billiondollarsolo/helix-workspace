@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { EventBus, EventEnvelope, Unsubscribe } from "@helix/sdk-types";
 import { ForbiddenError, UnauthorizedError } from "../../api/api-error.js";
 
@@ -31,12 +31,13 @@ export interface RegisterMailStreamOptions {
 /**
  * Map an activity.mail.* outbox subject + payload into a client SSE frame.
  * Returns null when the event is not relevant (wrong subject shape / missing
- * threadId / org mismatch). Pure — unit-tested without sockets.
+ * threadId / mailbox mismatch). Pure — unit-tested without sockets.
  */
 export function frameForMailActivity(input: {
   readonly subject: string;
   readonly payload: unknown;
   readonly actorOrgId: string;
+  readonly actorId: string;
 }): MailStreamFrame | null {
   const type: MailStreamEventType | null =
     input.subject === "activity.mail.received"
@@ -63,11 +64,17 @@ export function frameForMailActivity(input: {
       : typeof payload.org_id === "string"
         ? payload.org_id
         : null;
-  if (threadId === null || orgId === null) {
+  const actorId =
+    typeof payload.actorId === "string"
+      ? payload.actorId
+      : typeof payload.actor_id === "string"
+        ? payload.actor_id
+        : null;
+  if (threadId === null || orgId === null || actorId === null) {
     return null;
   }
-  // Authz filter: never deliver another org's activity to this connection.
-  if (orgId !== input.actorOrgId) {
+  // Authz filter: activity is private to the mailbox that owns its state row.
+  if (orgId !== input.actorOrgId || actorId !== input.actorId) {
     return null;
   }
   return { type, threadId, orgId };
@@ -108,6 +115,7 @@ export function registerMailStreamRoutes(
         subject: event.subject,
         payload: event.payload,
         actorOrgId: actor.orgId,
+        actorId: actor.id,
       });
       if (frame === null) {
         return;
@@ -149,6 +157,7 @@ export async function handleMailStreamEventForTest(
     readonly subject: string;
     readonly payload: unknown;
     readonly actorOrgId: string;
+    readonly actorId: string;
   },
 ): Promise<boolean> {
   const frame = frameForMailActivity(input);
@@ -158,6 +167,3 @@ export async function handleMailStreamEventForTest(
   reply.write(formatMailSseEvent(frame));
   return true;
 }
-
-// Keep FastifyReply type referenced for future auth middleware composition.
-export type { FastifyReply };

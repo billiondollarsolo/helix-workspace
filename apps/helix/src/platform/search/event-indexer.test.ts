@@ -55,11 +55,15 @@ describe("SearchEventIndexer", () => {
 
   it("applies deletes and reports indexer errors without blocking later indexers", async () => {
     const errors: unknown[] = [];
+    const projections: { readonly indexerId: string; readonly status: string }[] = [];
     const engine = new FakeSearchEngine();
     const router = new SearchEventIndexer({
       events: new FakeEventBus(),
       engine,
       onError: (error) => errors.push(error),
+      metrics: {
+        recordSearchProjection: (input) => projections.push(input),
+      },
     });
     router.register({
       id: "broken",
@@ -76,12 +80,43 @@ describe("SearchEventIndexer", () => {
 
     await router.handle({
       subject: "activity.mail.deleted",
-      payload: { id: "mail:1" },
+      payload: { id: "mail:1", orgId: "org-1" },
       occurredAt: "2026-05-20T00:00:00.000Z",
     });
 
     expect(errors).toHaveLength(1);
     expect(engine.deleted).toEqual([["mail:1"]]);
+    expect(engine.deletedOrgIds).toEqual(["org-1"]);
+    expect(projections.map(({ indexerId, status }) => ({ indexerId, status }))).toEqual([
+      { indexerId: "broken", status: "error" },
+      { indexerId: "mail", status: "success" },
+    ]);
+  });
+
+  it("durably queues routed mutations instead of touching the engine", async () => {
+    const engine = new FakeSearchEngine();
+    const queued: unknown[] = [];
+    const router = new SearchEventIndexer({
+      events: new FakeEventBus(),
+      engine,
+      queue: { enqueue: async (input) => void queued.push(input) },
+    });
+    router.register({
+      id: "drive",
+      subjects: ["activity.drive.*"],
+      route: async () => ({
+        upsert: [{ id: "drive:1", type: "drive", attributes: { orgId: "org-1" } }],
+      }),
+    });
+
+    await router.handle({
+      subject: "activity.drive.updated",
+      payload: { id: "drive:1" },
+      occurredAt: "2026-09-03T00:00:00.000Z",
+    });
+
+    expect(queued).toEqual([expect.objectContaining({ orgId: "org-1", indexerId: "drive" })]);
+    expect(engine.upserted).toEqual([]);
   });
 });
 
@@ -98,6 +133,7 @@ class FakeSearchEngine implements SearchEngine {
   readonly indexed: IndexDocument[] = [];
   readonly upserted: IndexDocument[][] = [];
   readonly deleted: string[][] = [];
+  readonly deletedOrgIds: Array<string | undefined> = [];
 
   async index(document: IndexDocument): Promise<void> {
     this.indexed.push(document);
@@ -107,11 +143,14 @@ class FakeSearchEngine implements SearchEngine {
     this.upserted.push([...documents]);
   }
 
-  async delete(ids: readonly string[]): Promise<void> {
+  async delete(ids: readonly string[], orgId?: string): Promise<void> {
     this.deleted.push([...ids]);
+    this.deletedOrgIds.push(orgId);
   }
 
-  async search(request = { query: "" }): Promise<{ readonly hits: readonly []; readonly query: string }> {
+  async search(
+    request = { query: "" },
+  ): Promise<{ readonly hits: readonly []; readonly query: string }> {
     return { hits: [], query: request.query };
   }
 }

@@ -1,5 +1,9 @@
 # Helix Runbook
 
+Executed backups and restores fail closed unless `HELIX_BACKUP_SIGNING_PRIVATE_KEY` and
+`HELIX_BACKUP_SIGNING_PUBLIC_KEY` point to the provisioned Ed25519 recovery key pair. Keep those keys
+outside the backup destination.
+
 ## Backup
 
 1. Confirm Compose can see the target stack:
@@ -94,7 +98,8 @@ proof from the deployed backup backend.
 
    For a point-in-time recovery from a `--pitr` backup, use the PITR restore
    path documented in `docs/backup-restore.md` (`restore.sh --pitr
-   --recovery-target-time ...`).
+--recovery-target-time ...`).
+
 6. Start remaining services:
 
    ```sh
@@ -229,3 +234,28 @@ infra/scripts/restore-drill.sh --backup backups/<backup-id>.tar.gz --execute
 
 Dry-runs redact the access token while still proving the `helix reindex --all` command path.
 For local restore drills without the app server, set `HELIX_REINDEX_COMMAND="pnpm --filter @helix/app db:reindex:search -- --all"` and provide the database/Meilisearch environment variables.
+
+## Drive Upload Recovery
+
+Drive upload preparation and finalization use durable, tenant-scoped states. Object-store calls,
+virus scanning, and preview conversion run between short Drive database phases, so they do not extend
+Drive row locks. Prepared single-part and multipart uploads expire after 15 minutes. The Drive retry
+worker leases and removes expired reservations, aborts incomplete multipart uploads, and retries failed
+byte cleanup. Keep the worker enabled even when antivirus retries are disabled.
+
+Monitor state without reading another tenant through an application role:
+
+```sql
+select status, count(*) from drive_multipart_sessions group by status order by status;
+select metadata->>'status' as status, count(*)
+from objects
+where kind = 'file' and metadata->>'status' in ('pending_upload', 'upload_expiring', 'scan_processing')
+group by metadata->>'status' order by status;
+```
+
+A growing `aborting` or `upload_expiring` count means the object store cannot abort/delete; repair its
+credentials or availability and let the leased worker retry. Do not manually mark these rows complete.
+Configure the S3-compatible bucket's native **abort incomplete multipart uploads** lifecycle rule as a
+backstop (one day is recommended). It covers the narrow provider-success/process-crash window before
+the returned upload ID can be bound to its database session; the application sweeper handles every
+bound session sooner.

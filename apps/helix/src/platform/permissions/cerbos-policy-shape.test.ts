@@ -33,11 +33,15 @@ function readToolPolicy(): CerbosResourcePolicyFile {
 describe("Cerbos tool policy shape", () => {
   it("uses action-specific scoped rules for every non-composite tool scope", () => {
     const rules = readToolPolicy().resourcePolicy?.rules ?? [];
+    expect(rules.some((rule) => rule.roles?.includes("admin") && rule.actions?.includes("*"))).toBe(
+      false,
+    );
     const scopedRules = rules.filter((rule) =>
       rule.roles?.some((role) => role === "user" || role === "agent" || role === "service_account"),
     );
     const expectedScopes = SCOPE_CATALOG.filter(
-      (scope) => scope.composite !== true && scope.protocolScope !== true,
+      (scope) =>
+        scope.composite !== true && scope.protocolScope !== true && scope.routeOnly !== true,
     ).map((scope) => scope.scope);
 
     expect(scopedRules.every((rule) => !rule.actions?.includes("*"))).toBe(true);

@@ -1,0 +1,54 @@
+name: Product SLO Report
+
+on:
+  schedule:
+    - cron: "23 7 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    environment: production-observability
+    env:
+      HELIX_SLO_PROMETHEUS_URL: ${{ secrets.HELIX_SLO_PROMETHEUS_URL }}
+      HELIX_SLO_PROMETHEUS_TOKEN: ${{ secrets.HELIX_SLO_PROMETHEUS_TOKEN }}
+      HELIX_SLO_EVIDENCE_URL: ${{ secrets.HELIX_SLO_EVIDENCE_URL }}
+      HELIX_SLO_EVIDENCE_TOKEN: ${{ secrets.HELIX_SLO_EVIDENCE_TOKEN }}
+      HELIX_SLO_TIER: ${{ vars.HELIX_SLO_TIER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Fetch protected periodic evidence
+        run: |
+          set -Eeuo pipefail
+          : "${HELIX_SLO_PROMETHEUS_URL:?production Prometheus URL is required}"
+          : "${HELIX_SLO_EVIDENCE_URL:?periodic evidence URL is required}"
+          headers=()
+          if [[ -n "${HELIX_SLO_EVIDENCE_TOKEN:-}" ]]; then
+            headers=(-H "authorization: Bearer $HELIX_SLO_EVIDENCE_TOKEN")
+          fi
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            "${headers[@]}" "$HELIX_SLO_EVIDENCE_URL" -o /tmp/helix-slo-evidence.json
+
+      - name: Build fail-closed monthly report
+        env:
+          HELIX_SLO_EVIDENCE: /tmp/helix-slo-evidence.json
+          HELIX_SLO_REPORT_OUTPUT: /tmp/helix-product-slo-report.json
+        run: |
+          set -Eeuo pipefail
+          export HELIX_SLO_TIER="${HELIX_SLO_TIER:-enterprise}"
+          export HELIX_SLO_PERIOD="$(date -u -d 'last month' +%Y-%m)"
+          node infra/scripts/product-slo-report.mjs
+
+      - name: Upload monthly report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: product-slo-report
+          path: /tmp/helix-product-slo-report.json
+          if-no-files-found: warn
+          retention-days: 400

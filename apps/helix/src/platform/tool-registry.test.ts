@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Actor, AuditRecord, RequestContext, ToolDefinition } from "@helix/sdk-types";
 import { tierDefaults } from "./config/tier.js";
 import { createToolRegistry, featureFlagForTool } from "./tool-registry.js";
-import { InMemoryConfirmationGate } from "./tools/registry.js";
+import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "./tools/registry.js";
 import {
   InMemoryAgentRateCostLimiter,
   usdToMicros,
@@ -168,7 +168,7 @@ describe("RuntimeToolRegistry", () => {
   });
 
   it("queues confirmation for enforced destructive calls and executes after approval", async () => {
-    const confirmationGate = new InMemoryConfirmationGate();
+    const confirmationGate = new InMemoryConfirmationGate(new InMemoryPendingActionStore());
     const registry = createToolRegistry({
       confirmationGate,
       confirmationDefaults: tierDefaults.personal,
@@ -450,7 +450,7 @@ describe("RuntimeToolRegistry", () => {
   });
 
   it("records cost once when confirmed pending actions execute", async () => {
-    const confirmationGate = new InMemoryConfirmationGate();
+    const confirmationGate = new InMemoryConfirmationGate(new InMemoryPendingActionStore());
     const registry = createToolRegistry({
       confirmationGate,
       confirmationDefaults: tierDefaults.personal,
@@ -574,7 +574,7 @@ describe("RuntimeToolRegistry", () => {
 
   it("records tool invocation metrics in the central registry", async () => {
     const metrics = new MemoryToolMetrics();
-    const confirmationGate = new InMemoryConfirmationGate();
+    const confirmationGate = new InMemoryConfirmationGate(new InMemoryPendingActionStore());
     const registry = createToolRegistry({
       confirmationGate,
       confirmationDefaults: tierDefaults.personal,
@@ -640,7 +640,7 @@ describe("RuntimeToolRegistry", () => {
 
 describe("per-credential policy overrides (PRD §9.2)", () => {
   it("forces confirmation when the credential override is 'always'", async () => {
-    const confirmationGate = new InMemoryConfirmationGate();
+    const confirmationGate = new InMemoryConfirmationGate(new InMemoryPendingActionStore());
     const registry = createToolRegistry({
       confirmationGate,
       // Personal tier only confirms destructive tools by default.
@@ -674,7 +674,7 @@ describe("per-credential policy overrides (PRD §9.2)", () => {
   });
 
   it("bypasses confirmation when the credential override is 'never'", async () => {
-    const confirmationGate = new InMemoryConfirmationGate();
+    const confirmationGate = new InMemoryConfirmationGate(new InMemoryPendingActionStore());
     const registry = createToolRegistry({
       confirmationGate,
       confirmationDefaults: tierDefaults.personal,

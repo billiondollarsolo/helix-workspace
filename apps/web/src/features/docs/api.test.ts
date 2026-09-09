@@ -227,8 +227,7 @@ describe("docs API", () => {
     await expect(
       importDocxDocument(
         {
-          filename: "Imported plan.docx",
-          contentBase64: btoa("docx bytes"),
+          sourceObjectId: "33333333-3333-4333-8333-333333333333",
           metadata: { source: "test" },
         },
         fetchImpl,
@@ -242,8 +241,7 @@ describe("docs API", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        filename: "Imported plan.docx",
-        contentBase64: btoa("docx bytes"),
+        sourceObjectId: "33333333-3333-4333-8333-333333333333",
         folderId: null,
         metadata: { source: "test" },
       }),

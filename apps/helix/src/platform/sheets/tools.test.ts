@@ -1,13 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
 import type { Actor } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
+import type { ImportSourceReader } from "../import-source.js";
 import { InMemorySheetsStore } from "./store.js";
 import { registerSheetsTools } from "./tools.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
-const corpusIt = existsSync("../../test-corpus/apache-tika") ? it : it.skip;
 
 function readerActor(): Actor {
   return { id: actorId, orgId, type: "user", scopes: ["sheets.read"] };
@@ -17,11 +16,35 @@ function writerActor(): Actor {
   return { id: actorId, orgId, type: "user", scopes: ["sheets.read", "sheets.write"] };
 }
 
-function setup(): { registry: ReturnType<typeof createToolRegistry>; store: InMemorySheetsStore } {
+function setup(
+  officeText?: string,
+  source?: { readonly name: string; readonly bytes: Uint8Array },
+): {
+  registry: ReturnType<typeof createToolRegistry>;
+  store: InMemorySheetsStore;
+} {
   const store = new InMemorySheetsStore();
   const registry = createToolRegistry();
-  registerSheetsTools(registry, { store });
+  registerSheetsTools(registry, {
+    store,
+    ...(source === undefined ? {} : { importSources: importSource(source.name, source.bytes) }),
+    ...(officeText === undefined
+      ? {}
+      : { officeTextExtractor: async () => ({ text: officeText }) }),
+  });
   return { registry, store };
+}
+
+function importSource(name: string, bytes: Uint8Array): ImportSourceReader {
+  return {
+    openFile: async () =>
+      ({
+        byteSize: bytes.byteLength,
+        etag: '"test"',
+        entry: { name, mimeType: "application/octet-stream" },
+        open: async () => bytes,
+      }) as never,
+  };
 }
 
 describe("sheets tools", () => {
@@ -173,7 +196,11 @@ describe("sheets tools", () => {
   });
 
   it("imports CSV text into a native spreadsheet", async () => {
-    const { registry } = setup();
+    const csvText = 'Customer,ARR,Note\nAcme,1200,"quoted, note"\nZenith,,Open';
+    const { registry } = setup(undefined, {
+      name: "Renewals.csv",
+      bytes: Buffer.from(csvText),
+    });
     const actor = writerActor();
 
     const imported = await registry.invoke<{
@@ -190,9 +217,8 @@ describe("sheets tools", () => {
     }>(
       "sheets.import-csv",
       {
-        filename: "Renewals.csv",
+        sourceObjectId: "44444444-4444-4444-8444-444444444444",
         folderId: "33333333-3333-4333-8333-333333333333",
-        csvText: 'Customer,ARR,Note\nAcme,1200,"quoted, note"\nZenith,,Open',
         metadata: { source: "test" },
       },
       { actor },
@@ -239,7 +265,11 @@ describe("sheets tools", () => {
   });
 
   it("imports TSV text into a native spreadsheet", async () => {
-    const { registry } = setup();
+    const tsvText = "Customer\tARR\tNote\nAcme\t1200\tTab retained\nZenith\t\tOpen";
+    const { registry } = setup(undefined, {
+      name: "Renewals.tsv",
+      bytes: Buffer.from(tsvText),
+    });
     const actor = writerActor();
 
     const imported = await registry.invoke<{
@@ -256,9 +286,8 @@ describe("sheets tools", () => {
     }>(
       "sheets.import-tsv",
       {
-        filename: "Renewals.tsv",
+        sourceObjectId: "44444444-4444-4444-8444-444444444444",
         folderId: "33333333-3333-4333-8333-333333333333",
-        tsvText: "Customer\tARR\tNote\nAcme\t1200\tTab retained\nZenith\t\tOpen",
         metadata: { source: "test" },
       },
       { actor },
@@ -295,7 +324,6 @@ describe("sheets tools", () => {
   });
 
   it("imports XLSX workbooks into native spreadsheet tabs", async () => {
-    const { registry } = setup();
     const actor = writerActor();
     const ExcelJS = (await import("exceljs")).default;
     const workbook = new ExcelJS.Workbook();
@@ -309,6 +337,10 @@ describe("sheets tools", () => {
     const notes = workbook.addWorksheet("Notes");
     notes.getCell(1, 1).value = { richText: [{ text: "Launch" }, { text: " plan" }] };
     const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+    const { registry } = setup("Customer\tARR\nAcme\t1200\n\t=SUM(B2:B2)\fLaunch plan", {
+      name: "Forecast.xlsx",
+      bytes: buffer,
+    });
 
     const imported = await registry.invoke<{
       readonly title: string;
@@ -322,9 +354,8 @@ describe("sheets tools", () => {
     }>(
       "sheets.import-xlsx",
       {
-        filename: "Forecast.xlsx",
+        sourceObjectId: "44444444-4444-4444-8444-444444444444",
         folderId: "33333333-3333-4333-8333-333333333333",
-        contentBase64: buffer.toString("base64"),
         metadata: { source: "test" },
       },
       { actor },
@@ -333,8 +364,8 @@ describe("sheets tools", () => {
     expect(imported.ok).toBe(true);
     expect(imported.ok ? imported.output.title : "").toBe("Forecast");
     expect(imported.ok ? imported.output.tabs.map((tab) => tab.name) : []).toEqual([
-      "Summary",
-      "Notes",
+      "Sheet 1",
+      "Sheet 2",
     ]);
     expect(imported.ok ? imported.output.metadata : {}).toMatchObject({
       app: "sheets",
@@ -363,120 +394,13 @@ describe("sheets tools", () => {
           row: 1,
           col: 1,
           value: "1200",
-          format: { numberFormat: "custom", customNumberFormat: "#,##0.00" },
         }),
         expect.objectContaining({ row: 2, col: 1, value: "=SUM(B2:B2)" }),
       ]),
     );
   });
 
-  it("imports legacy and binary Excel workbooks through the same spreadsheet importer", async () => {
-    const { registry } = setup();
-    const actor = writerActor();
-    const XLSX = await import("xlsx");
-
-    for (const fixture of [
-      { filename: "Legacy forecast.xls", bookType: "biff8" as const, format: "xls" },
-      { filename: "Binary forecast.xlsb", bookType: "xlsb" as const, format: "xlsb" },
-    ]) {
-      const workbook = XLSX.utils.book_new();
-      const worksheet = XLSX.utils.aoa_to_sheet([
-        ["Customer", "ARR"],
-        ["Acme", 1200],
-      ]);
-      XLSX.utils.book_append_sheet(workbook, worksheet, "Legacy");
-      const output: unknown = XLSX.write(workbook, { type: "buffer", bookType: fixture.bookType });
-      const buffer = Buffer.isBuffer(output) ? output : Buffer.from(output as Uint8Array);
-
-      const imported = await registry.invoke<{
-        readonly title: string;
-        readonly metadata: Record<string, unknown>;
-        readonly tabs: { readonly id: string; readonly name: string }[];
-        readonly import: { readonly format: string };
-      }>(
-        "sheets.import-xlsx",
-        {
-          filename: fixture.filename,
-          contentBase64: Buffer.from(buffer).toString("base64"),
-          metadata: { source: "legacy-excel-test" },
-        },
-        { actor },
-      );
-
-      expect(imported.ok).toBe(true);
-      expect(imported.ok ? imported.output.title : "").toContain("forecast");
-      expect(imported.ok ? imported.output.metadata : {}).toMatchObject({
-        importedFrom: fixture.format,
-        sourceFilename: fixture.filename,
-      });
-      expect(imported.ok ? imported.output.import : undefined).toMatchObject({
-        format: fixture.format,
-      });
-      expect(imported.ok ? imported.output.tabs.map((tab) => tab.name) : []).toEqual(["Legacy"]);
-
-      const tabId = imported.ok ? (imported.output.tabs[0]?.id ?? "") : "";
-      const tabRead = await registry.invoke<{
-        readonly cells: Array<{
-          readonly row: number;
-          readonly col: number;
-          readonly value: string;
-          readonly format: Record<string, unknown>;
-        }>;
-      }>("sheets.tab.get", { tabId }, { actor });
-      expect(tabRead.ok ? tabRead.output.cells : []).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ row: 0, col: 0, value: "Customer" }),
-          expect.objectContaining({
-            row: 1,
-            col: 1,
-            value: "1200",
-          }),
-        ]),
-      );
-    }
-  });
-
-  corpusIt("sanitizes corpus XLSB workbook tab names before storing them", async () => {
-    const { registry } = setup();
-    const actor = writerActor();
-    const buffer = readFileSync("../../test-corpus/apache-tika/microsoft/testEXCEL.xlsb");
-
-    const imported = await registry.invoke<{
-      readonly tabs: { readonly id: string; readonly name: string }[];
-    }>(
-      "sheets.import-xlsx",
-      {
-        filename: "testEXCEL.xlsb",
-        contentBase64: buffer.toString("base64"),
-        metadata: { source: "corpus-xlsb-test" },
-      },
-      { actor },
-    );
-
-    expect(imported.ok).toBe(true);
-    expect(imported.ok ? imported.output.tabs.map((tab) => tab.name) : []).toEqual([
-      "Sheet 1",
-      "Sheet 2",
-      "Sheet 3",
-    ]);
-
-    const tabId = imported.ok ? (imported.output.tabs[0]?.id ?? "") : "";
-    const tabRead = await registry.invoke<{
-      readonly cells: Array<{ readonly row: number; readonly col: number; readonly value: string }>;
-    }>("sheets.tab.get", { tabId }, { actor });
-    expect(tabRead.ok ? tabRead.output.cells : []).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          row: 0,
-          col: 0,
-          value: "This is an example spreadsheet created with Microsoft Excel 2007 Beta 2.",
-        }),
-      ]),
-    );
-  });
-
   it("imports ODS workbooks into native spreadsheet tabs", async () => {
-    const { registry } = setup();
     const actor = writerActor();
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
@@ -518,6 +442,10 @@ describe("sheets tools", () => {
       `<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>`,
     );
     const buffer = await zip.generateAsync({ type: "nodebuffer" });
+    const { registry } = setup("Customer\t\tRegion\nAcme\t1200\n\t=SUM(B2:B2)\fLaunch notes", {
+      name: "Forecast.ods",
+      bytes: buffer,
+    });
 
     const imported = await registry.invoke<{
       readonly title: string;
@@ -531,9 +459,8 @@ describe("sheets tools", () => {
     }>(
       "sheets.import-ods",
       {
-        filename: "Forecast.ods",
+        sourceObjectId: "44444444-4444-4444-8444-444444444444",
         folderId: "33333333-3333-4333-8333-333333333333",
-        contentBase64: buffer.toString("base64"),
         metadata: { source: "test" },
       },
       { actor },
@@ -542,8 +469,8 @@ describe("sheets tools", () => {
     expect(imported.ok).toBe(true);
     expect(imported.ok ? imported.output.title : "").toBe("Forecast");
     expect(imported.ok ? imported.output.tabs.map((tab) => tab.name) : []).toEqual([
-      "Summary",
-      "Notes",
+      "Sheet 1",
+      "Sheet 2",
     ]);
     expect(imported.ok ? imported.output.metadata : {}).toMatchObject({
       app: "sheets",

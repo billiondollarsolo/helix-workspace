@@ -359,6 +359,7 @@ describe("InMemorySlidesStore slides", () => {
       operation: {
         kind: "update-slide",
         slideId: slide.id,
+        expectedRevision: 1,
         content: { layout: "title", title: "Synced" },
       },
     });
@@ -380,6 +381,7 @@ describe("InMemorySlidesStore slides", () => {
       operation: {
         kind: "update-slide",
         slideId: slide.id,
+        expectedRevision: 2,
         content: { layout: "title", title: "Ignored duplicate" },
       },
     });
@@ -424,6 +426,7 @@ describe("InMemorySlidesStore slides", () => {
         operation: {
           kind: "update-slide",
           slideId: slide.id,
+          expectedRevision: 1,
           content: { layout: "title", title: "Too new" },
         },
       }),
@@ -535,35 +538,6 @@ describe("InMemorySlidesStore slides", () => {
     const snapshot = await store.getDeckForActor({ orgId, actorId, deckId: deck.id });
     expect(snapshot?.slides[0]?.content).toEqual({ layout: "title", title: "Second after rebase" });
     expect(snapshot?.slides[0]?.revision).toBe(3);
-  });
-
-  it("treats update-slide without expectedRevision as a legacy unsafe write (for back-compat)", async () => {
-    // Older clients that don't send expectedRevision fall through to the
-    // legacy last-write-wins path. The new safety net only activates when
-    // the client opts in by passing expectedRevision. This keeps existing
-    // tools (PPTX import, AI generation) working while the UI ships CAS.
-    const store = new InMemorySlidesStore();
-    const deck = await store.createDeck({ orgId, actorId, title: "Legacy" });
-    const slide = await store.createSlide({
-      orgId,
-      actorId,
-      deckId: deck.id,
-      content: titleContent,
-    });
-
-    const result = await store.applyOperation({
-      orgId,
-      actorId,
-      deckId: deck.id,
-      operationId: "op-legacy",
-      baseRevision: 0,
-      operation: {
-        kind: "update-slide",
-        slideId: slide.id,
-        content: { layout: "title", title: "Legacy unsafe" },
-      },
-    });
-    expect(result.status).toBe("applied");
   });
 
   it("rejects delete-slide ops with stale expectedRevision", async () => {

@@ -18,12 +18,30 @@ import {
   summarizeTenantExportAudit,
   type TenantExportManifest,
 } from "./export.js";
-import { registerTenantLifecycleRoutes, type TenantLifecycleStore } from "./lifecycle-routes.js";
+import {
+  registerTenantLifecycleRoutes as registerTenantLifecycleRoutesWithoutAudit,
+  type TenantLifecycleStore,
+} from "./lifecycle-routes.js";
 import { installTenantContextHook } from "./middleware.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const otherOrgId = "33333333-3333-4333-8333-333333333333";
 const actorId = "11111111-1111-4111-8111-111111111111";
+const defaultAuditSink = { append: async () => ({ id: "audit", thisHash: "hash" }) };
+
+type TenantLifecycleRouteTestOptions = Omit<
+  Parameters<typeof registerTenantLifecycleRoutesWithoutAudit>[1],
+  "auditSink"
+> &
+  Partial<Pick<Parameters<typeof registerTenantLifecycleRoutesWithoutAudit>[1], "auditSink">>;
+
+async function registerTenantLifecycleRoutes(
+  app: Parameters<typeof registerTenantLifecycleRoutesWithoutAudit>[0],
+  options: TenantLifecycleRouteTestOptions,
+): Promise<void> {
+  const { auditSink = defaultAuditSink, ...rest } = options;
+  await registerTenantLifecycleRoutesWithoutAudit(app, { ...rest, auditSink });
+}
 
 describe("buildTenantExportManifest", () => {
   it("builds the portable manifest plan without row data or secrets", () => {
@@ -142,6 +160,7 @@ describe("tenant export SQL helpers", () => {
     expect(recording.calls[0]?.text).toContain("from activity where org_id = ?");
     expect(recording.calls[0]?.text).toContain("from admin_org_units where org_id = ?");
     expect(recording.calls[0]?.text).toContain("from notifications where org_id = ?");
+    expect(recording.calls[0]?.text).toContain("from drive_workflows where org_id = ?");
     expect(recording.calls[0]?.values.every((value) => value === orgId)).toBe(true);
   });
 

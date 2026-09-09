@@ -152,14 +152,13 @@ export class PgVectorStore implements VectorStore {
   }
 
   private async collection(orgId: VectorOrgScope, name: string): Promise<VectorCollectionRow> {
-    const selectedRows = await this.sql`
+    const rows = await this.sql<VectorCollectionRow[]>`
       select dim, metric
       from vector_collections
       where org_id is not distinct from ${orgId}
         and name = ${name}
       limit 1
     `;
-    const rows = selectedRows as unknown as readonly VectorCollectionRow[];
     const row = rows[0];
     if (row === undefined) {
       throw new Error(`Vector collection does not exist: ${name}`);
@@ -192,7 +191,7 @@ export class PgVectorStore implements VectorStore {
   ): Promise<readonly VectorItemRow[]> {
     const visibility = this.visibilityClause(actorId);
     if (metric === "cosine") {
-      const rows = await this.sql`
+      const rows = await this.sql<VectorItemRow[]>`
         select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, 1 - (embedding <=> ${queryVector}::vector) as score
         from vector_items
         where org_id is not distinct from ${orgId}
@@ -201,10 +200,10 @@ export class PgVectorStore implements VectorStore {
         order by embedding <=> ${queryVector}::vector
         limit ${limit}
       `;
-      return rows as unknown as readonly VectorItemRow[];
+      return rows;
     }
     if (metric === "dot") {
-      const rows = await this.sql`
+      const rows = await this.sql<VectorItemRow[]>`
         select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, -(embedding <#> ${queryVector}::vector) as score
         from vector_items
         where org_id is not distinct from ${orgId}
@@ -213,9 +212,9 @@ export class PgVectorStore implements VectorStore {
         order by embedding <#> ${queryVector}::vector
         limit ${limit}
       `;
-      return rows as unknown as readonly VectorItemRow[];
+      return rows;
     }
-    const rows = await this.sql`
+    const rows = await this.sql<VectorItemRow[]>`
       select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, 1 / (1 + (embedding <-> ${queryVector}::vector)) as score
       from vector_items
       where org_id is not distinct from ${orgId}
@@ -224,7 +223,7 @@ export class PgVectorStore implements VectorStore {
       order by embedding <-> ${queryVector}::vector
       limit ${limit}
     `;
-    return rows as unknown as readonly VectorItemRow[];
+    return rows;
   }
 
   private async queryWithFilter(
@@ -239,7 +238,7 @@ export class PgVectorStore implements VectorStore {
   ): Promise<readonly VectorItemRow[]> {
     const visibility = this.visibilityClause(actorId);
     if (metric === "cosine") {
-      const rows = await this.sql`
+      const rows = await this.sql<VectorItemRow[]>`
         select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, 1 - (embedding <=> ${queryVector}::vector) as score
         from vector_items
         where org_id is not distinct from ${orgId}
@@ -249,10 +248,10 @@ export class PgVectorStore implements VectorStore {
         order by embedding <=> ${queryVector}::vector
         limit ${limit}
       `;
-      return rows as unknown as readonly VectorItemRow[];
+      return rows;
     }
     if (metric === "dot") {
-      const rows = await this.sql`
+      const rows = await this.sql<VectorItemRow[]>`
         select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, -(embedding <#> ${queryVector}::vector) as score
         from vector_items
         where org_id is not distinct from ${orgId}
@@ -262,9 +261,9 @@ export class PgVectorStore implements VectorStore {
         order by embedding <#> ${queryVector}::vector
         limit ${limit}
       `;
-      return rows as unknown as readonly VectorItemRow[];
+      return rows;
     }
-    const rows = await this.sql`
+    const rows = await this.sql<VectorItemRow[]>`
       select id, metadata, ${includeVectors ? this.sql`embedding::text` : this.sql`null`} as embedding, 1 / (1 + (embedding <-> ${queryVector}::vector)) as score
       from vector_items
       where org_id is not distinct from ${orgId}
@@ -274,7 +273,7 @@ export class PgVectorStore implements VectorStore {
       order by embedding <-> ${queryVector}::vector
       limit ${limit}
     `;
-    return rows as unknown as readonly VectorItemRow[];
+    return rows;
   }
 }
 

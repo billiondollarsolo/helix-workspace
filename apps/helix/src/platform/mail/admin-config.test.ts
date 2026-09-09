@@ -23,7 +23,17 @@ describe("mail admin configuration status", () => {
       async getOutboundDeliveryHealth(input) {
         return {
           ...emptyDeliveryHealth(input.since, "ok"),
-          counts: { queued: 2, sending: 1, sent: 9, failed: 1, cancelled: 0 },
+          counts: {
+            queued: 2,
+            cancelled: 0,
+            sending: 1,
+            accepted: 9,
+            delivered: 0,
+            deferred: 0,
+            bounced: 0,
+            complained: 0,
+            failed: 1,
+          },
           failedLast24h: 1,
           lastFailureAt: "2026-05-21T12:30:00.000Z",
           lastError: "550 rejected",
@@ -91,7 +101,7 @@ describe("mail admin configuration status", () => {
       maxMessageBytes: 26214400,
     });
     expect(status.deliveryHealth).toMatchObject({
-      counts: { queued: 2, sending: 1, sent: 9, failed: 1, cancelled: 0 },
+      counts: expect.objectContaining({ queued: 2, sending: 1, accepted: 9, failed: 1 }),
       failedLast24h: 1,
       lastError: "550 rejected",
     });
@@ -140,5 +150,31 @@ describe("mail admin configuration status", () => {
     expect(canReadMailAdminStatus({ ...actor, scopes: ["admin.config.write"] })).toBe(true);
     expect(canReadMailAdminStatus({ ...actor, scopes: ["mail.admin"] })).toBe(true);
     expect(canReadMailAdminStatus({ ...actor, scopes: ["mail.read"] })).toBe(false);
+  });
+
+  it("accepts only the exact product-scoped mail admin binding", () => {
+    const binding = {
+      roleId: "00000000-0000-4000-8000-000000000061",
+      allow: ["mail.admin"],
+      deny: [],
+    } as const;
+    expect(
+      canReadMailAdminStatus({
+        ...actor,
+        scopes: [],
+        roleBindings: [
+          { ...binding, scope: { type: "resource", resourceType: "product", id: "mail" } },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      canReadMailAdminStatus({
+        ...actor,
+        scopes: [],
+        roleBindings: [
+          { ...binding, scope: { type: "resource", resourceType: "product", id: "drive" } },
+        ],
+      }),
+    ).toBe(false);
   });
 });

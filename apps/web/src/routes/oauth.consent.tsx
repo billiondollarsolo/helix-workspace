@@ -65,7 +65,7 @@ function OAuthConsentRoute() {
     setSubmitting(true);
     const form = document.createElement("form");
     form.method = "POST";
-    form.action = "/oauth/authorize";
+    form.action = "/v1/oauth/authorize";
     appendHidden(form, "response_type", search.response_type);
     appendHidden(form, "client_id", search.client_id);
     appendHidden(form, "redirect_uri", search.redirect_uri);

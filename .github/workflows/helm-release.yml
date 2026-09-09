@@ -18,6 +18,8 @@ on:
         required: false
 
 permissions:
+  actions: read
+  attestations: write
   contents: read
   packages: write
   pages: write
@@ -33,27 +35,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
         with:
           version: v3.16.2
 
       - name: Lint and template the chart
         run: |
           set -Eeuo pipefail
-          helm lint "$CHART_DIR"
+          VALIDATION_DIGEST=sha256:1111111111111111111111111111111111111111111111111111111111111111
+          helm lint "$CHART_DIR" \
+            --set-string image.digest="$VALIDATION_DIGEST" \
+            --set-string fips.imageDigest="$VALIDATION_DIGEST"
           for overlay in "" \
             "-f $CHART_DIR/values-business.yaml" \
             "-f $CHART_DIR/values-enterprise.yaml" \
             "-f $CHART_DIR/values-sovereign.yaml"; do
             # shellcheck disable=SC2086
-            helm template helix "$CHART_DIR" $overlay >/dev/null
+            helm template helix "$CHART_DIR" \
+              --set-string image.digest="$VALIDATION_DIGEST" \
+              --set-string fips.imageDigest="$VALIDATION_DIGEST" \
+              $overlay >/dev/null
           done
 
       - name: Run PRD hardening contract validation
         run: bash infra/scripts/validate-helm.sh
+
+      - name: Block release without a current passing product SLO report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/product-slo-report.yml/runs?status=completed&per_page=1" --jq '.workflow_runs[0]')
+          [[ "$latest" != "null" ]] || { echo "No completed product SLO report exists" >&2; exit 1; }
+          conclusion=$(jq -r .conclusion <<<"$latest")
+          completed=$(jq -r .updated_at <<<"$latest")
+          age_days=$(( ($(date -u +%s) - $(date -u -d "$completed" +%s)) / 86400 ))
+          [[ "$conclusion" == "success" ]] || { echo "Latest product SLO report did not pass" >&2; exit 1; }
+          (( age_days <= 35 )) || { echo "Latest passing product SLO report is stale (${age_days}d)" >&2; exit 1; }
 
       - name: Resolve chart version
         id: version
@@ -78,6 +99,11 @@ jobs:
             --version "${CHART_VERSION}" \
             --app-version "${CHART_VERSION}" \
             --destination dist
+
+      - name: Attest packaged chart provenance
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: dist/*.tgz
 
       - name: Log in to GHCR
         env:
@@ -112,12 +138,12 @@ jobs:
           fi
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: public
 
       - name: Upload packaged chart artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: helix-helm-chart
           path: dist/*.tgz
@@ -132,4 +158,4 @@ jobs:
     steps:
       - name: Deploy Helm repo to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

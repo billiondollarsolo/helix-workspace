@@ -16,6 +16,10 @@ export async function resolvePlatformMigrationSources(): Promise<readonly Migrat
   const editorsMigrationSource = await resolveEditorsMigrationSource();
   if (editorsMigrationSource !== null) {
     sources.push(editorsMigrationSource);
+    sources.push({
+      namespace: "platform-post-editors",
+      directory: join(currentDir, "post-editor-migrations"),
+    });
   }
   return sources;
 }

@@ -6,11 +6,11 @@ import type {
   OutboundMailMessage,
   OutboundMailProvider,
 } from "@helix/sdk-types";
-import type {
-  MailOutboundDeliveryResult,
-  MailOutboundEnvelope,
-} from "./types.js";
-import type { OutboundMailTransport } from "./outbound.js";
+import type { MailOutboundDeliveryResult, MailOutboundEnvelope } from "./types.js";
+import type { DkimOptionsResolver, OutboundMailTransport } from "./outbound.js";
+import { MailDeliveryError } from "./errors.js";
+import { outboundFetch } from "../outbound-http.js";
+import { z } from "zod";
 
 /**
  * Pluggable outbound mail providers.
@@ -24,7 +24,7 @@ import type { OutboundMailTransport } from "./outbound.js";
  *
  * The org-selected provider + per-provider config lives in
  * `mail_outbound_providers` (see {@link OutboundProviderStore}); secrets are
- * referenced indirectly through an env-var name and never persisted inline.
+ * referenced by a tenant-scoped opaque handle and never persisted inline.
  */
 
 export type OutboundMailProviderKind = "ses" | "mailgun" | "smtp" | "postmark";
@@ -45,10 +45,70 @@ export interface OutboundProviderConfig {
   readonly enabled: boolean;
   readonly isDefault: boolean;
   readonly config: JsonObject;
-  /** Env-var name holding the API key / SMTP password; resolved at build time. */
+  /** Tenant Vault handle holding the API key / SMTP password. */
   readonly secretRef: string | null;
+  /** Independent Tenant Vault handle used only to authenticate feedback. */
+  readonly webhookSecretRef: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+const smtpSettings = {
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .max(253)
+    .refine((value) => !value.includes("@") && !value.includes("/"), "Mail host required"),
+  port: z.number().int().min(1).max(65_535).optional(),
+  secure: z.boolean().optional(),
+  user: z.string().trim().min(1).max(320).optional(),
+};
+const httpsUrl = z
+  .string()
+  .url()
+  .refine(isCredentialFreeHttpsUrl, "Credential-free HTTPS URL required");
+const providerPublicConfigs = {
+  ses: z.object({ ...smtpSettings, region: z.string().trim().min(1).max(100).optional() }).strict(),
+  smtp: z.object(smtpSettings).strict(),
+  mailgun: z
+    .object({
+      domain: z
+        .string()
+        .trim()
+        .min(1)
+        .max(253)
+        .refine((value) => !value.includes("@") && !value.includes("/"), "Mail domain required"),
+      baseUrl: httpsUrl.optional(),
+    })
+    .strict(),
+  postmark: z
+    .object({ baseUrl: httpsUrl.optional(), messageStream: z.string().max(200).optional() })
+    .strict(),
+} satisfies Record<OutboundMailProviderKind, z.ZodTypeAny>;
+
+export function parseOutboundProviderPublicConfig(
+  kind: OutboundMailProviderKind,
+  value: unknown,
+): JsonObject {
+  return providerPublicConfigs[kind].parse(value) as JsonObject;
+}
+
+function isCredentialFreeHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
+}
+
+export interface MailProviderSecretReader {
+  read(input: {
+    readonly orgId: string;
+    readonly scope: "mail-provider";
+    readonly handle: string;
+  }): Promise<Record<string, string> | undefined>;
 }
 
 /** Optional fetch dependency so HTTP-API providers stay testable. */
@@ -92,13 +152,16 @@ export class SesMailProvider implements OutboundMailProvider {
   readonly name: string;
   readonly #transport: Transporter<SMTPTransport.SentMessageInfo>;
   readonly #region: string;
+  readonly #resolveDkim: DkimOptionsResolver | undefined;
 
   constructor(
     options: SesProviderOptions,
     transport?: Transporter<SMTPTransport.SentMessageInfo>,
+    resolveDkim?: DkimOptionsResolver,
   ) {
     this.name = options.name;
     this.#region = options.region;
+    this.#resolveDkim = resolveDkim;
     this.#transport =
       transport ??
       nodemailer.createTransport({
@@ -112,7 +175,8 @@ export class SesMailProvider implements OutboundMailProvider {
   }
 
   async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
-    const info = await this.#transport.sendMail(toNodemailerMail(message));
+    const dkim = await this.#resolveDkim?.(message.from.address);
+    const info = await this.#transport.sendMail(toNodemailerMail(message, dkim));
     return {
       providerMessageId: info.messageId,
       metadata: {
@@ -189,10 +253,13 @@ export class MailgunMailProvider implements OutboundMailProvider {
       body: form,
     });
     if (!response.ok) {
-      const detail = await safeText(response);
-      throw new Error(`Mailgun delivery failed (${String(response.status)}): ${detail}`);
+      await discardText(response);
+      throw httpDeliveryError("Mailgun", response.status);
     }
-    const payload = (await response.json()) as { readonly id?: unknown; readonly message?: unknown };
+    const payload = (await response.json()) as {
+      readonly id?: unknown;
+      readonly message?: unknown;
+    };
     return {
       ...(typeof payload.id === "string" ? { providerMessageId: payload.id } : {}),
       metadata: {
@@ -223,13 +290,16 @@ export class SmtpRelayMailProvider implements OutboundMailProvider {
   readonly name: string;
   readonly #transport: Transporter<SMTPTransport.SentMessageInfo>;
   readonly #host: string;
+  readonly #resolveDkim: DkimOptionsResolver | undefined;
 
   constructor(
     options: SmtpRelayProviderOptions,
     transport?: Transporter<SMTPTransport.SentMessageInfo>,
+    resolveDkim?: DkimOptionsResolver,
   ) {
     this.name = options.name;
     this.#host = options.host;
+    this.#resolveDkim = resolveDkim;
     this.#transport =
       transport ??
       nodemailer.createTransport({
@@ -243,7 +313,8 @@ export class SmtpRelayMailProvider implements OutboundMailProvider {
   }
 
   async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
-    const info = await this.#transport.sendMail(toNodemailerMail(message));
+    const dkim = await this.#resolveDkim?.(message.from.address);
+    const info = await this.#transport.sendMail(toNodemailerMail(message, dkim));
     return {
       providerMessageId: info.messageId,
       metadata: {
@@ -314,8 +385,8 @@ export class PostmarkMailProvider implements OutboundMailProvider {
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      const detail = await safeText(response);
-      throw new Error(`Postmark delivery failed (${String(response.status)}): ${detail}`);
+      await discardText(response);
+      throw httpDeliveryError("Postmark", response.status);
     }
     const payload = (await response.json()) as {
       readonly MessageID?: unknown;
@@ -323,14 +394,10 @@ export class PostmarkMailProvider implements OutboundMailProvider {
       readonly Message?: unknown;
     };
     if (typeof payload.ErrorCode === "number" && payload.ErrorCode !== 0) {
-      throw new Error(
-        `Postmark rejected the message (${String(payload.ErrorCode)}): ${String(payload.Message)}`,
-      );
+      throw new Error(`Postmark rejected the message (${String(payload.ErrorCode)})`);
     }
     return {
-      ...(typeof payload.MessageID === "string"
-        ? { providerMessageId: payload.MessageID }
-        : {}),
+      ...(typeof payload.MessageID === "string" ? { providerMessageId: payload.MessageID } : {}),
       metadata: {
         provider: "postmark",
         messageStream: this.#messageStream,
@@ -350,16 +417,33 @@ export class PostmarkMailProvider implements OutboundMailProvider {
  * provider the org selected.
  */
 export class ProviderMailTransport implements OutboundMailTransport {
-  constructor(private readonly provider: OutboundMailProvider) {}
+  constructor(
+    private readonly provider: OutboundMailProvider,
+    private readonly providerId?: string,
+    private readonly resolveDkim?: DkimOptionsResolver,
+  ) {}
 
-  async send(envelope: MailOutboundEnvelope): Promise<MailOutboundDeliveryResult> {
-    const delivery = await this.provider.send(envelopeToMessage(envelope));
+  async send(
+    envelope: MailOutboundEnvelope,
+    handoff: { readonly idempotencyKey: string },
+  ): Promise<MailOutboundDeliveryResult> {
+    if (this.resolveDkim !== undefined && !["ses", "smtp"].includes(this.provider.kind)) {
+      const key = await this.resolveDkim(envelope.from.address);
+      if (key !== null) {
+        throw new MailDeliveryError(
+          `${this.provider.kind} cannot preserve a tenant-owned DKIM signature; use SMTP or SES.`,
+          false,
+        );
+      }
+    }
+    const delivery = await this.provider.send(envelopeToMessage(envelope, handoff.idempotencyKey));
     return {
       ...(delivery.providerMessageId === undefined
         ? {}
         : { providerMessageId: delivery.providerMessageId }),
       deliveryMetadata: {
         provider: this.provider.kind,
+        ...(this.providerId === undefined ? {} : { providerId: this.providerId }),
         providerName: this.provider.name,
         ...(delivery.metadata ?? {}),
       },
@@ -369,13 +453,13 @@ export class ProviderMailTransport implements OutboundMailTransport {
 
 /**
  * Build a concrete {@link OutboundMailProvider} from a stored provider config.
- * `resolveSecret` maps a `secret_ref` env-var name to its value; missing
- * secrets surface as an explicit error so misconfiguration fails fast.
+ * `resolveSecret` supplies a credential already resolved from the tenant's
+ * opaque Vault handle; missing secrets fail fast.
  */
 export function createOutboundMailProvider(
   config: OutboundProviderConfig,
   resolveSecret: (ref: string | null) => string | undefined,
-  deps: { readonly fetch?: FetchLike } = {},
+  deps: { readonly fetch?: FetchLike; readonly dkimResolver?: DkimOptionsResolver } = {},
 ): OutboundMailProvider {
   const settings = config.config;
   switch (config.kind) {
@@ -397,7 +481,7 @@ export function createOutboundMailProvider(
         ...(resolveSecret(config.secretRef) === undefined
           ? {}
           : { pass: resolveSecret(config.secretRef) }),
-      });
+      }, undefined, deps.dkimResolver);
     }
     case "mailgun": {
       return new MailgunMailProvider({
@@ -426,7 +510,7 @@ export function createOutboundMailProvider(
         ...(resolveSecret(config.secretRef) === undefined
           ? {}
           : { pass: resolveSecret(config.secretRef) }),
-      });
+      }, undefined, deps.dkimResolver);
     }
     case "postmark": {
       return new PostmarkMailProvider({
@@ -452,39 +536,71 @@ export function createOutboundMailProvider(
  * Resolve the outbound transport for an org: when a default provider is
  * configured in the store, deliver through it; otherwise fall back to the
  * supplied default transport (the env-configured SMTP/SES relay). Secrets are
- * resolved from the injected `env` secret table via the named `secret_ref`.
+ * resolved from the injected tenant secret reader via the opaque handle.
  */
 export async function resolveOutboundTransport(input: {
   readonly orgId: string;
   readonly providerStore: {
     getDefaultProvider(orgId: string): Promise<OutboundProviderConfig | null>;
   };
-  readonly fallbackTransport: OutboundMailTransport;
-  /**
-   * Secret lookup table (validated env or a test stub). Callers must inject
-   * this — platform/mail never reads process.env directly (G3).
-   */
-  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly fallbackTransport?: OutboundMailTransport | undefined;
+  readonly secretReader?: MailProviderSecretReader | undefined;
   readonly fetch?: FetchLike;
+  readonly dkimResolver?: DkimOptionsResolver;
 }): Promise<OutboundMailTransport> {
   const config = await input.providerStore.getDefaultProvider(input.orgId);
   if (config === null) {
+    if (input.fallbackTransport === undefined) {
+      throw new MailDeliveryError(
+        `No outbound mail provider is configured for tenant ${input.orgId}.`,
+        false,
+      );
+    }
     return input.fallbackTransport;
   }
-  const env = input.env ?? {};
-  const provider = createOutboundMailProvider(
-    config,
-    (ref) => (ref === null ? undefined : env[ref]),
-    input.fetch === undefined ? {} : { fetch: input.fetch },
-  );
-  return new ProviderMailTransport(provider);
+  if (config.orgId !== input.orgId) {
+    throw new MailDeliveryError("Outbound provider tenant mismatch.", false);
+  }
+  const secret =
+    config.secretRef === null
+      ? undefined
+      : await input.secretReader?.read({
+          orgId: input.orgId,
+          scope: "mail-provider",
+          handle: config.secretRef,
+        });
+  let provider: OutboundMailProvider;
+  try {
+    provider = createOutboundMailProvider(
+      config,
+      () => secret?.credential,
+      {
+        ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+        ...(input.dkimResolver === undefined ? {} : { dkimResolver: input.dkimResolver }),
+      },
+    );
+  } catch (error) {
+    throw new MailDeliveryError("Outbound mail provider configuration is invalid.", false, {
+      cause: error,
+    });
+  }
+  return new ProviderMailTransport(provider, config.id, input.dkimResolver);
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function envelopeToMessage(envelope: MailOutboundEnvelope): OutboundMailMessage {
+function envelopeToMessage(
+  envelope: MailOutboundEnvelope,
+  idempotencyKey: string,
+): OutboundMailMessage {
+  const headers = {
+    "X-Helix-Idempotency-Key": idempotencyKey,
+    ...(envelope.messageId === undefined ? {} : { "Message-ID": envelope.messageId }),
+    ...(envelope.inReplyTo === undefined ? {} : { "In-Reply-To": envelope.inReplyTo }),
+    ...(envelope.references === undefined ? {} : { References: envelope.references.join(" ") }),
+  };
   return {
     from: addressOf(envelope.from),
     to: envelope.to.map(addressOf),
@@ -493,26 +609,35 @@ function envelopeToMessage(envelope: MailOutboundEnvelope): OutboundMailMessage 
     subject: envelope.subject,
     text: envelope.text,
     ...(envelope.html === undefined ? {} : { html: envelope.html }),
+    ...(Object.keys(headers).length === 0 ? {} : { headers }),
     attachments: envelope.attachments.map((attachment) => ({
       ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
-      ...(attachment.contentType === undefined
-        ? {}
-        : { contentType: attachment.contentType }),
+      ...(attachment.contentType === undefined ? {} : { contentType: attachment.contentType }),
       content: new Uint8Array(attachment.content ?? Buffer.alloc(0)),
     })),
   };
 }
 
-function addressOf(value: {
+function httpDeliveryError(provider: string, status: number): MailDeliveryError {
+  return new MailDeliveryError(
+    `${provider} delivery failed with HTTP ${String(status)}`,
+    status >= 500 || status === 408 || status === 425 || status === 429,
+  );
+}
+
+function addressOf(value: { readonly address: string; readonly name?: string }): {
   readonly address: string;
   readonly name?: string;
-}): { readonly address: string; readonly name?: string } {
+} {
   return value.name === undefined
     ? { address: value.address }
     : { address: value.address, name: value.name };
 }
 
-function toNodemailerMail(message: OutboundMailMessage): SMTPTransport.MailOptions {
+function toNodemailerMail(
+  message: OutboundMailMessage,
+  dkim?: Awaited<ReturnType<DkimOptionsResolver>>,
+): SMTPTransport.MailOptions {
   return {
     from: formatAddress(message.from),
     to: message.to.map(formatAddress),
@@ -521,13 +646,12 @@ function toNodemailerMail(message: OutboundMailMessage): SMTPTransport.MailOptio
     subject: message.subject,
     text: message.text,
     ...(message.html === undefined ? {} : { html: message.html }),
+    ...(dkim === undefined || dkim === null ? {} : { dkim }),
     ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo }),
     ...(message.headers === undefined ? {} : { headers: { ...message.headers } }),
     attachments: (message.attachments ?? []).map((attachment) => ({
       ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
-      ...(attachment.contentType === undefined
-        ? {}
-        : { contentType: attachment.contentType }),
+      ...(attachment.contentType === undefined ? {} : { contentType: attachment.contentType }),
       content: Buffer.from(attachment.content),
     })),
   };
@@ -551,18 +675,18 @@ function formatAddress(address: { readonly address: string; readonly name?: stri
 
 function defaultFetch(): FetchLike {
   return (input, init) =>
-    fetch(input, {
+    outboundFetch(input, {
       method: init.method,
       headers: init.headers,
       body: init.body,
     });
 }
 
-async function safeText(response: { text(): Promise<string> }): Promise<string> {
+async function discardText(response: { text(): Promise<string> }): Promise<void> {
   try {
-    return (await response.text()).slice(0, 500);
+    await response.text();
   } catch {
-    return "<no response body>";
+    // Ignore provider-controlled response text; status codes are safe to report.
   }
 }
 

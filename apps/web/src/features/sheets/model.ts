@@ -102,10 +102,9 @@ export function gridToCellEdits(grid: SheetGrid | EditableGrid): SheetsCellEdit[
   return edits;
 }
 
-/** A spreadsheet list row, agnostic of seed vs. backend origin. */
+/** A live spreadsheet list row. */
 export interface SheetListRow extends SheetFile {
-  /** `"backend"` rows are live and editable; `"seed"` rows are offline-only. */
-  readonly source: "backend" | "seed";
+  readonly source: "backend";
   readonly mimeType?: string | undefined;
   /** Uppercase source format shown beside filenames, e.g. XLSX or ODS. */
   readonly formatLabel?: string;

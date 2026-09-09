@@ -1,24 +1,34 @@
 import type { JsonObject } from "@helix/sdk-types";
 import type { MailMessageInput } from "./types.js";
 import type { MailStore } from "./store.js";
-import {
-  matchesFilterCriteria,
-  shouldSkipVacationResponse,
-} from "./core/thread-projection.js";
+import { prepareOutboundEnvelope } from "./threading.js";
+import { matchesFilterCriteria, shouldSkipVacationResponse } from "./core/thread-projection.js";
 
 export interface MailFilterEvaluationResult {
   readonly matchedFilterIds: readonly string[];
   readonly vacationQueued: boolean;
 }
 
-export async function evaluateInboundMail(store: MailStore, input: {
-  readonly message: MailMessageInput;
-  readonly stored: { readonly threadId: string; readonly messageId: string };
-  readonly recipientActorId?: string | null;
-  readonly now?: Date;
-}): Promise<MailFilterEvaluationResult> {
-  const actorId = input.recipientActorId ?? input.message.actorId;
-  if (actorId === undefined || actorId === null) {
+export async function evaluateInboundMail(
+  store: MailStore,
+  input: {
+    readonly message: MailMessageInput;
+    readonly stored: { readonly threadId: string; readonly messageId: string };
+    readonly recipientActorId: string;
+    readonly recipientAddress: string;
+    readonly now?: Date;
+  },
+): Promise<MailFilterEvaluationResult> {
+  const actorId = input.recipientActorId;
+  const sender = input.message.from.address.toLowerCase();
+  const settings = await store.getUserSettings?.(input.message.orgId, actorId);
+  if (settings?.blockedSenders.includes(sender) === true) {
+    await store.updateThreadState({
+      orgId: input.message.orgId,
+      actorId,
+      threadId: input.stored.threadId,
+      patch: { spamAt: input.now ?? new Date() },
+    });
     return { matchedFilterIds: [], vacationQueued: false };
   }
 
@@ -36,7 +46,9 @@ export async function evaluateInboundMail(store: MailStore, input: {
         addLabels: filter.actions.applyLabels ?? [],
         ...(filter.actions.archive === true ? { archivedAt: input.now ?? new Date() } : {}),
         ...(filter.actions.delete === true ? { deletedAt: input.now ?? new Date() } : {}),
-        ...(filter.actions.snoozeUntil === undefined ? {} : { snoozedUntil: new Date(filter.actions.snoozeUntil) }),
+        ...(filter.actions.snoozeUntil === undefined
+          ? {}
+          : { snoozedUntil: new Date(filter.actions.snoozeUntil) }),
       },
     });
   }
@@ -44,18 +56,23 @@ export async function evaluateInboundMail(store: MailStore, input: {
   const vacationQueued = await maybeQueueVacationResponse(store, {
     message: input.message,
     actorId,
+    recipientAddress: input.recipientAddress,
     stored: input.stored,
     ...(input.now === undefined ? {} : { now: input.now }),
   });
   return { matchedFilterIds, vacationQueued };
 }
 
-async function maybeQueueVacationResponse(store: MailStore, input: {
-  readonly message: MailMessageInput;
-  readonly actorId: string;
-  readonly stored: { readonly threadId: string; readonly messageId: string };
-  readonly now?: Date;
-}): Promise<boolean> {
+async function maybeQueueVacationResponse(
+  store: MailStore,
+  input: {
+    readonly message: MailMessageInput;
+    readonly actorId: string;
+    readonly recipientAddress: string;
+    readonly stored: { readonly threadId: string; readonly messageId: string };
+    readonly now?: Date;
+  },
+): Promise<boolean> {
   const vacation = await store.getActiveVacation(input.message.orgId, input.actorId, input.now);
   if (vacation === null) {
     return false;
@@ -89,30 +106,27 @@ async function maybeQueueVacationResponse(store: MailStore, input: {
     orgId: input.message.orgId,
     actorId: input.actorId,
     threadId: input.stored.threadId,
-    ...(input.message.messageId === undefined ? {} : { inReplyTo: input.message.messageId }),
-    ...(input.message.references === undefined ? {} : { references: input.message.references }),
-    envelope: {
-      from: firstRecipient(input.message),
+    envelope: prepareOutboundEnvelope({
+      from: { address: input.recipientAddress },
       to: [input.message.from],
       cc: [],
       bcc: [],
       subject: vacation.subject,
       text: vacation.body,
       attachments: [],
-    },
+      ...(input.message.messageId === undefined ? {} : { inReplyTo: input.message.messageId }),
+      ...(input.message.references === undefined ? {} : { references: input.message.references }),
+    }),
     undoUntil: input.now ?? new Date(),
     outboxSubject: "mail.send",
   });
   return true;
 }
 
-function extractHeaders(
-  metadata: JsonObject,
-): Readonly<Record<string, string | undefined>> {
+function extractHeaders(metadata: JsonObject): Readonly<Record<string, string | undefined>> {
   const headers = metadata.headers;
   if (typeof headers !== "object" || headers === null || Array.isArray(headers)) {
-    const precedence =
-      typeof metadata.precedence === "string" ? metadata.precedence : undefined;
+    const precedence = typeof metadata.precedence === "string" ? metadata.precedence : undefined;
     const autoSubmitted =
       typeof metadata.autoSubmitted === "string" ? metadata.autoSubmitted : undefined;
     return {
@@ -127,12 +141,4 @@ function extractHeaders(
     }
   }
   return result;
-}
-
-function firstRecipient(message: MailMessageInput) {
-  const recipient = message.to[0];
-  if (recipient === undefined) {
-    throw new Error("Vacation response requires at least one recipient.");
-  }
-  return recipient;
 }

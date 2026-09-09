@@ -78,13 +78,14 @@ export class SignupVerificationEmailWorker {
   async handle(event: EventEnvelope): Promise<MailOutboundDeliveryResult> {
     try {
       const payload = parseSignupVerificationEmailPayload(event.payload);
-      return await this.options.transport.send(
-        renderSignupVerificationEmail({
-          payload,
-          from: this.from,
-          productName: this.productName,
-        }),
-      );
+      const message = renderSignupVerificationEmail({
+        payload,
+        from: this.from,
+        productName: this.productName,
+      });
+      return await this.options.transport.send(message, {
+        idempotencyKey: `signup-verification:${payload.orgId}:${payload.email}:${payload.expiresAt}`,
+      });
     } catch (error) {
       this.onError?.(error);
       throw error;
@@ -129,13 +130,14 @@ export class SignupOnboardingInviteEmailWorker {
   async handle(event: EventEnvelope): Promise<MailOutboundDeliveryResult> {
     try {
       const payload = parseSignupOnboardingInviteEmailPayload(event.payload);
-      return await this.options.transport.send(
-        renderSignupOnboardingInviteEmail({
-          payload,
-          from: this.from,
-          productName: this.productName,
-        }),
-      );
+      const message = renderSignupOnboardingInviteEmail({
+        payload,
+        from: this.from,
+        productName: this.productName,
+      });
+      return await this.options.transport.send(message, {
+        idempotencyKey: `signup-invite:${payload.orgId}:${payload.actorId}`,
+      });
     } catch (error) {
       this.onError?.(error);
       throw error;

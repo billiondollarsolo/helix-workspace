@@ -113,6 +113,10 @@ describe("NativePresentationEditor", () => {
       const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
       toolCalls.push({ url, body });
 
+      if (url === "/api/auth/csrf-token") {
+        return Promise.resolve(Response.json({ csrfToken: "test-csrf-token" }));
+      }
+
       if (url === "/api/auth/get-session") {
         return Promise.resolve(
           Response.json({
@@ -438,13 +442,17 @@ describe("NativePresentationEditor", () => {
             byteSize: 3,
             sha256: "0".repeat(64),
             status: "prepared",
-            uploadUrl: null,
+            uploadUrl: "https://storage.example/upload",
             uploadHeaders: {},
             metadata: {},
             createdAt: "2026-05-20T12:00:00.000Z",
             updatedAt: "2026-05-20T12:00:00.000Z",
           }),
         );
+      }
+
+      if (url === "https://storage.example/upload") {
+        return Promise.resolve(new Response(null, { status: 200 }));
       }
 
       if (url === "/api/tools/drive.finalize") {
@@ -1230,7 +1238,6 @@ describe("NativePresentationEditor", () => {
         folderId: null,
         mimeType: "image/png",
         byteSize: 3,
-        sha256: "0".repeat(64),
         metadata: { source: "web-shell" },
       },
     });
@@ -1239,10 +1246,8 @@ describe("NativePresentationEditor", () => {
       body: {
         objectId: "55555555-5555-4555-8555-555555555555",
         byteSize: 3,
-        sha256: "0".repeat(64),
         mimeType: "image/png",
-        storageKey: "drive/555/Roadmap_photo.png",
-        contentBase64: "cG5n",
+        idempotencyKey: "upload:55555555-5555-4555-8555-555555555555",
         metadata: { source: "web-shell" },
       },
     });
@@ -1441,7 +1446,6 @@ describe("NativePresentationEditor", () => {
         folderId: null,
         mimeType: "image/png",
         byteSize: 3,
-        sha256: "0".repeat(64),
         metadata: { source: "web-shell" },
       },
     });
@@ -1450,10 +1454,8 @@ describe("NativePresentationEditor", () => {
       body: {
         objectId: "55555555-5555-4555-8555-555555555555",
         byteSize: 3,
-        sha256: "0".repeat(64),
         mimeType: "image/png",
-        storageKey: "drive/555/Roadmap_photo.png",
-        contentBase64: "cG5n",
+        idempotencyKey: "upload:55555555-5555-4555-8555-555555555555",
         metadata: { source: "web-shell" },
       },
     });
@@ -3274,7 +3276,6 @@ describe("NativePresentationEditor", () => {
         folderId: null,
         mimeType: "audio/mpeg",
         byteSize: 3,
-        sha256: "0".repeat(64),
         metadata: { source: "web-shell" },
       },
     });
@@ -3283,10 +3284,8 @@ describe("NativePresentationEditor", () => {
       body: {
         objectId: "55555555-5555-4555-8555-555555555555",
         byteSize: 3,
-        sha256: "0".repeat(64),
         mimeType: "audio/mpeg",
-        storageKey: "drive/555/Roadmap_photo.png",
-        contentBase64: "bXAz",
+        idempotencyKey: "upload:55555555-5555-4555-8555-555555555555",
         metadata: { source: "web-shell" },
       },
     });
@@ -3612,18 +3611,16 @@ describe("NativePresentationEditor", () => {
       folderId: null,
       mimeType: "text/plain;charset=utf-8",
       byteSize: transcriptBytes,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     const finalizeBody = toolCallBody("/api/tools/drive.finalize");
     expect(finalizeBody).toMatchObject({
       objectId: "55555555-5555-4555-8555-555555555555",
       byteSize: transcriptBytes,
-      sha256: "0".repeat(64),
       mimeType: "text/plain;charset=utf-8",
+      idempotencyKey: "upload:55555555-5555-4555-8555-555555555555",
       metadata: { source: "web-shell" },
     });
-    expect(typeof finalizeBody.contentBase64).toBe("string");
 
     await clickButton("Save transcript to library");
     expect(container.textContent).toContain("Transcript saved to library.");
@@ -3763,18 +3760,16 @@ describe("NativePresentationEditor", () => {
       folderId: null,
       mimeType: "application/zip",
       byteSize: (packageBlob as Blob).size,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     const finalizeBody = toolCallBody("/api/tools/drive.finalize");
     expect(finalizeBody).toMatchObject({
       objectId: "55555555-5555-4555-8555-555555555555",
       byteSize: (packageBlob as Blob).size,
-      sha256: "0".repeat(64),
       mimeType: "application/zip",
+      idempotencyKey: "upload:55555555-5555-4555-8555-555555555555",
       metadata: { source: "web-shell" },
     });
-    expect(typeof finalizeBody.contentBase64).toBe("string");
 
     await clickButton("Exit");
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:recording-1");
@@ -4087,6 +4082,7 @@ function slide(
     layout: content.layout,
     content,
     speakerNotes: "",
+    revision: 1,
     createdAt: "2026-05-20T12:00:00.000Z",
     updatedAt: "2026-05-20T12:00:00.000Z",
     ...overrides,

@@ -15,6 +15,20 @@ const actor: Actor = {
 };
 
 describe("CardDAV routes", () => {
+  it("maps malformed REPORT XML to a bounded client error", async () => {
+    const app = await createApp();
+    const response = await app.inject({
+      method: "REPORT",
+      url: `/dav/card/${actor.id}/`,
+      headers: {
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
+        "content-type": "application/xml",
+      },
+      payload: '<D:addressbook-query xmlns:D="DAV:"><D:prop></D:addressbook-query>',
+    } as unknown as InjectOptions);
+    expect(response.statusCode).toBe(400);
+  });
+
   it("advertises read-only CardDAV methods and challenges unauthenticated clients", async () => {
     const app = await createApp();
 
@@ -25,8 +39,8 @@ describe("CardDAV routes", () => {
     } as unknown as InjectOptions);
 
     expect(options.statusCode).toBe(204);
-    expect(options.headers.dav).toBe("1, addressbook");
-    expect(options.headers.allow).toBe("OPTIONS, PROPFIND, REPORT, GET, PUT, DELETE");
+    expect(options.headers.dav).toBe("1, 3, addressbook, extended-mkcol, sync-collection");
+    expect(options.headers.allow).toBe("OPTIONS, PROPFIND, REPORT, GET, PUT, DELETE, MKCOL, ACL");
     expect(propfind.statusCode).toBe(401);
     expect(propfind.headers["www-authenticate"]).toBe('Basic realm="Helix CardDAV"');
   });
@@ -38,7 +52,7 @@ describe("CardDAV routes", () => {
       method: "PROPFIND",
       url: `/dav/card/${actor.id}/`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         depth: "1",
         "content-type": "application/xml",
       },
@@ -69,7 +83,7 @@ describe("CardDAV routes", () => {
       method: "GET",
       url: `/dav/card/${actor.id}/self.vcf`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
       },
     });
 
@@ -102,7 +116,7 @@ describe("CardDAV routes", () => {
       method: "PUT",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "text/vcard",
       },
       payload: [
@@ -122,7 +136,7 @@ describe("CardDAV routes", () => {
     const getCreated = await app.inject({
       method: "GET",
       url: contactUrl,
-      headers: { authorization: basic("ada@example.test", "carddav") },
+      headers: { authorization: basic("ada@example.test", "carddav.read,carddav.write") },
     });
     expect(getCreated.statusCode).toBe(200);
     expect(getCreated.headers.etag).toBe(created.headers.etag);
@@ -132,7 +146,7 @@ describe("CardDAV routes", () => {
       method: "PROPFIND",
       url: `/dav/card/${actor.id}/`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         depth: "1",
       },
     } as unknown as InjectOptions);
@@ -144,7 +158,7 @@ describe("CardDAV routes", () => {
       method: "REPORT",
       url: `/dav/card/${actor.id}/`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "application/xml",
       },
       payload: `<C:addressbook-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><D:href>${contactUrl}</D:href><D:href>${missingContactUrl}</D:href></C:addressbook-multiget>`,
@@ -160,7 +174,7 @@ describe("CardDAV routes", () => {
       method: "PUT",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "text/vcard",
       },
       payload: [
@@ -179,14 +193,14 @@ describe("CardDAV routes", () => {
     const deleted = await app.inject({
       method: "DELETE",
       url: contactUrl,
-      headers: { authorization: basic("ada@example.test", "carddav") },
+      headers: { authorization: basic("ada@example.test", "carddav.read,carddav.write") },
     } as unknown as InjectOptions);
     expect(deleted.statusCode).toBe(204);
 
     const getDeleted = await app.inject({
       method: "GET",
       url: contactUrl,
-      headers: { authorization: basic("ada@example.test", "carddav") },
+      headers: { authorization: basic("ada@example.test", "carddav.read,carddav.write") },
     });
     expect(getDeleted.statusCode).toBe(404);
   });
@@ -198,7 +212,7 @@ describe("CardDAV routes", () => {
       method: "PUT",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "text/vcard",
         "if-none-match": "*",
       },
@@ -211,7 +225,7 @@ describe("CardDAV routes", () => {
       method: "PUT",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "text/vcard",
         "if-none-match": "*",
       },
@@ -223,7 +237,7 @@ describe("CardDAV routes", () => {
       method: "PUT",
       url: `/dav/card/${actor.id}/missing-precondition.vcf`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "text/vcard",
         "if-match": "*",
       },
@@ -235,7 +249,7 @@ describe("CardDAV routes", () => {
       method: "PUT",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "text/vcard",
         "if-match": '"stale"',
       },
@@ -247,7 +261,7 @@ describe("CardDAV routes", () => {
       method: "PUT",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "text/vcard",
         "if-match": createdEtag,
       },
@@ -261,7 +275,7 @@ describe("CardDAV routes", () => {
       method: "DELETE",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "if-match": createdEtag,
       },
     } as unknown as InjectOptions);
@@ -271,7 +285,7 @@ describe("CardDAV routes", () => {
       method: "DELETE",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "if-match": updatedEtag,
       },
     } as unknown as InjectOptions);
@@ -285,7 +299,7 @@ describe("CardDAV routes", () => {
       method: "PUT",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "text/vcard",
       },
       payload: [
@@ -303,12 +317,11 @@ describe("CardDAV routes", () => {
       method: "PROPFIND",
       url: `/dav/card/${actor.id}/`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         depth: "0",
         "content-type": "application/xml",
       },
-      payload:
-        '<D:propfind xmlns:D="DAV:"><D:prop><D:sync-token /></D:prop></D:propfind>',
+      payload: '<D:propfind xmlns:D="DAV:"><D:prop><D:sync-token /></D:prop></D:propfind>',
     } as unknown as InjectOptions);
 
     expect(propfind.statusCode).toBe(207);
@@ -319,11 +332,10 @@ describe("CardDAV routes", () => {
       method: "REPORT",
       url: `/dav/card/${actor.id}/`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "application/xml",
       },
-      payload:
-        '<D:sync-collection xmlns:D="DAV:"><D:sync-token /></D:sync-collection>',
+      payload: '<D:sync-collection xmlns:D="DAV:"><D:sync-token /></D:sync-collection>',
     } as unknown as InjectOptions);
 
     expect(firstSync.statusCode).toBe(207);
@@ -335,7 +347,7 @@ describe("CardDAV routes", () => {
       method: "REPORT",
       url: `/dav/card/${actor.id}/`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "application/xml",
       },
       payload: `<D:sync-collection xmlns:D="DAV:"><D:sync-token>${token}</D:sync-token></D:sync-collection>`,
@@ -350,7 +362,7 @@ describe("CardDAV routes", () => {
       method: "PUT",
       url: contactUrl,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "text/vcard",
       },
       payload: [
@@ -372,7 +384,7 @@ describe("CardDAV routes", () => {
       method: "REPORT",
       url: `/dav/card/${actor.id}/`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "application/xml",
       },
       payload: `<D:sync-collection xmlns:D="DAV:"><D:sync-token>${token}</D:sync-token></D:sync-collection>`,
@@ -387,7 +399,7 @@ describe("CardDAV routes", () => {
     const deleted = await app.inject({
       method: "DELETE",
       url: contactUrl,
-      headers: { authorization: basic("ada@example.test", "carddav") },
+      headers: { authorization: basic("ada@example.test", "carddav.read,carddav.write") },
     } as unknown as InjectOptions);
     expect(deleted.statusCode).toBe(204);
 
@@ -398,7 +410,7 @@ describe("CardDAV routes", () => {
       method: "REPORT",
       url: `/dav/card/${actor.id}/`,
       headers: {
-        authorization: basic("ada@example.test", "carddav"),
+        authorization: basic("ada@example.test", "carddav.read,carddav.write"),
         "content-type": "application/xml",
       },
       payload: `<D:sync-collection xmlns:D="DAV:"><D:sync-token>${afterUpdate}</D:sync-token></D:sync-collection>`,
@@ -448,34 +460,192 @@ describe("CardDAV routes", () => {
     } as unknown as InjectOptions);
     expect(crossActor.statusCode).toBe(404);
   });
+
+  it("rejects the removed broad carddav compatibility scope", async () => {
+    const app = await createApp();
+    const response = await app.inject({
+      method: "PROPFIND",
+      url: `/dav/card/${actor.id}`,
+      headers: { authorization: basic("ada@example.test", "carddav") },
+    } as unknown as InjectOptions);
+
+    expect(response.statusCode).toBe(401);
+  });
+
+  it("applies CardDAV text filters and returns a bounded continuation page", async () => {
+    const app = await createApp();
+    for (const [href, name] of [
+      ["ada.vcf", "Ada Lovelace"],
+      ["grace.vcf", "Grace Hopper"],
+      ["katherine.vcf", "Katherine Johnson"],
+    ] as const) {
+      await app.inject({
+        method: "PUT",
+        url: `/dav/card/${actor.id}/${href}`,
+        headers: {
+          authorization: basic("ada@example.test", "carddav.write"),
+          "content-type": "text/vcard",
+        },
+        payload: contactVcard(name, `${href.slice(0, -4)}@example.test`),
+      } as unknown as InjectOptions);
+    }
+
+    const filtered = await app.inject({
+      method: "REPORT",
+      url: `/dav/card/${actor.id}/`,
+      headers: {
+        authorization: basic("ada@example.test", "carddav.read"),
+        "content-type": "application/xml",
+      },
+      payload: '<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><C:filter><C:prop-filter name="FN"><C:text-match match-type="contains">hopper</C:text-match></C:prop-filter></C:filter></C:addressbook-query>',
+    } as unknown as InjectOptions);
+    expect(filtered.statusCode).toBe(207);
+    expect(filtered.body).toContain("Grace Hopper");
+    expect(filtered.body).not.toContain("Katherine Johnson");
+
+    const first = await app.inject({
+      method: "REPORT",
+      url: `/dav/card/${actor.id}/`,
+      headers: {
+        authorization: basic("ada@example.test", "carddav.read"),
+        "content-type": "application/xml",
+      },
+      payload: '<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav" xmlns:H="urn:helix:params:xml:ns:carddav"><D:limit><D:nresults>1</D:nresults></D:limit></C:addressbook-query>',
+    } as unknown as InjectOptions);
+    expect(first.body).toContain("507 Insufficient Storage");
+    expect(first.body).toContain("number-of-matches-within-limits");
+    const pageToken = first.body.match(/<H:next-page-token>([^<]+)<\/H:next-page-token>/u)?.[1];
+    expect(pageToken).toBeTruthy();
+    if (pageToken === undefined) throw new Error("Expected a CardDAV page token.");
+
+    const second = await app.inject({
+      method: "REPORT",
+      url: `/dav/card/${actor.id}/`,
+      headers: {
+        authorization: basic("ada@example.test", "carddav.read"),
+        "content-type": "application/xml",
+      },
+      payload: `<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav" xmlns:H="urn:helix:params:xml:ns:carddav"><D:limit><D:nresults>1</D:nresults></D:limit><H:page-token>${pageToken}</H:page-token></C:addressbook-query>`,
+    } as unknown as InjectOptions);
+    expect(second.statusCode).toBe(207);
+    expect(second.body).not.toContain("ada.vcf");
+    expect(second.body).toContain("grace.vcf");
+  });
+
+  it("discovers accessible address books and serves their scoped resource paths", async () => {
+    const app = await createApp();
+    const books = await app.inject({
+      method: "PROPFIND",
+      url: `/dav/card/${actor.id}/books/`,
+      headers: { authorization: basic("ada@example.test", "carddav.read") },
+    } as unknown as InjectOptions);
+    expect(books.statusCode).toBe(207);
+    expect(books.body).toContain(`/dav/card/${actor.id}/books/${actor.id}/`);
+    expect(books.body).toContain("<D:write/>");
+
+    const url = `/dav/card/${actor.id}/books/${actor.id}/shared.vcf`;
+    const created = await app.inject({
+      method: "PUT",
+      url,
+      headers: {
+        authorization: basic("ada@example.test", "carddav.write"),
+        "content-type": "text/vcard",
+      },
+      payload: contactVcard("Shared Contact", "shared@example.test"),
+    } as unknown as InjectOptions);
+    expect(created.statusCode).toBe(201);
+    expect(created.headers.location).toBe(url);
+    expect((await app.inject({ method: "GET", url, headers: { authorization: basic("ada@example.test", "carddav.read") } })).statusCode).toBe(200);
+  });
+
+  it("creates and shares an address book with standard DAV collection methods", async () => {
+    const app = await createApp();
+    const bookId = "44444444-4444-4444-8444-444444444444";
+    const bookUrl = `/dav/card/${actor.id}/books/${bookId}/`;
+    const created = await app.inject({
+      method: "MKCOL",
+      url: bookUrl,
+      headers: {
+        authorization: basic("ada@example.test", "carddav.write"),
+        "content-type": "application/xml",
+      },
+      payload: '<D:mkcol xmlns:D="DAV:"><D:set><D:prop><D:displayname>Engineering</D:displayname></D:prop></D:set></D:mkcol>',
+    } as unknown as InjectOptions);
+    expect(created.statusCode).toBe(201);
+    expect(created.headers.location).toBe(bookUrl);
+
+    const shared = await app.inject({
+      method: "ACL",
+      url: bookUrl,
+      headers: {
+        authorization: basic("ada@example.test", "carddav.write"),
+        "content-type": "application/xml",
+      },
+      payload: '<D:acl xmlns:D="DAV:"><D:ace><D:principal><D:href>/dav/card/principals/33333333-3333-4333-8333-333333333333/</D:href></D:principal><D:grant><D:privilege><D:read/></D:privilege></D:grant></D:ace></D:acl>',
+    } as unknown as InjectOptions);
+    expect(shared.statusCode).toBe(204);
+
+    const books = await app.inject({
+      method: "PROPFIND",
+      url: `/dav/card/${actor.id}/books/`,
+      headers: { authorization: basic("ada@example.test", "carddav.read") },
+    } as unknown as InjectOptions);
+    expect(books.body).toContain("Engineering");
+    expect(books.body).toContain(bookUrl);
+  });
+
+  it("keeps a synthetic 100001-contact sync page bounded", async () => {
+    const store = new SyntheticLargeCardDavStore();
+    const app = await createApp(store);
+    const response = await app.inject({
+      method: "REPORT",
+      url: `/dav/card/${actor.id}/`,
+      headers: {
+        authorization: basic("ada@example.test", "carddav.read"),
+        "content-type": "application/xml",
+      },
+      payload: '<D:sync-collection xmlns:D="DAV:"><D:sync-token/><D:limit><D:nresults>500</D:nresults></D:limit></D:sync-collection>',
+    } as unknown as InjectOptions);
+    expect(response.statusCode).toBe(207);
+    expect(store.syntheticContactCount).toBe(100_001);
+    expect(store.requestedLimit).toBe(501);
+  });
 });
+
+class SyntheticLargeCardDavStore extends InMemoryCardDavContactStore {
+  readonly syntheticContactCount = 100_001;
+  requestedLimit = 0;
+
+  override async listContactChangesForActor(
+    input: Parameters<InMemoryCardDavContactStore["listContactChangesForActor"]>[0],
+  ) {
+    this.requestedLimit = input.limit;
+    return [];
+  }
+}
 
 class FakeAppPasswordAuthenticator implements AppPasswordAuthenticator {
   async authenticateAppPassword(input: {
     readonly username: string;
     readonly password: string;
     readonly requiredScope: string;
-    readonly compatibilityScope?: string | undefined;
   }): Promise<Actor | null> {
     if (input.username !== actor.email) {
       return null;
     }
     const scopes = input.password.split(",");
-    if (
-      !scopes.includes(input.requiredScope) &&
-      (input.compatibilityScope === undefined || !scopes.includes(input.compatibilityScope))
-    ) {
+    if (!scopes.includes(input.requiredScope)) {
       return null;
     }
     return { ...actor, scopes: [...(actor.scopes ?? []), ...scopes] };
   }
 }
 
-async function createApp() {
+async function createApp(store = new InMemoryCardDavContactStore()) {
   const app = fastify();
   await registerCardDavRoutes(app, {
     appPasswords: new FakeAppPasswordAuthenticator(),
-    store: new InMemoryCardDavContactStore(),
+    store,
   });
   return app;
 }
@@ -504,7 +674,7 @@ async function propfindSyncToken(
     method: "PROPFIND",
     url: `/dav/card/${actor.id}/`,
     headers: {
-      authorization: basic("ada@example.test", "carddav"),
+      authorization: basic("ada@example.test", "carddav.read,carddav.write"),
       depth: "0",
       "content-type": "application/xml",
     },

@@ -1,12 +1,6 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import {
-  planIdForChoice,
-  policyProviderForSignupSso,
-  PostgresSignupOnboardingStore,
-  signupOnboardingIdentityAllowedForPlan,
-  testSignupOnboardingSsoConfig,
-} from "./onboarding.js";
+import { planIdForChoice, PostgresSignupOnboardingStore } from "./onboarding.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
@@ -17,38 +11,6 @@ describe("planIdForChoice", () => {
     expect(planIdForChoice("personal")).toBe("personal");
     expect(planIdForChoice("sales")).toBeNull();
     expect(planIdForChoice(undefined)).toBe("pro");
-  });
-});
-
-describe("signupOnboardingIdentityAllowedForPlan", () => {
-  it("keeps local login available while gating SSO by onboarding plan choice", () => {
-    expect(signupOnboardingIdentityAllowedForPlan("personal", "local")).toBe(true);
-    expect(signupOnboardingIdentityAllowedForPlan("personal", "google")).toBe(false);
-    expect(signupOnboardingIdentityAllowedForPlan("pro-trial", "google")).toBe(true);
-    expect(signupOnboardingIdentityAllowedForPlan("pro-trial", "microsoft")).toBe(true);
-    expect(signupOnboardingIdentityAllowedForPlan("pro-trial", "saml")).toBe(false);
-    expect(signupOnboardingIdentityAllowedForPlan("sales", "saml")).toBe(true);
-  });
-});
-
-describe("signup onboarding SSO helpers", () => {
-  it("maps onboarding SSO provider choices to admin SSO policy providers", () => {
-    expect(policyProviderForSignupSso("google")).toBe("google");
-    expect(policyProviderForSignupSso("microsoft")).toBe("azure_ad");
-    expect(policyProviderForSignupSso("oidc")).toBe("generic_oidc");
-    expect(policyProviderForSignupSso("saml")).toBe("generic_saml");
-  });
-
-  it("keeps test-login dry-run status explicit until SSO runtime exists", () => {
-    expect(testSignupOnboardingSsoConfig({ provider: "saml" })).toMatchObject({
-      status: "configuration_required",
-    });
-    expect(
-      testSignupOnboardingSsoConfig({
-        provider: "oidc",
-        metadataUrl: "https://idp.example.com/.well-known/openid-configuration",
-      }),
-    ).toMatchObject({ status: "runtime_pending" });
   });
 });
 
@@ -86,7 +48,7 @@ describe("PostgresSignupOnboardingStore", () => {
       currentStep: "sso",
       planChoice: "personal",
       inviteCount: 10,
-      identityChoice: "google",
+      identityChoice: "local",
       updatedAt: "2026-05-24T12:00:00.000Z",
     });
   });
@@ -173,37 +135,6 @@ describe("PostgresSignupOnboardingStore", () => {
       planChoice: "sales",
       status: "completed",
     });
-  });
-
-  it("persists a disabled SSO draft when onboarding chooses an SSO provider", async () => {
-    const recording = createRecordingSql();
-    const store = new PostgresSignupOnboardingStore(recording.sql);
-
-    await store.persistCompletion({
-      orgId,
-      actorId,
-      planChoice: "pro-trial",
-      identityChoice: "google",
-      completedAt: new Date("2026-05-24T12:00:00.000Z"),
-    });
-
-    expect(recording.calls).toHaveLength(2);
-    expect(recording.calls[1]?.text).toContain("insert into admin_security_policies");
-    expect(recording.calls[1]?.text).toContain("insert into tenant_config_audit");
-    expect(recording.calls[1]?.text).toContain("false");
-    expect(recording.calls[1]?.text).toContain("'optional'");
-    expect(recording.jsonValues[2]).toEqual({
-      provider: "google",
-      metadataUrl: null,
-      jitProvisioning: true,
-      mappedDomains: [],
-      localLoginEnabled: true,
-      setupStatus: "draft",
-      testLoginStatus: "runtime_pending",
-      setupSource: "signup",
-      configuredAt: "2026-05-24T12:00:00.000Z",
-    });
-    expect(JSON.stringify(recording.calls)).not.toContain("sso.example.com");
   });
 });
 

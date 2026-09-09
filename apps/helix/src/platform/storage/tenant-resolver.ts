@@ -5,8 +5,11 @@ import {
   type S3CompatibleCredentials,
   type S3CompatibleStorageConfig,
 } from "./s3-compatible.js";
+import { assertStorageRegion } from "../tenancy/residency.js";
 
 export interface TenantStorageClient extends StorageClient {
+  checkHealth?(): Promise<void>;
+  listKeys?(prefix: string): AsyncIterable<string>;
   presignGetUrl?(
     key: string,
     options?: {
@@ -31,6 +34,22 @@ export interface TenantStorageClient extends StorageClient {
       readonly metadata?: Record<string, string>;
     },
   ): Promise<TenantPresignedPutUpload>;
+  createMultipartUpload?(
+    key: string,
+    options?: { readonly contentType?: string },
+  ): Promise<{ readonly uploadId: string }>;
+  presignUploadPart?(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    options?: { readonly contentType?: string; readonly expiresSeconds?: number },
+  ): Promise<string>;
+  completeMultipartUpload?(
+    key: string,
+    uploadId: string,
+    parts: readonly { readonly partNumber: number; readonly etag: string }[],
+  ): Promise<void>;
+  abortMultipartUpload?(key: string, uploadId: string): Promise<void>;
 }
 
 export interface TenantPresignedPutUpload {
@@ -42,6 +61,9 @@ export interface ResolvedTenantStorage {
   readonly client: TenantStorageClient;
   readonly managedBy: "helix-default" | "byo";
   readonly prefix: string;
+  readonly region?: string;
+  /** Encryption mode enforced by every object write for this resolved client. */
+  readonly encryptionAtRest?: "AES256" | "aws:kms" | undefined;
 }
 
 export interface TenantStorageStateSnapshot {
@@ -50,7 +72,18 @@ export interface TenantStorageStateSnapshot {
 }
 
 export interface TenantStorageSecretReader {
-  read(path: string): Promise<Record<string, string> | undefined>;
+  read(input: {
+    readonly orgId: string;
+    readonly scope: "byo-storage" | "mail-provider";
+    readonly handle: string;
+  }): Promise<Record<string, string> | undefined>;
+  deleteTenantSecrets?(input: { readonly orgId: string }): Promise<number>;
+}
+
+interface VersionedTenantStorageSecret {
+  readonly value: Record<string, string>;
+  /** Backend version, not secret material; changes atomically when credentials rotate. */
+  readonly version: string;
 }
 
 export interface TenantStoragePoolMetrics {
@@ -65,6 +98,7 @@ export type TenantStorageResolver = (input: {
 
 export function createTenantStorageResolver(options: {
   readonly defaultClient: TenantStorageClient | undefined;
+  readonly defaultServerSideEncryption?: "AES256" | "aws:kms" | undefined;
   readonly loadByoConfig: (
     orgId: string,
   ) => Promise<JsonObject | undefined> | JsonObject | undefined;
@@ -72,18 +106,49 @@ export function createTenantStorageResolver(options: {
   readonly createS3Client?: (config: S3CompatibleStorageConfig) => TenantStorageClient;
   readonly cacheMaxEntries?: number | undefined;
   readonly cacheIdleTtlMs?: number | undefined;
+  readonly secretRefreshIntervalMs?: number | undefined;
   readonly cacheNow?: (() => number) | undefined;
   readonly metrics?: TenantStoragePoolMetrics | undefined;
+  readonly deploymentRegion?: string | undefined;
 }): TenantStorageResolver {
+  const now = options.cacheNow ?? Date.now;
+  const maxEntries = options.cacheMaxEntries ?? 100;
+  const secretRefreshIntervalMs = options.secretRefreshIntervalMs ?? 60_000;
+  const secrets = new Map<
+    string,
+    { readonly value: VersionedTenantStorageSecret; readonly expiresAt: number }
+  >();
   const cache = new TenantStorageResolutionCache({
-    maxEntries: options.cacheMaxEntries ?? 100,
+    maxEntries,
     idleTtlMs: options.cacheIdleTtlMs ?? 60 * 60 * 1000,
-    now: options.cacheNow ?? Date.now,
+    now,
     metrics: options.metrics,
   });
   return async ({ orgId, refresh = false }) => {
-    const storageConfig = storageConfigFromByo(await options.loadByoConfig(orgId));
-    const cacheKey = storageResolutionCacheKey(orgId, storageConfig, options.defaultClient);
+    const storageConfig = storageConfigFromByo(await options.loadByoConfig(orgId), orgId);
+    if (storageConfig === undefined) return undefined;
+    if (storageConfig.kind === "byo" && options.deploymentRegion !== undefined) {
+      assertStorageRegion(storageConfig.region, options.deploymentRegion);
+      assertRegionalKmsKey(storageConfig.serverSideEncryptionAwsKmsKeyId, options.deploymentRegion);
+    }
+    let secret: VersionedTenantStorageSecret | undefined;
+    if (storageConfig.kind === "byo") {
+      const secretKey = `${orgId}:${storageConfig.credentialsSecretHandle}`;
+      const cachedSecret = secrets.get(secretKey);
+      if (!refresh && cachedSecret !== undefined && cachedSecret.expiresAt > now()) {
+        secret = cachedSecret.value;
+      } else {
+        secret = await readByoStorageSecret(storageConfig, options.secretReader);
+        secrets.delete(secretKey);
+        secrets.set(secretKey, { value: secret, expiresAt: now() + secretRefreshIntervalMs });
+        while (secrets.size > maxEntries) {
+          const oldest = secrets.keys().next().value;
+          if (oldest === undefined) break;
+          secrets.delete(oldest);
+        }
+      }
+    }
+    const cacheKey = storageResolutionCacheKey(orgId, storageConfig, secret?.version);
     if (!refresh) {
       const cached = cache.get(cacheKey);
       if (cached !== undefined) {
@@ -91,24 +156,15 @@ export function createTenantStorageResolver(options: {
       }
     }
     let resolved: ResolvedTenantStorage | undefined;
-    if (storageConfig === undefined) {
-      if (options.defaultClient === undefined) {
-        return undefined;
-      }
-      resolved = {
-        client: options.defaultClient,
-        managedBy: "helix-default",
-        prefix: "",
-      };
-      cache.set(cacheKey, resolved);
-      return resolved;
-    }
     if (storageConfig.kind === "byo") {
-      const client = createByoS3StorageClient(storageConfig, options);
+      if (secret === undefined) throw new Error("BYO storage credentials were not resolved.");
+      const client = createByoS3StorageClient(storageConfig, secret, options.createS3Client);
       resolved = {
         client: createPrefixedStorageClient(client, storageConfig.prefix),
         managedBy: "byo",
         prefix: storageConfig.prefix,
+        region: storageConfig.region,
+        encryptionAtRest: storageConfig.serverSideEncryption,
       };
       cache.set(cacheKey, resolved);
       return resolved;
@@ -120,6 +176,10 @@ export function createTenantStorageResolver(options: {
       client: createPrefixedStorageClient(options.defaultClient, storageConfig.prefix),
       managedBy: "helix-default",
       prefix: storageConfig.prefix,
+      ...(options.deploymentRegion === undefined ? {} : { region: options.deploymentRegion }),
+      ...(options.defaultServerSideEncryption === undefined
+        ? {}
+        : { encryptionAtRest: options.defaultServerSideEncryption }),
     };
     cache.set(cacheKey, resolved);
     return resolved;
@@ -128,7 +188,11 @@ export function createTenantStorageResolver(options: {
 
 export function createDefaultTenantStorageResolver(
   client: TenantStorageClient | undefined,
-  options: { readonly prefixForOrg?: (orgId: string) => string } = {},
+  options: {
+    readonly prefixForOrg?: (orgId: string) => string;
+    readonly serverSideEncryption?: "AES256" | "aws:kms";
+    readonly region?: string;
+  } = {},
 ): TenantStorageResolver {
   if (client === undefined) {
     return () => undefined;
@@ -140,17 +204,22 @@ export function createDefaultTenantStorageResolver(
       client: createPrefixedStorageClient(client, prefix),
       managedBy: "helix-default",
       prefix,
+      ...(options.region === undefined ? {} : { region: options.region }),
+      ...(options.serverSideEncryption === undefined
+        ? {}
+        : { encryptionAtRest: options.serverSideEncryption }),
     };
   };
 }
 
-export function resolveTenantStorageSnapshot(input: {
+export async function resolveTenantStorageSnapshot(input: {
   readonly orgId: string;
   readonly state: TenantStorageStateSnapshot;
   readonly defaultClient: TenantStorageClient | undefined;
   readonly secretReader?: TenantStorageSecretReader | undefined;
   readonly createS3Client?: (config: S3CompatibleStorageConfig) => TenantStorageClient;
-}): ResolvedTenantStorage | undefined {
+  readonly deploymentRegion?: string | undefined;
+}): Promise<ResolvedTenantStorage | undefined> {
   if (input.state.managedBy === "helix-default") {
     const storage = readRecord(input.state.storage);
     if (storage !== undefined && storage.kind !== "helix-default") {
@@ -166,24 +235,28 @@ export function resolveTenantStorageSnapshot(input: {
       client: createPrefixedStorageClient(input.defaultClient, prefix),
       managedBy: "helix-default",
       prefix,
+      ...(input.deploymentRegion === undefined ? {} : { region: input.deploymentRegion }),
     };
   }
 
   const storageConfig =
     input.state.storage === null
       ? undefined
-      : storageConfigFromByo({ storage: input.state.storage });
+      : storageConfigFromByo({ storage: input.state.storage }, input.orgId);
   if (storageConfig === undefined || storageConfig.kind !== "byo") {
     throw new Error("BYO storage snapshot must use kind byo.");
   }
-  const client = createByoS3StorageClient(storageConfig, {
-    ...(input.secretReader === undefined ? {} : { secretReader: input.secretReader }),
-    ...(input.createS3Client === undefined ? {} : { createS3Client: input.createS3Client }),
-  });
+  if (input.deploymentRegion !== undefined) {
+    assertStorageRegion(storageConfig.region, input.deploymentRegion);
+    assertRegionalKmsKey(storageConfig.serverSideEncryptionAwsKmsKeyId, input.deploymentRegion);
+  }
+  const secret = await readByoStorageSecret(storageConfig, input.secretReader);
+  const client = createByoS3StorageClient(storageConfig, secret, input.createS3Client);
   return {
     client: createPrefixedStorageClient(client, storageConfig.prefix),
     managedBy: "byo",
     prefix: storageConfig.prefix,
+    region: storageConfig.region,
   };
 }
 
@@ -191,7 +264,10 @@ export function defaultTenantStoragePrefix(orgId: string): string {
   return `tenants/${orgId}/`;
 }
 
-function storageConfigFromByo(byoConfig: JsonObject | undefined):
+function storageConfigFromByo(
+  byoConfig: JsonObject | undefined,
+  orgId: string,
+):
   | { readonly kind: "helix-default"; readonly prefix: string }
   | {
       readonly kind: "byo";
@@ -200,10 +276,19 @@ function storageConfigFromByo(byoConfig: JsonObject | undefined):
       readonly region: string;
       readonly bucket: string;
       readonly prefix: string;
-      readonly credentialsVaultPath: string;
+      readonly orgId: string;
+      readonly credentialsSecretHandle: string;
       readonly forcePathStyle: boolean;
-      readonly serverSideEncryption?: "aws:kms";
-      readonly serverSideEncryptionAwsKmsKeyId?: string;
+      readonly serverSideEncryption: "aws:kms";
+      readonly serverSideEncryptionAwsKmsKeyId: string;
+      readonly securityPolicy: {
+        readonly requireTls: true;
+        readonly requireVersioning: true;
+        readonly objectLock: {
+          readonly mode: "COMPLIANCE" | "GOVERNANCE";
+          readonly retentionDays: number;
+        };
+      };
     }
   | undefined {
   const storage = readRecord(byoConfig?.storage);
@@ -222,20 +307,24 @@ function storageConfigFromByo(byoConfig: JsonObject | undefined):
       throw new Error("BYO storage provider must be aws-s3, r2, or s3-compatible.");
     }
     const bucket = readRequiredString(storage.bucket, "BYO storage bucket is required.");
-    const credentialsVaultPath = readRequiredString(
-      storage.credentials_vault_path,
-      "BYO storage credentials_vault_path is required.",
+    const credentialsSecretHandle = readSecretHandle(
+      storage.credentials_secret_handle,
+      "BYO storage credentials_secret_handle is required.",
     );
     return {
       kind: "byo",
       provider,
-      endpoint: endpointForProvider(provider, readString(storage.endpoint)),
-      region: readString(storage.region) ?? "us-east-1",
+      endpoint: secureEndpointForProvider(provider, readString(storage.endpoint)),
+      region: readRequiredString(storage.region, "BYO storage region is required."),
       bucket,
-      prefix: normalizePrefix(readString(storage.prefix) ?? ""),
-      credentialsVaultPath,
+      prefix: normalizePrefix(
+        readString(storage.prefix)?.trim() || defaultTenantStoragePrefix(orgId),
+      ),
+      orgId,
+      credentialsSecretHandle,
       forcePathStyle: readBoolean(storage.force_path_style) ?? provider !== "aws-s3",
       ...serverSideEncryptionFromStorageConfig(storage),
+      securityPolicy: securityPolicyFromStorageConfig(storage),
     };
   }
   return undefined;
@@ -246,128 +335,29 @@ function createByoS3StorageClient(
     ReturnType<typeof storageConfigFromByo>,
     undefined | { readonly kind: "helix-default" }
   >,
-  options: {
-    readonly secretReader?: TenantStorageSecretReader | undefined;
-    readonly createS3Client?: (config: S3CompatibleStorageConfig) => TenantStorageClient;
-  },
+  secret: VersionedTenantStorageSecret,
+  createS3Client: ((config: S3CompatibleStorageConfig) => TenantStorageClient) | undefined,
 ): TenantStorageClient {
-  const secretReader = options.secretReader;
-  if (secretReader === undefined) {
-    throw new Error("BYO storage secret reader is not configured.");
-  }
-  const createS3Client = options.createS3Client ?? createS3CompatibleStorage;
-  return new LazyByoS3StorageClient({
-    config,
-    secretReader,
-    createS3Client,
+  return (createS3Client ?? createS3CompatibleStorage)({
+    endpoint: config.endpoint,
+    region: config.region,
+    bucket: config.bucket,
+    credentials: s3CredentialsFromSecret(secret.value),
+    forcePathStyle: config.forcePathStyle,
+    serverSideEncryption: config.serverSideEncryption,
+    serverSideEncryptionAwsKmsKeyId: config.serverSideEncryptionAwsKmsKeyId,
+    securityPolicy: config.securityPolicy,
   });
 }
 
-class LazyByoS3StorageClient implements TenantStorageClient {
-  #client: TenantStorageClient | undefined;
-
-  constructor(
-    private readonly options: {
-      readonly config: Exclude<
-        ReturnType<typeof storageConfigFromByo>,
-        undefined | { readonly kind: "helix-default" }
-      >;
-      readonly secretReader: TenantStorageSecretReader;
-      readonly createS3Client: (config: S3CompatibleStorageConfig) => TenantStorageClient;
-    },
-  ) {}
-
-  async put(object: StorageObject): Promise<void> {
-    await (await this.client()).put(object);
-  }
-
-  async get(key: string): Promise<StorageObject | null> {
-    return (await this.client()).get(key);
-  }
-
-  async delete(key: string): Promise<void> {
-    await (await this.client()).delete(key);
-  }
-
-  async presignGetUrl(
-    key: string,
-    options?: Parameters<NonNullable<TenantStorageClient["presignGetUrl"]>>[1],
-  ): Promise<string> {
-    const client = await this.client();
-    if (client.presignGetUrl === undefined) {
-      throw new Error("Resolved BYO storage client does not support presigned GET URLs.");
-    }
-    return client.presignGetUrl(key, options);
-  }
-
-  async presignPutUrl(
-    key: string,
-    options?: Parameters<NonNullable<TenantStorageClient["presignPutUrl"]>>[1],
-  ): Promise<string> {
-    const client = await this.client();
-    if (client.presignPutUrl === undefined) {
-      throw new Error("Resolved BYO storage client does not support presigned PUT URLs.");
-    }
-    return client.presignPutUrl(key, options);
-  }
-
-  async presignPutRequest(
-    key: string,
-    options?: Parameters<NonNullable<TenantStorageClient["presignPutRequest"]>>[1],
-  ): Promise<TenantPresignedPutUpload> {
-    const client = await this.client();
-    if (client.presignPutRequest !== undefined) {
-      return client.presignPutRequest(key, options);
-    }
-    if (client.presignPutUrl === undefined) {
-      throw new Error("Resolved BYO storage client does not support presigned PUT URLs.");
-    }
-    return {
-      url: await client.presignPutUrl(key, options),
-      headers: presignedPutHeadersFromOptions(options),
-    };
-  }
-
-  private async client(): Promise<TenantStorageClient> {
-    if (this.#client !== undefined) {
-      return this.#client;
-    }
-    const secret = await this.options.secretReader.read(this.options.config.credentialsVaultPath);
-    if (secret === undefined) {
-      throw new Error("BYO storage credentials were not found.");
-    }
-    this.#client = this.options.createS3Client({
-      endpoint: this.options.config.endpoint,
-      region: this.options.config.region,
-      bucket: this.options.config.bucket,
-      credentials: s3CredentialsFromSecret(secret),
-      forcePathStyle: this.options.config.forcePathStyle,
-      ...(this.options.config.serverSideEncryption === undefined
-        ? {}
-        : {
-            serverSideEncryption: this.options.config.serverSideEncryption,
-            ...(this.options.config.serverSideEncryptionAwsKmsKeyId === undefined
-              ? {}
-              : {
-                  serverSideEncryptionAwsKmsKeyId:
-                    this.options.config.serverSideEncryptionAwsKmsKeyId,
-                }),
-          }),
-    });
-    return this.#client;
-  }
-}
-
-function serverSideEncryptionFromStorageConfig(storage: Record<string, unknown>):
-  | {
-      readonly serverSideEncryption: "aws:kms";
-      readonly serverSideEncryptionAwsKmsKeyId: string;
-    }
-  | Record<string, never> {
+function serverSideEncryptionFromStorageConfig(storage: Record<string, unknown>): {
+  readonly serverSideEncryption: "aws:kms";
+  readonly serverSideEncryptionAwsKmsKeyId: string;
+} {
   const encryption = readRecord(storage.encryption);
   const kmsKeyId = readString(encryption?.sse_kms_key_arn)?.trim();
   if (kmsKeyId === undefined || kmsKeyId.length === 0) {
-    return {};
+    throw new Error("BYO storage requires an SSE-KMS key.");
   }
   return {
     serverSideEncryption: "aws:kms",
@@ -375,17 +365,71 @@ function serverSideEncryptionFromStorageConfig(storage: Record<string, unknown>)
   };
 }
 
-function endpointForProvider(
+function assertRegionalKmsKey(keyId: string, region: string): void {
+  if (!keyId.startsWith("arn:")) return;
+  if (keyId.split(":")[3] !== region) {
+    throw new Error(`BYO storage KMS key is outside tenant region '${region}'.`);
+  }
+}
+
+function securityPolicyFromStorageConfig(storage: Record<string, unknown>) {
+  const lifecycle = readRecord(storage.lifecycle);
+  const rawMode = readString(lifecycle?.object_lock)?.toUpperCase();
+  const retentionDays = lifecycle?.retention_days;
+  if (
+    (rawMode !== "GOVERNANCE" && rawMode !== "COMPLIANCE") ||
+    !Number.isSafeInteger(retentionDays) ||
+    (retentionDays as number) < 1
+  ) {
+    throw new Error(
+      "BYO storage requires governance or compliance object lock with retention_days.",
+    );
+  }
+  const mode: "GOVERNANCE" | "COMPLIANCE" = rawMode;
+  return {
+    requireTls: true as const,
+    requireVersioning: true as const,
+    objectLock: { mode, retentionDays: retentionDays as number },
+  };
+}
+
+function secureEndpointForProvider(
   provider: "aws-s3" | "r2" | "s3-compatible",
   endpoint: string | undefined,
 ): string {
   if (endpoint !== undefined && endpoint.length > 0) {
-    return endpoint;
+    const url = new URL(endpoint);
+    if (url.protocol !== "https:") throw new Error("BYO storage endpoint must use HTTPS.");
+    return url.toString().replace(/\/$/u, "");
   }
   if (provider === "aws-s3") {
     return "https://s3.amazonaws.com";
   }
   throw new Error("BYO storage endpoint is required for this provider.");
+}
+
+async function readByoStorageSecret(
+  config: Exclude<
+    ReturnType<typeof storageConfigFromByo>,
+    undefined | { readonly kind: "helix-default" }
+  >,
+  reader: TenantStorageSecretReader | undefined,
+): Promise<VersionedTenantStorageSecret> {
+  if (reader === undefined) throw new Error("BYO storage secret reader is not configured.");
+  const secret = await reader.read({
+    orgId: config.orgId,
+    scope: "byo-storage",
+    handle: config.credentialsSecretHandle,
+  });
+  if (secret === undefined) throw new Error("BYO storage credentials were not found.");
+  return {
+    value: secret,
+    version: createHash("sha256")
+      .update(
+        JSON.stringify(Object.entries(secret).sort(([left], [right]) => left.localeCompare(right))),
+      )
+      .digest("hex"),
+  };
 }
 
 function s3CredentialsFromSecret(secret: Record<string, string>): S3CompatibleCredentials {
@@ -404,6 +448,14 @@ function s3CredentialsFromSecret(secret: Record<string, string>): S3CompatibleCr
   };
 }
 
+function readSecretHandle(value: unknown, message: string): string {
+  const handle = readRequiredString(value, message).toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/u.test(handle)) {
+    throw new Error("Secret handle must be a canonical 1-100 character identifier.");
+  }
+  return handle;
+}
+
 export function createPrefixedStorageClient(
   client: TenantStorageClient,
   prefix: string,
@@ -412,6 +464,16 @@ export function createPrefixedStorageClient(
   const presignGetUrl = client.presignGetUrl?.bind(client);
   const presignPutUrl = client.presignPutUrl?.bind(client);
   const presignPutRequest = client.presignPutRequest?.bind(client);
+  const head = client.head?.bind(client);
+  const getStream = client.getStream?.bind(client);
+  const getRange = client.getRange?.bind(client);
+  const copy = client.copy?.bind(client);
+  const listKeys = client.listKeys?.bind(client);
+  const createMultipartUpload = client.createMultipartUpload?.bind(client);
+  const presignUploadPart = client.presignUploadPart?.bind(client);
+  const completeMultipartUpload = client.completeMultipartUpload?.bind(client);
+  const abortMultipartUpload = client.abortMultipartUpload?.bind(client);
+  const checkHealth = client.checkHealth?.bind(client);
   return {
     async put(object: StorageObject): Promise<void> {
       await client.put({ ...object, key: prefixedKey(normalizedPrefix, object.key) });
@@ -429,6 +491,95 @@ export function createPrefixedStorageClient(
     async delete(key: string): Promise<void> {
       await client.delete(prefixedKey(normalizedPrefix, key));
     },
+    ...(checkHealth === undefined ? {} : { checkHealth }),
+    ...(listKeys === undefined
+      ? {}
+      : {
+          async *listKeys(prefix: string): AsyncIterable<string> {
+            for await (const key of listKeys(prefixedKey(normalizedPrefix, prefix))) {
+              if (!key.startsWith(normalizedPrefix)) {
+                throw new Error("Storage returned an object outside the tenant namespace.");
+              }
+              yield key.slice(normalizedPrefix.length);
+            }
+          },
+        }),
+    ...(head === undefined
+      ? {}
+      : {
+          async head(key: string) {
+            const result = await head(prefixedKey(normalizedPrefix, key));
+            return result === null ? null : { ...result, key };
+          },
+        }),
+    ...(getStream === undefined
+      ? {}
+      : {
+          async getStream(key: string): Promise<StorageObject | null> {
+            const object = await getStream(prefixedKey(normalizedPrefix, key));
+            return object === null ? null : { ...object, key };
+          },
+        }),
+    ...(getRange === undefined
+      ? {}
+      : {
+          async getRange(key: string, start: number, end: number): Promise<StorageObject | null> {
+            const object = await getRange(prefixedKey(normalizedPrefix, key), start, end);
+            return object === null ? null : { ...object, key };
+          },
+        }),
+    ...(copy === undefined
+      ? {}
+      : {
+          async copy(sourceKey: string, destinationKey: string): Promise<void> {
+            await copy(
+              prefixedKey(normalizedPrefix, sourceKey),
+              prefixedKey(normalizedPrefix, destinationKey),
+            );
+          },
+        }),
+    ...(createMultipartUpload === undefined
+      ? {}
+      : {
+          async createMultipartUpload(key: string, options?: { readonly contentType?: string }) {
+            return createMultipartUpload(prefixedKey(normalizedPrefix, key), options);
+          },
+        }),
+    ...(presignUploadPart === undefined
+      ? {}
+      : {
+          async presignUploadPart(
+            key: string,
+            uploadId: string,
+            partNumber: number,
+            options?: { readonly contentType?: string; readonly expiresSeconds?: number },
+          ): Promise<string> {
+            return presignUploadPart(
+              prefixedKey(normalizedPrefix, key),
+              uploadId,
+              partNumber,
+              options,
+            );
+          },
+        }),
+    ...(completeMultipartUpload === undefined
+      ? {}
+      : {
+          async completeMultipartUpload(
+            key: string,
+            uploadId: string,
+            parts: readonly { readonly partNumber: number; readonly etag: string }[],
+          ): Promise<void> {
+            await completeMultipartUpload(prefixedKey(normalizedPrefix, key), uploadId, parts);
+          },
+        }),
+    ...(abortMultipartUpload === undefined
+      ? {}
+      : {
+          async abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+            await abortMultipartUpload(prefixedKey(normalizedPrefix, key), uploadId);
+          },
+        }),
     ...(presignGetUrl === undefined
       ? {}
       : {
@@ -542,17 +693,12 @@ function hasControlCharacter(value: string): boolean {
 
 function storageResolutionCacheKey(
   orgId: string,
-  storageConfig: ReturnType<typeof storageConfigFromByo>,
-  defaultClient: TenantStorageClient | undefined,
+  storageConfig: NonNullable<ReturnType<typeof storageConfigFromByo>>,
+  secretVersion?: string,
 ): string {
-  const basis =
-    storageConfig === undefined
-      ? {
-          kind: "legacy-default",
-          hasDefaultClient: defaultClient !== undefined,
-        }
-      : storageConfig;
-  return `${orgId}:${createHash("sha256").update(stableStringify(basis)).digest("hex")}`;
+  return `${orgId}:${createHash("sha256")
+    .update(stableStringify({ storageConfig, secretVersion }))
+    .digest("hex")}`;
 }
 
 function stableStringify(value: unknown): string {

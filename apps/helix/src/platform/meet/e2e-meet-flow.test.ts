@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
+import { createPlatformMetrics } from "../../api/metrics.js";
 import { createToolRegistry } from "../tool-registry.js";
 import { registerMeetTools } from "./tools.js";
 import { InMemoryMeetStore } from "./store.js";
@@ -12,20 +13,31 @@ describe("meet flow", () => {
   it("creates rooms, enforces room access, mints Jitsi JWTs, ends rooms, and attaches recordings against the platform store", async () => {
     const store = new InMemoryMeetStore();
     const registry = createToolRegistry();
+    const metrics = createPlatformMetrics();
     registerMeetTools(registry, {
       store,
+      metrics,
       jwtSecret: "test-secret",
       jwtAppId: "helix",
       jwtIssuer: "helix",
+      jitsiPublicUrl: "https://meet.helix.test",
+      recordingAvailable: async () => true,
     });
     const actor = userActor(["meet.read", "meet.write"]);
+
+    await expect(
+      registry.invoke(
+        "meet.create-room",
+        { subject: "Spoofed deployment", jitsiDomain: "attacker.example" },
+        { actor },
+      ),
+    ).resolves.toMatchObject({ ok: false });
 
     const created = await registry.invoke<{ readonly id: string; readonly roomName: string }>(
       "meet.create-room",
       {
         subject: "Launch review",
         roomName: "Launch Review",
-        jitsiDomain: "meet.helix.test",
         participantActorIds: [participantActorId],
       },
       { actor },
@@ -35,15 +47,97 @@ describe("meet flow", () => {
       throw new Error(created.error);
     }
 
-    const token = await registry.invoke<{ readonly token: string; readonly joinUrl: string }>(
+    await expect(
+      registry.invoke("meet.mint-token", { roomId: created.output.id }, { actor }),
+    ).resolves.toMatchObject({ ok: false });
+
+    const token = await registry.invoke<{
+      readonly token: string;
+      readonly joinUrl: string;
+      readonly recordingAvailable: boolean;
+    }>(
       "meet.mint-token",
-      { roomId: created.output.id, moderator: true },
+      {
+        roomId: created.output.id,
+        recordingNoticeAccepted: true,
+        recordingNoticeVersion: "2026-09-02",
+        deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        joinGrantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      },
       { actor },
     );
     expect(token.ok).toBe(true);
     if (!token.ok) {
       throw new Error(token.error);
     }
+    expect(jwtPayload(token.output.token).context.user.moderator).toBe(true);
+    expect(token.output.recordingAvailable).toBe(true);
+
+    await expect(
+      registry.invoke(
+        "meet.telemetry.record",
+        {
+          roomId: created.output.id,
+          event: "quality",
+          packetLossPercent: 12,
+          jitterMs: 250,
+          rttMs: 800,
+          bitrateKbps: 50,
+          bridgeLoadPercent: 95,
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({ ok: true, output: { accepted: true } });
+    await expect(
+      registry.invoke(
+        "meet.telemetry.record",
+        { roomId: created.output.id, event: "quality", packetLossPercent: 101 },
+        { actor },
+      ),
+    ).resolves.toMatchObject({ ok: false });
+    await expect(
+      registry.invoke(
+        "meet.telemetry.record",
+        {
+          roomId: created.output.id,
+          event: "quality",
+          packetLossPercent: 1,
+          mediaContent: "must-not-be-accepted",
+          token: "must-not-be-accepted",
+        },
+        { actor },
+      ),
+    ).resolves.toMatchObject({ ok: false });
+    const telemetry = await metrics.registry.metrics();
+    expect(telemetry).toContain('helix_meet_degraded_samples_total{signal="packet_loss"} 1');
+    expect(telemetry).not.toContain(created.output.id);
+
+    const participant = { ...userActor(["meet.read", "meet.write"]), id: participantActorId };
+    const participantToken = await registry.invoke<{ readonly token: string }>(
+      "meet.mint-token",
+      {
+        roomId: created.output.id,
+        recordingNoticeAccepted: true,
+        recordingNoticeVersion: "2026-09-02",
+        deviceId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        joinGrantId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      },
+      { actor: participant },
+    );
+    expect(participantToken.ok).toBe(true);
+    if (participantToken.ok) {
+      expect(jwtPayload(participantToken.output.token).context.user.moderator).toBe(false);
+    }
+    await expect(
+      registry.invoke(
+        "meet.recording.authorize-start",
+        { roomId: created.output.id },
+        { actor },
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      registry.invoke("meet.end-room", { roomId: created.output.id }, { actor: participant }),
+    ).resolves.toMatchObject({ ok: false });
 
     await expect(
       store.getRoomForActor({
@@ -249,7 +343,6 @@ describe("meet flow", () => {
       "meet.create-room",
       {
         subject: "1:1 with Jonas",
-        jitsiDomain: "meet.helix.test",
         scheduledStartAt: "2026-05-22T15:00:00.000Z",
         scheduledEndAt: "2026-05-22T15:30:00.000Z",
       },
@@ -273,5 +366,15 @@ function userActor(scopes: readonly string[]): Actor {
     email: "ada@example.com",
     displayName: "Ada Lovelace",
     scopes,
+  };
+}
+
+function jwtPayload(token: string): {
+  readonly context: { readonly user: { readonly moderator: boolean } };
+} {
+  const payload = token.split(".")[1];
+  if (payload === undefined) throw new Error("JWT payload missing");
+  return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+    readonly context: { readonly user: { readonly moderator: boolean } };
   };
 }

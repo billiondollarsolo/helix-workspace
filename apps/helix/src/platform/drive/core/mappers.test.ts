@@ -26,6 +26,25 @@ describe("mapObjectEntry", () => {
     expect(entry.app).toBe("docs");
     expect(entry.versionNumber).toBe(3);
     expect(entry.name).toBe("f.pdf");
+    expect(entry.metadata).not.toHaveProperty("starred");
+  });
+
+  it("projects only the current membership's star state", () => {
+    const entry = mapObjectEntry({
+      id: "11111111-1111-4111-8111-111111111111",
+      owner_actor_id: "a",
+      storage_key: "drive/o/x/v1/f.pdf",
+      mime_type: "application/pdf",
+      byte_size: 10,
+      sha256: null,
+      metadata: { name: "f.pdf", starred: false },
+      starred: true,
+      deleted_at: null,
+      created_at: new Date("2026-07-18T00:00:00Z"),
+      updated_at: new Date("2026-07-18T00:00:00Z"),
+    });
+
+    expect(entry.metadata.starred).toBe(true);
   });
 });
 

@@ -26,6 +26,26 @@ describe("actorHasScope", () => {
     expect(actorHasScope({ ...base, scopes: ["*"] }, "drive.read")).toBe(true);
     expect(actorHasScope({ ...base, scopes: ["admin.*"] }, "drive.read")).toBe(true);
   });
+
+  it("does not let a legacy wildcard bypass an exact role deny", () => {
+    expect(
+      actorHasScope(
+        {
+          ...base,
+          scopes: ["admin.*"],
+          roleBindings: [
+            {
+              roleId: "00000000-0000-4000-8000-000000000001",
+              allow: [],
+              deny: ["admin.users"],
+              scope: { type: "org" },
+            },
+          ],
+        },
+        "admin.users",
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("requireActorScope", () => {

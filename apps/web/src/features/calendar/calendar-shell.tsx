@@ -1,10 +1,9 @@
-/* Helix Calendar — week view recreated from the design handoff.
-   Left sidebar (Create, mini-month, calendar checklists), week board with an
-   hour gutter + 7 day columns, absolute-positioned colour-coded event cards,
-   the red "now" line, and a 340px event popover.
+/* Helix Calendar — backend-backed day, week, month, and agenda views.
+   The week board uses an hour gutter, seven day columns, positioned event
+   cards, a current-time line, and a focused event popover.
 
    Everything is wired to the calendar backend through TanStack Query:
-   - `calendar.event.list` feeds the week grid for the visible window.
+   - `calendar.event.list` feeds the selected view's bounded window.
    - `calendar.calendars.list` feeds the "My calendars"/"Team" checklists; the
      checklist also drives which events are shown.
    - `calendar.event.create` / `.update` / `.delete` back the Create button,
@@ -15,13 +14,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+  instantToLocalDateTime,
+  localDateTimeToFloatingInstant,
+  localDateTimeToInstant,
+  type CalendarTimeSemantics,
+} from "@helix/contracts";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Icons } from "@/components/icons";
 import {
@@ -45,6 +43,7 @@ import {
   todayIso,
   WEEK_DAY_LABELS,
   dateNumberForDay,
+  eventQueryWindowForTimeZone,
   formatCardTime,
   formatHour,
   gridEventFromApiEvent,
@@ -63,7 +62,7 @@ import {
   type CalendarRouteView,
 } from "./queries";
 
-const VIEW_OPTIONS: readonly CalendarRouteView[] = ["day", "week", "month"];
+const VIEW_OPTIONS: readonly CalendarRouteView[] = ["day", "week", "month", "agenda"];
 
 /** Props let the route own URL search state; all are optional for standalone use. */
 export interface CalendarShellProps {
@@ -79,16 +78,27 @@ interface EventDraft {
   readonly title: string;
   readonly description: string;
   readonly location: string;
+  readonly attendeeEmails: string;
+  readonly recurrenceRule: string;
+  readonly reminderMinutes: string;
+  readonly metadata: Record<string, unknown>;
   /** ISO date `yyyy-mm-dd`. */
   readonly date: string;
   /** Decimal hour. */
   readonly start: number;
   /** Decimal hour. */
   readonly end: number;
+  readonly timezone: string;
+  readonly allDay: boolean;
+  readonly timeSemantics: CalendarTimeSemantics;
 }
 
 export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellProps = {}) {
   const queryClient = useQueryClient();
+  const viewerTimeZone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    [],
+  );
   const [localState, setLocalState] = useState<CalendarRouteState>(
     routeState ?? defaultCalendarRouteState,
   );
@@ -110,14 +120,18 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
     updateState({ date: shiftIsoDate(state.date, state.view, direction) });
   };
 
-  const eventsInput = useMemo(
+  const displayWindowInput = useMemo(
     () => calendarEventsInputFromRouteState({ date: state.date, view: state.view }),
     [state.date, state.view],
   );
+  const eventsInput = useMemo(
+    () => eventQueryWindowForTimeZone(displayWindowInput, viewerTimeZone),
+    [displayWindowInput, viewerTimeZone],
+  );
   /** Human label for the visible window header, e.g. "May 18 – 24, 2026". */
   const windowLabel = useMemo(
-    () => formatWindowLabel(eventsInput.startsAt, eventsInput.endsAt),
-    [eventsInput.startsAt, eventsInput.endsAt],
+    () => formatWindowLabel(displayWindowInput.startsAt, displayWindowInput.endsAt),
+    [displayWindowInput.startsAt, displayWindowInput.endsAt],
   );
   const eventsQuery = useQuery(calendarEventsQueryOptions(eventsInput));
   const calendarsQuery = useQuery(calendarCalendarsQueryOptions());
@@ -157,14 +171,14 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
     [calendars],
   );
 
-  /** Backend events mapped onto the week grid, filtered to what is visible. */
+  /** Backend events normalized for the selected view and filtered by calendar. */
   const backendEvents = useMemo<readonly CalendarGridEvent[]>(() => {
     const data = eventsQuery.data;
     if (data === undefined) {
       return [];
     }
-    return data.map((event) => gridEventFromApiEvent(event, calendarColors)).filter(isOnGrid);
-  }, [eventsQuery.data, calendarColors]);
+    return data.map((event) => gridEventFromApiEvent(event, calendarColors, viewerTimeZone));
+  }, [eventsQuery.data, calendarColors, viewerTimeZone]);
 
   /** True when the backend events request failed — drives the error banner. */
   const eventsFailed = eventsQuery.isError;
@@ -178,8 +192,7 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
       return sourceEvents;
     }
     return sourceEvents.filter(
-      (event) =>
-        event.calendarId === undefined || (visibility[event.calendarId] ?? true),
+      (event) => event.calendarId === undefined || (visibility[event.calendarId] ?? true),
     );
   }, [sourceEvents, calendars.length, visibility]);
 
@@ -196,9 +209,7 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
   }, [visibleEvents, query]);
 
   const selectedEvent =
-    state.eventId.length > 0
-      ? (events.find((event) => event.id === state.eventId) ?? null)
-      : null;
+    state.eventId.length > 0 ? (events.find((event) => event.id === state.eventId) ?? null) : null;
 
   /* ----------------------------------------------------------- mutations */
 
@@ -216,8 +227,8 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
   const createMutation = useMutation({
     mutationFn: (input: CalendarCreateEventInput) => createCalendarEvent(input),
     onMutate: clearError,
-    onError: () => {
-      setActionError("Could not create the event. Try again.");
+    onError: (error: unknown) => {
+      setActionError(error instanceof Error ? error.message : "Could not create the event.");
     },
     onSuccess: invalidateCalendarData,
   });
@@ -225,8 +236,8 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
   const updateMutation = useMutation({
     mutationFn: (input: CalendarUpdateEventInput) => updateCalendarEvent(input),
     onMutate: clearError,
-    onError: () => {
-      setActionError("Could not update the event. Try again.");
+    onError: (error: unknown) => {
+      setActionError(error instanceof Error ? error.message : "Could not update the event.");
     },
     onSuccess: invalidateCalendarData,
   });
@@ -262,34 +273,58 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
 
   const [draft, setDraft] = useState<EventDraft | null>(null);
   /** Monday of the visible window — anchors drag-create/move ISO dates. */
-  const weekStartIso = (eventsInput.startsAt ?? "2026-05-18").slice(0, 10);
+  const weekStartIso = (displayWindowInput.startsAt ?? "2026-05-18").slice(0, 10);
 
   /** ISO date for a Monday-relative day index in the visible window. */
   const isoDateForWeekDay = useCallback(
     (dayIndex: number): string => {
+      if (state.view === "day") return state.date;
       const base = new Date(`${weekStartIso}T00:00:00.000Z`);
       base.setUTCDate(base.getUTCDate() + dayIndex);
       return base.toISOString().slice(0, 10);
     },
-    [weekStartIso],
+    [state.date, state.view, weekStartIso],
   );
 
   const openCreateDialog = (seed?: { date: string; start: number; end: number }) => {
     clearError();
+    const timezone =
+      calendars.find((calendar) => calendar.id === defaultCalendarId)?.timezone ?? viewerTimeZone;
     setDraft({
       mode: "create",
       calendarId: defaultCalendarId,
       title: "",
       description: "",
       location: "",
+      attendeeEmails: "",
+      recurrenceRule: "",
+      reminderMinutes: "",
+      metadata: {},
       date: seed?.date ?? isoDateForWeekDay(todayDayIndex()),
       start: seed?.start ?? 9,
       end: seed?.end ?? 10,
+      timezone,
+      allDay: false,
+      timeSemantics: "zoned",
     });
   };
 
   const openEditDialog = (event: CalendarGridEvent) => {
     clearError();
+    const apiEvent = event.apiEvent;
+    const timeSemantics = apiEvent?.allDay ? "all_day" : (apiEvent?.timeSemantics ?? "zoned");
+    const timezone = apiEvent?.timezone ?? viewerTimeZone;
+    const intentZone = timeSemantics === "zoned" ? timezone : "UTC";
+    const startsLocal =
+      apiEvent?.startsLocal ??
+      (apiEvent === undefined
+        ? `${event.date}T${decimalHourToClock(event.start)}:00`
+        : instantToLocalDateTime(apiEvent.startsAt, intentZone));
+    const endsLocal =
+      apiEvent?.endsLocal ??
+      (apiEvent === undefined
+        ? `${event.date}T${decimalHourToClock(event.end)}:00`
+        : instantToLocalDateTime(apiEvent.endsAt, intentZone));
     setDraft({
       mode: "edit",
       eventId: event.id,
@@ -297,16 +332,36 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
       title: event.title,
       description: event.apiEvent?.description ?? "",
       location: event.location ?? "",
-      date: event.date,
-      start: event.start,
-      end: event.end,
+      attendeeEmails:
+        event.apiEvent?.attendees
+          .filter((attendee) => attendee.isOrganizer !== true)
+          .map((attendee) => attendee.email)
+          .join(", ") ?? "",
+      recurrenceRule: event.apiEvent?.recurrenceRule ?? "",
+      reminderMinutes: calendarReminderMinutes(event.apiEvent?.metadata),
+      metadata: event.apiEvent?.metadata ?? {},
+      date: startsLocal.slice(0, 10),
+      start: clockToDecimalHour(startsLocal.slice(11, 16), event.start),
+      end: clockToDecimalHour(endsLocal.slice(11, 16), event.end),
+      timezone,
+      allDay: apiEvent?.allDay ?? false,
+      timeSemantics,
     });
   };
 
   const submitDraft = (value: EventDraft) => {
-    const startsAt = `${value.date}T${decimalHourToClock(value.start)}:00.000Z`;
-    const endsAt = `${value.date}T${decimalHourToClock(value.end)}:00.000Z`;
+    let startsAt: string;
+    let endsAt: string;
+    try {
+      const instants = draftInstants(value);
+      startsAt = instants.startsAt;
+      endsAt = instants.endsAt;
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "That local time is invalid.");
+      return;
+    }
     if (value.mode === "create") {
+      const attendees = attendeeInputs(value.attendeeEmails);
       createMutation.mutate({
         calendarId: value.calendarId,
         title: value.title,
@@ -314,8 +369,15 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
         location: value.location.trim() === "" ? null : value.location,
         startsAt,
         endsAt,
+        timezone: value.timezone,
+        allDay: value.allDay,
+        timeSemantics: value.timeSemantics,
+        recurrenceRule: value.recurrenceRule.trim() || null,
+        attendees,
+        metadata: calendarReminderMetadata(value.reminderMinutes, value.metadata),
       });
     } else if (value.eventId !== undefined) {
+      const attendees = attendeeInputs(value.attendeeEmails);
       updateMutation.mutate({
         eventId: value.eventId,
         patch: {
@@ -324,6 +386,12 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
           location: value.location.trim() === "" ? null : value.location,
           startsAt,
           endsAt,
+          timezone: value.timezone,
+          allDay: value.allDay,
+          timeSemantics: value.timeSemantics,
+          recurrenceRule: value.recurrenceRule.trim() || null,
+          attendees,
+          metadata: calendarReminderMetadata(value.reminderMinutes, value.metadata),
         },
       });
     }
@@ -338,11 +406,28 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
     }
     const duration = event.end - event.start;
     const date = isoDateForWeekDay(nextDay);
+    const semantics = event.apiEvent.timeSemantics ?? "zoned";
+    const localStart = `${date}T${decimalHourToClock(nextStart)}:00`;
+    const localEnd = `${date}T${decimalHourToClock(nextStart + duration)}:00`;
+    let startsAt: string;
+    let endsAt: string;
+    try {
+      if (semantics === "floating") {
+        startsAt = localDateTimeToFloatingInstant(localStart).toISOString();
+        endsAt = localDateTimeToFloatingInstant(localEnd).toISOString();
+      } else {
+        startsAt = localDateTimeToInstant(localStart, viewerTimeZone).toISOString();
+        endsAt = localDateTimeToInstant(localEnd, viewerTimeZone).toISOString();
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "That local time is invalid.");
+      return;
+    }
     updateMutation.mutate({
       eventId: event.id,
       patch: {
-        startsAt: `${date}T${decimalHourToClock(nextStart)}:00.000Z`,
-        endsAt: `${date}T${decimalHourToClock(nextStart + duration)}:00.000Z`,
+        startsAt,
+        endsAt,
       },
     });
   };
@@ -363,8 +448,7 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
     respondMutation.mutate({ eventId, responseStatus: status });
   };
 
-  const writableSelected =
-    selectedEvent !== null && selectedEvent.apiEvent !== undefined;
+  const writableSelected = selectedEvent !== null && selectedEvent.apiEvent !== undefined;
 
   return (
     <section
@@ -401,9 +485,7 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
         onDragCreate={dragCreate}
         onEditEvent={writableSelected ? openEditDialog : undefined}
         onDeleteEvent={
-          writableSelected
-            ? (eventId) => deleteMutation.mutate({ eventId })
-            : undefined
+          writableSelected ? (eventId) => deleteMutation.mutate({ eventId }) : undefined
         }
         onRespond={writableSelected ? respond : undefined}
         respondPending={respondMutation.isPending}
@@ -446,11 +528,7 @@ function CalendarSidebar({
   const mineSources = calendars.filter((source) => source.group === "mine");
   const teamSources = calendars.filter((source) => source.group === "team");
 
-  const renderGroup = (
-    label: string,
-    entries: readonly CalendarSidebarEntry[],
-    pad: string,
-  ) => (
+  const renderGroup = (label: string, entries: readonly CalendarSidebarEntry[], pad: string) => (
     <>
       <div className="section-label" style={{ padding: pad }}>
         {label}
@@ -513,8 +591,6 @@ function CalendarSidebar({
         />
       </label>
 
-      <MiniMonth />
-
       {calendarsLoading && (
         <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", padding: "8px 0" }}>
           Loading calendars…
@@ -564,85 +640,9 @@ function CalendarCheck({
         cursor: "pointer",
       }}
     >
-      <input
-        checked={checked}
-        onChange={onToggle}
-        style={{ accentColor: color }}
-        type="checkbox"
-      />
+      <input checked={checked} onChange={onToggle} style={{ accentColor: color }} type="checkbox" />
       <span>{name}</span>
     </label>
-  );
-}
-
-/** Mini-month for May 2026: today gets a violet circle, the active week tints. */
-function MiniMonth() {
-  const headers = ["S", "M", "T", "W", "T", "F", "S"];
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ fontSize: "var(--text-meta)", fontWeight: 600 }}>May 2026</span>
-        <div style={{ marginLeft: "auto", display: "flex" }}>
-          <button aria-label="Previous month" className="icon-btn" type="button">
-            <Icons.ChevronLeft />
-          </button>
-          <button aria-label="Next month" className="icon-btn" type="button">
-            <Icons.ChevronRight />
-          </button>
-        </div>
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gap: 1,
-          fontSize: "var(--text-chip)",
-          textAlign: "center",
-          color: "var(--text-3)",
-          marginBottom: 4,
-        }}
-      >
-        {headers.map((label, index) => (
-          <div key={`${label}-${String(index)}`}>{label}</div>
-        ))}
-      </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(7, 1fr)",
-          gap: 1,
-          fontSize: "var(--text-caption)",
-          textAlign: "center",
-        }}
-      >
-        {Array.from({ length: 35 }, (_, index) => {
-          const day = index - 3; // May 1, 2026 is a Friday -> offset by 3.
-          const valid = day >= 1 && day <= 31;
-          const isToday = day === 21;
-          const inWeek = day >= 18 && day <= 24;
-          return (
-            <div
-              key={index}
-              style={{
-                aspectRatio: "1",
-                display: "grid",
-                placeItems: "center",
-                borderRadius: 999,
-                color: !valid ? "var(--text-3)" : isToday ? "var(--accent-fg)" : "var(--text)",
-                background: isToday
-                  ? "var(--accent)"
-                  : inWeek && valid
-                    ? "var(--accent-soft)"
-                    : "transparent",
-                fontWeight: isToday ? 600 : 400,
-              }}
-            >
-              {valid ? day : ""}
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -706,6 +706,8 @@ function CalendarWeek({
     setAnchorRect(null);
     onCloseEvent();
   };
+
+  const gridEvents = events.filter(isOnGrid);
 
   return (
     <div
@@ -816,116 +818,128 @@ function CalendarWeek({
         </div>
       )}
 
-      {/* day headers */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "60px repeat(7, 1fr)",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        <div />
-        {WEEK_DAY_LABELS.map((label, index) => {
-          const isToday = index === todayDayIndex();
-          return (
-            <div
-              key={label}
-              style={{
-                padding: "8px 12px",
-                textAlign: "center",
-                borderLeft: "1px solid var(--border)",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: "var(--text-chip)",
-                  color: "var(--text-3)",
-                  textTransform: "uppercase",
-                  letterSpacing: ".06em",
-                }}
-              >
-                {label}
-              </div>
-              <div
-                style={{
-                  fontSize: "var(--text-h2)",
-                  fontWeight: 600,
-                  marginTop: 2,
-                  display: "inline-grid",
-                  placeItems: "center",
-                  width: 28,
-                  height: 28,
-                  borderRadius: 999,
-                  background: isToday ? "var(--accent)" : "transparent",
-                  color: isToday ? "var(--accent-fg)" : "var(--text)",
-                }}
-              >
-                {dateNumberForDay(weekStartIso, index)}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* week grid */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          display: "grid",
-          gridTemplateColumns: "60px repeat(7, 1fr)",
-          position: "relative",
-        }}
-      >
-        {/* hour gutter */}
-        <div>
-          {GRID_HOURS.map((hour) => (
-            <div
-              key={hour}
-              style={{
-                height: HOUR_HEIGHT,
-                fontSize: "var(--text-chip)",
-                color: "var(--text-3)",
-                textAlign: "right",
-                paddingRight: 8,
-                paddingTop: 2,
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              {hour <= 12 ? hour : hour - 12} {hour < 12 ? "AM" : "PM"}
-            </div>
-          ))}
-        </div>
-
-        {WEEK_DAY_LABELS.map((label, dayIndex) => (
-          <DayColumn
-            key={label}
-            dayIndex={dayIndex}
-            events={events.filter((event) => event.day === dayIndex)}
-            selectedEvent={selectedEvent}
-            onSelect={selectEvent}
-            onMoveEvent={onMoveEvent}
-            onDragCreate={onDragCreate}
-          />
-        ))}
-
-        {empty && (
+      {view !== "week" ? (
+        <CalendarPeriodList
+          events={events}
+          selectedEvent={selectedEvent}
+          onSelect={selectEvent}
+          empty={empty}
+          view={view}
+        />
+      ) : (
+        <>
+          {/* day headers */}
           <div
             style={{
-              position: "absolute",
-              inset: 0,
               display: "grid",
-              placeItems: "center",
-              pointerEvents: "none",
+              gridTemplateColumns: "60px repeat(7, 1fr)",
+              borderBottom: "1px solid var(--border)",
+              flexShrink: 0,
             }}
           >
-            <span style={{ fontSize: "var(--text-body-sm)", color: "var(--text-3)" }}>
-              No events this week.
-            </span>
+            <div />
+            {WEEK_DAY_LABELS.map((label, index) => {
+              const isToday = index === todayDayIndex();
+              return (
+                <div
+                  key={label}
+                  style={{
+                    padding: "8px 12px",
+                    textAlign: "center",
+                    borderLeft: "1px solid var(--border)",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: "var(--text-chip)",
+                      color: "var(--text-3)",
+                      textTransform: "uppercase",
+                      letterSpacing: ".06em",
+                    }}
+                  >
+                    {label}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "var(--text-h2)",
+                      fontWeight: 600,
+                      marginTop: 2,
+                      display: "inline-grid",
+                      placeItems: "center",
+                      width: 28,
+                      height: 28,
+                      borderRadius: 999,
+                      background: isToday ? "var(--accent)" : "transparent",
+                      color: isToday ? "var(--accent-fg)" : "var(--text)",
+                    }}
+                  >
+                    {dateNumberForDay(weekStartIso, index)}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        )}
-      </div>
+
+          {/* week grid */}
+          <div
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              display: "grid",
+              gridTemplateColumns: "60px repeat(7, 1fr)",
+              position: "relative",
+            }}
+          >
+            {/* hour gutter */}
+            <div>
+              {GRID_HOURS.map((hour) => (
+                <div
+                  key={hour}
+                  style={{
+                    height: HOUR_HEIGHT,
+                    fontSize: "var(--text-chip)",
+                    color: "var(--text-3)",
+                    textAlign: "right",
+                    paddingRight: 8,
+                    paddingTop: 2,
+                    borderBottom: "1px solid var(--border)",
+                  }}
+                >
+                  {hour <= 12 ? hour : hour - 12} {hour < 12 ? "AM" : "PM"}
+                </div>
+              ))}
+            </div>
+
+            {WEEK_DAY_LABELS.map((label, dayIndex) => (
+              <DayColumn
+                key={label}
+                dayIndex={dayIndex}
+                events={gridEvents.filter((event) => event.day === dayIndex)}
+                selectedEvent={selectedEvent}
+                onSelect={selectEvent}
+                onMoveEvent={onMoveEvent}
+                onDragCreate={onDragCreate}
+              />
+            ))}
+
+            {empty && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  pointerEvents: "none",
+                }}
+              >
+                <span style={{ fontSize: "var(--text-body-sm)", color: "var(--text-3)" }}>
+                  No events this week.
+                </span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {selectedEvent !== null && (
         <CalendarEventPopover
@@ -938,6 +952,63 @@ function CalendarWeek({
           respondPending={respondPending}
           deletePending={deletePending}
         />
+      )}
+    </div>
+  );
+}
+
+function CalendarPeriodList({
+  events,
+  selectedEvent,
+  onSelect,
+  empty,
+  view,
+}: {
+  readonly events: readonly CalendarGridEvent[];
+  readonly selectedEvent: CalendarGridEvent | null;
+  readonly onSelect: (event: CalendarGridEvent, target: HTMLElement) => void;
+  readonly empty: boolean;
+  readonly view: Exclude<CalendarRouteView, "week">;
+}) {
+  const ordered = [...events].sort(
+    (left, right) => left.date.localeCompare(right.date) || left.start - right.start,
+  );
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: 16 }} aria-label={`${view} events`}>
+      {empty ? (
+        <p style={{ color: "var(--text-3)" }}>No events in this {view}.</p>
+      ) : (
+        ordered.map((event, index) => {
+          const showDate = index === 0 || ordered[index - 1]?.date !== event.date;
+          return (
+            <div key={event.id}>
+              {showDate ? (
+                <h3 style={{ margin: "16px 0 6px", fontSize: "var(--text-body)" }}>
+                  {formatCalendarDate(event.date)}
+                </h3>
+              ) : null}
+              <button
+                type="button"
+                className={`btn ${selectedEvent?.id === event.id ? "primary" : ""}`}
+                onClick={(clickEvent) => onSelect(event, clickEvent.currentTarget)}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "110px 1fr",
+                  width: "100%",
+                  marginBottom: 6,
+                  textAlign: "left",
+                  borderLeft: `4px solid ${event.color}`,
+                }}
+              >
+                <span>{event.apiEvent?.allDay === true ? "All day" : formatHour(event.start)}</span>
+                <span>
+                  <strong>{event.title}</strong>
+                  {event.location === undefined ? null : ` · ${event.location}`}
+                </span>
+              </button>
+            </div>
+          );
+        })
       )}
     </div>
   );
@@ -1009,10 +1080,7 @@ function DayColumn({
       style={{ position: "relative", borderLeft: "1px solid var(--border)" }}
     >
       {GRID_HOURS.map((hour) => (
-        <div
-          key={hour}
-          style={{ height: HOUR_HEIGHT, borderBottom: "1px solid var(--border)" }}
-        />
+        <div key={hour} style={{ height: HOUR_HEIGHT, borderBottom: "1px solid var(--border)" }} />
       ))}
 
       {dragRange !== null && dragRange.to !== dragRange.from && (
@@ -1242,8 +1310,9 @@ function CalendarEventPopover({
     setPosition(computePopoverPosition(anchorRect));
   }, [anchorRect]);
 
-  const hasConferencing = event.location !== undefined;
   const apiAttendees = event.apiEvent?.attendees ?? [];
+  const conferenceUrl = safeHttpUrl(event.location);
+  const attendeeMailUrl = mailtoUrl(apiAttendees.map((attendee) => attendee.email));
   /** RSVP only makes sense for backend events the popover can act on. */
   const canRespond = onRespond !== undefined && event.apiEvent !== undefined;
   const canEdit = onEdit !== undefined;
@@ -1278,14 +1347,20 @@ function CalendarEventPopover({
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: "var(--text-body-lg)", fontWeight: 600, marginBottom: 4, lineHeight: 1.3 }}>
+          <div
+            style={{
+              fontSize: "var(--text-body-lg)",
+              fontWeight: 600,
+              marginBottom: 4,
+              lineHeight: 1.3,
+            }}
+          >
             {event.title}
           </div>
           <div style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
-            {formatEventDateLabel(event.date)} · {formatHour(event.start)} -{" "}
-            {formatHour(event.end)}
+            {formatEventDateLabel(event.date)} · {formatHour(event.start)} - {formatHour(event.end)}
           </div>
-          {hasConferencing && (
+          {event.location !== undefined && (
             <div
               style={{
                 fontSize: "var(--text-meta)",
@@ -1296,7 +1371,7 @@ function CalendarEventPopover({
                 gap: 6,
               }}
             >
-              <Icons.Video size={14} />
+              {conferenceUrl === null ? <Icons.Pin size={14} /> : <Icons.Video size={14} />}
               {event.location}
             </div>
           )}
@@ -1346,11 +1421,7 @@ function CalendarEventPopover({
         >
           <span>Delete this event?</span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-            <button
-              className="btn sm"
-              type="button"
-              onClick={() => setConfirmingDelete(false)}
-            >
+            <button className="btn sm" type="button" onClick={() => setConfirmingDelete(false)}>
               Cancel
             </button>
             <button
@@ -1386,48 +1457,45 @@ function CalendarEventPopover({
         </div>
         {apiAttendees.length > 0
           ? apiAttendees.map((attendee) => (
-                  <div
-                    key={attendee.id ?? attendee.email}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "4px 0",
-                      fontSize: "var(--text-meta)",
-                    }}
-                  >
-                    <Avatar
-                      name={attendee.displayName ?? attendee.email}
-                      size={22}
-                    />
-                    <span>{attendee.displayName ?? attendee.email}</span>
-                    <span
-                      className={`chip ${rsvpChipClass(attendee.responseStatus)}`}
-                      style={{ marginLeft: "auto" }}
-                    >
-                      {rsvpLabel(attendee.responseStatus)}
-                    </span>
-                  </div>
-                ))
-              : event.attendees.map((name) => (
-                  <div
-                    key={name}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "4px 0",
-                      fontSize: "var(--text-meta)",
-                    }}
-                  >
-                    <Avatar name={name} size={22} />
-                    <span>{name}</span>
-                  </div>
-                ))}
+              <div
+                key={attendee.id ?? attendee.email}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "4px 0",
+                  fontSize: "var(--text-meta)",
+                }}
+              >
+                <Avatar name={attendee.displayName ?? attendee.email} size={22} />
+                <span>{attendee.displayName ?? attendee.email}</span>
+                <span
+                  className={`chip ${rsvpChipClass(attendee.responseStatus)}`}
+                  style={{ marginLeft: "auto" }}
+                >
+                  {rsvpLabel(attendee.responseStatus)}
+                </span>
+              </div>
+            ))
+          : event.attendees.map((name) => (
+              <div
+                key={name}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "4px 0",
+                  fontSize: "var(--text-meta)",
+                }}
+              >
+                <Avatar name={name} size={22} />
+                <span>{name}</span>
+              </div>
+            ))}
       </div>
 
       <div style={{ height: 1, background: "var(--border)" }} />
-      {canRespond ? (
+      {canRespond && (
         <div style={{ padding: "10px 14px" }}>
           <div className="section-label" style={{ padding: "0 0 6px" }}>
             RSVP
@@ -1447,17 +1515,26 @@ function CalendarEventPopover({
             ))}
           </div>
         </div>
-      ) : (
+      )}
+      {(conferenceUrl !== null || attendeeMailUrl !== null) && (
         <div style={{ padding: "10px 14px", display: "flex", gap: 6 }}>
-          {hasConferencing && (
-            <button className="btn primary sm" style={{ flex: 1 }} type="button">
+          {conferenceUrl !== null && (
+            <a
+              className="btn primary sm"
+              href={conferenceUrl}
+              rel="noopener noreferrer"
+              style={{ flex: 1 }}
+              target="_blank"
+            >
               <Icons.Video size={14} />
               Join
-            </button>
+            </a>
           )}
-          <button aria-label="Email attendees" className="btn sm" type="button">
-            <Icons.Mail size={14} />
-          </button>
+          {attendeeMailUrl !== null && (
+            <a aria-label="Email attendees" className="btn sm" href={attendeeMailUrl}>
+              <Icons.Mail size={14} />
+            </a>
+          )}
         </div>
       )}
     </div>
@@ -1481,6 +1558,7 @@ function CalendarEventDialog({
 }) {
   const [value, setValue] = useState<EventDraft>(draft);
   const writableCalendars = calendars.filter((calendar) => calendar.writable);
+  const timeZones = useMemo(() => supportedTimeZones(value.timezone), [value.timezone]);
 
   useEffect(() => {
     const handleKeydown = (domEvent: KeyboardEvent) => {
@@ -1494,7 +1572,17 @@ function CalendarEventDialog({
     };
   }, [onClose]);
 
-  const valid = value.title.trim().length > 0 && value.end > value.start;
+  const attendeesValid =
+    attendeeInputs(value.attendeeEmails).length === splitAttendees(value.attendeeEmails).length;
+  const reminder = Number(value.reminderMinutes);
+  const reminderValid =
+    value.reminderMinutes === "" ||
+    (Number.isInteger(reminder) && reminder >= 0 && reminder <= 40_320);
+  const valid =
+    value.title.trim().length > 0 &&
+    (value.allDay || value.end > value.start) &&
+    attendeesValid &&
+    reminderValid;
 
   return (
     <div
@@ -1550,7 +1638,9 @@ function CalendarEventDialog({
           </button>
         </div>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
+        <label
+          style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}
+        >
           <span>Title</span>
           <input
             autoFocus
@@ -1564,7 +1654,56 @@ function CalendarEventDialog({
           />
         </label>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
+        <label
+          style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}
+        >
+          <span>Attendees</span>
+          <input
+            value={value.attendeeEmails}
+            onChange={(domEvent) =>
+              setValue((current) => ({ ...current, attendeeEmails: domEvent.target.value }))
+            }
+            placeholder="name@example.com, teammate@example.com"
+            style={dialogInputStyle}
+            type="text"
+            aria-invalid={!attendeesValid}
+          />
+        </label>
+
+        <label
+          style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}
+        >
+          <span>Repeat rule</span>
+          <input
+            value={value.recurrenceRule}
+            onChange={(domEvent) =>
+              setValue((current) => ({ ...current, recurrenceRule: domEvent.target.value }))
+            }
+            placeholder="FREQ=WEEKLY;BYDAY=MO"
+            style={dialogInputStyle}
+            type="text"
+          />
+        </label>
+
+        <label
+          style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}
+        >
+          <span>Reminder (minutes before)</span>
+          <input
+            value={value.reminderMinutes}
+            onChange={(domEvent) =>
+              setValue((current) => ({ ...current, reminderMinutes: domEvent.target.value }))
+            }
+            min="0"
+            max="40320"
+            style={dialogInputStyle}
+            type="number"
+          />
+        </label>
+
+        <label
+          style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}
+        >
           <span>Date</span>
           <input
             value={value.date}
@@ -1576,42 +1715,127 @@ function CalendarEventDialog({
           />
         </label>
 
-        <div style={{ display: "flex", gap: 8 }}>
-          <label
-            style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)", flex: 1 }}
-          >
-            <span>Start</span>
-            <input
-              value={decimalHourToClock(value.start)}
-              onChange={(domEvent) =>
-                setValue((current) => ({
-                  ...current,
-                  start: clockToDecimalHour(domEvent.target.value, current.start),
-                }))
-              }
-              style={dialogInputStyle}
-              type="time"
-            />
-          </label>
-          <label
-            style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)", flex: 1 }}
-          >
-            <span>End</span>
-            <input
-              value={decimalHourToClock(value.end)}
-              onChange={(domEvent) =>
-                setValue((current) => ({
-                  ...current,
-                  end: clockToDecimalHour(domEvent.target.value, current.end),
-                }))
-              }
-              style={dialogInputStyle}
-              type="time"
-            />
-          </label>
-        </div>
+        <label
+          style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "var(--text-meta)" }}
+        >
+          <input
+            checked={value.allDay}
+            onChange={(domEvent) =>
+              setValue((current) => ({
+                ...current,
+                allDay: domEvent.target.checked,
+                timeSemantics: domEvent.target.checked ? "all_day" : "zoned",
+              }))
+            }
+            type="checkbox"
+          />
+          <span>All day</span>
+        </label>
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
+        {!value.allDay && (
+          <div style={{ display: "flex", gap: 8 }}>
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                fontSize: "var(--text-meta)",
+                flex: 1,
+              }}
+            >
+              <span>Start</span>
+              <input
+                value={decimalHourToClock(value.start)}
+                onChange={(domEvent) =>
+                  setValue((current) => ({
+                    ...current,
+                    start: clockToDecimalHour(domEvent.target.value, current.start),
+                  }))
+                }
+                style={dialogInputStyle}
+                type="time"
+              />
+            </label>
+            <label
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                fontSize: "var(--text-meta)",
+                flex: 1,
+              }}
+            >
+              <span>End</span>
+              <input
+                value={decimalHourToClock(value.end)}
+                onChange={(domEvent) =>
+                  setValue((current) => ({
+                    ...current,
+                    end: clockToDecimalHour(domEvent.target.value, current.end),
+                  }))
+                }
+                style={dialogInputStyle}
+                type="time"
+              />
+            </label>
+          </div>
+        )}
+
+        {!value.allDay && (
+          <label
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              fontSize: "var(--text-meta)",
+            }}
+          >
+            <span>Time behavior</span>
+            <select
+              value={value.timeSemantics}
+              onChange={(domEvent) =>
+                setValue((current) => ({
+                  ...current,
+                  timeSemantics: domEvent.target.value as "zoned" | "floating",
+                }))
+              }
+              style={dialogInputStyle}
+            >
+              <option value="zoned">Fixed time zone</option>
+              <option value="floating">Floating (same local time)</option>
+            </select>
+          </label>
+        )}
+
+        {value.timeSemantics === "zoned" && (
+          <label
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              fontSize: "var(--text-meta)",
+            }}
+          >
+            <span>Time zone</span>
+            <select
+              value={value.timezone}
+              onChange={(domEvent) =>
+                setValue((current) => ({ ...current, timezone: domEvent.target.value }))
+              }
+              style={dialogInputStyle}
+            >
+              {timeZones.map((timeZone) => (
+                <option key={timeZone} value={timeZone}>
+                  {timeZone}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <label
+          style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}
+        >
           <span>Location</span>
           <input
             value={value.location}
@@ -1625,7 +1849,14 @@ function CalendarEventDialog({
         </label>
 
         {writableCalendars.length > 0 && (
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
+          <label
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              fontSize: "var(--text-meta)",
+            }}
+          >
             <span>Calendar</span>
             <select
               value={value.calendarId ?? ""}
@@ -1633,6 +1864,14 @@ function CalendarEventDialog({
                 setValue((current) => ({
                   ...current,
                   calendarId: domEvent.target.value === "" ? null : domEvent.target.value,
+                  ...(current.mode === "create"
+                    ? {
+                        timezone:
+                          writableCalendars.find(
+                            (calendar) => calendar.id === domEvent.target.value,
+                          )?.timezone ?? current.timezone,
+                      }
+                    : {}),
                 }))
               }
               style={dialogInputStyle}
@@ -1646,7 +1885,9 @@ function CalendarEventDialog({
           </label>
         )}
 
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}>
+        <label
+          style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "var(--text-meta)" }}
+        >
           <span>Description</span>
           <textarea
             value={value.description}
@@ -1668,11 +1909,7 @@ function CalendarEventDialog({
             disabled={!valid || pending}
             style={{ flex: 1 }}
           >
-            {pending
-              ? "Saving..."
-              : draft.mode === "create"
-                ? "Create"
-                : "Save changes"}
+            {pending ? "Saving..." : draft.mode === "create" ? "Create" : "Save changes"}
           </button>
         </div>
       </form>
@@ -1691,6 +1928,77 @@ const dialogInputStyle = {
 } as const;
 
 /* -------------------------------------------------------------------- helpers */
+
+function draftInstants(draft: EventDraft): { readonly startsAt: string; readonly endsAt: string } {
+  if (draft.allDay) {
+    return {
+      startsAt: localDateTimeToFloatingInstant(`${draft.date}T00:00:00`).toISOString(),
+      endsAt: localDateTimeToFloatingInstant(
+        `${shiftIsoDay(draft.date, 1)}T00:00:00`,
+      ).toISOString(),
+    };
+  }
+  const startsLocal = `${draft.date}T${decimalHourToClock(draft.start)}:00`;
+  const endsLocal = `${draft.date}T${decimalHourToClock(draft.end)}:00`;
+  const resolve = (value: string) =>
+    draft.timeSemantics === "floating"
+      ? localDateTimeToFloatingInstant(value)
+      : localDateTimeToInstant(value, draft.timezone);
+  return {
+    startsAt: resolve(startsLocal).toISOString(),
+    endsAt: resolve(endsLocal).toISOString(),
+  };
+}
+
+function splitAttendees(value: string): readonly string[] {
+  return value
+    .split(/[;,]/u)
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function attendeeInputs(value: string) {
+  return splitAttendees(value)
+    .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email))
+    .map((email) => ({ email }));
+}
+
+function calendarReminderMinutes(metadata: Record<string, unknown> | undefined): string {
+  const alarms = metadata?.alarms;
+  if (!Array.isArray(alarms)) return "";
+  const alarm = alarms.find(
+    (value): value is { readonly minutesBefore: number } =>
+      typeof value === "object" &&
+      value !== null &&
+      typeof (value as { readonly minutesBefore?: unknown }).minutesBefore === "number",
+  );
+  return alarm === undefined ? "" : String(alarm.minutesBefore);
+}
+
+function calendarReminderMetadata(
+  value: string,
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  if (value === "") return { ...metadata, alarms: [] };
+  const minutes = Number(value);
+  return Number.isInteger(minutes) && minutes >= 0 && minutes <= 40_320
+    ? { ...metadata, alarms: [{ minutesBefore: minutes }] }
+    : metadata;
+}
+
+function supportedTimeZones(selected: string): readonly string[] {
+  const intl = Intl as typeof Intl & {
+    supportedValuesOf?: (key: "timeZone") => string[];
+  };
+  const zones = intl.supportedValuesOf?.("timeZone") ?? ["UTC"];
+  return zones.includes(selected) ? zones : [selected, ...zones];
+}
+
+function shiftIsoDay(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
 
 /** Place the popover beside the anchor, flipping/clamping to stay on screen. */
 function computePopoverPosition(anchorRect: DOMRect | null): {
@@ -1771,10 +2079,39 @@ function shiftIsoDate(isoDate: string, view: CalendarRouteView, direction: -1 | 
     date.setUTCDate(date.getUTCDate() + direction);
   } else if (view === "month") {
     date.setUTCMonth(date.getUTCMonth() + direction);
+  } else if (view === "agenda") {
+    date.setUTCDate(date.getUTCDate() + direction * 30);
   } else {
     date.setUTCDate(date.getUTCDate() + direction * 7);
   }
   return date.toISOString().slice(0, 10);
+}
+
+function formatCalendarDate(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00.000Z`).toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+function safeHttpUrl(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function mailtoUrl(addresses: readonly string[]): string | null {
+  const unique = [...new Set(addresses.map((address) => address.trim()).filter(Boolean))];
+  return unique.length === 0
+    ? null
+    : `mailto:${unique.map((address) => encodeURIComponent(address)).join(",")}`;
 }
 
 /** Human date label for the popover, e.g. "2026-05-21" -> "Thu, May 21". */

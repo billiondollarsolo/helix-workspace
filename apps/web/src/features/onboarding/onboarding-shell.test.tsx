@@ -112,10 +112,10 @@ describe("OnboardingShell", () => {
     expect(container.textContent).toContain("Choose sign-in method");
     expect(container.textContent).toContain("Local email/password login");
     expect(container.textContent).toContain("Built-in login for owners, admins, and members");
-    expect(container.textContent).toContain("Google SSO");
-    expect(container.textContent).toContain("Microsoft SSO");
+    expect(container.textContent).toContain("Enterprise OIDC setup is available");
+    expect(container.textContent).not.toContain("Google SSO");
+    expect(container.textContent).not.toContain("Microsoft SSO");
     expect(container.textContent).not.toContain("SAML");
-    expect(textIndex("Local email/password login")).toBeLessThan(textIndex("Google SSO"));
     expect(linkNamed("Finish onboarding")?.getAttribute("href")).toBe("/welcome");
 
     clickLink("Finish onboarding");
@@ -181,7 +181,7 @@ describe("OnboardingShell", () => {
       currentStep: "invite",
       planChoice: "personal",
       inviteCount: 2,
-      identityChoice: "google",
+      identityChoice: "local",
     });
     const sendEvent = vi.fn().mockResolvedValue(undefined);
     const sendInvites = vi.fn().mockResolvedValue(undefined);
@@ -207,9 +207,7 @@ describe("OnboardingShell", () => {
     expect(container.textContent).toContain("Choose sign-in method");
     expect(container.textContent).toContain("Local email/password login");
     expect(container.textContent).not.toContain("Google SSO");
-    expect(container.textContent).toContain(
-      "SSO setup is available after upgrading to a team plan.",
-    );
+    expect(container.textContent).toContain("Enterprise OIDC setup is available");
     expect(saveProgress).toHaveBeenLastCalledWith({
       currentStep: "sso",
       planChoice: "personal",
@@ -251,50 +249,6 @@ describe("OnboardingShell", () => {
     expect(sendEvent).toHaveBeenLastCalledWith({
       event: "completed",
       planChoice: "personal",
-      inviteCount: 0,
-      identityChoice: "local",
-      skipped: false,
-    });
-  });
-
-  it("keeps local login selectable after previewing an SSO option", async () => {
-    const fetchState = vi.fn().mockResolvedValue({
-      status: "not_started",
-      currentStep: "plan",
-      planChoice: "pro-trial",
-      inviteCount: 0,
-      identityChoice: "local",
-    });
-    const sendEvent = vi.fn().mockResolvedValue(undefined);
-    const sendInvites = vi.fn().mockResolvedValue(undefined);
-    const saveProgress = vi.fn().mockResolvedValue(undefined);
-    await act(() => {
-      root.render(
-        <OnboardingShell
-          fetchState={fetchState}
-          sendEvent={sendEvent}
-          sendInvites={sendInvites}
-          saveProgress={saveProgress}
-        />,
-      );
-      return Promise.resolve();
-    });
-
-    clickButton("Continue");
-    clickButton("Continue");
-    clickButton("Google SSO");
-    clickButton("Local email/password");
-
-    expect(saveProgress).toHaveBeenLastCalledWith({
-      currentStep: "sso",
-      planChoice: "pro-trial",
-      inviteCount: 0,
-      identityChoice: "local",
-    });
-    clickLink("Finish onboarding");
-    expect(sendEvent).toHaveBeenLastCalledWith({
-      event: "completed",
-      planChoice: "pro-trial",
       inviteCount: 0,
       identityChoice: "local",
       skipped: false,
@@ -348,14 +302,6 @@ function clickLink(name: string): void {
   act(() => {
     link.click();
   });
-}
-
-function textIndex(value: string): number {
-  const index = container.textContent?.indexOf(value) ?? -1;
-  if (index === -1) {
-    throw new Error(`Missing text: ${value}`);
-  }
-  return index;
 }
 
 function changeTextarea(textarea: HTMLTextAreaElement, value: string): void {

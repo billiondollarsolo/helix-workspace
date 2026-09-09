@@ -44,7 +44,7 @@ export class PostgresMemoryStore implements MemoryStore {
     const limit = validateRecallLimit(k);
     const embedding = await this.embedOne(content);
     const queryVector = vectorToPgLiteral(embedding);
-    const selectedRows = await this.sql`
+    const rows = await this.sql<MemoryItemRow[]>`
       select
         id,
         org_id,
@@ -63,7 +63,6 @@ export class PostgresMemoryStore implements MemoryStore {
       order by embedding <=> ${queryVector}::vector
       limit ${limit}
     `;
-    const rows = selectedRows as unknown as readonly MemoryItemRow[];
     return rows.map(rowToMemoryItem);
   }
 
@@ -72,7 +71,7 @@ export class PostgresMemoryStore implements MemoryStore {
     const source = validateMemoryText(item.source ?? this.#defaultSource, "Memory source");
     const embedding = item.embedding ?? (await this.embedOne(content));
     validateVector(embedding);
-    const insertedRows = await this.sql`
+    const rows = await this.sql<MemoryItemRow[]>`
       insert into memory_items (org_id, actor_id, source, content, embedding, metadata, expires_at)
       values (
         ${actor.orgId},
@@ -85,7 +84,6 @@ export class PostgresMemoryStore implements MemoryStore {
       )
       returning id, org_id, actor_id, source, content, metadata, null::double precision as score, created_at, expires_at
     `;
-    const rows = insertedRows as unknown as readonly MemoryItemRow[];
     const row = rows[0];
     if (row === undefined) {
       throw new Error("Failed to store memory item");
@@ -95,36 +93,36 @@ export class PostgresMemoryStore implements MemoryStore {
 
   async forget(actor: Actor, criteria: ForgetCriteria): Promise<number> {
     if (criteria.all === true) {
-      const deletedRows = await this.sql`
+      const deletedRows = await this.sql<{ readonly id: string }[]>`
         delete from memory_items
         where org_id = ${actor.orgId}
           and actor_id = ${actor.id}
         returning id
       `;
-      return (deletedRows as unknown as readonly unknown[]).length;
+      return deletedRows.length;
     }
 
     let deleted = 0;
     if (criteria.ids !== undefined && criteria.ids.length > 0) {
-      const deletedRows = await this.sql`
+      const deletedRows = await this.sql<{ readonly id: string }[]>`
         delete from memory_items
         where org_id = ${actor.orgId}
           and actor_id = ${actor.id}
           and id::text = any(${this.sql.array([...criteria.ids])})
         returning id
       `;
-      deleted += (deletedRows as unknown as readonly unknown[]).length;
+      deleted += deletedRows.length;
     }
 
     if (criteria.olderThan !== undefined) {
-      const deletedRows = await this.sql`
+      const deletedRows = await this.sql<{ readonly id: string }[]>`
         delete from memory_items
         where org_id = ${actor.orgId}
           and actor_id = ${actor.id}
           and created_at < ${new Date(criteria.olderThan)}
         returning id
       `;
-      deleted += (deletedRows as unknown as readonly unknown[]).length;
+      deleted += deletedRows.length;
     }
 
     return deleted;
@@ -153,4 +151,3 @@ function rowToMemoryItem(row: MemoryItemRow): MemoryItem {
     ...(row.expires_at === null ? {} : { expiresAt: row.expires_at.toISOString() }),
   };
 }
-

@@ -123,9 +123,9 @@ describe("PostgresSignupVerifiedIdentityStore", () => {
       expect.arrayContaining([
         expect.stringContaining("from actors"),
         expect.stringContaining('from "user"'),
+        expect.stringContaining("helix_activate_identity_membership"),
         expect.stringContaining('insert into "user"'),
         expect.stringContaining("insert into account"),
-        expect.stringContaining("update actors"),
       ]),
     );
     expect(recording.calls.flatMap((call) => [...call.values])).toContain("stored-password-hash");
@@ -243,6 +243,9 @@ function createRecordingSql(): {
     if (text.includes('from "user"')) {
       return Promise.resolve([]);
     }
+    if (text.includes("helix_activate_identity_membership")) {
+      return Promise.resolve([{ actor_id: actorId }]);
+    }
     if (text.includes("signup_onboarding_invites")) {
       return Promise.resolve([
         {
@@ -267,12 +270,16 @@ function createRecordingSql(): {
       },
     ]);
   };
-  return {
-    sql: Object.assign(tag, {
-      json: (value: unknown) => value,
-    }) as unknown as postgres.Sql,
-    calls,
-  };
+  const sql = Object.assign(tag, {
+    json: (value: unknown) => value,
+  });
+  Object.assign(sql, {
+    begin: async <T>(
+      options: string | ((tx: typeof sql) => Promise<T>),
+      callback?: (tx: typeof sql) => Promise<T>,
+    ) => (typeof options === "function" ? options(sql) : callback?.(sql)),
+  });
+  return { sql: sql as unknown as postgres.Sql, calls };
 }
 
 function createInviteAcceptanceRecordingSql(): {

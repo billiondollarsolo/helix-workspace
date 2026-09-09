@@ -168,7 +168,10 @@ export function IdentityManagement() {
     },
   });
 
-  const idpConfigs = identityQuery.data?.idpConfigs ?? [];
+  const idpConfigs = useMemo(
+    () => identityQuery.data?.idpConfigs ?? [],
+    [identityQuery.data?.idpConfigs],
+  );
   const sortedConfigs = useMemo(
     () =>
       [...idpConfigs].sort((left, right) => {
@@ -196,7 +199,7 @@ export function IdentityManagement() {
       ) : null}
       {formError === null ? null : <Banner kind="error">{formError}</Banner>}
       {testLogin === null ? null : (
-        <Banner kind={testLogin.status === "runtime_pending" ? "info" : "error"}>
+        <Banner kind={testLogin.status === "ready" ? "info" : "error"}>
           {testLogin.message}
         </Banner>
       )}
@@ -252,26 +255,26 @@ export function IdentityManagement() {
                 key={config.id}
                 config={config}
                 promotePending={promoteMutation.isPending}
-                onPromote={() => promoteMutation.mutate(config.id)}
+                onPromote={() => {
+                  promoteMutation.mutate(config.id);
+                }}
                 updatePending={updateMutation.isPending}
-                onToggleEnabled={() =>
-                  updateMutation.mutate({ id: config.id, patch: { enabled: !config.enabled } })
-                }
-                onToggleJit={() =>
-                  updateMutation.mutate({
-                    id: config.id,
-                    patch: { jitProvisioning: !config.jitProvisioning },
-                  })
-                }
+                onToggleEnabled={() => {
+                  updateMutation.mutate({ id: config.id, patch: { enabled: !config.enabled } });
+                }}
                 onEdit={() => {
                   setFormError(null);
                   setEditingConfigId(config.id);
                   setForm(formFromConfig(config));
                 }}
                 deletePending={deleteMutation.isPending}
-                onDelete={() => setConfigToDelete(config)}
+                onDelete={() => {
+                  setConfigToDelete(config);
+                }}
                 testPending={testLoginMutation.isPending}
-                onTestLogin={() => testLoginMutation.mutate(config.id)}
+                onTestLogin={() => {
+                  testLoginMutation.mutate(config.id);
+                }}
               />
             ))}
           </div>
@@ -315,83 +318,37 @@ export function IdentityManagement() {
               gap: 12,
             }}
           >
-            <label style={labelStyle}>
-              Protocol
-              <select
-                aria-label="IdP protocol"
-                value={form.protocol}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    protocol: event.target.value as TenantIdpProtocol,
-                  }))
-                }
-                style={FIELD_STYLE}
-              >
-                <option value="saml">SAML</option>
-                <option value="oidc">OIDC</option>
-              </select>
-            </label>
+            <div style={labelStyle}>Protocol<strong>OpenID Connect (OIDC)</strong></div>
             <label style={labelStyle}>
               Display name
               <input
                 aria-label="IdP display name"
                 value={form.displayName}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, displayName: event.target.value }))
-                }
+                onChange={(event) => {
+                  setForm((current) => ({ ...current, displayName: event.target.value }));
+                }}
                 style={FIELD_STYLE}
               />
             </label>
-            {form.protocol === "saml" ? (
-              <label style={labelStyle}>
-                Metadata URL
-                <input
-                  aria-label="SAML metadata URL"
-                  value={form.metadataUrl}
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, metadataUrl: event.target.value }))
-                  }
-                  style={FIELD_STYLE}
-                />
-              </label>
-            ) : (
-              <>
-                <label style={labelStyle}>
-                  Issuer URL
-                  <input
-                    aria-label="OIDC issuer URL"
-                    value={form.issuer}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, issuer: event.target.value }))
-                    }
-                    style={FIELD_STYLE}
-                  />
-                </label>
-                <label style={labelStyle}>
-                  Client ID
-                  <input
-                    aria-label="OIDC client ID"
-                    value={form.clientId}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, clientId: event.target.value }))
-                    }
-                    style={FIELD_STYLE}
-                  />
-                </label>
-              </>
-            )}
             <label style={labelStyle}>
-              Signing cert Vault path
+              Issuer URL
+              <input aria-label="OIDC issuer URL" value={form.issuer} onChange={(event) => setForm((current) => ({ ...current, issuer: event.target.value }))} style={FIELD_STYLE} />
+            </label>
+            <label style={labelStyle}>
+              Client ID
+              <input aria-label="OIDC client ID" value={form.clientId} onChange={(event) => setForm((current) => ({ ...current, clientId: event.target.value }))} style={FIELD_STYLE} />
+            </label>
+            <label style={labelStyle}>
+              Private-key secret handle
               <input
-                aria-label="Signing cert Vault path"
-                value={form.signingCertVaultPath}
-                onChange={(event) =>
+                aria-label="OIDC private-key secret handle"
+                value={form.signingCertSecretHandle}
+                onChange={(event) => {
                   setForm((current) => ({
                     ...current,
-                    signingCertVaultPath: event.target.value,
-                  }))
-                }
+                    signingCertSecretHandle: event.target.value,
+                  }));
+                }}
                 style={FIELD_STYLE}
               />
             </label>
@@ -404,7 +361,7 @@ export function IdentityManagement() {
                 <input
                   aria-label={`${row.label} claim selector`}
                   value={row.selector}
-                  onChange={(event) =>
+                  onChange={(event) => {
                     setForm((current) => ({
                       ...current,
                       attrMappingJson: updateAttributeMappingJson(
@@ -412,8 +369,8 @@ export function IdentityManagement() {
                         row.attribute,
                         event.target.value,
                       ),
-                    }))
-                  }
+                    }));
+                  }}
                   style={FIELD_STYLE}
                   placeholder={row.placeholder}
                 />
@@ -426,9 +383,9 @@ export function IdentityManagement() {
             <textarea
               aria-label="Attribute mapping JSON"
               value={form.attrMappingJson}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, attrMappingJson: event.target.value }))
-              }
+              onChange={(event) => {
+                setForm((current) => ({ ...current, attrMappingJson: event.target.value }));
+              }}
               style={TEXTAREA_STYLE}
             />
           </label>
@@ -445,9 +402,9 @@ export function IdentityManagement() {
               <textarea
                 aria-label="Sample claims JSON"
                 value={form.sampleClaimsJson}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, sampleClaimsJson: event.target.value }))
-                }
+                onChange={(event) => {
+                  setForm((current) => ({ ...current, sampleClaimsJson: event.target.value }));
+                }}
                 style={TEXTAREA_STYLE}
               />
             </label>
@@ -479,9 +436,9 @@ export function IdentityManagement() {
               <input
                 type="checkbox"
                 checked={form.enabled}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, enabled: event.target.checked }))
-                }
+                onChange={(event) => {
+                  setForm((current) => ({ ...current, enabled: event.target.checked }));
+                }}
               />
               Enabled
             </label>
@@ -489,21 +446,11 @@ export function IdentityManagement() {
               <input
                 type="checkbox"
                 checked={form.isPrimary}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, isPrimary: event.target.checked }))
-                }
+                onChange={(event) => {
+                  setForm((current) => ({ ...current, isPrimary: event.target.checked }));
+                }}
               />
               Primary
-            </label>
-            <label style={checkboxLabelStyle}>
-              <input
-                type="checkbox"
-                checked={form.jitProvisioning}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, jitProvisioning: event.target.checked }))
-                }
-              />
-              JIT provisioning
             </label>
           </div>
 
@@ -586,7 +533,6 @@ function IdpConfigRow({
   onPromote,
   updatePending,
   onToggleEnabled,
-  onToggleJit,
   onEdit,
   deletePending,
   onDelete,
@@ -598,7 +544,6 @@ function IdpConfigRow({
   readonly onPromote: () => void;
   readonly updatePending: boolean;
   readonly onToggleEnabled: () => void;
-  readonly onToggleJit: () => void;
   readonly onEdit: () => void;
   readonly deletePending: boolean;
   readonly onDelete: () => void;
@@ -609,7 +554,7 @@ function IdpConfigRow({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) auto auto auto auto auto auto auto",
+        gridTemplateColumns: "minmax(0, 1fr) auto auto auto auto auto",
         gap: 12,
         alignItems: "center",
         border: "1px solid var(--border)",
@@ -632,19 +577,9 @@ function IdpConfigRow({
           ) : null}
         </div>
         <div style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", marginTop: 4 }}>
-          {config.protocol.toUpperCase()} | {config.signingCertVaultPath ?? "no signing cert path"}
+          {config.protocol.toUpperCase()} | {config.signingCertSecretHandle ?? "no signing cert"}
         </div>
       </div>
-      {config.samlSpMetadataUrl === null ? null : (
-        <a
-          className="btn sm"
-          href={config.samlSpMetadataUrl}
-          download={metadataDownloadName(config)}
-        >
-          <Icons.Download />
-          Metadata
-        </a>
-      )}
       <button type="button" className="btn sm" disabled={testPending} onClick={onTestLogin}>
         Test login
       </button>
@@ -659,9 +594,6 @@ function IdpConfigRow({
       <button type="button" className="btn sm" disabled={updatePending} onClick={onToggleEnabled}>
         {config.enabled ? "Disable" : "Enable"}
       </button>
-      <button type="button" className="btn sm" disabled={updatePending} onClick={onToggleJit}>
-        {config.jitProvisioning ? "Disable JIT" : "Enable JIT"}
-      </button>
       <button type="button" className="btn sm" disabled={updatePending} onClick={onEdit}>
         <Icons.EditPen />
         Edit
@@ -672,16 +604,6 @@ function IdpConfigRow({
       </button>
     </div>
   );
-}
-
-function metadataDownloadName(config: TenantIdpConfig): string {
-  return `${
-    config.displayName
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/gu, "-")
-      .replace(/^-|-$/gu, "") || "tenant"
-  }-sp-metadata.xml`;
 }
 
 const labelStyle: React.CSSProperties = {
@@ -735,29 +657,25 @@ const MAPPING_PREVIEW_ROW_STYLE: React.CSSProperties = {
 interface IdpFormState {
   readonly protocol: TenantIdpProtocol;
   readonly displayName: string;
-  readonly metadataUrl: string;
   readonly issuer: string;
   readonly clientId: string;
-  readonly signingCertVaultPath: string;
+  readonly signingCertSecretHandle: string;
   readonly attrMappingJson: string;
   readonly sampleClaimsJson: string;
   readonly isPrimary: boolean;
-  readonly jitProvisioning: boolean;
   readonly enabled: boolean;
 }
 
 function emptyIdpForm(): IdpFormState {
   return {
-    protocol: "saml",
+    protocol: "oidc",
     displayName: "",
-    metadataUrl: "",
     issuer: "",
     clientId: "",
-    signingCertVaultPath: "",
+    signingCertSecretHandle: "",
     attrMappingJson: '{\n  "email": "$.email",\n  "displayName": "$.name"\n}',
     sampleClaimsJson: '{\n  "email": "alice@example.com",\n  "name": "Alice Example"\n}',
     isPrimary: false,
-    jitProvisioning: true,
     enabled: true,
   };
 }
@@ -766,14 +684,12 @@ function formFromConfig(config: TenantIdpConfig): IdpFormState {
   return {
     protocol: config.protocol,
     displayName: config.displayName,
-    metadataUrl: stringField(config.config, "metadataUrl"),
     issuer: stringField(config.config, "issuer"),
     clientId: stringField(config.config, "clientId"),
-    signingCertVaultPath: config.signingCertVaultPath ?? "",
+    signingCertSecretHandle: config.signingCertSecretHandle ?? "",
     attrMappingJson: JSON.stringify(config.attrMapping, null, 2),
     sampleClaimsJson: emptyIdpForm().sampleClaimsJson,
     isPrimary: config.isPrimary,
-    jitProvisioning: config.jitProvisioning,
     enabled: config.enabled,
   };
 }
@@ -783,20 +699,23 @@ function buildCreateInput(form: IdpFormState) {
     throw new Error("Display name is required.");
   }
   const attrMapping = parseJsonObject(form.attrMappingJson, "Attribute mapping JSON");
-  const config =
-    form.protocol === "saml"
-      ? compactObject({ metadataUrl: form.metadataUrl.trim() })
-      : compactObject({ issuer: form.issuer.trim(), clientId: form.clientId.trim() });
+  const config = compactObject({ issuer: form.issuer.trim(), clientId: form.clientId.trim() });
+  if (form.issuer.trim().length === 0 || form.clientId.trim().length === 0) {
+    throw new Error("Issuer URL and client ID are required.");
+  }
+  if (form.signingCertSecretHandle.trim().length === 0) {
+    throw new Error("A tenant Vault private-key secret handle is required.");
+  }
   return {
     protocol: form.protocol,
     displayName: form.displayName.trim(),
     config,
     attrMapping,
-    signingCertVaultPath:
-      form.signingCertVaultPath.trim().length === 0 ? null : form.signingCertVaultPath.trim(),
+    signingCertSecretHandle:
+      form.signingCertSecretHandle.trim().length === 0 ? null : form.signingCertSecretHandle.trim(),
     enabled: form.enabled,
     isPrimary: form.isPrimary,
-    jitProvisioning: form.jitProvisioning,
+    jitProvisioning: false,
   };
 }
 
@@ -807,7 +726,7 @@ function buildUpdateInput(form: IdpFormState) {
     displayName: input.displayName,
     config: input.config,
     attrMapping: input.attrMapping,
-    signingCertVaultPath: input.signingCertVaultPath,
+    signingCertSecretHandle: input.signingCertSecretHandle,
     enabled: input.enabled,
     isPrimary: input.isPrimary,
     jitProvisioning: input.jitProvisioning,
@@ -867,7 +786,11 @@ function updateAttributeMappingJson(
   const mapping = safeParseJsonObject(mappingJson) ?? {};
   const nextSelector = selector.trim();
   if (nextSelector.length === 0) {
-    delete mapping[attribute];
+    return JSON.stringify(
+      Object.fromEntries(Object.entries(mapping).filter(([key]) => key !== attribute)),
+      null,
+      2,
+    );
   } else {
     mapping[attribute] = nextSelector;
   }

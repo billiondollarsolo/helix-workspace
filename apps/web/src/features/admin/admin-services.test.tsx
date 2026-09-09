@@ -6,10 +6,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminServicesOverview,
-  adminServicesQueryOptions,
   prefetchAdminServicesQuery,
   type AdminServiceSurface,
   type AdminServicesResponse,
+  type adminServicesQueryOptions,
 } from "./admin-services";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -74,7 +74,6 @@ describe("AdminServicesOverview admin UI", () => {
     );
     expect(headers).toEqual([
       "Service",
-      "Plugin",
       "Status",
       "Category",
       "Dependencies",
@@ -82,7 +81,6 @@ describe("AdminServicesOverview admin UI", () => {
       "Tools",
       "Actions",
     ]);
-    expect(table.textContent).toContain("com.helix.core.mail");
     expect(table.textContent).toContain("Configured / Enabled");
     expect(table.textContent).toContain("Communication");
     expect(table.textContent).toContain("2 total, 1 required missing");
@@ -181,7 +179,7 @@ describe("AdminServicesOverview admin UI", () => {
 
   async function clickButton(name: string) {
     const button = Array.from(container.querySelectorAll("button")).find((candidate) =>
-      candidate.textContent?.includes(name),
+      candidate.textContent.includes(name),
     );
     if (!(button instanceof HTMLButtonElement)) {
       throw new Error(`Button not found: ${name}`);
@@ -195,7 +193,9 @@ describe("AdminServicesOverview admin UI", () => {
   }
 
   async function waitForText(text: string) {
-    await waitFor(() => expect(container.textContent).toContain(text));
+    await waitFor(() => {
+      expect(container.textContent).toContain(text);
+    });
   }
 
   async function waitFor(assertion: () => void | Promise<void>) {
@@ -288,7 +288,6 @@ function mailService(): AdminServiceSurface {
     id: "mail",
     label: "Mail",
     metrics: ["mail.delivery.latency", "mail.delivery.failed"],
-    pluginId: "com.helix.core.mail",
     realtimeRoutes: [],
     scopes: ["mail.read", "mail.send"],
     status: "configured",
@@ -325,7 +324,6 @@ function docsService(): AdminServiceSurface {
     id: "docs",
     label: "Docs",
     metrics: ["docs.sync.active"],
-    pluginId: "com.helix.core.docs",
     realtimeRoutes: ["/sync/docs/:docId"],
     scopes: ["docs.read", "docs.write"],
     status: "ready",

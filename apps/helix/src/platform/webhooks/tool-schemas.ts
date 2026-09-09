@@ -1,5 +1,5 @@
 import type { JsonObject, SchemaAdapter } from "@helix/sdk-types";
-import { z, type ZodTypeAny } from "zod3";
+import { z, type ZodTypeAny } from "zod";
 
 export function zodToolSchema<TSchema extends ZodTypeAny>(
   schema: TSchema,

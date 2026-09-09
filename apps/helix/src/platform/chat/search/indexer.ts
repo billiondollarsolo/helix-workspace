@@ -1,5 +1,10 @@
 import type { JsonObject } from "@helix/sdk-types";
-import type { IndexDocument, SearchEventIndexer, SearchIndexer, SearchIndexerEvent } from "../../search/index.js";
+import type {
+  IndexDocument,
+  SearchEventIndexer,
+  SearchIndexer,
+  SearchIndexerEvent,
+} from "../../search/index.js";
 import type {
   ChatActivityPayload,
   ChatParticipant,
@@ -11,7 +16,9 @@ import type {
 export const chatSearchIndexerId = "chat";
 export const chatSearchSubjects = ["activity.chat.>", "com.helix.core.chat.>"] as const;
 
-export function createChatSearchIndexer(store: ChatSearchProjectionStore): SearchIndexer<ChatActivityPayload> {
+export function createChatSearchIndexer(
+  store: ChatSearchProjectionStore,
+): SearchIndexer<ChatActivityPayload> {
   return {
     id: chatSearchIndexerId,
     subjects: chatSearchSubjects,
@@ -35,7 +42,10 @@ export function createChatSearchIndexer(store: ChatSearchProjectionStore): Searc
   };
 }
 
-export function registerChatIndexer(indexer: SearchEventIndexer, store: ChatSearchProjectionStore): void {
+export function registerChatIndexer(
+  indexer: SearchEventIndexer,
+  store: ChatSearchProjectionStore,
+): void {
   indexer.register(createChatSearchIndexer(store));
 }
 
@@ -64,6 +74,8 @@ export function chatRecordToIndexDocument(record: ChatSearchRecord): IndexDocume
       roomId: record.roomId,
       roomName: record.roomName,
       roomKind: record.roomKind,
+      aclVersion: record.aclVersion,
+      allowedActorIds: record.allowedActorIds ?? [],
       messageId: record.id,
       authorId: record.author.id,
       authorName: record.author.displayName,
@@ -74,15 +86,9 @@ export function chatRecordToIndexDocument(record: ChatSearchRecord): IndexDocume
       createdAt: record.createdAt,
       editedAt: record.editedAt,
       metadata: record.metadata,
-      // RAG visibility — chat messages are indexed as private-to-author by
-      // default. This means a user's assistant can recall messages THEY
-      // wrote, but cannot retrieve other users' messages from rooms they're
-      // members of (even though chat-search itself respects membership ACLs).
-      // Lifting RAG to membership-aware visibility requires either
-      // per-member duplicate indexing or a result-time membership join — a
-      // tracked follow-up. Until then, this conservative model never leaks.
-      ragVisibility: "private",
-      ragOwnerActorId: record.author.id,
+      // Candidate visibility is tenant-wide; the search boundary performs an
+      // authoritative room-membership check before returning any Chat hit.
+      ragVisibility: "org",
     }),
     updatedAt: record.updatedAt ?? record.editedAt ?? record.createdAt,
   };
@@ -92,7 +98,9 @@ export function chatDocumentId(messageId: string): string {
   return `chat:${messageId}`;
 }
 
-function chatMessageIdFromEvent(event: SearchIndexerEvent<ChatActivityPayload>): string | undefined {
+function chatMessageIdFromEvent(
+  event: SearchIndexerEvent<ChatActivityPayload>,
+): string | undefined {
   const id = event.payload.messageId ?? event.payload.id;
   return typeof id === "string" && id.length > 0 ? id : undefined;
 }

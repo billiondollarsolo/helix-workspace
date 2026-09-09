@@ -1,0 +1,166 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "helix:slo_product_availability:ratio_30d",
+          "legendFormat": "{{product}}",
+          "refId": "A"
+        },
+        {
+          "expr": "helix:slo_auth_availability:ratio_30d",
+          "legendFormat": "auth",
+          "refId": "B"
+        }
+      ],
+      "title": "30-day availability",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": { "min": 0, "unit": "percentunit" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "helix:slo_product_errors:ratio_5m",
+          "legendFormat": "{{product}} 5m",
+          "refId": "A"
+        },
+        {
+          "expr": "helix:slo_product_errors:ratio_1h",
+          "legendFormat": "{{product}} 1h",
+          "refId": "B"
+        },
+        {
+          "expr": "helix:slo_auth_errors:ratio_5m",
+          "legendFormat": "auth 5m",
+          "refId": "C"
+        },
+        {
+          "expr": "helix:slo_auth_errors:ratio_1h",
+          "legendFormat": "auth 1h",
+          "refId": "D"
+        }
+      ],
+      "title": "Availability error-budget burn",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": { "min": 0, "unit": "s" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "helix:slo_product_latency:p95_seconds_30d",
+          "legendFormat": "{{product}}",
+          "refId": "A"
+        },
+        {
+          "expr": "helix:slo_auth_latency:p95_seconds_30d",
+          "legendFormat": "auth",
+          "refId": "B"
+        }
+      ],
+      "title": "30-day API p95 latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "helix:slo_search_freshness:seconds",
+          "legendFormat": "search freshness (seconds)",
+          "refId": "A"
+        },
+        {
+          "expr": "helix:slo_meet_join_latency:p95_seconds_30d",
+          "legendFormat": "meet join p95 (seconds)",
+          "refId": "B"
+        },
+        {
+          "expr": "helix:slo_meet_healthy_media:ratio_30d",
+          "legendFormat": "meet healthy media (ratio)",
+          "refId": "C"
+        }
+      ],
+      "title": "Freshness and meeting quality",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["helix", "slo", "error-budget"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Helix Product SLOs",
+  "uid": "helix-product-slos",
+  "version": 1,
+  "weekStart": ""
+}

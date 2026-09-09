@@ -1,0 +1,54 @@
+rule_files:
+  - ../../helm/helix/files/helix-capability-health.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'helix_operational_events_total{capability="mail",operation="delivery",status="error"}'
+        values: "0+1x20"
+      - series: 'helix_operational_events_total{capability="drive",operation="virus_scan",status="error"}'
+        values: "0+1x20"
+      - series: 'helix_operational_state{capability="search",measure="drift_objects"}'
+        values: "3x20"
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HelixOperationalFailure
+        exp_alerts:
+          - exp_labels:
+              capability: mail
+              operation: delivery
+              severity: warning
+              priority: p2
+              owner: platform-operations
+            exp_annotations:
+              summary: mail delivery is failing
+              runbook_url: docs/runbooks/product-slo-breach.md
+          - exp_labels:
+              capability: drive
+              operation: virus_scan
+              severity: warning
+              priority: p2
+              owner: platform-operations
+            exp_annotations:
+              summary: drive virus_scan is failing
+              runbook_url: docs/runbooks/product-slo-breach.md
+      - eval_time: 15m
+        alertname: HelixMailDeliveryFailure
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              priority: p1
+              owner: mail
+            exp_annotations:
+              summary: Outbound mail reached a terminal delivery failure
+              runbook_url: docs/runbooks/product-slo-breach.md
+      - eval_time: 15m
+        alertname: HelixSearchReconciliationDrift
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              priority: p2
+              owner: search
+            exp_annotations:
+              summary: Search reconciliation continues to find stale projections
+              runbook_url: docs/runbooks/product-slo-breach.md

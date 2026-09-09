@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMeetRoom, endMeetRoom, listMeetRooms, mintMeetToken } from "./api";
+import {
+  authorizeMeetRecordingStart,
+  createMeetRoom,
+  endMeetRoom,
+  listMeetRooms,
+  mintMeetToken,
+  recordMeetTelemetry,
+} from "./api";
 
 const room = {
   id: "33333333-3333-4333-8333-333333333333",
@@ -26,7 +33,6 @@ describe("meet API", () => {
         {
           subject: "Launch review",
           roomName: "launch-review",
-          jitsiDomain: "meet.helix.test",
         },
         fetchImpl,
       ),
@@ -37,7 +43,6 @@ describe("meet API", () => {
       body: JSON.stringify({
         subject: "Launch review",
         roomName: "launch-review",
-        jitsiDomain: "meet.helix.test",
         participantActorIds: [],
         metadata: {},
       }),
@@ -52,26 +57,84 @@ describe("meet API", () => {
       token: "jwt",
       joinUrl: "https://meet.helix.test/launch-review?jwt=jwt",
       expiresAt: "2026-05-20T13:00:00.000Z",
+      recordingAvailable: true,
+      canStartRecording: true,
+      recordingNoticeVersion: "2026-09-02",
+      recordingActive: false,
     };
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json(token))
       .mockResolvedValueOnce(Response.json({ ...room, status: "ended", endedAt: token.expiresAt }));
 
-    await expect(mintMeetToken({ roomId: room.id, moderator: true }, fetchImpl)).resolves.toEqual(
-      token,
-    );
+    await expect(
+      mintMeetToken(
+        {
+          roomId: room.id,
+          recordingNoticeAccepted: true,
+          recordingNoticeVersion: "2026-09-02",
+          deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          joinGrantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        },
+        fetchImpl,
+      ),
+    ).resolves.toEqual(token);
     await expect(endMeetRoom(room.id, fetchImpl)).resolves.toMatchObject({ status: "ended" });
 
     expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/meet.mint-token", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ roomId: room.id, expiresInSeconds: 3600, moderator: true }),
+      body: JSON.stringify({
+        roomId: room.id,
+        expiresInSeconds: 300,
+        recordingNoticeAccepted: true,
+        recordingNoticeVersion: "2026-09-02",
+        deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        joinGrantId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      }),
     });
     expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/meet.end-room", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ roomId: room.id }),
+    });
+  });
+
+  it("requires a server authorization before starting recording", async () => {
+    const authorization = {
+      authorizationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      expiresAt: "2026-05-20T12:01:00.000Z",
+      participantSubjects: [room.createdByActorId],
+    };
+    const fetchImpl = vi.fn(() => Promise.resolve(Response.json(authorization)));
+
+    await expect(authorizeMeetRecordingStart(room.id, fetchImpl)).resolves.toEqual(authorization);
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/meet.recording.authorize-start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: room.id }),
+    });
+  });
+
+  it("sends only the bounded Meet telemetry event contract", async () => {
+    const fetchImpl = vi.fn(() => Promise.resolve(Response.json({ accepted: true })));
+
+    await recordMeetTelemetry(
+      room.id,
+      { event: "quality", packetLossPercent: 12, jitterMs: 250, rttMs: 800 },
+      fetchImpl,
+    );
+
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/meet.telemetry.record", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        roomId: room.id,
+        event: "quality",
+        packetLossPercent: 12,
+        jitterMs: 250,
+        rttMs: 800,
+      }),
     });
   });
 

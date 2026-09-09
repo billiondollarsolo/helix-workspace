@@ -2793,35 +2793,35 @@ function rebaseSheetChartForStructuralChange(
       chart.placement === undefined
         ? undefined
         : rebaseSheetChartPlacementForStructuralChange(chart.placement, change);
-    const nextChart: Record<string, unknown> = { ...chart, range };
+    const nextChart = { ...chart, range };
     if (labelCol === null || labelCol === undefined) {
-      delete nextChart["labelCol"];
+      delete nextChart.labelCol;
     } else {
-      nextChart["labelCol"] = labelCol;
+      nextChart.labelCol = labelCol;
     }
     if (valueCol === null || valueCol === undefined) {
-      delete nextChart["valueCol"];
+      delete nextChart.valueCol;
     } else {
-      nextChart["valueCol"] = valueCol;
+      nextChart.valueCol = valueCol;
     }
     if (placement === undefined) {
-      delete nextChart["placement"];
+      delete nextChart.placement;
     } else {
-      nextChart["placement"] = placement;
+      nextChart.placement = placement;
     }
-    return nextChart as unknown as SheetChartMetadata;
+    return nextChart;
   }
   const placement =
     chart.placement === undefined
       ? undefined
       : rebaseSheetChartPlacementForStructuralChange(chart.placement, change);
-  const nextChart: Record<string, unknown> = { ...chart, range };
+  const nextChart = { ...chart, range };
   if (placement === undefined) {
-    delete nextChart["placement"];
+    delete nextChart.placement;
   } else {
-    nextChart["placement"] = placement;
+    nextChart.placement = placement;
   }
-  return nextChart as unknown as SheetChartMetadata;
+  return nextChart;
 }
 
 function rebaseSheetChartPlacementForStructuralChange(
@@ -2906,21 +2906,21 @@ function rebaseSheetFilterViewForStructuralChange(
   const predicates = filterViewPredicatesFromMetadata(view)
     .map((predicate) => rebaseSheetFilterPredicateForStructuralChange(predicate, change))
     .filter((predicate): predicate is SheetFilterPredicateMetadata => predicate !== null);
-  const nextView: Record<string, unknown> = { ...view, range, predicates };
+  const nextView = { ...view, range, predicates };
   if (sortColumn === null || sortColumn === undefined) {
-    delete nextView["sortColumn"];
+    delete nextView.sortColumn;
   } else {
-    nextView["sortColumn"] = sortColumn;
+    nextView.sortColumn = sortColumn;
   }
   if (sortKeys !== undefined) {
-    nextView["sortKeys"] = sortKeys;
+    nextView.sortKeys = sortKeys;
   }
   if (predicates[0] === undefined) {
-    delete nextView["predicate"];
+    delete nextView.predicate;
   } else {
-    nextView["predicate"] = predicates[0];
+    nextView.predicate = predicates[0];
   }
-  return nextView as unknown as SheetFilterViewMetadata;
+  return nextView;
 }
 
 function filterViewPredicatesFromMetadata(
@@ -2997,13 +2997,13 @@ function rebaseSheetPivotTableForStructuralChange(
     pivot.slicer === undefined
       ? undefined
       : rebaseStructuralReferenceIndex(pivot.slicer.column, change, "column");
-  const nextPivot: Record<string, unknown> = { ...pivot, range, rowFieldCol, valueFieldCol };
+  const nextPivot = { ...pivot, range, rowFieldCol, valueFieldCol };
   if (pivot.slicer === undefined || slicerColumn === null || slicerColumn === undefined) {
-    delete nextPivot["slicer"];
+    delete nextPivot.slicer;
   } else {
-    nextPivot["slicer"] = { ...pivot.slicer, column: slicerColumn };
+    nextPivot.slicer = { ...pivot.slicer, column: slicerColumn };
   }
-  return nextPivot as unknown as SheetPivotTableMetadata;
+  return nextPivot;
 }
 
 function rebaseSheetFrozenPanesForOperation(
@@ -3374,22 +3374,22 @@ export class PostgresSheetsStore implements SheetsStore {
         : [DEFAULT_TAB_NAME]
     ).map(assertTabName);
     return this.sql.begin(async (tx) => {
-      const sheetRows = (await tx`
+      const sheetRows = await tx<SheetRow[]>`
         insert into sheets (org_id, owner_actor_id, created_by_actor_id, title, metadata)
         values (
           ${input.orgId}, ${input.actorId}, ${input.actorId}, ${title},
           ${tx.json(toSqlJson(input.metadata ?? {}))}
         )
         returning *
-      `) as unknown as readonly SheetRow[];
+      `;
       const sheet = mapSheet(sheetRows[0]);
       const tabs: SheetTabRecord[] = [];
       for (let index = 0; index < tabNames.length; index += 1) {
-        const tabRows = (await tx`
+        const tabRows = await tx<SheetTabRow[]>`
           insert into sheet_tabs (org_id, sheet_id, name, position)
           values (${input.orgId}, ${sheet.id}, ${tabNames[index] ?? DEFAULT_TAB_NAME}, ${index})
           returning *
-        `) as unknown as readonly SheetTabRow[];
+        `;
         tabs.push(mapTab(tabRows[0]));
       }
       const storageKey = `sheets/${input.orgId}/${sheet.id}`;
@@ -3467,31 +3467,31 @@ export class PostgresSheetsStore implements SheetsStore {
       }
       const sourceTabs = await selectTabs(tx, input.orgId, source.id);
       const sourceCells = await selectCellsForSheet(tx, input.orgId, source.id);
-      const sourceObjectRows = (await tx`
+      const sourceObjectRows = await tx<{ readonly metadata: JsonObject }[]>`
         select metadata
         from objects
         where id = ${input.sheetId}
           and org_id = ${input.orgId}
           and metadata->>'app' = 'sheets'
         limit 1
-      `) as unknown as readonly { readonly metadata: JsonObject }[];
+      `;
       const sourceFolderId = jsonStringOrNull(sourceObjectRows[0]?.metadata.folderId);
       const folderId = input.folderId === undefined ? sourceFolderId : input.folderId;
       const title = assertTitle(input.title ?? `${source.title} (Copy)`);
-      const sheetRows = (await tx`
+      const sheetRows = await tx<SheetRow[]>`
         insert into sheets (org_id, owner_actor_id, created_by_actor_id, title, metadata)
         values (
           ${input.orgId}, ${input.actorId}, ${input.actorId}, ${title},
           ${tx.json(toSqlJson({}))}
         )
         returning *
-      `) as unknown as readonly SheetRow[];
+      `;
       const insertedSheet = mapSheet(sheetRows[0]);
       const tabIdMap = new Map<string, string>();
       const tabs: SheetTabRecord[] = [];
       const now = new Date();
       for (const tab of sourceTabs) {
-        const tabRows = (await tx`
+        const tabRows = await tx<SheetTabRow[]>`
           insert into sheet_tabs (org_id, sheet_id, name, position, metadata, created_at, updated_at)
           values (
             ${input.orgId},
@@ -3503,7 +3503,7 @@ export class PostgresSheetsStore implements SheetsStore {
             ${now}
           )
           returning *
-        `) as unknown as readonly SheetTabRow[];
+        `;
         const copiedTab = mapTab(tabRows[0]);
         tabIdMap.set(tab.id, copiedTab.id);
         tabs.push(copiedTab);
@@ -3514,12 +3514,12 @@ export class PostgresSheetsStore implements SheetsStore {
         copiedFromSheetId: source.id,
         ...(input.metadata ?? {}),
       };
-      const sheetRowsAfterMetadata = (await tx`
+      const sheetRowsAfterMetadata = await tx<SheetRow[]>`
         update sheets
         set metadata = ${tx.json(toSqlJson(metadata))}
         where id = ${insertedSheet.id} and org_id = ${input.orgId}
         returning *
-      `) as unknown as readonly SheetRow[];
+      `;
       const sheet = mapSheet(sheetRowsAfterMetadata[0]);
       const cells: SheetCellRecord[] = [];
       for (const cell of sourceCells) {
@@ -3527,7 +3527,7 @@ export class PostgresSheetsStore implements SheetsStore {
         if (nextTabId === undefined) {
           continue;
         }
-        const cellRows = (await tx`
+        const cellRows = await tx<SheetCellRow[]>`
           insert into sheet_cells (
             org_id, sheet_tab_id, row, col, value, formula, calc_value, dependencies, formula_error, format, created_at, updated_at
           )
@@ -3546,7 +3546,7 @@ export class PostgresSheetsStore implements SheetsStore {
             ${now}
           )
           returning *
-        `) as unknown as readonly SheetCellRow[];
+        `;
         cells.push(mapCell(cellRows[0]));
       }
       const storageKey = `sheets/${input.orgId}/${sheet.id}`;
@@ -3627,7 +3627,7 @@ export class PostgresSheetsStore implements SheetsStore {
   async listSheets(input: ListSheetsInput): Promise<SheetsPage> {
     const query = input.query?.trim();
     const titleQuery = query === undefined || query.length === 0 ? null : `%${query}%`;
-    const rows = (await this.sql`
+    const rows = await this.sql<(SheetRow & { readonly total_count: string })[]>`
       select *, count(*) over () as total_count
       from sheets
       where org_id = ${input.orgId}
@@ -3637,7 +3637,7 @@ export class PostgresSheetsStore implements SheetsStore {
       order by updated_at desc
       limit ${input.limit}
       offset ${input.offset}
-    `) as unknown as readonly (SheetRow & { readonly total_count: string })[];
+    `;
     return {
       sheets: rows.map(mapSheet),
       total: rows.length > 0 ? Number(rows[0]?.total_count ?? 0) : 0,
@@ -3664,12 +3664,12 @@ export class PostgresSheetsStore implements SheetsStore {
       const metadata = input.metadata ?? existing.metadata;
       const protectedRangesDelta =
         input.metadata === undefined ? null : protectedRangeAuditDelta(existing.metadata, metadata);
-      const rows = (await tx`
+      const rows = await tx<SheetRow[]>`
         update sheets
         set title = ${title}, metadata = ${tx.json(toSqlJson(metadata))}, updated_at = now()
         where id = ${input.sheetId} and org_id = ${input.orgId} and deleted_at is null
         returning *
-      `) as unknown as readonly SheetRow[];
+      `;
       if (rows[0] === undefined) {
         return null;
       }
@@ -3702,11 +3702,11 @@ export class PostgresSheetsStore implements SheetsStore {
       if (existing === null) {
         return null;
       }
-      const rows = (await tx`
+      const rows = await tx<SheetRow[]>`
         update sheets set deleted_at = now(), updated_at = now()
         where id = ${input.sheetId} and org_id = ${input.orgId} and deleted_at is null
         returning *
-      `) as unknown as readonly SheetRow[];
+      `;
       if (rows[0] === undefined) {
         return null;
       }
@@ -3728,20 +3728,20 @@ export class PostgresSheetsStore implements SheetsStore {
       if (sheet === null) {
         throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${input.sheetId}`);
       }
-      const positionRows = (await tx`
+      const positionRows = await tx<{ readonly next_position: number }[]>`
         select coalesce(max(position) + 1, 0) as next_position
         from sheet_tabs
         where sheet_id = ${input.sheetId} and deleted_at is null
-      `) as unknown as readonly { readonly next_position: number }[];
+      `;
       const position = input.position ?? positionRows[0]?.next_position ?? 0;
-      const rows = (await tx`
+      const rows = await tx<SheetTabRow[]>`
         insert into sheet_tabs (org_id, sheet_id, name, position, metadata)
         values (
           ${input.orgId}, ${input.sheetId}, ${name}, ${position},
           ${tx.json(toSqlJson(input.metadata ?? {}))}
         )
         returning *
-      `) as unknown as readonly SheetTabRow[];
+      `;
       await touchSheet(tx, input.orgId, input.sheetId);
       await this.#refreshStorageSnapshot(tx, input.orgId, input.actorId, input.sheetId);
       await appendSheetsActivity(tx, {
@@ -3764,13 +3764,13 @@ export class PostgresSheetsStore implements SheetsStore {
       const name = input.name === undefined ? tab.name : assertTabName(input.name);
       const position = input.position ?? tab.position;
       const metadata = input.metadata ?? tab.metadata;
-      const rows = (await tx`
+      const rows = await tx<SheetTabRow[]>`
         update sheet_tabs
         set name = ${name}, position = ${position},
             metadata = ${tx.json(toSqlJson(metadata))}, updated_at = now()
         where id = ${input.tabId} and org_id = ${input.orgId} and deleted_at is null
         returning *
-      `) as unknown as readonly SheetTabRow[];
+      `;
       if (rows[0] === undefined) {
         return null;
       }
@@ -3793,19 +3793,19 @@ export class PostgresSheetsStore implements SheetsStore {
       if (tab === null) {
         return null;
       }
-      const remainingRows = (await tx`
+      const remainingRows = await tx<{ readonly remaining: number }[]>`
         select count(*)::int as remaining
         from sheet_tabs
         where sheet_id = ${tab.sheetId} and deleted_at is null and id <> ${input.tabId}
-      `) as unknown as readonly { readonly remaining: number }[];
+      `;
       if ((remainingRows[0]?.remaining ?? 0) === 0) {
         throw new SheetsValidationError("A spreadsheet must keep at least one tab.");
       }
-      const rows = (await tx`
+      const rows = await tx<SheetTabRow[]>`
         update sheet_tabs set deleted_at = now(), updated_at = now()
         where id = ${input.tabId} and org_id = ${input.orgId} and deleted_at is null
         returning *
-      `) as unknown as readonly SheetTabRow[];
+      `;
       if (rows[0] === undefined) {
         return null;
       }
@@ -3970,9 +3970,10 @@ export class PostgresSheetsStore implements SheetsStore {
       }
       const tabs = await selectTabs(tx, input.orgId, sheet.id);
       const anchor = validatedSheetCommentAnchor(input.anchor, sheet, tabs);
-      const rows = (await tx`
+      const rows = await tx<SheetCommentRow[]>`
         insert into drive_comments
-          (org_id, object_id, parent_comment_id, actor_id, anchor, body, metadata)
+          (org_id, object_id, parent_comment_id, actor_id, anchor, body, metadata,
+           changed_by_actor_id)
         values (
           ${input.orgId},
           ${input.sheetId},
@@ -3980,10 +3981,11 @@ export class PostgresSheetsStore implements SheetsStore {
           ${input.actorId},
           ${tx.json(toSqlJson(anchor))},
           ${input.body},
-          ${tx.json(toSqlJson(input.metadata ?? {}))}
+          ${tx.json(toSqlJson(input.metadata ?? {}))},
+          ${input.actorId}
         )
         returning *
-      `) as unknown as readonly SheetCommentRow[];
+      `;
       const comment = mapSheetComment(rows[0]);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
@@ -4011,7 +4013,7 @@ export class PostgresSheetsStore implements SheetsStore {
     if (sheet === null) {
       return [];
     }
-    const rows = (await this.sql`
+    const rows = await this.sql<SheetCommentProjectionRow[]>`
       select
         c.*,
         a.display_name as actor_display_name,
@@ -4020,25 +4022,27 @@ export class PostgresSheetsStore implements SheetsStore {
       left join actors a on a.id = c.actor_id and a.org_id = c.org_id
       where c.org_id = ${input.orgId}
         and c.object_id = ${sheet.id}
+        and c.deleted_at is null
         ${
           input.status === undefined || input.status === "all"
             ? this.sql``
             : this.sql`and c.status = ${input.status}`
         }
       order by c.created_at asc, c.id asc
-    `) as unknown as readonly SheetCommentProjectionRow[];
+    `;
     return rows.map(mapSheetCommentListItem);
   }
 
   async resolveComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
+      const existingRows = await tx<SheetCommentRow[]>`
         select *
         from drive_comments
         where id = ${input.commentId}
           and org_id = ${input.orgId}
+          and deleted_at is null
         limit 1
-      `) as unknown as readonly SheetCommentRow[];
+      `;
       const existing = existingRows[0];
       if (existing === undefined) {
         return null;
@@ -4054,13 +4058,15 @@ export class PostgresSheetsStore implements SheetsStore {
       if (existing.status === "resolved") {
         return mapSheetComment(existing);
       }
-      const rows = (await tx`
+      const rows = await tx<SheetCommentRow[]>`
         update drive_comments
-        set status = 'resolved', resolved_at = now(), updated_at = now()
+        set status = 'resolved', resolved_at = now(), resolved_by_actor_id = ${input.actorId},
+            changed_by_actor_id = ${input.actorId}, updated_at = now()
         where id = ${input.commentId}
           and org_id = ${input.orgId}
+          and deleted_at is null
         returning *
-      `) as unknown as readonly SheetCommentRow[];
+      `;
       const comment = mapSheetComment(rows[0]);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
@@ -4075,13 +4081,14 @@ export class PostgresSheetsStore implements SheetsStore {
 
   async reopenComment(input: ResolveSheetCommentInput): Promise<SheetCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
+      const existingRows = await tx<SheetCommentRow[]>`
         select *
         from drive_comments
         where id = ${input.commentId}
           and org_id = ${input.orgId}
+          and deleted_at is null
         limit 1
-      `) as unknown as readonly SheetCommentRow[];
+      `;
       const existing = existingRows[0];
       if (existing === undefined) {
         return null;
@@ -4097,13 +4104,15 @@ export class PostgresSheetsStore implements SheetsStore {
       if (existing.status === "open") {
         return mapSheetComment(existing);
       }
-      const rows = (await tx`
+      const rows = await tx<SheetCommentRow[]>`
         update drive_comments
-        set status = 'open', resolved_at = null, updated_at = now()
+        set status = 'open', resolved_at = null, resolved_by_actor_id = null,
+            changed_by_actor_id = ${input.actorId}, updated_at = now()
         where id = ${input.commentId}
           and org_id = ${input.orgId}
+          and deleted_at is null
         returning *
-      `) as unknown as readonly SheetCommentRow[];
+      `;
       const comment = mapSheetComment(rows[0]);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
@@ -4118,13 +4127,14 @@ export class PostgresSheetsStore implements SheetsStore {
 
   async updateComment(input: UpdateSheetCommentInput): Promise<SheetCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
+      const existingRows = await tx<SheetCommentRow[]>`
         select *
         from drive_comments
         where id = ${input.commentId}
           and org_id = ${input.orgId}
+          and deleted_at is null
         limit 1
-      `) as unknown as readonly SheetCommentRow[];
+      `;
       const existing = existingRows[0];
       if (existing === undefined) {
         return null;
@@ -4137,13 +4147,17 @@ export class PostgresSheetsStore implements SheetsStore {
       if (sheet === null) {
         return null;
       }
-      const rows = (await tx`
+      if (existing.body === input.body) {
+        return mapSheetComment(existing);
+      }
+      const rows = await tx<SheetCommentRow[]>`
         update drive_comments
-        set body = ${input.body}, updated_at = now()
+        set body = ${input.body}, changed_by_actor_id = ${input.actorId}, updated_at = now()
         where id = ${input.commentId}
           and org_id = ${input.orgId}
+          and deleted_at is null
         returning *
-      `) as unknown as readonly SheetCommentRow[];
+      `;
       const comment = mapSheetComment(rows[0]);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
@@ -4158,13 +4172,14 @@ export class PostgresSheetsStore implements SheetsStore {
 
   async deleteComment(input: DeleteSheetCommentInput): Promise<SheetCommentRecord | null> {
     return this.sql.begin(async (tx) => {
-      const existingRows = (await tx`
+      const existingRows = await tx<SheetCommentRow[]>`
         select *
         from drive_comments
         where id = ${input.commentId}
           and org_id = ${input.orgId}
+          and deleted_at is null
         limit 1
-      `) as unknown as readonly SheetCommentRow[];
+      `;
       const existing = existingRows[0];
       if (existing === undefined) {
         return null;
@@ -4177,12 +4192,15 @@ export class PostgresSheetsStore implements SheetsStore {
       if (sheet === null) {
         return null;
       }
-      const rows = (await tx`
-        delete from drive_comments
+      const rows = await tx<SheetCommentRow[]>`
+        update drive_comments
+        set deleted_at = now(), deleted_by_actor_id = ${input.actorId},
+            changed_by_actor_id = ${input.actorId}, updated_at = now()
         where id = ${input.commentId}
           and org_id = ${input.orgId}
+          and deleted_at is null
         returning *
-      `) as unknown as readonly SheetCommentRow[];
+      `;
       const comment = mapSheetComment(rows[0]);
       await appendSheetsActivity(tx, {
         orgId: input.orgId,
@@ -4202,14 +4220,14 @@ export class PostgresSheetsStore implements SheetsStore {
     if (sheet === null) {
       return [];
     }
-    const rows = (await this.sql`
+    const rows = await this.sql<SheetOperationLogRow[]>`
       select *
       from sheet_op_log
       where org_id = ${input.orgId}
         and sheet_id = ${sheet.id}
         and revision > ${input.afterRevision ?? 0}
       order by revision asc
-    `) as unknown as readonly SheetOperationLogRow[];
+    `;
     return rows.map(mapSheetOperationLog);
   }
 
@@ -4219,18 +4237,18 @@ export class PostgresSheetsStore implements SheetsStore {
       if (tab === null || tab.sheetId !== input.sheetId) {
         throw new SheetsNotFoundError(`Unknown or inaccessible tab: ${input.tabId}`);
       }
-      const existingRows = (await tx`
+      const existingRows = await tx<SheetOperationLogRow[]>`
         select *
         from sheet_op_log
         where org_id = ${input.orgId}
           and sheet_id = ${input.sheetId}
           and operation_id = ${input.operationId}
         limit 1
-      `) as unknown as readonly SheetOperationLogRow[];
+      `;
       if (existingRows[0] !== undefined) {
         return mapSheetOperationLog(existingRows[0]);
       }
-      const rows = (await tx`
+      const rows = await tx<SheetOperationLogRow[]>`
         insert into sheet_op_log (
           org_id, sheet_id, sheet_tab_id, actor_id, operation_id, revision, base_revision, operation
         )
@@ -4249,7 +4267,7 @@ export class PostgresSheetsStore implements SheetsStore {
           ${tx.json(toSqlJson(input.operation))}
         )
         returning *
-      `) as unknown as readonly SheetOperationLogRow[];
+      `;
       return mapSheetOperationLog(rows[0]);
     });
   }
@@ -4264,14 +4282,14 @@ export class PostgresSheetsStore implements SheetsStore {
       if (sheet === null) {
         throw new SheetsNotFoundError(`Unknown or inaccessible sheet: ${input.sheetId}`);
       }
-      const existingRows = (await tx`
+      const existingRows = await tx<SheetOperationLogRow[]>`
         select *
         from sheet_op_log
         where org_id = ${input.orgId}
           and sheet_id = ${input.sheetId}
           and operation_id = ${input.operation.id}
         limit 1
-      `) as unknown as readonly SheetOperationLogRow[];
+      `;
       if (existingRows[0] !== undefined) {
         return {
           status: "duplicate",
@@ -4279,11 +4297,11 @@ export class PostgresSheetsStore implements SheetsStore {
           revision: existingRows[0].revision,
         };
       }
-      const latestRows = (await tx`
+      const latestRows = await tx<{ readonly revision: number }[]>`
         select coalesce(max(revision), 0)::int as revision
         from sheet_op_log
         where org_id = ${input.orgId} and sheet_id = ${input.sheetId}
-      `) as unknown as readonly { readonly revision: number }[];
+      `;
       const compactedThroughRevision = compactedThroughRevisionFromMetadata(sheet.metadata);
       const latestRevision = Math.max(latestRows[0]?.revision ?? 0, compactedThroughRevision);
       if (input.operation.baseRevision < compactedThroughRevision) {
@@ -4297,14 +4315,14 @@ export class PostgresSheetsStore implements SheetsStore {
       if (input.operation.baseRevision > latestRevision) {
         return { status: "ahead", operationId: input.operation.id, revision: latestRevision };
       }
-      const committedRows = (await tx`
+      const committedRows = await tx<SheetOperationLogRow[]>`
         select *
         from sheet_op_log
         where org_id = ${input.orgId}
           and sheet_id = ${input.sheetId}
           and revision > ${input.operation.baseRevision}
         order by revision asc
-      `) as unknown as readonly SheetOperationLogRow[];
+      `;
       const transformed = transformSheetOperation(
         input.operation,
         committedRows
@@ -4339,6 +4357,7 @@ export class PostgresSheetsStore implements SheetsStore {
       }
       await rebaseSheetCommentAnchorsForOperation(tx, {
         orgId: input.orgId,
+        actorId: input.actorId,
         sheetId: input.sheetId,
         tabId: input.tabId,
         operation: transformed,
@@ -4408,7 +4427,7 @@ export class PostgresSheetsStore implements SheetsStore {
           source: "sheets.sync",
         },
       });
-      const rows = (await tx`
+      const rows = await tx<SheetOperationLogRow[]>`
         insert into sheet_op_log (
           org_id, sheet_id, sheet_tab_id, actor_id, operation_id, revision, base_revision, operation
         )
@@ -4423,7 +4442,7 @@ export class PostgresSheetsStore implements SheetsStore {
           ${tx.json(toSqlJson(transformed))}
         )
         returning *
-      `) as unknown as readonly SheetOperationLogRow[];
+      `;
       const record = mapSheetOperationLog(rows[0]);
       return {
         status: "applied",
@@ -4443,11 +4462,11 @@ export class PostgresSheetsStore implements SheetsStore {
         return { latestRevision: 0, compactedThroughRevision: 0, deletedCount: 0 };
       }
       const retainRevisions = assertRetainedOperationRevisions(input.retainRevisions);
-      const latestRows = (await tx`
+      const latestRows = await tx<{ readonly revision: number }[]>`
         select coalesce(max(revision), 0)::int as revision
         from sheet_op_log
         where org_id = ${input.orgId} and sheet_id = ${input.sheetId}
-      `) as unknown as readonly { readonly revision: number }[];
+      `;
       const previousCompactedRevision = compactedThroughRevisionFromMetadata(sheet.metadata);
       const latestRevision = Math.max(latestRows[0]?.revision ?? 0, previousCompactedRevision);
       const compactedThroughRevision = Math.max(
@@ -4461,13 +4480,13 @@ export class PostgresSheetsStore implements SheetsStore {
           deletedCount: 0,
         };
       }
-      const deletedRows = (await tx`
+      const deletedRows = await tx<{ readonly revision: number }[]>`
         delete from sheet_op_log
         where org_id = ${input.orgId}
           and sheet_id = ${input.sheetId}
           and revision <= ${compactedThroughRevision}
         returning revision
-      `) as unknown as readonly { readonly revision: number }[];
+      `;
       await tx`
         update sheets
         set metadata = ${tx.json(
@@ -4490,7 +4509,7 @@ export class PostgresSheetsStore implements SheetsStore {
     if (sheet === null) {
       return [];
     }
-    const rows = (await this.sql`
+    const rows = await this.sql<SheetVersionRow[]>`
       select *
       from drive_versions
       where org_id = ${input.orgId}
@@ -4498,7 +4517,7 @@ export class PostgresSheetsStore implements SheetsStore {
         and mime_type = 'application/vnd.helix.spreadsheet+json'
       order by version_number desc
       limit ${input.limit}
-    `) as unknown as readonly SheetVersionRow[];
+    `;
     return rows.map(mapSheetVersion);
   }
 
@@ -4508,7 +4527,7 @@ export class PostgresSheetsStore implements SheetsStore {
       if (sheet === null) {
         return null;
       }
-      const versionRows = (await tx`
+      const versionRows = await tx<SheetVersionRow[]>`
         select *
         from drive_versions
         where id = ${input.versionId}
@@ -4516,7 +4535,7 @@ export class PostgresSheetsStore implements SheetsStore {
           and object_id = ${input.sheetId}
           and mime_type = 'application/vnd.helix.spreadsheet+json'
         limit 1
-      `) as unknown as readonly SheetVersionRow[];
+      `;
       if (versionRows[0] === undefined) {
         return null;
       }
@@ -4664,11 +4683,11 @@ export class PostgresSheetsStore implements SheetsStore {
 }
 
 async function nextDriveVersionNumber(sql: SqlLike, objectId: string): Promise<number> {
-  const rows = (await sql`
+  const rows = await sql<{ readonly version_number: number }[]>`
     select coalesce(max(version_number) + 1, 1)::int as version_number
     from drive_versions
     where object_id = ${objectId}
-  `) as unknown as readonly { readonly version_number: number }[];
+  `;
   return rows[0]?.version_number ?? 1;
 }
 
@@ -4719,14 +4738,14 @@ async function selectSheetById(
   orgId: string,
   sheetId: string,
 ): Promise<SheetRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<SheetRow[]>`
     select *
     from sheets
     where id = ${sheetId}
       and org_id = ${orgId}
       and deleted_at is null
     limit 1
-  `) as unknown as readonly SheetRow[];
+  `;
   return rows[0] === undefined ? null : mapSheet(rows[0]);
 }
 
@@ -4734,7 +4753,7 @@ async function selectVisibleSheet(
   sql: SqlLike,
   input: SheetRef | UpdateSheetInput,
 ): Promise<SheetRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<SheetRow[]>`
     select *
     from sheets
     where id = ${input.sheetId}
@@ -4742,7 +4761,7 @@ async function selectVisibleSheet(
       and deleted_at is null
       and (owner_actor_id = ${input.actorId} or created_by_actor_id = ${input.actorId})
     limit 1
-  `) as unknown as readonly SheetRow[];
+  `;
   return rows[0] === undefined ? null : mapSheet(rows[0]);
 }
 
@@ -4750,7 +4769,7 @@ async function selectVisibleSheetForUpdate(
   sql: SqlLike,
   input: SheetRef,
 ): Promise<SheetRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<SheetRow[]>`
     select *
     from sheets
     where id = ${input.sheetId}
@@ -4758,7 +4777,7 @@ async function selectVisibleSheetForUpdate(
       and deleted_at is null
       and (owner_actor_id = ${input.actorId} or created_by_actor_id = ${input.actorId})
     for update
-  `) as unknown as readonly SheetRow[];
+  `;
   return rows[0] === undefined ? null : mapSheet(rows[0]);
 }
 
@@ -4766,7 +4785,7 @@ async function selectVisibleTab(
   sql: SqlLike,
   input: { orgId: string; actorId: string; tabId: string },
 ): Promise<SheetTabRecord | null> {
-  const rows = (await sql`
+  const rows = await sql<SheetTabRow[]>`
     select t.*
     from sheet_tabs t
     join sheets s on s.id = t.sheet_id and s.org_id = t.org_id
@@ -4776,7 +4795,7 @@ async function selectVisibleTab(
       and s.deleted_at is null
       and (s.owner_actor_id = ${input.actorId} or s.created_by_actor_id = ${input.actorId})
     limit 1
-  `) as unknown as readonly SheetTabRow[];
+  `;
   return rows[0] === undefined ? null : mapTab(rows[0]);
 }
 
@@ -4785,12 +4804,12 @@ async function selectTabs(
   orgId: string,
   sheetId: string,
 ): Promise<readonly SheetTabRecord[]> {
-  const rows = (await sql`
+  const rows = await sql<SheetTabRow[]>`
     select *
     from sheet_tabs
     where org_id = ${orgId} and sheet_id = ${sheetId} and deleted_at is null
     order by position asc, created_at asc
-  `) as unknown as readonly SheetTabRow[];
+  `;
   return rows.map(mapTab);
 }
 
@@ -4801,7 +4820,7 @@ async function selectCells(
 ): Promise<readonly SheetCellRecord[]> {
   if (window !== undefined) {
     const normalized = normalizeSheetRange(window);
-    const rows = (await sql`
+    const rows = await sql<SheetCellRow[]>`
       select *
       from sheet_cells
       where sheet_tab_id = ${tabId}
@@ -4810,15 +4829,15 @@ async function selectCells(
         and col >= ${normalized.left}
         and col <= ${normalized.right}
       order by row asc, col asc
-    `) as unknown as readonly SheetCellRow[];
+    `;
     return rows.map(mapCell);
   }
-  const rows = (await sql`
+  const rows = await sql<SheetCellRow[]>`
     select *
     from sheet_cells
     where sheet_tab_id = ${tabId}
     order by row asc, col asc
-  `) as unknown as readonly SheetCellRow[];
+  `;
   return rows.map(mapCell);
 }
 
@@ -4827,7 +4846,7 @@ async function selectCellsForSheet(
   orgId: string,
   sheetId: string,
 ): Promise<readonly SheetCellRecord[]> {
-  const rows = (await sql`
+  const rows = await sql<SheetCellRow[]>`
     select c.*
     from sheet_cells c
     join sheet_tabs t on t.id = c.sheet_tab_id and t.org_id = c.org_id
@@ -4835,7 +4854,7 @@ async function selectCellsForSheet(
       and t.sheet_id = ${sheetId}
       and t.deleted_at is null
     order by t.position asc, c.row asc, c.col asc
-  `) as unknown as readonly SheetCellRow[];
+  `;
   return rows.map(mapCell);
 }
 
@@ -4843,19 +4862,21 @@ async function rebaseSheetCommentAnchorsForOperation(
   sql: SqlLike,
   input: {
     readonly orgId: string;
+    readonly actorId: string;
     readonly sheetId: string;
     readonly tabId: string;
     readonly operation: SheetOperation;
     readonly now: Date;
   },
 ): Promise<void> {
-  const rows = (await sql`
+  const rows = await sql<SheetCommentRow[]>`
     select *
     from drive_comments
     where org_id = ${input.orgId}
       and object_id = ${input.sheetId}
+      and deleted_at is null
     for update
-  `) as unknown as readonly SheetCommentRow[];
+  `;
   for (const row of rows) {
     const rebased = rebaseSheetCommentAnchorForOperation(row.anchor, input.tabId, input.operation);
     if (!rebased.changed) {
@@ -4863,7 +4884,8 @@ async function rebaseSheetCommentAnchorsForOperation(
     }
     await sql`
       update drive_comments
-      set anchor = ${sql.json(toSqlJson(rebased.anchor))}, updated_at = ${input.now}
+      set anchor = ${sql.json(toSqlJson(rebased.anchor))},
+          changed_by_actor_id = ${input.actorId}, updated_at = ${input.now}
       where id = ${row.id} and org_id = ${input.orgId}
     `;
   }
@@ -4877,14 +4899,15 @@ async function requireSheetCommentParent(
     readonly parentCommentId: string;
   },
 ): Promise<void> {
-  const rows = (await sql`
+  const rows = await sql<{ readonly id: string }[]>`
     select id
     from drive_comments
     where id = ${input.parentCommentId}
       and org_id = ${input.orgId}
       and object_id = ${input.sheetId}
+      and deleted_at is null
     limit 1
-  `) as unknown as readonly { readonly id: string }[];
+  `;
   if (rows[0] === undefined) {
     throw new SheetsValidationError("Comment parent must belong to the same spreadsheet.");
   }
@@ -4958,12 +4981,12 @@ async function appendSheetsActivity(
     readonly payload: JsonObject;
   },
 ): Promise<void> {
-  const previousRows = (await sql`
+  const previousRows = await sql<{ readonly this_hash: string }[]>`
     select this_hash from activity
     where org_id = ${input.orgId}
     order by created_at desc
     limit 1
-  `) as unknown as readonly { readonly this_hash: string }[];
+  `;
   const prevHash = previousRows[0]?.this_hash ?? null;
   const thisHash = `${prevHash ?? "root"}:${input.verb}:${input.objectId}:${String(Date.now())}`;
   await sql`
@@ -5003,7 +5026,11 @@ async function notifySheetCommentMentions(
   if (tokens.length === 0) {
     return;
   }
-  const actorRows = (await sql`
+  const actorRows = await sql<{
+    readonly id: string;
+    readonly display_name: string;
+    readonly email: string | null;
+  }[]>`
     select id, display_name, email
     from actors
     where org_id = ${input.orgId}
@@ -5021,11 +5048,7 @@ async function notifySheetCommentMentions(
             and (p.expires_at is null or p.expires_at > now())
         )
       )
-  `) as unknown as readonly {
-    readonly id: string;
-    readonly display_name: string;
-    readonly email: string | null;
-  }[];
+  `;
   const recipients = mentionedActorIds({
     actors: actorRows,
     authorActorId: input.actorId,

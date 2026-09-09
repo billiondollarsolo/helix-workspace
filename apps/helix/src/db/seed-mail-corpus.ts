@@ -213,8 +213,8 @@ async function insertEmail(
     const objectId = object.id;
 
     await sql`
-      insert into message_attachments (message_id, object_id, disposition)
-      values (${messageId_row}, ${objectId}, ${att.contentDisposition})
+      insert into message_attachments (org_id, message_id, object_id, disposition)
+      values (${orgId}, ${messageId_row}, ${objectId}, ${att.contentDisposition})
     `;
     await sql`
       insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)

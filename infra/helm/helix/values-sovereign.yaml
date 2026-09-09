@@ -30,12 +30,29 @@ security:
     pluginSignatureRequired: true
     localAiOnly: true
 
+# Provision this immutable Secret through the sovereign release process. Its
+# catalog keyring and publisher identities are the local trust boundary; the
+# embedded Sigstore proofs can be verified from a mirrored TUF root offline.
+env:
+  - name: HELIX_PLUGIN_TRUST_FILE
+    value: /run/helix/plugin-trust/trust.json
+extraVolumes:
+  - name: plugin-trust
+    secret:
+      secretName: helix-plugin-trust
+      items:
+        - key: trust.json
+          path: trust.json
+extraVolumeMounts:
+  - name: plugin-trust
+    mountPath: /run/helix/plugin-trust
+    readOnly: true
+
 # The default repository is overridden by the FIPS image below when
 # `fips.enabled` is true (see the `helix.image` helper). `digest` is left empty
 # here because the FIPS image — not the standard image — is the deployed one.
 image:
   repository: registry.example.internal/helix/helix
-  tag: "0.9.0"
   digest: ""
   pullPolicy: IfNotPresent
 
@@ -47,14 +64,13 @@ external:
   siem:
     enabled: true
 
-# Tier 4 default-deny egress. No CIDRs and no DNS are allowed by the chart;
-# approved private-endpoint CIDRs must be added explicitly at install time
-# (see docs/security/tier4-airgap-install.md §3).
+# Tier 4 keeps exact cluster DNS but removes public HTTPS, including from the
+# image-verification hook. Add the private registry as a single-host endpoint
+# after the air-gap network review (see docs/security/tier4-airgap-install.md §3).
 networkPolicy:
-  egress:
-    allowAll: false
-    allowDns: false
-    cidrs: []
+  imageVerifier:
+    egress:
+      publicHttps: false
 
 spire:
   enabled: true
@@ -75,11 +91,8 @@ siem:
 fips:
   enabled: true
   imageRepository: registry.example.internal/helix/helix-fips
-  # Placeholder digest. MUST be replaced with the promoted internal digest
-  # before production traffic; the STIG image policy below rejects this zero
-  # digest at admission time.
-  imageDigest: >-
-    sha256:0000000000000000000000000000000000000000000000000000000000000000
+  # Required at install time; no placeholder can pass chart rendering.
+  imageDigest: ""
   nodeSelector:
     node-restriction.kubernetes.io/fips: "true"
   crypto:
@@ -134,6 +147,9 @@ airgap:
 autoscaling:
   minReplicas: 3
   maxReplicas: 10
+
+availability:
+  priorityClassName: helix-workspace-critical
 
 podDisruptionBudget:
   minAvailable: 2

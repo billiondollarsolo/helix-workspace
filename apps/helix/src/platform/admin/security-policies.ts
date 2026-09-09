@@ -1,7 +1,9 @@
 import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
+import { driveWorkflowKinds } from "../drive/workflows.js";
+import { dlpBoundaries } from "../dlp.js";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -17,16 +19,16 @@ import {
 /**
  * Admin Console — Security policies.
  *
- * One record per (org, policyType) covering the six controls the Security
+ * One record per (org, policyType) covering the controls the Security
  * section of the Admin Console surfaces:
  *
- *   mfa | sso | session | external_sharing | dlp | device_trust
+ *   mfa | sso | session | external_sharing | dlp | device_trust | drive_workflows
  *
  * `settings` is a typed JSON blob whose shape is validated per policy type.
  * Tier-config enforcement (audit shipping, Vault/SIEM) lives elsewhere and is
  * unaffected; these records hold the org-author-editable policy state and are
  * advisory to that enforcement. The store seeds a default record for each type
- * the first time an org's policies are listed so the UI always has six cards.
+ * the first time an org's policies are listed so the UI always has every card.
  */
 
 export type SecurityPolicyType =
@@ -35,7 +37,8 @@ export type SecurityPolicyType =
   | "session"
   | "external_sharing"
   | "dlp"
-  | "device_trust";
+  | "device_trust"
+  | "drive_workflows";
 
 export type PolicyEnforcement = "disabled" | "optional" | "required";
 
@@ -46,6 +49,7 @@ export const SECURITY_POLICY_TYPES: readonly SecurityPolicyType[] = [
   "external_sharing",
   "dlp",
   "device_trust",
+  "drive_workflows",
 ];
 
 export interface SecurityPolicyRecord {
@@ -58,13 +62,6 @@ export interface SecurityPolicyRecord {
   readonly updatedBy: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
-}
-
-export type SsoTestLoginStatus = "configuration_required" | "runtime_pending";
-
-export interface SsoTestLoginResult {
-  readonly status: SsoTestLoginStatus;
-  readonly message: string;
 }
 
 // --------------------------------------------------------------------------
@@ -83,17 +80,13 @@ const mfaSettings = z
 
 const ssoSettings = z
   .object({
-    provider: z
-      .enum(["okta", "azure_ad", "google", "generic_oidc", "generic_saml", "none"])
-      .default("none"),
+    provider: z.enum(["okta", "azure_ad", "google", "generic_oidc", "none"]).default("none"),
     metadataUrl: z.string().trim().url().max(2000).nullable().default(null),
     jitProvisioning: z.boolean().default(false),
     mappedDomains: z.array(z.string().trim().min(1).max(253)).max(50).default([]),
     localLoginEnabled: z.literal(true).default(true),
     setupStatus: z.enum(["none", "draft"]).default("none"),
-    testLoginStatus: z
-      .enum(["not_tested", "configuration_required", "runtime_pending"])
-      .default("not_tested"),
+    testLoginStatus: z.enum(["not_tested", "configuration_required"]).default("not_tested"),
     setupSource: z.enum(["admin", "signup"]).default("admin"),
   })
   .strict();
@@ -101,7 +94,9 @@ const ssoSettings = z
 const sessionSettings = z
   .object({
     inactivityTimeoutDays: z.number().int().min(1).max(90).default(14),
+    absoluteLifetimeDays: z.number().int().min(1).max(90).default(7),
     reauthForAdminActions: z.boolean().default(true),
+    reauthIntervalMinutes: z.number().int().min(1).max(1440).default(10),
     maxConcurrentSessions: z.number().int().min(1).max(50).default(10),
   })
   .strict();
@@ -120,7 +115,11 @@ const dlpSettings = z
       .array(z.enum(["pii", "credentials", "credit_card", "source_code"]))
       .max(4)
       .default(["pii", "credentials", "credit_card"]),
-    action: z.enum(["audit", "warn", "block"]).default("warn"),
+    action: z.enum(["audit", "warn", "quarantine", "block"]).default("warn"),
+    boundaries: z
+      .array(z.enum(dlpBoundaries))
+      .max(dlpBoundaries.length)
+      .default([...dlpBoundaries]),
     scanOutboundMail: z.boolean().default(true),
     scanSharedDocs: z.boolean().default(true),
   })
@@ -137,6 +136,16 @@ const deviceTrustSettings = z
   })
   .strict();
 
+const driveWorkflowSettings = z
+  .object({
+    allowedKinds: z
+      .array(z.enum(driveWorkflowKinds))
+      .max(driveWorkflowKinds.length)
+      .default([...driveWorkflowKinds]),
+    requireDueDate: z.boolean().default(false),
+  })
+  .strict();
+
 const settingsSchemaByType: Record<SecurityPolicyType, z.ZodTypeAny> = {
   mfa: mfaSettings,
   sso: ssoSettings,
@@ -144,6 +153,7 @@ const settingsSchemaByType: Record<SecurityPolicyType, z.ZodTypeAny> = {
   external_sharing: externalSharingSettings,
   dlp: dlpSettings,
   device_trust: deviceTrustSettings,
+  drive_workflows: driveWorkflowSettings,
 };
 
 /** Parse and normalize a policy's `settings` blob against its typed schema. */
@@ -202,6 +212,7 @@ const policyTypeSchema = z.enum([
   "external_sharing",
   "dlp",
   "device_trust",
+  "drive_workflows",
 ]);
 
 const updatePolicyBody = z
@@ -218,7 +229,7 @@ const updatePolicyBody = z
 export interface RegisterAdminSecurityPoliciesRoutesOptions {
   readonly store: SecurityPoliciesStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
-  readonly auditSink?: AdminConsoleAuditSink | undefined;
+  readonly auditSink: AdminConsoleAuditSink;
 }
 
 /**
@@ -236,7 +247,7 @@ export async function registerAdminSecurityPoliciesRoutes(
 
   app.get("/api/admin/security-policies", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
+    if (!canReadAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
     return { policies: await store.list(actor.orgId) };
@@ -244,7 +255,7 @@ export async function registerAdminSecurityPoliciesRoutes(
 
   app.get("/api/admin/security-policies/:policyType", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
+    if (!canReadAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
     const params = z.object({ policyType: policyTypeSchema }).safeParse(request.params);
@@ -258,57 +269,9 @@ export async function registerAdminSecurityPoliciesRoutes(
     return { policy };
   });
 
-  app.post("/api/admin/security-policies/sso/test-login", async (request, reply) => {
-    const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
-
-    const current = (await store.get(actor.orgId, "sso")) ?? {
-      ...defaultPolicy("sso"),
-      id: "",
-      orgId: actor.orgId,
-      updatedBy: null,
-      createdAt: "",
-      updatedAt: "",
-    };
-    const parsedSettings = parsePolicySettings("sso", current.settings);
-    if (!parsedSettings.ok) {
-      return reply
-        .code(400)
-        .send(invalidRequest("Invalid SSO policy settings.", parsedSettings.issues));
-    }
-    const testLogin = testSsoPolicyLogin(parsedSettings.settings);
-    const policy = await store.upsert({
-      orgId: actor.orgId,
-      policyType: "sso",
-      enabled: current.enabled,
-      enforcement: current.enforcement,
-      settings: {
-        ...parsedSettings.settings,
-        testLoginStatus: testLogin.status,
-      },
-      updatedBy: actor.id,
-    });
-
-    await auditAdminAction(auditSink, {
-      orgId: actor.orgId,
-      actorId: actor.id,
-      verb: "admin.security_policy.sso_test_login.checked",
-      objectType: "admin_security_policy",
-      objectId: policy.id,
-      metadata: {
-        policyType: "sso",
-        testLoginStatus: testLogin.status,
-      },
-    });
-
-    return { testLogin };
-  });
-
   app.put("/api/admin/security-policies/:policyType", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canWriteAdminConsole(actor)) {
+    if (!canWriteAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleWriteScope);
     }
     const params = z.object({ policyType: policyTypeSchema }).safeParse(request.params);
@@ -366,27 +329,6 @@ export async function registerAdminSecurityPoliciesRoutes(
   });
 }
 
-export function testSsoPolicyLogin(settings: Record<string, unknown>): SsoTestLoginResult {
-  const provider = typeof settings.provider === "string" ? settings.provider : "none";
-  const metadataUrl = typeof settings.metadataUrl === "string" ? settings.metadataUrl.trim() : "";
-  if (provider === "none") {
-    return {
-      status: "configuration_required",
-      message: "Choose an SSO provider before testing login.",
-    };
-  }
-  if (["okta", "generic_oidc", "generic_saml"].includes(provider) && metadataUrl.length === 0) {
-    return {
-      status: "configuration_required",
-      message: "Provider metadata is required before SSO can be tested.",
-    };
-  }
-  return {
-    status: "runtime_pending",
-    message: "Configuration saved. SAML/OIDC runtime is not connected yet.",
-  };
-}
-
 // --------------------------------------------------------------------------
 // Postgres store
 // --------------------------------------------------------------------------
@@ -407,12 +349,12 @@ export class PostgresSecurityPoliciesStore implements SecurityPoliciesStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async list(orgId: string): Promise<readonly SecurityPolicyRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<SecurityPolicyRow[]>`
       select id, org_id, policy_type, enabled, enforcement, settings,
              updated_by, created_at, updated_at
       from admin_security_policies
       where org_id = ${orgId}
-    `) as unknown as readonly SecurityPolicyRow[];
+    `;
     const byType = new Map(rows.map((row) => [row.policy_type, mapPolicyRow(row)]));
     return SECURITY_POLICY_TYPES.map((policyType) => {
       const existing = byType.get(policyType);
@@ -435,18 +377,18 @@ export class PostgresSecurityPoliciesStore implements SecurityPoliciesStore {
   }
 
   async get(orgId: string, policyType: SecurityPolicyType): Promise<SecurityPolicyRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<SecurityPolicyRow[]>`
       select id, org_id, policy_type, enabled, enforcement, settings,
              updated_by, created_at, updated_at
       from admin_security_policies
       where org_id = ${orgId} and policy_type = ${policyType}
-    `) as unknown as readonly SecurityPolicyRow[];
+    `;
     const row = rows[0];
     return row === undefined ? null : mapPolicyRow(row);
   }
 
   async upsert(input: UpsertSecurityPolicyInput): Promise<SecurityPolicyRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<SecurityPolicyRow[]>`
       insert into admin_security_policies
         (org_id, policy_type, enabled, enforcement, settings, updated_by)
       values
@@ -460,7 +402,7 @@ export class PostgresSecurityPoliciesStore implements SecurityPoliciesStore {
         updated_at = now()
       returning id, org_id, policy_type, enabled, enforcement, settings,
                 updated_by, created_at, updated_at
-    `) as unknown as readonly SecurityPolicyRow[];
+    `;
     const row = rows[0];
     if (row === undefined) {
       throw new Error("Failed to upsert security policy.");

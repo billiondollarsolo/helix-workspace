@@ -1,14 +1,12 @@
-import { scrypt as scryptCallback } from "node:crypto";
-import { promisify } from "node:util";
 import { hash as argon2Hash, verify as argon2Verify } from "@node-rs/argon2";
+import type { ActorRoleBinding } from "@helix/sdk-types";
 import { getCryptoProvider } from "../crypto/index.js";
 
-const scrypt = promisify(scryptCallback);
 const DEFAULT_TOKEN_TTL_SECONDS = 3600;
-const SECRET_KEY_LENGTH = 64;
+const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 const SCOPE_TOKEN_PATTERN = /^[\x21\x23-\x5b\x5d-\x7e]+$/u;
 
-export type OAuthGrantType = "client_credentials" | "authorization_code";
+export type OAuthGrantType = "client_credentials" | "authorization_code" | "refresh_token";
 export type OAuthTokenType = "Bearer";
 
 export interface OAuthClientRecord {
@@ -27,6 +25,8 @@ export interface OAuthClientRecord {
   readonly redirectUris: readonly string[];
   readonly expiresAt: Date | null;
   readonly revokedAt: Date | null;
+  /** Epoch copied into issued tokens; revoke/secret rotation increments it. */
+  readonly revocationEpoch?: number;
 }
 
 export interface OAuthClientCreateInput {
@@ -89,6 +89,7 @@ export interface AccessTokenRecord {
   readonly actorDisplayName?: string;
   readonly actorEmail?: string;
   readonly scopes: readonly string[];
+  readonly roleBindings?: readonly ActorRoleBinding[];
   readonly issuedAt: Date;
   readonly expiresAt: Date;
 }
@@ -96,16 +97,59 @@ export interface AccessTokenRecord {
 export interface AccessTokenStore {
   saveToken(token: AccessTokenRecord): Promise<void>;
   findToken(token: string): Promise<AccessTokenRecord | null>;
-  /**
-   * Revoke a previously issued access token (RFC 7009). Optional for backward
-   * compatibility with stores that predate token revocation; when absent, the
-   * revocation endpoint still responds successfully per RFC 7009 §2.2.
-   */
-  revokeToken?(token: string, revokedAt: Date): Promise<void>;
+}
+
+export interface StoredAccessTokenRecord extends AccessTokenRecord {
+  /** Canonical authorization-server origin this opaque token belongs to. */
+  readonly issuer: string;
+  readonly clientEpoch: number;
+  readonly refreshFamilyId: string | null;
+}
+
+export interface RefreshTokenRecord {
+  readonly token: string;
+  readonly familyId: string;
+  readonly clientId: string;
+  readonly actorId: string;
+  readonly orgId: string;
+  readonly issuer: string;
+  readonly scopes: readonly string[];
+  readonly clientEpoch: number;
+  readonly issuedAt: Date;
+  readonly expiresAt: Date;
+}
+
+export type RefreshTokenRotationResult =
+  | {
+      readonly status: "rotated";
+      readonly accessToken: StoredAccessTokenRecord;
+      readonly refreshToken: RefreshTokenRecord;
+    }
+  | { readonly status: "invalid" | "invalid_scope" | "reused" };
+
+export interface OAuthTokenStore extends AccessTokenStore {
+  saveToken(token: StoredAccessTokenRecord): Promise<void>;
+  saveAuthorizationCodeTokens(
+    accessToken: StoredAccessTokenRecord,
+    refreshToken: RefreshTokenRecord,
+  ): Promise<void>;
+  findAccessTokenForClient(token: string, clientId: string): Promise<AccessTokenRecord | null>;
+  findRefreshTokenForClient(token: string, clientId: string): Promise<RefreshTokenRecord | null>;
+  rotateRefreshToken(input: {
+    readonly token: string;
+    readonly clientId: string;
+    readonly nextAccessToken: string;
+    readonly nextRefreshToken: string;
+    readonly requestedScopes: readonly string[];
+    readonly rotatedAt: Date;
+    readonly accessExpiresAt: Date;
+  }): Promise<RefreshTokenRotationResult>;
+  revokeAccessTokenForClient(token: string, clientId: string, revokedAt: Date): Promise<void>;
+  revokeRefreshTokenForClient(token: string, clientId: string, revokedAt: Date): Promise<void>;
 }
 
 export interface OAuthTokenRequest {
-  readonly grantType: OAuthGrantType;
+  readonly grantType: "client_credentials";
   readonly clientId: string;
   readonly clientSecret: string;
   readonly scope?: string;
@@ -113,6 +157,7 @@ export interface OAuthTokenRequest {
 
 export interface OAuthTokenResponse {
   readonly access_token: string;
+  readonly refresh_token?: string;
   readonly token_type: OAuthTokenType;
   readonly expires_in: number;
   readonly scope: string;
@@ -160,10 +205,21 @@ export interface OAuthAuthorizationCodeTokenRequest {
   readonly codeVerifier: string;
 }
 
+export interface OAuthRefreshTokenRequest {
+  readonly grantType: "refresh_token";
+  readonly clientId: string;
+  readonly clientSecret?: string;
+  readonly refreshToken: string;
+  readonly scope?: string;
+}
+
 export interface OAuthTokenServiceOptions {
   readonly clientStore: OAuthClientStore;
-  readonly tokenStore?: AccessTokenStore;
+  readonly tokenStore: OAuthTokenStore;
+  /** Canonical authorization-server origin used to bind durable token hashes. */
+  readonly issuer: string;
   readonly tokenTtlSeconds?: number;
+  readonly refreshTokenTtlSeconds?: number;
   /**
    * Authorization-code redeemer (PRD §13.6). When provided, the service can
    * mint access tokens for the `authorization_code` grant.
@@ -173,9 +229,14 @@ export interface OAuthTokenServiceOptions {
 
 export class OAuthTokenService {
   readonly #tokenTtlSeconds: number;
+  readonly #refreshTokenTtlSeconds: number;
+  readonly #issuer: string;
 
   constructor(private readonly options: OAuthTokenServiceOptions) {
+    this.#issuer = options.issuer;
     this.#tokenTtlSeconds = options.tokenTtlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS;
+    this.#refreshTokenTtlSeconds =
+      options.refreshTokenTtlSeconds ?? DEFAULT_REFRESH_TOKEN_TTL_SECONDS;
   }
 
   async issueClientCredentialsToken(input: OAuthTokenRequest): Promise<OAuthTokenResponse> {
@@ -190,21 +251,8 @@ export class OAuthTokenService {
     if (client.expiresAt !== null && client.expiresAt <= now) {
       throw new OAuthError("invalid_client", "OAuth client has expired.", 401);
     }
-    const verification = await verifySecretWithRehash(input.clientSecret, client.clientSecretHash);
-    if (!verification.valid) {
+    if (!(await verifySecret(input.clientSecret, client.clientSecretHash))) {
       throw new OAuthError("invalid_client", "Invalid OAuth client credentials.", 401);
-    }
-    if (verification.rehashedSecretHash !== null) {
-      // Transparently upgrade a legacy scrypt hash to argon2id (PRD §9.2).
-      try {
-        await this.options.clientStore.rotateClientSecret(
-          client.clientId,
-          verification.rehashedSecretHash,
-          now,
-        );
-      } catch {
-        // A failed re-hash upgrade must not fail an otherwise valid token request.
-      }
     }
 
     const requestedScopes = parseScope(input.scope);
@@ -220,16 +268,19 @@ export class OAuthTokenService {
 
     const issuedAt = now;
     const expiresAt = new Date(issuedAt.getTime() + this.#tokenTtlSeconds * 1000);
-    const accessToken: AccessTokenRecord = {
+    const accessToken: StoredAccessTokenRecord = {
       token: `helix_at_${randomToken(32)}`,
       clientId: client.clientId,
       actorId: client.actorId,
       orgId: client.orgId,
+      issuer: this.#issuer,
       scopes: grantedScopes,
+      clientEpoch: client.revocationEpoch ?? 0,
+      refreshFamilyId: null,
       issuedAt,
       expiresAt,
     };
-    await this.options.tokenStore?.saveToken(accessToken);
+    await this.options.tokenStore.saveToken(accessToken);
 
     return {
       access_token: accessToken.token,
@@ -274,23 +325,8 @@ export class OAuthTokenService {
       if (input.clientSecret === undefined || input.clientSecret.length === 0) {
         throw new OAuthError("invalid_client", "Client secret is required for this client.", 401);
       }
-      const verification = await verifySecretWithRehash(
-        input.clientSecret,
-        client.clientSecretHash,
-      );
-      if (!verification.valid) {
+      if (!(await verifySecret(input.clientSecret, client.clientSecretHash))) {
         throw new OAuthError("invalid_client", "Invalid OAuth client credentials.", 401);
-      }
-      if (verification.rehashedSecretHash !== null) {
-        try {
-          await this.options.clientStore.rotateClientSecret(
-            client.clientId,
-            verification.rehashedSecretHash,
-            now,
-          );
-        } catch {
-          // A failed re-hash upgrade must not fail an otherwise valid request.
-        }
       }
     }
 
@@ -300,6 +336,13 @@ export class OAuthTokenService {
       redirectUri: input.redirectUri,
       codeVerifier: input.codeVerifier,
     });
+    if (redeemed.orgId !== client.orgId) {
+      throw new OAuthError(
+        "invalid_grant",
+        "Authorization code tenant does not match the OAuth client installation.",
+        400,
+      );
+    }
     // The code's scopes must remain a subset of what the client is allowed.
     const unauthorizedScope = redeemed.scopes.find((scope) => !client.scopes.includes(scope));
     if (unauthorizedScope !== undefined) {
@@ -313,22 +356,82 @@ export class OAuthTokenService {
     const issuedAt = now;
     const expiresAt = new Date(issuedAt.getTime() + this.#tokenTtlSeconds * 1000);
     const grantedScopes = [...new Set(redeemed.scopes)];
-    const accessToken: AccessTokenRecord = {
+    const familyId = getCryptoProvider().randomUuid();
+    const accessToken: StoredAccessTokenRecord = {
       token: `helix_at_${randomToken(32)}`,
       clientId: client.clientId,
       actorId: redeemed.actorId,
       orgId: redeemed.orgId,
+      issuer: this.#issuer,
       scopes: grantedScopes,
+      clientEpoch: client.revocationEpoch ?? 0,
+      refreshFamilyId: familyId,
       issuedAt,
       expiresAt,
     };
-    await this.options.tokenStore?.saveToken(accessToken);
+    const refreshToken: RefreshTokenRecord = {
+      token: `helix_rt_${randomToken(32)}`,
+      familyId,
+      clientId: client.clientId,
+      actorId: redeemed.actorId,
+      orgId: redeemed.orgId,
+      issuer: this.#issuer,
+      scopes: grantedScopes,
+      clientEpoch: client.revocationEpoch ?? 0,
+      issuedAt,
+      expiresAt: new Date(issuedAt.getTime() + this.#refreshTokenTtlSeconds * 1000),
+    };
+    await this.options.tokenStore.saveAuthorizationCodeTokens(accessToken, refreshToken);
 
     return {
       access_token: accessToken.token,
+      refresh_token: refreshToken.token,
       token_type: "Bearer",
       expires_in: this.#tokenTtlSeconds,
       scope: grantedScopes.join(" "),
+    };
+  }
+
+  async issueRefreshToken(input: OAuthRefreshTokenRequest): Promise<OAuthTokenResponse> {
+    const client = await this.options.clientStore.findClient(input.clientId);
+    if (client === null || client.revokedAt !== null) {
+      throw new OAuthError("invalid_client", "Unknown or revoked OAuth client.", 401);
+    }
+    const now = new Date();
+    if (client.expiresAt !== null && client.expiresAt <= now) {
+      throw new OAuthError("invalid_client", "OAuth client has expired.", 401);
+    }
+    if (client.clientSecretHash.length > 0) {
+      if (input.clientSecret === undefined || input.clientSecret.length === 0) {
+        throw new OAuthError("invalid_client", "Client secret is required for this client.", 401);
+      }
+      if (!(await verifySecret(input.clientSecret, client.clientSecretHash))) {
+        throw new OAuthError("invalid_client", "Invalid OAuth client credentials.", 401);
+      }
+    }
+
+    const requestedScopes = parseScope(input.scope);
+    const result = await this.options.tokenStore.rotateRefreshToken({
+      token: input.refreshToken,
+      clientId: client.clientId,
+      nextAccessToken: `helix_at_${randomToken(32)}`,
+      nextRefreshToken: `helix_rt_${randomToken(32)}`,
+      requestedScopes,
+      rotatedAt: now,
+      accessExpiresAt: new Date(now.getTime() + this.#tokenTtlSeconds * 1000),
+    });
+    if (result.status === "invalid_scope") {
+      throw new OAuthError("invalid_scope", "Requested scope exceeds the refresh grant.", 400);
+    }
+    if (result.status !== "rotated") {
+      throw new OAuthError("invalid_grant", "Refresh token is invalid or has been reused.", 400);
+    }
+    return {
+      access_token: result.accessToken.token,
+      refresh_token: result.refreshToken.token,
+      token_type: "Bearer",
+      expires_in: this.#tokenTtlSeconds,
+      scope: result.accessToken.scopes.join(" "),
     };
   }
 
@@ -337,7 +440,7 @@ export class OAuthTokenService {
    * (`invalid_client`) when authentication fails. Used by the RFC 7009 / 7662
    * token-management endpoints, which require client authentication.
    */
-  async authenticateClient(clientId: string, clientSecret: string): Promise<OAuthClientRecord> {
+  async authenticateClient(clientId: string, clientSecret?: string): Promise<OAuthClientRecord> {
     const client = await this.options.clientStore.findClient(clientId);
     if (client === null) {
       throw new OAuthError("invalid_client", "Unknown OAuth client.", 401);
@@ -345,59 +448,58 @@ export class OAuthTokenService {
     if (client.revokedAt !== null) {
       throw new OAuthError("invalid_client", "OAuth client has been revoked.", 401);
     }
-    const verification = await verifySecretWithRehash(clientSecret, client.clientSecretHash);
-    if (!verification.valid) {
-      throw new OAuthError("invalid_client", "Invalid OAuth client credentials.", 401);
-    }
-    if (verification.rehashedSecretHash !== null) {
-      try {
-        await this.options.clientStore.rotateClientSecret(
-          client.clientId,
-          verification.rehashedSecretHash,
-          new Date(),
-        );
-      } catch {
-        // A failed re-hash upgrade must not fail an otherwise valid request.
+    if (client.clientSecretHash.length > 0) {
+      if (clientSecret === undefined || clientSecret.length === 0) {
+        throw new OAuthError("invalid_client", "Client secret is required for this client.", 401);
+      }
+      if (!(await verifySecret(clientSecret, client.clientSecretHash))) {
+        throw new OAuthError("invalid_client", "Invalid OAuth client credentials.", 401);
       }
     }
     return client;
   }
 
-  /**
-   * Revoke an access token (RFC 7009). Revocation is idempotent: revoking an
-   * unknown, expired, or already-revoked token is treated as a success.
-   */
-  async revokeToken(token: string): Promise<void> {
-    const tokenStore = this.options.tokenStore;
-    if (tokenStore?.revokeToken === undefined) {
+  /** RFC 7009 revocation, bound to the authenticated issuing client. */
+  async revokeToken(input: {
+    readonly token: string;
+    readonly clientId: string;
+    readonly tokenTypeHint?: "access_token" | "refresh_token";
+  }): Promise<void> {
+    const now = new Date();
+    if (input.tokenTypeHint === "refresh_token") {
+      await this.options.tokenStore.revokeRefreshTokenForClient(input.token, input.clientId, now);
+      await this.options.tokenStore.revokeAccessTokenForClient(input.token, input.clientId, now);
       return;
     }
-    await tokenStore.revokeToken(token, new Date());
+    await this.options.tokenStore.revokeAccessTokenForClient(input.token, input.clientId, now);
+    await this.options.tokenStore.revokeRefreshTokenForClient(input.token, input.clientId, now);
   }
 
   /**
    * Introspect an access token (RFC 7662). Returns the token's metadata when
    * it is currently active, or `{ active: false }` otherwise.
    */
-  async introspectToken(token: string): Promise<OAuthIntrospectionResponse> {
-    const tokenStore = this.options.tokenStore;
-    if (tokenStore === undefined || token.length === 0) {
+  async introspectToken(input: {
+    readonly token: string;
+    readonly clientId: string;
+  }): Promise<OAuthIntrospectionResponse> {
+    if (input.token.length === 0) {
       return { active: false };
     }
-    const record = await tokenStore.findToken(token);
-    if (record === null || record.expiresAt <= new Date()) {
-      return { active: false };
+    const accessToken = await this.options.tokenStore.findAccessTokenForClient(
+      input.token,
+      input.clientId,
+    );
+    if (accessToken !== null) {
+      return introspectionForToken(accessToken, "Bearer");
     }
-    return {
-      active: true,
-      scope: record.scopes.join(" "),
-      client_id: record.clientId,
-      token_type: "Bearer",
-      exp: Math.floor(record.expiresAt.getTime() / 1000),
-      iat: Math.floor(record.issuedAt.getTime() / 1000),
-      sub: record.actorId,
-      ...(record.actorEmail === undefined ? {} : { username: record.actorEmail }),
-    };
+    const refreshToken = await this.options.tokenStore.findRefreshTokenForClient(
+      input.token,
+      input.clientId,
+    );
+    return refreshToken === null
+      ? { active: false }
+      : introspectionForToken(refreshToken, "refresh_token");
   }
 }
 
@@ -405,11 +507,27 @@ export interface OAuthIntrospectionResponse {
   readonly active: boolean;
   readonly scope?: string;
   readonly client_id?: string;
-  readonly token_type?: OAuthTokenType;
+  readonly token_type?: OAuthTokenType | "refresh_token";
   readonly exp?: number;
   readonly iat?: number;
   readonly sub?: string;
   readonly username?: string;
+}
+
+function introspectionForToken(
+  record: AccessTokenRecord | RefreshTokenRecord,
+  tokenType: OAuthTokenType | "refresh_token",
+): OAuthIntrospectionResponse {
+  return {
+    active: true,
+    scope: record.scopes.join(" "),
+    client_id: record.clientId,
+    token_type: tokenType,
+    exp: Math.floor(record.expiresAt.getTime() / 1000),
+    iat: Math.floor(record.issuedAt.getTime() / 1000),
+    sub: record.actorId,
+    ...("actorEmail" in record ? { username: record.actorEmail } : {}),
+  };
 }
 
 export interface OAuthClientManagerOptions {
@@ -464,9 +582,14 @@ export class OAuthClientManager {
   }
 }
 
-export class InMemoryOAuthClientStore implements OAuthClientStore, AccessTokenStore {
+export class InMemoryOAuthClientStore implements OAuthClientStore, OAuthTokenStore {
   readonly #clients = new Map<string, OAuthClientRecord>();
-  readonly #tokens = new Map<string, AccessTokenRecord>();
+  readonly #tokens = new Map<string, StoredAccessTokenRecord>();
+  readonly #refreshTokens = new Map<string, RefreshTokenRecord>();
+  readonly #consumedRefreshTokens = new Set<string>();
+  readonly #revokedRefreshTokens = new Set<string>();
+
+  constructor(private readonly issuer = "urn:helix:test") {}
 
   async findClient(clientId: string): Promise<OAuthClientRecord | null> {
     return this.#clients.get(clientId) ?? null;
@@ -495,6 +618,7 @@ export class InMemoryOAuthClientStore implements OAuthClientStore, AccessTokenSt
       redirectUris: [...new Set(input.redirectUris ?? [])],
       expiresAt: input.expiresAt ?? null,
       revokedAt: null,
+      revocationEpoch: 0,
     };
     this.#clients.set(client.clientId, client);
     return client;
@@ -505,7 +629,11 @@ export class InMemoryOAuthClientStore implements OAuthClientStore, AccessTokenSt
     if (client === undefined || client.revokedAt !== null) {
       return null;
     }
-    const revoked = { ...client, revokedAt };
+    const revoked = {
+      ...client,
+      revokedAt,
+      revocationEpoch: (client.revocationEpoch ?? 0) + 1,
+    };
     this.#clients.set(clientId, revoked);
     return revoked;
   }
@@ -515,10 +643,14 @@ export class InMemoryOAuthClientStore implements OAuthClientStore, AccessTokenSt
     clientSecretHash: string,
   ): Promise<OAuthClientRecord | null> {
     const client = this.#clients.get(clientId);
-    if (client === undefined) {
+    if (client === undefined || client.revokedAt !== null) {
       return null;
     }
-    const rotated = { ...client, clientSecretHash };
+    const rotated = {
+      ...client,
+      clientSecretHash,
+      revocationEpoch: (client.revocationEpoch ?? 0) + 1,
+    };
     this.#clients.set(clientId, rotated);
     return rotated;
   }
@@ -542,18 +674,184 @@ export class InMemoryOAuthClientStore implements OAuthClientStore, AccessTokenSt
   readonly #revokedTokens = new Set<string>();
 
   async saveToken(token: AccessTokenRecord): Promise<void> {
-    this.#tokens.set(token.token, token);
+    const client = this.#clients.get(token.clientId);
+    const issuer =
+      "issuer" in token && typeof token.issuer === "string" ? token.issuer : this.issuer;
+    if (issuer !== this.issuer) {
+      throw new Error("OAuth token issuer does not match this authorization server.");
+    }
+    this.#tokens.set(token.token, {
+      ...token,
+      issuer,
+      clientEpoch:
+        "clientEpoch" in token && typeof token.clientEpoch === "number"
+          ? token.clientEpoch
+          : (client?.revocationEpoch ?? 0),
+      refreshFamilyId:
+        "refreshFamilyId" in token && typeof token.refreshFamilyId === "string"
+          ? token.refreshFamilyId
+          : null,
+    });
   }
 
   async findToken(token: string): Promise<AccessTokenRecord | null> {
-    if (this.#revokedTokens.has(token)) {
+    const record = this.#tokens.get(token);
+    if (record === undefined || this.#revokedTokens.has(token) || record.expiresAt <= new Date()) {
       return null;
     }
-    return this.#tokens.get(token) ?? null;
+    const client = this.#clients.get(record.clientId);
+    // `AccessTokenStore.saveToken` is also used directly by route/session
+    // tests and adapters that do not own an OAuth client registry. Tokens
+    // issued by this store always have a client and take the stricter path.
+    if (client === undefined) {
+      return record;
+    }
+    if (
+      record.issuer !== this.issuer ||
+      client.revokedAt !== null ||
+      (client.expiresAt !== null && client.expiresAt <= new Date()) ||
+      record.clientEpoch !== (client.revocationEpoch ?? 0)
+    ) {
+      return null;
+    }
+    return record;
   }
 
-  async revokeToken(token: string): Promise<void> {
-    this.#revokedTokens.add(token);
+  async saveAuthorizationCodeTokens(
+    accessToken: StoredAccessTokenRecord,
+    refreshToken: RefreshTokenRecord,
+  ): Promise<void> {
+    if (
+      accessToken.refreshFamilyId !== refreshToken.familyId ||
+      accessToken.clientId !== refreshToken.clientId ||
+      accessToken.actorId !== refreshToken.actorId ||
+      accessToken.orgId !== refreshToken.orgId ||
+      accessToken.issuer !== refreshToken.issuer ||
+      accessToken.clientEpoch !== refreshToken.clientEpoch
+    ) {
+      throw new Error("OAuth authorization token pair is inconsistent.");
+    }
+    if (accessToken.issuer !== this.issuer) {
+      throw new Error("OAuth token issuer does not match this authorization server.");
+    }
+    this.#tokens.set(accessToken.token, accessToken);
+    this.#refreshTokens.set(refreshToken.token, refreshToken);
+  }
+
+  async findAccessTokenForClient(
+    token: string,
+    clientId: string,
+  ): Promise<AccessTokenRecord | null> {
+    const record = await this.findToken(token);
+    return record?.clientId === clientId ? record : null;
+  }
+
+  async findRefreshTokenForClient(
+    token: string,
+    clientId: string,
+  ): Promise<RefreshTokenRecord | null> {
+    const record = this.#refreshTokens.get(token);
+    if (
+      record === undefined ||
+      record.clientId !== clientId ||
+      record.issuer !== this.issuer ||
+      record.expiresAt <= new Date() ||
+      this.#consumedRefreshTokens.has(token) ||
+      this.#revokedRefreshTokens.has(token)
+    ) {
+      return null;
+    }
+    const client = this.#clients.get(clientId);
+    return client !== undefined &&
+      client.revokedAt === null &&
+      (client.expiresAt === null || client.expiresAt > new Date()) &&
+      record.clientEpoch === (client.revocationEpoch ?? 0)
+      ? record
+      : null;
+  }
+
+  async rotateRefreshToken(input: {
+    readonly token: string;
+    readonly clientId: string;
+    readonly nextAccessToken: string;
+    readonly nextRefreshToken: string;
+    readonly requestedScopes: readonly string[];
+    readonly rotatedAt: Date;
+    readonly accessExpiresAt: Date;
+  }): Promise<RefreshTokenRotationResult> {
+    const current = this.#refreshTokens.get(input.token);
+    if (current === undefined || current.clientId !== input.clientId) {
+      return { status: "invalid" };
+    }
+    if (this.#consumedRefreshTokens.has(input.token)) {
+      this.#revokeFamily(current.familyId, current.clientId);
+      return { status: "reused" };
+    }
+    const client = this.#clients.get(input.clientId);
+    if (
+      this.#revokedRefreshTokens.has(input.token) ||
+      current.expiresAt <= input.rotatedAt ||
+      client === undefined ||
+      client.revokedAt !== null ||
+      (client.expiresAt !== null && client.expiresAt <= input.rotatedAt) ||
+      current.clientEpoch !== (client.revocationEpoch ?? 0)
+    ) {
+      return { status: "invalid" };
+    }
+    const scopes =
+      input.requestedScopes.length === 0 ? [...current.scopes] : [...input.requestedScopes];
+    if (scopes.some((scope) => !current.scopes.includes(scope))) {
+      return { status: "invalid_scope" };
+    }
+    const accessToken: StoredAccessTokenRecord = {
+      token: input.nextAccessToken,
+      clientId: current.clientId,
+      actorId: current.actorId,
+      orgId: current.orgId,
+      issuer: current.issuer,
+      scopes,
+      clientEpoch: current.clientEpoch,
+      refreshFamilyId: current.familyId,
+      issuedAt: input.rotatedAt,
+      expiresAt: input.accessExpiresAt,
+    };
+    const refreshToken: RefreshTokenRecord = {
+      ...current,
+      token: input.nextRefreshToken,
+      scopes,
+      issuedAt: input.rotatedAt,
+      expiresAt: current.expiresAt,
+    };
+    this.#consumedRefreshTokens.add(input.token);
+    this.#tokens.set(accessToken.token, accessToken);
+    this.#refreshTokens.set(refreshToken.token, refreshToken);
+    return { status: "rotated", accessToken, refreshToken };
+  }
+
+  async revokeAccessTokenForClient(token: string, clientId: string): Promise<void> {
+    if (this.#tokens.get(token)?.clientId === clientId) {
+      this.#revokedTokens.add(token);
+    }
+  }
+
+  async revokeRefreshTokenForClient(token: string, clientId: string): Promise<void> {
+    const record = this.#refreshTokens.get(token);
+    if (record?.clientId === clientId) {
+      this.#revokeFamily(record.familyId, clientId);
+    }
+  }
+
+  #revokeFamily(familyId: string, clientId: string): void {
+    for (const [token, record] of this.#refreshTokens) {
+      if (record.familyId === familyId && record.clientId === clientId) {
+        this.#revokedRefreshTokens.add(token);
+      }
+    }
+    for (const [token, record] of this.#tokens) {
+      if (record.refreshFamilyId === familyId && record.clientId === clientId) {
+        this.#revokedTokens.add(token);
+      }
+    }
   }
 }
 
@@ -604,84 +902,14 @@ export async function hashSecret(secret: string): Promise<string> {
   return argon2Hash(secret, ARGON2ID_OPTIONS);
 }
 
-/**
- * Legacy scrypt hashing. Retained only for tests and migration fixtures;
- * production code must use {@link hashSecret} (argon2id).
- */
-export async function hashSecretScrypt(secret: string): Promise<string> {
-  const salt = getCryptoProvider().randomBytes(16).toString("base64url");
-  const derived = (await scrypt(secret, salt, SECRET_KEY_LENGTH)) as Buffer;
-  return `scrypt$${salt}$${derived.toString("base64url")}`;
-}
-
-/**
- * Detect the hashing algorithm used to produce a stored secret hash.
- */
-export function detectHashAlgorithm(hash: string): "argon2id" | "scrypt" | "unknown" {
-  if (hash.startsWith("$argon2id$") || hash.startsWith("$argon2i$") || hash.startsWith("$argon2d$")) {
-    return "argon2id";
-  }
-  if (hash.startsWith("scrypt$")) {
-    return "scrypt";
-  }
-  return "unknown";
-}
-
-async function verifyScryptSecret(secret: string, hash: string): Promise<boolean> {
-  const [scheme, salt, expectedHash] = hash.split("$");
-  if (scheme !== "scrypt" || salt === undefined || expectedHash === undefined) {
+/** Verify a client secret against the sole supported Argon2id format. */
+export async function verifySecret(secret: string, hash: string): Promise<boolean> {
+  if (!hash.startsWith("$argon2id$")) return false;
+  try {
+    return await argon2Verify(hash, secret);
+  } catch {
     return false;
   }
-  const expected = Buffer.from(expectedHash, "base64url");
-  const actual = (await scrypt(secret, salt, expected.length)) as Buffer;
-  return getCryptoProvider().timingSafeEqual(actual, expected);
-}
-
-/**
- * Verify a client secret against a stored hash. Accepts both argon2id (current)
- * and legacy scrypt hashes, detecting the algorithm by the hash format.
- */
-export async function verifySecret(secret: string, hash: string): Promise<boolean> {
-  const algorithm = detectHashAlgorithm(hash);
-  if (algorithm === "argon2id") {
-    try {
-      return await argon2Verify(hash, secret);
-    } catch {
-      return false;
-    }
-  }
-  if (algorithm === "scrypt") {
-    return verifyScryptSecret(secret, hash);
-  }
-  return false;
-}
-
-export interface SecretVerificationResult {
-  /** Whether the supplied secret matches the stored hash. */
-  readonly valid: boolean;
-  /**
-   * When `valid` is true and the stored hash used a legacy algorithm (scrypt),
-   * this holds a freshly computed argon2id hash so the caller can transparently
-   * upgrade the stored credential. `null` when no rehash is needed.
-   */
-  readonly rehashedSecretHash: string | null;
-}
-
-/**
- * Verify a client secret and, on success, transparently upgrade legacy scrypt
- * hashes to argon2id. The caller is responsible for persisting
- * `rehashedSecretHash` when it is non-null.
- */
-export async function verifySecretWithRehash(
-  secret: string,
-  hash: string,
-): Promise<SecretVerificationResult> {
-  const algorithm = detectHashAlgorithm(hash);
-  const valid = await verifySecret(secret, hash);
-  if (!valid || algorithm === "argon2id") {
-    return { valid, rehashedSecretHash: null };
-  }
-  return { valid, rehashedSecretHash: await hashSecret(secret) };
 }
 
 function randomToken(bytes: number): string {

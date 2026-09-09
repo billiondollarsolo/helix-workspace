@@ -13,16 +13,10 @@ import {
   DocumentSurfaceViewToggle,
   useDocumentSurfaceViewPreference,
 } from "@/features/drive/view-preference";
-import {
-  DOC_FOLDERS,
-  DOC_TEMPLATES,
-  FOLDER_EMPTY_STATES,
-  type DocFolderId,
-  type DocSummary,
-} from "./data";
+import { DOC_FOLDERS, FOLDER_EMPTY_STATES, type DocFolderId, type DocSummary } from "./data";
 
 export interface DocListProps {
-  /** All documents available (backend rows merged over seed data). */
+  /** All live documents returned by the backend. */
   readonly documents: readonly DocSummary[];
   /** Active folder / tag-folder id. */
   readonly folder: string;
@@ -114,15 +108,7 @@ export function DocList({
           </span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <DocumentSurfaceViewToggle view={view} onViewChange={setView} />
-            <button className="btn" type="button">
-              <Icons.Filter /> Filter
-            </button>
-            <button
-              className="btn"
-              type="button"
-              onClick={onImportDocument}
-              disabled={isImporting}
-            >
+            <button className="btn" type="button" onClick={onImportDocument} disabled={isImporting}>
               <Icons.Upload /> {isImporting ? "Importing..." : "Import"}
             </button>
             <button
@@ -312,9 +298,7 @@ export function DocList({
                   key={document.id}
                   document={document}
                   isTrash={folder === "trash"}
-                  isBusy={
-                    busyDocumentId === document.id || migratingDocumentId === document.id
-                  }
+                  isBusy={busyDocumentId === document.id || migratingDocumentId === document.id}
                   canMigrate={
                     editorsEnabled && isLegacyDocument(document) && onMigrateDocument !== undefined
                   }
@@ -620,14 +604,6 @@ function DocsSidebar({
             </button>
           );
         })}
-
-        <div className="surf-section-label">Templates</div>
-        {DOC_TEMPLATES.map((template) => (
-          <button key={template} type="button" className="surf-nav-row">
-            <Icons.Doc />
-            <span className="label">{template}</span>
-          </button>
-        ))}
       </nav>
     </aside>
   );

@@ -33,8 +33,8 @@ create index if not exists mail_thread_state_spam_idx
 -- Org-admin-selectable outbound mail delivery providers. Exactly one provider
 -- per org is `is_default` and routes new outbound dispatch; the rest are kept
 -- for fail-over / migration. `config` carries the per-provider settings
--- (region, domain, base URL, ...) while secrets (API keys, SMTP passwords) are
--- stored as `secret_ref` env-var indirections — never inline.
+-- (region, domain, base URL, ...) while secrets (API keys, SMTP passwords) live
+-- in tenant Vault records selected by the opaque `secret_ref` handle.
 do $$ begin
   create type mail_outbound_provider_kind as enum ('ses', 'mailgun', 'smtp', 'postmark');
 exception when duplicate_object then null; end $$;
@@ -48,11 +48,39 @@ create table if not exists mail_outbound_providers (
   is_default boolean not null default false,
   -- Non-secret provider settings (region, domain, host, port, baseUrl, ...).
   config jsonb not null default '{}'::jsonb,
-  -- Env-var name holding the provider API key / SMTP password.
-  secret_ref text,
+  -- Canonical tenant Vault handle, never a path or credential value.
+  secret_ref text check (
+    secret_ref is null or secret_ref ~ '^[a-z0-9]([a-z0-9._-]{0,98}[a-z0-9])?$'
+  ),
   created_by uuid,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint mail_outbound_providers_public_config check (
+    jsonb_typeof(config) = 'object'
+    and case kind
+      when 'ses' then config - array['host', 'port', 'secure', 'user', 'region'] = '{}'::jsonb
+      when 'smtp' then config - array['host', 'port', 'secure', 'user'] = '{}'::jsonb
+      when 'mailgun' then config - array['domain', 'baseUrl'] = '{}'::jsonb
+      when 'postmark' then config - array['baseUrl', 'messageStream'] = '{}'::jsonb
+      else false
+    end
+    and (not (config ? 'host') or (
+      jsonb_typeof(config->'host') = 'string' and config->>'host' !~ '[@/]'
+    ))
+    and (not (config ? 'port') or jsonb_typeof(config->'port') = 'number')
+    and (not (config ? 'secure') or jsonb_typeof(config->'secure') = 'boolean')
+    and (not (config ? 'user') or jsonb_typeof(config->'user') = 'string')
+    and (not (config ? 'region') or jsonb_typeof(config->'region') = 'string')
+    and (not (config ? 'domain') or (
+      jsonb_typeof(config->'domain') = 'string' and config->>'domain' !~ '[@/]'
+    ))
+    and (not (config ? 'baseUrl') or (
+      jsonb_typeof(config->'baseUrl') = 'string'
+      and config->>'baseUrl' ~ '^https://'
+      and config->>'baseUrl' !~ '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*@'
+    ))
+    and (not (config ? 'messageStream') or jsonb_typeof(config->'messageStream') = 'string')
+  )
 );
 
 create index if not exists mail_outbound_providers_org_idx
@@ -98,7 +126,7 @@ create unique index if not exists mail_sending_domains_org_default_idx
 -- DKIM signing keys per sending domain. Rotation creates a new `active` key
 -- and demotes the previous one to `retiring` (kept published in DNS until
 -- in-flight mail signed with it has been delivered) before it is `retired`.
--- The private key is stored PEM-encoded; the public key is surfaced as the
+-- The private key is stored as tenant-bound authenticated ciphertext; the public key is surfaced as the
 -- DNS TXT record value the admin must publish at `<selector>._domainkey.<domain>`.
 do $$ begin
   create type mail_dkim_key_status as enum ('active', 'retiring', 'retired');
@@ -112,7 +140,9 @@ create table if not exists mail_dkim_keys (
   status mail_dkim_key_status not null default 'active',
   algorithm text not null default 'rsa-sha256',
   key_bits integer not null default 2048,
-  private_key_pem text not null,
+  private_key_ciphertext text not null check (
+    private_key_ciphertext ~ '^helix[$]1([$][A-Za-z0-9_-]+){6}$'
+  ),
   public_key_pem text not null,
   -- DNS TXT record value for <selector>._domainkey.<domain>.
   dns_record text not null,

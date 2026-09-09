@@ -18,12 +18,11 @@ import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { docsQueryKeys } from "@/features/docs/query-keys";
 import type { EditorSurface } from "../format-detection.js";
-import type { ConvertedTarget } from "../converters.js";
+import type { ConvertedTarget, DriveObjectDescriptor } from "../converters.js";
 import {
   canCreateEditableCopy,
   editableCopyUnavailableMessage,
 } from "../conversion-capabilities.js";
-import { fetchDriveBlob } from "../drive-fetcher.js";
 import { UnsupportedFormatPlaceholder } from "./UnsupportedFormatPlaceholder.js";
 
 const LazyImportedAudioRenderer = lazy(() =>
@@ -168,7 +167,7 @@ export function UniversalEditorRouter<TNative>({
         <ImportDecision
           parsed={parsed}
           objectId={objectId}
-          fileName={result.blob.name}
+          blob={result.blob}
           nativeEditingEnabled={nativeEditingEnabled}
         />
       );
@@ -193,12 +192,14 @@ export function UniversalEditorRouter<TNative>({
 function ConvertAndRedirect({
   parsed,
   objectId,
+  blob,
 }: {
   readonly parsed:
     | import("../parsers/types.js").ImportedDoc
     | import("../parsers/types.js").ImportedSheet
     | import("../parsers/types.js").ImportedDeck;
   readonly objectId: string;
+  readonly blob: DriveObjectDescriptor;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -214,10 +215,6 @@ function ConvertAndRedirect({
         convertImportedDocToNative,
         convertImportedSheetToNative,
       } = await import("../converters.js");
-      // Re-fetch the blob to ensure the converter has the original bytes (the
-      // parsed result holds bytes for pdf/image but not necessarily for doc /
-      // sheet / deck shapes).
-      const blob = await fetchDriveBlob(objectId);
       if (parsed.kind === "doc") {
         return convertImportedDocToNative(blob, parsed, objectId);
       }
@@ -260,7 +257,7 @@ function ConvertAndRedirect({
     return () => {
       cancelled = true;
     };
-  }, [objectId, parsed, queryClient, router]);
+  }, [blob, objectId, parsed, queryClient, router]);
 
   if (importError !== null) {
     const err = importError;
@@ -358,7 +355,7 @@ function universalEditorInFlightImports(): Map<string, Promise<ConvertedTarget>>
 function ImportDecision({
   parsed,
   objectId,
-  fileName,
+  blob,
   nativeEditingEnabled,
 }: {
   readonly parsed:
@@ -366,7 +363,7 @@ function ImportDecision({
     | import("../parsers/types.js").ImportedSheet
     | import("../parsers/types.js").ImportedDeck;
   readonly objectId: string;
-  readonly fileName: string;
+  readonly blob: DriveObjectDescriptor;
   readonly nativeEditingEnabled: boolean;
 }) {
   const [decision, setDecision] = useState<OpenDecision>("ask");
@@ -376,21 +373,21 @@ function ImportDecision({
     switch (parsed.kind) {
       case "doc":
         return withRendererFallback(
-          <LazyImportedDocumentRenderer doc={parsed} objectId={objectId} fileName={fileName} />,
+          <LazyImportedDocumentRenderer doc={parsed} objectId={objectId} fileName={blob.name} />,
         );
       case "sheet":
         return withRendererFallback(
-          <LazyImportedSheetRenderer sheet={parsed} objectId={objectId} fileName={fileName} />,
+          <LazyImportedSheetRenderer sheet={parsed} objectId={objectId} fileName={blob.name} />,
         );
       case "deck":
         return withRendererFallback(
-          <LazyImportedDeckRenderer deck={parsed} objectId={objectId} fileName={fileName} />,
+          <LazyImportedDeckRenderer deck={parsed} objectId={objectId} fileName={blob.name} />,
         );
     }
   }
 
   if (decision === "import") {
-    return <ConvertAndRedirect parsed={parsed} objectId={objectId} />;
+    return <ConvertAndRedirect parsed={parsed} objectId={objectId} blob={blob} />;
   }
 
   return (
@@ -436,18 +433,18 @@ function ImportDecision({
         <p style={{ color: "var(--text-2)", lineHeight: 1.55, marginTop: 12 }}>
           {canCreateCopy ? (
             <>
-              Helix can create an editable {surfaceNoun(parsed)} copy of <strong>{fileName}</strong>
-              . The original upload stays unchanged in Drive.
+              Helix can create an editable {surfaceNoun(parsed)} copy of{" "}
+              <strong>{blob.name}</strong>. The original upload stays unchanged in Drive.
             </>
           ) : nativeEditingEnabled ? (
             <>
-              Helix can preview <strong>{fileName}</strong>, but{" "}
+              Helix can preview <strong>{blob.name}</strong>, but{" "}
               {editableCopyUnavailableMessage(parsed.format)} The original upload stays unchanged in
               Drive.
             </>
           ) : (
             <>
-              Editors alpha is disabled. Helix can preview <strong>{fileName}</strong> and download
+              Editors alpha is disabled. Helix can preview <strong>{blob.name}</strong> and download
               the original, but it will not create editable native copies until an admin enables
               Editors.
             </>
@@ -456,8 +453,8 @@ function ImportDecision({
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 24 }}>
           <a
             className="btn"
-            href={`/api/drive/objects/${objectId}/content?download=1`}
-            download={fileName}
+            href={`/v1/api/drive/objects/${objectId}/content?download=1`}
+            download={blob.name}
           >
             Download original
           </a>
@@ -518,7 +515,7 @@ function EditorsDisabledStorageOnly({ objectId }: { readonly objectId: string })
           Drive storage and sharing; admins can enable Editors alpha from Admin &gt; Core apps.
         </p>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 24 }}>
-          <a className="btn" href={`/api/drive/objects/${objectId}/content?download=1`}>
+          <a className="btn" href={`/v1/api/drive/objects/${objectId}/content?download=1`}>
             Download original
           </a>
         </div>

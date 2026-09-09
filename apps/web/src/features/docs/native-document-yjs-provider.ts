@@ -4,7 +4,6 @@ import * as encoding from "lib0/encoding";
 import * as awarenessProtocol from "y-protocols/awareness";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
-import { addAccessTokenSearchParam } from "@/lib/auth";
 
 const yjsMessageSync = 0;
 const yjsMessageAwareness = 1;
@@ -296,12 +295,12 @@ export function applyNativeDocumentState(doc: Y.Doc, stateBase64: string | null)
 
 export function toWebSocketUrl(url: string): string {
   if (/^wss?:\/\//iu.test(url)) {
-    return addAccessTokenSearchParam(url);
+    return url;
   }
   const base = typeof window === "undefined" ? "http://localhost" : window.location.href;
   const resolved = new URL(url, base);
   resolved.protocol = resolved.protocol === "https:" ? "wss:" : "ws:";
-  return addAccessTokenSearchParam(resolved.toString());
+  return resolved.toString();
 }
 
 function encodeSyncFrame(write: (encoder: encoding.Encoder) => void): Uint8Array {

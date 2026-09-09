@@ -24,7 +24,6 @@ export interface DirectoryUser {
 }
 
 export const ADMIN_NAV = [
-  { id: "overview", label: "Overview", icon: "Grid" },
   { id: "users", label: "Users", icon: "Users" },
   { id: "groups", label: "Groups & OUs", icon: "Building" },
   { id: "security", label: "Security", icon: "Shield" },

@@ -1,0 +1,166 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "id": null,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (route, status_code) (rate(helix_http_requests_total{route=~\"/oauth/token|/api/auth/.*|/api/session.*|/api/admin/backups|/api/admin/restores\"}[5m]))",
+          "legendFormat": "{{route}} {{status_code}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(helix_http_request_duration_seconds_bucket{route=~\"/oauth/token|/api/auth/.*|/api/session.*|/api/admin/backups|/api/admin/restores\"}[5m])))",
+          "legendFormat": "{{route}} p95 seconds",
+          "refId": "B"
+        }
+      ],
+      "title": "Auth and backup/restore request rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (tool_id, status) (rate(helix_tool_invocations_total{tool_id=~\"(mail|chat|drive|calendar|meet|search)\\..+\"}[5m]))",
+          "legendFormat": "{{tool_id}} {{status}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, tool_id) (rate(helix_tool_invocation_duration_seconds_bucket{tool_id=~\"(mail|chat|drive|calendar|meet|search)\\..+\"}[5m])))",
+          "legendFormat": "{{tool_id}} p95 seconds",
+          "refId": "B"
+        }
+      ],
+      "title": "Product operation rate and errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (capability, operation, status) (increase(helix_operational_events_total[15m]))",
+          "legendFormat": "{{capability}} {{operation}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Mail queue/delivery, Drive AV/quota, Chat fanout/replay, reconciliation",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, capability, operation) (rate(helix_operational_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{capability}} {{operation}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Internal operation p95 latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (capability, measure) (increase(helix_operational_units_total[1h]))",
+          "legendFormat": "{{capability}} {{measure}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (capability, measure) (helix_operational_state)",
+          "legendFormat": "{{capability}} {{measure}} current",
+          "refId": "B"
+        },
+        {
+          "expr": "max by (indexer) (helix_search_projection_lag_seconds)",
+          "legendFormat": "search lag {{indexer}} seconds",
+          "refId": "C"
+        }
+      ],
+      "title": "Business volume, search freshness, and reconciliation drift",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": { "defaults": { "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (signal) (increase(helix_meet_degraded_samples_total[15m]))",
+          "legendFormat": "Meet {{signal}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (decision) (increase(helix_permission_checks_total[15m]))",
+          "legendFormat": "Policy {{decision}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(increase(helix_audit_hash_chain_failures_total[15m]))",
+          "legendFormat": "Audit integrity failures",
+          "refId": "C"
+        }
+      ],
+      "title": "Meet quality, policy decisions, and audit integrity",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["helix", "operations", "capabilities"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Helix Capability Health",
+  "uid": "helix-capability-health",
+  "version": 1
+}

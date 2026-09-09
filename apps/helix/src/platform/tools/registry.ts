@@ -196,7 +196,7 @@ export class InMemoryConfirmationGate implements ConfirmationGate {
   private readonly confirmationTimeoutMs: number;
 
   constructor(
-    private readonly store: PendingActionStore = new InMemoryPendingActionStore(),
+    private readonly store: PendingActionStore,
     private readonly options: ConfirmationGateOptions = {},
   ) {
     this.confirmationTimeoutMs = options.confirmationTimeoutMs ?? defaultConfirmationTimeoutMs;

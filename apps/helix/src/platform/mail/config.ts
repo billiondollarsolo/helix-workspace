@@ -4,9 +4,18 @@ import type { SpamdScannerOptions } from "./spam.js";
 import type { ClamavScannerOptions } from "./antivirus.js";
 
 export interface MailReceiverConfig {
-  readonly orgId: string;
   readonly port: number;
   readonly host?: string;
+  readonly maxMessageBytes: number;
+  readonly maxRecipients: number;
+  readonly maxConnections: number;
+  readonly socketTimeoutMs: number;
+  readonly dataTimeoutMs: number;
+}
+
+export interface MailSubmissionConfig extends MailReceiverConfig {
+  readonly tlsKeyFile: string;
+  readonly tlsCertFile: string;
 }
 
 export interface MailSignupFrom {
@@ -19,6 +28,7 @@ export interface MailConfig {
   readonly defaultOrgId: string;
   readonly outbound: OutboundMailConfig | undefined;
   readonly receiver: MailReceiverConfig | undefined;
+  readonly submission: MailSubmissionConfig | undefined;
   readonly spamd: SpamdScannerOptions | undefined;
   readonly clamav: ClamavScannerOptions | undefined;
   readonly signupFrom: MailSignupFrom;
@@ -48,7 +58,7 @@ function parseFloatConfig(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-/** Build outbound SMTP config from validated env (mirrors legacy getOutboundMailConfig). */
+/** Build outbound SMTP config from validated environment. */
 export function buildOutboundConfig(env: Env): OutboundMailConfig | undefined {
   const host = env.MAIL_SMTP_HOST ?? env.SES_SMTP_HOST;
   if (host === undefined || host.length === 0) {
@@ -76,9 +86,36 @@ export function buildReceiverConfig(env: Env): MailReceiverConfig | undefined {
   const host = env.MAIL_SMTP_RECEIVER_HOST;
   const port = parsePositiveInt(env.MAIL_SMTP_RECEIVER_PORT) ?? 2525;
   return {
-    orgId: env.HELIX_DEFAULT_ORG_ID,
     port,
     ...(host === undefined || host.length === 0 ? {} : { host }),
+    maxMessageBytes: env.MAIL_SMTP_MAX_MESSAGE_BYTES,
+    maxRecipients: env.MAIL_SMTP_MAX_RECIPIENTS,
+    maxConnections: env.MAIL_SMTP_MAX_CONNECTIONS,
+    socketTimeoutMs: env.MAIL_SMTP_SOCKET_TIMEOUT_MS,
+    dataTimeoutMs: env.MAIL_SMTP_DATA_TIMEOUT_MS,
+  };
+}
+
+/** Build the implicit-TLS authenticated submission listener (RFC 6409/8314). */
+export function buildSubmissionConfig(env: Env): MailSubmissionConfig | undefined {
+  if (!envFlag(env.MAIL_SMTP_SUBMISSION_ENABLED)) return undefined;
+  const tlsKeyFile = env.MAIL_SMTP_SUBMISSION_TLS_KEY_FILE;
+  const tlsCertFile = env.MAIL_SMTP_SUBMISSION_TLS_CERT_FILE;
+  if (tlsKeyFile === undefined || tlsCertFile === undefined) {
+    throw new TypeError("SMTP submission requires TLS key and certificate files.");
+  }
+  return {
+    port: parsePositiveInt(env.MAIL_SMTP_SUBMISSION_PORT) ?? 465,
+    ...(env.MAIL_SMTP_SUBMISSION_HOST === undefined
+      ? {}
+      : { host: env.MAIL_SMTP_SUBMISSION_HOST }),
+    tlsKeyFile,
+    tlsCertFile,
+    maxMessageBytes: env.MAIL_SMTP_MAX_MESSAGE_BYTES,
+    maxRecipients: env.MAIL_SMTP_MAX_RECIPIENTS,
+    maxConnections: env.MAIL_SMTP_MAX_CONNECTIONS,
+    socketTimeoutMs: env.MAIL_SMTP_SOCKET_TIMEOUT_MS,
+    dataTimeoutMs: env.MAIL_SMTP_DATA_TIMEOUT_MS,
   };
 }
 
@@ -125,6 +162,7 @@ export function mailConfig(env: Env): MailConfig {
     defaultOrgId: env.HELIX_DEFAULT_ORG_ID,
     outbound: buildOutboundConfig(env),
     receiver: buildReceiverConfig(env),
+    submission: buildSubmissionConfig(env),
     spamd: buildSpamdConfig(env),
     clamav: buildClamavConfig(env),
     signupFrom: {

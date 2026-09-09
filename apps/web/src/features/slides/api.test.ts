@@ -137,10 +137,9 @@ describe("Slides API", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          filename: "Board narrative.pptx",
+          sourceObjectId: "22222222-2222-4222-8222-222222222222",
           title: "Board narrative",
           folderId: null,
-          contentBase64: "UEsDBA==",
           metadata: { source: "test" },
         }),
       });
@@ -157,9 +156,8 @@ describe("Slides API", () => {
     await expect(
       importPptxDeck(
         {
-          filename: "Board narrative.pptx",
+          sourceObjectId: "22222222-2222-4222-8222-222222222222",
           title: "Board narrative",
-          contentBase64: "UEsDBA==",
           metadata: { source: "test" },
         },
         fetchImpl,

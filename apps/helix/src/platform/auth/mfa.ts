@@ -1,5 +1,9 @@
 import type { FastifyRequest } from "fastify";
+import type postgres from "postgres";
+import { createHash, randomBytes } from "node:crypto";
+import { symmetricDecrypt, symmetricEncrypt, type SecretConfig } from "better-auth/crypto";
 import type { Actor, SecurityTier } from "@helix/sdk-types";
+import type { BetterAuthSessionVerifier } from "./better-auth.js";
 
 /**
  * MFA enforcement for admin-scoped requests (PRD §9, P2-1).
@@ -9,12 +13,8 @@ import type { Actor, SecurityTier } from "@helix/sdk-types";
  * module makes that control real: admin-scoped requests from an actor without
  * a verified MFA factor are rejected on tiers that require admin MFA.
  *
- * BetterAuth's `twoFactor` plugin is not enabled in this deployment, so a
- * verified factor is signalled to the application by the authenticating layer
- * (BetterAuth, or the upstream auth proxy after a factor challenge) via the
- * `x-helix-mfa-verified` request header. When BetterAuth's twoFactor plugin is
- * later enabled, its session `twoFactorEnabled`/AAL signal can be threaded into
- * {@link MfaVerificationResolver} without changing the enforcement path.
+ * Better Auth's maintained passkey and TOTP plugins establish a server-side
+ * assurance marker; policy checks fail closed when that marker is absent.
  */
 
 /** Tiers on which administrators must present a verified MFA factor. */
@@ -35,27 +35,251 @@ export function tierRequiresAdminMfa(tier: SecurityTier): boolean {
  * counts. Non-admin actors are never subject to admin-MFA enforcement.
  */
 export function actorHasAdminScope(actor: Actor): boolean {
-  return (actor.scopes ?? []).some(
-    (scope) => scope === "admin.*" || scope.startsWith("admin."),
-  );
+  return (actor.scopes ?? []).some((scope) => scope === "admin.*" || scope.startsWith("admin."));
 }
 
-/** Resolves whether the request presented a verified MFA factor. */
+/** Resolves whether the authenticated server session has recent MFA assurance. */
 export interface MfaVerificationResolver {
   isMfaVerified(request: FastifyRequest): boolean | Promise<boolean>;
 }
 
+export interface MfaAssuranceMarker {
+  markVerifiedSession(sessionToken: string, verifiedAt?: Date): Promise<boolean>;
+}
+
+export interface RecoveryCodeBroker {
+  replace(userId: string, bridgeCodes: readonly string[]): Promise<readonly string[]>;
+  consume(code: string): Promise<string | null>;
+  clear(userId: string): Promise<void>;
+  invalidateOtherSessions(userId: string, keepToken: string | null): Promise<void>;
+  isRecentSession(token: string, now?: Date): Promise<boolean>;
+}
+
 /**
- * Default resolver: reads the `x-helix-mfa-verified` header. The header is set
- * to `true` by the authenticating layer only after a factor challenge has been
- * satisfied for the current session, so a client cannot self-assert it past
- * the trusted auth boundary.
+ * Keeps user-visible recovery codes as SHA-256 digests while adapting Better
+ * Auth's encrypted backup-code protocol. The random bridge value is not shown
+ * to users and every digest is consumed atomically before authentication.
  */
-export const headerMfaVerificationResolver: MfaVerificationResolver = {
-  isMfaVerified(request: FastifyRequest): boolean {
-    const header = request.headers["x-helix-mfa-verified"];
-    const value = Array.isArray(header) ? header[0] : header;
-    return typeof value === "string" && value.trim().toLowerCase() === "true";
+export class PostgresRecoveryCodeBroker implements RecoveryCodeBroker {
+  readonly #key: SecretConfig;
+
+  constructor(
+    private readonly sql: postgres.Sql,
+    secret: string,
+  ) {
+    this.#key = { currentVersion: 1, keys: new Map([[1, secret]]), legacySecret: secret };
+  }
+
+  async replace(userId: string, bridgeCodes: readonly string[]): Promise<readonly string[]> {
+    const codes = bridgeCodes.map(() => newRecoveryCode());
+    const rows = await Promise.all(
+      codes.map(async (code, index) => ({
+        digest: recoveryCodeDigest(code),
+        bridge: await symmetricEncrypt({ key: this.#key, data: bridgeCodes[index] ?? "" }),
+      })),
+    );
+    await this.sql.begin(async (tx) => {
+      await tx`delete from auth_recovery_codes where auth_user_id = ${userId}`;
+      for (const row of rows) {
+        await tx`
+          insert into auth_recovery_codes (auth_user_id, code_digest, bridge_ciphertext)
+          values (${userId}, ${row.digest}, ${row.bridge})
+        `;
+      }
+    });
+    return codes;
+  }
+
+  async consume(code: string): Promise<string | null> {
+    const rows = await this.sql<{ readonly bridge_ciphertext: string }[]>`
+      update auth_recovery_codes
+      set consumed_at = now()
+      where code_digest = ${recoveryCodeDigest(code)}
+        and consumed_at is null
+      returning bridge_ciphertext
+    `;
+    const bridge = rows[0]?.bridge_ciphertext;
+    return bridge === undefined ? null : symmetricDecrypt({ key: this.#key, data: bridge });
+  }
+
+  async clear(userId: string): Promise<void> {
+    await this.sql`delete from auth_recovery_codes where auth_user_id = ${userId}`;
+  }
+
+  async invalidateOtherSessions(userId: string, keepToken: string | null): Promise<void> {
+    if (keepToken === null) {
+      await this.sql`delete from "session" where "userId" = ${userId}`;
+      return;
+    }
+    await this.sql`delete from "session" where "userId" = ${userId} and token <> ${keepToken}`;
+  }
+
+  async isRecentSession(token: string, now = new Date()): Promise<boolean> {
+    const recentAfter = new Date(now.getTime() - 10 * 60_000);
+    const rows = await this.sql`
+      select 1 from "session"
+      where token = ${token}
+        and "expiresAt" > ${now}
+        and greatest("createdAt", coalesce(mfa_verified_at, '-infinity')) > ${recentAfter}
+      limit 1
+    `;
+    return rows.length === 1;
+  }
+}
+
+export function recoveryCodeDigest(code: string): string {
+  return createHash("sha256").update(code.trim(), "utf8").digest("hex");
+}
+
+export function newRecoveryCode(): string {
+  const value = randomBytes(10).toString("hex").toUpperCase();
+  return `${value.slice(0, 5)}-${value.slice(5, 10)}-${value.slice(10, 15)}-${value.slice(15)}`;
+}
+
+/** Recent server-side MFA assurance bound to one session and one issuer. */
+export class PostgresSessionMfaAssurance implements MfaVerificationResolver, MfaAssuranceMarker {
+  readonly #maxAgeMs: number;
+
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly verifier: BetterAuthSessionVerifier,
+    private readonly audience: string,
+    maxAgeSeconds = 600,
+  ) {
+    this.#maxAgeMs = maxAgeSeconds * 1000;
+  }
+
+  async markVerifiedSession(sessionToken: string, verifiedAt = new Date()): Promise<boolean> {
+    const rows = await this.sql`
+      update "session" s
+      set mfa_verified_at = ${verifiedAt},
+          mfa_audience = ${this.audience},
+          "updatedAt" = ${verifiedAt}
+      from "user" u
+      where s.token = ${sessionToken}
+        and s."expiresAt" > ${verifiedAt}
+        and u.id = s."userId"
+        and (
+          u."twoFactorEnabled" = true
+          or exists (select 1 from passkey p where p."userId" = u.id)
+        )
+      returning s.id
+    `;
+    return rows.length === 1;
+  }
+
+  async isMfaVerified(request: FastifyRequest): Promise<boolean> {
+    const sessionToken = await this.verifier.getSessionToken?.({ headers: request.headers });
+    if (sessionToken === undefined || sessionToken === null) {
+      return false;
+    }
+    const now = new Date();
+    const freshAfter = new Date(now.getTime() - this.#maxAgeMs);
+    const rows = await this.sql`
+      select 1
+      from "session" s
+      join "user" u on u.id = s."userId"
+      where s.token = ${sessionToken}
+        and s."expiresAt" > ${now}
+        and s.mfa_verified_at > ${freshAfter}
+        and s.mfa_verified_at <= ${now}
+        and s.mfa_audience = ${this.audience}
+        and (
+          u."twoFactorEnabled" = true
+          or exists (select 1 from passkey p where p."userId" = u.id)
+        )
+      limit 1
+    `;
+    return rows.length === 1;
+  }
+}
+
+const MFA_VERIFICATION_PATHS = new Set([
+  "/api/auth/two-factor/verify-totp",
+  "/api/auth/two-factor/verify-backup-code",
+  "/api/auth/passkey/verify-authentication",
+]);
+
+/** Extract a session token only from a successful maintained 2FA endpoint response. */
+export function verifiedMfaSessionToken(
+  requestUrl: string,
+  statusCode: number,
+  responseBody: string | null,
+  setCookieHeader?: string | null,
+): string | null {
+  const path = requestUrl.split("?")[0];
+  if (
+    !MFA_VERIFICATION_PATHS.has(path ?? "") ||
+    statusCode < 200 ||
+    statusCode >= 300 ||
+    responseBody === null
+  ) {
+    return null;
+  }
+  const cookieToken = sessionTokenFromSetCookie(setCookieHeader);
+  if (cookieToken !== null) {
+    return cookieToken;
+  }
+  try {
+    const body: unknown = JSON.parse(responseBody);
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return null;
+    }
+    const token = (body as Record<string, unknown>).token;
+    return typeof token === "string" && token.length > 0 && token.length <= 512 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Session token newly issued by an auth response, if present. */
+export function authResponseSessionToken(
+  responseBody: string | null,
+  setCookieHeader?: string | null,
+): string | null {
+  const cookie = sessionTokenFromSetCookie(setCookieHeader);
+  if (cookie !== null) return cookie;
+  const payload = parseJsonRecord(responseBody);
+  const direct = payload?.token;
+  if (typeof direct === "string" && direct.length > 0 && direct.length <= 512) return direct;
+  const nested = payload?.session;
+  return typeof nested === "object" &&
+    nested !== null &&
+    !Array.isArray(nested) &&
+    typeof (nested as Record<string, unknown>).token === "string"
+    ? ((nested as Record<string, unknown>).token as string)
+    : null;
+}
+
+function parseJsonRecord(value: string | null): Record<string, unknown> | null {
+  if (value === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function sessionTokenFromSetCookie(header: string | null | undefined): string | null {
+  const encoded = header?.match(/(?:^|,\s*)(?:__Secure-)?helix_session=([^;,\s]+)/u)?.[1];
+  if (encoded === undefined) {
+    return null;
+  }
+  try {
+    const token = decodeURIComponent(encoded).split(".")[0];
+    return token !== undefined && token.length > 0 && token.length <= 512 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fail-closed default until MFA assurance is stored on authenticated sessions. */
+export const unverifiedMfaResolver: MfaVerificationResolver = {
+  isMfaVerified(): boolean {
+    return false;
   },
 };
 

@@ -43,7 +43,7 @@ export class PostgresAIProvenanceStore {
 
   async record(input: AIArtifactCreateInput): Promise<{ readonly id: string }> {
     const actorId = isUuid(input.actor.id) ? input.actor.id : null;
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       insert into ai_artifacts (
         org_id, actor_id, provider_id, model, feature, input_hash, output_hash, metadata
       )
@@ -58,7 +58,7 @@ export class PostgresAIProvenanceStore {
         ${this.sql.json(toSqlJson(input.metadata ?? {}))}
       )
       returning id
-    `) as unknown as readonly { readonly id: string }[];
+    `;
     const row = rows[0];
     if (row === undefined) {
       throw new Error("Failed to record AI provenance.");
@@ -67,11 +67,11 @@ export class PostgresAIProvenanceStore {
   }
 
   async get(orgId: string, id: string): Promise<AIArtifactRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<AIArtifactRow[]>`
       select * from ai_artifacts
       where org_id = ${orgId} and id = ${id}
       limit 1
-    `) as unknown as readonly AIArtifactRow[];
+    `;
     const row = rows[0];
     return row === undefined
       ? null

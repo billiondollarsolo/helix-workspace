@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DriveStore } from "../drive/index.js";
 import type { DriveCommentListItem } from "../drive/types.js";
 import { createToolRegistry } from "../tool-registry.js";
+import type { ImportSourceReader } from "../import-source.js";
 import { InMemorySlidesStore } from "./store.js";
 import { createSlidesToolDefinitions, registerSlides, registerSlidesTools } from "./tools.js";
 
@@ -61,15 +62,27 @@ function escapeXml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
+function importSource(name: string, bytes: Uint8Array): ImportSourceReader {
+  return {
+    openFile: async () =>
+      ({
+        byteSize: bytes.byteLength,
+        etag: '"test"',
+        entry: { name, mimeType: "application/octet-stream" },
+        open: async () => bytes,
+      }) as never,
+  };
+}
+
 class FakeDriveCommentReader {
   comments: readonly DriveCommentListItem[] = [];
   readonly listedComments: Parameters<NonNullable<DriveStore["listComments"]>>[0][] = [];
 
   async listComments(
     input: Parameters<NonNullable<DriveStore["listComments"]>>[0],
-  ): Promise<readonly DriveCommentListItem[]> {
+  ): Promise<{ readonly comments: readonly DriveCommentListItem[]; readonly nextCursor: null }> {
     this.listedComments.push(input);
-    return this.comments;
+    return { comments: this.comments, nextCursor: null };
   }
 }
 
@@ -463,7 +476,7 @@ describe("slides tools end-to-end", () => {
     const slide1Xml = (await zip.file("ppt/slides/slide1.xml")?.async("string")) ?? "";
     const slide2Xml = (await zip.file("ppt/slides/slide2.xml")?.async("string")) ?? "";
     expect(driveStore.listedComments).toEqual([
-      { orgId, actorId, objectId: deckId, status: "all" },
+      { orgId, actorId, objectId: deckId, status: "all", limit: 100 },
     ]);
     expect(slide1Xml).toContain("Review comments:");
     expect(slide1Xml).toContain("[open] Avery Reviewer (Native): Tighten this claim.");
@@ -480,7 +493,6 @@ describe("slides tools end-to-end", () => {
 
   it("imports a PPTX payload as native text-first slides", async () => {
     const registry = createToolRegistry();
-    registerSlides(registry, { store: new InMemorySlidesStore() });
     const pptx = await pptxFixture({
       slides: [
         ["Board narrative", "Q2 strategy", "Customer proof"],
@@ -488,14 +500,20 @@ describe("slides tools end-to-end", () => {
       ],
       notes: ["Open with the customer outcome.", "Call out follow-up owners."],
     });
+    registerSlides(registry, {
+      store: new InMemorySlidesStore(),
+      importSources: importSource("Board narrative.pptx", pptx),
+      officeTextExtractor: async () => ({
+        text: "Board narrative\nQ2 strategy\nCustomer proof\fRisks\nMigration scope\nSupport readiness",
+      }),
+    });
 
     const imported = output(
       await registry.invoke(
         "slides.import-pptx",
         {
-          filename: "Board narrative.pptx",
+          sourceObjectId: "33333333-3333-4333-8333-333333333333",
           folderId: null,
-          contentBase64: pptx.toString("base64"),
           metadata: { source: "test" },
         },
         invokeContext,
@@ -506,7 +524,7 @@ describe("slides tools end-to-end", () => {
     expect(imported.import).toMatchObject({
       sourceFormat: "pptx",
       slideCount: 2,
-      fidelity: "first-pass-text",
+      fidelity: "isolated-text",
     });
     const slides = imported.slides as ToolOutput[];
     expect(slides).toHaveLength(2);
@@ -515,7 +533,7 @@ describe("slides tools end-to-end", () => {
       title: "Board narrative",
       items: ["Q2 strategy", "Customer proof"],
     });
-    expect(slides[0]?.speakerNotes).toBe("Open with the customer outcome.");
+    expect(slides[0]?.speakerNotes).toBe("");
     expect(slides[1]?.content).toMatchObject({
       layout: "bullets",
       title: "Risks",
@@ -532,18 +550,21 @@ describe("slides tools end-to-end", () => {
 
   it("preserves PPTX-family source extensions during import", async () => {
     const registry = createToolRegistry();
-    registerSlides(registry, { store: new InMemorySlidesStore() });
     const pptm = await pptxFixture({
       slides: [["Macro deck", "Revenue bridge"]],
+    });
+    registerSlides(registry, {
+      store: new InMemorySlidesStore(),
+      importSources: importSource("Macro deck.pptm", pptm),
+      officeTextExtractor: async () => ({ text: "Macro deck\nRevenue bridge" }),
     });
 
     const imported = output(
       await registry.invoke(
         "slides.import-pptx",
         {
-          filename: "Macro deck.pptm",
+          sourceObjectId: "33333333-3333-4333-8333-333333333333",
           folderId: null,
-          contentBase64: pptm.toString("base64"),
           metadata: { importedFromFormat: "pptm" },
         },
         invokeContext,
@@ -554,7 +575,7 @@ describe("slides tools end-to-end", () => {
     expect(imported.import).toMatchObject({
       sourceFormat: "pptm",
       slideCount: 1,
-      fidelity: "first-pass-text",
+      fidelity: "isolated-text",
     });
 
     const deckId = imported.id as string;
@@ -648,6 +669,55 @@ describe("slides tools end-to-end", () => {
       'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"',
     );
     expect(mediaEntries.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("rejects image payloads whose bytes do not match their declared safe type", async () => {
+    const registry = createToolRegistry();
+    registerSlides(registry, { store: new InMemorySlidesStore() });
+    const disguisedIcns = `data:image/png;base64,${Buffer.from("icns00000000", "ascii").toString("base64")}`;
+    const deckId = output(
+      await registry.invoke("slides.deck.create", { title: "Untrusted assets" }, invokeContext),
+    ).id as string;
+
+    await registry.invoke(
+      "slides.slide.create",
+      {
+        deckId,
+        content: {
+          layout: "bullets",
+          title: "Rejected asset",
+          items: [],
+          shapes: [
+            {
+              id: "image-1",
+              kind: "image",
+              x: 10,
+              y: 20,
+              width: 30,
+              height: 20,
+              imageUrl: disguisedIcns,
+              imageAlt: "Unsafe image rejected",
+            },
+          ],
+        },
+        speakerNotes: "",
+      },
+      invokeContext,
+    );
+
+    const exported = output(
+      await registry.invoke("slides.export", { deckId, format: "pptx" }, invokeContext),
+    );
+    const JSZip = (await import("jszip")).default;
+    const zip = await JSZip.loadAsync(Buffer.from(exported.contentBase64 as string, "base64"));
+    const slideXml = (await zip.file("ppt/slides/slide1.xml")?.async("string")) ?? "";
+
+    expect(slideXml).toContain("Unsafe image rejected");
+    expect(
+      Object.entries(zip.files).filter(
+        ([name, entry]) => name.startsWith("ppt/media/") && !entry.dir,
+      ),
+    ).toHaveLength(0);
   });
 
   it("exports a native deck as PDF and SVG image-series payloads", async () => {

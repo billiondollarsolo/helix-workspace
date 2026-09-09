@@ -5,11 +5,11 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  adminMailConfigurationQueryOptions,
   MailConfiguration,
   prefetchAdminMailConfigurationQuery,
   type AdminMailConfigurationResponse,
 } from "./mail-configuration";
+import type { adminMailConfigurationQueryOptions } from "./mail-configuration";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -74,6 +74,9 @@ describe("MailConfiguration admin UI", () => {
     expect(container.textContent).toContain("10 MB");
     expect(container.textContent).toContain("SMTP receiver bound to runtime config.");
     expect(container.textContent).toContain("Transient SES throttle");
+    expect(container.textContent).toContain("Delivery rate80.0%");
+    expect(container.textContent).toContain("Bounce rate16.0%");
+    expect(container.textContent).toContain("Complaint rate4.0%");
 
     const table = tableByLabel("Mail DNS records");
     const headers = Array.from(table.querySelectorAll('[role="columnheader"]')).map(
@@ -151,7 +154,9 @@ describe("MailConfiguration admin UI", () => {
   }
 
   async function waitForText(text: string) {
-    await waitFor(() => expect(container.textContent).toContain(text));
+    await waitFor(() => {
+      expect(container.textContent).toContain(text);
+    });
   }
 
   async function waitFor(assertion: () => void | Promise<void>) {
@@ -178,11 +183,15 @@ function mailConfiguration(): AdminMailConfigurationResponse {
   return {
     deliveryHealth: {
       counts: {
+        accepted: 42,
+        bounced: 4,
         cancelled: 1,
+        complained: 1,
+        deferred: 2,
+        delivered: 20,
         failed: 2,
         queued: 3,
         sending: 1,
-        sent: 42,
       },
       failedLast24h: 1,
       lastError: "Transient SES throttle",

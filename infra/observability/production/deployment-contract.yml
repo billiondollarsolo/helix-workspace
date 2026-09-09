@@ -1,0 +1,47 @@
+apiVersion: observability.helix.local/v1
+kind: ProductionContract
+metadata:
+  name: helix-observability
+spec:
+  tenant:
+    idEnvironment: HELIX_OBSERVABILITY_TENANT_ID
+    header: X-Scope-OrgID
+    boundary: deployment
+    requireSpanAttribute: helix.tenant.org_id
+  workloadIdentity:
+    mode: mutual-tls
+    internalTransport: service-mesh-strict-mtls
+    certificateRotationDays: 30
+    unauthorizedIngestResult: tls-handshake-failure
+    unauthorizedQueryResult: tls-handshake-failure
+  availability:
+    lokiReplicas: 3
+    tempoDistributorReplicas: 3
+    tempoKafkaReplicas: 3
+    tempoKafkaReplicationFactor: 3
+    tempoKafkaMinimumInSyncReplicas: 2
+    tempoPartitionConsumers: 3
+    collectorReplicas: 3
+    spreadAcrossZones: true
+    disruptionMaxUnavailable: 1
+    walPersistentVolume: true
+    collectorQueueDirectoryEnvironment: OTEL_QUEUE_DIRECTORY
+    kafkaTransport: service-mesh-strict-mtls
+  storage:
+    backend: s3
+    retentionHours: 720
+    buckets:
+      - environment: LOKI_S3_BUCKET
+        versioning: Enabled
+        replication: required
+      - environment: TEMPO_S3_BUCKET
+        versioning: Enabled
+        replication: required
+  backup:
+    configurationSource: git
+    dataRecoverySource: replicated-versioned-object-storage
+    restoreDrillIntervalDays: 90
+  accessAudit:
+    sink: immutable-security-audit
+    requiredFields: [timestamp, tenant, client-certificate-subject, method, route, status]
+    forbiddenFields: [authorization, cookie, token, query-body, response-body]

@@ -6,10 +6,10 @@ import {
 } from "./startup-migration-check.js";
 
 describe("startup migration check", () => {
-  it("defaults on for local/dev and off for production", () => {
+  it("defaults on in every environment", () => {
     expect(shouldCheckStartupMigrations({ NODE_ENV: "development" })).toBe(true);
     expect(shouldCheckStartupMigrations({ NODE_ENV: "test" })).toBe(true);
-    expect(shouldCheckStartupMigrations({ NODE_ENV: "production" })).toBe(false);
+    expect(shouldCheckStartupMigrations({ NODE_ENV: "production" })).toBe(true);
   });
 
   it("honors explicit overrides", () => {

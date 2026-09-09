@@ -9,7 +9,7 @@ import { driveBlobKey } from "./storage-key.js";
  */
 
 export function isDriveBlobStorageKey(storageKey: string): boolean {
-  return /^drive\/[^/]+\/blobs\/[a-f0-9]{64}$/iu.test(storageKey);
+  return /^drive\/[^/]+\/blobs\/[a-f0-9]{64}(?:\.[a-f0-9-]{36})?$/iu.test(storageKey);
 }
 
 export function resolveFinalizeStorageKey(input: {

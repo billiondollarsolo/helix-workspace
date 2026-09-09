@@ -2,6 +2,16 @@
 
 Phase 9 documentation pass for TASK-A09.
 
+## Workspace domains
+
+Domain ownership, identity, mail, aliases, custom hosts, and federation are one
+aggregate. Verify a server-issued DNS challenge before enabling capabilities;
+quarantine a suspect domain to stop every use immediately, and release it only
+after moving its users, aliases, and groups. Primary changes are verified-only,
+transactional, limited to one per hour, and reversible for 24 hours. See the
+[domain and identity model](domain-identity.md) for secondary-domain versus
+domain-alias behavior and the rename/release runbook.
+
 ## Quality Gate Responsibilities
 
 Admins own release readiness for:
@@ -62,7 +72,7 @@ Useful k6 overrides:
 - `INBOUND_MAIL_MARKER=release-k6-inbound-001`
 - `INBOUND_MAIL_SEARCHABLE_P95_MS=5000`
 - `ASSISTANT_BODY='{"message":"Route this request without side effects."}'`
-- `PLUGIN_INSTALL_BODY='{"pluginId":"com.helix.core.search-meilisearch","version":"1.0.0","source":"official"}'`
+- `PLUGIN_INSTALL_BODY='{"pluginId":"com.helix.webhook-out-slack","version":"1.0.0"}'`
 - `PLUGIN_INSTALL_EXPECT=pending_confirmation`
 
 Protected PRD groups are skipped by default when `AUTH_TOKEN` is absent. Provide
@@ -136,11 +146,11 @@ When Dockerized k6 targets a host-run API, set
 `HELIX_K6_DOCKER_ADD_HOST_GATEWAY=true` to force it or `false` to preserve
 Docker Desktop/Rancher Desktop's built-in macOS host routing.
 
-Backup/restore REST evidence is opt-in because it calls admin operation routes,
-and the backend returns dry-run command metadata by default without invoking the scripts unless
+Backup REST evidence is opt-in because it calls an admin operation route,
+and the backend returns dry-run command metadata by default without invoking the script unless
 `HELIX_ADMIN_BACKUP_EXECUTE=true` is set on the API process. The smoke script
-uses the deterministic backup id `helix-smoke-backup` and asserts both responses
-return `status: "dry_run"`:
+uses the deterministic backup id `helix-smoke-backup` and asserts the response
+returns `status: "dry_run"`:
 
 ```sh
 HELIX_SMOKE_CLIENT_ID=helix-local-oauth-client \
@@ -151,13 +161,13 @@ HELIX_SMOKE_CLIENT_SECRET=helix-local-dev-secret \
     --search-reindex
 ```
 
-Add `--backup-restore-encrypted` when the restore dry-run should target the
-Tier 2+ age-encrypted archive shape, `<backup-id>.tar.gz.age`. The CLI
-equivalent is `helix restore --from <backup-id> --encrypted`.
+The smoke flow covers backup creation. Restore is deliberately excluded because it requires a
+recent MFA step-up, the dedicated `admin.backups.restore` scope, an explicit isolated database and
+bucket, and two other recovery-admin approvals. Follow
+[`runbooks/backup-restore-jobs.md`](runbooks/backup-restore-jobs.md) for that workflow.
 
-`POST /api/admin/backups` and `POST /api/admin/restores` require
-`admin.config.write` or an admin config wildcard scope. Keep the smoke token
-scope aligned with the default
+`POST /api/admin/backups` requires `admin.config.write`; configuration administrators cannot invoke
+restore endpoints. Keep the smoke token scope aligned with the default
 `platform.read mail.read mail.send docs.read docs.write docs.comment
 drive.read drive.write calendar.read calendar.write calendar.write:respond
 calendar.read:freebusy chat.read chat.write meet.read meet.write
@@ -209,7 +219,7 @@ events websocket, WebDAV, CalDAV, CardDAV, and target-mode k6. Add
 configured with `ASSISTANT_AI_PROVIDER_ID` or AI routing; it verifies the
 provider/model, surfaced AI provenance id, and provider-specific LLM metrics.
 Add `--drive-docs-calendar-smoke` to mutate realistic workspace data through
-the live backend: Drive upload/finalize with inline bytes and MCP byte read,
+the live backend: presigned Drive upload/finalize and MCP byte read,
 Docs create/update/comment/export and MCP read, and Calendar confirmation-gated
 create/list/RSVP/freebusy plus MCP read. Add
 `--drive-docs-calendar-search-smoke` when Meilisearch is configured to run an
@@ -295,11 +305,17 @@ HELIX_BASE_URL=http://127.0.0.1:28431 \
 HELIX_SMOKE_CLIENT_ID=helix-local-oauth-client \
 HELIX_SMOKE_CLIENT_SECRET=helix-local-dev-secret \
 HELIX_DELIVERABILITY_RECIPIENT=deliverability-probe@gmail.com \
+HELIX_DELIVERABILITY_FROM_DOMAIN=example.com \
 HELIX_DELIVERABILITY_IMAP_HOST=imap.gmail.com \
 HELIX_DELIVERABILITY_IMAP_USER=deliverability-probe@gmail.com \
 HELIX_DELIVERABILITY_IMAP_PASSWORD=<app-password> \
   pnpm quality:mail-deliverability-smoke
 ```
+
+The probe also fetches the receiver's `Authentication-Results` and fails unless DMARC passes for
+`HELIX_DELIVERABILITY_FROM_DOMAIN` with aligned DKIM or SPF. Use the complete release, abuse,
+queue-recovery, and manual-provider-failover procedure in
+[`runbooks/mail-deliverability.md`](runbooks/mail-deliverability.md).
 
 Add `--webdav-smoke` to create and approve a scoped `webdav` app password for
 the seeded actor, prove `/dav/files/*` Basic-auth challenge and authenticated
@@ -376,7 +392,7 @@ next command for any skip or failure.
 | `chat`           | `helix_chat_delivery_ms`, `CHAT_DELIVERY_P95_MS`                     | `CHAT_TOOL_ID`, `CHAT_BODY`, `CHAT_QUERY`, `CHAT_EXPECT`                                                                                                                                                                                       | Protected; seed chat data and auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=chat pnpm quality:k6:target`.                                                                                                                     |
 | `docs`           | `helix_docs_collaboration_ms`, `DOCS_COLLABORATION_P95_MS`           | `DOCS_CREATE_TOOL_ID`, `DOCS_CREATE_BODY`, `DOCS_EXPORT_TOOL_ID`, `DOCS_EXPORT_BODY`, `DOCS_DOC_ID`, `DOCS_EXPECT`                                                                                                                             | Protected; create/export a backend Docs document with auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=docs pnpm quality:k6:target`.                                                                                             |
 | `meet_jitsi`     | `helix_jitsi_join_ms`, `JITSI_JOIN_P95_MS`                           | `MEET_CREATE_TOOL_ID`, `MEET_CREATE_BODY`, `MEET_MINT_TOOL_ID`, `MEET_MINT_BODY`, `MEET_END_TOOL_ID`, `MEET_ROOM_ID`, `MEET_JITSI_DOMAIN`, `MEET_EXPECT`, `MEET_END_AFTER_MINT`                                                                | Protected; create a backend Meet room and mint a Jitsi join token with auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=meet_jitsi pnpm quality:k6:target`.                                                                      |
-| `plugin_install` | `helix_plugin_install_ms`, `PLUGIN_INSTALL_P95_MS`                   | `PLUGIN_INSTALL_TOOL_ID`, `PLUGIN_INSTALL_BODY`, `PLUGIN_INSTALL_EXPECT`, `PLUGIN_INSTALL_PLUGIN_ID`, `PLUGIN_INSTALL_VERSION`, `PLUGIN_INSTALL_SOURCE`, `PLUGIN_INSTALL_REGISTRY_URL`                                                         | Protected/admin; use release plugin metadata or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=plugin_install pnpm quality:k6:target`.                                                                                                 |
+| `plugin_install` | `helix_plugin_install_ms`, `PLUGIN_INSTALL_P95_MS`                   | `PLUGIN_INSTALL_TOOL_ID`, `PLUGIN_INSTALL_BODY`, `PLUGIN_INSTALL_EXPECT`, `PLUGIN_INSTALL_PLUGIN_ID`, `PLUGIN_INSTALL_VERSION`                                                                                                                 | Protected/admin; use release plugin metadata or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=plugin_install pnpm quality:k6:target`.                                                                                                 |
 | `assistant_llm`  | `helix_llm_routing_overhead_ms`, `LLM_ROUTING_P95_MS`                | `ASSISTANT_TOOL_ID`, `ASSISTANT_BODY`, `ASSISTANT_MESSAGE`                                                                                                                                                                                     | Protected; configure provider-safe prompt/body or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=assistant_llm pnpm quality:k6:target`. Pair release provider proof with `pnpm quality:live-auth-smoke -- --assistant-provider-smoke`. |
 | `mcp`            | `helix_mcp_catalog_ms`, `MCP_CATALOG_P95_MS`                         | `MCP_PATH`, `MCP_EXPECT`                                                                                                                                                                                                                       | Protected; expose the MCP catalog endpoint with auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=mcp pnpm quality:k6:target`.                                                                                                    |
 | `otel_health`    | `helix_otel_trace_ingestion_lag_ms`, `OTEL_INGESTION_LAG_P95_MS`     | `OTEL_HEALTH_PATH`                                                                                                                                                                                                                             | Health/metrics evidence can run without auth; if observability is not deployed, record the blocker, owner, and next command: `K6_SCENARIO_GROUPS=otel_health pnpm quality:k6:target`.                                                                                       |

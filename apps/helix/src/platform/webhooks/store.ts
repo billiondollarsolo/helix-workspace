@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type { JsonValue } from "@helix/sdk-types";
 import type postgres from "postgres";
-import { randomBytes, sha256Hex } from "../crypto/index.js";
+import { sha256Hex } from "../crypto/index.js";
+import type { TenantEnvelopeCipher } from "../secrets/envelope.js";
 import type { WebhookDeliveryStatus, WebhookDirection } from "./types.js";
 
 export interface OutboundWebhookRecord {
@@ -10,7 +11,7 @@ export interface OutboundWebhookRecord {
   readonly name: string;
   readonly url: string;
   readonly eventSubjects: readonly string[];
-  readonly secretRef: string | null;
+  readonly secretCiphertext: string;
   readonly headers: Record<string, string>;
   readonly enabled: boolean;
   readonly metadata: Record<string, unknown>;
@@ -25,7 +26,7 @@ export interface InboundWebhookRecord {
   readonly name: string;
   readonly slug: string;
   readonly source: string;
-  readonly secretRef: string | null;
+  readonly secretCiphertext: string;
   readonly enabled: boolean;
   readonly metadata: Record<string, unknown>;
   readonly createdByActorId: string | null;
@@ -61,7 +62,7 @@ export interface CreateOutboundWebhookInput {
   readonly name: string;
   readonly url: string;
   readonly eventSubjects: readonly string[];
-  readonly secretRef?: string | null | undefined;
+  readonly secret: string;
   readonly headers?: Record<string, string> | undefined;
   readonly enabled?: boolean | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
@@ -73,7 +74,7 @@ export interface CreateInboundWebhookInput {
   readonly name: string;
   readonly slug: string;
   readonly source: string;
-  readonly secretRef?: string | null | undefined;
+  readonly secret: string;
   readonly enabled?: boolean | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
   readonly createdByActorId?: string | null | undefined;
@@ -83,7 +84,7 @@ export interface OutboundWebhookPatch {
   readonly name?: string | undefined;
   readonly url?: string | undefined;
   readonly eventSubjects?: readonly string[] | undefined;
-  readonly secretRef?: string | null | undefined;
+  readonly secret?: string | undefined;
   readonly headers?: Record<string, string> | undefined;
   readonly enabled?: boolean | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
@@ -93,7 +94,7 @@ export interface InboundWebhookPatch {
   readonly name?: string | undefined;
   readonly slug?: string | undefined;
   readonly source?: string | undefined;
-  readonly secretRef?: string | null | undefined;
+  readonly secret?: string | undefined;
   readonly enabled?: boolean | undefined;
   readonly metadata?: Record<string, unknown> | undefined;
 }
@@ -137,7 +138,7 @@ interface OutboundWebhookRow {
   readonly name: string;
   readonly url: string;
   readonly event_subjects: readonly string[];
-  readonly secret_ref: string | null;
+  readonly secret_ciphertext: string;
   readonly headers: Record<string, string>;
   readonly enabled: boolean;
   readonly metadata: Record<string, unknown>;
@@ -152,7 +153,7 @@ interface InboundWebhookRow {
   readonly name: string;
   readonly slug: string;
   readonly source: string;
-  readonly secret_ref: string | null;
+  readonly secret_ciphertext: string;
   readonly enabled: boolean;
   readonly metadata: Record<string, unknown>;
   readonly created_by_actor_id: string | null;
@@ -200,28 +201,32 @@ export class OutboundWebhookQuotaExceededError extends Error {
 }
 
 export class PostgresWebhookStore {
-  constructor(private readonly sql: postgres.Sql) {}
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly secrets: TenantEnvelopeCipher,
+  ) {}
 
   async createOutbound(input: CreateOutboundWebhookInput): Promise<OutboundWebhookRecord> {
+    assertWebhookConfig(input.headers ?? {}, input.metadata ?? {});
     return this.sql.begin(async (tx) => {
       await assertOutboundWebhookQuotaAvailable(tx, input.orgId);
-      const rows = (await tx`
+      const rows = await tx<OutboundWebhookRow[]>`
         insert into outbound_webhooks (
-          org_id, name, url, event_subjects, secret_ref, headers, enabled, metadata, created_by_actor_id
+          org_id, name, url, event_subjects, secret_ciphertext, headers, enabled, metadata, created_by_actor_id
         )
         values (
           ${input.orgId},
           ${input.name},
           ${input.url},
           ${tx.array([...input.eventSubjects])},
-          ${input.secretRef ?? createInlineSecret()},
+          ${encryptWebhookSecret(this.secrets, input.orgId, input.secret)},
           ${tx.json(toSqlJson(input.headers ?? {}))},
           ${input.enabled ?? true},
           ${tx.json(toSqlJson(input.metadata ?? {}))},
           ${input.createdByActorId ?? null}
         )
         returning *
-      `) as unknown as readonly OutboundWebhookRow[];
+      `;
       return mapOutbound(rows[0]);
     });
   }
@@ -235,20 +240,28 @@ export class PostgresWebhookStore {
     if (current === null) {
       return null;
     }
-    const rows = (await this.sql`
+    assertWebhookConfig(
+      input.patch.headers ?? current.headers,
+      input.patch.metadata ?? current.metadata,
+    );
+    const rows = await this.sql<OutboundWebhookRow[]>`
       update outbound_webhooks
       set
         name = ${input.patch.name ?? current.name},
         url = ${input.patch.url ?? current.url},
         event_subjects = ${this.sql.array([...(input.patch.eventSubjects ?? current.eventSubjects)])},
-        secret_ref = ${input.patch.secretRef === undefined ? current.secretRef : input.patch.secretRef},
+        secret_ciphertext = ${
+          input.patch.secret === undefined
+            ? current.secretCiphertext
+            : encryptWebhookSecret(this.secrets, input.orgId, input.patch.secret)
+        },
         headers = ${this.sql.json(toSqlJson(input.patch.headers ?? current.headers))},
         enabled = ${input.patch.enabled ?? current.enabled},
         metadata = ${this.sql.json(toSqlJson(input.patch.metadata ?? current.metadata))},
         updated_at = now()
       where org_id = ${input.orgId} and id = ${input.id} and deleted_at is null
       returning *
-    `) as unknown as readonly OutboundWebhookRow[];
+    `;
     return rows[0] === undefined ? null : mapOutbound(rows[0]);
   }
 
@@ -263,49 +276,50 @@ export class PostgresWebhookStore {
   }
 
   async getOutbound(orgId: string, id: string): Promise<OutboundWebhookRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OutboundWebhookRow[]>`
       select * from outbound_webhooks
       where org_id = ${orgId} and id = ${id} and deleted_at is null
       limit 1
-    `) as unknown as readonly OutboundWebhookRow[];
+    `;
     return rows[0] === undefined ? null : mapOutbound(rows[0]);
   }
 
   async listOutbound(orgId: string): Promise<readonly OutboundWebhookRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OutboundWebhookRow[]>`
       select * from outbound_webhooks
       where org_id = ${orgId} and deleted_at is null
       order by created_at desc
-    `) as unknown as readonly OutboundWebhookRow[];
+    `;
     return rows.map(mapOutbound);
   }
 
   async listEnabledOutbound(): Promise<readonly OutboundWebhookRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OutboundWebhookRow[]>`
       select * from outbound_webhooks
       where enabled = true and deleted_at is null
       order by created_at desc
-    `) as unknown as readonly OutboundWebhookRow[];
+    `;
     return rows.map(mapOutbound);
   }
 
   async createInbound(input: CreateInboundWebhookInput): Promise<InboundWebhookRecord> {
-    const rows = (await this.sql`
+    assertNoPlaintextSecretFields(input.metadata ?? {});
+    const rows = await this.sql<InboundWebhookRow[]>`
       insert into inbound_webhooks (
-        org_id, name, slug, source, secret_ref, enabled, metadata, created_by_actor_id
+        org_id, name, slug, source, secret_ciphertext, enabled, metadata, created_by_actor_id
       )
       values (
         ${input.orgId},
         ${input.name},
         ${input.slug},
         ${input.source},
-        ${input.secretRef ?? createInlineSecret()},
+        ${encryptWebhookSecret(this.secrets, input.orgId, input.secret)},
         ${input.enabled ?? true},
         ${this.sql.json(toSqlJson(input.metadata ?? {}))},
         ${input.createdByActorId ?? null}
       )
       returning *
-    `) as unknown as readonly InboundWebhookRow[];
+    `;
     return mapInbound(rows[0]);
   }
 
@@ -318,19 +332,24 @@ export class PostgresWebhookStore {
     if (current === null) {
       return null;
     }
-    const rows = (await this.sql`
+    assertNoPlaintextSecretFields(input.patch.metadata ?? current.metadata);
+    const rows = await this.sql<InboundWebhookRow[]>`
       update inbound_webhooks
       set
         name = ${input.patch.name ?? current.name},
         slug = ${input.patch.slug ?? current.slug},
         source = ${input.patch.source ?? current.source},
-        secret_ref = ${input.patch.secretRef === undefined ? current.secretRef : input.patch.secretRef},
+        secret_ciphertext = ${
+          input.patch.secret === undefined
+            ? current.secretCiphertext
+            : encryptWebhookSecret(this.secrets, input.orgId, input.patch.secret)
+        },
         enabled = ${input.patch.enabled ?? current.enabled},
         metadata = ${this.sql.json(toSqlJson(input.patch.metadata ?? current.metadata))},
         updated_at = now()
       where org_id = ${input.orgId} and id = ${input.id} and disabled_at is null
       returning *
-    `) as unknown as readonly InboundWebhookRow[];
+    `;
     return rows[0] === undefined ? null : mapInbound(rows[0]);
   }
 
@@ -347,46 +366,47 @@ export class PostgresWebhookStore {
   async rotateInboundSecret(
     orgId: string,
     id: string,
-  ): Promise<{ readonly webhook: InboundWebhookRecord; readonly secretRef: string } | null> {
-    const secretRef = createInlineSecret();
-    const rows = (await this.sql`
+    secret: string,
+  ): Promise<InboundWebhookRecord | null> {
+    const ciphertext = encryptWebhookSecret(this.secrets, orgId, secret);
+    const rows = await this.sql<InboundWebhookRow[]>`
       update inbound_webhooks
-      set secret_ref = ${secretRef}, updated_at = now()
+      set secret_ciphertext = ${ciphertext}, updated_at = now()
       where org_id = ${orgId} and id = ${id} and disabled_at is null
       returning *
-    `) as unknown as readonly InboundWebhookRow[];
-    return rows[0] === undefined ? null : { webhook: mapInbound(rows[0]), secretRef };
+    `;
+    return rows[0] === undefined ? null : mapInbound(rows[0]);
   }
 
   async getInbound(orgId: string, id: string): Promise<InboundWebhookRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<InboundWebhookRow[]>`
       select * from inbound_webhooks
       where org_id = ${orgId} and id = ${id} and disabled_at is null
       limit 1
-    `) as unknown as readonly InboundWebhookRow[];
+    `;
     return rows[0] === undefined ? null : mapInbound(rows[0]);
   }
 
   async getInboundBySlug(slug: string): Promise<InboundWebhookRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<InboundWebhookRow[]>`
       select * from inbound_webhooks
       where slug = ${slug} and enabled = true and disabled_at is null
       limit 1
-    `) as unknown as readonly InboundWebhookRow[];
+    `;
     return rows[0] === undefined ? null : mapInbound(rows[0]);
   }
 
   async listInbound(orgId: string): Promise<readonly InboundWebhookRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<InboundWebhookRow[]>`
       select * from inbound_webhooks
       where org_id = ${orgId} and disabled_at is null
       order by created_at desc
-    `) as unknown as readonly InboundWebhookRow[];
+    `;
     return rows.map(mapInbound);
   }
 
   async createDelivery(input: CreateWebhookDeliveryInput): Promise<WebhookDeliveryRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<WebhookDeliveryRow[]>`
       insert into webhook_deliveries (
         id, org_id, direction, outbound_webhook_id, inbound_webhook_id, event_subject,
         status, attempt, payload, payload_sha256, signature, request_headers,
@@ -404,22 +424,22 @@ export class PostgresWebhookStore {
         ${this.sql.json(toSqlJson(input.payload))},
         ${input.payloadSha256 ?? sha256Json(input.payload)},
         ${input.signature ?? null},
-        ${this.sql.json(toSqlJson(input.requestHeaders ?? {}))},
+        ${this.sql.json(toSqlJson(redactWebhookHeaders(input.requestHeaders ?? {})))},
         ${input.responseStatus ?? null},
-        ${this.sql.json(toSqlJson(input.responseHeaders ?? {}))},
+        ${this.sql.json(toSqlJson(redactWebhookHeaders(input.responseHeaders ?? {})))},
         ${input.error ?? null},
         ${input.nextAttemptAt ?? null},
         ${input.deliveredAt ?? null}
       )
       returning *
-    `) as unknown as readonly WebhookDeliveryRow[];
+    `;
     return mapDelivery(rows[0]);
   }
 
   async updateDeliveryStatus(
     input: UpdateWebhookDeliveryStatusInput,
   ): Promise<WebhookDeliveryRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<WebhookDeliveryRow[]>`
       update webhook_deliveries
       set
         status = ${input.status},
@@ -427,12 +447,12 @@ export class PostgresWebhookStore {
         signature = case when ${input.signature === undefined} then signature else ${input.signature ?? null} end,
         request_headers = case
           when ${input.requestHeaders === undefined} then request_headers
-          else ${this.sql.json(toSqlJson(input.requestHeaders ?? {}))}
+          else ${this.sql.json(toSqlJson(redactWebhookHeaders(input.requestHeaders ?? {})))}
         end,
         response_status = case when ${input.responseStatus === undefined} then response_status else ${input.responseStatus ?? null} end,
         response_headers = case
           when ${input.responseHeaders === undefined} then response_headers
-          else ${this.sql.json(toSqlJson(input.responseHeaders ?? {}))}
+          else ${this.sql.json(toSqlJson(redactWebhookHeaders(input.responseHeaders ?? {})))}
         end,
         error = case when ${input.error === undefined} then error else ${input.error ?? null} end,
         next_attempt_at = case when ${input.nextAttemptAt === undefined} then next_attempt_at else ${input.nextAttemptAt ?? null} end,
@@ -440,7 +460,7 @@ export class PostgresWebhookStore {
         updated_at = now()
       where id = ${input.id}
       returning *
-    `) as unknown as readonly WebhookDeliveryRow[];
+    `;
     return rows[0] === undefined ? null : mapDelivery(rows[0]);
   }
 
@@ -450,7 +470,7 @@ export class PostgresWebhookStore {
       readonly now?: Date | undefined;
     } = {},
   ): Promise<readonly WebhookDeliveryRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<WebhookDeliveryRow[]>`
       update webhook_deliveries
       set
         status = 'in_progress',
@@ -472,7 +492,7 @@ export class PostgresWebhookStore {
         for update skip locked
       )
       returning *
-    `) as unknown as readonly WebhookDeliveryRow[];
+    `;
     return rows.map(mapDelivery);
   }
 
@@ -485,11 +505,11 @@ export class PostgresWebhookStore {
   }
 
   async getDelivery(orgId: string, id: string): Promise<WebhookDeliveryRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<WebhookDeliveryRow[]>`
       select * from webhook_deliveries
       where org_id = ${orgId} and id = ${id}
       limit 1
-    `) as unknown as readonly WebhookDeliveryRow[];
+    `;
     return rows[0] === undefined ? null : mapDelivery(rows[0]);
   }
 
@@ -499,37 +519,40 @@ export class PostgresWebhookStore {
     readonly status?: WebhookDeliveryStatus | undefined;
     readonly limit?: number | undefined;
   }): Promise<readonly WebhookDeliveryRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<WebhookDeliveryRow[]>`
       select * from webhook_deliveries
       where org_id = ${input.orgId}
         and (${input.direction ?? null}::webhook_direction is null or direction = ${input.direction ?? null}::webhook_direction)
         and (${input.status ?? null}::webhook_delivery_status is null or status = ${input.status ?? null}::webhook_delivery_status)
       order by created_at desc
       limit ${input.limit ?? 100}
-    `) as unknown as readonly WebhookDeliveryRow[];
+    `;
     return rows.map(mapDelivery);
   }
 }
 
 export interface WebhookSecretResolver {
-  resolveSecretRef(secretRef: string): Promise<string | null> | string | null;
+  resolveSecret(orgId: string, secretCiphertext: string): Promise<string | null> | string | null;
 }
 
 export async function resolveWebhookSecret(
-  secretRef: string | null,
+  orgId: string,
+  secretCiphertext: string,
   resolver?: WebhookSecretResolver,
 ): Promise<string> {
-  if (secretRef === null || secretRef.length === 0) {
-    return "";
-  }
-  if (secretRef.startsWith("inline:")) {
-    return secretRef.slice("inline:".length);
-  }
-  const secret = await resolver?.resolveSecretRef(secretRef);
+  const secret = await resolver?.resolveSecret(orgId, secretCiphertext);
   if (secret === undefined || secret === null) {
-    throw new Error(`Unable to resolve webhook secret ref: ${secretRef}`);
+    throw new Error("Unable to resolve webhook secret.");
   }
   return secret;
+}
+
+export class TenantEnvelopeWebhookSecretResolver implements WebhookSecretResolver {
+  constructor(private readonly secrets: TenantEnvelopeCipher) {}
+
+  resolveSecret(orgId: string, ciphertext: string): string {
+    return this.secrets.open(orgId, "webhook", ciphertext);
+  }
 }
 
 export function sha256Json(value: unknown): string {
@@ -537,20 +560,79 @@ export function sha256Json(value: unknown): string {
   return sha256Hex(JSON.stringify(value));
 }
 
+export function webhookHeadersAreSafe(headers: Record<string, string>): boolean {
+  return Object.keys(headers).every(webhookHeaderNameIsSafe);
+}
+
+export function webhookHeaderNameIsSafe(name: string): boolean {
+  const normalized = name.trim().toLowerCase();
+  return (
+    normalized !== "authorization" &&
+    normalized !== "proxy-authorization" &&
+    normalized !== "cookie" &&
+    normalized !== "set-cookie" &&
+    !isSecretFieldName(normalized)
+  );
+}
+
+export function containsPlaintextSecretField(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(containsPlaintextSecretField);
+  }
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  return Object.entries(value).some(
+    ([key, child]) => isSecretFieldName(key) || containsPlaintextSecretField(child),
+  );
+}
+
 function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
-function createInlineSecret(): string {
-  // Webhook signing secret minted via the crypto adapter (PRD §14.4).
-  return `inline:${randomBytes(32).toString("base64url")}`;
+function redactWebhookHeaders(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([name]) => webhookHeaderNameIsSafe(name)),
+  );
+}
+
+function encryptWebhookSecret(cipher: TenantEnvelopeCipher, orgId: string, secret: string): string {
+  const bytes = Buffer.byteLength(secret);
+  if (bytes < 32 || bytes > 4_096) {
+    throw new Error("Webhook secret must be between 32 and 4096 bytes.");
+  }
+  return cipher.seal(orgId, "webhook", secret);
+}
+
+function assertWebhookConfig(
+  headers: Record<string, string>,
+  metadata: Record<string, unknown>,
+): void {
+  if (!webhookHeadersAreSafe(headers)) {
+    throw new Error("Webhook authentication belongs in the encrypted webhook secret.");
+  }
+  assertNoPlaintextSecretFields(metadata);
+}
+
+function assertNoPlaintextSecretFields(value: unknown): void {
+  if (containsPlaintextSecretField(value)) {
+    throw new Error("Webhook metadata cannot contain plaintext credential fields.");
+  }
+}
+
+function isSecretFieldName(value: string): boolean {
+  const normalized = value.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").toLowerCase();
+  return /(^|[_-])(auth(?:entication)?|secret|password|token|credential|api[_-]?key|access[_-]?key|private[_-]?key|signing[_-]?key)($|[_-])/u.test(
+    normalized,
+  );
 }
 
 async function assertOutboundWebhookQuotaAvailable(
   sql: postgres.Sql | postgres.TransactionSql,
   orgId: string,
 ): Promise<void> {
-  const rows = (await sql`
+  const rows = await sql<OutboundWebhookQuotaRow[]>`
     select
       case
         when o.quotas ? 'outbound_webhooks_limit' then o.quotas -> 'outbound_webhooks_limit'
@@ -568,7 +650,7 @@ async function assertOutboundWebhookQuotaAvailable(
     where o.id = ${orgId}
     limit 1
     for update of o
-  `) as unknown as readonly OutboundWebhookQuotaRow[];
+  `;
   const row = rows[0];
   if (row === undefined) {
     return;
@@ -606,7 +688,7 @@ function mapOutbound(row: OutboundWebhookRow | undefined): OutboundWebhookRecord
     name: row.name,
     url: row.url,
     eventSubjects: row.event_subjects,
-    secretRef: row.secret_ref,
+    secretCiphertext: row.secret_ciphertext,
     headers: row.headers,
     enabled: row.enabled,
     metadata: row.metadata,
@@ -626,7 +708,7 @@ function mapInbound(row: InboundWebhookRow | undefined): InboundWebhookRecord {
     name: row.name,
     slug: row.slug,
     source: row.source,
-    secretRef: row.secret_ref,
+    secretCiphertext: row.secret_ciphertext,
     enabled: row.enabled,
     metadata: row.metadata,
     createdByActorId: row.created_by_actor_id,

@@ -103,6 +103,9 @@ beforeEach(() => {
   if (!hasUsableLocalStorage()) {
     installMemoryLocalStorage();
   }
+  if (typeof document !== "undefined") {
+    document.cookie = `helix_csrf=${"t".repeat(43)}; Path=/`;
+  }
 });
 
 afterEach(() => {

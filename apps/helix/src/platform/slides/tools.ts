@@ -1,8 +1,8 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
-import { z } from "zod3";
+import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
-import { importPptxDeck } from "./import-pptx.js";
+import { readImportSource, type ImportSourceReader } from "../import-source.js";
 import { slideContentSchema } from "./content.js";
 import {
   exportSlidesDeckToImageSeries,
@@ -18,6 +18,7 @@ import type { SlideContent, SlideDeckSummaryRecord, SlideRecord } from "./types.
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.unknown()).default({});
+const PRESENTATION_IMPORT_MAX_BYTES = 64 * 1024 * 1024;
 
 const listDecksSchema = z.object({
   query: z.string().max(512).optional(),
@@ -45,10 +46,9 @@ const exportDeckSchema = z.object({
 });
 
 const importPptxSchema = z.object({
-  filename: z.string().min(1).max(255),
+  sourceObjectId: uuidSchema,
   title: z.string().min(1).max(255).optional(),
   folderId: uuidSchema.nullable().optional(),
-  contentBase64: z.string().min(1),
   metadata: metadataSchema,
 });
 
@@ -114,7 +114,15 @@ const genericObjectJsonSchema = {
 export interface CreateSlidesToolDefinitionsOptions {
   readonly store: SlidesStore;
   readonly driveStore?: DriveCommentReader | undefined;
+  readonly importSources?: ImportSourceReader | undefined;
+  readonly officeTextExtractor?: SlidesOfficeTextExtractor | undefined;
 }
+
+export type SlidesOfficeTextExtractor = (input: {
+  readonly name: string;
+  readonly mimeType: string;
+  readonly content: Uint8Array;
+}) => Promise<{ readonly text: string }>;
 
 type DriveCommentReader = {
   readonly listComments: NonNullable<DriveStore["listComments"]>;
@@ -239,15 +247,17 @@ export function createSlidesToolDefinitions(
         if (result === null) {
           throw new Error(`Unknown Slides deck: ${input.deckId}`);
         }
-        const comments =
+        const commentPage =
           options.driveStore === undefined
-            ? []
+            ? { comments: [] }
             : await options.driveStore.listComments({
                 orgId: ctx.actor.orgId,
                 actorId: ctx.actor.id,
                 objectId: input.deckId,
                 status: "all",
+                limit: 100,
               });
+        const comments = commentPage.comments;
         const exported = await exportSlidesDeck(result.deck, result.slides, input.format, comments);
         await ctx.audit("slides.export", {
           deckId: input.deckId,
@@ -267,10 +277,16 @@ export function createSlidesToolDefinitions(
       inputSchema: zodToolSchema(importPptxSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const imported = await importPptxDeck({
-          filename: input.filename,
+        const source = await readImportSource(options.importSources, {
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.sourceObjectId,
+          maxBytes: PRESENTATION_IMPORT_MAX_BYTES,
+        });
+        const imported = await importSlidesFromOffice(options.officeTextExtractor, {
+          filename: source.name,
           ...(input.title === undefined ? {} : { title: input.title }),
-          content: Buffer.from(input.contentBase64, "base64"),
+          content: source.bytes,
         });
         const deck = await store.createDeck({
           orgId: ctx.actor.orgId,
@@ -279,6 +295,7 @@ export function createSlidesToolDefinitions(
           folderId: input.folderId ?? null,
           metadata: toJsonObject({
             ...input.metadata,
+            importedFromDriveObjectId: input.sourceObjectId,
             originalFormat: imported.metadata.sourceFormat,
             import: imported.metadata,
           }),
@@ -298,7 +315,7 @@ export function createSlidesToolDefinitions(
         }
         await ctx.audit("slides.import-pptx", {
           deckId: deck.id,
-          filename: input.filename,
+          filename: source.name,
           slideCount: slides.length,
         });
         return {
@@ -497,6 +514,63 @@ async function exportSlidesDeck(
     case "svg-series":
       return exportSlidesDeckToImageSeries(deck, slides, comments);
   }
+}
+
+async function importSlidesFromOffice(
+  extractor: SlidesOfficeTextExtractor | undefined,
+  input: { readonly filename: string; readonly title?: string; readonly content: Uint8Array },
+) {
+  if (extractor === undefined) {
+    throw new Error("PPTX import requires the isolated content converter.");
+  }
+  const extracted = await extractor({
+    name: input.filename,
+    mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    content: input.content,
+  });
+  const pages = extracted.text
+    .split("\f")
+    .map((page) =>
+      page
+        .split(/\r?\n/u)
+        .map((line) => line.replaceAll(/\s+/gu, " ").trim())
+        .filter((line) => line.length > 0)
+        .slice(0, 80),
+    )
+    .filter((page) => page.length > 0)
+    .slice(0, 200);
+  if (pages.length === 0) {
+    throw new Error("Presentation contains no importable text.");
+  }
+  const slides = pages.map((lines, index) => {
+    const title = lines[0] ?? `Imported slide ${String(index + 1)}`;
+    const content: SlideContent =
+      lines.length > 1
+        ? { layout: "bullets", title, items: lines.slice(1, 25) }
+        : { layout: "title", title };
+    return { content, speakerNotes: "" };
+  });
+  const sourceFormat = presentationSourceFormat(input.filename);
+  return {
+    title:
+      input.title?.trim() ||
+      slides[0]?.content.title ||
+      titleFromPresentationFilename(input.filename),
+    slides,
+    metadata: {
+      sourceFormat,
+      slideCount: slides.length,
+      fidelity: "isolated-text",
+    },
+  };
+}
+
+function titleFromPresentationFilename(filename: string): string {
+  return filename.replace(/\.(pptx|pptm|potx|potm|ppsx)$/iu, "").trim() || "Imported presentation";
+}
+
+function presentationSourceFormat(filename: string): string {
+  return /\.(pptx|pptm|potx|potm|ppsx)$/iu.exec(filename)?.[1]?.toLowerCase() ?? "pptx";
 }
 
 /**

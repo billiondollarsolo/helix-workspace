@@ -2,6 +2,7 @@ import type { Actor } from "@helix/sdk-types";
 import fastify, { type InjectOptions } from "fastify";
 import { describe, expect, it } from "vitest";
 import { createIcsCalendar } from "./ics.js";
+import { expandCalendarEventOccurrences } from "./recurrence.js";
 import { registerCalendarRoutes } from "./routes.js";
 import type { CalendarInvitationSender } from "./ics.js";
 import type {
@@ -15,9 +16,98 @@ import type {
   CalendarEventRecord,
   CalendarFindTimeSlot,
   CalendarListEntry,
+  CalendarMembershipRecord,
 } from "./types.js";
 
 describe("CalDAV calendar routes", () => {
+  it("maps malformed REPORT XML to a bounded client error", async () => {
+    const actor = testActor();
+    const app = fastify();
+    await registerCalendarRoutes(app, {
+      store: new FakeCalendarStore(actor),
+      actorFromRequest: () => actor,
+    });
+    const response = await app.inject({
+      method: "REPORT",
+      url: "/dav/cal/00000000-0000-4000-8000-000000000101/",
+      headers: { authorization: basicAuth(), "content-type": "application/xml" },
+      payload: '<D:calendar-query xmlns:D="DAV:"><D:prop></D:calendar-query>',
+    } as unknown as InjectOptions);
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("requires calendar.manage before exposing the membership surface", async () => {
+    const actor = testActor();
+    const store = new FakeCalendarStore(actor);
+    const app = fastify();
+    await registerCalendarRoutes(app, { store, actorFromRequest: () => actor });
+
+    const denied = await app.inject({
+      method: "GET",
+      url: "/api/calendar/calendars/00000000-0000-4000-8000-000000000101/memberships",
+    });
+    expect(denied.statusCode).toBe(403);
+
+    const manager = { ...actor, scopes: [...(actor.scopes ?? []), "calendar.manage"] };
+    const allowedApp = fastify();
+    await registerCalendarRoutes(allowedApp, {
+      store: new FakeCalendarStore(manager),
+      actorFromRequest: () => manager,
+    });
+    const allowed = await allowedApp.inject({
+      method: "GET",
+      url: "/api/calendar/calendars/00000000-0000-4000-8000-000000000101/memberships",
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json()).toEqual({ memberships: [] });
+  });
+
+  it("bounds revision export and requires an optimistic sequence for restore", async () => {
+    const actor = testActor();
+    const store = new FakeCalendarStore(actor);
+    const eventId = "00000000-0000-4000-8000-000000000399";
+    await store.createEvent({
+      id: eventId,
+      orgId: actor.orgId,
+      actorId: actor.id,
+      title: "Revision source",
+      startsAt: new Date("2026-05-21T15:00:00Z"),
+      endsAt: new Date("2026-05-21T16:00:00Z"),
+    });
+    const app = fastify();
+    await registerCalendarRoutes(app, { store, actorFromRequest: () => actor });
+
+    const oversized = await app.inject({
+      method: "GET",
+      url: `/api/calendar/events/${eventId}/revisions?limit=101`,
+    });
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/calendar/events/${eventId}/revisions?limit=25&beforeRevision=7`,
+    });
+    const invalidRestore = await app.inject({
+      method: "POST",
+      url: `/api/calendar/events/${eventId}/revisions/restore`,
+      payload: { revision: 0 },
+    });
+    const restored = await app.inject({
+      method: "POST",
+      url: `/api/calendar/events/${eventId}/revisions/restore`,
+      payload: { revision: 0, expectedIcsSequence: 0 },
+    });
+
+    expect(oversized.statusCode).toBe(400);
+    expect(listed.statusCode).toBe(200);
+    expect(store.listRevisionInputs).toEqual([
+      expect.objectContaining({ eventId, limit: 25, beforeRevision: 7 }),
+    ]);
+    expect(invalidRestore.statusCode).toBe(400);
+    expect(restored.statusCode).toBe(200);
+    expect(store.restoreRevisionInputs).toEqual([
+      expect.objectContaining({ eventId, revision: 0, expectedIcsSequence: 0 }),
+    ]);
+  });
+
   it("serves CalDAV discovery properties and respects PROPFIND depth", async () => {
     const actor = testActor();
     const store = new FakeCalendarStore(actor);
@@ -60,11 +150,26 @@ describe("CalDAV calendar routes", () => {
     expect(depthZero.body).toContain("<D:current-user-principal>");
     expect(depthZero.body).toContain(`/dav/cal/principals/00000000-0000-4000-8000-000000000001/`);
     expect(depthZero.body).toContain("<C:calendar-home-set>");
-    expect(depthZero.body).toContain("<D:collection/><C:calendar/>");
-    expect(depthZero.body).toContain("<D:supported-report-set>");
-    expect(depthZero.body).toContain("<C:calendar-query/>");
-    expect(depthZero.body).toContain("<C:calendar-multiget/>");
+    expect(depthZero.body).toContain("<D:resourcetype><D:collection/></D:resourcetype>");
     expect(depthZero.body).not.toContain(`${eventId}.ics`);
+
+    const home = await app.inject({
+      method: "PROPFIND",
+      url: `/dav/cal/${actor.id}/`,
+      headers: {
+        authorization: basicAuth(),
+        depth: "1",
+        "content-type": "application/xml",
+      },
+      payload: '<D:propfind xmlns:D="DAV:" />',
+    } as unknown as InjectOptions);
+    expect(home.statusCode).toBe(207);
+    expect(home.body).toContain(`/dav/cal/${calendarId}/`);
+    expect(home.body).toContain("<D:collection/><C:calendar/>");
+    expect(home.body).toContain("<D:sync-token>");
+    expect(home.body).toContain("<CS:getctag>");
+    expect(home.body).toContain("<D:sync-collection/>");
+    expect(home.body).not.toContain(`${eventId}.ics`);
 
     const depthOne = await app.inject({
       method: "PROPFIND",
@@ -164,13 +269,17 @@ describe("CalDAV calendar routes", () => {
 
     const calendarId = "00000000-0000-4000-8000-000000000101";
     const eventId = "00000000-0000-4000-8000-000000000201";
+    const title = `CalDAV ${"\ud83d\ude80\u6771\u4eac".repeat(20)} planning`;
     const ics = createIcsCalendar({
       event: eventRecord({
         id: eventId,
         calendarId,
-        title: "CalDAV planning",
+        title,
         description: "Review CalDAV PUT support.",
         location: "Room 12",
+        startsAt: new Date("2026-05-21T13:30:00.000Z"),
+        endsAt: new Date("2026-05-21T14:30:00.000Z"),
+        timezone: "America/New_York",
         recurrenceRule: "FREQ=WEEKLY;COUNT=2",
         metadata: {
           caldav: { exdate: ["2026-05-27T15:00:00.000Z"] },
@@ -207,9 +316,12 @@ describe("CalDAV calendar routes", () => {
     expect(stored.id).toBe(eventId);
     expect(stored.calendarId).toBe(calendarId);
     expect(stored.uid).toBe(`${eventId}@calendar.helix.local`);
-    expect(stored.title).toBe("CalDAV planning");
+    expect(stored.title).toBe(title);
     expect(stored.description).toBe("Review CalDAV PUT support.");
     expect(stored.location).toBe("Room 12");
+    expect(stored.startsAt.toISOString()).toBe("2026-05-21T13:30:00.000Z");
+    expect(stored.endsAt.toISOString()).toBe("2026-05-21T14:30:00.000Z");
+    expect(stored.timezone).toBe("America/New_York");
     expect(stored.recurrenceRule).toBe("FREQ=WEEKLY;COUNT=2");
     expect(stored.metadata).toMatchObject({
       caldav: { exdate: ["2026-05-27T15:00:00.000Z"] },
@@ -223,7 +335,7 @@ describe("CalDAV calendar routes", () => {
     ).toBe("tentative");
   });
 
-  it("treats advertised actor calendar home as the default calendar alias", async () => {
+  it("keeps the advertised calendar home distinct from writable calendar collections", async () => {
     const actor = testActor();
     const store = new FakeCalendarStore(actor);
     const app = fastify();
@@ -262,12 +374,8 @@ describe("CalDAV calendar routes", () => {
       ].join("\n"),
     } as unknown as InjectOptions);
 
-    expect(created.statusCode).toBe(201);
-    expect(store.requireEvent(eventId).calendarId).toBe("00000000-0000-4000-8000-000000000101");
-    expect(queried.statusCode).toBe(207);
-    expect(store.lastListInput?.calendarId).toBeUndefined();
-    expect(queried.body).toContain(`/dav/cal/00000000-0000-4000-8000-000000000101/${eventId}.ics`);
-    expect(queried.body).toContain("SUMMARY:Actor home alias");
+    expect(created.statusCode).toBe(404);
+    expect(queried.statusCode).toBe(404);
   });
 
   it("stores cancelled RECURRENCE-ID instances from CalDAV PUT as EXDATEs", async () => {
@@ -340,6 +448,143 @@ describe("CalDAV calendar routes", () => {
     expect(reportResponse.body).not.toContain("SUMMARY:Weekly planning");
   });
 
+  it("round-trips edit-this and edit-future overrides through a series edit", async () => {
+    const actor = testActor();
+    const store = new FakeCalendarStore(actor);
+    const app = fastify();
+    await registerCalendarRoutes(app, { store, actorFromRequest: () => actor });
+    const calendarId = "00000000-0000-4000-8000-000000000101";
+    const eventId = "00000000-0000-4000-8000-000000000213";
+    const uid = `${eventId}@calendar.helix.local`;
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      `UID:${uid}`,
+      "DTSTAMP:20260520T130000Z",
+      "DTSTART:20260520T150000Z",
+      "DTEND:20260520T160000Z",
+      "SUMMARY:Series title",
+      "RRULE:FREQ=DAILY;COUNT=5",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      `UID:${uid}`,
+      "RECURRENCE-ID:20260521T150000Z",
+      "DTSTAMP:20260520T140000Z",
+      "DTSTART:20260521T170000Z",
+      "DTEND:20260521T180000Z",
+      "SEQUENCE:3",
+      "SUMMARY:One-off title",
+      "ATTENDEE;PARTSTAT=DECLINED:mailto:bruno@example.com",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      `UID:${uid}`,
+      "RECURRENCE-ID:20260522T150000Z",
+      "DTSTAMP:20260520T143000Z",
+      "DTSTART:20260522T150000Z",
+      "DTEND:20260522T160000Z",
+      "SEQUENCE:3",
+      "STATUS:CANCELLED",
+      "SUMMARY:Cancelled occurrence",
+      "END:VEVENT",
+      "BEGIN:VEVENT",
+      `UID:${uid}`,
+      "RECURRENCE-ID;RANGE=THISANDFUTURE:20260523T150000Z",
+      "DTSTAMP:20260520T150000Z",
+      "DTSTART:20260523T180000Z",
+      "DTEND:20260523T190000Z",
+      "SEQUENCE:4",
+      "SUMMARY:Future title",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: `/dav/cal/${calendarId}/${eventId}.ics`,
+          headers: { authorization: basicAuth(), "content-type": "text/calendar" },
+          payload: ics,
+        })
+      ).statusCode,
+    ).toBe(201);
+    const created = store.requireEvent(eventId);
+    expect(created.metadata).toMatchObject({
+      caldav: {
+        overrides: [
+          {
+            recurrenceId: "2026-05-21T15:00:00.000Z",
+            startsAt: "2026-05-21T17:00:00.000Z",
+            attendees: [{ email: "bruno@example.com", responseStatus: "declined" }],
+          },
+          {
+            recurrenceId: "2026-05-22T15:00:00.000Z",
+            status: "cancelled",
+          },
+          {
+            recurrenceId: "2026-05-23T15:00:00.000Z",
+            range: "this_and_future",
+          },
+        ],
+      },
+    });
+    expect(
+      expandCalendarEventOccurrences(
+        created,
+        new Date("2026-05-20T00:00:00Z"),
+        new Date("2026-05-26T00:00:00Z"),
+      ).map((occurrence) => occurrence.startsAt.toISOString()),
+    ).toEqual([
+      "2026-05-20T15:00:00.000Z",
+      "2026-05-21T17:00:00.000Z",
+      "2026-05-23T18:00:00.000Z",
+      "2026-05-24T18:00:00.000Z",
+    ]);
+
+    const exported = await app.inject({
+      method: "GET",
+      url: `/dav/cal/${calendarId}/${eventId}.ics`,
+      headers: { authorization: basicAuth() },
+    });
+    expect(exported.body).toContain("RECURRENCE-ID:20260521T150000Z");
+    expect(exported.body).toContain("PARTSTAT=DECLINED");
+    expect(exported.body).toContain("RECURRENCE-ID:20260522T150000Z");
+    expect(exported.body).toContain("STATUS:CANCELLED");
+    expect(exported.body).toContain("RECURRENCE-ID;RANGE=THISANDFUTURE:20260523T150000Z");
+
+    const seriesEdit = exported.body.replace("SUMMARY:Series title", "SUMMARY:Edited series");
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: `/dav/cal/${calendarId}/${eventId}.ics`,
+          headers: {
+            authorization: basicAuth(),
+            "content-type": "text/calendar",
+            "if-match": `"${eventId}-0"`,
+          },
+          payload: seriesEdit,
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(store.requireEvent(eventId)).toMatchObject({
+      title: "Edited series",
+      metadata: {
+        caldav: {
+          overrides: [
+            {
+              recurrenceId: "2026-05-21T15:00:00.000Z",
+              attendees: [{ email: "bruno@example.com", responseStatus: "declined" }],
+            },
+            { recurrenceId: "2026-05-22T15:00:00.000Z", status: "cancelled" },
+            { recurrenceId: "2026-05-23T15:00:00.000Z", range: "this_and_future" },
+          ],
+        },
+      },
+    });
+  });
+
   it("normalizes CalDAV PUT TZID local dates to UTC instants", async () => {
     const actor = testActor();
     const store = new FakeCalendarStore(actor);
@@ -392,6 +637,48 @@ describe("CalDAV calendar routes", () => {
     expect(getResponse.body).toContain('DTSTART;TZID="America/New_York":20260521T093000');
     expect(getResponse.body).toContain('DTEND;TZID="America/New_York":20260521T103000');
     expect(getResponse.body).toContain("EXDATE:20260528T133000Z");
+  });
+
+  it("round-trips CalDAV floating local times without attaching a zone", async () => {
+    const actor = testActor();
+    const store = new FakeCalendarStore(actor);
+    const app = fastify();
+    await registerCalendarRoutes(app, { store, actorFromRequest: () => actor });
+
+    const calendarId = "00000000-0000-4000-8000-000000000101";
+    const eventId = "00000000-0000-4000-8000-000000000205";
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "BEGIN:VEVENT",
+      `UID:${eventId}@calendar.helix.local`,
+      "DTSTART:20260521T093000",
+      "DTEND:20260521T103000",
+      "SUMMARY:Floating planning",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+
+    const putResponse = await app.inject({
+      method: "PUT",
+      url: `/dav/cal/${calendarId}/${eventId}.ics`,
+      headers: { authorization: basicAuth(), "content-type": "text/calendar" },
+      payload: ics,
+    });
+    const stored = store.requireEvent(eventId);
+
+    expect(putResponse.statusCode).toBe(201);
+    expect(stored.startsAt.toISOString()).toBe("2026-05-21T09:30:00.000Z");
+    expect(stored.timeSemantics).toBe("floating");
+
+    const getResponse = await app.inject({
+      method: "GET",
+      url: `/dav/cal/${calendarId}/${eventId}.ics`,
+      headers: { authorization: basicAuth() },
+    });
+    expect(getResponse.body).toContain("DTSTART:20260521T093000\r\n");
+    expect(getResponse.body).not.toContain("DTSTART:20260521T093000Z");
+    expect(getResponse.body).not.toContain("DTSTART;TZID");
   });
 
   it("round-trips CalDAV all-day VALUE=DATE events through PUT, GET, and date windows", async () => {
@@ -628,6 +915,119 @@ describe("CalDAV calendar routes", () => {
     expect(currentDelete.statusCode).toBe(204);
   });
 
+  it("pages more than 250 resources and converges offline updates and tombstones", async () => {
+    const actor = testActor();
+    const store = new FakeCalendarStore(actor);
+    const calendarId = "00000000-0000-4000-8000-000000000101";
+    for (let index = 1; index <= 253; index += 1) {
+      await store.createEvent({
+        id: syncEventId(index),
+        orgId: actor.orgId,
+        actorId: actor.id,
+        calendarId,
+        title: `Sync event ${String(index)}`,
+        startsAt: new Date(Date.UTC(2026, 6, 1, 12, index)),
+        endsAt: new Date(Date.UTC(2026, 6, 1, 13, index)),
+      });
+    }
+    const app = fastify();
+    await registerCalendarRoutes(app, { store, actorFromRequest: () => actor });
+
+    const collection = await app.inject({
+      method: "PROPFIND",
+      url: `/dav/cal/${calendarId}/`,
+      headers: { authorization: basicAuth(), depth: "0", "content-type": "application/xml" },
+      payload: '<D:propfind xmlns:D="DAV:" />',
+    } as unknown as InjectOptions);
+    const currentToken = syncTokenFromXml(collection.body);
+    expect(collection.body).toContain(
+      `<D:getetag>&quot;calendar-${calendarId}-253&quot;</D:getetag>`,
+    );
+    let token: string | null = null;
+    const received = new Set<string>();
+    for (let pageNumber = 0; pageNumber < 4 && token !== currentToken; pageNumber += 1) {
+      const page = await app.inject({
+        method: "REPORT",
+        url: `/dav/cal/${calendarId}/`,
+        headers: { authorization: basicAuth(), "content-type": "application/xml" },
+        payload: [
+          '<D:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">',
+          `<D:sync-token>${token ?? ""}</D:sync-token>`,
+          "<D:sync-level>1</D:sync-level>",
+          "<D:limit><D:nresults>100</D:nresults></D:limit>",
+          "<D:prop><D:getetag/><C:calendar-data/></D:prop>",
+          "</D:sync-collection>",
+        ].join(""),
+      } as unknown as InjectOptions);
+      expect(page.statusCode).toBe(207);
+      for (const id of eventIdsFromXml(page.body)) received.add(id);
+      token = syncTokenFromXml(page.body);
+      if (token !== currentToken) {
+        expect(page.body).toContain("<D:number-of-matches-within-limits/>");
+      }
+    }
+    expect(token).toBe(currentToken);
+    expect(received.size).toBe(253);
+    if (token === null) throw new Error("Initial CalDAV sync did not return a token.");
+
+    const updatedId = syncEventId(1);
+    const deletedId = syncEventId(2);
+    const createdId = syncEventId(254);
+    await store.updateEvent({
+      orgId: actor.orgId,
+      actorId: actor.id,
+      eventId: updatedId,
+      patch: { title: "Updated while offline" },
+    });
+    await store.deleteEvent({ orgId: actor.orgId, actorId: actor.id, eventId: deletedId });
+    await store.createEvent({
+      id: createdId,
+      orgId: actor.orgId,
+      actorId: actor.id,
+      calendarId,
+      title: "Created while offline",
+      startsAt: new Date("2026-07-02T12:00:00Z"),
+      endsAt: new Date("2026-07-02T13:00:00Z"),
+    });
+    const delta = await app.inject({
+      method: "REPORT",
+      url: `/dav/cal/${calendarId}/`,
+      headers: { authorization: basicAuth(), "content-type": "application/xml" },
+      payload: [
+        '<D:sync-collection xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">',
+        `<D:sync-token>${token}</D:sync-token>`,
+        "<D:sync-level>1</D:sync-level>",
+        "<D:prop><D:getetag/><C:calendar-data/></D:prop>",
+        "</D:sync-collection>",
+      ].join(""),
+    } as unknown as InjectOptions);
+    expect(delta.statusCode).toBe(207);
+    expect(delta.body).toContain("SUMMARY:Updated while offline");
+    expect(delta.body).toContain("SUMMARY:Created while offline");
+    expect(delta.body).toContain(`/dav/cal/${calendarId}/${deletedId}.ics`);
+    expect(delta.body).toContain("HTTP/1.1 404 Not Found");
+    expect(syncTokenFromXml(delta.body)).not.toBe(token);
+
+    const wrongCollectionToken = token.replace(calendarId, actor.id);
+    const rejected = await app.inject({
+      method: "REPORT",
+      url: `/dav/cal/${calendarId}/`,
+      headers: { authorization: basicAuth(), "content-type": "application/xml" },
+      payload: `<D:sync-collection xmlns:D="DAV:"><D:sync-token>${wrongCollectionToken}</D:sync-token></D:sync-collection>`,
+    } as unknown as InjectOptions);
+    expect(rejected.statusCode).toBe(409);
+    expect(rejected.body).toContain("<D:valid-sync-token/>");
+
+    store.hiddenCalendarIds.add(calendarId);
+    const revoked = await app.inject({
+      method: "REPORT",
+      url: `/dav/cal/${calendarId}/`,
+      headers: { authorization: basicAuth(), "content-type": "application/xml" },
+      payload: '<D:sync-collection xmlns:D="DAV:"><D:sync-token /></D:sync-collection>',
+    } as unknown as InjectOptions);
+    expect(revoked.statusCode).toBe(404);
+  });
+
   it("serves CalDAV calendar-query REPORT with filtered calendar data", async () => {
     const actor = testActor();
     const store = new FakeCalendarStore(actor);
@@ -844,8 +1244,21 @@ describe("CalDAV calendar routes", () => {
     const invitationSender = new FakeInvitationSender();
     await registerCalendarRoutes(app, { store, actorFromRequest: () => actor, invitationSender });
 
-    const response = await app.inject({
+    const confirmation = await app.inject({
       method: "GET",
+      url: "/dav/cal/rsvp/token-bruno-example-com?response=declined",
+    });
+    expect(confirmation.statusCode).toBe(200);
+    expect(confirmation.headers["content-security-policy"]).toContain("form-action 'self'");
+    expect(confirmation.body).toContain("Respond to invitation");
+    expect(
+      store
+        .requireEvent(eventId)
+        .attendees.find((attendee) => attendee.email === "bruno@example.com")?.responseStatus,
+    ).toBe("needs_action");
+
+    const response = await app.inject({
+      method: "POST",
       url: "/dav/cal/rsvp/token-bruno-example-com?response=declined",
     });
 
@@ -866,6 +1279,18 @@ describe("CalDAV calendar routes", () => {
       event: { id: eventId },
       attendee: { email: "bruno@example.com", responseStatus: "declined" },
     });
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/dav/cal/rsvp/token-bruno-example-com?response=accepted",
+    });
+    expect(replay.statusCode).toBe(404);
+    expect(
+      store
+        .requireEvent(eventId)
+        .attendees.find((attendee) => attendee.email === "bruno@example.com")?.responseStatus,
+    ).toBe("declined");
+    expect(invitationSender.replyInputs).toHaveLength(1);
   });
 
   it("returns deterministic RSVP errors for malformed and unknown links", async () => {
@@ -875,16 +1300,16 @@ describe("CalDAV calendar routes", () => {
     await registerCalendarRoutes(app, { store, actorFromRequest: () => actor });
 
     const malformed = await app.inject({
-      method: "GET",
+      method: "POST",
       url: "/dav/cal/rsvp/missing-token?response=bogus",
     });
     const response = await app.inject({
-      method: "GET",
+      method: "POST",
       url: "/dav/cal/rsvp/missing-token?response=accepted",
     });
 
     expect(malformed.statusCode).toBe(400);
-    expect(malformed.body).toBe("Malformed RSVP link.");
+    expect(malformed.body).toBe("Malformed RSVP response.");
     expect(response.statusCode).toBe(404);
     expect(response.body).toBe("Unknown RSVP link.");
   });
@@ -907,7 +1332,18 @@ class FakeInvitationSender implements CalendarInvitationSender {
 
 class FakeCalendarStore implements CalendarStore {
   readonly #events = new Map<string, CalendarEventRecord>();
+  readonly #calendarIds = new Set(["00000000-0000-4000-8000-000000000101"]);
+  readonly #changes: {
+    readonly calendarId: string;
+    readonly eventId: string;
+    readonly version: number;
+    readonly deleted: boolean;
+  }[] = [];
+  readonly #versions = new Map<string, number>();
   readonly authScopes: string[] = [];
+  readonly hiddenCalendarIds = new Set<string>();
+  readonly listRevisionInputs: Parameters<CalendarStore["listEventRevisions"]>[0][] = [];
+  readonly restoreRevisionInputs: Parameters<CalendarStore["restoreEventRevision"]>[0][] = [];
   allowedScopes: readonly string[] = ["calendar.read", "calendar.write"];
   lastListInput:
     | {
@@ -933,17 +1369,24 @@ class FakeCalendarStore implements CalendarStore {
       endsAt: input.endsAt,
       timezone: input.timezone,
       allDay: input.allDay,
+      timeSemantics: input.timeSemantics,
       recurrenceRule: input.recurrenceRule ?? null,
       metadata: input.metadata ?? {},
       attendees: attendeeInputs(input.attendees ?? []),
     });
     this.#events.set(id, event);
+    this.#calendarIds.add(event.calendarId);
+    this.#recordChange(event.calendarId, id, false);
     return event;
   }
 
   async updateEvent(input: UpdateCalendarEventInput): Promise<CalendarEventRecord | null> {
     const existing = this.#events.get(input.eventId);
-    if (existing === undefined) {
+    if (
+      existing === undefined ||
+      (input.expectedIcsSequence !== undefined &&
+        input.expectedIcsSequence !== existing.icsSequence)
+    ) {
       return null;
     }
     const updated = {
@@ -957,44 +1400,91 @@ class FakeCalendarStore implements CalendarStore {
       updatedAt: new Date("2026-05-20T13:05:00.000Z"),
     };
     this.#events.set(input.eventId, updated);
+    this.#recordChange(updated.calendarId, updated.id, false);
     return updated;
   }
 
-  async deleteEvent(input: { readonly eventId: string }): Promise<CalendarEventRecord | null> {
+  async deleteEvent(input: {
+    readonly orgId?: string | undefined;
+    readonly actorId?: string | undefined;
+    readonly eventId: string;
+    readonly expectedIcsSequence?: number | undefined;
+  }): Promise<CalendarEventRecord | null> {
     const existing = this.#events.get(input.eventId);
-    if (existing === undefined) {
+    if (
+      existing === undefined ||
+      (input.expectedIcsSequence !== undefined &&
+        input.expectedIcsSequence !== existing.icsSequence)
+    ) {
       return null;
     }
     this.#events.delete(input.eventId);
+    this.#recordChange(existing.calendarId, existing.id, true);
     return existing;
   }
 
+  async listEventRevisions(
+    input: Parameters<CalendarStore["listEventRevisions"]>[0],
+  ): Promise<readonly []> {
+    this.listRevisionInputs.push(input);
+    return [];
+  }
+
+  async restoreEventRevision(
+    input: Parameters<CalendarStore["restoreEventRevision"]>[0],
+  ): Promise<CalendarEventRecord | null> {
+    this.restoreRevisionInputs.push(input);
+    return this.#events.get(input.eventId) ?? null;
+  }
+
   async respondToEvent(input: {
-    readonly rsvpToken?: string | undefined;
+    readonly actorId?: string | undefined;
+    readonly eventId?: string | undefined;
     readonly responseStatus: "accepted" | "declined" | "tentative";
   }): Promise<CalendarEventRecord | null> {
-    if (input.rsvpToken === undefined) {
+    if (input.eventId === undefined || input.actorId === undefined) {
       return null;
     }
+    const event = this.#events.get(input.eventId);
+    if (event === undefined) {
+      return null;
+    }
+    const updated = {
+      ...event,
+      attendees: event.attendees.map((attendee) =>
+        attendee.actorId === input.actorId
+          ? { ...attendee, responseStatus: input.responseStatus }
+          : attendee,
+      ),
+    };
+    this.#events.set(event.id, updated);
+    return updated;
+  }
+
+  async respondToRsvpToken(input: {
+    readonly rsvpToken: string;
+    readonly responseStatus: "accepted" | "declined" | "tentative";
+  }) {
     for (const event of this.#events.values()) {
-      if (!event.attendees.some((attendee) => attendee.rsvpToken === input.rsvpToken)) {
+      const attendee = event.attendees.find((candidate) => candidate.rsvpToken === input.rsvpToken);
+      if (attendee === undefined) {
         continue;
       }
+      const responded = {
+        ...attendee,
+        responseStatus: input.responseStatus,
+        respondedAt: new Date("2026-05-20T13:06:00.000Z"),
+        rsvpToken: `consumed-${input.rsvpToken}`,
+      };
       const updated = {
         ...event,
-        attendees: event.attendees.map((attendee) =>
-          attendee.rsvpToken === input.rsvpToken
-            ? {
-                ...attendee,
-                responseStatus: input.responseStatus,
-                respondedAt: new Date("2026-05-20T13:06:00.000Z"),
-              }
-            : attendee,
+        attendees: event.attendees.map((candidate) =>
+          candidate.rsvpToken === input.rsvpToken ? responded : candidate,
         ),
         updatedAt: new Date("2026-05-20T13:06:00.000Z"),
       };
       this.#events.set(event.id, updated);
-      return updated;
+      return { event: updated, attendee: responded };
     }
     return null;
   }
@@ -1026,6 +1516,35 @@ class FakeCalendarStore implements CalendarStore {
       .slice(0, input.limit ?? 250);
   }
 
+  async listCalendarChangesForActor(input: {
+    readonly calendarId: string;
+    readonly afterVersion: number;
+    readonly limit?: number | undefined;
+  }) {
+    if (this.hiddenCalendarIds.has(input.calendarId) || !this.#calendarIds.has(input.calendarId)) {
+      return null;
+    }
+    const limit = input.limit ?? 250;
+    const rows = this.#changes
+      .filter(
+        (change) => change.calendarId === input.calendarId && change.version > input.afterVersion,
+      )
+      .slice(0, limit + 1);
+    const pageRows = rows.slice(0, limit);
+    const latestByEvent = new Map(pageRows.map((change) => [change.eventId, change]));
+    return {
+      changes: [...latestByEvent.values()].map((change) => ({
+        version: change.version,
+        eventId: change.eventId,
+        event: change.deleted ? null : (this.#events.get(change.eventId) ?? null),
+      })),
+      version:
+        pageRows.at(-1)?.version ?? this.#versions.get(input.calendarId) ?? input.afterVersion,
+      latestVersion: this.#versions.get(input.calendarId) ?? 0,
+      hasMore: rows.length > limit,
+    };
+  }
+
   async authenticateAppPassword(input: {
     readonly username: string;
     readonly password: string;
@@ -1040,7 +1559,37 @@ class FakeCalendarStore implements CalendarStore {
   }
 
   async listCalendarsForActor(): Promise<readonly CalendarListEntry[]> {
+    return [...this.#calendarIds]
+      .filter((id) => !this.hiddenCalendarIds.has(id))
+      .map((id) => ({
+        id,
+        orgId: this.actor.orgId,
+        name: "Calendar",
+        description: null,
+        timezone: "UTC",
+        color: "#4f46e5",
+        ownerActorId: this.actor.id,
+        ownerDisplayName: this.actor.displayName ?? null,
+        role: "owner",
+        visible: true,
+        group: "mine",
+        writable: true,
+        sortOrder: 0,
+        eventCount: [...this.#events.values()].filter((event) => event.calendarId === id).length,
+        syncVersion: this.#versions.get(id) ?? 0,
+      }));
+  }
+
+  async listCalendarMemberships(): Promise<readonly CalendarMembershipRecord[]> {
     return [];
+  }
+
+  async setCalendarMembership(): Promise<CalendarMembershipRecord | null> {
+    return null;
+  }
+
+  async removeCalendarMembership(): Promise<boolean> {
+    return false;
   }
 
   requireEvent(eventId: string): CalendarEventRecord {
@@ -1049,6 +1598,12 @@ class FakeCalendarStore implements CalendarStore {
       throw new Error(`Unknown event: ${eventId}`);
     }
     return event;
+  }
+
+  #recordChange(calendarId: string, eventId: string, deleted: boolean): void {
+    const version = (this.#versions.get(calendarId) ?? 0) + 1;
+    this.#versions.set(calendarId, version);
+    this.#changes.push({ calendarId, eventId, version, deleted });
   }
 }
 
@@ -1063,6 +1618,7 @@ function eventRecord(input: {
   readonly endsAt?: Date | undefined;
   readonly timezone?: string | undefined;
   readonly allDay?: boolean | undefined;
+  readonly timeSemantics?: CalendarEventRecord["timeSemantics"];
   readonly recurrenceRule?: string | null | undefined;
   readonly attendees?: readonly CalendarAttendeeRecord[] | undefined;
   readonly metadata?: CalendarEventRecord["metadata"] | undefined;
@@ -1081,6 +1637,7 @@ function eventRecord(input: {
     endsAt: input.endsAt ?? new Date("2026-05-20T16:00:00.000Z"),
     timezone: input.timezone ?? "UTC",
     allDay: input.allDay ?? false,
+    timeSemantics: input.timeSemantics,
     status: "confirmed",
     recurrenceRule: input.recurrenceRule ?? null,
     organizerActorId: "00000000-0000-4000-8000-000000000001",
@@ -1113,6 +1670,20 @@ function attendeeRecord(input: {
     respondedAt: input.respondedAt ?? null,
     metadata: {},
   };
+}
+
+function syncEventId(index: number): string {
+  return `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
+
+function syncTokenFromXml(xml: string): string {
+  const token = /<D:sync-token>([^<]+)<\/D:sync-token>/u.exec(xml)?.[1];
+  if (token === undefined) throw new Error("Expected CalDAV sync-token.");
+  return token;
+}
+
+function eventIdsFromXml(xml: string): readonly string[] {
+  return [...xml.matchAll(/\/([0-9a-f-]{36})\.ics/giu)].map((match) => match[1] ?? "");
 }
 
 function attendeeInputs(

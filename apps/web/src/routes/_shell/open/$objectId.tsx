@@ -116,7 +116,7 @@ export function OpenObjectRouteContent({
     // Image / audio / video / ebook don't have dedicated SPA viewer routes yet;
     // surface them through the raw preview endpoint so the browser renders
     // them inline.
-    window.location.replace(`/api/drive/objects/${objectId}/preview`);
+    window.location.replace(`/v1/api/drive/objects/${objectId}/preview`);
   }, [loadQuery.data, objectId, router]);
 
   // Navigate to the freshly-imported native helix entity.
@@ -349,7 +349,7 @@ function OpenConversionChoice({
         >
           <a
             className="btn sm"
-            href={`/api/drive/objects/${objectId}/content?download=1`}
+            href={`/v1/api/drive/objects/${objectId}/content?download=1`}
             download={fileName}
           >
             Download original

@@ -1,17 +1,22 @@
-name: helix-infra
+# Local development only. Production deployments use the hardened Helm profiles.
+name: helix-local-dev
 
 services:
   helix:
-    image: ${HELIX_IMAGE:-ghcr.io/helix/helix:latest}
+    # The local stack never resolves a remote application tag. Build/tag this image locally;
+    # production pulls the signed digest required by the Helm chart.
+    image: helix/helix:local
+    pull_policy: never
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
+      # Deliberately non-overridable: this stack is never a production deployment path.
+      NODE_ENV: development
       HOST: 0.0.0.0
       PORT: 3000
       LOG_LEVEL: ${LOG_LEVEL:-info}
       HELIX_SECURITY_TIER: ${HELIX_SECURITY_TIER:-personal}
       HELIX_PUBLIC_URL: ${HELIX_PUBLIC_URL:-http://localhost:28441}
       HELIX_DEFAULT_ORG_ID: ${HELIX_DEFAULT_ORG_ID:-00000000-0000-4000-8000-000000000100}
-      DATABASE_URL: postgres://${POSTGRES_USER:-helix}:${POSTGRES_PASSWORD:-helix_dev_password}@postgres:5432/${POSTGRES_DB:-helix}
+      DATABASE_URL: postgres://helix_app:helix_app_local@postgres:5432/${POSTGRES_DB:-helix}
       BETTER_AUTH_ENABLED: ${BETTER_AUTH_ENABLED:-true}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:28441}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-helix_local_better_auth_secret_change_me_32_chars}
@@ -60,13 +65,17 @@ services:
       MEET_JITSI_JWT_ISSUER: ${MEET_JITSI_JWT_ISSUER:-helix}
       MEET_JITSI_JWT_AUDIENCE: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
       MEET_JITSI_JWT_SECRET: ${MEET_JITSI_JWT_SECRET:-helix_dev_jitsi_jwt_secret_change_me}
-      MEET_JITSI_TOKEN_TTL_SECONDS: ${MEET_JITSI_TOKEN_TTL_SECONDS:-3600}
+      MEET_JITSI_TOKEN_TTL_SECONDS: ${MEET_JITSI_TOKEN_TTL_SECONDS:-300}
       MEET_JITSI_WEBHOOK_SHARED_SECRET: ${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}
+      MEET_JIBRI_HEALTH_URL: ${MEET_JIBRI_HEALTH_URL:-http://jitsi-jibri:2222/jibri/api/v1.0/health}
       HELIX_CONFIG_JSON: >-
-        {"security":{"tier":"personal"},"plugins":{"com.helix.webhook-engine":{"enabled":true},"com.helix.webhook-out-generic":{"enabled":true},"com.helix.webhook-out-slack":{"enabled":true},"com.helix.webhook-out-discord":{"enabled":true},"com.helix.webhook-out-teams":{"enabled":true},"com.helix.webhook-out-custom-template":{"enabled":true},"com.helix.webhook-in-generic":{"enabled":true},"com.helix.webhook-in-github":{"enabled":true},"com.helix.webhook-in-stripe":{"enabled":true},"com.helix.webhook-in-linear":{"enabled":true},"com.helix.core.meet-jitsi":{"enabled":true,"jitsiDomain":"${MEET_JITSI_DOMAIN:-meet.localhost}","publicUrl":"${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}","jwt":{"appId":"${MEET_JITSI_JWT_APP_ID:-helix-meet}","issuer":"${MEET_JITSI_JWT_ISSUER:-helix}","audience":"${MEET_JITSI_JWT_AUDIENCE:-jitsi}","secretEnv":"MEET_JITSI_JWT_SECRET","ttlSeconds":${MEET_JITSI_TOKEN_TTL_SECONDS:-3600}},"webhook":{"sharedSecretEnv":"MEET_JITSI_WEBHOOK_SHARED_SECRET"}},"com.helix.observability-otel":{"enabled":true,"otlpEndpoint":"http://otel-collector:4318/v1/traces","sampling":{"traces":1,"toolCalls":1,"permissionChecks":1}}}}
+        {"security":{"tier":"personal"},"observability":{"config":{"otlpEndpoint":"http://otel-collector:4318/v1/traces","sampling":{"traces":1,"toolCalls":1,"permissionChecks":1}}},"plugins":{"com.helix.webhook-out-slack":{"enabled":true},"com.helix.core.meet-jitsi":{"enabled":true,"jitsiDomain":"${MEET_JITSI_DOMAIN:-meet.localhost}","publicUrl":"${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}","jwt":{"appId":"${MEET_JITSI_JWT_APP_ID:-helix-meet}","issuer":"${MEET_JITSI_JWT_ISSUER:-helix}","audience":"${MEET_JITSI_JWT_AUDIENCE:-jitsi}","secretEnv":"MEET_JITSI_JWT_SECRET","ttlSeconds":${MEET_JITSI_TOKEN_TTL_SECONDS:-300}},"webhook":{"sharedSecretEnv":"MEET_JITSI_WEBHOOK_SHARED_SECRET"}}}}
     ports:
-      - "${HELIX_PORT:-28431}:3000"
-      - "${HELIX_SMTP_RECEIVE_PORT:-28456}:2525"
+      - "127.0.0.1:${HELIX_PORT:-28431}:3000"
+      - "127.0.0.1:${HELIX_SMTP_RECEIVE_PORT:-28456}:2525"
+    networks:
+      - default
+      - content-conversion
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,13 +108,12 @@ services:
   postgres:
     build:
       context: ./infra/postgres
-    image: helix/postgres-pgvector:17-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-helix}
       POSTGRES_USER: ${POSTGRES_USER:-helix}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-helix_dev_password}
     ports:
-      - "${POSTGRES_PORT:-28432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-28432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -117,10 +125,10 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_PORT:-28433}:6379"
+      - "127.0.0.1:${REDIS_PORT:-28433}:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -131,29 +139,29 @@ services:
     restart: unless-stopped
 
   nats:
-    image: nats:2.10-alpine
+    image: nats:2.10.29-alpine@sha256:b83efabe3e7def1e0a4a31ec6e078999bb17c80363f881df35edc70fcb6bb927
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "${NATS_CLIENT_PORT:-28434}:4222"
-      - "${NATS_MONITOR_PORT:-28435}:8222"
+      - "127.0.0.1:${NATS_CLIENT_PORT:-28434}:4222"
+      - "127.0.0.1:${NATS_MONITOR_PORT:-28435}:8222"
     volumes:
       - nats-data:/data
     restart: unless-stopped
 
   meilisearch:
-    image: getmeili/meilisearch:v1.10
+    image: getmeili/meilisearch:v1.10.3@sha256:9d1b9b02fe6c68f60b54ce40092d8078f051b9341c400c90f907607636b7c9c1
     environment:
       MEILI_ENV: ${MEILI_ENV:-development}
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-helix_dev_meili_master_key}
       MEILI_NO_ANALYTICS: "true"
     ports:
-      - "${MEILI_PORT:-28436}:7700"
+      - "127.0.0.1:${MEILI_PORT:-28436}:7700"
     volumes:
       - meili-data:/meili_data
     restart: unless-stopped
 
   rustfs:
-    image: rustfs/rustfs:latest
+    image: rustfs/rustfs:1.0.0-beta.12@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21
     command: ["/data"]
     environment:
       RUSTFS_ADDRESS: ":9000"
@@ -168,39 +176,39 @@ services:
       # InvalidBucketName.
       RUSTFS_SERVER_DOMAINS: ${RUSTFS_SERVER_DOMAINS:-localhost,rustfs,localhost:28437,localhost:9000,rustfs:9000}
     ports:
-      - "${RUSTFS_API_PORT:-28437}:9000"
-      - "${RUSTFS_CONSOLE_PORT:-28438}:9001"
+      - "127.0.0.1:${RUSTFS_API_PORT:-28437}:9000"
+      - "127.0.0.1:${RUSTFS_CONSOLE_PORT:-28438}:9001"
     volumes:
       - rustfs-data:/data
     restart: unless-stopped
 
   cerbos:
-    image: ghcr.io/cerbos/cerbos:latest
+    image: ghcr.io/cerbos/cerbos:0.55.0@sha256:4b9d3b58c4f11c1b8953bc798d8d086e64f276882253ab169625fddc7f432515
     command: ["server", "--config=/config/.cerbos.yaml"]
     ports:
-      - "${CERBOS_HTTP_PORT:-28439}:3592"
-      - "${CERBOS_GRPC_PORT:-28440}:3593"
+      - "127.0.0.1:${CERBOS_HTTP_PORT:-28439}:3592"
+      - "127.0.0.1:${CERBOS_GRPC_PORT:-28440}:3593"
     volumes:
       - ./infra/cerbos/.cerbos.yaml:/config/.cerbos.yaml:ro
       - ./infra/cerbos/policies:/policies:ro
     restart: unless-stopped
 
   mailpit:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.31.0@sha256:c96991d9bef73594c246d89ca81411d4e916f03e76a7d2d72fa2ab5dd3c9ce24
     ports:
-      - "${MAILPIT_SMTP_PORT:-28457}:1025"
-      - "${MAILPIT_WEB_PORT:-28458}:8025"
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-28457}:1025"
+      - "127.0.0.1:${MAILPIT_WEB_PORT:-28458}:8025"
     restart: unless-stopped
 
   # SpamAssassin spamd daemon. Inbound mail ingest scores each received message
   # over the spamd TCP protocol when MAIL_SPAMD_ENABLED=true. Opt-in via the
   # `mail-security` compose profile.
   spamd:
-    image: instantlinux/spamassassin:latest
+    image: instantlinux/spamassassin:4.0.2-3@sha256:2016c75fcbe2215ee9dc50cd3e89f01a13bef7cbc1cd7e4d63054cb7170528b2
     profiles: ["mail-security"]
     command: ["spamd", "--allowed-ips=0.0.0.0/0", "--listen=0.0.0.0:783", "--max-children=4"]
     ports:
-      - "${MAIL_SPAMD_PORT_PUBLISHED:-28459}:783"
+      - "127.0.0.1:${MAIL_SPAMD_PORT_PUBLISHED:-28459}:783"
     volumes:
       - spamd-data:/var/lib/spamassassin
     restart: unless-stopped
@@ -209,10 +217,19 @@ services:
   # INSTREAM TCP protocol when MAIL_CLAMAV_ENABLED=true. Opt-in via the
   # `mail-security` compose profile.
   clamav:
-    image: clamav/clamav:latest
+    image: clamav/clamav:1.5.4@sha256:f0954d679017eb6d48221e2b2be3ac5457bf278a844f39b672376f55a085f591
     profiles: ["mail-security"]
+    environment:
+      CLAMD_CONF_StreamMaxLength: ${HELIX_DRIVE_AV_MAX_FILE_BYTES:-134217728}
+      CLAMD_CONF_MaxFileSize: ${HELIX_DRIVE_AV_MAX_FILE_BYTES:-134217728}
+      CLAMD_CONF_MaxScanSize: ${HELIX_DRIVE_ARCHIVE_MAX_UNCOMPRESSED_BYTES:-1073741824}
+      CLAMD_CONF_MaxFiles: ${HELIX_DRIVE_ARCHIVE_MAX_ENTRIES:-10000}
+      CLAMD_CONF_MaxRecursion: ${HELIX_DRIVE_ARCHIVE_MAX_NESTED:-20}
+      CLAMD_CONF_MaxScanTime: ${MAIL_CLAMAV_TIMEOUT_MS:-30000}
+      CLAMD_CONF_AlertExceedsMax: "yes"
+      CLAMD_CONF_AlertEncrypted: "yes"
     ports:
-      - "${MAIL_CLAMAV_PORT_PUBLISHED:-28460}:3310"
+      - "127.0.0.1:${MAIL_CLAMAV_PORT_PUBLISHED:-28460}:3310"
     volumes:
       - clamav-data:/var/lib/clamav
     healthcheck:
@@ -226,13 +243,29 @@ services:
   drive-preview-libreoffice:
     build:
       context: ./infra/drive-preview-libreoffice
-    image: helix/drive-preview-libreoffice:latest
     profiles: ["drive-preview"]
     environment:
       PORT: 8080
-      MAX_BODY_BYTES: ${DRIVE_PREVIEW_MAX_BODY_BYTES:-52428800}
-    ports:
-      - "${DRIVE_PREVIEW_PORT:-28450}:8080"
+      DRIVE_PREVIEW_REQUEST_BYTES: ${DRIVE_PREVIEW_REQUEST_BYTES:-73400320}
+      DRIVE_PREVIEW_MAX_BYTES: ${DRIVE_PREVIEW_MAX_BYTES:-52428800}
+      DRIVE_PREVIEW_MAX_OUTPUT_BYTES: ${DRIVE_PREVIEW_MAX_OUTPUT_BYTES:-67108864}
+      DRIVE_PREVIEW_MAX_TEXT_BYTES: ${DRIVE_PREVIEW_MAX_TEXT_BYTES:-10485760}
+      DRIVE_PREVIEW_MAX_ARCHIVE_ENTRIES: ${DRIVE_PREVIEW_MAX_ARCHIVE_ENTRIES:-2048}
+      DRIVE_PREVIEW_MAX_ARCHIVE_BYTES: ${DRIVE_PREVIEW_MAX_ARCHIVE_BYTES:-268435456}
+      DRIVE_PREVIEW_MAX_ARCHIVE_RATIO: ${DRIVE_PREVIEW_MAX_ARCHIVE_RATIO:-100}
+      DRIVE_PREVIEW_MAX_CELLS: ${DRIVE_PREVIEW_MAX_CELLS:-1000000}
+      DRIVE_PREVIEW_MAX_PAGES: ${DRIVE_PREVIEW_MAX_PAGES:-200}
+      DRIVE_PREVIEW_TIMEOUT_MS: ${DRIVE_PREVIEW_TIMEOUT_MS:-30000}
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 768m
+    cpus: 1
+    tmpfs:
+      - /tmp:size=512m,mode=1777,nosuid,nodev
+    networks: [content-conversion]
     healthcheck:
       test:
         [
@@ -244,35 +277,37 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    stop_grace_period: 5s
     restart: unless-stopped
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     environment:
       HELIX_DOMAIN: ${HELIX_DOMAIN:-localhost}
       HELIX_UPSTREAM: ${HELIX_UPSTREAM:-helix:3000}
+      HELIX_JITSI_ORIGIN: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost:28452}
     ports:
       - "${CADDY_HTTP_PORT:-28441}:80"
       - "${CADDY_HTTPS_PORT:-28442}:443"
       - "${CADDY_HTTPS_PORT:-28442}:443/udp"
-      - "${CADDY_ADMIN_PORT:-28443}:2019"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
       - helix
-      - cerbos
-      - rustfs
     restart: unless-stopped
 
   jitsi-web:
-    image: jitsi/web:stable
+    image: jitsi/web:stable-11031@sha256:2183593bbbe1b5e27c368e3737efc51915ce7742de93f594e5ca7950c864c233
     profiles: ["meet"]
     environment:
       ENABLE_AUTH: "1"
       ENABLE_GUESTS: "0"
       ENABLE_XMPP_WEBSOCKET: "1"
+      ENABLE_P2P: "0"
+      ENABLE_LOBBY: "1"
+      ENABLE_AV_MODERATION: "1"
       AUTH_TYPE: jwt
       # Show the in-call "Start recording" button. Without this jitsi-meet
       # hides the recording menu items even if Jibri is up.
@@ -290,11 +325,13 @@ services:
       JWT_ACCEPTED_ISSUERS: ${MEET_JITSI_JWT_ISSUER:-helix}
       JWT_ACCEPTED_AUDIENCES: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
     ports:
-      - "${JITSI_WEB_HTTP_PORT:-28451}:80"
-      - "${JITSI_WEB_HTTPS_PORT:-28452}:443"
+      - "127.0.0.1:${JITSI_WEB_HTTP_PORT:-28451}:80"
+      - "127.0.0.1:${JITSI_WEB_HTTPS_PORT:-28452}:443"
     volumes:
-      - ./infra/meet/config/web:/config
+      - jitsi-web-config:/config
+      - ./infra/meet/custom-config.js:/config/custom-config.js:ro
       - ./infra/meet/config/transcripts:/usr/share/jitsi-meet/transcripts
+    networks: [meet-control]
     depends_on:
       - jitsi-prosody
       - jitsi-jicofo
@@ -302,13 +339,26 @@ services:
     restart: unless-stopped
 
   jitsi-prosody:
-    image: jitsi/prosody:stable
+    image: jitsi/prosody:stable-11031@sha256:926c508c0d9198bf9d0b6adb88ce9092461e9a79e2895fb57fe4ef5f44ff3523
     profiles: ["meet"]
     environment:
       AUTH_TYPE: jwt
       ENABLE_AUTH: "1"
       ENABLE_GUESTS: "0"
       ENABLE_XMPP_WEBSOCKET: "1"
+      ENABLE_LOBBY: "1"
+      ENABLE_AV_MODERATION: "1"
+      ENABLE_END_CONFERENCE: "1"
+      PROSODY_ENABLE_FILTER_MESSAGES: "1"
+      XMPP_MUC_MODULES: token_affiliation
+      STUN_HOST: ${JITSI_TURN_HOST:-turn.localhost}
+      STUN_PORT: ${JITSI_TURN_PORT:-3478}
+      TURN_HOST: ${JITSI_TURN_HOST:-turn.localhost}
+      TURN_PORT: ${JITSI_TURN_PORT:-3478}
+      TURN_TRANSPORT: udp,tcp
+      TURNS_HOST: ${JITSI_TURN_HOST:-turn.localhost}
+      TURNS_PORT: ${JITSI_TURNS_PORT:-5349}
+      TURN_TTL: "600"
       # Provision the recorder.meet.jitsi virtual host + the jibri/recorder
       # XMPP users that Jibri authenticates as. Required for the recording
       # to begin at all; absent these, jicofo never finds a Jibri instance.
@@ -328,6 +378,8 @@ services:
       JICOFO_AUTH_USER: focus
       JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-helix_dev_jicofo_auth_password_change_me}
       JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-helix_dev_jicofo_component_secret_change_me}
+      ENABLE_AUTO_OWNER: "0"
+      ENABLE_MODERATOR_CHECKS: "1"
       JVB_AUTH_USER: jvb
       JVB_AUTH_PASSWORD: ${JITSI_JVB_AUTH_PASSWORD:-helix_dev_jvb_auth_password_change_me}
       JWT_APP_ID: ${MEET_JITSI_JWT_APP_ID:-helix-meet}
@@ -335,14 +387,35 @@ services:
       JWT_ACCEPTED_ISSUERS: ${MEET_JITSI_JWT_ISSUER:-helix}
       JWT_ACCEPTED_AUDIENCES: ${MEET_JITSI_JWT_AUDIENCE:-jitsi}
     ports:
-      - "${JITSI_PROSODY_C2S_PORT:-28454}:5222"
-      - "${JITSI_PROSODY_HTTP_PORT:-28455}:5280"
+      - "127.0.0.1:${JITSI_PROSODY_C2S_PORT:-28454}:5222"
+      - "127.0.0.1:${JITSI_PROSODY_HTTP_PORT:-28455}:5280"
     volumes:
-      - ./infra/meet/config/prosody:/config
+      - jitsi-prosody-config:/config
+      - ./infra/meet/prosody/05-turn-secret:/etc/cont-init.d/05-turn-secret:ro
+    secrets:
+      - source: jitsi_turn_shared_secret
+        target: jitsi_turn_shared_secret
+      - source: jitsi_xmpp_cert
+        target: /config/certs/${JITSI_XMPP_DOMAIN:-meet.jitsi}.crt
+      - source: jitsi_xmpp_key
+        target: /config/certs/${JITSI_XMPP_DOMAIN:-meet.jitsi}.key
+      - source: jitsi_xmpp_cert
+        target: /config/certs/${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}.crt
+      - source: jitsi_xmpp_key
+        target: /config/certs/${JITSI_XMPP_AUTH_DOMAIN:-auth.meet.jitsi}.key
+      - source: jitsi_xmpp_cert
+        target: /config/certs/${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}.crt
+      - source: jitsi_xmpp_key
+        target: /config/certs/${JITSI_XMPP_MUC_DOMAIN:-muc.meet.jitsi}.key
+      - source: jitsi_xmpp_cert
+        target: /config/certs/${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}.crt
+      - source: jitsi_xmpp_key
+        target: /config/certs/${JITSI_XMPP_INTERNAL_MUC_DOMAIN:-internal-muc.meet.jitsi}.key
+    networks: [meet-control]
     restart: unless-stopped
 
   jitsi-jicofo:
-    image: jitsi/jicofo:stable
+    image: jitsi/jicofo:stable-11031@sha256:1f78fb0c0548ae5efd83a2b488df6aabbae4a70bc6f64c74395b6937b3aceb98
     profiles: ["meet"]
     environment:
       TZ: ${TZ:-UTC}
@@ -354,6 +427,10 @@ services:
       JICOFO_AUTH_USER: focus
       JICOFO_AUTH_PASSWORD: ${JITSI_JICOFO_AUTH_PASSWORD:-helix_dev_jicofo_auth_password_change_me}
       JICOFO_COMPONENT_SECRET: ${JITSI_JICOFO_COMPONENT_SECRET:-helix_dev_jicofo_component_secret_change_me}
+      JAVA_TOOL_OPTIONS: >-
+        -Djavax.net.ssl.trustStore=/run/secrets/jitsi_xmpp_truststore
+        -Djavax.net.ssl.trustStoreType=PKCS12
+        -Djavax.net.ssl.trustStorePassword=changeit
       # Tell jicofo to discover Jibri instances via the recording brewery
       # MUC. Jibri joins that MUC on startup; jicofo dispatches recording
       # start/stop IQ messages to whichever Jibri presence is available.
@@ -362,13 +439,17 @@ services:
       JIBRI_PENDING_TIMEOUT: "90"
       XMPP_RECORDER_DOMAIN: ${JITSI_XMPP_RECORDER_DOMAIN:-recorder.meet.jitsi}
     volumes:
-      - ./infra/meet/config/jicofo:/config
+      - jitsi-jicofo-config:/config
+      - ./infra/meet/jicofo/custom-jicofo.conf:/config/custom-jicofo.conf:ro
+    secrets:
+      - jitsi_xmpp_truststore
+    networks: [meet-control]
     depends_on:
       - jitsi-prosody
     restart: unless-stopped
 
   jitsi-jvb:
-    image: jitsi/jvb:stable
+    image: jitsi/jvb:stable-11031@sha256:3460de3541a8f96d007b8f2b4681ea8321cae64c17387338eabf776e73cd0f51
     profiles: ["meet"]
     environment:
       TZ: ${TZ:-UTC}
@@ -381,12 +462,63 @@ services:
       JVB_PORT: 10000
       JVB_TCP_HARVESTER_DISABLED: "true"
       JVB_ADVERTISE_IPS: ${JITSI_JVB_ADVERTISE_IPS:-}
+      JVB_STUN_SERVERS: jitsi-turn:3478
+      JVB_REQUIRE_VALID_ADDRESS: "true"
+      JAVA_TOOL_OPTIONS: >-
+        -Djavax.net.ssl.trustStore=/run/secrets/jitsi_xmpp_truststore
+        -Djavax.net.ssl.trustStoreType=PKCS12
+        -Djavax.net.ssl.trustStorePassword=changeit
     ports:
-      - "${JITSI_JVB_UDP_PORT:-28453}:10000/udp"
+      - "127.0.0.1:${JITSI_JVB_UDP_PORT:-28453}:10000/udp"
     volumes:
-      - ./infra/meet/config/jvb:/config
+      - jitsi-jvb-config:/config
+      - ./infra/meet/jvb/custom-jvb.conf:/config/custom-jvb.conf:ro
+    secrets:
+      - jitsi_xmpp_truststore
+    networks: [meet-control, meet-media]
     depends_on:
       - jitsi-prosody
+      - jitsi-turn
+    restart: unless-stopped
+
+  jitsi-turn:
+    image: coturn/coturn:4.7.0-alpine@sha256:2a0c41042b02c6daa33f35ce3781da20fe0d08da6cf2746c8ae62a890802cc36
+    profiles: ["meet"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        umask 077;
+        printf 'static-auth-secret=%s\n' "$$(cat /run/secrets/jitsi_turn_shared_secret)"
+        > /tmp/turn-secret.conf;
+        exec turnserver -c /tmp/turn-secret.conf --fingerprint --use-auth-secret
+        --realm="$${JITSI_TURN_REALM}" --server-name="$${JITSI_TURN_REALM}"
+        --external-ip="$${JITSI_TURN_EXTERNAL_IP}"
+        --listening-port=3478 --tls-listening-port=5349
+        --min-port=49160 --max-port=49200
+        --cert=/run/secrets/jitsi_turn_cert --pkey=/run/secrets/jitsi_turn_key
+        --no-dtls --stale-nonce=600
+        --user-quota=12 --total-quota=1200 --no-cli
+        --no-multicast-peers --log-file=stdout
+    environment:
+      JITSI_TURN_REALM: ${JITSI_TURN_HOST:-turn.localhost}
+      JITSI_TURN_EXTERNAL_IP: ${JITSI_TURN_EXTERNAL_IP:-127.0.0.1}
+    ports:
+      - "${JITSI_TURN_BIND_IP:-127.0.0.1}:${JITSI_TURN_PORT:-3478}:3478/tcp"
+      - "${JITSI_TURN_BIND_IP:-127.0.0.1}:${JITSI_TURN_PORT:-3478}:3478/udp"
+      - "${JITSI_TURN_BIND_IP:-127.0.0.1}:${JITSI_TURNS_PORT:-5349}:5349/tcp"
+      - "${JITSI_TURN_BIND_IP:-127.0.0.1}:49160-49200:49160-49200/udp"
+    secrets:
+      - jitsi_turn_shared_secret
+      - jitsi_turn_cert
+      - jitsi_turn_key
+    networks: [meet-media]
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777,nosuid,nodev,noexec
+      - /var/tmp:size=16m,mode=1777,nosuid,nodev,noexec
     restart: unless-stopped
 
   # ----------------------------------------------------------------------
@@ -395,14 +527,11 @@ services:
   # snd-aloop + X11 screen, encodes via ffmpeg, runs finalize.sh on stop.
   #
   # IMPORTANT: snd-aloop is a Linux kernel module that must be loaded on
-  # the HOST. On Docker-for-Mac this is impractical (the Linux VM kernel
-  # is not user-modifiable) so Jibri will start but fail to record. For
-  # Mac dev validation, use the `meet-mock-recorder` service below — it
-  # simulates the Jibri webhook contract end-to-end. In Linux prod, make
-  # sure `modprobe snd-aloop` succeeds on the host before bringing this
-  # up.
+  # the host. Recording is therefore supported only on a Linux host where
+  # `modprobe snd-aloop` succeeds; the service intentionally fails rather
+  # than manufacturing placeholder media on unsupported hosts.
   jitsi-jibri:
-    image: jitsi/jibri:stable
+    image: jitsi/jibri:stable-11031@sha256:40f5fd67517cdb6395ae642143f1a5c002ff80259c1c633a384ede5c7b0569f4
     profiles: ["meet", "recording"]
     environment:
       TZ: ${TZ:-UTC}
@@ -417,29 +546,26 @@ services:
       JIBRI_BREWERY_MUC: ${JIBRI_BREWERY_MUC:-jibribrewery}
       JIBRI_RECORDER_USER: ${JIBRI_RECORDER_USER:-recorder}
       JIBRI_RECORDER_PASSWORD: ${JIBRI_RECORDER_PASSWORD:-helix_dev_jibri_recorder_password_change_me}
+      XMPP_TRUST_ALL_CERTS: "false"
+      JAVA_TOOL_OPTIONS: >-
+        -Djavax.net.ssl.trustStore=/run/secrets/jitsi_xmpp_truststore
+        -Djavax.net.ssl.trustStoreType=PKCS12
+        -Djavax.net.ssl.trustStorePassword=changeit
       JIBRI_RECORDING_DIR: /recordings
       JIBRI_FINALIZE_RECORDING_SCRIPT_PATH: /jibri-finalize/finalize.sh
-      # finalize.sh reads these to prepare tenant storage uploads + notify helix.
-      # Prepare is optional only for local RustFS dev. BYO/tenant-resolved
-      # recording storage must set HELIX_JITSI_PREPARE_UPLOAD=true and
-      # HELIX_JITSI_PREPARE_REQUIRED=true so finalize fails before webhooking
-      # when storage cannot be prepared or uploaded.
+      # finalize.sh uses Helix's tenant-bound prepare/upload/complete protocol.
       HELIX_INTERNAL_URL: ${HELIX_INTERNAL_URL:-http://helix:3000}
       HELIX_JITSI_WEBHOOK_SECRET: ${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}
       HELIX_JITSI_ORG_ID: ${HELIX_JITSI_ORG_ID:-}
-      HELIX_JITSI_PREPARE_UPLOAD: ${HELIX_JITSI_PREPARE_UPLOAD:-false}
-      HELIX_JITSI_PREPARE_REQUIRED: ${HELIX_JITSI_PREPARE_REQUIRED:-false}
-      HELIX_JITSI_PREPARE_URL: ${HELIX_JITSI_PREPARE_URL:-}
-      RUSTFS_ENDPOINT_INTERNAL: ${RUSTFS_ENDPOINT_INTERNAL:-http://rustfs:9000}
-      RUSTFS_BUCKET: ${RUSTFS_BUCKET:-helix-objects}
-      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-helixrustfs}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-helix_rustfs_dev_secret}
     volumes:
-      - ./infra/meet/config/jibri:/config
+      - jitsi-jibri-config:/config
       - ./infra/meet/finalize:/jibri-finalize:ro
       - jibri-recordings:/recordings
       # Required for Jibri's headless Chrome and X server
       - /dev/shm:/dev/shm
+    secrets:
+      - jitsi_xmpp_truststore
+    networks: [default, meet-control]
     shm_size: "2gb"
     cap_add:
       - SYS_ADMIN
@@ -450,18 +576,13 @@ services:
       - helix
     restart: unless-stopped
 
-  # Mock recorder lives as a helix admin tool (`meet.mock-record`) rather
-  # than a separate container, so the dev validation path exercises
-  # exactly the same /webhook/jitsi code Jibri's finalize.sh hits. See
-  # apps/helix/src/platform/meet/mock-recorder.ts.
-
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.159.0@sha256:1f2c54a30e713fac6b3ae77a1ec84010c2007e29ced8ec666214fc2f6739c1cc
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     profiles: ["observability"]
     ports:
-      - "${OTEL_COLLECTOR_GRPC_PORT:-28444}:4317"
-      - "${OTEL_COLLECTOR_HTTP_PORT:-28445}:4318"
+      - "127.0.0.1:${OTEL_COLLECTOR_GRPC_PORT:-28444}:4317"
+      - "127.0.0.1:${OTEL_COLLECTOR_HTTP_PORT:-28445}:4318"
     volumes:
       - ./infra/observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro
     depends_on:
@@ -469,56 +590,57 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
     profiles: ["observability"]
     ports:
-      - "${PROMETHEUS_PORT:-28446}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-28446}:9090"
     volumes:
       - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/observability/prometheus/rules:/etc/prometheus/rules:ro
+      - ./infra/helm/helix/files:/etc/prometheus/product-slos:ro
       - prometheus-data:/prometheus
     depends_on:
       - alertmanager
     restart: unless-stopped
 
   alertmanager:
-    image: prom/alertmanager:latest
+    image: prom/alertmanager:v0.34.0@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
       - "--web.listen-address=0.0.0.0:9093"
     profiles: ["observability"]
     ports:
-      - "${ALERTMANAGER_PORT:-28461}:9093"
+      - "127.0.0.1:${ALERTMANAGER_PORT:-28461}:9093"
     volumes:
       - ./infra/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager-data:/alertmanager
     restart: unless-stopped
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:3.0.0@sha256:78439f7f7cf3c97122846c13a832e060c6c7ef67dcc814dccf0a5f3f78393a93
     command: ["-config.file=/etc/tempo.yaml"]
     profiles: ["observability"]
     ports:
-      - "${TEMPO_HTTP_PORT:-28447}:3200"
+      - "127.0.0.1:${TEMPO_HTTP_PORT:-28447}:3200"
     volumes:
       - ./infra/observability/tempo/tempo.yaml:/etc/tempo.yaml:ro
       - tempo-data:/var/tempo
     restart: unless-stopped
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500
     command: ["-config.file=/etc/loki/local-config.yaml"]
     profiles: ["observability"]
     ports:
-      - "${LOKI_PORT:-28448}:3100"
+      - "127.0.0.1:${LOKI_PORT:-28448}:3100"
     volumes:
       - ./infra/observability/loki/loki.yaml:/etc/loki/local-config.yaml:ro
       - loki-data:/loki
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
     profiles: ["observability"]
     environment:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
@@ -526,7 +648,7 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_AUTH_ANONYMOUS_ENABLED:-true}
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     ports:
-      - "${GRAFANA_PORT:-28449}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-28449}:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       - ./infra/observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
@@ -553,3 +675,30 @@ volumes:
   grafana-data:
   spamd-data:
   clamav-data:
+  jitsi-web-config:
+  jitsi-prosody-config:
+  jitsi-jicofo-config:
+  jitsi-jvb-config:
+  jitsi-jibri-config:
+  jibri-recordings:
+
+secrets:
+  jitsi_turn_shared_secret:
+    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/turn-shared-secret
+  jitsi_turn_cert:
+    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/turn.crt
+  jitsi_turn_key:
+    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/turn.key
+  jitsi_xmpp_cert:
+    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/xmpp.crt
+  jitsi_xmpp_key:
+    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/xmpp.key
+  jitsi_xmpp_truststore:
+    file: ${HELIX_MEET_SECRETS_DIR:-.local/meet-secrets}/xmpp-truststore.p12
+
+networks:
+  content-conversion:
+    internal: true
+  meet-control:
+    internal: true
+  meet-media:

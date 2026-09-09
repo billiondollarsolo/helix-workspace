@@ -7,7 +7,17 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { useQuery } from "@tanstack/react-query";
 import { Icons, type IconName } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
-import { sessionUserQueryOptions } from "@/lib/auth";
+import {
+  addPasskey,
+  deletePasskey,
+  disableTotp,
+  enableTotp,
+  listPasskeys,
+  regenerateRecoveryCodes,
+  sessionUserQueryOptions,
+  verifyTotp,
+  type PasskeyRecord,
+} from "@/lib/auth";
 import {
   ACCENT_OPTIONS,
   FONT_SCALE_OPTIONS,
@@ -15,6 +25,8 @@ import {
   useAppearance,
 } from "@/components/settings-store";
 import type { SettingsSectionId } from "@/components/shell/overlay-context";
+import { setMailUserSettings } from "@/features/mail/api";
+import { mailUserSettingsQueryOptions } from "@/features/mail/queries";
 
 /* ---------- shared bits ---------- */
 
@@ -570,6 +582,41 @@ function NotifySection() {
 /* ---------- Mail signature ---------- */
 
 function SignatureSection() {
+  const settings = useQuery(mailUserSettingsQueryOptions());
+  const [signatureText, setSignatureText] = useState("");
+  const [includeOnReplies, setIncludeOnReplies] = useState(true);
+  const [blockedSenders, setBlockedSenders] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (settings.data === undefined) return;
+    setSignatureText(settings.data.signatureText);
+    setIncludeOnReplies(settings.data.includeSignatureOnReplies);
+    setBlockedSenders(settings.data.blockedSenders.join("\n"));
+  }, [settings.data]);
+
+  const save = async () => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      await setMailUserSettings({
+        signatureText,
+        signatureHtml: null,
+        includeSignatureOnReplies: includeOnReplies,
+        blockedSenders: blockedSenders
+          .split(/[\s,]+/u)
+          .map((address) => address.trim().toLowerCase())
+          .filter(Boolean),
+      });
+      setMessage("Mail settings saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save mail settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <>
       <h1 style={h1Style}>Mail signature</h1>
@@ -580,11 +627,11 @@ function SignatureSection() {
           name="mailSignature"
           autoComplete="off"
           className="input"
-          defaultValue=""
+          value={signatureText}
+          onChange={(event) => setSignatureText(event.target.value)}
           placeholder="For example, Thanks, Morgan…"
           rows={5}
-          disabled
-          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          disabled={settings.isPending || saving}
           style={{
             height: "auto",
             padding: 10,
@@ -600,13 +647,43 @@ function SignatureSection() {
           id="settings-reply-signature"
           name="replySignature"
           className="select"
-          disabled
-          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          value={includeOnReplies ? "include" : "skip"}
+          onChange={(event) => setIncludeOnReplies(event.target.value === "include")}
+          disabled={settings.isPending || saving}
         >
-          <option>Include signature on replies</option>
-          <option>Skip on replies</option>
+          <option value="include">Include signature on replies</option>
+          <option value="skip">Skip on replies</option>
         </select>
       </SettingsField>
+      <SettingsField
+        label="Blocked senders"
+        hint="One email address per line; future messages go to Spam"
+        controlId="settings-blocked-senders"
+      >
+        <textarea
+          id="settings-blocked-senders"
+          name="blockedSenders"
+          autoComplete="off"
+          className="input"
+          value={blockedSenders}
+          onChange={(event) => setBlockedSenders(event.target.value)}
+          rows={4}
+          disabled={settings.isPending || saving}
+          style={{ height: "auto", padding: 10, resize: "vertical", fontFamily: "inherit" }}
+        />
+      </SettingsField>
+      {settings.error !== null ? (
+        <div role="alert">{settings.error.message}</div>
+      ) : null}
+      {message !== null ? <div role="status">{message}</div> : null}
+      <button
+        type="button"
+        className="btn primary sm"
+        disabled={settings.isPending || saving}
+        onClick={() => void save()}
+      >
+        {saving ? "Saving…" : "Save mail settings"}
+      </button>
     </>
   );
 }
@@ -614,77 +691,63 @@ function SignatureSection() {
 /* ---------- Security ---------- */
 
 function SecuritySection() {
-  const sessions = [
-    {
-      device: "MacBook Pro · Safari",
-      loc: "San Francisco, CA",
-      time: "now",
-      current: true,
-    },
-    {
-      device: "iPhone 15 · Helix iOS",
-      loc: "San Francisco, CA",
-      time: "2h ago",
-      current: false,
-    },
-    {
-      device: "Windows · Chrome",
-      loc: "Portland, OR",
-      time: "Yesterday",
-      current: false,
-    },
-  ];
+  const { data: user, refetch: refetchSession } = useQuery(sessionUserQueryOptions());
+  const [passkeys, setPasskeys] = useState<readonly PasskeyRecord[]>([]);
+  const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [totpUri, setTotpUri] = useState<string | null>(null);
+  const [recoveryCodes, setRecoveryCodes] = useState<readonly string[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function run(operation: () => Promise<void>): Promise<void> {
+    setBusy(true); setMessage(null);
+    try { await operation(); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "Security update failed."); }
+    finally { setBusy(false); }
+  }
+
+  useEffect(() => { void listPasskeys().then(setPasskeys).catch(() => setPasskeys([])); }, []);
+
   return (
     <>
       <h1 style={h1Style}>Security</h1>
-      <div style={subStyle}>Authentication and active sessions</div>
-      <SettingsField label="Multi-factor authentication" hint="Required by your organization">
-        <span className="chip success">
-          <span className="chip-dot" />
-          Enrolled · YubiKey + TOTP
-        </span>
-        <UnavailableSettingsButton style={{ marginLeft: 8 }}>Manage</UnavailableSettingsButton>
+      <div style={subStyle}>Passkeys, authenticator apps, and one-time recovery codes</div>
+      <SettingsField label="Passkeys" hint="Preferred: phishing-resistant WebAuthn credentials">
+        <button className="btn sm" type="button" disabled={busy} onClick={() => void run(async () => {
+          await addPasskey("Helix passkey"); setPasskeys(await listPasskeys()); setMessage("Passkey added.");
+        })}>Add passkey</button>
+        {passkeys.map((passkey) => <div key={passkey.id} style={{ marginTop: 8 }}>
+          {passkey.name ?? "Passkey"}
+          <button className="btn sm" type="button" disabled={busy} style={{ marginLeft: 8 }} onClick={() => void run(async () => {
+            await deletePasskey(passkey.id); setPasskeys(await listPasskeys());
+          })}>Remove</button>
+        </div>)}
       </SettingsField>
-      <SettingsField
-        label="Recovery codes"
-        hint="Stored offline, used if your second factor is unavailable"
-      >
-        <UnavailableSettingsButton>View recovery codes</UnavailableSettingsButton>
+      <SettingsField label="Authenticator app" hint="TOTP fallback requires your current password">
+        <input className="input" type="password" autoComplete="current-password" placeholder="Current password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        {user?.twoFactorEnabled ?
+          <button className="btn sm" type="button" disabled={busy || password.length === 0} style={{ marginLeft: 8 }} onClick={() => void run(async () => {
+            await disableTotp(password); setPassword(""); await refetchSession(); setRecoveryCodes([]);
+          })}>Disable TOTP</button> :
+          <button className="btn sm" type="button" disabled={busy || password.length === 0} style={{ marginLeft: 8 }} onClick={() => void run(async () => {
+            const setup = await enableTotp(password); setTotpUri(setup.totpURI); setRecoveryCodes(setup.backupCodes);
+          })}>Set up TOTP</button>}
+        {totpUri === null ? null : <div style={{ marginTop: 8 }}>
+          <div style={{ overflowWrap: "anywhere" }}>{totpUri}</div>
+          <input className="input" inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" value={totpCode} onChange={(event) => setTotpCode(event.target.value)} />
+          <button className="btn sm" type="button" disabled={busy || totpCode.length < 6} style={{ marginLeft: 8 }} onClick={() => void run(async () => {
+            await verifyTotp(totpCode); setTotpUri(null); setTotpCode(""); setPassword(""); await refetchSession();
+          })}>Verify</button>
+        </div>}
       </SettingsField>
-      <SettingsField label="Active sessions" hint="Devices currently signed in">
-        <div className="panel">
-          {sessions.map((session, index) => (
-            <div
-              key={session.device}
-              style={{
-                padding: "10px 12px",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                borderTop: index ? "1px solid var(--border)" : "none",
-                fontSize: "var(--text-meta)",
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 500 }}>
-                  {session.device}
-                  {session.current ? (
-                    <span className="chip accent" style={{ marginLeft: 6 }}>
-                      This device
-                    </span>
-                  ) : null}
-                </div>
-                <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
-                  {session.loc} · {session.time}
-                </div>
-              </div>
-              {!session.current ? (
-                <UnavailableSettingsButton>Sign out</UnavailableSettingsButton>
-              ) : null}
-            </div>
-          ))}
-        </div>
+      <SettingsField label="Recovery codes" hint="Shown once; each code works once and cannot be recovered">
+        {user?.twoFactorEnabled ? <button className="btn sm" type="button" disabled={busy || password.length === 0} onClick={() => void run(async () => {
+          setRecoveryCodes(await regenerateRecoveryCodes(password)); setPassword("");
+        })}>Replace recovery codes</button> : <span>Enable TOTP to create recovery codes.</span>}
+        {recoveryCodes.length === 0 ? null : <pre style={{ marginTop: 8 }}>{recoveryCodes.join("\n")}</pre>}
       </SettingsField>
+      {message === null ? null : <div role="status">{message}</div>}
     </>
   );
 }

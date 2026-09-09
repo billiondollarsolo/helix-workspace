@@ -14,7 +14,7 @@ export function useMailRealtime(enabled = true): void {
       return;
     }
 
-    const source = new EventSource("/sse/mail", { withCredentials: true });
+    const source = new EventSource("/v1/sse/mail", { withCredentials: true });
 
     const onMessage = (event: MessageEvent<string>) => {
       try {

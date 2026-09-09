@@ -1,4 +1,4 @@
-import { addAccessTokenSearchParam, authenticatedFetch } from "@/lib/auth";
+import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
 
 export type DocsApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -296,9 +296,8 @@ export async function copyDocsDocument(
 
 export async function importDocxDocument(
   input: {
-    readonly filename?: string;
+    readonly sourceObjectId: string;
     readonly title?: string;
-    readonly contentBase64: string;
     readonly folderId?: string | null;
     readonly metadata?: Record<string, unknown>;
   },
@@ -307,9 +306,8 @@ export async function importDocxDocument(
   return callDocsTool<DocsApiDocument>(
     "docs.import-docx",
     {
-      ...(input.filename === undefined ? {} : { filename: input.filename }),
+      sourceObjectId: input.sourceObjectId,
       ...(input.title === undefined ? {} : { title: input.title }),
-      contentBase64: input.contentBase64,
       folderId: input.folderId ?? null,
       metadata: input.metadata ?? {},
     },
@@ -813,14 +811,14 @@ export async function resolveDocsSuggestions(
 }
 
 export function docsSyncUrl(docId: string): string {
-  const path = `/sync/docs/${encodeURIComponent(docId)}`;
+  const path = `/v1/sync/docs/${encodeURIComponent(docId)}`;
   if (typeof window === "undefined") {
     return path;
   }
 
   const url = new URL(path, window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return addAccessTokenSearchParam(url.toString());
+  return url.toString();
 }
 
 export function createDocsSyncClient(options: DocsSyncClientOptions): DocsSyncClient {

@@ -1,6 +1,7 @@
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
+import { actorHasScope } from "../../api/scopes.js";
 
 const adminAuditScope = "admin.audit";
 const uuidSchema = z.string().uuid();
@@ -68,7 +69,8 @@ export async function registerAuditLogAdminRoutes(
         .code(400)
         .send({ error: "Invalid audit log query.", issues: parsed.error.issues });
     }
-    const cursor = parsed.data.cursor === undefined ? undefined : decodeAuditLogCursor(parsed.data.cursor);
+    const cursor =
+      parsed.data.cursor === undefined ? undefined : decodeAuditLogCursor(parsed.data.cursor);
     if (cursor === null) {
       return reply.code(400).send({ error: "Invalid audit log cursor." });
     }
@@ -96,14 +98,14 @@ export async function registerAuditLogAdminRoutes(
 }
 
 export function canReadAuditLog(actor: Actor): boolean {
-  const scopes = actor.scopes ?? [];
-  return scopes.includes(adminAuditScope) || scopes.includes("admin.*");
+  return actorHasScope(actor, adminAuditScope);
 }
 
 export function encodeAuditLogCursor(record: Pick<AuditLogRecord, "createdAt" | "id">): string {
-  return Buffer.from(JSON.stringify({ createdAt: record.createdAt, id: record.id }), "utf8").toString(
-    "base64url",
-  );
+  return Buffer.from(
+    JSON.stringify({ createdAt: record.createdAt, id: record.id }),
+    "utf8",
+  ).toString("base64url");
 }
 
 export function decodeAuditLogCursor(cursor: string): AuditLogCursor | null {

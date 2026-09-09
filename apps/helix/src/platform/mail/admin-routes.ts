@@ -1,6 +1,6 @@
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -13,6 +13,7 @@ import {
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "../admin/console-shared.js";
+import { DomainsConflictError, type DomainRecord, type DomainsStore } from "../admin/domains.js";
 import {
   MailAdminConflictError,
   type MailDkimKeyRecord,
@@ -20,15 +21,18 @@ import {
   type MailDmarcReportStore,
   type MailRoutingRuleStore,
   type OutboundProviderStore,
-  type SendingDomainStore,
 } from "./admin-store.js";
-import { OUTBOUND_MAIL_PROVIDER_KINDS, type OutboundProviderConfig } from "./providers.js";
+import {
+  OUTBOUND_MAIL_PROVIDER_KINDS,
+  parseOutboundProviderPublicConfig,
+  type OutboundProviderConfig,
+} from "./providers.js";
 import { parseDmarcAggregateReport, DmarcReportParseError } from "./dmarc.js";
 
 /**
  * Mail delivery admin routes.
  *
- * Org admins manage the outbound delivery provider, sending domains, DKIM
+ * Org admins manage the outbound delivery provider, mail domains, DKIM
  * signing keys, DMARC deliverability reports, and inbound routing rules. Every
  * route is scope-gated through the shared admin-console helpers
  * (`admin.console.read` / `admin.console.write`, with `admin.*` and the
@@ -42,12 +46,20 @@ const mailAdminScope = "mail.admin";
 
 /** Mail-admin read access — admin-console read, `admin.*`, or `mail.admin`. */
 function canReadMailDeliveryAdmin(actor: Actor): boolean {
-  return canReadAdminConsole(actor) || (actor.scopes ?? []).includes(mailAdminScope);
+  return canReadAdminConsole(actor, mailAdminScope, {
+    type: "product",
+    id: "mail",
+    orgId: actor.orgId,
+  });
 }
 
 /** Mail-admin write access — admin-console write, `admin.*`, or `mail.admin`. */
 function canWriteMailDeliveryAdmin(actor: Actor): boolean {
-  return canWriteAdminConsole(actor) || (actor.scopes ?? []).includes(mailAdminScope);
+  return canWriteAdminConsole(actor, mailAdminScope, {
+    type: "product",
+    id: "mail",
+    orgId: actor.orgId,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +71,12 @@ const domainKeyParams = z.object({ id: z.string().uuid(), keyId: z.string().uuid
 
 const providerKindSchema = z.enum(OUTBOUND_MAIL_PROVIDER_KINDS);
 const jsonObjectSchema = z.record(z.unknown());
+const tenantSecretHandleSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/u);
 
 const createProviderBody = z
   .object({
@@ -67,7 +85,8 @@ const createProviderBody = z
     enabled: z.boolean().default(true),
     isDefault: z.boolean().default(false),
     config: jsonObjectSchema.default({}),
-    secretRef: z.string().trim().min(1).max(200).nullable().default(null),
+    secretRef: tenantSecretHandleSchema.nullable().default(null),
+    webhookSecretRef: tenantSecretHandleSchema.nullable().default(null),
   })
   .strict();
 
@@ -77,26 +96,16 @@ const updateProviderBody = z
     enabled: z.boolean().optional(),
     isDefault: z.boolean().optional(),
     config: jsonObjectSchema.optional(),
-    secretRef: z.string().trim().min(1).max(200).nullable().optional(),
+    secretRef: tenantSecretHandleSchema.nullable().optional(),
+    webhookSecretRef: tenantSecretHandleSchema.nullable().optional(),
   })
   .strict();
 
-const domainSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(253)
-  .regex(/^[a-z0-9.-]+$/iu, "Domain must contain only letters, digits, dots, and hyphens.");
-
-const createSendingDomainBody = z
+const enableMailDomainBody = z
   .object({
-    domain: domainSchema,
-    isDefault: z.boolean().default(false),
     providerId: z.string().uuid().nullable().default(null),
   })
   .strict();
-
-const verifyDomainBody = z.object({ verified: z.boolean() }).strict();
 
 const generateDkimBody = z
   .object({
@@ -106,7 +115,8 @@ const generateDkimBody = z
       .min(1)
       .max(63)
       .regex(/^[a-z0-9._-]+$/iu, "Selector must be a DNS label."),
-    keyBits: z.union([z.literal(1024), z.literal(2048), z.literal(4096)]).default(2048),
+    keyBits: z.literal(2048).default(2048),
+    kmsKeyId: z.string().trim().min(1).max(2_048).optional(),
   })
   .strict();
 
@@ -121,15 +131,27 @@ const dmarcQuery = z.object({
 });
 
 const routingActionKindSchema = z.enum(["forward", "alias", "drop", "tag", "mailbox"]);
+const routingAddressPatternSchema = z
+  .string()
+  .trim()
+  .max(320)
+  .regex(/^(?:\*|[^@*\s]+)@[^@*\s]+$/u);
 const routingMatchSchema = z
   .object({
-    recipientPattern: z.string().trim().min(1).max(320).optional(),
-    senderPattern: z.string().trim().min(1).max(320).optional(),
+    recipientPattern: routingAddressPatternSchema.optional(),
+    senderPattern: routingAddressPatternSchema.optional(),
     subjectContains: z.string().trim().min(1).max(998).optional(),
-    headerName: z.string().trim().min(1).max(128).optional(),
+    headerName: z
+      .string()
+      .trim()
+      .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/u)
+      .optional(),
     headerContains: z.string().trim().min(1).max(998).optional(),
   })
-  .strict();
+  .strict()
+  .refine((value) => (value.headerName === undefined) === (value.headerContains === undefined), {
+    message: "headerName and headerContains must be provided together.",
+  });
 const routingActionSchema = z
   .object({
     forwardTo: z.string().email().optional(),
@@ -178,20 +200,30 @@ function routingActionIsConsistent(
   kind: z.infer<typeof routingActionKindSchema>,
   action: z.infer<typeof routingActionSchema>,
 ): boolean {
+  const configured = Object.keys(action).filter((key) => key !== "stopProcessing");
   switch (kind) {
     case "forward":
-      return action.forwardTo !== undefined;
+      return configured.length === 1 && action.forwardTo !== undefined;
     case "alias":
-      return action.aliasActorId !== undefined;
+      return configured.length === 1 && action.aliasActorId !== undefined;
     case "tag":
-      return action.tag !== undefined;
+      return configured.length === 1 && action.tag !== undefined;
     case "mailbox":
-      return action.mailbox !== undefined;
+      return configured.length === 1 && action.mailbox !== undefined;
     case "drop":
-      return true;
+      return configured.length === 0;
     default:
       return false;
   }
+}
+
+function isRoutingValidationError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error.code === "23514" || error.code === "22023")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +242,8 @@ function serializeProvider(provider: OutboundProviderConfig): Record<string, unk
     // Only the env-var *name* is surfaced; the secret value never leaves the host.
     secretRef: provider.secretRef,
     hasSecret: provider.secretRef !== null,
+    webhookSecretRef: provider.webhookSecretRef,
+    hasWebhookSecret: provider.webhookSecretRef !== null,
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
   };
@@ -231,7 +265,9 @@ function serializeDkimKey(key: MailDkimKeyRecord): Record<string, unknown> {
     publicKeyPem: key.publicKeyPem,
     dnsRecord: key.dnsRecord,
     dnsHost: `${key.selector}._domainkey`,
-    privateKeyStored: key.privateKeyPem.length > 0,
+    privateKeyStored: key.privateKeyStored,
+    activatedAt: key.activatedAt,
+    verifiedAt: key.verifiedAt,
     rotatedAt: key.rotatedAt,
     retiredAt: key.retiredAt,
     createdAt: key.createdAt,
@@ -245,12 +281,16 @@ function serializeDkimKey(key: MailDkimKeyRecord): Record<string, unknown> {
 
 export interface RegisterMailDeliveryAdminRoutesOptions {
   readonly providerStore: OutboundProviderStore;
-  readonly domainStore: SendingDomainStore;
+  readonly domainStore: Pick<DomainsStore, "listDomains" | "getDomain" | "setDomainCapabilities">;
   readonly dkimStore: MailDkimKeyStore;
   readonly dmarcStore: MailDmarcReportStore;
   readonly routingStore: MailRoutingRuleStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
-  readonly auditSink?: AdminConsoleAuditSink | undefined;
+  readonly auditSink: AdminConsoleAuditSink;
+  readonly verifyDkimDns: (input: {
+    readonly host: string;
+    readonly record: string;
+  }) => Promise<boolean>;
 }
 
 /**
@@ -260,13 +300,13 @@ export interface RegisterMailDeliveryAdminRoutesOptions {
  *   POST   /api/admin/mail/providers
  *   PATCH  /api/admin/mail/providers/:id
  *   DELETE /api/admin/mail/providers/:id
- *   GET    /api/admin/mail/sending-domains
- *   POST   /api/admin/mail/sending-domains
- *   POST   /api/admin/mail/sending-domains/:id/verify
- *   DELETE /api/admin/mail/sending-domains/:id
- *   GET    /api/admin/mail/sending-domains/:id/dkim
- *   POST   /api/admin/mail/sending-domains/:id/dkim
- *   POST   /api/admin/mail/sending-domains/:id/dkim/:keyId/retire
+ *   GET    /api/admin/mail/domains
+ *   POST   /api/admin/mail/domains/:id/enable
+ *   DELETE /api/admin/mail/domains/:id
+ *   GET    /api/admin/mail/domains/:id/dkim
+ *   POST   /api/admin/mail/domains/:id/dkim
+ *   POST   /api/admin/mail/domains/:id/dkim/:keyId/activate
+ *   POST   /api/admin/mail/domains/:id/dkim/:keyId/retire
  *   GET    /api/admin/mail/dmarc/reports
  *   GET    /api/admin/mail/dmarc/summary
  *   POST   /api/admin/mail/dmarc/reports
@@ -279,8 +319,16 @@ export async function registerMailDeliveryAdminRoutes(
   app: FastifyInstance,
   options: RegisterMailDeliveryAdminRoutesOptions,
 ): Promise<void> {
-  const { providerStore, domainStore, dkimStore, dmarcStore, routingStore, actorFromRequest, auditSink } =
-    options;
+  const {
+    providerStore,
+    domainStore,
+    dkimStore,
+    dmarcStore,
+    routingStore,
+    actorFromRequest,
+    auditSink,
+    verifyDkimDns,
+  } = options;
 
   // ---- Outbound providers -------------------------------------------------
 
@@ -303,21 +351,25 @@ export async function registerMailDeliveryAdminRoutes(
     }
     let provider: OutboundProviderConfig;
     try {
+      const config = parseOutboundProviderPublicConfig(body.data.kind, body.data.config);
       provider = await providerStore.createProvider({
         orgId: actor.orgId,
         name: body.data.name,
         kind: body.data.kind,
         enabled: body.data.enabled,
         isDefault: body.data.isDefault,
-        config: compactJson(body.data.config),
+        config,
         secretRef: body.data.secretRef,
+        webhookSecretRef: body.data.webhookSecretRef,
         createdBy: actor.id,
       });
     } catch (error) {
       if (error instanceof MailAdminConflictError) {
         return reply.code(409).send(conflict(error.message));
       }
-      throw error;
+      return reply
+        .code(400)
+        .send(invalidRequest(error instanceof Error ? error.message : "Invalid provider config."));
     }
     await auditAdminAction(auditSink, {
       orgId: actor.orgId,
@@ -343,14 +395,32 @@ export async function registerMailDeliveryAdminRoutes(
     if (!body.success) {
       return reply.code(400).send(invalidRequest("Invalid provider patch.", body.error.issues));
     }
+    const current = await providerStore.getProvider(actor.orgId, params.data.id);
+    if (current === null) {
+      return reply.code(404).send(notFound("Provider not found."));
+    }
+    let config: JsonObject | undefined;
+    try {
+      config =
+        body.data.config === undefined
+          ? undefined
+          : parseOutboundProviderPublicConfig(current.kind, body.data.config);
+    } catch (error) {
+      return reply
+        .code(400)
+        .send(invalidRequest(error instanceof Error ? error.message : "Invalid provider config."));
+    }
     const provider = await providerStore.updateProvider({
       orgId: actor.orgId,
       id: params.data.id,
       ...(body.data.name === undefined ? {} : { name: body.data.name }),
       ...(body.data.enabled === undefined ? {} : { enabled: body.data.enabled }),
       ...(body.data.isDefault === undefined ? {} : { isDefault: body.data.isDefault }),
-      ...(body.data.config === undefined ? {} : { config: compactJson(body.data.config) }),
+      ...(config === undefined ? {} : { config }),
       ...(body.data.secretRef === undefined ? {} : { secretRef: body.data.secretRef }),
+      ...(body.data.webhookSecretRef === undefined
+        ? {}
+        : { webhookSecretRef: body.data.webhookSecretRef }),
     });
     if (provider === null) {
       return reply.code(404).send(notFound("Provider not found."));
@@ -389,115 +459,121 @@ export async function registerMailDeliveryAdminRoutes(
     return { status: "deleted" };
   });
 
-  // ---- Sending domains ----------------------------------------------------
+  // ---- Canonical domains with mail capability ----------------------------
 
-  app.get("/api/admin/mail/sending-domains", async (request, reply) => {
+  app.get("/api/admin/mail/domains", async (request, reply) => {
     const actor = await actorFromRequest(request);
     if (!canReadMailDeliveryAdmin(actor)) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
-    return { domains: await domainStore.listDomains(actor.orgId) };
+    const domains = (await domainStore.listDomains(actor.orgId)).filter(
+      (domain) => domain.status === "verified" && domain.mailEnabled,
+    );
+    return {
+      domains: await Promise.all(
+        domains.map(async (domain) => ({
+          ...domain,
+          dkimKeys: (await dkimStore.listKeys(actor.orgId, domain.id)).map(serializeDkimKey),
+        })),
+      ),
+    };
   });
 
-  app.post("/api/admin/mail/sending-domains", async (request, reply) => {
+  app.post("/api/admin/mail/domains/:id/enable", async (request, reply) => {
     const actor = await actorFromRequest(request);
     if (!canWriteMailDeliveryAdmin(actor)) {
       return sendForbidden(reply, adminConsoleWriteScope);
     }
-    const body = createSendingDomainBody.safeParse(request.body);
-    if (!body.success) {
-      return reply.code(400).send(invalidRequest("Invalid sending domain.", body.error.issues));
+    const params = idParams.safeParse(request.params);
+    const body = enableMailDomainBody.safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send(invalidRequest("Invalid mail-domain configuration."));
     }
     if (body.data.providerId !== null) {
       const provider = await providerStore.getProvider(actor.orgId, body.data.providerId);
       if (provider === null) {
-        return reply.code(400).send(invalidRequest("Unknown provider for sending domain."));
+        return reply.code(400).send(invalidRequest("Unknown provider for mail domain."));
       }
     }
-    let domain;
+    const current = await domainStore.getDomain(actor.orgId, params.data.id);
+    if (current === null) return reply.code(404).send(notFound("Domain not found."));
+    let domain: DomainRecord | null;
     try {
-      domain = await domainStore.createDomain({
+      domain = await domainStore.setDomainCapabilities({
         orgId: actor.orgId,
-        domain: body.data.domain.toLowerCase(),
-        isDefault: body.data.isDefault,
+        id: current.id,
+        actorId: actor.id,
+        identityEnabled: current.identityEnabled,
+        mailEnabled: true,
+        aliasesEnabled: current.aliasesEnabled,
+        customHostEnabled: current.customHostEnabled,
+        federationEnabled: current.federationEnabled,
         providerId: body.data.providerId,
-        createdBy: actor.id,
+        identityMode: current.identityMode,
+        aliasTargetDomainId: current.aliasTargetDomainId,
       });
     } catch (error) {
-      if (error instanceof MailAdminConflictError) {
+      if (error instanceof DomainsConflictError) {
         return reply.code(409).send(conflict(error.message));
       }
+      throw error;
+    }
+    if (domain === null) return reply.code(404).send(notFound("Domain not found."));
+    await auditAdminAction(auditSink, {
+      orgId: actor.orgId,
+      actorId: actor.id,
+      verb: "mail.domain.enabled",
+      objectType: "admin_domain",
+      objectId: domain.id,
+      metadata: { domain: domain.domain },
+    });
+    return { domain };
+  });
+
+  app.delete("/api/admin/mail/domains/:id", async (request, reply) => {
+    const actor = await actorFromRequest(request);
+    if (!canWriteMailDeliveryAdmin(actor)) {
+      return sendForbidden(reply, adminConsoleWriteScope);
+    }
+    const params = idParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.code(400).send(invalidRequest("Invalid domain id."));
+    }
+    const current = await domainStore.getDomain(actor.orgId, params.data.id);
+    if (current === null) return reply.code(404).send(notFound("Domain not found."));
+    let domain: DomainRecord | null;
+    try {
+      domain = await domainStore.setDomainCapabilities({
+        orgId: actor.orgId,
+        id: current.id,
+        actorId: actor.id,
+        identityEnabled: current.identityEnabled,
+        mailEnabled: false,
+        aliasesEnabled: current.aliasesEnabled,
+        customHostEnabled: current.customHostEnabled,
+        federationEnabled: current.federationEnabled,
+        providerId: null,
+        identityMode: current.identityMode,
+        aliasTargetDomainId: current.aliasTargetDomainId,
+      });
+    } catch (error) {
+      if (error instanceof DomainsConflictError)
+        return reply.code(409).send(conflict(error.message));
       throw error;
     }
     await auditAdminAction(auditSink, {
       orgId: actor.orgId,
       actorId: actor.id,
-      verb: "mail.sending_domain.created",
-      objectType: "mail_sending_domain",
-      objectId: domain.id,
-      metadata: { domain: domain.domain, isDefault: domain.isDefault },
-    });
-    return reply.code(201).send({ domain });
-  });
-
-  app.post("/api/admin/mail/sending-domains/:id/verify", async (request, reply) => {
-    const actor = await actorFromRequest(request);
-    if (!canWriteMailDeliveryAdmin(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
-    const params = idParams.safeParse(request.params);
-    if (!params.success) {
-      return reply.code(400).send(invalidRequest("Invalid domain id."));
-    }
-    const body = verifyDomainBody.safeParse(request.body);
-    if (!body.success) {
-      return reply.code(400).send(invalidRequest("Invalid verification request."));
-    }
-    const domain = await domainStore.setDomainVerified(
-      actor.orgId,
-      params.data.id,
-      body.data.verified,
-    );
-    if (domain === null) {
-      return reply.code(404).send(notFound("Sending domain not found."));
-    }
-    await auditAdminAction(auditSink, {
-      orgId: actor.orgId,
-      actorId: actor.id,
-      verb: "mail.sending_domain.verified",
-      objectType: "mail_sending_domain",
-      objectId: domain.id,
-      metadata: { domain: domain.domain, verified: body.data.verified },
-    });
-    return { domain };
-  });
-
-  app.delete("/api/admin/mail/sending-domains/:id", async (request, reply) => {
-    const actor = await actorFromRequest(request);
-    if (!canWriteMailDeliveryAdmin(actor)) {
-      return sendForbidden(reply, adminConsoleWriteScope);
-    }
-    const params = idParams.safeParse(request.params);
-    if (!params.success) {
-      return reply.code(400).send(invalidRequest("Invalid domain id."));
-    }
-    const deleted = await domainStore.deleteDomain(actor.orgId, params.data.id);
-    if (!deleted) {
-      return reply.code(404).send(notFound("Sending domain not found."));
-    }
-    await auditAdminAction(auditSink, {
-      orgId: actor.orgId,
-      actorId: actor.id,
-      verb: "mail.sending_domain.deleted",
-      objectType: "mail_sending_domain",
+      verb: "mail.domain.disabled",
+      objectType: "admin_domain",
       objectId: params.data.id,
     });
-    return { status: "deleted" };
+    return { status: "disabled", domain };
   });
 
   // ---- DKIM keys ----------------------------------------------------------
 
-  app.get("/api/admin/mail/sending-domains/:id/dkim", async (request, reply) => {
+  app.get("/api/admin/mail/domains/:id/dkim", async (request, reply) => {
     const actor = await actorFromRequest(request);
     if (!canReadMailDeliveryAdmin(actor)) {
       return sendForbidden(reply, adminConsoleReadScope);
@@ -507,14 +583,14 @@ export async function registerMailDeliveryAdminRoutes(
       return reply.code(400).send(invalidRequest("Invalid domain id."));
     }
     const domain = await domainStore.getDomain(actor.orgId, params.data.id);
-    if (domain === null) {
-      return reply.code(404).send(notFound("Sending domain not found."));
+    if (domain === null || !domain.mailEnabled || domain.status !== "verified") {
+      return reply.code(404).send(notFound("Mail domain not found."));
     }
     const keys = await dkimStore.listKeys(actor.orgId, params.data.id);
     return { keys: keys.map(serializeDkimKey) };
   });
 
-  app.post("/api/admin/mail/sending-domains/:id/dkim", async (request, reply) => {
+  app.post("/api/admin/mail/domains/:id/dkim", async (request, reply) => {
     const actor = await actorFromRequest(request);
     if (!canWriteMailDeliveryAdmin(actor)) {
       return sendForbidden(reply, adminConsoleWriteScope);
@@ -528,8 +604,8 @@ export async function registerMailDeliveryAdminRoutes(
       return reply.code(400).send(invalidRequest("Invalid DKIM request.", body.error.issues));
     }
     const domain = await domainStore.getDomain(actor.orgId, params.data.id);
-    if (domain === null) {
-      return reply.code(404).send(notFound("Sending domain not found."));
+    if (domain === null || !domain.mailEnabled || domain.status !== "verified") {
+      return reply.code(404).send(notFound("Mail domain not found."));
     }
     let key: MailDkimKeyRecord;
     try {
@@ -539,11 +615,15 @@ export async function registerMailDeliveryAdminRoutes(
         selector: body.data.selector,
         domain: domain.domain,
         keyBits: body.data.keyBits,
+        ...(body.data.kmsKeyId === undefined ? {} : { kmsKeyId: body.data.kmsKeyId }),
         createdBy: actor.id,
       });
     } catch (error) {
       if (error instanceof MailAdminConflictError) {
         return reply.code(409).send(conflict(error.message));
+      }
+      if (isRoutingValidationError(error)) {
+        return reply.code(400).send(invalidRequest("Routing rule violates tenant mail policy."));
       }
       throw error;
     }
@@ -558,7 +638,42 @@ export async function registerMailDeliveryAdminRoutes(
     return reply.code(201).send({ key: serializeDkimKey(key) });
   });
 
-  app.post("/api/admin/mail/sending-domains/:id/dkim/:keyId/retire", async (request, reply) => {
+  app.post("/api/admin/mail/domains/:id/dkim/:keyId/activate", async (request, reply) => {
+    const actor = await actorFromRequest(request);
+    if (!canWriteMailDeliveryAdmin(actor)) {
+      return sendForbidden(reply, adminConsoleWriteScope);
+    }
+    const params = domainKeyParams.safeParse(request.params);
+    if (!params.success) {
+      return reply.code(400).send(invalidRequest("Invalid DKIM key identifiers."));
+    }
+    const domain = await domainStore.getDomain(actor.orgId, params.data.id);
+    const pending = (await dkimStore.listKeys(actor.orgId, params.data.id)).find(
+      (key) => key.id === params.data.keyId && key.status === "pending",
+    );
+    if (domain === null || pending === undefined || domain.status !== "verified") {
+      return reply.code(404).send(notFound("Pending DKIM key not found."));
+    }
+    const host = `${pending.selector}._domainkey.${domain.domain}`;
+    if (!(await verifyDkimDns({ host, record: pending.dnsRecord }))) {
+      return reply.code(409).send(conflict(`Publish the DKIM TXT record at ${host} first.`));
+    }
+    const key = await dkimStore.activateKey(actor.orgId, pending.id);
+    if (key === null) {
+      return reply.code(409).send(conflict("DKIM key activation raced with another update."));
+    }
+    await auditAdminAction(auditSink, {
+      orgId: actor.orgId,
+      actorId: actor.id,
+      verb: "mail.dkim_key.activated",
+      objectType: "mail_dkim_key",
+      objectId: key.id,
+      metadata: { domain: domain.domain, selector: key.selector, verifiedHost: host },
+    });
+    return { key: serializeDkimKey(key) };
+  });
+
+  app.post("/api/admin/mail/domains/:id/dkim/:keyId/retire", async (request, reply) => {
     const actor = await actorFromRequest(request);
     if (!canWriteMailDeliveryAdmin(actor)) {
       return sendForbidden(reply, adminConsoleWriteScope);
@@ -705,16 +820,24 @@ export async function registerMailDeliveryAdminRoutes(
     if (!body.success) {
       return reply.code(400).send(invalidRequest("Invalid routing rule patch.", body.error.issues));
     }
-    const rule = await routingStore.updateRule({
-      orgId: actor.orgId,
-      id: params.data.id,
-      ...(body.data.name === undefined ? {} : { name: body.data.name }),
-      ...(body.data.isEnabled === undefined ? {} : { isEnabled: body.data.isEnabled }),
-      ...(body.data.priority === undefined ? {} : { priority: body.data.priority }),
-      ...(body.data.match === undefined ? {} : { match: compactJson(body.data.match) }),
-      ...(body.data.actionKind === undefined ? {} : { actionKind: body.data.actionKind }),
-      ...(body.data.action === undefined ? {} : { action: compactJson(body.data.action) }),
-    });
+    let rule;
+    try {
+      rule = await routingStore.updateRule({
+        orgId: actor.orgId,
+        id: params.data.id,
+        ...(body.data.name === undefined ? {} : { name: body.data.name }),
+        ...(body.data.isEnabled === undefined ? {} : { isEnabled: body.data.isEnabled }),
+        ...(body.data.priority === undefined ? {} : { priority: body.data.priority }),
+        ...(body.data.match === undefined ? {} : { match: compactJson(body.data.match) }),
+        ...(body.data.actionKind === undefined ? {} : { actionKind: body.data.actionKind }),
+        ...(body.data.action === undefined ? {} : { action: compactJson(body.data.action) }),
+      });
+    } catch (error) {
+      if (isRoutingValidationError(error)) {
+        return reply.code(400).send(invalidRequest("Routing rule violates tenant mail policy."));
+      }
+      throw error;
+    }
     if (rule === null) {
       return reply.code(404).send(notFound("Routing rule not found."));
     }

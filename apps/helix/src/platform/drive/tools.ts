@@ -1,6 +1,6 @@
 // ponytail: tool surface registry >400 LOC; split by domain (upload/access/comments/links) when next feature lands.
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
-import { z } from "zod3";
+import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
@@ -11,8 +11,10 @@ import {
   driveAccessUpdateOutputSchema,
   driveCommentListOutputSchema,
   driveCommentOutputSchema,
+  driveCommentRevisionListOutputSchema,
   driveCreateOutputSchema,
   driveDeleteOutputSchema,
+  driveDocumentSurfaceViewOutputSchema,
   driveEntryOutputSchema,
   driveFinalizeOutputSchema,
   driveListOutputSchema,
@@ -27,15 +29,18 @@ import {
   driveUploadOutputSchema,
   driveVersionOutputSchema,
   driveVersionsListOutputSchema,
+  driveWorkflowListOutputSchema,
+  driveWorkflowSchema,
 } from "./tool-output-schemas.js";
 import { BadRequestError, NotFoundError } from "../../api/api-error.js";
-import { normalizeDriveRole } from "./core/roles.js";
+import { actorHasScope } from "../../api/scopes.js";
 import type {
   DriveAccessGrantRecord,
   DriveEntryRecord,
   DrivePdfFormStateRecord,
   DriveCommentListItem,
   DriveCommentRecord,
+  DriveCommentRevisionRecord,
   DriveSearchHit,
   DriveUploadRecord,
   DriveVersionRecord,
@@ -44,6 +49,11 @@ import type { DocsStore } from "../docs/index.js";
 import { HELIX_NATIVE_DOCUMENT_ENGINE } from "../docs/native-state.js";
 import type { SheetsStore } from "../sheets/index.js";
 import type { SlidesStore } from "../slides/index.js";
+import {
+  driveWorkflowKinds,
+  type DriveWorkflowRecord,
+  type DriveWorkflowStore,
+} from "./workflows.js";
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.unknown()).default({});
@@ -52,7 +62,7 @@ const uploadSchema = z.object({
   name: z.string().min(1).max(255),
   folderId: uuidSchema.nullable().optional(),
   mimeType: z.string().min(1).default("application/octet-stream"),
-  byteSize: z.number().int().min(0).optional(),
+  byteSize: z.number().int().min(0),
   sha256: z
     .string()
     .regex(/^[a-f0-9]{64}$/i)
@@ -60,15 +70,19 @@ const uploadSchema = z.object({
   metadata: metadataSchema,
 });
 
-const finalizeSchema = z.object({
-  objectId: uuidSchema,
-  byteSize: z.number().int().min(0),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/i),
-  mimeType: z.string().min(1).optional(),
-  storageKey: z.string().min(1).optional(),
-  contentBase64: z.string().min(1).optional(),
-  metadata: metadataSchema,
-});
+const finalizeSchema = z
+  .object({
+    objectId: uuidSchema,
+    byteSize: z.number().int().min(0),
+    sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/i)
+      .optional(),
+    mimeType: z.string().min(1).optional(),
+    idempotencyKey: z.string().min(1).max(128).optional(),
+    metadata: metadataSchema,
+  })
+  .strict();
 
 const uploadCompleteSchema = z.object({
   objectId: uuidSchema,
@@ -82,7 +96,10 @@ const uploadCompleteSchema = z.object({
     )
     .min(1),
   byteSize: z.number().int().min(0),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/i),
+  sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/i)
+    .optional(),
   mimeType: z.string().min(1).optional(),
   metadata: metadataSchema,
 });
@@ -91,6 +108,7 @@ const listSchema = z.object({
   folderId: uuidSchema.nullable().optional(),
   includeTrashed: z.boolean().default(false),
   limit: z.number().int().positive().max(250).default(100),
+  cursor: z.string().max(2_048).optional(),
   app: z.string().optional(),
   /** Filter by object kind. Defaults to 'file'. Pass 'recording' for the
    *  Recordings drive scope (meeting recording artifacts). */
@@ -137,6 +155,11 @@ const moveSchema = z.object({
   folderId: uuidSchema.nullable().optional(),
 });
 
+const moveFolderSchema = z.object({
+  folderId: uuidSchema,
+  parentFolderId: uuidSchema.nullable().optional(),
+});
+
 const objectIdSchema = z.object({
   objectId: uuidSchema,
 });
@@ -146,6 +169,10 @@ const starSchema = z.object({
   starred: z.boolean(),
 });
 
+const documentSurfaceViewSchema = z.enum(["grid", "list"]);
+const getDocumentSurfaceViewSchema = z.object({}).strict();
+const setDocumentSurfaceViewSchema = z.object({ view: documentSurfaceViewSchema }).strict();
+
 const renameSchema = z.object({
   objectId: uuidSchema,
   name: z.string().min(1).max(255),
@@ -154,12 +181,16 @@ const renameSchema = z.object({
 const revertVersionSchema = z.object({
   objectId: uuidSchema,
   versionNumber: z.number().int().positive(),
+  idempotencyKey: z.string().min(1).max(128).optional(),
 });
 
 const createShareLinkSchema = z.object({
   objectId: uuidSchema,
-  role: z.enum(["reader", "commenter", "editor"]).default("reader"),
+  password: z.string().min(12).max(256).optional(),
   expiresAt: z.string().datetime().nullable().optional(),
+  oneTime: z.boolean().default(false),
+  allowedDomains: z.array(z.string().trim().toLowerCase().min(3).max(253)).max(50).default([]),
+  allowDownload: z.boolean().default(true),
 });
 
 const revokeShareLinkSchema = z.object({
@@ -177,6 +208,14 @@ const createCommentSchema = z.object({
 const listCommentsSchema = z.object({
   objectId: uuidSchema,
   status: z.enum(["open", "resolved", "all"]).optional(),
+  cursor: z.string().min(1).max(2_000).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+});
+
+const listCommentRevisionsSchema = z.object({
+  objectId: uuidSchema,
+  cursor: z.string().min(1).max(2_000).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
 });
 
 const resolveCommentSchema = z.object({
@@ -214,6 +253,34 @@ const createSchema = z.object({
   kind: z.enum(["folder", "document", "spreadsheet", "presentation"]),
   folderId: uuidSchema.nullable().optional(),
   name: z.string().min(1).max(255),
+});
+
+const workflowCreateSchema = z
+  .object({
+    kind: z.enum(driveWorkflowKinds),
+    resourceType: z.enum(["object", "folder"]),
+    resourceId: uuidSchema,
+    assignedToActorId: uuidSchema.optional(),
+    assignedToActorRef: z.string().trim().min(1).max(320).optional(),
+    payload: metadataSchema,
+    dueAt: z.string().datetime().optional(),
+  })
+  .refine(
+    (input) => input.assignedToActorId === undefined || input.assignedToActorRef === undefined,
+    {
+      message: "Provide an assignee id or email/name, not both.",
+      path: ["assignedToActorRef"],
+    },
+  );
+const workflowListSchema = z.object({
+  state: z.enum(["open", "approved", "rejected", "cancelled", "completed"]).optional(),
+  limit: z.number().int().positive().max(250).default(100),
+});
+const workflowTransitionSchema = z.object({
+  workflowId: uuidSchema,
+  expectedVersion: z.string().regex(/^[1-9][0-9]{0,18}$/u),
+  state: z.enum(["approved", "rejected", "cancelled", "completed"]),
+  payload: metadataSchema,
 });
 
 const genericObjectJsonSchema = {
@@ -264,6 +331,7 @@ export interface CreateDriveToolDefinitionsOptions {
     readonly actorIds: readonly string[];
     readonly unresolvedRefs: readonly string[];
   }>;
+  readonly workflows?: DriveWorkflowStore;
 }
 
 export function createDriveToolDefinitions(
@@ -349,7 +417,7 @@ export function createDriveToolDefinitions(
           name: input.name,
           folderId: input.folderId ?? null,
           mimeType: input.mimeType,
-          ...(input.byteSize === undefined ? {} : { byteSize: input.byteSize }),
+          byteSize: input.byteSize,
           ...(input.sha256 === undefined ? {} : { sha256: input.sha256.toLowerCase() }),
           metadata: toJsonObject(input.metadata),
         });
@@ -376,12 +444,9 @@ export function createDriveToolDefinitions(
             actorId: ctx.actor.id,
             objectId: input.objectId,
             byteSize: input.byteSize,
-            sha256: input.sha256.toLowerCase(),
+            ...(input.sha256 === undefined ? {} : { sha256: input.sha256.toLowerCase() }),
             ...(input.mimeType === undefined ? {} : { mimeType: input.mimeType }),
-            ...(input.storageKey === undefined ? {} : { storageKey: input.storageKey }),
-            ...(input.contentBase64 === undefined
-              ? {}
-              : { content: Buffer.from(input.contentBase64, "base64") }),
+            ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
             metadata: toJsonObject(input.metadata),
           }),
         ),
@@ -406,7 +471,7 @@ export function createDriveToolDefinitions(
             uploadId: input.uploadId,
             parts: input.parts,
             byteSize: input.byteSize,
-            sha256: input.sha256.toLowerCase(),
+            ...(input.sha256 === undefined ? {} : { sha256: input.sha256.toLowerCase() }),
             ...(input.mimeType === undefined ? {} : { mimeType: input.mimeType }),
             metadata: toJsonObject(input.metadata),
           }),
@@ -421,23 +486,24 @@ export function createDriveToolDefinitions(
       inputSchema: zodToolSchema(listSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveListOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const entries = await options.store.list({
+        const page = await options.store.list({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           folderId: input.folderId ?? null,
           includeTrashed: input.includeTrashed,
           limit: input.limit,
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
           ...(input.app === undefined ? {} : { app: input.app }),
           ...(input.kind === undefined ? {} : { kind: input.kind }),
           ...(input.acrossFolders === undefined ? {} : { acrossFolders: input.acrossFolders }),
         });
-        const serialized = entries.map(serializeEntry);
+        const serialized = page.entries.map(serializeEntry);
 
         // Decorate each entry with the owner's display name so the UI
         // can render "Owned by Avery Park" instead of a raw UUID. Single
         // batched lookup per `drive.list` call.
         if (options.resolveActorNames === undefined) {
-          return { entries: serialized };
+          return { entries: serialized, nextCursor: page.nextCursor };
         }
         const ownerIds = Array.from(
           new Set(
@@ -447,7 +513,7 @@ export function createDriveToolDefinitions(
           ),
         );
         if (ownerIds.length === 0) {
-          return { entries: serialized };
+          return { entries: serialized, nextCursor: page.nextCursor };
         }
         const names = await options.resolveActorNames(ownerIds);
         const enriched = serialized.map((entry) => {
@@ -459,7 +525,7 @@ export function createDriveToolDefinitions(
             ...(owner.email === undefined ? {} : { ownerEmail: owner.email }),
           };
         });
-        return { entries: enriched };
+        return { entries: enriched, nextCursor: page.nextCursor };
       },
     }),
     defineTool<z.output<typeof shareSchema>, unknown>({
@@ -559,7 +625,11 @@ export function createDriveToolDefinitions(
               ? null
               : new Date(input.expiresAt),
         });
-        return { objectId: input.objectId, actorId: input.actorId, grant: serializeNullableGrant(grant) };
+        return {
+          objectId: input.objectId,
+          actorId: input.actorId,
+          grant: serializeNullableGrant(grant),
+        };
       },
     }),
     defineTool<z.output<typeof moveSchema>, unknown>({
@@ -582,10 +652,31 @@ export function createDriveToolDefinitions(
         return serializeEntry(entry);
       },
     }),
+    defineTool<z.output<typeof moveFolderSchema>, unknown>({
+      id: "drive.folder.move",
+      description: "Move a Drive folder and its descendants.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(moveFolderSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveEntryOutputSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.moveFolder === undefined) {
+          throw new Error("drive.folder.move requires DriveStore.moveFolder.");
+        }
+        const entry = await options.store.moveFolder({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          folderId: input.folderId,
+          parentFolderId: input.parentFolderId ?? null,
+        });
+        if (entry === null) throw new NotFoundError(`Unknown Drive folder: ${input.folderId}`);
+        return serializeEntry(entry);
+      },
+    }),
     defineTool<z.output<typeof starSchema>, unknown>({
       id: "drive.star.set",
       description: "Star or unstar a Drive file for filtered Drive and app-list views.",
-      permission: "drive.write",
+      permission: "drive.read",
       sideEffects: "write",
       inputSchema: zodToolSchema(starSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveEntryOutputSchema, genericObjectJsonSchema),
@@ -603,6 +694,45 @@ export function createDriveToolDefinitions(
           throw new NotFoundError(`Unknown starrable Drive object: ${input.objectId}`);
         }
         return serializeEntry(entry);
+      },
+    }),
+    defineTool<z.output<typeof getDocumentSurfaceViewSchema>, unknown>({
+      id: "drive.view.get",
+      description: "Get the current member's shared Drive and editor-list layout.",
+      permission: "drive.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(getDocumentSurfaceViewSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveDocumentSurfaceViewOutputSchema, genericObjectJsonSchema),
+      handler: async (_input, ctx) => {
+        if (options.store.getDocumentSurfaceView === undefined) {
+          throw new Error("drive.view.get requires DriveStore.getDocumentSurfaceView.");
+        }
+        return {
+          view: await options.store.getDocumentSurfaceView({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+          }),
+        };
+      },
+    }),
+    defineTool<z.output<typeof setDocumentSurfaceViewSchema>, unknown>({
+      id: "drive.view.set",
+      description: "Set the current member's shared Drive and editor-list layout.",
+      permission: "drive.read",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(setDocumentSurfaceViewSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveDocumentSurfaceViewOutputSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.setDocumentSurfaceView === undefined) {
+          throw new Error("drive.view.set requires DriveStore.setDocumentSurfaceView.");
+        }
+        return {
+          view: await options.store.setDocumentSurfaceView({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            view: input.view,
+          }),
+        };
       },
     }),
     defineTool<z.output<typeof objectIdSchema>, unknown>({
@@ -682,7 +812,7 @@ export function createDriveToolDefinitions(
     defineTool<z.output<typeof createCommentSchema>, unknown>({
       id: "drive.comment.create",
       description: "Create a page or object anchored comment on a Drive object.",
-      permission: "drive.write",
+      permission: "drive.read",
       sideEffects: "write",
       inputSchema: zodToolSchema(createCommentSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
@@ -716,22 +846,45 @@ export function createDriveToolDefinitions(
         if (options.store.listComments === undefined) {
           throw new Error("drive.comment tools require DriveStore comment methods.");
         }
+        const page = await options.store.listComments({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.objectId,
+          ...(input.status === undefined ? {} : { status: input.status }),
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          limit: input.limit,
+        });
+        return { comments: page.comments.map(serializeComment), nextCursor: page.nextCursor };
+      },
+    }),
+    defineTool<z.output<typeof listCommentRevisionsSchema>, unknown>({
+      id: "drive.comment.evidence.list",
+      description: "List immutable Drive comment evidence for an editor.",
+      permission: "drive.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(listCommentRevisionsSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveCommentRevisionListOutputSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.listCommentRevisions === undefined) {
+          throw new Error("drive.comment evidence requires DriveStore revision methods.");
+        }
+        const page = await options.store.listCommentRevisions({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.objectId,
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          limit: input.limit,
+        });
         return {
-          comments: (
-            await options.store.listComments({
-              orgId: ctx.actor.orgId,
-              actorId: ctx.actor.id,
-              objectId: input.objectId,
-              ...(input.status === undefined ? {} : { status: input.status }),
-            })
-          ).map(serializeComment),
+          revisions: page.revisions.map(serializeCommentRevision),
+          nextCursor: page.nextCursor,
         };
       },
     }),
     defineTool<z.output<typeof resolveCommentSchema>, unknown>({
       id: "drive.comment.resolve",
       description: "Resolve a comment on a Drive object.",
-      permission: "drive.write",
+      permission: "drive.read",
       sideEffects: "write",
       inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
@@ -753,7 +906,7 @@ export function createDriveToolDefinitions(
     defineTool<z.output<typeof resolveCommentSchema>, unknown>({
       id: "drive.comment.reopen",
       description: "Reopen a resolved comment on a Drive object.",
-      permission: "drive.write",
+      permission: "drive.read",
       sideEffects: "write",
       inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
@@ -775,7 +928,7 @@ export function createDriveToolDefinitions(
     defineTool<z.output<typeof updateCommentSchema>, unknown>({
       id: "drive.comment.update",
       description: "Update a Drive object comment body.",
-      permission: "drive.write",
+      permission: "drive.read",
       sideEffects: "write",
       inputSchema: zodToolSchema(updateCommentSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(driveCommentOutputSchema, genericObjectJsonSchema),
@@ -798,7 +951,7 @@ export function createDriveToolDefinitions(
     defineTool<z.output<typeof resolveCommentSchema>, unknown>({
       id: "drive.comment.delete",
       description: "Delete a comment on a Drive object.",
-      permission: "drive.write",
+      permission: "drive.read",
       sideEffects: "write",
       confirmationRequired: true,
       inputSchema: zodToolSchema(resolveCommentSchema, genericObjectJsonSchema),
@@ -927,7 +1080,8 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof revertVersionSchema>, z.output<typeof driveVersionOutputSchema>>({
       id: "drive.versions.revert",
-      description: "Create a new version that restores bytes from a prior version (history is append-only).",
+      description:
+        "Create a new version that restores bytes from a prior version (history is append-only).",
       permission: "drive.write",
       sideEffects: "write",
       confirmationRequired: true,
@@ -943,36 +1097,42 @@ export function createDriveToolDefinitions(
             actorId: ctx.actor.id,
             objectId: input.objectId,
             versionNumber: input.versionNumber,
+            ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
           }),
         );
       },
     }),
-    defineTool<z.output<typeof createShareLinkSchema>, z.output<typeof driveShareLinkOutputSchema>>({
-      id: "drive.link.create",
-      description: "Create a public/anonymous share link for a Drive object (owner only).",
-      permission: "drive.write",
-      sideEffects: "write",
-      confirmationRequired: true,
-      inputSchema: zodToolSchema(createShareLinkSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(driveShareLinkOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        if (options.store.createShareLink === undefined) {
-          throw new Error("drive.link.create requires DriveStore.createShareLink.");
-        }
-        return serializeShareLink(
-          await options.store.createShareLink({
-            orgId: ctx.actor.orgId,
-            actorId: ctx.actor.id,
-            objectId: input.objectId,
-            role: input.role,
-            expiresAt:
-              input.expiresAt === undefined || input.expiresAt === null
-                ? null
-                : new Date(input.expiresAt),
-          }),
-        );
+    defineTool<z.output<typeof createShareLinkSchema>, z.output<typeof driveShareLinkOutputSchema>>(
+      {
+        id: "drive.link.create",
+        description: "Create a public/anonymous share link for a Drive object (owner only).",
+        permission: "drive.write",
+        sideEffects: "write",
+        confirmationRequired: true,
+        inputSchema: zodToolSchema(createShareLinkSchema, genericObjectJsonSchema),
+        outputSchema: zodToolSchema(driveShareLinkOutputSchema, genericObjectJsonSchema),
+        handler: async (input, ctx) => {
+          if (options.store.createShareLink === undefined) {
+            throw new Error("drive.link.create requires DriveStore.createShareLink.");
+          }
+          return serializeShareLink(
+            await options.store.createShareLink({
+              orgId: ctx.actor.orgId,
+              actorId: ctx.actor.id,
+              objectId: input.objectId,
+              ...(input.password === undefined ? {} : { password: input.password }),
+              expiresAt:
+                input.expiresAt === undefined || input.expiresAt === null
+                  ? null
+                  : new Date(input.expiresAt),
+              oneTime: input.oneTime,
+              allowedDomains: input.allowedDomains,
+              allowDownload: input.allowDownload,
+            }),
+          );
+        },
       },
-    }),
+    ),
     defineTool<z.output<typeof objectIdSchema>, z.output<typeof driveShareLinkListOutputSchema>>({
       id: "drive.link.list",
       description: "List active public share links for a Drive object.",
@@ -995,7 +1155,10 @@ export function createDriveToolDefinitions(
         };
       },
     }),
-    defineTool<z.output<typeof revokeShareLinkSchema>, z.output<typeof driveShareLinkRevokeOutputSchema>>({
+    defineTool<
+      z.output<typeof revokeShareLinkSchema>,
+      z.output<typeof driveShareLinkRevokeOutputSchema>
+    >({
       id: "drive.link.revoke",
       description: "Revoke a public share link.",
       permission: "drive.write",
@@ -1017,7 +1180,86 @@ export function createDriveToolDefinitions(
         };
       },
     }),
-
+    defineTool<z.output<typeof workflowCreateSchema>, z.output<typeof driveWorkflowSchema>>({
+      id: "drive.workflow.create",
+      description:
+        "Create a governed Drive shortcut, file request, approval, ownership transfer, shared drive, classification, hold, or investigation.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(workflowCreateSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveWorkflowSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.workflows === undefined) throw new Error("Drive workflows are not configured.");
+        const assignedToActorId =
+          input.assignedToActorRef === undefined
+            ? input.assignedToActorId
+            : await resolveDriveWorkflowActorRef(
+                options,
+                ctx.actor.orgId,
+                input.assignedToActorRef,
+              );
+        return serializeWorkflow(
+          await options.workflows.create({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            kind: input.kind,
+            resourceType: input.resourceType,
+            resourceId: input.resourceId,
+            ...(assignedToActorId === undefined ? {} : { assignedToActorId }),
+            payload: toJsonObject(input.payload),
+            ...(input.kind === "classification"
+              ? { allowSensitivityDowngrade: actorHasScope(ctx.actor, "admin.security") }
+              : {}),
+            ...(input.dueAt === undefined ? {} : { dueAt: new Date(input.dueAt) }),
+          }),
+        );
+      },
+    }),
+    defineTool<z.output<typeof workflowListSchema>, z.output<typeof driveWorkflowListOutputSchema>>(
+      {
+        id: "drive.workflow.list",
+        description: "List Drive workflows assigned to or requested by the current user.",
+        permission: "drive.read",
+        sideEffects: "read",
+        inputSchema: zodToolSchema(workflowListSchema, genericObjectJsonSchema),
+        outputSchema: zodToolSchema(driveWorkflowListOutputSchema, genericObjectJsonSchema),
+        handler: async (input, ctx) => {
+          if (options.workflows === undefined)
+            throw new Error("Drive workflows are not configured.");
+          return {
+            workflows: (
+              await options.workflows.list({
+                orgId: ctx.actor.orgId,
+                actorId: ctx.actor.id,
+                ...(input.state === undefined ? {} : { state: input.state }),
+                limit: input.limit,
+              })
+            ).map(serializeWorkflow),
+          };
+        },
+      },
+    ),
+    defineTool<z.output<typeof workflowTransitionSchema>, z.output<typeof driveWorkflowSchema>>({
+      id: "drive.workflow.transition",
+      description: "Approve, reject, cancel, or complete an assigned Drive workflow.",
+      permission: "drive.write",
+      sideEffects: "write",
+      inputSchema: zodToolSchema(workflowTransitionSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(driveWorkflowSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.workflows === undefined) throw new Error("Drive workflows are not configured.");
+        return serializeWorkflow(
+          await options.workflows.transition({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            workflowId: input.workflowId,
+            expectedVersion: input.expectedVersion,
+            state: input.state,
+            payload: toJsonObject(input.payload),
+          }),
+        );
+      },
+    }),
   ];
 }
 
@@ -1036,6 +1278,16 @@ function defineTool<Input, Output>(
   return tool;
 }
 
+function serializeWorkflow(workflow: DriveWorkflowRecord): z.output<typeof driveWorkflowSchema> {
+  return {
+    ...workflow,
+    dueAt: workflow.dueAt?.toISOString() ?? null,
+    decidedAt: workflow.decidedAt?.toISOString() ?? null,
+    createdAt: workflow.createdAt.toISOString(),
+    updatedAt: workflow.updatedAt.toISOString(),
+  };
+}
+
 async function resolveDriveShareActorRefs(
   options: CreateDriveToolDefinitionsOptions,
   orgId: string,
@@ -1051,6 +1303,19 @@ async function resolveDriveShareActorRefs(
     );
   }
   return result.actorIds;
+}
+
+async function resolveDriveWorkflowActorRef(
+  options: CreateDriveToolDefinitionsOptions,
+  orgId: string,
+  ref: string,
+): Promise<string> {
+  const actorIds = await resolveDriveShareActorRefs(options, orgId, [ref]);
+  const actorId = actorIds[0];
+  if (actorIds.length !== 1 || actorId === undefined) {
+    throw new BadRequestError("Drive workflow assignee must identify exactly one workspace user.");
+  }
+  return actorId;
 }
 
 function serializeUpload(record: DriveUploadRecord) {
@@ -1106,21 +1371,37 @@ function serializeComment(comment: DriveCommentRecord | DriveCommentListItem) {
   };
 }
 
+function serializeCommentRevision(revision: DriveCommentRevisionRecord) {
+  return {
+    ...revision,
+    resolvedAt: revision.resolvedAt?.toISOString() ?? null,
+    deletedAt: revision.deletedAt?.toISOString() ?? null,
+    capturedAt: revision.capturedAt.toISOString(),
+  };
+}
+
 function serializeShareLink(link: {
   readonly id: string;
   readonly orgId: string;
   readonly objectId: string;
-  readonly token: string;
-  readonly role: string;
+  readonly token: string | null;
+  readonly role: "reader";
   readonly expiresAt: Date | null;
+  readonly passwordProtected: boolean;
+  readonly oneTime: boolean;
+  readonly allowedDomains: readonly string[];
+  readonly allowDownload: boolean;
+  readonly consumedAt: Date | null;
   readonly createdByActorId: string | null;
   readonly createdAt: Date;
   readonly revokedAt: Date | null;
 }) {
   return {
     ...link,
-    role: normalizeDriveRole(link.role),
+    role: link.role,
+    allowedDomains: [...link.allowedDomains],
     expiresAt: link.expiresAt?.toISOString() ?? null,
+    consumedAt: link.consumedAt?.toISOString() ?? null,
     createdAt: link.createdAt.toISOString(),
     revokedAt: link.revokedAt?.toISOString() ?? null,
   };

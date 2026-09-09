@@ -34,6 +34,52 @@ app.kubernetes.io/name: {{ include "helix.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{/*
+Default pod scheduling keeps replicas off the same node and spreads them across
+zones while still permitting a single-zone development cluster. Callers may
+replace affinity or topologySpreadConstraints explicitly.
+*/}}
+{{- define "helix.podScheduling" -}}
+{{- $root := .root -}}
+{{- $role := .role -}}
+{{- with $root.Values.availability.priorityClassName }}
+priorityClassName: {{ . | quote }}
+{{- end }}
+affinity:
+  {{- if .affinity }}
+  {{- toYaml .affinity | nindent 2 }}
+  {{- else }}
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              {{- include "helix.selectorLabels" $root | nindent 14 }}
+              helix.io/role: {{ $role | quote }}
+  {{- end }}
+topologySpreadConstraints:
+  {{- if .topologySpreadConstraints }}
+  {{- toYaml .topologySpreadConstraints | nindent 2 }}
+  {{- else }}
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        {{- include "helix.selectorLabels" $root | nindent 8 }}
+        helix.io/role: {{ $role | quote }}
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        {{- include "helix.selectorLabels" $root | nindent 8 }}
+        helix.io/role: {{ $role | quote }}
+  {{- end }}
+{{- end -}}
+
 {{- define "helix.selectedImageRepository" -}}
 {{- ternary .Values.fips.imageRepository .Values.image.repository .Values.fips.enabled -}}
 {{- end -}}
@@ -44,21 +90,124 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "helix.image" -}}
 {{- $repository := include "helix.selectedImageRepository" . -}}
-{{- $digest := include "helix.selectedImageDigest" . -}}
-{{- if $digest -}}
+{{- $digest := required "image.digest or fips.imageDigest must be an approved sha256 digest" (include "helix.selectedImageDigest" .) -}}
 {{- printf "%s@%s" $repository $digest -}}
-{{- else -}}
-{{- printf "%s:%s" $repository .Values.image.tag -}}
-{{- end -}}
 {{- end -}}
 
 {{- define "helix.validateValues" -}}
-{{- $digest := include "helix.selectedImageDigest" . -}}
-{{- if and .Values.stig.imagePolicy.requireDigest (not $digest) -}}
-{{- fail "stig.imagePolicy.requireDigest requires image.digest or fips.imageDigest for the selected image" -}}
+{{- $digest := required "image.digest or fips.imageDigest must be an approved sha256 digest" (include "helix.selectedImageDigest" .) -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) -}}
+{{- fail "selected image digest must match sha256:<64 lowercase hex characters>" -}}
 {{- end -}}
-{{- if and .Values.stig.imagePolicy.forbidLatestTag (not $digest) (eq .Values.image.tag "latest") -}}
-{{- fail "stig.imagePolicy.forbidLatestTag forbids image.tag=latest when no digest is set" -}}
+{{- if eq $digest "sha256:0000000000000000000000000000000000000000000000000000000000000000" -}}
+{{- fail "selected image digest cannot be a placeholder" -}}
+{{- end -}}
+{{- $converterDigest := required "contentConverter.image.digest must be an approved sha256 digest" .Values.contentConverter.image.digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $converterDigest) -}}
+{{- fail "content converter image digest must match sha256:<64 lowercase hex characters>" -}}
+{{- end -}}
+{{- if eq $converterDigest "sha256:0000000000000000000000000000000000000000000000000000000000000000" -}}
+{{- fail "content converter image digest cannot be a placeholder" -}}
+{{- end -}}
+{{- if not (regexMatch "^https://[^/?#@]+/?$" .Values.publicUrl) -}}
+{{- fail "publicUrl must be one canonical HTTPS origin without credentials, path, query, or fragment" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" .Values.external.s3.region) -}}
+{{- fail "external.s3.region must be the canonical lowercase deployment region" -}}
+{{- end -}}
+{{- if and .Values.cloudnativepg.backup.enabled (not (contains .Values.external.s3.region .Values.cloudnativepg.backup.barmanObjectStore.destinationPath)) -}}
+{{- fail "cloudnativepg backup destinationPath must include the deployment region" -}}
+{{- end -}}
+{{- if .Values.external.postgres.url -}}
+{{- fail "external.postgres.url is unsupported in production; use external.postgres.urlSecret" -}}
+{{- end -}}
+{{- $_ := required "external.postgres.urlSecret.name is required" .Values.external.postgres.urlSecret.name -}}
+{{- $_ := required "external.postgres.urlSecret.key is required" .Values.external.postgres.urlSecret.key -}}
+{{- $_ := required "auth.secretRef.name is required" .Values.auth.secretRef.name -}}
+{{- $_ := required "auth.secretRef.key is required" .Values.auth.secretRef.key -}}
+{{- $_ := required "external.meilisearch.masterKeySecret.name is required" .Values.external.meilisearch.masterKeySecret.name -}}
+{{- $_ := required "external.s3.accessKeySecret.name is required" .Values.external.s3.accessKeySecret.name -}}
+{{- $_ := required "external.s3.secretKeySecret.name is required" .Values.external.s3.secretKeySecret.name -}}
+{{- $networkPolicy := .Values.networkPolicy -}}
+{{- if hasKey $networkPolicy "enabled" -}}
+{{- fail "networkPolicy.enabled is unsupported; workload network policies are mandatory" -}}
+{{- end -}}
+{{- if or (hasKey $networkPolicy "ingress") (hasKey $networkPolicy "egress") -}}
+{{- fail "legacy networkPolicy.ingress/egress is unsupported; use application or imageVerifier policies" -}}
+{{- end -}}
+{{- if not $networkPolicy.dns.enabled -}}
+{{- fail "networkPolicy.dns.enabled must remain true so workloads have only exact DNS egress by default" -}}
+{{- end -}}
+{{- $_ := required "networkPolicy.dns.namespace is required" $networkPolicy.dns.namespace -}}
+{{- if eq (len $networkPolicy.dns.podLabels) 0 -}}
+{{- fail "networkPolicy.dns.podLabels must select the DNS workload exactly" -}}
+{{- end -}}
+{{- range $reservedLabel := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "helix.io/role" "helix.io/service-account" -}}
+{{- if hasKey $.Values.podLabels $reservedLabel -}}
+{{- fail (printf "podLabels may not override reserved network identity label %s" $reservedLabel) -}}
+{{- end -}}
+{{- end -}}
+{{- if $networkPolicy.imageVerifier.ingress -}}
+{{- fail "networkPolicy.imageVerifier ingress must remain empty" -}}
+{{- end -}}
+{{- if and .Values.ingress.enabled (not $networkPolicy.application.ingress) -}}
+{{- fail "ingress.enabled requires at least one exact networkPolicy.application.ingress source" -}}
+{{- end -}}
+{{- $policies := dict "application" $networkPolicy.application "imageVerifier" $networkPolicy.imageVerifier "roleDefault" $networkPolicy.roleDefault -}}
+{{- range $role := .Values.roleDeployments -}}
+{{- $_ := set $policies (printf "roleDeployments.%s.networkPolicy" $role.name) ($role.networkPolicy | default $networkPolicy.roleDefault) -}}
+{{- end -}}
+{{- range $policyName, $policy := $policies -}}
+{{- range $source := $policy.ingress -}}
+{{- $_ := required (printf "networkPolicy.%s ingress namespace is required" $policyName) $source.namespace -}}
+{{- $_ := required (printf "networkPolicy.%s ingress serviceAccount is required" $policyName) $source.serviceAccount -}}
+{{- if eq (len ($source.podLabels | default dict)) 0 -}}
+{{- fail (printf "networkPolicy.%s ingress podLabels must select the source workload exactly" $policyName) -}}
+{{- end -}}
+{{- if hasKey $source.podLabels "helix.io/service-account" -}}
+{{- fail (printf "networkPolicy.%s ingress podLabels may not override helix.io/service-account" $policyName) -}}
+{{- end -}}
+{{- end -}}
+{{- $egress := $policy.egress -}}
+{{- if or (hasKey $egress "allowAll") (hasKey $egress "cidrs") (hasKey $egress "ports") -}}
+{{- fail (printf "networkPolicy.%s legacy broad egress keys are unsupported" $policyName) -}}
+{{- end -}}
+{{- range $destination := $egress.endpoints -}}
+{{- $cidr := required (printf "networkPolicy.%s endpoint cidr is required" $policyName) $destination.cidr -}}
+{{- $normalizedCidr := lower $cidr -}}
+{{- if not (regexMatch "^.+/(32|128)$" $cidr) -}}
+{{- fail (printf "networkPolicy.%s endpoint %s must identify one host (/32 or /128)" $policyName $cidr) -}}
+{{- end -}}
+{{- if or (regexMatch "^(0|127|169\\.254)\\." $normalizedCidr) (regexMatch "^(::|::1/|fe80:|fd00:ec2::254/|fd20:ce::254/)" $normalizedCidr) (eq $normalizedCidr "100.100.100.200/32") -}}
+{{- fail (printf "networkPolicy.%s endpoint %s targets a local or metadata address" $policyName $cidr) -}}
+{{- end -}}
+{{- if eq (len ($destination.ports | default list)) 0 -}}
+{{- fail (printf "networkPolicy.%s endpoint %s requires exact ports" $policyName $cidr) -}}
+{{- end -}}
+{{- range $port := $destination.ports -}}
+{{- if or (lt (int $port) 1) (gt (int $port) 65535) -}}
+{{- fail (printf "networkPolicy.%s endpoint port must be between 1 and 65535" $policyName) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- range $destination := $egress.inCluster -}}
+{{- $_ := required (printf "networkPolicy.%s inCluster namespace is required" $policyName) $destination.namespace -}}
+{{- $_ := required (printf "networkPolicy.%s inCluster serviceAccount is required" $policyName) $destination.serviceAccount -}}
+{{- if eq (len ($destination.podLabels | default dict)) 0 -}}
+{{- fail (printf "networkPolicy.%s inCluster podLabels must select the destination workload exactly" $policyName) -}}
+{{- end -}}
+{{- if hasKey $destination.podLabels "helix.io/service-account" -}}
+{{- fail (printf "networkPolicy.%s inCluster podLabels may not override helix.io/service-account" $policyName) -}}
+{{- end -}}
+{{- if eq (len ($destination.ports | default list)) 0 -}}
+{{- fail (printf "networkPolicy.%s inCluster destination requires exact ports" $policyName) -}}
+{{- end -}}
+{{- range $port := $destination.ports -}}
+{{- if or (lt (int $port) 1) (gt (int $port) 65535) -}}
+{{- fail (printf "networkPolicy.%s inCluster port must be between 1 and 65535" $policyName) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
@@ -94,6 +243,32 @@ default role. Input is the chart root context.
   value: 0.0.0.0
 - name: PORT
   value: "3000"
+- name: HELIX_REGION
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_REGION
+- name: HELIX_OTEL_REGION
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_OTEL_REGION
+- name: HELIX_SIEM_REGION
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_SIEM_REGION
+- name: MEET_JITSI_REGION
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: MEET_JITSI_REGION
+- name: HELIX_DRIVE_OFFICE_PREVIEW_URL
+  value: {{ printf "http://%s-content-converter:%d" (include "helix.fullname" .) (int .Values.contentConverter.port) | quote }}
+- name: HELIX_DRIVE_OFFICE_PREVIEW_ALLOWED_HOSTS
+  value: {{ printf "%s-content-converter" (include "helix.fullname" .) | quote }}
+- name: HELIX_DRIVE_OFFICE_PREVIEW_TIMEOUT_MS
+  value: {{ .Values.contentConverter.timeoutMs | quote }}
 - name: HELIX_CONFIG_JSON
   valueFrom:
     configMapKeyRef:
@@ -109,6 +284,11 @@ default role. Input is the chart root context.
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: HELIX_PUBLIC_URL
+- name: HELIX_TENANT_ROOT_HOSTS
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_TENANT_ROOT_HOSTS
 {{- /*
   FIPS env is opt-in: emitted only when fips.enabled is true. When omitted the
   crypto adapter sees no HELIX_FIPS_* / HELIX_CRYPTO_* env and self-initializes
@@ -142,6 +322,11 @@ default role. Input is the chart root context.
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: LOG_LEVEL
+- name: BETTER_AUTH_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.auth.secretRef.name | quote }}
+      key: {{ .Values.auth.secretRef.key | quote }}
 - name: DATABASE_URL
   {{- if .Values.external.postgres.url }}
   value: {{ .Values.external.postgres.url | quote }}
@@ -176,11 +361,30 @@ default role. Input is the chart root context.
     secretKeyRef:
       name: {{ .Values.external.meilisearch.masterKeySecret.name | quote }}
       key: {{ .Values.external.meilisearch.masterKeySecret.key | quote }}
+{{- if .Values.external.clamav.enabled }}
+- name: MAIL_CLAMAV_ENABLED
+  value: "true"
+- name: MAIL_CLAMAV_HOST
+  value: {{ required "external.clamav.host is required" .Values.external.clamav.host | quote }}
+- name: MAIL_CLAMAV_PORT
+  value: {{ .Values.external.clamav.port | quote }}
+- name: MAIL_CLAMAV_TIMEOUT_MS
+  value: {{ .Values.external.clamav.timeoutMs | quote }}
+- name: HELIX_AV_MAX_SIGNATURE_AGE_MS
+  value: {{ .Values.external.clamav.maxSignatureAgeMs | quote }}
+{{- end }}
 - name: RUSTFS_ENDPOINT
   valueFrom:
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: RUSTFS_ENDPOINT
+{{- range $key := list "RUSTFS_BUCKET" "RUSTFS_REGION" "RUSTFS_SERVER_SIDE_ENCRYPTION" "RUSTFS_SSE_KMS_KEY_ID" "RUSTFS_OBJECT_LOCK_MODE" "RUSTFS_OBJECT_LOCK_RETENTION_DAYS" }}
+- name: {{ $key }}
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" $ }}-config
+      key: {{ $key }}
+{{- end }}
 - name: RUSTFS_ACCESS_KEY
   valueFrom:
     secretKeyRef:
@@ -252,9 +456,9 @@ default role. Input is the chart root context.
       name: {{ .Values.external.siem.existingSecret.name | quote }}
       key: {{ .Values.external.siem.existingSecret.tokenKey | quote }}
 {{- end }}
-{{- with .Values.env }}
-{{- toYaml . }}
-{{- end }}
+{{ with .Values.env }}
+{{ toYaml . }}
+{{ end }}
 {{- end -}}
 
 {{/*

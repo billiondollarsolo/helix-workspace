@@ -1,13 +1,9 @@
 /**
  * Server-side HTML sanitizer for the PDF export pipeline.
  *
- * The PDF exporter renders untrusted document HTML inside a headless Chromium
- * instance. Without sanitization, a malicious document body could embed
- * script tags, iframes, or link rel=preconnect tags that would cause
- * Chromium to fetch arbitrary URLs from inside the Helix network perimeter
- * (SSRF). To defend in depth we both (a) strip every element/attribute that
- * could trigger a network fetch or run script, and (b) block all subresource
- * requests at the Chromium routing layer (see chromium.ts).
+ * The PDF exporter sends document HTML to the isolated, no-egress content
+ * converter. Sanitization strips executable and network-capable markup before
+ * it crosses that boundary; the worker's network policy is the second layer.
  *
  * The implementation is deliberately self-contained — no jsdom/DOMPurify/
  * sanitize-html dependency. It uses an allowlist tokenizer over the HTML
@@ -119,14 +115,7 @@ const DROP_CONTENT_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 /** Void (self-closing) tags — we never emit a closing tag for these. */
-const VOID_TAGS: ReadonlySet<string> = new Set([
-  "br",
-  "hr",
-  "img",
-  "meta",
-  "wbr",
-  "col",
-]);
+const VOID_TAGS: ReadonlySet<string> = new Set(["br", "hr", "img", "meta", "wbr", "col"]);
 
 /** Attributes allowed per-tag. "*" applies to any tag. */
 const ALLOWED_ATTRIBUTES: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -144,11 +133,7 @@ const ALLOWED_ATTRIBUTES: Readonly<Record<string, ReadonlySet<string>>> = {
 
 /** URL schemes accepted in href attributes. Everything else (javascript:,
  * data: for non-image, vbscript:, etc.) is dropped. */
-const ALLOWED_HREF_SCHEMES: ReadonlySet<string> = new Set([
-  "http:",
-  "https:",
-  "mailto:",
-]);
+const ALLOWED_HREF_SCHEMES: ReadonlySet<string> = new Set(["http:", "https:", "mailto:"]);
 
 const COMMENT_AND_DECL_PATTERN =
   /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<![^>]*>|<\?[\s\S]*?\?>/gu;
@@ -156,18 +141,15 @@ const COMMENT_AND_DECL_PATTERN =
 // reliably detect a trailing `/` self-close marker; per-attribute parsing
 // happens in `sanitizeAttributes`.
 const TAG_PATTERN = /<\s*(\/?)([a-zA-Z][a-zA-Z0-9:-]*)([^>]*)>/gu;
-const ATTR_PATTERN =
-  /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))/gu;
+const ATTR_PATTERN = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))/gu;
 
 /**
- * Returns a sanitized copy of html safe to feed to Chromium. Drops every
+ * Returns a sanitized copy of html safe to send to the converter. Drops every
  * element / attribute not on the allowlist and removes all on* handlers
  * and dangerous URL schemes.
  *
- * IMPORTANT: this is one layer of defense. The chromium renderer also blocks
- * every subresource request via page.route('**', route => route.abort()),
- * so even if the sanitizer let something through, Chromium still will not
- * fetch external URLs.
+ * IMPORTANT: this is one layer of defense. The converter deployment also has
+ * no network egress, so a parser bypass cannot reach internal or public URLs.
  */
 export function sanitizeHtmlForExport(html: string): string {
   // 1. Strip comments, CDATA, doctypes, and processing instructions outright.

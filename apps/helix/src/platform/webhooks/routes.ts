@@ -1,9 +1,14 @@
 import { Readable } from "node:stream";
 import type { FastifyInstance } from "fastify";
+import {
+  INBOUND_WEBHOOK_BODY_LIMIT_BYTES,
+  readBoundedRequestBody,
+} from "../../api/request-body.js";
 import { verifyInboundWebhookPayload } from "./delivery.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import {
   resolveWebhookSecret,
+  webhookHeaderNameIsSafe,
   type InboundWebhookRecord,
   type PostgresWebhookStore,
   type WebhookSecretResolver,
@@ -20,7 +25,7 @@ import {
   type ParseSourceWebhookOptions,
   type WebhookHeaders,
 } from "./sources/index.js";
-import { z } from "zod3";
+import { z } from "zod";
 
 const paramsSchema = z.object({
   slug: z.string().min(1),
@@ -58,7 +63,7 @@ export async function registerWebhookRoutes(
       return;
     }
 
-    void readPayload(payload)
+    void readBoundedRequestBody(payload, INBOUND_WEBHOOK_BODY_LIMIT_BYTES)
       .then((rawBody) => {
         rawWebhookBodies.set(request, rawBody);
         const replay = Readable.from(rawBody);
@@ -71,63 +76,59 @@ export async function registerWebhookRoutes(
       });
   });
 
-  app.post("/webhooks/:slug", async (request, reply) => {
-    const params = paramsSchema.parse(request.params);
-    const webhook = await options.store.getInboundBySlug(params.slug);
-    if (webhook === null) {
-      return reply.code(404).send({ error: `Unknown inbound webhook: ${params.slug}` });
-    }
+  app.post(
+    "/webhooks/:slug",
+    { bodyLimit: INBOUND_WEBHOOK_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const params = paramsSchema.parse(request.params);
+      const webhook = await options.store.getInboundBySlug(params.slug);
+      if (webhook === null) {
+        return reply.code(404).send({ error: `Unknown inbound webhook: ${params.slug}` });
+      }
 
-    const payloadBuffer = rawWebhookBodies.get(request) ?? bodyToBuffer(request.body);
-    const verificationHeaders = allHeaders(request.headers);
-    const headers = compactHeaders(request.headers);
-    const verified = await verifyAndParseInboundWebhook({
-      webhook,
-      payload: payloadBuffer,
-      headers: verificationHeaders,
-      ...(options.secretResolver === undefined ? {} : { secretResolver: options.secretResolver }),
-    });
-    const receivedAt = new Date();
-    const routed =
-      verified.accepted && options.tools !== undefined
-        ? await routeInboundWebhookAction({
-            tools: options.tools,
-            webhook,
-            parsedPayload: verified.parsedPayload,
-            eventSubject: verified.eventSubject,
-          })
-        : { ok: true as const };
-    const accepted = verified.accepted && routed.ok;
-    const delivery = await options.store.createDelivery({
-      orgId: webhook.orgId,
-      direction: "inbound",
-      inboundWebhookId: webhook.id,
-      eventSubject: verified.eventSubject,
-      status: accepted ? "delivered" : "failed",
-      payload: verified.parsedPayload,
-      signature: verified.signatureHeader ?? null,
-      requestHeaders: headers,
-      error: accepted ? null : routed.ok ? verified.error : routed.error,
-      deliveredAt: accepted ? receivedAt : null,
-    });
-    if (accepted) {
-      await options.store.markInboundReceived(webhook.id, receivedAt);
-      return reply.code(202).send({ ok: true, deliveryId: delivery.id });
-    }
-    return reply.code(verified.accepted ? 422 : 401).send({
-      ok: false,
-      deliveryId: delivery.id,
-      error: routed.ok ? verified.error : routed.error,
-    });
-  });
-}
-
-async function readPayload(payload: Readable): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of payload as AsyncIterable<Buffer | string | Uint8Array>) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
+      const payloadBuffer = rawWebhookBodies.get(request) ?? bodyToBuffer(request.body);
+      const verificationHeaders = allHeaders(request.headers);
+      const headers = compactHeaders(request.headers);
+      const verified = await verifyAndParseInboundWebhook({
+        webhook,
+        payload: payloadBuffer,
+        headers: verificationHeaders,
+        ...(options.secretResolver === undefined ? {} : { secretResolver: options.secretResolver }),
+      });
+      const receivedAt = new Date();
+      const routed =
+        verified.accepted && options.tools !== undefined
+          ? await routeInboundWebhookAction({
+              tools: options.tools,
+              webhook,
+              parsedPayload: verified.parsedPayload,
+              eventSubject: verified.eventSubject,
+            })
+          : { ok: true as const };
+      const accepted = verified.accepted && routed.ok;
+      const delivery = await options.store.createDelivery({
+        orgId: webhook.orgId,
+        direction: "inbound",
+        inboundWebhookId: webhook.id,
+        eventSubject: verified.eventSubject,
+        status: accepted ? "delivered" : "failed",
+        payload: verified.parsedPayload,
+        signature: verified.signatureHeader ?? null,
+        requestHeaders: headers,
+        error: accepted ? null : routed.ok ? verified.error : routed.error,
+        deliveredAt: accepted ? receivedAt : null,
+      });
+      if (accepted) {
+        await options.store.markInboundReceived(webhook.id, receivedAt);
+        return reply.code(202).send({ ok: true, deliveryId: delivery.id });
+      }
+      return reply.code(verified.accepted ? 422 : 401).send({
+        ok: false,
+        deliveryId: delivery.id,
+        error: routed.ok ? verified.error : routed.error,
+      });
+    },
+  );
 }
 
 async function verifyAndParseInboundWebhook(input: {
@@ -146,7 +147,11 @@ async function verifyAndParseInboundWebhook(input: {
   try {
     const providerSource = providerSources.get(webhook.source);
     if (providerSource !== undefined) {
-      const secret = await resolveWebhookSecret(webhook.secretRef, input.secretResolver);
+      const secret = await resolveWebhookSecret(
+        webhook.orgId,
+        webhook.secretCiphertext,
+        input.secretResolver,
+      );
       const signatureHeaderName = providerSignatureHeaders[webhook.source];
       const signatureHeader =
         signatureHeaderName === undefined ? undefined : firstHeader(headers[signatureHeaderName]);
@@ -173,7 +178,8 @@ async function verifyAndParseInboundWebhook(input: {
     const signatureHeader = firstHeader(headers["x-helix-signature"]);
     const accepted = await verifyInboundWebhookPayload({
       payload,
-      secretRef: webhook.secretRef,
+      orgId: webhook.orgId,
+      secretCiphertext: webhook.secretCiphertext,
       ...(input.secretResolver === undefined ? {} : { secretResolver: input.secretResolver }),
       signatureHeader,
     });
@@ -280,7 +286,7 @@ function compactHeaders(
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers)
-      .filter(([key]) => key !== "authorization" && key !== "cookie")
+      .filter(([key]) => webhookHeaderNameIsSafe(key))
       .flatMap(([key, value]) => {
         const first = firstHeader(value);
         return first === undefined ? [] : [[key, first]];

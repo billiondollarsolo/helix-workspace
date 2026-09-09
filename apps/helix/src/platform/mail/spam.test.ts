@@ -1,7 +1,11 @@
 import { createServer, type Server } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { SpamdScanner, getSpamdScannerConfig, parseSpamdResponse } from "./spam.js";
-import { ClamavScanner, getClamavScannerConfig, parseClamavResponse } from "./antivirus.js";
+import { SpamdScanner, parseSpamdResponse } from "./spam.js";
+import {
+  ClamavScanner,
+  parseClamavResponse,
+  parseClamavVersion,
+} from "./antivirus.js";
 import { ingestRawMail, scanInboundMail } from "./ingest.js";
 import type { MailMessageInput, MailThreadStatePatch, StoredMailMessage } from "./types.js";
 
@@ -12,19 +16,25 @@ import type { MailMessageInput, MailThreadStatePatch, StoredMailMessage } from "
  * which works for both the half-closing spamd client and the keep-open clamd
  * client.
  */
-function fakeDaemon(reply: string | Buffer): Promise<{ port: number; close: () => Promise<void> }> {
+function fakeDaemon(
+  reply: string | Buffer | ((request: Buffer) => string | Buffer),
+): Promise<{ port: number; close: () => Promise<void> }> {
   return new Promise((resolve, reject) => {
     const server: Server = createServer((socket) => {
       let timer: NodeJS.Timeout | undefined;
+      const chunks: Buffer[] = [];
       const replyOnce = (): void => {
         if (timer !== undefined) {
           clearTimeout(timer);
         }
         timer = setTimeout(() => {
-          socket.end(reply);
+          socket.end(typeof reply === "function" ? reply(Buffer.concat(chunks)) : reply);
         }, 25);
       };
-      socket.on("data", replyOnce);
+      socket.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        replyOnce();
+      });
       socket.on("end", replyOnce);
       socket.on("error", () => {
         /* ignore */
@@ -67,9 +77,7 @@ describe("spamd protocol parsing", () => {
   });
 
   it("parses a clean verdict with a negative score", () => {
-    const parsed = parseSpamdResponse(
-      "SPAMD/1.1 0 EX_OK\nSpam: False ; -1.2 / 5.0\n\nBAYES_00\n",
-    );
+    const parsed = parseSpamdResponse("SPAMD/1.1 0 EX_OK\nSpam: False ; -1.2 / 5.0\n\nBAYES_00\n");
     expect(parsed.score).toBe(-1.2);
     expect(parsed.symbols).toEqual(["BAYES_00"]);
   });
@@ -125,9 +133,26 @@ describe("clamd protocol parsing", () => {
       /clamd returned an error/u,
     );
   });
+
+  it("parses engine and signature database freshness", () => {
+    expect(parseClamavVersion("ClamAV 1.5.4/27835/Tue Sep 2 10:33:42 2026\0")).toEqual({
+      engineVersion: "1.5.4",
+      signatureVersion: 27835,
+      signatureUpdatedAt: new Date("2026-09-02T10:33:42.000Z"),
+    });
+    expect(() => parseClamavVersion("ClamAV 1.5.4/unknown")).toThrow("signature freshness");
+  });
 });
 
 describe("ClamavScanner", () => {
+  it("requires a valid clamd PONG for health", async () => {
+    const daemon = await fakeDaemon("PONG\0");
+    servers.push(daemon);
+    const scanner = new ClamavScanner({ host: "127.0.0.1", port: daemon.port });
+
+    await expect(scanner.checkHealth()).resolves.toBeUndefined();
+  });
+
   it("reports an infected verdict from clamd", async () => {
     const daemon = await fakeDaemon("stream: Eicar-Test-Signature FOUND\0");
     servers.push(daemon);
@@ -144,6 +169,47 @@ describe("ClamavScanner", () => {
     const scanner = new ClamavScanner({ host: "127.0.0.1", port: daemon.port });
     const result = await scanner.scan(Buffer.from("benign payload"));
     expect(result.infected).toBe(false);
+  });
+
+  it("requires a fresh loaded signature database for readiness", async () => {
+    const daemon = await fakeDaemon((request) =>
+      request.includes(Buffer.from("PING"))
+        ? "PONG\0"
+        : "ClamAV 1.5.4/27835/Tue Sep 2 10:33:42 2026\0",
+    );
+    servers.push(daemon);
+    const scanner = new ClamavScanner({ host: "127.0.0.1", port: daemon.port });
+    await expect(
+      scanner.checkReadiness({
+        maxSignatureAgeMs: 48 * 60 * 60 * 1_000,
+        now: new Date("2026-09-03T10:33:42.000Z"),
+      }),
+    ).resolves.toMatchObject({ engineVersion: "1.5.4", signatureVersion: 27835 });
+  });
+
+  it("fails readiness for stale signatures and bounds a hung scan", async () => {
+    const staleDaemon = await fakeDaemon((request) =>
+      request.includes(Buffer.from("PING"))
+        ? "PONG\0"
+        : "ClamAV 1.5.4/27835/Tue Aug 1 10:33:42 2026\0",
+    );
+    servers.push(staleDaemon);
+    const staleScanner = new ClamavScanner({ host: "127.0.0.1", port: staleDaemon.port });
+    await expect(
+      staleScanner.checkReadiness({
+        maxSignatureAgeMs: 48 * 60 * 60 * 1_000,
+        now: new Date("2026-09-03T10:33:42.000Z"),
+      }),
+    ).rejects.toThrow("signatures are stale");
+
+    const slowDaemon = await fakeDaemon("stream: OK\0");
+    servers.push(slowDaemon);
+    const timedScanner = new ClamavScanner({
+      host: "127.0.0.1",
+      port: slowDaemon.port,
+      timeoutMs: 5,
+    });
+    await expect(timedScanner.scan("slow")).rejects.toThrow("timed out");
   });
 });
 
@@ -221,7 +287,64 @@ describe("scanInboundMail", () => {
     expect(result.routedToSpam).toBe(false);
     expect(result.spam).toBeNull();
   });
+
+  it("defers delivery and emits an alert when a configured scanner is unavailable", async () => {
+    const unavailable: string[] = [];
+    await expect(
+      scanInboundMail(
+        {
+          failurePolicy: "defer",
+          spam: cleanSpamScanner,
+          antivirus: {
+            async scan() {
+              throw new Error("clamd unreachable");
+            },
+          },
+          onUnavailable: ({ scanner }) => unavailable.push(scanner),
+        },
+        "message",
+      ),
+    ).rejects.toMatchObject({ responseCode: 451 });
+    expect(unavailable).toContain("antivirus");
+  });
+
+  it("defers when a required scanner is absent or skips the message", async () => {
+    await expect(
+      scanInboundMail({ failurePolicy: "defer", spam: cleanSpamScanner }, "message"),
+    ).rejects.toMatchObject({ responseCode: 451 });
+    await expect(
+      scanInboundMail(
+        {
+          failurePolicy: "defer",
+          spam: cleanSpamScanner,
+          antivirus: {
+            async scan() {
+              return {
+                infected: false,
+                signature: null,
+                scanned: false,
+                evidence: { scanned: false, reason: "too large" },
+              };
+            },
+          },
+        },
+        "message",
+      ),
+    ).rejects.toMatchObject({ responseCode: 451 });
+  });
 });
+
+const cleanSpamScanner = {
+  async scan() {
+    return {
+      score: 0,
+      thresholdReportedBySpamd: 5,
+      isSpam: false,
+      symbols: [],
+      evidence: { scanned: true },
+    };
+  },
+};
 
 /** A minimal mail store recording inbound inserts and thread-state patches. */
 class RecordingMailStore {
@@ -234,7 +357,13 @@ class RecordingMailStore {
 
   async insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage> {
     this.inserted.push(input);
-    return { threadId: "thread-1", messageId: "message-1", attachmentObjectIds: [] };
+    return {
+      threadId: "thread-1",
+      messageId: "message-1",
+      attachmentObjectIds: [],
+      created: true,
+      deliveredActorIds: input.mailboxActorIds ?? [],
+    };
   }
 
   async updateThreadState(input: {
@@ -264,6 +393,31 @@ const rawMessage =
   "From: sender@external.test\r\nTo: user@helix.test\r\nSubject: Promo\r\n\r\nbuy now\r\n";
 
 describe("ingest spam routing", () => {
+  it("does not persist mail when secure scanning is unavailable", async () => {
+    const store = new RecordingMailStore();
+    await expect(
+      ingestRawMail({
+        store: store as never,
+        authenticator: trustedAuthenticator,
+        scanners: {
+          failurePolicy: "defer",
+          spam: cleanSpamScanner,
+          antivirus: {
+            async scan() {
+              throw new Error("clamd offline");
+            },
+          },
+        },
+        input: {
+          orgId: "org-1",
+          recipients: [{ orgId: "org-1", actorId: "actor-1", address: "user@helix.test" }],
+          raw: rawMessage,
+        },
+      }),
+    ).rejects.toMatchObject({ responseCode: 451 });
+    expect(store.inserted).toHaveLength(0);
+  });
+
   it("routes a high-scoring message to the recipient's Spam folder", async () => {
     const store = new RecordingMailStore();
     const result = await ingestRawMail({
@@ -284,9 +438,9 @@ describe("ingest spam routing", () => {
       },
       input: {
         orgId: "org-1",
+        recipients: [{ orgId: "org-1", actorId: "actor-1", address: "user@helix.test" }],
         raw: rawMessage,
         envelopeFrom: "sender@external.test",
-        envelopeTo: ["user@helix.test"],
       },
     });
     expect(result.scan.routedToSpam).toBe(true);
@@ -322,9 +476,9 @@ describe("ingest spam routing", () => {
       },
       input: {
         orgId: "org-1",
+        recipients: [{ orgId: "org-1", actorId: "actor-1", address: "user@helix.test" }],
         raw: rawMessage,
         envelopeFrom: "sender@external.test",
-        envelopeTo: ["user@helix.test"],
       },
     });
     expect(result.scan.routedToSpam).toBe(false);
@@ -350,40 +504,11 @@ describe("ingest spam routing", () => {
       },
       input: {
         orgId: "org-1",
+        recipients: [{ orgId: "org-1", actorId: "actor-1", address: "user@helix.test" }],
         raw: rawMessage,
-        envelopeTo: ["user@helix.test"],
       },
     });
     expect(result.scan.spamReason).toBe("virus");
     expect(store.patches.some((entry) => entry.patch.spamAt !== undefined)).toBe(true);
-  });
-});
-
-describe("config gating", () => {
-  it("returns undefined when spamd is disabled", () => {
-    expect(getSpamdScannerConfig({})).toBeUndefined();
-  });
-
-  it("reads spamd config from the environment", () => {
-    const config = getSpamdScannerConfig({
-      MAIL_SPAMD_ENABLED: "true",
-      MAIL_SPAMD_HOST: "spam.internal",
-      MAIL_SPAMD_PORT: "7830",
-      MAIL_SPAMD_THRESHOLD: "6.5",
-    });
-    expect(config).toEqual({ host: "spam.internal", port: 7830, threshold: 6.5 });
-  });
-
-  it("returns undefined when clamav is disabled", () => {
-    expect(getClamavScannerConfig({})).toBeUndefined();
-  });
-
-  it("reads clamav config from the environment", () => {
-    const config = getClamavScannerConfig({
-      MAIL_CLAMAV_ENABLED: "1",
-      MAIL_CLAMAV_HOST: "av.internal",
-      MAIL_CLAMAV_PORT: "3310",
-    });
-    expect(config).toEqual({ host: "av.internal", port: 3310 });
   });
 });

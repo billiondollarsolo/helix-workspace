@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DRIVE_ROLES, driveRoleRank, hasRoleAtLeast, normalizeDriveRole } from "./roles.js";
+import { DRIVE_ROLES, driveRoleRank, hasRoleAtLeast, parseDriveRole } from "./roles.js";
 
 describe("drive roles", () => {
   it("orders reader < commenter < editor < owner", () => {
@@ -8,10 +8,10 @@ describe("drive roles", () => {
     expect(driveRoleRank("editor")).toBeLessThan(driveRoleRank("owner"));
   });
 
-  it("normalizes the legacy 'viewer' vocab to 'reader'", () => {
-    expect(normalizeDriveRole("viewer")).toBe("reader");
-    expect(normalizeDriveRole("editor")).toBe("editor");
-    expect(normalizeDriveRole("unknown")).toBe("reader");
+  it("accepts only canonical roles", () => {
+    expect(parseDriveRole("editor")).toBe("editor");
+    expect(() => parseDriveRole("viewer")).toThrow();
+    expect(() => parseDriveRole("unknown")).toThrow();
   });
 
   it("hasRoleAtLeast respects rank", () => {

@@ -44,7 +44,6 @@ const BOOLEAN_FEATURE_FLAGS = [
   ["ai_smart_compose", "AI smart compose"],
   ["b2b_sharing", "B2B sharing"],
   ["mail_outbound", "Outbound mail"],
-  ["sso_saml", "SAML SSO"],
   ["scim_provisioning", "SCIM provisioning"],
   ["custom_domain", "Custom domains"],
   ["byo_storage", "BYO storage"],
@@ -103,8 +102,9 @@ const BYO_STORAGE_FIELDS = [
   ["region", "Region"],
   ["bucket", "Bucket"],
   ["prefix", "Prefix"],
-  ["credentials_vault_path", "Credentials Vault path"],
+  ["credentials_secret_handle", "Credentials secret handle"],
   ["sse_kms_key_arn", "SSE-KMS key ARN"],
+  ["retention_days", "Object-lock retention days"],
 ] as const;
 
 type BooleanFeatureFlagKey = (typeof BOOLEAN_FEATURE_FLAGS)[number][0];
@@ -121,6 +121,7 @@ type ByoStorageState = Record<ByoStorageFieldKey, string> & {
   readonly kind: ByoStorageKind;
   readonly provider: ByoStorageProvider;
   readonly force_path_style: boolean;
+  readonly object_lock: "governance" | "compliance";
 };
 
 const emptyFeatureState = {
@@ -137,9 +138,11 @@ const emptyByoStorageState = {
   region: "us-east-1",
   bucket: "",
   prefix: "",
-  credentials_vault_path: "",
+  credentials_secret_handle: "",
   sse_kms_key_arn: "",
+  retention_days: "30",
   force_path_style: false,
+  object_lock: "compliance",
 } satisfies ByoStorageState;
 
 export function TenantConfigManagement() {
@@ -267,7 +270,7 @@ export function TenantConfigManagement() {
     canSave &&
     migrationCutoverConfirmed &&
     storageMigration !== null &&
-    storageMigration.dryRun === false &&
+    !storageMigration.dryRun &&
     storageMigration.status === "succeeded" &&
     storageMigration.failures.length === 0 &&
     storageMigration.lastError === null &&
@@ -602,6 +605,21 @@ export function TenantConfigManagement() {
                 disabled={byoStorage.kind === "helix-default"}
               />
             </label>
+            <label className="grid gap-1 text-xs text-muted-foreground">
+              <span>Object-lock mode</span>
+              <select
+                className="h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground"
+                disabled={byoStorage.kind === "helix-default"}
+                onChange={(event) => {
+                  const object_lock = event.currentTarget.value as "governance" | "compliance";
+                  setByoStorage((current) => ({ ...current, object_lock }));
+                }}
+                value={byoStorage.object_lock}
+              >
+                <option value="compliance">Compliance</option>
+                <option value="governance">Governance</option>
+              </select>
+            </label>
             <SaveButton disabled={!canSave} label="Save BYO storage" onClick={saveByoStorage} />
             <Button disabled={!canSave} onClick={testStorage} size="sm" type="button">
               <Activity aria-hidden="true" />
@@ -706,7 +724,7 @@ export function TenantConfigManagement() {
                       {storageMigration.failures.length === 1 ? "" : "s"}
                     </span>
                   )}
-                  {storageMigration.dryRun === false && storageMigration.status === "succeeded" ? (
+                  {!storageMigration.dryRun && storageMigration.status === "succeeded" ? (
                     <div className="grid gap-2 border-t border-border/70 pt-2">
                       <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
                         <span>Confirm migration cutover</span>
@@ -827,6 +845,7 @@ function brandingStateFromConfig(config: TenantConfigAdminView): BrandingState {
 function byoStorageStateFromConfig(config: TenantConfigAdminView): ByoStorageState {
   const storage = readRecord(config.byo.storage);
   const encryption = readRecord(storage?.encryption);
+  const lifecycle = readRecord(storage?.lifecycle);
   const kind = storage?.kind === "byo" ? "byo" : "helix-default";
   const provider = readByoStorageProvider(storage?.provider);
   return {
@@ -836,10 +855,15 @@ function byoStorageStateFromConfig(config: TenantConfigAdminView): ByoStorageSta
     region: typeof storage?.region === "string" ? storage.region : "us-east-1",
     bucket: typeof storage?.bucket === "string" ? storage.bucket : "",
     prefix: typeof storage?.prefix === "string" ? storage.prefix : "",
-    credentials_vault_path:
-      typeof storage?.credentials_vault_path === "string" ? storage.credentials_vault_path : "",
+    credentials_secret_handle:
+      typeof storage?.credentials_secret_handle === "string"
+        ? storage.credentials_secret_handle
+        : "",
     sse_kms_key_arn:
       typeof encryption?.sse_kms_key_arn === "string" ? encryption.sse_kms_key_arn : "",
+    retention_days:
+      typeof lifecycle?.retention_days === "number" ? String(lifecycle.retention_days) : "30",
+    object_lock: lifecycle?.object_lock === "governance" ? "governance" : "compliance",
     force_path_style:
       typeof storage?.force_path_style === "boolean"
         ? storage.force_path_style
@@ -863,18 +887,14 @@ function compactBlankStrings(input: BrandingState): Record<string, string> {
   return output;
 }
 
-function parseByoStorage(input: ByoStorageState):
-  | {
-      readonly kind: ByoStorageKind;
-      readonly [key: string]: string | boolean | { readonly sse_kms_key_arn: string };
-    }
-  | string {
+function parseByoStorage(input: ByoStorageState): Record<string, unknown> | string {
   const bucket = input.bucket.trim();
-  const credentialsVaultPath = input.credentials_vault_path.trim();
+  const credentialsSecretHandle = input.credentials_secret_handle.trim();
   const endpoint = input.endpoint.trim();
   const region = input.region.trim();
   const prefix = input.prefix.trim();
   const sseKmsKeyArn = input.sse_kms_key_arn.trim();
+  const retentionDays = Number(input.retention_days);
   if (unsafeStoragePrefix(prefix)) {
     return "BYO storage prefix must not contain path traversal, repeated separators, or control characters.";
   }
@@ -887,28 +907,31 @@ function parseByoStorage(input: ByoStorageState):
   if (bucket.length === 0) {
     return "BYO storage bucket is required.";
   }
-  if (!/^tenants\/[A-Za-z0-9_-]+\/byo-storage\/[A-Za-z0-9_.-]+$/u.test(credentialsVaultPath)) {
-    return "Credentials Vault path must be scoped under tenants/{tenant}/byo-storage/.";
+  if (!/^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/u.test(credentialsSecretHandle)) {
+    return "Credentials secret handle must be a lowercase identifier.";
   }
   if (input.provider !== "aws-s3" && endpoint.length === 0) {
     return "BYO storage endpoint is required for this provider.";
+  }
+  if (endpoint.length > 0 && !endpoint.startsWith("https://")) {
+    return "BYO storage endpoint must use HTTPS.";
+  }
+  if (region.length === 0) return "BYO storage region is required.";
+  if (sseKmsKeyArn.length === 0) return "BYO storage SSE-KMS key ARN is required.";
+  if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 36_500) {
+    return "Object-lock retention days must be between 1 and 36500.";
   }
   return {
     kind: "byo",
     provider: input.provider,
     ...(endpoint.length === 0 ? {} : { endpoint }),
-    ...(region.length === 0 ? {} : { region }),
+    region,
     bucket,
     ...(prefix.length === 0 ? {} : { prefix }),
-    credentials_vault_path: credentialsVaultPath,
+    credentials_secret_handle: credentialsSecretHandle,
     force_path_style: input.force_path_style,
-    ...(sseKmsKeyArn.length === 0
-      ? {}
-      : {
-          encryption: {
-            sse_kms_key_arn: sseKmsKeyArn,
-          },
-        }),
+    encryption: { sse_kms_key_arn: sseKmsKeyArn },
+    lifecycle: { object_lock: input.object_lock, retention_days: retentionDays },
   };
 }
 
@@ -955,13 +978,10 @@ function byoStoragePlaceholder(
   if (key === "prefix") {
     return "helix/";
   }
-  if (key === "credentials_vault_path") {
-    return "tenants/acme/byo-storage/s3";
+  if (key === "credentials_secret_handle") {
+    return "s3-primary";
   }
-  if (key === "sse_kms_key_arn") {
-    return "arn:aws:kms:us-east-1:123456789012:key/...";
-  }
-  return undefined;
+  return "arn:aws:kms:us-east-1:123456789012:key/...";
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {

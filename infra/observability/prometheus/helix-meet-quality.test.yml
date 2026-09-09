@@ -1,0 +1,34 @@
+rule_files:
+  - rules/helix-meet-quality.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'helix_meet_degraded_samples_total{signal="packet_loss"}'
+        values: "0+1x10"
+      - series: 'helix_meet_participant_events_total{event="reconnected",device="none"}'
+        values: "0+1x10"
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: HelixMeetQualityDegraded
+        exp_alerts:
+          - exp_labels:
+              signal: packet_loss
+              severity: warning
+              priority: p2
+              service: meet
+            exp_annotations:
+              summary: "Meet quality degradation detected"
+              description: "Meet packet_loss crossed its bounded operational threshold."
+      - eval_time: 7m
+        alertname: HelixMeetParticipantInstability
+        exp_alerts:
+          - exp_labels:
+              event: reconnected
+              device: none
+              severity: warning
+              priority: p2
+              service: meet
+            exp_annotations:
+              summary: "Meet participant instability detected"
+              description: "Meet recorded repeated reconnected events for device=none."

@@ -1,8 +1,7 @@
 /* SheetsList — the Sheets list view.
 
-   Reads spreadsheets from the `sheets.list` tool via TanStack Query and
-   merges them ahead of the typed seed (offline fallback). The per-row
-   more-actions menu runs `sheets.delete`. Mirrors the Docs list layout:
+   Reads live spreadsheets from the `sheets.list` tool via TanStack Query.
+   The per-row more-actions menu runs Drive lifecycle operations. Mirrors the Docs list layout:
    a card grid or table driven by the shared document view preference. */
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
@@ -26,12 +25,7 @@ import {
 } from "@/features/drive/view-preference";
 import type { SheetListRow } from "./model";
 import { sheetsListFromDriveQueryOptions, sheetsQueryKeys } from "./queries";
-import {
-  SHEETS_FOLDERS,
-  SHEETS_TEMPLATES,
-  headingForSheetsFolder,
-  type SheetsFolderId,
-} from "./list-taxonomy";
+import { SHEETS_FOLDERS, headingForSheetsFolder, type SheetsFolderId } from "./list-taxonomy";
 
 export interface SheetsListProps {
   /** Optional case-insensitive filter applied to the spreadsheet title. */
@@ -199,9 +193,6 @@ export function SheetsList({
           <h1 style={{ margin: 0, fontSize: "var(--text-h2)", fontWeight: 600 }}>{heading}</h1>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <DocumentSurfaceViewToggle view={view} onViewChange={setView} />
-            <button type="button" className="btn">
-              <Icons.Filter /> Filter
-            </button>
             <button
               type="button"
               className="btn"
@@ -231,7 +222,7 @@ export function SheetsList({
         {isBackendUnavailable ? (
           <div role="status" style={noticeStyle}>
             <Icons.Globe />
-            Sheets backend unavailable — showing seeded spreadsheets only.
+            Sheets unavailable — try again later.
           </div>
         ) : null}
 
@@ -512,14 +503,6 @@ function SheetsSidebar({
             </button>
           );
         })}
-
-        <div className="surf-section-label">Templates</div>
-        {SHEETS_TEMPLATES.map((template) => (
-          <button key={template} type="button" className="surf-nav-row">
-            <Icons.Sheet />
-            <span className="label">{template}</span>
-          </button>
-        ))}
       </nav>
     </aside>
   );

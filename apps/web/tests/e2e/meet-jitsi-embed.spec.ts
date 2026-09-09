@@ -15,18 +15,17 @@ interface MeetToolCall {
 }
 
 test.describe("/meet Jitsi embed", () => {
-  test("mints a backend token and initializes the configured Jitsi room", async ({
-    page,
-  }) => {
+  test("mints a backend token and initializes the configured Jitsi room", async ({ page }) => {
     const calls: MeetToolCall[] = [];
 
-    await page.addInitScript(({ key, token }) => window.localStorage.setItem(key, token), {
-      key: accessTokenStorageKey,
-      token: accessToken,
-    });
+    await page.addInitScript(
+      ({ key, token }) => {
+        window.localStorage.setItem(key, token);
+      },
+      { key: accessTokenStorageKey, token: accessToken },
+    );
     await mockMeetTools(page, calls);
     await mockJitsiExternalApi(page);
-
     await page.goto("/meet");
     await expect(page.getByText("Backend launch review", { exact: true })).toBeVisible();
 
@@ -34,11 +33,16 @@ test.describe("/meet Jitsi embed", () => {
 
     await expect
       .poll(() => calls.find((call) => call.pathname === "/api/tools/meet.mint-token")?.body)
-      .toEqual({
-        roomId,
-        expiresInSeconds: 3600,
-        moderator: false,
-      });
+      .toEqual(
+        expect.objectContaining({
+          roomId,
+          expiresInSeconds: 300,
+          recordingNoticeAccepted: true,
+          recordingNoticeVersion: "2026-09-02",
+          deviceId: expect.any(String),
+          joinGrantId: expect.any(String),
+        }),
+      );
 
     await expect
       .poll(() =>
@@ -137,6 +141,23 @@ async function mockMeetTools(page: Page, calls: MeetToolCall[]) {
         token: "jwt",
         joinUrl,
         expiresAt: "2026-05-20T13:00:00.000Z",
+        recordingAvailable: true,
+        canStartRecording: true,
+        recordingNoticeVersion: "2026-09-02",
+        canModerate: true,
+        controls: {
+          roomId,
+          hostActorId: "11111111-1111-4111-8111-111111111111",
+          cohostActorIds: [],
+          lobbyEnabled: true,
+          locked: false,
+          mutePolicy: "open",
+          presenterPolicy: "everyone",
+          presenterSubject: null,
+          chatPolicy: "everyone",
+          reactionPolicy: "everyone",
+          version: 1,
+        },
       });
       return;
     }

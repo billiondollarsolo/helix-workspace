@@ -253,96 +253,75 @@ export async function copySheet(
   );
 }
 
-/** Import CSV text into a native spreadsheet. */
+interface SheetsImportInput {
+  readonly sourceObjectId: string;
+  readonly title?: string;
+  readonly folderId?: string | null;
+  readonly metadata?: Record<string, unknown>;
+}
+
+/** Import a Drive CSV object into a native spreadsheet. */
 export async function importCsvSheet(
-  input: {
-    readonly filename: string;
-    readonly title?: string;
-    readonly folderId?: string | null;
-    readonly csvText: string;
-    readonly metadata?: Record<string, unknown>;
-  },
+  input: SheetsImportInput,
   fetchImpl: SheetsApiFetch = authenticatedFetch,
 ): Promise<SheetsImportCsvResult> {
   return callSheetsTool<SheetsImportCsvResult>(
     "sheets.import-csv",
     {
-      filename: input.filename,
+      sourceObjectId: input.sourceObjectId,
       ...(input.title === undefined ? {} : { title: input.title }),
       ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
-      csvText: input.csvText,
       metadata: input.metadata ?? {},
     },
     fetchImpl,
   );
 }
 
-/** Import TSV text into a native spreadsheet. */
+/** Import a Drive TSV object into a native spreadsheet. */
 export async function importTsvSheet(
-  input: {
-    readonly filename: string;
-    readonly title?: string;
-    readonly folderId?: string | null;
-    readonly tsvText: string;
-    readonly metadata?: Record<string, unknown>;
-  },
+  input: SheetsImportInput,
   fetchImpl: SheetsApiFetch = authenticatedFetch,
 ): Promise<SheetsImportTsvResult> {
   return callSheetsTool<SheetsImportTsvResult>(
     "sheets.import-tsv",
     {
-      filename: input.filename,
+      sourceObjectId: input.sourceObjectId,
       ...(input.title === undefined ? {} : { title: input.title }),
       ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
-      tsvText: input.tsvText,
       metadata: input.metadata ?? {},
     },
     fetchImpl,
   );
 }
 
-/** Import XLSX bytes into a native spreadsheet. */
+/** Import a Drive XLSX object into a native spreadsheet. */
 export async function importXlsxSheet(
-  input: {
-    readonly filename: string;
-    readonly title?: string;
-    readonly folderId?: string | null;
-    readonly contentBase64: string;
-    readonly metadata?: Record<string, unknown>;
-  },
+  input: SheetsImportInput,
   fetchImpl: SheetsApiFetch = authenticatedFetch,
 ): Promise<SheetsImportXlsxResult> {
   return callSheetsTool<SheetsImportXlsxResult>(
     "sheets.import-xlsx",
     {
-      filename: input.filename,
+      sourceObjectId: input.sourceObjectId,
       ...(input.title === undefined ? {} : { title: input.title }),
       ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
-      contentBase64: input.contentBase64,
       metadata: input.metadata ?? {},
     },
     fetchImpl,
   );
 }
 
-/** Import ODS bytes into a native spreadsheet. */
+/** Import a Drive ODS object into a native spreadsheet. */
 export async function importOdsSheet(
-  input: {
-    readonly filename: string;
-    readonly title?: string;
-    readonly folderId?: string | null;
-    readonly contentBase64: string;
-    readonly metadata?: Record<string, unknown>;
-  },
+  input: SheetsImportInput,
   fetchImpl: SheetsApiFetch = authenticatedFetch,
 ): Promise<SheetsImportOdsResult> {
   return callSheetsTool<SheetsImportOdsResult>(
     "sheets.import-ods",
     {
-      filename: input.filename,
+      sourceObjectId: input.sourceObjectId,
       ...(input.title === undefined ? {} : { title: input.title }),
       ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
-      contentBase64: input.contentBase64,
       metadata: input.metadata ?? {},
     },
     fetchImpl,

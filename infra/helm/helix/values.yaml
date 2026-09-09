@@ -10,20 +10,68 @@ gracefulShutdown:
   terminationGracePeriodSeconds: 60
   preStopSleepSeconds: 5
 
+availability:
+  # Reference a pre-created PriorityClass in production tiers. Empty keeps the
+  # chart usable in clusters where operators cannot create cluster resources.
+  priorityClassName: ""
+  minReadySeconds: 10
+  progressDeadlineSeconds: 600
+  startupProbe:
+    periodSeconds: 2
+    failureThreshold: 60
+
 image:
   repository: ghcr.io/helix/helix
-  tag: latest
+  # Required at install time. Tags are deliberately unsupported.
   digest: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
+
+# Mandatory isolated parser boundary for Office previews/imports and Docs PDF export.
+contentConverter:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/helix/drive-preview-libreoffice
+    digest: ""
+    pullPolicy: IfNotPresent
+  port: 8080
+  timeoutMs: 30000
+  limits:
+    requestBytes: 73400320
+    sourceBytes: 52428800
+    outputBytes: 67108864
+    textBytes: 10485760
+    archiveEntries: 2048
+    archiveBytes: 268435456
+    archiveRatio: 100
+    cells: 1000000
+    pages: 200
+  tmpSizeLimit: 512Mi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 384Mi
+    limits:
+      cpu: "1"
+      memory: 768Mi
+
+imageVerification:
+  publicKeySecret:
+    name: helix-image-signing-key
+    key: cosign.pub
 
 security:
   # personal, business, enterprise, sovereign
   tier: personal
   overrides: {}
 
-publicUrl: http://helix.local
+publicUrl: https://helix.example.com
+# Exact parent hosts allowed to resolve `{tenant}.host`. Empty derives one host
+# from publicUrl. Use `env` below to source HELIX_TENANT_PROXY_SECRET from a
+# Secret when a trusted edge proxy must assert a tenant independently of Host.
+tenantRootHosts: []
 logLevel: info
+trustedProxies: []
 
 serviceAccount:
   create: true
@@ -127,6 +175,7 @@ monitoring:
     labels: {}
     annotations: {}
     runbookUrl: docs/specs/05-operations/runbooks/signup-activation-slo-breach.md
+    searchRunbookUrl: docs/runbooks/search-projection-lag.md
 
 # Confirmed Helix architecture: core apps are toggleable platform modules that
 # ship in ONE image. The primary Deployment above runs the default role (all
@@ -149,19 +198,26 @@ roleDeployments: []
   #   nodeSelector: {}
   #   tolerations: []
   #   affinity: {}
+  #   networkPolicy: {}       # optional; defaults to networkPolicy.roleDefault
 
 nodeSelector: {}
 tolerations: []
 affinity: {}
 topologySpreadConstraints: []
 
+# Better Auth is always enabled in production. The chart deliberately has no
+# inline secret value; installations must provide this Secret out of band.
+auth:
+  secretRef:
+    name: helix-auth
+    key: BETTER_AUTH_SECRET
+
 external:
   postgres:
-    # For production, prefer urlSecret and leave url empty.
-    url: >-
-      postgres://helix:change-me@postgres.example.internal:5432/helix?sslmode=require
+    # Database credentials are accepted only through a Secret reference.
+    url: ""
     urlSecret:
-      name: ""
+      name: helix-postgres
       key: DATABASE_URL
   redis:
     url: redis://redis.example.internal:6379
@@ -178,6 +234,12 @@ external:
     masterKeySecret:
       name: helix-meilisearch
       key: MEILI_MASTER_KEY
+  clamav:
+    enabled: true
+    host: clamav.example.internal
+    port: 3310
+    timeoutMs: 30000
+    maxSignatureAgeMs: 172800000
   s3:
     endpoint: https://s3.example.internal
     accessKeySecret:
@@ -188,6 +250,9 @@ external:
       key: RUSTFS_SECRET_KEY
     bucket: helix-audit
     region: us-east-1
+    kmsKeyId: helix-storage
+    objectLockMode: compliance
+    objectLockRetentionDays: 30
   kms:
     enabled: false
     endpoint: https://kms.example.internal
@@ -227,27 +292,42 @@ extraVolumes: []
 extraVolumeMounts: []
 
 networkPolicy:
-  enabled: true
-  ingress:
-    namespaceSelector: {}
-    podSelector: {}
-  egress:
-    allowAll: true
-    allowDns: true
-    cidrs: []
-    ports:
-      - protocol: TCP
-        port: 443
-      - protocol: TCP
-        port: 5432
-      - protocol: TCP
-        port: 4222
-      - protocol: TCP
-        port: 6379
-      - protocol: TCP
-        port: 7700
-      - protocol: TCP
-        port: 8200
+  # Every Helix role gets a separate ingress/egress policy. A source or
+  # in-cluster destination must match all three identities: namespace, the
+  # service-account identity label, and the supplied workload labels.
+  dns:
+    enabled: true
+    namespace: kube-system
+    podLabels:
+      k8s-app: kube-dns
+  application:
+    ingress: []
+    egress:
+      # Public HTTPS excludes private, link-local, metadata, multicast, and
+      # documentation ranges. Keep disabled unless this deployment needs it.
+      publicHttps: false
+      # Private/internal destinations are single hosts only (/32 or /128),
+      # each with explicit TCP destination ports.
+      endpoints: []
+      # In-cluster destinations use exact namespace + service account + pod
+      # labels and explicit TCP ports.
+      inCluster: []
+  # Extra roleDeployments inherit this deny-by-default policy unless that role
+  # supplies its own networkPolicy block.
+  roleDefault:
+    ingress: []
+    egress:
+      publicHttps: false
+      endpoints: []
+      inCluster: []
+  # Cosign needs registry access before install/upgrade. It has no ingress and
+  # may only use DNS and public HTTPS; sovereign installs disable public HTTPS.
+  imageVerifier:
+    ingress: []
+    egress:
+      publicHttps: true
+      endpoints: []
+      inCluster: []
 
 spire:
   enabled: false

@@ -1,0 +1,97 @@
+extensions:
+  file_storage:
+    directory: ${env:OTEL_QUEUE_DIRECTORY}
+    create_directory: true
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: ${env:POD_IP}:4318
+        tls:
+          cert_file: /var/run/otel-server/tls.crt
+          key_file: /var/run/otel-server/tls.key
+          client_ca_file: /var/run/otel-client-ca/ca.crt
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 768
+    spike_limit_mib: 192
+  filter/tenant:
+    error_mode: propagate
+    traces:
+      span:
+        - 'attributes["helix.tenant.org_id"] == nil and attributes["org_id"] == nil'
+    logs:
+      log_record:
+        - 'resource.attributes["helix.tenant.org_id"] == nil and attributes["helix.tenant.org_id"] == nil'
+  attributes/redact:
+    actions:
+      - { key: http.request.header.authorization, action: delete }
+      - { key: http.request.header.cookie, action: delete }
+      - { key: enduser.id, action: delete }
+      - { key: user.email, action: delete }
+      - { key: email.address, action: delete }
+      - { key: message.body, action: delete }
+      - { key: file.name, action: delete }
+      - { key: gen_ai.prompt, action: delete }
+      - { key: gen_ai.completion, action: delete }
+      - { key: token, action: delete }
+  transform/redact-log-body:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - 'replace_pattern(body, "(?i)(authorization|cookie|token|password|prompt|message_body)=\\S+", "$1=[REDACTED]") where IsString(body)'
+  batch:
+    send_batch_size: 2048
+    timeout: 5s
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo.helix-observability.svc.cluster.local:4317
+    headers:
+      X-Scope-OrgID: ${env:HELIX_OBSERVABILITY_TENANT_ID}
+    tls:
+      ca_file: /var/run/backend-client/ca.crt
+      cert_file: /var/run/backend-client/tls.crt
+      key_file: /var/run/backend-client/tls.key
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      queue_size: 10000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 10m
+  otlphttp/loki:
+    endpoint: https://loki.helix-observability.svc.cluster.local:3100/otlp
+    headers:
+      X-Scope-OrgID: ${env:HELIX_OBSERVABILITY_TENANT_ID}
+    tls:
+      ca_file: /var/run/backend-client/ca.crt
+      cert_file: /var/run/backend-client/tls.crt
+      key_file: /var/run/backend-client/tls.key
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      queue_size: 10000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 10m
+
+service:
+  extensions: [file_storage]
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/tenant, attributes/redact, batch]
+      exporters: [otlp/tempo]
+    logs:
+      receivers: [otlp]
+      processors:
+        [memory_limiter, filter/tenant, attributes/redact, transform/redact-log-body, batch]
+      exporters: [otlphttp/loki]

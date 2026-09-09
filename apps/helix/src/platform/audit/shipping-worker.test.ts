@@ -171,6 +171,24 @@ describe("AuditShippingWorker", () => {
     });
   });
 
+  it("does not checkpoint a batch when independent anchor reconciliation fails", async () => {
+    const store = new InMemoryAuditShippingStore([
+      auditRecord("1", "2026-05-20T00:00:00.000Z"),
+    ]);
+    const worker = new AuditShippingWorker({
+      store,
+      shipper: new ReconciliationFailShipper(),
+      now: fixedNow("2026-05-20T00:02:00.000Z"),
+    });
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      status: "error",
+      error: "immutable anchor mismatch",
+      checkpoint: null,
+    });
+    expect(store.savedCheckpoints).toEqual([]);
+  });
+
   it("reports idle backlog and avoids overlapping scheduled runs", async () => {
     vi.useFakeTimers();
     const onResult = vi.fn();
@@ -298,6 +316,12 @@ class RecordingAuditBatchShipper implements AuditBatchShipper {
   }
 }
 
+class ReconciliationFailShipper extends RecordingAuditBatchShipper {
+  async reconcile(): Promise<void> {
+    throw new Error("immutable anchor mismatch");
+  }
+}
+
 class FailOnGroupAuditBatchShipper implements AuditBatchShipper {
   readonly shippedGroups: string[][] = [];
 
@@ -337,6 +361,8 @@ function auditRecord(
     verb: "object.created",
     objectType: "object",
     metadata: {},
+    schemaVersion: 1,
+    sequence: String(Number.parseInt(id.at(-1) ?? "1", 10) || 1),
     thisHash: "c".repeat(64),
     createdAt,
     ...overrides,

@@ -3,10 +3,11 @@ import type {
   CalendarEventRecord,
   CalendarResponseStatus,
 } from "./types.js";
-import { recurrenceExceptionDates } from "./recurrence.js";
+import { recurrenceExceptionDates, recurrenceOverrides } from "./recurrence.js";
 import { MailSendService } from "../mail/outbound.js";
 import type { MailOutboundRecord } from "../mail/types.js";
 import type { MailStore } from "../mail/index.js";
+import { versionedApiPath } from "../../api/version.js";
 
 export interface CalendarInvitationSender {
   sendInvitation(input: {
@@ -15,6 +16,8 @@ export interface CalendarInvitationSender {
     readonly event: CalendarEventRecord;
     readonly method: "REQUEST" | "CANCEL";
     readonly rsvpBaseUrl?: string | undefined;
+    /** Stable durable-delivery id; retries reuse one RFC Message-ID. */
+    readonly deliveryId?: string | undefined;
   }): Promise<readonly MailOutboundRecord[]>;
   sendReply?(input: {
     readonly orgId: string;
@@ -22,6 +25,10 @@ export interface CalendarInvitationSender {
     readonly event: CalendarEventRecord;
     readonly attendee: CalendarAttendeeRecord;
   }): Promise<readonly MailOutboundRecord[]>;
+}
+
+export function calendarDeliveryMessageId(deliveryId: string): string {
+  return `<calendar-delivery-${deliveryId}@helix.local>`;
 }
 
 export interface CreateMailCalendarInvitationSenderOptions {
@@ -70,6 +77,9 @@ export function createMailCalendarInvitationSender(
               ],
               cc: [],
               bcc: [],
+              ...(input.deliveryId === undefined
+                ? {}
+                : { messageId: calendarDeliveryMessageId(input.deliveryId) }),
               subject: invitationSubject(input.method, input.event),
               text: invitationText(input.method, input.event, attendee, input.rsvpBaseUrl),
               attachments: [
@@ -135,9 +145,10 @@ export function createIcsCalendar(input: {
     "PRODID:-//Helix//Calendar//EN",
     `METHOD:${method}`,
     "CALSCALE:GREGORIAN",
+    ...vtimezoneLines(input.event),
     "BEGIN:VEVENT",
     `UID:${escapeIcsText(calendarUid(input.event))}`,
-    `DTSTAMP:${formatIcsDate(new Date())}`,
+    `DTSTAMP:${formatIcsDate(input.event.updatedAt)}`,
     formatIcsDateProperty("DTSTART", input.event.startsAt, input.event),
     formatIcsDateProperty("DTEND", input.event.endsAt, input.event),
     `SEQUENCE:${String(calendarSequence(input.event))}`,
@@ -188,7 +199,44 @@ export function createIcsCalendar(input: {
       `X-HELIX-RSVP-DECLINE:${rsvpUrl(input.rsvpBaseUrl, input.attendee.rsvpToken, "declined")}`,
     );
   }
-  lines.push("END:VEVENT", "END:VCALENDAR");
+  for (const alarm of calendarAlarms(input.event)) {
+    lines.push(
+      "BEGIN:VALARM",
+      "ACTION:DISPLAY",
+      `TRIGGER:${alarm.minutesBefore === 0 ? "PT0M" : `-PT${String(alarm.minutesBefore)}M`}`,
+      `DESCRIPTION:${escapeIcsText(alarm.description ?? input.event.title)}`,
+      "END:VALARM",
+    );
+  }
+  lines.push("END:VEVENT");
+  for (const override of recurrenceOverrides(input.event.metadata)) {
+    const recurrenceId = new Date(override.recurrenceId);
+    const startsAt = new Date(override.startsAt);
+    const endsAt = new Date(override.endsAt);
+    const dtstamp = new Date(override.dtstamp);
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${escapeIcsText(calendarUid(input.event))}`,
+      `RECURRENCE-ID${override.range === "this_and_future" ? ";RANGE=THISANDFUTURE" : ""}:${formatIcsDate(recurrenceId)}`,
+      `DTSTAMP:${formatIcsDate(dtstamp)}`,
+      `DTSTART:${formatIcsDate(startsAt)}`,
+      `DTEND:${formatIcsDate(endsAt)}`,
+      `SEQUENCE:${String(override.sequence)}`,
+      `STATUS:${override.status.toUpperCase()}`,
+      `SUMMARY:${escapeIcsText(override.title ?? input.event.title)}`,
+    );
+    if (override.description !== null && override.description !== undefined) {
+      lines.push(`DESCRIPTION:${escapeIcsText(override.description)}`);
+    }
+    if (override.location !== null && override.location !== undefined) {
+      lines.push(`LOCATION:${escapeIcsText(override.location)}`);
+    }
+    for (const attendee of override.attendees) {
+      lines.push(attendeeToIcs({ ...attendee, actorId: null }));
+    }
+    lines.push("END:VEVENT");
+  }
+  lines.push("END:VCALENDAR");
   return foldIcsLines(lines).join("\r\n") + "\r\n";
 }
 
@@ -208,7 +256,7 @@ export function rsvpUrl(
   token: string,
   responseStatus: CalendarResponseStatus,
 ): string {
-  const url = new URL(`/dav/cal/rsvp/${encodeURIComponent(token)}`, baseUrl);
+  const url = new URL(versionedApiPath(`/dav/cal/rsvp/${encodeURIComponent(token)}`), baseUrl);
   url.searchParams.set("response", responseStatus);
   return url.toString();
 }
@@ -278,9 +326,10 @@ function organizerAddress(
   return { address: `${actorId}@${defaultFromDomain ?? "localhost"}`, name: "Helix Calendar" };
 }
 
-function attendeeAddress(
-  attendee: CalendarAttendeeRecord,
-): { readonly address: string; readonly name?: string } {
+function attendeeAddress(attendee: CalendarAttendeeRecord): {
+  readonly address: string;
+  readonly name?: string;
+} {
   return {
     address: attendee.email,
     ...(attendee.displayName === null || attendee.displayName === undefined
@@ -321,10 +370,13 @@ function partstat(responseStatus: CalendarResponseStatus): string {
 function formatIcsDateProperty(
   name: "DTSTART" | "DTEND",
   value: Date,
-  event: Pick<CalendarEventRecord, "timezone" | "allDay">,
+  event: Pick<CalendarEventRecord, "timezone" | "allDay" | "timeSemantics">,
 ): string {
   if (event.allDay) {
     return `${name};VALUE=DATE:${formatIcsDateOnly(value)}`;
+  }
+  if (event.timeSemantics === "floating") {
+    return `${name}:${formatIcsDate(value).replace(/Z$/u, "")}`;
   }
   if (event.timezone !== undefined && event.timezone !== "UTC") {
     const local = formatIcsLocalDate(value, event.timezone);
@@ -383,32 +435,192 @@ function formatIcsLocalDate(value: Date, timeZone: string): string | null {
   }
 }
 
+function vtimezoneLines(event: CalendarEventRecord): string[] {
+  const timeZone = event.timezone;
+  if (
+    event.allDay ||
+    event.timeSemantics === "floating" ||
+    timeZone === undefined ||
+    timeZone === "UTC"
+  )
+    return [];
+  const startYear = event.startsAt.getUTCFullYear() - 1;
+  const endYear = event.endsAt.getUTCFullYear() + 5;
+  const cacheKey = `${timeZone}:${String(startYear)}:${String(endYear)}`;
+  const cached = vtimezoneCache.get(cacheKey);
+  if (cached !== undefined) return [...cached];
+  const rangeStart = new Date(Date.UTC(startYear, 0, 1));
+  const rangeEnd = new Date(Date.UTC(endYear + 1, 0, 1));
+  const initialOffset = timeZoneOffsetMinutes(rangeStart, timeZone);
+  if (initialOffset === null || formatIcsLocalDate(rangeStart, timeZone) === null) return [];
+
+  const transitions: { at: Date; from: number; to: number }[] = [];
+  let previousAt = rangeStart;
+  let previousOffset = initialOffset;
+  for (
+    let probe = new Date(rangeStart.getTime() + 7 * 86_400_000);
+    probe <= rangeEnd;
+    probe = new Date(probe.getTime() + 7 * 86_400_000)
+  ) {
+    const offset = timeZoneOffsetMinutes(probe, timeZone);
+    if (offset !== null && offset !== previousOffset) {
+      const at = findOffsetTransition(previousAt, probe, timeZone, previousOffset);
+      transitions.push({ at, from: previousOffset, to: offset });
+      previousOffset = offset;
+    }
+    previousAt = probe;
+  }
+
+  const initialKind =
+    transitions[0] !== undefined && transitions[0].to < transitions[0].from
+      ? "DAYLIGHT"
+      : "STANDARD";
+  const lines = [
+    "BEGIN:VTIMEZONE",
+    `TZID:${escapeIcsText(timeZone)}`,
+    `X-LIC-LOCATION:${escapeIcsText(timeZone)}`,
+    ...timezoneObservanceLines(initialKind, rangeStart, initialOffset, initialOffset, timeZone),
+  ];
+  for (const transition of transitions) {
+    lines.push(
+      ...timezoneObservanceLines(
+        transition.to > transition.from ? "DAYLIGHT" : "STANDARD",
+        transition.at,
+        transition.from,
+        transition.to,
+        timeZone,
+      ),
+    );
+  }
+  lines.push("END:VTIMEZONE");
+  if (vtimezoneCache.size >= 64) {
+    const oldest = vtimezoneCache.keys().next().value;
+    if (oldest !== undefined) vtimezoneCache.delete(oldest);
+  }
+  vtimezoneCache.set(cacheKey, lines);
+  return lines;
+}
+
+const vtimezoneCache = new Map<string, readonly string[]>();
+
+function timezoneObservanceLines(
+  kind: "STANDARD" | "DAYLIGHT",
+  at: Date,
+  from: number,
+  to: number,
+  timeZone: string,
+): string[] {
+  return [
+    `BEGIN:${kind}`,
+    `DTSTART:${formatIcsLocalDate(at, timeZone) ?? formatIcsDate(at).replace(/Z$/u, "")}`,
+    `TZOFFSETFROM:${formatUtcOffset(from)}`,
+    `TZOFFSETTO:${formatUtcOffset(to)}`,
+    `TZNAME:${escapeIcsText(timeZoneName(at, timeZone))}`,
+    `END:${kind}`,
+  ];
+}
+
+function findOffsetTransition(from: Date, to: Date, timeZone: string, oldOffset: number): Date {
+  let low = from.getTime();
+  let high = to.getTime();
+  while (high - low > 60_000) {
+    const middle = Math.floor((low + high) / 120_000) * 60_000;
+    if (timeZoneOffsetMinutes(new Date(middle), timeZone) === oldOffset) low = middle;
+    else high = middle;
+  }
+  return new Date(high);
+}
+
+function timeZoneOffsetMinutes(value: Date, timeZone: string): number | null {
+  const local = formatIcsLocalDate(value, timeZone);
+  if (local === null) return null;
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/u.exec(local);
+  if (match === null) return null;
+  const [, year = "", month = "", day = "", hour = "", minute = "", second = ""] = match;
+  return Math.round(
+    (Date.UTC(+year, +month - 1, +day, +hour, +minute, +second) - value.getTime()) / 60_000,
+  );
+}
+
+function formatUtcOffset(minutes: number): string {
+  const absolute = Math.abs(minutes);
+  return `${minutes < 0 ? "-" : "+"}${String(Math.floor(absolute / 60)).padStart(2, "0")}${String(absolute % 60).padStart(2, "0")}`;
+}
+
+function timeZoneName(value: Date, timeZone: string): string {
+  return (
+    new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" })
+      .formatToParts(value)
+      .find(({ type }) => type === "timeZoneName")?.value ?? timeZone
+  );
+}
+
+function calendarAlarms(
+  event: CalendarEventRecord,
+): readonly { readonly minutesBefore: number; readonly description?: string }[] {
+  const alarms = event.metadata.alarms;
+  if (!Array.isArray(alarms)) return [];
+  const seen = new Set<number>();
+  return alarms.flatMap((alarm) => {
+    if (typeof alarm !== "object" || alarm === null) return [];
+    const value = alarm as { readonly minutesBefore?: unknown; readonly description?: unknown };
+    if (
+      !Number.isInteger(value.minutesBefore) ||
+      (value.minutesBefore as number) < 0 ||
+      (value.minutesBefore as number) > 40_320 ||
+      seen.has(value.minutesBefore as number)
+    ) {
+      return [];
+    }
+    const minutesBefore = value.minutesBefore as number;
+    seen.add(minutesBefore);
+    return [
+      {
+        minutesBefore,
+        ...(typeof value.description === "string" && value.description.length <= 500
+          ? { description: value.description }
+          : {}),
+      },
+    ];
+  });
+}
+
 function escapeIcsText(value: string): string {
   return value
     .replaceAll("\\", "\\\\")
     .replaceAll(";", "\\;")
     .replaceAll(",", "\\,")
-    .replace(/\r?\n/g, "\\n");
+    .replace(/\r\n|\r|\n/g, "\\n");
 }
 
 function escapeIcsParam(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  return `"${value
+    .replaceAll("^", "^^")
+    .replace(/\r\n|\r|\n/g, "^n")
+    .replaceAll('"', "^'")}"`;
 }
 
 function foldIcsLines(lines: readonly string[]): string[] {
-  const folded: string[] = [];
-  for (const line of lines) {
-    if (line.length <= 75) {
-      folded.push(line);
-      continue;
-    }
-    let rest = line;
-    folded.push(rest.slice(0, 75));
-    rest = rest.slice(75);
-    while (rest.length > 0) {
-      folded.push(` ${rest.slice(0, 74)}`);
-      rest = rest.slice(74);
+  return lines.flatMap(foldIcsLine);
+}
+
+function foldIcsLine(line: string): string[] {
+  const parts: string[] = [];
+  let part = "";
+  let bytes = 0;
+  let limit = 75;
+  for (const character of line) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (bytes + characterBytes > limit) {
+      parts.push(parts.length === 0 ? part : ` ${part}`);
+      part = character;
+      bytes = characterBytes;
+      limit = 74;
+    } else {
+      part += character;
+      bytes += characterBytes;
     }
   }
-  return folded;
+  parts.push(parts.length === 0 ? part : ` ${part}`);
+  return parts;
 }

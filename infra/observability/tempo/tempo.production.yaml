@@ -1,0 +1,101 @@
+multitenancy_enabled: true
+
+server:
+  http_listen_address: ${POD_IP}
+  http_listen_port: 3200
+  grpc_listen_address: ${POD_IP}
+  grpc_listen_port: 9095
+  http_tls_config:
+    cert_file: /var/run/tempo-server/tls.crt
+    key_file: /var/run/tempo-server/tls.key
+    client_auth_type: RequireAndVerifyClientCert
+    client_ca_file: /var/run/tempo-client-ca/ca.crt
+  log_request_headers: true
+  log_request_at_info_level_enabled: true
+  log_request_exclude_headers_list: Authorization,Cookie,X-Access-Token,X-Csrf-Token
+
+memberlist:
+  join_members: [tempo-memberlist.helix-observability.svc.cluster.local:7946]
+  bind_addr: ["${POD_IP}"]
+  tls_enabled: true
+  tls_cert_path: /var/run/tempo-memberlist/tls.crt
+  tls_key_path: /var/run/tempo-memberlist/tls.key
+  tls_ca_path: /var/run/tempo-memberlist/ca.crt
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: ${POD_IP}:4317
+          tls:
+            cert_file: /var/run/tempo-server/tls.crt
+            key_file: /var/run/tempo-server/tls.key
+            client_ca_file: /var/run/tempo-client-ca/ca.crt
+
+ingest:
+  kafka:
+    address: tempo-kafka.observability-storage.svc.cluster.local:9092
+    topic: helix-tempo-traces
+    client_id: helix-tempo
+    sasl_username: ${TEMPO_KAFKA_USERNAME}
+    sasl_password: ${TEMPO_KAFKA_PASSWORD}
+    auto_create_topic_enabled: false
+
+live_store:
+  ring:
+    kvstore:
+      store: memberlist
+  partition_ring:
+    kvstore:
+      store: memberlist
+    min_partition_owners_count: 3
+  wal:
+    path: /var/lib/tempo/live-store
+
+block_builder:
+  wal:
+    path: /var/lib/tempo/block-builder
+
+backend_scheduler:
+  provider:
+    retention:
+      interval: 1h
+    compaction:
+      compaction:
+        block_retention: 720h
+        retention_concurrency: 10
+
+backend_worker:
+  backend_scheduler_addr: tempo-backend-scheduler.helix-observability.svc.cluster.local:9095
+  compaction:
+    block_retention: 720h
+    retention_concurrency: 10
+
+query_frontend:
+  max_outstanding_per_tenant: 200
+  log_query_request_headers: X-Scope-OrgID
+
+storage:
+  trace:
+    backend: s3
+    wal:
+      path: /var/lib/tempo/wal
+    s3:
+      bucket: ${TEMPO_S3_BUCKET}
+      endpoint: ${OBSERVABILITY_S3_ENDPOINT}
+      region: ${OBSERVABILITY_S3_REGION}
+      insecure: false
+
+overrides:
+  defaults:
+    ingestion:
+      rate_strategy: global
+      rate_limit_bytes: 10000000
+      burst_size_bytes: 20000000
+      max_traces_per_user: 10000
+      max_global_traces_per_user: 30000
+    global:
+      max_bytes_per_trace: 5000000
+    read:
+      max_bytes_per_tag_values_query: 5000000

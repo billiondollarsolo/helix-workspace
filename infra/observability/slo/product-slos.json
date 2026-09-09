@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "windowDays": 30,
+  "burnRates": {
+    "fast": { "shortWindow": "5m", "longWindow": "1h", "multiplier": 14.4 },
+    "slow": { "shortWindow": "30m", "longWindow": "6h", "multiplier": 6 }
+  },
+  "tiers": {
+    "personal": {
+      "availability": {
+        "mail": 0.995,
+        "chat": 0.995,
+        "drive": 0.995,
+        "calendar": 0.995,
+        "meet": 0.995,
+        "search": 0.995,
+        "auth": 0.999
+      },
+      "apiP95Seconds": {
+        "mail": 1.5,
+        "chat": 1.5,
+        "drive": 1.5,
+        "calendar": 1.5,
+        "meet": 2,
+        "search": 0.75,
+        "auth": 1
+      },
+      "mail": { "queueP95Seconds": 30, "deliveryP95Seconds": 60 },
+      "drive": { "verifiedIntegrity": 1 },
+      "search": { "freshnessSeconds": 300 },
+      "chat": { "fanoutP95Seconds": 2, "replaySuccessRatio": 1 },
+      "meet": { "joinP95Seconds": 10, "healthyMediaRatio": 0.98 },
+      "recovery": { "rpoSeconds": 86400, "rtoSeconds": 14400 },
+      "policy": { "propagationP95Seconds": 300 }
+    },
+    "business": {
+      "availability": {
+        "mail": 0.999,
+        "chat": 0.999,
+        "drive": 0.999,
+        "calendar": 0.999,
+        "meet": 0.999,
+        "search": 0.999,
+        "auth": 0.9995
+      },
+      "apiP95Seconds": {
+        "mail": 1,
+        "chat": 1,
+        "drive": 1,
+        "calendar": 1,
+        "meet": 1.5,
+        "search": 0.5,
+        "auth": 0.75
+      },
+      "mail": { "queueP95Seconds": 15, "deliveryP95Seconds": 30 },
+      "drive": { "verifiedIntegrity": 1 },
+      "search": { "freshnessSeconds": 120 },
+      "chat": { "fanoutP95Seconds": 1, "replaySuccessRatio": 1 },
+      "meet": { "joinP95Seconds": 5, "healthyMediaRatio": 0.99 },
+      "recovery": { "rpoSeconds": 14400, "rtoSeconds": 7200 },
+      "policy": { "propagationP95Seconds": 120 }
+    },
+    "enterprise": {
+      "availability": {
+        "mail": 0.9995,
+        "chat": 0.9995,
+        "drive": 0.9995,
+        "calendar": 0.9995,
+        "meet": 0.9995,
+        "search": 0.9995,
+        "auth": 0.9999
+      },
+      "apiP95Seconds": {
+        "mail": 0.75,
+        "chat": 0.75,
+        "drive": 0.75,
+        "calendar": 0.75,
+        "meet": 1,
+        "search": 0.4,
+        "auth": 0.5
+      },
+      "mail": { "queueP95Seconds": 10, "deliveryP95Seconds": 30 },
+      "drive": { "verifiedIntegrity": 1 },
+      "search": { "freshnessSeconds": 60 },
+      "chat": { "fanoutP95Seconds": 0.5, "replaySuccessRatio": 1 },
+      "meet": { "joinP95Seconds": 4, "healthyMediaRatio": 0.995 },
+      "recovery": { "rpoSeconds": 3600, "rtoSeconds": 3600 },
+      "policy": { "propagationP95Seconds": 60 }
+    },
+    "sovereign": {
+      "availability": {
+        "mail": 0.9995,
+        "chat": 0.9995,
+        "drive": 0.9995,
+        "calendar": 0.9995,
+        "meet": 0.9995,
+        "search": 0.9995,
+        "auth": 0.9999
+      },
+      "apiP95Seconds": {
+        "mail": 0.75,
+        "chat": 0.75,
+        "drive": 0.75,
+        "calendar": 0.75,
+        "meet": 1,
+        "search": 0.4,
+        "auth": 0.5
+      },
+      "mail": { "queueP95Seconds": 10, "deliveryP95Seconds": 30 },
+      "drive": { "verifiedIntegrity": 1 },
+      "search": { "freshnessSeconds": 60 },
+      "chat": { "fanoutP95Seconds": 0.5, "replaySuccessRatio": 1 },
+      "meet": { "joinP95Seconds": 4, "healthyMediaRatio": 0.995 },
+      "recovery": { "rpoSeconds": 900, "rtoSeconds": 1800 },
+      "policy": { "propagationP95Seconds": 60 }
+    }
+  }
+}

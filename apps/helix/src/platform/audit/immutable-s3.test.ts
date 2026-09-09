@@ -8,6 +8,7 @@ import type {
 } from "@helix/sdk";
 import {
   ImmutableS3AuditShipper,
+  createHmacAuditAnchorAuthenticator,
   shipImmutableAuditBatch,
   type ImmutableAuditActivityRecord,
   type ImmutableAuditObject,
@@ -16,6 +17,7 @@ import {
 
 const now = () => new Date("2026-05-20T12:00:00.000Z");
 const decoder = new TextDecoder();
+const signer = createHmacAuditAnchorAuthenticator("audit-key-1", "a".repeat(32));
 
 describe("ImmutableS3AuditShipper", () => {
   it("ships audit records and a checksum manifest with object lock metadata", async () => {
@@ -23,6 +25,7 @@ describe("ImmutableS3AuditShipper", () => {
     const result = await shipImmutableAuditBatch(
       {
         store,
+        signer,
         prefix: "helix-audit",
         retentionDays: 30,
         now,
@@ -83,7 +86,11 @@ describe("ImmutableS3AuditShipper", () => {
     const manifest: unknown = JSON.parse(decoder.decode(manifestObject.body));
     expect(manifest).toMatchObject({
       batchId: "batch-001",
-      format: "helix.audit.immutable-s3.v1",
+      format: "helix.audit.immutable-s3.v2",
+      authentication: {
+        algorithm: "HMAC-SHA256",
+        keyId: "audit-key-1",
+      },
       hashChain: {
         firstPrevHash: null,
         lastThisHash: digest("activity-2"),
@@ -102,6 +109,7 @@ describe("ImmutableS3AuditShipper", () => {
     await shipImmutableAuditBatch(
       {
         store,
+        signer,
         metering,
         prefix: "helix-audit",
         now,
@@ -136,18 +144,21 @@ describe("ImmutableS3AuditShipper", () => {
     expect(metadataJson).not.toContain(digest("activity-1"));
   });
 
-  it("does not emit storage metering for mixed-org batches", async () => {
+  it("rejects mixed-org anchors", async () => {
     const metering = new RecordingMeteringClient();
 
-    await shipImmutableAuditBatch(
-      {
-        store: new RecordingImmutableAuditStore(),
-        metering,
-        now,
-        batchId: () => "batch-001",
-      },
-      [record("activity-1"), record("activity-2", { orgId: "org-2" })],
-    );
+    await expect(
+      shipImmutableAuditBatch(
+        {
+          store: new RecordingImmutableAuditStore(),
+          signer,
+          metering,
+          now,
+          batchId: () => "batch-001",
+        },
+        [record("activity-1"), record("activity-2", { orgId: "org-2" })],
+      ),
+    ).rejects.toThrow("exactly one organization");
 
     expect(metering.records).toHaveLength(0);
   });
@@ -159,6 +170,7 @@ describe("ImmutableS3AuditShipper", () => {
       shipImmutableAuditBatch(
         {
           store: new FailingImmutableAuditStore(),
+          signer,
           metering,
           now,
           batchId: () => "batch-001",
@@ -175,6 +187,7 @@ describe("ImmutableS3AuditShipper", () => {
     let batchNumber = 0;
     const shipper = new ImmutableS3AuditShipper({
       store,
+      signer,
       batchSize: 2,
       now,
       batchId: () => {
@@ -202,7 +215,7 @@ describe("ImmutableS3AuditShipper", () => {
       thisHash: "not-a-digest",
     };
 
-    await expect(shipImmutableAuditBatch({ store: new RecordingImmutableAuditStore() }, [invalidRecord])).rejects.toThrow(
+    await expect(shipImmutableAuditBatch({ store: new RecordingImmutableAuditStore(), signer }, [invalidRecord])).rejects.toThrow(
       "thisHash must be a lowercase sha256 hex digest",
     );
   });
@@ -249,6 +262,8 @@ function record(id: string, overrides: Partial<ImmutableAuditActivityRecord> = {
     objectId: "doc-1",
     objectType: "document",
     orgId: "org-1",
+    schemaVersion: 1,
+    sequence: String(Number.parseInt(id.replace("activity-", ""), 10) || 1),
     thisHash: digest(id),
     verb: "document.created",
     ...overrides,

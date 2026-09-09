@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
 import { createChatToolDefinitions, registerChatTools } from "./tools.js";
 import type { ChatStore } from "./store.js";
 import type {
   ChatMessageRecord,
   ChatPinRecord,
+  ChatReactionMutationRecord,
   ChatReactionRecord,
   ChatReadReceiptRecord,
   ChatRoomRecord,
@@ -22,16 +23,25 @@ describe("chat tools", () => {
     const registry = createToolRegistry();
     registerChatTools(registry, { store: new FakeChatStore() });
 
-    expect(registry.list().map((tool) => tool.id).sort()).toEqual([
+    expect(
+      registry
+        .list()
+        .map((tool) => tool.id)
+        .sort(),
+    ).toEqual([
       "chat.create_room",
       "chat.delete",
       "chat.edit",
+      "chat.export",
+      "chat.import",
       "chat.invite",
       "chat.message.list",
       "chat.pin",
       "chat.pins.list",
       "chat.react",
       "chat.reply_in_thread",
+      "chat.room.discover",
+      "chat.room.join",
       "chat.room.list",
       "chat.search",
       "chat.send",
@@ -57,8 +67,9 @@ describe("chat tools", () => {
 
   it("sends messages through the shared store contract", async () => {
     const store = new FakeChatStore();
+    const publish = vi.fn();
     const registry = createToolRegistry();
-    registerChatTools(registry, { store });
+    registerChatTools(registry, { store, bus: { publish } });
 
     const result = await registry.invoke(
       "chat.send",
@@ -91,6 +102,31 @@ describe("chat tools", () => {
       body: "hello",
       sentAt: now.toISOString(),
     });
+    expect(publish).toHaveBeenCalledWith(
+      roomId,
+      expect.objectContaining({ type: "message.created", roomId, orgId }),
+    );
+  });
+
+  it("publishes the canonical reaction projection to connected clients", async () => {
+    const publish = vi.fn();
+    const registry = createToolRegistry();
+    registerChatTools(registry, { store: new FakeChatStore(), bus: { publish } });
+
+    const result = await registry.invoke(
+      "chat.react",
+      { messageId, emoji: "👍", op: "add" },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["chat.post"] } },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(publish).toHaveBeenCalledWith(
+      roomId,
+      expect.objectContaining({
+        type: "message.updated",
+        message: expect.objectContaining({ id: messageId }),
+      }),
+    );
   });
 
   it("auto-classifies a newly sent message via the classifyResource hook", async () => {
@@ -144,6 +180,31 @@ describe("chat tools", () => {
     );
 
     expect(result.ok).toBe(true);
+  });
+
+  it("accepts room-scoped bot identities only with the chat posting scope", async () => {
+    const registry = createToolRegistry();
+    registerChatTools(registry, { store: new FakeChatStore() });
+    const bot = { id: actorId, orgId, type: "service_account" as const };
+
+    await expect(
+      registry.invoke(
+        "chat.send",
+        { roomId, body: "Automated update" },
+        {
+          actor: { ...bot, scopes: ["chat.post"] },
+        },
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      registry.invoke(
+        "chat.send",
+        { roomId, body: "Automated update" },
+        {
+          actor: { ...bot, scopes: [] },
+        },
+      ),
+    ).resolves.toMatchObject({ ok: false, statusCode: 403 });
   });
 
   it("normalizes search hits with ISO timestamps", async () => {
@@ -210,12 +271,50 @@ describe("chat tools", () => {
       },
     });
     await expect(
+      registry.invoke("chat.room.discover", { query: "General" }, { actor }),
+    ).resolves.toMatchObject({ ok: true, output: { rooms: [{ id: roomId }] } });
+    await expect(
       registry.invoke("chat.message.list", { roomId, limit: 20 }, { actor }),
     ).resolves.toMatchObject({
       ok: true,
       output: {
         messages: [{ id: messageId, roomId, body: "hello", sentAt: now.toISOString() }],
       },
+    });
+  });
+
+  it("exports only the history returned by the governed store", async () => {
+    const registry = createToolRegistry();
+    registerChatTools(registry, { store: new FakeChatStore() });
+    const result = await registry.invoke(
+      "chat.export",
+      { roomId },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["chat.read"] } },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.output : undefined).toMatchObject({
+      version: 1,
+      room: { id: roomId },
+      messages: [{ id: messageId, body: "hello" }],
+    });
+  });
+
+  it("imports an idempotently identified message through the governed store", async () => {
+    const registry = createToolRegistry();
+    registerChatTools(registry, { store: new FakeChatStore() });
+    const result = await registry.invoke(
+      "chat.import",
+      {
+        roomId,
+        messages: [{ sourceMessageId: "legacy-1", body: "Imported", metadata: {} }],
+      },
+      { actor: { id: actorId, orgId, type: "user", scopes: ["chat.create"] } },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      output: { roomId, messageIds: [messageId] },
     });
   });
 });
@@ -249,21 +348,33 @@ class FakeChatStore implements ChatStore {
     return [await this.createRoom()];
   }
 
+  async discoverRooms(): Promise<readonly ChatRoomRecord[]> {
+    return this.listRooms();
+  }
+
+  async joinRoom(): Promise<ChatRoomRecord> {
+    return this.createRoom();
+  }
+
   async sendMessage(input: Parameters<ChatStore["sendMessage"]>[0]): Promise<ChatMessageRecord> {
     this.sent.push(input);
     return messageRecord(input.body);
   }
 
-  async react(input: Parameters<ChatStore["react"]>[0]): Promise<ChatReactionRecord | null> {
-    if (input.op === "remove") {
-      return null;
-    }
+  async react(input: Parameters<ChatStore["react"]>[0]): Promise<ChatReactionMutationRecord> {
+    const reaction: ChatReactionRecord | null =
+      input.op === "remove"
+        ? null
+        : {
+            messageId: input.messageId,
+            actorId: input.actorId,
+            orgId: input.orgId,
+            emoji: input.emoji,
+            createdAt: now,
+          };
     return {
-      messageId: input.messageId,
-      actorId: input.actorId,
-      orgId: input.orgId,
-      emoji: input.emoji,
-      createdAt: now,
+      reaction,
+      message: { ...messageRecord("hello"), reactions: reaction ? [reaction] : [] },
     };
   }
 
@@ -282,14 +393,28 @@ class FakeChatStore implements ChatStore {
       roomId: input.roomId,
       actorId: input.actorId,
       orgId: input.orgId,
-      lastReadMessageId: input.messageId ?? null,
+      lastReadMessageId: input.messageId,
       lastReadAt: now,
       updatedAt: now,
+      isShared: true,
     };
   }
 
   async listMessages(): Promise<readonly ChatMessageRecord[]> {
     return [messageRecord("hello")];
+  }
+
+  async exportRoom() {
+    return {
+      version: 1 as const,
+      exportedAt: now,
+      room: await this.createRoom(),
+      messages: await this.listMessages(),
+    };
+  }
+
+  async importMessages() {
+    return { roomId, messageIds: [messageId] };
   }
 
   async search(): Promise<readonly ChatSearchHit[]> {

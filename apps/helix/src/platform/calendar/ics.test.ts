@@ -17,6 +17,10 @@ describe("calendar ICS mail invitations", () => {
 
     expect(ics).toContain('DTSTART;TZID="America/New_York":20260521T093000');
     expect(ics).toContain('DTEND;TZID="America/New_York":20260521T103000');
+    expect(ics).toContain("BEGIN:VTIMEZONE\r\nTZID:America/New_York\r\n");
+    expect(ics).toContain("BEGIN:DAYLIGHT\r\n");
+    expect(ics).toContain("BEGIN:STANDARD\r\n");
+    expect(ics).toContain("TZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\n");
     expect(ics).not.toContain("DTSTART:20260521T133000Z");
   });
 
@@ -35,6 +39,87 @@ describe("calendar ICS mail invitations", () => {
     expect(ics).toContain("DTEND;VALUE=DATE:20260523");
     expect(ics).not.toContain("DTSTART;TZID");
     expect(ics).not.toContain("DTSTART:20260521T000000Z");
+  });
+
+  it("emits floating events without UTC or TZID markers", () => {
+    const ics = createIcsCalendar({
+      event: {
+        ...eventRecord(),
+        startsAt: new Date("2026-05-21T09:30:00.000Z"),
+        endsAt: new Date("2026-05-21T10:30:00.000Z"),
+        timezone: "America/New_York",
+        timeSemantics: "floating",
+      },
+    });
+
+    expect(ics).toContain("DTSTART:20260521T093000\r\n");
+    expect(ics).toContain("DTEND:20260521T103000\r\n");
+    expect(ics).not.toContain("DTSTART;TZID");
+    expect(ics).not.toContain("DTSTART:20260521T093000Z");
+    expect(ics).not.toContain("BEGIN:VTIMEZONE");
+  });
+
+  it("folds Unicode content at 75 UTF-8 octets without splitting code points", () => {
+    const ics = createIcsCalendar({
+      event: {
+        ...eventRecord(),
+        title: `Launch ${"\ud83d\ude80".repeat(40)} review`,
+        description: `Line one\rLine two; ${"\u6771\u4eac".repeat(30)}, done`,
+      },
+    });
+
+    const physicalLines = ics.trimEnd().split("\r\n");
+    expect(physicalLines.every((line) => Buffer.byteLength(line, "utf8") <= 75)).toBe(true);
+    const unfolded = ics.replace(/\r\n[ \t]/g, "");
+    expect(unfolded).toContain(`SUMMARY:Launch ${"\ud83d\ude80".repeat(40)} review`);
+    expect(unfolded).toContain(
+      `DESCRIPTION:Line one\\nLine two\\; ${"\u6771\u4eac".repeat(30)}\\, done`,
+    );
+    expect(ics).not.toContain("\ufffd");
+  });
+
+  it("uses RFC 6868 attendee parameter escaping and cancellation semantics", () => {
+    const base = eventRecord();
+    const attendee = base.attendees[1];
+    if (attendee === undefined) {
+      throw new Error("Expected attendee.");
+    }
+    const ics = createIcsCalendar({
+      event: {
+        ...base,
+        status: "cancelled",
+        icsSequence: 4,
+        attendees: [{ ...attendee, displayName: 'Bruno ^ "B"\nBuilder' }],
+      },
+      method: "CANCEL",
+    }).replace(/\r\n[ \t]/g, "");
+
+    expect(ics).toContain("METHOD:CANCEL\r\n");
+    expect(ics).toContain("SEQUENCE:4\r\n");
+    expect(ics).toContain("STATUS:CANCELLED\r\n");
+    expect(ics).toContain("CN=\"Bruno ^^ ^'B^'^nBuilder\"");
+  });
+
+  it("emits bounded persisted display alarms and ignores malformed metadata", () => {
+    const ics = createIcsCalendar({
+      event: {
+        ...eventRecord(),
+        metadata: {
+          alarms: [
+            { minutesBefore: 10, description: "Bring notes" },
+            { minutesBefore: 10 },
+            { minutesBefore: -1 },
+            { minutesBefore: 99_999 },
+            { minutesBefore: "ten" },
+          ],
+        },
+      },
+    });
+
+    expect(ics.match(/BEGIN:VALARM/g)).toHaveLength(1);
+    expect(ics).toContain(
+      "BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT10M\r\nDESCRIPTION:Bring notes\r\nEND:VALARM",
+    );
   });
 
   it("queues text/calendar invitations through the existing mail send outbox", async () => {

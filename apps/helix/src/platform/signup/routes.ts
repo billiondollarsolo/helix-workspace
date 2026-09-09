@@ -1,9 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import type { Actor, HelixConfig, MeteringClient } from "@helix/sdk-types";
 import { unauthenticatedActor } from "../../api/actor.js";
 import { buildErrorEnvelope } from "../../api/error-envelope.js";
 import type { PlatformMetrics } from "../../api/metrics.js";
+import { SIGNUP_BODY_LIMIT_BYTES } from "../../api/request-body.js";
 import { createRequestContext } from "../../api/trace.js";
 import { isSaas } from "../mode/index.js";
 import type { OutboxStore } from "../outbox/outbox.js";
@@ -25,10 +26,7 @@ import type {
   SignupPasswordScreeningResult,
 } from "./password-screening.js";
 import type { SignupRecaptchaVerifier, SignupRecaptchaVerifyResult } from "./recaptcha.js";
-import {
-  signupOnboardingIdentityAllowedForPlan,
-  type SignupOnboardingStore,
-} from "./onboarding.js";
+import type { SignupOnboardingStore } from "./onboarding.js";
 import { signupActivationSloObservedSubject, signupFunnelSubjects } from "./event-schemas.js";
 import type { SignupOnboardingInviteTokenStore } from "./invites.js";
 import type { SignupRiskReviewDecision, SignupRiskReviewer } from "./risk-review.js";
@@ -133,14 +131,7 @@ const resendVerificationBodySchema = z.object({
 });
 
 const onboardingPlanChoiceSchema = z.enum(["pro-trial", "personal", "sales"]);
-const onboardingIdentityChoiceSchema = z.enum([
-  "local",
-  "google",
-  "microsoft",
-  "okta",
-  "oidc",
-  "saml",
-]);
+const onboardingIdentityChoiceSchema = z.literal("local");
 const onboardingStepSchema = z.enum(["plan", "invite", "sso"]);
 
 const onboardingEventBodySchema = z.discriminatedUnion("event", [
@@ -176,20 +167,6 @@ const onboardingInvitesBodySchema = z.object({
 const onboardingInviteAcceptBodySchema = z.object({
   token: z.string().min(1).max(4096),
 });
-
-function invalidOnboardingIdentityChoice(
-  reply: FastifyReply,
-  request: FastifyRequest,
-): FastifyReply {
-  return reply.code(400).send(
-    buildErrorEnvelope({
-      statusCode: 400,
-      code: "bad_request",
-      message: "Selected SSO provider is not available for the onboarding plan choice.",
-      traceId: traceIdForRequest(request),
-    }),
-  );
-}
 
 const welcomeActionSchema = z.enum([
   "try_editor",
@@ -376,7 +353,7 @@ export async function registerSignupRoutes(
     };
   });
 
-  app.post("/api/signup", async (request, reply) => {
+  app.post("/api/signup", { bodyLimit: SIGNUP_BODY_LIMIT_BYTES }, async (request, reply) => {
     const parsed = signupBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send(
@@ -535,294 +512,312 @@ export async function registerSignupRoutes(
     );
   });
 
-  app.post("/api/signup/form-viewed", async (request, reply) => {
-    const parsed = signupFormViewedBodySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup form-viewed request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
+  app.post(
+    "/api/signup/form-viewed",
+    { bodyLimit: SIGNUP_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parsed = signupFormViewedBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "bad_request",
+            message: `Invalid signup form-viewed request body: ${parsed.error.message}`,
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
 
-    if (options.outbox === undefined) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_form_viewed_telemetry_not_implemented",
-          message:
-            "Signup form-viewed telemetry is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/form-viewed" },
-        }),
-      );
-    }
+      if (options.outbox === undefined) {
+        return reply.code(501).send(
+          buildErrorEnvelope({
+            statusCode: 501,
+            code: "signup_form_viewed_telemetry_not_implemented",
+            message:
+              "Signup form-viewed telemetry is registered for SaaS mode but is not implemented yet.",
+            traceId: traceIdForRequest(request),
+            details: { phase: "commercial.B.4", route: "/api/signup/form-viewed" },
+          }),
+        );
+      }
 
-    await options.outbox.insert({
-      subject: signupFunnelSubjects.formViewed,
-      payload: {
-        step: "form_viewed",
-        source: "signup",
-        page: parsed.data.page,
-        ...(parsed.data.attribution === undefined
-          ? {}
-          : { attribution: compactRecord(parsed.data.attribution) }),
-      },
-      ...traceForOutbox(request),
-    });
-    recordSignupFunnelMetric(options.metrics, { step: "form_viewed" });
-
-    return reply.code(202).send({ status: "accepted" });
-  });
-
-  app.post("/api/signup/verify-email", async (request, reply) => {
-    const parsed = verifyEmailBodySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup verification request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    const activation = signupActivationStores(options);
-    if (activation === null) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_verify_not_implemented",
-          message:
-            "Signup email verification is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "platform-v2.A.8", route: "/api/signup/verify-email" },
-        }),
-      );
-    }
-
-    const tokenRecord = await activation.verificationTokens.findValid({ token: parsed.data.token });
-    if (tokenRecord === null) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "signup_verification_invalid",
-          message: "Signup email verification token is invalid or expired.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    const provisioning = await activation.provisioning.findByOrgId(tokenRecord.orgId);
-    if (provisioning?.status !== "waiting_for_verification") {
-      const provisioningStatus = provisioning?.status ?? "missing";
-      const currentStep = provisioning?.currentStep ?? null;
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "tenant_not_ready",
-          message: "Tenant provisioning has not completed its pre-verification steps.",
-          traceId: traceIdForRequest(request),
-          details: {
-            status: provisioningStatus,
-            currentStep,
-          },
-        }),
-      );
-    }
-
-    const consumed = await activation.verificationTokens.consume({ token: parsed.data.token });
-    if (consumed === null) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "signup_verification_invalid",
-          message: "Signup email verification token is invalid or expired.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    const identity = await activation.identities.createVerifiedCredentialUser({
-      orgId: consumed.orgId,
-      email: consumed.email,
-      passwordHash: consumed.passwordHash,
-    });
-    if (identity === null) {
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "signup_identity_conflict",
-          message: "Verified signup identity could not be linked to the tenant owner actor.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    const org = await activation.orgs.activateProvisionedOrg(consumed.orgId);
-    if (org === null) {
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "tenant_activation_conflict",
-          message: "Tenant could not be activated from its current status.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    const succeededProvisioning = await activation.provisioning.markSucceeded({
-      orgId: org.id,
-      currentStep: "email_verified",
-      completedSteps: uniqueSteps([...provisioning.completedSteps, "email_verified"]),
-    });
-    await enqueueSignupActivationSloObserved({
-      outbox: activation.outbox,
-      metrics: options.metrics,
-      org,
-      provisioning,
-      succeededProvisioning,
-      request,
-    });
-    emitSeatDelta({
-      metering: options.metering,
-      onMeteringError: options.onMeteringError,
-      orgId: org.id,
-      quantity: 1,
-      source: "signup",
-      reason: "owner_verified",
-      actorId: identity.actorId,
-      trace: traceForOutbox(request).trace,
-    });
-    await activation.outbox?.insert({
-      subject: "tenant.provisioned",
-      payload: {
-        orgId: org.id,
-        orgSlug: org.slug,
-        ownerEmail: consumed.email,
-        ownerActorId: identity.actorId,
-        betterAuthUserId: identity.betterAuthUserId,
-        tier: org.tier,
-        planId: org.planId,
-        region: org.region,
-        source: "signup",
-        status: "active",
-      },
-      ...traceForOutbox(request),
-    });
-    await enqueueSignupFunnelEvent({
-      outbox: activation.outbox,
-      metrics: options.metrics,
-      subject: signupFunnelSubjects.verified,
-      org,
-      request,
-      payload: {
-        step: "verified",
-        source: "signup",
-        ownerActorId: identity.actorId,
-        betterAuthUserId: identity.betterAuthUserId,
-      },
-    });
-
-    const session = await activation.sessionIssuer?.issueSession({
-      userId: identity.betterAuthUserId,
-      requestHeaders: request.headers,
-    });
-    if (session !== undefined) {
-      reply.header("set-cookie", session.setCookieHeader);
-    }
-
-    return {
-      status: "active",
-      org: publicSignupOrg(org),
-      verification: {
-        status: "verified",
-      },
-      session: {
-        created: session !== undefined,
-        status: session === undefined ? "credential_ready" : "created",
-      },
-      workspace: buildSignupWorkspaceUrls(options.publicBaseUrl ?? defaultPublicBaseUrl, org.slug),
-    };
-  });
-
-  app.post("/api/signup/resend-verification", async (request, reply) => {
-    const parsed = resendVerificationBodySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup verification resend request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    if (
-      options.verificationTokens?.reissueFromToken === undefined ||
-      options.outbox === undefined
-    ) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_verification_resend_not_implemented",
-          message:
-            "Signup email verification resend is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/resend-verification" },
-        }),
-      );
-    }
-
-    const reissue = await options.verificationTokens.reissueFromToken({
-      token: parsed.data.token,
-    });
-    if (reissue.status === "rate_limited") {
-      reply.header("retry-after", String(reissue.retryAfterSeconds));
-      return reply.code(429).send(
-        buildErrorEnvelope({
-          statusCode: 429,
-          code: "signup_verification_resend_rate_limited",
-          message: "Too many signup verification resend attempts.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-    if (reissue.status === "issued") {
-      const org = {
-        id: reissue.verification.orgId,
-        slug: orgSlugFromSignupMetadata(reissue.verification.metadata),
-      };
-      await enqueueSignupVerificationEmail({
-        outbox: options.outbox,
-        org,
-        email: reissue.verification.email,
-        verification: reissue.verification,
-        publicBaseUrl: options.publicBaseUrl ?? defaultPublicBaseUrl,
-        request,
-      });
       await options.outbox.insert({
-        subject: signupFunnelSubjects.verificationSent,
+        subject: signupFunnelSubjects.formViewed,
         payload: {
-          orgId: org.id,
-          orgSlug: org.slug,
-          step: "verification_sent",
+          step: "form_viewed",
           source: "signup",
-          resend: true,
-          expiresAt: reissue.verification.expiresAt.toISOString(),
+          page: parsed.data.page,
+          ...(parsed.data.attribution === undefined
+            ? {}
+            : { attribution: compactRecord(parsed.data.attribution) }),
         },
         ...traceForOutbox(request),
       });
-      recordSignupFunnelMetric(options.metrics, { step: "verification_sent" });
-    }
+      recordSignupFunnelMetric(options.metrics, { step: "form_viewed" });
 
-    return reply.code(202).send({ status: "accepted" });
-  });
+      return reply.code(202).send({ status: "accepted" });
+    },
+  );
+
+  app.post(
+    "/api/signup/verify-email",
+    { bodyLimit: SIGNUP_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parsed = verifyEmailBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "bad_request",
+            message: `Invalid signup verification request body: ${parsed.error.message}`,
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      const activation = signupActivationStores(options);
+      if (activation === null) {
+        return reply.code(501).send(
+          buildErrorEnvelope({
+            statusCode: 501,
+            code: "signup_verify_not_implemented",
+            message:
+              "Signup email verification is registered for SaaS mode but is not implemented yet.",
+            traceId: traceIdForRequest(request),
+            details: { phase: "platform-v2.A.8", route: "/api/signup/verify-email" },
+          }),
+        );
+      }
+
+      const tokenRecord = await activation.verificationTokens.findValid({
+        token: parsed.data.token,
+      });
+      if (tokenRecord === null) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "signup_verification_invalid",
+            message: "Signup email verification token is invalid or expired.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      const provisioning = await activation.provisioning.findByOrgId(tokenRecord.orgId);
+      if (provisioning?.status !== "waiting_for_verification") {
+        const provisioningStatus = provisioning?.status ?? "missing";
+        const currentStep = provisioning?.currentStep ?? null;
+        return reply.code(409).send(
+          buildErrorEnvelope({
+            statusCode: 409,
+            code: "tenant_not_ready",
+            message: "Tenant provisioning has not completed its pre-verification steps.",
+            traceId: traceIdForRequest(request),
+            details: {
+              status: provisioningStatus,
+              currentStep,
+            },
+          }),
+        );
+      }
+
+      const consumed = await activation.verificationTokens.consume({ token: parsed.data.token });
+      if (consumed === null) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "signup_verification_invalid",
+            message: "Signup email verification token is invalid or expired.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      const identity = await activation.identities.createVerifiedCredentialUser({
+        orgId: consumed.orgId,
+        email: consumed.email,
+        passwordHash: consumed.passwordHash,
+      });
+      if (identity === null) {
+        return reply.code(409).send(
+          buildErrorEnvelope({
+            statusCode: 409,
+            code: "signup_identity_conflict",
+            message: "Verified signup identity could not be linked to the tenant owner actor.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      const org = await activation.orgs.activateProvisionedOrg(consumed.orgId);
+      if (org === null) {
+        return reply.code(409).send(
+          buildErrorEnvelope({
+            statusCode: 409,
+            code: "tenant_activation_conflict",
+            message: "Tenant could not be activated from its current status.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      const succeededProvisioning = await activation.provisioning.markSucceeded({
+        orgId: org.id,
+        currentStep: "email_verified",
+        completedSteps: uniqueSteps([...provisioning.completedSteps, "email_verified"]),
+      });
+      await enqueueSignupActivationSloObserved({
+        outbox: activation.outbox,
+        metrics: options.metrics,
+        org,
+        provisioning,
+        succeededProvisioning,
+        request,
+      });
+      emitSeatDelta({
+        metering: options.metering,
+        onMeteringError: options.onMeteringError,
+        orgId: org.id,
+        quantity: 1,
+        source: "signup",
+        reason: "owner_verified",
+        actorId: identity.actorId,
+        trace: traceForOutbox(request).trace,
+      });
+      await activation.outbox?.insert({
+        subject: "tenant.provisioned",
+        payload: {
+          orgId: org.id,
+          orgSlug: org.slug,
+          ownerEmail: consumed.email,
+          ownerActorId: identity.actorId,
+          betterAuthUserId: identity.betterAuthUserId,
+          tier: org.tier,
+          planId: org.planId,
+          region: org.region,
+          source: "signup",
+          status: "active",
+        },
+        ...traceForOutbox(request),
+      });
+      await enqueueSignupFunnelEvent({
+        outbox: activation.outbox,
+        metrics: options.metrics,
+        subject: signupFunnelSubjects.verified,
+        org,
+        request,
+        payload: {
+          step: "verified",
+          source: "signup",
+          ownerActorId: identity.actorId,
+          betterAuthUserId: identity.betterAuthUserId,
+        },
+      });
+
+      const session = await activation.sessionIssuer?.issueSession({
+        userId: identity.betterAuthUserId,
+        requestHeaders: request.headers,
+        ipAddress: request.ip,
+      });
+      if (session !== undefined) {
+        reply.header("set-cookie", session.setCookieHeader);
+      }
+
+      return {
+        status: "active",
+        org: publicSignupOrg(org),
+        verification: {
+          status: "verified",
+        },
+        session: {
+          created: session !== undefined,
+          status: session === undefined ? "credential_ready" : "created",
+        },
+        workspace: buildSignupWorkspaceUrls(
+          options.publicBaseUrl ?? defaultPublicBaseUrl,
+          org.slug,
+        ),
+      };
+    },
+  );
+
+  app.post(
+    "/api/signup/resend-verification",
+    { bodyLimit: SIGNUP_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parsed = resendVerificationBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "bad_request",
+            message: `Invalid signup verification resend request body: ${parsed.error.message}`,
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      if (
+        options.verificationTokens?.reissueFromToken === undefined ||
+        options.outbox === undefined
+      ) {
+        return reply.code(501).send(
+          buildErrorEnvelope({
+            statusCode: 501,
+            code: "signup_verification_resend_not_implemented",
+            message:
+              "Signup email verification resend is registered for SaaS mode but is not implemented yet.",
+            traceId: traceIdForRequest(request),
+            details: { phase: "commercial.B.4", route: "/api/signup/resend-verification" },
+          }),
+        );
+      }
+
+      const reissue = await options.verificationTokens.reissueFromToken({
+        token: parsed.data.token,
+      });
+      if (reissue.status === "rate_limited") {
+        reply.header("retry-after", String(reissue.retryAfterSeconds));
+        return reply.code(429).send(
+          buildErrorEnvelope({
+            statusCode: 429,
+            code: "signup_verification_resend_rate_limited",
+            message: "Too many signup verification resend attempts.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+      if (reissue.status === "issued") {
+        const org = {
+          id: reissue.verification.orgId,
+          slug: orgSlugFromSignupMetadata(reissue.verification.metadata),
+        };
+        await enqueueSignupVerificationEmail({
+          outbox: options.outbox,
+          org,
+          email: reissue.verification.email,
+          verification: reissue.verification,
+          publicBaseUrl: options.publicBaseUrl ?? defaultPublicBaseUrl,
+          request,
+        });
+        await options.outbox.insert({
+          subject: signupFunnelSubjects.verificationSent,
+          payload: {
+            orgId: org.id,
+            orgSlug: org.slug,
+            step: "verification_sent",
+            source: "signup",
+            resend: true,
+            expiresAt: reissue.verification.expiresAt.toISOString(),
+          },
+          ...traceForOutbox(request),
+        });
+        recordSignupFunnelMetric(options.metrics, { step: "verification_sent" });
+      }
+
+      return reply.code(202).send({ status: "accepted" });
+    },
+  );
 
   app.get("/api/signup/onboarding-state", async (request, reply) => {
     if (options.actorFromRequest === undefined || options.onboarding?.getState === undefined) {
@@ -853,419 +848,431 @@ export async function registerSignupRoutes(
     return options.onboarding.getState(actor.orgId);
   });
 
-  app.post("/api/signup/onboarding-progress", async (request, reply) => {
-    const parsed = onboardingProgressBodySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup onboarding progress request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-    if (
-      !signupOnboardingIdentityAllowedForPlan(parsed.data.planChoice, parsed.data.identityChoice)
-    ) {
-      return invalidOnboardingIdentityChoice(reply, request);
-    }
+  app.post(
+    "/api/signup/onboarding-progress",
+    { bodyLimit: SIGNUP_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parsed = onboardingProgressBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "bad_request",
+            message: `Invalid signup onboarding progress request body: ${parsed.error.message}`,
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+      if (
+        options.actorFromRequest === undefined ||
+        options.onboarding?.persistProgress === undefined
+      ) {
+        return reply.code(501).send(
+          buildErrorEnvelope({
+            statusCode: 501,
+            code: "signup_onboarding_progress_not_implemented",
+            message:
+              "Signup onboarding progress recovery is registered for SaaS mode but is not implemented yet.",
+            traceId: traceIdForRequest(request),
+            details: { phase: "commercial.B.4", route: "/api/signup/onboarding-progress" },
+          }),
+        );
+      }
 
-    if (
-      options.actorFromRequest === undefined ||
-      options.onboarding?.persistProgress === undefined
-    ) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_onboarding_progress_not_implemented",
-          message:
-            "Signup onboarding progress recovery is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/onboarding-progress" },
-        }),
-      );
-    }
+      const actor = await options.actorFromRequest(request);
+      if (isUnauthenticated(actor)) {
+        return reply.code(401).send(
+          buildErrorEnvelope({
+            statusCode: 401,
+            code: "unauthorized",
+            message: "Authentication required.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
 
-    const actor = await options.actorFromRequest(request);
-    if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    await options.onboarding.persistProgress({
-      orgId: actor.orgId,
-      actorId: actor.id,
-      currentStep: parsed.data.currentStep,
-      ...(parsed.data.planChoice === undefined ? {} : { planChoice: parsed.data.planChoice }),
-      ...(parsed.data.inviteCount === undefined ? {} : { inviteCount: parsed.data.inviteCount }),
-      ...(parsed.data.identityChoice === undefined
-        ? {}
-        : { identityChoice: parsed.data.identityChoice }),
-    });
-
-    return reply.code(202).send({ status: "accepted" });
-  });
-
-  app.post("/api/signup/onboarding-event", async (request, reply) => {
-    const parsed = onboardingEventBodySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup onboarding event request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-    if (
-      parsed.data.event === "completed" &&
-      !signupOnboardingIdentityAllowedForPlan(parsed.data.planChoice, parsed.data.identityChoice)
-    ) {
-      return invalidOnboardingIdentityChoice(reply, request);
-    }
-
-    if (options.actorFromRequest === undefined || options.outbox === undefined) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_onboarding_telemetry_not_implemented",
-          message:
-            "Signup onboarding telemetry is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/onboarding-event" },
-        }),
-      );
-    }
-
-    const actor = await options.actorFromRequest(request);
-    if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    const subject =
-      parsed.data.event === "started"
-        ? signupFunnelSubjects.onboardingStarted
-        : signupFunnelSubjects.onboardingCompleted;
-    const eventDetails =
-      parsed.data.event === "completed"
-        ? {
-            ...(parsed.data.planChoice === undefined ? {} : { planChoice: parsed.data.planChoice }),
-            ...(parsed.data.inviteCount === undefined
-              ? {}
-              : { inviteCount: parsed.data.inviteCount }),
-            ...(parsed.data.identityChoice === undefined
-              ? {}
-              : { identityChoice: parsed.data.identityChoice }),
-            ...(parsed.data.skipped === undefined ? {} : { skipped: parsed.data.skipped }),
-          }
-        : {};
-    if (parsed.data.event === "completed") {
-      await options.onboarding?.persistCompletion({
+      await options.onboarding.persistProgress({
         orgId: actor.orgId,
         actorId: actor.id,
-        ...eventDetails,
+        currentStep: parsed.data.currentStep,
+        ...(parsed.data.planChoice === undefined ? {} : { planChoice: parsed.data.planChoice }),
+        ...(parsed.data.inviteCount === undefined ? {} : { inviteCount: parsed.data.inviteCount }),
+        ...(parsed.data.identityChoice === undefined
+          ? {}
+          : { identityChoice: parsed.data.identityChoice }),
       });
-    }
-    await options.outbox.insert({
-      subject,
-      payload: {
-        orgId: actor.orgId,
-        actorId: actor.id,
-        source: "signup",
-        step: parsed.data.event === "started" ? "onboarding_started" : "onboarding_completed",
-        ...eventDetails,
-      },
-      ...traceForOutbox(request),
-    });
-    recordSignupFunnelMetric(options.metrics, {
-      step: parsed.data.event === "started" ? "onboarding_started" : "onboarding_completed",
-    });
 
-    return reply.code(202).send({ status: "accepted" });
-  });
+      return reply.code(202).send({ status: "accepted" });
+    },
+  );
 
-  app.post("/api/signup/onboarding-invites", async (request, reply) => {
-    const parsed = onboardingInvitesBodySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup onboarding invites request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
+  app.post(
+    "/api/signup/onboarding-event",
+    { bodyLimit: SIGNUP_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parsed = onboardingEventBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "bad_request",
+            message: `Invalid signup onboarding event request body: ${parsed.error.message}`,
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+      if (options.actorFromRequest === undefined || options.outbox === undefined) {
+        return reply.code(501).send(
+          buildErrorEnvelope({
+            statusCode: 501,
+            code: "signup_onboarding_telemetry_not_implemented",
+            message:
+              "Signup onboarding telemetry is registered for SaaS mode but is not implemented yet.",
+            traceId: traceIdForRequest(request),
+            details: { phase: "commercial.B.4", route: "/api/signup/onboarding-event" },
+          }),
+        );
+      }
 
-    if (
-      options.actorFromRequest === undefined ||
-      options.outbox === undefined ||
-      options.onboardingInvites === undefined ||
-      options.orgs?.findById === undefined
-    ) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_onboarding_invites_not_implemented",
-          message:
-            "Signup onboarding invite delivery is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/onboarding-invites" },
-        }),
-      );
-    }
+      const actor = await options.actorFromRequest(request);
+      if (isUnauthenticated(actor)) {
+        return reply.code(401).send(
+          buildErrorEnvelope({
+            statusCode: 401,
+            code: "unauthorized",
+            message: "Authentication required.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
 
-    const actor = await options.actorFromRequest(request);
-    if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-    if (!canSendSignupOnboardingInvites(actor)) {
-      return reply.code(403).send(
-        buildErrorEnvelope({
-          statusCode: 403,
-          code: "forbidden",
-          message: "Admin access is required to invite teammates.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    const org = await options.orgs.findById(actor.orgId);
-    if (org === null) {
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "signup_onboarding_invites_org_not_found",
-          message: "Invite delivery could not resolve the current workspace.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    const emails = uniqueSteps(parsed.data.emails);
-    for (const email of emails) {
-      const invite = await options.onboardingInvites.issue({
-        orgId: actor.orgId,
-        invitedByActorId: actor.id,
-        email,
-        metadata: { source: "signup" },
-      });
+      const subject =
+        parsed.data.event === "started"
+          ? signupFunnelSubjects.onboardingStarted
+          : signupFunnelSubjects.onboardingCompleted;
+      const eventDetails =
+        parsed.data.event === "completed"
+          ? {
+              ...(parsed.data.planChoice === undefined
+                ? {}
+                : { planChoice: parsed.data.planChoice }),
+              ...(parsed.data.inviteCount === undefined
+                ? {}
+                : { inviteCount: parsed.data.inviteCount }),
+              ...(parsed.data.identityChoice === undefined
+                ? {}
+                : { identityChoice: parsed.data.identityChoice }),
+              ...(parsed.data.skipped === undefined ? {} : { skipped: parsed.data.skipped }),
+            }
+          : {};
+      if (parsed.data.event === "completed") {
+        await options.onboarding?.persistCompletion({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          ...eventDetails,
+        });
+      }
       await options.outbox.insert({
-        subject: signupOnboardingInviteEmailSubject,
+        subject,
         payload: {
           orgId: actor.orgId,
-          orgSlug: org.slug,
           actorId: actor.id,
-          email,
-          inviteUrl: buildSignupOnboardingInviteUrl(
-            options.publicBaseUrl ?? defaultPublicBaseUrl,
-            org.slug,
-            invite.token,
-          ),
           source: "signup",
+          step: parsed.data.event === "started" ? "onboarding_started" : "onboarding_completed",
+          ...eventDetails,
         },
         ...traceForOutbox(request),
       });
-    }
+      recordSignupFunnelMetric(options.metrics, {
+        step: parsed.data.event === "started" ? "onboarding_started" : "onboarding_completed",
+      });
 
-    return reply.code(202).send({ status: "accepted", inviteCount: emails.length });
-  });
+      return reply.code(202).send({ status: "accepted" });
+    },
+  );
 
-  app.post("/api/signup/onboarding-invite/accept", async (request, reply) => {
-    const parsed = onboardingInviteAcceptBodySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup onboarding invite acceptance request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
+  app.post(
+    "/api/signup/onboarding-invites",
+    { bodyLimit: SIGNUP_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parsed = onboardingInvitesBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "bad_request",
+            message: `Invalid signup onboarding invites request body: ${parsed.error.message}`,
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
 
-    if (
-      options.actorFromRequest === undefined ||
-      options.onboardingInvites === undefined ||
-      options.orgs?.findById === undefined
-    ) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_onboarding_invite_accept_not_implemented",
-          message:
-            "Signup onboarding invite acceptance is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/onboarding-invite/accept" },
-        }),
-      );
-    }
+      if (
+        options.actorFromRequest === undefined ||
+        options.outbox === undefined ||
+        options.onboardingInvites === undefined ||
+        options.orgs?.findById === undefined
+      ) {
+        return reply.code(501).send(
+          buildErrorEnvelope({
+            statusCode: 501,
+            code: "signup_onboarding_invites_not_implemented",
+            message:
+              "Signup onboarding invite delivery is registered for SaaS mode but is not implemented yet.",
+            traceId: traceIdForRequest(request),
+            details: { phase: "commercial.B.4", route: "/api/signup/onboarding-invites" },
+          }),
+        );
+      }
 
-    const actor = await options.actorFromRequest(request);
-    if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
+      const actor = await options.actorFromRequest(request);
+      if (isUnauthenticated(actor)) {
+        return reply.code(401).send(
+          buildErrorEnvelope({
+            statusCode: 401,
+            code: "unauthorized",
+            message: "Authentication required.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+      if (!canSendSignupOnboardingInvites(actor)) {
+        return reply.code(403).send(
+          buildErrorEnvelope({
+            statusCode: 403,
+            code: "forbidden",
+            message: "Admin access is required to invite teammates.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
 
-    const acceptance = await options.onboardingInvites.accept({
-      token: parsed.data.token,
-      actor,
-    });
-    if (acceptance.status === "not_found") {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "signup_onboarding_invite_invalid",
-          message: "Signup onboarding invite is invalid or expired.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-    if (acceptance.status === "email_mismatch") {
-      return reply.code(403).send(
-        buildErrorEnvelope({
-          statusCode: 403,
-          code: "signup_onboarding_invite_email_mismatch",
-          message: "Sign in with the invited email address before accepting this invite.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
+      const org = await options.orgs.findById(actor.orgId);
+      if (org === null) {
+        return reply.code(409).send(
+          buildErrorEnvelope({
+            statusCode: 409,
+            code: "signup_onboarding_invites_org_not_found",
+            message: "Invite delivery could not resolve the current workspace.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
 
-    const org = await options.orgs.findById(acceptance.invite.orgId);
-    if (org === null) {
-      return reply.code(409).send(
-        buildErrorEnvelope({
-          statusCode: 409,
-          code: "signup_onboarding_invite_org_not_found",
-          message: "Invite acceptance could not resolve the invited workspace.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
+      const emails = uniqueSteps(parsed.data.emails);
+      for (const email of emails) {
+        const invite = await options.onboardingInvites.issue({
+          orgId: actor.orgId,
+          invitedByActorId: actor.id,
+          email,
+          metadata: { source: "signup" },
+        });
+        await options.outbox.insert({
+          subject: signupOnboardingInviteEmailSubject,
+          payload: {
+            orgId: actor.orgId,
+            orgSlug: org.slug,
+            actorId: actor.id,
+            email,
+            inviteUrl: buildSignupOnboardingInviteUrl(
+              options.publicBaseUrl ?? defaultPublicBaseUrl,
+              org.slug,
+              invite.token,
+            ),
+            source: "signup",
+          },
+          ...traceForOutbox(request),
+        });
+      }
 
-    await options.outbox?.insert({
-      subject: signupFunnelSubjects.onboardingInviteAccepted,
-      payload: {
+      return reply.code(202).send({ status: "accepted", inviteCount: emails.length });
+    },
+  );
+
+  app.post(
+    "/api/signup/onboarding-invite/accept",
+    { bodyLimit: SIGNUP_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parsed = onboardingInviteAcceptBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "bad_request",
+            message: `Invalid signup onboarding invite acceptance request body: ${parsed.error.message}`,
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      if (
+        options.actorFromRequest === undefined ||
+        options.onboardingInvites === undefined ||
+        options.orgs?.findById === undefined
+      ) {
+        return reply.code(501).send(
+          buildErrorEnvelope({
+            statusCode: 501,
+            code: "signup_onboarding_invite_accept_not_implemented",
+            message:
+              "Signup onboarding invite acceptance is registered for SaaS mode but is not implemented yet.",
+            traceId: traceIdForRequest(request),
+            details: { phase: "commercial.B.4", route: "/api/signup/onboarding-invite/accept" },
+          }),
+        );
+      }
+
+      const actor = await options.actorFromRequest(request);
+      if (isUnauthenticated(actor)) {
+        return reply.code(401).send(
+          buildErrorEnvelope({
+            statusCode: 401,
+            code: "unauthorized",
+            message: "Authentication required.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      const acceptance = await options.onboardingInvites.accept({
+        token: parsed.data.token,
+        actor,
+      });
+      if (acceptance.status === "not_found") {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "signup_onboarding_invite_invalid",
+            message: "Signup onboarding invite is invalid or expired.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+      if (acceptance.status === "email_mismatch") {
+        return reply.code(403).send(
+          buildErrorEnvelope({
+            statusCode: 403,
+            code: "signup_onboarding_invite_email_mismatch",
+            message: "Sign in with the invited email address before accepting this invite.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      const org = await options.orgs.findById(acceptance.invite.orgId);
+      if (org === null) {
+        return reply.code(409).send(
+          buildErrorEnvelope({
+            statusCode: 409,
+            code: "signup_onboarding_invite_org_not_found",
+            message: "Invite acceptance could not resolve the invited workspace.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      await options.outbox?.insert({
+        subject: signupFunnelSubjects.onboardingInviteAccepted,
+        payload: {
+          orgId: org.id,
+          orgSlug: org.slug,
+          actorId: actor.id,
+          invitedByActorId: acceptance.invite.invitedByActorId,
+          source: "signup",
+          step: "onboarding_invite_accepted",
+        },
+        ...traceForOutbox(request),
+      });
+      recordSignupFunnelMetric(options.metrics, {
+        step: "onboarding_invite_accepted",
+        org,
+      });
+      emitSeatDelta({
+        metering: options.metering,
+        onMeteringError: options.onMeteringError,
         orgId: org.id,
-        orgSlug: org.slug,
+        quantity: 1,
+        source: "signup",
+        reason: "onboarding_invite_accepted",
         actorId: actor.id,
         invitedByActorId: acceptance.invite.invitedByActorId,
-        source: "signup",
-        step: "onboarding_invite_accepted",
-      },
-      ...traceForOutbox(request),
-    });
-    recordSignupFunnelMetric(options.metrics, {
-      step: "onboarding_invite_accepted",
-      org,
-    });
-    emitSeatDelta({
-      metering: options.metering,
-      onMeteringError: options.onMeteringError,
-      orgId: org.id,
-      quantity: 1,
-      source: "signup",
-      reason: "onboarding_invite_accepted",
-      actorId: actor.id,
-      invitedByActorId: acceptance.invite.invitedByActorId,
-      trace: traceForOutbox(request).trace,
-    });
+        trace: traceForOutbox(request).trace,
+      });
 
-    return {
-      status: "accepted",
-      org: publicSignupOrg(org),
-      actorId: actor.id,
-      workspace: buildSignupWorkspaceUrls(options.publicBaseUrl ?? defaultPublicBaseUrl, org.slug),
-    };
-  });
-
-  app.post("/api/signup/welcome-event", async (request, reply) => {
-    const parsed = welcomeEventBodySchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send(
-        buildErrorEnvelope({
-          statusCode: 400,
-          code: "bad_request",
-          message: `Invalid signup welcome event request body: ${parsed.error.message}`,
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    if (options.actorFromRequest === undefined || options.outbox === undefined) {
-      return reply.code(501).send(
-        buildErrorEnvelope({
-          statusCode: 501,
-          code: "signup_welcome_telemetry_not_implemented",
-          message:
-            "Signup welcome activation telemetry is registered for SaaS mode but is not implemented yet.",
-          traceId: traceIdForRequest(request),
-          details: { phase: "commercial.B.4", route: "/api/signup/welcome-event" },
-        }),
-      );
-    }
-
-    const actor = await options.actorFromRequest(request);
-    if (isUnauthenticated(actor)) {
-      return reply.code(401).send(
-        buildErrorEnvelope({
-          statusCode: 401,
-          code: "unauthorized",
-          message: "Authentication required.",
-          traceId: traceIdForRequest(request),
-        }),
-      );
-    }
-
-    await options.outbox.insert({
-      subject:
-        parsed.data.event === "viewed"
-          ? signupFunnelSubjects.welcomeViewed
-          : signupFunnelSubjects.welcomeActionClicked,
-      payload: {
-        orgId: actor.orgId,
+      return {
+        status: "accepted",
+        org: publicSignupOrg(org),
         actorId: actor.id,
-        source: "signup",
-        step: parsed.data.event === "viewed" ? "welcome_viewed" : "welcome_action_clicked",
-        ...(parsed.data.event === "action_clicked" ? { action: parsed.data.action } : {}),
-      },
-      ...traceForOutbox(request),
-    });
-    recordSignupFunnelMetric(options.metrics, {
-      step: parsed.data.event === "viewed" ? "welcome_viewed" : "welcome_action_clicked",
-    });
+        workspace: buildSignupWorkspaceUrls(
+          options.publicBaseUrl ?? defaultPublicBaseUrl,
+          org.slug,
+        ),
+      };
+    },
+  );
 
-    return reply.code(202).send({ status: "accepted" });
-  });
+  app.post(
+    "/api/signup/welcome-event",
+    { bodyLimit: SIGNUP_BODY_LIMIT_BYTES },
+    async (request, reply) => {
+      const parsed = welcomeEventBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send(
+          buildErrorEnvelope({
+            statusCode: 400,
+            code: "bad_request",
+            message: `Invalid signup welcome event request body: ${parsed.error.message}`,
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      if (options.actorFromRequest === undefined || options.outbox === undefined) {
+        return reply.code(501).send(
+          buildErrorEnvelope({
+            statusCode: 501,
+            code: "signup_welcome_telemetry_not_implemented",
+            message:
+              "Signup welcome activation telemetry is registered for SaaS mode but is not implemented yet.",
+            traceId: traceIdForRequest(request),
+            details: { phase: "commercial.B.4", route: "/api/signup/welcome-event" },
+          }),
+        );
+      }
+
+      const actor = await options.actorFromRequest(request);
+      if (isUnauthenticated(actor)) {
+        return reply.code(401).send(
+          buildErrorEnvelope({
+            statusCode: 401,
+            code: "unauthorized",
+            message: "Authentication required.",
+            traceId: traceIdForRequest(request),
+          }),
+        );
+      }
+
+      await options.outbox.insert({
+        subject:
+          parsed.data.event === "viewed"
+            ? signupFunnelSubjects.welcomeViewed
+            : signupFunnelSubjects.welcomeActionClicked,
+        payload: {
+          orgId: actor.orgId,
+          actorId: actor.id,
+          source: "signup",
+          step: parsed.data.event === "viewed" ? "welcome_viewed" : "welcome_action_clicked",
+          ...(parsed.data.event === "action_clicked" ? { action: parsed.data.action } : {}),
+        },
+        ...traceForOutbox(request),
+      });
+      recordSignupFunnelMetric(options.metrics, {
+        step: parsed.data.event === "viewed" ? "welcome_viewed" : "welcome_action_clicked",
+      });
+
+      return reply.code(202).send({ status: "accepted" });
+    },
+  );
 }
 
 type SignupOrgStore = Pick<OrgStore, "createOrg"> &

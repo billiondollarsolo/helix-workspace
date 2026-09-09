@@ -6,7 +6,7 @@ import {
   type MeteringRollupMetricKey,
 } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import {
   adminConsoleReadScope,
   canReadAdminConsole,
@@ -245,7 +245,7 @@ export async function registerAdminBillingRoutes(
 
   app.get("/api/admin/billing/account", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
+    if (!canReadAdminConsole(actor, "admin.billing")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
     const account = await store.getAccount(actor.orgId);
@@ -257,7 +257,7 @@ export async function registerAdminBillingRoutes(
 
   app.get("/api/admin/billing/invoices", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
+    if (!canReadAdminConsole(actor, "admin.billing")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
     const parsed = listInvoicesQuery.safeParse(request.query);
@@ -287,7 +287,7 @@ export async function registerAdminBillingRoutes(
 
   app.get("/api/admin/billing/usage", async (request, reply) => {
     const actor = await actorFromRequest(request);
-    if (!canReadAdminConsole(actor)) {
+    if (!canReadAdminConsole(actor, "admin.billing")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
     const parsed = usageRollupsQuery.safeParse(request.query);
@@ -366,14 +366,14 @@ export class PostgresBillingStore implements BillingStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async getAccount(orgId: string): Promise<BillingAccountRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<BillingAccountRow[]>`
       select org_id, plan_name, plan_price_per_seat_cents, billing_cycle, currency,
              licenses_total, licenses_used, storage_used_bytes, storage_limit_bytes,
              ai_credits_used, ai_credits_limit, next_invoice_cents, next_invoice_at,
              created_at, updated_at
       from admin_billing_accounts
       where org_id = ${orgId}
-    `) as unknown as readonly BillingAccountRow[];
+    `;
     const row = rows[0];
     return row === undefined ? null : mapAccountRow(row);
   }
@@ -381,7 +381,7 @@ export class PostgresBillingStore implements BillingStore {
   async listInvoices(input: ListInvoicesInput): Promise<readonly InvoiceRecord[]> {
     const cursorIssuedAt = input.cursor?.createdAt ?? null;
     const cursorId = input.cursor?.id ?? null;
-    const rows = (await this.sql`
+    const rows = await this.sql<InvoiceRow[]>`
       select id, org_id, invoice_number, amount_cents, currency, status,
              period_start, period_end, issued_at, created_at
       from admin_billing_invoices
@@ -392,12 +392,12 @@ export class PostgresBillingStore implements BillingStore {
         )
       order by issued_at desc, id desc
       limit ${input.limit}
-    `) as unknown as readonly InvoiceRow[];
+    `;
     return rows.map(mapInvoiceRow);
   }
 
   async listUsageRollups(input: ListUsageRollupsInput): Promise<readonly UsageRollupRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<UsageRollupRow[]>`
       select org_id, period_start, period_end, metric_key, quantity::text as quantity, computed_at
       from metering_rollups
       where org_id = ${input.orgId}
@@ -406,7 +406,7 @@ export class PostgresBillingStore implements BillingStore {
         and (${input.metricKey ?? null}::text is null or metric_key = ${input.metricKey ?? null})
       order by period_start desc, metric_key asc
       limit 120
-    `) as unknown as readonly UsageRollupRow[];
+    `;
     return rows.map(mapUsageRollupRow);
   }
 }

@@ -1,8 +1,11 @@
 import type postgres from "postgres";
-import type { MeteringClient, StorageClient } from "@helix/sdk";
+import type { MeteringClient } from "@helix/sdk";
 import {
   shipImmutableAuditBatch,
+  type AuditAnchorSigner,
+  type AuditAnchorVerifier,
   type ImmutableAuditObjectLockMode,
+  type ImmutableAuditStorageClient,
 } from "./immutable-s3.js";
 import type { AuditBatchShipper } from "./shipping-worker.js";
 import { PostgresWormAuditShipper } from "./immutable-postgres.js";
@@ -12,6 +15,11 @@ import {
   type SiemSyslogTransport,
 } from "./siem-syslog.js";
 import type { SiemAuditFormat } from "./siem-format.js";
+import {
+  reconcileAuditAnchors,
+  storageClientAuditAnchorArchive,
+} from "./anchor-reconciler.js";
+import type { AuditVerificationStore } from "./verifier.js";
 
 /**
  * Unified audit-destination selection.
@@ -72,7 +80,9 @@ export interface ImmutableS3AuditDestinationConfig {
   readonly destination: "immutable-s3";
   readonly batchSize?: number;
   readonly intervalMs?: number;
-  readonly storage: StorageClient;
+  readonly storage: ImmutableAuditStorageClient & { listKeys(prefix: string): AsyncIterable<string> };
+  readonly signer: AuditAnchorSigner;
+  readonly verifier: AuditAnchorVerifier;
   readonly prefix?: string;
   readonly objectLockMode?: ImmutableAuditObjectLockMode;
   readonly retentionDays?: number;
@@ -108,6 +118,7 @@ export interface AuditDestinationDependencies {
   readonly sql?: postgres.Sql;
   readonly metering?: MeteringClient;
   readonly onMeteringError?: (error: unknown) => void;
+  readonly audit?: AuditVerificationStore;
 }
 
 /**
@@ -121,12 +132,17 @@ export function createAuditDestinationShipper(
   dependencies: AuditDestinationDependencies = {},
 ): AuditBatchShipper {
   switch (config.destination) {
-    case "immutable-s3":
+    case "immutable-s3": {
+      if (dependencies.audit === undefined) {
+        throw new TypeError("immutable-s3 destination requires an audit verification store");
+      }
+      const audit = dependencies.audit;
       return {
         ship: (records) =>
           shipImmutableAuditBatch(
             {
               store: config.storage,
+              signer: config.signer,
               ...(dependencies.metering === undefined
                 ? {}
                 : { metering: dependencies.metering }),
@@ -144,7 +160,16 @@ export function createAuditDestinationShipper(
             },
             records,
           ),
+        reconcile: async () => {
+          await reconcileAuditAnchors({
+            archive: storageClientAuditAnchorArchive(config.storage),
+            audit,
+            verifier: config.verifier,
+            ...(config.prefix === undefined ? {} : { prefix: config.prefix }),
+          });
+        },
       };
+    }
     case "siem-syslog":
       return new SiemAuditShipper({
         host: config.host,

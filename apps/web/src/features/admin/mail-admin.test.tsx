@@ -35,9 +35,10 @@ const domainsPayload = {
     {
       id: "d-1",
       domain: "mail.helix.io",
-      spf: "verified",
-      dkim: "pending",
-      dmarc: "verified",
+      status: "verified",
+      isPrimary: true,
+      mailEnabled: true,
+      providerId: null,
       dkimKeys: [{ id: "k-1", selector: "helix2026", status: "active" }],
     },
   ],
@@ -69,11 +70,12 @@ const routingPayload = {
   rules: [
     {
       id: "rule-1",
-      matchPattern: "*@support.helix.io",
-      action: "mailbox",
-      destination: "support-team",
-      enabled: true,
+      name: "Support catch-all",
+      isEnabled: true,
       priority: 10,
+      match: { recipientPattern: "*@support.helix.io" },
+      actionKind: "mailbox",
+      action: { mailbox: "support-team" },
     },
   ],
 };
@@ -85,6 +87,52 @@ const spamPayload = {
   daemonStatus: "running",
   rulesetVersion: "2026.05",
   taggedLast24h: 47,
+};
+
+const operationsPayloads = {
+  deadLetters: {
+    messages: [
+      {
+        id: "out-1",
+        actorId: "actor-1",
+        messageId: "msg-1",
+        attemptCount: 4,
+        lastError: "relay timeout",
+        deadLetteredAt: "2026-05-20T12:00:00Z",
+      },
+    ],
+  },
+  events: {
+    events: [
+      {
+        id: "event-1",
+        outboundId: "out-2",
+        kind: "bounced",
+        recipient: "bad@example.test",
+        diagnostic: "550 unknown user",
+        occurredAt: "2026-05-20T12:01:00Z",
+      },
+    ],
+  },
+  suppressions: {
+    suppressions: [
+      {
+        id: "sup-1",
+        address: "bad@example.test",
+        reason: "hard_bounce",
+        createdAt: "2026-05-20T12:01:00Z",
+      },
+    ],
+  },
+  journal: {
+    journal: {
+      enabled: true,
+      retentionDays: 3650,
+      entryCount: 42,
+      lastJournaledAt: "2026-05-20T12:02:00Z",
+      updatedAt: "2026-05-20T12:02:00Z",
+    },
+  },
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -111,10 +159,13 @@ function requestUrlOf(input: unknown): string {
 function routedFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
   return vi.fn<typeof fetch>((input) => {
     const url = requestUrlOf(input);
+    if (url.includes("/api/auth/csrf-token")) {
+      return Promise.resolve(jsonResponse({ csrfToken: "test-csrf-token" }));
+    }
     if (url.includes("/api/admin/mail/providers")) {
       return Promise.resolve(jsonResponse(providersPayload));
     }
-    if (url.includes("/api/admin/mail/sending-domains")) {
+    if (url.includes("/api/admin/mail/domains")) {
       return Promise.resolve(jsonResponse(domainsPayload));
     }
     if (url.includes("/api/admin/mail/dmarc")) {
@@ -125,6 +176,18 @@ function routedFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
     }
     if (url.includes("/api/admin/mail/spam")) {
       return Promise.resolve(jsonResponse(spamPayload));
+    }
+    if (url.includes("/api/admin/mail/outbound/dead-letters")) {
+      return Promise.resolve(jsonResponse(operationsPayloads.deadLetters));
+    }
+    if (url.includes("/api/admin/mail/outbound/delivery-events")) {
+      return Promise.resolve(jsonResponse(operationsPayloads.events));
+    }
+    if (url.includes("/api/admin/mail/outbound/suppressions")) {
+      return Promise.resolve(jsonResponse(operationsPayloads.suppressions));
+    }
+    if (url.includes("/api/admin/mail/journal")) {
+      return Promise.resolve(jsonResponse(operationsPayloads.journal));
     }
     return Promise.resolve(jsonResponse({ error: "not found" }, 404));
   });
@@ -137,9 +200,7 @@ describe("MailAdminSection", () => {
 
   function render(node: ReactNode): Promise<void> {
     return act(() => {
-      root.render(
-        createElement(QueryClientProvider, { client: queryClient }, node),
-      );
+      root.render(createElement(QueryClientProvider, { client: queryClient }, node));
       return Promise.resolve();
     });
   }
@@ -232,25 +293,24 @@ describe("MailAdminSection", () => {
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(
         (call) =>
-          requestUrlOf(call[0]).includes("/api/admin/mail/providers") &&
-          call[1]?.method === "POST",
+          requestUrlOf(call[0]).includes("/api/admin/mail/providers") && call[1]?.method === "POST",
       );
       expect(post).toBeDefined();
     });
   });
 
-  it("navigates to sending domains and shows DKIM keys and verification badges", async () => {
+  it("navigates to mail domains and shows active DKIM keys", async () => {
     vi.stubGlobal("fetch", routedFetch());
 
     await render(createElement(MailAdminSection));
-    await clickButton("Sending domains");
+    await clickButton("Mail domains");
 
     await waitFor(() => {
       expect(container.textContent).toContain("mail.helix.io");
     });
     expect(container.textContent).toContain("helix2026");
     expect(container.textContent).toContain("active");
-    expect(container.querySelector('[title="DKIM: pending"]')).not.toBeNull();
+    expect(container.textContent).toContain("Primary");
   });
 
   it("generates a DKIM key via the API", async () => {
@@ -258,7 +318,7 @@ describe("MailAdminSection", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await render(createElement(MailAdminSection));
-    await clickButton("Sending domains");
+    await clickButton("Mail domains");
     await waitFor(() => {
       expect(container.textContent).toContain("mail.helix.io");
     });
@@ -273,8 +333,7 @@ describe("MailAdminSection", () => {
 
     await waitFor(() => {
       const post = fetchMock.mock.calls.find(
-        (call) =>
-          requestUrlOf(call[0]).includes("/dkim") && call[1]?.method === "POST",
+        (call) => requestUrlOf(call[0]).includes("/dkim") && call[1]?.method === "POST",
       );
       expect(post).toBeDefined();
     });
@@ -293,33 +352,24 @@ describe("MailAdminSection", () => {
     expect(container.textContent).toContain("google.com");
   });
 
-  it("lists routing rules and deletes one via the API", async () => {
+  it("exposes the governed routing rule view", async () => {
     const fetchMock = routedFetch();
     vi.stubGlobal("fetch", fetchMock);
 
     await render(createElement(MailAdminSection));
     await clickButton("Routing rules");
-
-    await waitFor(() => {
-      expect(container.textContent).toContain("*@support.helix.io");
-    });
-
-    const del = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Delete rule *@support.helix.io"]',
-    );
-    await act(() => {
-      del?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      return Promise.resolve();
-    });
-
-    await waitFor(() => {
-      const deleteCall = fetchMock.mock.calls.find(
-        (call) =>
-          requestUrlOf(call[0]).includes("/api/admin/mail/routing-rules/") &&
-          call[1]?.method === "DELETE",
-      );
-      expect(deleteCall).toBeDefined();
-    });
+    await waitFor(() => expect(container.textContent).toContain("support-team"));
+    expect(container.textContent).toContain("*@support.helix.io");
+    expect(
+      fetchMock.mock.calls.some((call) =>
+        requestUrlOf(call[0]).includes("/api/admin/mail/routing-rules"),
+      ),
+    ).toBe(true);
+    await clickButton("Add rule");
+    expect(container.querySelector('[aria-label="Sender pattern"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Subject contains"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Header name"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Stop processing"]')).not.toBeNull();
   });
 
   it("shows spam filtering thresholds and daemon status", async () => {
@@ -334,6 +384,17 @@ describe("MailAdminSection", () => {
     expect(container.textContent).toContain("Spam threshold");
     expect(container.textContent).toContain("running");
     expect(container.textContent).toContain("Reject threshold");
+  });
+
+  it("shows tenant-scoped delivery traces, dead letters, and suppressions", async () => {
+    vi.stubGlobal("fetch", routedFetch());
+    await render(createElement(MailAdminSection));
+    await clickButton("Operations");
+    await waitFor(() => expect(container.textContent).toContain("relay timeout"));
+    expect(container.textContent).toContain("550 unknown user");
+    expect(container.textContent).toContain("bad@example.test");
+    expect(container.textContent).toContain("Immutable compliance journal");
+    expect(container.textContent).toContain("42 captured messages");
   });
 
   it("shows an unavailable notice when the providers API denies access", async () => {
@@ -354,10 +415,10 @@ describe("MailAdminSection", () => {
 
 /** Set a React-controlled input value via the native setter. */
 function setInputValue(input: HTMLInputElement, value: string): void {
-  Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    "value",
-  )?.set?.call(input, value);
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
+    input,
+    value,
+  );
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 

@@ -6,6 +6,7 @@ import {
   LOCAL_DEMO_SEARCH_DOCUMENTS,
 } from "./index-local-demo-search.js";
 import { LOCAL_DEMO_IDS } from "./seed-local-demo.js";
+import { DEFAULT_LOCAL_OAUTH_ACTOR_ID } from "./seed-local-oauth.js";
 
 describe("indexLocalDemoSearch", () => {
   it("is a no-op when no search engine is configured", async () => {
@@ -18,10 +19,10 @@ describe("indexLocalDemoSearch", () => {
 
   it("keeps the curated search descriptor aligned with seeded Mail, Drive, Docs, Calendar, and Chat ids", () => {
     expect(LOCAL_DEMO_SEARCH_DOCUMENTS.map((document) => document.expectedId)).toEqual([
-      `mail:${LOCAL_DEMO_IDS.mailAmazonMessage}`,
-      `mail:${LOCAL_DEMO_IDS.mailRenovateMessage}`,
-      `mail:${LOCAL_DEMO_IDS.mailPlanningMessage}`,
-      `mail:${LOCAL_DEMO_IDS.mailPianoMessage}`,
+      `mail:${DEFAULT_LOCAL_OAUTH_ACTOR_ID}:${LOCAL_DEMO_IDS.mailAmazonMessage}`,
+      `mail:${DEFAULT_LOCAL_OAUTH_ACTOR_ID}:${LOCAL_DEMO_IDS.mailRenovateMessage}`,
+      `mail:${DEFAULT_LOCAL_OAUTH_ACTOR_ID}:${LOCAL_DEMO_IDS.mailPlanningMessage}`,
+      `mail:${DEFAULT_LOCAL_OAUTH_ACTOR_ID}:${LOCAL_DEMO_IDS.mailPianoMessage}`,
       `drive:${LOCAL_DEMO_IDS.driveFileAiServices}`,
       `drive:${LOCAL_DEMO_IDS.driveFileTraining}`,
       `docs:${LOCAL_DEMO_IDS.docsQuarterly}`,

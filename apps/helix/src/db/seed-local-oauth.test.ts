@@ -28,26 +28,28 @@ describe("seedLocalOAuth", () => {
       orgId: DEFAULT_LOCAL_OAUTH_ORG_ID,
       scopes: [...DEFAULT_LOCAL_OAUTH_SCOPES],
     });
-    expect(result.sampleTokenCommand).toContain("/oauth/token");
+    expect(result.sampleTokenCommand).toContain("/v1/oauth/token");
     expect(result.sampleTokenCommand).toContain("grant_type=client_credentials");
     expect(JSON.stringify(result)).not.toContain("scrypt$");
 
-    expect(recording.calls).toHaveLength(2);
-    expect(recording.calls[0]?.text).toContain("insert into actors");
-    expect(recording.calls[0]?.text).toContain("on conflict (id) do update");
-    expect(recording.calls[0]?.values).toContain(DEFAULT_LOCAL_OAUTH_ACTOR_ID);
-    expect(recording.calls[0]?.values).toContain(DEFAULT_LOCAL_OAUTH_ORG_ID);
-    expect(recording.calls[0]?.values).toContain("user");
+    expect(recording.beginCalls).toBe(1);
+    const actorUpsert = recording.calls.find((call) => call.text.includes("insert into actors"));
+    expect(actorUpsert?.text).toContain("on conflict (id) do update");
+    expect(actorUpsert?.values).toContain(DEFAULT_LOCAL_OAUTH_ACTOR_ID);
+    expect(actorUpsert?.values).toContain(DEFAULT_LOCAL_OAUTH_ORG_ID);
+    expect(actorUpsert?.values).toContain("user");
 
-    expect(recording.calls[1]?.text).toContain("insert into agent_credentials");
-    expect(recording.calls[1]?.text).toContain("credential_type");
-    expect(recording.calls[1]?.text).toContain(
-      "on conflict (client_id) where revoked_at is null do update",
+    const credentialUpsert = recording.calls.find((call) =>
+      call.text.includes("insert into agent_credentials"),
     );
-    expect(recording.calls[1]?.values).toContain(DEFAULT_LOCAL_OAUTH_CLIENT_ID);
-    expect(recording.calls[1]?.values).not.toContain(DEFAULT_LOCAL_OAUTH_CLIENT_SECRET);
+    expect(credentialUpsert?.text).toContain("credential_type");
+    expect(credentialUpsert?.text).toContain(
+      "on conflict (client_id) where credential_type = 'oauth_client' do update",
+    );
+    expect(credentialUpsert?.values).toContain(DEFAULT_LOCAL_OAUTH_CLIENT_ID);
+    expect(credentialUpsert?.values).not.toContain(DEFAULT_LOCAL_OAUTH_CLIENT_SECRET);
 
-    const secretHash = recording.calls[1]?.values.find(
+    const secretHash = credentialUpsert?.values.find(
       (value): value is string => typeof value === "string" && value.startsWith("$argon2id$"),
     );
     expect(secretHash).toBeDefined();
@@ -60,8 +62,8 @@ describe("seedLocalOAuth", () => {
     const recording = createRecordingSql();
 
     const result = await seedLocalOAuth(recording.sql, {
-      orgId: "org-2",
-      actorId: "actor-2",
+      orgId: "00000000-0000-4000-8000-000000000200",
+      actorId: "00000000-0000-4000-8000-000000000201",
       actorType: "agent",
       clientId: "client-2",
       clientSecret: "secret-2",
@@ -72,14 +74,16 @@ describe("seedLocalOAuth", () => {
     expect(result).toMatchObject({
       clientId: "client-2",
       clientSecret: "secret-2",
-      actorId: "actor-2",
-      orgId: "org-2",
+      actorId: "00000000-0000-4000-8000-000000000201",
+      orgId: "00000000-0000-4000-8000-000000000200",
       scopes: ["mail.read", "mail.send"],
     });
-    expect(result.sampleTokenCommand).toContain("http://localhost:4317/oauth/token");
-    expect(recording.calls[0]?.values).toContain("org-2");
-    expect(recording.calls[0]?.values).toContain("agent");
-    expect(recording.calls[1]?.values).toContain("client-2");
+    expect(result.sampleTokenCommand).toContain("http://localhost:4317/v1/oauth/token");
+    expect(
+      recording.calls.some((call) => call.values.includes("00000000-0000-4000-8000-000000000200")),
+    ).toBe(true);
+    expect(recording.calls.some((call) => call.values.includes("agent"))).toBe(true);
+    expect(recording.calls.some((call) => call.values.includes("client-2"))).toBe(true);
     expect(recording.arrays).toContainEqual(["mail.read", "mail.send"]);
   });
 });
@@ -88,9 +92,11 @@ function createRecordingSql(): {
   readonly sql: postgres.Sql;
   readonly calls: readonly RecordedQuery[];
   readonly arrays: readonly (readonly unknown[])[];
+  readonly beginCalls: number;
 } {
   const calls: RecordedQuery[] = [];
   const arrays: (readonly unknown[])[] = [];
+  let beginCalls = 0;
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
     calls.push({ text: strings.join("$"), values });
     return Promise.resolve([]);
@@ -100,6 +106,17 @@ function createRecordingSql(): {
       arrays.push(value);
       return value;
     },
+    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) => {
+      beginCalls += 1;
+      return callback(sql as unknown as postgres.TransactionSql);
+    },
   }) as unknown as postgres.Sql;
-  return { sql, calls, arrays };
+  return {
+    sql,
+    calls,
+    arrays,
+    get beginCalls() {
+      return beginCalls;
+    },
+  };
 }

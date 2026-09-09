@@ -41,8 +41,8 @@ describe("observability config", () => {
   it("lets explicit environment values override JSON config", () => {
     const config = loadObservabilityConfigFromEnv({
       HELIX_CONFIG_JSON: JSON.stringify({
-        plugins: {
-          "com.helix.observability-otel": {
+        observability: {
+          config: {
             enabled: false,
             otlpEndpoint: "http://tempo:4318",
             sampling: { traces: 0.1 },
@@ -62,6 +62,7 @@ describe("observability config", () => {
   it("applies standard OpenTelemetry env vars without overwriting explicit values", () => {
     const env: NodeJS.ProcessEnv = {
       OTEL_TRACES_SAMPLER: "always_on",
+      HELIX_REGION: "us-east-1",
     };
 
     applyOpenTelemetryEnvironment(env, {
@@ -82,6 +83,7 @@ describe("observability config", () => {
     expect(env.OTEL_TRACES_SAMPLER).toBe("always_on");
     expect(env.OTEL_TRACES_SAMPLER_ARG).toBe("0.5");
     expect(env.OTEL_PROPAGATORS).toBe("tracecontext,baggage");
+    expect(env.OTEL_RESOURCE_ATTRIBUTES).toBe("helix.deployment.region=us-east-1");
   });
 
   it("normalizes receiver endpoints for the HTTP trace exporter", () => {
@@ -91,5 +93,49 @@ describe("observability config", () => {
     expect(normalizeOtlpHttpTraceEndpoint("http://otel-collector:4317")).toBe(
       "http://otel-collector:4318/v1/traces",
     );
+  });
+
+  it("fails closed when production telemetry is not mutually authenticated", () => {
+    expect(() =>
+      loadObservabilityConfigFromEnv({
+        NODE_ENV: "production",
+        HELIX_REGION: "us-east-1",
+        HELIX_OTEL_REGION: "us-east-1",
+        HELIX_OBSERVABILITY_ENABLED: "true",
+        HELIX_OTEL_TRACES_ENDPOINT: "http://otel-collector:4318/v1/traces",
+      }),
+    ).toThrow("explicit HTTPS OTLP trace endpoint");
+
+    expect(() =>
+      loadObservabilityConfigFromEnv({
+        NODE_ENV: "production",
+        HELIX_REGION: "us-east-1",
+        HELIX_OTEL_REGION: "us-east-1",
+        HELIX_OBSERVABILITY_ENABLED: "true",
+        HELIX_OTEL_TRACES_ENDPOINT: "https://otel-collector:4318/v1/traces",
+      }),
+    ).toThrow("trusted collector CA");
+
+    expect(
+      loadObservabilityConfigFromEnv({
+        NODE_ENV: "production",
+        HELIX_REGION: "us-east-1",
+        HELIX_OTEL_REGION: "us-east-1",
+        HELIX_OBSERVABILITY_ENABLED: "true",
+        HELIX_OTEL_TRACES_ENDPOINT: "https://otel-collector:4318/v1/traces",
+        OTEL_EXPORTER_OTLP_CERTIFICATE: "/var/run/otel/ca.crt",
+        OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE: "/var/run/otel/tls.crt",
+        OTEL_EXPORTER_OTLP_CLIENT_KEY: "/var/run/otel/tls.key",
+      }).enabled,
+    ).toBe(true);
+
+    expect(() =>
+      loadObservabilityConfigFromEnv({
+        NODE_ENV: "production",
+        HELIX_REGION: "us-east-1",
+        HELIX_OTEL_REGION: "eu-west-1",
+        HELIX_OBSERVABILITY_ENABLED: "true",
+      }),
+    ).toThrow("pinned to HELIX_REGION");
   });
 });

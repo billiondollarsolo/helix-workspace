@@ -1,5 +1,7 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { actorHasScope } from "../../api/scopes.js";
+import { actorRoleDecision } from "../permissions/roles.js";
 import type { MailOutboundStatus } from "./types.js";
 
 const adminConfigReadScope = "admin.config.read";
@@ -126,12 +128,12 @@ export async function registerMailAdminRoutes(
 }
 
 export function canReadMailAdminStatus(actor: Actor): boolean {
-  const scopes = actor.scopes ?? [];
+  const resource = { type: "product", id: "mail", orgId: actor.orgId } as const;
+  if (actorRoleDecision(actor, mailAdminScope, resource) === "deny") return false;
   return (
-    scopes.includes(adminConfigReadScope) ||
-    scopes.includes(adminConfigWriteScope) ||
-    scopes.includes(mailAdminScope) ||
-    scopes.includes("admin.*")
+    actorHasScope(actor, adminConfigReadScope, resource) ||
+    actorHasScope(actor, adminConfigWriteScope, resource) ||
+    actorHasScope(actor, mailAdminScope, resource)
   );
 }
 
@@ -252,10 +254,14 @@ export function emptyDeliveryHealth(since: Date, evidence: string): MailOutbound
     since: since.toISOString(),
     counts: {
       queued: 0,
-      sending: 0,
-      sent: 0,
-      failed: 0,
       cancelled: 0,
+      sending: 0,
+      accepted: 0,
+      delivered: 0,
+      deferred: 0,
+      bounced: 0,
+      complained: 0,
+      failed: 0,
     },
     failedLast24h: 0,
     lastFailureAt: null,

@@ -13,6 +13,7 @@ describe("trash-sync registry", () => {
       sql: () => Promise.resolve([]),
       orgId: "org",
       objectId: "obj",
+      action: "trash",
       deletedAt: new Date("2026-07-18T00:00:00.000Z"),
     };
     await registry.run("docs", input);
@@ -27,6 +28,7 @@ describe("trash-sync registry", () => {
       sql: () => Promise.resolve([]),
       orgId: "org",
       objectId: "obj",
+      action: "trash",
       deletedAt: new Date(),
     });
     expect(docs).not.toHaveBeenCalled();
@@ -43,6 +45,7 @@ describe("trash-sync registry", () => {
       sql: () => Promise.resolve([]),
       orgId: "o",
       objectId: "x",
+      action: "restore",
       deletedAt: null,
     });
     const trashAt = new Date("2026-01-01T00:00:00.000Z");
@@ -50,9 +53,25 @@ describe("trash-sync registry", () => {
       sql: () => Promise.resolve([]),
       orgId: "o",
       objectId: "x",
+      action: "trash",
       deletedAt: trashAt,
     });
     expect(seen).toEqual([null, trashAt]);
+  });
+
+  it("purges native records instead of leaving editor tombstones", async () => {
+    const queries: string[] = [];
+    await createDefaultTrashSyncRegistry().run("docs", {
+      sql: (strings) => {
+        queries.push(strings.join("?"));
+        return Promise.resolve([]);
+      },
+      orgId: "o",
+      objectId: "x",
+      action: "purge",
+      deletedAt: new Date(),
+    });
+    expect(queries).toEqual([expect.stringContaining("delete from docs_documents")]);
   });
 
   it("default registry registers docs/sheets/slides", () => {

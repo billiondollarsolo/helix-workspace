@@ -12,10 +12,18 @@ create table if not exists outbound_webhooks (
   name text not null,
   url text not null,
   event_subjects text[] not null default '{}',
-  secret_ref text,
+  secret_ciphertext text not null check (
+    secret_ciphertext ~ '^helix[$]1([$][A-Za-z0-9_-]+){6}$'
+  ),
   headers jsonb not null default '{}',
   enabled boolean not null default true,
   metadata jsonb not null default '{}',
+  constraint outbound_webhooks_headers_no_credentials check (
+    headers::text !~* '"[^"]*(authorization|authentication|x[-_]?auth|secret|password|token|credential|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret|signing[-_]?(key|secret))[^"]*"[[:space:]]*:'
+  ),
+  constraint outbound_webhooks_metadata_no_credentials check (
+    metadata::text !~* '"[^"]*(secret|password|token|credential|api[-_]?key|private[-_]?key|client[-_]?secret)[^"]*"[[:space:]]*:'
+  ),
   created_by_actor_id uuid references actors(id),
   deleted_at timestamptz,
   created_at timestamptz not null default now(),
@@ -30,9 +38,14 @@ create table if not exists inbound_webhooks (
   org_id uuid not null,
   name text not null,
   source text not null,
-  secret_ref text,
+  secret_ciphertext text not null check (
+    secret_ciphertext ~ '^helix[$]1([$][A-Za-z0-9_-]+){6}$'
+  ),
   enabled boolean not null default true,
   metadata jsonb not null default '{}',
+  constraint inbound_webhooks_metadata_no_credentials check (
+    metadata::text !~* '"[^"]*(secret|password|token|credential|api[-_]?key|private[-_]?key|client[-_]?secret)[^"]*"[[:space:]]*:'
+  ),
   created_by_actor_id uuid references actors(id),
   disabled_at timestamptz,
   last_received_at timestamptz,
@@ -62,7 +75,13 @@ create table if not exists webhook_deliveries (
   next_attempt_at timestamptz,
   delivered_at timestamptz,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint webhook_deliveries_request_headers_no_credentials check (
+    request_headers::text !~* '"[^"]*(authorization|authentication|x[-_]?auth|secret|password|token|credential|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret|signing[-_]?(key|secret))[^"]*"[[:space:]]*:'
+  ),
+  constraint webhook_deliveries_response_headers_no_credentials check (
+    response_headers::text !~* '"[^"]*(authorization|authentication|x[-_]?auth|secret|password|token|credential|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret|signing[-_]?(key|secret))[^"]*"[[:space:]]*:'
+  )
 );
 
 create index if not exists webhook_deliveries_org_status_idx on webhook_deliveries (org_id, status);

@@ -13,6 +13,7 @@ import {
   type SeedLocalOAuthResult,
 } from "./seed-local-oauth.js";
 import { createS3CompatibleStorage } from "../platform/storage/index.js";
+import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 
 export const LOCAL_DEMO_SOURCE = "local-demo";
 export const LOCAL_DEMO_VOLUME_SOURCE = "local-demo-volume";
@@ -185,11 +186,11 @@ export async function seedLocalDemo(
   const passwordHash = await hashPassword(password);
   await storage?.ensureBucket?.();
 
-  await sql.begin(async (tx) => {
+  await withTenantPostgresContext(sql, { orgId }, async (tx) => {
     await seedOrg(tx, orgId);
     await seedActors(tx, orgId, actorId, email, displayName);
     await clearDemoContent(tx, orgId);
-    await seedBetterAuthUser(tx, actorId, email, displayName, passwordHash);
+    await seedBetterAuthUser(tx, orgId, actorId, email, displayName, passwordHash);
     await seedDrive(tx, orgId, actorId, storage);
     await seedDocs(tx, orgId, actorId, storage);
     await seedCalendar(tx, orgId, actorId, email, timeline);
@@ -267,7 +268,8 @@ async function seedActors(
         "calendar.read",
         "calendar.write",
         "chat.read",
-        "chat.write",
+        "chat.post",
+        "chat.create",
         "assistant.write",
         "assistant.memory",
       ],
@@ -377,6 +379,7 @@ async function clearVolumeDemoContent(sql: SeedSql, orgId: string): Promise<void
 
 async function seedBetterAuthUser(
   sql: SeedSql,
+  orgId: string,
   actorId: string,
   email: string,
   displayName: string,
@@ -384,14 +387,13 @@ async function seedBetterAuthUser(
 ): Promise<void> {
   const defaultUserId = `demo-${actorId}`;
   const rows = await sql<{ readonly id: string }[]>`
-    insert into "user" (id, name, email, "emailVerified", actor_id, "createdAt", "updatedAt")
-    values (${defaultUserId}, ${displayName}, ${email}, true, ${actorId}, now(), now())
+    insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+    values (${defaultUserId}, ${displayName}, ${email}, true, now(), now())
     on conflict (lower(email)) do update
     set
       name = excluded.name,
       email = excluded.email,
       "emailVerified" = true,
-      actor_id = excluded.actor_id,
       "updatedAt" = now()
     returning id
   `;
@@ -420,6 +422,14 @@ async function seedBetterAuthUser(
       password = excluded.password,
       "updatedAt" = now()
   `;
+  const linked = await sql<{ readonly actor_id: string | null }[]>`
+    select helix_activate_identity_membership(
+      'better-auth', ${userId}, ${orgId}, ${email}, ${displayName}
+    ) as actor_id
+  `;
+  if (linked[0]?.actor_id !== actorId) {
+    throw new Error(`Failed to link local demo login ${email}.`);
+  }
 }
 
 async function seedDrive(
@@ -923,8 +933,8 @@ async function seedMail(
     )
   `;
   await sql`
-    insert into message_attachments (message_id, object_id, disposition)
-    values (${demoIds.mailAmazonMessage}, ${demoIds.mailAttachmentAmazon}, 'attachment')
+    insert into message_attachments (org_id, message_id, object_id, disposition)
+    values (${orgId}, ${demoIds.mailAmazonMessage}, ${demoIds.mailAttachmentAmazon}, 'attachment')
   `;
   await grant(sql, orgId, actorId, "object", demoIds.mailAttachmentAmazon, "owner", actorId);
 }

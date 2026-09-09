@@ -3,13 +3,18 @@
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
-import type { OutboundMailProviderKind, OutboundProviderConfig } from "./providers.js";
+import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
+import type { KmsDkimPrivateKeyProtector } from "./dkim-kms.js";
+import {
+  parseOutboundProviderPublicConfig,
+  type OutboundMailProviderKind,
+  type OutboundProviderConfig,
+} from "./providers.js";
 
 /**
  * Postgres + in-memory stores for the mail-admin domains:
  *
  *   * Outbound providers   (`mail_outbound_providers`)
- *   * Sending domains      (`mail_sending_domains`)
  *   * DKIM keys            (`mail_dkim_keys`)
  *   * DMARC reports        (`mail_dmarc_reports` / `mail_dmarc_report_records`)
  *   * Inbound routing rules(`mail_inbound_routing_rules`)
@@ -22,19 +27,8 @@ import type { OutboundMailProviderKind, OutboundProviderConfig } from "./provide
 // Records
 // ===========================================================================
 
-export type MailDkimKeyStatus = "active" | "retiring" | "retired";
+export type MailDkimKeyStatus = "pending" | "active" | "retiring" | "retired";
 export type MailRoutingActionKind = "forward" | "alias" | "drop" | "tag" | "mailbox";
-
-export interface MailSendingDomainRecord {
-  readonly id: string;
-  readonly orgId: string;
-  readonly domain: string;
-  readonly isDefault: boolean;
-  readonly verifiedAt: string | null;
-  readonly providerId: string | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-}
 
 export interface MailDkimKeyRecord {
   readonly id: string;
@@ -44,10 +38,12 @@ export interface MailDkimKeyRecord {
   readonly status: MailDkimKeyStatus;
   readonly algorithm: string;
   readonly keyBits: number;
-  /** PEM private key — never serialized to clients; admin routes redact it. */
-  readonly privateKeyPem: string;
+  /** The private key exists only as tenant/domain-bound KMS ciphertext. */
+  readonly privateKeyStored: boolean;
   readonly publicKeyPem: string;
   readonly dnsRecord: string;
+  readonly activatedAt: string | null;
+  readonly verifiedAt: string | null;
   readonly rotatedAt: string | null;
   readonly retiredAt: string | null;
   readonly createdAt: string;
@@ -130,6 +126,7 @@ export interface CreateOutboundProviderInput {
   readonly isDefault: boolean;
   readonly config: JsonObject;
   readonly secretRef: string | null;
+  readonly webhookSecretRef: string | null;
   readonly createdBy: string;
 }
 
@@ -141,6 +138,7 @@ export interface UpdateOutboundProviderInput {
   readonly isDefault?: boolean;
   readonly config?: JsonObject;
   readonly secretRef?: string | null;
+  readonly webhookSecretRef?: string | null;
 }
 
 export interface OutboundProviderStore {
@@ -152,39 +150,36 @@ export interface OutboundProviderStore {
   deleteProvider(orgId: string, id: string): Promise<boolean>;
 }
 
-export interface CreateSendingDomainInput {
-  readonly orgId: string;
-  readonly domain: string;
-  readonly isDefault: boolean;
-  readonly providerId: string | null;
-  readonly createdBy: string;
-}
-
-export interface SendingDomainStore {
-  listDomains(orgId: string): Promise<readonly MailSendingDomainRecord[]>;
-  getDomain(orgId: string, id: string): Promise<MailSendingDomainRecord | null>;
-  createDomain(input: CreateSendingDomainInput): Promise<MailSendingDomainRecord>;
-  setDomainVerified(
-    orgId: string,
-    id: string,
-    verified: boolean,
-  ): Promise<MailSendingDomainRecord | null>;
-  deleteDomain(orgId: string, id: string): Promise<boolean>;
-}
-
 export interface MailDkimKeyStore {
   listKeys(orgId: string, domainId: string): Promise<readonly MailDkimKeyRecord[]>;
-  /** Generate a fresh key, promoting it to `active` and demoting any previous active key. */
+  /** Stage a KMS-protected key. It is not used for signing until activated. */
   generateKey(input: {
     readonly orgId: string;
     readonly domainId: string;
     readonly selector: string;
     readonly domain: string;
     readonly keyBits?: number;
+    readonly kmsKeyId?: string;
     readonly createdBy: string;
   }): Promise<MailDkimKeyRecord>;
+  /** Activate a DNS-verified pending key and retain the former key for continuity. */
+  activateKey(orgId: string, id: string): Promise<MailDkimKeyRecord | null>;
   /** Rotate: mark the named retiring key fully `retired`. */
   retireKey(orgId: string, id: string): Promise<MailDkimKeyRecord | null>;
+}
+
+export interface MailDkimSigningKeyResolver {
+  resolveSigningKey(
+    orgId: string,
+    fromAddress: string,
+  ): Promise<
+    | {
+        readonly domainName: string;
+        readonly keySelector: string;
+        readonly privateKey: string;
+      }
+    | null
+  >;
 }
 
 export interface IngestDmarcReportInput {
@@ -286,6 +281,7 @@ interface OutboundProviderRow {
   readonly is_default: boolean;
   readonly config: JsonObject;
   readonly secret_ref: string | null;
+  readonly webhook_secret_ref: string | null;
   readonly created_at: Date;
   readonly updated_at: Date;
 }
@@ -298,8 +294,9 @@ function mapProviderRow(row: OutboundProviderRow): OutboundProviderConfig {
     kind: row.kind,
     enabled: row.enabled,
     isDefault: row.is_default,
-    config: row.config,
+    config: parseOutboundProviderPublicConfig(row.kind, row.config),
     secretRef: row.secret_ref,
+    webhookSecretRef: row.webhook_secret_ref,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -309,31 +306,36 @@ export class PostgresOutboundProviderStore implements OutboundProviderStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async listProviders(orgId: string): Promise<readonly OutboundProviderConfig[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<OutboundProviderRow[]>`
       select * from mail_outbound_providers
       where org_id = ${orgId}
       order by is_default desc, created_at asc, id asc
-    `) as unknown as readonly OutboundProviderRow[];
+    `;
     return rows.map(mapProviderRow);
   }
 
   async getProvider(orgId: string, id: string): Promise<OutboundProviderConfig | null> {
-    const rows = (await this.sql`
-      select * from mail_outbound_providers where org_id = ${orgId} and id = ${id}
-    `) as unknown as readonly OutboundProviderRow[];
-    return rows[0] === undefined ? null : mapProviderRow(rows[0]);
+    return withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
+      const rows = await tx<OutboundProviderRow[]>`
+        select * from mail_outbound_providers where org_id = ${orgId} and id = ${id}
+      `;
+      return rows[0] === undefined ? null : mapProviderRow(rows[0]);
+    });
   }
 
   async getDefaultProvider(orgId: string): Promise<OutboundProviderConfig | null> {
-    const rows = (await this.sql`
-      select * from mail_outbound_providers
-      where org_id = ${orgId} and is_default = true and enabled = true
-      limit 1
-    `) as unknown as readonly OutboundProviderRow[];
-    return rows[0] === undefined ? null : mapProviderRow(rows[0]);
+    return withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
+      const rows = await tx<OutboundProviderRow[]>`
+        select * from mail_outbound_providers
+        where org_id = ${orgId} and is_default = true and enabled = true
+        limit 1
+      `;
+      return rows[0] === undefined ? null : mapProviderRow(rows[0]);
+    });
   }
 
   async createProvider(input: CreateOutboundProviderInput): Promise<OutboundProviderConfig> {
+    const publicConfig = parseOutboundProviderPublicConfig(input.kind, input.config);
     return this.sql.begin(async (tx) => {
       if (input.isDefault) {
         await tx`
@@ -341,17 +343,17 @@ export class PostgresOutboundProviderStore implements OutboundProviderStore {
           where org_id = ${input.orgId}
         `;
       }
-      const rows = (await tx`
+      const rows = await tx<OutboundProviderRow[]>`
         insert into mail_outbound_providers
-          (org_id, name, kind, enabled, is_default, config, secret_ref, created_by)
+          (org_id, name, kind, enabled, is_default, config, secret_ref, webhook_secret_ref, created_by)
         values (
           ${input.orgId}, ${input.name}, ${input.kind}, ${input.enabled},
-          ${input.isDefault}, ${tx.json(toSqlJson(input.config))}, ${input.secretRef},
-          ${input.createdBy}
+          ${input.isDefault}, ${tx.json(toSqlJson(publicConfig))}, ${input.secretRef},
+          ${input.webhookSecretRef}, ${input.createdBy}
         )
         on conflict do nothing
         returning *
-      `) as unknown as readonly OutboundProviderRow[];
+      `;
       if (rows[0] === undefined) {
         throw new MailAdminConflictError(
           `An outbound provider named "${input.name}" already exists.`,
@@ -361,134 +363,46 @@ export class PostgresOutboundProviderStore implements OutboundProviderStore {
     });
   }
 
-  async updateProvider(
-    input: UpdateOutboundProviderInput,
-  ): Promise<OutboundProviderConfig | null> {
+  async updateProvider(input: UpdateOutboundProviderInput): Promise<OutboundProviderConfig | null> {
     return this.sql.begin(async (tx) => {
-      const existing = (await tx`
+      const existing = await tx<OutboundProviderRow[]>`
         select * from mail_outbound_providers where org_id = ${input.orgId} and id = ${input.id}
-      `) as unknown as readonly OutboundProviderRow[];
+      `;
       const current = existing[0];
       if (current === undefined) {
         return null;
       }
+      const publicConfig = parseOutboundProviderPublicConfig(
+        current.kind,
+        input.config ?? current.config,
+      );
       if (input.isDefault === true) {
         await tx`
           update mail_outbound_providers set is_default = false, updated_at = now()
           where org_id = ${input.orgId} and id <> ${input.id}
         `;
       }
-      const rows = (await tx`
+      const rows = await tx<OutboundProviderRow[]>`
         update mail_outbound_providers
         set
           name = ${input.name ?? current.name},
           enabled = ${input.enabled ?? current.enabled},
           is_default = ${input.isDefault ?? current.is_default},
-          config = ${tx.json(toSqlJson(input.config ?? current.config))},
+          config = ${tx.json(toSqlJson(publicConfig))},
           secret_ref = ${input.secretRef === undefined ? current.secret_ref : input.secretRef},
+          webhook_secret_ref = ${input.webhookSecretRef === undefined ? current.webhook_secret_ref : input.webhookSecretRef},
           updated_at = now()
         where org_id = ${input.orgId} and id = ${input.id}
         returning *
-      `) as unknown as readonly OutboundProviderRow[];
+      `;
       return rows[0] === undefined ? null : mapProviderRow(rows[0]);
     });
   }
 
   async deleteProvider(orgId: string, id: string): Promise<boolean> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       delete from mail_outbound_providers where org_id = ${orgId} and id = ${id} returning id
-    `) as unknown as readonly { readonly id: string }[];
-    return rows.length > 0;
-  }
-}
-
-interface SendingDomainRow {
-  readonly id: string;
-  readonly org_id: string;
-  readonly domain: string;
-  readonly is_default: boolean;
-  readonly verified_at: Date | null;
-  readonly provider_id: string | null;
-  readonly created_at: Date;
-  readonly updated_at: Date;
-}
-
-function mapDomainRow(row: SendingDomainRow): MailSendingDomainRecord {
-  return {
-    id: row.id,
-    orgId: row.org_id,
-    domain: row.domain,
-    isDefault: row.is_default,
-    verifiedAt: row.verified_at?.toISOString() ?? null,
-    providerId: row.provider_id,
-    createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
-  };
-}
-
-export class PostgresSendingDomainStore implements SendingDomainStore {
-  constructor(private readonly sql: postgres.Sql) {}
-
-  async listDomains(orgId: string): Promise<readonly MailSendingDomainRecord[]> {
-    const rows = (await this.sql`
-      select * from mail_sending_domains
-      where org_id = ${orgId}
-      order by is_default desc, domain asc
-    `) as unknown as readonly SendingDomainRow[];
-    return rows.map(mapDomainRow);
-  }
-
-  async getDomain(orgId: string, id: string): Promise<MailSendingDomainRecord | null> {
-    const rows = (await this.sql`
-      select * from mail_sending_domains where org_id = ${orgId} and id = ${id}
-    `) as unknown as readonly SendingDomainRow[];
-    return rows[0] === undefined ? null : mapDomainRow(rows[0]);
-  }
-
-  async createDomain(input: CreateSendingDomainInput): Promise<MailSendingDomainRecord> {
-    return this.sql.begin(async (tx) => {
-      if (input.isDefault) {
-        await tx`
-          update mail_sending_domains set is_default = false, updated_at = now()
-          where org_id = ${input.orgId}
-        `;
-      }
-      const rows = (await tx`
-        insert into mail_sending_domains (org_id, domain, is_default, provider_id, created_by)
-        values (
-          ${input.orgId}, ${input.domain}, ${input.isDefault}, ${input.providerId},
-          ${input.createdBy}
-        )
-        on conflict do nothing
-        returning *
-      `) as unknown as readonly SendingDomainRow[];
-      if (rows[0] === undefined) {
-        throw new MailAdminConflictError(
-          `The sending domain "${input.domain}" is already registered.`,
-        );
-      }
-      return mapDomainRow(rows[0]);
-    });
-  }
-
-  async setDomainVerified(
-    orgId: string,
-    id: string,
-    verified: boolean,
-  ): Promise<MailSendingDomainRecord | null> {
-    const rows = (await this.sql`
-      update mail_sending_domains
-      set verified_at = ${verified ? this.sql`now()` : null}, updated_at = now()
-      where org_id = ${orgId} and id = ${id}
-      returning *
-    `) as unknown as readonly SendingDomainRow[];
-    return rows[0] === undefined ? null : mapDomainRow(rows[0]);
-  }
-
-  async deleteDomain(orgId: string, id: string): Promise<boolean> {
-    const rows = (await this.sql`
-      delete from mail_sending_domains where org_id = ${orgId} and id = ${id} returning id
-    `) as unknown as readonly { readonly id: string }[];
+    `;
     return rows.length > 0;
   }
 }
@@ -501,9 +415,12 @@ interface DkimKeyRow {
   readonly status: MailDkimKeyStatus;
   readonly algorithm: string;
   readonly key_bits: number;
-  readonly private_key_pem: string;
+  readonly private_key_ciphertext: string;
+  readonly kms_key_id: string;
   readonly public_key_pem: string;
   readonly dns_record: string;
+  readonly activated_at: Date | null;
+  readonly verified_at: Date | null;
   readonly rotated_at: Date | null;
   readonly retired_at: Date | null;
   readonly created_at: Date;
@@ -519,9 +436,11 @@ function mapDkimRow(row: DkimKeyRow): MailDkimKeyRecord {
     status: row.status,
     algorithm: row.algorithm,
     keyBits: row.key_bits,
-    privateKeyPem: row.private_key_pem,
+    privateKeyStored: row.private_key_ciphertext.length > 0,
     publicKeyPem: row.public_key_pem,
     dnsRecord: row.dns_record,
+    activatedAt: row.activated_at?.toISOString() ?? null,
+    verifiedAt: row.verified_at?.toISOString() ?? null,
     rotatedAt: row.rotated_at?.toISOString() ?? null,
     retiredAt: row.retired_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
@@ -529,15 +448,18 @@ function mapDkimRow(row: DkimKeyRow): MailDkimKeyRecord {
   };
 }
 
-export class PostgresMailDkimKeyStore implements MailDkimKeyStore {
-  constructor(private readonly sql: postgres.Sql) {}
+export class PostgresMailDkimKeyStore implements MailDkimKeyStore, MailDkimSigningKeyResolver {
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly keys: KmsDkimPrivateKeyProtector,
+  ) {}
 
   async listKeys(orgId: string, domainId: string): Promise<readonly MailDkimKeyRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<DkimKeyRow[]>`
       select * from mail_dkim_keys
       where org_id = ${orgId} and domain_id = ${domainId}
       order by created_at desc, id desc
-    `) as unknown as readonly DkimKeyRow[];
+    `;
     return rows.map(mapDkimRow);
   }
 
@@ -547,31 +469,34 @@ export class PostgresMailDkimKeyStore implements MailDkimKeyStore {
     readonly selector: string;
     readonly domain: string;
     readonly keyBits?: number;
+    readonly kmsKeyId?: string;
     readonly createdBy: string;
   }): Promise<MailDkimKeyRecord> {
     const keyBits = input.keyBits ?? 2048;
+    if (keyBits < 2048) {
+      throw new TypeError("DKIM RSA keys must be at least 2048 bits.");
+    }
     const material = generateDkimKeyMaterial(keyBits);
+    const protectedKey = await this.keys.protect({
+      orgId: input.orgId,
+      domainId: input.domainId,
+      privateKeyPem: material.privateKeyPem,
+      ...(input.kmsKeyId === undefined ? {} : { kmsKeyId: input.kmsKeyId }),
+    });
     return this.sql.begin(async (tx) => {
-      // Demote any current active key to `retiring` — it stays published in DNS
-      // until in-flight mail signed with it has drained, then is retired.
-      await tx`
-        update mail_dkim_keys
-        set status = 'retiring', rotated_at = now(), updated_at = now()
-        where org_id = ${input.orgId} and domain_id = ${input.domainId} and status = 'active'
-      `;
-      const rows = (await tx`
+      const rows = await tx<DkimKeyRow[]>`
         insert into mail_dkim_keys (
           org_id, domain_id, selector, status, algorithm, key_bits,
-          private_key_pem, public_key_pem, dns_record, created_by
+          private_key_ciphertext, kms_key_id, public_key_pem, dns_record, created_by
         )
         values (
-          ${input.orgId}, ${input.domainId}, ${input.selector}, 'active', 'rsa-sha256',
-          ${keyBits}, ${material.privateKeyPem}, ${material.publicKeyPem},
+          ${input.orgId}, ${input.domainId}, ${input.selector}, 'pending', 'rsa-sha256',
+          ${keyBits}, ${protectedKey.ciphertext}, ${protectedKey.kmsKeyId}, ${material.publicKeyPem},
           ${dkimDnsRecord(material.dnsPublicKey)}, ${input.createdBy}
         )
         on conflict do nothing
         returning *
-      `) as unknown as readonly DkimKeyRow[];
+      `;
       if (rows[0] === undefined) {
         throw new MailAdminConflictError(
           `A DKIM key with selector "${input.selector}" already exists for this domain.`,
@@ -581,14 +506,92 @@ export class PostgresMailDkimKeyStore implements MailDkimKeyStore {
     });
   }
 
+  async activateKey(orgId: string, id: string): Promise<MailDkimKeyRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const pending = await tx<DkimKeyRow[]>`
+        select * from mail_dkim_keys
+        where org_id = ${orgId} and id = ${id} and status = 'pending'
+        for update
+      `;
+      if (pending[0] === undefined) return null;
+      await tx`
+        update mail_dkim_keys
+        set status = 'retiring', rotated_at = now(), updated_at = now()
+        where org_id = ${orgId} and domain_id = ${pending[0].domain_id} and status = 'active'
+      `;
+      const rows = await tx<DkimKeyRow[]>`
+        update mail_dkim_keys
+        set status = 'active', activated_at = now(), verified_at = now(), updated_at = now()
+        where org_id = ${orgId} and id = ${id} and status = 'pending'
+        returning *
+      `;
+      return rows[0] === undefined ? null : mapDkimRow(rows[0]);
+    });
+  }
+
   async retireKey(orgId: string, id: string): Promise<MailDkimKeyRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<DkimKeyRow[]>`
       update mail_dkim_keys
       set status = 'retired', retired_at = now(), updated_at = now()
-      where org_id = ${orgId} and id = ${id} and status <> 'retired'
+      where org_id = ${orgId} and id = ${id} and status = 'retiring'
       returning *
-    `) as unknown as readonly DkimKeyRow[];
+    `;
     return rows[0] === undefined ? null : mapDkimRow(rows[0]);
+  }
+
+  async resolveSigningKey(
+    orgId: string,
+    fromAddress: string,
+  ): Promise<{
+    readonly domainName: string;
+    readonly keySelector: string;
+    readonly privateKey: string;
+  } | null> {
+    const domain = fromAddress.slice(fromAddress.lastIndexOf("@") + 1).toLowerCase();
+    if (domain === fromAddress.toLowerCase()) return null;
+    const rows = await this.sql<{
+      readonly domain_name: string;
+      readonly domain_id: string;
+      readonly selector: string | null;
+      readonly private_key_ciphertext: string | null;
+      readonly kms_key_id: string | null;
+    }[]>`
+      select
+        domain.domain as domain_name,
+        domain.id as domain_id,
+        key.selector,
+        key.private_key_ciphertext,
+        key.kms_key_id
+      from admin_domains domain
+      left join mail_dkim_keys key
+        on key.org_id = domain.org_id
+        and key.domain_id = domain.id
+        and key.status = 'active'
+      where domain.org_id = ${orgId}
+        and domain.status = 'verified'
+        and domain.mail_enabled = true
+        and lower(domain.domain) = ${domain}
+      limit 1
+    `;
+    const key = rows[0];
+    if (key === undefined) return null;
+    if (
+      key.selector === null ||
+      key.private_key_ciphertext === null ||
+      key.kms_key_id === null
+    ) {
+      throw new TypeError(`Verified sending domain ${domain} has no active DKIM key.`);
+    }
+    return {
+      domainName: key.domain_name,
+      keySelector: key.selector,
+      privateKey: await this.keys.open({
+        orgId,
+        domainId: key.domain_id,
+        ciphertext: key.private_key_ciphertext,
+        kmsKeyId: key.kms_key_id,
+      }),
+    };
   }
 }
 
@@ -634,7 +637,7 @@ export class PostgresMailDmarcReportStore implements MailDmarcReportStore {
   async ingestReport(input: IngestDmarcReportInput): Promise<MailDmarcReportRecord> {
     const totals = aggregateDmarcRecords(input.records);
     return this.sql.begin(async (tx) => {
-      const rows = (await tx`
+      const rows = await tx<DmarcReportRow[]>`
         insert into mail_dmarc_reports (
           org_id, domain, org_name, report_id, date_range_begin, date_range_end,
           policy_p, policy_sp, policy_pct, total_messages, pass_messages, fail_messages, raw
@@ -657,7 +660,7 @@ export class PostgresMailDmarcReportStore implements MailDmarcReportStore {
           fail_messages = excluded.fail_messages,
           raw = excluded.raw
         returning *
-      `) as unknown as readonly DmarcReportRow[];
+      `;
       const report = rows[0];
       if (report === undefined) {
         throw new Error("Failed to ingest DMARC report.");
@@ -682,22 +685,24 @@ export class PostgresMailDmarcReportStore implements MailDmarcReportStore {
     });
   }
 
-  async listReports(
-    orgId: string,
-    domain?: string,
-  ): Promise<readonly MailDmarcReportRecord[]> {
-    const rows = (await this.sql`
+  async listReports(orgId: string, domain?: string): Promise<readonly MailDmarcReportRecord[]> {
+    const rows = await this.sql<DmarcReportRow[]>`
       select * from mail_dmarc_reports
       where org_id = ${orgId}
         and (${domain ?? null}::text is null or lower(domain) = ${(domain ?? "").toLowerCase()})
       order by date_range_end desc, id desc
       limit 200
-    `) as unknown as readonly DmarcReportRow[];
+    `;
     return rows.map(mapDmarcRow);
   }
 
   async getSummary(orgId: string, domain: string): Promise<MailDmarcSummary> {
-    const totalsRows = (await this.sql`
+    const totalsRows = await this.sql<{
+      readonly total: number;
+      readonly pass: number;
+      readonly fail: number;
+      readonly report_count: number;
+    }[]>`
       select
         coalesce(sum(total_messages), 0)::int as total,
         coalesce(sum(pass_messages), 0)::int as pass,
@@ -705,13 +710,11 @@ export class PostgresMailDmarcReportStore implements MailDmarcReportStore {
         count(*)::int as report_count
       from mail_dmarc_reports
       where org_id = ${orgId} and lower(domain) = ${domain.toLowerCase()}
-    `) as unknown as readonly {
-      readonly total: number;
-      readonly pass: number;
-      readonly fail: number;
-      readonly report_count: number;
-    }[];
-    const sources = (await this.sql`
+    `;
+    const sources = await this.sql<{
+      readonly source_ip: string;
+      readonly message_count: number;
+    }[]>`
       select rr.source_ip, sum(rr.message_count)::int as message_count
       from mail_dmarc_report_records rr
       join mail_dmarc_reports r on r.id = rr.report_id
@@ -721,10 +724,7 @@ export class PostgresMailDmarcReportStore implements MailDmarcReportStore {
       group by rr.source_ip
       order by message_count desc
       limit 10
-    `) as unknown as readonly {
-      readonly source_ip: string;
-      readonly message_count: number;
-    }[];
+    `;
     const totals = totalsRows[0] ?? { total: 0, pass: 0, fail: 0, report_count: 0 };
     return {
       domain: domain.toLowerCase(),
@@ -773,23 +773,23 @@ export class PostgresMailRoutingRuleStore implements MailRoutingRuleStore {
   constructor(private readonly sql: postgres.Sql) {}
 
   async listRules(orgId: string): Promise<readonly MailRoutingRuleRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<RoutingRuleRow[]>`
       select * from mail_inbound_routing_rules
       where org_id = ${orgId}
       order by priority asc, created_at asc
-    `) as unknown as readonly RoutingRuleRow[];
+    `;
     return rows.map(mapRoutingRow);
   }
 
   async getRule(orgId: string, id: string): Promise<MailRoutingRuleRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<RoutingRuleRow[]>`
       select * from mail_inbound_routing_rules where org_id = ${orgId} and id = ${id}
-    `) as unknown as readonly RoutingRuleRow[];
+    `;
     return rows[0] === undefined ? null : mapRoutingRow(rows[0]);
   }
 
   async createRule(input: CreateRoutingRuleInput): Promise<MailRoutingRuleRecord> {
-    const rows = (await this.sql`
+    const rows = await this.sql<RoutingRuleRow[]>`
       insert into mail_inbound_routing_rules (
         org_id, name, is_enabled, priority, match, action_kind, action, created_by
       )
@@ -800,11 +800,9 @@ export class PostgresMailRoutingRuleStore implements MailRoutingRuleStore {
       )
       on conflict do nothing
       returning *
-    `) as unknown as readonly RoutingRuleRow[];
+    `;
     if (rows[0] === undefined) {
-      throw new MailAdminConflictError(
-        `A routing rule named "${input.name}" already exists.`,
-      );
+      throw new MailAdminConflictError(`A routing rule named "${input.name}" already exists.`);
     }
     return mapRoutingRow(rows[0]);
   }
@@ -814,7 +812,7 @@ export class PostgresMailRoutingRuleStore implements MailRoutingRuleStore {
     if (current === null) {
       return null;
     }
-    const rows = (await this.sql`
+    const rows = await this.sql<RoutingRuleRow[]>`
       update mail_inbound_routing_rules
       set
         name = ${input.name ?? current.name},
@@ -826,14 +824,14 @@ export class PostgresMailRoutingRuleStore implements MailRoutingRuleStore {
         updated_at = now()
       where org_id = ${input.orgId} and id = ${input.id}
       returning *
-    `) as unknown as readonly RoutingRuleRow[];
+    `;
     return rows[0] === undefined ? null : mapRoutingRow(rows[0]);
   }
 
   async deleteRule(orgId: string, id: string): Promise<boolean> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       delete from mail_inbound_routing_rules where org_id = ${orgId} and id = ${id} returning id
-    `) as unknown as readonly { readonly id: string }[];
+    `;
     return rows.length > 0;
   }
 }
@@ -877,11 +875,7 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
     return [...this.#providers.values()]
       .filter((provider) => provider.orgId === orgId)
       .sort((a, b) =>
-        a.isDefault === b.isDefault
-          ? a.createdAt.localeCompare(b.createdAt)
-          : a.isDefault
-            ? -1
-            : 1,
+        a.isDefault === b.isDefault ? a.createdAt.localeCompare(b.createdAt) : a.isDefault ? -1 : 1,
       );
   }
 
@@ -901,8 +895,7 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
   async createProvider(input: CreateOutboundProviderInput): Promise<OutboundProviderConfig> {
     const clash = [...this.#providers.values()].some(
       (provider) =>
-        provider.orgId === input.orgId &&
-        provider.name.toLowerCase() === input.name.toLowerCase(),
+        provider.orgId === input.orgId && provider.name.toLowerCase() === input.name.toLowerCase(),
     );
     if (clash) {
       throw new MailAdminConflictError(
@@ -918,6 +911,7 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
     }
     this.#seq += 1;
     const timestamp = isoNow(this.now);
+    const publicConfig = parseOutboundProviderPublicConfig(input.kind, input.config);
     const provider: OutboundProviderConfig = {
       id: genId(this.#seq),
       orgId: input.orgId,
@@ -925,8 +919,9 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
       kind: input.kind,
       enabled: input.enabled,
       isDefault: input.isDefault,
-      config: input.config,
+      config: publicConfig,
       secretRef: input.secretRef,
+      webhookSecretRef: input.webhookSecretRef,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -934,13 +929,15 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
     return provider;
   }
 
-  async updateProvider(
-    input: UpdateOutboundProviderInput,
-  ): Promise<OutboundProviderConfig | null> {
+  async updateProvider(input: UpdateOutboundProviderInput): Promise<OutboundProviderConfig | null> {
     const current = this.#providers.get(input.id);
     if (current === undefined || current.orgId !== input.orgId) {
       return null;
     }
+    const publicConfig = parseOutboundProviderPublicConfig(
+      current.kind,
+      input.config ?? current.config,
+    );
     if (input.isDefault === true) {
       for (const provider of this.#providers.values()) {
         if (provider.orgId === input.orgId && provider.id !== input.id && provider.isDefault) {
@@ -953,8 +950,10 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
       name: input.name ?? current.name,
       enabled: input.enabled ?? current.enabled,
       isDefault: input.isDefault ?? current.isDefault,
-      config: input.config ?? current.config,
+      config: publicConfig,
       secretRef: input.secretRef === undefined ? current.secretRef : input.secretRef,
+      webhookSecretRef:
+        input.webhookSecretRef === undefined ? current.webhookSecretRef : input.webhookSecretRef,
       updatedAt: isoNow(this.now),
     };
     this.#providers.set(updated.id, updated);
@@ -967,87 +966,6 @@ export class InMemoryOutboundProviderStore implements OutboundProviderStore {
       return false;
     }
     this.#providers.delete(id);
-    return true;
-  }
-}
-
-export class InMemorySendingDomainStore implements SendingDomainStore {
-  readonly #domains = new Map<string, MailSendingDomainRecord>();
-  #seq = 0;
-
-  constructor(private readonly now: () => Date = () => new Date("2026-05-21T00:00:00.000Z")) {}
-
-  async listDomains(orgId: string): Promise<readonly MailSendingDomainRecord[]> {
-    return [...this.#domains.values()]
-      .filter((domain) => domain.orgId === orgId)
-      .sort((a, b) =>
-        a.isDefault === b.isDefault ? a.domain.localeCompare(b.domain) : a.isDefault ? -1 : 1,
-      );
-  }
-
-  async getDomain(orgId: string, id: string): Promise<MailSendingDomainRecord | null> {
-    const domain = this.#domains.get(id);
-    return domain === undefined || domain.orgId !== orgId ? null : domain;
-  }
-
-  async createDomain(input: CreateSendingDomainInput): Promise<MailSendingDomainRecord> {
-    const clash = [...this.#domains.values()].some(
-      (domain) =>
-        domain.orgId === input.orgId &&
-        domain.domain.toLowerCase() === input.domain.toLowerCase(),
-    );
-    if (clash) {
-      throw new MailAdminConflictError(
-        `The sending domain "${input.domain}" is already registered.`,
-      );
-    }
-    if (input.isDefault) {
-      for (const domain of this.#domains.values()) {
-        if (domain.orgId === input.orgId && domain.isDefault) {
-          this.#domains.set(domain.id, { ...domain, isDefault: false });
-        }
-      }
-    }
-    this.#seq += 1;
-    const timestamp = isoNow(this.now);
-    const domain: MailSendingDomainRecord = {
-      id: genId(this.#seq),
-      orgId: input.orgId,
-      domain: input.domain,
-      isDefault: input.isDefault,
-      verifiedAt: null,
-      providerId: input.providerId,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    this.#domains.set(domain.id, domain);
-    return domain;
-  }
-
-  async setDomainVerified(
-    orgId: string,
-    id: string,
-    verified: boolean,
-  ): Promise<MailSendingDomainRecord | null> {
-    const domain = this.#domains.get(id);
-    if (domain === undefined || domain.orgId !== orgId) {
-      return null;
-    }
-    const updated: MailSendingDomainRecord = {
-      ...domain,
-      verifiedAt: verified ? isoNow(this.now) : null,
-      updatedAt: isoNow(this.now),
-    };
-    this.#domains.set(updated.id, updated);
-    return updated;
-  }
-
-  async deleteDomain(orgId: string, id: string): Promise<boolean> {
-    const domain = this.#domains.get(id);
-    if (domain === undefined || domain.orgId !== orgId) {
-      return false;
-    }
-    this.#domains.delete(id);
     return true;
   }
 }
@@ -1070,6 +988,7 @@ export class InMemoryMailDkimKeyStore implements MailDkimKeyStore {
     readonly selector: string;
     readonly domain: string;
     readonly keyBits?: number;
+    readonly kmsKeyId?: string;
     readonly createdBy: string;
   }): Promise<MailDkimKeyRecord> {
     const clash = [...this.#keys.values()].some(
@@ -1083,12 +1002,10 @@ export class InMemoryMailDkimKeyStore implements MailDkimKeyStore {
       );
     }
     const timestamp = isoNow(this.now);
-    for (const key of this.#keys.values()) {
-      if (key.orgId === input.orgId && key.domainId === input.domainId && key.status === "active") {
-        this.#keys.set(key.id, { ...key, status: "retiring", rotatedAt: timestamp });
-      }
-    }
     const keyBits = input.keyBits ?? 2048;
+    if (keyBits < 2048) {
+      throw new TypeError("DKIM RSA keys must be at least 2048 bits.");
+    }
     const material = generateDkimKeyMaterial(keyBits);
     this.#seq += 1;
     const key: MailDkimKeyRecord = {
@@ -1096,12 +1013,14 @@ export class InMemoryMailDkimKeyStore implements MailDkimKeyStore {
       orgId: input.orgId,
       domainId: input.domainId,
       selector: input.selector,
-      status: "active",
+      status: "pending",
       algorithm: "rsa-sha256",
       keyBits,
-      privateKeyPem: material.privateKeyPem,
+      privateKeyStored: true,
       publicKeyPem: material.publicKeyPem,
       dnsRecord: dkimDnsRecord(material.dnsPublicKey),
+      activatedAt: null,
+      verifiedAt: null,
       rotatedAt: null,
       retiredAt: null,
       createdAt: timestamp,
@@ -1111,9 +1030,36 @@ export class InMemoryMailDkimKeyStore implements MailDkimKeyStore {
     return key;
   }
 
+  async activateKey(orgId: string, id: string): Promise<MailDkimKeyRecord | null> {
+    const key = this.#keys.get(id);
+    if (key === undefined || key.orgId !== orgId || key.status !== "pending") {
+      return null;
+    }
+    const timestamp = isoNow(this.now);
+    for (const current of this.#keys.values()) {
+      if (current.orgId === orgId && current.domainId === key.domainId && current.status === "active") {
+        this.#keys.set(current.id, {
+          ...current,
+          status: "retiring",
+          rotatedAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+    }
+    const active: MailDkimKeyRecord = {
+      ...key,
+      status: "active",
+      activatedAt: timestamp,
+      verifiedAt: timestamp,
+      updatedAt: timestamp,
+    };
+    this.#keys.set(active.id, active);
+    return active;
+  }
+
   async retireKey(orgId: string, id: string): Promise<MailDkimKeyRecord | null> {
     const key = this.#keys.get(id);
-    if (key === undefined || key.orgId !== orgId || key.status === "retired") {
+    if (key === undefined || key.orgId !== orgId || key.status !== "retiring") {
       return null;
     }
     const timestamp = isoNow(this.now);
@@ -1144,10 +1090,12 @@ export class InMemoryMailDmarcReportStore implements MailDmarcReportStore {
         report.orgName === input.orgName &&
         report.reportId === input.reportId,
     );
-    const id = existing?.id ?? (() => {
-      this.#seq += 1;
-      return genId(this.#seq);
-    })();
+    const id =
+      existing?.id ??
+      (() => {
+        this.#seq += 1;
+        return genId(this.#seq);
+      })();
     const report: MailDmarcReportRecord = {
       id,
       orgId: input.orgId,
@@ -1169,10 +1117,7 @@ export class InMemoryMailDmarcReportStore implements MailDmarcReportStore {
     return report;
   }
 
-  async listReports(
-    orgId: string,
-    domain?: string,
-  ): Promise<readonly MailDmarcReportRecord[]> {
+  async listReports(orgId: string, domain?: string): Promise<readonly MailDmarcReportRecord[]> {
     return [...this.#reports.values()]
       .filter(
         (report) =>
@@ -1192,10 +1137,7 @@ export class InMemoryMailDmarcReportStore implements MailDmarcReportStore {
       passMessages += report.passMessages;
       for (const record of this.#records.get(report.id) ?? []) {
         if (record.dkimResult !== "pass" && record.spfResult !== "pass") {
-          bySource.set(
-            record.sourceIp,
-            (bySource.get(record.sourceIp) ?? 0) + record.messageCount,
-          );
+          bySource.set(record.sourceIp, (bySource.get(record.sourceIp) ?? 0) + record.messageCount);
         }
       }
     }
@@ -1224,7 +1166,9 @@ export class InMemoryMailRoutingRuleStore implements MailRoutingRuleStore {
     return [...this.#rules.values()]
       .filter((rule) => rule.orgId === orgId)
       .sort((a, b) =>
-        a.priority === b.priority ? a.createdAt.localeCompare(b.createdAt) : a.priority - b.priority,
+        a.priority === b.priority
+          ? a.createdAt.localeCompare(b.createdAt)
+          : a.priority - b.priority,
       );
   }
 
@@ -1235,8 +1179,7 @@ export class InMemoryMailRoutingRuleStore implements MailRoutingRuleStore {
 
   async createRule(input: CreateRoutingRuleInput): Promise<MailRoutingRuleRecord> {
     const clash = [...this.#rules.values()].some(
-      (rule) =>
-        rule.orgId === input.orgId && rule.name.toLowerCase() === input.name.toLowerCase(),
+      (rule) => rule.orgId === input.orgId && rule.name.toLowerCase() === input.name.toLowerCase(),
     );
     if (clash) {
       throw new MailAdminConflictError(`A routing rule named "${input.name}" already exists.`);

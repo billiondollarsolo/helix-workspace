@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MULTIPART_PART_SIZE,
+  MAX_MULTIPART_PARTS,
   planMultipartParts,
   shouldUseMultipartUpload,
   validateCompletedParts,
@@ -27,6 +28,10 @@ describe("planMultipartParts", () => {
 
   it("returns empty plan for zero size", () => {
     expect(planMultipartParts(0).parts).toEqual([]);
+  });
+
+  it("rejects plans that would disclose an unbounded URL set", () => {
+    expect(() => planMultipartParts(MAX_MULTIPART_PARTS + 1, 1)).toThrow("maximum");
   });
 });
 

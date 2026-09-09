@@ -1,5 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
-import type { AuditRecord, JsonObject, JsonValue, MeteringClient, StorageClient } from "@helix/sdk";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import type {
+  AuditRecord,
+  JsonObject,
+  JsonValue,
+  MeteringClient,
+  StorageClient,
+  StorageObject,
+} from "@helix/sdk";
 import { canonicalJson } from "./hash.js";
 
 export type ImmutableAuditObjectLockMode = "COMPLIANCE" | "GOVERNANCE";
@@ -21,16 +28,37 @@ export interface ImmutableAuditObjectStore {
   putObject(object: ImmutableAuditObject): Promise<void>;
 }
 
+export interface ImmutableAuditStorageClient extends StorageClient {
+  putObjectLocked(object: StorageObject, lock: ImmutableAuditObjectLock): Promise<void>;
+}
+
 export interface ImmutableAuditActivityRecord extends AuditRecord {
   readonly id: string;
   readonly orgId: string;
   readonly createdAt: string;
   readonly thisHash: string;
   readonly prevHash?: string | null;
+  readonly schemaVersion: number;
+  readonly sequence: string;
+}
+
+export interface AuditAnchorAuthentication {
+  readonly algorithm: "HMAC-SHA256";
+  readonly keyId: string;
+  readonly signature: string;
+}
+
+export interface AuditAnchorSigner {
+  readonly keyId: string;
+  sign(payload: Uint8Array): Promise<string>;
+}
+
+export interface AuditAnchorVerifier {
+  verify(payload: Uint8Array, authentication: AuditAnchorAuthentication): Promise<boolean>;
 }
 
 export interface ImmutableS3AuditShipperOptions {
-  readonly store: ImmutableAuditObjectStore | StorageClient;
+  readonly store: ImmutableAuditObjectStore | ImmutableAuditStorageClient;
   readonly metering?: MeteringClient;
   readonly onMeteringError?: (error: unknown) => void;
   readonly prefix?: string;
@@ -40,6 +68,7 @@ export interface ImmutableS3AuditShipperOptions {
   readonly retentionDays?: number;
   readonly now?: () => Date;
   readonly batchId?: () => string;
+  readonly signer: AuditAnchorSigner;
 }
 
 export interface ImmutableAuditShipResult {
@@ -63,6 +92,7 @@ interface NormalizedOptions {
   readonly retentionDays: number;
   readonly now: () => Date;
   readonly batchId: () => string;
+  readonly signer: AuditAnchorSigner;
 }
 
 const encoder = new TextEncoder();
@@ -121,23 +151,20 @@ export async function shipImmutableAuditBatch(
   return writeImmutableAuditBatch(normalizeOptions(options), records);
 }
 
-export function createStorageClientImmutableAuditStore(storage: StorageClient): ImmutableAuditObjectStore {
+export function createStorageClientImmutableAuditStore(storage: ImmutableAuditStorageClient): ImmutableAuditObjectStore {
   return {
     async putObject(object: ImmutableAuditObject): Promise<void> {
-      await storage.put({
+      const storedObject = {
         key: object.key,
         body: object.body,
         contentType: object.contentType,
-        metadata: {
-          ...object.metadata,
-          ...(object.objectLock === undefined
-            ? {}
-            : {
-                "object-lock-mode": object.objectLock.mode,
-                "object-lock-retain-until": object.objectLock.retainUntil,
-              }),
-        },
-      });
+        metadata: object.metadata,
+      } satisfies StorageObject;
+      if (object.objectLock === undefined) {
+        await storage.put(storedObject);
+      } else {
+        await storage.putObjectLocked(storedObject, object.objectLock);
+      }
     },
   };
 }
@@ -167,7 +194,7 @@ async function writeImmutableAuditBatch(
   const manifestKey = joinKey(keyPrefix, `${batchId}.manifest.json`);
   const recordsBody = encodeRecords(records);
   const recordsSha256 = sha256Hex(recordsBody);
-  const manifest = createManifest({
+  const unsignedManifest = createManifest({
     batchId,
     createdAt,
     records,
@@ -176,6 +203,18 @@ async function writeImmutableAuditBatch(
     manifestKey,
     objectLock,
   });
+  const signature = await options.signer.sign(encodeJson(unsignedManifest));
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(signature)) {
+    throw new TypeError("audit anchor signer must return a base64 signature");
+  }
+  const manifest: JsonObject = {
+    ...unsignedManifest,
+    authentication: {
+      algorithm: "HMAC-SHA256",
+      keyId: options.signer.keyId,
+      signature,
+    },
+  };
   const manifestBody = encodeJson(manifest);
   const manifestSha256 = sha256Hex(manifestBody);
   const baseMetadata = {
@@ -253,6 +292,7 @@ function normalizeOptions(options: ImmutableS3AuditShipperOptions): NormalizedOp
     retentionDays,
     now: options.now ?? (() => new Date()),
     batchId: options.batchId ?? randomUUID,
+    signer: options.signer,
   };
 }
 
@@ -280,7 +320,9 @@ function emitImmutableAuditStorageDelta(input: {
     });
 }
 
-function isImmutableAuditObjectStore(store: ImmutableAuditObjectStore | StorageClient): store is ImmutableAuditObjectStore {
+function isImmutableAuditObjectStore(
+  store: ImmutableAuditObjectStore | ImmutableAuditStorageClient,
+): store is ImmutableAuditObjectStore {
   return "putObject" in store;
 }
 
@@ -299,6 +341,12 @@ function assertRecord(record: ImmutableAuditActivityRecord): void {
   }
   if (!/^[a-f0-9]{64}$/.test(record.thisHash)) {
     throw new TypeError("immutable audit record thisHash must be a lowercase sha256 hex digest");
+  }
+  if (!Number.isInteger(record.schemaVersion) || record.schemaVersion < 1) {
+    throw new TypeError("immutable audit record schemaVersion must be a positive integer");
+  }
+  if (!/^[1-9][0-9]*$/.test(record.sequence)) {
+    throw new TypeError("immutable audit record sequence must be a positive integer string");
   }
 }
 
@@ -321,6 +369,8 @@ function toExportRecord(record: ImmutableAuditActivityRecord): JsonObject {
     onBehalfOfActorId: record.onBehalfOfActorId ?? null,
     orgId: record.orgId,
     prevHash: record.prevHash ?? record.previousHash ?? null,
+    schemaVersion: record.schemaVersion,
+    sequence: record.sequence,
     spanId: record.trace?.spanId ?? null,
     thisHash: record.thisHash,
     toolId: record.toolId ?? null,
@@ -349,13 +399,16 @@ function createManifest(input: {
     batchId: input.batchId,
     createdAt: input.createdAt.toISOString(),
     firstCreatedAt: first.createdAt,
-    format: "helix.audit.immutable-s3.v1",
+    format: "helix.audit.immutable-s3.v2",
     hashChain: {
       firstPrevHash: first.prevHash ?? first.previousHash ?? null,
+      firstSequence: first.sequence,
+      lastSequence: last.sequence,
       lastThisHash: last.thisHash,
     },
     lastCreatedAt: last.createdAt,
     manifestKey: input.manifestKey,
+    orgId: first.orgId,
     recordCount: input.records.length,
     recordIds: input.records.map((record) => record.id),
     recordsKey: input.recordsKey,
@@ -386,7 +439,10 @@ function commonOrgSegment(records: readonly ImmutableAuditActivityRecord[]): str
     return "unknown-org";
   }
 
-  return records.every((record) => record.orgId === firstOrgId) ? safeSegment(firstOrgId) : "multi-org";
+  if (!records.every((record) => record.orgId === firstOrgId)) {
+    throw new TypeError("immutable audit batches must contain exactly one organization");
+  }
+  return safeSegment(firstOrgId);
 }
 
 function commonOrgId(records: readonly ImmutableAuditActivityRecord[]): string | undefined {
@@ -419,4 +475,31 @@ function encodeJson(value: JsonValue): Uint8Array {
 
 function sha256Hex(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+export function createHmacAuditAnchorAuthenticator(
+  keyId: string,
+  secret: string,
+): AuditAnchorSigner & AuditAnchorVerifier {
+  if (keyId.length === 0 || secret.length < 32) {
+    throw new TypeError("audit anchor key id and a secret of at least 32 characters are required");
+  }
+  return {
+    keyId,
+    async sign(payload) {
+      return createHmac("sha256", secret).update(payload).digest("base64");
+    },
+    async verify(payload, authentication) {
+      if (authentication.keyId !== keyId) {
+        return false;
+      }
+      const expected = createHmac("sha256", secret).update(payload).digest();
+      const actual = Buffer.from(authentication.signature, "base64");
+      return actual.length === expected.length && timingSafeEqual(actual, expected);
+    },
+  };
+}
+
+export function encodeAuditAnchorPayload(manifest: JsonObject): Uint8Array {
+  return encodeJson(manifest);
 }

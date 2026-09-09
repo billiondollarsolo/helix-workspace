@@ -158,6 +158,7 @@ describe("SingletonWorkerSupervisor", () => {
 
     expect(worker.starts).toBe(1);
     expect(supervisor.isLeader).toBe(true);
+    expect(supervisor.isHealthy).toBe(true);
     await supervisor.stop();
   });
 
@@ -181,6 +182,7 @@ describe("SingletonWorkerSupervisor", () => {
 
     expect(worker.starts).toBe(0);
     expect(follower.isLeader).toBe(false);
+    expect(follower.isHealthy).toBe(true);
     await leader.stop();
     await follower.stop();
   });
@@ -282,9 +284,11 @@ describe("SingletonWorkerSupervisor", () => {
     await supervisor.start();
     expect(worker.starts).toBe(0);
     expect(errors).toHaveLength(1);
+    expect(supervisor.isHealthy).toBe(false);
 
     await vi.advanceTimersByTimeAsync(500);
     expect(worker.starts).toBe(1);
+    expect(supervisor.isHealthy).toBe(true);
     await supervisor.stop();
   });
 });

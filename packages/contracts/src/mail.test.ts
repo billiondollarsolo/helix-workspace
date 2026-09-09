@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   mailFilterSchema,
+  mailDraftSaveInputSchema,
   mailSendInputSchema,
   mailSpamInputSchema,
   mailThreadRowSchema,
@@ -61,5 +62,20 @@ describe("mail contracts", () => {
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     expect(f.priority).toBe(100);
+  });
+
+  it("requires one flat revision-safe draft contract", () => {
+    const base = {
+      idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      to: [{ address: "a@b.com" }],
+      subject: "Draft",
+      bodyText: "Body",
+      attachments: [{ objectId: "22222222-2222-4222-8222-222222222222" }],
+    };
+    expect(mailDraftSaveInputSchema.parse(base)).toMatchObject(base);
+    expect(() => mailDraftSaveInputSchema.parse({ ...base, id: base.idempotencyKey })).toThrow(
+      "expectedRevision",
+    );
+    expect(() => mailDraftSaveInputSchema.parse({ envelope: base })).toThrow();
   });
 });

@@ -1,5 +1,5 @@
 import { TRPCError, initTRPC } from "@trpc/server";
-import { z, type ZodTypeAny } from "zod3";
+import { z, type ZodTypeAny } from "zod";
 import type { Actor, RequestContext, ToolDefinition } from "@helix/sdk-types";
 import type { PlatformMetrics } from "./metrics.js";
 import {
@@ -36,11 +36,6 @@ const adminConfigWriteProcedure = trpc.procedure.use(({ ctx, next }) => {
     });
   }
   return next();
-});
-
-const toolCallSchema = z.object({
-  toolId: z.string().min(1),
-  input: z.unknown().optional(),
 });
 
 /**
@@ -86,8 +81,7 @@ const pendingConfirmationSchema = z
 /**
  * Builds the per-tool projection sub-router. Tool ids are namespaced
  * (`mail.send`) so they are exposed under a nested router structure
- * (`byId.mail.send`) keyed by the full id to avoid collisions, plus a flat
- * `byId` map keyed by the verbatim tool id.
+ * (`byId.mail.send`) keyed by the full id to avoid collisions.
  */
 function buildToolProjectionRouter(tools: RuntimeToolRegistry) {
   const procedures: Record<string, ReturnType<typeof buildToolProcedure>> = {};
@@ -141,19 +135,6 @@ export function createHelixTRPCRouter(input: {
       list: trpc.procedure.query(async ({ ctx }) => ({
         tools: (await input.tools.listVisible(ctx.actor)).map(projectToolListItem),
       })),
-      visible: trpc.procedure.query(async ({ ctx }) => ({
-        tools: (await input.tools.listVisible(ctx.actor)).map(projectToolListItem),
-      })),
-      // Generic back-compat procedure — kept so untyped callers and dynamic
-      // tooling keep working alongside the per-tool projection below.
-      invoke: trpc.procedure.input(toolCallSchema).mutation(async ({ ctx, input: call }) => {
-        const result = await input.tools.invoke(call.toolId, call.input, {
-          request: ctx.request,
-          actor: ctx.actor,
-          enforceConfirmation: true,
-        });
-        return unwrapToolResult(result);
-      }),
       // P1-3: one typed procedure per registered tool, keyed by verbatim id.
       byId: buildToolProjectionRouter(input.tools),
     }),

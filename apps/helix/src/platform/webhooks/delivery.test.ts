@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createWebhookHttpClient,
   deliverOutboundWebhook,
   verifyInboundWebhookPayload,
   type WebhookDeliveryStore,
@@ -19,16 +20,43 @@ const orgId = "00000000-0000-4000-8000-000000000001";
 const webhookId = "00000000-0000-4000-8000-000000000010";
 const now = new Date("2026-05-20T12:00:00.000Z");
 
+describe("webhook HTTP client", () => {
+  it("discards remote-controlled response content", async () => {
+    const client = createWebhookHttpClient(
+      async () =>
+        new Response("remote-body-secret", {
+          status: 500,
+          statusText: "remote-status-secret",
+          headers: { "x-request-id": "remote-header-secret" },
+        }),
+    );
+
+    const response = await client.post({
+      url: "https://hooks.example",
+      headers: {},
+      body: "{}",
+    });
+    expect(response).toEqual({
+      status: 500,
+      headers: {},
+      body: "Remote endpoint returned HTTP 500.",
+    });
+    expect(JSON.stringify(response)).not.toContain("secret");
+  });
+});
+
 describe("webhook secret resolution", () => {
-  it("keeps inline refs working for outbound signing and inbound verification", async () => {
+  it("requires a resolver for outbound signing and inbound verification", async () => {
     const store = new InMemoryDeliveryStore();
     const httpClient = new RecordingHttpClient([{ status: 204, headers: {}, body: "" }]);
+    const secretResolver = new MapSecretResolver({ ciphertext: "resolved-secret" });
 
     const delivery = await deliverOutboundWebhook({
       store,
       httpClient,
       now,
-      webhook: outboundWebhook({ secretRef: "inline:inline-secret" }),
+      secretResolver,
+      webhook: outboundWebhook({ secretCiphertext: "ciphertext" }),
       event: { subject: "webhook.test", payload: { ok: true } },
     });
 
@@ -38,7 +66,7 @@ describe("webhook secret resolution", () => {
     expect(
       verifyWebhookSignature({
         payload: request?.body ?? "",
-        secret: "inline-secret",
+        secret: "resolved-secret",
         header: request?.headers["x-helix-signature"] ?? "",
         now,
       }),
@@ -46,20 +74,22 @@ describe("webhook secret resolution", () => {
 
     const signed = signWebhookPayload({
       payload: request?.body ?? "",
-      secret: "inline-secret",
+      secret: "resolved-secret",
       timestamp: now,
     });
     await expect(
       verifyInboundWebhookPayload({
         payload: request?.body ?? "",
-        secretRef: "inline:inline-secret",
+        orgId,
+        secretCiphertext: "ciphertext",
+        secretResolver,
         signatureHeader: signed.header,
         now,
       }),
     ).resolves.toBe(true);
   });
 
-  it("fails closed for non-inline refs when no resolver is configured", async () => {
+  it("fails closed when no resolver is configured", async () => {
     const store = new InMemoryDeliveryStore();
     const httpClient = new RecordingHttpClient([{ status: 204, headers: {}, body: "" }]);
 
@@ -68,34 +98,35 @@ describe("webhook secret resolution", () => {
         store,
         httpClient,
         now,
-        webhook: outboundWebhook({ secretRef: "vault:webhooks/outbound/test" }),
+        webhook: outboundWebhook({ secretCiphertext: "ciphertext" }),
         event: { subject: "webhook.test", payload: { ok: true } },
       }),
-    ).rejects.toThrow("Unable to resolve webhook secret ref");
+    ).rejects.toThrow("Unable to resolve webhook secret");
 
     expect(httpClient.requests).toHaveLength(0);
     expect(store.deliveries).toHaveLength(0);
 
     const signedWithRawRef = signWebhookPayload({
       payload: "payload",
-      secret: "vault:webhooks/outbound/test",
+      secret: "ciphertext",
       timestamp: now,
     });
     await expect(
       verifyInboundWebhookPayload({
         payload: "payload",
-        secretRef: "vault:webhooks/outbound/test",
+        orgId,
+        secretCiphertext: "ciphertext",
         signatureHeader: signedWithRawRef.header,
         now,
       }),
-    ).rejects.toThrow("Unable to resolve webhook secret ref");
+    ).rejects.toThrow("Unable to resolve webhook secret");
   });
 
-  it("uses a configured resolver for non-inline refs without treating the ref as the secret", async () => {
+  it("uses resolved plaintext without treating ciphertext as the secret", async () => {
     const store = new InMemoryDeliveryStore();
     const httpClient = new RecordingHttpClient([{ status: 204, headers: {}, body: "" }]);
     const secretResolver = new MapSecretResolver({
-      "vault:webhooks/outbound/test": "resolved-secret",
+      ciphertext: "resolved-secret",
     });
 
     await deliverOutboundWebhook({
@@ -103,12 +134,12 @@ describe("webhook secret resolution", () => {
       httpClient,
       now,
       secretResolver,
-      webhook: outboundWebhook({ secretRef: "vault:webhooks/outbound/test" }),
+      webhook: outboundWebhook({ secretCiphertext: "ciphertext" }),
       event: { subject: "webhook.test", payload: { ok: true } },
     });
 
     const request = httpClient.requests[0];
-    expect(secretResolver.refs).toEqual(["vault:webhooks/outbound/test"]);
+    expect(secretResolver.refs).toEqual([`${orgId}:ciphertext`]);
     expect(
       verifyWebhookSignature({
         payload: request?.body ?? "",
@@ -120,7 +151,7 @@ describe("webhook secret resolution", () => {
     expect(
       verifyWebhookSignature({
         payload: request?.body ?? "",
-        secret: "vault:webhooks/outbound/test",
+        secret: "ciphertext",
         header: request?.headers["x-helix-signature"] ?? "",
         now,
       }),
@@ -134,7 +165,8 @@ describe("webhook secret resolution", () => {
     await expect(
       verifyInboundWebhookPayload({
         payload: "payload",
-        secretRef: "vault:webhooks/outbound/test",
+        orgId,
+        secretCiphertext: "ciphertext",
         secretResolver,
         signatureHeader: signedWithResolvedSecret.header,
         now,
@@ -195,9 +227,9 @@ class MapSecretResolver implements WebhookSecretResolver {
 
   constructor(private readonly secrets: Record<string, string>) {}
 
-  resolveSecretRef(secretRef: string): string | null {
-    this.refs.push(secretRef);
-    return this.secrets[secretRef] ?? null;
+  resolveSecret(resolvedOrgId: string, secretCiphertext: string): string | null {
+    this.refs.push(`${resolvedOrgId}:${secretCiphertext}`);
+    return this.secrets[secretCiphertext] ?? null;
   }
 }
 
@@ -283,7 +315,7 @@ function outboundWebhook(overrides: Partial<OutboundWebhookRecord>): OutboundWeb
     name: "Webhook",
     url: "https://example.test/webhook",
     eventSubjects: ["webhook.test"],
-    secretRef: "inline:test-secret",
+    secretCiphertext: "ciphertext",
     headers: {},
     enabled: true,
     metadata: {},

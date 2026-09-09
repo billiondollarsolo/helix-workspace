@@ -5,7 +5,6 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
-import { storeAccessToken } from "@/lib/auth";
 import {
   NativeDocumentYjsProvider,
   applyNativeDocumentState,
@@ -39,18 +38,16 @@ describe("native document Yjs provider", () => {
     vi.useRealTimers();
   });
 
-  it("normalizes Yjs sync URLs and preserves fallback realtime auth", () => {
+  it("normalizes Yjs sync URLs without credentials", () => {
     expect(toWebSocketUrl("/sync/docs/doc-1?protocol=yjs")).toBe(
       "ws://localhost:3000/sync/docs/doc-1?protocol=yjs",
     );
 
-    storeAccessToken("token-1");
-
     expect(toWebSocketUrl("/sync/docs/doc-1?protocol=yjs")).toBe(
-      "ws://localhost:3000/sync/docs/doc-1?protocol=yjs&access_token=token-1",
+      "ws://localhost:3000/sync/docs/doc-1?protocol=yjs",
     );
     expect(toWebSocketUrl("ws://localhost/sync/docs/doc-1?protocol=yjs")).toBe(
-      "ws://localhost/sync/docs/doc-1?protocol=yjs&access_token=token-1",
+      "ws://localhost/sync/docs/doc-1?protocol=yjs",
     );
   });
 

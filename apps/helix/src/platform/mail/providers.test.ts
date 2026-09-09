@@ -7,6 +7,8 @@ import {
   SesMailProvider,
   SmtpRelayMailProvider,
   createOutboundMailProvider,
+  parseOutboundProviderPublicConfig,
+  resolveOutboundTransport,
   type FetchLike,
   type OutboundProviderConfig,
 } from "./providers.js";
@@ -37,10 +39,7 @@ interface FetchCall {
 }
 
 /** A `FetchLike` returning a fixed JSON body and recording its calls. */
-function jsonFetch(
-  status: number,
-  body: unknown,
-): { fetch: FetchLike; calls: FetchCall[] } {
+function jsonFetch(status: number, body: unknown): { fetch: FetchLike; calls: FetchCall[] } {
   const calls: FetchCall[] = [];
   const fetchImpl: FetchLike = async (url, init) => {
     calls.push({ url, headers: init.headers });
@@ -90,9 +89,11 @@ describe("MailgunMailProvider", () => {
       name: "mg",
       domain: "mg.helix.test",
       apiKey: "key-secret",
-      fetch: jsonFetch(401, { message: "Unauthorized" }).fetch,
+      fetch: jsonFetch(401, { message: "remote-secret" }).fetch,
     });
-    await expect(provider.send(message)).rejects.toThrow(/Mailgun delivery failed \(401\)/u);
+    const failure = await provider.send(message).catch((error: unknown) => error);
+    expect(String(failure)).toMatch(/Mailgun delivery failed with HTTP 401/u);
+    expect(String(failure)).not.toContain("remote-secret");
   });
 });
 
@@ -113,9 +114,11 @@ describe("PostmarkMailProvider", () => {
     const provider = new PostmarkMailProvider({
       name: "pm",
       serverToken: "token-secret",
-      fetch: jsonFetch(200, { ErrorCode: 406, Message: "Inactive recipient" }).fetch,
+      fetch: jsonFetch(200, { ErrorCode: 406, Message: "remote-secret" }).fetch,
     });
-    await expect(provider.send(message)).rejects.toThrow(/Postmark rejected the message/u);
+    const failure = await provider.send(message).catch((error: unknown) => error);
+    expect(String(failure)).toMatch(/Postmark rejected the message/u);
+    expect(String(failure)).not.toContain("remote-secret");
   });
 });
 
@@ -151,9 +154,56 @@ describe("ProviderMailTransport", () => {
       fetch: jsonFetch(200, { id: "<x@mg>" }).fetch,
     });
     const transport = new ProviderMailTransport(provider);
-    const result = await transport.send(envelope);
+    const result = await transport.send(envelope, { idempotencyKey: "handoff-1" });
     expect(result.providerMessageId).toBe("<x@mg>");
     expect(result.deliveryMetadata).toMatchObject({ provider: "mailgun", providerName: "mg" });
+  });
+
+  it("passes canonical threading headers through provider adapters", async () => {
+    const send = vi.fn(async () => ({ providerMessageId: "provider-1" }));
+    const transport = new ProviderMailTransport({
+      kind: "smtp",
+      name: "relay",
+      send,
+    });
+
+    await transport.send(
+      {
+        ...envelope,
+        messageId: "<outbound@helix.test>",
+        inReplyTo: "<parent@example.net>",
+        references: ["<root@example.net>", "<parent@example.net>"],
+      },
+      { idempotencyKey: "handoff-1" },
+    );
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headers: {
+          "Message-ID": "<outbound@helix.test>",
+          "In-Reply-To": "<parent@example.net>",
+          References: "<root@example.net> <parent@example.net>",
+          "X-Helix-Idempotency-Key": "handoff-1",
+        },
+      }),
+    );
+  });
+
+  it("fails closed when an HTTP provider cannot preserve tenant DKIM", async () => {
+    const provider = new MailgunMailProvider({
+      name: "mg",
+      domain: "mg.helix.test",
+      apiKey: "key",
+      fetch: jsonFetch(200, { id: "<x@mg>" }).fetch,
+    });
+    const transport = new ProviderMailTransport(provider, undefined, async () => ({
+      domainName: "example.com",
+      keySelector: "s1",
+      privateKey: "kms-unwrapped-key",
+    }));
+    await expect(
+      transport.send(envelope, { idempotencyKey: "handoff-1" }),
+    ).rejects.toThrow(/use SMTP or SES/u);
   });
 });
 
@@ -165,6 +215,7 @@ describe("createOutboundMailProvider", () => {
     isDefault: true,
     createdAt: "2026-05-21T00:00:00.000Z",
     updatedAt: "2026-05-21T00:00:00.000Z",
+    webhookSecretRef: null,
   } as const;
 
   it("builds a Mailgun provider with a resolved secret", () => {
@@ -173,10 +224,10 @@ describe("createOutboundMailProvider", () => {
       name: "mg",
       kind: "mailgun",
       config: { domain: "mg.helix.test" },
-      secretRef: "MAILGUN_KEY",
+      secretRef: "mailgun-primary",
     };
     const provider = createOutboundMailProvider(config, (ref) =>
-      ref === "MAILGUN_KEY" ? "secret-value" : undefined,
+      ref === "mailgun-primary" ? "secret-value" : undefined,
     );
     expect(provider.kind).toBe("mailgun");
   });
@@ -205,5 +256,58 @@ describe("createOutboundMailProvider", () => {
     expect(() => createOutboundMailProvider(config, () => undefined)).toThrow(
       /missing required config "host"/u,
     );
+  });
+});
+
+describe("outbound provider public configuration", () => {
+  it("rejects inline credentials and unknown settings", () => {
+    expect(() =>
+      parseOutboundProviderPublicConfig("mailgun", {
+        domain: "mg.example.com",
+        apiKey: "directly-usable-secret",
+      }),
+    ).toThrow();
+    expect(() =>
+      parseOutboundProviderPublicConfig("postmark", {
+        baseUrl: "https://user:secret@api.postmarkapp.com",
+      }),
+    ).toThrow();
+    expect(() =>
+      parseOutboundProviderPublicConfig("smtp", { host: "user:secret@smtp.example.com" }),
+    ).toThrow();
+  });
+});
+
+describe("resolveOutboundTransport tenant boundary", () => {
+  it("fails closed when the provider store returns another tenant's config", async () => {
+    await expect(
+      resolveOutboundTransport({
+        orgId: "org-a",
+        providerStore: {
+          getDefaultProvider: async () => ({
+            id: "p1",
+            orgId: "org-b",
+            name: "relay",
+            kind: "smtp",
+            enabled: true,
+            isDefault: true,
+            config: { host: "smtp.example.test" },
+            secretRef: null,
+            webhookSecretRef: null,
+            createdAt: "2026-05-21T00:00:00.000Z",
+            updatedAt: "2026-05-21T00:00:00.000Z",
+          }),
+        },
+      }),
+    ).rejects.toThrow("Outbound provider tenant mismatch");
+  });
+
+  it("requires either a tenant provider or an explicit global fallback", async () => {
+    await expect(
+      resolveOutboundTransport({
+        orgId: "org-a",
+        providerStore: { getDefaultProvider: async () => null },
+      }),
+    ).rejects.toThrow("No outbound mail provider is configured for tenant org-a");
   });
 });

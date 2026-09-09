@@ -57,7 +57,7 @@ describe("drive AI/search flow", () => {
       tags: ["roadmap", "launch"],
     });
     const rootList = drive.list({ actor: ada });
-    await drive.share({ actor: ada, fileId: file.id, target: bruno, role: "viewer" });
+    await drive.share({ actor: ada, fileId: file.id, target: bruno, role: "reader" });
     const moved = await drive.move({ actor: ada, fileId: file.id, parentFolderId: folder.id });
     const folderList = drive.list({ actor: ada, parentFolderId: folder.id });
 
@@ -109,7 +109,7 @@ describe("drive AI/search flow", () => {
 
     expect(upload.uploadUrl).toContain("upload-1");
     expect(rootList.map((item) => item.id)).toEqual(expect.arrayContaining([folder.id, file.id]));
-    expect(drive.shares(file.id)).toEqual([{ actorId: bruno.id, role: "viewer" }]);
+    expect(drive.shares(file.id)).toEqual([{ actorId: bruno.id, role: "reader" }]);
     expect(moved.parentFolderId).toBe(folder.id);
     expect(folderList.map((item) => item.id)).toEqual([file.id]);
     expect(search.hits.map((hit) => hit.id)).toContain(`drive:${file.id}`);

@@ -183,7 +183,7 @@ export function ImportedEbookRenderer({ ebook, objectId, fileName }: ImportedEbo
           Next →
         </button>
         <a
-          href={`/api/drive/objects/${objectId}/content?download=1`}
+          href={`/v1/api/drive/objects/${objectId}/content?download=1`}
           className="btn sm"
           download={fileName ?? ""}
         >

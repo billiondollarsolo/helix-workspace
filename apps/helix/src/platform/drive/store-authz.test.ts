@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
 import { DriveForbiddenError, DriveNotFoundError } from "./errors.js";
-import { PostgresDriveStore } from "./store.js";
+import { PostgresDriveStore, type DriveStorageClient } from "./store.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const ownerId = "22222222-2222-4222-8222-222222222222";
@@ -33,10 +33,7 @@ function objectRow(overrides: { owner?: string } = {}) {
  * Nested canReadObjectSql fragments surface the actorId; the outer select
  * uses that actor to decide visibility.
  */
-function createAuthzSql(options: {
-  grants: Readonly<Record<string, string>>;
-  ownerId?: string;
-}) {
+function createAuthzSql(options: { grants: Readonly<Record<string, string>>; ownerId?: string }) {
   const owner = options.ownerId ?? ownerId;
   let lastAclActorId: string | undefined;
 
@@ -54,7 +51,7 @@ function createAuthzSql(options: {
 
     // Nested ACL fragment: capture actorId and return a non-promise descriptor
     // (matches store-query-shape.test.ts / store-metering.test.ts fakes).
-    if (text.includes("objects.owner_actor_id") || text.includes("drive_folders.owner_actor_id")) {
+    if (text.includes("helix_drive_effective_role") && !text.trimStart().startsWith("select")) {
       lastAclActorId = resolveActor(values) ?? lastAclActorId;
       return { text, values };
     }
@@ -71,10 +68,10 @@ function createAuthzSql(options: {
 
     // requireObjectRole permission role lookup
     if (
-      text.includes("from permissions") &&
-      (text.includes("select role") || text.trimStart().startsWith("select role"))
+      text.includes("helix_drive_effective_role") && text.trimStart().startsWith("select")
     ) {
       const actor = resolveActor(values);
+      if (actor === owner) return Promise.resolve([{ role: "owner" }]);
       if (actor === undefined || options.grants[actor] === undefined) {
         return Promise.resolve([]);
       }
@@ -131,6 +128,45 @@ function createAuthzSql(options: {
 }
 
 describe("PostgresDriveStore least-privilege authz", () => {
+  it("forbids a reader from finalizing or completing an upload", async () => {
+    const { sql } = createAuthzSql({ grants: { [readerId]: "reader" } });
+    let multipartCompleted = false;
+    const storage: DriveStorageClient = {
+      async put() {},
+      async get() {
+        return null;
+      },
+      async delete() {},
+      async completeMultipartUpload() {
+        multipartCompleted = true;
+      },
+    };
+    const store = new PostgresDriveStore(sql, storage);
+
+    await expect(
+      store.finalizeUpload({
+        orgId,
+        actorId: readerId,
+        objectId,
+        byteSize: 1,
+        sha256: "a".repeat(64),
+        content: new Uint8Array([1]),
+      }),
+    ).rejects.toBeInstanceOf(DriveForbiddenError);
+    await expect(
+      store.completeMultipartUpload({
+        orgId,
+        actorId: readerId,
+        objectId,
+        uploadId: "upload-1",
+        parts: [{ partNumber: 1, etag: "etag-1" }],
+        byteSize: 1,
+        sha256: "a".repeat(64),
+      }),
+    ).rejects.toBeInstanceOf(DriveForbiddenError);
+    expect(multipartCompleted).toBe(false);
+  });
+
   it("forbids a reader from sharing", async () => {
     const { sql } = createAuthzSql({ grants: { [readerId]: "reader" } });
     const store = new PostgresDriveStore(sql);
@@ -218,7 +254,7 @@ describe("PostgresDriveStore least-privilege authz", () => {
     ).rejects.toMatchObject({ code: "forbidden" });
   });
 
-  it("allows the owner to share (and normalizes viewer→reader)", async () => {
+  it("allows the owner to share with a canonical role", async () => {
     const { sql } = createAuthzSql({ grants: {} });
     const store = new PostgresDriveStore(sql);
     await expect(
@@ -227,7 +263,7 @@ describe("PostgresDriveStore least-privilege authz", () => {
         actorId: ownerId,
         objectId,
         targetActorIds: [readerId],
-        role: "viewer",
+        role: "reader",
       }),
     ).resolves.toMatchObject({ role: "reader" });
   });
@@ -252,7 +288,7 @@ describe("PostgresDriveStore least-privilege authz", () => {
     const { sql } = createAuthzSql({ grants: { [readerId]: "reader" } });
     const store = new PostgresDriveStore(sql);
     await expect(
-      store.createShareLink({ orgId, actorId: readerId, objectId, role: "reader" }),
+      store.createShareLink({ orgId, actorId: readerId, objectId }),
     ).rejects.toBeInstanceOf(DriveForbiddenError);
   });
 });

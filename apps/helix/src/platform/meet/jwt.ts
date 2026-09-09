@@ -15,6 +15,8 @@ export interface MintJitsiJwtInput {
   readonly subject?: string | undefined;
   readonly room: string;
   readonly user: JitsiJwtUser;
+  /** Jitsi/Prosody-enforced participant capabilities. */
+  readonly features?: Readonly<Record<string, boolean>> | undefined;
   readonly ttlSeconds?: number | undefined;
   readonly now?: Date | undefined;
 }
@@ -50,6 +52,7 @@ export function mintJitsiJwt(input: MintJitsiJwtInput): MintedJitsiJwt {
         avatar: input.user.avatar ?? "",
         moderator: input.user.moderator ?? false,
       },
+      ...(input.features === undefined ? {} : { features: input.features }),
     },
   };
   const encodedHeader = base64UrlJson(header);

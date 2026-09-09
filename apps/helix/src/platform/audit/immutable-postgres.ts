@@ -121,21 +121,21 @@ export class PostgresWormAuditReader {
   constructor(private readonly sql: postgres.Sql) {}
 
   async countForOrg(orgId: string): Promise<number> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly record_count: number }[]>`
       select count(*)::int as record_count
       from audit_immutable_postgres
       where org_id = ${orgId}
-    `) as unknown as readonly { readonly record_count: number }[];
+    `;
     return rows[0]?.record_count ?? 0;
   }
 
   async listHashesForOrg(orgId: string): Promise<readonly string[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly this_hash: string }[]>`
       select this_hash
       from audit_immutable_postgres
       where org_id = ${orgId}
       order by record_created_at asc, record_id asc
-    `) as unknown as readonly { readonly this_hash: string }[];
+    `;
     return rows.map((row) => row.this_hash);
   }
 }

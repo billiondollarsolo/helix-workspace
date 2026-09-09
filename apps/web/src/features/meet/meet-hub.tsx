@@ -16,7 +16,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import { Dialog } from "@/components/ui/helix-dialog";
-import { createMeetRoom, mintMeetToken, type MeetMeetingRecord } from "./api";
+import {
+  createMeetRoom,
+  joinMeetByCode,
+  MEET_RECORDING_NOTICE_VERSION,
+  mintMeetToken,
+  type MeetMeetingRecord,
+  type MeetRecordingConsent,
+} from "./api";
 import { meetMeetingsQueryOptions, meetQueryKeys } from "./queries";
 import type { MeetCallSession } from "./meet-shell";
 import {
@@ -34,22 +41,26 @@ export interface MeetHubProps {
   readonly onEnterCall: (session: MeetCallSession) => void;
 }
 
-const DEFAULT_JITSI_DOMAIN = "meet.localhost";
+type PendingJoin =
+  | { readonly kind: "start"; readonly subject: string }
+  | { readonly kind: "meeting"; readonly meeting: MeetMeetingRecord }
+  | { readonly kind: "code"; readonly code: string };
 
 export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
   const queryClient = useQueryClient();
   const [code, setCode] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [linkRoom, setLinkRoom] = useState<{ readonly code: string; readonly subject: string } | null>(
-    null,
-  );
+  const [linkRoom, setLinkRoom] = useState<{
+    readonly code: string;
+    readonly subject: string;
+  } | null>(null);
   const [recordingsFor, setRecordingsFor] = useState<MeetMeetingRecord | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingJoin, setPendingJoin] = useState<PendingJoin | null>(null);
 
   const meetingsQuery = useQuery(meetMeetingsQueryOptions());
 
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: meetQueryKeys.all });
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: meetQueryKeys.all });
 
   const clearActionError = () => {
     setActionError(null);
@@ -57,9 +68,12 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
 
   /* meet.create-room + meet.mint-token → enter the in-call view. */
   const startMutation = useMutation({
-    mutationFn: async (subject: string) => {
-      const room = await createMeetRoom({ subject, jitsiDomain: DEFAULT_JITSI_DOMAIN });
-      const token = await mintMeetToken({ roomId: room.id, moderator: true });
+    mutationFn: async (input: {
+      readonly subject: string;
+      readonly consent: MeetRecordingConsent;
+    }) => {
+      const room = await createMeetRoom({ subject: input.subject });
+      const token = await mintMeetToken({ roomId: room.id, ...input.consent });
       return { room, token };
     },
     onMutate: clearActionError,
@@ -69,10 +83,16 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
         roomId: room.id,
         roomName: room.roomName,
         subject: room.subject,
-        code: room.roomName,
+        code: room.joinCode,
         jitsiDomain: token.jitsiDomain,
         token: token.token,
         joinUrl: token.joinUrl,
+        recordingAvailable: token.recordingAvailable,
+        canStartRecording: token.canStartRecording,
+        recordingNoticeVersion: token.recordingNoticeVersion,
+        recordingActive: token.recordingActive,
+        controls: token.controls,
+        canModerate: token.canModerate,
         startedAtMs: Date.parse(room.startedAt) || Date.now(),
       });
     },
@@ -90,7 +110,6 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
     }) =>
       createMeetRoom({
         subject: input.subject,
-        jitsiDomain: DEFAULT_JITSI_DOMAIN,
         scheduledStartAt: input.scheduledStartAt,
         scheduledEndAt: input.scheduledEndAt,
       }),
@@ -109,12 +128,11 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
     mutationFn: () =>
       createMeetRoom({
         subject: "Helix meeting",
-        jitsiDomain: DEFAULT_JITSI_DOMAIN,
       }),
     onMutate: clearActionError,
     onSuccess: (room) => {
       void invalidate();
-      setLinkRoom({ code: room.roomName, subject: room.subject });
+      setLinkRoom({ code: room.joinCode, subject: room.subject });
     },
     onError: (error: unknown) => {
       setActionError(messageOf(error));
@@ -123,9 +141,12 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
 
   /* meet.mint-token for an existing room → enter the in-call view. */
   const joinMutation = useMutation({
-    mutationFn: async (meeting: MeetMeetingRecord) => {
-      const token = await mintMeetToken({ roomId: meeting.id });
-      return { meeting, token };
+    mutationFn: async (input: {
+      readonly meeting: MeetMeetingRecord;
+      readonly consent: MeetRecordingConsent;
+    }) => {
+      const token = await mintMeetToken({ roomId: input.meeting.id, ...input.consent });
+      return { meeting: input.meeting, token };
     },
     onMutate: clearActionError,
     onSuccess: ({ meeting, token }) => {
@@ -137,11 +158,44 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
         jitsiDomain: token.jitsiDomain,
         token: token.token,
         joinUrl: token.joinUrl,
+        recordingAvailable: token.recordingAvailable,
+        canStartRecording: token.canStartRecording,
+        recordingNoticeVersion: token.recordingNoticeVersion,
+        recordingActive: token.recordingActive,
+        controls: token.controls,
+        canModerate: token.canModerate,
         startedAtMs: meeting.startedAt ? Date.parse(meeting.startedAt) || Date.now() : Date.now(),
       });
     },
     onError: (error: unknown) => {
       setActionError(messageOf(error));
+    },
+  });
+
+  const codeJoinMutation = useMutation({
+    mutationFn: (input: { readonly code: string; readonly consent: MeetRecordingConsent }) =>
+      joinMeetByCode({ code: input.code, ...input.consent }),
+    onMutate: clearActionError,
+    onSuccess: (token) => {
+      onEnterCall({
+        roomId: token.roomId,
+        roomName: token.roomName,
+        subject: token.subject ?? "Helix meeting",
+        code: token.code ?? code.trim(),
+        jitsiDomain: token.jitsiDomain,
+        token: token.token,
+        joinUrl: token.joinUrl,
+        recordingAvailable: token.recordingAvailable,
+        canStartRecording: token.canStartRecording,
+        recordingNoticeVersion: token.recordingNoticeVersion,
+        recordingActive: token.recordingActive,
+        controls: token.controls,
+        canModerate: token.canModerate,
+        startedAtMs: Date.now(),
+      });
+    },
+    onError: () => {
+      setActionError("No active meeting matches that code.");
     },
   });
 
@@ -159,7 +213,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
     [data],
   );
 
-  /* Map backend meetings by code/id so a Join click can mint a token. */
+  /* Map listed rows by id; code joins use the backend's indexed lookup. */
   const meetingByRow = useMemo(() => {
     const map = new Map<string, MeetMeetingRecord>();
     for (const meeting of data?.meetings ?? []) {
@@ -179,9 +233,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
         )
       : scheduled;
   const filteredRecent =
-    query.length > 0
-      ? recent.filter((m) => m.title.toLowerCase().includes(query))
-      : recent;
+    query.length > 0 ? recent.filter((m) => m.title.toLowerCase().includes(query)) : recent;
 
   const heroBusy = startMutation.isPending || linkMutation.isPending;
 
@@ -189,7 +241,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
     setActionError(null);
     const backend = meeting.roomId ? meetingByRow.get(meeting.roomId) : undefined;
     if (backend && backend.status === "active") {
-      joinMutation.mutate(backend);
+      setPendingJoin({ kind: "meeting", meeting: backend });
       return;
     }
     if (backend && backend.status === "scheduled") {
@@ -207,14 +259,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
       setActionError("Enter a meeting code to join.");
       return;
     }
-    const backend = [...meetingByRow.values()].find(
-      (m) => m.code === trimmed || m.roomName === trimmed,
-    );
-    if (backend && backend.status === "active") {
-      joinMutation.mutate(backend);
-      return;
-    }
-    setActionError("No active meeting matches that code.");
+    setPendingJoin({ kind: "code", code: trimmed.toLowerCase() });
   }
 
   return (
@@ -248,11 +293,10 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                 disabled={heroBusy}
                 onClick={() => {
                   setActionError(null);
-                  startMutation.mutate("Instant meeting");
+                  setPendingJoin({ kind: "start", subject: "Instant meeting" });
                 }}
               >
-                <Icons.Video />{" "}
-                {startMutation.isPending ? "Starting…" : "Start instant meeting"}
+                <Icons.Video /> {startMutation.isPending ? "Starting…" : "Start instant meeting"}
               </button>
               <button
                 className="btn lg"
@@ -284,7 +328,9 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
             ) : null}
             {linkRoom !== null ? (
               <div style={linkBannerStyle}>
-                <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>Meeting link ready</span>
+                <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
+                  Meeting link ready
+                </span>
                 <code className="mono" style={{ fontSize: "var(--text-meta)" }}>
                   helix.meet/{linkRoom.code}
                 </code>
@@ -372,7 +418,9 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                     >
                       {meeting.time}
                     </div>
-                    <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>{meeting.duration}</div>
+                    <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+                      {meeting.duration}
+                    </div>
                   </div>
                   <div style={{ minWidth: 0 }}>
                     <div
@@ -383,7 +431,9 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                         marginBottom: 4,
                       }}
                     >
-                      <span style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{meeting.title}</span>
+                      <span style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>
+                        {meeting.title}
+                      </span>
                       {meeting.inProgress ? (
                         <span className="chip danger">
                           <span className="chip-dot" />
@@ -412,7 +462,10 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                       <span>{meeting.attendees} attendees</span>
                     </div>
                   </div>
-                  <div className="mono" style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+                  <div
+                    className="mono"
+                    style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
+                  >
                     {meeting.code || "—"}
                   </div>
                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
@@ -426,13 +479,6 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                     >
                       {meeting.inProgress ? "Join now" : "Join"}
                     </button>
-                    <button
-                      className="icon-btn"
-                      type="button"
-                      aria-label={`More options for ${meeting.title}`}
-                    >
-                      <Icons.MoreV />
-                    </button>
                   </div>
                 </div>
               ))
@@ -442,12 +488,9 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
 
         {/* Recent meetings */}
         <div>
-          <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
-            <h3 style={{ fontSize: "var(--text-body)", fontWeight: 600, margin: 0 }}>Recent</h3>
-            <button className="btn sm" type="button" style={{ marginLeft: "auto" }}>
-              View all
-            </button>
-          </div>
+          <h3 style={{ fontSize: "var(--text-body)", fontWeight: 600, margin: "0 0 12px" }}>
+            Recent
+          </h3>
           <div className="panel">
             {meetingsQuery.isLoading ? (
               <PanelMessage>Loading recent meetings…</PanelMessage>
@@ -471,10 +514,16 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                   }}
                 >
                   <div>
-                    <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{meeting.title}</div>
+                    <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>
+                      {meeting.title}
+                    </div>
                   </div>
-                  <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>{meeting.date}</span>
-                  <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>{meeting.duration}</span>
+                  <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
+                    {meeting.date}
+                  </span>
+                  <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
+                    {meeting.duration}
+                  </span>
                   <span style={{ fontSize: "var(--text-meta)", color: "var(--text-2)" }}>
                     {meeting.attendees} people
                   </span>
@@ -493,9 +542,6 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                         <Icons.Video /> Recording
                       </button>
                     ) : null}
-                    <button className="btn sm" type="button">
-                      Summary
-                    </button>
                   </div>
                 </div>
               ))
@@ -517,6 +563,26 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
         />
       ) : null}
 
+      {pendingJoin !== null ? (
+        <RecordingConsentDialog
+          onClose={() => {
+            setPendingJoin(null);
+          }}
+          onAccept={() => {
+            const consent = createRecordingConsent();
+            const pending = pendingJoin;
+            setPendingJoin(null);
+            if (pending.kind === "start") {
+              startMutation.mutate({ subject: pending.subject, consent });
+            } else if (pending.kind === "meeting") {
+              joinMutation.mutate({ meeting: pending.meeting, consent });
+            } else {
+              codeJoinMutation.mutate({ code: pending.code, consent });
+            }
+          }}
+        />
+      ) : null}
+
       {recordingsFor !== null ? (
         <RecordingDrawer
           meeting={recordingsFor}
@@ -531,7 +597,14 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
 
 function PanelMessage({ children }: { readonly children: React.ReactNode }) {
   return (
-    <div style={{ padding: "28px 16px", textAlign: "center", fontSize: "var(--text-meta)", color: "var(--text-3)" }}>
+    <div
+      style={{
+        padding: "28px 16px",
+        textAlign: "center",
+        fontSize: "var(--text-meta)",
+        color: "var(--text-3)",
+      }}
+    >
       {children}
     </div>
   );
@@ -587,7 +660,12 @@ function ScheduleDialog({
           <button className="btn" type="button" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn primary" type="submit" form="meet-schedule-form" disabled={pending}>
+          <button
+            className="btn primary"
+            type="submit"
+            form="meet-schedule-form"
+            disabled={pending}
+          >
             {pending ? "Scheduling…" : "Schedule"}
           </button>
         </div>
@@ -659,6 +737,61 @@ function defaultLocalDateTime(): string {
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Try again.";
+}
+
+function createRecordingConsent(): MeetRecordingConsent {
+  return {
+    recordingNoticeAccepted: true,
+    recordingNoticeVersion: MEET_RECORDING_NOTICE_VERSION,
+    deviceId: meetDeviceId(),
+    joinGrantId: crypto.randomUUID(),
+  };
+}
+
+function RecordingConsentDialog({
+  onClose,
+  onAccept,
+}: {
+  readonly onClose: () => void;
+  readonly onAccept: () => void;
+}) {
+  return (
+    <Dialog
+      title="Recording notice"
+      onClose={onClose}
+      footer={
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button className="btn" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" type="button" onClick={onAccept}>
+            I consent and join
+          </button>
+        </div>
+      }
+    >
+      <p>
+        This meeting may record audio, video, and shared content. If recording starts, everyone will
+        see and hear an alert.
+      </p>
+      <p>
+        By joining, you explicitly consent under Helix&apos;s global all-parties recording policy.
+      </p>
+    </Dialog>
+  );
+}
+
+function meetDeviceId(): string {
+  const key = "helix-meet-device-id";
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing !== null) return existing;
+    const created = crypto.randomUUID();
+    localStorage.setItem(key, created);
+    return created;
+  } catch {
+    return crypto.randomUUID();
+  }
 }
 
 const eyebrowStyle = {

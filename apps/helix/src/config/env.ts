@@ -1,4 +1,4 @@
-import { z } from "zod3";
+import { z } from "zod";
 
 /**
  * Optional URL that accepts empty string as undefined (common for unset docker env).
@@ -20,6 +20,11 @@ const coercePositiveInt = (fallback: number) =>
 const coerceNonNegInt = (fallback: number) =>
   z.coerce.number().int().nonnegative().default(fallback);
 
+const optionalPositiveInt = z.preprocess(
+  (value) => (value === undefined || value === "" ? undefined : value),
+  z.coerce.number().int().positive().optional(),
+);
+
 /**
  * Operational environment schema. All production app code must read config via
  * {@link loadEnv} / {@link env} rather than raw `process.env`.
@@ -30,9 +35,10 @@ const coerceNonNegInt = (fallback: number) =>
  */
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  DATABASE_URL: z.string().min(1).default(
-    "postgres://helix:helix_dev_password@localhost:28432/helix",
-  ),
+  DATABASE_URL: z
+    .string()
+    .min(1)
+    .default("postgres://helix:helix_dev_password@localhost:28432/helix"),
   HELIX_MIGRATION_DATABASE_URL: optionalString,
   MIGRATION_DATABASE_URL: optionalString,
   REDIS_URL: optionalUrl,
@@ -40,12 +46,14 @@ const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
   SHUTDOWN_TIMEOUT_MS: coerceNonNegInt(50_000),
   HELIX_MODE: z.enum(["single-tenant", "multi-tenant-saas"]).default("single-tenant"),
-  HELIX_BODY_LIMIT_BYTES: coercePositiveInt(134_217_728),
+  HELIX_REGION: z.string().default("default"),
+  HELIX_TRUSTED_PROXIES: optionalString,
+  HELIX_TENANT_ROOT_HOSTS: optionalString,
+  HELIX_TENANT_PROXY_SECRET: optionalString.pipe(z.string().min(32).optional()),
   HELIX_ROLE: optionalString,
   HELIX_APPS: optionalString,
   LOG_LEVEL: z.string().default("info"),
   POSTGRES_POOL_MAX: coercePositiveInt(10),
-  HELIX_POSTGRES_APP_ROLE: z.string().default("helix_app_role"),
   HELIX_DEFAULT_ORG_ID: z.string().default("00000000-0000-0000-0000-000000000000"),
   HELIX_PUBLIC_URL: optionalUrl,
   PUBLIC_BASE_URL: optionalUrl,
@@ -53,6 +61,8 @@ const envSchema = z.object({
   HELIX_APP_VERSION: optionalString,
   HELIX_SECURITY_TIER: optionalString,
   HELIX_PLUGINS_DIR: optionalString,
+  HELIX_PLUGIN_TRUST_FILE: optionalString,
+  HELIX_OUTBOUND_HTTP_PROXY_URL: optionalUrl,
 
   // Storage (RustFS / S3-compatible)
   RUSTFS_ENDPOINT: optionalUrl,
@@ -62,20 +72,30 @@ const envSchema = z.object({
   RUSTFS_BUCKET: z.string().default("helix-objects"),
   RUSTFS_REGION: z.string().default("us-east-1"),
   RUSTFS_SERVER_SIDE_ENCRYPTION: optionalString,
+  RUSTFS_SSE_KMS_KEY_ID: optionalString,
+  RUSTFS_OBJECT_LOCK_MODE: optionalString,
+  RUSTFS_OBJECT_LOCK_RETENTION_DAYS: optionalPositiveInt,
 
   // Drive preview / enrichment
   HELIX_DRIVE_OFFICE_PREVIEW_URL: optionalUrl,
   HELIX_DRIVE_OFFICE_PREVIEW_TIMEOUT_MS: coercePositiveInt(10_000),
-  HELIX_DRIVE_LOCAL_OFFICE_PREVIEW: optionalString,
   /** When true, finalize stores content-addressed blobs with refcounts. Default off. */
   HELIX_DRIVE_CONTENT_DEDUP: optionalString,
   HELIX_DRIVE_MULTIPART_THRESHOLD_BYTES: coercePositiveInt(8 * 1024 * 1024),
   HELIX_DRIVE_MULTIPART_PART_SIZE_BYTES: coercePositiveInt(8 * 1024 * 1024),
+  HELIX_AV_MAX_SIGNATURE_AGE_MS: coercePositiveInt(48 * 60 * 60 * 1_000),
+  HELIX_DRIVE_AV_MAX_FILE_BYTES: coercePositiveInt(128 * 1024 * 1024),
+  HELIX_DRIVE_ARCHIVE_MAX_ENTRIES: coercePositiveInt(10_000),
+  HELIX_DRIVE_ARCHIVE_MAX_UNCOMPRESSED_BYTES: coercePositiveInt(1024 * 1024 * 1024),
+  HELIX_DRIVE_ARCHIVE_MAX_EXPANSION_RATIO: coercePositiveInt(100),
+  HELIX_DRIVE_ARCHIVE_MAX_NESTED: coercePositiveInt(20),
+  HELIX_DRIVE_SCAN_MAX_ATTEMPTS: coercePositiveInt(5),
+  HELIX_DRIVE_SCAN_RETRY_DELAY_MS: coercePositiveInt(30_000),
+  HELIX_DRIVE_SCAN_RETRY_INTERVAL_MS: coercePositiveInt(10_000),
+  HELIX_DRIVE_SCAN_RETRY_BATCH_SIZE: coercePositiveInt(20),
+  HELIX_DRIVE_SCAN_LEASE_MS: coercePositiveInt(120_000),
   HELIX_DRIVE_OFFICE_PREVIEW_ALLOWED_HOSTS: optionalString,
   DRIVE_AUTO_TAG_ENRICHMENT: optionalString,
-  HELIX_CHROMIUM_PATH: optionalString,
-  HELIX_DOCS_PDF_RENDERER: optionalString,
-  HELIX_DOCS_PDF_RENDER_TIMEOUT_MS: coercePositiveInt(15_000),
 
   // Event bus / workers
   NATS_URL: optionalUrl,
@@ -111,6 +131,7 @@ const envSchema = z.object({
   BETTER_AUTH_URL: optionalUrl,
   BETTER_AUTH_DATABASE_URL: optionalUrl,
   BETTER_AUTH_TRUSTED_ORIGINS: optionalString,
+  HELIX_SECRET_ENCRYPTION_KEY: optionalString.pipe(z.string().min(32).optional()),
   HELIX_SIGNUP_RATE_LIMIT_PER_HOUR: coercePositiveInt(5),
   HELIX_SIGNUP_BLOCKED_EMAIL_DOMAINS: optionalString,
   HELIX_SIGNUP_MANUAL_REVIEW_COUNTRIES: optionalString,
@@ -139,6 +160,19 @@ const envSchema = z.object({
   MAIL_SMTP_RECEIVER_ENABLED: optionalString,
   MAIL_SMTP_RECEIVER_HOST: optionalString,
   MAIL_SMTP_RECEIVER_PORT: optionalString,
+  MAIL_SMTP_MAX_MESSAGE_BYTES: coercePositiveInt(52_428_800),
+  MAIL_SMTP_MAX_RECIPIENTS: coercePositiveInt(100),
+  MAIL_SMTP_MAX_CONNECTIONS: coercePositiveInt(100),
+  MAIL_SMTP_SOCKET_TIMEOUT_MS: coercePositiveInt(60_000),
+  MAIL_SMTP_DATA_TIMEOUT_MS: coercePositiveInt(120_000),
+  MAIL_SMTP_SUBMISSION_ENABLED: optionalString,
+  MAIL_SMTP_SUBMISSION_HOST: optionalString,
+  MAIL_SMTP_SUBMISSION_PORT: optionalString,
+  MAIL_SMTP_SUBMISSION_TLS_KEY_FILE: optionalString,
+  MAIL_SMTP_SUBMISSION_TLS_CERT_FILE: optionalString,
+  MAIL_DKIM_KMS_KEY_ID: optionalString,
+  MAIL_DKIM_KMS_REGION: z.string().default("us-east-1"),
+  MAIL_DKIM_KMS_ENDPOINT: optionalUrl,
   MAIL_SPAMD_ENABLED: optionalString,
   MAIL_SPAMD_HOST: optionalString,
   MAIL_SPAMD_PORT: optionalString,
@@ -153,10 +187,6 @@ const envSchema = z.object({
   CHAT_PRESENCE_TTL_SECONDS: coercePositiveInt(60),
   CHAT_WS_RATE_LIMIT_CAPACITY: coercePositiveInt(30),
   CHAT_WS_RATE_LIMIT_REFILL_PER_SECOND: coercePositiveInt(3),
-  /** @deprecated prefer CAPACITY — kept for older deploys */
-  CHAT_WS_RATE_LIMIT_PER_MINUTE: coercePositiveInt(120),
-  /** @deprecated prefer CAPACITY — kept for older deploys */
-  CHAT_WS_RATE_LIMIT_BURST: coercePositiveInt(30),
 
   // AI / search
   OPENAI_API_KEY: optionalString,
@@ -183,13 +213,17 @@ const envSchema = z.object({
   MEET_JITSI_JWT_ISSUER: optionalString,
   MEET_JITSI_JWT_AUDIENCE: optionalString,
   MEET_JITSI_WEBHOOK_SHARED_SECRET: optionalString,
-  JITSI_JWT_APP_ID: optionalString,
-  JITSI_JWT_ISSUER: optionalString,
-  JITSI_JWT_SECRET: optionalString,
-  JITSI_WEBHOOK_SECRET: optionalString,
+  MEET_JIBRI_HEALTH_URL: optionalUrl,
+  MEET_JITSI_REGION: optionalString,
 
   // Telemetry
   OTEL_SDK_DISABLED: optionalString,
+  HELIX_OTEL_REGION: optionalString,
+  HELIX_SIEM_REGION: optionalString,
+
+  // Immutable audit placement
+  AUDIT_IMMUTABLE_S3_ENABLED: optionalString,
+  AUDIT_IMMUTABLE_S3_REGION: optionalString,
 
   // Editors
   HELIX_EDITORS_CORE_APP_ENTRY: optionalString,
@@ -218,13 +252,51 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
+const productionPlaceholderMarkers = [
+  "change-me",
+  "change_me",
+  "changeme",
+  "placeholder",
+  "_dev_secret",
+  "helix_dev_",
+  "helix_local_",
+  "helix-local-dev",
+] as const;
+
+const credentialEnvironmentKey =
+  /(?:DATABASE_URL|PASSWORD|PASS|SECRET|SECRET_KEY|TOKEN|API_KEY|MASTER_KEY|CLIENT_SECRET)$/u;
+
+function productionPlaceholderIssues(
+  source: Record<string, string | undefined>,
+  parsed: Env,
+): string[] {
+  const candidates = Object.entries(source).filter(
+    (entry): entry is [string, string] =>
+      entry[1] !== undefined && credentialEnvironmentKey.test(entry[0]),
+  );
+
+  // Storage credentials have development defaults for the local Compose stack.
+  // A production storage endpoint must never inherit that default silently.
+  if (parsed.RUSTFS_ENDPOINT !== undefined && source.RUSTFS_SECRET_KEY === undefined) {
+    candidates.push(["RUSTFS_SECRET_KEY", parsed.RUSTFS_SECRET_KEY]);
+  }
+
+  return candidates.flatMap(([key, value]) => {
+    const normalized = value.toLowerCase();
+    return productionPlaceholderMarkers.some((marker) => normalized.includes(marker))
+      ? [`  - ${key}: development or placeholder credential is forbidden in production`]
+      : [];
+  });
+}
+
 export function loadEnv(source: Record<string, string | undefined> = process.env): Env {
   // In production, require DATABASE_URL explicitly (no silent localhost default).
   const nodeEnv = source.NODE_ENV ?? "development";
-  if (nodeEnv === "production" && (source.DATABASE_URL === undefined || source.DATABASE_URL.trim() === "")) {
-    throw new Error(
-      "Invalid environment configuration:\n  - DATABASE_URL: Required in production",
-    );
+  if (
+    nodeEnv === "production" &&
+    (source.DATABASE_URL === undefined || source.DATABASE_URL.trim() === "")
+  ) {
+    throw new Error("Invalid environment configuration:\n  - DATABASE_URL: Required in production");
   }
 
   const result = envSchema.safeParse(source);
@@ -233,6 +305,12 @@ export function loadEnv(source: Record<string, string | undefined> = process.env
       .map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`)
       .join("\n");
     throw new Error(`Invalid environment configuration:\n${details}`);
+  }
+  if (nodeEnv === "production") {
+    const issues = productionPlaceholderIssues(source, result.data);
+    if (issues.length > 0) {
+      throw new Error(`Invalid environment configuration:\n${issues.join("\n")}`);
+    }
   }
   return Object.freeze(result.data);
 }

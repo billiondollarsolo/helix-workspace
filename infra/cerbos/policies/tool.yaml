@@ -2,8 +2,6 @@ apiVersion: api.cerbos.dev/v1
 resourcePolicy:
   resource: tool
   version: default
-  importDerivedRoles:
-    - helix_platform_roles
   schemas:
     principalSchema:
       ref: cerbos:///platform/principal.json
@@ -13,13 +11,6 @@ resourcePolicy:
     - actions: ["*"]
       effect: EFFECT_ALLOW
       roles: ["system"]
-
-    - actions: ["*"]
-      effect: EFFECT_ALLOW
-      roles: ["admin"]
-      condition:
-        match:
-          expr: P.attr.org_id == R.attr.org_id
 
     - actions: ["platform.read"]
       effect: EFFECT_ALLOW
@@ -184,6 +175,13 @@ resourcePolicy:
         match:
           expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "calendar.write" && P.attr.scopes.exists(scope, scope == "calendar.write")
 
+    - actions: ["calendar.manage"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "calendar.manage" && P.attr.scopes.exists(scope, scope == "calendar.manage")
+
     - actions: ["calendar.write:respond"]
       effect: EFFECT_ALLOW
       roles: ["user", "agent", "service_account"]
@@ -253,6 +251,20 @@ resourcePolicy:
       condition:
         match:
           expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "meet.write" && P.attr.scopes.exists(scope, scope == "meet.write")
+
+    - actions: ["notifications.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "notifications.read" && P.attr.scopes.exists(scope, scope == "notifications.read")
+
+    - actions: ["notifications.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "notifications.write" && P.attr.scopes.exists(scope, scope == "notifications.write")
 
     - actions: ["assistant.read"]
       effect: EFFECT_ALLOW

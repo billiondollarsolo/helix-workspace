@@ -1,0 +1,74 @@
+name: helix-mail-edge
+
+services:
+  inbound:
+    image: ghcr.io/docker-mailserver/docker-mailserver:15.1.0@sha256:af51b15dd3fc72153c0e90eb7692bb5e3a463212d87959a80fa7aa89b617d44a
+    hostname: ${HELIX_MAIL_EDGE_HOSTNAME:?set HELIX_MAIL_EDGE_HOSTNAME}
+    environment:
+      OVERRIDE_HOSTNAME: ${HELIX_MAIL_EDGE_HOSTNAME}
+      HELIX_MAIL_RELAY_DOMAINS: ${HELIX_MAIL_RELAY_DOMAINS:?set HELIX_MAIL_RELAY_DOMAINS}
+      HELIX_MAIL_INGEST_HOST: ${HELIX_MAIL_INGEST_HOST:-helix}
+      HELIX_MAIL_INGEST_PORT: ${HELIX_MAIL_INGEST_PORT:-2525}
+      SSL_TYPE: manual
+      SSL_CERT_PATH: /run/tls/tls.crt
+      SSL_KEY_PATH: /run/tls/tls.key
+      TLS_LEVEL: modern
+      PERMIT_DOCKER: none
+      POSTFIX_INET_PROTOCOLS: all
+      POSTFIX_MESSAGE_SIZE_LIMIT: ${HELIX_MAIL_MAX_MESSAGE_BYTES:-52428800}
+      ENABLE_DNSBL: "1"
+      POSTSCREEN_ACTION: enforce
+      POSTFIX_REJECT_UNKNOWN_CLIENT_HOSTNAME: "0"
+      ENABLE_RSPAMD: "1"
+      ENABLE_RSPAMD_REDIS: "1"
+      RSPAMD_GREYLISTING: "1"
+      RSPAMD_HFILTER: "1"
+      RSPAMD_HFILTER_HOSTNAME_UNKNOWN_SCORE: "6"
+      ENABLE_OPENDKIM: "0"
+      ENABLE_OPENDMARC: "0"
+      ENABLE_POLICYD_SPF: "0"
+      ENABLE_AMAVIS: "0"
+      ENABLE_SPAMASSASSIN: "0"
+      ENABLE_POSTGREY: "0"
+      ENABLE_CLAMAV: "0"
+      ENABLE_IMAP: "0"
+      ENABLE_POP3: "0"
+      ENABLE_MANAGESIEVE: "0"
+      ENABLE_FAIL2BAN: "1"
+      FAIL2BAN_BLOCKTYPE: drop
+      SPOOF_PROTECTION: "1"
+      LOG_LEVEL: info
+      SUPERVISOR_LOGLEVEL: warn
+      PFLOGSUMM_TRIGGER: daily_cron
+      PFLOGSUMM_RECIPIENT: ${HELIX_MAIL_POSTMASTER:?set HELIX_MAIL_POSTMASTER}
+      POSTMASTER_ADDRESS: ${HELIX_MAIL_POSTMASTER}
+      ENABLE_UPDATE_CHECK: "0"
+    ports:
+      - "${HELIX_MAIL_EDGE_BIND:-0.0.0.0}:${HELIX_MAIL_EDGE_PORT:-25}:25"
+    volumes:
+      - ./config:/tmp/docker-mailserver:ro
+      - ${HELIX_MAIL_TLS_CERT:?set HELIX_MAIL_TLS_CERT}:/run/tls/tls.crt:ro
+      - ${HELIX_MAIL_TLS_KEY:?set HELIX_MAIL_TLS_KEY}:/run/tls/tls.key:ro
+      - mail-edge-state:/var/mail-state
+      - mail-edge-logs:/var/log/mail
+    cap_add:
+      - NET_ADMIN
+    networks:
+      - backend
+    restart: unless-stopped
+    stop_grace_period: 1m
+    healthcheck:
+      test: ["CMD-SHELL", "ss -ltn | grep -q ':25 '"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 1m
+
+networks:
+  backend:
+    name: ${HELIX_BACKEND_NETWORK:?set HELIX_BACKEND_NETWORK}
+    external: true
+
+volumes:
+  mail-edge-state:
+  mail-edge-logs:

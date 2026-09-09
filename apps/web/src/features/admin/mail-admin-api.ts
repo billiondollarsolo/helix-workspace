@@ -7,7 +7,7 @@ import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
  *
  * Talks to the mail backend's admin REST surface under `/api/admin/mail/`:
  *  - `/providers`        — outbound mail providers (list / create / patch / set-default)
- *  - `/sending-domains`  — sending domains + per-domain DKIM keys
+ *  - `/domains`          — canonical mail-enabled domains + DKIM keys
  *  - `/dmarc`            — DMARC aggregate reports + deliverability summary
  *  - `/routing-rules`    — inbound routing rules (CRUD)
  *  - `/spam`             — spamd threshold + status (read view)
@@ -74,11 +74,8 @@ export interface PatchMailProviderInput {
 }
 
 // ---------------------------------------------------------------------------
-// Sending domains + DKIM
+// Canonical mail domains + DKIM
 // ---------------------------------------------------------------------------
-
-export const VERIFICATION_STATES = ["verified", "pending", "failed"] as const;
-export type VerificationState = (typeof VERIFICATION_STATES)[number];
 
 export const DKIM_KEY_STATES = ["active", "retiring", "retired"] as const;
 export type DkimKeyState = (typeof DKIM_KEY_STATES)[number];
@@ -92,22 +89,23 @@ const dkimKeySchema = z.object({
 
 export type DkimKey = z.infer<typeof dkimKeySchema>;
 
-const sendingDomainSchema = z.object({
+const mailDomainSchema = z.object({
   id: z.string(),
   domain: z.string(),
-  spf: z.enum(VERIFICATION_STATES),
-  dkim: z.enum(VERIFICATION_STATES),
-  dmarc: z.enum(VERIFICATION_STATES),
+  status: z.enum(["pending", "verified", "quarantined", "released"]),
+  isPrimary: z.boolean(),
+  mailEnabled: z.boolean(),
+  providerId: z.string().nullable(),
   dkimKeys: z.array(dkimKeySchema),
 });
 
-export type SendingDomain = z.infer<typeof sendingDomainSchema>;
+export type MailDomain = z.infer<typeof mailDomainSchema>;
 
-const sendingDomainsResponseSchema = z.object({
-  domains: z.array(sendingDomainSchema),
+const mailDomainsResponseSchema = z.object({
+  domains: z.array(mailDomainSchema),
 });
 
-export type SendingDomainsResponse = z.infer<typeof sendingDomainsResponseSchema>;
+export type MailDomainsResponse = z.infer<typeof mailDomainsResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // DMARC / deliverability
@@ -148,23 +146,41 @@ export type DmarcResponse = z.infer<typeof dmarcResponseSchema>;
 // Inbound routing rules
 // ---------------------------------------------------------------------------
 
-export const ROUTING_ACTIONS = ["forward", "mailbox", "drop", "webhook"] as const;
+export const ROUTING_ACTIONS = ["forward", "alias", "tag", "mailbox", "drop"] as const;
 export type RoutingAction = (typeof ROUTING_ACTIONS)[number];
 
 export const routingActionLabels: Record<RoutingAction, string> = {
   forward: "Forward",
+  alias: "Deliver to user",
+  tag: "Apply tag",
   mailbox: "Deliver to mailbox",
   drop: "Drop",
-  webhook: "Webhook",
 };
+
+const routingMatchSchema = z.object({
+  recipientPattern: z.string().optional(),
+  senderPattern: z.string().optional(),
+  subjectContains: z.string().optional(),
+  headerName: z.string().optional(),
+  headerContains: z.string().optional(),
+});
+
+const routingActionSchema = z.object({
+  forwardTo: z.string().optional(),
+  aliasActorId: z.string().optional(),
+  tag: z.string().optional(),
+  mailbox: z.string().optional(),
+  stopProcessing: z.boolean().optional(),
+});
 
 const routingRuleSchema = z.object({
   id: z.string(),
-  matchPattern: z.string(),
-  action: z.enum(ROUTING_ACTIONS),
-  destination: z.string(),
-  enabled: z.boolean(),
+  name: z.string(),
+  isEnabled: z.boolean(),
   priority: z.number().int(),
+  match: routingMatchSchema,
+  actionKind: z.enum(ROUTING_ACTIONS),
+  action: routingActionSchema,
 });
 
 export type RoutingRule = z.infer<typeof routingRuleSchema>;
@@ -176,10 +192,16 @@ const routingRulesResponseSchema = z.object({
 export type RoutingRulesResponse = z.infer<typeof routingRulesResponseSchema>;
 
 export interface RoutingRuleInput {
-  readonly matchPattern: string;
-  readonly action: RoutingAction;
-  readonly destination: string;
-  readonly enabled: boolean;
+  readonly name: string;
+  readonly recipientPattern?: string;
+  readonly senderPattern?: string;
+  readonly subjectContains?: string;
+  readonly headerName?: string;
+  readonly headerContains?: string;
+  readonly actionKind: RoutingAction;
+  readonly destination?: string;
+  readonly stopProcessing?: boolean;
+  readonly isEnabled: boolean;
   readonly priority: number;
 }
 
@@ -200,16 +222,68 @@ const spamSettingsResponseSchema = z.object({
 
 export type SpamSettingsResponse = z.infer<typeof spamSettingsResponseSchema>;
 
+const deadLettersSchema = z.object({
+  messages: z.array(
+    z.object({
+      id: z.string(),
+      actorId: z.string(),
+      messageId: z.string(),
+      attemptCount: z.number().int(),
+      lastError: z.string().nullable(),
+      deadLetteredAt: z.string().nullable(),
+    }),
+  ),
+});
+const deliveryEventsSchema = z.object({
+  events: z.array(
+    z.object({
+      id: z.string(),
+      outboundId: z.string(),
+      kind: z.enum(["accepted", "delivered", "deferred", "bounced", "complained"]),
+      recipient: z.string(),
+      diagnostic: z.string().nullable(),
+      occurredAt: z.string(),
+    }),
+  ),
+});
+const suppressionsSchema = z.object({
+  suppressions: z.array(
+    z.object({
+      id: z.string(),
+      address: z.string(),
+      reason: z.enum(["hard_bounce", "complaint", "manual"]),
+      createdAt: z.string(),
+    }),
+  ),
+});
+const mailJournalSchema = z.object({
+  journal: z.object({
+    enabled: z.boolean(),
+    retentionDays: z.number().int(),
+    entryCount: z.number().int(),
+    lastJournaledAt: z.string().nullable(),
+    updatedAt: z.string().nullable(),
+  }),
+});
+
+export interface MailOperations {
+  readonly deadLetters: z.infer<typeof deadLettersSchema>["messages"];
+  readonly events: z.infer<typeof deliveryEventsSchema>["events"];
+  readonly suppressions: z.infer<typeof suppressionsSchema>["suppressions"];
+  readonly journal: z.infer<typeof mailJournalSchema>["journal"];
+}
+
 // ---------------------------------------------------------------------------
 // Query keys
 // ---------------------------------------------------------------------------
 
 export const mailAdminQueryKeys = {
   providers: () => ["admin", "mail", "providers"] as const,
-  sendingDomains: () => ["admin", "mail", "sending-domains"] as const,
+  domains: () => ["admin", "mail", "domains"] as const,
   dmarc: () => ["admin", "mail", "dmarc"] as const,
   routingRules: () => ["admin", "mail", "routing-rules"] as const,
   spam: () => ["admin", "mail", "spam"] as const,
+  operations: () => ["admin", "mail", "operations"] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -225,10 +299,10 @@ export function mailProvidersQueryOptions(fetchImpl: AuthFetch = authenticatedFe
   });
 }
 
-export function sendingDomainsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
+export function mailDomainsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
-    queryKey: mailAdminQueryKeys.sendingDomains(),
-    queryFn: () => fetchSendingDomains(fetchImpl),
+    queryKey: mailAdminQueryKeys.domains(),
+    queryFn: () => fetchMailDomains(fetchImpl),
     retry: false,
     throwOnError: false,
   });
@@ -259,6 +333,71 @@ export function spamSettingsQueryOptions(fetchImpl: AuthFetch = authenticatedFet
     retry: false,
     throwOnError: false,
   });
+}
+
+export function mailOperationsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
+  return queryOptions({
+    queryKey: mailAdminQueryKeys.operations(),
+    queryFn: () => fetchMailOperations(fetchImpl),
+    retry: false,
+    throwOnError: false,
+  });
+}
+
+export async function fetchMailOperations(
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<MailOperations> {
+  const [deadLetters, events, suppressions, journal] = await Promise.all([
+    fetchImpl("/api/admin/mail/outbound/dead-letters", { method: "GET" }),
+    fetchImpl("/api/admin/mail/outbound/delivery-events", { method: "GET" }),
+    fetchImpl("/api/admin/mail/outbound/suppressions", { method: "GET" }),
+    fetchImpl("/api/admin/mail/journal", { method: "GET" }),
+  ]);
+  return {
+    deadLetters: (await parseResponse(deadLetters, "load dead letters", deadLettersSchema))
+      .messages,
+    events: (await parseResponse(events, "load delivery events", deliveryEventsSchema)).events,
+    suppressions: (await parseResponse(suppressions, "load suppressions", suppressionsSchema))
+      .suppressions,
+    journal: (await parseResponse(journal, "load compliance journal", mailJournalSchema)).journal,
+  };
+}
+
+export async function saveMailJournalSettings(
+  input: { readonly enabled: boolean; readonly retentionDays: number },
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<MailOperations["journal"]> {
+  const response = await fetchImpl("/api/admin/mail/journal", {
+    method: "PUT",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+  return (await parseResponse(response, "save compliance journal", mailJournalSchema)).journal;
+}
+
+export async function replayDeadLetter(
+  id: string,
+  reason: string,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<void> {
+  const response = await fetchImpl(`/api/admin/mail/outbound/${encodeURIComponent(id)}/replay`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ reason }),
+  });
+  await ensureOk(response, "replay dead letter");
+}
+
+export async function removeMailSuppression(
+  id: string,
+  reason: string,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<void> {
+  const response = await fetchImpl(
+    `/api/admin/mail/outbound/suppressions/${encodeURIComponent(id)}`,
+    { method: "DELETE", headers: jsonHeaders, body: JSON.stringify({ reason }) },
+  );
+  await ensureOk(response, "remove suppression");
 }
 
 // ---------------------------------------------------------------------------
@@ -309,59 +448,37 @@ export async function setDefaultMailProvider(
 }
 
 // ---------------------------------------------------------------------------
-// Sending domains — fetchers + mutations
+// Canonical mail domains — fetchers + mutations
 // ---------------------------------------------------------------------------
 
-export async function fetchSendingDomains(
+export async function fetchMailDomains(
   fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<SendingDomainsResponse> {
-  const response = await fetchImpl("/api/admin/mail/sending-domains", { method: "GET" });
-  return parseResponse(response, "load sending domains", sendingDomainsResponseSchema);
+): Promise<MailDomainsResponse> {
+  const response = await fetchImpl("/api/admin/mail/domains", { method: "GET" });
+  return parseResponse(response, "load mail domains", mailDomainsResponseSchema);
 }
 
-export async function createSendingDomain(
-  domain: string,
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<SendingDomain> {
-  const response = await fetchImpl("/api/admin/mail/sending-domains", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ domain }),
-  });
-  return parseResponse(response, "add sending domain", sendingDomainSchema);
-}
-
-export async function deleteSendingDomain(
+export async function disableMailDomain(
   id: string,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<void> {
-  const response = await fetchImpl(
-    `/api/admin/mail/sending-domains/${encodeURIComponent(id)}`,
-    { method: "DELETE" },
-  );
-  await ensureOk(response, "delete sending domain");
+  const response = await fetchImpl(`/api/admin/mail/domains/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+  await ensureOk(response, "disable mail domain");
 }
 
 export async function generateDkimKey(
   domainId: string,
+  selector: string,
   fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<SendingDomain> {
-  const response = await fetchImpl(
-    `/api/admin/mail/sending-domains/${encodeURIComponent(domainId)}/dkim`,
-    { method: "POST", headers: jsonHeaders },
-  );
-  return parseResponse(response, "generate DKIM key", sendingDomainSchema);
-}
-
-export async function rotateDkimKey(
-  domainId: string,
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<SendingDomain> {
-  const response = await fetchImpl(
-    `/api/admin/mail/sending-domains/${encodeURIComponent(domainId)}/dkim/rotate`,
-    { method: "POST", headers: jsonHeaders },
-  );
-  return parseResponse(response, "rotate DKIM key", sendingDomainSchema);
+): Promise<DkimKey> {
+  const response = await fetchImpl(`/api/admin/mail/domains/${encodeURIComponent(domainId)}/dkim`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ selector, keyBits: 2048 }),
+  });
+  return (await parseResponse(response, "generate DKIM key", z.object({ key: dkimKeySchema }))).key;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,36 +510,64 @@ export async function createRoutingRule(
   const response = await fetchImpl("/api/admin/mail/routing-rules", {
     method: "POST",
     headers: jsonHeaders,
-    body: JSON.stringify(input),
+    body: JSON.stringify(routingRuleRequest(input)),
   });
-  return parseResponse(response, "create routing rule", routingRuleSchema);
+  return (
+    await parseResponse(response, "create routing rule", z.object({ rule: routingRuleSchema }))
+  ).rule;
 }
 
 export async function patchRoutingRule(
   id: string,
-  input: Partial<RoutingRuleInput>,
+  input: { readonly isEnabled: boolean },
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<RoutingRule> {
-  const response = await fetchImpl(
-    `/api/admin/mail/routing-rules/${encodeURIComponent(id)}`,
-    {
-      method: "PATCH",
-      headers: jsonHeaders,
-      body: JSON.stringify(input),
-    },
-  );
-  return parseResponse(response, "update routing rule", routingRuleSchema);
+  const response = await fetchImpl(`/api/admin/mail/routing-rules/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+  return (
+    await parseResponse(response, "update routing rule", z.object({ rule: routingRuleSchema }))
+  ).rule;
 }
 
 export async function deleteRoutingRule(
   id: string,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<void> {
-  const response = await fetchImpl(
-    `/api/admin/mail/routing-rules/${encodeURIComponent(id)}`,
-    { method: "DELETE" },
-  );
+  const response = await fetchImpl(`/api/admin/mail/routing-rules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
   await ensureOk(response, "delete routing rule");
+}
+
+function routingRuleRequest(input: RoutingRuleInput) {
+  const destination = input.destination?.trim();
+  const stopProcessing = input.stopProcessing === true ? { stopProcessing: true } : {};
+  return {
+    name: input.name,
+    isEnabled: input.isEnabled,
+    priority: input.priority,
+    match: {
+      ...(input.recipientPattern === undefined ? {} : { recipientPattern: input.recipientPattern }),
+      ...(input.senderPattern === undefined ? {} : { senderPattern: input.senderPattern }),
+      ...(input.subjectContains === undefined ? {} : { subjectContains: input.subjectContains }),
+      ...(input.headerName === undefined ? {} : { headerName: input.headerName }),
+      ...(input.headerContains === undefined ? {} : { headerContains: input.headerContains }),
+    },
+    actionKind: input.actionKind,
+    action:
+      input.actionKind === "forward"
+        ? { forwardTo: destination, ...stopProcessing }
+        : input.actionKind === "alias"
+          ? { aliasActorId: destination, ...stopProcessing }
+          : input.actionKind === "tag"
+            ? { tag: destination, ...stopProcessing }
+            : input.actionKind === "mailbox"
+              ? { mailbox: destination, ...stopProcessing }
+              : stopProcessing,
+  };
 }
 
 // ---------------------------------------------------------------------------

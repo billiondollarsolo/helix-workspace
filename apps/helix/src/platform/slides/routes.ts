@@ -1,6 +1,6 @@
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import { slideContentSchema } from "./content.js";
 import type { SlidesStore, SlideSyncOperation } from "./store.js";
 import type { SlideDeckSummaryRecord, SlideRecord } from "./types.js";
@@ -55,46 +55,49 @@ const querySchema = z
   })
   .partial();
 
-const metadataSchema = z.record(z.unknown());
+const metadataSchema = z.record(z.unknown()).transform(toJsonObject);
 
-const operationSchema = z.union([
-  z
-    .object({
-      kind: z.literal("update-deck"),
-      title: z.string().min(1).max(255).optional(),
-      metadata: metadataSchema.optional(),
-    })
-    .refine((value) => value.title !== undefined || value.metadata !== undefined, {
-      message: "Provide a deck title or metadata update.",
-    }),
-  z.object({
-    kind: z.literal("create-slide"),
-    content: slideContentSchema,
-    speakerNotes: z.string().max(20_000).optional(),
-    position: z.number().int().nonnegative().max(10_000).optional(),
-  }),
-  z
-    .object({
-      kind: z.literal("update-slide"),
-      slideId: z.string().uuid(),
-      content: slideContentSchema.optional(),
+const operationSchema = z
+  .union([
+    z
+      .object({
+        kind: z.literal("update-deck"),
+        title: z.string().min(1).max(255).optional(),
+        metadata: metadataSchema.optional(),
+      })
+      .refine((value) => value.title !== undefined || value.metadata !== undefined, {
+        message: "Provide a deck title or metadata update.",
+      }),
+    z.object({
+      kind: z.literal("create-slide"),
+      content: slideContentSchema,
       speakerNotes: z.string().max(20_000).optional(),
-      /** Per-slide CAS token; see SlideRecord.revision. */
-      expectedRevision: z.number().int().nonnegative().max(2_000_000_000).optional(),
-    })
-    .refine((value) => value.content !== undefined || value.speakerNotes !== undefined, {
-      message: "Provide slide content or speaker notes.",
+      position: z.number().int().nonnegative().max(10_000).optional(),
     }),
-  z.object({
-    kind: z.literal("delete-slide"),
-    slideId: z.string().uuid(),
-    expectedRevision: z.number().int().nonnegative().max(2_000_000_000).optional(),
-  }),
-  z.object({
-    kind: z.literal("reorder-slides"),
-    slideIds: z.array(z.string().uuid()).min(1).max(1_000),
-  }),
-]);
+    z
+      .object({
+        kind: z.literal("update-slide"),
+        slideId: z.string().uuid(),
+        content: slideContentSchema.optional(),
+        speakerNotes: z.string().max(20_000).optional(),
+        /** Per-slide CAS token; see SlideRecord.revision. */
+        expectedRevision: z.number().int().nonnegative().max(2_000_000_000),
+      })
+      .refine((value) => value.content !== undefined || value.speakerNotes !== undefined, {
+        message: "Provide slide content or speaker notes.",
+      }),
+    z.object({
+      kind: z.literal("delete-slide"),
+      slideId: z.string().uuid(),
+      expectedRevision: z.number().int().nonnegative().max(2_000_000_000),
+    }),
+    z.object({
+      kind: z.literal("reorder-slides"),
+      slideIds: z.array(z.string().uuid()).min(1).max(1_000),
+    }),
+  ])
+  // JSON input cannot contain explicit undefined values; the domain types use exact optionals.
+  .transform((operation) => operation as SlideSyncOperation);
 
 const awarenessSchema = z.object({
   type: z.literal("awareness"),
@@ -255,7 +258,7 @@ async function handleSlidesMessage(input: {
     deckId: input.room.deckId,
     operationId: message.operationId,
     baseRevision: message.baseRevision,
-    operation: toJsonObject(message.operation) as unknown as SlideSyncOperation,
+    operation: message.operation,
   });
 
   if (result.status === "duplicate") {

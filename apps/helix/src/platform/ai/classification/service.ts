@@ -1,4 +1,8 @@
 import { deriveClassification, defaultClassificationPolicy } from "./policy.js";
+import {
+  canonicalClassificationResourceType,
+  sensitivityLabelFor,
+} from "./sensitivity-labels.js";
 import type {
   ClassificationDerivation,
   ClassificationDerivationInput,
@@ -62,10 +66,21 @@ export class ResourceClassificationService {
     readonly derivation: ClassificationDerivation;
     readonly record: ResourceClassificationRecord;
   }> {
-    const derivation = deriveClassification(input.derivation, this.#policy);
+    const resourceType = canonicalClassificationResourceType(input.resourceType);
+    const derived = deriveClassification(input.derivation, this.#policy);
+    const existing = await this.#store.get({ ...input, resourceType });
+    const derivation =
+      existing !== null &&
+      sensitivityLabelFor(existing.classification).rank > sensitivityLabelFor(derived.classification).rank
+        ? {
+            classification: existing.classification,
+            source: existing.source,
+            reason: `preserved:${existing.reason}`,
+          }
+        : derived;
     const record: ResourceClassificationRecord = {
       orgId: input.orgId,
-      resourceType: input.resourceType,
+      resourceType,
       resourceId: input.resourceId,
       classification: derivation.classification,
       source: derivation.source,
@@ -82,7 +97,10 @@ export class ResourceClassificationService {
    * resource has not been classified yet.
    */
   async get(ref: ResourceRef): Promise<ResourceClassificationRecord | null> {
-    return this.#store.get(ref);
+    return this.#store.get({
+      ...ref,
+      resourceType: canonicalClassificationResourceType(ref.resourceType),
+    });
   }
 
   /**
@@ -91,7 +109,7 @@ export class ResourceClassificationService {
    * to resolve a classification for gating.
    */
   async resolve(input: ClassifyResourceInput): Promise<ResourceClassificationRecord> {
-    const existing = await this.#store.get(input);
+    const existing = await this.get(input);
     if (existing !== null) {
       return existing;
     }

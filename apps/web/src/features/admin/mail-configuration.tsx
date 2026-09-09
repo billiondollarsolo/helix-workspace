@@ -55,10 +55,14 @@ export interface AdminMailConfigurationResponse {
     readonly since: string;
     readonly counts: {
       readonly queued: number;
-      readonly sending: number;
-      readonly sent: number;
-      readonly failed: number;
       readonly cancelled: number;
+      readonly sending: number;
+      readonly accepted: number;
+      readonly delivered: number;
+      readonly deferred: number;
+      readonly bounced: number;
+      readonly complained: number;
+      readonly failed: number;
     };
     readonly failedLast24h: number;
     readonly lastFailureAt: string | null;
@@ -209,7 +213,8 @@ export function MailConfiguration() {
           status={deliveryStatus(config)}
           rows={[
             ["Since", formatTimestamp(config?.deliveryHealth.since)],
-            ["Sent", formatNumber(config?.deliveryHealth.counts.sent)],
+            ["Accepted", formatNumber(config?.deliveryHealth.counts.accepted)],
+            ["Delivered", formatNumber(config?.deliveryHealth.counts.delivered)],
             ["Failed 24h", formatNumber(config?.deliveryHealth.failedLast24h)],
             ["Last error", config?.deliveryHealth.lastError ?? "-"],
           ]}
@@ -236,9 +241,11 @@ export function MailConfiguration() {
             rows={[
               ["Queued", formatNumber(config.deliveryHealth.counts.queued)],
               ["Sending", formatNumber(config.deliveryHealth.counts.sending)],
+              ["Deferred", formatNumber(config.deliveryHealth.counts.deferred)],
+              ["Delivery rate", terminalRate(config.deliveryHealth.counts, "delivered")],
+              ["Bounce rate", terminalRate(config.deliveryHealth.counts, "bounced")],
+              ["Complaint rate", terminalRate(config.deliveryHealth.counts, "complained")],
               ["Failed", formatNumber(config.deliveryHealth.counts.failed)],
-              ["Cancelled", formatNumber(config.deliveryHealth.counts.cancelled)],
-              ["Last failure", formatTimestamp(config.deliveryHealth.lastFailureAt)],
             ]}
           />
         </div>
@@ -289,7 +296,8 @@ async function fetchAdminMailConfiguration(): Promise<AdminMailConfigurationResp
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(
-      errorMessageFromOutput(output) ?? `Mail config request failed with ${response.status}`,
+      errorMessageFromOutput(output) ??
+        `Mail config request failed with ${String(response.status)}`,
     );
   }
   if (!isAdminMailConfigurationResponse(output)) {
@@ -337,7 +345,7 @@ function domainRecordRows(domains: readonly AdminMailDomain[]): DNSRecordRow[] {
       ...record,
       defaultFrom: domain.defaultFrom,
       domain: domain.domain,
-      id: `${domain.domain}:${record.type}:${index}`,
+      id: `${domain.domain}:${record.type}:${String(index)}`,
     })),
   );
 }
@@ -421,6 +429,14 @@ function formatNumber(value: number | undefined): string {
   return value === undefined ? "-" : new Intl.NumberFormat("en-US").format(value);
 }
 
+function terminalRate(
+  counts: AdminMailConfigurationResponse["deliveryHealth"]["counts"],
+  kind: "delivered" | "bounced" | "complained",
+): string {
+  const total = counts.delivered + counts.bounced + counts.complained;
+  return total === 0 ? "-" : `${((counts[kind] / total) * 100).toFixed(1)}%`;
+}
+
 function formatBytes(value: number | null): string;
 function formatBytes(value: number | null | undefined): string {
   if (value === null || value === undefined) {
@@ -436,7 +452,7 @@ function formatBytes(value: number | null | undefined): string {
     size /= 1024;
     unitIndex += 1;
   }
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(size)} ${units[unitIndex]}`;
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(size)} ${units[unitIndex] ?? "GB"}`;
 }
 
 function formatTimestamp(value: string | null | undefined): string {
@@ -532,10 +548,14 @@ function isDeliveryHealth(
     typeof value.since === "string" &&
     isRecord(value.counts) &&
     typeof value.counts.queued === "number" &&
-    typeof value.counts.sending === "number" &&
-    typeof value.counts.sent === "number" &&
-    typeof value.counts.failed === "number" &&
     typeof value.counts.cancelled === "number" &&
+    typeof value.counts.sending === "number" &&
+    typeof value.counts.accepted === "number" &&
+    typeof value.counts.delivered === "number" &&
+    typeof value.counts.deferred === "number" &&
+    typeof value.counts.bounced === "number" &&
+    typeof value.counts.complained === "number" &&
+    typeof value.counts.failed === "number" &&
     typeof value.failedLast24h === "number" &&
     isNullableString(value.lastFailureAt) &&
     isNullableString(value.lastError)

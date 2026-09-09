@@ -75,7 +75,7 @@ describe("signup shell", () => {
   it("creates a workspace and shows the email verification handoff", async () => {
     const fetchImpl = vi.fn<typeof fetch>((input) => {
       const url = urlForRequest(input);
-      if (url === "/api/signup/form-viewed") {
+      if (url === "/v1/api/signup/form-viewed") {
         return Promise.resolve(
           Response.json(
             { error: { message: "Telemetry unavailable during signup form view." } },
@@ -83,10 +83,10 @@ describe("signup shell", () => {
           ),
         );
       }
-      if (url === "/api/signup/org-slug/acme/availability") {
+      if (url === "/v1/api/signup/org-slug/acme/availability") {
         return Promise.resolve(Response.json({ slug: "acme", valid: true, available: true }));
       }
-      if (url === "/api/signup") {
+      if (url === "/v1/api/signup") {
         return Promise.resolve(
           Response.json(
             {
@@ -147,11 +147,11 @@ describe("signup shell", () => {
     expect(container.textContent).toContain("Check your email");
     expect(container.textContent).toContain("Sign in with email/password");
     const formViewedCall = fetchImpl.mock.calls.find(
-      ([input]) => urlForRequest(input) === "/api/signup/form-viewed",
+      ([input]) => urlForRequest(input) === "/v1/api/signup/form-viewed",
     );
     expect(formViewedCall?.[1]?.body).toBe(JSON.stringify({ page: "signup" }));
     const signupCall = fetchImpl.mock.calls.find(
-      ([input]) => urlForRequest(input) === "/api/signup",
+      ([input]) => urlForRequest(input) === "/v1/api/signup",
     );
     expect(signupCall?.[1]?.body).toBe(
       JSON.stringify({
@@ -172,7 +172,7 @@ describe("signup shell", () => {
   it("blocks submit until the password strength is accepted", async () => {
     const fetchImpl = vi.fn<typeof fetch>((input) => {
       const url = urlForRequest(input);
-      if (url === "/api/signup/org-slug/acme/availability") {
+      if (url === "/v1/api/signup/org-slug/acme/availability") {
         return Promise.resolve(Response.json({ slug: "acme", valid: true, available: true }));
       }
       return Promise.resolve(
@@ -200,7 +200,7 @@ describe("signup shell", () => {
     expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(
       true,
     );
-    expect(fetchImpl.mock.calls.some(([input]) => urlForRequest(input) === "/api/signup")).toBe(
+    expect(fetchImpl.mock.calls.some(([input]) => urlForRequest(input) === "/v1/api/signup")).toBe(
       false,
     );
   });
@@ -253,7 +253,7 @@ describe("verify email shell", () => {
     expect(container.querySelector<HTMLAnchorElement>("a")?.getAttribute("href")).toBe(
       "https://acme.helix.example/onboarding",
     );
-    expect(fetchImpl).toHaveBeenCalledWith("/api/signup/verify-email", expect.any(Object));
+    expect(fetchImpl).toHaveBeenCalledWith("/v1/api/signup/verify-email", expect.any(Object));
   });
 
   it("falls back to login after verification when no session cookie is created", async () => {
@@ -289,7 +289,7 @@ describe("verify email shell", () => {
   it("offers token-based resend when verification token is invalid or expired", async () => {
     const fetchImpl = vi.fn<typeof fetch>((input) => {
       const url = urlForRequest(input);
-      if (url === "/api/signup/verify-email") {
+      if (url === "/v1/api/signup/verify-email") {
         return Promise.resolve(
           Response.json(
             {
@@ -302,7 +302,7 @@ describe("verify email shell", () => {
           ),
         );
       }
-      if (url === "/api/signup/resend-verification") {
+      if (url === "/v1/api/signup/resend-verification") {
         return Promise.resolve(Response.json({ status: "accepted" }, { status: 202 }));
       }
       return Promise.resolve(
@@ -323,7 +323,7 @@ describe("verify email shell", () => {
     });
 
     const resendCall = fetchImpl.mock.calls.find(
-      ([input]) => urlForRequest(input) === "/api/signup/resend-verification",
+      ([input]) => urlForRequest(input) === "/v1/api/signup/resend-verification",
     );
     expect(resendCall?.[1]?.body).toBe(JSON.stringify({ token: "old-token" }));
     expect(container.textContent).toContain(
@@ -427,7 +427,7 @@ describe("signup invite shell", () => {
 
   it("accepts an invite after local login succeeds", async () => {
     const fetchImpl = vi.fn<typeof fetch>((input) => {
-      if (urlForRequest(input) === "/api/signup/onboarding-invite/accept") {
+      if (urlForRequest(input) === "/v1/api/signup/onboarding-invite/accept") {
         return Promise.resolve(
           Response.json({
             status: "accepted",
@@ -480,7 +480,7 @@ describe("signup invite shell", () => {
     });
 
     expect(fetchImpl).toHaveBeenCalledWith(
-      "/api/signup/onboarding-invite/accept",
+      "/v1/api/signup/onboarding-invite/accept",
       expect.objectContaining({
         method: "POST",
         credentials: "include",

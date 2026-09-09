@@ -6,7 +6,7 @@
   "vendor": { "name": "Helix" },
   "license": "Apache-2.0",
   "sdkVersion": "^1.0.0",
-  "kind": "in-process",
+  "kind": "sandboxed",
   "category": "connector",
   "main": "index.js",
   "capabilities": {

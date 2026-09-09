@@ -5,7 +5,7 @@ import {
 } from "@/lib/search-params";
 import type { CalendarListEventsInput } from "./api";
 
-export const calendarRouteViews = ["week", "month", "day"] as const;
+export const calendarRouteViews = ["week", "month", "day", "agenda"] as const;
 export type CalendarRouteView = (typeof calendarRouteViews)[number];
 
 export interface CalendarRouteSearch {
@@ -86,6 +86,16 @@ export function calendarEventsInputFromRouteState(
       startsAt: `${formatIsoDate(startsAt)}T00:00:00.000Z`,
       endsAt: `${formatIsoDate(endsAt)}T23:59:59.999Z`,
       limit: 100,
+    };
+  }
+
+  if (state.view === "agenda") {
+    const startsAt = dateFromIsoDate(state.date);
+    const endsAt = addUtcDays(startsAt, 29);
+    return {
+      startsAt: `${formatIsoDate(startsAt)}T00:00:00.000Z`,
+      endsAt: `${formatIsoDate(endsAt)}T23:59:59.999Z`,
+      limit: 250,
     };
   }
 

@@ -1,16 +1,17 @@
-import { z } from "zod3";
+import { z } from "zod";
 import { getCryptoProvider } from "../crypto/index.js";
 import type postgres from "postgres";
 import type { Actor, JsonObject, ToolDefinition } from "@helix/sdk-types";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { hashSecret, parseScope, OAuthError, verifySecret } from "./oauth.js";
-import { appPasswordScopeCatalog } from "../permissions/scope-catalog.js";
+import { actorHasScope } from "../../api/scopes.js";
+import { appPasswordScopeCatalog, validatedPermissions } from "../permissions/scope-catalog.js";
 
 export const appPasswordAdminScope = "admin.users";
 
 /**
- * Scope catalog for legacy app passwords (DAV / IMAP / SMTP clients).
+ * Scope catalog for standards-client app passwords (DAV / SMTP clients).
  *
  * As of P1-6 this is re-exported from the single canonical scope-catalog module
  * (derived as the `app_password` surface) rather than hand-maintained here.
@@ -76,10 +77,11 @@ export class AppPasswordManager {
   async create(
     input: Omit<AppPasswordCreateInput, "passwordHash">,
   ): Promise<AppPasswordRegistration> {
+    const scopes = requireAppPasswordScopes(normalizeScopes(input.scopes));
     const password = `helix_ap_${getCryptoProvider().randomBytes(24).toString("base64url")}`;
     const appPassword = await this.store.createAppPassword({
       ...input,
-      scopes: normalizeScopes(input.scopes),
+      scopes,
       passwordHash: await hashSecret(password),
     });
     return { appPassword, password };
@@ -116,7 +118,7 @@ export class InMemoryAppPasswordStore implements AppPasswordStore {
       orgId: input.orgId,
       label: input.label,
       passwordHash: input.passwordHash,
-      scopes: uniqueScopes(input.scopes),
+      scopes: requireAppPasswordScopes(input.scopes),
       lastUsedAt: null,
       expiresAt: input.expiresAt ?? null,
       revokedAt: null,
@@ -165,15 +167,12 @@ export class InMemoryAppPasswordStore implements AppPasswordStore {
       ) {
         continue;
       }
-      const scopes = [...new Set([...(actor.scopes ?? []), ...record.scopes])];
-      if (
-        !scopes.includes(input.requiredScope) &&
-        (input.compatibilityScope === undefined || !scopes.includes(input.compatibilityScope))
-      ) {
+      const restrictedActor = restrictAppPasswordActor(actor, record.scopes, input);
+      if (restrictedActor === null) {
         continue;
       }
       if (await verifySecret(input.password, record.passwordHash)) {
-        return { ...actor, scopes };
+        return restrictedActor;
       }
     }
     return null;
@@ -184,7 +183,8 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
   constructor(private readonly sql: postgres.Sql) {}
 
   async createAppPassword(input: AppPasswordCreateInput): Promise<AppPasswordRecord> {
-    const rows = (await this.sql`
+    const scopes = requireAppPasswordScopes(input.scopes);
+    const rows = await this.sql<AppPasswordRow[]>`
       with selected_actor as (
         select id, org_id
         from actors
@@ -198,7 +198,7 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
           selected_actor.id,
           ${input.label},
           ${input.passwordHash},
-          ${this.sql.array(uniqueScopes(input.scopes))},
+          ${this.sql.array(scopes)},
           ${input.expiresAt ?? null}
         from selected_actor
         returning id, actor_id, label, scopes, last_used_at, expires_at, revoked_at, created_at
@@ -215,7 +215,7 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
         inserted.created_at
       from inserted
       join selected_actor on selected_actor.id = inserted.actor_id
-    `) as unknown as readonly AppPasswordRow[];
+    `;
     const record = rowToRecord(rows[0]);
     if (record === null) {
       throw new Error("Failed to create app password for actor in org.");
@@ -224,7 +224,7 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
   }
 
   async listAppPasswords(input: AppPasswordListInput): Promise<readonly AppPasswordRecord[]> {
-    const rows = (await this.sql`
+    const rows = await this.sql<AppPasswordRow[]>`
       select
         p.id,
         p.actor_id,
@@ -241,7 +241,7 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
         and (${input.actorId ?? null}::uuid is null or p.actor_id = ${input.actorId ?? null}::uuid)
         and (${input.includeRevoked === true}::boolean or p.revoked_at is null)
       order by p.created_at desc, p.id asc
-    `) as unknown as readonly AppPasswordRow[];
+    `;
     return rows.flatMap((row) => {
       const record = rowToRecord(row);
       return record === null ? [] : [record];
@@ -253,7 +253,7 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
     readonly orgId: string;
     readonly revokedAt: Date;
   }): Promise<AppPasswordRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<AppPasswordRow[]>`
       with updated as (
         update app_passwords
         set revoked_at = ${input.revokedAt}
@@ -274,12 +274,12 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
           app_passwords.created_at
       )
       select * from updated
-    `) as unknown as readonly AppPasswordRow[];
+    `;
     return rowToRecord(rows[0]);
   }
 
   async authenticateAppPassword(input: AppPasswordAuthenticationInput): Promise<Actor | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<AppPasswordAuthRow[]>`
       select
         a.id,
         a.org_id,
@@ -295,26 +295,28 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
       where p.revoked_at is null
         and (p.expires_at is null or p.expires_at > now())
         and a.disabled_at is null
+        and helix_credential_principal_is_active(a.id, a.org_id)
         and (lower(a.email) = lower(${input.username}) or a.id::text = ${input.username})
-    `) as unknown as readonly AppPasswordAuthRow[];
+    `;
     for (const row of rows) {
-      const scopes = [...new Set([...row.actor_scopes, ...row.password_scopes])];
-      if (
-        !scopes.includes(input.requiredScope) &&
-        (input.compatibilityScope === undefined || !scopes.includes(input.compatibilityScope))
-      ) {
-        continue;
-      }
-      if (await verifySecret(input.password, row.hash)) {
-        await this.sql`update app_passwords set last_used_at = now() where id = ${row.password_id}`;
-        return {
+      const restrictedActor = restrictAppPasswordActor(
+        {
           id: row.id,
           orgId: row.org_id,
           type: row.type,
           displayName: row.display_name,
-          scopes,
+          scopes: row.actor_scopes,
           ...(row.email === null ? {} : { email: row.email }),
-        };
+        },
+        row.password_scopes,
+        input,
+      );
+      if (restrictedActor === null) {
+        continue;
+      }
+      if (await verifySecret(input.password, row.hash)) {
+        await this.sql`update app_passwords set last_used_at = now() where id = ${row.password_id}`;
+        return restrictedActor;
       }
     }
     return null;
@@ -324,7 +326,6 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
 export interface RegisterAppPasswordToolsOptions {
   readonly store: AppPasswordStore;
   readonly manager?: AppPasswordManager;
-  readonly scopeCatalog?: readonly string[];
 }
 
 const genericObjectJsonSchema = {
@@ -375,12 +376,12 @@ export function createAppPasswordToolDefinitions(
   options: RegisterAppPasswordToolsOptions,
 ): readonly ToolDefinition[] {
   const manager = options.manager ?? new AppPasswordManager(options.store);
-  const createInputSchema = createSchema(new Set(options.scopeCatalog ?? appPasswordScopeCatalog));
+  const createInputSchema = createSchema(new Set(appPasswordScopeCatalog));
 
   return [
     defineTool<z.output<typeof createInputSchema>, unknown>({
       id: "app.passwords.create",
-      description: "Create a scoped app password for legacy DAV, IMAP, or SMTP clients.",
+      description: "Create a scoped app password for DAV or SMTP clients.",
       permission: appPasswordAdminScope,
       sideEffects: "write",
       confirmationRequired: true,
@@ -514,8 +515,46 @@ function normalizeScopes(scopes: readonly string[]): string[] {
   }
 }
 
-function uniqueScopes(scopes: readonly string[]): string[] {
-  return [...new Set(scopes)];
+/**
+ * Restrict an app-password session to the credential's explicit grant and the
+ * actor's current authority. Protocol aliases (for example `webdav`) may stand
+ * in for the requested product scope, but never add the actor's ambient scopes.
+ */
+export function restrictAppPasswordActor(
+  actor: Actor,
+  passwordScopes: readonly string[],
+  input: Pick<AppPasswordAuthenticationInput, "requiredScope" | "compatibilityScope">,
+): Actor | null {
+  if (actor.type !== "user" || !actorHasScope(actor, input.requiredScope)) {
+    return null;
+  }
+  const scopes = validAppPasswordScopes(passwordScopes);
+  if (
+    scopes === null ||
+    (!scopes.includes(input.requiredScope) &&
+      (input.compatibilityScope === undefined || !scopes.includes(input.compatibilityScope)))
+  ) {
+    return null;
+  }
+  return { ...actor, scopes };
+}
+
+const allowedAppPasswordScopes = new Set<string>(appPasswordScopeCatalog);
+
+function validAppPasswordScopes(scopes: readonly string[]): string[] | null {
+  const validated = validatedPermissions(scopes);
+  if (validated.length === 0 || validated.some((scope) => !allowedAppPasswordScopes.has(scope))) {
+    return null;
+  }
+  return [...validated];
+}
+
+function requireAppPasswordScopes(scopes: readonly string[]): string[] {
+  const validated = validAppPasswordScopes(scopes);
+  if (validated === null) {
+    throw new TypeError("App passwords may contain only supported user protocol scopes.");
+  }
+  return validated;
 }
 
 function rowToRecord(row: AppPasswordRow | undefined): AppPasswordRecord | null {

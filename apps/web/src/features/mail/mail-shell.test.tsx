@@ -9,6 +9,12 @@ import { MailShell } from "./mail-shell";
 import { MAIL_COMPOSE_RECOVERY_KEY } from "./mail-compose-recovery";
 
 const navigateMock = vi.fn();
+const uploadDriveFileMock = vi.fn();
+const trashDriveObjectMock = vi.fn();
+vi.mock("@/features/drive/api", () => ({
+  uploadDriveFile: (...args: unknown[]) => uploadDriveFileMock(...args),
+  trashDriveObject: (...args: unknown[]) => trashDriveObjectMock(...args),
+}));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
   useRouter: () => ({ navigate: navigateMock }),
@@ -138,6 +144,9 @@ describe("MailShell", () => {
 
   function defaultFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const url = urlOf(input);
+    if (url.endsWith("/api/auth/csrf-token")) {
+      return Promise.resolve(Response.json({ csrfToken: "test-csrf-token" }));
+    }
     if (url.endsWith("/mail.folders.list")) {
       return Promise.resolve(Response.json({ folders: FOLDERS }));
     }
@@ -173,6 +182,10 @@ describe("MailShell", () => {
 
   beforeEach(() => {
     navigateMock.mockClear();
+    uploadDriveFileMock.mockResolvedValue({
+      objectId: "33333333-3333-4333-8333-333333333333",
+    });
+    trashDriveObjectMock.mockResolvedValue(null);
     window.localStorage.clear();
     container = document.createElement("div");
     document.body.append(container);
@@ -355,7 +368,7 @@ describe("MailShell", () => {
     });
     await flush();
     expect(container.textContent).toContain("Here is the consolidated roadmap for review.");
-    expect(container.textContent).toContain("Summarize with Helix AI");
+    expect(container.textContent).not.toContain("Summarize with Helix AI");
 
     clickButtonText("Reply all");
     expect(container.textContent).toContain("Replying all");
@@ -448,6 +461,30 @@ describe("MailShell", () => {
     expect(container.textContent).not.toContain("New message");
   });
 
+  it("schedules compose mail through the durable mail.send queue", async () => {
+    render();
+    await flush();
+    clickButtonText("Compose");
+    const toInput = container.querySelector('input[aria-label="To"]');
+    const scheduleInput = container.querySelector('input[aria-label="Send later"]');
+    if (!(toInput instanceof HTMLInputElement) || !(scheduleInput instanceof HTMLInputElement)) {
+      throw new Error("Compose scheduling inputs not found");
+    }
+    setInputValue(toInput, "mira@helix.io");
+    const localSendAt = "2026-10-01T12:30";
+    setInputValue(scheduleInput, localSendAt);
+
+    clickButtonText("Schedule");
+    await flush();
+
+    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.send");
+    const rawBody = sendCall?.[1]?.body;
+    const body = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as {
+      readonly sendAt?: string;
+    };
+    expect(body.sendAt).toBe(new Date(localSendAt).toISOString());
+  });
+
   it("validates recipients inline and focuses the first invalid field", async () => {
     render();
     await flush();
@@ -471,11 +508,20 @@ describe("MailShell", () => {
     window.localStorage.setItem(
       MAIL_COMPOSE_RECOVERY_KEY,
       JSON.stringify({
-        to: "mira@helix.test",
-        cc: "",
-        bcc: "",
+        id: "11111111-1111-4111-8111-111111111111",
+        expectedRevision: 3,
+        to: [{ address: "mira@helix.test" }],
+        cc: [],
+        bcc: [],
         subject: "Recovered launch note",
-        body: "The restored body",
+        bodyText: "The restored body",
+        attachments: [
+          {
+            objectId: "22222222-2222-4222-8222-222222222222",
+            filename: "recovered-brief.pdf",
+            contentType: "application/pdf",
+          },
+        ],
         updatedAt: new Date().toISOString(),
       }),
     );
@@ -490,14 +536,9 @@ describe("MailShell", () => {
     expect(
       container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message body"]')?.value,
     ).toBe("The restored body");
-    expect(
-      container.querySelector<HTMLButtonElement>('button[aria-label="Schedule send unavailable"]')
-        ?.disabled,
-    ).toBe(true);
-    expect(
-      container.querySelector<HTMLButtonElement>('button[aria-label="AI assist unavailable"]')
-        ?.title,
-    ).toContain("not connected");
+    expect(container.textContent).toContain("recovered-brief.pdf");
+    expect(container.querySelector('button[aria-label="Schedule send unavailable"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="AI assist unavailable"]')).toBeNull();
 
     const minimize = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Minimize compose"]',
@@ -623,25 +664,7 @@ describe("MailShell", () => {
   });
 
   it("attaches dropped files through the same sendMail mechanism", async () => {
-    // Stub FileReader so it delivers base64 synchronously in the test env.
     const fileContent = "hello attachment";
-    const fileBase64 = btoa(fileContent);
-    const fileReaderMock = {
-      readAsDataURL: vi.fn(function (this: typeof fileReaderMock) {
-        this.result = `data:text/plain;base64,${fileBase64}`;
-        if (typeof this.onload === "function") {
-          this.onload();
-        }
-      }),
-      onload: null as (() => void) | null,
-      onerror: null as (() => void) | null,
-      result: null as string | null,
-    };
-    vi.stubGlobal(
-      "FileReader",
-      vi.fn(() => fileReaderMock),
-    );
-
     render();
     await flush();
     clickButtonText("Compose");
@@ -666,8 +689,13 @@ describe("MailShell", () => {
       compose.dispatchEvent(makeDragEvent("drop", [droppedFile], compose));
     });
 
-    // Wait for the async FileReader → state update chain.
+    // Wait for the direct-to-storage upload → state update chain.
     await flushMicrotasks();
+    expect(uploadDriveFileMock).toHaveBeenCalledWith({
+      file: droppedFile,
+      folderId: null,
+      signal: expect.any(AbortSignal),
+    });
 
     // Attachment chip should appear.
     expect(container.textContent).toContain("report.pdf");
@@ -681,6 +709,7 @@ describe("MailShell", () => {
       throw new Error("To input not found");
     }
     setInputValue(toInput, "mira@helix.io");
+    await flushMicrotasks();
     clickButtonText("Send");
     await flush();
 
@@ -691,16 +720,49 @@ describe("MailShell", () => {
       readonly attachments?: ReadonlyArray<{
         readonly filename: string;
         readonly contentType: string;
-        readonly content: string;
+        readonly objectId: string;
       }>;
     };
     expect(parsedBody.attachments).toBeDefined();
     expect(parsedBody.attachments).toHaveLength(1);
     expect(parsedBody.attachments?.[0]?.filename).toBe("report.pdf");
     expect(parsedBody.attachments?.[0]?.contentType).toBe("application/pdf");
-    expect(parsedBody.attachments?.[0]?.content).toBe(fileBase64);
+    expect(parsedBody.attachments?.[0]?.objectId).toBe("33333333-3333-4333-8333-333333333333");
+    expect(parsedBody.attachments?.[0]).not.toHaveProperty("byteSize");
+  });
 
-    vi.unstubAllGlobals();
+  it("rejects an oversized selection before upload and cancels an active upload", async () => {
+    render();
+    await flush();
+    clickButtonText("Compose");
+    const compose = container.querySelector(".compose-drop-root");
+    if (!(compose instanceof HTMLElement)) throw new Error("Compose root not found");
+
+    const oversized = new File(["x"], "huge.bin");
+    Object.defineProperty(oversized, "size", { value: 25 * 1024 * 1024 + 1 });
+    act(() => {
+      compose.dispatchEvent(makeDragEvent("drop", [oversized], compose));
+    });
+    await flushMicrotasks();
+    expect(uploadDriveFileMock).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("per-file limit");
+
+    let uploadSignal: AbortSignal | undefined;
+    uploadDriveFileMock.mockImplementationOnce(
+      ({ signal }: { readonly signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          uploadSignal = signal;
+          signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        }),
+    );
+    act(() => {
+      compose.dispatchEvent(makeDragEvent("drop", [new File(["ok"], "ok.txt")], compose));
+    });
+    await flushMicrotasks();
+    clickButtonText("Cancel attachment upload");
+    await flushMicrotasks();
+    expect(uploadSignal?.aborted).toBe(true);
+    expect(container.textContent).toContain("selecting the same file will resume it");
   });
 
   it("does not flicker the drop overlay when the cursor crosses child elements", async () => {
@@ -805,6 +867,20 @@ describe("MailShell", () => {
         : "{}",
     ) as { readonly threadId: string };
     expect(body.threadId).toBe("thread-1");
+  });
+
+  it.each([
+    ["Trash", "Restore", "mail.restore"],
+    ["Archive", "Unarchive", "mail.unarchive"],
+    ["Snoozed", "Unsnooze", "mail.unsnooze"],
+  ])("offers %s mailbox reversal through %s", async (folder, action, tool) => {
+    render();
+    await flush();
+    clickButtonText(folder);
+    await flush();
+    clickAriaButton(action);
+    await flush();
+    expect(fetchMock.mock.calls.some((call) => call[0] === `/api/tools/${tool}`)).toBe(true);
   });
 
   /* ============================================================

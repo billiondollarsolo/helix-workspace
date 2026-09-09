@@ -1,3 +1,4 @@
+import type { CalendarTimeSemantics } from "@helix/contracts";
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
 
 export const calendarPluginId = "com.helix.core.calendar";
@@ -16,12 +17,21 @@ export interface CalendarRecord {
   readonly timezone: string;
   readonly description: string | null;
   readonly metadata: JsonObject;
+  readonly syncVersion: number;
   readonly deletedAt: Date | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
 
-export type CalendarMembershipRole = "owner" | "writer" | "reader";
+export type CalendarMembershipRole = "owner" | "manager" | "writer" | "reader";
+
+export interface CalendarMembershipRecord {
+  readonly calendarId: string;
+  readonly actorId: string;
+  readonly displayName: string | null;
+  readonly email: string | null;
+  readonly role: CalendarMembershipRole;
+}
 
 /**
  * A calendar as it appears in an actor's sidebar calendar-list. Combines the
@@ -46,6 +56,8 @@ export interface CalendarListEntry {
   readonly writable: boolean;
   readonly sortOrder: number;
   readonly eventCount: number;
+  /** Monotonic CalDAV collection revision used by ETag and sync-token. */
+  readonly syncVersion: number;
 }
 
 export interface CalendarAttendeeRecord {
@@ -78,6 +90,9 @@ export interface CalendarEventRecord {
   readonly endsAt: Date;
   readonly timezone?: string | undefined;
   readonly allDay: boolean;
+  readonly timeSemantics?: CalendarTimeSemantics | undefined;
+  readonly startsLocal?: string | undefined;
+  readonly endsLocal?: string | undefined;
   readonly status: CalendarEventStatus;
   readonly recurrenceRule?: string | null | undefined;
   readonly organizerActorId?: string | null | undefined;
@@ -93,6 +108,25 @@ export interface CalendarEventRecord {
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly attendees: readonly CalendarAttendeeRecord[];
+  /** Durable invitation/cancellation rows created with this event mutation. */
+  readonly invitationDeliveriesQueued?: number | undefined;
+}
+
+export type CalendarEventRevisionKind =
+  | "created"
+  | "updated"
+  | "cancelled"
+  | "responded"
+  | "restored";
+
+export interface CalendarEventRevisionRecord {
+  readonly eventId: string;
+  readonly revision: number;
+  readonly calendarId: string;
+  readonly changeKind: CalendarEventRevisionKind;
+  readonly changedByActorId: string | null;
+  readonly snapshot: JsonObject;
+  readonly createdAt: Date;
 }
 
 export interface CalendarBusyInterval {
@@ -119,6 +153,10 @@ export interface CalendarFreeBusyEvent {
   readonly transparency?: "opaque" | "transparent" | undefined;
   readonly recurrenceRule?: string | null | undefined;
   readonly metadata?: JsonObject | undefined;
+  readonly timezone?: string | undefined;
+  readonly allDay?: boolean | undefined;
+  readonly timeSemantics?: CalendarTimeSemantics | undefined;
+  readonly startsLocal?: string | undefined;
 }
 
 export interface CalendarBusyBlock {

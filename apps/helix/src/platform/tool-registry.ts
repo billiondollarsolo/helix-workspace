@@ -28,6 +28,7 @@ import {
   type AgentLimitExceeded,
   type AgentRateCostLimiter,
 } from "./limits/index.js";
+import { dlpDecisionError, dlpToolInvocation, type DlpGuard } from "./dlp.js";
 
 export type ToolInvokeResult<Output = unknown> =
   | { readonly ok: true; readonly status?: "executed"; readonly output: Output }
@@ -177,10 +178,12 @@ export interface ToolRegistryOptions {
   readonly metrics?: ToolInvocationMetrics;
   readonly featureFlags?: FeatureFlagProvider;
   readonly toolFeatureFlag?: ToolFeatureFlagResolver;
+  readonly dlp?: DlpGuard;
 }
 
 export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeToolRegistry {
   const tools = new Map<string, ToolDefinition>();
+  const dlp = options.dlp;
   const accessPolicy = options.accessPolicy ?? new ScopeToolAccessPolicy();
   const confirmationDefaults = options.confirmationDefaults ?? tierDefaults.personal;
   const agentLimitTier = options.agentLimitTier ?? confirmationDefaults.tier;
@@ -269,6 +272,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
 
         try {
           const input = tool.inputSchema.parse(rawInput);
+          let dlpOutputScan: ReturnType<typeof dlpToolInvocation> = null;
           const compositionResult = checkScopeComposition(actor, tool, input);
           if (!compositionResult.ok) {
             span.setAttribute(
@@ -286,6 +290,58 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
               start,
               invocationMetrics,
             );
+          }
+          const dlpInvocation = dlpToolInvocation(tool.id, input, actor);
+          if (dlpInvocation !== null && dlp !== undefined) {
+            const dlpDecision = await dlp.evaluate({
+              orgId: actor.orgId,
+              actorId: actor.id,
+              ...dlpInvocation,
+              acknowledged: options?.skipConfirmation === true,
+              ...(options?.request?.traceId === undefined
+                ? {}
+                : { traceId: options.request.traceId }),
+            });
+            if (
+              dlpDecision.action === "allow" &&
+              (dlpInvocation.boundary === "copy_export" || dlpInvocation.boundary === "api_agent")
+            ) {
+              dlpOutputScan = dlpInvocation;
+            }
+            if (dlpDecision.action === "block" || dlpDecision.action === "quarantine") {
+              throw dlpDecisionError(dlpDecision);
+            }
+            if (dlpDecision.action === "warn" && options?.skipConfirmation !== true) {
+              const dlpConfirmationGate = registryOptionsConfirmationGate();
+              if (dlpConfirmationGate === undefined) {
+                const error = new Error("DLP warning requires explicit confirmation.") as Error & {
+                  statusCode: number;
+                };
+                error.statusCode = 409;
+                throw error;
+              }
+              const pending = await dlpConfirmationGate.queue({
+                tool,
+                actor,
+                input: toJsonValue(input),
+                ...(options?.request === undefined ? {} : { request: options.request }),
+                ...(options?.request?.traceId === undefined
+                  ? {}
+                  : { traceId: options.request.traceId }),
+              });
+              return toolInvokeResultWithSpan(
+                span,
+                {
+                  ok: true,
+                  status: "pending_confirmation",
+                  output: { status: "pending_confirmation", pending } as Output,
+                  pending,
+                },
+                tool.id,
+                start,
+                invocationMetrics,
+              );
+            }
           }
           const context = createToolContext(
             options?.request,
@@ -329,6 +385,53 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
           }
           const output = await tool.handler(input, context);
           const parsedOutput = tool.outputSchema.parse(output) as Output;
+          if (dlpOutputScan !== null && dlp !== undefined) {
+            const postDecision = await dlp.evaluate({
+              orgId: actor.orgId,
+              actorId: actor.id,
+              boundary: dlpOutputScan.boundary,
+              content: parsedOutput,
+              resources: dlpOutputScan.resources,
+              acknowledged: options?.skipConfirmation === true,
+              ...(options?.request?.traceId === undefined
+                ? {}
+                : { traceId: options.request.traceId }),
+            });
+            if (postDecision.action === "block" || postDecision.action === "quarantine") {
+              throw dlpDecisionError(postDecision);
+            }
+            if (postDecision.action === "warn" && options?.skipConfirmation !== true) {
+              const dlpConfirmationGate = registryOptionsConfirmationGate();
+              if (dlpConfirmationGate === undefined) {
+                const error = new Error("DLP warning requires explicit confirmation.") as Error & {
+                  statusCode: number;
+                };
+                error.statusCode = 409;
+                throw error;
+              }
+              const pending = await dlpConfirmationGate.queue({
+                tool,
+                actor,
+                input: toJsonValue(input),
+                ...(options?.request === undefined ? {} : { request: options.request }),
+                ...(options?.request?.traceId === undefined
+                  ? {}
+                  : { traceId: options.request.traceId }),
+              });
+              return toolInvokeResultWithSpan(
+                span,
+                {
+                  ok: true,
+                  status: "pending_confirmation",
+                  output: { status: "pending_confirmation", pending } as Output,
+                  pending,
+                },
+                tool.id,
+                start,
+                invocationMetrics,
+              );
+            }
+          }
           await recordAgentCost(
             actor,
             estimatedCostUsdMicros,

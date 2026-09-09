@@ -9,6 +9,7 @@ import { driveRecordToIndexDocument } from "../drive/search/indexer.js";
 import { PostgresDriveStore } from "../drive/index.js";
 import { mailRecordToIndexDocument } from "../mail/search/indexer.js";
 import { PostgresMailStore } from "../mail/index.js";
+import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
 import type { IndexDocument, SearchEngine } from "./types.js";
 
 export const searchReindexTypes = ["mail", "chat", "docs", "drive", "calendar"] as const;
@@ -35,6 +36,58 @@ export interface SearchReindexRunner {
   reindex(input?: SearchReindexRequest): Promise<SearchReindexResult>;
 }
 
+export interface SearchReconciliationWorkerOptions {
+  readonly service: SearchReindexRunner;
+  readonly intervalMs?: number;
+  readonly onResult?: (result: SearchReindexResult) => void;
+  readonly onError?: (error: unknown) => void;
+}
+
+/** Repairs missed Drive projections from the authoritative database. */
+export class SearchReconciliationWorker {
+  private timer: NodeJS.Timeout | undefined;
+  private active: Promise<SearchReindexResult> | undefined;
+
+  constructor(private readonly options: SearchReconciliationWorkerOptions) {}
+
+  start(): void {
+    if (this.timer !== undefined) return;
+    this.timer = setInterval(
+      () => void this.run().catch(() => undefined),
+      this.options.intervalMs ?? 300_000,
+    );
+    void this.run().catch(() => undefined);
+  }
+
+  async stop(): Promise<void> {
+    if (this.timer !== undefined) clearInterval(this.timer);
+    this.timer = undefined;
+    await this.active;
+  }
+
+  reconcileOnce(): Promise<SearchReindexResult> {
+    return this.run();
+  }
+
+  private run(): Promise<SearchReindexResult> {
+    if (this.active !== undefined) return this.active;
+    this.active = this.options.service
+      .reindex({ types: ["drive"], pruneStale: true })
+      .then((result) => {
+        this.options.onResult?.(result);
+        return result;
+      })
+      .catch((error: unknown) => {
+        this.options.onError?.(error);
+        throw error;
+      })
+      .finally(() => {
+        this.active = undefined;
+      });
+    return this.active;
+  }
+}
+
 export interface SearchReindexSource {
   readonly type: SearchReindexType;
   collect(input: { readonly orgId?: string | undefined }): Promise<readonly IndexDocument[]>;
@@ -42,6 +95,22 @@ export interface SearchReindexSource {
     readonly orgId?: string | undefined;
     readonly batchSize: number;
   }): AsyncIterable<readonly IndexDocument[]>;
+  collectPage?(input: {
+    readonly orgId?: string | undefined;
+    readonly batchSize: number;
+    readonly cursor?: SearchReindexCursor | undefined;
+  }): Promise<SearchReindexPage>;
+}
+
+export interface SearchReindexCursor {
+  readonly updatedAt: string;
+  readonly id: string;
+}
+
+export interface SearchReindexPage {
+  readonly documents: readonly IndexDocument[];
+  readonly cursor?: SearchReindexCursor | undefined;
+  readonly done: boolean;
 }
 
 export interface SearchReindexServiceOptions {
@@ -62,7 +131,10 @@ export class SearchReindexService implements SearchReindexRunner {
     let totalDocuments = 0;
 
     for (const source of sources) {
-      for await (const documents of collectSourceBatches(source, { orgId: input.orgId, batchSize })) {
+      for await (const documents of collectSourceBatches(source, {
+        orgId: input.orgId,
+        batchSize,
+      })) {
         counts[source.type] += documents.length;
         totalDocuments += documents.length;
         for (const document of documents) {
@@ -101,28 +173,35 @@ export class SearchReindexService implements SearchReindexRunner {
     readonly currentIdsByType: Record<SearchReindexType, Set<string>>;
     readonly batchSize: number;
   }): Promise<number> {
-    const staleIds: string[] = [];
+    const staleIdsByOrg = new Map<string | undefined, string[]>();
     for (const type of input.types) {
       const currentIds = input.currentIdsByType[type];
-      const indexedIds = await this.collectIndexedIds({ type, orgId: input.orgId });
-      for (const indexedId of indexedIds) {
-        if (!currentIds.has(indexedId)) {
-          staleIds.push(indexedId);
+      const indexedDocuments = await this.collectIndexedDocuments({ type, orgId: input.orgId });
+      for (const indexedDocument of indexedDocuments) {
+        if (!currentIds.has(indexedDocument.id)) {
+          const orgId = input.orgId ?? indexedDocument.orgId;
+          const staleIds = staleIdsByOrg.get(orgId) ?? [];
+          staleIds.push(indexedDocument.id);
+          staleIdsByOrg.set(orgId, staleIds);
         }
       }
     }
 
-    for (const batch of chunks(staleIds, input.batchSize)) {
-      await this.options.engine.delete(batch);
+    let deletedDocuments = 0;
+    for (const [orgId, staleIds] of staleIdsByOrg) {
+      deletedDocuments += staleIds.length;
+      for (const batch of chunks(staleIds, input.batchSize)) {
+        await this.options.engine.delete(batch, orgId);
+      }
     }
-    return staleIds.length;
+    return deletedDocuments;
   }
 
-  private async collectIndexedIds(input: {
+  private async collectIndexedDocuments(input: {
     readonly type: SearchReindexType;
     readonly orgId?: string | undefined;
-  }): Promise<readonly string[]> {
-    const ids: string[] = [];
+  }): Promise<readonly { readonly id: string; readonly orgId?: string }[]> {
+    const documents: { readonly id: string; readonly orgId?: string }[] = [];
     const pageSize = 1000;
     let offset = 0;
     for (;;) {
@@ -131,16 +210,26 @@ export class SearchReindexService implements SearchReindexRunner {
         types: [input.type],
         limit: pageSize,
         offset,
-        ...(input.orgId === undefined ? {} : { filter: `attributes.orgId = ${JSON.stringify(input.orgId)}` }),
+        ...(input.orgId === undefined
+          ? {}
+          : { filter: `attributes.orgId = ${JSON.stringify(input.orgId)}` }),
         attributesToRetrieve: ["id", "type", "attributes"],
       });
-      ids.push(...response.hits.map((hit) => hit.id));
+      documents.push(
+        ...response.hits.map((hit) => {
+          const orgId = hit.attributes?.orgId;
+          return {
+            id: hit.id,
+            ...(typeof orgId === "string" ? { orgId } : {}),
+          };
+        }),
+      );
       if (response.hits.length < pageSize) {
         break;
       }
       offset += pageSize;
     }
-    return ids;
+    return documents;
   }
 }
 
@@ -166,7 +255,7 @@ export function createPostgresSearchReindexSources(
       type: "mail",
       tableName: "messages",
       predicate: "kind = 'mail' and deleted_at is null",
-      load: (id) => mail.getMailSearchRecord(id),
+      load: (id, orgId) => mail.getMailSearchRecordsForIndexing({ messageId: id, orgId }),
       map: mailRecordToIndexDocument,
     }),
     postgresSource({
@@ -214,7 +303,7 @@ interface PostgresSourceOptions<Record> {
   readonly type: SearchReindexType;
   readonly tableName: "messages" | "docs_documents" | "objects" | "cal_events";
   readonly predicate: string;
-  readonly load: (id: string) => Promise<Record | null>;
+  readonly load: (id: string, orgId?: string) => Promise<Record | readonly Record[] | null>;
   readonly map: (record: Record) => IndexDocument;
 }
 
@@ -234,65 +323,146 @@ function postgresSource<Record>(options: PostgresSourceOptions<Record>): SearchR
         orgId,
         pageSize: batchSize,
       }),
+    collectPage: async ({ orgId, batchSize, cursor }) => {
+      if (orgId === undefined) {
+        const rows = await collectDurableIdPage(options.sql, options.type, batchSize, cursor);
+        const documents: IndexDocument[] = [];
+        const rowsByOrg = new Map<string, (typeof rows)[number][]>();
+        for (const row of rows) {
+          const orgRows = rowsByOrg.get(row.orgId) ?? [];
+          orgRows.push(row);
+          rowsByOrg.set(row.orgId, orgRows);
+        }
+        for (const [rowOrgId, orgRows] of rowsByOrg) {
+          await withTenantIoSagaPostgresContext(
+            options.sql,
+            { orgId: rowOrgId, serviceContext: true },
+            async () => {
+              documents.push(
+                ...(await collectDocuments(
+                  orgRows.map((row) => row.id),
+                  (id) => options.load(id, rowOrgId),
+                  options.map,
+                )),
+              );
+            },
+          );
+        }
+        const last = rows.at(-1);
+        return {
+          documents,
+          done: rows.length < batchSize,
+          ...(last === undefined
+            ? {}
+            : { cursor: { id: last.id, updatedAt: last.updatedAt.toISOString() } }),
+        };
+      }
+      const rows = await collectIdPage({
+        sql: options.sql,
+        tableName: options.tableName,
+        predicate: options.predicate,
+        orgId,
+        limit: batchSize,
+        cursor:
+          cursor === undefined
+            ? undefined
+            : { id: cursor.id, updatedAt: new Date(cursor.updatedAt) },
+      });
+      const documents = await collectDocuments(
+        rows.map((row) => row.id),
+        (id) => options.load(id, orgId),
+        options.map,
+      );
+      const last = rows.at(-1);
+      return {
+        documents,
+        done: rows.length < batchSize,
+        ...(last === undefined
+          ? {}
+          : { cursor: { id: last.id, updatedAt: last.updatedAt.toISOString() } }),
+      };
+    },
   };
+}
+
+async function collectDurableIdPage(
+  sql: postgres.Sql,
+  type: SearchReindexType,
+  limit: number,
+  cursor: SearchReindexCursor | undefined,
+): Promise<readonly { readonly id: string; readonly orgId: string; readonly updatedAt: Date }[]> {
+  const rows = await sql<{ id: string; org_id: string; updated_at: Date }[]>`
+    select * from helix_search_reindex_id_page(
+      ${type}, ${cursor?.updatedAt ?? null}, ${cursor?.id ?? null}, ${limit}
+    )
+  `;
+  return rows.map((row) => ({ id: row.id, orgId: row.org_id, updatedAt: row.updated_at }));
 }
 
 async function* collectPostgresDocumentBatches<Record>(
   options: PostgresSourceOptions<Record> & { readonly orgId?: string | undefined },
 ): AsyncIterable<readonly IndexDocument[]> {
-  let offset = 0;
+  let cursor: { readonly updatedAt: Date; readonly id: string } | undefined;
   for (;;) {
-    const ids = await collectIds({
+    const rows = await collectIdPage({
       sql: options.sql,
       tableName: options.tableName,
       predicate: options.predicate,
       orgId: options.orgId,
       limit: options.pageSize,
-      offset,
+      cursor,
     });
-    if (ids.length === 0) {
+    if (rows.length === 0) {
       return;
     }
 
-    const documents = await collectDocuments(ids, options.load, options.map);
+    const ids = rows.map((row) => row.id);
+    const documents = await collectDocuments(
+      ids,
+      (id) => options.load(id, options.orgId),
+      options.map,
+    );
     if (documents.length > 0) {
       yield documents;
     }
     if (ids.length < options.pageSize) {
       return;
     }
-    offset += options.pageSize;
+    const last = rows.at(-1);
+    if (last === undefined) return;
+    cursor = { id: last.id, updatedAt: last.updatedAt };
   }
 }
 
 async function collectDocuments<Record>(
   ids: readonly string[],
-  load: (id: string) => Promise<Record | null>,
+  load: (id: string) => Promise<Record | readonly Record[] | null>,
   map: (record: Record) => IndexDocument,
 ): Promise<readonly IndexDocument[]> {
   const documents: IndexDocument[] = [];
   for (const id of ids) {
-    const record = await load(id);
-    if (record !== null) {
-      documents.push(map(record));
+    const loaded = await load(id);
+    if (loaded !== null) {
+      const records = Array.isArray(loaded) ? loaded : [loaded as Record];
+      documents.push(...records.map(map));
     }
   }
   return documents;
 }
 
-async function collectIds(input: {
+async function collectIdPage(input: {
   readonly sql: postgres.Sql;
   readonly tableName: "messages" | "docs_documents" | "objects" | "cal_events";
   readonly predicate: string;
   readonly orgId: string | undefined;
   readonly limit: number;
-  readonly offset: number;
-}): Promise<readonly string[]> {
-  const rows = (await input.sql.unsafe(
-    `select id from ${input.tableName} where ${input.predicate} and ($1::uuid is null or org_id = $1::uuid) order by updated_at asc, id asc limit $2 offset $3`,
-    [input.orgId ?? null, input.limit, input.offset],
-  )) as unknown as readonly { readonly id: string }[];
-  return rows.map((row) => row.id);
+  readonly cursor: { readonly updatedAt: Date; readonly id: string } | undefined;
+}): Promise<readonly { readonly id: string; readonly updatedAt: Date }[]> {
+  const rows = await input.sql.unsafe<{ readonly id: string; readonly updated_at: Date }[]>(
+    `select id, updated_at from ${input.tableName} where ${input.predicate} and ($1::uuid is null or org_id = $1::uuid) and ($3::timestamptz is null or (updated_at, id) > ($3::timestamptz, $4::uuid)) order by updated_at asc, id asc limit $2`,
+    [input.orgId ?? null, input.limit, input.cursor?.updatedAt ?? null, input.cursor?.id ?? null],
+  );
+  return rows.map((row) => ({ id: row.id, updatedAt: row.updated_at }));
 }
 
 async function* collectSourceBatches(
@@ -309,7 +479,9 @@ async function* collectSourceBatches(
   }
 }
 
-function normalizeTypes(types: readonly SearchReindexType[] | undefined): readonly SearchReindexType[] {
+function normalizeTypes(
+  types: readonly SearchReindexType[] | undefined,
+): readonly SearchReindexType[] {
   if (types === undefined || types.length === 0) {
     return searchReindexTypes;
   }

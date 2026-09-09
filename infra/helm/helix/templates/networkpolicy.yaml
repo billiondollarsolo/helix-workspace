@@ -1,50 +1,162 @@
-{{- if .Values.networkPolicy.enabled }}
+{{- include "helix.validateValues" . }}
+{{- define "helix.networkPolicy" }}
+{{- $root := .root }}
+{{- $role := .role }}
+{{- $policy := .policy }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "helix.fullname" . }}
+  name: {{ printf "%s-%s" (include "helix.fullname" $root) $role | trunc 63 | trimSuffix "-" }}
   labels:
-    {{- include "helix.labels" . | nindent 4 }}
+    {{- include "helix.labels" $root | nindent 4 }}
+    helix.io/role: {{ $role | quote }}
+  {{- if .hook }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  {{- end }}
 spec:
   podSelector:
     matchLabels:
-      {{- include "helix.selectorLabels" . | nindent 6 }}
+      {{- include "helix.selectorLabels" $root | nindent 6 }}
+      helix.io/role: {{ $role | quote }}
+      helix.io/service-account: {{ include "helix.serviceAccountName" $root | quote }}
   policyTypes:
     - Ingress
     - Egress
+  {{- if $policy.ingress }}
   ingress:
     - from:
+        {{- range $source := $policy.ingress }}
         - namespaceSelector:
-            {{- toYaml .Values.networkPolicy.ingress.namespaceSelector | nindent 12 }}
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $source.namespace | quote }}
           podSelector:
-            {{- toYaml .Values.networkPolicy.ingress.podSelector | nindent 12 }}
+            matchLabels:
+              helix.io/service-account: {{ $source.serviceAccount | quote }}
+              {{- toYaml $source.podLabels | nindent 14 }}
+        {{- end }}
       ports:
         - protocol: TCP
           port: 3000
-  {{- if .Values.networkPolicy.egress.allowAll }}
+  {{- else }}
+  ingress: []
+  {{- end }}
+  {{- $egress := $policy.egress }}
+  {{- if or $root.Values.networkPolicy.dns.enabled $egress.publicHttps $egress.endpoints $egress.inCluster (and .database $root.Values.cloudnativepg.enabled) .contentConverter }}
   egress:
-    - {}
-  {{- else if or .Values.networkPolicy.egress.allowDns .Values.networkPolicy.egress.cidrs }}
-  egress:
-    {{- if .Values.networkPolicy.egress.allowDns }}
+    {{- if $root.Values.networkPolicy.dns.enabled }}
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: kube-system
+              kubernetes.io/metadata.name: {{ $root.Values.networkPolicy.dns.namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- toYaml $root.Values.networkPolicy.dns.podLabels | nindent 14 }}
       ports:
         - protocol: UDP
           port: 53
         - protocol: TCP
           port: 53
     {{- end }}
-    {{- range .Values.networkPolicy.egress.cidrs }}
+    {{- if $egress.publicHttps }}
     - to:
         - ipBlock:
-            cidr: {{ . | quote }}
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.0.2.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 198.51.100.0/24
+              - 203.0.113.0/24
+              - 224.0.0.0/4
+              - 240.0.0.0/4
       ports:
-        {{- toYaml $.Values.networkPolicy.egress.ports | nindent 8 }}
+        - protocol: TCP
+          port: 443
+    - to:
+        - ipBlock:
+            cidr: 2000::/3
+            except:
+              - 2001::/23
+              - 2001:db8::/32
+              - 2002::/16
+              - 3fff::/20
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+    {{- range $destination := $egress.endpoints }}
+    - to:
+        - ipBlock:
+            cidr: {{ $destination.cidr | quote }}
+      ports:
+        {{- range $port := $destination.ports }}
+        - protocol: TCP
+          port: {{ $port }}
+        {{- end }}
+    {{- end }}
+    {{- range $destination := $egress.inCluster }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $destination.namespace | quote }}
+          podSelector:
+            matchLabels:
+              helix.io/service-account: {{ $destination.serviceAccount | quote }}
+              {{- toYaml $destination.podLabels | nindent 14 }}
+      ports:
+        {{- range $port := $destination.ports }}
+        - protocol: TCP
+          port: {{ $port }}
+        {{- end }}
+    {{- end }}
+    {{- if and .database $root.Values.cloudnativepg.enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $root.Release.Namespace | quote }}
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ $root.Values.cloudnativepg.clusterName | quote }}
+              cnpg.io/podRole: instance
+              helix.io/service-account: {{ $root.Values.cloudnativepg.clusterName | quote }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
+    {{- if .contentConverter }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $root.Release.Namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- include "helix.selectorLabels" $root | nindent 14 }}
+              helix.io/role: content-converter
+              helix.io/service-account: {{ include "helix.serviceAccountName" $root | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $root.Values.contentConverter.port }}
     {{- end }}
   {{- else }}
   egress: []
   {{- end }}
 {{- end }}
+
+{{ include "helix.networkPolicy" (dict "root" . "role" "default" "policy" .Values.networkPolicy.application "database" true "contentConverter" true) }}
+{{- range $role := .Values.roleDeployments }}
+{{- $rolePolicy := $role.networkPolicy | default $.Values.networkPolicy.roleDefault }}
+---
+{{ include "helix.networkPolicy" (dict "root" $ "role" $role.name "policy" $rolePolicy "database" true) }}
+{{- end }}
+---
+{{ include "helix.networkPolicy" (dict "root" . "role" "image-verifier" "policy" .Values.networkPolicy.imageVerifier "hook" true) }}

@@ -25,6 +25,7 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import type postgres from "postgres";
 import { hashPassword } from "@better-auth/utils/password";
+import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
 
 /** Derive a stable Better-Auth user id from an email. Sessions reference
@@ -53,9 +54,9 @@ const ADMIN_SCOPES = [
   "docs.comment",
   "calendar.read",
   "calendar.write",
+  "calendar.manage",
   "calendar.external",
   "chat.read",
-  "chat.write",
   "chat.post",
   "chat.create",
   "meet.read",
@@ -102,7 +103,8 @@ const USER_SCOPES = [
   "calendar.read",
   "calendar.write",
   "chat.read",
-  "chat.write",
+  "chat.post",
+  "chat.create",
   "meet.read",
   "meet.write",
   "assistant.read",
@@ -283,17 +285,6 @@ async function wipe(sql: postgres.Sql): Promise<void> {
     }
   }
 
-  // Detach `user.actor_id` from the about-to-be-deleted actors. The FK
-  // doesn't cascade, so any user row still pointing at an actor would
-  // block the actor delete. Setting to null first severs the link
-  // cleanly; reseedActors() re-binds it to the new random actor id
-  // when it upserts the user row.
-  try {
-    await sql`update "user" set actor_id = null where email like '%@helix.local'`;
-  } catch {
-    /* table may differ on older dev DBs */
-  }
-
   // Actors last (FK target for almost everything). The TRUNCATE CASCADE
   // above will have left them dangling — wipe just the @helix.local ones
   // so any system accounts (if present) survive.
@@ -301,23 +292,24 @@ async function wipe(sql: postgres.Sql): Promise<void> {
 }
 
 async function ensureOrg(sql: postgres.Sql): Promise<string> {
-  // Helix has no `orgs` table — org_id is just a UUID referenced from
-  // every other table. Reuse the most-common existing org if any actor
-  // remains in the DB; otherwise mint a fresh random one.
   const rows = (await sql`
-    select org_id, count(*) as n
-    from actors
-    group by org_id
-    order by n desc
+    select id
+    from orgs
+    where status = 'active'
+    order by created_at
     limit 1
-  `) as unknown as readonly { readonly org_id: string; readonly n: string | number }[];
-  const mostCommonOrg = rows[0];
-  if (mostCommonOrg !== undefined) return mostCommonOrg.org_id;
-  return randomUUID();
+  `) as unknown as readonly { readonly id: string }[];
+  if (rows[0] !== undefined) return rows[0].id;
+  const id = randomUUID();
+  await sql`
+    insert into orgs (id, slug, display_name, status)
+    values (${id}, ${`reseed-${id.slice(0, 8)}`}, 'Reseed workspace', 'active')
+  `;
+  return id;
 }
 
 async function reseedActors(
-  sql: postgres.Sql,
+  sql: postgres.Sql | postgres.TransactionSql,
   orgId: string,
 ): Promise<ReadonlyMap<string, string>> {
   process.stdout.write(
@@ -344,12 +336,9 @@ async function reseedActors(
       continue;
     }
 
-    // Better-Auth user id is STABLE across reseeds (derived from email).
-    // The actor id underneath rotates randomly, but session cookies key
-    // off user.id, so existing logins survive a reseed. The auth
-    // resolver finds the right actor via:
-    //   1. `actors.metadata -> 'betterAuth' ->> 'userId'` (primary)
-    //   2. `email` within the request's org (fallback)
+    // Better-Auth user id is stable across reseeds. The provider link points
+    // to the global subject while the replacement actor becomes its new
+    // tenant-local membership.
     const userId = stableUserIdForEmail(principal.email);
     const passwordHash = await hashPassword(principal.password);
     await sql`
@@ -357,23 +346,16 @@ async function reseedActors(
       values (
         ${actorId}, ${orgId}, 'user', ${principal.email}, ${principal.displayName},
         ${sql.array(scopes, 1009)},
-        ${sql.json({
-          source: "reseed",
-          title: principal.title ?? null,
-          betterAuth: { userId, emailVerified: true },
-        })}
+        ${sql.json({ source: "reseed", title: principal.title ?? null })}
       )
     `;
-    // Upsert the user row — same stable id every reseed so existing
-    // sessions remain valid. actor_id swings to the new random actor.
     await sql`
-      insert into "user" (id, name, email, "emailVerified", actor_id, "createdAt", "updatedAt")
-      values (${userId}, ${principal.displayName}, ${principal.email}, true, ${actorId}, now(), now())
+      insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+      values (${userId}, ${principal.displayName}, ${principal.email}, true, now(), now())
       on conflict (id) do update set
         name = excluded.name,
         email = excluded.email,
         "emailVerified" = true,
-        actor_id = excluded.actor_id,
         "updatedAt" = now()
     `;
     await sql`
@@ -384,6 +366,14 @@ async function reseedActors(
         ${passwordHash}, now(), now()
       )
     `;
+    const linked = await sql<{ readonly actor_id: string | null }[]>`
+      select helix_activate_identity_membership(
+        'better-auth', ${userId}, ${orgId}, ${principal.email}, ${principal.displayName}
+      ) as actor_id
+    `;
+    if (linked[0]?.actor_id !== actorId) {
+      throw new Error(`Failed to link reseeded login ${principal.email}.`);
+    }
     process.stdout.write(
       `  ${actorId.slice(0, 8)}… ${principal.email.padEnd(28)} ${principal.displayName}  (pw=${principal.password})\n`,
     );
@@ -408,7 +398,7 @@ async function main(): Promise<void> {
   try {
     await wipe(sql);
     const orgId = await ensureOrg(sql);
-    await reseedActors(sql, orgId);
+    await withTenantPostgresContext(sql, { orgId }, (tx) => reseedActors(tx, orgId));
     process.stdout.write(`\nOrg id: ${orgId}\n\n`);
   } finally {
     await sql.end({ timeout: 5 });

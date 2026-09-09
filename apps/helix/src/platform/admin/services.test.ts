@@ -77,7 +77,6 @@ describe("admin services catalog", () => {
     const meet = serviceById(response.services, "meet");
 
     expect(mail).toMatchObject({
-      pluginId: "com.helix.core.mail",
       status: "configured",
       adminScopes: ["mail.admin", "admin.config.read", "admin.config.write"],
     });
@@ -87,9 +86,9 @@ describe("admin services catalog", () => {
     expect(drive.tools).toEqual(
       expect.arrayContaining(["drive.upload", "drive.share", "drive.search"]),
     );
-    expect(drive.apiRoutes).toEqual(expect.arrayContaining(["/dav/files/*", "/mcp"]));
+    expect(drive.apiRoutes).toEqual(expect.arrayContaining(["/v1/dav/files/*", "/v1/mcp"]));
     expect(docs).toMatchObject({
-      realtimeRoutes: ["/sync/docs/:docId"],
+      realtimeRoutes: ["/v1/sync/docs/:docId"],
     });
     expect(meet.capabilities).toEqual(expect.arrayContaining(["video:jitsi", "jwt-minting"]));
     expect(JSON.stringify(response)).not.toContain("secret-password");
@@ -124,7 +123,7 @@ describe("admin services catalog", () => {
       },
     });
     expect(detail.json<AdminServiceResponse>().service.realtimeRoutes).toEqual(
-      expect.arrayContaining(["/ws/chat"]),
+      expect.arrayContaining(["/v1/ws/chat"]),
     );
 
     const readiness = await app.inject({
@@ -172,7 +171,7 @@ describe("admin services catalog", () => {
     const capabilitiesJson = capabilities.json<AdminServiceCapabilitiesResponse>();
     expect(capabilitiesJson).toMatchObject({
       serviceId: "docs",
-      routes: { realtime: ["/sync/docs/:docId"] },
+      routes: { realtime: ["/v1/sync/docs/:docId"] },
     });
     expect(capabilitiesJson.capabilities).toEqual(
       expect.arrayContaining(["yjs-sync", "editor:tiptap"]),
@@ -205,7 +204,7 @@ describe("admin services catalog", () => {
     expect(actionsJson.actions[0]).toMatchObject({
       id: "search.reindex",
       method: "POST",
-      path: "/api/admin/search/reindex",
+      path: "/v1/api/admin/search/reindex",
     });
 
     await app.close();
@@ -232,7 +231,7 @@ describe("admin services catalog", () => {
     const routesJson = routes.json<AdminServiceRoutesResponse>();
     expect(routesJson).toMatchObject({ serviceId: "drive" });
     expect(routesJson.routes.api).toEqual(
-      expect.arrayContaining(["/dav/files/*", "/api/tools/drive.*", "/mcp"]),
+      expect.arrayContaining(["/v1/dav/files/*", "/v1/api/tools/drive.*", "/v1/mcp"]),
     );
 
     const scopes = await app.inject({ method: "GET", url: "/api/admin/services/auth/scopes" });
@@ -280,7 +279,7 @@ describe("admin services catalog", () => {
     expect(operations.statusCode).toBe(200);
     const operationsJson = operations.json<AdminServiceOperationsResponse>();
     expect(operationsJson.actions.find((action) => action.id === "restore.create")).toMatchObject({
-      path: "/api/admin/restores",
+      path: "/v1/api/admin/restores",
       destructive: true,
     });
     expect(operationsJson.metrics).toEqual(

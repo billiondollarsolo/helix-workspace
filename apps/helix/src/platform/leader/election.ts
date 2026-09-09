@@ -187,6 +187,7 @@ export class SingletonWorkerSupervisor {
   private started = false;
   private stopped = false;
   private workerRunning = false;
+  private acquisitionHealthy = true;
 
   constructor(private readonly options: SingletonWorkerSupervisorOptions) {
     this.retryIntervalMs = options.retryIntervalMs ?? defaultRetryIntervalMs;
@@ -195,6 +196,15 @@ export class SingletonWorkerSupervisor {
   /** True once this replica has won leadership and started the worker. */
   get isLeader(): boolean {
     return this.workerRunning;
+  }
+
+  get name(): string {
+    return this.options.name;
+  }
+
+  /** Non-leaders are healthy; acquisition/start failures make the supervisor unready. */
+  get isHealthy(): boolean {
+    return this.started && !this.stopped && this.acquisitionHealthy;
   }
 
   async start(): Promise<void> {
@@ -241,6 +251,7 @@ export class SingletonWorkerSupervisor {
     }
     try {
       const lease = await this.options.election.tryAcquire(this.options.name);
+      this.acquisitionHealthy = true;
       if (this.isStopped()) {
         await lease.release();
         return;
@@ -259,6 +270,7 @@ export class SingletonWorkerSupervisor {
           .then(() => this.options.worker.start())
           .catch((error: unknown) => {
             this.workerRunning = false;
+            this.acquisitionHealthy = false;
             this.options.onError?.(error, this.options.name);
           });
       } else {
@@ -266,6 +278,7 @@ export class SingletonWorkerSupervisor {
         this.scheduleRetry();
       }
     } catch (error) {
+      this.acquisitionHealthy = false;
       this.options.onError?.(error, this.options.name);
       this.scheduleRetry();
     }

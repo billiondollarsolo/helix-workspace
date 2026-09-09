@@ -51,7 +51,10 @@ export function chatRoomListQueryOptions(
   });
 }
 
-export function chatMessageListQueryOptions(roomId: string | undefined, limit = CHAT_MESSAGE_PAGE_SIZE) {
+export function chatMessageListQueryOptions(
+  roomId: string | undefined,
+  limit = CHAT_MESSAGE_PAGE_SIZE,
+) {
   return queryOptions({
     queryKey: chatQueryKeys.messages(roomId, limit),
     queryFn: () => {
@@ -66,8 +69,8 @@ export function chatMessageListQueryOptions(roomId: string | undefined, limit = 
 }
 
 /**
- * Infinite history: pages are newest-first from the API; `before` is the oldest
- * loaded message's `sentAt`. Stop when a page returns fewer than `limit` rows.
+ * Infinite history: pages are newest-first from the API; the composite cursor
+ * keeps equal-timestamp messages stable. Stop when a page has fewer than `limit` rows.
  */
 export function chatMessageListInfiniteQueryOptions(roomId: string | undefined) {
   return infiniteQueryOptions({
@@ -82,13 +85,13 @@ export function chatMessageListInfiniteQueryOptions(roomId: string | undefined) 
         ...(pageParam === undefined ? {} : { before: pageParam }),
       });
     },
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: undefined as { readonly sentAt: string; readonly id: string } | undefined,
     getNextPageParam: (lastPage) => {
       if (lastPage.length < CHAT_MESSAGE_PAGE_SIZE) {
         return undefined;
       }
       const oldest = lastPage[lastPage.length - 1];
-      return oldest?.sentAt;
+      return oldest === undefined ? undefined : { sentAt: oldest.sentAt, id: oldest.id };
     },
     enabled: roomId !== undefined,
     throwOnError: false,

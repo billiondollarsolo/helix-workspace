@@ -1,7 +1,7 @@
 import { pathToFileURL } from "node:url";
 import type postgres from "postgres";
 import { createSqlClient } from "./client.js";
-import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
+import { DEFAULT_LOCAL_OAUTH_ACTOR_ID, DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 import { createDemoTimeline, LOCAL_DEMO_IDS } from "./seed-local-demo.js";
 import { calendarRecordToIndexDocument } from "../platform/calendar/search/indexer.js";
 import { PostgresCalendarStore } from "../platform/calendar/store.js";
@@ -96,10 +96,8 @@ async function demoIndexDocuments(
 
   const documents: IndexDocument[] = [];
   for (const messageId of searchRecordIds("mail")) {
-    const record = await mail.getMailSearchRecord(messageId);
-    if (record !== null && record.orgId === orgId) {
-      documents.push(mailRecordToIndexDocument(record));
-    }
+    const records = await mail.getMailSearchRecordsForIndexing({ messageId, orgId });
+    documents.push(...records.map(mailRecordToIndexDocument));
   }
   for (const fileId of searchRecordIds("drive")) {
     const record = await drive.getDriveSearchRecord(fileId);
@@ -132,7 +130,7 @@ export const LOCAL_DEMO_SEARCH_DOCUMENTS = [
   {
     type: "mail",
     recordId: LOCAL_DEMO_IDS.mailAmazonMessage,
-    expectedId: `mail:${LOCAL_DEMO_IDS.mailAmazonMessage}`,
+    expectedId: `mail:${DEFAULT_LOCAL_OAUTH_ACTOR_ID}:${LOCAL_DEMO_IDS.mailAmazonMessage}`,
     query: "Amazon arriving",
     expectedTitle: "3 items from Amazon arriving tomorrow",
     expectedUrl: `/mail/${LOCAL_DEMO_IDS.mailAmazonThread}?message=${LOCAL_DEMO_IDS.mailAmazonMessage}`,
@@ -150,7 +148,7 @@ export const LOCAL_DEMO_SEARCH_DOCUMENTS = [
   {
     type: "mail",
     recordId: LOCAL_DEMO_IDS.mailRenovateMessage,
-    expectedId: `mail:${LOCAL_DEMO_IDS.mailRenovateMessage}`,
+    expectedId: `mail:${DEFAULT_LOCAL_OAUTH_ACTOR_ID}:${LOCAL_DEMO_IDS.mailRenovateMessage}`,
     query: "Renovate",
     expectedTitle: "[AlphaBravoCompany/remotedialer] Run failed: Renovate - main",
     expectedUrl: `/mail/${LOCAL_DEMO_IDS.mailRenovateThread}?message=${LOCAL_DEMO_IDS.mailRenovateMessage}`,
@@ -168,7 +166,7 @@ export const LOCAL_DEMO_SEARCH_DOCUMENTS = [
   {
     type: "mail",
     recordId: LOCAL_DEMO_IDS.mailPlanningMessage,
-    expectedId: `mail:${LOCAL_DEMO_IDS.mailPlanningMessage}`,
+    expectedId: `mail:${DEFAULT_LOCAL_OAUTH_ACTOR_ID}:${LOCAL_DEMO_IDS.mailPlanningMessage}`,
     query: "expanded responsibilities",
     expectedTitle: "Request to revisit compensation for expanded responsibilities",
     expectedUrl: `/mail/${LOCAL_DEMO_IDS.mailPlanningThread}?message=${LOCAL_DEMO_IDS.mailPlanningMessage}`,
@@ -186,7 +184,7 @@ export const LOCAL_DEMO_SEARCH_DOCUMENTS = [
   {
     type: "mail",
     recordId: LOCAL_DEMO_IDS.mailPianoMessage,
-    expectedId: `mail:${LOCAL_DEMO_IDS.mailPianoMessage}`,
+    expectedId: `mail:${DEFAULT_LOCAL_OAUTH_ACTOR_ID}:${LOCAL_DEMO_IDS.mailPianoMessage}`,
     query: "piano lesson",
     expectedTitle: "4:40 piano lesson reminder",
     expectedUrl: `/mail/${LOCAL_DEMO_IDS.mailPianoThread}?message=${LOCAL_DEMO_IDS.mailPianoMessage}`,

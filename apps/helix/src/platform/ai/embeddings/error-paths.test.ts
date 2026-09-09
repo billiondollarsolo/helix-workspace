@@ -62,9 +62,18 @@ describe("OpenAI-compatible embedding provider — error paths", () => {
   it("throws an AIProviderRequestError on a non-2xx response", async () => {
     const provider = createOpenAICompatibleEmbeddingProvider({
       ...baseConfig,
-      fetch: fetchReturning(() => new Response("rate limited", { status: 429 })),
+      fetch: fetchReturning(
+        () =>
+          new Response("remote-body-secret", {
+            status: 429,
+            statusText: "remote-status-secret",
+          }),
+      ),
     });
-    await expect(provider.embed(["hello"])).rejects.toThrow("429");
+    const failure = await provider.embed(["hello"]).catch((error: unknown) => error);
+    expect(String(failure)).toContain("429");
+    expect(String(failure)).not.toMatch(/remote-(?:body|status)-secret/u);
+    expect(failure).toMatchObject({ status: 429 });
   });
 
   it("throws when the response body is not a JSON object", async () => {
@@ -82,9 +91,7 @@ describe("OpenAI-compatible embedding provider — error paths", () => {
         jsonResponse({ data: [{ object: "embedding", index: 0, embedding: [0.1, 0.2] }] }),
       ),
     });
-    await expect(provider.embed(["one", "two"])).rejects.toThrow(
-      "1 vectors for 2 inputs",
-    );
+    await expect(provider.embed(["one", "two"])).rejects.toThrow("1 vectors for 2 inputs");
   });
 
   it("drops rows with non-finite embedding values and surfaces a count mismatch", async () => {

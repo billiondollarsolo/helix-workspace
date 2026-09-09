@@ -1,0 +1,33 @@
+{{- if .Values.monitoring.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "helix.fullname" . }}-search
+  labels:
+    {{- include "helix.labels" . | nindent 4 }}
+    helix.io/alert-domain: search
+spec:
+  groups:
+    - name: helix.search
+      rules:
+        - alert: HelixSearchProjectionLagHigh
+          expr: max by (indexer) (helix_search_projection_lag_seconds) > 300
+          for: 10m
+          labels:
+            severity: warning
+            priority: p1
+            service: search
+          annotations:
+            runbook_url: {{ .Values.monitoring.prometheusRule.searchRunbookUrl | quote }}
+            summary: Search projection lag exceeds five minutes
+        - alert: HelixSearchProjectionErrors
+          expr: sum by (indexer) (increase(helix_search_projection_errors_total[10m])) > 0
+          for: 5m
+          labels:
+            severity: warning
+            priority: p1
+            service: search
+          annotations:
+            runbook_url: {{ .Values.monitoring.prometheusRule.searchRunbookUrl | quote }}
+            summary: Search projection events are failing
+{{- end }}

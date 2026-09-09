@@ -44,8 +44,8 @@ describe("seedLocalDemo", () => {
         password: DEFAULT_LOCAL_DEMO_PASSWORD,
       },
     });
-    expect(result.oauth.sampleTokenCommand).toContain("/oauth/token");
-    expect(recording.beginCalls).toBe(1);
+    expect(result.oauth.sampleTokenCommand).toContain("/v1/oauth/token");
+    expect(recording.beginCalls).toBe(2);
 
     const sqlText = recording.calls.map((call) => call.text).join("\n");
     expect(sqlText).toContain("insert into orgs");
@@ -160,7 +160,11 @@ function createRecordingSql(): {
   let beginCalls = 0;
 
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
+    const text = strings.join("$");
+    calls.push({ text, values });
+    if (text.includes("helix_activate_identity_membership")) {
+      return Promise.resolve([{ actor_id: DEFAULT_LOCAL_OAUTH_ACTOR_ID }]);
+    }
     return Promise.resolve([]);
   };
   const sql = Object.assign(tag, {

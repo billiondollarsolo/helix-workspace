@@ -197,7 +197,7 @@ export async function countTenantExportRows(
   sql: postgres.Sql,
   orgId: string,
 ): Promise<readonly TenantExportTableCount[]> {
-  const rows = (await sql`
+  const rows = await sql<TenantExportTableCountRow[]>`
     select 'actors' as table_name, count(*)::integer as row_count from actors where org_id = ${orgId}
     union all select 'tenant_config_audit', count(*)::integer from tenant_config_audit where org_id = ${orgId}
     union all select 'tenant_provisioning_state', count(*)::integer from tenant_provisioning_state where org_id = ${orgId}
@@ -240,13 +240,13 @@ export async function countTenantExportRows(
     union all select 'mail_thread_state', count(*)::integer from mail_thread_state where org_id = ${orgId}
     union all select 'mail_outbound_messages', count(*)::integer from mail_outbound_messages where org_id = ${orgId}
     union all select 'mail_outbound_providers', count(*)::integer from mail_outbound_providers where org_id = ${orgId}
-    union all select 'mail_sending_domains', count(*)::integer from mail_sending_domains where org_id = ${orgId}
     union all select 'mail_dkim_keys', count(*)::integer from mail_dkim_keys where org_id = ${orgId}
     union all select 'mail_dmarc_reports', count(*)::integer from mail_dmarc_reports where org_id = ${orgId}
     union all select 'mail_dmarc_report_records', count(*)::integer from mail_dmarc_report_records where org_id = ${orgId}
     union all select 'mail_inbound_routing_rules', count(*)::integer from mail_inbound_routing_rules where org_id = ${orgId}
     union all select 'drive_folders', count(*)::integer from drive_folders where org_id = ${orgId}
     union all select 'drive_versions', count(*)::integer from drive_versions where org_id = ${orgId}
+    union all select 'drive_workflows', count(*)::integer from drive_workflows where org_id = ${orgId}
     union all select 'docs_documents', count(*)::integer from docs_documents where org_id = ${orgId}
     union all select 'docs_styles', count(*)::integer from docs_styles where org_id = ${orgId}
     union all select 'docs_themes', count(*)::integer from docs_themes where org_id = ${orgId}
@@ -262,8 +262,13 @@ export async function countTenantExportRows(
     union all select 'cal_calendars', count(*)::integer from cal_calendars where org_id = ${orgId}
     union all select 'cal_calendar_memberships', count(*)::integer from cal_calendar_memberships where org_id = ${orgId}
     union all select 'cal_events', count(*)::integer from cal_events where org_id = ${orgId}
+    union all select 'cal_event_revisions', count(*)::integer from cal_event_revisions where org_id = ${orgId}
     union all select 'cal_attendees', count(*)::integer from cal_attendees where org_id = ${orgId}
+    union all select 'cal_scheduling_profiles', count(*)::integer from cal_scheduling_profiles where org_id = ${orgId}
+    union all select 'cal_resources', count(*)::integer from cal_resources where org_id = ${orgId}
+    union all select 'cal_resource_bookings', count(*)::integer from cal_resource_bookings where org_id = ${orgId}
     union all select 'carddav_contacts', count(*)::integer from carddav_contacts where org_id = ${orgId}
+    union all select 'carddav_addressbooks', count(*)::integer from carddav_addressbooks where org_id = ${orgId}
     union all select 'meet_rooms', count(*)::integer from meet_rooms where org_id = ${orgId}
     union all select 'chat_room_settings', count(*)::integer from chat_room_settings where org_id = ${orgId}
     union all select 'chat_reactions', count(*)::integer from chat_reactions where org_id = ${orgId}
@@ -273,7 +278,7 @@ export async function countTenantExportRows(
     union all select 'resource_classifications', count(*)::integer from resource_classifications where org_id = ${orgId}
     union all select 'seed_corpus_assets', count(*)::integer from seed_corpus_assets where org_id = ${orgId}
     order by table_name
-  `) as unknown as readonly TenantExportTableCountRow[];
+  `;
   return rows.map((row) => ({ table: row.table_name, rowCount: row.row_count }));
 }
 
@@ -281,14 +286,14 @@ export async function summarizeTenantExportAudit(
   sql: postgres.Sql,
   orgId: string,
 ): Promise<TenantExportAuditSummary> {
-  const rows = (await sql`
+  const rows = await sql<TenantExportAuditSummaryRow[]>`
     select
       count(*)::integer as row_count,
       min(created_at) as first_entry_at,
       max(created_at) as last_entry_at
     from activity
     where org_id = ${orgId}
-  `) as unknown as readonly TenantExportAuditSummaryRow[];
+  `;
   const row = rows[0];
   return {
     rowCount: row?.row_count ?? 0,

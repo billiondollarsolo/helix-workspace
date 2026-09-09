@@ -1,9 +1,4 @@
-/* Sheets list view — static folder + template taxonomy.
- *
- * Mirrors `apps/web/src/features/docs/data.ts` (DOC_FOLDERS / DOC_TEMPLATES)
- * so the Sheets list-page sidebar (SheetsSidebar) has the same shape as the
- * Docs sidebar. Kept as a separate file so the visual taxonomy doesn't get
- * tangled with the grid/cell helpers in `./seed`. */
+/* Sheets list view — static folder taxonomy. */
 
 import type { IconComponent } from "@/components/icons";
 import { Icons } from "@/components/icons";
@@ -23,15 +18,6 @@ export const SHEETS_FOLDERS: readonly SheetsFolder[] = [
   { id: "shared", label: "Shared with me", icon: Icons.Users },
   { id: "starred", label: "Starred", icon: Icons.Star },
   { id: "trash", label: "Trash", icon: Icons.Trash },
-];
-
-export const SHEETS_TEMPLATES: readonly string[] = [
-  "Budget tracker",
-  "Project tracker",
-  "OKR planner",
-  "Roadmap",
-  "Inventory",
-  "Pivot starter",
 ];
 
 /** Heading shown above the main pane for each folder. */

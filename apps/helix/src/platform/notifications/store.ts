@@ -34,7 +34,7 @@ export async function insertNotification(
   sql: SqlLike,
   input: NotificationInsert,
 ): Promise<NotificationRecord> {
-  const rows = (await sql`
+  const rows = await sql<NotificationRow[]>`
     insert into notifications (
       org_id, actor_id, verb, object_type, object_id, summary, body, payload
     )
@@ -49,7 +49,7 @@ export async function insertNotification(
       ${sql.json(input.payload ?? {})}
     )
     returning *
-  `) as unknown as readonly NotificationRow[];
+  `;
   const row = rows[0];
   if (row === undefined) {
     throw new Error("Failed to insert notification.");
@@ -76,29 +76,29 @@ export class PostgresNotificationStore implements NotificationStore {
   async list(input: ListNotificationsInput): Promise<readonly NotificationRecord[]> {
     const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
     const rows = input.unreadOnly
-      ? ((await this.sql`
+      ? await this.sql<NotificationRow[]>`
           select * from notifications
           where org_id = ${input.orgId}
             and actor_id = ${input.actorId}
             and read_at is null
           order by created_at desc
           limit ${limit}
-        `) as unknown as readonly NotificationRow[])
-      : ((await this.sql`
+        `
+      : await this.sql<NotificationRow[]>`
           select * from notifications
           where org_id = ${input.orgId}
             and actor_id = ${input.actorId}
           order by created_at desc
           limit ${limit}
-        `) as unknown as readonly NotificationRow[]);
+        `;
     return rows.map(mapRow);
   }
 
   async countUnread(orgId: string, actorId: string): Promise<number> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly c: number }[]>`
       select count(*)::int as c from notifications
       where org_id = ${orgId} and actor_id = ${actorId} and read_at is null
-    `) as unknown as readonly { readonly c: number }[];
+    `;
     return rows[0]?.c ?? 0;
   }
 
@@ -106,23 +106,23 @@ export class PostgresNotificationStore implements NotificationStore {
     if (ids.length === 0) {
       return 0;
     }
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       update notifications
       set read_at = now()
       where org_id = ${orgId} and actor_id = ${actorId} and read_at is null
         and id in ${this.sql(ids)}
       returning id
-    `) as unknown as readonly { readonly id: string }[];
+    `;
     return rows.length;
   }
 
   async markAllRead(orgId: string, actorId: string): Promise<number> {
-    const rows = (await this.sql`
+    const rows = await this.sql<{ readonly id: string }[]>`
       update notifications
       set read_at = now()
       where org_id = ${orgId} and actor_id = ${actorId} and read_at is null
       returning id
-    `) as unknown as readonly { readonly id: string }[];
+    `;
     return rows.length;
   }
 }

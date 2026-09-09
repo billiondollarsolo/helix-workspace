@@ -1,3 +1,5 @@
+import { outboundFetch } from "../outbound-http.js";
+
 export interface SignupRecaptchaVerifyInput {
   readonly token: string | undefined;
   readonly ip: string;
@@ -42,7 +44,7 @@ export class GoogleRecaptchaVerifier implements SignupRecaptchaVerifier {
     this.secret = options.secret;
     this.minScore = options.minScore ?? defaultMinScore;
     this.expectedAction = options.expectedAction ?? defaultExpectedAction;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? outboundFetch;
     this.endpoint = options.endpoint ?? "https://www.google.com/recaptcha/api/siteverify";
   }
 

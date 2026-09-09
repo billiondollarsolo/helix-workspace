@@ -12,6 +12,8 @@ export interface MeilisearchHttpClientOptions {
   readonly baseUrl: string;
   readonly apiKey?: string;
   readonly fetch?: typeof fetch;
+  readonly taskPollIntervalMs?: number;
+  readonly taskTimeoutMs?: number;
 }
 
 export class MeilisearchHttpError extends Error {
@@ -25,7 +27,9 @@ export class MeilisearchHttpError extends Error {
   }
 }
 
-export function createMeilisearchHttpClient(options: MeilisearchHttpClientOptions): MeilisearchClientLike {
+export function createMeilisearchHttpClient(
+  options: MeilisearchHttpClientOptions,
+): MeilisearchClientLike {
   return new MeilisearchHttpClient(options);
 }
 
@@ -33,6 +37,8 @@ class MeilisearchHttpClient implements MeilisearchClientLike {
   readonly #baseUrl: URL;
   readonly #apiKey: string | undefined;
   readonly #fetch: typeof fetch;
+  readonly #taskPollIntervalMs: number;
+  readonly #taskTimeoutMs: number;
 
   constructor(options: MeilisearchHttpClientOptions) {
     if (options.baseUrl.trim().length === 0) {
@@ -41,6 +47,8 @@ class MeilisearchHttpClient implements MeilisearchClientLike {
     this.#baseUrl = new URL(options.baseUrl);
     this.#apiKey = options.apiKey;
     this.#fetch = options.fetch ?? fetch;
+    this.#taskPollIntervalMs = options.taskPollIntervalMs ?? 50;
+    this.#taskTimeoutMs = options.taskTimeoutMs ?? 30_000;
   }
 
   index(uid: string): MeilisearchIndexLike {
@@ -60,6 +68,32 @@ class MeilisearchHttpClient implements MeilisearchClientLike {
       },
       { allowConflict: true },
     );
+  }
+
+  async waitForTask(uid: number): Promise<void> {
+    const deadline = Date.now() + this.#taskTimeoutMs;
+    while (Date.now() <= deadline) {
+      const task = await requestJson(
+        this.#baseUrl,
+        this.#fetch,
+        this.#apiKey,
+        "GET",
+        `/tasks/${String(uid)}`,
+      );
+      const status = taskStatus(task);
+      if (status === "succeeded") return;
+      if (status === "failed" || status === "canceled") {
+        throw new Error(`Meilisearch task ${String(uid)} ${status}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.#taskPollIntervalMs));
+    }
+    throw new Error(`Meilisearch task ${String(uid)} timed out`);
+  }
+
+  async swapIndexes(indexes: readonly [string, string]): Promise<unknown> {
+    return requestJson(this.#baseUrl, this.#fetch, this.#apiKey, "POST", "/swap-indexes", [
+      { indexes },
+    ]);
   }
 }
 
@@ -93,7 +127,10 @@ class MeilisearchHttpIndex implements MeilisearchIndexLike {
     );
   }
 
-  async search(query: string, options?: MeilisearchSearchOptions): Promise<MeilisearchSearchResponse> {
+  async search(
+    query: string,
+    options?: MeilisearchSearchOptions,
+  ): Promise<MeilisearchSearchResponse> {
     const response = await requestJson(
       this.baseUrl,
       this.fetchImpl,
@@ -129,9 +166,14 @@ async function requestJson(
   baseUrl: URL,
   fetchImpl: typeof fetch,
   apiKey: string | undefined,
-  method: "POST" | "PATCH",
+  method: "GET" | "POST" | "PATCH",
   path: string,
-  body: JsonObject | readonly IndexDocument[] | readonly string[] | MeilisearchIndexSettings,
+  body?:
+    | JsonObject
+    | readonly JsonObject[]
+    | readonly IndexDocument[]
+    | readonly string[]
+    | MeilisearchIndexSettings,
   options?: { readonly allowConflict?: boolean },
 ): Promise<unknown> {
   const url = new URL(path, baseUrl);
@@ -142,7 +184,7 @@ async function requestJson(
       "content-type": "application/json",
       ...(apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` }),
     },
-    body: JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await response.text();
   if (!response.ok) {
@@ -152,6 +194,11 @@ async function requestJson(
     throw new MeilisearchHttpError(response.status, response.statusText, text);
   }
   return text.length === 0 ? null : (JSON.parse(text) as unknown);
+}
+
+function taskStatus(value: unknown): string | undefined {
+  if (!isObject(value)) return undefined;
+  return typeof value.status === "string" ? value.status : undefined;
 }
 
 function parseSearchResponse(value: unknown): MeilisearchSearchResponse {
@@ -181,7 +228,9 @@ function parseSearchResponse(value: unknown): MeilisearchSearchResponse {
     ...(typeof value.estimatedTotalHits === "number"
       ? { estimatedTotalHits: value.estimatedTotalHits }
       : {}),
-    ...(typeof value.processingTimeMs === "number" ? { processingTimeMs: value.processingTimeMs } : {}),
+    ...(typeof value.processingTimeMs === "number"
+      ? { processingTimeMs: value.processingTimeMs }
+      : {}),
   };
 }
 

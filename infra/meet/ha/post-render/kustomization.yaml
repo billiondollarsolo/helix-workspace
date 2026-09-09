@@ -1,0 +1,103 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - upstream.yaml
+  - addons.yaml
+images:
+  - name: busybox
+    newName: registry.helix.invalid/meet/busybox
+    newTag: 1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+patches:
+  - target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/component=jvb
+    patch: |-
+      - op: replace
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 0
+            maxUnavailable: 1
+      - op: add
+        path: /spec/template/spec/terminationGracePeriodSeconds
+        value: 660
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            minDomains: 3
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: jvb
+            matchLabelKeys: [app.kubernetes.io/name]
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: jvb
+            matchLabelKeys: [app.kubernetes.io/name]
+      - op: add
+        path: /spec/template/spec/containers/0/lifecycle
+        value:
+          preStop:
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  deadline=$(( $(date +%s) + 600 ))
+                  until curl -fsS -X POST http://127.0.0.1:8080/colibri/drain/enable; do
+                    [ "$(date +%s)" -ge "$deadline" ] && exit 1
+                    sleep 5
+                  done
+                  while [ "$(date +%s)" -lt "$deadline" ]; do
+                    participants=$(curl -fsS http://127.0.0.1:8080/colibri/stats | sed -n 's/.*"participants"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')
+                    [ "${participants:-1}" -eq 0 ] && exit 0
+                    sleep 5
+                  done
+                  exit 1
+  - target:
+      kind: Deployment
+      labelSelector: app.kubernetes.io/component=coturn
+    patch: |-
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: coturn
+            matchLabelKeys: [app.kubernetes.io/name]
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: coturn
+            matchLabelKeys: [app.kubernetes.io/name]
+  - target:
+      kind: StatefulSet
+      labelSelector: app.kubernetes.io/component=haproxy
+    patch: |-
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            minDomains: 3
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: haproxy
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: haproxy

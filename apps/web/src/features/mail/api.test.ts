@@ -9,6 +9,7 @@ import {
   getMailThread,
   listMailFilters,
   replyToMail,
+  restoreMailThread,
   searchMail,
   sendMail,
   setMailVacation,
@@ -16,7 +17,10 @@ import {
   setMailThreadStarred,
   snoozeMailThread,
   spamMailThread,
+  unarchiveMailThread,
+  unsnoozeMailThread,
   updateMailFilter,
+  validateMailAttachmentSelection,
 } from "./api";
 import {
   mailRouteSearchFromState,
@@ -96,13 +100,16 @@ describe("mail API", () => {
   });
 
   it("sends and replies with backend tool payloads", async () => {
-    const fetchImpl = vi.fn(() => Promise.resolve(Response.json({ status: "queued" })));
+    const fetchImpl = vi.fn<typeof fetch>(() =>
+      Promise.resolve(Response.json({ status: "queued" })),
+    );
     const message = {
       to: [{ address: "sam@helix.local", name: "Sam Patel" }],
       cc: [],
       bcc: [],
       subject: "Hello",
       bodyText: "Body",
+      sendAt: "2026-05-21T12:00:00.000Z",
     };
 
     await expect(sendMail(message, fetchImpl)).resolves.toEqual({ status: "queued" });
@@ -120,6 +127,44 @@ describe("mail API", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ threadId: "thread-1", ...message }),
     });
+  });
+
+  it("rejects oversized selections before upload and strips local byte accounting on send", async () => {
+    expect(
+      validateMailAttachmentSelection([], [{ name: "too-large.bin", size: 25 * 1024 * 1024 + 1 }]),
+    ).toContain("per-file limit");
+    expect(
+      validateMailAttachmentSelection(
+        [
+          {
+            objectId: "11111111-1111-4111-8111-111111111111",
+            filename: "first.bin",
+            byteSize: 20 * 1024 * 1024,
+          },
+        ],
+        [{ name: "second.bin", size: 6 * 1024 * 1024 }],
+      ),
+    ).toContain("message limit");
+
+    const fetchImpl = vi.fn(() => Promise.resolve(Response.json({ status: "queued" })));
+    await sendMail(
+      {
+        to: [{ address: "sam@helix.local" }],
+        subject: "Attachment",
+        bodyText: "Body",
+        attachments: [
+          {
+            objectId: "11111111-1111-4111-8111-111111111111",
+            filename: "first.bin",
+            byteSize: 3,
+          },
+        ],
+      },
+      fetchImpl,
+    );
+    const request = fetchImpl.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
+    expect(JSON.parse(request[1].body as string)).not.toHaveProperty("attachments.0.byteSize");
+    expect(request[1].body).not.toContain("byteSize");
   });
 
   it("fetches a selected mail thread", async () => {
@@ -202,30 +247,36 @@ describe("mail API", () => {
     const fetchImpl = vi.fn(() => Promise.resolve(Response.json({ ok: true })));
 
     await archiveMailThread("thread-1", fetchImpl);
+    await unarchiveMailThread("thread-1", fetchImpl);
     await deleteMailThread("thread-1", fetchImpl);
+    await restoreMailThread("thread-1", fetchImpl);
     await applyMailLabels({ threadId: "thread-1", add: ["team"], remove: ["planning"] }, fetchImpl);
     await snoozeMailThread({ threadId: "thread-1", until: "2026-05-21T12:00:00.000Z" }, fetchImpl);
+    await unsnoozeMailThread("thread-1", fetchImpl);
     await setMailThreadRead({ threadId: "thread-1", unread: true }, fetchImpl);
     await setMailThreadStarred({ threadId: "thread-1", starred: true }, fetchImpl);
 
     expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/mail.archive", expect.any(Object));
-    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/mail.delete", expect.any(Object));
-    expect(fetchImpl).toHaveBeenNthCalledWith(3, "/api/tools/mail.label.apply", {
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/mail.unarchive", expect.any(Object));
+    expect(fetchImpl).toHaveBeenNthCalledWith(3, "/api/tools/mail.delete", expect.any(Object));
+    expect(fetchImpl).toHaveBeenNthCalledWith(4, "/api/tools/mail.restore", expect.any(Object));
+    expect(fetchImpl).toHaveBeenNthCalledWith(5, "/api/tools/mail.label.apply", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ threadId: "thread-1", add: ["team"], remove: ["planning"] }),
     });
-    expect(fetchImpl).toHaveBeenNthCalledWith(4, "/api/tools/mail.snooze", {
+    expect(fetchImpl).toHaveBeenNthCalledWith(6, "/api/tools/mail.snooze", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ threadId: "thread-1", until: "2026-05-21T12:00:00.000Z" }),
     });
-    expect(fetchImpl).toHaveBeenNthCalledWith(5, "/api/tools/mail.read.set", {
+    expect(fetchImpl).toHaveBeenNthCalledWith(7, "/api/tools/mail.unsnooze", expect.any(Object));
+    expect(fetchImpl).toHaveBeenNthCalledWith(8, "/api/tools/mail.read.set", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ threadId: "thread-1", unread: true }),
     });
-    expect(fetchImpl).toHaveBeenNthCalledWith(6, "/api/tools/mail.star.set", {
+    expect(fetchImpl).toHaveBeenNthCalledWith(9, "/api/tools/mail.star.set", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ threadId: "thread-1", starred: true }),

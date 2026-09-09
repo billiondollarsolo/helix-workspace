@@ -45,8 +45,29 @@ export function createScopedSearchRequest(
     return undefined;
   }
 
+  const orgFilter =
+    actor.type === "system" ? undefined : `attributes.orgId = ${JSON.stringify(actor.orgId)}`;
+  const principalFilters =
+    actor.type === "system"
+      ? []
+      : (["drive", "chat"] as const).flatMap((type) =>
+          selectedTypes.includes(type)
+            ? [
+                selectedTypes.length === 1
+                  ? `attributes.allowedActorIds = ${JSON.stringify(actor.id)}`
+                  : `(type != ${JSON.stringify(type)} OR attributes.allowedActorIds = ${JSON.stringify(actor.id)})`,
+              ]
+            : [],
+        );
+  const requiredFilters = [orgFilter, ...principalFilters].filter(
+    (value): value is string => value !== undefined,
+  );
   const filter = combineSearchFilters(
-    actor.type === "system" ? undefined : `attributes.orgId = ${JSON.stringify(actor.orgId)}`,
+    requiredFilters.length === 0
+      ? undefined
+      : requiredFilters.length === 1
+        ? requiredFilters[0]
+        : requiredFilters,
     input.filter,
   );
 
@@ -66,7 +87,7 @@ export function createScopedSearchRequest(
 }
 
 function combineSearchFilters(
-  requiredFilter: string | undefined,
+  requiredFilter: string | readonly string[] | undefined,
   extraFilter: string | readonly string[] | undefined,
 ): string | readonly string[] | undefined {
   if (requiredFilter === undefined) {
@@ -75,8 +96,9 @@ function combineSearchFilters(
   if (extraFilter === undefined) {
     return requiredFilter;
   }
+  const requiredFilters = typeof requiredFilter === "string" ? [requiredFilter] : requiredFilter;
   if (typeof extraFilter === "string") {
-    return [requiredFilter, extraFilter];
+    return [...requiredFilters, extraFilter];
   }
-  return [requiredFilter, ...extraFilter];
+  return [...requiredFilters, ...extraFilter];
 }

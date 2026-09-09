@@ -133,6 +133,7 @@ describe("NativePdfViewer", () => {
     comments = [];
     pdfFormState = null;
     toolCalls = [];
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(null, { status: 200 }))));
     vi.mocked(authenticatedFetch).mockReset();
     vi.mocked(authenticatedFetch).mockImplementation((input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -274,7 +275,7 @@ describe("NativePdfViewer", () => {
             byteSize: upload.byteSize,
             sha256: "0".repeat(64),
             status: "prepared",
-            uploadUrl: null,
+            uploadUrl: "https://storage.example/upload",
             uploadHeaders: {},
             metadata: {},
             createdAt: "2026-05-24T15:00:00.000Z",
@@ -304,6 +305,9 @@ describe("NativePdfViewer", () => {
             createdAt: "2026-05-24T15:00:00.000Z",
           }),
         );
+      }
+      if (url === "https://storage.example/upload") {
+        return Promise.resolve(new Response(null, { status: 200 }));
       }
       return Promise.resolve(new Response(new Uint8Array([1, 2, 3])));
     });
@@ -680,17 +684,15 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     expect(lastToolCallBody("/api/tools/drive.finalize")).toMatchObject({
       objectId: "drive-pdf-copy-1",
       byteSize: 3,
-      sha256: "0".repeat(64),
       mimeType: "application/pdf",
+      idempotencyKey: "upload:drive-pdf-copy-1",
       metadata: { source: "web-shell" },
     });
-    expect(typeof lastToolCallBody("/api/tools/drive.finalize").contentBase64).toBe("string");
     digestSpy.mockRestore();
 
     await clickButton("Place redaction");
@@ -767,13 +769,11 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     expect(lastToolCallBody("/api/tools/drive.finalize")).toMatchObject({
       objectId: "drive-pdf-copy-1",
       byteSize: 3,
-      sha256: "0".repeat(64),
       mimeType: "application/pdf",
       metadata: { source: "web-shell" },
     });
@@ -845,13 +845,11 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     expect(lastToolCallBody("/api/tools/drive.finalize")).toMatchObject({
       objectId: "drive-pdf-copy-1",
       byteSize: 3,
-      sha256: "0".repeat(64),
       mimeType: "application/pdf",
       metadata: { source: "web-shell" },
     });
@@ -877,13 +875,11 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     expect(lastToolCallBody("/api/tools/drive.finalize")).toMatchObject({
       objectId: "drive-pdf-copy-1",
       byteSize: 3,
-      sha256: "0".repeat(64),
       mimeType: "application/pdf",
       metadata: { source: "web-shell" },
     });
@@ -927,12 +923,10 @@ describe("NativePdfViewer", () => {
       name: "pdf-object-1-split-pages.zip",
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/zip",
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     expect(lastToolCallBody("/api/tools/drive.finalize")).toMatchObject({
       objectId: "drive-pdf-copy-1",
-      sha256: "0".repeat(64),
       mimeType: "application/zip",
       metadata: { source: "web-shell" },
     });
@@ -964,7 +958,6 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     movedLaterDigestSpy.mockRestore();
@@ -999,7 +992,6 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     movedEarlierDigestSpy.mockRestore();
@@ -1022,13 +1014,11 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     expect(lastToolCallBody("/api/tools/drive.finalize")).toMatchObject({
       objectId: "drive-pdf-copy-1",
       byteSize: 3,
-      sha256: "0".repeat(64),
       mimeType: "application/pdf",
       metadata: { source: "web-shell" },
     });
@@ -1076,13 +1066,11 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     expect(lastToolCallBody("/api/tools/drive.finalize")).toMatchObject({
       objectId: "drive-pdf-copy-1",
       byteSize: 3,
-      sha256: "0".repeat(64),
       mimeType: "application/pdf",
       metadata: { source: "web-shell" },
     });
@@ -1125,13 +1113,11 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     expect(lastToolCallBody("/api/tools/drive.finalize")).toMatchObject({
       objectId: "drive-pdf-copy-1",
       byteSize: 3,
-      sha256: "0".repeat(64),
       mimeType: "application/pdf",
       metadata: { source: "web-shell" },
     });
@@ -1190,7 +1176,6 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     mergeAfterPageDigestSpy.mockRestore();
@@ -1338,7 +1323,6 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     digestSpy.mockRestore();
@@ -1510,13 +1494,11 @@ describe("NativePdfViewer", () => {
       folderId: SOURCE_FOLDER_ID,
       mimeType: "application/pdf",
       byteSize: 3,
-      sha256: "0".repeat(64),
       metadata: { source: "web-shell" },
     });
     expect(lastToolCallBody("/api/tools/drive.finalize")).toMatchObject({
       objectId: "drive-pdf-copy-1",
       byteSize: 3,
-      sha256: "0".repeat(64),
       mimeType: "application/pdf",
       metadata: { source: "web-shell" },
     });

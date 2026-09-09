@@ -1,6 +1,7 @@
 export * from "./context.js";
 export * from "./export.js";
 export * from "./hard-delete-worker.js";
+export * from "./tenant-deletion.js";
 export * from "./lifecycle-routes.js";
 export * from "./middleware.js";
 export * from "./orgs.js";
@@ -11,3 +12,4 @@ export * from "./provisioning-bootstrap.js";
 export * from "./provisioning-owner.js";
 export * from "./provisioning-storage.js";
 export * from "./provisioning-worker.js";
+export * from "./residency.js";

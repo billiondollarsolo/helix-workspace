@@ -245,7 +245,7 @@ export function NativePdfViewer({
   const [isPreparingPageCopy, setPreparingPageCopy] = useState(false);
   const [driveSaveStatus, setDriveSaveStatus] = useState<PdfDriveSaveStatus>("idle");
   const [mergePlacement, setMergePlacement] = useState<PdfMergePlacement>("append");
-  const contentUrl = `/api/drive/objects/${encodeURIComponent(objectId)}/content`;
+  const contentUrl = `/v1/api/drive/objects/${encodeURIComponent(objectId)}/content`;
 
   useEffect(() => {
     let cancelled = false;

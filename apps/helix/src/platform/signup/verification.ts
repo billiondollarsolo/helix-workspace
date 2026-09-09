@@ -88,7 +88,6 @@ interface SignupActorRow {
 
 interface BetterAuthUserRow {
   readonly id: string;
-  readonly actor_id: string | null;
 }
 
 interface SignupOwnerEmailRow {
@@ -112,7 +111,7 @@ export class PostgresSignupEmailVerificationTokenStore implements SignupEmailVer
     const passwordHash = await hashPassword(input.password);
     const issuedAt = input.now ?? new Date();
     const expiresAt = new Date(issuedAt.getTime() + signupEmailVerificationTtlSeconds * 1000);
-    const rows = (await this.sql`
+    const rows = await this.sql<SignupEmailVerificationRow[]>`
       insert into signup_email_verifications (
         org_id,
         email,
@@ -141,7 +140,7 @@ export class PostgresSignupEmailVerificationTokenStore implements SignupEmailVer
         metadata = excluded.metadata,
         updated_at = now()
       returning org_id, email, password_hash, expires_at, consumed_at, metadata
-    `) as unknown as readonly SignupEmailVerificationRow[];
+    `;
     return { ...mapSignupEmailVerificationRow(rows[0]), token };
   }
 
@@ -149,14 +148,14 @@ export class PostgresSignupEmailVerificationTokenStore implements SignupEmailVer
     readonly token: string;
     readonly now?: Date | undefined;
   }): Promise<SignupEmailVerificationRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<SignupEmailVerificationRow[]>`
       select org_id, email, password_hash, expires_at, consumed_at, metadata
       from signup_email_verifications
       where token_hash = ${hashSignupEmailVerificationToken(input.token)}
         and consumed_at is null
         and expires_at > ${input.now ?? new Date()}
       limit 1
-    `) as unknown as readonly SignupEmailVerificationRow[];
+    `;
     return rows[0] === undefined ? null : mapSignupEmailVerificationRow(rows[0]);
   }
 
@@ -164,7 +163,7 @@ export class PostgresSignupEmailVerificationTokenStore implements SignupEmailVer
     readonly token: string;
     readonly now?: Date | undefined;
   }): Promise<SignupEmailVerificationRecord | null> {
-    const rows = (await this.sql`
+    const rows = await this.sql<SignupEmailVerificationRow[]>`
       update signup_email_verifications
       set
         consumed_at = ${input.now ?? new Date()},
@@ -173,7 +172,7 @@ export class PostgresSignupEmailVerificationTokenStore implements SignupEmailVer
         and consumed_at is null
         and expires_at > ${input.now ?? new Date()}
       returning org_id, email, password_hash, expires_at, consumed_at, metadata
-    `) as unknown as readonly SignupEmailVerificationRow[];
+    `;
     return rows[0] === undefined ? null : mapSignupEmailVerificationRow(rows[0]);
   }
 
@@ -186,13 +185,13 @@ export class PostgresSignupEmailVerificationTokenStore implements SignupEmailVer
     const now = input.now ?? new Date();
     const limit = input.limit ?? 5;
     const windowSeconds = input.windowSeconds ?? 24 * 60 * 60;
-    const existingRows = (await this.sql`
+    const existingRows = await this.sql<SignupEmailVerificationRow[]>`
       select org_id, email, password_hash, expires_at, consumed_at, metadata
       from signup_email_verifications
       where token_hash = ${hashSignupEmailVerificationToken(input.token)}
         and consumed_at is null
       limit 1
-    `) as unknown as readonly SignupEmailVerificationRow[];
+    `;
     const existing = existingRows[0];
     if (existing === undefined) {
       return { status: "not_found" };
@@ -209,7 +208,7 @@ export class PostgresSignupEmailVerificationTokenStore implements SignupEmailVer
 
     const token = generateSignupEmailVerificationToken();
     const expiresAt = new Date(now.getTime() + signupEmailVerificationTtlSeconds * 1000);
-    const rows = (await this.sql`
+    const rows = await this.sql<SignupEmailVerificationRow[]>`
       update signup_email_verifications
       set
         token_hash = ${hashSignupEmailVerificationToken(token)},
@@ -220,7 +219,7 @@ export class PostgresSignupEmailVerificationTokenStore implements SignupEmailVer
       where org_id = ${existing.org_id}
         and consumed_at is null
       returning org_id, email, password_hash, expires_at, consumed_at, metadata
-    `) as unknown as readonly SignupEmailVerificationRow[];
+    `;
     const record = mapSignupEmailVerificationRow(rows[0]);
     return { status: "issued", verification: { ...record, token } };
   }
@@ -234,45 +233,52 @@ export class PostgresSignupVerifiedIdentityStore implements SignupVerifiedIdenti
     readonly email: string;
     readonly passwordHash: string;
   }): Promise<SignupVerifiedIdentityRecord | null> {
-    const email = normalizeSignupEmail(input.email);
-    const actorRows = (await this.sql`
+    return this.sql.begin("isolation level serializable", async (sql) => {
+      const email = normalizeSignupEmail(input.email);
+      await sql`select set_config('helix.org_id', ${input.orgId}, true)`;
+      const actorRows = await sql<SignupActorRow[]>`
       select id, display_name
       from actors
       where org_id = ${input.orgId}
         and type = 'user'
         and disabled_at is null
         and lower(email) = ${email}
+      for update
       limit 1
-    `) as unknown as readonly SignupActorRow[];
-    const actor = actorRows[0];
-    if (actor === undefined) {
-      return null;
-    }
+    `;
+      const actor = actorRows[0];
+      if (actor === undefined) {
+        return null;
+      }
 
-    const existingRows = (await this.sql`
-      select id, actor_id
+      const existingRows = await sql<BetterAuthUserRow[]>`
+      select id
       from "user"
       where lower(email) = ${email}
+      for update
       limit 1
-    `) as unknown as readonly BetterAuthUserRow[];
-    const existingUser = existingRows[0];
-    if (existingUser !== undefined && existingUser.actor_id !== actor.id) {
-      return null;
-    }
-
-    const betterAuthUserId = existingUser?.id ?? `signup-${actor.id}`;
-    await this.sql`
-      insert into "user" (id, name, email, "emailVerified", actor_id, "createdAt", "updatedAt")
-      values (${betterAuthUserId}, ${actor.display_name}, ${email}, true, ${actor.id}, now(), now())
+      `;
+      const existingUser = existingRows[0];
+      const betterAuthUserId = existingUser?.id ?? `signup-${actor.id}`;
+      const activated = await sql<{ readonly actor_id: string | null }[]>`
+        select helix_activate_identity_membership(
+          'better-auth', ${betterAuthUserId}, ${input.orgId}, ${email}, ${actor.display_name}
+        ) as actor_id
+      `;
+      if (activated[0]?.actor_id !== actor.id) {
+        return null;
+      }
+      await sql`
+      insert into "user" (id, name, email, "emailVerified", "createdAt", "updatedAt")
+      values (${betterAuthUserId}, ${actor.display_name}, ${email}, true, now(), now())
       on conflict (id) do update
       set
         name = excluded.name,
         email = excluded.email,
         "emailVerified" = true,
-        actor_id = excluded.actor_id,
         "updatedAt" = now()
     `;
-    await this.sql`
+      await sql`
       insert into account (
         id, "userId", "accountId", "providerId", password, "createdAt", "updatedAt"
       )
@@ -285,23 +291,11 @@ export class PostgresSignupVerifiedIdentityStore implements SignupVerifiedIdenti
         now(),
         now()
       )
-      on conflict ("providerId", "accountId") do update
-      set
-        "userId" = excluded."userId",
-        password = excluded.password,
-        "updatedAt" = now()
-    `;
-    await this.sql`
-      update actors
-      set
-        metadata = metadata || ${this.sql.json({
-          betterAuth: { userId: betterAuthUserId, emailVerified: true },
-        })},
-        updated_at = now()
-      where id = ${actor.id}
+      on conflict ("providerId", "accountId") do nothing
     `;
 
-    return { actorId: actor.id, betterAuthUserId };
+      return { actorId: actor.id, betterAuthUserId };
+    });
   }
 }
 
@@ -310,7 +304,7 @@ export class PostgresSignupOwnerEmailLookup implements SignupOwnerEmailLookup {
 
   async findOwnerByEmail(email: string): Promise<SignupOwnerEmailRecord | null> {
     const normalized = normalizeSignupEmail(email);
-    const rows = (await this.sql`
+    const rows = await this.sql<SignupOwnerEmailRow[]>`
       select org_id, email
       from (
         select
@@ -333,7 +327,7 @@ export class PostgresSignupOwnerEmailLookup implements SignupOwnerEmailLookup {
           and actors.metadata -> 'tenantProvisioning' ->> 'role' = 'owner'
       ) owner_emails
       limit 1
-    `) as unknown as readonly SignupOwnerEmailRow[];
+    `;
     const row = rows[0];
     return row === undefined ? null : { orgId: row.org_id, email: row.email };
   }

@@ -27,6 +27,11 @@ export interface IdempotencyStore {
   set(key: string, record: IdempotencyRecord): Promise<void>;
 }
 
+export interface IdempotencyRedisClient {
+  get(key: string): Promise<string | null>;
+  set(key: string, value: string, mode: "PX", ttlMs: number): Promise<unknown>;
+}
+
 export const DEFAULT_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Builds the namespaced storage key for an idempotency entry. */
@@ -67,6 +72,42 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
 
   async set(key: string, record: IdempotencyRecord): Promise<void> {
     this.entries.set(key, record);
+  }
+}
+
+export class RedisIdempotencyStore implements IdempotencyStore {
+  constructor(
+    private readonly redis: IdempotencyRedisClient,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async get(key: string): Promise<IdempotencyRecord | undefined> {
+    const value = await this.redis.get(key);
+    if (value === null) return undefined;
+    const record = parseIdempotencyRecord(value);
+    return record?.expiresAt !== undefined && record.expiresAt > this.now() ? record : undefined;
+  }
+
+  async set(key: string, record: IdempotencyRecord): Promise<void> {
+    const ttlMs = record.expiresAt - this.now();
+    if (ttlMs > 0) await this.redis.set(key, JSON.stringify(record), "PX", ttlMs);
+  }
+}
+
+function parseIdempotencyRecord(value: string): IdempotencyRecord | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    const record = parsed as Record<string, unknown>;
+    return typeof record.statusCode === "number" &&
+      typeof record.requestHash === "string" &&
+      typeof record.expiresAt === "number" &&
+      typeof record.result === "object" &&
+      record.result !== null
+      ? (parsed as IdempotencyRecord)
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 

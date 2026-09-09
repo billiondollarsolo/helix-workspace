@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
 import type { EventBus, EventEnvelope, JsonObject, Unsubscribe } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import type { SheetOperation, SheetsStore } from "./store.js";
 import type { WebsocketConnectionMetrics } from "../websocket-metrics.js";
 import { trackWebsocketConnection } from "../websocket-metrics.js";
@@ -432,7 +432,11 @@ async function publishSheetsFanout(input: {
     sheetId: input.room.sheetId,
     tabId: input.tabId,
     revision: input.revision,
-    operation: input.operation as unknown as JsonObject,
+    operation: {
+      id: input.operation.id,
+      baseRevision: input.operation.baseRevision,
+      changes: input.operation.changes.map((change) => ({ ...change })),
+    },
   };
   try {
     await input.events.publish(sheetSyncSubject(input.actor.orgId, input.room.sheetId), payload);

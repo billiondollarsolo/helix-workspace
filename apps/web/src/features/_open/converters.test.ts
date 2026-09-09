@@ -72,9 +72,8 @@ describe("converters", () => {
     });
     expect(importDocxDocumentMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        filename: "Macro Template.dotm",
+        sourceObjectId: "drive-dotm",
         title: "Macro Template",
-        contentBase64: "ZG90bQ==",
         metadata: expect.objectContaining({
           importedFromDriveObjectId: "drive-dotm",
           importedFromFilename: "Macro Template.dotm",
@@ -113,8 +112,7 @@ describe("converters", () => {
     });
     expect(importOdsSheetMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        filename: "Forecast.ods",
-        contentBase64: "b2Rz",
+        sourceObjectId: "drive-ods",
         metadata: expect.objectContaining({
           importedFromFormat: "ods",
           importedFromFormatLabel: "ODS (OpenDocument Spreadsheet)",
@@ -149,7 +147,7 @@ describe("converters", () => {
     });
     expect(importXlsxSheetMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        filename: "Legacy Forecast.xls",
+        sourceObjectId: "drive-xls",
         metadata: expect.objectContaining({
           importedFromDriveObjectId: "drive-xls",
           importedFromFilename: "Legacy Forecast.xls",
@@ -187,9 +185,8 @@ describe("converters", () => {
     });
     expect(importPptxDeckMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        filename: "Macro Roadmap.pptm",
+        sourceObjectId: "drive-pptm",
         title: "Macro Roadmap",
-        contentBase64: "cHB0bQ==",
         metadata: expect.objectContaining({
           importedFromDriveObjectId: "drive-pptm",
           importedFromFilename: "Macro Roadmap.pptm",

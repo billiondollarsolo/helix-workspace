@@ -6,7 +6,7 @@ import type {
   ToolDefinition,
   TraceContext,
 } from "@helix/sdk-types";
-import { z } from "zod3";
+import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
@@ -33,6 +33,9 @@ import {
   type DocsVersionRestoreRecord,
 } from "./types.js";
 import { createDocsSuggestionSlotProviders, docsSuggestionSlotIds } from "./ai/suggestions.js";
+import { readImportSource, type ImportSourceReader } from "../import-source.js";
+
+const DOCX_IMPORT_MAX_BYTES = 20 * 1024 * 1024;
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.unknown()).default({});
@@ -117,9 +120,8 @@ const exportSchema = z.object({
 });
 
 const importDocxSchema = z.object({
-  filename: z.string().min(1).max(255).optional(),
+  sourceObjectId: uuidSchema,
   title: z.string().min(1).max(255).optional(),
-  contentBase64: z.string().min(1).max(25_000_000),
   folderId: uuidSchema.nullable().optional(),
   metadata: metadataSchema,
 });
@@ -248,10 +250,10 @@ const genericObjectJsonSchema = {
 
 export interface CreateDocsToolDefinitionsOptions {
   readonly store: DocsToolStore;
+  readonly importSources?: ImportSourceReader | undefined;
   readonly ai?: AICapability | undefined;
   readonly docxToMarkdown?: DocxToMarkdownConverter | undefined;
   readonly pdfRenderer?: PdfExportRenderer | undefined;
-  readonly onPdfRendererError?: ((error: unknown) => void) | undefined;
   readonly metering?: MeteringClient | undefined;
   readonly onMeteringError?: ((error: unknown) => void) | undefined;
   readonly exportJobLimiter?: TenantHourlyQuotaLimiter | undefined;
@@ -307,6 +309,7 @@ export interface DocxToMarkdownResult {
 
 export type DocxToMarkdownConverter = (input: {
   readonly buffer: Buffer;
+  readonly filename: string;
 }) => Promise<DocxToMarkdownResult>;
 
 export function createDocsToolDefinitions(
@@ -565,9 +568,6 @@ export function createDocsToolDefinitions(
           },
           {
             ...(options.pdfRenderer === undefined ? {} : { pdfRenderer: options.pdfRenderer }),
-            ...(options.onPdfRendererError === undefined
-              ? {}
-              : { onPdfRendererError: options.onPdfRendererError }),
           },
         );
         emitDocsExportMetering({
@@ -589,28 +589,35 @@ export function createDocsToolDefinitions(
       inputSchema: zodToolSchema(importDocxSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const converter = options.docxToMarkdown ?? convertDocxToMarkdown;
-        const bytes = Buffer.from(input.contentBase64, "base64");
-        if (bytes.length === 0) {
+        if (options.docxToMarkdown === undefined) {
+          throw new Error("DOCX import requires the isolated content converter.");
+        }
+        const source = await readImportSource(options.importSources, {
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          objectId: input.sourceObjectId,
+          maxBytes: DOCX_IMPORT_MAX_BYTES,
+        });
+        if (source.bytes.length === 0) {
           throw new Error("DOCX import content is empty.");
         }
-        const imported = await converter({ buffer: bytes });
-        // Mammoth inlines embedded images as `![alt](data:image/...;base64,…)`.
-        // EMF/WMF blobs can be 50KB+ as a single unbroken token, which the
-        // markdown→native renderer then emits as a horizontal wall of text.
-        // Replace the data: URI portion with a clean placeholder so the doc
-        // body stays readable. A follow-up will upload the bytes as real
-        // image attachments and link them by drive-object ref.
+        const imported = await options.docxToMarkdown({
+          buffer: Buffer.from(
+            source.bytes.buffer,
+            source.bytes.byteOffset,
+            source.bytes.byteLength,
+          ),
+          filename: source.name,
+        });
         const sanitizedMarkdown = stripInlineDataUriImages(imported.markdown);
-        const sourceFormat = docsImportSourceFormat(input.filename);
-        const title =
-          input.title?.trim() || titleFromFilename(input.filename) || "Imported document";
+        const sourceFormat = docsImportSourceFormat(source.name);
+        const title = input.title?.trim() || titleFromFilename(source.name) || "Imported document";
         const metadata = toJsonObject({
           ...input.metadata,
           importedFrom: sourceFormat,
-          ...(input.filename === undefined
-            ? {}
-            : { filename: input.filename, sourceFilename: input.filename }),
+          importedFromDriveObjectId: input.sourceObjectId,
+          filename: source.name,
+          sourceFilename: source.name,
           importMessages: imported.messages,
         });
         const document = (await requireStoreMethod(
@@ -1258,46 +1265,12 @@ function serializeDocument(document: DocsDocumentRecord) {
   };
 }
 
-async function convertDocxToMarkdown(input: {
-  readonly buffer: Buffer;
-}): Promise<DocxToMarkdownResult> {
-  const mammothModule = (await import("mammoth")) as unknown as {
-    readonly default?: {
-      readonly convertToMarkdown: MammothConvertToMarkdown;
-    };
-    readonly convertToMarkdown: MammothConvertToMarkdown;
-  };
-  const mammoth = mammothModule.default ?? mammothModule;
-  const result = await mammoth.convertToMarkdown({ buffer: input.buffer });
-  return {
-    markdown: result.value.trim(),
-    messages: result.messages.map((message) =>
-      toJsonObject({
-        type: message.type,
-        message: message.message,
-      }),
-    ),
-  };
-}
-
-type MammothConvertToMarkdown = (input: { readonly buffer: Buffer }) => Promise<{
-  readonly value: string;
-  readonly messages: readonly {
-    readonly type?: string | undefined;
-    readonly message?: string | undefined;
-  }[];
-}>;
-
 function titleFromFilename(filename: string | undefined): string | undefined {
   const trimmed = filename?.trim();
   if (trimmed === undefined || trimmed.length === 0) {
     return undefined;
   }
-  return (
-    trimmed
-      .replace(/\.(docx?|docm|dotx|dotm|rtf|odt)$/iu, "")
-      .trim() || undefined
-  );
+  return trimmed.replace(/\.(docx|docm|dotx|dotm|odt)$/iu, "").trim() || undefined;
 }
 
 function docsImportSourceFormat(filename: string | undefined): string {
@@ -1307,7 +1280,6 @@ function docsImportSourceFormat(filename: string | undefined): string {
     case "docm":
     case "dotx":
     case "dotm":
-    case "rtf":
     case "odt":
       return extension;
     default:
@@ -1315,12 +1287,7 @@ function docsImportSourceFormat(filename: string | undefined): string {
   }
 }
 
-/** Replace `![alt](data:image/...;base64,…)` in markdown with a clean
- *  placeholder. Mammoth emits one of these per embedded DOCX image; EMF/WMF
- *  blobs can be 50KB+ unbroken which renders as a horizontal text wall. We
- *  drop the data URI entirely and keep the alt text so the doc reads cleanly.
- *  Real image preservation lands when the importer uploads each blob as a
- *  drive object and rewrites the markdown to reference its object id. */
+/** Replace converter-supplied inline data images with inert text placeholders. */
 export function stripInlineDataUriImages(markdown: string): string {
   return markdown.replace(/!\[([^\]]*)\]\(data:[^)]+\)/gu, (_, altRaw: string) => {
     const alt = altRaw.trim();

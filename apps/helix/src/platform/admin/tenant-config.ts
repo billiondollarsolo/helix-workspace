@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Actor, EventBus, JsonObject } from "@helix/sdk-types";
-import { z } from "zod3";
+import { z } from "zod";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -24,6 +24,7 @@ import {
 } from "../storage/index.js";
 import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
 import { buildEffectiveTenantConfig, type PlanRecord, type PlanStore } from "../tenancy/plans.js";
+import { inboundAuthenticationPolicySchema } from "../mail/inbound-policy.js";
 
 export interface TenantConfigAdminStore {
   findById(id: string): Promise<OrgRecord | null>;
@@ -53,7 +54,7 @@ export interface TenantConfigAdminView {
 export interface RegisterTenantConfigAdminRoutesOptions {
   readonly store: TenantConfigAdminStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
-  readonly auditSink?: AdminConsoleAuditSink | undefined;
+  readonly auditSink: AdminConsoleAuditSink;
   readonly storageResolver?: TenantStorageResolver | undefined;
   readonly storageMigrationJobs?:
     | Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg">
@@ -85,6 +86,7 @@ const featureFlagsSchema = z
     watermark: watermarkModeSchema.optional(),
     b2b_sharing: z.boolean().optional(),
     mail_outbound: z.boolean().optional(),
+    mail_inbound_policy: inboundAuthenticationPolicySchema.optional(),
     sso_saml: z.boolean().optional(),
     scim_provisioning: z.boolean().optional(),
     custom_domain: z.boolean().optional(),
@@ -133,26 +135,32 @@ const byoStorageSchema = z
   .object({
     kind: z.enum(["helix-default", "byo"]),
     provider: z.enum(["aws-s3", "r2", "s3-compatible"]).optional(),
-    endpoint: z.string().trim().url().max(2000).optional(),
+    endpoint: z
+      .string()
+      .trim()
+      .url()
+      .max(2000)
+      .refine(urlHasNoCredentials, "Storage endpoint must not contain credentials.")
+      .optional(),
     region: z.string().trim().min(1).max(100).optional(),
     bucket: z.string().trim().min(1).max(255).optional(),
     prefix: z
       .string()
       .trim()
+      .min(1)
       .max(1024)
       .refine((value) => !unsafeStoragePrefix(value), {
         message:
           "Storage prefix must not contain path traversal, repeated separators, or control characters.",
       })
       .optional(),
-    credentials_vault_path: z
+    credentials_secret_handle: z
       .string()
       .trim()
       .min(1)
-      .max(500)
-      .regex(/^tenants\/[A-Za-z0-9_-]+\/byo-storage\/[A-Za-z0-9_.-]+$/u, {
-        message:
-          "BYO storage credentials_vault_path must be scoped under tenants/{tenant}/byo-storage/.",
+      .max(100)
+      .regex(/^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$/u, {
+        message: "BYO storage credentials_secret_handle must be a canonical identifier.",
       })
       .optional(),
     force_path_style: z.boolean().optional(),
@@ -183,7 +191,7 @@ const byoStorageSchema = z
   .strict()
   .superRefine((value, ctx) => {
     if (value.kind === "byo") {
-      for (const key of ["provider", "bucket", "credentials_vault_path"] as const) {
+      for (const key of ["provider", "region", "bucket", "credentials_secret_handle"] as const) {
         if (value[key] === undefined) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -197,6 +205,31 @@ const byoStorageSchema = z
           code: z.ZodIssueCode.custom,
           path: ["endpoint"],
           message: "endpoint is required for this BYO storage provider.",
+        });
+      }
+      if (value.endpoint !== undefined && new URL(value.endpoint).protocol !== "https:") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["endpoint"],
+          message: "BYO storage endpoint must use HTTPS.",
+        });
+      }
+      if (value.encryption?.sse_kms_key_arn === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["encryption", "sse_kms_key_arn"],
+          message: "BYO storage requires an SSE-KMS key.",
+        });
+      }
+      if (
+        value.lifecycle?.object_lock === undefined ||
+        value.lifecycle.object_lock === "off" ||
+        value.lifecycle.retention_days == null
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lifecycle"],
+          message: "BYO storage requires object lock and retention days.",
         });
       }
     }
@@ -716,6 +749,15 @@ function unsafeStoragePrefix(value: string): boolean {
     trimmed.includes("//") ||
     hasControlCharacter(trimmed)
   );
+}
+
+function urlHasNoCredentials(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
 }
 
 function hasControlCharacter(value: string): boolean {

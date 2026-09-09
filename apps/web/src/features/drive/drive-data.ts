@@ -56,7 +56,7 @@ function isDriveApiPreview(value: unknown): value is DriveApiPreview {
       kind === "pdf" ||
       kind === "office" ||
       kind === "unsupported") &&
-    (status === "available" || status === "unsupported") &&
+    (status === "pending" || status === "available" || status === "unsupported") &&
     typeof mimeType === "string" &&
     mimeType.length > 0
   );

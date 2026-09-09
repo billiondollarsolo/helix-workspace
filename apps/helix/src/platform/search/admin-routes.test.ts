@@ -1,7 +1,8 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import { actorFromRequest } from "../../api/actor.js";
+import { actorFromRequest } from "../../api/test-actor.js";
 import { registerSearchAdminRoutes } from "./admin-routes.js";
+import type { SearchReindexJobService } from "./durable.js";
 import type { SearchReindexRequest, SearchReindexResult, SearchReindexType } from "./reindex.js";
 
 const actorId = "11111111-1111-4111-8111-111111111111";
@@ -84,6 +85,64 @@ describe("search admin routes", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: "Invalid search reindex request." });
     expect(service.calls).toEqual([]);
+  });
+
+  it("creates, reads, and cancels resumable full shadow jobs", async () => {
+    const service = new FakeSearchReindexService();
+    const calls: string[] = [];
+    const job = {
+      id: "33333333-3333-4333-8333-333333333333",
+      orgId,
+      requestedByActorId: actorId,
+      types: ["mail", "chat", "docs", "drive", "calendar"] as const,
+      batchSize: 50,
+      shadowIndexUid: "shadow",
+      status: "queued" as const,
+      phase: "backfill" as const,
+      sourceIndex: 0,
+      startMutationId: 4n,
+      replayMutationId: 4n,
+      totalDocuments: 0n,
+      attemptCount: 0,
+    };
+    const jobs: SearchReindexJobService = {
+      create: async (_actor, input) => {
+        calls.push(`create:${String(input?.batchSize)}`);
+        return job;
+      },
+      get: async (id) => {
+        calls.push(`get:${id}`);
+        return job;
+      },
+      cancel: async (id) => {
+        calls.push(`cancel:${id}`);
+        return true;
+      },
+    };
+    const app = fastify();
+    await registerSearchAdminRoutes(app, { service, jobs, actorFromRequest });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/admin/search/reindex/jobs",
+      headers: adminHeaders(),
+      payload: { all: true, batchSize: 50 },
+    });
+    const read = await app.inject({
+      method: "GET",
+      url: `/api/admin/search/reindex/jobs/${job.id}`,
+      headers: adminHeaders(),
+    });
+    const cancelled = await app.inject({
+      method: "POST",
+      url: `/api/admin/search/reindex/jobs/${job.id}/cancel`,
+      headers: adminHeaders(),
+    });
+
+    expect(created.json()).toMatchObject({ id: job.id, startMutationId: "4" });
+    expect(read.statusCode).toBe(200);
+    expect(cancelled.json()).toEqual({ status: "cancelled" });
+    expect(calls).toEqual([`create:50`, `get:${job.id}`, `cancel:${job.id}`]);
   });
 });
 

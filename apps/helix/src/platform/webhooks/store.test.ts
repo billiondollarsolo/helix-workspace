@@ -1,14 +1,16 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { TenantEnvelopeCipher } from "../secrets/envelope.js";
 import { OutboundWebhookQuotaExceededError, PostgresWebhookStore } from "./store.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
+const secrets = new TenantEnvelopeCipher("webhook-test-master-key-at-least-32-bytes");
 
 describe("PostgresWebhookStore", () => {
   it("blocks outbound webhook creation when outbound_webhooks_limit is reached", async () => {
     const recording = createRecordingSql([quotaRow({ limit: 2, used: "2" })]);
-    const store = new PostgresWebhookStore(recording.sql);
+    const store = new PostgresWebhookStore(recording.sql, secrets);
 
     await expect(store.createOutbound(createOutboundInput())).rejects.toThrow(
       OutboundWebhookQuotaExceededError,
@@ -28,7 +30,7 @@ describe("PostgresWebhookStore", () => {
       quotaRow({ limit: null, used: "999" }),
       [outboundWebhookRow()],
     ]);
-    const store = new PostgresWebhookStore(recording.sql);
+    const store = new PostgresWebhookStore(recording.sql, secrets);
 
     await expect(store.createOutbound(createOutboundInput())).resolves.toMatchObject({
       orgId,
@@ -45,7 +47,7 @@ describe("PostgresWebhookStore", () => {
       quotaRow({ limit: 3, used: 2 }),
       [outboundWebhookRow({ id: "33333333-3333-4333-8333-333333333333" })],
     ]);
-    const store = new PostgresWebhookStore(recording.sql);
+    const store = new PostgresWebhookStore(recording.sql, secrets);
 
     await expect(store.createOutbound(createOutboundInput())).resolves.toMatchObject({
       id: "33333333-3333-4333-8333-333333333333",
@@ -57,6 +59,44 @@ describe("PostgresWebhookStore", () => {
       quotaSql.indexOf("o.quotas ? 'outbound_webhooks_limit'"),
     );
     expect(recording.calls[1]?.text).toContain("insert into outbound_webhooks");
+  });
+
+  it("persists a tenant-bound envelope instead of the webhook secret", async () => {
+    const plaintext = "webhook-test-secret-at-least-32-bytes";
+    const recording = createRecordingSql([
+      quotaRow({ limit: null, used: 0 }),
+      [outboundWebhookRow()],
+    ]);
+    const store = new PostgresWebhookStore(recording.sql, secrets);
+
+    await store.createOutbound(createOutboundInput());
+
+    const insertedValues = recording.calls[1]?.values ?? [];
+    const ciphertext = insertedValues.find(
+      (value): value is string => typeof value === "string" && value.startsWith("helix$1$"),
+    );
+    expect(insertedValues).not.toContain(plaintext);
+    expect(ciphertext).toBeDefined();
+    expect(secrets.open(orgId, "webhook", ciphertext ?? "")).toBe(plaintext);
+  });
+
+  it("rejects credentials hidden in webhook headers or metadata", async () => {
+    const recording = createRecordingSql([]);
+    const store = new PostgresWebhookStore(recording.sql, secrets);
+
+    await expect(
+      store.createOutbound({
+        ...createOutboundInput(),
+        headers: { authorization: "Bearer directly-usable-secret" },
+      }),
+    ).rejects.toThrow("encrypted webhook secret");
+    await expect(
+      store.createOutbound({
+        ...createOutboundInput(),
+        metadata: { nested: { accessKeyId: "directly-usable-key" } },
+      }),
+    ).rejects.toThrow("plaintext credential fields");
+    expect(recording.calls).toEqual([]);
   });
 });
 
@@ -91,6 +131,7 @@ function createOutboundInput() {
     name: "Deployments",
     url: "https://example.com/webhook",
     eventSubjects: ["deploy.created"],
+    secret: "webhook-test-secret-at-least-32-bytes",
     headers: { "x-source": "helix" },
     enabled: true,
     metadata: { source: "test" },
@@ -110,16 +151,14 @@ function quotaRow(input: {
   ];
 }
 
-function outboundWebhookRow(
-  input: { readonly id?: string } = {},
-): Record<string, unknown> {
+function outboundWebhookRow(input: { readonly id?: string } = {}): Record<string, unknown> {
   return {
     id: input.id ?? "33333333-3333-4333-8333-333333333333",
     org_id: orgId,
     name: "Deployments",
     url: "https://example.com/webhook",
     event_subjects: ["deploy.created"],
-    secret_ref: "inline:test",
+    secret_ciphertext: secrets.seal(orgId, "webhook", "webhook-test-secret-at-least-32-bytes"),
     headers: { "x-source": "helix" },
     enabled: true,
     metadata: { source: "test" },

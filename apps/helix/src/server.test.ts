@@ -27,55 +27,36 @@ import {
   getAuditDestinationConfigs,
   getBetterAuthRuntimeConfig,
   getImmutableAuditShippingConfig,
-  getOutboundMailConfig,
-  getSmtpMailReceiverConfig,
+  HELIX_LOG_REDACT_PATHS,
   registerActionStatusRoutes,
   registerAssistantStreamRoute,
   installTenantApiRpsLimitHook,
+  registerCanonicalApi,
   registerToolRestRoutes,
-  rewriteVersionedApiUrl,
   verifyDefaultOrgAtBoot,
   type AssistantStreamOrchestrator,
 } from "./server.js";
 import type { AssistantStreamEvent } from "./platform/assistant/index.js";
 
-const now = new Date("2026-05-20T00:00:00.000Z");
-const later = new Date("2026-05-20T01:00:00.000Z");
+const now = new Date();
+const later = new Date(now.getTime() + 60 * 60 * 1000);
+
+describe("log secret redaction", () => {
+  it("redacts HTTP credentials and websocket ticket protocols", () => {
+    expect(HELIX_LOG_REDACT_PATHS).toEqual(
+      expect.arrayContaining([
+        "req.headers.authorization",
+        "req.headers.cookie",
+        "req.headers.sec-websocket-protocol",
+        "token",
+        "ticket",
+      ]),
+    );
+  });
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
-});
-
-describe("mail server env config", () => {
-  it("uses Mailpit-compatible outbound SMTP env", () => {
-    expect(
-      getOutboundMailConfig({
-        MAIL_SMTP_HOST: "mailpit",
-        MAIL_SMTP_PORT: "1025",
-        MAIL_SMTP_SECURE: "false",
-      }),
-    ).toEqual({
-      host: "mailpit",
-      port: 1025,
-      secure: false,
-    });
-  });
-
-  it("starts the in-process SMTP receiver only when explicitly enabled", () => {
-    expect(getSmtpMailReceiverConfig({})).toBeUndefined();
-    expect(
-      getSmtpMailReceiverConfig({
-        HELIX_DEFAULT_ORG_ID: "org-local",
-        MAIL_SMTP_RECEIVER_ENABLED: "true",
-        MAIL_SMTP_RECEIVER_HOST: "0.0.0.0",
-        MAIL_SMTP_RECEIVER_PORT: "2525",
-      }),
-    ).toEqual({
-      orgId: "org-local",
-      host: "0.0.0.0",
-      port: 2525,
-    });
-  });
 });
 
 describe("BetterAuth server env config", () => {
@@ -88,6 +69,7 @@ describe("BetterAuth server env config", () => {
     ).toMatchObject({
       databaseUrl: "postgres://helix:secret@postgres:5432/helix",
       baseUrl: "http://localhost:3000",
+      secureCookies: false,
     });
 
     expect(
@@ -95,6 +77,9 @@ describe("BetterAuth server env config", () => {
         BETTER_AUTH_ENABLED: "false",
       }),
     ).toBeUndefined();
+    expect(() =>
+      getBetterAuthRuntimeConfig({ BETTER_AUTH_ENABLED: "false", NODE_ENV: "production" }),
+    ).toThrow("cannot be disabled in production");
 
     expect(() =>
       getBetterAuthRuntimeConfig({
@@ -102,6 +87,36 @@ describe("BetterAuth server env config", () => {
         NODE_ENV: "production",
       }),
     ).toThrow("BETTER_AUTH_SECRET must be at least 32 characters");
+  });
+
+  it("requires one canonical HTTPS external origin and secure cookies in production", () => {
+    const production = {
+      DATABASE_URL: "postgres://helix:secret@postgres:5432/helix",
+      BETTER_AUTH_SECRET: "a-production-strength-secret-with-32-characters",
+      NODE_ENV: "production",
+    };
+
+    expect(() => getBetterAuthRuntimeConfig(production)).toThrow(
+      "canonical HTTPS Better Auth origin",
+    );
+    expect(() =>
+      getBetterAuthRuntimeConfig({ ...production, BETTER_AUTH_URL: "http://app.helix.example" }),
+    ).toThrow("must use HTTPS");
+    expect(() =>
+      getBetterAuthRuntimeConfig({
+        ...production,
+        BETTER_AUTH_URL: "https://app.helix.example/auth",
+      }),
+    ).toThrow("scheme and authority");
+    expect(
+      getBetterAuthRuntimeConfig({
+        ...production,
+        BETTER_AUTH_URL: "https://app.helix.example/",
+      }),
+    ).toMatchObject({
+      baseUrl: "https://app.helix.example",
+      secureCookies: true,
+    });
   });
 });
 
@@ -334,6 +349,8 @@ describe("immutable audit shipping env config", () => {
         AUDIT_IMMUTABLE_S3_INTERVAL_MS: "5000",
         AUDIT_IMMUTABLE_S3_RETENTION_DAYS: "90",
         AUDIT_IMMUTABLE_S3_OBJECT_LOCK_MODE: "GOVERNANCE",
+        AUDIT_IMMUTABLE_S3_ANCHOR_KEY_ID: "audit-anchor-2026-01",
+        AUDIT_IMMUTABLE_S3_ANCHOR_SECRET: "a".repeat(32),
       }),
     ).toEqual({
       endpoint: "http://rustfs:9000",
@@ -347,6 +364,8 @@ describe("immutable audit shipping env config", () => {
       intervalMs: 5000,
       retentionDays: 90,
       objectLockMode: "GOVERNANCE",
+      anchorKeyId: "audit-anchor-2026-01",
+      anchorSecret: "a".repeat(32),
     });
   });
 
@@ -356,6 +375,18 @@ describe("immutable audit shipping env config", () => {
         AUDIT_IMMUTABLE_S3_ENABLED: "true",
       }),
     ).toThrow("AUDIT_IMMUTABLE_S3_ENDPOINT or AUDIT_S3_ENDPOINT is required");
+  });
+
+  it("fails closed when immutable shipping lacks an external anchor key", () => {
+    expect(() =>
+      getImmutableAuditShippingConfig({
+        AUDIT_IMMUTABLE_S3_ENABLED: "true",
+        AUDIT_IMMUTABLE_S3_ENDPOINT: "http://rustfs:9000",
+        AUDIT_IMMUTABLE_S3_BUCKET: "helix-audit",
+        AUDIT_IMMUTABLE_S3_ACCESS_KEY: "audit-access",
+        AUDIT_IMMUTABLE_S3_SECRET_KEY: "audit-secret",
+      }),
+    ).toThrow("AUDIT_IMMUTABLE_S3_ANCHOR_KEY_ID is required");
   });
 });
 
@@ -394,6 +425,8 @@ describe("audit destination selection (Follow-up A)", () => {
       AUDIT_IMMUTABLE_S3_BUCKET: "helix-audit",
       AUDIT_IMMUTABLE_S3_ACCESS_KEY: "k",
       AUDIT_IMMUTABLE_S3_SECRET_KEY: "s",
+      AUDIT_IMMUTABLE_S3_ANCHOR_KEY_ID: "audit-anchor-2026-01",
+      AUDIT_IMMUTABLE_S3_ANCHOR_SECRET: "a".repeat(32),
       AUDIT_SIEM_SYSLOG_ENABLED: "true",
       AUDIT_SIEM_SYSLOG_HOST: "siem.internal",
     });
@@ -408,6 +441,12 @@ describe("audit destination selection (Follow-up A)", () => {
 });
 
 describe("AI runtime config", () => {
+  it("honors the tenant AI kill switch even when environment providers exist", () => {
+    vi.stubEnv("OLLAMA_BASE_URL", "http://ollama:11434/v1");
+    vi.stubEnv("OPENAI_API_KEY", "secret");
+    expect(createAssistantProviders({ enabled: false })).toEqual([]);
+  });
+
   it("creates configured LLM providers and feature routing from platform AI config", async () => {
     const providers = createAssistantProviders({
       enabled: true,
@@ -463,7 +502,7 @@ describe("AI runtime config", () => {
 
   it("creates configured OpenAI-compatible embeddings for assistant memory", async () => {
     const requests: { readonly input: URL; readonly init: RequestInit | undefined }[] = [];
-    vi.stubGlobal("fetch", async (input: URL | string, init?: RequestInit) => {
+    const fetch = vi.fn(async (input: URL | string, init?: RequestInit) => {
       requests.push({ input: input instanceof URL ? input : new URL(input), init });
       return new Response(
         JSON.stringify({
@@ -490,6 +529,7 @@ describe("AI runtime config", () => {
         },
       },
       { EMBEDDING_API_KEY: "secret-key" },
+      fetch as typeof globalThis.fetch,
     );
 
     await expect(provider.embed(["hello"])).resolves.toEqual([[0.1, 0.2, 0.3]]);
@@ -575,7 +615,10 @@ describe("tool REST routes", () => {
         types: ["mail", "drive"],
         limit: 5,
         offset: 2,
-        filter: 'attributes.orgId = "org-get"',
+        filter: [
+          'attributes.orgId = "org-get"',
+          '(type != "drive" OR attributes.allowedActorIds = "actor-get")',
+        ],
         forActorId: "actor-get",
       },
     ]);
@@ -1021,12 +1064,19 @@ describe("tool REST idempotency (P1-10)", () => {
   });
 });
 
-describe("API versioning (P1-10)", () => {
-  it("rewrites a /v1 prefixed URL onto the canonical path", () => {
-    expect(rewriteVersionedApiUrl("/v1/api/tools")).toBe("/api/tools");
-    expect(rewriteVersionedApiUrl("/v1")).toBe("/");
-    expect(rewriteVersionedApiUrl("/api/tools")).toBe("/api/tools");
-    expect(rewriteVersionedApiUrl("/v1?x=1")).toBe("/?x=1");
+describe("canonical API versioning", () => {
+  it("registers only the versioned route without a compatibility alias", async () => {
+    const app = fastify();
+    await registerCanonicalApi(app, async (api) => {
+      api.get("/api/ping", async (request) => ({ requestUrl: request.url }));
+    });
+
+    const canonical = await app.inject({ method: "GET", url: "/v1/api/ping?ready=true" });
+    expect(canonical.statusCode).toBe(200);
+    expect(canonical.json()).toEqual({ requestUrl: "/api/ping?ready=true" });
+    expect((await app.inject({ method: "GET", url: "/api/ping" })).statusCode).toBe(404);
+    expect(app.printRoutes()).toContain("v1/api/ping");
+    await app.close();
   });
 });
 
@@ -1106,7 +1156,7 @@ describe("action status routes", () => {
 
     const response = await app.inject({
       method: "GET",
-      url: `/api/actions/${pending.id}`,
+      url: `/actions/${pending.id}`,
       headers: { authorization: "Bearer other-action-token" },
     });
 

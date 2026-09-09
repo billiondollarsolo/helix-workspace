@@ -109,7 +109,10 @@ describe("webhook HMAC — byte-identical with FIPS off", () => {
 describe("auth token hashing — byte-identical with FIPS off", () => {
   it("hashAccessToken equals the direct node:crypto SHA-256", () => {
     const token = "helix_at_abcdef0123456789";
-    expect(hashAccessToken(token)).toBe(createHash("sha256").update(token).digest("hex"));
+    const issuer = "https://helix.example.test";
+    expect(hashAccessToken(token, issuer)).toBe(
+      createHash("sha256").update(`${issuer}\0${token}`).digest("hex"),
+    );
   });
 });
 
@@ -128,7 +131,7 @@ describe("no FIPS path runs when FIPS is off", () => {
       objectType: "thread",
       verb: "create",
     };
-    hashAccessToken("tok");
+    hashAccessToken("tok", "https://helix.example.test");
     computeAuditHash(minimalRecord, null);
     signWebhookPayload({ payload: "p", secret: "s", timestamp: 1 });
 

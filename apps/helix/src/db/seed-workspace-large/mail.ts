@@ -343,8 +343,8 @@ export async function seedMail(sql: SeedSql, orgId: string): Promise<number> {
             on conflict (id) do nothing
           `;
           await sql`
-            insert into message_attachments (message_id, object_id, disposition)
-            values (${messageId}, ${objectId}, 'attachment')
+            insert into message_attachments (org_id, message_id, object_id, disposition)
+            values (${orgId}, ${messageId}, ${objectId}, 'attachment')
             on conflict do nothing
           `;
           await grantBoth(sql, orgId, "object", objectId, "owner");

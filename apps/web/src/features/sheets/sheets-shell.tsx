@@ -3,9 +3,7 @@
    Holds the list ⇄ editor selection in local state. The "New" button runs
    the `sheets.create` tool through TanStack Query; the list view reads
    `sheets.list` and the editor reads `sheets.get` / `sheets.tab.get`.
-
-   The typed seed (`./seed`) is kept only as an offline fallback so the
-   surface still renders when the backend is unavailable. */
+   Backend failures are shown explicitly; no demo rows are substituted. */
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";

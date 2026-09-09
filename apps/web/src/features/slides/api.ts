@@ -39,7 +39,7 @@ export interface SlidesApiSlide {
   /** Per-slide CAS counter; clients send this back as `expectedRevision` on
    * `update-slide` / `delete-slide` so concurrent edits to the same slide
    * fail fast instead of silently last-write-winning. */
-  readonly revision?: number;
+  readonly revision: number;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -194,10 +194,9 @@ export async function restoreSlidesVersion(
 /** `slides.import-pptx` — import an uploaded PPTX into a native deck. */
 export async function importPptxDeck(
   input: {
-    readonly filename: string;
+    readonly sourceObjectId: string;
     readonly title: string;
     readonly folderId?: string | null;
-    readonly contentBase64: string;
     readonly metadata?: Record<string, unknown>;
   },
   fetchImpl: SlidesApiFetch = authenticatedFetch,
@@ -205,10 +204,9 @@ export async function importPptxDeck(
   return callSlidesTool<SlidesImportResult>(
     "slides.import-pptx",
     {
-      filename: input.filename,
+      sourceObjectId: input.sourceObjectId,
       title: input.title,
       folderId: input.folderId ?? null,
-      contentBase64: input.contentBase64,
       metadata: input.metadata ?? {},
     },
     fetchImpl,

@@ -1,18 +1,31 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { DAV_BODY_LIMIT_BYTES } from "../../api/request-body.js";
+import { versionedApiPath } from "../../api/version.js";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
 import {
+  DavStandardsParseError,
+  davElements,
+  davText,
+  decodePathSegment,
+  parseDavXml,
+} from "../dav/standards.js";
+import {
+  CardDavAccessError,
   InvalidVcardError,
+  type CardDavContactFilter,
   type CardDavContactRecord,
   type CardDavContactStore,
 } from "./store.js";
+
+const CARD_DAV_PAGE_LIMIT = 500;
 
 export interface RegisterCardDavRoutesOptions {
   readonly appPasswords: AppPasswordAuthenticator;
   readonly store: CardDavContactStore;
 }
 
-type CardDavMethod = "PROPFIND" | "REPORT" | "GET" | "PUT" | "DELETE";
+type CardDavMethod = "PROPFIND" | "REPORT" | "GET" | "PUT" | "DELETE" | "MKCOL" | "ACL";
 
 export async function registerCardDavRoutes(
   app: FastifyInstance,
@@ -20,6 +33,8 @@ export async function registerCardDavRoutes(
 ): Promise<void> {
   safeAddHttpMethod(app, "PROPFIND", { hasBody: true });
   safeAddHttpMethod(app, "REPORT", { hasBody: true });
+  safeAddHttpMethod(app, "MKCOL", { hasBody: true });
+  safeAddHttpMethod(app, "ACL", { hasBody: true });
   safeAddContentTypeParser(app, "application/xml");
   safeAddContentTypeParser(app, "text/xml");
   safeAddContentTypeParser(app, "text/vcard");
@@ -30,27 +45,103 @@ export async function registerCardDavRoutes(
     url: "/dav/card/*",
     handler: async (_request, reply) =>
       reply
-        .header("DAV", "1, addressbook")
-        .header("Allow", "OPTIONS, PROPFIND, REPORT, GET, PUT, DELETE")
+        .header("DAV", "1, 3, addressbook, extended-mkcol, sync-collection")
+        .header("Allow", "OPTIONS, PROPFIND, REPORT, GET, PUT, DELETE, MKCOL, ACL")
         .code(204)
         .send(),
   });
 
   app.route({
-    method: ["PROPFIND", "REPORT", "GET", "PUT", "DELETE"],
+    method: ["PROPFIND", "REPORT", "GET", "PUT", "DELETE", "MKCOL", "ACL"],
     url: "/dav/card/*",
+    bodyLimit: DAV_BODY_LIMIT_BYTES,
     handler: async (request, reply) => {
       const method = request.method as CardDavMethod;
       const actor = await authenticateCardDav(
         request,
         options.appPasswords,
-        method === "PUT" || method === "DELETE" ? "carddav.write" : "carddav.read",
+        method === "PUT" || method === "DELETE" || method === "MKCOL" || method === "ACL"
+          ? "carddav.write"
+          : "carddav.read",
       );
       if (actor === null) {
         return reply
           .header("www-authenticate", 'Basic realm="Helix CardDAV"')
           .code(401)
           .send("CardDAV app password required.");
+      }
+      const addressBookId = addressBookIdFromRequest(request.url, actor);
+      const davBodyText = bodyToString(request.body);
+      if (
+        (method === "PROPFIND" || method === "REPORT" || method === "MKCOL" || method === "ACL") &&
+        davBodyText.trim().length > 0
+      ) {
+        try {
+          parseDavXml(davBodyText);
+          if (method === "REPORT") {
+            reportLimit(davBodyText);
+            if (isSyncCollectionReport(davBodyText)) {
+              syncCollectionVersion(davBodyText);
+            } else if (!isAddressbookMultigetReport(davBodyText)) {
+              addressbookFilter(davBodyText);
+              reportPageToken(davBodyText);
+            }
+          }
+        } catch (error) {
+          if (error instanceof DavStandardsParseError) return reply.code(400).send(error.message);
+          throw error;
+        }
+      }
+
+      if (method === "MKCOL") {
+        if (
+          addressBookId === undefined ||
+          requestPath(request.url) !== addressbookHref(actor, addressBookId)
+        ) {
+          return reply.code(400).send("CardDAV MKCOL requires a UUID address-book path.");
+        }
+        const displayName =
+          (davBodyText.trim().length === 0
+            ? ""
+            : davText(davElements(parseDavXml(davBodyText), "displayname")[0]).trim()) ||
+          "Contacts";
+        if (displayName.length > 255) return reply.code(400).send("Address-book name is too long.");
+        const created = await options.store.createAddressBook({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          addressBookId,
+          displayName,
+        });
+        return created === null
+          ? reply.code(409).send("CardDAV address book already exists.")
+          : reply.header("Location", addressbookHref(actor, addressBookId)).code(201).send();
+      }
+
+      if (method === "ACL") {
+        if (addressBookId === undefined) return reply.code(400).send("Address-book id required.");
+        const grant = addressBookGrant(davBodyText);
+        if (grant === null) return reply.code(400).send("A valid CardDAV ACL grant is required.");
+        const shared = await options.store.shareAddressBook({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          addressBookId,
+          memberActorId: grant.actorId,
+          role: grant.role,
+        });
+        return shared
+          ? reply.code(204).send()
+          : reply.code(403).send("Only the address-book owner may share it.");
+      }
+
+      if (method === "PROPFIND" && isAddressBookListRequest(request.url, actor)) {
+        const books = await options.store.listAddressBooksForActor({
+          orgId: actor.orgId,
+          actorId: actor.id,
+        });
+        return reply
+          .code(207)
+          .type("application/xml; charset=utf-8")
+          .send(addressBookListXml(actor, books));
       }
 
       if (method === "GET") {
@@ -67,6 +158,7 @@ export async function registerCardDavRoutes(
         const contact = await options.store.getContactForActor({
           orgId: actor.orgId,
           actorId: actor.id,
+          ...(addressBookId === undefined ? {} : { addressBookId }),
           href,
         });
         if (contact === null) {
@@ -86,6 +178,7 @@ export async function registerCardDavRoutes(
         const existing = await options.store.getContactForActor({
           orgId: actor.orgId,
           actorId: actor.id,
+          ...(addressBookId === undefined ? {} : { addressBookId }),
           href,
         });
         const preconditionFailure = cardDavPreconditionFailure(request, existing);
@@ -96,15 +189,19 @@ export async function registerCardDavRoutes(
           const result = await options.store.upsertContactFromVcard({
             orgId: actor.orgId,
             actorId: actor.id,
+            ...(addressBookId === undefined ? {} : { addressBookId }),
             href,
             vcard: bodyToString(request.body),
           });
           return await reply
             .header("ETag", result.contact.etag)
-            .header("Location", contactHref(actor, result.contact))
+            .header("Location", contactHref(actor, result.contact, addressBookId))
             .code(result.created ? 201 : 204)
             .send();
         } catch (error) {
+          if (error instanceof CardDavAccessError) {
+            return await reply.code(403).send(error.message);
+          }
           if (error instanceof InvalidVcardError) {
             return await reply.code(400).send(error.message);
           }
@@ -120,6 +217,7 @@ export async function registerCardDavRoutes(
         const existing = await options.store.getContactForActor({
           orgId: actor.orgId,
           actorId: actor.id,
+          ...(addressBookId === undefined ? {} : { addressBookId }),
           href,
         });
         const preconditionFailure = cardDavPreconditionFailure(request, existing);
@@ -129,45 +227,76 @@ export async function registerCardDavRoutes(
         const deleted = await options.store.deleteContact({
           orgId: actor.orgId,
           actorId: actor.id,
+          ...(addressBookId === undefined ? {} : { addressBookId }),
           href,
         });
         return deleted ? reply.code(204).send() : reply.code(404).send("Unknown CardDAV contact.");
       }
 
-      const contacts = await options.store.listContactsForActor({
-        orgId: actor.orgId,
-        actorId: actor.id,
-      });
-      const syncVersion = await options.store.getContactSyncVersionForActor({
-        orgId: actor.orgId,
-        actorId: actor.id,
-      });
       if (method === "REPORT") {
-        const bodyText = bodyToString(request.body);
+        const bodyText = davBodyText;
+        const limit = reportLimit(bodyText);
         if (isSyncCollectionReport(bodyText)) {
           const sinceSyncVersion = syncCollectionVersion(bodyText);
-          const changes =
-            sinceSyncVersion === undefined
-              ? contacts
-              : await options.store.listContactChangesForActor({
-                  orgId: actor.orgId,
-                  actorId: actor.id,
-                  sinceSyncVersion,
-                });
+          const changes = await options.store.listContactChangesForActor({
+            orgId: actor.orgId,
+            actorId: actor.id,
+            ...(addressBookId === undefined ? {} : { addressBookId }),
+            sinceSyncVersion: sinceSyncVersion ?? 0,
+            limit: limit + 1,
+          });
+          const truncated = changes.length > limit;
+          const page = changes.slice(0, limit);
+          const syncVersion = truncated
+            ? (page.at(-1)?.syncVersion ?? sinceSyncVersion ?? 0)
+            : await options.store.getContactSyncVersionForActor({
+                orgId: actor.orgId,
+                actorId: actor.id,
+                ...(addressBookId === undefined ? {} : { addressBookId }),
+              });
           return reply
             .code(207)
             .type("application/xml; charset=utf-8")
             .send(
-              cardDavSyncCollectionXml(actor, contacts, changes, syncVersion, sinceSyncVersion),
+              cardDavSyncCollectionXml(
+                actor,
+                page,
+                syncVersion,
+                sinceSyncVersion,
+                truncated,
+                addressBookId,
+              ),
             );
         }
+        const afterHref = reportPageToken(bodyText);
+        const contacts = await options.store.listContactsForActor({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          ...(addressBookId === undefined ? {} : { addressBookId }),
+          limit: limit + 1,
+          ...(afterHref === undefined ? {} : { afterHref }),
+          ...(isAddressbookMultigetReport(bodyText) ? {} : { filter: addressbookFilter(bodyText) }),
+        });
+        const truncated = contacts.length > limit;
+        const page = contacts.slice(0, limit);
         return reply
           .code(207)
           .type("application/xml; charset=utf-8")
-          .send(cardDavReportXml(actor, contacts, bodyText));
+          .send(cardDavReportXml(actor, page, bodyText, truncated, addressBookId));
       }
 
-      const target = cardDavTarget(request.url, actor, contacts);
+      const contacts = await options.store.listContactsForActor({
+        orgId: actor.orgId,
+        actorId: actor.id,
+        ...(addressBookId === undefined ? {} : { addressBookId }),
+        limit: CARD_DAV_PAGE_LIMIT + 1,
+      });
+      const syncVersion = await options.store.getContactSyncVersionForActor({
+        orgId: actor.orgId,
+        actorId: actor.id,
+        ...(addressBookId === undefined ? {} : { addressBookId }),
+      });
+      const target = cardDavTarget(request.url, actor, contacts, addressBookId);
       if (target === null) {
         return reply.code(404).send("Unknown CardDAV resource.");
       }
@@ -175,7 +304,17 @@ export async function registerCardDavRoutes(
       return reply
         .code(207)
         .type("application/xml; charset=utf-8")
-        .send(cardDavMultistatusXml(actor, target, contacts, depth, syncVersion));
+        .send(
+          cardDavMultistatusXml(
+            actor,
+            target,
+            contacts.slice(0, CARD_DAV_PAGE_LIMIT),
+            depth,
+            syncVersion,
+            contacts.length > CARD_DAV_PAGE_LIMIT,
+            addressBookId,
+          ),
+        );
     },
   });
 }
@@ -193,7 +332,6 @@ async function authenticateCardDav(
     username: credentials.username,
     password: credentials.password,
     requiredScope,
-    compatibilityScope: "carddav",
   });
 }
 
@@ -209,21 +347,46 @@ function cardDavMultistatusXml(
   contacts: readonly CardDavContactRecord[],
   depth: 0 | 1,
   syncVersion: number,
+  truncated = false,
+  addressBookId?: string,
 ): string {
-  const responses = [targetResponseXml(actor, target, contacts, syncVersion)];
+  const responses = [targetResponseXml(actor, target, contacts, syncVersion, addressBookId)];
   if (depth === 1 && target.kind === "addressbook") {
     responses.push(
       selfCardResponseXml(actor),
-      ...contacts.map((contact) => contactResponseXml(actor, contact)),
+      ...contacts.map((contact) => contactResponseXml(actor, contact, {}, addressBookId)),
     );
   }
+  if (truncated) responses.push(limitExceededResponseXml());
   return xmlDocument(multistatusXml(responses));
+}
+
+function addressBookListXml(
+  actor: Actor,
+  books: Awaited<ReturnType<CardDavContactStore["listAddressBooksForActor"]>>,
+): string {
+  return xmlDocument(
+    multistatusXml(
+      books.map((book) =>
+        responseXml({
+          href: addressbookHref(actor, book.id),
+          displayName: book.displayName,
+          resourceType: "<D:collection/><C:addressbook/>",
+          extraProps: book.canWrite
+            ? "<D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege></D:current-user-privilege-set>"
+            : "<D:current-user-privilege-set><D:privilege><D:read/></D:privilege></D:current-user-privilege-set>",
+        }),
+      ),
+    ),
+  );
 }
 
 function cardDavReportXml(
   actor: Actor,
   contacts: readonly CardDavContactRecord[],
   bodyText: string,
+  truncated: boolean,
+  addressBookId?: string,
 ): string {
   const requestedHrefs = reportHrefs(bodyText);
   if (isAddressbookMultigetReport(bodyText)) {
@@ -232,12 +395,13 @@ function cardDavReportXml(
         ? [
             selfCardResponseXml(actor, { includeAddressData: true }),
             ...contacts.map((contact) =>
-              contactResponseXml(actor, contact, { includeAddressData: true }),
+              contactResponseXml(actor, contact, { includeAddressData: true }, addressBookId),
             ),
           ]
         : requestedHrefs.map((href) =>
-            addressbookMultigetResponseXml(actor, contacts, href),
+            addressbookMultigetResponseXml(actor, contacts, href, addressBookId),
           );
+    if (truncated) responses.push(limitExceededResponseXml());
     return xmlDocument(multistatusXml(responses));
   }
 
@@ -247,34 +411,41 @@ function cardDavReportXml(
     responses.push(selfCardResponseXml(actor, { includeAddressData: true }));
   }
   for (const contact of contacts) {
-    const href = contactHref(actor, contact);
+    const href = contactHref(actor, contact, addressBookId);
     if (shouldIncludeAll || requestedHrefs.includes(href)) {
-      responses.push(contactResponseXml(actor, contact, { includeAddressData: true }));
+      responses.push(
+        contactResponseXml(actor, contact, { includeAddressData: true }, addressBookId),
+      );
     }
   }
+  if (truncated) responses.push(limitExceededResponseXml(contacts.at(-1)?.href));
   return xmlDocument(multistatusXml(responses));
 }
 
 function cardDavSyncCollectionXml(
   actor: Actor,
-  contacts: readonly CardDavContactRecord[],
   changes: readonly CardDavContactRecord[],
   syncVersion: number,
   sinceSyncVersion: number | undefined,
+  truncated: boolean,
+  addressBookId?: string,
 ): string {
   const responses =
     sinceSyncVersion === undefined
       ? [
           selfCardResponseXml(actor, { includeAddressData: true }),
-          ...contacts.map((contact) =>
-            contactResponseXml(actor, contact, { includeAddressData: true }),
-          ),
+          ...changes
+            .filter((contact) => contact.deletedAt === undefined)
+            .map((contact) =>
+              contactResponseXml(actor, contact, { includeAddressData: true }, addressBookId),
+            ),
         ]
       : changes.map((contact) =>
           contact.deletedAt === undefined
-            ? contactResponseXml(actor, contact, { includeAddressData: true })
-            : deletedContactResponseXml(actor, contact),
+            ? contactResponseXml(actor, contact, { includeAddressData: true }, addressBookId)
+            : deletedContactResponseXml(actor, contact, addressBookId),
         );
+  if (truncated) responses.push(limitExceededResponseXml());
   return xmlDocument(multistatusXml(responses, syncToken(syncVersion)));
 }
 
@@ -283,6 +454,7 @@ function targetResponseXml(
   target: CardDavTarget,
   contacts: readonly CardDavContactRecord[],
   syncVersion: number,
+  addressBookId?: string,
 ): string {
   if (target.kind === "principal") {
     return responseXml({
@@ -296,10 +468,10 @@ function targetResponseXml(
     return selfCardResponseXml(actor);
   }
   if (target.kind === "contact") {
-    return contactResponseXml(actor, target.contact);
+    return contactResponseXml(actor, target.contact, {}, addressBookId);
   }
   return responseXml({
-    href: addressbookHref(actor),
+    href: addressbookHref(actor, addressBookId),
     displayName: "Contacts",
     resourceType: "<D:collection/><C:addressbook/>",
     extraProps: [
@@ -342,9 +514,10 @@ function contactResponseXml(
   actor: Actor,
   contact: CardDavContactRecord,
   options: { readonly includeAddressData?: boolean } = {},
+  addressBookId?: string,
 ): string {
   return responseXml({
-    href: contactHref(actor, contact),
+    href: contactHref(actor, contact, addressBookId),
     displayName: contact.href,
     resourceType: "",
     extraProps: [
@@ -362,27 +535,41 @@ function addressbookMultigetResponseXml(
   actor: Actor,
   contacts: readonly CardDavContactRecord[],
   href: string,
+  addressBookId?: string,
 ): string {
   if (href === selfCardHref(actor)) {
     return selfCardResponseXml(actor, { includeAddressData: true });
   }
-  const prefix = addressbookHref(actor);
+  const prefix = addressbookHref(actor, addressBookId);
   if (href.startsWith(prefix)) {
-    const contactHrefValue = decodeURIComponent(href.slice(prefix.length));
+    const contactHrefValue = safeDecodePathSegment(href.slice(prefix.length));
+    if (contactHrefValue === null) return notFoundResponseXml(href);
     const contact = contacts.find((candidate) => candidate.href === contactHrefValue);
     if (contact !== undefined) {
-      return contactResponseXml(actor, contact, { includeAddressData: true });
+      return contactResponseXml(actor, contact, { includeAddressData: true }, addressBookId);
     }
   }
   return notFoundResponseXml(href);
 }
 
-function deletedContactResponseXml(actor: Actor, contact: CardDavContactRecord): string {
-  return notFoundResponseXml(contactHref(actor, contact));
+function deletedContactResponseXml(
+  actor: Actor,
+  contact: CardDavContactRecord,
+  addressBookId?: string,
+): string {
+  return notFoundResponseXml(contactHref(actor, contact, addressBookId));
 }
 
 function notFoundResponseXml(href: string): string {
   return `<D:response><D:href>${xmlEscape(href)}</D:href><D:status>HTTP/1.1 404 Not Found</D:status></D:response>`;
+}
+
+function limitExceededResponseXml(lastHref?: string): string {
+  const next =
+    lastHref === undefined
+      ? ""
+      : `<H:next-page-token>${Buffer.from(lastHref, "utf8").toString("base64url")}</H:next-page-token>`;
+  return `<D:response><D:href></D:href><D:status>HTTP/1.1 507 Insufficient Storage</D:status><D:error><D:number-of-matches-within-limits/>${next}</D:error></D:response>`;
 }
 
 function responseXml(input: {
@@ -398,12 +585,18 @@ function cardDavTarget(
   url: string,
   actor: Actor,
   contacts: readonly CardDavContactRecord[],
+  addressBookId?: string,
 ): CardDavTarget | null {
   const path = requestPath(url);
   if (path.includes("/principals/")) {
     return { kind: "principal" };
   }
-  if (path === addressbookHref(actor) || path === "/dav/card/" || path === "/dav/card") {
+  if (
+    path === addressbookHref(actor, addressBookId) ||
+    path === `${addressbookHref(actor, addressBookId)}/` ||
+    (addressBookId === undefined &&
+      (path === versionedApiPath("/dav/card/") || path === versionedApiPath("/dav/card")))
+  ) {
     return { kind: "addressbook" };
   }
   if (isSelfVcardRequest(url, actor)) {
@@ -422,9 +615,15 @@ function isSelfVcardRequest(url: string, actor: Actor): boolean {
   return path === selfCardHref(actor) || path === `${selfCardHref(actor)}/`;
 }
 
+function isAddressBookListRequest(url: string, actor: Actor): boolean {
+  const path = requestPath(url);
+  const href = `${addressbookHref(actor)}books`;
+  return path === href || path === `${href}/`;
+}
+
 function contactHrefFromRequest(url: string, actor: Actor): string | null {
   const path = requestPath(url);
-  const prefix = addressbookHref(actor);
+  const prefix = addressbookHref(actor, addressBookIdFromRequest(url, actor));
   if (!path.startsWith(prefix)) {
     return null;
   }
@@ -432,7 +631,8 @@ function contactHrefFromRequest(url: string, actor: Actor): string | null {
   if (rawName.length === 0 || rawName.includes("/")) {
     return null;
   }
-  const href = decodeURIComponent(rawName);
+  const href = safeDecodePathSegment(rawName);
+  if (href === null) return null;
   return isValidContactHref(href) ? href : null;
 }
 
@@ -448,28 +648,92 @@ function isValidContactHref(href: string): boolean {
 }
 
 function reportHrefs(body: string): readonly string[] {
-  return [...body.matchAll(/<[^>]*href[^>]*>([^<]+)<\/[^>]*href>/gi)].map((match) =>
-    xmlUnescape(match[1] ?? ""),
-  );
+  return davElements(parseDavXml(body), "href").map((element) => davText(element));
+}
+
+function reportLimit(body: string): number {
+  const value = davText(davElements(parseDavXml(body), "nresults")[0]).trim();
+  if (value.length === 0) return CARD_DAV_PAGE_LIMIT;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) throw new DavStandardsParseError("xml", "invalid");
+  return Math.min(parsed, 1000);
+}
+
+function reportPageToken(body: string): string | undefined {
+  const value = davText(davElements(parseDavXml(body), "page-token")[0]).trim();
+  if (value.length === 0) return undefined;
+  try {
+    const decoded = Buffer.from(value, "base64url").toString("utf8");
+    if (!isValidContactHref(decoded)) throw new DavStandardsParseError("xml", "invalid");
+    return decoded;
+  } catch {
+    throw new DavStandardsParseError("xml", "invalid");
+  }
+}
+
+function addressbookFilter(body: string): CardDavContactFilter | undefined {
+  const property = davElements(parseDavXml(body), "prop-filter")[0];
+  if (property === undefined) return undefined;
+  const propertyName = property.attributes.name?.toUpperCase();
+  if (propertyName !== "FN" && propertyName !== "EMAIL" && propertyName !== "UID") {
+    throw new DavStandardsParseError("xml", "invalid");
+  }
+  const match = davElements(property, "text-match")[0];
+  if (match === undefined) return undefined;
+  const matchType = match.attributes["match-type"] ?? "contains";
+  if (
+    matchType !== "contains" &&
+    matchType !== "equals" &&
+    matchType !== "starts-with" &&
+    matchType !== "ends-with"
+  ) {
+    throw new DavStandardsParseError("xml", "invalid");
+  }
+  return {
+    property: propertyName,
+    value: davText(match),
+    matchType,
+    negate: match.attributes["negate-condition"] === "yes",
+  };
+}
+
+function addressBookGrant(
+  body: string,
+): { readonly actorId: string; readonly role: "viewer" | "editor" } | null {
+  if (body.trim().length === 0) return null;
+  const href = davElements(parseDavXml(body), "href")
+    .map((node) => davText(node).trim())
+    .find((value) => value.includes("/principals/"));
+  const actorId = href?.match(/\/principals\/([0-9a-f-]{36})\/?$/iu)?.[1];
+  if (
+    actorId === undefined ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      actorId,
+    )
+  ) {
+    return null;
+  }
+  return {
+    actorId,
+    role: davElements(parseDavXml(body), "write").length > 0 ? "editor" : "viewer",
+  };
 }
 
 function isSyncCollectionReport(body: string): boolean {
-  return /<[^>]*sync-collection[\s>]/i.test(body);
+  return davElements(parseDavXml(body), "sync-collection").length > 0;
 }
 
 function isAddressbookMultigetReport(body: string): boolean {
-  return /<[^>]*addressbook-multiget[\s>]/i.test(body);
+  return davElements(parseDavXml(body), "addressbook-multiget").length > 0;
 }
 
 function syncCollectionVersion(body: string): number | undefined {
-  const match = body.match(/<[^>]*sync-token[^>]*>([^<]*)<\/[^>]*sync-token>/i);
-  const token = match?.[1]?.trim();
-  if (token === undefined || token.length === 0) {
-    return undefined;
-  }
-  const decoded = xmlUnescape(token);
+  const token = davText(davElements(parseDavXml(body), "sync-token")[0]).trim();
+  if (token.length === 0) return undefined;
+  const decoded = token;
   const version = decoded.match(/^data:,helix-carddav-sync-(\d+)$/)?.[1];
-  return version === undefined ? undefined : Number(version);
+  if (version === undefined) throw new DavStandardsParseError("xml", "invalid");
+  return Number(version);
 }
 
 function syncToken(syncVersion: number): string {
@@ -477,19 +741,42 @@ function syncToken(syncVersion: number): string {
 }
 
 function principalHref(actor: Actor): string {
-  return `/dav/card/principals/${encodeURIComponent(actor.id)}/`;
+  return versionedApiPath(`/dav/card/principals/${encodeURIComponent(actor.id)}/`);
 }
 
-function addressbookHref(actor: Actor): string {
-  return `/dav/card/${encodeURIComponent(actor.id)}/`;
+function addressbookHref(actor: Actor, addressBookId?: string): string {
+  return addressBookId === undefined
+    ? versionedApiPath(`/dav/card/${encodeURIComponent(actor.id)}/`)
+    : versionedApiPath(
+        `/dav/card/${encodeURIComponent(actor.id)}/books/${encodeURIComponent(addressBookId)}/`,
+      );
 }
 
 function selfCardHref(actor: Actor): string {
   return `${addressbookHref(actor)}self.vcf`;
 }
 
-function contactHref(actor: Actor, contact: CardDavContactRecord): string {
-  return `${addressbookHref(actor)}${encodeURIComponent(contact.href)}`;
+function contactHref(
+  actor: Actor,
+  contact: CardDavContactRecord,
+  addressBookId?: string,
+): string {
+  return `${addressbookHref(actor, addressBookId)}${encodeURIComponent(contact.href)}`;
+}
+
+function addressBookIdFromRequest(url: string, actor: Actor): string | undefined {
+  const prefix = versionedApiPath(`/dav/card/${encodeURIComponent(actor.id)}/books/`);
+  const path = requestPath(url);
+  if (!path.startsWith(prefix)) return undefined;
+  const value = path.slice(prefix.length).split("/")[0];
+  if (value === undefined) return undefined;
+  const decoded = safeDecodePathSegment(value);
+  return decoded !== null &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+      decoded,
+    )
+    ? decoded
+    : undefined;
 }
 
 function actorVcard(actor: Actor): string {
@@ -597,14 +884,12 @@ function xmlDocument(body: string): string {
 
 function multistatusXml(responses: readonly string[], syncTokenValue?: string): string {
   const token =
-    syncTokenValue === undefined
-      ? ""
-      : `<D:sync-token>${xmlEscape(syncTokenValue)}</D:sync-token>`;
-  return `<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">${responses.join("")}${token}</D:multistatus>`;
+    syncTokenValue === undefined ? "" : `<D:sync-token>${xmlEscape(syncTokenValue)}</D:sync-token>`;
+  return `<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav" xmlns:H="urn:helix:params:xml:ns:carddav">${responses.join("")}${token}</D:multistatus>`;
 }
 
 function requestPath(url: string): string {
-  return url.split("?")[0] ?? url;
+  return versionedApiPath(url.split("?")[0] ?? url);
 }
 
 function xmlEscape(value: string): string {
@@ -615,12 +900,13 @@ function xmlEscape(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function xmlUnescape(value: string): string {
-  return value
-    .replaceAll("&quot;", '"')
-    .replaceAll("&gt;", ">")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&amp;", "&");
+function safeDecodePathSegment(value: string): string | null {
+  try {
+    return decodePathSegment(value);
+  } catch (error) {
+    if (error instanceof DavStandardsParseError) return null;
+    throw error;
+  }
 }
 
 function vcardEscape(value: string): string {

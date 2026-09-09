@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -15,25 +16,41 @@ import {
 describe("document surface view preference", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let stored: DocumentSurfaceView | null;
+  let queryClient: QueryClient;
+  let stored: DocumentSurfaceView;
+  let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
+  let getItem: ReturnType<typeof vi.fn>;
   let setItem: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    stored = null;
-    setItem = vi.fn((key: string, value: string) => {
-      if (key === "helix.documentSurface.view" && (value === "grid" || value === "list")) {
-        stored = value;
-      }
-    });
+    stored = "list";
+    document.cookie = "helix_csrf=test-csrf; path=/";
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    getItem = vi.fn();
+    setItem = vi.fn();
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: {
-        getItem: vi.fn((key: string) => (key === "helix.documentSurface.view" ? stored : null)),
+        getItem,
         setItem,
         removeItem: vi.fn(),
         clear: vi.fn(),
       },
     });
+    fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === "/api/tools/drive.view.get") {
+        return Promise.resolve(Response.json({ view: stored }));
+      }
+      if (url === "/api/tools/drive.view.set") {
+        if (typeof init?.body !== "string") throw new Error("Expected JSON request body.");
+        const body = JSON.parse(init.body) as { readonly view: DocumentSurfaceView };
+        stored = body.view;
+        return Promise.resolve(Response.json({ view: stored }));
+      }
+      return Promise.resolve(Response.json({ error: "unexpected request" }, { status: 500 }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -44,11 +61,13 @@ describe("document surface view preference", () => {
       root.unmount();
     });
     container.remove();
+    queryClient.clear();
+    vi.unstubAllGlobals();
   });
 
-  it("reads and writes the shared card/list view preference", () => {
-    stored = "list";
+  it("reads and writes the server-owned card/list preference without localStorage", async () => {
     render();
+    await settle();
 
     expect(container.querySelector("[data-view]")?.textContent).toBe("list");
 
@@ -59,15 +78,31 @@ describe("document surface view preference", () => {
     act(() => {
       cardButton?.click();
     });
+    await settle();
 
     expect(container.querySelector("[data-view]")?.textContent).toBe("grid");
-    expect(setItem).toHaveBeenCalledWith("helix.documentSurface.view", "grid");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tools/drive.view.set",
+      expect.objectContaining({ body: JSON.stringify({ view: "grid" }) }),
+    );
     expect(stored).toBe("grid");
+    expect(getItem).not.toHaveBeenCalledWith("helix.documentSurface.view");
+    expect(setItem).not.toHaveBeenCalled();
   });
 
   function render() {
     act(() => {
-      root.render(<Harness />);
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Harness />
+        </QueryClientProvider>,
+      );
+    });
+  }
+
+  async function settle() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
     });
   }
 });

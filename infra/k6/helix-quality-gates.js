@@ -339,7 +339,10 @@ export function meetJitsi() {
       ...jsonEnv("MEET_MINT_BODY", {
         roomId,
         expiresInSeconds: 600,
-        moderator: false,
+        recordingNoticeAccepted: true,
+        recordingNoticeVersion: "2026-09-02",
+        deviceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        joinGrantId: `00000000-0000-4000-8000-${String(__VU).padStart(6, "0")}${String(__ITER).padStart(6, "0")}`,
       }),
       roomId,
     },
@@ -507,9 +510,16 @@ function jsonEnv(name, fallback) {
 
 function defaultPluginInstallBody() {
   return {
-    pluginId: __ENV.PLUGIN_INSTALL_PLUGIN_ID || "com.helix.core.search-meilisearch",
+    pluginId: __ENV.PLUGIN_INSTALL_PLUGIN_ID || "com.helix.webhook-out-slack",
     version: __ENV.PLUGIN_INSTALL_VERSION || "1.0.0",
-    source: __ENV.PLUGIN_INSTALL_SOURCE || "official",
+    confirmations: [
+      "source.non_official",
+      "permissions.scopes.webhooks.write",
+      "permissions.outbound-network.hooks.slack.com",
+      "capabilities.provides.webhook.out.format.slack",
+      "capabilities.consumes.webhook.engine",
+      "artifact.untrusted",
+    ],
   };
 }
 

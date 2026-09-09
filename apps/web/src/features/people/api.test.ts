@@ -11,6 +11,10 @@ describe("people directory API", () => {
               id: "actor-1",
               email: "ada@example.com",
               displayName: "Ada Lovelace",
+              kind: "personal",
+              favorite: true,
+              avatarDataUrl: null,
+              relationship: { manager: "Grace Hopper" },
             },
           ],
         }),
@@ -22,6 +26,10 @@ describe("people directory API", () => {
         id: "actor-1",
         email: "ada@example.com",
         displayName: "Ada Lovelace",
+        kind: "personal",
+        favorite: true,
+        avatarDataUrl: null,
+        relationship: { manager: "Grace Hopper" },
       },
     ]);
     expect(fetchImpl).toHaveBeenCalledWith("/api/people?limit=10&query=ada");

@@ -328,8 +328,7 @@ async function toEditorsHttpRequest(
   actorFromRequest?: (request: FastifyRequest) => Actor | Promise<Actor>,
 ): Promise<EditorsHttpRequest> {
   const actor = await actorFromRequest?.(request);
-  const tenant = (request as unknown as { readonly tenant?: { readonly orgId?: string } | null })
-    .tenant;
+  const tenant = request.tenant;
   return {
     method: request.method as EditorsHttpMethod,
     url: request.url,

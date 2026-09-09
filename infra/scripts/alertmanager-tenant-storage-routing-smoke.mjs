@@ -140,7 +140,7 @@ async function runAlertmanagerRoutingSmoke() {
       `127.0.0.1:${alertmanagerPort}:9093`,
       "-v",
       `${configPath}:/etc/alertmanager/alertmanager.yml:ro`,
-      "prom/alertmanager:latest",
+      "prom/alertmanager:v0.34.0@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d",
       "--config.file=/etc/alertmanager/alertmanager.yml",
       "--storage.path=/alertmanager",
       "--web.listen-address=0.0.0.0:9093",

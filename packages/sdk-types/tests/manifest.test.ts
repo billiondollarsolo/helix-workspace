@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { assertPluginManifest, validatePluginManifest } from "../src/manifest.js";
 
 describe("plugin manifest policy metadata", () => {
-  it("accepts signed tier metadata", () => {
+  it("accepts canonical ids, artifact paths, and tier metadata", () => {
     expect(
       assertPluginManifest({
         ...baseManifest(),
@@ -12,21 +12,21 @@ describe("plugin manifest policy metadata", () => {
             sovereign: "prohibited",
           },
         },
-        signature: {
-          bundleDigest: validDigest(),
-          signerIdentity: "https://issuer.example/helix-builder",
-          signedAt: "2026-05-20T12:00:00Z",
-        },
+        main: "dist/index.js",
       }),
     ).toMatchObject({
       id: "com.example.plugin",
-      signature: { bundleDigest: validDigest() },
+      main: "dist/index.js",
     });
   });
 
-  it("rejects malformed tier and signature metadata", () => {
+  it("rejects malformed tier metadata, ids, dependencies, and artifact paths", () => {
     const result = validatePluginManifest({
       ...baseManifest(),
+      id: "../plugin",
+      main: "../outside.js",
+      migrations: "/etc/passwd",
+      dependencies: ["notcanonical", { id: "com.example.-bad" }],
       tierRequirements: {
         minTier: "gold",
         tierRestrictions: {
@@ -34,29 +34,22 @@ describe("plugin manifest policy metadata", () => {
           sovereign: 1,
         },
       },
-      signature: {
-        bundleDigest: 123,
-        signerIdentity: "not a signer",
-        signedAt: "not a date",
-      },
     });
 
     expect(result.valid).toBe(false);
     expect(result.issues.map((issue) => issue.path)).toEqual([
+      "$.id",
+      "$.dependencies[0]",
+      "$.dependencies[1].id",
+      "$.main",
+      "$.migrations",
       "$.tierRequirements.minTier",
       "$.tierRequirements.tierRestrictions.unknown",
       "$.tierRequirements.tierRestrictions.unknown",
       "$.tierRequirements.tierRestrictions.sovereign",
-      "$.signature.bundleDigest",
-      "$.signature.signerIdentity",
-      "$.signature.signedAt",
     ]);
   });
 });
-
-function validDigest(): string {
-  return `sha256:${"a".repeat(64)}`;
-}
 
 function baseManifest(): Record<string, unknown> {
   return {
@@ -64,7 +57,7 @@ function baseManifest(): Record<string, unknown> {
     name: "Example Plugin",
     version: "1.0.0",
     sdkVersion: "^1.0.0",
-    kind: "in-process",
+    kind: "sandboxed",
     capabilities: {
       provides: [],
       consumes: [],

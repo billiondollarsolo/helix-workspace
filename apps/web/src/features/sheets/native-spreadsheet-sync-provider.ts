@@ -1,5 +1,4 @@
 import { Debouncer } from "@tanstack/pacer";
-import { addAccessTokenSearchParam } from "@/lib/auth";
 import type { SheetsApiTabWithCells, SheetsCellEdit } from "./api";
 
 const socketOpen = 1;
@@ -282,13 +281,13 @@ export class NativeSpreadsheetSyncProvider {
 }
 
 export function sheetSyncWebSocketUrl(sheetId: string): string {
-  const path = `/sync/sheets/${encodeURIComponent(sheetId)}?protocol=${protocol}`;
+  const path = `/v1/sync/sheets/${encodeURIComponent(sheetId)}?protocol=${protocol}`;
   if (typeof window === "undefined") {
-    return addAccessTokenSearchParam(`ws://localhost${path}`);
+    return `ws://localhost${path}`;
   }
   const resolved = new URL(path, window.location.href);
   resolved.protocol = resolved.protocol === "https:" ? "wss:" : "ws:";
-  return addAccessTokenSearchParam(resolved.toString());
+  return resolved.toString();
 }
 
 export function applySpreadsheetOperationToTab(

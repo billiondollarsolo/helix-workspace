@@ -21,6 +21,8 @@ function record(
     objectId: "doc-1",
     createdAt: "2026-05-21T12:00:00.000Z",
     metadata: { ip: "127.0.0.1" },
+    schemaVersion: 1,
+    sequence: "1",
     thisHash: digest(id),
     ...overrides,
   };

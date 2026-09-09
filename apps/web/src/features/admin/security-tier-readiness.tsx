@@ -122,7 +122,7 @@ interface AIConfigStatus {
   };
 }
 
-type PluginSource = "official" | "sideload" | "self-hosted";
+type PluginSource = "official" | "sideload";
 
 interface PluginConfirmation {
   readonly id: string;
@@ -149,7 +149,6 @@ interface PluginCatalogItem {
   };
   readonly lifecycle?: PluginCatalogLifecycleStatus | null;
   readonly install?: PluginCatalogInstallStatus | null;
-  readonly signature?: Record<string, unknown> | null;
   readonly tierRequirements?: Record<string, unknown> | null;
 }
 
@@ -174,7 +173,6 @@ interface PluginCatalogStatus {
 interface PluginInstallInput {
   readonly pluginId: string;
   readonly version: string;
-  readonly source: PluginSource;
   readonly confirmations: readonly string[];
 }
 
@@ -540,7 +538,7 @@ const controls: readonly ControlRow[] = [
     valuesByTier: {
       personal: "optional TOTP",
       business: "admins required",
-      enterprise: "org-wide required, SAML/OIDC plugin",
+      enterprise: "org-wide required, OIDC",
       sovereign: "CAC/PIV smartcard",
     },
   },
@@ -658,7 +656,6 @@ export async function prefetchAdminReadinessQueries(queryClient: AdminReadinessR
 export function SecurityTierReadiness() {
   const [selectedTierId, setSelectedTierId] = useState<TierId>("business");
   const [selectedPluginId, setSelectedPluginId] = useState<string | null>(null);
-  const [pluginSource, setPluginSource] = useState<PluginSource>("official");
   const [confirmedPluginRequirements, setConfirmedPluginRequirements] = useState<readonly string[]>(
     [],
   );
@@ -731,7 +728,6 @@ export function SecurityTierReadiness() {
                         install: {
                           ...(plugin.install ?? {}),
                           optimisticStatus: "installing",
-                          source: input.source,
                         },
                       }
                     : plugin,
@@ -819,13 +815,7 @@ export function SecurityTierReadiness() {
     () => pluginCatalog.find((plugin) => plugin.id === selectedPluginId) ?? pluginCatalog[0],
     [pluginCatalog, selectedPluginId],
   );
-  const pluginConfirmations = useMemo(
-    () =>
-      selectedPlugin === undefined
-        ? []
-        : pluginConfirmationsForSource(selectedPlugin, pluginSource),
-    [pluginSource, selectedPlugin],
-  );
+  const pluginConfirmations = selectedPlugin?.install?.confirmations ?? [];
   const confirmedPluginIds = useMemo(
     () => new Set(confirmedPluginRequirements),
     [confirmedPluginRequirements],
@@ -844,7 +834,7 @@ export function SecurityTierReadiness() {
   useEffect(() => {
     setConfirmedPluginRequirements([]);
     setPluginInstallStatus(null);
-  }, [pluginSource, selectedPlugin?.id]);
+  }, [selectedPlugin?.id]);
 
   const selectedTier = tiers.find((tier) => tier.id === selectedTierId) ?? tiers[1];
   if (selectedTier === undefined) {
@@ -1190,7 +1180,7 @@ export function SecurityTierReadiness() {
               </dd>
             </div>
           </dl>
-          <button className="helix-button helix-button-secondary" type="button">
+          <span className="helix-button helix-button-secondary" role="status">
             {tierMutation.isPending ? (
               <CircleDashed aria-hidden="true" size={16} />
             ) : (
@@ -1201,7 +1191,7 @@ export function SecurityTierReadiness() {
               : backendStatus !== undefined
                 ? "Config API connected"
                 : "Config API unavailable"}
-          </button>
+          </span>
           <button
             className="helix-button"
             disabled={tierMutation.isPending || backendStatus === undefined}
@@ -1359,18 +1349,6 @@ export function SecurityTierReadiness() {
                 ))}
               </select>
             </label>
-            <label>
-              <span>Source</span>
-              <select
-                aria-label="Plugin source"
-                onChange={(event) => setPluginSource(event.target.value as PluginSource)}
-                value={pluginSource}
-              >
-                <option value="official">Official Helix registry</option>
-                <option value="sideload">Sideloaded bundle</option>
-                <option value="self-hosted">Self-hosted registry</option>
-              </select>
-            </label>
           </div>
 
           {pluginCatalogQuery.isError ? (
@@ -1424,7 +1402,7 @@ export function SecurityTierReadiness() {
               <PluginManifestFacts plugin={selectedPlugin} />
               <div className="admin-plugin-confirmations">
                 {pluginConfirmations.length === 0 ? (
-                  <p>Official installs do not require additional source confirmations.</p>
+                  <p>This catalog-authenticated artifact requires no additional confirmations.</p>
                 ) : (
                   pluginConfirmations.map((confirmation) => (
                     <label key={confirmation.id}>
@@ -1454,7 +1432,6 @@ export function SecurityTierReadiness() {
                   pluginInstallMutation.mutate({
                     pluginId: selectedPlugin.id,
                     version: selectedPlugin.version,
-                    source: pluginSource,
                     confirmations: confirmedPluginRequirements,
                   })
                 }
@@ -1818,92 +1795,6 @@ function isTierId(value: unknown): value is TierId {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function pluginConfirmationsForSource(
-  plugin: PluginCatalogItem,
-  source: PluginSource,
-): readonly PluginConfirmation[] {
-  if (source === "official") {
-    return [];
-  }
-  const confirmations: PluginConfirmation[] = [
-    {
-      id: "source.non_official",
-      label: "Install from a non-official source",
-      category: "source",
-      detail: `${plugin.id} will be installed from ${formatToken(source)}.`,
-    },
-  ];
-  appendPluginConfirmations(
-    confirmations,
-    "permissions.scopes",
-    "Scope",
-    plugin.permissions.scopes,
-  );
-  appendPluginConfirmations(
-    confirmations,
-    "permissions.outbound-network",
-    "Outbound network",
-    plugin.permissions["outbound-network"],
-  );
-  appendPluginConfirmations(
-    confirmations,
-    "permissions.filesystem",
-    "Filesystem",
-    plugin.permissions.filesystem,
-  );
-  appendPluginConfirmations(
-    confirmations,
-    "permissions.envVars",
-    "Environment variable",
-    plugin.permissions.envVars,
-  );
-  appendPluginConfirmations(
-    confirmations,
-    "capabilities.provides",
-    "Provided capability",
-    plugin.capabilities.provides,
-  );
-  appendPluginConfirmations(
-    confirmations,
-    "capabilities.consumes",
-    "Consumed capability",
-    plugin.capabilities.consumes,
-  );
-  if (plugin.signature === undefined || plugin.signature === null) {
-    confirmations.push({
-      id: "signature.missing",
-      label: "Unsigned plugin artifact",
-      category: "signature",
-      detail: "The manifest does not include signed artifact evidence.",
-    });
-  }
-  if (plugin.tierRequirements !== undefined && plugin.tierRequirements !== null) {
-    confirmations.push({
-      id: "tier.requirements",
-      label: "Tier requirements declared",
-      category: "tier",
-      detail: "Review tier restrictions before installing this plugin.",
-    });
-  }
-  return confirmations;
-}
-
-function appendPluginConfirmations(
-  confirmations: PluginConfirmation[],
-  field: string,
-  label: string,
-  values: readonly string[],
-): void {
-  for (const value of values) {
-    confirmations.push({
-      id: `${field}.${value}`,
-      label,
-      category: field,
-      detail: value,
-    });
-  }
 }
 
 function pluginInstallStatusMessage(result: PluginInstallResult): string {

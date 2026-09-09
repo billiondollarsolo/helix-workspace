@@ -1,27 +1,36 @@
 import type { JsonObject } from "@helix/sdk-types";
-import type { IndexDocument, SearchEventIndexer, SearchIndexer, SearchIndexerEvent } from "../../search/index.js";
-import type { MailActivityPayload, MailAddress, MailSearchProjectionStore, MailSearchRecord } from "../types.js";
+import type { IndexDocument, SearchIndexer, SearchIndexerEvent } from "../../search/types.js";
+import type { SearchEventIndexer } from "../../search/event-indexer.js";
+import type {
+  MailActivityPayload,
+  MailAddress,
+  MailSearchProjectionStore,
+  MailSearchRecord,
+} from "../types.js";
 
 export const mailSearchIndexerId = "mail";
 export const mailSearchSubjects = ["activity.mail.>", "com.helix.core.mail.>"] as const;
 
-export function createMailSearchIndexer(store: MailSearchProjectionStore): SearchIndexer<MailActivityPayload> {
+export function createMailSearchIndexer(
+  store: MailSearchProjectionStore,
+): SearchIndexer<MailActivityPayload> {
   return {
     id: mailSearchIndexerId,
     subjects: mailSearchSubjects,
     async route(event) {
       const messageId = mailMessageIdFromEvent(event);
-      if (messageId === undefined) {
+      const scope = mailScopeFromEvent(event);
+      if (messageId === undefined || scope === undefined) {
         return undefined;
       }
 
       if (isDeleteSubject(event.subject)) {
-        return { delete: [mailDocumentId(messageId)] };
+        return { delete: [mailDocumentId(messageId, scope.actorId)] };
       }
 
-      const record = await store.getMailSearchRecord(messageId);
+      const record = await store.getMailSearchRecord({ ...scope, messageId });
       if (record === null) {
-        return { delete: [mailDocumentId(messageId)] };
+        return { delete: [mailDocumentId(messageId, scope.actorId)] };
       }
 
       return { upsert: [mailRecordToIndexDocument(record)] };
@@ -29,7 +38,22 @@ export function createMailSearchIndexer(store: MailSearchProjectionStore): Searc
   };
 }
 
-export function registerMailIndexer(indexer: SearchEventIndexer, store: MailSearchProjectionStore): void {
+function mailScopeFromEvent(
+  event: SearchIndexerEvent<MailActivityPayload>,
+): { readonly orgId: string; readonly actorId: string } | undefined {
+  const { orgId, actorId } = event.payload;
+  return typeof orgId === "string" &&
+    orgId.length > 0 &&
+    typeof actorId === "string" &&
+    actorId.length > 0
+    ? { orgId, actorId }
+    : undefined;
+}
+
+export function registerMailIndexer(
+  indexer: SearchEventIndexer,
+  store: MailSearchProjectionStore,
+): void {
   indexer.register(createMailSearchIndexer(store));
 }
 
@@ -38,12 +62,20 @@ export function mailRecordToIndexDocument(record: MailSearchRecord): IndexDocume
   const to = record.to.map(addressSearchText).join(", ");
   const cc = (record.cc ?? []).map(addressSearchText).join(", ");
   const bcc = (record.bcc ?? []).map(addressSearchText).join(", ");
-  const body = [record.subject, addressSearchText(record.from), to, cc, bcc, labels.join(" "), record.body]
+  const body = [
+    record.subject,
+    addressSearchText(record.from),
+    to,
+    cc,
+    bcc,
+    labels.join(" "),
+    record.body,
+  ]
     .filter((part) => part.length > 0)
     .join("\n");
 
   return {
-    id: mailDocumentId(record.id),
+    id: mailDocumentId(record.id, record.ownerActorId),
     type: "mail",
     title: record.subject,
     body,
@@ -62,22 +94,20 @@ export function mailRecordToIndexDocument(record: MailSearchRecord): IndexDocume
       classification: record.classification,
       sentAt: record.sentAt,
       metadata: record.metadata,
-      // RAG visibility — mail is personal-by-default. Only the mailbox owner
-      // can retrieve their mail via the assistant. Recipients indexing their
-      // OWN copies is a follow-up (would need per-recipient indexing).
-      ...(record.ownerActorId === null
-        ? { ragVisibility: "org" }
-        : { ragVisibility: "private", ragOwnerActorId: record.ownerActorId }),
+      ragVisibility: "private",
+      ragOwnerActorId: record.ownerActorId,
     }),
     updatedAt: record.updatedAt ?? record.sentAt,
   };
 }
 
-export function mailDocumentId(messageId: string): string {
-  return `mail:${messageId}`;
+export function mailDocumentId(messageId: string, actorId: string): string {
+  return `mail:${actorId}:${messageId}`;
 }
 
-function mailMessageIdFromEvent(event: SearchIndexerEvent<MailActivityPayload>): string | undefined {
+function mailMessageIdFromEvent(
+  event: SearchIndexerEvent<MailActivityPayload>,
+): string | undefined {
   const id = event.payload.messageId ?? event.payload.id;
   return typeof id === "string" && id.length > 0 ? id : undefined;
 }

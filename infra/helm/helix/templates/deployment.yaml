@@ -10,6 +10,13 @@ spec:
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   revisionHistoryLimit: 3
+  minReadySeconds: {{ .Values.availability.minReadySeconds }}
+  progressDeadlineSeconds: {{ .Values.availability.progressDeadlineSeconds }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       {{- include "helix.selectorLabels" . | nindent 6 }}
@@ -19,6 +26,7 @@ spec:
       labels:
         {{- include "helix.selectorLabels" . | nindent 8 }}
         helix.io/role: default
+        helix.io/service-account: {{ include "helix.serviceAccountName" . | quote }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -51,24 +59,17 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- $nodeSelector := .Values.nodeSelector }}
+      {{- $nodeSelector := mergeOverwrite (deepCopy .Values.nodeSelector) (dict "topology.kubernetes.io/region" .Values.external.s3.region) }}
       {{- if .Values.fips.enabled }}
-      {{- $nodeSelector = mergeOverwrite (deepCopy .Values.nodeSelector) .Values.fips.nodeSelector }}
+      {{- $nodeSelector = mergeOverwrite $nodeSelector .Values.fips.nodeSelector }}
       {{- end }}
       {{- with $nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "helix.podScheduling" (dict "root" . "role" "default" "affinity" .Values.affinity "topologySpreadConstraints" .Values.topologySpreadConstraints) | nindent 6 }}
       {{- with .Values.tolerations }}
       tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.topologySpreadConstraints }}
-      topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
@@ -111,6 +112,12 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 6
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: {{ .Values.availability.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.availability.startupProbe.failureThreshold }}
           livenessProbe:
             httpGet:
               path: /healthz

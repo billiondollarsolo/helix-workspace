@@ -167,7 +167,7 @@ const apiSecurityPolicies = {
       mappedDomains: ["helix.local"],
       localLoginEnabled: true,
       setupStatus: "draft",
-      testLoginStatus: "runtime_pending",
+      testLoginStatus: "configuration_required",
       setupSource: "admin",
     }),
     securityPolicy("session", {
@@ -186,6 +186,10 @@ const apiSecurityPolicies = {
     }),
     securityPolicy("device_trust", {
       protectedApps: ["admin"],
+    }),
+    securityPolicy("drive_workflows", {
+      allowedKinds: ["shortcut", "file_request", "approval"],
+      requireDueDate: false,
     }),
   ],
 };
@@ -349,13 +353,15 @@ describe("AdminConsole", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the Overview placeholder by default (telemetry not yet wired)", async () => {
+  it("renders the live user directory by default", async () => {
     mockJsonResponse(fetchMock, apiUsers);
 
     await render(createElement(AdminConsole));
 
-    expect(container.textContent).toContain("Workspace overview");
-    expect(container.textContent).toContain("Telemetry not yet wired");
+    expect(container.textContent).toContain("Users");
+    await waitFor(() => {
+      expect(container.textContent).toContain("Mira Okafor");
+    });
   });
 
   it("navigates to each admin section from the sidebar", async () => {
@@ -471,6 +477,63 @@ describe("AdminConsole", () => {
     expect(localLogin?.disabled).toBe(true);
   });
 
+  it("lets an admin select allowed Drive workflows and due-date policy", async () => {
+    let updateBody: unknown;
+    fetchMock.mockImplementation((input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input instanceof Request
+              ? input.url
+              : "";
+      if (url.includes("/api/admin/security-policies/drive_workflows")) {
+        if (typeof init?.body !== "string") throw new Error("Expected JSON policy body");
+        updateBody = JSON.parse(init.body);
+        return Promise.resolve(Response.json({ policy: apiSecurityPolicies.policies.at(-1) }));
+      }
+      if (url.includes("/api/admin/security-policies")) {
+        return Promise.resolve(Response.json(apiSecurityPolicies));
+      }
+      return Promise.resolve(Response.json(apiUsers));
+    });
+
+    await render(createElement(AdminConsole));
+    await clickButton("Security");
+    await waitFor(() => {
+      expect(container.textContent).toContain("Drive workflows");
+    });
+    const edit = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Edit Drive workflows"]',
+    );
+    if (edit === null) throw new Error("Drive workflow edit button not found");
+    act(() => {
+      edit.click();
+    });
+    const shortcut = [...container.querySelectorAll("label")]
+      .find((label) => label.textContent.trim() === "shortcut")
+      ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(shortcut?.checked).toBe(true);
+    const dueDate = [...container.querySelectorAll("label")]
+      .find((label) => label.textContent.includes("Require due dates"))
+      ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (dueDate === undefined || dueDate === null) throw new Error("Due-date control not found");
+    act(() => {
+      dueDate.click();
+    });
+    await clickButton("Save policy");
+
+    await waitFor(() => {
+      expect(updateBody).toMatchObject({
+        settings: {
+          allowedKinds: ["shortcut", "file_request", "approval"],
+          requireDueDate: true,
+        },
+      });
+    });
+  });
+
   it("shows the empty-state row when the users API returns no rows", async () => {
     mockJsonResponse(fetchMock, { users: [], nextCursor: null });
 
@@ -506,7 +569,7 @@ describe("AdminConsole", () => {
     expect(container.textContent).not.toContain("Mira Okafor");
   });
 
-  it("shows bulk actions when users are selected", async () => {
+  it("shows the selection count without unsupported bulk actions", async () => {
     mockJsonResponse(fetchMock, apiUsers);
 
     await render(createElement(AdminConsole));
@@ -528,8 +591,10 @@ describe("AdminConsole", () => {
     });
 
     expect(container.textContent).toContain("selected");
-    expect(container.textContent).toContain("Change role");
-    expect(container.textContent).toContain("Suspend");
+    expect(container.textContent).not.toContain("Change role");
+    expect(
+      [...container.querySelectorAll("button")].some((button) => button.textContent === "Suspend"),
+    ).toBe(false);
   });
 
   it("renders billing usage rollups from the billing API", async () => {

@@ -38,6 +38,7 @@ import { detectFormat } from "@/features/_open/format-detection";
 import { setHelixDriveItemDragData } from "./drag-payload";
 import { FileNameText } from "./file-name-text";
 import { FileThumbnail } from "./file-thumbnail";
+import { DriveWorkflows } from "./drive-workflows";
 import {
   DocumentSurfaceViewToggle,
   useDocumentSurfaceViewPreference,
@@ -971,7 +972,7 @@ function DriveConversionDialog({
         >
           <a
             className="btn sm"
-            href={`/api/drive/objects/${conversion.objectId}/content?download=1`}
+            href={`/v1/api/drive/objects/${conversion.objectId}/content?download=1`}
             download={conversion.fileName}
           >
             Download original
@@ -1328,10 +1329,6 @@ function DriveMain({
         <DriveBreadcrumb scope={scope} trail={trail} onNavigate={onNavigateCrumb} />
         <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
           <DocumentSurfaceViewToggle view={view} onViewChange={onViewChange} />
-          <button type="button" className="btn sm">
-            <Icons.Filter />
-            Filter
-          </button>
         </div>
       </div>
 
@@ -2227,6 +2224,13 @@ function DriveDetailsPanel({
                 onRoleChange={(actorId, role) => updateAccessMutation.mutate({ actorId, role })}
               />
             </>
+          ) : null}
+
+          {!isTrash && entry !== null ? (
+            <DriveWorkflows
+              resourceId={entry.id}
+              resourceType={entry.type === "folder" ? "folder" : "object"}
+            />
           ) : null}
 
           <div className="section-label" style={{ padding: "16px 0 6px" }}>

@@ -11,16 +11,12 @@ export interface SignupPasswordStrength {
 }
 
 const minScore = 3;
-type PasswordEstimator = typeof estimatePassword;
-interface PasswordEstimatorModule {
-  readonly default: PasswordEstimator;
-}
-let passwordEstimatorPromise: Promise<PasswordEstimator> | undefined;
+const predictableTerms = ["password", "qwerty", "letmein", "welcome", "administrator"];
 
 export async function evaluateSignupPasswordStrength(
   input: SignupPasswordStrengthInput,
 ): Promise<SignupPasswordStrength> {
-  const score = await scoreSignupPassword(input);
+  const score = scoreSignupPassword(input);
   return {
     score,
     acceptable: score >= minScore,
@@ -29,22 +25,30 @@ export async function evaluateSignupPasswordStrength(
 }
 
 export function preloadSignupPasswordStrengthEstimator(): Promise<void> {
-  return loadPasswordEstimator().then(() => undefined);
+  return Promise.resolve();
 }
 
-async function scoreSignupPassword(input: SignupPasswordStrengthInput): Promise<number> {
+function scoreSignupPassword(input: SignupPasswordStrengthInput): number {
   if (input.password.length < 12) {
     return 0;
   }
-  const estimatePassword = await loadPasswordEstimator();
-  return estimatePassword(input.password, [...contextualPasswordTerms(input)]).score;
-}
-
-function loadPasswordEstimator(): Promise<PasswordEstimator> {
-  passwordEstimatorPromise ??= import("zxcvbn").then(
-    (module) => (module as unknown as PasswordEstimatorModule).default,
-  );
-  return passwordEstimatorPromise;
+  const normalized = input.password.toLowerCase();
+  if (
+    [...predictableTerms, ...contextualPasswordTerms(input)].some(
+      (term) => term.length >= 3 && normalized.includes(term),
+    ) ||
+    /^(.)\1+$/u.test(normalized) ||
+    /(?:012345|123456|abcdef|qwerty)/u.test(normalized)
+  ) {
+    return 0;
+  }
+  const alphabet =
+    (/[a-z]/u.test(input.password) ? 26 : 0) +
+    (/[A-Z]/u.test(input.password) ? 26 : 0) +
+    (/\d/u.test(input.password) ? 10 : 0) +
+    (/[^A-Za-z0-9]/u.test(input.password) ? 32 : 0);
+  const entropy = input.password.length * Math.log2(alphabet);
+  return entropy >= 100 ? 4 : entropy >= 70 ? 3 : entropy >= 50 ? 2 : 1;
 }
 
 function passwordStrengthLabel(score: number): string {
@@ -66,4 +70,3 @@ function contextualPasswordTerms(input: SignupPasswordStrengthInput): readonly s
     ...input.orgName.toLowerCase().split(/[^a-z0-9]+/u),
   ].filter((term) => term.length > 0);
 }
-import type estimatePassword from "zxcvbn";

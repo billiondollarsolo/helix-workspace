@@ -1,6 +1,6 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import { actorFromRequest } from "../../api/actor.js";
+import { actorFromRequest } from "../../api/test-actor.js";
 import type {
   CreateTenantStorageMigrationJobInput,
   TenantStorageMigrationJobRecord,
@@ -8,10 +8,33 @@ import type {
 } from "../storage/index.js";
 import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
 import type { PlanRecord, PlanStore } from "../tenancy/plans.js";
-import { registerTenantConfigAdminRoutes, type TenantConfigAdminStore } from "./tenant-config.js";
+import {
+  registerTenantConfigAdminRoutes as registerTenantConfigAdminRoutesWithoutAudit,
+  type TenantConfigAdminStore,
+} from "./tenant-config.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const actorId = "11111111-1111-4111-8111-111111111111";
+const defaultAuditSink = { append: async () => ({ id: "audit", thisHash: "hash" }) };
+const secureByoStorage = {
+  region: "us-east-1",
+  encryption: { sse_kms_key_arn: "arn:aws:kms:us-east-1:123456789012:key/acme" },
+  lifecycle: { object_lock: "compliance", retention_days: 30 },
+} as const;
+
+type TenantConfigRouteTestOptions = Omit<
+  Parameters<typeof registerTenantConfigAdminRoutesWithoutAudit>[1],
+  "auditSink"
+> &
+  Partial<Pick<Parameters<typeof registerTenantConfigAdminRoutesWithoutAudit>[1], "auditSink">>;
+
+async function registerTenantConfigAdminRoutes(
+  app: Parameters<typeof registerTenantConfigAdminRoutesWithoutAudit>[0],
+  options: TenantConfigRouteTestOptions,
+): Promise<void> {
+  const { auditSink = defaultAuditSink, ...rest } = options;
+  await registerTenantConfigAdminRoutesWithoutAudit(app, { ...rest, auditSink });
+}
 
 function headers(scopes: string): Record<string, string> {
   return {
@@ -103,10 +126,11 @@ describe("tenant config admin routes", () => {
             region: "us-east-1",
             bucket: "acme-helix-data",
             prefix: "helix/",
-            credentials_vault_path: "tenants/acme/byo-storage/s3",
+            credentials_secret_handle: "s3",
             encryption: {
               sse_kms_key_arn: "arn:aws:kms:us-east-1:123456789012:key/acme",
             },
+            lifecycle: { object_lock: "compliance", retention_days: 30 },
           },
         },
         quotas: { api_rps_limit: 10, actors_limit: null },
@@ -127,10 +151,11 @@ describe("tenant config admin routes", () => {
             region: "us-east-1",
             bucket: "acme-helix-data",
             prefix: "helix/",
-            credentials_vault_path: "tenants/acme/byo-storage/s3",
+            credentials_secret_handle: "s3",
             encryption: {
               sse_kms_key_arn: "arn:aws:kms:us-east-1:123456789012:key/acme",
             },
+            lifecycle: { object_lock: "compliance", retention_days: 30 },
           },
         },
         featureFlags: { ai_smart_compose: true, dlp_enforcement: "warn", byo_storage: true },
@@ -147,7 +172,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "s3-compatible",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/s3",
+            credentials_secret_handle: "s3",
           },
         },
         features: { ai_smart_compose: true, dlp_enforcement: "warn", byo_storage: true },
@@ -194,7 +219,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "s3-compatible",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/s3",
+            credentials_secret_handle: "s3",
             accessKeyId: "plaintext-access-key",
             secretAccessKey: "plaintext-secret-key",
           },
@@ -223,9 +248,10 @@ describe("tenant config admin routes", () => {
         byo: {
           storage: {
             kind: "byo",
+            ...secureByoStorage,
             provider: "aws-s3",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
       },
@@ -255,7 +281,7 @@ describe("tenant config admin routes", () => {
             provider: "azure-blob",
             bucket: "acme-helix-data",
             prefix: "../escape",
-            credentials_vault_path: "platform/root",
+            credentials_secret_handle: "../root",
           },
         },
       },
@@ -265,7 +291,36 @@ describe("tenant config admin routes", () => {
     const serialized = JSON.stringify(body(response));
     expect(serialized).toContain("Invalid enum value");
     expect(serialized).toContain("Storage prefix must not contain");
-    expect(serialized).toContain("credentials_vault_path");
+    expect(serialized).toContain("credentials_secret_handle");
+    await app.close();
+  });
+
+  it("rejects tenant paths where only an opaque storage secret handle is allowed", async () => {
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, {
+      store: new InMemoryTenantConfigAdminStore(),
+      actorFromRequest,
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/api/admin/tenant-config",
+      headers: headers("admin.console.write"),
+      payload: {
+        features: { byo_storage: true },
+        byo: {
+          storage: {
+            kind: "byo",
+            provider: "aws-s3",
+            bucket: "acme-helix-data",
+            credentials_secret_handle: "tenants/another-org/byo-storage/aws",
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.stringify(body(response))).toContain("credentials_secret_handle");
     await app.close();
   });
 
@@ -511,9 +566,10 @@ describe("tenant config admin routes", () => {
         dryRun: true,
         targetStorage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "aws-s3",
           bucket: "acme-helix-data",
-          credentials_vault_path: "tenants/acme/byo-storage/aws",
+          credentials_secret_handle: "aws",
         },
       },
     });
@@ -526,7 +582,7 @@ describe("tenant config admin routes", () => {
           kind: "byo",
           provider: "aws-s3",
           bucket: "acme-helix-data",
-          credentials_vault_path: "tenants/acme/byo-storage/aws",
+          credentials_secret_handle: "aws",
         },
       },
     });
@@ -536,7 +592,7 @@ describe("tenant config admin routes", () => {
           managedBy: "byo",
           storage: {
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
       },
@@ -564,9 +620,10 @@ describe("tenant config admin routes", () => {
         dryRun: false,
         targetStorage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "aws-s3",
           bucket: "acme-helix-data",
-          credentials_vault_path: "tenants/acme/byo-storage/aws",
+          credentials_secret_handle: "aws",
         },
       },
     });
@@ -586,7 +643,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "aws-s3",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
       },
@@ -601,7 +658,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "aws-s3",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
       },
@@ -654,9 +711,10 @@ describe("tenant config admin routes", () => {
         dryRun: false,
         sourceStorage: {
           kind: "byo",
+          ...secureByoStorage,
           provider: "aws-s3",
           bucket: "acme-helix-data",
-          credentials_vault_path: "tenants/acme/byo-storage/aws",
+          credentials_secret_handle: "aws",
         },
       },
     });
@@ -672,7 +730,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "aws-s3",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
         targetStorage: {
@@ -690,7 +748,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "aws-s3",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
         targetStorage: { managedBy: "helix-default", storage: null },
@@ -758,9 +816,10 @@ describe("tenant config admin routes", () => {
     const featureFlagEvents: unknown[] = [];
     const targetStorage = {
       kind: "byo",
+      ...secureByoStorage,
       provider: "aws-s3",
       bucket: "acme-helix-data",
-      credentials_vault_path: "tenants/acme/byo-storage/aws",
+      credentials_secret_handle: "aws",
     } as const;
     storageMigrationJobs.jobs.push(
       migrationJob({
@@ -844,8 +903,11 @@ describe("tenant config admin routes", () => {
     const sourceStorage = {
       kind: "byo",
       provider: "aws-s3",
+      region: "us-east-1",
       bucket: "acme-helix-data",
-      credentials_vault_path: "tenants/acme/byo-storage/aws",
+      credentials_secret_handle: "aws",
+      encryption: secureByoStorage.encryption,
+      lifecycle: secureByoStorage.lifecycle,
     } as const;
     const store = new InMemoryTenantConfigAdminStore({
       byoConfig: { storage: sourceStorage },
@@ -909,7 +971,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "aws-s3",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
         plannedCount: 1,
@@ -929,7 +991,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "aws-s3",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
         plannedCount: 2,
@@ -950,7 +1012,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "aws-s3",
             bucket: "acme-helix-data",
-            credentials_vault_path: "tenants/acme/byo-storage/aws",
+            credentials_secret_handle: "aws",
           },
         },
         plannedCount: 2,
@@ -993,7 +1055,7 @@ describe("tenant config admin routes", () => {
             kind: "byo",
             provider: "aws-s3",
             bucket: "old-bucket",
-            credentials_vault_path: "tenants/acme/byo-storage/old",
+            credentials_secret_handle: "old",
           },
         },
         targetStorage: { managedBy: "helix-default", storage: null },
@@ -1009,7 +1071,7 @@ describe("tenant config admin routes", () => {
           kind: "byo",
           provider: "aws-s3",
           bucket: "new-bucket",
-          credentials_vault_path: "tenants/acme/byo-storage/new",
+          credentials_secret_handle: "new",
         },
       },
     });

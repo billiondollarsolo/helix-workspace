@@ -14,15 +14,14 @@ const identityPayload = {
     {
       id: "idp-1",
       orgId: "org-1",
-      protocol: "saml",
+      protocol: "oidc",
       isPrimary: true,
       displayName: "Acme Okta",
-      config: { metadataUrl: "https://idp.example.com/metadata" },
-      signingCertVaultPath: "tenants/org-1/idp/saml-signing-cert",
+      config: { issuer: "https://idp.example.com", clientId: "helix" },
+      signingCertSecretHandle: "oidc-private-key",
       attrMapping: { email: "$.email" },
-      jitProvisioning: true,
+      jitProvisioning: false,
       enabled: true,
-      samlSpMetadataUrl: "https://app.helix.example/api/auth/saml/acme/metadata",
       createdAt: "2026-05-24T00:00:00.000Z",
       updatedAt: "2026-05-24T00:00:00.000Z",
     },
@@ -38,9 +37,6 @@ describe("identity-api", () => {
 
     expect(result.localLoginRecovery.enabled).toBe(true);
     expect(result.idpConfigs[0]?.displayName).toBe("Acme Okta");
-    expect(result.idpConfigs[0]?.samlSpMetadataUrl).toBe(
-      "https://app.helix.example/api/auth/saml/acme/metadata",
-    );
     expect(fetchImpl).toHaveBeenCalledWith("/api/admin/identity/idp-configs", { method: "GET" });
   });
 
@@ -54,10 +50,10 @@ describe("identity-api", () => {
 
     await createTenantIdpConfig(
       {
-        protocol: "saml",
+        protocol: "oidc",
         displayName: "Acme Okta",
-        config: { metadataUrl: "https://idp.example.com/metadata" },
-        signingCertVaultPath: "tenants/org-1/idp/saml-signing-cert",
+        config: { issuer: "https://idp.example.com", clientId: "helix" },
+        signingCertSecretHandle: "oidc-private-key",
         attrMapping: { email: "$.email" },
         enabled: true,
       },
@@ -68,10 +64,10 @@ describe("identity-api", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        protocol: "saml",
+        protocol: "oidc",
         displayName: "Acme Okta",
-        config: { metadataUrl: "https://idp.example.com/metadata" },
-        signingCertVaultPath: "tenants/org-1/idp/saml-signing-cert",
+        config: { issuer: "https://idp.example.com", clientId: "helix" },
+        signingCertSecretHandle: "oidc-private-key",
         attrMapping: { email: "$.email" },
         enabled: true,
       }),
@@ -134,9 +130,8 @@ describe("identity-api", () => {
     const fetchImpl = vi.fn<AuthFetch>().mockResolvedValue(
       Response.json({
         testLogin: {
-          status: "runtime_pending",
-          message:
-            "SAML configuration is ready. Runtime AuthnRequest/ACS handling is not connected yet.",
+          status: "ready",
+          message: "OIDC discovery and callback validation are ready.",
         },
         localLoginRecovery: identityPayload.localLoginRecovery,
       }),
@@ -144,7 +139,7 @@ describe("identity-api", () => {
 
     const result = await testTenantIdpConfigLogin("idp-1", fetchImpl);
 
-    expect(result.status).toBe("runtime_pending");
+    expect(result.status).toBe("ready");
     expect(fetchImpl).toHaveBeenCalledWith("/api/admin/identity/idp-configs/idp-1/test-login", {
       method: "POST",
     });

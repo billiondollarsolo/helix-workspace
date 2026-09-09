@@ -94,8 +94,6 @@ const requiredCoverage = [
       "PLUGIN_INSTALL_EXPECT",
       "PLUGIN_INSTALL_PLUGIN_ID",
       "PLUGIN_INSTALL_VERSION",
-      "PLUGIN_INSTALL_SOURCE",
-      "PLUGIN_INSTALL_REGISTRY_URL",
     ],
   },
   {

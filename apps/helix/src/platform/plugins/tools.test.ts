@@ -1,10 +1,24 @@
+import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Actor, PluginManifest } from "@helix/sdk-types";
+import { InMemoryEventBus } from "../events/in-memory-event-bus.js";
 import { createToolRegistry } from "../tool-registry.js";
-import { registerPluginTools } from "./tools.js";
+import { calculatePluginBundleDigest, discoverPlugin } from "./loader.js";
+import {
+  InMemoryPluginLifecycleStore,
+  PluginLifecycle,
+  registerPluginTools,
+  type PluginRuntimeLifecycle,
+} from "./tools.js";
+import {
+  pluginCatalogPayloadBytes,
+  type PluginCatalogEntry,
+  type PluginCatalogPayload,
+  type PluginTrustOptions,
+} from "./trust.js";
 
 const tempDirs: string[] = [];
 const actor: Actor = {
@@ -62,7 +76,7 @@ describe("plugin tools", () => {
     const registry = createToolRegistry();
     registerPluginTools(registry, {
       pluginsDir,
-      officialPluginIds: ["com.example.official"],
+      discovery: { pluginTrust: await createPluginTrust(pluginsDir, ["com.example.official"]) },
     });
 
     const result = await registry.invoke("plugin.list", {}, { actor });
@@ -80,7 +94,7 @@ describe("plugin tools", () => {
       "permissions.filesystem./tmp/imports",
       "permissions.envVars.EXAMPLE_API_KEY",
       "capabilities.provides.example.capability",
-      "signature.missing",
+      "artifact.untrusted",
     ]);
     expect(official?.install).toEqual({ confirmationRequired: false, confirmations: [] });
   });
@@ -98,11 +112,11 @@ describe("plugin tools", () => {
       },
     ]);
     const registry = createToolRegistry();
-    registerPluginTools(registry, { pluginsDir, officialPluginIds: [] });
+    registerPluginTools(registry, { pluginsDir });
 
     const blocked = await registry.invoke(
       "plugin.install",
-      { pluginId: "com.example.community", source: "sideload" },
+      { pluginId: "com.example.community", source: "official" },
       { actor },
     );
 
@@ -115,7 +129,7 @@ describe("plugin tools", () => {
       "permissions.scopes.drive.write",
       "permissions.outbound-network.api.example.com",
       "capabilities.provides.example.capability",
-      "signature.missing",
+      "artifact.untrusted",
     ]);
 
     const installed = await registry.invoke(
@@ -128,7 +142,7 @@ describe("plugin tools", () => {
           "permissions.scopes.drive.write",
           "permissions.outbound-network.api.example.com",
           "capabilities.provides.example.capability",
-          "signature.missing",
+          "artifact.untrusted",
         ],
       },
       { actor },
@@ -148,7 +162,7 @@ describe("plugin tools", () => {
     const registry = createToolRegistry();
     registerPluginTools(registry, {
       pluginsDir,
-      officialPluginIds: ["com.example.official"],
+      discovery: { pluginTrust: await createPluginTrust(pluginsDir, ["com.example.official"]) },
     });
 
     const result = await registry.invoke(
@@ -170,7 +184,10 @@ describe("plugin tools", () => {
   it("enables and disables an installed plugin while preserving lifecycle state in the list", async () => {
     const pluginsDir = await writePluginsDirectory([{ id: "com.example.lifecycle" }]);
     const registry = createToolRegistry();
-    registerPluginTools(registry, { pluginsDir });
+    registerPluginTools(registry, {
+      pluginsDir,
+      discovery: { pluginTrust: await createPluginTrust(pluginsDir, ["com.example.lifecycle"]) },
+    });
 
     const missing = await registry.invoke(
       "plugin.disable",
@@ -216,7 +233,12 @@ describe("plugin tools", () => {
   it("requires explicit confirmation before uninstalling an installed plugin", async () => {
     const pluginsDir = await writePluginsDirectory([{ id: "com.example.uninstallable" }]);
     const registry = createToolRegistry();
-    registerPluginTools(registry, { pluginsDir });
+    registerPluginTools(registry, {
+      pluginsDir,
+      discovery: {
+        pluginTrust: await createPluginTrust(pluginsDir, ["com.example.uninstallable"]),
+      },
+    });
 
     await registry.invoke(
       "plugin.install",
@@ -244,7 +266,100 @@ describe("plugin tools", () => {
       lifecycle: { state: "uninstalled", installed: false },
     });
   });
+
+  it("rejects traversal ids and detects cataloged artifacts changed after signing", async () => {
+    const pluginsDir = await writePluginsDirectory([{ id: "com.example.tampered" }]);
+    const pluginTrust = await createPluginTrust(pluginsDir, ["com.example.tampered"]);
+    await writeFile(join(pluginsDir, "com.example.tampered", "extra.js"), "tampered\n", "utf8");
+    const registry = createToolRegistry();
+    registerPluginTools(registry, { pluginsDir, discovery: { pluginTrust } });
+
+    const traversal = await registry.invoke(
+      "plugin.install",
+      { pluginId: "../com.example.tampered", source: "official" },
+      { actor },
+    );
+    expect(traversal.ok).toBe(false);
+
+    const tampered = await registry.invoke(
+      "plugin.install",
+      { pluginId: "com.example.tampered", source: "official" },
+      { actor },
+    );
+    expect(tampered.ok).toBe(false);
+    expect(tampered.ok ? undefined : tampered.error).toContain("bundle digest mismatch");
+  });
+
+  it("starts and removes hooks on every replica and rolls back a failed state commit", async () => {
+    const pluginsDir = await writePluginsDirectory([{ id: "com.example.lifecycle" }]);
+    const plugin = await discoverPlugin(join(pluginsDir, "com.example.lifecycle"));
+    const store = new InMemoryPluginLifecycleStore();
+    const events = new InMemoryEventBus();
+    const firstRuntime = recordingRuntime();
+    const secondRuntime = recordingRuntime();
+    const first = new PluginLifecycle({ store, pluginsDir, events, runtime: firstRuntime.runtime });
+    const second = new PluginLifecycle({
+      store,
+      pluginsDir,
+      events,
+      runtime: secondRuntime.runtime,
+    });
+    await first.start();
+    await second.start();
+
+    await first.transition(plugin, "enabled", "official");
+    expect(firstRuntime.enabled).toEqual(["com.example.lifecycle"]);
+    expect(secondRuntime.enabled).toEqual(["com.example.lifecycle"]);
+
+    await first.transition(plugin, "disabled", "official");
+    expect(firstRuntime.enabled).toEqual([]);
+    expect(secondRuntime.enabled).toEqual([]);
+
+    let rolledBack = false;
+    const failing = new PluginLifecycle({
+      pluginsDir,
+      store: {
+        get: async () => undefined,
+        list: async () => [],
+        set: async () => Promise.reject(new Error("db")),
+      },
+      runtime: {
+        disable: () => {},
+        prepare: async () => ({
+          commit: () => {},
+          rollback: () => {
+            rolledBack = true;
+          },
+        }),
+      },
+    });
+    await expect(failing.transition(plugin, "enabled", "official")).rejects.toThrow("db");
+    expect(rolledBack).toBe(true);
+    await first.close();
+    await second.close();
+    await events.close();
+  });
 });
+
+function recordingRuntime(): {
+  readonly runtime: PluginRuntimeLifecycle;
+  readonly enabled: string[];
+} {
+  const enabled: string[] = [];
+  return {
+    enabled,
+    runtime: {
+      prepare: async (plugin) => ({
+        commit: () => enabled.push(plugin.manifest.id),
+        rollback: () => {},
+      }),
+      disable: (pluginId) => {
+        const index = enabled.indexOf(pluginId);
+        if (index >= 0) enabled.splice(index, 1);
+      },
+    },
+  };
+}
 
 async function writePluginsDirectory(manifests: readonly PluginManifestPatch[]): Promise<string> {
   const pluginsDir = await mkdtemp(join(tmpdir(), "helix-plugin-tools-"));
@@ -262,6 +377,72 @@ async function writePluginsDirectory(manifests: readonly PluginManifestPatch[]):
   return pluginsDir;
 }
 
+async function createPluginTrust(
+  pluginsDir: string,
+  pluginIds: readonly string[],
+): Promise<PluginTrustOptions> {
+  const plugins = await Promise.all(
+    pluginIds.map((pluginId) => discoverPlugin(join(pluginsDir, pluginId))),
+  );
+  const payload: PluginCatalogPayload = {
+    version: 1,
+    issuedAt: "2026-09-02T00:00:00.000Z",
+    expiresAt: "2026-09-03T00:00:00.000Z",
+    plugins: await Promise.all(
+      plugins.map(async (plugin) => ({
+        id: plugin.manifest.id,
+        version: plugin.manifest.version,
+        ...testArtifactProof(await calculatePluginBundleDigest(plugin)),
+      })),
+    ),
+  };
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const keyId = "test-catalog";
+  return {
+    catalog: {
+      keyId,
+      payload,
+      signature: sign(null, pluginCatalogPayloadBytes(payload), privateKey).toString("base64"),
+    },
+    trustedCatalogKeys: {
+      [keyId]: publicKey.export({ format: "pem", type: "spki" }).toString(),
+    },
+    ...testPublisherTrust(),
+    now: () => new Date("2026-09-02T12:00:00.000Z"),
+  };
+}
+
+function testArtifactProof(
+  bundleDigest: string,
+): Pick<PluginCatalogEntry, "bundleDigest" | "publisher" | "sigstoreBundle"> {
+  return {
+    bundleDigest,
+    publisher: "helix-release",
+    sigstoreBundle: { testDigest: bundleDigest } as unknown as PluginCatalogEntry["sigstoreBundle"],
+  };
+}
+
+function testPublisherTrust(): Pick<
+  PluginTrustOptions,
+  "trustedPublishers" | "createBundleVerifier"
+> {
+  return {
+    trustedPublishers: {
+      "helix-release": {
+        issuer: "https://token.actions.githubusercontent.com",
+        uri: "https://github.com/helix/workspace/.github/workflows/release.yml@refs/heads/main",
+      },
+    },
+    createBundleVerifier: async () => ({
+      verify(bundle, data) {
+        const marker = (bundle as unknown as { readonly testDigest?: string }).testDigest;
+        if (marker !== data?.toString("utf8")) throw new Error("invalid test proof");
+        return {} as never;
+      },
+    }),
+  };
+}
+
 interface PluginManifestPatch extends Partial<PluginManifest> {
   readonly id: string;
 }
@@ -272,7 +453,7 @@ function baseManifest(): PluginManifest {
     name: "Example Plugin",
     version: "1.0.0",
     sdkVersion: "^1.0.0",
-    kind: "in-process",
+    kind: "sandboxed",
     main: "index.js",
     capabilities: {
       provides: ["example.capability"],

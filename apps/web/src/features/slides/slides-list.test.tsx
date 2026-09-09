@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SlidesList } from "./slides-list";
+import type { SlideDeck } from "./seed";
 
 const deckId = "11111111-1111-4111-8111-111111111111";
 const navigateMock = vi.fn();
@@ -22,7 +23,7 @@ let container: HTMLDivElement;
 let root: Root;
 let queryClient: QueryClient;
 let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
-let onOpen: ReturnType<typeof vi.fn>;
+let onOpen = vi.fn<(deck: Pick<SlideDeck, "id" | "openMode">) => void>();
 let toolCalls: Array<{ readonly url: string; readonly body: unknown }>;
 let importShouldFail: boolean;
 let digestSpy: { mockRestore: () => void };
@@ -30,6 +31,7 @@ let driveEntries: readonly unknown[];
 
 describe("SlidesList", () => {
   beforeEach(() => {
+    document.cookie = "helix_csrf=test-csrf; path=/";
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -49,6 +51,12 @@ describe("SlidesList", () => {
 
       if (url === "/api/tools/drive.list") {
         return Promise.resolve(Response.json({ entries: driveEntries }));
+      }
+      if (url === "/api/tools/drive.view.get") {
+        return Promise.resolve(Response.json({ view: "grid" }));
+      }
+      if (url === "/api/tools/drive.view.set") {
+        return Promise.resolve(Response.json({ view: (body as { readonly view?: string }).view }));
       }
       if (url === "/api/tools/drive.trash") {
         return Promise.resolve(

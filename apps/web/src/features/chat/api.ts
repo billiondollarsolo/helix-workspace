@@ -1,5 +1,6 @@
 import type {
   ChatCreateRoomInput,
+  ChatAttachment,
   ChatInviteInput,
   ChatMessage,
   ChatPresenceStatus,
@@ -7,19 +8,23 @@ import type {
   ChatRoom,
   ChatSearchHit,
 } from "@helix/contracts";
-import { authenticatedFetch, getStoredAccessToken } from "@/lib/auth";
+import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
 
-/** @deprecated Prefer ChatSearchHit from @helix/contracts */
-export type { ChatSearchHit };
+export type ChatMessageRecord = Omit<
+  ChatMessage,
+  "revision" | "reactions" | "replyCount" | "pin" | "attachmentObjectIds" | "attachments"
+> &
+  Partial<Pick<ChatMessage, "revision" | "reactions" | "replyCount" | "pin">> & {
+    readonly attachmentObjectIds: readonly string[];
+    readonly attachments?: readonly ChatAttachmentRecord[];
+  };
 
-export type ChatMessageRecord = ChatMessage & {
-  readonly attachmentObjectIds: readonly string[];
-};
+export type ChatAttachmentRecord = ChatAttachment;
 
 export type ChatRoomMemberRecord = {
   readonly actorId: string;
-  readonly role: string;
+  readonly role: "owner" | "moderator" | "member";
   readonly displayName: string | null;
   readonly email: string | null;
 };
@@ -30,7 +35,8 @@ export type ChatRoomRecord = ChatRoom & {
     readonly orgId?: string;
     readonly name: string | null;
     readonly topic: string | null;
-    readonly isPrivate: boolean;
+    readonly privacy: "discoverable" | "restricted" | "private";
+    readonly readReceiptsEnabled: boolean;
     readonly metadata?: Record<string, unknown>;
     readonly createdAt?: string;
     readonly updatedAt?: string;
@@ -42,7 +48,7 @@ export interface ChatPresenceEntry {
   readonly orgId: string;
   readonly displayName?: string;
   readonly email?: string;
-  readonly status: ChatPresenceStatus | "online";
+  readonly status: ChatPresenceStatus;
   readonly seenAt: string;
 }
 
@@ -92,6 +98,7 @@ export type ChatRealtimeEvent =
   | {
       readonly type: "subscribed";
       readonly roomId: string;
+      readonly cursor: number;
       readonly presence: readonly ChatPresenceEntry[];
       readonly receipts?: readonly ChatReadReceiptRecord[];
     }
@@ -118,24 +125,53 @@ export type ChatRealtimeEvent =
   | {
       readonly type: "message.created";
       readonly roomId: string;
+      readonly cursor: number;
       readonly actorId?: string;
       readonly message: ChatMessageRecord;
+    }
+  | {
+      readonly type: "message.updated";
+      readonly roomId: string;
+      readonly cursor: number;
+      readonly message: ChatMessageRecord;
+    }
+  | {
+      readonly type: "message.deleted";
+      readonly roomId: string;
+      readonly cursor: number;
+      readonly messageId: string;
+      readonly revision: number;
+      readonly deletedAt: string;
     }
   | {
       readonly type: "read";
       readonly roomId: string;
       readonly actorId: string;
-      readonly messageId?: string;
+      readonly messageId: string;
+      readonly cursor: number;
       readonly receipt: ChatReadReceiptRecord;
     }
+  | {
+      readonly type: "access.changed";
+      readonly roomId: string;
+      readonly actorId: string;
+      readonly aclVersion: number;
+      readonly cursor: number;
+    }
+  | { readonly type: "resync.required"; readonly roomId: string; readonly cursor: number }
   | { readonly type: "reconnect"; readonly reason: string }
-  | { readonly type: "error"; readonly code?: string; readonly message?: string; readonly error?: string };
+  | {
+      readonly type: "error";
+      readonly code?: string;
+      readonly message?: string;
+      readonly error?: string;
+    };
 
 export interface ChatRealtimeClient {
-  subscribe(roomId: string): void;
+  subscribe(roomId: string, cursor?: number): void;
   sendMessage(input: ChatSendInput): void;
   setTyping(roomId: string, isTyping: boolean): void;
-  markRead(roomId: string, messageId?: string): void;
+  markRead(roomId: string, messageId: string): void;
   requestPresence(roomId: string): void;
   setPresence(status: ChatPresenceStatus): void;
   isOpen(): boolean;
@@ -143,14 +179,17 @@ export interface ChatRealtimeClient {
 }
 
 interface ChatRealtimeClientOptions {
+  readonly ticket: string;
   readonly url?: string;
   readonly WebSocketImpl?: typeof WebSocket;
-  readonly protocols?: string | string[];
   readonly onEvent: (event: ChatRealtimeEvent) => void;
   readonly onOpen?: (() => void) | undefined;
   readonly onClose?: ((event?: CloseEvent) => void) | undefined;
   readonly onError?: ((error: Event) => void) | undefined;
 }
+
+const CHAT_REALTIME_PROTOCOL = "helix.chat.v1";
+const CHAT_TICKET_PROTOCOL_PREFIX = "helix.ticket.";
 
 export async function searchChat(
   input: {
@@ -192,10 +231,30 @@ export async function listChatRooms(
   return output.rooms ?? [];
 }
 
+export async function discoverChatRooms(
+  input: { readonly query?: string; readonly limit?: number } = {},
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<readonly ChatRoomRecord[]> {
+  const output = await callChatTool<{ readonly rooms?: readonly ChatRoomRecord[] }>(
+    "chat.room.discover",
+    { query: input.query, limit: input.limit ?? 50 },
+    fetchImpl,
+  );
+  return output.rooms ?? [];
+}
+
+export function joinChatRoom(
+  roomId: string,
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<ChatRoomRecord> {
+  return callChatTool<ChatRoomRecord>("chat.room.join", { roomId }, fetchImpl);
+}
+
 export async function listChatMessages(
   input: {
     readonly roomId: string;
-    readonly before?: string;
+    readonly before?: ChatMessagePageCursor;
+    readonly direction?: "older" | "newer";
     readonly limit?: number;
   },
   fetchImpl: ChatApiFetch = authenticatedFetch,
@@ -205,6 +264,7 @@ export async function listChatMessages(
     {
       roomId: input.roomId,
       before: input.before,
+      direction: input.direction,
       limit: input.limit ?? 50,
     },
     fetchImpl,
@@ -219,14 +279,21 @@ export type CreateChatRoomRequest = {
   readonly kind?: "chat_room" | "chat_dm";
   readonly memberActorIds?: readonly string[];
   readonly topic?: string;
-  readonly isPrivate?: boolean;
+  readonly privacy?: "discoverable" | "restricted" | "private";
+  readonly readReceiptsEnabled?: boolean;
+  readonly spaceType?: "conversation" | "announcement" | "project";
+  readonly historyPolicy?: "full" | "since_join" | "off";
+  readonly retentionDays?: number | null;
+  readonly legalHold?: boolean;
+  readonly notificationPolicy?: "all" | "mentions" | "none";
+  readonly externalAccess?: "internal" | "guests" | "federated";
   readonly metadata?: Record<string, unknown>;
 };
 
 export type InviteToRoomRequest = {
   readonly roomId: string;
   readonly actorIds: readonly string[];
-  readonly role?: string;
+  readonly role?: "moderator" | "member";
 };
 
 export async function createChatRoom(
@@ -236,7 +303,14 @@ export async function createChatRoom(
   const payload: ChatCreateRoomInput = {
     kind: input.kind ?? "chat_room",
     memberActorIds: [...(input.memberActorIds ?? [])],
-    isPrivate: input.isPrivate ?? false,
+    privacy: input.privacy ?? "restricted",
+    readReceiptsEnabled: input.readReceiptsEnabled ?? true,
+    spaceType: input.spaceType ?? "conversation",
+    historyPolicy: input.historyPolicy ?? "full",
+    retentionDays: input.retentionDays ?? null,
+    legalHold: input.legalHold ?? false,
+    notificationPolicy: input.notificationPolicy ?? "all",
+    externalAccess: input.externalAccess ?? "guests",
     metadata: input.metadata ?? {},
     ...(input.subject === undefined ? {} : { subject: input.subject }),
     ...(input.topic === undefined ? {} : { topic: input.topic }),
@@ -260,7 +334,8 @@ export async function listThreadReplies(
   input: {
     readonly roomId: string;
     readonly parentMessageId: string;
-    readonly before?: string;
+    readonly before?: ChatMessagePageCursor;
+    readonly direction?: "older" | "newer";
     readonly limit?: number;
   },
   fetchImpl: ChatApiFetch = authenticatedFetch,
@@ -273,12 +348,18 @@ export async function listThreadReplies(
   return output.messages ?? [];
 }
 
+export interface ChatMessagePageCursor {
+  readonly sentAt: string;
+  readonly id: string;
+}
+
 export async function replyInThread(
   input: {
     readonly roomId: string;
     readonly parentMessageId: string;
     readonly body: string;
     readonly bodyFormat?: "plain" | "markdown";
+    readonly attachmentObjectIds?: readonly string[];
     readonly clientMessageId?: string;
   },
   fetchImpl: ChatApiFetch = authenticatedFetch,
@@ -324,15 +405,50 @@ export async function sendChatMessage(
       bodyFormat: input.bodyFormat ?? "plain",
       attachmentObjectIds: input.attachmentObjectIds ?? [],
       metadata: input.metadata ?? {},
-      ...(input.clientMessageId === undefined
-        ? {}
-        : { clientMessageId: input.clientMessageId }),
-      ...(input.parentMessageId === undefined
-        ? {}
-        : { parentMessageId: input.parentMessageId }),
+      ...(input.clientMessageId === undefined ? {} : { clientMessageId: input.clientMessageId }),
+      ...(input.parentMessageId === undefined ? {} : { parentMessageId: input.parentMessageId }),
     },
     fetchImpl,
   );
+}
+
+export async function uploadChatAttachment(
+  roomId: string,
+  file: File,
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<ChatAttachmentRecord> {
+  const response = await fetchImpl(
+    `/api/chat/rooms/${encodeURIComponent(roomId)}/attachments?filename=${encodeURIComponent(file.name || "pasted-image")}`,
+    {
+      method: "POST",
+      headers: { "content-type": file.type || "application/octet-stream" },
+      body: file,
+    },
+  );
+  const output: unknown = await response.json().catch(() => null);
+  if (!response.ok || !isChatAttachment(output)) {
+    throw new Error(chatApiError(output, "Unable to upload this image."));
+  }
+  return output;
+}
+
+export async function saveChatAttachmentToDrive(
+  objectId: string,
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<{ readonly objectId: string }> {
+  const response = await fetchImpl(
+    `/api/chat/attachments/${encodeURIComponent(objectId)}/save-to-drive`,
+    { method: "POST" },
+  );
+  const output: unknown = await response.json().catch(() => null);
+  if (!response.ok || !isRecord(output) || typeof output.objectId !== "string") {
+    throw new Error(chatApiError(output, "Unable to save this image to Drive."));
+  }
+  return { objectId: output.objectId };
+}
+
+export function chatAttachmentContentUrl(objectId: string, download = false): string {
+  return `/v1/api/chat/attachments/${encodeURIComponent(objectId)}/content${download ? "?download=1" : ""}`;
 }
 
 export async function reactToChatMessage(
@@ -366,7 +482,7 @@ export async function deleteChatMessage(
 }
 
 /** Chat WS URL without embedding the access token in the query string (G6). */
-export function chatRealtimeUrl(path = "/ws/chat"): string {
+export function chatRealtimeUrl(path = "/v1/ws/chat"): string {
   if (typeof window === "undefined") {
     return path;
   }
@@ -376,26 +492,42 @@ export function chatRealtimeUrl(path = "/ws/chat"): string {
   return url.toString();
 }
 
-/** Subprotocol list: `helix-bearer` + token when a stored bearer exists. */
-export function chatRealtimeProtocols(): string[] | undefined {
-  const token = getStoredAccessToken();
-  if (token === null) {
-    return undefined;
+export async function issueChatWebSocketTicket(
+  roomId: string,
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<string> {
+  const response = await fetchImpl("/api/chat/ws-ticket", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ roomId }),
+  });
+  const output: unknown = await response.json().catch(() => null);
+  if (!response.ok || !isRecord(output) || typeof output.ticket !== "string") {
+    throw new Error("Unable to authorize Chat realtime.");
   }
-  return ["helix-bearer", token];
+  return output.ticket;
 }
 
 export function createChatRealtimeClient(options: ChatRealtimeClientOptions): ChatRealtimeClient {
   const WebSocketImpl = options.WebSocketImpl ?? globalThis.WebSocket;
-  const protocols =
-    options.protocols ?? chatRealtimeProtocols();
-  const socket =
-    protocols === undefined
-      ? new WebSocketImpl(options.url ?? chatRealtimeUrl())
-      : new WebSocketImpl(options.url ?? chatRealtimeUrl(), protocols);
+  const socket = new WebSocketImpl(options.url ?? chatRealtimeUrl(), [
+    CHAT_REALTIME_PROTOCOL,
+    `${CHAT_TICKET_PROTOCOL_PREFIX}${options.ticket}`,
+  ]);
 
-  socket.addEventListener("open", () => options.onOpen?.());
-  socket.addEventListener("close", (event) => options.onClose?.(event));
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  socket.addEventListener("open", () => {
+    // eslint-disable-next-line helix/pacer-discipline -- Browser WebSocket liveness protocol.
+    heartbeat = setInterval(() => {
+      if (socket.readyState === WebSocketImpl.OPEN) socket.send('{"type":"heartbeat"}');
+    }, 15_000);
+    options.onOpen?.();
+  });
+  socket.addEventListener("close", (event) => {
+    // eslint-disable-next-line helix/pacer-discipline -- Stops the WebSocket liveness protocol.
+    if (heartbeat !== undefined) clearInterval(heartbeat);
+    options.onClose?.(event);
+  });
   socket.addEventListener("error", (event) => options.onError?.(event));
   socket.addEventListener("message", (event) => {
     const parsed = parseChatRealtimeEvent(event.data);
@@ -409,27 +541,38 @@ export function createChatRealtimeClient(options: ChatRealtimeClientOptions): Ch
   };
 
   return {
-    subscribe: (roomId) => send({ type: "subscribe", roomId }),
-    sendMessage: (input) =>
+    subscribe: (roomId, cursor = 0) => {
+      send({ type: "subscribe", roomId, cursor });
+    },
+    sendMessage: (input) => {
       send({
         type: "send",
         roomId: input.roomId,
         body: input.body,
         bodyFormat: input.bodyFormat ?? "plain",
         attachmentObjectIds: input.attachmentObjectIds ?? [],
-        ...(input.clientMessageId === undefined
-          ? {}
-          : { clientMessageId: input.clientMessageId }),
-        ...(input.parentMessageId === undefined
-          ? {}
-          : { parentMessageId: input.parentMessageId }),
-      }),
-    setTyping: (roomId, isTyping) => send({ type: "typing", roomId, isTyping }),
-    markRead: (roomId, messageId) => send({ type: "read", roomId, messageId }),
-    requestPresence: (roomId) => send({ type: "presence", roomId }),
-    setPresence: (status) => send({ type: "presence.set", status }),
+        ...(input.clientMessageId === undefined ? {} : { clientMessageId: input.clientMessageId }),
+        ...(input.parentMessageId === undefined ? {} : { parentMessageId: input.parentMessageId }),
+      });
+    },
+    setTyping: (roomId, isTyping) => {
+      send({ type: "typing", roomId, isTyping });
+    },
+    markRead: (roomId, messageId) => {
+      send({ type: "read", roomId, messageId });
+    },
+    requestPresence: (roomId) => {
+      send({ type: "presence", roomId });
+    },
+    setPresence: (status) => {
+      send({ type: "presence.set", status });
+    },
     isOpen: () => socket.readyState === WebSocketImpl.OPEN,
-    close: () => socket.close(),
+    close: () => {
+      // eslint-disable-next-line helix/pacer-discipline -- Stops the WebSocket liveness protocol.
+      if (heartbeat !== undefined) clearInterval(heartbeat);
+      socket.close();
+    },
   };
 }
 
@@ -458,4 +601,23 @@ function parseChatRealtimeEvent(data: unknown): ChatRealtimeEvent | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function isChatAttachment(value: unknown): value is ChatAttachmentRecord {
+  return (
+    isRecord(value) &&
+    typeof value.objectId === "string" &&
+    value.source === "chat" &&
+    typeof value.filename === "string" &&
+    typeof value.mimeType === "string" &&
+    typeof value.byteSize === "number"
+  );
+}
+
+function chatApiError(value: unknown, fallback: string): string {
+  if (!isRecord(value)) return fallback;
+  if (typeof value.message === "string") return value.message;
+  return isRecord(value.error) && typeof value.error.message === "string"
+    ? value.error.message
+    : fallback;
 }

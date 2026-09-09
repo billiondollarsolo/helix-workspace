@@ -1,6 +1,8 @@
-import type { Actor } from "@helix/sdk-types";
+import type { Actor, ResourceRef } from "@helix/sdk-types";
 import type { FastifyReply } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
+import { actorHasScope } from "../../api/scopes.js";
+import { actorRoleDecision } from "../permissions/roles.js";
 
 /**
  * Shared helpers for the Admin Console backend domains (Groups & OUs,
@@ -25,20 +27,43 @@ export const adminConsoleWriteScope = "admin.console.write";
  * `admin.users` scope and the catch-all `admin.*` both imply read access so
  * existing admin operators are not locked out.
  */
-export function canReadAdminConsole(actor: Actor): boolean {
-  const scopes = actor.scopes ?? [];
+export function canReadAdminConsole(
+  actor: Actor,
+  delegatedPermission?: string,
+  resource?: ResourceRef,
+): boolean {
+  const target = resource ?? { type: "org", orgId: actor.orgId };
+  if (
+    delegatedPermission !== undefined &&
+    actorRoleDecision(actor, delegatedPermission, target) === "deny"
+  ) {
+    return false;
+  }
   return (
-    scopes.includes(adminConsoleReadScope) ||
-    scopes.includes(adminConsoleWriteScope) ||
-    scopes.includes("admin.users") ||
-    scopes.includes(adminWildcardScope)
+    actorHasScope(actor, adminConsoleReadScope, target) ||
+    actorHasScope(actor, adminConsoleWriteScope, target) ||
+    actorHasScope(actor, "admin.users", target) ||
+    (delegatedPermission !== undefined && actorHasScope(actor, delegatedPermission, target))
   );
 }
 
 /** Resolve whether `actor` may mutate an admin-console domain. */
-export function canWriteAdminConsole(actor: Actor): boolean {
-  const scopes = actor.scopes ?? [];
-  return scopes.includes(adminConsoleWriteScope) || scopes.includes(adminWildcardScope);
+export function canWriteAdminConsole(
+  actor: Actor,
+  delegatedPermission?: string,
+  resource?: ResourceRef,
+): boolean {
+  const target = resource ?? { type: "org", orgId: actor.orgId };
+  if (
+    delegatedPermission !== undefined &&
+    actorRoleDecision(actor, delegatedPermission, target) === "deny"
+  ) {
+    return false;
+  }
+  return (
+    actorHasScope(actor, adminConsoleWriteScope, target) ||
+    (delegatedPermission !== undefined && actorHasScope(actor, delegatedPermission, target))
+  );
 }
 
 /** Error envelope returned by every admin-console route. */
@@ -190,13 +215,9 @@ export interface AdminConsoleAuditSink {
   }): Promise<{ readonly id: string; readonly thisHash: string }>;
 }
 
-/**
- * Append an audit record, swallowing failures so an audit outage never blocks
- * an admin mutation. Admin writes are still authoritative; the audit trail is
- * best-effort here exactly as the broader platform treats activity logging.
- */
+/** Append inside the request transaction; failure rolls the privileged mutation back. */
 export async function auditAdminAction(
-  sink: AdminConsoleAuditSink | undefined,
+  sink: AdminConsoleAuditSink,
   record: {
     readonly orgId: string;
     readonly actorId: string;
@@ -206,14 +227,7 @@ export async function auditAdminAction(
     readonly metadata?: Record<string, unknown>;
   },
 ): Promise<void> {
-  if (sink === undefined) {
-    return;
-  }
-  try {
-    await sink.append(record);
-  } catch {
-    // Best-effort: audit failures must not roll back an admin mutation.
-  }
+  await sink.append(record);
 }
 
 /** Escape `%`, `_`, and `\` for safe use inside a SQL `LIKE` pattern. */

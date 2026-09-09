@@ -1,5 +1,3 @@
-export const observabilityOtelPluginId = "com.helix.observability-otel";
-
 export interface ObservabilitySamplingConfig {
   readonly traces: number;
   readonly llmCalls: number;
@@ -34,12 +32,62 @@ export const defaultObservabilityConfig: ObservabilityConfig = {
   propagateTraceContext: true,
 };
 
-export function loadObservabilityConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ObservabilityConfig {
+export function loadObservabilityConfigFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): ObservabilityConfig {
   const configJson = parseConfigJson(env.HELIX_CONFIG_JSON);
   const jsonConfig = configFromJson(configJson);
   const envConfig = configFromExplicitEnv(env);
 
-  return mergeObservabilityConfig(defaultObservabilityConfig, mergeObservabilityConfig(jsonConfig, envConfig));
+  const config = mergeObservabilityConfig(
+    defaultObservabilityConfig,
+    mergeObservabilityConfig(jsonConfig, envConfig),
+  );
+  assertProductionTelemetryTransport(env, config);
+  return config;
+}
+
+function assertProductionTelemetryTransport(
+  env: NodeJS.ProcessEnv,
+  config: ObservabilityConfig,
+): void {
+  if (env.NODE_ENV !== "production" || !config.enabled) {
+    return;
+  }
+
+  if (
+    env.HELIX_REGION === undefined ||
+    env.HELIX_REGION === "default" ||
+    env.HELIX_OTEL_REGION !== env.HELIX_REGION
+  ) {
+    throw new Error("Production telemetry must be pinned to HELIX_REGION");
+  }
+
+  if (config.tracesEndpoint === undefined || !config.tracesEndpoint.startsWith("https://")) {
+    throw new Error("Production telemetry requires an explicit HTTPS OTLP trace endpoint");
+  }
+
+  const requiredFiles = [
+    [
+      "OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE",
+      "OTEL_EXPORTER_OTLP_CERTIFICATE",
+      "trusted collector CA",
+    ],
+    [
+      "OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE",
+      "OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE",
+      "client certificate",
+    ],
+    ["OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY", "OTEL_EXPORTER_OTLP_CLIENT_KEY", "client key"],
+  ] as const;
+
+  for (const [signalKey, sharedKey, description] of requiredFiles) {
+    if (!env[signalKey] && !env[sharedKey]) {
+      throw new Error(
+        `Production telemetry requires a ${description} (${signalKey} or ${sharedKey})`,
+      );
+    }
+  }
 }
 
 export function mergeObservabilityConfig(
@@ -72,7 +120,9 @@ export function mergeObservabilityConfig(
       permissionChecks: normalizeSampleRate(sampling.permissionChecks),
     },
     propagateTraceContext:
-      override.propagateTraceContext ?? base.propagateTraceContext ?? defaultObservabilityConfig.propagateTraceContext,
+      override.propagateTraceContext ??
+      base.propagateTraceContext ??
+      defaultObservabilityConfig.propagateTraceContext,
   };
 }
 
@@ -111,13 +161,22 @@ export function applyOpenTelemetryEnvironment(
 
   env.OTEL_TRACES_SAMPLER ??= "traceidratio";
   env.OTEL_TRACES_SAMPLER_ARG ??= String(config.sampling.traces);
+  if (env.HELIX_REGION !== undefined) {
+    const regionAttribute = `helix.deployment.region=${env.HELIX_REGION}`;
+    env.OTEL_RESOURCE_ATTRIBUTES = env.OTEL_RESOURCE_ATTRIBUTES
+      ? `${env.OTEL_RESOURCE_ATTRIBUTES},${regionAttribute}`
+      : regionAttribute;
+  }
 }
 
 function configFromExplicitEnv(env: NodeJS.ProcessEnv): PartialObservabilityConfig {
   const enabled = parseBoolean(env.HELIX_OBSERVABILITY_ENABLED);
   const rawEndpoint =
-    env.HELIX_OTEL_TRACES_ENDPOINT ?? env.HELIX_OTEL_OTLP_ENDPOINT ?? env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
-  const endpoint = rawEndpoint === undefined ? undefined : normalizeOtlpHttpTraceEndpoint(rawEndpoint);
+    env.HELIX_OTEL_TRACES_ENDPOINT ??
+    env.HELIX_OTEL_OTLP_ENDPOINT ??
+    env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+  const endpoint =
+    rawEndpoint === undefined ? undefined : normalizeOtlpHttpTraceEndpoint(rawEndpoint);
   const headers = parseHeaders(env.HELIX_OTEL_HEADERS ?? env.OTEL_EXPORTER_OTLP_HEADERS);
   const traces = parseSampleRate(env.HELIX_OTEL_TRACES_SAMPLING ?? env.OTEL_TRACES_SAMPLER_ARG);
   const llmCalls = parseSampleRate(env.HELIX_OTEL_LLM_CALLS_SAMPLING);
@@ -145,8 +204,7 @@ function configFromJson(value: unknown): PartialObservabilityConfig {
 
   const observability = isRecord(value.observability) ? value.observability : undefined;
   const topLevelConfig = isRecord(observability?.config) ? observability.config : undefined;
-  const pluginConfig = pluginConfigFromJson(value);
-  const merged = mergePlainObjects(topLevelConfig, pluginConfig);
+  const merged = topLevelConfig ?? {};
 
   const endpoint = stringValue(merged.otlpEndpoint ?? merged.tracesEndpoint);
   const headers = parseHeadersObject(merged.headers);
@@ -171,20 +229,6 @@ function configFromJson(value: unknown): PartialObservabilityConfig {
       ...(permissionSampleRate === undefined ? {} : { permissionChecks: permissionSampleRate }),
     },
   };
-}
-
-function pluginConfigFromJson(value: Record<string, unknown>): Record<string, unknown> | undefined {
-  if (!isRecord(value.plugins)) {
-    return undefined;
-  }
-
-  const exact = value.plugins[observabilityOtelPluginId];
-  if (isRecord(exact)) {
-    return exact;
-  }
-
-  const versioned = Object.entries(value.plugins).find(([key]) => key.startsWith(`${observabilityOtelPluginId}@`));
-  return isRecord(versioned?.[1]) ? versioned[1] : undefined;
 }
 
 function parseConfigJson(text: string | undefined): unknown {
@@ -264,18 +308,6 @@ function parseHeadersObject(value: unknown): Record<string, string> | undefined 
     }
   }
   return Object.keys(headers).length === 0 ? undefined : headers;
-}
-
-function mergePlainObjects(
-  base: Record<string, unknown> | undefined,
-  override: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  const merged: Record<string, unknown> = { ...(base ?? {}) };
-  for (const [key, value] of Object.entries(override ?? {})) {
-    const existing = merged[key];
-    merged[key] = isRecord(existing) && isRecord(value) ? mergePlainObjects(existing, value) : value;
-  }
-  return merged;
 }
 
 function stringValue(value: unknown): string | undefined {

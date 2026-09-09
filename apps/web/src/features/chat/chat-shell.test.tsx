@@ -32,7 +32,8 @@ const room = {
     threadId: ROOM_ID,
     name: "Platform Engineering",
     topic: "Release coordination",
-    isPrivate: false,
+    privacy: "restricted" as const,
+    readReceiptsEnabled: true,
   },
   createdAt: "2026-05-20T11:00:00.000Z",
   updatedAt: "2026-05-20T12:00:00.000Z",
@@ -70,6 +71,9 @@ function makeFetch(overrides: Partial<Record<string, unknown>> = {}) {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     void init;
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url === "/api/chat/ws-ticket") {
+      return Promise.resolve(Response.json({ ticket: "t".repeat(43) }));
+    }
     if (url.endsWith("/chat.room.list")) {
       return Promise.resolve(
         Response.json(overrides["chat.room.list"] ?? { rooms: [room, dmRoom] }),
@@ -160,8 +164,6 @@ vi.mock("@tanstack/react-router", () => ({
 let fetchMock = makeFetch();
 vi.mock("@/lib/auth", () => ({
   authenticatedFetch: (input: RequestInfo | URL, init?: RequestInit) => fetchMock(input, init),
-  addAccessTokenSearchParam: (url: string) => url,
-  getStoredAccessToken: () => null,
   sessionQueryKeys: { current: ["auth", "session"] },
   sessionUserQueryOptions: () => ({
     queryKey: ["auth", "session"],
@@ -213,6 +215,7 @@ describe("ChatShell", () => {
       );
       await Promise.resolve();
     });
+    await flush();
     (globalThis as { WebSocket: typeof WebSocket }).WebSocket = previous;
   }
 
@@ -251,6 +254,51 @@ describe("ChatShell", () => {
     );
   });
 
+  it("offers announcement and project spaces without inert header controls", async () => {
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    const create = container.querySelector<HTMLButtonElement>('[aria-label="New conversation"]');
+    act(() => create?.click());
+
+    const spaceTypes = container.querySelector<HTMLSelectElement>('[aria-label="Space type"]');
+    expect(Array.from(spaceTypes?.options ?? []).map((option) => option.value)).toEqual([
+      "conversation",
+      "announcement",
+      "project",
+    ]);
+    for (const label of [
+      "History policy",
+      "Notification policy",
+      "External access",
+      "Retention days",
+    ]) {
+      expect(container.querySelector(`[aria-label="${label}"]`)).not.toBeNull();
+    }
+    expect(container.textContent).toContain("Legal hold");
+    expect(container.querySelector('[aria-label="Notification settings"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Pinned messages"]')).toBeNull();
+  });
+
+  it("disables announcement posting for ordinary members", async () => {
+    fetchMock = makeFetch({
+      "chat.room.list": {
+        rooms: [
+          {
+            ...room,
+            members: [
+              { actorId: SELF_ACTOR, role: "member", displayName: "Maya Chen", email: null },
+            ],
+            settings: { ...room.settings, spaceType: "announcement" },
+          },
+        ],
+      },
+    });
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+
+    const composer = container.querySelector<HTMLTextAreaElement>(".chat-composer-input");
+    expect(composer?.disabled).toBe(true);
+    expect(composer?.placeholder).toBe("Only announcers can post here");
+  });
+
   it("renders backend messages in the channel pane", async () => {
     await renderShell(FakeWebSocket as unknown as typeof WebSocket);
     await flush();
@@ -260,6 +308,47 @@ describe("ChatShell", () => {
     );
     // Author is resolved from the room member list.
     expect(container.querySelector(".chat-msg-author")?.textContent).toBe("Daniel Cho");
+  });
+
+  it("aggregates shared reactions and removes the current actor's reaction", async () => {
+    const createdAt = "2026-05-20T12:01:00.000Z";
+    fetchMock = makeFetch({
+      "chat.message.list": {
+        messages: [
+          {
+            ...message,
+            reactions: [
+              { messageId: MSG_ID, actorId: SELF_ACTOR, emoji: "✅", createdAt },
+              { messageId: MSG_ID, actorId: PEER_ACTOR, emoji: "✅", createdAt },
+            ],
+          },
+        ],
+      },
+    });
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    const socket = FakeWebSocket.instances[0];
+    if (socket === undefined) throw new Error("Expected Chat socket.");
+    await flush();
+    await readyConnection(socket);
+    await flush();
+
+    const reaction = container.querySelector<HTMLButtonElement>('[aria-label="✅ 2 reactions"]');
+    expect(reaction?.dataset.mine).toBe("true");
+    act(() => reaction?.click());
+    await flush();
+
+    const call = fetchMock.mock.calls.find(([input]) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      return url.endsWith("/chat.react");
+    });
+    expect(call).toBeDefined();
+    const body = call?.[1]?.body;
+    if (typeof body !== "string") throw new Error("Expected reaction request body.");
+    expect(JSON.parse(body)).toMatchObject({
+      messageId: MSG_ID,
+      emoji: "✅",
+      op: "remove",
+    });
   });
 
   it("subscribes over the WebSocket and shows a live new message", async () => {
@@ -320,7 +409,7 @@ describe("ChatShell", () => {
           {
             actorId: PEER_ACTOR,
             orgId: "org",
-            status: "online",
+            status: "available",
             seenAt: "2026-05-20T12:00:00.000Z",
           },
         ],

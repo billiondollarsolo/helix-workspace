@@ -1,7 +1,19 @@
 import type { AICapability, AIClassification, JsonObject } from "@helix/sdk-types";
-import { deriveClassification, type ClassificationPolicy } from "../../ai/classification/index.js";
-import type { EnrichmentEvent, EnrichmentHandler, EnrichmentWorker } from "../../ai/enrichment/index.js";
-import type { MailActivityPayload, MailEnrichmentProjectionStore, MailEnrichmentRecord } from "../types.js";
+import {
+  deriveClassification,
+  sensitivityClassificationFromMetadata,
+  type ClassificationPolicy,
+} from "../../ai/classification/index.js";
+import type {
+  EnrichmentEvent,
+  EnrichmentHandler,
+  EnrichmentWorker,
+} from "../../ai/enrichment/index.js";
+import type {
+  MailActivityPayload,
+  MailEnrichmentProjectionStore,
+  MailEnrichmentRecord,
+} from "../types.js";
 
 export interface MailEntityExtractEnrichmentOptions {
   readonly store: MailEnrichmentProjectionStore;
@@ -31,7 +43,9 @@ export function registerMailEnrichments(
     if (options.ai === undefined) {
       throw new TypeError("mail.entity-extract enrichment requires an AI capability");
     }
-    worker.register(createMailEntityExtractEnrichmentHandler({ store: options.store, ai: options.ai }));
+    worker.register(
+      createMailEntityExtractEnrichmentHandler({ store: options.store, ai: options.ai }),
+    );
   }
 
   if (options.classification === true) {
@@ -65,7 +79,8 @@ export function createMailEntityExtractEnrichmentHandler(
           messages: [
             {
               role: "system",
-              content: "Extract people, dates, and action items from this email. Return compact JSON.",
+              content:
+                "Extract people, dates, and action items from this email. Return compact JSON.",
             },
             {
               role: "user",
@@ -80,6 +95,8 @@ export function createMailEntityExtractEnrichmentHandler(
       );
       const data = parseJsonObject(response.message) ?? { text: response.message };
       await options.store.recordMailEnrichment?.({
+        orgId: message.orgId,
+        actorId: message.ownerActorId,
         messageId: message.id,
         feature: "mail.entity-extract",
         data,
@@ -125,6 +142,8 @@ export function createMailClassificationEnrichmentHandler(
         options.policy,
       );
       await options.store.setMailClassification?.({
+        orgId: message.orgId,
+        actorId: message.ownerActorId,
         messageId: message.id,
         classification: derived.classification,
         source: derived.source,
@@ -155,7 +174,16 @@ async function messageForEnrichment(
   if (typeof messageId !== "string" || messageId.length === 0) {
     return null;
   }
-  return store.getMailEnrichmentRecord(messageId);
+  const { orgId, actorId } = event.payload;
+  if (
+    typeof orgId !== "string" ||
+    orgId.length === 0 ||
+    typeof actorId !== "string" ||
+    actorId.length === 0
+  ) {
+    return null;
+  }
+  return store.getMailEnrichmentRecord({ orgId, actorId, messageId });
 }
 
 function skipped(feature: string, event: EnrichmentEvent<MailActivityPayload>, reason: string) {
@@ -179,22 +207,26 @@ function mailRecordText(message: MailEnrichmentRecord): string {
   ].join("\n");
 }
 
-function addressEmail(address: { readonly address: string; readonly email?: string | undefined }): string {
+function addressEmail(address: {
+  readonly address: string;
+  readonly email?: string | undefined;
+}): string {
   return address.email ?? address.address;
 }
 
 function parseJsonObject(text: string): JsonObject | undefined {
   try {
     const parsed: unknown = JSON.parse(text);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as JsonObject) : undefined;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as JsonObject)
+      : undefined;
   } catch {
     return undefined;
   }
 }
 
-export function mailClassificationFromMetadata(metadata: JsonObject | undefined): AIClassification | undefined {
-  const value = metadata?.classification;
-  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
-    ? value
-    : undefined;
+export function mailClassificationFromMetadata(
+  metadata: JsonObject | undefined,
+): AIClassification | undefined {
+  return sensitivityClassificationFromMetadata(metadata);
 }

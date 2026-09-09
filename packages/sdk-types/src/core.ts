@@ -2,6 +2,19 @@ import type { JsonObject, JsonValue } from "./json.js";
 
 export type ActorType = "user" | "agent" | "service_account" | "system";
 
+export type RoleBindingScope =
+  | { readonly type: "org" }
+  | { readonly type: "org_unit"; readonly id: string }
+  | { readonly type: "group"; readonly id: string }
+  | { readonly type: "resource"; readonly resourceType: string; readonly id: string };
+
+export interface ActorRoleBinding {
+  readonly roleId: string;
+  readonly allow: readonly string[];
+  readonly deny: readonly string[];
+  readonly scope: RoleBindingScope;
+}
+
 export interface Actor {
   readonly id: string;
   readonly type: ActorType;
@@ -9,6 +22,7 @@ export interface Actor {
   readonly displayName?: string;
   readonly email?: string;
   readonly scopes?: readonly string[];
+  readonly roleBindings?: readonly ActorRoleBinding[];
 }
 
 export interface RequestContext {
@@ -74,10 +88,24 @@ export interface StorageObject {
   readonly metadata?: Record<string, string>;
 }
 
+export interface StorageObjectHead {
+  readonly key: string;
+  readonly byteSize: number;
+  readonly etag?: string;
+  readonly lastModified?: Date;
+  readonly contentType?: string;
+  readonly metadata?: Record<string, string>;
+}
+
 export interface StorageClient {
   put(object: StorageObject): Promise<void>;
   get(key: string): Promise<StorageObject | null>;
   delete(key: string): Promise<void>;
+  /** Optional bounded-memory primitives for large objects. */
+  head?(key: string): Promise<StorageObjectHead | null>;
+  getStream?(key: string): Promise<StorageObject | null>;
+  getRange?(key: string, start: number, end: number): Promise<StorageObject | null>;
+  copy?(sourceKey: string, destinationKey: string): Promise<void>;
 }
 
 export interface CacheClient {

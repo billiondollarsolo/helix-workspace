@@ -54,7 +54,7 @@ describe("buildOpenApiDocument", () => {
           operationId: "health",
         },
       },
-      "/api/tools": {
+      "/v1/api/tools": {
         get: {
           operationId: "listTools",
           security: [
@@ -94,7 +94,7 @@ describe("buildOpenApiDocument", () => {
           },
         },
       },
-      "/actions/{pendingId}": {
+      "/v1/actions/{pendingId}": {
         get: {
           operationId: "getActionStatus",
           security: [
@@ -130,12 +130,7 @@ describe("buildOpenApiDocument", () => {
                         ],
                         properties: {
                           status: {
-                            enum: [
-                              "pending_confirmation",
-                              "confirmed",
-                              "cancelled",
-                              "expired",
-                            ],
+                            enum: ["pending_confirmation", "confirmed", "cancelled", "expired"],
                           },
                         },
                       },
@@ -147,7 +142,7 @@ describe("buildOpenApiDocument", () => {
           },
         },
       },
-      "/api/tools/pending/{pendingId}/approve": {
+      "/v1/api/tools/pending/{pendingId}/approve": {
         post: {
           operationId: "approvePendingAction",
           security: [
@@ -191,7 +186,7 @@ describe("buildOpenApiDocument", () => {
           },
         },
       },
-      "/api/tools/pending/{pendingId}/cancel": {
+      "/v1/api/tools/pending/{pendingId}/cancel": {
         post: {
           operationId: "cancelPendingAction",
           security: [
@@ -202,7 +197,7 @@ describe("buildOpenApiDocument", () => {
           ],
         },
       },
-      "/api/tools/platform.ping": {
+      "/v1/api/tools/platform.ping": {
         get: {
           operationId: "getTool_platform_ping",
           security: [
@@ -251,7 +246,7 @@ describe("buildOpenApiDocument", () => {
           },
         },
       },
-      "/api/tools/mail%2Fsend": {
+      "/v1/api/tools/mail%2Fsend": {
         post: {
           operationId: "postTool_mail_send",
           security: [
@@ -279,7 +274,7 @@ describe("buildOpenApiDocument", () => {
           description: "OAuth 2.1 client credentials flow for agents, CLI, and integrations.",
           flows: {
             clientCredentials: {
-              tokenUrl: "/oauth/token",
+              tokenUrl: "/v1/oauth/token",
               // Descriptions are sourced from the canonical scope catalog.
               scopes: {
                 "mail.send": "Send mail to internal recipients.",
@@ -308,7 +303,7 @@ describe("buildOpenApiDocument", () => {
       },
     });
     expect(
-      (document.paths as Record<string, unknown>)["/api/tools/mail%2Fsend"],
+      (document.paths as Record<string, unknown>)["/v1/api/tools/mail%2Fsend"],
     ).not.toHaveProperty("get");
     expect(document.tags).toEqual([
       { name: "Existing", description: "Existing tag." },
@@ -330,7 +325,29 @@ describe("buildOpenApiDocument", () => {
       tool({ id: "mail.send", permission: "mail.send", sideEffects: "write" }),
     ]);
     const paths = document.paths as Record<string, Record<string, { tags?: string[] }>>;
-    expect(paths["/api/tools/mail.send"]?.post?.tags).toEqual(["feature:mail", "Tools"]);
+    expect(paths["/v1/api/tools/mail.send"]?.post?.tags).toEqual(["feature:mail", "Tools"]);
+  });
+
+  it("publishes one versioned path and unique operation name per generated operation", () => {
+    const document = buildOpenApiDocument({ openapi: "3.1.0" }, [
+      tool({ id: "mail.list", permission: "mail.read", sideEffects: "read" }),
+      tool({ id: "mail.send", permission: "mail.send", sideEffects: "write" }),
+    ]);
+    const paths = document.paths as Record<string, Record<string, unknown>>;
+    expect(Object.keys(paths).every((path) => path.startsWith("/v1/"))).toBe(true);
+    expect(Object.keys(paths).some((path) => path.startsWith("/api/"))).toBe(false);
+
+    const operationIds = Object.values(paths).flatMap((path) =>
+      Object.values(path).flatMap((operation) =>
+        typeof operation === "object" &&
+        operation !== null &&
+        "operationId" in operation &&
+        typeof operation.operationId === "string"
+          ? [operation.operationId]
+          : [],
+      ),
+    );
+    expect(new Set(operationIds).size).toBe(operationIds.length);
   });
 
   it("adds the canonical HelixError schema and an Idempotency-Key parameter", () => {
@@ -343,7 +360,7 @@ describe("buildOpenApiDocument", () => {
       string,
       Record<string, { parameters?: { name?: string }[]; responses?: Record<string, unknown> }>
     >;
-    const post = paths["/api/tools/mail.send"]?.post;
+    const post = paths["/v1/api/tools/mail.send"]?.post;
     expect(post?.parameters?.some((parameter) => parameter.name === "Idempotency-Key")).toBe(true);
     expect(post?.responses).toHaveProperty("409");
   });
@@ -354,7 +371,7 @@ describe("buildOpenApiDocument", () => {
     ]);
     const yaml = openApiDocumentToYaml(document);
     expect(yaml).toContain("openapi: 3.1.0");
-    expect(yaml).toContain("/api/tools/platform.ping");
+    expect(yaml).toContain("/v1/api/tools/platform.ping");
     expect(yaml.endsWith("\n")).toBe(true);
   });
 });

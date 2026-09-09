@@ -215,7 +215,7 @@ function markdownToBlocks(markdown: string): Y.XmlElement[] {
 function blockElement(nodeName: string, text: string, level?: number): Y.XmlElement {
   const element = new Y.XmlElement(nodeName);
   if (level !== undefined) {
-    (element.setAttribute as unknown as (key: string, value: number) => void)("level", level);
+    Reflect.apply(element.setAttribute.bind(element), undefined, ["level", level]);
   }
   const xmlText = new Y.XmlText();
   if (text.length > 0) {

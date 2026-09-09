@@ -18,18 +18,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tanstack/react-query": "5.101.4",
-    "lucide-react": "1.28.0",
+    "@tanstack/react-query": "5.102.8",
+    "lucide-react": "1.41.0",
     "react": "19.2.8"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@helix/config": "workspace:*",
     "@types/react": "19.2.18",
-    "eslint": "10.8.0",
-    "typescript": "5.9.3",
-    "typescript-eslint": "8.65.0",
-    "vitest": "4.1.11"
+    "eslint": "10.10.0",
+    "typescript": "7.0.2",
+    "typescript-eslint": "8.69.0",
+    "vitest": "5.0.0"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",

@@ -9,6 +9,7 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresDriveStore } from "../drive/index.js";
+import { skipUnlessLiveDatabase } from "../test/live-suite.js";
 
 const ACME_ORG_ID = "f9000000-0000-4000-8000-000000000001";
 const ACME_ACTOR_ID = "f9000000-0000-4000-8000-000000000002";
@@ -30,7 +31,7 @@ function createSql(): postgres.Sql {
 describe(
   "cross-tenant isolation adversarial fixture",
   {
-    skip: !process.env.DATABASE_URL,
+    skip: skipUnlessLiveDatabase("cross-tenant isolation adversarial fixture"),
   },
   () => {
     let sql: postgres.Sql;
@@ -48,7 +49,33 @@ describe(
       await sql.end();
     });
 
-    it("does not expose beta Drive data when an acme actor supplies beta resource ids", async () => {
+    it("rejects permission rows that assign an actor to another tenant", async () => {
+      await expect(
+        sql`
+          insert into permissions (
+            org_id,
+            actor_id,
+            resource_type,
+            resource_id,
+            role,
+            granted_by_actor_id
+          )
+          values (
+            ${BETA_ORG_ID},
+            ${ACME_ACTOR_ID},
+            'object',
+            ${BETA_OBJECT_ID},
+            'reader',
+            ${BETA_ACTOR_ID}
+          )
+        `,
+      ).rejects.toMatchObject({
+        code: "23503",
+        constraint_name: "permissions_chat_actor_org_fk",
+      });
+    });
+
+    it("does not expose beta Drive data to an acme actor", async () => {
       const readError = await captureError(() =>
         store.readFile({
           orgId: ACME_ORG_ID,
@@ -94,7 +121,7 @@ describe(
           targetActorIds: [ACME_ACTOR_ID],
           role: "reader",
         }),
-      ).rejects.toThrow("Unknown or inaccessible Drive object");
+      ).rejects.toThrow(/Unknown(?: or inaccessible)? Drive (?:object|folder)/u);
 
       await expect(
         store.move({
@@ -103,7 +130,7 @@ describe(
           objectId: BETA_OBJECT_ID,
           folderId: null,
         }),
-      ).rejects.toThrow("Unknown or inaccessible Drive object");
+      ).rejects.toThrow(/Unknown(?: or inaccessible)? Drive (?:object|folder)/u);
 
       await expect(
         store.trash({
@@ -111,7 +138,7 @@ describe(
           actorId: ACME_ACTOR_ID,
           objectId: BETA_OBJECT_ID,
         }),
-      ).rejects.toThrow("Unknown or inaccessible Drive object");
+      ).rejects.toThrow(/Unknown(?: or inaccessible)? Drive (?:object|folder)/u);
 
       await expect(
         store.delete({
@@ -119,7 +146,7 @@ describe(
           actorId: ACME_ACTOR_ID,
           objectId: BETA_OBJECT_ID,
         }),
-      ).rejects.toThrow("Unknown or inaccessible Drive object");
+      ).rejects.toThrow(/Unknown(?: or inaccessible)? Drive (?:object|folder)/u);
 
       const betaRows = await sql<{ deleted_at: Date | null }[]>`
         select deleted_at from objects where id = ${BETA_OBJECT_ID} and org_id = ${BETA_ORG_ID}
@@ -272,6 +299,7 @@ async function cleanupFixture(sql: postgres.Sql): Promise<void> {
   await sql`delete from drive_versions where object_id in (${ACME_OBJECT_ID}, ${BETA_OBJECT_ID})`;
   await sql`delete from objects where id in (${ACME_OBJECT_ID}, ${BETA_OBJECT_ID})`;
   await sql`delete from drive_folders where id = ${BETA_FOLDER_ID}`;
+  await sql`delete from resource_classifications where org_id in (${ACME_ORG_ID}, ${BETA_ORG_ID})`;
   await sql`delete from actors where id in (${ACME_ACTOR_ID}, ${BETA_ACTOR_ID})`;
   await sql`delete from orgs where id in (${ACME_ORG_ID}, ${BETA_ORG_ID})`;
 }

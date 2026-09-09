@@ -1,0 +1,484 @@
+/* Admin › Organization › Domains — workspace domains and their DNS records. */
+
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Icons } from "@/components/icons";
+import { DomainCapabilitiesPanel, domainSummary } from "./domain-capabilities";
+import { Button } from "@/components/ui/button";
+import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import {
+  createDomain,
+  releaseDomain,
+  domainsQueryKeys,
+  domainsQueryOptions,
+  setPrimaryDomain,
+  upsertDnsRecord,
+  verifyDnsRecord,
+  type DnsRecord,
+  type DnsRecordType,
+  type DomainWithRecords,
+} from "@/features/admin/domains-api";
+import {
+  AdminField,
+  AdminInput,
+  AdminSelect,
+  AdminToolbar,
+} from "@/features/admin/console/controls";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
+import {
+  EmptyRow,
+  EmptyState,
+  MutationError,
+  PageHeading,
+  PageScroll,
+  QueryFailureBanner,
+  StateBanner,
+  StatusChip,
+  useQueryFailure,
+} from "@/features/admin/console/primitives";
+
+/* Structural rather than importing `QueryClient`: the route loader only ever
+   hands this helper an `ensureQueryData`, and typing it that way keeps the
+   section free of a router/query-client dependency it does not otherwise have. */
+interface AdminDomainsRouteQueryClient {
+  ensureQueryData(options: ReturnType<typeof domainsQueryOptions>): Promise<unknown>;
+}
+
+/** Warms the exact key `AdminDomains` mounts, so the section's first request
+ *  leaves while its chunk is still downloading. Failures are swallowed: the
+ *  mounted `useQuery` re-reports them through `QueryFailureBanner`, and a
+ *  rejected loader would blank the route over a fetch the page can recover. */
+export async function prefetchAdminDomainsQuery(queryClient: AdminDomainsRouteQueryClient) {
+  await queryClient.ensureQueryData(domainsQueryOptions()).catch(() => undefined);
+}
+
+/* ------------------------------------------------------------------ */
+/* Audit log                                                          */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/* Domain                                                             */
+/* ------------------------------------------------------------------ */
+
+const DNS_RECORD_TYPES_UI: readonly DnsRecordType[] = [
+  "MX",
+  "SPF",
+  "DKIM",
+  "DMARC",
+  "TXT",
+  "CNAME",
+  "A",
+];
+
+/* `pending` and `failed` are database words. The chip has to say what they
+   mean for the operator: nothing has been checked yet, versus we looked and
+   the record was not there. */
+function ownershipLabel(
+  status: "verified" | "pending" | "failed" | "quarantined" | "released",
+): string {
+  switch (status) {
+    case "verified":
+      return "Ownership proved";
+    case "failed":
+      return "Verification failed";
+    default:
+      return "Not verified";
+  }
+}
+
+function verificationVariant(
+  status: "verified" | "pending" | "failed" | "quarantined" | "released",
+): string {
+  return status === "verified" ? "success" : status === "pending" ? "warning" : "danger";
+}
+
+/** What deleting this domain actually costs, read off the entry the operator is
+ *  looking at.
+ *
+ *  The mail sentence is branched on verification on purpose: an unverified
+ *  domain is not carrying mail yet, and warning that delivery stops would put a
+ *  consequence on screen that does not exist. The record count is the entry's
+ *  own `dnsRecords`, never an estimate. */
+function domainDeletionBlastRadius(entry: DomainWithRecords): string {
+  const mail =
+    entry.domain.status === "verified" && entry.domain.mailEnabled
+      ? `Mail delivery stops for every address at ${entry.domain.domain}.`
+      : entry.domain.status !== "verified"
+        ? `${entry.domain.domain} is not verified, so no mail is flowing through it yet.`
+        : `Mail is disabled for ${entry.domain.domain}.`;
+
+  const records =
+    "The domain enters a quarantine period before another workspace can claim it. Existing data is retained.";
+
+  const primary = entry.domain.isPrimary ? " This is the workspace's primary domain." : "";
+  return `${mail} ${records}${primary}`;
+}
+
+/** DNS records table + add-record form + per-record verify for one domain. */
+function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
+  const queryClient = useQueryClient();
+  const [recordType, setRecordType] = useState<DnsRecordType>("MX");
+  const [host, setHost] = useState("");
+  const [expectedValue, setExpectedValue] = useState("");
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: domainsQueryKeys.domains() });
+    void queryClient.invalidateQueries({
+      queryKey: domainsQueryKeys.dnsRecords(entry.domain.id),
+    });
+  };
+
+  const upsertMutation = useMutation({
+    mutationFn: (input: { recordType: DnsRecordType; host: string; expectedValue: string }) =>
+      upsertDnsRecord(entry.domain.id, input),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      setHost("");
+      setExpectedValue("");
+      invalidate();
+    },
+  });
+  const verifyMutation = useMutation({
+    mutationFn: (recordId: string) => verifyDnsRecord(entry.domain.id, recordId),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => invalidate(),
+  });
+
+  const columns: readonly AdminColumn<DnsRecord>[] = [
+    {
+      id: "type",
+      header: "Type",
+      width: "70px",
+      cell: (record) => <span className="font-semibold">{record.recordType}</span>,
+    },
+    {
+      id: "host",
+      header: "Host",
+      width: "180px",
+      cell: (record) => <span className="mono">{record.host}</span>,
+    },
+    {
+      id: "value",
+      /* Takes the slack so the fixed columns keep their widths. */
+      header: "Value",
+      width: "100%",
+      cell: (record) => (
+        /* A DKIM public key is hundreds of characters; bounded and clipped so
+           one record cannot push the status and verify controls off-screen. */
+        <span className="mono block max-w-[46ch] truncate text-[var(--text-2)]">
+          {record.expectedValue}
+        </span>
+      ),
+    },
+    {
+      id: "status",
+      header: "Status",
+      width: "100px",
+      cell: (record) => (
+        <StatusChip tone={verificationVariant(record.status)} label={record.status} />
+      ),
+    },
+    {
+      id: "verify",
+      header: "Verify record",
+      headerHidden: true,
+      align: "right",
+      width: "90px",
+      cell: (record) => (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-label={`Verify ${record.recordType} ${record.host}`}
+          disabled={verifyMutation.isPending}
+          onClick={() => verifyMutation.mutate(record.id)}
+        >
+          Verify
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <div className="panel mb-4 overflow-hidden">
+      {upsertMutation.isError ? (
+        <div className="px-4 py-2">
+          <StateBanner kind="error">{upsertMutation.error.message}</StateBanner>
+        </div>
+      ) : null}
+      {verifyMutation.isError ? (
+        <div className="px-4 py-2">
+          <StateBanner kind="error">{verifyMutation.error.message}</StateBanner>
+        </div>
+      ) : null}
+
+      <AdminTable
+        label={`DNS records for ${entry.domain.domain}`}
+        columns={columns}
+        rows={entry.dnsRecords}
+        rowKey={(record) => record.id}
+        empty={
+          /* Helix seeds the MX / SPF / DMARC rows it needs when the deployment
+             has a public mail hostname configured. An empty panel therefore
+             means it does not — say so, rather than leaving an operator to
+             guess which records to type into the form below. */
+          <EmptyRow>
+            No DNS records yet. Helix adds the records it needs automatically once
+            <code> HELIX_MAIL_PUBLIC_HOSTNAME</code> is set on the deployment; until then, add them
+            below.
+          </EmptyRow>
+        }
+      />
+
+      <form
+        className="px-4 pt-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (host.trim().length === 0 || expectedValue.trim().length === 0) {
+            return;
+          }
+          upsertMutation.mutate({
+            recordType,
+            host: host.trim(),
+            expectedValue: expectedValue.trim(),
+          });
+        }}
+      >
+        <AdminToolbar label={`Add a DNS record to ${entry.domain.domain}`}>
+          <AdminField label="Record type">
+            <AdminSelect
+              value={recordType}
+              onChange={(event) => setRecordType(event.target.value as DnsRecordType)}
+            >
+              {DNS_RECORD_TYPES_UI.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </AdminSelect>
+          </AdminField>
+          <AdminField label="Host">
+            <AdminInput
+              value={host}
+              onChange={(event) => setHost(event.target.value)}
+              placeholder="helix.io"
+            />
+          </AdminField>
+          <AdminField label="Value" className="flex-1">
+            <AdminInput
+              value={expectedValue}
+              onChange={(event) => setExpectedValue(event.target.value)}
+              placeholder="10 mx1.helix.io"
+            />
+          </AdminField>
+          {/* `self-end` so the button sits on the controls' baseline rather
+              than centred against the taller labelled fields. It is the one
+              primary action of this panel — the Verify buttons above it are
+              outline so they do not compete with it. */}
+          <Button type="submit" size="sm" className="self-end" disabled={upsertMutation.isPending}>
+            <Icons.Plus /> Record
+          </Button>
+        </AdminToolbar>
+      </form>
+    </div>
+  );
+}
+
+export function AdminDomain() {
+  const queryClient = useQueryClient();
+  const domainsQuery = useQuery(domainsQueryOptions());
+  const [newDomain, setNewDomain] = useState("");
+  /* Snapshot of the entry under the cursor: the list refetches on its own, and
+     the dialog must keep describing the domain the operator actually picked. */
+  const [deleteTarget, setDeleteTarget] = useState<DomainWithRecords | null>(null);
+
+  const invalidate = () =>
+    void queryClient.invalidateQueries({ queryKey: domainsQueryKeys.domains() });
+
+  const addMutation = useMutation({
+    mutationFn: (domain: string) => createDomain({ domain }),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      setNewDomain("");
+      invalidate();
+    },
+  });
+  const primaryMutation = useMutation({
+    mutationFn: (id: string) => setPrimaryDomain(id),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => invalidate(),
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => releaseDomain(id),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => invalidate(),
+  });
+
+  const domains = domainsQuery.data ?? [];
+
+  /* Invalidating the key rather than calling the observer's own refetch keeps
+     every reader of `admin/domains` in step after a recovery. */
+  const domainsFailure = useQueryFailure(domainsQuery, invalidate);
+
+  return (
+    <PageScroll>
+      <PageHeading
+        title="Domains"
+        subtitle="Every domain this workspace owns, what it is used for, and the DNS records behind it."
+      />
+
+      {domainsFailure !== null ? (
+        <QueryFailureBanner
+          summary="Domains are unavailable"
+          subject="domains"
+          error={domainsFailure.error}
+          isRetrying={domainsFailure.isRetrying}
+          onRetry={domainsFailure.retry}
+          /* The domain list is everything this page renders, so the retry is
+             the only action left on screen. */
+          retryVariant="default"
+        >
+          Adding a domain and editing its DNS records need the current list, so both stay
+          unavailable until this loads.
+        </QueryFailureBanner>
+      ) : domainsQuery.isPending ? (
+        <StateBanner kind="loading">Loading domains…</StateBanner>
+      ) : null}
+      <MutationError error={addMutation.error} />
+      <MutationError error={primaryMutation.error} />
+      <MutationError error={deleteMutation.error} />
+
+      {domainsFailure !== null ? null : (
+        <>
+          <form
+            className="panel mb-4 flex items-end gap-2 p-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (newDomain.trim().length === 0) {
+                return;
+              }
+              addMutation.mutate(newDomain.trim());
+            }}
+          >
+            <AdminField label="New domain">
+              <AdminInput
+                value={newDomain}
+                onChange={(event) => setNewDomain(event.target.value)}
+                placeholder="helix.io"
+                /* Fixed width rather than `flex-1` — a hostname is ~20
+                   characters, and stretching the field across the panel put the
+                   submit button a screen away. */
+                className="w-80"
+              />
+            </AdminField>
+            <Button type="submit" disabled={addMutation.isPending}>
+              <Icons.Plus /> Add domain
+            </Button>
+          </form>
+
+          {domains.length === 0 ? (
+            /* The loading banner above already says it is loading; a second
+               "Loading domains…" in the empty state read as two states. */
+            domainsQuery.isPending ? null : (
+              <EmptyState icon={<Icons.Globe />} title="No domains yet">
+                Add a domain to send and receive mail from it, and to let people sign in with
+                addresses at that domain. Each one needs its DNS records verified before it goes
+                live.
+              </EmptyState>
+            )
+          ) : (
+            domains.map((entry) => (
+              <div key={entry.domain.id} className="admin-domain-entry">
+                <div className="panel admin-domain-row">
+                  <span className="admin-domain-icon">
+                    <Icons.Globe />
+                  </span>
+                  <div className="admin-domain-identity">
+                    <div className="admin-domain-name">
+                      {entry.domain.domain}
+                      {entry.domain.isPrimary ? <span className="chip">Primary</span> : null}
+                    </div>
+                    {/* What the domain does, not what tier of domain it is —
+                        "Secondary domain" told an operator nothing they could
+                        act on. */}
+                    <div className="admin-domain-summary">{domainSummary(entry)}</div>
+                  </div>
+                  <StatusChip
+                    tone={verificationVariant(entry.domain.status)}
+                    label={ownershipLabel(entry.domain.status)}
+                  />
+                  {!entry.domain.isPrimary ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      aria-label={`Make ${entry.domain.domain} primary`}
+                      disabled={primaryMutation.isPending}
+                      onClick={() => primaryMutation.mutate(entry.domain.id)}
+                    >
+                      Make primary
+                    </Button>
+                  ) : null}
+                  {/* Was a bare trash glyph in the same grey as "Make primary",
+                      one click from stopping mail. It now says what it does and
+                      reads as the destructive control it is. */}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    aria-label={`Release ${entry.domain.domain}`}
+                    disabled={deleteMutation.isPending}
+                    onClick={() => setDeleteTarget(entry)}
+                  >
+                    <Icons.Trash /> Release
+                  </Button>
+                </div>
+                {/* Capabilities first, DNS records second: what the domain is
+                    used for is the question, and the records are how you get
+                    there. */}
+                <DomainCapabilitiesPanel entry={entry} />
+                <DomainDnsPanel entry={entry} />
+              </div>
+            ))
+          )}
+        </>
+      )}
+
+      {/* Top tier: irreversible, it takes the DNS records with it, and getting
+          the domain back means re-verifying ownership outside this console — so
+          the operator types the hostname rather than clicking through. */}
+      {deleteTarget === null ? null : (
+        <ConfirmDestructive
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setDeleteTarget(null);
+            }
+          }}
+          title="Release domain"
+          blastRadius={domainDeletionBlastRadius(deleteTarget)}
+          confirmPhrase={deleteTarget.domain.domain}
+          confirmLabel="Release domain"
+          isPending={deleteMutation.isPending}
+          onConfirm={() =>
+            deleteMutation.mutate(deleteTarget.domain.id, {
+              /* Close on settle, not on success: a failure is reported by the
+                 page banner behind this overlay, so holding the dialog open
+                 would hide the only account of what went wrong. */
+              onSettled: () => setDeleteTarget(null),
+            })
+          }
+        >
+          Releasing <strong>{deleteTarget.domain.domain}</strong> removes it from this workspace.
+          Getting it back means adding the domain again and re-verifying ownership from DNS; this
+          console cannot undo the deletion.
+        </ConfirmDestructive>
+      )}
+    </PageScroll>
+  );
+}

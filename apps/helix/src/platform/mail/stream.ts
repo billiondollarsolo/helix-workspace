@@ -1,5 +1,5 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { EventBus, EventEnvelope, Unsubscribe } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ForbiddenError, UnauthorizedError } from "../../api/api-error.js";
 
 const MAIL_ACTIVITY_SUBJECTS = ["activity.mail.received", "activity.mail.sent"] as const;
@@ -39,12 +39,7 @@ export function frameForMailActivity(input: {
   readonly actorOrgId: string;
   readonly actorId: string;
 }): MailStreamFrame | null {
-  const type: MailStreamEventType | null =
-    input.subject === "activity.mail.received"
-      ? "mail.received"
-      : input.subject === "activity.mail.sent"
-        ? "mail.sent"
-        : null;
+  const type = mailStreamEventType(input.subject);
   if (type === null) {
     return null;
   }
@@ -78,6 +73,17 @@ export function frameForMailActivity(input: {
     return null;
   }
   return { type, threadId, orgId };
+}
+
+function mailStreamEventType(subject: string): MailStreamEventType | null {
+  switch (subject) {
+    case "activity.mail.received":
+      return "mail.received";
+    case "activity.mail.sent":
+      return "mail.sent";
+    default:
+      return null;
+  }
 }
 
 export function formatMailSseEvent(frame: MailStreamFrame): string {

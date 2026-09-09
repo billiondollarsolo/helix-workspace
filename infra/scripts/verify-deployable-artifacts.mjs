@@ -38,10 +38,19 @@ for (const file of files.filter((file) =>
   for (const match of source.matchAll(/^\s*image:\s*([^\s#]+).*$/gmu)) {
     const image = unquote(match[1]);
     if (immutableImage.test(image) || variableImageDigest.test(image)) continue;
+    const service =
+      source
+        .slice(0, match.index)
+        .split(/^  [\w-]+:\s*$/mu)
+        .at(-1) +
+      match[0] +
+      source.slice(match.index + match[0].length).split(/^  [\w-]+:\s*$/mu)[0];
+    // Local build outputs have no registry digest; never pull a same-named image.
     if (
       display(file) === "docker-compose.yml" &&
-      image === "helix/helix:local" &&
-      source.includes("image: helix/helix:local\n    pull_policy: never")
+      image.startsWith("helix/") &&
+      service.includes("    pull_policy: never") &&
+      (image === "helix/helix:local" || service.includes("    build:"))
     )
       continue;
     violations.push(`${display(file)} uses mutable image ${image}`);
@@ -58,7 +67,7 @@ for (const file of files.filter((file) => basename(file.pathname).startsWith("Do
       .filter((image) => !image.startsWith("${")),
   ];
   for (const image of references) {
-    if (!immutableImage.test(image))
+    if (image !== "scratch" && !immutableImage.test(image))
       violations.push(`${display(file)} uses mutable image ${image}`);
   }
 }

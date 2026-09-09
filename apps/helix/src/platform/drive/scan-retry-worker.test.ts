@@ -4,8 +4,7 @@ import { DriveVirusScanRetryWorker } from "./scan-retry-worker.js";
 describe("DriveVirusScanRetryWorker", () => {
   it("runs one bounded batch at a time and reports the result", async () => {
     let finish:
-      | ((value: { claimed: number; completed: number; failed: number }) => void)
-      | undefined;
+      ((value: { claimed: number; completed: number; failed: number }) => void) | undefined;
     const runVirusScanRetryBatch = vi.fn(
       () =>
         new Promise<{ claimed: number; completed: number; failed: number }>((resolve) => {

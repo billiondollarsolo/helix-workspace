@@ -1,6 +1,6 @@
 {
   "name": "@helix/sdk",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "private": true,
   "dependencies": {
@@ -36,7 +36,7 @@
   "scripts": {
     "build": "tsc -b",
     "lint": "eslint src --max-warnings=0",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude='dist/**'",
     "typecheck": "tsc -b"
   },
   "devDependencies": {

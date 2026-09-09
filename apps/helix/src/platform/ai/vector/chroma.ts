@@ -2,6 +2,7 @@ import {
   isJsonObject,
   normalizeHttpConfig,
   optionalJsonObject,
+  optionalVector,
   requestJson,
   withOptionalFields,
   type HttpVectorAdapterConfig,
@@ -43,16 +44,26 @@ export class ChromaVectorStore implements VectorStore {
     });
   }
 
-  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(
+    orgId: VectorOrgScope,
+    collection: string,
+    items: readonly VectorItem[],
+  ): Promise<void> {
     if (items.length === 0) {
       return;
     }
     const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
-    await requestJson(this.id, this.#config, "POST", `/api/v1/collections/${encodeURIComponent(scoped)}/upsert`, {
-      ids: items.map((item) => item.id),
-      embeddings: items.map((item) => [...validateVector(item.vector)]),
-      metadatas: items.map((item) => item.metadata ?? {}),
-    });
+    await requestJson(
+      this.id,
+      this.#config,
+      "POST",
+      `/api/v1/collections/${encodeURIComponent(scoped)}/upsert`,
+      {
+        ids: items.map((item) => item.id),
+        embeddings: items.map((item) => [...validateVector(item.vector)]),
+        metadatas: items.map((item) => item.metadata ?? {}),
+      },
+    );
   }
 
   async query(
@@ -62,12 +73,21 @@ export class ChromaVectorStore implements VectorStore {
     opts: VectorQueryOpts = {},
   ): Promise<readonly VectorMatch[]> {
     const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
-    const response = await requestJson(this.id, this.#config, "POST", `/api/v1/collections/${encodeURIComponent(scoped)}/query`, {
-      query_embeddings: [[...validateVector(vector)]],
-      n_results: validateLimit(opts.limit),
-      include: opts.includeVectors === true ? ["metadatas", "distances", "embeddings"] : ["metadatas", "distances"],
-      ...(opts.filter === undefined ? {} : { where: opts.filter }),
-    });
+    const response = await requestJson(
+      this.id,
+      this.#config,
+      "POST",
+      `/api/v1/collections/${encodeURIComponent(scoped)}/query`,
+      {
+        query_embeddings: [[...validateVector(vector)]],
+        n_results: validateLimit(opts.limit),
+        include:
+          opts.includeVectors === true
+            ? ["metadatas", "distances", "embeddings"]
+            : ["metadatas", "distances"],
+        ...(opts.filter === undefined ? {} : { where: opts.filter }),
+      },
+    );
     return chromaMatches(response, opts.includeVectors === true);
   }
 
@@ -76,9 +96,15 @@ export class ChromaVectorStore implements VectorStore {
       return;
     }
     const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
-    await requestJson(this.id, this.#config, "POST", `/api/v1/collections/${encodeURIComponent(scoped)}/delete`, {
-      ids: [...ids],
-    });
+    await requestJson(
+      this.id,
+      this.#config,
+      "POST",
+      `/api/v1/collections/${encodeURIComponent(scoped)}/delete`,
+      {
+        ids: [...ids],
+      },
+    );
   }
 }
 
@@ -103,7 +129,7 @@ function chromaMatches(response: unknown, includeVectors: boolean): readonly Vec
         id,
         score: 1 / (1 + distance),
         metadata: optionalJsonObject(metadatas[index]),
-        vector: vectorFromUnknownArray(embedding),
+        vector: optionalVector(embedding),
       }),
     );
   }
@@ -112,12 +138,4 @@ function chromaMatches(response: unknown, includeVectors: boolean): readonly Vec
 
 function firstArray(value: unknown): readonly unknown[] {
   return Array.isArray(value) && Array.isArray(value[0]) ? value[0] : [];
-}
-
-function vectorFromUnknownArray(value: unknown): readonly number[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const vector = value.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
-  return vector.length === value.length ? vector : undefined;
 }

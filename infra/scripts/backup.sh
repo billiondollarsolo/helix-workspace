@@ -29,6 +29,9 @@ Options:
   --age-recipients-file <path>     Encrypt archive with an age recipient file
   --kms-key-id <id>                Encrypt archive with a cloud KMS data key (Tier 3)
   --signing-private-key <path>     Ed25519 private key used to sign manifest.json
+  --off-host-uri <s3://...>        Copy ciphertext + manifest/checksum sidecars off-host
+  --retention-days <n>             Required retention contract for business+
+  --key-custody-ref <ref>          Non-secret KMS/HSM/vault/keychain recovery reference
   -h, --help
 
 Environment:
@@ -47,6 +50,10 @@ Environment:
   HELIX_KMS_ENDPOINT               Optional KMS endpoint override (LocalStack etc.)
   HELIX_BACKUP_SIGNING_PRIVATE_KEY Required Ed25519 manifest signing key
   HELIX_APP_VERSION                Immutable build id (defaults to Git commit locally)
+  HELIX_BACKUP_OFFHOST_URI         S3 destination for encrypted artifacts
+  HELIX_BACKUP_RETENTION_DAYS      Required retention duration
+  HELIX_BACKUP_KEY_CUSTODY_REF     Non-secret recovery-key custody reference
+  HELIX_BACKUP_OFFHOST_PROFILE     Optional AWS profile for the off-host destination
 
 WAL archiving (operator one-time setup, required for --pitr / --include-wal):
   postgresql.conf:
@@ -74,6 +81,9 @@ WAL_ARCHIVE_DIR=${HELIX_WAL_ARCHIVE_DIR:-/wal_archive}
 RUSTFS_BUCKET=${HELIX_BACKUP_RUSTFS_BUCKET:-}
 KMS_KEY_ID=${HELIX_BACKUP_KMS_KEY_ID:-}
 SIGNING_PRIVATE_KEY=${HELIX_BACKUP_SIGNING_PRIVATE_KEY:-}
+OFFHOST_URI=${HELIX_BACKUP_OFFHOST_URI:-}
+RETENTION_DAYS=${HELIX_BACKUP_RETENTION_DAYS:-0}
+KEY_CUSTODY_REF=${HELIX_BACKUP_KEY_CUSTODY_REF:-}
 AGE_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -92,6 +102,9 @@ while [[ $# -gt 0 ]]; do
     --age-recipients-file) AGE_ARGS+=("-R" "${2:?missing recipients file}"); shift 2 ;;
     --kms-key-id) KMS_KEY_ID=${2:?missing kms key id}; shift 2 ;;
     --signing-private-key) SIGNING_PRIVATE_KEY=${2:?missing signing private key}; shift 2 ;;
+    --off-host-uri) OFFHOST_URI=${2:?missing off-host URI}; shift 2 ;;
+    --retention-days) RETENTION_DAYS=${2:?missing retention days}; shift 2 ;;
+    --key-custody-ref) KEY_CUSTODY_REF=${2:?missing key custody reference}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
@@ -112,6 +125,7 @@ if [[ "$DRY_RUN" == "0" ]]; then
   require_cmd docker
   require_cmd node
   [[ -f "$SIGNING_PRIVATE_KEY" ]] || die "backup requires --signing-private-key or HELIX_BACKUP_SIGNING_PRIVATE_KEY"
+  require_cmd shasum
 fi
 require_cmd tar
 
@@ -141,12 +155,27 @@ if [[ "$ENCRYPT_AGE" == "true" && "$ENCRYPT_KMS" == "true" ]]; then
   die "choose one of --age-recipient or --kms-key-id, not both"
 fi
 
+[[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] || die "retention days must be a non-negative integer"
+case "$OFFHOST_URI" in
+  ""|s3://*) ;;
+  *) die "off-host URI must use s3://" ;;
+esac
+
 # Tier policy: business+ must be encrypted; sovereign requires KMS/HSM-backed keys.
 if [[ "$TIER" != "personal" && "$ENCRYPT_AGE" == "false" && "$ENCRYPT_KMS" == "false" && "$DRY_RUN" == "0" ]]; then
   die "$TIER backups must be encrypted; set AGE_RECIPIENTS/AGE_RECIPIENTS_FILE/--age-recipient or HELIX_BACKUP_KMS_KEY_ID/--kms-key-id"
 fi
 if [[ "$TIER" == "sovereign" && "$ENCRYPT_KMS" == "false" && "$DRY_RUN" == "0" ]]; then
   die "sovereign backups require KMS/HSM-backed encryption; set --kms-key-id"
+fi
+if [[ "$TIER" != "personal" && "$DRY_RUN" == "0" ]]; then
+  MIN_RETENTION_DAYS=30
+  [[ "$TIER" == "enterprise" ]] && MIN_RETENTION_DAYS=90
+  [[ "$TIER" == "sovereign" ]] && MIN_RETENTION_DAYS=365
+  [[ -n "$OFFHOST_URI" ]] || die "$TIER backups require --off-host-uri"
+  (( RETENTION_DAYS >= MIN_RETENTION_DAYS )) \
+    || die "$TIER backups require --retention-days >= $MIN_RETENTION_DAYS"
+  [[ -n "$KEY_CUSTODY_REF" ]] || die "$TIER backups require --key-custody-ref (never put a private key in the backup)"
 fi
 
 if [[ "$ENCRYPT_AGE" == "true" && "$DRY_RUN" == "0" ]]; then
@@ -178,6 +207,12 @@ OBJECT_VERSIONS="$STAGING_DIR/object-versions.json"
 MANIFEST="$STAGING_DIR/manifest.json"
 MANIFEST_SIGNATURE="$STAGING_DIR/manifest.sig"
 ARCHIVE="$OUTPUT_DIR/$BACKUP_ID.tar.gz"
+FINAL_ARCHIVE="$ARCHIVE"
+BACKUP_CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+DATABASE_CAPTURED_AT=$BACKUP_CREATED_AT
+OBJECTS_CAPTURED_AT=$BACKUP_CREATED_AT
+OBJECT_VERSIONING=Unavailable
+OBJECT_REPLICATION=not-applicable
 
 log "backup id: $BACKUP_ID"
 log "tier: $TIER"
@@ -256,6 +291,7 @@ dump_postgres_logical() {
   cmd=$(printf '%s exec -T %q pg_dump --snapshot=%q --format=custom --no-owner --no-acl --verbose -U %q -d %q > %q' \
     "$(compose)" "$POSTGRES_SERVICE" "$DATABASE_SNAPSHOT" "$POSTGRES_USER" "$POSTGRES_DB" "$POSTGRES_DUMP")
   run_shell "$cmd"
+  DATABASE_CAPTURED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 }
 
 capture_snapshot_metadata() {
@@ -408,19 +444,53 @@ backup_objects() {
     --bucket "$RUSTFS_BUCKET" --query Status --output text)
   [[ "$versioning" == "Enabled" ]] || die "object backup requires versioning Enabled on s3://$RUSTFS_BUCKET"
   mkdir -p "$OBJECTS_DIR"
+  if [[ "$TIER" != "personal" ]]; then
+    aws --endpoint-url "$endpoint" s3api get-bucket-replication --bucket "$RUSTFS_BUCKET" --output json >"$OBJECTS_DIR/replication.json"
+    node -e 'const fs=require("fs"),v=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(!v.ReplicationConfiguration?.Rules?.some(r=>r.Status==="Enabled")) process.exit(1)' "$OBJECTS_DIR/replication.json" \
+      || die "source bucket has no enabled replication rule"
+  fi
   aws --endpoint-url "$endpoint" s3api list-object-versions \
     --bucket "$RUSTFS_BUCKET" --output json \
     >"$OBJECT_VERSIONS"
   node "$SCRIPT_DIR/object-snapshot.mjs" capture \
     "$OBJECT_REFS" "$OBJECT_VERSIONS" "$DATABASE_BOUNDARY" \
     "$RUSTFS_BUCKET" "$endpoint" "$OBJECTS_DIR"
+  OBJECT_VERSIONING=Enabled
+  OBJECTS_CAPTURED_AT=$DATABASE_BOUNDARY
+}
+
+capture_database_consistency() {
+  local output=$1 database=${2:-$POSTGRES_DB}
+  local sql
+  sql="begin isolation level repeatable read read only; set transaction snapshot '$DATABASE_SNAPSHOT';
+  select metric, value from (
+    select 'activity.count'::text metric, count(*)::text value from public.activity
+    union all select 'audit.invalid_links', count(*)::text from (
+      select prev_hash, lag(this_hash) over (partition by org_id order by sequence) expected
+      from public.activity
+    ) links where prev_hash is distinct from expected
+    union all select 'drive_versions.count', count(*)::text from public.drive_versions
+    union all select 'mail_outbound_messages.count', count(*)::text from public.mail_outbound_messages
+    union all select 'objects.count', count(*)::text from public.objects
+    union all select 'outbox.count', count(*)::text from public.outbox
+  ) metrics order by metric;
+  select 'drive_version.sample', concat_ws('|', id::text, storage_key, sha256)
+  from public.drive_versions order by id limit 25; commit;"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ mkdir -p %q\n' "$(dirname "$output")"
+    printf '+ %s exec -T %q psql -At -F <tab> -U %q -d %q > %q # database/object/outbound/audit consistency snapshot\n' \
+      "$(compose)" "$POSTGRES_SERVICE" "$POSTGRES_USER" "$database" "$output"
+    return
+  fi
+  mkdir -p "$(dirname "$output")"
+  bash -c "$(printf '%s exec -T %q psql -X -qAt -F %q -v ON_ERROR_STOP=1 -U %q -d %q -c %q > %q' \
+    "$(compose)" "$POSTGRES_SERVICE" $'\t' "$POSTGRES_USER" "$database" "$sql" "$output")"
 }
 
 write_manifest() {
-  local encryption='"none"'
-  if [[ "$ENCRYPT_AGE" == "true" ]]; then encryption='"age"'; fi
-  if [[ "$ENCRYPT_KMS" == "true" ]]; then encryption='"kms"'; fi
-
+  local encryption=none
+  if [[ "$ENCRYPT_AGE" == "true" ]]; then encryption=age; fi
+  if [[ "$ENCRYPT_KMS" == "true" ]]; then encryption=kms; fi
   local pg_mode="logical-dump"
 
   cat >"$MANIFEST" <<EOF
@@ -463,10 +533,20 @@ write_manifest() {
     "endpoint": "$(json_escape "$(object_store_endpoint)")",
     "artifact": "objects/",
     "inventory": "objects/inventory.json",
+    "versioning": "$(json_escape "$OBJECT_VERSIONING")",
+    "versionInventoryArtifact": "objects/inventory.json",
     "note": "Exactly one immutable version per ready reference at postgres.snapshot_boundary."
   },
+  "resilience": {
+    "offHostUri": "$(json_escape "$OFFHOST_URI")",
+    "retentionDays": $RETENTION_DAYS,
+    "versioningRequired": $([ "$TIER" != "personal" ] && printf true || printf false),
+    "replicationRequired": $([ "$TIER" != "personal" ] && printf true || printf false)
+  },
   "encryption": {
-    "method": $encryption,
+    "method": "$encryption",
+    "keyCustodyRef": "$(json_escape "$KEY_CUSTODY_REF")",
+    "plaintextKeyMaterialIncluded": false,
     "kms_key_id": "$(json_escape "${KMS_KEY_ID}")"
   }
 }
@@ -492,16 +572,20 @@ archive_backup() {
 
   if [[ "$ENCRYPT_AGE" == "true" ]]; then
     local encrypted_archive="$ARCHIVE.age"
+    FINAL_ARCHIVE="$encrypted_archive"
     if [[ "$DRY_RUN" == "1" ]]; then
       printf '+ age <recipients> -o %q %q\n' "$encrypted_archive" "$ARCHIVE"
       printf '+ rm -rf %q %q\n' "$STAGING_DIR" "$ARCHIVE"
     else
       age "${AGE_ARGS[@]}" -o "$encrypted_archive" "$ARCHIVE"
+      cp "$MANIFEST" "$encrypted_archive.manifest.json"
+      cp "$MANIFEST_SIGNATURE" "$encrypted_archive.manifest.sig"
       rm -rf "$STAGING_DIR" "$ARCHIVE"
       log "encrypted archive (age): $encrypted_archive"
     fi
   elif [[ "$ENCRYPT_KMS" == "true" ]]; then
     local encrypted_archive="$ARCHIVE.kms"
+    FINAL_ARCHIVE="$encrypted_archive"
     if [[ "$DRY_RUN" == "1" ]]; then
       printf '+ aws kms generate-data-key --key-id %q\n' "$KMS_KEY_ID"
       printf '+ aes-gcm-file.mjs encrypt %q %q <kms-data-key-via-stdin>\n' "$ARCHIVE" "$encrypted_archive"
@@ -509,17 +593,92 @@ archive_backup() {
       printf '+ rm -rf %q %q\n' "$STAGING_DIR" "$ARCHIVE"
     else
       kms_encrypt_file "$ARCHIVE" "$encrypted_archive" "$KMS_KEY_ID"
+      cp "$MANIFEST" "$encrypted_archive.manifest.json"
+      cp "$MANIFEST_SIGNATURE" "$encrypted_archive.manifest.sig"
       rm -rf "$STAGING_DIR" "$ARCHIVE"
       log "encrypted archive (kms): $encrypted_archive (+ $encrypted_archive.datakey)"
     fi
   else
     log "archive: $ARCHIVE"
   fi
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ write manifest sidecar: %q\n' "$FINAL_ARCHIVE.manifest.json"
+    printf '+ write sha256 sidecar: %q\n' "$FINAL_ARCHIVE.sha256"
+  else
+    # The embedded manifest is authoritative. The external copy permits
+    # recovery-point selection without decrypting every candidate archive.
+    # Restore compares it byte-for-byte with the embedded copy.
+    if [[ -f "$FINAL_ARCHIVE.manifest.json" ]]; then
+      :
+    elif [[ -d "$STAGING_DIR" ]]; then
+      cp "$MANIFEST" "$FINAL_ARCHIVE.manifest.json"
+      cp "$MANIFEST_SIGNATURE" "$FINAL_ARCHIVE.manifest.sig"
+    else
+      tar -xOf "$FINAL_ARCHIVE" "$BACKUP_ID/manifest.json" >"$FINAL_ARCHIVE.manifest.json"
+    fi
+    (
+      cd "$(dirname "$FINAL_ARCHIVE")"
+      shasum -a 256 "$(basename "$FINAL_ARCHIVE")"
+    ) >"$FINAL_ARCHIVE.sha256"
+  fi
 }
 
+validate_offhost_contract() {
+  [[ -n "$OFFHOST_URI" ]] || return 0
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ aws s3api get-bucket-versioning/get-bucket-replication/get-bucket-lifecycle-configuration # %s-day contract\n' "$RETENTION_DAYS"
+    return
+  fi
+  local destination=${OFFHOST_URI#s3://}
+  local bucket=${destination%%/*}
+  local profile_args=()
+  [[ -n "${HELIX_BACKUP_OFFHOST_PROFILE:-}" ]] && profile_args=(--profile "$HELIX_BACKUP_OFFHOST_PROFILE")
+  local status lifecycle_days day retention_ok=false
+  status=$(aws "${profile_args[@]}" s3api get-bucket-versioning --bucket "$bucket" --query Status --output text)
+  [[ "$status" == "Enabled" ]] || die "off-host bucket versioning is not Enabled: $bucket"
+  aws "${profile_args[@]}" s3api get-bucket-replication --bucket "$bucket" >/dev/null \
+    || die "off-host bucket replication is not configured: $bucket"
+  if [[ "$TIER" == "sovereign" ]]; then
+    local object_lock
+    object_lock=$(aws "${profile_args[@]}" s3api get-object-lock-configuration \
+      --bucket "$bucket" --query ObjectLockConfiguration.ObjectLockEnabled --output text)
+    [[ "$object_lock" == "Enabled" ]] || die "sovereign off-host bucket must enable S3 Object Lock"
+  fi
+  # shellcheck disable=SC2016 # JMESPath backticks are literals, not shell expansion.
+  lifecycle_days=$(aws "${profile_args[@]}" s3api get-bucket-lifecycle-configuration \
+    --bucket "$bucket" --query 'Rules[?Status==`Enabled`].Expiration.Days' --output text)
+  for day in $lifecycle_days; do
+    if [[ "$day" =~ ^[0-9]+$ ]] && (( day >= RETENTION_DAYS )); then retention_ok=true; fi
+  done
+  bool_true "$retention_ok" || die "off-host bucket has no enabled lifecycle retention >= ${RETENTION_DAYS} days"
+}
+
+copy_offhost() {
+  [[ -n "$OFFHOST_URI" ]] || return 0
+  local profile_args=()
+  [[ -n "${HELIX_BACKUP_OFFHOST_PROFILE:-}" ]] && profile_args=(--profile "$HELIX_BACKUP_OFFHOST_PROFILE")
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ aws s3 cp %q %q\n' "$FINAL_ARCHIVE" "$OFFHOST_URI/"
+    printf '+ aws s3 cp %q %q\n' "$FINAL_ARCHIVE.manifest.json" "$OFFHOST_URI/"
+    printf '+ aws s3 cp %q %q\n' "$FINAL_ARCHIVE.manifest.sig" "$OFFHOST_URI/"
+    printf '+ aws s3 cp %q %q\n' "$FINAL_ARCHIVE.sha256" "$OFFHOST_URI/"
+    return
+  fi
+  aws "${profile_args[@]}" s3 cp "$FINAL_ARCHIVE" "$OFFHOST_URI/"
+  aws "${profile_args[@]}" s3 cp "$FINAL_ARCHIVE.manifest.json" "$OFFHOST_URI/"
+  aws "${profile_args[@]}" s3 cp "$FINAL_ARCHIVE.manifest.sig" "$OFFHOST_URI/"
+  aws "${profile_args[@]}" s3 cp "$FINAL_ARCHIVE.sha256" "$OFFHOST_URI/"
+  if [[ "$FINAL_ARCHIVE" == *.kms ]]; then
+    aws "${profile_args[@]}" s3 cp "$FINAL_ARCHIVE.datakey" "$OFFHOST_URI/"
+  fi
+}
+
+validate_offhost_contract
 start_consistent_snapshot
 dump_postgres_logical
 capture_snapshot_metadata
+capture_database_consistency "$STAGING_DIR/consistency/database.tsv"
 require_object_coverage
 finish_consistent_snapshot
 
@@ -538,4 +697,5 @@ else
 fi
 
 archive_backup
+copy_offhost
 log "backup workflow complete"

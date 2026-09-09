@@ -1,7 +1,7 @@
 import type { Actor } from "@helix/sdk-types";
+import type { SecurityPoliciesStore, SecurityPolicyRecord } from "./admin/security-policies.js";
 import type { DataClassification, ResourceClassificationService } from "./ai/index.js";
 import { sensitivityLabelFor } from "./ai/index.js";
-import type { SecurityPoliciesStore, SecurityPolicyRecord } from "./admin/security-policies.js";
 
 export const dlpBoundaries = [
   "mail_send",
@@ -84,7 +84,7 @@ export class TenantDlpGuard implements DlpGuard {
     const settings = dlpSettings(policy);
     const boundaryEnabled = settings?.boundaries.has(input.boundary) === true;
     const findings: DlpFinding[] = [];
-    if (boundaryEnabled && settings !== null) {
+    if (boundaryEnabled) {
       const scanned = boundedText(input.content);
       findings.push(...detectDlp(scanned.text, settings.detectors));
       if (scanned.truncated || input.scanIncomplete === true) {
@@ -120,7 +120,7 @@ export class TenantDlpGuard implements DlpGuard {
     );
     const result = decision(
       input,
-      stricterAction(labelAction, boundaryEnabled && settings !== null ? settings.action : "allow"),
+      stricterAction(labelAction, boundaryEnabled ? settings.action : "allow"),
       classification,
       uniqueFindings,
     );

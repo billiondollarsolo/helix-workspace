@@ -4,6 +4,7 @@ import {
   listDrive,
   listDriveAccess,
   listDriveWorkflows,
+  getDriveUploadStatus,
   searchDrive,
   type DriveApiEntry,
   type DriveApiSearchHit,
@@ -36,15 +37,6 @@ export function deriveDriveSuggestions(entries: readonly DriveApiEntry[]): Drive
   const files = sorted.filter((entry) => entry.type === "file").slice(0, 10);
 
   return { folders, files };
-}
-
-/**
- * Build Drive suggestions from a local set of folder/file entries. Used when
- * the backend suggestions query is unavailable (offline) so the Suggested
- * folders / Suggested files sections still render real content.
- */
-export function fallbackDriveSuggestions(entries: readonly DriveApiEntry[]): DriveSuggestions {
-  return deriveDriveSuggestions(entries);
 }
 
 export function driveSuggestionsQueryOptions() {
@@ -87,6 +79,7 @@ export const defaultDriveItemsInput = {
 export const driveQueryKeys = {
   access: (objectId: string) => ["drive", "access", objectId] as const,
   workflows: ["drive", "workflows"] as const,
+  uploadStatus: (objectId: string | null) => ["drive", "upload-status", objectId] as const,
   items: (input: DriveItemsQueryInput = defaultDriveItemsInput) =>
     [
       "drive",
@@ -105,6 +98,18 @@ export function driveWorkflowsQueryOptions(enabled = true) {
     queryKey: driveQueryKeys.workflows,
     queryFn: () => listDriveWorkflows(),
     enabled,
+  });
+}
+
+export function driveUploadStatusQueryOptions(objectId: string | null) {
+  return queryOptions({
+    queryKey: driveQueryKeys.uploadStatus(objectId),
+    queryFn: () => {
+      if (objectId === null) throw new Error("No Drive upload is being processed.");
+      return getDriveUploadStatus(objectId);
+    },
+    enabled: objectId !== null,
+    refetchInterval: (query) => (query.state.data?.terminal === true ? false : 1_500),
     throwOnError: false,
   });
 }
@@ -142,7 +147,6 @@ export function entryFromSearchHit(hit: DriveApiSearchHit): DriveApiEntry {
     mimeType: hit.mimeType,
     byteSize: hit.byteSize,
     sha256: hit.sha256,
-    ...(hit.previewMetadata === undefined ? {} : { preview: hit.previewMetadata }),
     metadata: {},
     deletedAt: null,
     createdAt: hit.updatedAt,

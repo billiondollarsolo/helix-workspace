@@ -52,6 +52,7 @@ describe("Postgres OAuth stores", () => {
       expiresAt,
       revokedAt: null,
       revocationEpoch: 0,
+      lastUsedAt: null,
     });
     expect(recording.calls[0]?.text).toContain("insert into agent_credentials");
     expect(recording.calls[0]?.text).toContain("where id =");
@@ -209,6 +210,7 @@ describe("Postgres OAuth stores", () => {
         expiresAt: null,
         revokedAt,
         revocationEpoch: 1,
+        lastUsedAt: null,
       },
     ]);
     expect(recording.calls[0]?.text).toContain("where a.org_id =");
@@ -301,7 +303,9 @@ describe("Postgres OAuth stores", () => {
       expiresAt,
     });
     expect(recording.calls[0]?.text).toContain("where t.token_hash =");
-    expect(recording.calls[0]?.text.match(/helix_credential_principal_is_active/gu)).toHaveLength(2);
+    expect(recording.calls[0]?.text.match(/helix_credential_principal_is_active/gu)).toHaveLength(
+      2,
+    );
     expect(recording.calls[0]?.values).toContain(hashAccessToken("helix_at_secret", testIssuer));
   });
 

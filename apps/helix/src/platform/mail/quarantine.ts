@@ -64,7 +64,8 @@ interface QuarantineRow {
   readonly helo: string | null;
   readonly provider_delivery_id: string | null;
   readonly storage_key: string;
-  readonly byte_size: number;
+  readonly legacy_source_id?: string | null;
+  readonly byte_size: number | string;
   readonly sha256: string;
   readonly signature: string;
   readonly authentication: JsonObject;
@@ -96,6 +97,16 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
     }
     const id = randomUUID();
     const sha256 = createHash("sha256").update(input.raw).digest("hex");
+    const dedupKey = createHash("sha256")
+      .update(
+        JSON.stringify([
+          sha256,
+          [...input.recipientAddresses].sort(),
+          input.envelopeFrom ?? null,
+          input.providerDeliveryId ?? null,
+        ]),
+      )
+      .digest("hex");
     const storageKey = `mail-quarantine/${id}/${sha256}.eml`;
     await storage.put({
       key: storageKey,
@@ -104,20 +115,30 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
       metadata: { quarantineId: id, sha256 },
     });
     try {
-      await this.sql`
+      const rows = await this.sql<{ readonly id: string }[]>`
         insert into mail_quarantines (
           id, org_id, recipient_addresses, envelope_from, remote_address, helo,
           provider_delivery_id, storage_key, byte_size, sha256, signature,
-          authentication, scan_evidence
+          authentication, scan_evidence, dedup_key
         )
         values (
           ${id}, ${input.orgId}, ${this.sql.array([...input.recipientAddresses])},
           ${input.envelopeFrom ?? null}, ${input.remoteAddress ?? null}, ${input.helo ?? null},
           ${input.providerDeliveryId ?? null}, ${storageKey}, ${input.raw.byteLength}, ${sha256},
           ${signature}, ${this.sql.json(toSqlJson(input.authentication))},
-          ${this.sql.json(toSqlJson(input.scanEvidence))}
+          ${this.sql.json(toSqlJson(input.scanEvidence))}, ${dedupKey}
         )
+        on conflict (org_id, dedup_key) where dedup_key is not null do nothing
+        returning id
       `;
+      if (rows.length === 0) {
+        const prior = await this.sql<
+          { readonly id: string }[]
+        >`select id from mail_quarantines where org_id = ${input.orgId} and dedup_key = ${dedupKey}`;
+        if (prior[0] === undefined) throw new Error("Quarantine duplicate disappeared.");
+        await storage.delete(storageKey);
+        return { id: prior[0].id };
+      }
     } catch (error) {
       await storage.delete(storageKey).catch(() => undefined);
       throw error;
@@ -160,14 +181,24 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
     `;
     const row = rows[0];
     if (row === undefined) return null;
-    const storage = (await this.storageResolver({ orgId }))?.client;
     try {
-      if (storage === undefined) throw new MailQuarantineIntegrityError();
-      const object = await storage.get(row.storage_key);
-      if (object === null || object.key !== row.storage_key) {
-        throw new MailQuarantineIntegrityError();
+      let raw: Buffer;
+      if (row.legacy_source_id != null) {
+        // Existing main backups retain database-backed bytes until resolution.
+        const legacy = await this.sql<{ readonly raw_message: Buffer | null }[]>`
+          select raw_message from mail_quarantined_messages
+          where org_id = ${orgId} and id = ${row.legacy_source_id}
+        `;
+        if (legacy[0]?.raw_message == null) throw new MailQuarantineIntegrityError();
+        raw = await verifiedBody(legacy[0].raw_message, row.byte_size, row.sha256);
+      } else {
+        const storage = (await this.storageResolver({ orgId }))?.client;
+        if (storage === undefined) throw new MailQuarantineIntegrityError();
+        const object = await storage.get(row.storage_key);
+        if (object === null || object.key !== row.storage_key)
+          throw new MailQuarantineIntegrityError();
+        raw = await verifiedBody(object.body, row.byte_size, row.sha256);
       }
-      const raw = await verifiedBody(object.body, row.byte_size, row.sha256);
       return {
         id: row.id,
         releaseToken: requiredToken(row.release_token),
@@ -257,9 +288,30 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
   }
 
   private async deleteBytes(orgId: string, id: string, storageKey: string): Promise<boolean> {
-    const storage = (await this.storageResolver({ orgId }))?.client;
-    if (storage === undefined) return false;
     try {
+      const cleared = await this.sql<{ readonly id: string }[]>`
+        with cleared as (
+          update mail_quarantined_messages legacy
+          set raw_message = null, status = current.status,
+              released_at = case when current.status = 'released' then current.resolved_at else legacy.released_at end,
+              released_by = case when current.status = 'released' then current.resolved_by_actor_id else legacy.released_by end,
+              deleted_at = case when current.status = 'deleted' then current.resolved_at else legacy.deleted_at end,
+              deleted_by = case when current.status = 'deleted' then current.resolved_by_actor_id else legacy.deleted_by end,
+              updated_at = now()
+          from mail_quarantines current
+          where current.org_id = ${orgId} and current.id = ${id}
+            and current.status in ('released', 'deleted')
+            and legacy.org_id = current.org_id and legacy.id = current.legacy_source_id
+          returning legacy.id
+        )
+        update mail_quarantines set bytes_deleted_at = now()
+        where org_id = ${orgId} and id = ${id} and legacy_source_id in (select id from cleared)
+        returning id
+      `;
+      if (cleared.length > 0) return true;
+      if (storageKey.startsWith("legacy-mail-quarantine/")) return false;
+      const storage = (await this.storageResolver({ orgId }))?.client;
+      if (storage === undefined) return false;
       await storage.delete(storageKey);
       await this.sql`
         update mail_quarantines set bytes_deleted_at = now()
@@ -274,23 +326,24 @@ export class PostgresMailQuarantineStore implements MailQuarantineStore {
 
 async function verifiedBody(
   body: StorageObject["body"],
-  expectedSize: number,
+  expectedSize: number | string,
   expectedSha256: string,
 ): Promise<Buffer> {
+  const size = Number(expectedSize);
+  if (!Number.isSafeInteger(size) || size < 1 || size > MAIL_RAW_SOURCE_MAX_BYTES) {
+    throw new MailQuarantineIntegrityError();
+  }
   const chunks: Uint8Array[] = [];
   let byteSize = 0;
   for await (const chunk of body instanceof Uint8Array ? [body] : body) {
     byteSize += chunk.byteLength;
-    if (byteSize > expectedSize || byteSize > MAIL_RAW_SOURCE_MAX_BYTES) {
+    if (byteSize > size || byteSize > MAIL_RAW_SOURCE_MAX_BYTES) {
       throw new MailQuarantineIntegrityError();
     }
     chunks.push(chunk);
   }
   const bytes = Buffer.concat(chunks);
-  if (
-    byteSize !== expectedSize ||
-    createHash("sha256").update(bytes).digest("hex") !== expectedSha256
-  ) {
+  if (byteSize !== size || createHash("sha256").update(bytes).digest("hex") !== expectedSha256) {
     throw new MailQuarantineIntegrityError();
   }
   return bytes;

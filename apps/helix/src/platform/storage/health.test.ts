@@ -153,7 +153,9 @@ class RecordingStorageClient implements TenantStorageClient {
     return {
       key,
       body:
-        this.options.readBody === undefined ? body : new TextEncoder().encode(this.options.readBody),
+        this.options.readBody === undefined
+          ? body
+          : new TextEncoder().encode(this.options.readBody),
     };
   }
 

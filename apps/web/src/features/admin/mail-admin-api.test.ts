@@ -83,13 +83,23 @@ describe("mail-admin-api", () => {
     expect(init?.method).toBe("POST");
   });
 
-  it("POSTs set-default to the provider's set-default endpoint", async () => {
-    fetchImpl.mockResolvedValue(jsonResponse({ providers: [] }));
+  it("PATCHes the provider to set its default status", async () => {
+    fetchImpl.mockResolvedValue(
+      jsonResponse({
+        id: "p-9",
+        name: "SMTP",
+        kind: "smtp",
+        config: {},
+        isDefault: true,
+        enabled: true,
+      }),
+    );
 
     await setDefaultMailProvider("p-9", fetchImpl);
     const [url, init] = fetchImpl.mock.calls[0] ?? [];
-    expect(url).toBe("/api/admin/mail/providers/p-9/set-default");
-    expect(init?.method).toBe("POST");
+    expect(url).toBe("/api/admin/mail/providers/p-9");
+    expect(init?.method).toBe("PATCH");
+    expect(init?.body).toBe(JSON.stringify({ isDefault: true }));
   });
 
   it("fetches canonical mail domains with DKIM keys", async () => {
@@ -142,7 +152,7 @@ describe("mail-admin-api", () => {
     );
 
     const result = await fetchMailDmarc(fetchImpl);
-    expect(result.summary.dmarcPassRate).toBeCloseTo(0.98);
+    expect(result.summary?.dmarcPassRate).toBeCloseTo(0.98);
   });
 
   it("creates and deletes routing rules", async () => {

@@ -188,11 +188,7 @@ function signupFunnelSchema(input: {
     ...(input.properties ?? {}),
   };
   const required = [
-    ...(tenantScoped
-      ? tenantIdentity === "actor"
-        ? ["orgId", "actorId", "source", "step"]
-        : ["orgId", "orgSlug", "tier", "planId", "region", "source", "step"]
-      : ["source", "step"]),
+    ...baseRequiredProperties(tenantScoped, tenantIdentity),
     ...(input.required ?? []),
   ];
 
@@ -205,6 +201,19 @@ function signupFunnelSchema(input: {
     tags: ["Signup"],
     payloadSchema: objectSchema(properties, required),
   };
+}
+
+function baseRequiredProperties(
+  tenantScoped: boolean,
+  identity: "actor" | "org",
+): readonly string[] {
+  if (!tenantScoped) {
+    return ["source", "step"];
+  }
+  if (identity === "actor") {
+    return ["orgId", "actorId", "source", "step"];
+  }
+  return ["orgId", "orgSlug", "tier", "planId", "region", "source", "step"];
 }
 
 function tenantScopedProperties(identity: "actor" | "org"): JsonObject {

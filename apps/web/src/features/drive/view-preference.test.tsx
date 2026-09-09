@@ -39,10 +39,10 @@ describe("document surface view preference", () => {
     });
     fetchMock = vi.fn<typeof fetch>((input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (url === "/api/tools/drive.view.get") {
+      if (url === "/v1/api/tools/drive.view.get") {
         return Promise.resolve(Response.json({ view: stored }));
       }
-      if (url === "/api/tools/drive.view.set") {
+      if (url === "/v1/api/tools/drive.view.set") {
         if (typeof init?.body !== "string") throw new Error("Expected JSON request body.");
         const body = JSON.parse(init.body) as { readonly view: DocumentSurfaceView };
         stored = body.view;
@@ -82,7 +82,7 @@ describe("document surface view preference", () => {
 
     expect(container.querySelector("[data-view]")?.textContent).toBe("grid");
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/tools/drive.view.set",
+      "/v1/api/tools/drive.view.set",
       expect.objectContaining({ body: JSON.stringify({ view: "grid" }) }),
     );
     expect(stored).toBe("grid");

@@ -9,6 +9,15 @@ import { MailAdminSection } from "./mail-admin";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
+const navigateMock = vi.fn();
+const routerMocks = { search: {} as Record<string, unknown> };
+vi.mock("@tanstack/react-router", async () => ({
+  ...(await vi.importActual("@tanstack/react-router")),
+  useNavigate: () => navigateMock,
+  useSearch: () => routerMocks.search,
+  useParams: () => ({ section: "mail" }),
+}));
+
 const providersPayload = {
   providers: [
     {
@@ -225,6 +234,26 @@ describe("MailAdminSection", () => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
+    routerMocks.search = {};
+    navigateMock.mockReset();
+    navigateMock.mockImplementation(
+      async (options: {
+        search?: (previous: Record<string, unknown>) => Record<string, unknown>;
+      }) => {
+        if (typeof options.search === "function")
+          routerMocks.search = options.search({ ...routerMocks.search });
+        await act(async () => {
+          root.render(
+            createElement(
+              QueryClientProvider,
+              { client: queryClient },
+              createElement(MailAdminSection),
+            ),
+          );
+          await Promise.resolve();
+        });
+      },
+    );
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: { getItem: vi.fn(() => null), removeItem: vi.fn(), setItem: vi.fn() },

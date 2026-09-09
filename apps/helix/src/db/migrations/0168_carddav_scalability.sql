@@ -1,4 +1,8 @@
+-- Extension installation needs the migration connection's database privilege;
+-- return to the non-login DDL owner before creating application objects.
+reset role;
 create extension if not exists pg_trgm;
+set local role helix_migration_owner;
 
 create table carddav_addressbooks (
   id uuid primary key default gen_random_uuid(),

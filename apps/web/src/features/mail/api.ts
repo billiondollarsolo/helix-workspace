@@ -19,14 +19,7 @@ import {
 export type MailApiAddress = MailAddress;
 
 export type MailFolderKey =
-  | "inbox"
-  | "starred"
-  | "snoozed"
-  | "sent"
-  | "drafts"
-  | "archive"
-  | "spam"
-  | "trash";
+  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
 export type MailCategoryTab = "primary" | "updates" | "promotions" | "social";
 
@@ -138,6 +131,8 @@ export function validateMailAttachmentSelection(
 }
 
 export interface MailSendInput {
+  readonly draft?: { readonly id: string; readonly revision: number };
+  readonly idempotencyKey?: string;
   readonly to: readonly MailApiAddress[];
   readonly cc?: readonly MailApiAddress[];
   readonly bcc?: readonly MailApiAddress[];
@@ -157,9 +152,14 @@ export interface MailSendResult {
   readonly messageId?: string;
   readonly threadId?: string;
   readonly status?: string;
+  /** User-visible delivery state from the server (`mailOutboundDisplayStatus`). */
+  readonly deliveryStatus?: "queued" | "sending" | "sent" | "delayed" | "failed" | "cancelled";
   readonly undoUntil?: string;
   readonly queuedAt?: string;
+  readonly lastError?: string | null;
 }
+
+export type { MailDraftSaveInput } from "@helix/contracts";
 
 export interface MailFilterCriteria {
   readonly fromContains?: string;
@@ -290,6 +290,8 @@ export async function sendMail(
   return callMailTool<MailSendResult>(
     "mail.send",
     {
+      ...(input.draft === undefined ? {} : { draft: input.draft }),
+      ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
       to: input.to,
       cc: input.cc ?? [],
       bcc: input.bcc ?? [],
@@ -378,6 +380,26 @@ export async function spamMailThread(
   await callMailTool("mail.spam", { threadId, spam: true }, fetchImpl);
 }
 
+/** Clear spam (Not spam) — returns the thread to the normal mailbox views. */
+export async function unspamMailThread(
+  threadId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callMailTool("mail.spam", { threadId, spam: false }, fetchImpl);
+}
+
+export async function getMailOutbound(
+  outboundId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<MailOutboundRecord | null> {
+  const output = await callMailTool<{ readonly outbound?: MailOutboundRecord | null }>(
+    "mail.outbound.get",
+    { id: outboundId },
+    fetchImpl,
+  );
+  return output.outbound ?? null;
+}
+
 export async function cancelOutboundMail(
   outboundId: string,
   fetchImpl: MailApiFetch = authenticatedFetch,
@@ -409,12 +431,12 @@ export async function saveMailDraft(
 }
 
 export async function discardMailDraft(
-  id: string,
+  input: { readonly id: string; readonly expectedRevision: number },
   fetchImpl: MailApiFetch = authenticatedFetch,
 ): Promise<boolean> {
   const output = await callMailTool<{ readonly deleted?: boolean }>(
     "mail.draft.discard",
-    { id },
+    input,
     fetchImpl,
   );
   return output.deleted ?? false;

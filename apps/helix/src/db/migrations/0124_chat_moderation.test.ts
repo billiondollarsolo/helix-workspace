@@ -7,9 +7,14 @@ const sql = DATABASE_URL === undefined ? null : postgres(DATABASE_URL, { max: 4 
 
 describe("0124 chat moderation migration", () => {
   it("keeps moderation tenant-scoped, role-checked, append-only, and on canonical events", async () => {
-    const migration = await readFile(new URL("./0124_chat_moderation.sql", import.meta.url), "utf8");
+    const migration = await readFile(
+      new URL("./0124_chat_moderation.sql", import.meta.url),
+      "utf8",
+    );
     expect(migration).toContain("foreign key (org_id, room_id) references threads(org_id, id)");
-    expect(migration).toContain("foreign key (org_id, case_id) references chat_moderation_cases(org_id, id)");
+    expect(migration).toContain(
+      "foreign key (org_id, case_id) references chat_moderation_cases(org_id, id)",
+    );
     expect(migration).toContain("helix_chat_is_room_moderator");
     expect(migration).toContain("force row level security");
     expect(migration).toContain("append_chat_room_event");
@@ -141,12 +146,15 @@ describe.skipIf(sql === null)("0124 live chat moderation playbooks", () => {
       { impossibleTravel: true },
     );
     await moderate(moderator, compromiseCase, "ban_actor", "Contain compromised account");
-    await asActor(compromised, (tx) => tx`
+    await asActor(
+      compromised,
+      (tx) => tx`
       select helix_appeal_chat_case(
         ${orgA}, ${compromised}, ${compromiseCase}, 'Account recovered',
         '{"credentialReset":true}'::jsonb
       )
-    `);
+    `,
+    );
     await moderate(moderator, compromiseCase, "uphold", "Review still pending");
 
     const guestCase = await report(member, room, null, guest, "guest_abuse", {
@@ -154,34 +162,41 @@ describe.skipIf(sql === null)("0124 live chat moderation playbooks", () => {
     });
     await moderate(moderator, guestCase, "dismiss", "Guest controls contain the incident");
 
-    const queue = await asActor(moderator, (tx) => tx<
-      { category: string; event_count: number; resolution: string | null }[]
-    >`
+    const queue = await asActor(
+      moderator,
+      (tx) => tx<{ category: string; event_count: number; resolution: string | null }[]>`
       select moderation_case.category, moderation_case.resolution, count(event.id)::integer event_count
       from chat_moderation_cases moderation_case
       join chat_moderation_case_events event on event.case_id = moderation_case.id
         and event.org_id = moderation_case.org_id
       where moderation_case.room_id = ${room}
       group by moderation_case.id order by moderation_case.category
-    `);
+    `,
+    );
     expect(new Set(queue.map((item) => item.category))).toEqual(
       new Set(["harassment", "spam", "compromised_account", "malicious_attachment", "guest_abuse"]),
     );
     expect(queue.find((item) => item.category === "compromised_account")?.event_count).toBe(4);
 
     await expect(
-      asActor(member, (tx) => tx`
+      asActor(
+        member,
+        (tx) => tx`
         select helix_moderate_chat_case(
           ${orgA}, ${member}, ${guestCase}, 'dismiss', '', null, '{}'::jsonb
         )
-      `),
+      `,
+      ),
     ).rejects.toMatchObject({ code: "42501" });
     await expect(
-      asActor(outsider, (tx) => tx`
+      asActor(
+        outsider,
+        (tx) => tx`
         select helix_report_chat_abuse(
           ${orgA}, ${outsider}, ${room}, null, ${guest}, 'guest_abuse', 'cross tenant', '{}'::jsonb
         )
-      `),
+      `,
+      ),
     ).rejects.toMatchObject({ code: "42501" });
 
     const peerMessage = await send(peerModerator, room, "moderator message");
@@ -192,13 +207,19 @@ describe.skipIf(sql === null)("0124 live chat moderation playbooks", () => {
   });
 
   it("enforces blocks, slow mode, content rules, guest controls, abuse signals, and immutable evidence", async () => {
-    await asActor(member, (tx) => tx`
+    await asActor(
+      member,
+      (tx) => tx`
       select helix_set_chat_block(${orgA}, ${member}, ${guest}, true, 'unwanted contact')
-    `);
+    `,
+    );
     await expect(send(guest, dm, "blocked DM")).rejects.toMatchObject({ code: "42501" });
-    await asActor(member, (tx) => tx`
+    await asActor(
+      member,
+      (tx) => tx`
       select helix_set_chat_block(${orgA}, ${member}, ${guest}, false, '')
-    `);
+    `,
+    );
     await expect(send(guest, dm, "DM after unblock")).resolves.toBeTruthy();
 
     await configure({ slow: 60, blocked: ["forbidden"], formats: ["plain"], guests: false });
@@ -210,19 +231,28 @@ describe.skipIf(sql === null)("0124 live chat moderation playbooks", () => {
 
     await configure({ slow: 0, blocked: [], formats: ["plain", "markdown"], guests: true });
     for (let index = 0; index < 5; index += 1) await send(member, room, `rate ${String(index)}`);
-    const signals = await asActor(moderator, (tx) => tx<{ signal_type: string }[]>`
+    const signals = await asActor(
+      moderator,
+      (tx) => tx<{ signal_type: string }[]>`
       select signal_type from chat_abuse_signals where room_id = ${room}
-    `);
+    `,
+    );
     expect(signals.some((signal) => signal.signal_type === "message_rate")).toBe(true);
-    const memberSignals = await asActor(member, (tx) => tx<{ id: string }[]>`
+    const memberSignals = await asActor(
+      member,
+      (tx) => tx<{ id: string }[]>`
       select id from chat_abuse_signals where room_id = ${room}
-    `);
+    `,
+    );
     expect(memberSignals).toEqual([]);
     await expect(
-      asActor(moderator, (tx) => tx`
+      asActor(
+        moderator,
+        (tx) => tx`
         insert into chat_abuse_signals (org_id, room_id, actor_id, signal_type, score)
         values (${orgA}, ${room}, ${member}, 'spam', 100)
-      `),
+      `,
+      ),
     ).rejects.toMatchObject({ code: "42501" });
 
     const caseRows = await database<{ id: string }[]>`
@@ -244,11 +274,13 @@ describe.skipIf(sql === null)("0124 live chat moderation playbooks", () => {
     `;
     expect(moderationOutbox[0]?.count).toBeGreaterThan(15);
     expect(deletionEvents[0]?.count).toBe(2);
-    const catalog = await database<{
-      relrowsecurity: boolean;
-      relforcerowsecurity: boolean;
-      app_can_mutate: boolean;
-    }[]>`
+    const catalog = await database<
+      {
+        relrowsecurity: boolean;
+        relforcerowsecurity: boolean;
+        app_can_mutate: boolean;
+      }[]
+    >`
       select relation.relrowsecurity, relation.relforcerowsecurity,
         has_table_privilege('helix_app', relation.oid, 'insert,update,delete') app_can_mutate
       from pg_class relation
@@ -307,12 +339,15 @@ describe.skipIf(sql === null)("0124 live chat moderation playbooks", () => {
   }
 
   async function moderate(actorId: string, caseId: string, action: string, reason: string) {
-    return asActor(actorId, (tx) => tx`
+    return asActor(
+      actorId,
+      (tx) => tx`
       select helix_moderate_chat_case(
         ${orgA}, ${actorId}, ${caseId}, ${action}, ${reason}, null,
         '{"reviewed":true}'::jsonb
       )
-    `);
+    `,
+    );
   }
 
   async function configure(input: {
@@ -321,11 +356,14 @@ describe.skipIf(sql === null)("0124 live chat moderation playbooks", () => {
     formats: string[];
     guests: boolean;
   }) {
-    return asActor(moderator, (tx) => tx`
+    return asActor(
+      moderator,
+      (tx) => tx`
       select helix_configure_chat_moderation(
         ${orgA}, ${moderator}, ${room}, ${input.slow}, ${input.blocked}, ${input.formats}, ${input.guests}
       )
-    `);
+    `,
+    );
   }
 
   async function cleanup() {

@@ -113,11 +113,7 @@ export interface CalendarEventRecord {
 }
 
 export type CalendarEventRevisionKind =
-  | "created"
-  | "updated"
-  | "cancelled"
-  | "responded"
-  | "restored";
+  "created" | "updated" | "cancelled" | "responded" | "restored";
 
 export interface CalendarEventRevisionRecord {
   readonly eventId: string;

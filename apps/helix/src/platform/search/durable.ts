@@ -37,11 +37,7 @@ export interface ClaimedSearchMutation {
 }
 
 export type SearchReindexJobStatus =
-  | "queued"
-  | "processing"
-  | "completed"
-  | "cancelled"
-  | "dead_lettered";
+  "queued" | "processing" | "completed" | "cancelled" | "dead_lettered";
 
 export interface SearchReindexJob {
   readonly id: string;

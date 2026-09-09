@@ -76,6 +76,14 @@ export interface S3CompatiblePresignedPutUpload {
   readonly headers: Record<string, string>;
 }
 
+export interface S3CompatibleObjectEvidence {
+  readonly byteSize: number | null;
+  readonly etag: string | null;
+  readonly serverSideEncryption: string | null;
+  readonly serverSideEncryptionAwsKmsKeyId: string | null;
+  readonly metadata: Record<string, string>;
+}
+
 export interface S3MultipartCompletedPart {
   readonly partNumber: number;
   readonly etag: string;
@@ -87,6 +95,8 @@ export interface S3ObjectLock {
 }
 
 export interface S3CompatibleStorageClient extends StorageClient {
+  headObject(key: string): Promise<S3CompatibleObjectEvidence | null>;
+  copyObject(sourceKey: string, destinationKey: string): Promise<void>;
   checkHealth(): Promise<void>;
   ensureBucket(): Promise<void>;
   head(key: string): Promise<StorageObjectHead | null>;
@@ -169,13 +179,16 @@ class SdkS3CompatibleStorageClient implements S3CompatibleStorageClient {
       new GetBucketEncryptionCommand({ Bucket: this.#config.bucket }),
       "encryption policy check",
     );
-    const rule = encryption.ServerSideEncryptionConfiguration?.Rules?.[0]
-      ?.ApplyServerSideEncryptionByDefault;
+    const rule =
+      encryption.ServerSideEncryptionConfiguration?.Rules?.[0]?.ApplyServerSideEncryptionByDefault;
     if (
       rule?.SSEAlgorithm !== "aws:kms" ||
       rule.KMSMasterKeyID !== this.#config.serverSideEncryptionAwsKmsKeyId
     ) {
-      throw new S3CompatibleStorageError("S3 bucket does not enforce the configured SSE-KMS key", 503);
+      throw new S3CompatibleStorageError(
+        "S3 bucket does not enforce the configured SSE-KMS key",
+        503,
+      );
     }
     if (policy.requireVersioning) {
       const versioning = await this.#send<GetBucketVersioningCommandOutput>(
@@ -281,6 +294,30 @@ class SdkS3CompatibleStorageClient implements S3CompatibleStorageClient {
       if (isMissing(error)) return null;
       throw error;
     }
+  }
+
+  async headObject(key: string): Promise<S3CompatibleObjectEvidence | null> {
+    assertKey(key);
+    try {
+      const result = await this.#send<HeadObjectCommandOutput>(
+        new HeadObjectCommand({ Bucket: this.#config.bucket, Key: key }),
+        "head",
+      );
+      return {
+        byteSize: result.ContentLength ?? null,
+        etag: result.ETag ?? null,
+        serverSideEncryption: result.ServerSideEncryption ?? null,
+        serverSideEncryptionAwsKmsKeyId: result.SSEKMSKeyId ?? null,
+        metadata: result.Metadata ?? {},
+      };
+    } catch (error) {
+      if (isMissing(error)) return null;
+      throw error;
+    }
+  }
+
+  copyObject(sourceKey: string, destinationKey: string): Promise<void> {
+    return this.copy(sourceKey, destinationKey);
   }
 
   async getStream(key: string): Promise<StorageObject | null> {

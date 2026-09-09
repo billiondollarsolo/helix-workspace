@@ -15,6 +15,7 @@ import type { AuthorizationCodeRecord, AuthorizationCodeStore } from "./authoriz
 import type {
   AgentCredentialInventoryRecord,
   AgentCredentialLifecycleStore,
+  AgentAutomationPolicy,
   AgentCredentialPolicy,
   AgentCredentialRecord,
   AgentCredentialType,
@@ -35,6 +36,7 @@ interface OAuthClientRow {
   readonly org_id: string;
   readonly scopes: readonly string[];
   readonly redirect_uris: readonly string[] | null;
+  readonly last_used_at?: Date | null;
   readonly expires_at: Date | null;
   readonly revoked_at: Date | null;
   readonly revocation_epoch: number | string;
@@ -88,6 +90,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         a.org_id,
         c.scopes,
         c.redirect_uris,
+        c.last_used_at,
         c.expires_at,
         c.revoked_at,
         c.revocation_epoch
@@ -110,6 +113,7 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         a.org_id,
         c.scopes,
         c.redirect_uris,
+        c.last_used_at,
         c.expires_at,
         c.revoked_at,
         c.revocation_epoch
@@ -137,6 +141,15 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
         where id = ${input.actorId}
           and org_id = ${input.orgId}
           and helix_credential_principal_is_active(id, org_id)
+          and (
+            ${input.approvalOwnerActorId ?? null}::uuid is null
+            or exists (
+              select 1 from actors owner
+              where owner.id = ${input.approvalOwnerActorId ?? null}::uuid
+                and owner.org_id = ${input.orgId}
+                and owner.type = 'user'
+            )
+          )
       ),
       inserted as (
         insert into agent_credentials (
@@ -146,6 +159,8 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
           secret_hash,
           scopes,
           redirect_uris,
+          created_by,
+          approval_owner_actor_id,
           expires_at
         )
         select
@@ -155,6 +170,8 @@ export class PostgresOAuthClientStore implements OAuthClientStore {
           ${input.clientSecretHash},
           ${this.sql.array(scopes)},
           ${this.sql.array(redirectUris)},
+          ${input.approvalOwnerActorId ?? null},
+          ${input.approvalOwnerActorId ?? null},
           ${input.expiresAt ?? null}
         from selected_actor
         returning
@@ -882,10 +899,13 @@ interface AgentCredentialRow {
   readonly principal_type: "agent" | "service_account";
   readonly owner_actor_id: string;
   readonly purpose: string;
+  readonly approval_owner_actor_id: string | null;
   readonly ip_allowlist: readonly string[] | null;
   readonly allowed_hours: unknown;
   readonly confirmation_override: unknown;
   readonly rate_limit_overrides: unknown;
+  readonly automation_policy: unknown;
+  readonly policy_version: string;
   readonly expires_at: Date | null;
   readonly revoked_at: Date | null;
   readonly created_at: Date;
@@ -908,10 +928,14 @@ const AGENT_CREDENTIAL_COLUMNS = `
   a.type as principal_type,
   c.owner_actor_id,
   c.purpose,
+  c.approval_owner_actor_id,
   c.ip_allowlist,
   c.allowed_hours,
   c.confirmation_override,
   c.rate_limit_overrides,
+  c.automation_policy,
+  c.policy_version,
+  c.last_used_at,
   c.expires_at,
   c.revoked_at,
   c.created_at,
@@ -936,19 +960,48 @@ export class PostgresAgentCredentialStore implements AgentCredentialLifecycleSto
         and c.credential_type = 'api_key'
         and c.revoked_at is null
         and helix_credential_principal_is_active(c.actor_id, a.org_id)
+        and a.disabled_at is null
       limit 1
     `;
     return rowToCredential(rows[0]);
   }
 
   async findByCertFingerprint(fingerprint: string): Promise<AgentCredentialRecord | null> {
-    const rows = await this.sql<AgentCredentialRow[]>`
+    const rows = await this.sql<readonly AgentCredentialRow[]>`
       select ${this.sql.unsafe(AGENT_CREDENTIAL_COLUMNS)}
       from agent_credentials c
       join actors a on a.id = c.actor_id
       where c.cert_fingerprint = ${fingerprint}
         and c.credential_type = 'mtls_cert'
         and c.revoked_at is null
+        and a.disabled_at is null
+        and helix_credential_principal_is_active(c.actor_id, a.org_id)
+      limit 1
+    `;
+    return rowToCredential(rows[0]);
+  }
+
+  async findByClientId(clientId: string): Promise<AgentCredentialRecord | null> {
+    const rows = await this.sql<readonly AgentCredentialRow[]>`
+      select ${this.sql.unsafe(AGENT_CREDENTIAL_COLUMNS)}
+      from agent_credentials c
+      join actors a on a.id = c.actor_id
+      where c.client_id = ${clientId}
+        and c.credential_type = 'oauth_client'
+        and a.disabled_at is null
+        and helix_credential_principal_is_active(c.actor_id, a.org_id)
+      limit 1
+    `;
+    return rowToCredential(rows[0]);
+  }
+
+  async findById(credentialId: string): Promise<AgentCredentialRecord | null> {
+    const rows = await this.sql<readonly AgentCredentialRow[]>`
+      select ${this.sql.unsafe(AGENT_CREDENTIAL_COLUMNS)}
+      from agent_credentials c
+      join actors a on a.id = c.actor_id
+      where c.id = ${credentialId}
+        and a.disabled_at is null
         and helix_credential_principal_is_active(c.actor_id, a.org_id)
       limit 1
     `;
@@ -1090,7 +1143,9 @@ function rowToCredential(row: AgentCredentialRow | undefined): AgentCredentialRe
     apiKeyHash: row.api_key_hash,
     certFingerprint: row.cert_fingerprint,
     label: row.label,
+    approvalOwnerActorId: row.approval_owner_actor_id,
     policy: rowToPolicy(row),
+    lastUsedAt: row.last_used_at,
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
   };
@@ -1102,7 +1157,21 @@ function rowToPolicy(row: AgentCredentialRow): AgentCredentialPolicy {
     allowedHours: parseAllowedHours(row.allowed_hours),
     confirmationOverride: parseConfirmationOverride(row.confirmation_override),
     rateLimitOverrides: parseRateLimitOverrides(row.rate_limit_overrides),
+    automationPolicy: parseAutomationPolicy(row.automation_policy),
+    version: row.policy_version,
   };
+}
+
+function parseAutomationPolicy(value: unknown): AgentAutomationPolicy | null {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value !== "object" ||
+    !Array.isArray((value as { readonly rules?: unknown }).rules)
+  ) {
+    return null;
+  }
+  return value as AgentAutomationPolicy;
 }
 
 function parseAllowedHours(value: unknown): AllowedHoursWindow | null {
@@ -1162,6 +1231,7 @@ function rowToClient(row: OAuthClientRow | undefined): OAuthClientRecord | null 
     orgId: row.org_id,
     scopes: [...row.scopes],
     redirectUris: row.redirect_uris === null ? [] : [...row.redirect_uris],
+    lastUsedAt: row.last_used_at ?? null,
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
     revocationEpoch: Number(row.revocation_epoch),

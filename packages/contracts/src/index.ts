@@ -5,3 +5,4 @@ export * from "./drive.js";
 export * from "./mail.js";
 export * from "./chat.js";
 export * from "./calendar-time.js";
+export * from "./security-scanning.js";

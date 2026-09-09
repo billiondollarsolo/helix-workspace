@@ -54,10 +54,7 @@ export interface AvatarProps {
 
 export function Avatar({ name = "", size = 22, src, alt, className }: AvatarProps) {
   const initials = initialsFromName(name);
-  const [c1, c2] = AVATAR_COLORS[hashIdx(name, AVATAR_COLORS.length)] ?? [
-    "#7c3aed",
-    "#a78bfa",
-  ];
+  const [c1, c2] = AVATAR_COLORS[hashIdx(name, AVATAR_COLORS.length)] ?? ["#7c3aed", "#a78bfa"];
 
   const style: CSSProperties = {
     width: size,
@@ -73,7 +70,15 @@ export function Avatar({ name = "", size = 22, src, alt, className }: AvatarProp
       className={className ? `avatar ${className}` : "avatar"}
       style={style}
       role="img"
-      aria-label={alt ?? name}
+      /* `role="img"` with no name announces as an unlabelled image, which is
+         worse than no role at all. `alt ?? name` was undefined whenever a
+         caller passed neither — the case axe flagged. The fallback is generic
+         on purpose: it is honest about being a placeholder rather than
+         inventing an identity for whoever this depicts. */
+      /* `||`, not `??`: `name` defaults to `""`, which is not nullish, so a
+         nullish fallback never fires and the label stays empty — an empty
+         aria-label is no accessible name at all, which is the defect. */
+      aria-label={alt || name || "User avatar"}
     >
       {src ? null : initials}
     </div>

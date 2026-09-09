@@ -9,14 +9,7 @@ export const mailPluginId = "com.helix.core.mail";
  * is "threads with starred = true", `archive` is "threads with archived_at set".
  */
 export type MailFolderId =
-  | "inbox"
-  | "starred"
-  | "snoozed"
-  | "sent"
-  | "drafts"
-  | "archive"
-  | "spam"
-  | "trash";
+  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
 export const MAIL_FOLDER_IDS = [
   "inbox",
@@ -80,6 +73,9 @@ export interface MailThreadRowRecord {
   readonly category: MailCategoryTab;
   readonly folder: MailFolderId;
   readonly snoozedUntil: string | null;
+  /** Who filed this thread into Spam (from message scan metadata). */
+  readonly spamCatcher?:
+    "spamd" | "ai" | "rules" | "user" | "virus" | "scanner-policy" | "auth-failure" | null;
 }
 
 export interface MailThreadListRequest {
@@ -309,6 +305,11 @@ export interface MailOutboundRecord {
   readonly failedAt: Date | null;
   readonly lastError: string | null;
   readonly providerMessageId: string | null;
+  /** Stable dispatch-time provider choice. Secrets are never persisted here. */
+  readonly providerId?: string | null;
+  readonly providerKind?: string | null;
+  readonly providerDecisionSource?: "sending_domain" | "org_default" | "environment" | null;
+  readonly providerDecidedAt?: Date | null;
   readonly deliveryMetadata: JsonObject;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -371,6 +372,8 @@ export interface MailSearchHit {
   readonly labels: readonly string[];
   readonly unread: boolean;
   readonly starred: boolean;
+  /** True when metadata indicates at least one attachment (M13 has:attachment). */
+  readonly hasAttachment?: boolean | undefined;
   readonly outboundStatus?: MailOutboundStatus | undefined;
   readonly providerMessageId?: string | undefined;
   readonly deliveryMetadata?: JsonObject | undefined;

@@ -74,9 +74,7 @@ describe("AuthorizingSearchEngine", () => {
         },
       ),
     ).resolves.toBe(false);
-    expect(checked).toEqual([
-      { orgId: "org-1", actorId: "actor-1", contactId: "contact-1" },
-    ]);
+    expect(checked).toEqual([{ orgId: "org-1", actorId: "actor-1", contactId: "contact-1" }]);
   });
 });
 

@@ -26,13 +26,7 @@ function version(versionNumber: number, metadata: Record<string, unknown>) {
 
 function versioningSql() {
   const original = {
-    ...version(1, {
-      preview: {
-        kind: "pdf",
-        status: "available",
-        storageKey: "drive-previews/stale-version.pdf",
-      },
-    }),
+    ...version(1, { name: "report.docx" }),
     idempotency_key: null as string | null,
   };
   const versions = [original];
@@ -45,7 +39,7 @@ function versioningSql() {
     mime_type: mimeType,
     byte_size: 10,
     sha256: "a".repeat(64),
-    metadata: { name: "report.docx", status: "ready", preview: original.metadata.preview },
+    metadata: { name: "report.docx", status: "ready" },
     deleted_at: null,
     created_at: now,
     updated_at: now,
@@ -56,9 +50,6 @@ function versioningSql() {
     const text = strings.join("?");
     if (text.includes("objects.owner_actor_id")) return { text, values };
     if (text.includes("select set_config")) return Promise.resolve([]);
-    if (text.includes("with candidates as") && text.includes("drive_preview_jobs")) {
-      return Promise.resolve([]);
-    }
     if (text.includes("select *") && text.includes("from objects")) {
       return Promise.resolve([object]);
     }
@@ -125,7 +116,7 @@ function versioningSql() {
 }
 
 describe("Drive version allocation", () => {
-  it("serializes 100 writes, replays idempotency, and never carries a stale preview", async () => {
+  it("serializes 100 writes, replays idempotency, preserving stored content", async () => {
     const state = versioningSql();
     const store = new PostgresDriveStore(state.sql);
 
@@ -145,18 +136,7 @@ describe("Drive version allocation", () => {
       Array.from({ length: 100 }, (_, index) => index + 2),
     );
     expect(new Set(writes.map((row) => row.versionNumber)).size).toBe(100);
-    expect(
-      writes.every((row) => {
-        const preview = row.metadata.preview;
-        return (
-          typeof preview === "object" &&
-          preview !== null &&
-          "status" in preview &&
-          preview.status === "pending"
-        );
-      }),
-    ).toBe(true);
-    expect(JSON.stringify(writes)).not.toContain("stale-version.pdf");
+    expect(writes.every((row) => row.sha256 === "a".repeat(64))).toBe(true);
     await expect(
       store.revertToVersion({
         orgId,
@@ -167,6 +147,5 @@ describe("Drive version allocation", () => {
       }),
     ).resolves.toEqual(writes[0]);
     expect(state.versions).toHaveLength(101);
-    expect(state.currentObject().metadata.preview).toMatchObject({ status: "pending" });
   });
 });

@@ -7,7 +7,7 @@ describe("0156 passkeys and recovery codes", () => {
       new URL("./0156_passkeys_and_recovery_codes.sql", import.meta.url),
       "utf8",
     );
-    expect(migration).toContain('unique index if not exists better_auth_passkey_credential_idx');
+    expect(migration).toContain("unique index if not exists better_auth_passkey_credential_idx");
     expect(migration).toContain("better_auth_account_issuer_idx");
     expect(migration).toContain("counter >= 0");
     expect(migration).toContain("new.counter <= old.counter");

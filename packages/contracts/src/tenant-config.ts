@@ -8,9 +8,9 @@ type JsonObject = { readonly [key: string]: JsonValue };
 type JsonArray = readonly JsonValue[];
 
 const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
-  z.union([jsonPrimitiveSchema, z.array(jsonValueSchema), z.record(jsonValueSchema)]),
+  z.union([jsonPrimitiveSchema, z.array(jsonValueSchema), z.record(z.string(), jsonValueSchema)]),
 );
-const jsonObjectSchema: z.ZodType<JsonObject> = z.record(jsonValueSchema);
+const jsonObjectSchema: z.ZodType<JsonObject> = z.record(z.string(), jsonValueSchema);
 
 export const commercialPlanIdSchema = z.enum([
   "personal",
@@ -41,11 +41,7 @@ export type TenantByoConfig = z.infer<typeof tenantByoConfigSchema>;
 
 export const tenantFeatureFlagsSchema = z
   .object({
-    editors_native_document: z.boolean(),
-    editors_native_spreadsheet: z.boolean(),
-    editors_native_presentation: z.boolean(),
-    editors_native_pdf: z.boolean(),
-    editors_ai_rag: z.boolean(),
+    assistant_retrieval: z.boolean(),
     ai_smart_compose: z.boolean(),
     dlp_enforcement: dlpEnforcementModeSchema,
     watermark: watermarkModeSchema,
@@ -75,7 +71,6 @@ export const tenantQuotasSchema = z
     actors_limit: z.number().nullable(),
     outbound_webhooks_limit: z.number().nullable(),
     api_rps_limit: z.number().nullable(),
-    collab_concurrent_editors_per_doc: z.number().nullable(),
     export_jobs_per_hour: z.number().nullable(),
   })
   .passthrough();
@@ -102,11 +97,7 @@ export const tenantConfigSchema = z.object({
 export type TenantConfig = z.infer<typeof tenantConfigSchema>;
 
 export const SYSTEM_TENANT_FEATURE_FLAGS = {
-  editors_native_document: true,
-  editors_native_spreadsheet: true,
-  editors_native_presentation: true,
-  editors_native_pdf: true,
-  editors_ai_rag: false,
+  assistant_retrieval: false,
   ai_smart_compose: false,
   dlp_enforcement: "off",
   watermark: "off",
@@ -133,7 +124,6 @@ export const SYSTEM_TENANT_QUOTAS = {
   actors_limit: 1,
   outbound_webhooks_limit: 5,
   api_rps_limit: 5,
-  collab_concurrent_editors_per_doc: 5,
   export_jobs_per_hour: 10,
 } as const satisfies TenantQuotas;
 

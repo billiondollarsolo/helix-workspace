@@ -23,6 +23,8 @@ import {
   FONT_SCALE_OPTIONS,
   setAppearance,
   useAppearance,
+  type Density,
+  type ThemeMode,
 } from "@/components/settings-store";
 import type { SettingsSectionId } from "@/components/shell/overlay-context";
 import { setMailUserSettings } from "@/features/mail/api";
@@ -84,6 +86,13 @@ function SettingsField({
 const SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE =
   "Account-backed settings are not available in this build yet.";
 
+/* Spread onto every control whose value has nowhere to persist yet, so the
+   disabled state and its explanation always travel together. */
+const UNAVAILABLE_CONTROL_PROPS = {
+  disabled: true,
+  title: SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE,
+} as const;
+
 function Toggle({
   defaultOn,
   label,
@@ -144,8 +153,7 @@ function UnavailableSettingsButton({
       type="button"
       className={className}
       style={style}
-      disabled
-      title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+      {...UNAVAILABLE_CONTROL_PROPS}
       aria-description={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
     >
       {children}
@@ -159,6 +167,86 @@ const subStyle = {
   color: "var(--text-3)",
   marginBottom: 8,
 } as const;
+
+const segmentedGroupStyle = {
+  display: "flex",
+  gap: 4,
+  padding: 2,
+  background: "var(--surface-2)",
+  borderRadius: 6,
+  width: "fit-content",
+} as const;
+
+/** Pill-style single-choice control (Density, Text size). */
+function SegmentedControl<TValue extends string>({
+  label,
+  options,
+  value,
+  onSelect,
+}: {
+  label: string;
+  options: readonly { value: TValue; label: string }[];
+  value: TValue;
+  onSelect: (value: TValue) => void;
+}) {
+  return (
+    <div role="group" aria-label={label} style={segmentedGroupStyle}>
+      {options.map((option) => {
+        const selected = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onSelect(option.value)}
+            aria-pressed={selected}
+            style={{
+              height: 28,
+              padding: "0 16px",
+              borderRadius: 4,
+              fontSize: "var(--text-meta)",
+              background: selected ? "var(--surface)" : "transparent",
+              color: selected ? "var(--text)" : "var(--text-2)",
+              fontWeight: selected ? 600 : 400,
+              boxShadow: selected ? "var(--shadow-sm)" : "none",
+            }}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Label + description on the left, a switch on the right. `style` carries the
+    caller's row padding and separator borders. */
+function ToggleRow({
+  label,
+  desc,
+  defaultOn,
+  style,
+}: {
+  label: string;
+  desc: string;
+  defaultOn: boolean;
+  style: CSSProperties;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", ...style }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{label}</div>
+        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}>
+          {desc}
+        </div>
+      </div>
+      <Toggle
+        defaultOn={defaultOn}
+        label={label}
+        disabledReason={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+      />
+    </div>
+  );
+}
 
 /* ---------- Profile ---------- */
 
@@ -188,8 +276,7 @@ function ProfileSection() {
           className="input"
           defaultValue={displayName}
           key={displayName}
-          disabled
-          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          {...UNAVAILABLE_CONTROL_PROPS}
         />
       </SettingsField>
       <SettingsField label="Pronouns" controlId="settings-pronouns">
@@ -200,8 +287,7 @@ function ProfileSection() {
           className="input"
           defaultValue=""
           placeholder="For example, they/them…"
-          disabled
-          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          {...UNAVAILABLE_CONTROL_PROPS}
         />
       </SettingsField>
       <SettingsField label="Job title" controlId="settings-job-title">
@@ -212,8 +298,7 @@ function ProfileSection() {
           className="input"
           defaultValue=""
           placeholder="For example, Product Designer…"
-          disabled
-          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          {...UNAVAILABLE_CONTROL_PROPS}
         />
       </SettingsField>
       <SettingsField
@@ -229,8 +314,7 @@ function ProfileSection() {
           defaultValue=""
           placeholder="For example, Building the next Helix release…"
           rows={3}
-          disabled
-          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          {...UNAVAILABLE_CONTROL_PROPS}
           style={{
             height: "auto",
             padding: 10,
@@ -246,16 +330,21 @@ function ProfileSection() {
 
 /* ---------- Appearance ---------- */
 
+const DENSITY_OPTIONS: readonly { value: Density; label: string }[] = [
+  { value: "compact", label: "Compact" },
+  { value: "comfortable", label: "Roomy" },
+];
+
+const THEME_OPTIONS: readonly { v: ThemeMode; label: string; swatch: [string, string] }[] = [
+  { v: "light", label: "Light", swatch: ["#fafaf9", "#1c1917"] },
+  { v: "dark", label: "Dark", swatch: ["#0a0a0b", "#ededee"] },
+];
+
 function AppearanceSection() {
   const theme = useAppearance((s) => s.theme);
   const density = useAppearance((s) => s.density);
   const fontScale = useAppearance((s) => s.fontScale);
   const accent = useAppearance((s) => s.accent);
-
-  const themeOptions: { v: "light" | "dark"; label: string; swatch: [string, string] }[] = [
-    { v: "light", label: "Light", swatch: ["#fafaf9", "#1c1917"] },
-    { v: "dark", label: "Dark", swatch: ["#0a0a0b", "#ededee"] },
-  ];
 
   return (
     <>
@@ -263,7 +352,7 @@ function AppearanceSection() {
       <div style={subStyle}>Personalize how Helix looks for you</div>
       <SettingsField label="Theme" hint="Choose light or dark mode">
         <div role="group" aria-label="Theme" style={{ display: "flex", gap: 12 }}>
-          {themeOptions.map((option) => (
+          {THEME_OPTIONS.map((option) => (
             <button
               key={option.v}
               type="button"
@@ -335,79 +424,20 @@ function AppearanceSection() {
         </div>
       </SettingsField>
       <SettingsField label="Density" hint="How tightly content is packed">
-        <div
-          role="group"
-          aria-label="Density"
-          style={{
-            display: "flex",
-            gap: 4,
-            padding: 2,
-            background: "var(--surface-2)",
-            borderRadius: 6,
-            width: "fit-content",
-          }}
-        >
-          {(
-            [
-              { v: "compact", label: "Compact" },
-              { v: "comfortable", label: "Roomy" },
-            ] as const
-          ).map((option) => (
-            <button
-              key={option.v}
-              type="button"
-              onClick={() => setAppearance("density", option.v)}
-              aria-pressed={density === option.v}
-              style={{
-                height: 28,
-                padding: "0 16px",
-                borderRadius: 4,
-                fontSize: "var(--text-meta)",
-                background: density === option.v ? "var(--surface)" : "transparent",
-                color: density === option.v ? "var(--text)" : "var(--text-2)",
-                fontWeight: density === option.v ? 600 : 400,
-                boxShadow: density === option.v ? "var(--shadow-sm)" : "none",
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          label="Density"
+          options={DENSITY_OPTIONS}
+          value={density}
+          onSelect={(next) => setAppearance("density", next)}
+        />
       </SettingsField>
       <SettingsField label="Text size" hint="Scale text across the entire workspace">
-        <div
-          role="group"
-          aria-label="Text size"
-          style={{
-            display: "flex",
-            gap: 4,
-            padding: 2,
-            background: "var(--surface-2)",
-            borderRadius: 6,
-            width: "fit-content",
-          }}
-        >
-          {FONT_SCALE_OPTIONS.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => setAppearance("fontScale", option.value)}
-              aria-pressed={fontScale === option.value}
-              style={{
-                height: 28,
-                padding: "0 16px",
-                borderRadius: 4,
-                fontSize: "var(--text-meta)",
-                background: fontScale === option.value ? "var(--surface)" : "transparent",
-                color: fontScale === option.value ? "var(--text)" : "var(--text-2)",
-                fontWeight: fontScale === option.value ? 600 : 400,
-                boxShadow: fontScale === option.value ? "var(--shadow-sm)" : "none",
-              }}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          label="Text size"
+          options={FONT_SCALE_OPTIONS}
+          value={fontScale}
+          onSelect={(next) => setAppearance("fontScale", next)}
+        />
       </SettingsField>
       <SettingsField label="Accent color" hint="Used for buttons, selections, and highlights">
         <div
@@ -458,8 +488,7 @@ function LanguageSection() {
           name="language"
           className="select"
           defaultValue="en-US"
-          disabled
-          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          {...UNAVAILABLE_CONTROL_PROPS}
         >
           <option value="en-US">English (US)</option>
           <option value="en-GB">English (UK)</option>
@@ -474,8 +503,7 @@ function LanguageSection() {
           name="timeZone"
           className="select"
           defaultValue="pt"
-          disabled
-          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          {...UNAVAILABLE_CONTROL_PROPS}
         >
           <option value="pt">(GMT-08:00) America / Los Angeles</option>
           <option value="et">(GMT-05:00) America / New York</option>
@@ -489,8 +517,7 @@ function LanguageSection() {
           name="weekStart"
           className="select"
           defaultValue="mon"
-          disabled
-          title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+          {...UNAVAILABLE_CONTROL_PROPS}
         >
           <option value="sun">Sunday</option>
           <option value="mon">Monday</option>
@@ -506,8 +533,7 @@ function LanguageSection() {
             aria-label="Working hours start"
             defaultValue="09:00"
             style={{ width: 100 }}
-            disabled
-            title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+            {...UNAVAILABLE_CONTROL_PROPS}
           />
           <span style={{ color: "var(--text-3)" }}>to</span>
           <input
@@ -518,8 +544,7 @@ function LanguageSection() {
             aria-label="Working hours end"
             defaultValue="18:00"
             style={{ width: 100 }}
-            disabled
-            title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+            {...UNAVAILABLE_CONTROL_PROPS}
           />
           <span style={{ color: "var(--text-3)", fontSize: "var(--text-meta)" }}>Mon–Fri</span>
         </div>
@@ -552,28 +577,17 @@ function NotifySection() {
       <h1 style={h1Style}>Notifications</h1>
       <div style={subStyle}>What you get notified about and where</div>
       {rows.map((row, index) => (
-        <div
+        <ToggleRow
           key={row.label}
+          label={row.label}
+          desc={row.desc}
+          defaultOn={row.on}
           style={{
-            display: "flex",
-            alignItems: "center",
             padding: "12px 0",
             borderTop: index ? "1px solid var(--border)" : "none",
             borderBottom: index === rows.length - 1 ? "1px solid var(--border)" : "none",
           }}
-        >
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>{row.label}</div>
-            <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}>
-              {row.desc}
-            </div>
-          </div>
-          <Toggle
-            defaultOn={row.on}
-            label={row.label}
-            disabledReason={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
-          />
-        </div>
+        />
       ))}
     </>
   );
@@ -672,9 +686,7 @@ function SignatureSection() {
           style={{ height: "auto", padding: 10, resize: "vertical", fontFamily: "inherit" }}
         />
       </SettingsField>
-      {settings.error !== null ? (
-        <div role="alert">{settings.error.message}</div>
-      ) : null}
+      {settings.error !== null ? <div role="alert">{settings.error.message}</div> : null}
       {message !== null ? <div role="status">{message}</div> : null}
       <button
         type="button"
@@ -701,51 +713,160 @@ function SecuritySection() {
   const [busy, setBusy] = useState(false);
 
   async function run(operation: () => Promise<void>): Promise<void> {
-    setBusy(true); setMessage(null);
-    try { await operation(); }
-    catch (error) { setMessage(error instanceof Error ? error.message : "Security update failed."); }
-    finally { setBusy(false); }
+    setBusy(true);
+    setMessage(null);
+    try {
+      await operation();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Security update failed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  useEffect(() => { void listPasskeys().then(setPasskeys).catch(() => setPasskeys([])); }, []);
+  useEffect(() => {
+    void listPasskeys()
+      .then(setPasskeys)
+      .catch(() => setPasskeys([]));
+  }, []);
 
   return (
     <>
       <h1 style={h1Style}>Security</h1>
       <div style={subStyle}>Passkeys, authenticator apps, and one-time recovery codes</div>
       <SettingsField label="Passkeys" hint="Preferred: phishing-resistant WebAuthn credentials">
-        <button className="btn sm" type="button" disabled={busy} onClick={() => void run(async () => {
-          await addPasskey("Helix passkey"); setPasskeys(await listPasskeys()); setMessage("Passkey added.");
-        })}>Add passkey</button>
-        {passkeys.map((passkey) => <div key={passkey.id} style={{ marginTop: 8 }}>
-          {passkey.name ?? "Passkey"}
-          <button className="btn sm" type="button" disabled={busy} style={{ marginLeft: 8 }} onClick={() => void run(async () => {
-            await deletePasskey(passkey.id); setPasskeys(await listPasskeys());
-          })}>Remove</button>
-        </div>)}
+        <button
+          className="btn sm"
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              await addPasskey("Helix passkey");
+              setPasskeys(await listPasskeys());
+              setMessage("Passkey added.");
+            })
+          }
+        >
+          Add passkey
+        </button>
+        {passkeys.map((passkey) => (
+          <div key={passkey.id} style={{ marginTop: 8 }}>
+            {passkey.name ?? "Passkey"}
+            <button
+              className="btn sm"
+              type="button"
+              disabled={busy}
+              style={{ marginLeft: 8 }}
+              onClick={() =>
+                void run(async () => {
+                  await deletePasskey(passkey.id);
+                  setPasskeys(await listPasskeys());
+                })
+              }
+            >
+              Remove
+            </button>
+          </div>
+        ))}
       </SettingsField>
       <SettingsField label="Authenticator app" hint="TOTP fallback requires your current password">
-        <input className="input" type="password" autoComplete="current-password" placeholder="Current password" value={password} onChange={(event) => setPassword(event.target.value)} />
-        {user?.twoFactorEnabled ?
-          <button className="btn sm" type="button" disabled={busy || password.length === 0} style={{ marginLeft: 8 }} onClick={() => void run(async () => {
-            await disableTotp(password); setPassword(""); await refetchSession(); setRecoveryCodes([]);
-          })}>Disable TOTP</button> :
-          <button className="btn sm" type="button" disabled={busy || password.length === 0} style={{ marginLeft: 8 }} onClick={() => void run(async () => {
-            const setup = await enableTotp(password); setTotpUri(setup.totpURI); setRecoveryCodes(setup.backupCodes);
-          })}>Set up TOTP</button>}
-        {totpUri === null ? null : <div style={{ marginTop: 8 }}>
-          <div style={{ overflowWrap: "anywhere" }}>{totpUri}</div>
-          <input className="input" inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" value={totpCode} onChange={(event) => setTotpCode(event.target.value)} />
-          <button className="btn sm" type="button" disabled={busy || totpCode.length < 6} style={{ marginLeft: 8 }} onClick={() => void run(async () => {
-            await verifyTotp(totpCode); setTotpUri(null); setTotpCode(""); setPassword(""); await refetchSession();
-          })}>Verify</button>
-        </div>}
+        <input
+          className="input"
+          type="password"
+          autoComplete="current-password"
+          placeholder="Current password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        {user?.twoFactorEnabled ? (
+          <button
+            className="btn sm"
+            type="button"
+            disabled={busy || password.length === 0}
+            style={{ marginLeft: 8 }}
+            onClick={() =>
+              void run(async () => {
+                await disableTotp(password);
+                setPassword("");
+                await refetchSession();
+                setRecoveryCodes([]);
+              })
+            }
+          >
+            Disable TOTP
+          </button>
+        ) : (
+          <button
+            className="btn sm"
+            type="button"
+            disabled={busy || password.length === 0}
+            style={{ marginLeft: 8 }}
+            onClick={() =>
+              void run(async () => {
+                const setup = await enableTotp(password);
+                setTotpUri(setup.totpURI);
+                setRecoveryCodes(setup.backupCodes);
+              })
+            }
+          >
+            Set up TOTP
+          </button>
+        )}
+        {totpUri === null ? null : (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ overflowWrap: "anywhere" }}>{totpUri}</div>
+            <input
+              className="input"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="6-digit code"
+              value={totpCode}
+              onChange={(event) => setTotpCode(event.target.value)}
+            />
+            <button
+              className="btn sm"
+              type="button"
+              disabled={busy || totpCode.length < 6}
+              style={{ marginLeft: 8 }}
+              onClick={() =>
+                void run(async () => {
+                  await verifyTotp(totpCode);
+                  setTotpUri(null);
+                  setTotpCode("");
+                  setPassword("");
+                  await refetchSession();
+                })
+              }
+            >
+              Verify
+            </button>
+          </div>
+        )}
       </SettingsField>
-      <SettingsField label="Recovery codes" hint="Shown once; each code works once and cannot be recovered">
-        {user?.twoFactorEnabled ? <button className="btn sm" type="button" disabled={busy || password.length === 0} onClick={() => void run(async () => {
-          setRecoveryCodes(await regenerateRecoveryCodes(password)); setPassword("");
-        })}>Replace recovery codes</button> : <span>Enable TOTP to create recovery codes.</span>}
-        {recoveryCodes.length === 0 ? null : <pre style={{ marginTop: 8 }}>{recoveryCodes.join("\n")}</pre>}
+      <SettingsField
+        label="Recovery codes"
+        hint="Shown once; each code works once and cannot be recovered"
+      >
+        {user?.twoFactorEnabled ? (
+          <button
+            className="btn sm"
+            type="button"
+            disabled={busy || password.length === 0}
+            onClick={() =>
+              void run(async () => {
+                setRecoveryCodes(await regenerateRecoveryCodes(password));
+                setPassword("");
+              })
+            }
+          >
+            Replace recovery codes
+          </button>
+        ) : (
+          <span>Enable TOTP to create recovery codes.</span>
+        )}
+        {recoveryCodes.length === 0 ? null : (
+          <pre style={{ marginTop: 8 }}>{recoveryCodes.join("\n")}</pre>
+        )}
       </SettingsField>
       {message === null ? null : <div role="status">{message}</div>}
     </>
@@ -812,40 +933,60 @@ const AI_PROVIDERS: readonly AiProvider[] = [
   },
 ];
 
+/* Model ids offered per bring-your-own-key provider. Providers absent from
+   this map (custom endpoints) fall back to the generic placeholder. */
+const AI_PROVIDER_MODELS: Readonly<Record<string, readonly string[]>> = {
+  openai: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o3", "o4-mini"],
+  anthropic: ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5"],
+  google: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"],
+  azure: ["(your deployment names)"],
+};
+
 function AiModelOptions({ provider }: { provider: string }) {
-  if (provider === "openai") {
-    return (
-      <>
-        <option>gpt-4o</option>
-        <option>gpt-4o-mini</option>
-        <option>gpt-4-turbo</option>
-        <option>o3</option>
-        <option>o4-mini</option>
-      </>
-    );
-  }
-  if (provider === "anthropic") {
-    return (
-      <>
-        <option>claude-sonnet-4-5</option>
-        <option>claude-opus-4-5</option>
-        <option>claude-haiku-4-5</option>
-      </>
-    );
-  }
-  if (provider === "google") {
-    return (
-      <>
-        <option>gemini-2.5-pro</option>
-        <option>gemini-2.5-flash</option>
-        <option>gemini-2.5-flash-lite</option>
-      </>
-    );
-  }
-  if (provider === "azure") {
-    return <option>(your deployment names)</option>;
-  }
-  return <option>(your model id)</option>;
+  const models = AI_PROVIDER_MODELS[provider] ?? ["(your model id)"];
+  return (
+    <>
+      {models.map((model) => (
+        <option key={model}>{model}</option>
+      ))}
+    </>
+  );
+}
+
+function PrivacyCheckbox({
+  name,
+  label,
+  desc,
+  defaultChecked = false,
+}: {
+  name: string;
+  label: string;
+  desc: ReactNode;
+  defaultChecked?: boolean;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 10,
+        fontSize: "var(--text-meta)",
+        cursor: "pointer",
+      }}
+    >
+      <input
+        type="checkbox"
+        name={name}
+        defaultChecked={defaultChecked}
+        {...UNAVAILABLE_CONTROL_PROPS}
+        style={{ accentColor: "var(--accent)", marginTop: 2 }}
+      />
+      <div>
+        <div style={{ fontWeight: 500 }}>{label}</div>
+        <div style={{ color: "var(--text-3)", marginTop: 2 }}>{desc}</div>
+      </div>
+    </label>
+  );
 }
 
 function AISection() {
@@ -946,8 +1087,7 @@ function AISection() {
               spellCheck={false}
               className="input mono"
               defaultValue={selected.host}
-              disabled
-              title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+              {...UNAVAILABLE_CONTROL_PROPS}
             />
           </SettingsField>
           <SettingsField
@@ -965,8 +1105,7 @@ function AISection() {
                 spellCheck={false}
                 placeholder={selected.placeholder}
                 style={{ flex: 1 }}
-                disabled
-                title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+                {...UNAVAILABLE_CONTROL_PROPS}
               />
               <UnavailableSettingsButton className="btn">Test Connection</UnavailableSettingsButton>
             </div>
@@ -976,8 +1115,7 @@ function AISection() {
               id="settings-ai-model"
               name="aiModel"
               className="select"
-              disabled
-              title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+              {...UNAVAILABLE_CONTROL_PROPS}
             >
               <AiModelOptions provider={provider} />
             </select>
@@ -989,8 +1127,7 @@ function AISection() {
             id="settings-ai-model"
             name="aiModel"
             className="select"
-            disabled
-            title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
+            {...UNAVAILABLE_CONTROL_PROPS}
           >
             <option>Helix Pro — best for analysis and writing</option>
             <option>Helix Fast — quick responses, lower cost</option>
@@ -1001,83 +1138,32 @@ function AISection() {
 
       <SettingsField label="Features" hint="Where AI can be used across the workspace">
         {features.map((feature, index) => (
-          <div
+          <ToggleRow
             key={feature.label}
+            label={feature.label}
+            desc={feature.desc}
+            defaultOn={feature.on}
             style={{
-              display: "flex",
-              alignItems: "center",
               padding: "10px 0",
               borderTop: index ? "1px solid var(--border)" : "none",
             }}
-          >
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: "var(--text-body-sm)", fontWeight: 500 }}>
-                {feature.label}
-              </div>
-              <div
-                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)", marginTop: 2 }}
-              >
-                {feature.desc}
-              </div>
-            </div>
-            <Toggle
-              defaultOn={feature.on}
-              label={feature.label}
-              disabledReason={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
-            />
-          </div>
+          />
         ))}
       </SettingsField>
 
       <SettingsField label="Privacy" hint="Control what data is shared with the provider">
         <div style={{ display: "grid", gap: 8 }}>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 10,
-              fontSize: "var(--text-meta)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              name="aiWorkspaceContext"
-              defaultChecked
-              disabled
-              title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
-              style={{ accentColor: "var(--accent)", marginTop: 2 }}
-            />
-            <div>
-              <div style={{ fontWeight: 500 }}>Use my workspace content for context</div>
-              <div style={{ color: "var(--text-3)", marginTop: 2 }}>
-                Mail, docs, and files referenced in prompts.
-              </div>
-            </div>
-          </label>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 10,
-              fontSize: "var(--text-meta)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              name="aiProviderTraining"
-              disabled
-              title={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
-              style={{ accentColor: "var(--accent)", marginTop: 2 }}
-            />
-            <div>
-              <div style={{ fontWeight: 500 }}>Allow provider to train on my data</div>
-              <div style={{ color: "var(--text-3)", marginTop: 2 }}>
-                Off by default. Most providers don&apos;t train on enterprise data anyway.
-              </div>
-            </div>
-          </label>
+          <PrivacyCheckbox
+            name="aiWorkspaceContext"
+            defaultChecked
+            label="Use my workspace content for context"
+            desc="Mail, docs, and files referenced in prompts."
+          />
+          <PrivacyCheckbox
+            name="aiProviderTraining"
+            label="Allow provider to train on my data"
+            desc={<>Off by default. Most providers don&apos;t train on enterprise data anyway.</>}
+          />
         </div>
       </SettingsField>
     </>
@@ -1158,15 +1244,20 @@ function ShortcutsSection() {
 
 /* ---------- shell ---------- */
 
-const SECTIONS: { id: SettingsSectionId; label: string; icon: IconName }[] = [
-  { id: "profile", label: "Profile", icon: "Users" },
-  { id: "appearance", label: "Appearance", icon: "Sun" },
-  { id: "language", label: "Language & region", icon: "Globe" },
-  { id: "notify", label: "Notifications", icon: "Bell" },
-  { id: "signature", label: "Mail signature", icon: "EditPen" },
-  { id: "ai", label: "Helix AI", icon: "Sparkles" },
-  { id: "security", label: "Security", icon: "Shield" },
-  { id: "shortcuts", label: "Keyboard shortcuts", icon: "Code" },
+const SECTIONS: {
+  id: SettingsSectionId;
+  label: string;
+  icon: IconName;
+  Component: () => ReactNode;
+}[] = [
+  { id: "profile", label: "Profile", icon: "Users", Component: ProfileSection },
+  { id: "appearance", label: "Appearance", icon: "Sun", Component: AppearanceSection },
+  { id: "language", label: "Language & region", icon: "Globe", Component: LanguageSection },
+  { id: "notify", label: "Notifications", icon: "Bell", Component: NotifySection },
+  { id: "signature", label: "Mail signature", icon: "EditPen", Component: SignatureSection },
+  { id: "ai", label: "Helix AI", icon: "Sparkles", Component: AISection },
+  { id: "security", label: "Security", icon: "Shield", Component: SecuritySection },
+  { id: "shortcuts", label: "Keyboard shortcuts", icon: "Code", Component: ShortcutsSection },
 ];
 
 export interface SettingsPageProps {
@@ -1236,6 +1327,9 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
   if (!open) {
     return null;
   }
+
+  const activeSection = SECTIONS.find((entry) => entry.id === section);
+  const ActiveSectionBody = activeSection?.Component;
 
   return (
     <div
@@ -1317,7 +1411,7 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
           })}
         </nav>
         <main
-          aria-label={`${SECTIONS.find((entry) => entry.id === section)?.label ?? "Settings"} settings`}
+          aria-label={`${activeSection?.label ?? "Settings"} settings`}
           style={{
             flex: 1,
             overflowY: "auto",
@@ -1326,14 +1420,7 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
             minWidth: 0,
           }}
         >
-          {section === "profile" ? <ProfileSection /> : null}
-          {section === "appearance" ? <AppearanceSection /> : null}
-          {section === "language" ? <LanguageSection /> : null}
-          {section === "notify" ? <NotifySection /> : null}
-          {section === "signature" ? <SignatureSection /> : null}
-          {section === "ai" ? <AISection /> : null}
-          {section === "security" ? <SecuritySection /> : null}
-          {section === "shortcuts" ? <ShortcutsSection /> : null}
+          {ActiveSectionBody ? <ActiveSectionBody /> : null}
         </main>
       </div>
     </div>

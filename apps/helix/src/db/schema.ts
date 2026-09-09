@@ -3,7 +3,6 @@ import {
   boolean,
   check,
   cidr,
-  customType,
   date,
   foreignKey,
   index,
@@ -22,7 +21,6 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-
 export const actorType = pgEnum("actor_type", ["user", "agent", "service_account", "system"]);
 export const orgStatus = pgEnum("org_status", [
   "provisioning",
@@ -40,6 +38,23 @@ export const objectKind = pgEnum("object_kind", [
   "mail_source",
   "chat_attachment",
 ]);
+export const driveUploadState = pgEnum("drive_upload_state", [
+  "pending_upload",
+  "uploaded",
+  "scanning",
+  "active",
+  "quarantined",
+  "scan_failed",
+  "trashed",
+]);
+export const driveScanJobStatus = pgEnum("drive_scan_job_status", [
+  "pending",
+  "running",
+  "retry_scheduled",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 export const threadKind = pgEnum("thread_kind", [
   "mail",
   "chat_room",
@@ -51,7 +66,10 @@ export const threadKind = pgEnum("thread_kind", [
 export const messageKind = pgEnum("message_kind", ["mail", "chat", "comment", "system"]);
 export const pendingActionStatus = pgEnum("pending_action_status", [
   "pending_confirmation",
-  "confirmed",
+  "approved",
+  "executing",
+  "executed",
+  "failed",
   "cancelled",
   "expired",
 ]);
@@ -112,6 +130,12 @@ export const mailDkimKeyStatus = pgEnum("mail_dkim_key_status", [
   "retiring",
   "retired",
 ]);
+export const mailReceivingDomainStatus = pgEnum("mail_receiving_domain_status", [
+  "pending",
+  "verified",
+  "active",
+  "disabled",
+]);
 export const mailRoutingActionKind = pgEnum("mail_routing_action_kind", [
   "forward",
   "alias",
@@ -119,18 +143,10 @@ export const mailRoutingActionKind = pgEnum("mail_routing_action_kind", [
   "tag",
   "mailbox",
 ]);
-
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 };
-
-const bytea = customType<{ data: Buffer; driverData: Buffer }>({
-  dataType() {
-    return "bytea";
-  },
-});
-
 export const plans = pgTable(
   "plans",
   {
@@ -151,7 +167,6 @@ export const plans = pgTable(
     availableIdx: index("plans_available_idx").on(table.available, table.sortOrder),
   }),
 );
-
 export const orgs = pgTable(
   "orgs",
   {
@@ -197,7 +212,6 @@ export const orgs = pgTable(
     ),
   }),
 );
-
 export const actors = pgTable(
   "actors",
   {
@@ -218,7 +232,6 @@ export const actors = pgTable(
     parentIdx: index("actors_parent_user_idx").on(table.parentUserId),
   }),
 );
-
 export const identitySubjects = pgTable(
   "identity_subjects",
   {
@@ -239,7 +252,6 @@ export const identitySubjects = pgTable(
     ),
   }),
 );
-
 export const identityProviderSubjects = pgTable(
   "identity_provider_subjects",
   {
@@ -257,7 +269,6 @@ export const identityProviderSubjects = pgTable(
     subjectIdx: index("identity_provider_subjects_subject_idx").on(table.subjectId),
   }),
 );
-
 export const organizationMemberships = pgTable(
   "organization_memberships",
   {
@@ -301,7 +312,6 @@ export const organizationMemberships = pgTable(
     subjectIdx: index("organization_memberships_subject_idx").on(table.subjectId, table.status),
   }),
 );
-
 export const tenantConfigAudit = pgTable(
   "tenant_config_audit",
   {
@@ -323,7 +333,6 @@ export const tenantConfigAudit = pgTable(
     ),
   }),
 );
-
 export const tenantIdpConfigs = pgTable(
   "tenant_idp_configs",
   {
@@ -382,7 +391,6 @@ export const tenantIdpConfigs = pgTable(
     ),
   }),
 );
-
 export const tenantProvisioningState = pgTable(
   "tenant_provisioning_state",
   {
@@ -403,7 +411,6 @@ export const tenantProvisioningState = pgTable(
     statusIdx: index("tenant_provisioning_state_status_idx").on(table.status, table.updatedAt),
   }),
 );
-
 export const tenantStorageMigrationJobs = pgTable(
   "tenant_storage_migration_jobs",
   {
@@ -442,7 +449,6 @@ export const tenantStorageMigrationJobs = pgTable(
     ),
   }),
 );
-
 export const signupEmailVerifications = pgTable(
   "signup_email_verifications",
   {
@@ -462,7 +468,6 @@ export const signupEmailVerifications = pgTable(
     expiresAtIdx: index("signup_email_verifications_expires_at_idx").on(table.expiresAt),
   }),
 );
-
 export const signupOnboardingInvites = pgTable(
   "signup_onboarding_invites",
   {
@@ -487,7 +492,6 @@ export const signupOnboardingInvites = pgTable(
     expiresAtIdx: index("signup_onboarding_invites_expires_at_idx").on(table.expiresAt),
   }),
 );
-
 export const meteringEvents = pgTable(
   "metering_events",
   {
@@ -508,7 +512,6 @@ export const meteringEvents = pgTable(
       .where(sql`${table.rolledUpAt} is null`),
   }),
 );
-
 export const meteringRollups = pgTable(
   "metering_rollups",
   {
@@ -531,7 +534,6 @@ export const meteringRollups = pgTable(
     ),
   }),
 );
-
 export const objects = pgTable(
   "objects",
   {
@@ -543,6 +545,9 @@ export const objects = pgTable(
     mimeType: text("mime_type").notNull(),
     byteSize: bigint("byte_size", { mode: "number" }).notNull(),
     sha256: text("sha256"),
+    uploadState: driveUploadState("upload_state").default("active").notNull(),
+    uploadDeclaredByteSize: numeric("upload_declared_byte_size"),
+    uploadDeclaredSha256: text("upload_declared_sha256"),
     classification: text("classification").default("internal").notNull(),
     metadata: jsonb("metadata").default({}).notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -557,7 +562,6 @@ export const objects = pgTable(
     metadataNoStarred: check("objects_metadata_no_starred", sql`not ${table.metadata} ? 'starred'`),
   }),
 );
-
 export const driveMemberStars = pgTable(
   "drive_member_stars",
   {
@@ -579,7 +583,6 @@ export const driveMemberStars = pgTable(
     }).onDelete("cascade"),
   }),
 );
-
 export const workspaceMemberPreferences = pgTable(
   "workspace_member_preferences",
   {
@@ -600,7 +603,6 @@ export const workspaceMemberPreferences = pgTable(
     ),
   }),
 );
-
 export const driveScanJobs = pgTable(
   "drive_scan_jobs",
   {
@@ -640,7 +642,6 @@ export const driveScanJobs = pgTable(
     ),
   }),
 );
-
 export const driveQuarantineDeletions = pgTable(
   "drive_quarantine_deletions",
   {
@@ -676,7 +677,6 @@ export const driveQuarantineDeletions = pgTable(
     ),
   }),
 );
-
 export const driveMultipartSessions = pgTable(
   "drive_multipart_sessions",
   {
@@ -720,44 +720,6 @@ export const driveMultipartSessions = pgTable(
     ),
   }),
 );
-
-export const drivePreviewJobs = pgTable(
-  "drive_preview_jobs",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id")
-      .notNull()
-      .references(() => orgs.id, { onDelete: "cascade" }),
-    objectId: uuid("object_id")
-      .notNull()
-      .references(() => objects.id, { onDelete: "cascade" }),
-    versionId: uuid("version_id")
-      .notNull()
-      .references((): AnyPgColumn => driveVersions.id, { onDelete: "cascade" }),
-    actorId: uuid("actor_id").references(() => actors.id, { onDelete: "set null" }),
-    status: text("status").default("pending").notNull(),
-    attemptCount: integer("attempt_count").default(0).notNull(),
-    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).defaultNow().notNull(),
-    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
-    lastError: text("last_error"),
-    ...timestamps,
-  },
-  (table) => ({
-    versionUnique: uniqueIndex("drive_preview_jobs_org_version_key").on(
-      table.orgId,
-      table.versionId,
-    ),
-    claimIdx: index("drive_preview_jobs_claim_idx")
-      .on(table.nextAttemptAt, table.createdAt)
-      .where(sql`${table.status} = 'pending'`),
-    stateCheck: check(
-      "drive_preview_jobs_state_check",
-      sql`(${table.status} = 'pending' and ${table.leaseExpiresAt} is null)
-          or (${table.status} = 'processing' and ${table.leaseExpiresAt} is not null)`,
-    ),
-  }),
-);
-
 export const threads = pgTable(
   "threads",
   {
@@ -775,7 +737,6 @@ export const threads = pgTable(
     orgIdIdIdx: uniqueIndex("threads_org_id_id_unique_idx").on(table.orgId, table.id),
   }),
 );
-
 export const messages = pgTable(
   "messages",
   {
@@ -808,7 +769,6 @@ export const messages = pgTable(
       .where(sql`${table.kind} = 'chat'`),
   }),
 );
-
 export const chatMessageRevisions = pgTable(
   "chat_message_revisions",
   {
@@ -842,7 +802,61 @@ export const chatMessageRevisions = pgTable(
     ),
   }),
 );
-
+export const mailInboundDeliveries = pgTable(
+  "mail_inbound_deliveries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    dedupKey: text("dedup_key").notNull(),
+    normalizedMessageId: text("normalized_message_id"),
+    rawSha256: text("raw_sha256").notNull(),
+    envelopeFrom: text("envelope_from"),
+    envelopeTo: text("envelope_to").array().notNull(),
+    messageId: uuid("message_id").references(() => messages.id, { onDelete: "cascade" }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+    ...timestamps,
+  },
+  (table) => ({
+    orgDedupIdx: uniqueIndex("mail_inbound_deliveries_org_dedup_idx").on(
+      table.orgId,
+      table.dedupKey,
+    ),
+    messageIdx: uniqueIndex("mail_inbound_deliveries_message_idx")
+      .on(table.messageId)
+      .where(sql`${table.messageId} is not null`),
+    orgReceivedIdx: index("mail_inbound_deliveries_org_received_idx").on(
+      table.orgId,
+      table.receivedAt,
+    ),
+  }),
+);
+export const mailInboundRecipients = pgTable(
+  "mail_inbound_recipients",
+  {
+    deliveryId: uuid("delivery_id")
+      .notNull()
+      .references(() => mailInboundDeliveries.id, { onDelete: "cascade" }),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => actors.id),
+    address: text("address").notNull(),
+    matchKind: text("match_kind").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.deliveryId, table.address] }),
+    actorIdx: index("mail_inbound_recipients_actor_idx").on(
+      table.orgId,
+      table.actorId,
+      table.createdAt,
+    ),
+  }),
+);
 export const messageAttachments = pgTable(
   "message_attachments",
   {
@@ -866,7 +880,6 @@ export const messageAttachments = pgTable(
     orgObjectIdx: index("message_attachments_org_object_idx").on(table.orgId, table.objectId),
   }),
 );
-
 export const chatAttachments = pgTable(
   "chat_attachments",
   {
@@ -945,7 +958,6 @@ export const chatAttachments = pgTable(
     ),
   }),
 );
-
 export const mailAttachmentIngestions = pgTable(
   "mail_attachment_ingestions",
   {
@@ -1001,7 +1013,6 @@ export const mailAttachmentIngestions = pgTable(
       .where(sql`${table.status} <> 'attached' and ${table.cleanedAt} is null`),
   }),
 );
-
 export const mailRawSources = pgTable("mail_raw_sources", {
   messageId: uuid("message_id")
     .primaryKey()
@@ -1017,7 +1028,6 @@ export const mailRawSources = pgTable("mail_raw_sources", {
   projectionSha256: text("projection_sha256").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
-
 export const mailMessageIdentities = pgTable(
   "mail_message_identities",
   {
@@ -1045,7 +1055,6 @@ export const mailMessageIdentities = pgTable(
       .where(sql`${table.providerDeliveryId} is not null`),
   }),
 );
-
 export const mailMessageDeliveries = pgTable(
   "mail_message_deliveries",
   {
@@ -1073,7 +1082,6 @@ export const mailMessageDeliveries = pgTable(
     ),
   }),
 );
-
 export const permissions = pgTable(
   "permissions",
   {
@@ -1118,7 +1126,6 @@ export const permissions = pgTable(
     ),
   }),
 );
-
 export const activity = pgTable(
   "activity",
   {
@@ -1139,7 +1146,6 @@ export const activity = pgTable(
     hashIdx: uniqueIndex("activity_hash_idx").on(table.thisHash),
   }),
 );
-
 export const outbox = pgTable(
   "outbox",
   {
@@ -1160,7 +1166,6 @@ export const outbox = pgTable(
     pendingIdx: index("outbox_pending_idx").on(table.deliverAfter, table.deliveredAt),
   }),
 );
-
 export const aiArtifacts = pgTable("ai_artifacts", {
   id: uuid("id").defaultRandom().primaryKey(),
   orgId: uuid("org_id").notNull(),
@@ -1173,7 +1178,6 @@ export const aiArtifacts = pgTable("ai_artifacts", {
   metadata: jsonb("metadata").default({}).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
-
 export const memoryItems = pgTable(
   "memory_items",
   {
@@ -1194,9 +1198,7 @@ export const memoryItems = pgTable(
     actorCreatedIdx: index("memory_items_actor_created_idx").on(table.actorId, table.createdAt),
   }),
 );
-
 export const vectorMetric = pgEnum("vector_metric", ["cosine", "dot", "l2"]);
-
 export const vectorCollections = pgTable(
   "vector_collections",
   {
@@ -1216,7 +1218,6 @@ export const vectorCollections = pgTable(
     pk: primaryKey({ columns: [table.orgId, table.name] }),
   }),
 );
-
 export const vectorItems = pgTable(
   "vector_items",
   {
@@ -1237,28 +1238,40 @@ export const vectorItems = pgTable(
     metadataIdx: index("vector_items_metadata_idx").using("gin", table.metadata),
   }),
 );
-
 export const pendingActions = pgTable("pending_actions", {
   id: uuid("id").defaultRandom().primaryKey(),
   orgId: uuid("org_id").notNull(),
   actorId: uuid("actor_id")
     .references(() => actors.id)
     .notNull(),
+  requesterCredentialId: uuid("requester_credential_id"),
+  requesterPrincipal: jsonb("requester_principal").default({}).notNull(),
+  requesterIp: text("requester_ip"),
+  approvalOwnerActorId: uuid("approval_owner_actor_id").references(() => actors.id),
+  approverActorId: uuid("approver_actor_id").references(() => actors.id),
+  executionActorId: uuid("execution_actor_id").references(() => actors.id),
   toolId: text("tool_id").notNull(),
   input: jsonb("input").notNull(),
+  inputHash: text("input_hash").notNull(),
+  policySnapshot: jsonb("policy_snapshot").default({}).notNull(),
+  policyVersion: text("policy_version").notNull(),
   status: pendingActionStatus("status").default("pending_confirmation").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   decidedAt: timestamp("decided_at", { withTimezone: true }),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  executionStartedAt: timestamp("execution_started_at", { withTimezone: true }),
+  executionCompletedAt: timestamp("execution_completed_at", { withTimezone: true }),
+  executionLeaseExpiresAt: timestamp("execution_lease_expires_at", { withTimezone: true }),
+  executionAttempts: integer("execution_attempts").default(0).notNull(),
+  executionIdempotencyKey: text("execution_idempotency_key").notNull(),
   traceId: text("trace_id"),
   result: jsonb("result"),
   error: text("error"),
   approvalKind: text("approval_kind").default("self_confirmation").notNull(),
   approvedByActorId: uuid("approved_by_actor_id").references(() => actors.id),
-  approvedAt: timestamp("approved_at", { withTimezone: true }),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
 });
-
 export const assistantConversations = pgTable(
   "assistant_conversations",
   {
@@ -1284,7 +1297,6 @@ export const assistantConversations = pgTable(
     ),
   }),
 );
-
 export const assistantMessages = pgTable(
   "assistant_messages",
   {
@@ -1312,7 +1324,6 @@ export const assistantMessages = pgTable(
     ),
   }),
 );
-
 export const assistantMemoryPreferences = pgTable(
   "assistant_memory_preferences",
   {
@@ -1329,7 +1340,6 @@ export const assistantMemoryPreferences = pgTable(
     actorIdx: index("assistant_memory_preferences_actor_idx").on(table.actorId),
   }),
 );
-
 export const appPasswords = pgTable(
   "app_passwords",
   {
@@ -1349,7 +1359,6 @@ export const appPasswords = pgTable(
     actorIdx: index("app_passwords_actor_idx").on(table.actorId),
   }),
 );
-
 export const platformConfig = pgTable("platform_config", {
   key: text("key").primaryKey(),
   value: jsonb("value").notNull(),
@@ -1357,7 +1366,6 @@ export const platformConfig = pgTable("platform_config", {
   updatedByActorId: uuid("updated_by_actor_id").references(() => actors.id),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
-
 export const installedPlugins = pgTable(
   "installed_plugins",
   {
@@ -1380,7 +1388,6 @@ export const installedPlugins = pgTable(
     ),
   }),
 );
-
 export const agentCredentials = pgTable(
   "agent_credentials",
   {
@@ -1401,6 +1408,9 @@ export const agentCredentials = pgTable(
     ipAllowlist: cidr("ip_allowlist").array(),
     allowedHours: jsonb("allowed_hours"),
     confirmationOverride: jsonb("confirmation_override"),
+    approvalOwnerActorId: uuid("approval_owner_actor_id").references(() => actors.id),
+    automationPolicy: jsonb("automation_policy"),
+    policyVersion: text("policy_version").default("1").notNull(),
     createdBy: uuid("created_by").references(() => actors.id),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -1419,7 +1429,6 @@ export const agentCredentials = pgTable(
     ),
   }),
 );
-
 export const oauthAccessTokens = pgTable(
   "oauth_access_tokens",
   {
@@ -1450,7 +1459,6 @@ export const oauthAccessTokens = pgTable(
     ),
   }),
 );
-
 export const oauthConsentNonces = pgTable(
   "oauth_consent_nonces",
   {
@@ -1475,7 +1483,6 @@ export const oauthConsentNonces = pgTable(
     ),
   }),
 );
-
 export const oauthGrants = pgTable(
   "oauth_grants",
   {
@@ -1504,7 +1511,6 @@ export const oauthGrants = pgTable(
     ),
   }),
 );
-
 export const oauthRefreshTokens = pgTable(
   "oauth_refresh_tokens",
   {
@@ -1540,7 +1546,6 @@ export const oauthRefreshTokens = pgTable(
     ),
   }),
 );
-
 export const outboundWebhooks = pgTable(
   "outbound_webhooks",
   {
@@ -1574,7 +1579,6 @@ export const outboundWebhooks = pgTable(
     ),
   }),
 );
-
 export const inboundWebhooks = pgTable(
   "inbound_webhooks",
   {
@@ -1605,7 +1609,6 @@ export const inboundWebhooks = pgTable(
     ),
   }),
 );
-
 export const webhookDeliveries = pgTable(
   "webhook_deliveries",
   {
@@ -1646,7 +1649,6 @@ export const webhookDeliveries = pgTable(
     ),
   }),
 );
-
 export const mailFilters = pgTable(
   "mail_filters",
   {
@@ -1668,7 +1670,6 @@ export const mailFilters = pgTable(
     orgPriorityIdx: index("mail_filters_org_priority_idx").on(table.orgId, table.priority),
   }),
 );
-
 export const mailUserSettings = pgTable(
   "mail_user_settings",
   {
@@ -1689,7 +1690,6 @@ export const mailUserSettings = pgTable(
     }).onDelete("cascade"),
   }),
 );
-
 export const mailAliases = pgTable(
   "mail_aliases",
   {
@@ -1714,7 +1714,6 @@ export const mailAliases = pgTable(
       .where(sql`${table.disabledAt} is null`),
   }),
 );
-
 export const mailVacation = pgTable(
   "mail_vacation",
   {
@@ -1736,7 +1735,6 @@ export const mailVacation = pgTable(
     orgEnabledIdx: index("mail_vacation_org_enabled_idx").on(table.orgId, table.enabled),
   }),
 );
-
 export const mailVacationResponses = pgTable(
   "mail_vacation_responses",
   {
@@ -1761,7 +1759,6 @@ export const mailVacationResponses = pgTable(
     actorIdx: index("mail_vacation_responses_actor_idx").on(table.actorId),
   }),
 );
-
 export const mailThreadState = pgTable(
   "mail_thread_state",
   {
@@ -1802,7 +1799,6 @@ export const mailThreadState = pgTable(
     ),
   }),
 );
-
 export const mailRetentionHolds = pgTable(
   "mail_retention_holds",
   {
@@ -1834,7 +1830,6 @@ export const mailRetentionHolds = pgTable(
     ),
   }),
 );
-
 export const mailOutboundMessages = pgTable(
   "mail_outbound_messages",
   {
@@ -1857,6 +1852,10 @@ export const mailOutboundMessages = pgTable(
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     failedAt: timestamp("failed_at", { withTimezone: true }),
     lastError: text("last_error"),
+    providerId: text("provider_id"),
+    providerKind: text("provider_kind"),
+    providerDecisionSource: text("provider_decision_source"),
+    providerDecidedAt: timestamp("provider_decided_at", { withTimezone: true }),
     providerMessageId: text("provider_message_id"),
     attemptCount: integer("attempt_count").default(0).notNull(),
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
@@ -1865,6 +1864,8 @@ export const mailOutboundMessages = pgTable(
     leaseOwner: text("lease_owner"),
     leaseToken: uuid("lease_token"),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    deliveryStatus: text("delivery_status"),
+    deliveryEventAt: timestamp("delivery_event_at", { withTimezone: true }),
     deliveryMetadata: jsonb("delivery_metadata").default({}).notNull(),
     ...timestamps,
   },
@@ -1885,7 +1886,6 @@ export const mailOutboundMessages = pgTable(
     ),
   }),
 );
-
 export const mailOutboundProviders = pgTable(
   "mail_outbound_providers",
   {
@@ -1935,7 +1935,6 @@ export const mailOutboundProviders = pgTable(
     ),
   }),
 );
-
 export const mailDeliveryEvents = pgTable(
   "mail_delivery_events",
   {
@@ -1977,7 +1976,6 @@ export const mailDeliveryEvents = pgTable(
     ),
   }),
 );
-
 export const mailSuppressions = pgTable(
   "mail_suppressions",
   {
@@ -2015,12 +2013,16 @@ export const mailSuppressions = pgTable(
     ),
   }),
 );
-
 export const adminDomains = pgTable(
   "admin_domains",
   {
     id: uuid("id").defaultRandom().primaryKey(),
     orgId: uuid("org_id").notNull(),
+    /* The domain identity this capability hangs off (admin_domains). Declared
+       without a Drizzle .references() because admin_domains is managed in raw
+       SQL and has no table definition here; the FK itself is enforced by the
+       database (migration 0086). */
+    adminDomainId: uuid("admin_domain_id").notNull(),
     domain: text("domain").notNull(),
     status: text("status").default("pending").notNull(),
     isPrimary: boolean("is_primary").default(false).notNull(),
@@ -2098,7 +2100,6 @@ export const adminDomains = pgTable(
     ),
   }),
 );
-
 export const adminDomainPrimaryTransitions = pgTable(
   "admin_domain_primary_transitions",
   {
@@ -2148,7 +2149,84 @@ export const adminDomainPrimaryTransitions = pgTable(
     ),
   }),
 );
-
+export const mailProviderDeliveryEvents = pgTable(
+  "mail_provider_delivery_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    providerId: uuid("provider_id")
+      .notNull()
+      .references(() => mailOutboundProviders.id, { onDelete: "restrict" }),
+    outboundId: uuid("outbound_id").references(() => mailOutboundMessages.id, {
+      onDelete: "set null",
+    }),
+    providerEventId: text("provider_event_id").notNull(),
+    providerMessageId: text("provider_message_id").notNull(),
+    normalizedRecipient: text("normalized_recipient").notNull(),
+    eventType: text("event_type").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    idempotencyIdx: uniqueIndex("mail_provider_delivery_events_idempotency_idx").on(
+      table.orgId,
+      table.providerId,
+      table.providerEventId,
+    ),
+    outboundIdx: index("mail_provider_delivery_events_outbound_idx").on(
+      table.orgId,
+      table.outboundId,
+      table.occurredAt,
+      table.id,
+    ),
+    thresholdIdx: index("mail_provider_delivery_events_threshold_idx").on(
+      table.orgId,
+      table.eventType,
+      table.occurredAt,
+    ),
+  }),
+);
+export const mailReceivingDomains = pgTable(
+  "mail_receiving_domains",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    /* See mailSendingDomains.adminDomainId — same parent, same reason the
+       reference is left to the database. */
+    adminDomainId: uuid("admin_domain_id").notNull(),
+    domain: text("domain").notNull(),
+    status: mailReceivingDomainStatus("status").default("pending").notNull(),
+    verificationTokenHash: text("verification_token_hash").notNull(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    catchAllActorId: uuid("catch_all_actor_id").references(() => actors.id, {
+      onDelete: "set null",
+    }),
+    createdBy: uuid("created_by").references(() => actors.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (table) => ({
+    orgDomainIdx: uniqueIndex("mail_receiving_domains_org_domain_idx").on(
+      table.orgId,
+      table.domain,
+    ),
+    activeDomainIdx: uniqueIndex("mail_receiving_domains_active_domain_idx")
+      .on(table.domain)
+      .where(sql`${table.status} = 'active'`),
+    tokenHashIdx: uniqueIndex("mail_receiving_domains_token_hash_idx").on(
+      table.verificationTokenHash,
+    ),
+    orgStatusIdx: index("mail_receiving_domains_org_status_idx").on(
+      table.orgId,
+      table.status,
+      table.createdAt,
+    ),
+  }),
+);
 export const mailDkimKeys = pgTable(
   "mail_dkim_keys",
   {
@@ -2190,7 +2268,6 @@ export const mailDkimKeys = pgTable(
     ),
   }),
 );
-
 export const mailDmarcReports = pgTable(
   "mail_dmarc_reports",
   {
@@ -2224,7 +2301,6 @@ export const mailDmarcReports = pgTable(
     ),
   }),
 );
-
 export const mailDmarcReportRecords = pgTable(
   "mail_dmarc_report_records",
   {
@@ -2246,7 +2322,6 @@ export const mailDmarcReportRecords = pgTable(
     orgIdx: index("mail_dmarc_report_records_org_idx").on(table.orgId, table.sourceIp),
   }),
 );
-
 export const mailInboundRoutingRules = pgTable(
   "mail_inbound_routing_rules",
   {
@@ -2266,7 +2341,6 @@ export const mailInboundRoutingRules = pgTable(
     orgNameIdx: uniqueIndex("mail_inbound_routing_rules_org_name_idx").on(table.orgId, table.name),
   }),
 );
-
 export const mailJournalSettings = pgTable("mail_journal_settings", {
   orgId: uuid("org_id")
     .primaryKey()
@@ -2278,7 +2352,6 @@ export const mailJournalSettings = pgTable("mail_journal_settings", {
     .notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
-
 export const mailJournalEntries = pgTable(
   "mail_journal_entries",
   {
@@ -2307,7 +2380,6 @@ export const mailJournalEntries = pgTable(
     expiryIdx: index("mail_journal_expiry_idx").on(table.retentionUntil, table.orgId, table.id),
   }),
 );
-
 export const driveFolders = pgTable(
   "drive_folders",
   {
@@ -2330,7 +2402,6 @@ export const driveFolders = pgTable(
     ownerIdx: index("drive_folders_owner_idx").on(table.ownerActorId),
   }),
 );
-
 export const driveRetentionHolds = pgTable(
   "drive_retention_holds",
   {
@@ -2354,7 +2425,6 @@ export const driveRetentionHolds = pgTable(
       .where(sql`${table.releasedAt} is null`),
   }),
 );
-
 export const driveVersions = pgTable(
   "drive_versions",
   {
@@ -2389,41 +2459,6 @@ export const driveVersions = pgTable(
     orgStorageIdx: index("drive_versions_org_storage_idx").on(table.orgId, table.storageKey),
   }),
 );
-
-export const drivePdfFormStates = pgTable(
-  "drive_pdf_form_states",
-  {
-    orgId: uuid("org_id")
-      .references(() => orgs.id, { onDelete: "cascade" })
-      .notNull(),
-    objectId: uuid("object_id")
-      .references(() => objects.id, { onDelete: "cascade" })
-      .notNull(),
-    actorId: uuid("actor_id")
-      .references(() => actors.id, { onDelete: "cascade" })
-      .notNull(),
-    fieldValues: jsonb("field_values").default([]).notNull(),
-    sourceVersionNumber: integer("source_version_number"),
-    sourceSha256: text("source_sha256"),
-    sourceByteSize: integer("source_byte_size"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => ({
-    pk: primaryKey({ columns: [table.orgId, table.objectId, table.actorId] }),
-    actorUpdatedIdx: index("drive_pdf_form_states_actor_updated_idx").on(
-      table.orgId,
-      table.actorId,
-      table.updatedAt,
-    ),
-    objectUpdatedIdx: index("drive_pdf_form_states_object_updated_idx").on(
-      table.orgId,
-      table.objectId,
-      table.updatedAt,
-    ),
-  }),
-);
-
 export const driveShareLinks = pgTable(
   "drive_share_links",
   {
@@ -2457,7 +2492,6 @@ export const driveShareLinks = pgTable(
     objectIdx: index("drive_share_links_object_idx").on(table.orgId, table.objectId),
   }),
 );
-
 export const driveShareLinkEvents = pgTable(
   "drive_share_link_events",
   {
@@ -2482,7 +2516,6 @@ export const driveShareLinkEvents = pgTable(
     ),
   }),
 );
-
 export const driveShareLinkRateLimits = pgTable(
   "drive_share_link_rate_limits",
   {
@@ -2495,7 +2528,6 @@ export const driveShareLinkRateLimits = pgTable(
     updatedIdx: index("drive_share_link_rate_limits_updated_idx").on(table.updatedAt),
   }),
 );
-
 /** Content-addressed blobs (optional dedup path; migration 0074). */
 export const driveBlobs = pgTable(
   "drive_blobs",
@@ -2513,7 +2545,6 @@ export const driveBlobs = pgTable(
     storageKeyIdx: uniqueIndex("drive_blobs_org_storage_key_idx").on(table.orgId, table.storageKey),
   }),
 );
-
 export const driveBlobReservations = pgTable(
   "drive_blob_reservations",
   {
@@ -2538,7 +2569,6 @@ export const driveBlobReservations = pgTable(
     objectIdx: uniqueIndex("drive_blob_reservations_object_idx").on(table.orgId, table.objectId),
   }),
 );
-
 export const driveComments = pgTable(
   "drive_comments",
   {
@@ -2590,7 +2620,6 @@ export const driveComments = pgTable(
     ),
   }),
 );
-
 export const driveCommentRevisions = pgTable(
   "drive_comment_revisions",
   {
@@ -2641,405 +2670,6 @@ export const driveCommentRevisions = pgTable(
     ),
   }),
 );
-
-export const docsDocuments = pgTable(
-  "docs_documents",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    title: text("title").notNull(),
-    threadId: uuid("thread_id").references(() => threads.id, { onDelete: "set null" }),
-    ownerActorId: uuid("owner_actor_id").references(() => actors.id),
-    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
-    ydocState: bytea("ydoc_state"),
-    ydocStateVector: bytea("ydoc_state_vector"),
-    updateSeq: integer("update_seq").default(0).notNull(),
-    editorEngine: text("editor_engine").default("legacy-yjs").notNull(),
-    formatVersion: integer("format_version").default(1).notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
-    ...timestamps,
-  },
-  (table) => ({
-    orgUpdatedIdx: index("docs_documents_org_updated_idx").on(table.orgId, table.updatedAt),
-    engineIdx: index("docs_documents_engine_idx").on(
-      table.orgId,
-      table.editorEngine,
-      table.updatedAt,
-    ),
-    ownerIdx: index("docs_documents_owner_idx").on(table.ownerActorId),
-    threadIdx: index("docs_documents_thread_idx").on(table.threadId),
-  }),
-);
-
-export const docsStyles = pgTable(
-  "docs_styles",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    documentId: uuid("document_id")
-      .references(() => docsDocuments.id, { onDelete: "cascade" })
-      .notNull(),
-    kind: text("kind").notNull(),
-    name: text("name").notNull(),
-    definition: jsonb("definition").default({}).notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    ...timestamps,
-  },
-  (table) => ({
-    documentKindNameIdx: uniqueIndex("docs_styles_document_kind_name_idx").on(
-      table.documentId,
-      table.kind,
-      table.name,
-    ),
-    orgDocumentIdx: index("docs_styles_org_document_idx").on(table.orgId, table.documentId),
-  }),
-);
-
-export const docsThemes = pgTable(
-  "docs_themes",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    documentId: uuid("document_id").references(() => docsDocuments.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    tokens: jsonb("tokens").default({}).notNull(),
-    isDefault: boolean("is_default").default(false).notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    ...timestamps,
-  },
-  (table) => ({
-    documentNameIdx: uniqueIndex("docs_themes_document_name_idx").on(table.documentId, table.name),
-    orgDocumentIdx: index("docs_themes_org_document_idx").on(table.orgId, table.documentId),
-  }),
-);
-
-export const docsRevisions = pgTable(
-  "docs_revisions",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    documentId: uuid("document_id")
-      .references(() => docsDocuments.id, { onDelete: "cascade" })
-      .notNull(),
-    revisionNumber: integer("revision_number").notNull(),
-    title: text("title"),
-    editorEngine: text("editor_engine").notNull(),
-    formatVersion: integer("format_version").notNull(),
-    updateSeq: integer("update_seq"),
-    ydocState: bytea("ydoc_state"),
-    ydocStateVector: bytea("ydoc_state_vector"),
-    snapshot: jsonb("snapshot").default({}).notNull(),
-    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
-    metadata: jsonb("metadata").default({}).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => ({
-    documentNumberIdx: uniqueIndex("docs_revisions_document_number_idx").on(
-      table.documentId,
-      table.revisionNumber,
-    ),
-    orgCreatedIdx: index("docs_revisions_org_created_idx").on(table.orgId, table.createdAt),
-  }),
-);
-
-export const docsUpdates = pgTable(
-  "docs_updates",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    documentId: uuid("document_id")
-      .references(() => docsDocuments.id, { onDelete: "cascade" })
-      .notNull(),
-    parentCommentId: uuid("parent_comment_id").references((): AnyPgColumn => docsComments.id, {
-      onDelete: "cascade",
-    }),
-    actorId: uuid("actor_id").references(() => actors.id),
-    seq: integer("seq").notNull(),
-    update: bytea("update").notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => ({
-    documentSeqIdx: uniqueIndex("docs_updates_document_seq_idx").on(table.documentId, table.seq),
-    documentCreatedIdx: index("docs_updates_document_created_idx").on(
-      table.documentId,
-      table.createdAt,
-    ),
-    orgCreatedIdx: index("docs_updates_org_created_idx").on(table.orgId, table.createdAt),
-  }),
-);
-
-export const docsComments = pgTable(
-  "docs_comments",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    documentId: uuid("document_id")
-      .references(() => docsDocuments.id, { onDelete: "cascade" })
-      .notNull(),
-    parentCommentId: uuid("parent_comment_id").references((): AnyPgColumn => docsComments.id, {
-      onDelete: "cascade",
-    }),
-    actorId: uuid("actor_id").references(() => actors.id),
-    anchor: jsonb("anchor").default({}).notNull(),
-    body: text("body").notNull(),
-    status: text("status").default("open").notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-    ...timestamps,
-  },
-  (table) => ({
-    documentStatusIdx: index("docs_comments_document_status_idx").on(
-      table.documentId,
-      table.status,
-    ),
-    orgCreatedIdx: index("docs_comments_org_created_idx").on(table.orgId, table.createdAt),
-    parentCreatedIdx: index("docs_comments_parent_created_idx").on(
-      table.parentCommentId,
-      table.createdAt,
-    ),
-  }),
-);
-
-export const docsSuggestions = pgTable(
-  "docs_suggestions",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    documentId: uuid("document_id")
-      .references(() => docsDocuments.id, { onDelete: "cascade" })
-      .notNull(),
-    actorId: uuid("actor_id").references(() => actors.id),
-    anchor: jsonb("anchor").default({}).notNull(),
-    beforeText: text("before_text").default("").notNull(),
-    afterText: text("after_text").default("").notNull(),
-    reason: text("reason").default("").notNull(),
-    status: text("status").default("pending").notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    resolvedByActorId: uuid("resolved_by_actor_id").references(() => actors.id),
-    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
-    ...timestamps,
-  },
-  (table) => ({
-    documentStatusIdx: index("docs_suggestions_document_status_idx").on(
-      table.documentId,
-      table.status,
-    ),
-    orgCreatedIdx: index("docs_suggestions_org_created_idx").on(table.orgId, table.createdAt),
-  }),
-);
-
-export const docsAskHistory = pgTable(
-  "docs_ask_history",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    documentId: uuid("document_id")
-      .references(() => docsDocuments.id, { onDelete: "cascade" })
-      .notNull(),
-    actorId: uuid("actor_id")
-      .references(() => actors.id, { onDelete: "cascade" })
-      .notNull(),
-    question: text("question").notNull(),
-    answer: text("answer").notNull(),
-    sourceScope: text("source_scope").default("document").notNull(),
-    sourceExcerpt: text("source_excerpt").default("").notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    ...timestamps,
-  },
-  (table) => ({
-    actorDocumentCreatedIdx: index("docs_ask_history_actor_document_created_idx").on(
-      table.orgId,
-      table.actorId,
-      table.documentId,
-      table.createdAt,
-    ),
-    documentCreatedIdx: index("docs_ask_history_document_created_idx").on(
-      table.orgId,
-      table.documentId,
-      table.createdAt,
-    ),
-  }),
-);
-
-export const sheets = pgTable(
-  "sheets",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    ownerActorId: uuid("owner_actor_id").references(() => actors.id),
-    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
-    title: text("title").notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
-    ...timestamps,
-  },
-  (table) => ({
-    orgUpdatedIdx: index("sheets_org_updated_idx").on(table.orgId, table.updatedAt),
-    ownerIdx: index("sheets_owner_idx").on(table.ownerActorId, table.deletedAt),
-  }),
-);
-
-export const sheetTabs = pgTable(
-  "sheet_tabs",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    sheetId: uuid("sheet_id")
-      .references(() => sheets.id, { onDelete: "cascade" })
-      .notNull(),
-    name: text("name").notNull(),
-    position: integer("position").default(0).notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
-    ...timestamps,
-  },
-  (table) => ({
-    sheetPositionIdx: index("sheet_tabs_sheet_position_idx").on(table.sheetId, table.position),
-    orgIdx: index("sheet_tabs_org_idx").on(table.orgId),
-  }),
-);
-
-export const sheetCells = pgTable(
-  "sheet_cells",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    sheetTabId: uuid("sheet_tab_id")
-      .references(() => sheetTabs.id, { onDelete: "cascade" })
-      .notNull(),
-    row: integer("row").notNull(),
-    col: integer("col").notNull(),
-    value: text("value").default("").notNull(),
-    formula: text("formula"),
-    calcValue: text("calc_value"),
-    dependencies: jsonb("dependencies").default([]).notNull(),
-    formulaError: text("formula_error"),
-    format: jsonb("format").default({}).notNull(),
-    ...timestamps,
-  },
-  (table) => ({
-    tabCoordIdx: uniqueIndex("sheet_cells_tab_coord_idx").on(
-      table.sheetTabId,
-      table.row,
-      table.col,
-    ),
-    orgIdx: index("sheet_cells_org_idx").on(table.orgId),
-  }),
-);
-
-export const sheetOpLog = pgTable(
-  "sheet_op_log",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id")
-      .references(() => orgs.id, { onDelete: "cascade" })
-      .notNull(),
-    sheetId: uuid("sheet_id")
-      .references(() => sheets.id, { onDelete: "cascade" })
-      .notNull(),
-    sheetTabId: uuid("sheet_tab_id")
-      .references(() => sheetTabs.id, { onDelete: "cascade" })
-      .notNull(),
-    actorId: uuid("actor_id").references(() => actors.id),
-    operationId: text("operation_id").notNull(),
-    revision: integer("revision").notNull(),
-    baseRevision: integer("base_revision").notNull(),
-    operation: jsonb("operation").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => ({
-    sheetRevisionIdx: uniqueIndex("sheet_op_log_sheet_revision_idx").on(
-      table.sheetId,
-      table.revision,
-    ),
-    sheetOperationIdx: uniqueIndex("sheet_op_log_sheet_operation_idx").on(
-      table.sheetId,
-      table.operationId,
-    ),
-    orgSheetRevisionIdx: index("sheet_op_log_org_sheet_revision_idx").on(
-      table.orgId,
-      table.sheetId,
-      table.revision,
-    ),
-    orgCreatedIdx: index("sheet_op_log_org_created_idx").on(table.orgId, table.createdAt),
-  }),
-);
-
-export const slideDecks = pgTable(
-  "slide_decks",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    title: text("title").notNull(),
-    ownerActorId: uuid("owner_actor_id").references(() => actors.id),
-    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
-    metadata: jsonb("metadata").default({}).notNull(),
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
-    ...timestamps,
-  },
-  (table) => ({
-    orgUpdatedIdx: index("slide_decks_org_updated_idx").on(table.orgId, table.updatedAt),
-    ownerIdx: index("slide_decks_owner_idx").on(table.ownerActorId),
-  }),
-);
-
-export const slides = pgTable(
-  "slides",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    deckId: uuid("deck_id")
-      .references(() => slideDecks.id, { onDelete: "cascade" })
-      .notNull(),
-    position: integer("position").notNull(),
-    layout: text("layout").notNull(),
-    content: jsonb("content").default({}).notNull(),
-    speakerNotes: text("speaker_notes").default("").notNull(),
-    revision: integer("revision").default(1).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => ({
-    deckPositionIdx: uniqueIndex("slides_deck_position_idx").on(table.deckId, table.position),
-    orgDeckIdx: index("slides_org_deck_idx").on(table.orgId, table.deckId),
-  }),
-);
-
-export const slidesOpLog = pgTable(
-  "slides_op_log",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    orgId: uuid("org_id").notNull(),
-    deckId: uuid("deck_id")
-      .references(() => slideDecks.id, { onDelete: "cascade" })
-      .notNull(),
-    actorId: uuid("actor_id").references(() => actors.id),
-    operationId: text("operation_id").notNull(),
-    revision: integer("revision").notNull(),
-    baseRevision: integer("base_revision").notNull(),
-    operation: jsonb("operation").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => ({
-    deckRevisionIdx: uniqueIndex("slides_op_log_deck_revision_idx").on(
-      table.deckId,
-      table.revision,
-    ),
-    deckOperationIdx: uniqueIndex("slides_op_log_deck_operation_idx").on(
-      table.deckId,
-      table.operationId,
-    ),
-    orgDeckRevisionIdx: index("slides_op_log_org_deck_revision_idx").on(
-      table.orgId,
-      table.deckId,
-      table.revision,
-    ),
-    orgCreatedIdx: index("slides_op_log_org_created_idx").on(table.orgId, table.createdAt),
-  }),
-);
-
 export const calCalendars = pgTable(
   "cal_calendars",
   {
@@ -3066,7 +2696,6 @@ export const calCalendars = pgTable(
     ),
   }),
 );
-
 export const calEventChanges = pgTable(
   "cal_event_changes",
   {
@@ -3091,7 +2720,6 @@ export const calEventChanges = pgTable(
     syncVersionCheck: check("cal_event_changes_sync_version_check", sql`${table.syncVersion} > 0`),
   }),
 );
-
 export const calEvents = pgTable(
   "cal_events",
   {
@@ -3131,7 +2759,6 @@ export const calEvents = pgTable(
     organizerIdx: index("cal_events_organizer_idx").on(table.organizerActorId),
   }),
 );
-
 export const calEventRevisions = pgTable(
   "cal_event_revisions",
   {
@@ -3155,7 +2782,6 @@ export const calEventRevisions = pgTable(
     ),
   }),
 );
-
 export const calSchedulingProfiles = pgTable(
   "cal_scheduling_profiles",
   {
@@ -3178,7 +2804,6 @@ export const calSchedulingProfiles = pgTable(
     pk: primaryKey({ columns: [table.orgId, table.actorId] }),
   }),
 );
-
 export const calResources = pgTable(
   "cal_resources",
   {
@@ -3210,7 +2835,6 @@ export const calResources = pgTable(
     ),
   }),
 );
-
 export const calResourceBookings = pgTable(
   "cal_resource_bookings",
   {
@@ -3248,7 +2872,6 @@ export const calResourceBookings = pgTable(
     eventIdx: index("cal_resource_bookings_event_idx").on(table.orgId, table.eventId),
   }),
 );
-
 export const calAttendees = pgTable(
   "cal_attendees",
   {
@@ -3274,7 +2897,6 @@ export const calAttendees = pgTable(
     eventIdx: index("cal_attendees_event_idx").on(table.eventId),
   }),
 );
-
 export const cardDavAddressBooks = pgTable(
   "carddav_addressbooks",
   {
@@ -3293,7 +2915,6 @@ export const cardDavAddressBooks = pgTable(
     ownerIdx: index("carddav_addressbooks_owner_idx").on(table.orgId, table.ownerActorId, table.id),
   }),
 );
-
 export const cardDavContacts = pgTable(
   "carddav_contacts",
   {
@@ -3335,7 +2956,6 @@ export const cardDavContacts = pgTable(
     ),
   }),
 );
-
 export const meetRooms = pgTable(
   "meet_rooms",
   {
@@ -3369,7 +2989,6 @@ export const meetRooms = pgTable(
     createdByIdx: index("meet_rooms_created_by_idx").on(table.createdByActorId, table.status),
   }),
 );
-
 export const meetGuestInvites = pgTable(
   "meet_guest_invites",
   {
@@ -3401,7 +3020,6 @@ export const meetGuestInvites = pgTable(
     ),
   }),
 );
-
 export const meetRecordingUploads = pgTable(
   "meet_recording_uploads",
   {
@@ -3431,7 +3049,6 @@ export const meetRecordingUploads = pgTable(
       .where(sql`${table.completedAt} is null`),
   }),
 );
-
 export const meetMediaWebhookReceipts = pgTable(
   "meet_media_webhook_receipts",
   {
@@ -3443,7 +3060,6 @@ export const meetMediaWebhookReceipts = pgTable(
     expiryIdx: index("meet_media_webhook_receipts_expiry_idx").on(table.expiresAt),
   }),
 );
-
 export const chatRoomSettings = pgTable(
   "chat_room_settings",
   {
@@ -3466,7 +3082,6 @@ export const chatRoomSettings = pgTable(
     orgIdx: index("chat_room_settings_org_idx").on(table.orgId),
   }),
 );
-
 export const chatReactions = pgTable(
   "chat_reactions",
   {
@@ -3485,7 +3100,6 @@ export const chatReactions = pgTable(
     orgEmojiIdx: index("chat_reactions_org_emoji_idx").on(table.orgId, table.emoji),
   }),
 );
-
 export const chatPins = pgTable(
   "chat_pins",
   {
@@ -3505,7 +3119,6 @@ export const chatPins = pgTable(
     orgThreadIdx: index("chat_pins_org_thread_idx").on(table.orgId, table.threadId),
   }),
 );
-
 export const chatReadReceipts = pgTable(
   "chat_read_receipts",
   {
@@ -3528,7 +3141,6 @@ export const chatReadReceipts = pgTable(
     actorIdx: index("chat_read_receipts_actor_idx").on(table.actorId, table.updatedAt),
   }),
 );
-
 export const chatWebsocketTickets = pgTable(
   "chat_websocket_tickets",
   {
@@ -3569,7 +3181,6 @@ export const chatWebsocketTickets = pgTable(
     ),
   }),
 );
-
 export const chatRoomEvents = pgTable(
   "chat_room_events",
   {

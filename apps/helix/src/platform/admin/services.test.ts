@@ -58,7 +58,6 @@ describe("admin services catalog", () => {
       "mail",
       "chat",
       "drive",
-      "docs",
       "calendar",
       "meet",
       "search",
@@ -73,7 +72,6 @@ describe("admin services catalog", () => {
     expect(response.generatedAt).toBe("2026-05-21T14:00:00.000Z");
     const mail = serviceById(response.services, "mail");
     const drive = serviceById(response.services, "drive");
-    const docs = serviceById(response.services, "docs");
     const meet = serviceById(response.services, "meet");
 
     expect(mail).toMatchObject({
@@ -81,15 +79,12 @@ describe("admin services catalog", () => {
       adminScopes: ["mail.admin", "admin.config.read", "admin.config.write"],
     });
     expect(drive.capabilities).toEqual(
-      expect.arrayContaining(["storage-client", "preview-renderer"]),
+      expect.arrayContaining(["storage-client", "file-versioning"]),
     );
     expect(drive.tools).toEqual(
       expect.arrayContaining(["drive.upload", "drive.share", "drive.search"]),
     );
     expect(drive.apiRoutes).toEqual(expect.arrayContaining(["/v1/dav/files/*", "/v1/mcp"]));
-    expect(docs).toMatchObject({
-      realtimeRoutes: ["/v1/sync/docs/:docId"],
-    });
     expect(meet.capabilities).toEqual(expect.arrayContaining(["video:jitsi", "jwt-minting"]));
     expect(JSON.stringify(response)).not.toContain("secret-password");
     expect(JSON.stringify(response)).not.toContain("rustfs-secret");
@@ -165,16 +160,15 @@ describe("admin services catalog", () => {
 
     const capabilities = await app.inject({
       method: "GET",
-      url: "/api/admin/services/docs/capabilities",
+      url: "/api/admin/services/meet/capabilities",
     });
     expect(capabilities.statusCode).toBe(200);
     const capabilitiesJson = capabilities.json<AdminServiceCapabilitiesResponse>();
     expect(capabilitiesJson).toMatchObject({
-      serviceId: "docs",
-      routes: { realtime: ["/v1/sync/docs/:docId"] },
+      serviceId: "meet",
     });
     expect(capabilitiesJson.capabilities).toEqual(
-      expect.arrayContaining(["yjs-sync", "editor:tiptap"]),
+      expect.arrayContaining(["video:jitsi", "jwt-minting"]),
     );
 
     const tools = await app.inject({ method: "GET", url: "/api/admin/services/drive/tools" });
@@ -267,9 +261,7 @@ describe("admin services catalog", () => {
     const ai = await app.inject({ method: "GET", url: "/api/admin/services/ai/ai" });
     expect(ai.statusCode).toBe(200);
     const aiJson = ai.json<AdminServiceAiResponse>();
-    expect(aiJson.aiSlots).toEqual(
-      expect.arrayContaining(["assistant.chat", "mail.compose-help", "docs.smart-write"]),
-    );
+    expect(aiJson.aiSlots).toEqual(expect.arrayContaining(["assistant.chat", "mail.compose-help"]));
     expect(aiJson.enrichments).toEqual(expect.arrayContaining(["mail.classification"]));
 
     const operations = await app.inject({

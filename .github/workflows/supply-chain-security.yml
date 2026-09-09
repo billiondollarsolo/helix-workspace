@@ -1,0 +1,64 @@
+name: Supply Chain Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-dependency-advisories:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: helix-all/helix-workspace
+    steps:
+      - name: Checkout helix-workspace
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: helix-all/helix-workspace
+          persist-credentials: false
+
+      - name: Set up pinned pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.18.0
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+
+      - name: Audit production dependency lockfile
+        run: pnpm quality:production-dependency-audit
+
+  committed-secret-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan committed history for secrets
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo"
+          -w /repo
+          --entrypoint /bin/sh
+          ghcr.io/gitleaks/gitleaks@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
+          -ec
+          'git config --global --add safe.directory /repo &&
+          test "$(git rev-parse --is-inside-work-tree)" = true &&
+          test -n "$(git rev-list -1 --all)" &&
+          gitleaks git . --redact --no-banner --exit-code 1'

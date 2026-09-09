@@ -1,18 +1,26 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyRequest } from "fastify";
 import type postgres from "postgres";
 import {
   actorHasAdminScope,
+  createMfaAssertionVerificationResolver,
   evaluateAdminMfa,
   PostgresSessionMfaAssurance,
   authResponseSessionToken,
   newRecoveryCode,
   recoveryCodeDigest,
+  MFA_ASSERTION_HEADER,
   tierRequiresAdminMfa,
   unverifiedMfaResolver,
   verifiedMfaSessionToken,
 } from "./mfa.js";
+
+const assertionSecret = "mfa-assertion-secret-with-at-least-32-bytes";
+const assertionIssuer = "https://auth.example.test";
+const assertionAudience = "helix-workspace";
+const nowSeconds = 1_784_908_800;
 
 const adminActor: Actor = {
   id: "admin-1",
@@ -28,10 +36,54 @@ const nonAdminActor: Actor = {
   scopes: ["mail.read", "chat.post"],
 };
 
-function requestWithHeader(value: string | undefined): FastifyRequest {
+function requestWithHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): FastifyRequest {
   return {
-    headers: value === undefined ? {} : { "x-helix-mfa-verified": value },
+    headers,
   } as unknown as FastifyRequest;
+}
+
+function signedAssertion(
+  overrides: Partial<{
+    v: number;
+    iss: string;
+    aud: string;
+    sub: string;
+    org: string;
+    amr: string;
+    iat: number;
+    exp: number;
+  }> = {},
+  secret = assertionSecret,
+): string {
+  const claims = {
+    v: 1,
+    iss: assertionIssuer,
+    aud: assertionAudience,
+    sub: adminActor.id,
+    org: adminActor.orgId,
+    amr: "mfa",
+    iat: nowSeconds - 10,
+    exp: nowSeconds + 120,
+    ...overrides,
+  };
+  return signClaims(claims, secret);
+}
+
+function signClaims(claims: unknown, secret = assertionSecret): string {
+  const encodedClaims = Buffer.from(JSON.stringify(claims), "utf8").toString("base64url");
+  const signature = createHmac("sha256", secret).update(encodedClaims).digest("base64url");
+  return `${encodedClaims}.${signature}`;
+}
+
+function resolver() {
+  return createMfaAssertionVerificationResolver({
+    secret: assertionSecret,
+    issuer: assertionIssuer,
+    audience: assertionAudience,
+    now: () => nowSeconds,
+  });
 }
 
 describe("tierRequiresAdminMfa (P2-1)", () => {
@@ -61,9 +113,19 @@ describe("actorHasAdminScope", () => {
 
 describe("unverifiedMfaResolver", () => {
   it("does not trust a client-supplied MFA header", () => {
-    expect(unverifiedMfaResolver.isMfaVerified(requestWithHeader("true"))).toBe(false);
-    expect(unverifiedMfaResolver.isMfaVerified(requestWithHeader("TRUE"))).toBe(false);
-    expect(unverifiedMfaResolver.isMfaVerified(requestWithHeader(undefined))).toBe(false);
+    expect(
+      unverifiedMfaResolver.isMfaVerified(
+        requestWithHeaders({ "x-helix-mfa-verified": "true" }),
+        adminActor,
+      ),
+    ).toBe(false);
+    expect(
+      unverifiedMfaResolver.isMfaVerified(
+        requestWithHeaders({ "x-helix-mfa-verified": "TRUE" }),
+        adminActor,
+      ),
+    ).toBe(false);
+    expect(unverifiedMfaResolver.isMfaVerified(requestWithHeaders({}), adminActor)).toBe(false);
   });
 });
 
@@ -88,7 +150,9 @@ describe("server-side MFA assurance", () => {
     await expect(assurance.markVerifiedSession("server-session-token", verifiedAt)).resolves.toBe(
       true,
     );
-    await expect(assurance.isMfaVerified(requestWithHeader("true"))).resolves.toBe(true);
+    await expect(
+      assurance.isMfaVerified(requestWithHeaders({ "x-helix-mfa-verified": "true" })),
+    ).resolves.toBe(true);
 
     expect(recording.calls[0]?.text).toContain("mfa_verified_at");
     expect(recording.calls[0]?.text).toContain('u."twoFactorEnabled" = true');
@@ -109,7 +173,9 @@ describe("server-side MFA assurance", () => {
       "https://helix.example.test",
     );
 
-    await expect(assurance.isMfaVerified(requestWithHeader("true"))).resolves.toBe(false);
+    await expect(
+      assurance.isMfaVerified(requestWithHeaders({ "x-helix-mfa-verified": "true" })),
+    ).resolves.toBe(false);
     expect(recording.calls).toHaveLength(0);
   });
 
@@ -172,6 +238,139 @@ describe("recovery code material", () => {
     expect(recoveryCodeDigest(first)).toMatch(/^[0-9a-f]{64}$/u);
     expect(recoveryCodeDigest(` ${first} `)).toBe(recoveryCodeDigest(first));
     expect(recoveryCodeDigest(first)).not.toContain(first.replaceAll("-", ""));
+  });
+});
+
+describe("signed MFA assertion verification", () => {
+  it("accepts a valid, short-lived assertion bound to the authenticated actor", () => {
+    expect(
+      resolver().isMfaVerified(
+        requestWithHeaders({ [MFA_ASSERTION_HEADER]: signedAssertion() }),
+        adminActor,
+      ),
+    ).toBe(true);
+  });
+
+  it("never trusts the legacy client-controlled verification header", () => {
+    expect(
+      resolver().isMfaVerified(requestWithHeaders({ "x-helix-mfa-verified": "true" }), adminActor),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["actor", { sub: "other-admin" }],
+    ["organization", { org: "other-org" }],
+    ["authentication method", { amr: "pwd" }],
+    ["contract version", { v: 2 }],
+    ["issuer", { iss: "https://attacker.example" }],
+    ["audience", { aud: "other-service" }],
+  ])("rejects an assertion with the wrong %s binding", (_label, overrides) => {
+    expect(
+      resolver().isMfaVerified(
+        requestWithHeaders({ [MFA_ASSERTION_HEADER]: signedAssertion(overrides) }),
+        adminActor,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects tampering without comparing signatures as ordinary strings", () => {
+    const assertion = signedAssertion();
+    const tampered = `${assertion.slice(0, -1)}${assertion.endsWith("A") ? "B" : "A"}`;
+    expect(
+      resolver().isMfaVerified(
+        requestWithHeaders({ [MFA_ASSERTION_HEADER]: tampered }),
+        adminActor,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects an assertion signed with a different key", () => {
+    expect(
+      resolver().isMfaVerified(
+        requestWithHeaders({
+          [MFA_ASSERTION_HEADER]: signedAssertion(
+            {},
+            "different-mfa-assertion-secret-with-at-least-32-bytes",
+          ),
+        }),
+        adminActor,
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects signed but non-canonical claim shapes", () => {
+    expect(
+      resolver().isMfaVerified(
+        requestWithHeaders({
+          [MFA_ASSERTION_HEADER]: signClaims({
+            v: 1,
+            iss: assertionIssuer,
+            aud: assertionAudience,
+            sub: adminActor.id,
+            org: adminActor.orgId,
+            amr: "mfa",
+            iat: nowSeconds - 10,
+            exp: nowSeconds + 60,
+            unexpected: true,
+          }),
+        }),
+        adminActor,
+      ),
+    ).toBe(false);
+    expect(
+      resolver().isMfaVerified(
+        requestWithHeaders({ [MFA_ASSERTION_HEADER]: signClaims(["mfa"]) }),
+        adminActor,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    ["expired", { iat: nowSeconds - 120, exp: nowSeconds }],
+    ["issued in the future", { iat: nowSeconds + 1, exp: nowSeconds + 60 }],
+    ["non-positive lifetime", { iat: nowSeconds - 10, exp: nowSeconds - 10 }],
+    ["overlong lifetime", { iat: nowSeconds - 10, exp: nowSeconds + 291 }],
+  ])("rejects an %s assertion", (_label, overrides) => {
+    expect(
+      resolver().isMfaVerified(
+        requestWithHeaders({ [MFA_ASSERTION_HEADER]: signedAssertion(overrides) }),
+        adminActor,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([undefined, "", "not-an-assertion", "abc.def.extra", "!!!!.!!!!", ["one", "two"]])(
+    "rejects absent, malformed, or repeated assertions",
+    (value) => {
+      expect(
+        resolver().isMfaVerified(
+          requestWithHeaders(value === undefined ? {} : { [MFA_ASSERTION_HEADER]: value }),
+          adminActor,
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("fails closed without a configured verifier and rejects partial or weak configuration", () => {
+    expect(
+      createMfaAssertionVerificationResolver({}).isMfaVerified(
+        requestWithHeaders({ [MFA_ASSERTION_HEADER]: signedAssertion() }),
+        adminActor,
+      ),
+    ).toBe(false);
+    expect(() =>
+      createMfaAssertionVerificationResolver({
+        secret: "short",
+        issuer: assertionIssuer,
+        audience: assertionAudience,
+      }),
+    ).toThrow(/at least 32 bytes/u);
+    expect(() =>
+      createMfaAssertionVerificationResolver({
+        secret: assertionSecret,
+        issuer: assertionIssuer,
+      }),
+    ).toThrow(/configured together/u);
   });
 });
 

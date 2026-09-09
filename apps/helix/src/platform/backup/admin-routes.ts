@@ -308,8 +308,8 @@ function shouldExecute(value: boolean | undefined): boolean {
   if (value !== undefined) {
     return value;
   }
-  const raw = env().HELIX_ADMIN_BACKUP_EXECUTE;
-  return raw === "1" || raw?.toLowerCase() === "true" || raw?.toLowerCase() === "yes";
+  const raw = env().HELIX_ADMIN_BACKUP_EXECUTE?.toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes";
 }
 
 function shellCommand(args: readonly string[]): string {

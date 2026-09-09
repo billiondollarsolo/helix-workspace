@@ -104,7 +104,7 @@ export class SemanticSearchEngine implements SearchEngine {
 
     const queryVector = (await this.options.embeddings.embed([query]))[0];
     if (queryVector === undefined) {
-      return filteredKeywordResponse;
+      return { ...filteredKeywordResponse, hits: keywordHits.slice(offset, offset + limit) };
     }
 
     const semanticMatches = await this.options.vectorStore.query(

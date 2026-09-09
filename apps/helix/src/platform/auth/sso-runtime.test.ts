@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import type postgres from "postgres";
 import { describe, expect, it, vi } from "vitest";
 import { resolveTenantOidcPrivateKey, resolveTenantOidcUser } from "./sso-runtime.js";
@@ -32,24 +33,35 @@ describe("tenant OIDC runtime boundary", () => {
 
   it("resolves only the exact tenant-bound private key handle", async () => {
     const read = vi.fn().mockResolvedValue({
-      privateKeyPem: "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----",
+      privateKeyPem: generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({
+        type: "pkcs8",
+        format: "pem",
+      }),
       kid: "current",
       algorithm: "RS256",
     });
     await expect(
-      resolveTenantOidcPrivateKey(fakeSql([{ handle: "oidc-key" }]), { read }, {
-        providerId,
-        keyId: "oidc-key",
-        issuer: "https://idp.example.com",
-      }),
+      resolveTenantOidcPrivateKey(
+        fakeSql([{ handle: "oidc-key" }]),
+        { read },
+        {
+          providerId,
+          keyId: "oidc-key",
+          issuer: "https://idp.example.com",
+        },
+      ),
     ).resolves.toMatchObject({ kid: "current", algorithm: "RS256" });
     expect(read).toHaveBeenCalledWith({ orgId, scope: "idp", handle: "oidc-key" });
     await expect(
-      resolveTenantOidcPrivateKey(fakeSql([]), { read }, {
-        providerId,
-        keyId: "other-key",
-        issuer: "https://idp.example.com",
-      }),
+      resolveTenantOidcPrivateKey(
+        fakeSql([]),
+        { read },
+        {
+          providerId,
+          keyId: "other-key",
+          issuer: "https://idp.example.com",
+        },
+      ),
     ).rejects.toThrow("binding is invalid");
   });
 });
@@ -73,7 +85,8 @@ function oidcInput() {
 function fakeSql(rows: readonly Record<string, string>[]): postgres.Sql {
   const tag = (() => Promise.resolve(rows)) as unknown as postgres.Sql;
   Object.assign(tag, {
-    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) => callback(tag as never),
+    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) =>
+      callback(tag as never),
   });
   return tag;
 }

@@ -82,7 +82,7 @@ describe("PostgresSecurityPoliciesStore", () => {
     const store = new PostgresSecurityPoliciesStore(recording.sql);
     const policies = await store.list(orgId);
     expect(recording.calls[0]?.text).toContain("from admin_security_policies");
-    expect(policies).toHaveLength(6);
+    expect(policies).toHaveLength(7);
     expect(policies.every((policy) => policy.orgId === orgId)).toBe(true);
   });
 

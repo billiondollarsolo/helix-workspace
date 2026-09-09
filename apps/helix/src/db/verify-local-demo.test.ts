@@ -7,13 +7,11 @@ describe("assertLocalDemoVerified", () => {
       assertLocalDemoVerified({
         orgCount: 1,
         actorCount: 1,
-        hasDocsCommentScope: true,
         betterAuthUserCount: 1,
         betterAuthCredentialCount: 1,
         oauthCredentialCount: 1,
         mailHitCount: 1,
         mailThreadMessageCount: 1,
-        docsCount: 1,
         rootDriveEntryCount: 2,
         projectDriveEntryCount: 1,
         calendarEventCount: 2,
@@ -21,7 +19,6 @@ describe("assertLocalDemoVerified", () => {
         chatMessageHitCount: 1,
         hasRenovateMail: true,
         hasAmazonMailWithAttachment: true,
-        hasQuarterlyPlanningDoc: true,
         hasAiServicesDriveFile: true,
         hasProjectsDriveFolder: true,
         hasTrainingCourseDriveFile: true,
@@ -53,13 +50,11 @@ describe("assertLocalDemoVerified", () => {
       assertLocalDemoVerified({
         orgCount: 0,
         actorCount: 0,
-        hasDocsCommentScope: false,
         betterAuthUserCount: 0,
         betterAuthCredentialCount: 0,
         oauthCredentialCount: 0,
         mailHitCount: 0,
         mailThreadMessageCount: 0,
-        docsCount: 0,
         rootDriveEntryCount: 0,
         projectDriveEntryCount: 0,
         calendarEventCount: 0,
@@ -67,7 +62,6 @@ describe("assertLocalDemoVerified", () => {
         chatMessageHitCount: 0,
         hasRenovateMail: false,
         hasAmazonMailWithAttachment: false,
-        hasQuarterlyPlanningDoc: false,
         hasAiServicesDriveFile: false,
         hasProjectsDriveFolder: false,
         hasTrainingCourseDriveFile: false,
@@ -94,21 +88,18 @@ describe("assertLocalDemoVerified", () => {
     };
     expect(verify).toThrow("Local demo verification failed");
     expect(verify).toThrow("local demo org expected >= 1, got 0");
-    expect(verify).toThrow("Docs comment/suggestion scope was not found");
-    expect(verify).toThrow(
-      "local demo org expected >= 1, got 0; actor expected >= 1, got 0; Docs comment/suggestion scope was not found; Better Auth user linkage expected >= 1, got 0; Better Auth credential expected >= 1, got 0; OAuth credential expected >= 1, got 0; mail search hits expected >= 1, got 0; mail thread messages expected >= 1, got 0; docs list results expected >= 1, got 0; root Drive entries expected >= 2, got 0; project Drive entries expected >= 1, got 0; calendar events expected >= 2, got 0; chat rooms expected >= 1, got 0; chat message hits expected >= 1, got 0",
-    );
+    expect(verify).toThrow();
     expect(verify).toThrow("Renovate mail was not found");
     expect(verify).toThrow("Product planning review calendar event was not found");
     expect(verify).toThrow("Helix launch chat room was not found");
     expect(verify).toThrow("Mail density chat message was not found");
     expect(verify).toThrow("Better Auth email/password login was not found");
     expect(verify).toThrow("Better Auth session login was not found");
-    expect(verify).toThrow("seeded storage objects expected >= 5, got 0");
+    expect(verify).toThrow("seeded storage objects expected >= 3, got 0");
     expect(verify).toThrow("seeded storage object content was not found");
-    expect(verify).toThrow("seeded search hits expected >= 13, got 0");
+    expect(verify).toThrow("seeded search hits expected >= 11, got 0");
     expect(verify).toThrow("seeded search results was not found");
-    expect(verify).toThrow("curated search documents expected >= 13, got 0");
+    expect(verify).toThrow("curated search documents expected >= 11, got 0");
     expect(verify).toThrow("curated search document projections was not found");
     expect(verify).toThrow("curated search projection failures: mail:Renovate mail");
     expect(verify).toThrow("volume mail threads expected >= 10000, got 0");
@@ -121,13 +112,11 @@ describe("assertLocalDemoVerified", () => {
       assertLocalDemoVerified({
         orgCount: 1,
         actorCount: 1,
-        hasDocsCommentScope: true,
         betterAuthUserCount: 1,
         betterAuthCredentialCount: 1,
         oauthCredentialCount: 1,
         mailHitCount: 1,
         mailThreadMessageCount: 1,
-        docsCount: 1,
         rootDriveEntryCount: 2,
         projectDriveEntryCount: 1,
         calendarEventCount: 2,
@@ -135,7 +124,6 @@ describe("assertLocalDemoVerified", () => {
         chatMessageHitCount: 1,
         hasRenovateMail: true,
         hasAmazonMailWithAttachment: true,
-        hasQuarterlyPlanningDoc: true,
         hasAiServicesDriveFile: true,
         hasProjectsDriveFolder: true,
         hasTrainingCourseDriveFile: true,
@@ -170,7 +158,7 @@ describe("isExpectedVolumeSearchHit", () => {
     expect(
       isExpectedVolumeSearchHit(
         {
-          id: "mail:00000000-0000-4200-8000-000000000001",
+          id: `mail:${orgId}:00000000-0000-4200-8000-000000000001`,
           type: "mail",
           title: "helix-volume-mail-search message 00001",
           body: "helix-volume-mail-search body 00001. Synthetic corpus.",

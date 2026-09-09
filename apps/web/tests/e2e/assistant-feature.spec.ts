@@ -1,22 +1,20 @@
 /**
  * Assistant feature E2E (P1-1) — drives the real /assistant UI in a real browser.
  *
- * MOCKED (default): `/api/**` is intercepted; the assistant.chat tool returns a
+ * MOCKED (default): `/v1/api/**` is intercepted; the assistant.chat tool returns a
  * deterministic turn with a pending tool-call confirmation.
  * LIVE (`HELIX_E2E_BACKEND=live`): drives the docker-compose backend's assistant
  * tool with a real OAuth token. See `support/backend-mode.ts`.
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
-import { isLiveBackend, mintLiveAccessToken } from "./support/backend-mode";
+import { isLiveBackend, seedBrowserSession } from "./support/backend-mode";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 
-const accessTokenStorageKey = "helix.accessToken";
-const assistantScope = "platform.read assistant.read assistant.write";
 const prompt = "Share the Q3 Launch PRD with Bruno.";
 
 test.describe("/assistant feature flow", () => {
   test("sends a prompt and renders the backend assistant turn", async ({ page }) => {
-    const accessToken = await seedAccessToken(page, assistantScope, "e2e-assistant-token");
+    const accessToken = await seedBrowserSession(page, "e2e-assistant-token");
     if (!isLiveBackend()) {
       await mockAssistantBackend(page, accessToken);
     }
@@ -40,21 +38,13 @@ test.describe("/assistant feature flow", () => {
   });
 });
 
-async function seedAccessToken(page: Page, scope: string, mockToken: string): Promise<string> {
-  const token = isLiveBackend() ? await mintLiveAccessToken(scope) : mockToken;
-  await page.addInitScript(({ key, value }) => window.localStorage.setItem(key, value), {
-    key: accessTokenStorageKey,
-    value: token,
-  });
-  return token;
-}
-
 async function mockAssistantBackend(page: Page, accessToken: string) {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
+    if (await fulfillCoreAppsRoute(route)) return;
 
-    if (request.headers().authorization !== `Bearer ${accessToken}`) {
+    if (!(request.headers().cookie ?? "").includes(`helix_session=${accessToken}`)) {
       await route.fulfill({
         status: 401,
         contentType: "application/json",
@@ -63,7 +53,7 @@ async function mockAssistantBackend(page: Page, accessToken: string) {
       return;
     }
 
-    if (pathname === "/api/tools/assistant.chat") {
+    if (pathname === "/v1/api/tools/assistant.chat") {
       await fulfillJson(route, {
         conversation: { id: "00000000-0000-4000-8000-000000000123" },
         response: {

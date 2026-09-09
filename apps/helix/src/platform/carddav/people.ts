@@ -4,37 +4,48 @@ import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { parseVCard } from "../dav/standards.js";
-import {
-  InvalidVcardError,
-  parseVcard,
-} from "./store.js";
+import { InvalidVcardError, parseVcard } from "./store.js";
 
 const uuid = z.string().uuid();
 const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(25),
-  query: z.string().trim().max(200).optional().transform((value) => value || undefined),
-  favorites: z.enum(["true", "false"]).optional().transform((value) => value === "true"),
+  query: z
+    .string()
+    .trim()
+    .max(200)
+    .optional()
+    .transform((value) => value || undefined),
+  favorites: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value === "true"),
 });
 const importSchema = z.object({
-  href: z.string().trim().regex(/^[A-Za-z0-9._-]{1,200}\.vcf$/u).optional(),
+  href: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9._-]{1,200}\.vcf$/u)
+    .optional(),
   vcard: z.string().min(1).max(1_048_576),
 });
-const relationshipSchema = z.record(
-  z.string().regex(/^[a-z0-9_-]{1,64}$/u),
-  z.string().trim().min(1).max(512),
-).refine((value) => Object.keys(value).length <= 20, "At most 20 relationships are allowed.");
-const avatarSchema = z.string().max(350_000).regex(
-  /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/u,
-).nullable();
-const updateSchema = z.object({
-  favorite: z.boolean().optional(),
-  avatarDataUrl: avatarSchema.optional(),
-  relationship: relationshipSchema.optional(),
-}).refine((value) => Object.keys(value).length > 0, "A contact change is required.");
-const mergeSchema = z.object({ sourceId: uuid, targetId: uuid }).refine(
-  (value) => value.sourceId !== value.targetId,
-  "Merge contacts must be distinct.",
-);
+const relationshipSchema = z
+  .record(z.string().regex(/^[a-z0-9_-]{1,64}$/u), z.string().trim().min(1).max(512))
+  .refine((value) => Object.keys(value).length <= 20, "At most 20 relationships are allowed.");
+const avatarSchema = z
+  .string()
+  .max(350_000)
+  .regex(/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/u)
+  .nullable();
+const updateSchema = z
+  .object({
+    favorite: z.boolean().optional(),
+    avatarDataUrl: avatarSchema.optional(),
+    relationship: relationshipSchema.optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, "A contact change is required.");
+const mergeSchema = z
+  .object({ sourceId: uuid, targetId: uuid })
+  .refine((value) => value.sourceId !== value.targetId, "Merge contacts must be distinct.");
 
 export interface PeopleRecord {
   readonly id: string;
@@ -165,8 +176,9 @@ export class PostgresPeopleStore implements PeopleStore {
           and addressbook_id = ${addressBookId} and href = ${href} and deleted_at is null
         limit 1 for update
       `;
-      const rows = existing[0] === undefined
-        ? await tx<PeopleRow[]>`
+      const rows =
+        existing[0] === undefined
+          ? await tx<PeopleRow[]>`
             insert into carddav_contacts (
               org_id, owner_actor_id, addressbook_id, href, uid, display_name, email, favorite,
               avatar_data_url, relationship, vcard, etag
@@ -180,7 +192,7 @@ export class PostgresPeopleStore implements PeopleStore {
               coalesce(nullif(display_name, ''), email, 'Unnamed contact') as display_name,
               favorite, avatar_data_url, relationship
           `
-        : await tx<PeopleRow[]>`
+          : await tx<PeopleRow[]>`
             update carddav_contacts set uid = ${parsed.uid}, display_name = ${parsed.displayName ?? null},
               email = ${parsed.email ?? null}, favorite = ${parsed.favorite},
               avatar_data_url = ${parsed.avatarDataUrl ?? null}, relationship = ${tx.json(parsed.relationship)},
@@ -327,7 +339,9 @@ export async function registerPeopleRoutes(
     const query = querySchema.safeParse(request.query);
     if (!query.success) return reply.code(400).send({ error: "invalid_people_query" });
     const actor = await options.actorFromRequest(request);
-    return { people: await options.store.list({ orgId: actor.orgId, actorId: actor.id, ...query.data }) };
+    return {
+      people: await options.store.list({ orgId: actor.orgId, actorId: actor.id, ...query.data }),
+    };
   });
   app.get("/api/people/autocomplete", async (request, reply) => {
     const query = querySchema.safeParse(request.query);
@@ -356,7 +370,8 @@ export async function registerPeopleRoutes(
         }),
       });
     } catch (error) {
-      if (error instanceof InvalidVcardError) return reply.code(400).send({ error: "invalid_vcard" });
+      if (error instanceof InvalidVcardError)
+        return reply.code(400).send({ error: "invalid_vcard" });
       throw error;
     }
   });
@@ -374,14 +389,19 @@ export async function registerPeopleRoutes(
     const body = updateSchema.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ error: "invalid_contact" });
     const actor = await options.actorFromRequest(request);
-    const contact = await options.store.updateContact({ orgId: actor.orgId, actorId: actor.id, id: params.data.id, ...body.data });
+    const contact = await options.store.updateContact({
+      orgId: actor.orgId,
+      actorId: actor.id,
+      id: params.data.id,
+      ...body.data,
+    });
     return contact === null ? reply.code(404).send({ error: "contact_not_found" }) : { contact };
   });
   app.delete("/api/people/contacts/:id", async (request, reply) => {
     const params = z.object({ id: uuid }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ error: "invalid_contact" });
     const actor = await options.actorFromRequest(request);
-    return await options.store.deleteContact(actor.orgId, actor.id, params.data.id)
+    return (await options.store.deleteContact(actor.orgId, actor.id, params.data.id))
       ? reply.code(204).send()
       : reply.code(404).send({ error: "contact_not_found" });
   });
@@ -389,7 +409,11 @@ export async function registerPeopleRoutes(
     const body = mergeSchema.safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: "invalid_contact_merge" });
     const actor = await options.actorFromRequest(request);
-    const contact = await options.store.mergeContacts({ orgId: actor.orgId, actorId: actor.id, ...body.data });
+    const contact = await options.store.mergeContacts({
+      orgId: actor.orgId,
+      actorId: actor.id,
+      ...body.data,
+    });
     return contact === null ? reply.code(404).send({ error: "contact_not_found" }) : { contact };
   });
 }
@@ -453,7 +477,9 @@ function updateVcard(
 }
 
 function safeAvatar(value: string | null): string | null {
-  return value !== null && value.length <= 350_000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/u.test(value)
+  return value !== null &&
+    value.length <= 350_000 &&
+    /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/u.test(value)
     ? value
     : null;
 }

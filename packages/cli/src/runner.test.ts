@@ -18,6 +18,86 @@ class CaptureStream extends Writable {
   }
 }
 
+describe("CLI smoke (E9.3)", () => {
+  it("reports its installed version without credentials or network access", async () => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    expect(
+      await runCli(["--version"], {}, { stdin: Readable.from([]), stdout, stderr }, async () => {
+        throw new Error("Version must be offline");
+      }),
+    ).toBe(0);
+    expect(stdout.output).toBe("helix 1.0.0\n");
+    expect(stderr.output).toBe("");
+  });
+  it("exports help usage and tool-list module path with exit 0", async () => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+
+    await expect(
+      runCli(
+        ["--help"],
+        { HELIX_BASE_URL: "https://helix.example" },
+        {
+          stdin: Readable.from([]),
+          stdout,
+          stderr,
+        },
+      ),
+    ).resolves.toBe(0);
+
+    expect(stdout.output).toContain("Usage:");
+    expect(stdout.output).toContain("helix tool list");
+    expect(stdout.output).toContain("helix tool call");
+    expect(stderr.output).toBe("");
+  });
+
+  it("lists tools via openapi source (module path)", async () => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      requests.push({ url, init });
+      return new Response(
+        JSON.stringify({
+          openapi: "3.1.0",
+          paths: {
+            "/api/tools/mail.list": {
+              post: {
+                operationId: "mail.list",
+                summary: "List mail",
+                "x-helix-tool": {
+                  id: "mail.list",
+                  permission: "mail.read",
+                  sideEffects: "read",
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    await expect(
+      runCli(
+        ["tool", "list", "--source", "openapi"],
+        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-smoke" },
+        {
+          stdin: Readable.from([]),
+          stdout,
+          stderr,
+        },
+        fetchImpl,
+      ),
+    ).resolves.toBe(0);
+
+    expect(requests.some((request) => request.url.includes("/openapi"))).toBe(true);
+    expect(stdout.output).toContain("mail.list");
+    expect(stderr.output).toBe("");
+  });
+});
+
 describe("runCli API document commands", () => {
   it("fetches and formats the AsyncAPI document", async () => {
     const stdout = new CaptureStream();
@@ -46,8 +126,10 @@ describe("runCli API document commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/asyncapi.json",
+        url: "https://helix.example/v1/asyncapi.json",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "GET",
           headers: {
             accept: "application/json",
@@ -89,7 +171,7 @@ describe("runCli completion commands", () => {
     expect(requests).toEqual([]);
     expect(stdout.output).toContain("complete -F _helix_completion helix");
     expect(stdout.output).toContain("helix tool list --source openapi");
-    expect(stdout.output).toContain("tool mail chat drive docs calendar meet assistant webhook");
+    expect(stdout.output).toContain("tool mail chat drive calendar meet assistant webhook");
     expect(stdout.output).toContain("backup restore reindex action");
     expect(stdout.output).toContain("serve resources");
     expect(stdout.output).toContain("list read");
@@ -206,8 +288,10 @@ describe("runCli webhook wrapper commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/tools/webhook.outbound.create",
+        url: "https://helix.example/v1/api/tools/webhook.outbound.create",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -259,8 +343,10 @@ describe("runCli backup and restore operator commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/admin/backups",
+        url: "https://helix.example/v1/api/admin/backups",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -313,8 +399,10 @@ describe("runCli backup and restore operator commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/admin/restores",
+        url: "https://helix.example/v1/api/admin/restores",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -355,8 +443,10 @@ describe("runCli backup and restore operator commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/admin/search/reindex",
+        url: "https://helix.example/v1/api/admin/search/reindex",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -408,8 +498,10 @@ describe("runCli action status commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/actions/00000000-0000-4000-8000-000000000111",
+        url: "https://helix.example/v1/actions/00000000-0000-4000-8000-000000000111",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "GET",
           headers: {
             accept: "application/json",
@@ -451,8 +543,10 @@ describe("runCli action status commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/tools/pending/00000000-0000-4000-8000-000000000111/approve",
+        url: "https://helix.example/v1/api/tools/pending/00000000-0000-4000-8000-000000000111/approve",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -505,8 +599,10 @@ describe("runCli action status commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/tools/pending/00000000-0000-4000-8000-000000000111/cancel",
+        url: "https://helix.example/v1/api/tools/pending/00000000-0000-4000-8000-000000000111/cancel",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -697,8 +793,10 @@ describe("runCli tool discovery commands", () => {
     ).resolves.toBe(0);
 
     expect(requests[0]).toMatchObject({
-      url: "https://helix.example/mcp",
+      url: "https://helix.example/v1/mcp",
       init: {
+        redirect: "error",
+        signal: expect.any(AbortSignal),
         method: "POST",
         body: '{"jsonrpc":"2.0","id":"helix-tool-list","method":"tools/list"}',
       },
@@ -856,8 +954,10 @@ describe("runCli tool discovery commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/tools/mail.send",
+        url: "https://helix.example/v1/api/tools/mail.send",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -886,7 +986,12 @@ describe("runCli tool discovery commands", () => {
 
     await expect(
       runCli(
-        ["drive", "upload", "./report.pdf", "--folder", "44444444-4444-4444-8444-444444444444"],
+        [
+          "drive",
+          "upload",
+          "--json",
+          '{"name":"report.pdf","folderId":"44444444-4444-4444-8444-444444444444"}',
+        ],
         { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
         {
           stdin: Readable.from([]),
@@ -899,15 +1004,17 @@ describe("runCli tool discovery commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/tools/drive.upload",
+        url: "https://helix.example/v1/api/tools/drive.upload",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
             authorization: "Bearer token-1",
             "content-type": "application/json",
           },
-          body: '{"name":"report.pdf","metadata":{"localPath":"./report.pdf"},"folderId":"44444444-4444-4444-8444-444444444444"}',
+          body: '{"name":"report.pdf","folderId":"44444444-4444-4444-8444-444444444444"}',
         },
       },
     ]);
@@ -942,8 +1049,10 @@ describe("runCli tool discovery commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/tools/chat.send",
+        url: "https://helix.example/v1/api/tools/chat.send",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -996,8 +1105,10 @@ describe("runCli tool discovery commands", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/tools/calendar.find-time",
+        url: "https://helix.example/v1/api/tools/calendar.find-time",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -1041,8 +1152,10 @@ describe("runCli plugin install", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/tools/plugin.install",
+        url: "https://helix.example/v1/api/tools/plugin.install",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -1086,8 +1199,10 @@ describe("runCli plugin lifecycle", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/api/tools/plugin.disable",
+        url: "https://helix.example/v1/api/tools/plugin.disable",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -1131,8 +1246,10 @@ describe("runCli login", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/oauth/token",
+        url: "https://helix.example/v1/oauth/token",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -1177,8 +1294,10 @@ describe("runCli MCP serve", () => {
 
     expect(requests).toEqual([
       {
-        url: "https://helix.example/mcp",
+        url: "https://helix.example/v1/mcp",
         init: {
+          redirect: "error",
+          signal: expect.any(AbortSignal),
           method: "POST",
           headers: {
             accept: "application/json",
@@ -1303,5 +1422,139 @@ describe("runCli logout", () => {
     ).resolves.toBe(0);
 
     expect(stderr.output).toContain("unset HELIX_ACCESS_TOKEN");
+  });
+});
+
+describe("CLI MCP transport reliability", () => {
+  it("preserves byte-framed Unicode across split chunks and adjacent messages", async () => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    const messages = [1, 2].map((id) =>
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name: "chat.send", arguments: { body: "Hello 🌍 café" } },
+      }),
+    );
+    const wire = Buffer.from(
+      messages
+        .map((body) => `Content-Length: ${String(Buffer.byteLength(body))}\r\n\r\n${body}`)
+        .join(""),
+    );
+    const chunks = Array.from(wire, (byte) => Buffer.from([byte]));
+    const received: string[] = [];
+    expect(
+      await runCli(
+        ["mcp", "serve"],
+        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "helix_ak_example" },
+        { stdin: Readable.from(chunks), stdout, stderr },
+        async (_url, init) => {
+          expect(init.headers).toMatchObject({ authorization: "Bearer helix_ak_example" });
+          expect(init.redirect).toBe("error");
+          expect(init.signal).toBeInstanceOf(AbortSignal);
+          received.push(typeof init.body === "string" ? init.body : "");
+          return Response.json({ jsonrpc: "2.0", id: received.length, result: { text: "🌍" } });
+        },
+      ),
+    ).toBe(0);
+    expect(received).toEqual(messages);
+    expect(stdout.output).toContain('"text":"🌍"');
+    expect(stderr.output).toBe("");
+  });
+
+  it.each([
+    "Content-Length: 1048577\r\n\r\n",
+    "Content-Length: 10oops\r\n\r\n",
+    "Content-Length: 1\r\nContent-Length: 1\r\n\r\nx",
+    "x".repeat(1048577),
+  ])("rejects an oversized or malformed frame before HTTP", async (wire) => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    let requests = 0;
+    expect(
+      await runCli(
+        ["mcp", "serve"],
+        { HELIX_BASE_URL: "https://helix.example" },
+        { stdin: Readable.from([wire]), stdout, stderr },
+        async () => {
+          requests++;
+          return Response.json({});
+        },
+      ),
+    ).toBe(1);
+    expect(requests).toBe(0);
+    expect(stdout.output).toBe("");
+    expect(stderr.output).toMatch(/size|length/i);
+  });
+
+  it("does not invent a JSON-RPC response for an accepted notification", async () => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    expect(
+      await runCli(
+        ["mcp", "serve"],
+        { HELIX_BASE_URL: "https://helix.example" },
+        {
+          stdin: Readable.from(['{"jsonrpc":"2.0","method":"notifications/initialized"}\n']),
+          stdout,
+          stderr,
+        },
+        async () => new Response(null, { status: 202 }),
+      ),
+    ).toBe(0);
+    expect(stdout.output).toBe("");
+  });
+
+  it.each([
+    {
+      jsonrpc: "2.0",
+      id: "helix-tool-call",
+      result: { isError: true, content: [{ type: "text", text: "denied" }] },
+    },
+    {},
+  ])("returns failure for a tool error or malformed RPC response", async (response) => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    expect(
+      await runCli(
+        ["tool", "call", "chat.send", "--transport", "mcp", "--json", "{}"],
+        { HELIX_BASE_URL: "https://helix.example" },
+        { stdin: Readable.from([]), stdout, stderr },
+        async () => Response.json(response),
+      ),
+    ).toBe(1);
+  });
+});
+
+describe("MCP persistent transport recovery", () => {
+  it.each(["network", "wrong-id"])("continues after a %s failure", async (mode) => {
+    const stdout = new CaptureStream();
+    const stderr = new CaptureStream();
+    let calls = 0;
+    const input = [1, 2].map(
+      (id) => JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" }) + "\n",
+    );
+    expect(
+      await runCli(
+        ["mcp", "serve"],
+        { HELIX_BASE_URL: "https://helix.example" },
+        { stdin: Readable.from(input), stdout, stderr },
+        async () => {
+          calls += 1;
+          if (calls === 1 && mode === "network") throw new Error("connection reset");
+          return Response.json({ jsonrpc: "2.0", id: calls === 1 ? 99 : 2, result: { tools: [] } });
+        },
+      ),
+    ).toBe(0);
+    const results = stdout.output
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(results[0]).toMatchObject({
+      id: 1,
+      error: { code: mode === "network" ? -32000 : -32603 },
+    });
+    expect(results[1]).toEqual({ jsonrpc: "2.0", id: 2, result: { tools: [] } });
   });
 });

@@ -24,7 +24,7 @@ const raw = Buffer.from(
     "",
     "--eicar",
     "Content-Type: application/octet-stream",
-    'Content-Disposition: attachment; filename="eicar.com"',
+    'Content-Disposition: attachment; filename="eicar.txt"',
     "",
     "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
     "--eicar--",
@@ -172,7 +172,7 @@ describe("mail quarantine admin flow", () => {
     const rejected = await app.inject({
       method: "POST",
       url: `/api/admin/mail/quarantine/${quarantineId}/release`,
-      payload: { reason: "False positive review" },
+      payload: { confirmed: true, reason: "False positive review" },
     });
     expect(rejected.statusCode).toBe(409);
     expect(mail.inserted).toHaveLength(0);
@@ -183,7 +183,7 @@ describe("mail quarantine admin flow", () => {
     const released = await app.inject({
       method: "POST",
       url: `/api/admin/mail/quarantine/${quarantineId}/release`,
-      payload: { reason: "False positive review" },
+      payload: { confirmed: true, reason: "False positive review" },
     });
     expect(released.statusCode).toBe(200);
     expect(mail.inserted).toHaveLength(1);
@@ -197,7 +197,7 @@ describe("mail quarantine admin flow", () => {
     const unavailable = await app.inject({
       method: "POST",
       url: `/api/admin/mail/quarantine/${quarantineId}/release`,
-      payload: { reason: "False positive review" },
+      payload: { confirmed: true, reason: "False positive review" },
     });
     expect(unavailable.statusCode).toBe(503);
     expect(mail.inserted).toHaveLength(0);
@@ -210,7 +210,7 @@ describe("mail quarantine admin flow", () => {
     const denied = await app.inject({
       method: "DELETE",
       url: `/api/admin/mail/quarantine/${quarantineId}`,
-      payload: { reason: "Confirmed malware" },
+      payload: { confirmed: true, reason: "Confirmed malware" },
     });
     expect(denied.statusCode).toBe(403);
 
@@ -224,7 +224,7 @@ describe("mail quarantine admin flow", () => {
     const deleted = await app.inject({
       method: "DELETE",
       url: `/api/admin/mail/quarantine/${quarantineId}`,
-      payload: { reason: "Confirmed malware" },
+      payload: { confirmed: true, reason: "Confirmed malware" },
     });
     expect(deleted.statusCode).toBe(200);
     expect(quarantine.deletions).toHaveLength(1);

@@ -23,6 +23,8 @@ export interface OAuthClientRecord {
    * matching, no wildcards.
    */
   readonly redirectUris: readonly string[];
+  /** Latest successful token issuance, when known by the backing store. */
+  readonly lastUsedAt?: Date | null;
   readonly expiresAt: Date | null;
   readonly revokedAt: Date | null;
   /** Epoch copied into issued tokens; revoke/secret rotation increments it. */
@@ -33,6 +35,8 @@ export interface OAuthClientCreateInput {
   readonly actorId: string;
   readonly orgId: string;
   readonly scopes: readonly string[];
+  /** Human owner allowed to approve this credential's queued actions. */
+  readonly approvalOwnerActorId?: string;
   /**
    * Per-client redirect-URI allowlist (CRITICAL-3). When omitted, the client
    * is created with no registered redirect URIs and `/oauth/authorize` will

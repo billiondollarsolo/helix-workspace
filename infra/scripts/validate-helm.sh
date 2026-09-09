@@ -14,12 +14,10 @@ render() {
   "$HELM_BIN" lint "$CHART_DIR" \
     --set-string image.digest="$VALIDATION_DIGEST" \
     --set-string fips.imageDigest="$VALIDATION_DIGEST" \
-    --set-string contentConverter.image.digest="$VALIDATION_DIGEST" \
     "$@" >/dev/null
   "$HELM_BIN" template helix "$CHART_DIR" \
     --set-string image.digest="$VALIDATION_DIGEST" \
     --set-string fips.imageDigest="$VALIDATION_DIGEST" \
-    --set-string contentConverter.image.digest="$VALIDATION_DIGEST" \
     "$@" >"$WORK_DIR/$name.yaml"
 }
 
@@ -68,7 +66,6 @@ assert_template_fails() {
   if "$HELM_BIN" template helix "$CHART_DIR" \
     --set-string image.digest="$VALIDATION_DIGEST" \
     --set-string fips.imageDigest="$VALIDATION_DIGEST" \
-    --set-string contentConverter.image.digest="$VALIDATION_DIGEST" \
     "$@" >"$WORK_DIR/$name.out" 2>&1; then
     echo "Helm validation failed: unsafe network configuration $name was accepted" >&2
     exit 1
@@ -91,6 +88,9 @@ if "$HELM_BIN" template helix "$CHART_DIR" \
   exit 1
 fi
 
+render storage
+assert_not_contains "$WORK_DIR/storage.yaml" "HELIX_DRIVE_OFFICE_PREVIEW_URL" "storage must not require the converter"
+assert_not_contains "$WORK_DIR/storage.yaml" "^  name: helix-content-converter$" "storage must not deploy the converter"
 render base
 render business -f "$CHART_DIR/values-business.yaml"
 render enterprise -f "$CHART_DIR/values-enterprise.yaml"
@@ -126,7 +126,6 @@ ROLES="$WORK_DIR/roles.yaml"
 NETWORK_ALLOWLIST="$WORK_DIR/network-allowlist.yaml"
 
 extract_policy "$BASE" helix-default "$WORK_DIR/base-default-network-policy.yaml"
-extract_policy "$BASE" helix-content-converter-network "$WORK_DIR/converter-network-policy.yaml"
 extract_policy "$BASE" helix-image-verifier "$WORK_DIR/base-verifier-network-policy.yaml"
 extract_policy "$ROLES" helix-realtime "$WORK_DIR/role-network-policy.yaml"
 extract_policy "$ENTERPRISE" helix-default "$WORK_DIR/enterprise-default-network-policy.yaml"
@@ -134,7 +133,6 @@ extract_policy "$SOVEREIGN" helix-image-verifier "$WORK_DIR/sovereign-verifier-n
 extract_policy "$NETWORK_ALLOWLIST" helix-default "$WORK_DIR/allowlist-network-policy.yaml"
 
 BASE_DEFAULT_POLICY="$WORK_DIR/base-default-network-policy.yaml"
-CONVERTER_POLICY="$WORK_DIR/converter-network-policy.yaml"
 BASE_VERIFIER_POLICY="$WORK_DIR/base-verifier-network-policy.yaml"
 ROLE_POLICY="$WORK_DIR/role-network-policy.yaml"
 ENTERPRISE_DEFAULT_POLICY="$WORK_DIR/enterprise-default-network-policy.yaml"
@@ -143,14 +141,6 @@ ALLOWLIST_POLICY="$WORK_DIR/allowlist-network-policy.yaml"
 
 assert_contains "$BASE" '^kind: Deployment$' "base chart must render a Deployment"
 assert_contains "$BASE" 'image: "ghcr.io/helix/helix@sha256:1111111111111111111111111111111111111111111111111111111111111111"' "base deployment must use only the approved digest"
-assert_contains "$BASE" 'image: "ghcr.io/helix/drive-preview-libreoffice@sha256:1111111111111111111111111111111111111111111111111111111111111111"' "content converter must use only the approved digest"
-assert_contains "$BASE" 'HELIX_DRIVE_OFFICE_PREVIEW_URL' "production API must require the isolated converter"
-assert_contains "$BASE" '^        runAsUser: 65532$' "content converter must run as an unprivileged UID"
-assert_contains "$BASE" '^          type: RuntimeDefault$' "content converter must use the runtime seccomp profile"
-assert_contains "$BASE" 'DRIVE_PREVIEW_MAX_ARCHIVE_BYTES' "content converter must receive archive bounds"
-assert_contains "$BASE" 'DRIVE_PREVIEW_MAX_CELLS' "content converter must receive cell bounds"
-assert_contains "$BASE" 'DRIVE_PREVIEW_MAX_PAGES' "content converter must receive page bounds"
-assert_contains "$BASE" 'sizeLimit: 512Mi' "content converter temporary storage must be memory-backed and bounded"
 assert_contains "$BASE" '^kind: Job$' "base chart must render the pre-install image verifier"
 assert_contains "$BASE" 'helm.sh/hook: pre-install,pre-upgrade' "image verification must block installs and upgrades"
 assert_contains "$BASE" 'ghcr.io/sigstore/cosign/cosign:v3\.0\.6@sha256:de9c65609e6bde17e6b48de485ee788407c9502fa08b8f4459f595b21f56cd00' "image verifier itself must be digest-pinned"
@@ -163,6 +153,14 @@ assert_contains "$BASE" '^kind: HorizontalPodAutoscaler$' "base chart must rende
 assert_contains "$BASE" 'helix_websocket_connections_active' "HPA must autoscale on the WebSocket-connection metric (PRD 16.1)"
 assert_contains "$BASE" '^  behavior:$' "HPA must declare scale-up/scale-down behaviour for spiky WebSocket traffic"
 assert_contains "$BASE" 'prometheus.io/scrape: "true"' "deployment must expose Prometheus scrape hints for the WS metrics adapter"
+# Schema migrations must run before the app rolls. docker-compose.production
+# has always gated the app on a `helix-migrate` service; the chart shipped
+# without an equivalent, so a Kubernetes upgrade served new code against the
+# old schema until this Job existed.
+assert_contains "$BASE" '^kind: Job$' "base chart must render the migration Job"
+assert_contains "$BASE" 'dist/db/migrate.js' "migration Job must run the migration runner"
+assert_contains "$BASE" '"helm.sh/hook": pre-install,pre-upgrade' "migrations must run as a pre-install/pre-upgrade hook, before the Deployment is applied"
+
 assert_contains "$BASE" '^kind: PodDisruptionBudget$' "base chart must render a PDB"
 assert_contains "$BASE" '^  minReadySeconds: 10$' "workloads must remain ready before a rollout advances"
 assert_contains "$BASE" '^  progressDeadlineSeconds: 600$' "failed rollouts must have a finite progress deadline"
@@ -171,7 +169,6 @@ assert_contains "$BASE" '^      maxSurge: 1$' "rolling releases must canary one 
 assert_contains "$BASE" '^[[:space:]]+startupProbe:$' "slow starts must be separated from liveness failure"
 assert_contains "$BASE" 'topologyKey: topology\.kubernetes\.io/zone' "replicas must spread across zones"
 assert_contains "$BASE" 'topologyKey: kubernetes\.io/hostname' "replicas must spread across nodes"
-assert_contains "$BASE" '^  name: helix-content-converter$' "the converter must have its own disruption budget"
 assert_contains "$BASE" '^kind: NetworkPolicy$' "base chart must render a NetworkPolicy"
 assert_contains "$BASE_DEFAULT_POLICY" 'helix.io/role: "default"' "default policy must select only the default role"
 assert_contains "$BASE_DEFAULT_POLICY" 'helix.io/service-account: "helix"' "default policy must select its exact service-account identity"
@@ -180,10 +177,6 @@ assert_contains "$BASE_DEFAULT_POLICY" 'kubernetes.io/metadata.name: "kube-syste
 assert_contains "$BASE_DEFAULT_POLICY" 'k8s-app: kube-dns' "default egress must select DNS pods exactly"
 assert_contains "$BASE_DEFAULT_POLICY" '^          port: 53$' "default egress must allow DNS destination port 53"
 assert_not_contains "$BASE_DEFAULT_POLICY" 'port: 443|cidr:|namespaceSelector: \{\}|podSelector: \{\}|- \{\}' "default app policy must have no broad ingress or non-DNS egress"
-assert_contains "$BASE_DEFAULT_POLICY" '^          port: 8080$' "API egress must allow only the content converter port"
-assert_contains "$CONVERTER_POLICY" 'helix.io/role: default' "content converter must accept only API workload ingress"
-assert_contains "$CONVERTER_POLICY" '^          port: 8080$' "content converter ingress must expose only its service port"
-assert_contains "$CONVERTER_POLICY" '^  egress: \[\]$' "content converter must have no network egress"
 assert_contains "$BASE_VERIFIER_POLICY" 'helix.io/role: "image-verifier"' "image verifier must have its own exact policy"
 assert_contains "$BASE_VERIFIER_POLICY" 'helm.sh/hook-weight: "-20"' "verifier policy must exist before the verification Job"
 assert_contains "$BASE_VERIFIER_POLICY" 'helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded' "verifier policy must be removed after the hook finishes"
@@ -205,6 +198,40 @@ assert_contains "$BASE" '^            - name: DATABASE_URL$' "database configura
 assert_contains "$BASE" '^                  name: "helix-postgres"$' "database credentials must come from the configured Secret"
 assert_not_contains "$BASE" 'change-me|helix_dev_password|type: (LoadBalancer|NodePort)|nodePort:' "production manifests must contain no known credentials or public control-plane Services"
 assert_not_contains "$BASE" '^kind: PrometheusRule$' "PrometheusRule must be opt-in because Prometheus Operator CRDs may be absent"
+
+# Full Workspace readiness gates (MVP fail-closed). Defaults must match
+# docker-compose.production.yml and AGENTS.md; PKG flip is documented only.
+assert_contains "$BASE" 'name: HELIX_APPS' "base chart must inject HELIX_APPS for packaging parity with Compose"
+assert_contains "$BASE" 'key: HELIX_APPS' "HELIX_APPS must come from the packaging ConfigMap"
+assert_contains "$BASE" 'HELIX_APPS: "mail,drive,chat,assistant"' "base chart must default HELIX_APPS to the production MVP allowlist"
+assert_contains "$BASE" 'HELIX_WORKSPACE_PROFILE: "mvp"' "base chart must default workspace profile to mvp"
+# ConfigMap stores HELIX_CONFIG_JSON as an escaped JSON string (\"keys\").
+assert_contains "$BASE" '\\"calendar\\":\{\\"enabled\\":false\}' "HELIX_CONFIG_JSON must disable calendar module by default"
+assert_contains "$BASE" '\\"meet\\":\{\\"enabled\\":false\}' "HELIX_CONFIG_JSON must disable meet module by default"
+assert_not_contains "$BASE" 'HELIX_APPS: "mail,drive,chat,assistant,calendar' "base chart must not enable Full Workspace apps by default"
+
+# Negative structural gate: MVP profile must refuse expanded apps without profile=full.
+# Helm --set treats unescaped commas as value separators, so escape list commas.
+if "$HELM_BIN" template helix "$CHART_DIR" \
+  --set-string image.digest="$VALIDATION_DIGEST" \
+  --set workspace.apps='mail\,drive\,chat\,assistant\,meet' >/dev/null 2>"$WORK_DIR/mvp-apps-fail.err"; then
+  echo "Helm validation failed: MVP profile must refuse workspace.apps that enable Meet without profile=full" >&2
+  exit 1
+fi
+assert_contains "$WORK_DIR/mvp-apps-fail.err" 'workspace.apps must be mail,drive,chat,assistant unless workspace.profile=full' \
+  "MVP packaging fail must name the PKG flip constraint"
+
+# Full profile may expand apps (structural only — does not claim domain evidence).
+render full_profile \
+  --set workspace.profile=full \
+  --set workspace.apps='mail\,drive\,chat\,assistant\,calendar\,meet' \
+  --set workspace.modules.docs.enabled=true \
+  --set workspace.modules.calendar.enabled=true \
+  --set workspace.modules.meet.enabled=true
+FULL_PROFILE="$WORK_DIR/full_profile.yaml"
+assert_contains "$FULL_PROFILE" 'HELIX_WORKSPACE_PROFILE: "full"' "full profile must set HELIX_WORKSPACE_PROFILE=full"
+assert_contains "$FULL_PROFILE" 'HELIX_APPS: "mail,drive,chat,assistant,calendar,meet"' \
+  "full profile must render Full Workspace HELIX_APPS when explicitly set"
 
 assert_contains "$BUSINESS" 'helix.io/security-tier: "business"' "business overlay must label the tier"
 assert_not_contains "$BUSINESS" '^    - \{\}$' "business overlay must not allow all egress"
@@ -316,9 +343,22 @@ for values_file in "$CHART_DIR"/values*.yaml; do
 done
 
 if command -v kubeconform >/dev/null 2>&1; then
-  kubeconform -strict -ignore-missing-schemas "$BASE" "$BUSINESS" "$ENTERPRISE" "$SOVEREIGN" "$OBSERVABILITY" "$ROLES"
+  KUBECONFORM_REQUIRED_VERSION=${KUBECONFORM_REQUIRED_VERSION:-v0.8.0}
+  KUBECONFORM_ACTUAL_VERSION=$(kubeconform -v)
+  if [[ "$KUBECONFORM_ACTUAL_VERSION" != "$KUBECONFORM_REQUIRED_VERSION" ]]; then
+    echo "Helm validation failed: kubeconform ${KUBECONFORM_REQUIRED_VERSION} is required; found ${KUBECONFORM_ACTUAL_VERSION}." >&2
+    exit 1
+  fi
+  kubeconform \
+    -strict \
+    -kubernetes-version 1.36.3 \
+    -ignore-missing-schemas \
+    "$BASE" "$BUSINESS" "$ENTERPRISE" "$SOVEREIGN" "$OBSERVABILITY" "$ROLES"
+elif [[ "${CI:-}" == "true" ]]; then
+  echo "Helm validation failed: kubeconform v0.8.0 is required in CI." >&2
+  exit 1
 else
   echo "kubeconform not found; skipped Kubernetes schema validation."
 fi
 
-echo "Helm validation passed: base, business, enterprise, sovereign, observability, and routable role overlays rendered expected PRD hardening evidence."
+echo "Helm validation passed: base, business, enterprise, sovereign, observability, and MVP packaging/full-profile structural gates rendered expected PRD hardening evidence."

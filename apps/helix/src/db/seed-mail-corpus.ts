@@ -53,6 +53,7 @@ export async function seedMailCorpus(
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(
         `Corpus dir not found at ${CORPUS_DIR}. Run \`pnpm corpus:fetch --only=synthetic-email\` first.`,
+        { cause: err },
       );
     }
     throw err;

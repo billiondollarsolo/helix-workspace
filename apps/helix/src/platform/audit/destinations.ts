@@ -15,10 +15,7 @@ import {
   type SiemSyslogTransport,
 } from "./siem-syslog.js";
 import type { SiemAuditFormat } from "./siem-format.js";
-import {
-  reconcileAuditAnchors,
-  storageClientAuditAnchorArchive,
-} from "./anchor-reconciler.js";
+import { reconcileAuditAnchors, storageClientAuditAnchorArchive } from "./anchor-reconciler.js";
 import type { AuditVerificationStore } from "./verifier.js";
 
 /**
@@ -71,16 +68,15 @@ import type { AuditVerificationStore } from "./verifier.js";
  * ```
  */
 
-export type AuditDestinationKind =
-  | "immutable-s3"
-  | "siem-syslog"
-  | "audit-immutable-postgres";
+export type AuditDestinationKind = "immutable-s3" | "siem-syslog" | "audit-immutable-postgres";
 
 export interface ImmutableS3AuditDestinationConfig {
   readonly destination: "immutable-s3";
   readonly batchSize?: number;
   readonly intervalMs?: number;
-  readonly storage: ImmutableAuditStorageClient & { listKeys(prefix: string): AsyncIterable<string> };
+  readonly storage: ImmutableAuditStorageClient & {
+    listKeys(prefix: string): AsyncIterable<string>;
+  };
   readonly signer: AuditAnchorSigner;
   readonly verifier: AuditAnchorVerifier;
   readonly prefix?: string;
@@ -143,9 +139,7 @@ export function createAuditDestinationShipper(
             {
               store: config.storage,
               signer: config.signer,
-              ...(dependencies.metering === undefined
-                ? {}
-                : { metering: dependencies.metering }),
+              ...(dependencies.metering === undefined ? {} : { metering: dependencies.metering }),
               ...(dependencies.onMeteringError === undefined
                 ? {}
                 : { onMeteringError: dependencies.onMeteringError }),

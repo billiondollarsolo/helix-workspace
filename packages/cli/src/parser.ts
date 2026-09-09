@@ -5,6 +5,7 @@ export type HelixCommand =
       readonly toolId: string;
       readonly json: JsonArgument;
       readonly transport?: ToolCallTransport;
+      readonly uploadPath?: string;
     }
   | { readonly kind: "tool-describe"; readonly toolId: string }
   | {
@@ -70,7 +71,7 @@ export type HelixCommand =
 export type ToolListSource = "api" | "openapi" | "mcp";
 export type ToolCallTransport = "rest" | "mcp";
 export type CompletionShell = "bash" | "zsh" | "fish";
-export type SearchType = "mail" | "chat" | "docs" | "drive" | "calendar";
+export type SearchType = "mail" | "chat" | "drive" | "calendar";
 export type AdminUserType = "user" | "agent" | "service_account" | "system";
 export type SecurityTier = "personal" | "business" | "enterprise" | "sovereign";
 export type PluginLifecycleAction = "enable" | "disable" | "uninstall";
@@ -126,10 +127,6 @@ export function parseCliArgs(args: readonly string[]): HelixCommand {
 
   if (scope === "drive") {
     return parseDriveCommand(action, subject, rest);
-  }
-
-  if (scope === "docs") {
-    return parseDocsCommand(action, subject, rest);
   }
 
   if (scope === "calendar") {
@@ -382,7 +379,7 @@ function parseMailCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
+  const jsonArgs = argsWithSubject(subject, rest);
   switch (action) {
     case "send":
       return {
@@ -742,11 +739,7 @@ function parseMailOptions(
 
     const numberField = spec.numbers.get(flag);
     if (numberField !== undefined) {
-      const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        throw new CliUsageError(mailUsage(commandName, spec));
-      }
-      input[numberField] = parsed;
+      input[numberField] = parsePositiveInteger(value, mailUsage(commandName, spec));
       continue;
     }
 
@@ -781,6 +774,25 @@ function inlineJson(input: Record<string, unknown>): JsonArgument {
 
 function isDefined(value: string | undefined): value is string {
   return value !== undefined;
+}
+
+/**
+ * Scope parsers receive the third positional argument separately from the rest,
+ * but flag parsing treats it as just another argument. This re-joins them.
+ */
+function argsWithSubject(subject: string | undefined, rest: readonly string[]): readonly string[] {
+  return subject === undefined ? rest : [subject, ...rest];
+}
+
+/**
+ * Rejects a third positional argument for subcommands that only accept flags,
+ * so `helix drive list extra` fails with the subcommand usage instead of being
+ * silently parsed as a flag.
+ */
+function rejectPositionalSubject(subject: string | undefined, usageMessage: string): void {
+  if (subject !== undefined && !subject.startsWith("--")) {
+    throw new CliUsageError(usageMessage);
+  }
 }
 
 function mailUsage(commandName: string, spec: MailOptionSpec): string {
@@ -841,10 +853,8 @@ function parseChatCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
-  if (subject !== undefined && !subject.startsWith("--")) {
-    throw new CliUsageError(chatUsage);
-  }
+  const jsonArgs = argsWithSubject(subject, rest);
+  rejectPositionalSubject(subject, chatUsage);
   switch (action) {
     case "send":
       return {
@@ -947,57 +957,42 @@ function parseDriveCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
+  const jsonArgs = argsWithSubject(subject, rest);
   switch (action) {
     case "upload":
       return {
         kind: "tool-call",
         toolId: "drive.upload",
         json: parseDriveUploadOptions(subject, rest),
+        ...(subject !== undefined && !subject.startsWith("--") ? { uploadPath: subject } : {}),
       };
     case "finalize":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.finalize", json: parseJsonArgument(jsonArgs) };
     case "list":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveListUsage);
-      }
+      rejectPositionalSubject(subject, driveListUsage);
       return {
         kind: "tool-call",
         toolId: "drive.list",
         json: parseDriveListOptions(jsonArgs),
       };
     case "share":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.share", json: parseJsonArgument(jsonArgs) };
     case "move":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.move", json: parseJsonArgument(jsonArgs) };
     case "trash":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.trash", json: parseJsonArgument(jsonArgs) };
     case "restore":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.restore", json: parseJsonArgument(jsonArgs) };
     case "delete":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveUsage);
-      }
+      rejectPositionalSubject(subject, driveUsage);
       return { kind: "tool-call", toolId: "drive.delete", json: parseJsonArgument(jsonArgs) };
     case "search":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(driveSearchUsage);
-      }
+      rejectPositionalSubject(subject, driveSearchUsage);
       return {
         kind: "tool-call",
         toolId: "drive.search",
@@ -1011,7 +1006,7 @@ function parseDriveCommand(
 const driveUsage =
   "Usage: helix drive <upload|finalize|list|share|move|trash|restore|delete|search> [--json [JSON]]";
 const driveUploadUsage =
-  "Usage: helix drive upload <path> [--folder <folder-id>] [--name <name>] [--mime-type <type>] [--byte-size <number>] [--sha256 <hex>] [--json [JSON]]";
+  "Usage: helix drive upload <path> [--prepared <json-file>] [--folder <folder-id>] [--name <name>] [--mime-type <type>] [--byte-size <number>] [--sha256 <hex>] [--json [JSON]]";
 const driveListUsage =
   "Usage: helix drive list [--folder <folder-id>] [--limit <number>] [--include-trashed] [--json [JSON]]";
 const driveSearchUsage =
@@ -1032,7 +1027,7 @@ function parseDriveUploadOptions(path: string | undefined, args: readonly string
 
   const input: Record<string, unknown> = {
     name: basename(path),
-    metadata: { localPath: path },
+    metadata: { source: "cli" },
   };
   parseDriveFlags(
     args,
@@ -1042,6 +1037,7 @@ function parseDriveUploadOptions(path: string | undefined, args: readonly string
         ["--folder", "folderId"],
         ["--name", "name"],
         ["--mime-type", "mimeType"],
+        ["--prepared", "preparedFile"],
         ["--sha256", "sha256"],
       ]),
       numbers: new Map([["--byte-size", "byteSize"]]),
@@ -1139,11 +1135,7 @@ function parseDriveFlags(
 
     const numberField = spec.numbers.get(flag);
     if (numberField !== undefined) {
-      const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        throw new CliUsageError(usageMessage);
-      }
-      input[numberField] = parsed;
+      input[numberField] = parsePositiveInteger(value, usageMessage);
       index += 1;
       continue;
     }
@@ -1154,223 +1146,6 @@ function parseDriveFlags(
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
-}
-
-function parseDocsCommand(
-  action: string | undefined,
-  subject: string | undefined,
-  rest: readonly string[],
-): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
-  switch (action) {
-    case "create":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsCreateUsage);
-      }
-      return { kind: "tool-call", toolId: "docs.create", json: parseDocsCreateOptions(jsonArgs) };
-    case "update-title":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsUpdateTitleUsage);
-      }
-      return {
-        kind: "tool-call",
-        toolId: "docs.update-title",
-        json: parseDocsUpdateTitleOptions(jsonArgs),
-      };
-    case "export":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsExportUsage);
-      }
-      return { kind: "tool-call", toolId: "docs.export", json: parseDocsExportOptions(jsonArgs) };
-    case "comment-create":
-    case "comment":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsCommentCreateUsage);
-      }
-      return {
-        kind: "tool-call",
-        toolId: "docs.comment.create",
-        json: parseDocsCommentCreateOptions(jsonArgs),
-      };
-    case "get":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsGetUsage);
-      }
-      return {
-        kind: "tool-call",
-        toolId: "docs.get",
-        json: parseTypedOptions(jsonArgs, docsGetOptions, docsGetUsage),
-      };
-    case "list":
-      if (subject !== undefined && !subject.startsWith("--")) {
-        throw new CliUsageError(docsListUsage);
-      }
-      return {
-        kind: "tool-call",
-        toolId: "docs.list",
-        json: parseTypedOptions(jsonArgs, docsListOptions, docsListUsage),
-      };
-    default:
-      throw new CliUsageError(docsUsage);
-  }
-}
-
-const docsUsage =
-  "Usage: helix docs <create|get|list|update-title|export|comment-create> [--json [JSON]]";
-const docsGetUsage = "Usage: helix docs get [--doc-id <id>] [--json [JSON]]";
-const docsListUsage = "Usage: helix docs list [--query <text>] [--limit <number>] [--json [JSON]]";
-
-const docsGetOptions = {
-  arrays: new Map<string, string>(),
-  strings: new Map([["--doc-id", "docId"]]),
-  numbers: new Map<string, string>(),
-  booleans: new Map<string, string>(),
-} as const;
-
-const docsListOptions = {
-  arrays: new Map<string, string>(),
-  strings: new Map([["--query", "query"]]),
-  numbers: new Map([["--limit", "limit"]]),
-  booleans: new Map<string, string>(),
-} as const;
-const docsCreateUsage =
-  "Usage: helix docs create [--title <text>] [--initial-markdown <markdown>] [--folder <folder-id>] [--metadata <json-object>] [--json [JSON]]";
-const docsUpdateTitleUsage =
-  "Usage: helix docs update-title [--doc-id <id>] [--title <text>] [--json [JSON]]";
-const docsExportUsage =
-  "Usage: helix docs export [--doc-id <id>] [--format <markdown|pdf|docx>] [--include-comments] [--filename <name>] [--json [JSON]]";
-const docsCommentCreateUsage =
-  "Usage: helix docs comment-create [--doc-id <id>] [--body <text>] [--anchor <json-object>] [--metadata <json-object>] [--json [JSON]]";
-
-function parseDocsCreateOptions(args: readonly string[]): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
-
-  return parseDocsFlags(args, docsCreateUsage, {
-    strings: new Map([
-      ["--title", "title"],
-      ["--initial-markdown", "initialMarkdown"],
-      ["--folder", "folderId"],
-      ["--folder-id", "folderId"],
-    ]),
-    jsonObjects: new Map([["--metadata", "metadata"]]),
-    booleans: new Map<string, string>(),
-  });
-}
-
-function parseDocsUpdateTitleOptions(args: readonly string[]): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
-
-  return parseDocsFlags(args, docsUpdateTitleUsage, {
-    strings: new Map([
-      ["--doc-id", "docId"],
-      ["--title", "title"],
-    ]),
-    jsonObjects: new Map<string, string>(),
-    booleans: new Map<string, string>(),
-  });
-}
-
-function parseDocsExportOptions(args: readonly string[]): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
-
-  return parseDocsFlags(args, docsExportUsage, {
-    strings: new Map([
-      ["--doc-id", "docId"],
-      ["--format", "format"],
-      ["--filename", "filename"],
-    ]),
-    jsonObjects: new Map<string, string>(),
-    booleans: new Map([["--include-comments", "includeComments"]]),
-  });
-}
-
-function parseDocsCommentCreateOptions(args: readonly string[]): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
-
-  return parseDocsFlags(args, docsCommentCreateUsage, {
-    strings: new Map([
-      ["--doc-id", "docId"],
-      ["--body", "body"],
-    ]),
-    jsonObjects: new Map([
-      ["--anchor", "anchor"],
-      ["--metadata", "metadata"],
-    ]),
-    booleans: new Map<string, string>(),
-  });
-}
-
-type DocsOptionSpec = {
-  readonly strings: ReadonlyMap<string, string>;
-  readonly jsonObjects: ReadonlyMap<string, string>;
-  readonly booleans: ReadonlyMap<string, string>;
-};
-
-function parseDocsFlags(
-  args: readonly string[],
-  usageMessage: string,
-  spec: DocsOptionSpec,
-): JsonArgument {
-  const input: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
-    if (flag === undefined) {
-      throw new CliUsageError(usageMessage);
-    }
-
-    const booleanField = spec.booleans.get(flag);
-    if (booleanField !== undefined) {
-      input[booleanField] = true;
-      continue;
-    }
-
-    const value = args[index + 1];
-    if (value === undefined || value.startsWith("--")) {
-      throw new CliUsageError(usageMessage);
-    }
-
-    const stringField = spec.strings.get(flag);
-    if (stringField !== undefined) {
-      input[stringField] = value;
-      index += 1;
-      continue;
-    }
-
-    const jsonObjectField = spec.jsonObjects.get(flag);
-    if (jsonObjectField !== undefined) {
-      input[jsonObjectField] = parseJsonObjectFlag(value, usageMessage);
-      index += 1;
-      continue;
-    }
-
-    throw new CliUsageError(usageMessage);
-  }
-
-  return { source: "inline", value: JSON.stringify(input) };
 }
 
 function parseJsonObjectFlag(value: string, usageMessage: string): Record<string, unknown> {
@@ -1390,10 +1165,8 @@ function parseCalendarCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
-  if (subject !== undefined && !subject.startsWith("--")) {
-    throw new CliUsageError(calendarUsage);
-  }
+  const jsonArgs = argsWithSubject(subject, rest);
+  rejectPositionalSubject(subject, calendarUsage);
   switch (action) {
     case "event-create":
     case "create":
@@ -1534,10 +1307,8 @@ function parseMeetCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
-  if (subject !== undefined && !subject.startsWith("--")) {
-    throw new CliUsageError(meetUsage);
-  }
+  const jsonArgs = argsWithSubject(subject, rest);
+  rejectPositionalSubject(subject, meetUsage);
   switch (action) {
     case "create-room":
     case "create":
@@ -1627,10 +1398,8 @@ function parseAssistantCommand(
   subject: string | undefined,
   rest: readonly string[],
 ): HelixCommand {
-  const jsonArgs = subject === undefined ? rest : [subject, ...rest];
-  if (subject !== undefined && !subject.startsWith("--")) {
-    throw new CliUsageError(assistantUsage);
-  }
+  const jsonArgs = argsWithSubject(subject, rest);
+  rejectPositionalSubject(subject, assistantUsage);
   switch (action) {
     case "chat":
     case "ask":
@@ -1758,9 +1527,9 @@ function parseSearchCommand(args: readonly string[]): HelixCommand {
 }
 
 const searchUsage =
-  "Usage: helix search <query> | helix search --query <text> [--type <mail|chat|docs|drive|calendar>] [--limit <number>] [--json [JSON]]";
+  "Usage: helix search <query> | helix search --query <text> [--type <mail|chat|drive|calendar>] [--limit <number>] [--json [JSON]]";
 
-const searchTypes = new Set<SearchType>(["mail", "chat", "docs", "drive", "calendar"]);
+const searchTypes = new Set<SearchType>(["mail", "chat", "drive", "calendar"]);
 
 function isSearchType(value: string): value is SearchType {
   return searchTypes.has(value as SearchType);
@@ -1838,6 +1607,16 @@ function parseAdminAgentCredentialsCommand(
           args,
           adminAgentCredentialsCreateOptions,
           adminAgentCredentialsCreateUsage,
+        ),
+      };
+    case "rotate":
+      return {
+        kind: "tool-call",
+        toolId: "agent.credentials.rotate",
+        json: parseTypedOptions(
+          args,
+          adminAgentCredentialsRotateOptions,
+          adminAgentCredentialsUsage,
         ),
       };
     case "revoke":
@@ -1922,13 +1701,13 @@ const adminAppPasswordsCreateUsage =
 const adminAppPasswordsRevokeUsage =
   "Usage: helix admin app-passwords revoke [--password-id <id>] [--json [JSON]]";
 const adminAgentCredentialsUsage =
-  "Usage: helix admin agent-credentials <list|create|revoke> [--json [JSON]]";
+  "Usage: helix admin agent-credentials <list|create|rotate|revoke> [--json [JSON]]";
 const adminAgentCredentialsListUsage =
   "Usage: helix admin agent-credentials list [--actor-id <id>] [--include-revoked] [--json [JSON]]";
 const adminAgentCredentialsCreateUsage =
-  "Usage: helix admin agent-credentials create [--actor-id <id>] [--scope <scope>] [--expires-at <iso>] [--json [JSON]]";
+  "Usage: helix admin agent-credentials create --actor-id <id> --credential-type <api_key|oauth_client|mtls_cert> --label <label> --purpose <purpose> --scope <scope> [--expires-at <iso>] [--json [JSON]]";
 const adminAgentCredentialsRevokeUsage =
-  "Usage: helix admin agent-credentials revoke [--client-id <id>] [--json [JSON]]";
+  "Usage: helix admin agent-credentials revoke --credential-id <id> [--json [JSON]]";
 const adminUsersUsage =
   "Usage: helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]";
 const adminUsersListUsage = adminUsersUsage;
@@ -1972,6 +1751,10 @@ const adminAgentCredentialsCreateOptions = {
   arrays: new Map([["--scope", "scopes"]]),
   strings: new Map([
     ["--actor-id", "actorId"],
+    ["--credential-type", "credentialType"],
+    ["--label", "label"],
+    ["--purpose", "purpose"],
+    ["--certificate-fingerprint", "certificateFingerprint"],
     ["--expires-at", "expiresAt"],
   ]),
   numbers: new Map<string, string>(),
@@ -1980,9 +1763,21 @@ const adminAgentCredentialsCreateOptions = {
 
 const adminAgentCredentialsRevokeOptions = {
   arrays: new Map<string, string>(),
-  strings: new Map([["--client-id", "clientId"]]),
+  strings: new Map([
+    ["--credential-id", "credentialId"],
+    ["--client-id", "credentialId"],
+  ]),
   numbers: new Map<string, string>(),
   booleans: new Map<string, string>(),
+} as const;
+
+const adminAgentCredentialsRotateOptions = {
+  ...adminAgentCredentialsRevokeOptions,
+  strings: new Map([
+    ["--credential-id", "credentialId"],
+    ["--expires-at", "expiresAt"],
+    ["--certificate-fingerprint", "certificateFingerprint"],
+  ]),
 } as const;
 
 const adminUserTypes = new Set<AdminUserType>(["user", "agent", "service_account", "system"]);
@@ -2497,11 +2292,7 @@ function parseWebhookOptions(
 
     const numberField = spec.numbers.get(flag);
     if (numberField !== undefined) {
-      const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        throw new CliUsageError(usageMessage);
-      }
-      input[numberField] = parsed;
+      input[numberField] = parsePositiveInteger(value, usageMessage);
       index += 1;
       continue;
     }
@@ -2619,11 +2410,7 @@ function parseTypedOptions(
 
     const numberField = spec.numbers.get(flag);
     if (numberField !== undefined) {
-      const parsed = Number(value);
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        throw new CliUsageError(usageMessage);
-      }
-      input[numberField] = parsed;
+      input[numberField] = parsePositiveInteger(value, usageMessage);
       index += 1;
       continue;
     }
@@ -2715,11 +2502,12 @@ function parseJsonArgument(args: readonly string[]): JsonArgument {
 }
 
 export const usage = `Usage:
+  helix --version
   helix tool list [--source <api|openapi|mcp>]
   helix tool describe <id>
   helix tool call <id> [--transport <rest|mcp>] [--json [JSON]]
   helix search <query>
-  helix search --query <text> [--type <mail|chat|docs|drive|calendar>] [--limit <number>] [--json [JSON]]
+  helix search --query <text> [--type <mail|chat|drive|calendar>] [--limit <number>] [--json [JSON]]
   helix mail send [--to <email>] [--cc <email>] [--bcc <email>] [--from <email>] [--subject <text>] [--body <text>] [--html <html>] [--json [JSON]]
   helix mail reply [--thread-id <id>] [--message-id <id>] [--body <text>] [--html <html>] [--cc <email>] [--bcc <email>] [--json [JSON]]
   helix mail list [--mailbox <name>] [--label <label>] [--limit <number>] [--cursor <cursor>] [--json [JSON]]
@@ -2744,7 +2532,7 @@ export const usage = `Usage:
   helix chat invite [--json [JSON]]
   helix chat search [--query <text>] [--room-id <id>] [--limit <number>] [--cursor <cursor>] [--json [JSON]]
   helix chat messages [--room-id <id>] [--before <iso>] [--limit <number>] [--json [JSON]]
-  helix drive upload <path> [--folder <folder-id>] [--name <name>] [--mime-type <type>] [--byte-size <number>] [--sha256 <hex>] [--json [JSON]]
+  helix drive upload <path> [--prepared <json-file>] [--folder <folder-id>] [--name <name>] [--mime-type <type>] [--byte-size <number>] [--sha256 <hex>] [--json [JSON]]
   helix drive finalize [--json [JSON]]
   helix drive list [--folder <folder-id>] [--limit <number>] [--include-trashed] [--json [JSON]]
   helix drive share [--json [JSON]]
@@ -2753,12 +2541,6 @@ export const usage = `Usage:
   helix drive restore [--json [JSON]]
   helix drive delete [--json [JSON]]
   helix drive search [--query <text>] [--folder <folder-id>] [--limit <number>] [--json [JSON]]
-  helix docs create [--title <text>] [--initial-markdown <markdown>] [--folder <folder-id>] [--metadata <json-object>] [--json [JSON]]
-  helix docs get [--doc-id <id>] [--json [JSON]]
-  helix docs list [--query <text>] [--limit <number>] [--json [JSON]]
-  helix docs update-title [--doc-id <id>] [--title <text>] [--json [JSON]]
-  helix docs export [--doc-id <id>] [--format <markdown|pdf|docx>] [--include-comments] [--filename <name>] [--json [JSON]]
-  helix docs comment-create [--doc-id <id>] [--body <text>] [--anchor <json-object>] [--metadata <json-object>] [--json [JSON]]
   helix calendar event-create [--calendar-id <id>] [--title <text>] [--description <text>] [--start <iso>] [--end <iso>] [--timezone <tz>] [--location <text>] [--attendee <email>] [--all-day] [--json [JSON]]
   helix calendar event-update [--event-id <id>] [--calendar-id <id>] [--title <text>] [--description <text>] [--start <iso>] [--end <iso>] [--timezone <tz>] [--location <text>] [--attendee <email>] [--all-day] [--json [JSON]]
   helix calendar event-delete [--event-id <id>] [--send-cancellation] [--json [JSON]]
@@ -2782,8 +2564,8 @@ export const usage = `Usage:
   helix admin app-passwords create [--actor-id <id>] [--label <label>] [--scope <scope>] [--expires-at <iso>] [--json [JSON]]
   helix admin app-passwords revoke [--password-id <id>] [--json [JSON]]
   helix admin agent-credentials list [--actor-id <id>] [--include-revoked] [--json [JSON]]
-  helix admin agent-credentials create [--actor-id <id>] [--scope <scope>] [--expires-at <iso>] [--json [JSON]]
-  helix admin agent-credentials revoke [--client-id <id>] [--json [JSON]]
+  helix admin agent-credentials create --actor-id <id> --credential-type <api_key|oauth_client|mtls_cert> --label <label> --purpose <purpose> --scope <scope> [--expires-at <iso>] [--json [JSON]]
+  helix admin agent-credentials revoke --credential-id <id> [--json [JSON]]
   helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]
   helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]
   helix backup create
@@ -2820,4 +2602,5 @@ export const usage = `Usage:
 Environment:
   HELIX_BASE_URL         Base URL for the Helix API
   HELIX_ACCESS_TOKEN     Optional bearer token for API requests
+  HELIX_API_KEY          API key for the agent identity (takes precedence over HELIX_ACCESS_TOKEN)
   HELIX_CREDENTIALS_FILE Override path for stored credentials (helix logout)`;

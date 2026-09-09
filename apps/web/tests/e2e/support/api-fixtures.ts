@@ -16,7 +16,6 @@ export function coreAppShellStatusFixture() {
     { id: "mail", name: "Mail" },
     { id: "chat", name: "Chat" },
     { id: "drive", name: "Drive" },
-    { id: "docs", name: "Docs" },
     { id: "calendar", name: "Calendar" },
     { id: "meet", name: "Meet" },
     { id: "assistant", name: "Assistant" },
@@ -53,21 +52,36 @@ export function coreAppsAdminStatusFixture() {
  * valid fixture regardless of the feature under test.
  */
 export function isCoreAppsPath(pathname: string): boolean {
-  return pathname === "/api/core-apps" || pathname === "/api/admin/core-apps";
+  return pathname === "/v1/api/core-apps" || pathname === "/v1/api/admin/core-apps";
 }
 
 /**
- * Fulfill a `/api/core-apps` (or `/api/admin/core-apps`) route with the shared
+ * Fulfill a `/v1/api/core-apps` (or `/v1/api/admin/core-apps`) route with the shared
  * valid fixture. Returns `true` if it handled the route, `false` otherwise so
  * callers can fall through to their feature-specific mocks.
  */
 export async function fulfillCoreAppsRoute(route: Route): Promise<boolean> {
   const pathname = new URL(route.request().url()).pathname;
-  if (pathname === "/api/core-apps") {
+  if (pathname === "/v1/api/auth/get-session") {
+    await fulfillJson(route, {
+      user: {
+        id: "e2e-user",
+        actorId: "00000000-0000-4000-8000-000000000111",
+        email: "admin@example.test",
+        name: "Test admin",
+      },
+    });
+    return true;
+  }
+  if (pathname === "/v1/api/auth/csrf-token") {
+    await fulfillJson(route, { csrfToken: "e2e-csrf-token" });
+    return true;
+  }
+  if (pathname === "/v1/api/core-apps") {
     await fulfillJson(route, coreAppShellStatusFixture());
     return true;
   }
-  if (pathname === "/api/admin/core-apps") {
+  if (pathname === "/v1/api/admin/core-apps") {
     await fulfillJson(route, coreAppsAdminStatusFixture());
     return true;
   }
@@ -77,9 +91,15 @@ export async function fulfillCoreAppsRoute(route: Route): Promise<boolean> {
 /**
  * Install a standalone route for the core-app shell endpoints. Use this in
  * specs whose own `page.route` matcher is narrower than `**\/api/**` and would
- * otherwise let `/api/core-apps` reach a real (or non-existent) backend.
+ * otherwise let `/v1/api/core-apps` reach a real (or non-existent) backend.
  */
 export async function installCoreAppsRoutes(page: Page): Promise<void> {
+  await page.route("**/api/auth/get-session", async (route) => {
+    await fulfillCoreAppsRoute(route);
+  });
+  await page.route("**/api/auth/csrf-token", async (route) => {
+    await fulfillCoreAppsRoute(route);
+  });
   await page.route("**/api/core-apps", async (route) => {
     await fulfillJson(route, coreAppShellStatusFixture());
   });

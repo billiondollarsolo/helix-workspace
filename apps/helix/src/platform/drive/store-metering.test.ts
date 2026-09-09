@@ -94,7 +94,6 @@ describe("PostgresDriveStore metering", () => {
       ],
       [],
       [],
-      [],
       deletedRows,
       [],
       [],

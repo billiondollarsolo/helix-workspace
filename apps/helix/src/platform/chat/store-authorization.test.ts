@@ -30,6 +30,42 @@ describe("Postgres chat authorization", () => {
     expect(recording.calls).toHaveLength(2);
   });
 
+  it.each([
+    ["member", "member"],
+    ["moderator", "moderator"],
+    ["owner", "owner"],
+  ] as const)("denies %s removing %s", async (callerRole, targetRole) => {
+    const row = roomRow(callerRole);
+    row.members.push({ actorId: inviteeId, role: targetRole, displayName: "Target", email: null });
+    const recording = recordingSql([[], [row]]);
+    await expect(
+      new PostgresChatStore(recording.sql).removeMember({
+        orgId,
+        actorId,
+        roomId,
+        removedActorId: inviteeId,
+      }),
+    ).rejects.toBeInstanceOf(ChatMemberAccessError);
+    expect(recording.calls.some((query) => query.includes("delete from permissions"))).toBe(false);
+  });
+
+  it("locks membership before removing an ordinary member and appends an audit", async () => {
+    const row = roomRow("owner");
+    row.members.push({ actorId: inviteeId, role: "member", displayName: "Target", email: null });
+    const recording = recordingSql([[], [row]]);
+    await expect(
+      new PostgresChatStore(recording.sql).removeMember({
+        orgId,
+        actorId,
+        roomId,
+        removedActorId: inviteeId,
+      }),
+    ).resolves.toEqual({ roomId, removedActorId: inviteeId, removed: true });
+    expect(recording.calls[0]).toContain("for update");
+    expect(recording.calls.some((query) => query.includes("delete from permissions"))).toBe(true);
+    expect(recording.calls.some((query) => query.includes("insert into activity"))).toBe(true);
+  });
+
   it("uses the same history and retention predicate for listing and export", async () => {
     const recording = recordingSql([[roomRow("owner")], [], [roomRow("owner")], []]);
     const store = new PostgresChatStore(recording.sql);
@@ -45,7 +81,7 @@ describe("Postgres chat authorization", () => {
   });
 });
 
-function roomRow(role: "owner" | "member") {
+function roomRow(role: "owner" | "moderator" | "member") {
   const now = new Date();
   return {
     id: roomId,

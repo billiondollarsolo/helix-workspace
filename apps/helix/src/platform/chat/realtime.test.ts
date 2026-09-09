@@ -44,11 +44,13 @@ const otherActor: Actor = {
 };
 const roomId = "33333333-3333-4333-8333-333333333333";
 const messageId = "44444444-4444-4444-8444-444444444444";
+const trustedOrigins = ["https://app.helix.test"];
 const emptyWebSocketRequest = ticketRequest("t");
 
 function ticketRequest(character: string): FastifyRequest {
   return {
     headers: {
+      origin: trustedOrigins[0],
       "sec-websocket-protocol": `helix.chat.v1, helix.ticket.${character.repeat(43)}`,
     },
     query: {},
@@ -57,14 +59,17 @@ function ticketRequest(character: string): FastifyRequest {
 
 describe("chat realtime", () => {
   it("builds stable per-room subjects for the NATS abstraction", () => {
-    expect(roomSubject(roomId)).toBe(`chat.room.${roomId}.events`);
-    expect(roomSubject("room.with.dots")).toBe("chat.room.room_with_dots.events");
+    expect(roomSubject(actor.orgId, roomId)).toBe(`chat.org.${actor.orgId}.room.${roomId}.events`);
+    expect(roomSubject("org.with.dots", "room.with.dots")).toBe(
+      "chat.org.org_with_dots.room.room_with_dots.events",
+    );
   });
 
   it("rejects an unauthenticated upgrade before accepting frames", async () => {
     const socket = new FakeSocket();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(null),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -82,6 +87,7 @@ describe("chat realtime", () => {
     const replay = new FakeSocket();
     const options = {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets,
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -107,10 +113,12 @@ describe("chat realtime", () => {
     };
     await handleChatSocket(first, emptyWebSocketRequest, {
       ...options,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
     });
     await handleChatSocket(second, emptyWebSocketRequest, {
       ...options,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
     });
     expect(first.messages).toContainEqual(expect.objectContaining({ type: "ready" }));
@@ -121,6 +129,7 @@ describe("chat realtime", () => {
     const replacement = new FakeSocket();
     await handleChatSocket(replacement, emptyWebSocketRequest, {
       ...options,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
     });
     expect(replacement.messages).toContainEqual(expect.objectContaining({ type: "ready" }));
@@ -131,6 +140,7 @@ describe("chat realtime", () => {
     const store = new FakeChatStore();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -157,6 +167,7 @@ describe("chat realtime", () => {
 
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus,
       presence,
@@ -190,6 +201,7 @@ describe("chat realtime", () => {
 
     await handleChatSocket(receiverSocket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(otherActor),
       bus,
       presence,
@@ -200,6 +212,7 @@ describe("chat realtime", () => {
 
     await handleChatSocket(senderSocket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus,
       presence,
@@ -249,6 +262,7 @@ describe("chat realtime", () => {
     const socket = new FakeSocket();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -271,6 +285,7 @@ describe("chat realtime", () => {
     const receiverSocket = new FakeSocket();
     await handleChatSocket(receiverSocket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus,
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -285,6 +300,7 @@ describe("chat realtime", () => {
     const senderSocket = new FakeSocket();
     await handleChatSocket(senderSocket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(otherActor),
       bus,
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -302,6 +318,7 @@ describe("chat realtime", () => {
 
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -326,6 +343,7 @@ describe("chat realtime", () => {
     const bus = new InMemoryChatRoomBus();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus,
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -335,7 +353,7 @@ describe("chat realtime", () => {
     socket.messages.length = 0;
 
     store.denyRoom(roomId);
-    await bus.publish(roomId, {
+    await bus.publish(actor.orgId, roomId, {
       type: "access.changed",
       roomId,
       orgId: actor.orgId,
@@ -352,7 +370,7 @@ describe("chat realtime", () => {
   it("replays durable room events once in order from the requested cursor", async () => {
     const bus = new InMemoryChatRoomBus();
     for (const id of ["one", "two", "three"]) {
-      await bus.publish(roomId, {
+      await bus.publish(actor.orgId, roomId, {
         type: "message.created",
         roomId,
         orgId: actor.orgId,
@@ -363,6 +381,7 @@ describe("chat realtime", () => {
     const socket = new FakeSocket();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus,
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -388,6 +407,7 @@ describe("chat realtime", () => {
     const socket = new FakeSocket();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: subscriber,
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -402,8 +422,8 @@ describe("chat realtime", () => {
       orgId: actor.orgId,
       message: { id: messageId },
     } as const;
-    await publisher.publish(roomId, event);
-    await transport.publish(roomSubject(roomId), { ...event, cursor: 1 });
+    await publisher.publish(actor.orgId, roomId, event);
+    await transport.publish(roomSubject(actor.orgId, roomId), { ...event, cursor: 1 });
     await settle();
 
     expect(socket.messages.filter((message) => message.type === "message.created")).toEqual([
@@ -422,7 +442,7 @@ describe("chat realtime", () => {
       },
     });
 
-    await bus.publish(roomId, {
+    await bus.publish(actor.orgId, roomId, {
       type: "message.created",
       roomId,
       orgId: actor.orgId,
@@ -441,6 +461,7 @@ describe("chat realtime", () => {
     const socket = new FakeSocket();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -461,6 +482,7 @@ describe("chat realtime", () => {
     const socket = new FakeSocket();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: subscriber,
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -470,7 +492,7 @@ describe("chat realtime", () => {
     socket.messages.length = 0;
 
     store.denyRoom(roomId);
-    await publisher.publish(roomId, {
+    await publisher.publish(actor.orgId, roomId, {
       type: "access.changed",
       roomId,
       orgId: actor.orgId,
@@ -560,6 +582,7 @@ describe("chat realtime", () => {
     const socket = new FakeSocket();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence,
@@ -579,6 +602,7 @@ describe("chat realtime", () => {
     const socket = new FakeSocket();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store: new PresencePrivacyChatStore(otherActor.id),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence,
@@ -593,6 +617,7 @@ describe("chat realtime", () => {
     const socket = new FakeSocket();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -617,6 +642,7 @@ describe("chat realtime", () => {
     const store = new BlockingChatStore();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -642,6 +668,7 @@ describe("chat realtime", () => {
     const store = new BlockingChatStore();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -669,6 +696,7 @@ describe("chat realtime", () => {
     const store = new FakeChatStore();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -689,6 +717,7 @@ describe("chat realtime", () => {
     const store = new BlockingChatStore();
     await handleChatSocket(socket, emptyWebSocketRequest, {
       store,
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore({ ttlSeconds: 30 }),
@@ -807,6 +836,7 @@ describe("chat websocket ticket issuance", () => {
     const { app, issueTicket } = captureWebsocketApp();
     await registerChatRoutes(app, {
       store,
+      trustedOrigins,
       tickets,
       actorFromRequest: () => actor,
       bus: new InMemoryChatRoomBus(),
@@ -828,6 +858,7 @@ describe("chat websocket ticket issuance", () => {
     const { app, issueTicket } = captureWebsocketApp();
     await registerChatRoutes(app, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       actorFromRequest: () => unauthenticatedActor,
       bus: new InMemoryChatRoomBus(),
@@ -841,13 +872,13 @@ describe("chat websocket ticket issuance", () => {
 describe("chat event cursor endpoint", () => {
   it("returns only authorized durable events after the requested cursor", async () => {
     const bus = new InMemoryChatRoomBus();
-    await bus.publish(roomId, {
+    await bus.publish(actor.orgId, roomId, {
       type: "message.created",
       roomId,
       orgId: actor.orgId,
       message: { id: "one" },
     });
-    await bus.publish(roomId, {
+    await bus.publish(actor.orgId, roomId, {
       type: "message.created",
       roomId,
       orgId: actor.orgId,
@@ -856,6 +887,7 @@ describe("chat event cursor endpoint", () => {
     const { app, replayEvents } = captureWebsocketApp();
     await registerChatRoutes(app, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       actorFromRequest: () => actor,
       bus,
@@ -878,6 +910,7 @@ describe("chat event cursor endpoint", () => {
     const { app, replayEvents } = captureWebsocketApp();
     await registerChatRoutes(app, {
       store: new FakeChatStore({ inaccessibleRoomIds: [roomId] }),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       actorFromRequest: () => actor,
       bus: new InMemoryChatRoomBus(),
@@ -893,6 +926,7 @@ describe("chat graceful-shutdown broadcast (PRD §16.3 step 5)", () => {
     const { app, connect } = captureWebsocketApp();
     const handle = await registerChatRoutes(app, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       actorFromRequest: () => actor,
       bus: new InMemoryChatRoomBus(),
@@ -919,6 +953,7 @@ describe("chat graceful-shutdown broadcast (PRD §16.3 step 5)", () => {
     const { app, connect } = captureWebsocketApp();
     const handle = await registerChatRoutes(app, {
       store: new FakeChatStore(),
+      trustedOrigins,
       tickets: new FakeTicketStore(actor),
       actorFromRequest: () => actor,
       bus: new InMemoryChatRoomBus(),
@@ -939,6 +974,7 @@ describe("chat graceful-shutdown broadcast (PRD §16.3 step 5)", () => {
 });
 
 class FakeSocket {
+  bufferedAmount = 0;
   readonly messages: Record<string, unknown>[] = [];
   closed: { readonly code?: number; readonly reason?: string } | null = null;
   #messageHandlers: ((data: string) => void)[] = [];
@@ -1198,13 +1234,14 @@ class PresenceRecordingRoomBus extends InMemoryChatRoomBus {
   }
 
   override async publish(
+    orgId: string,
     roomId: string,
-    event: Parameters<InMemoryChatRoomBus["publish"]>[1],
+    event: Parameters<InMemoryChatRoomBus["publish"]>[2],
   ): Promise<void> {
     if (event.type === "read") {
       this.readRostersAtPublish.push([...(await this.presence.list(roomId))]);
     }
-    await super.publish(roomId, event);
+    await super.publish(orgId, roomId, event);
   }
 }
 
@@ -1246,3 +1283,62 @@ function messageRecord(body: string): ChatMessageRecord {
 async function settle(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
 }
+
+describe("chat transport safety", () => {
+  it("closes and unsubscribes a slow socket before its buffer grows without bound", async () => {
+    const socket = new FakeSocket();
+    const bus = new InMemoryChatRoomBus();
+    const presence = new InMemoryChatPresenceStore({ ttlSeconds: 30 });
+    await handleChatSocket(socket, emptyWebSocketRequest, {
+      store: new FakeChatStore(),
+      tickets: new FakeTicketStore(actor),
+      trustedOrigins,
+      bus,
+      presence,
+    });
+    socket.receive({ type: "subscribe", roomId });
+    await settle();
+    socket.bufferedAmount = 2 * 1024 * 1024;
+    await bus.publish(actor.orgId, roomId, {
+      type: "typing",
+      eventId: "slow-event",
+      orgId: actor.orgId,
+      roomId,
+      actorId: otherActor.id,
+      isTyping: true,
+    });
+    await settle();
+    expect(socket.closed).toEqual({ code: 1013, reason: "slow consumer" });
+    expect(await presence.list(roomId)).toEqual([]);
+  });
+  it.each([
+    { origin: "https://evil.invalid", cookie: "helix_session=valid" },
+    { cookie: "helix_session=valid" },
+  ])("rejects unsafe browser origins before consuming a ticket", async (headers) => {
+    const socket = new FakeSocket();
+    const tickets = new FakeTicketStore(actor);
+    await handleChatSocket(
+      socket,
+      {
+        headers: { ...emptyWebSocketRequest.headers, origin: undefined, ...headers },
+      } as FastifyRequest,
+      {
+        store: new FakeChatStore(),
+        tickets,
+        trustedOrigins,
+        bus: new InMemoryChatRoomBus(),
+        presence: new InMemoryChatPresenceStore(),
+      },
+    );
+    expect(socket.closed).toEqual({ code: 4403, reason: "origin rejected" });
+    const accepted = new FakeSocket();
+    await handleChatSocket(accepted, emptyWebSocketRequest, {
+      store: new FakeChatStore(),
+      tickets,
+      trustedOrigins,
+      bus: new InMemoryChatRoomBus(),
+      presence: new InMemoryChatPresenceStore(),
+    });
+    expect(accepted.messages).toContainEqual(expect.objectContaining({ type: "ready" }));
+  });
+});

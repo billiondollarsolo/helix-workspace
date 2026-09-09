@@ -59,9 +59,7 @@ describe("buildSyslogMessage", () => {
     });
 
     // PRIVAL = facility*8 + severity = 13*8 + 6 = 110, VERSION = 1.
-    expect(message.startsWith("<110>1 2026-05-21T12:00:00.000Z helix-1 helix-audit - ")).toBe(
-      true,
-    );
+    expect(message.startsWith("<110>1 2026-05-21T12:00:00.000Z helix-1 helix-audit - ")).toBe(true);
     expect(message).toContain('[helix@32473 recordId="rec-1"');
     expect(message).toContain(`thisHash="${digest("rec-1")}"`);
     expect(message).toContain("CEF:0|Helix|HelixPlatform|1.0|document|document.created|5");
@@ -138,8 +136,7 @@ describe("SiemAuditShipper", () => {
 
   it("validates the port and severity ranges", () => {
     expect(
-      () =>
-        new SiemAuditShipper({ host: "h", port: 70_000, transport: "tcp", format: "cef" }),
+      () => new SiemAuditShipper({ host: "h", port: 70_000, transport: "tcp", format: "cef" }),
     ).toThrow("port");
     expect(
       () =>

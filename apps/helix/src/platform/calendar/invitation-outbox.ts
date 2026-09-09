@@ -261,7 +261,9 @@ export class CalendarInvitationDeliveryWorker {
   }
 
   private async deliver(delivery: ClaimedCalendarInvitationDelivery): Promise<void> {
-    await this.options.store.withActorContext(delivery, async () => this.deliverInContext(delivery));
+    await this.options.store.withActorContext(delivery, async () =>
+      this.deliverInContext(delivery),
+    );
   }
 
   private async deliverInContext(delivery: ClaimedCalendarInvitationDelivery): Promise<void> {
@@ -335,10 +337,7 @@ function invitationEventForRecipient(
   return {
     ...event,
     status: method === "CANCEL" ? "cancelled" : event.status,
-    attendees: [
-      ...event.attendees.filter((candidate) => candidate.isOrganizer === true),
-      attendee,
-    ],
+    attendees: [...event.attendees.filter((candidate) => candidate.isOrganizer === true), attendee],
   };
 }
 

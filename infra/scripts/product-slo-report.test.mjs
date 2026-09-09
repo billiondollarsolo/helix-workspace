@@ -2,16 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { evaluateEvidence, evaluateRuntime, percentile } from "./product-slo-report.mjs";
-
 const policy = JSON.parse(
   await readFile(new URL("../observability/slo/product-slos.json", import.meta.url), "utf8"),
 ).tiers.business;
-
 test("percentile uses the nearest-rank result", () => {
   assert.equal(percentile([1, 3, 2, 4, 5], 0.8), 4);
   assert.equal(percentile([]), undefined);
 });
-
 test("runtime evaluation consumes real Prometheus vector shapes and fails missing series", () => {
   const sample = (value, labels = {}) => ({ metric: labels, value: [1, String(value)] });
   const vectors = {
@@ -36,7 +33,6 @@ test("runtime evaluation consumes real Prometheus vector shapes and fails missin
     "fail",
   );
 });
-
 test("periodic evidence is measured against tier objectives and fails stale/missing provenance", () => {
   const evidence = {
     schemaVersion: 1,

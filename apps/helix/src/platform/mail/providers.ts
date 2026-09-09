@@ -162,16 +162,7 @@ export class SesMailProvider implements OutboundMailProvider {
     this.name = options.name;
     this.#region = options.region;
     this.#resolveDkim = resolveDkim;
-    this.#transport =
-      transport ??
-      nodemailer.createTransport({
-        host: options.host,
-        port: options.port ?? 587,
-        secure: options.secure ?? false,
-        ...(options.user === undefined
-          ? {}
-          : { auth: { user: options.user, pass: options.pass ?? "" } }),
-      });
+    this.#transport = transport ?? createSmtpTransport(options);
   }
 
   async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
@@ -300,16 +291,7 @@ export class SmtpRelayMailProvider implements OutboundMailProvider {
     this.name = options.name;
     this.#host = options.host;
     this.#resolveDkim = resolveDkim;
-    this.#transport =
-      transport ??
-      nodemailer.createTransport({
-        host: options.host,
-        port: options.port ?? 587,
-        secure: options.secure ?? false,
-        ...(options.user === undefined
-          ? {}
-          : { auth: { user: options.user, pass: options.pass ?? "" } }),
-      });
+    this.#transport = transport ?? createSmtpTransport(options);
   }
 
   async send(message: OutboundMailMessage): Promise<OutboundMailDelivery> {
@@ -465,23 +447,27 @@ export function createOutboundMailProvider(
   switch (config.kind) {
     case "ses": {
       const host = requireString(settings, "host", config.name);
-      return new SesMailProvider({
-        name: config.name,
-        region: stringSetting(settings, "region") ?? "us-east-1",
-        host,
-        ...(numberSetting(settings, "port") === undefined
-          ? {}
-          : { port: numberSetting(settings, "port") }),
-        ...(booleanSetting(settings, "secure") === undefined
-          ? {}
-          : { secure: booleanSetting(settings, "secure") }),
-        ...(stringSetting(settings, "user") === undefined
-          ? {}
-          : { user: stringSetting(settings, "user") }),
-        ...(resolveSecret(config.secretRef) === undefined
-          ? {}
-          : { pass: resolveSecret(config.secretRef) }),
-      }, undefined, deps.dkimResolver);
+      return new SesMailProvider(
+        {
+          name: config.name,
+          region: stringSetting(settings, "region") ?? "us-east-1",
+          host,
+          ...(numberSetting(settings, "port") === undefined
+            ? {}
+            : { port: numberSetting(settings, "port") }),
+          ...(booleanSetting(settings, "secure") === undefined
+            ? {}
+            : { secure: booleanSetting(settings, "secure") }),
+          ...(stringSetting(settings, "user") === undefined
+            ? {}
+            : { user: stringSetting(settings, "user") }),
+          ...(resolveSecret(config.secretRef) === undefined
+            ? {}
+            : { pass: resolveSecret(config.secretRef) }),
+        },
+        undefined,
+        deps.dkimResolver,
+      );
     }
     case "mailgun": {
       return new MailgunMailProvider({
@@ -495,22 +481,26 @@ export function createOutboundMailProvider(
       });
     }
     case "smtp": {
-      return new SmtpRelayMailProvider({
-        name: config.name,
-        host: requireString(settings, "host", config.name),
-        ...(numberSetting(settings, "port") === undefined
-          ? {}
-          : { port: numberSetting(settings, "port") }),
-        ...(booleanSetting(settings, "secure") === undefined
-          ? {}
-          : { secure: booleanSetting(settings, "secure") }),
-        ...(stringSetting(settings, "user") === undefined
-          ? {}
-          : { user: stringSetting(settings, "user") }),
-        ...(resolveSecret(config.secretRef) === undefined
-          ? {}
-          : { pass: resolveSecret(config.secretRef) }),
-      }, undefined, deps.dkimResolver);
+      return new SmtpRelayMailProvider(
+        {
+          name: config.name,
+          host: requireString(settings, "host", config.name),
+          ...(numberSetting(settings, "port") === undefined
+            ? {}
+            : { port: numberSetting(settings, "port") }),
+          ...(booleanSetting(settings, "secure") === undefined
+            ? {}
+            : { secure: booleanSetting(settings, "secure") }),
+          ...(stringSetting(settings, "user") === undefined
+            ? {}
+            : { user: stringSetting(settings, "user") }),
+          ...(resolveSecret(config.secretRef) === undefined
+            ? {}
+            : { pass: resolveSecret(config.secretRef) }),
+        },
+        undefined,
+        deps.dkimResolver,
+      );
     }
     case "postmark": {
       return new PostmarkMailProvider({
@@ -571,14 +561,10 @@ export async function resolveOutboundTransport(input: {
         });
   let provider: OutboundMailProvider;
   try {
-    provider = createOutboundMailProvider(
-      config,
-      () => secret?.credential,
-      {
-        ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
-        ...(input.dkimResolver === undefined ? {} : { dkimResolver: input.dkimResolver }),
-      },
-    );
+    provider = createOutboundMailProvider(config, () => secret?.credential, {
+      ...(input.fetch === undefined ? {} : { fetch: input.fetch }),
+      ...(input.dkimResolver === undefined ? {} : { dkimResolver: input.dkimResolver }),
+    });
   } catch (error) {
     throw new MailDeliveryError("Outbound mail provider configuration is invalid.", false, {
       cause: error,
@@ -632,6 +618,24 @@ function addressOf(value: { readonly address: string; readonly name?: string }):
   return value.name === undefined
     ? { address: value.address }
     : { address: value.address, name: value.name };
+}
+
+/** Shared nodemailer SMTP transport used by the SES and SMTP-relay providers. */
+function createSmtpTransport(options: {
+  readonly host: string;
+  readonly port?: number | undefined;
+  readonly secure?: boolean | undefined;
+  readonly user?: string | undefined;
+  readonly pass?: string | undefined;
+}): Transporter<SMTPTransport.SentMessageInfo> {
+  return nodemailer.createTransport({
+    host: options.host,
+    port: options.port ?? 587,
+    secure: options.secure ?? false,
+    ...(options.user === undefined
+      ? {}
+      : { auth: { user: options.user, pass: options.pass ?? "" } }),
+  });
 }
 
 function toNodemailerMail(

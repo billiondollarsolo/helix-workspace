@@ -19,6 +19,7 @@ import {
   type MailDkimKeyRecord,
   type MailDkimKeyStore,
   type MailDmarcReportStore,
+  type MailDmarcReportRecord,
   type MailRoutingRuleStore,
   type OutboundProviderStore,
 } from "./admin-store.js";
@@ -114,7 +115,8 @@ const generateDkimBody = z
       .trim()
       .min(1)
       .max(63)
-      .regex(/^[a-z0-9._-]+$/iu, "Selector must be a DNS label."),
+      .regex(/^[a-z0-9._-]+$/iu, "Selector must be a DNS label.")
+      .optional(),
     keyBits: z.literal(2048).default(2048),
     kmsKeyId: z.string().trim().min(1).max(2_048).optional(),
   })
@@ -278,6 +280,65 @@ function serializeDkimKey(key: MailDkimKeyRecord): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
+
+export function summarizeDmarcReports(reports: readonly MailDmarcReportRecord[]): {
+  readonly dmarcPassRate: number;
+  readonly messagesEvaluated: number;
+  readonly windowDays: number;
+  readonly reportCount: number;
+} | null {
+  let messagesEvaluated = 0;
+  let passMessages = 0;
+  let windowStart = Number.POSITIVE_INFINITY;
+  let windowEnd = Number.NEGATIVE_INFINITY;
+  for (const report of reports) {
+    messagesEvaluated += report.totalMessages;
+    passMessages += report.passMessages;
+    /* Each bound is parsed on its own and dropped if it is not a date. Folding
+       `Date.parse` straight into the running min/max let one report row with an
+       unreadable range turn the aggregate NaN, and the guard below then answered
+       `null` for the whole org — discarding a message count and pass rate that
+       were perfectly real. */
+    const begin = Date.parse(report.dateRangeBegin);
+    if (Number.isFinite(begin)) {
+      windowStart = Math.min(windowStart, begin);
+    }
+    const end = Date.parse(report.dateRangeEnd);
+    if (Number.isFinite(end)) {
+      windowEnd = Math.max(windowEnd, end);
+    }
+  }
+  /* No readable bound anywhere is the one case still worth refusing: the window
+     the rates describe would be unstated, and an invented one is a lie. */
+  if (messagesEvaluated === 0 || !Number.isFinite(windowStart) || !Number.isFinite(windowEnd)) {
+    return null;
+  }
+  const dayMs = 86_400_000;
+  return {
+    dmarcPassRate: passMessages / messagesEvaluated,
+    messagesEvaluated,
+    // A single report covering part of a day is still a one-day window.
+    windowDays: Math.max(1, Math.ceil((windowEnd - windowStart) / dayMs)),
+    reportCount: reports.length,
+  };
+}
+
+/** Project a DMARC aggregate report for the console's per-reporter table. */
+function serializeDmarcReport(report: MailDmarcReportRecord): Record<string, unknown> {
+  return {
+    id: report.id,
+    // The "reporter" is the receiving org that sent us the aggregate report.
+    reporter: report.orgName,
+    reportId: report.reportId,
+    domain: report.domain,
+    rangeStart: report.dateRangeBegin,
+    rangeEnd: report.dateRangeEnd,
+    total: report.totalMessages,
+    passCount: report.passMessages,
+    failCount: report.failMessages,
+    policyP: report.policyP,
+  };
+}
 
 export interface RegisterMailDeliveryAdminRoutesOptions {
   readonly providerStore: OutboundProviderStore;
@@ -607,12 +668,20 @@ export async function registerMailDeliveryAdminRoutes(
     if (domain === null || !domain.mailEnabled || domain.status !== "verified") {
       return reply.code(404).send(notFound("Mail domain not found."));
     }
+    const selector =
+      body.data.selector ??
+      nextDkimSelector(
+        (await dkimStore.listKeys(actor.orgId, params.data.id)).map((key) => key.selector),
+        new Date(),
+      );
+    if (selector === null)
+      return reply.code(409).send(conflict("No unused DKIM selector is available today."));
     let key: MailDkimKeyRecord;
     try {
       key = await dkimStore.generateKey({
         orgId: actor.orgId,
         domainId: params.data.id,
-        selector: body.data.selector,
+        selector,
         domain: domain.domain,
         keyBits: body.data.keyBits,
         ...(body.data.kmsKeyId === undefined ? {} : { kmsKeyId: body.data.kmsKeyId }),
@@ -698,6 +767,22 @@ export async function registerMailDeliveryAdminRoutes(
   });
 
   // ---- DMARC reports ------------------------------------------------------
+
+  app.get("/api/admin/mail/dmarc", async (request, reply) => {
+    const actor = await actorFromRequest(request);
+    if (!canReadMailDeliveryAdmin(actor)) {
+      return sendForbidden(reply, adminConsoleReadScope);
+    }
+    const query = dmarcQuery.safeParse(request.query);
+    if (!query.success) {
+      return reply.code(400).send(invalidRequest("Invalid DMARC query."));
+    }
+    const reports = await dmarcStore.listReports(actor.orgId, query.data.domain);
+    return {
+      summary: summarizeDmarcReports(reports),
+      reports: reports.map(serializeDmarcReport),
+    };
+  });
 
   app.get("/api/admin/mail/dmarc/reports", async (request, reply) => {
     const actor = await actorFromRequest(request);
@@ -874,4 +959,18 @@ export async function registerMailDeliveryAdminRoutes(
     });
     return { status: "deleted" };
   });
+}
+
+function nextDkimSelector(taken: readonly string[], now: Date): string | null {
+  const base = `helix${now.toISOString().slice(0, 10).replaceAll("-", "")}`;
+  if (!taken.includes(base)) {
+    return base;
+  }
+  for (let suffix = 2; suffix <= 99; suffix += 1) {
+    const candidate = `${base}-${String(suffix)}`;
+    if (!taken.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
 }

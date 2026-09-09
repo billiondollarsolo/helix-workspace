@@ -1,7 +1,14 @@
 import { Socket } from "node:net";
-import { once } from "node:events";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import type { JsonObject } from "@helix/sdk-types";
+import type { SecurityScanResult } from "@helix/contracts";
+import type { JsonObject, SecurityTier } from "@helix/sdk-types";
+import {
+  ClamdInstreamClient,
+  parseClamdInstreamResponse,
+  resolveTerminalSecurityScanPolicy,
+  type SecurityScanningMetrics,
+  type SecurityScanDisposition,
+} from "../security/scanning/index.js";
 
 /**
  * ClamAV `clamd` antivirus integration.
@@ -26,6 +33,10 @@ export interface AntivirusScanResult {
   readonly scanned: boolean;
   /** Structured evidence persisted on the message metadata. */
   readonly evidence: JsonObject;
+  /** Shared content-free result from the real scanner, when configured. */
+  readonly securityScan?: SecurityScanResult;
+  /** Domain policy decision for the organization security tier. */
+  readonly disposition?: SecurityScanDisposition;
 }
 
 /** Pluggable antivirus scanner. Inbound ingest calls {@link AntivirusScanner.scan}. */
@@ -40,6 +51,11 @@ export interface ClamavScannerOptions {
   readonly timeoutMs?: number;
   /** Maximum message size sent to clamd, in bytes. Defaults to 25 MiB. */
   readonly maxMessageBytes?: number;
+  /** Engine/definition version discovered by deployment health checks. */
+  readonly scannerVersion?: string;
+  /** Defaults to Personal's explicitly unscanned failure behavior. */
+  readonly tier?: SecurityTier;
+  readonly metrics?: SecurityScanningMetrics;
 }
 
 export interface ClamavVersionInfo {
@@ -55,7 +71,6 @@ export interface ClamavReadinessOptions {
 
 const DEFAULT_CLAMAV_TIMEOUT_MS = 30_000;
 const DEFAULT_CLAMAV_MAX_BYTES = 25 * 1024 * 1024;
-const CLAMD_CHUNK_SIZE = 64 * 1024;
 
 /**
  * Antivirus scanner backed by a ClamAV `clamd` daemon over TCP.
@@ -68,12 +83,25 @@ export class ClamavScanner implements AntivirusScanner {
   readonly #port: number;
   readonly #timeoutMs: number;
   readonly #maxMessageBytes: number;
+  readonly #client: ClamdInstreamClient;
+  readonly #tier: SecurityTier;
+  readonly #metrics: SecurityScanningMetrics | undefined;
 
   constructor(options: ClamavScannerOptions) {
     this.#host = options.host;
     this.#port = options.port;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_CLAMAV_TIMEOUT_MS;
     this.#maxMessageBytes = options.maxMessageBytes ?? DEFAULT_CLAMAV_MAX_BYTES;
+    this.#tier = options.tier ?? "personal";
+    this.#metrics = options.metrics;
+    this.#client = new ClamdInstreamClient({
+      host: options.host,
+      port: options.port,
+      timeoutMs: options.timeoutMs ?? DEFAULT_CLAMAV_TIMEOUT_MS,
+      maxBytes: options.maxMessageBytes ?? DEFAULT_CLAMAV_MAX_BYTES,
+      ...(options.scannerVersion === undefined ? {} : { scannerVersion: options.scannerVersion }),
+      ...(options.metrics === undefined ? {} : { metrics: options.metrics }),
+    });
   }
 
   async checkHealth(): Promise<void> {
@@ -99,39 +127,38 @@ export class ClamavScanner implements AntivirusScanner {
   }
 
   async scan(raw: Buffer | string): Promise<AntivirusScanResult> {
+    return this.scanInput(Buffer.isBuffer(raw) ? raw : Buffer.from(raw));
+  }
+
+  private async scanInput(body: Buffer | AsyncIterable<Uint8Array>): Promise<AntivirusScanResult> {
     return trace.getTracer("helix.mail").startActiveSpan("clamav.instream", async (span) => {
       try {
-        const body = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-        if (body.byteLength > this.#maxMessageBytes) {
+        const result = await this.#client.scan(body);
+        const disposition = resolveTerminalSecurityScanPolicy(this.#tier, result, this.#metrics);
+        if (result.state === "unsupported" || result.state === "scan_failed") {
           span.setAttribute("helix.mail.av_scanned", false);
           return {
             infected: false,
             signature: null,
             scanned: false,
-            evidence: {
-              scanned: false,
-              reason: "message exceeds clamd max size",
-              byteSize: body.byteLength,
-            },
+            evidence: safeEvidence(result.evidence),
+            securityScan: result,
+            disposition,
           } satisfies AntivirusScanResult;
         }
-        const response = await this.#instream(body);
-        const verdict = parseClamavResponse(response);
-        span.setAttribute("helix.mail.av_infected", verdict.infected);
-        if (verdict.signature !== null) {
-          span.setAttribute("helix.mail.av_signature", verdict.signature);
+        const infected = result.state === "infected";
+        const signature = result.state === "infected" ? result.evidence.signature : null;
+        span.setAttribute("helix.mail.av_infected", infected);
+        if (signature !== null) {
+          span.setAttribute("helix.mail.av_signature", signature);
         }
         return {
-          infected: verdict.infected,
-          signature: verdict.signature,
+          infected,
+          signature,
           scanned: true,
-          evidence: {
-            scanned: true,
-            infected: verdict.infected,
-            signature: verdict.signature,
-            host: this.#host,
-            port: this.#port,
-          },
+          evidence: safeEvidence(result.evidence),
+          securityScan: result,
+          disposition,
         };
       } catch (error) {
         span.recordException(error instanceof Error ? error : new Error(String(error)));
@@ -155,27 +182,20 @@ export class ClamavScanner implements AntivirusScanner {
         evidence: { scanned: false, reason: "message exceeds clamd max size", byteSize },
       };
     }
-    const response = await this.#requestStream(raw, byteSize);
-    const verdict = parseClamavResponse(response);
-    return {
-      infected: verdict.infected,
-      signature: verdict.signature,
-      scanned: true,
-      evidence: {
-        scanned: true,
-        infected: verdict.infected,
-        signature: verdict.signature,
-        host: this.#host,
-        port: this.#port,
-      },
-    };
+    async function* checkedChunks(): AsyncIterable<Uint8Array> {
+      let observed = 0;
+      for await (const chunk of raw) {
+        observed += chunk.byteLength;
+        if (observed > byteSize) throw new Error("ClamAV stream exceeded its declared size");
+        yield chunk;
+      }
+      if (observed !== byteSize)
+        throw new Error("ClamAV stream size did not match its declared size");
+    }
+    return this.scanInput(checkedChunks());
   }
 
-  #instream(body: Buffer): Promise<string> {
-    return this.#request("zINSTREAM\0", body);
-  }
-
-  #request(command: string, body?: Buffer): Promise<string> {
+  #request(command: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const socket = new Socket();
       const chunks: Buffer[] = [];
@@ -210,74 +230,9 @@ export class ClamavScanner implements AntivirusScanner {
 
       socket.connect(this.#port, this.#host, () => {
         socket.write(command);
-        if (body !== undefined) {
-          // INSTREAM: each chunk is a 4-byte big-endian length prefix followed by
-          // that many bytes; a zero-length chunk terminates the stream.
-          for (let offset = 0; offset < body.byteLength; offset += CLAMD_CHUNK_SIZE) {
-            const slice = body.subarray(offset, offset + CLAMD_CHUNK_SIZE);
-            const prefix = Buffer.alloc(4);
-            prefix.writeUInt32BE(slice.byteLength, 0);
-            socket.write(prefix);
-            socket.write(slice);
-          }
-          const terminator = Buffer.alloc(4);
-          terminator.writeUInt32BE(0, 0);
-          socket.write(terminator);
-        }
       });
     });
   }
-
-  #requestStream(body: AsyncIterable<Uint8Array>, expectedBytes: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const socket = new Socket();
-      const responseChunks: Buffer[] = [];
-      let settled = false;
-      const finish = (error: Error | null): void => {
-        if (settled) return;
-        settled = true;
-        socket.destroy();
-        if (error === null) resolve(Buffer.concat(responseChunks).toString("utf8"));
-        else reject(error);
-      };
-      socket.setTimeout(this.#timeoutMs);
-      socket.once("timeout", () =>
-        finish(new Error(`clamd request timed out after ${String(this.#timeoutMs)}ms`)),
-      );
-      socket.once("error", finish);
-      socket.on("data", (chunk: Buffer) => responseChunks.push(chunk));
-      socket.once("end", () => finish(null));
-      socket.connect(this.#port, this.#host, () => {
-        void (async () => {
-          await writeSocket(socket, Buffer.from("zINSTREAM\0"));
-          let written = 0;
-          for await (const input of body) {
-            for (let offset = 0; offset < input.byteLength; offset += CLAMD_CHUNK_SIZE) {
-              const chunk = input.subarray(offset, offset + CLAMD_CHUNK_SIZE);
-              written += chunk.byteLength;
-              if (written > expectedBytes || written > this.#maxMessageBytes) {
-                throw new Error("ClamAV stream exceeded its declared size");
-              }
-              const prefix = Buffer.allocUnsafe(4);
-              prefix.writeUInt32BE(chunk.byteLength);
-              await writeSocket(socket, prefix);
-              await writeSocket(socket, chunk);
-            }
-          }
-          if (written !== expectedBytes) {
-            throw new Error("ClamAV stream size did not match its declared size");
-          }
-          await writeSocket(socket, Buffer.alloc(4));
-        })().catch((error: unknown) =>
-          finish(error instanceof Error ? error : new Error(String(error))),
-        );
-      });
-    });
-  }
-}
-
-async function writeSocket(socket: Socket, bytes: Uint8Array): Promise<void> {
-  if (!socket.write(bytes)) await once(socket, "drain");
 }
 
 interface ClamavVerdict {
@@ -293,18 +248,33 @@ interface ClamavVerdict {
  *   `INSTREAM size limit exceeded. ERROR` -> error
  */
 export function parseClamavResponse(response: string): ClamavVerdict {
-  const trimmed = response.replace(/\0/gu, "").trim();
-  if (/\bERROR$/u.test(trimmed)) {
-    throw new Error(`clamd returned an error: ${trimmed}`);
+  try {
+    return parseClamdInstreamResponse(response);
+  } catch {
+    const trimmed = response.replace(/\0/gu, "").trim();
+    if (/\bERROR$/u.test(trimmed)) {
+      throw new Error(`clamd returned an error: ${trimmed}`);
+    }
+    throw new Error(`Unparseable clamd response: ${trimmed.slice(0, 120)}`);
   }
-  if (/\bOK$/u.test(trimmed)) {
-    return { infected: false, signature: null };
-  }
-  const found = /:\s*(.+?)\s+FOUND$/u.exec(trimmed);
-  if (found !== null) {
-    return { infected: true, signature: found[1] ?? "unknown" };
-  }
-  throw new Error(`Unparseable clamd response: ${trimmed.slice(0, 120)}`);
+}
+
+function safeEvidence(evidence: {
+  readonly scannerName: string;
+  readonly scannerVersion: string;
+  readonly startedAt: string;
+  readonly completedAt: string;
+  readonly byteSize: number;
+  readonly signature?: string;
+}): JsonObject {
+  return {
+    scannerName: evidence.scannerName,
+    scannerVersion: evidence.scannerVersion,
+    startedAt: evidence.startedAt,
+    completedAt: evidence.completedAt,
+    byteSize: evidence.byteSize,
+    ...(evidence.signature === undefined ? {} : { signature: evidence.signature }),
+  };
 }
 
 /** Parse `ClamAV <engine>/<database>/<updated>` returned by clamd VERSION. */

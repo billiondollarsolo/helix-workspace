@@ -53,7 +53,7 @@ interface SignedInSession {
   cookie: string;
 }
 
-async function main() {
+async function main(): Promise<void> {
   console.log(`Helix corpus seed → ${BACKEND}`);
   console.log(`  user: ${EMAIL}`);
   console.log(`  root: /${ROOT_FOLDER}/`);
@@ -90,7 +90,9 @@ async function main() {
   const stats = { ok: 0, exists: 0, fail: 0 };
   const queue = [...files];
   await Promise.all(
-    Array.from({ length: CONCURRENCY }, () => worker(session, queue, folderCache, stats, files.length)),
+    Array.from({ length: CONCURRENCY }, () =>
+      worker(session, queue, folderCache, stats, files.length),
+    ),
   );
 
   console.log(
@@ -105,7 +107,7 @@ async function worker(
   folderCache: Map<string, string | null>,
   stats: { ok: number; exists: number; fail: number },
   total: number,
-) {
+): Promise<void> {
   while (queue.length > 0) {
     const file = queue.shift();
     if (!file) break;
@@ -164,7 +166,15 @@ async function uploadOne(
   if (reserve.alreadyExists === true) return "exists";
 
   // Phase 2 (bytes): direct-to-storage if presigned URL available, else inline.
-  let finalizePayload: Record<string, unknown>;
+  // Both paths finalize with the same descriptor; only the inline path carries
+  // the bytes, so `metadata` is appended last to keep one shared payload shape.
+  const finalizePayload: Record<string, unknown> = {
+    objectId: reserve.objectId,
+    byteSize: body.byteLength,
+    sha256,
+    mimeType,
+    storageKey: reserve.storageKey,
+  };
   if (reserve.uploadUrl) {
     const putRes = await fetch(reserve.uploadUrl, {
       method: "PUT",
@@ -175,25 +185,10 @@ async function uploadOne(
       const text = await putRes.text().catch(() => "");
       throw new Error(`presigned PUT → HTTP ${putRes.status} ${text.slice(0, 200)}`);
     }
-    finalizePayload = {
-      objectId: reserve.objectId,
-      byteSize: body.byteLength,
-      sha256,
-      mimeType,
-      storageKey: reserve.storageKey,
-      metadata: { source: "corpus-seed" },
-    };
   } else {
-    finalizePayload = {
-      objectId: reserve.objectId,
-      byteSize: body.byteLength,
-      sha256,
-      mimeType,
-      storageKey: reserve.storageKey,
-      contentBase64: body.toString("base64"),
-      metadata: { source: "corpus-seed" },
-    };
+    finalizePayload.contentBase64 = body.toString("base64");
   }
+  finalizePayload.metadata = { source: "corpus-seed" };
 
   // Phase 3 (commit): drive.finalize verifies the object, creates the immutable
   // version row, fires the `drive.upload.finalized` audit event, and emits the
@@ -252,7 +247,7 @@ async function driveTool<T = unknown>(
   return (await res.json()) as T;
 }
 
-async function healthCheck() {
+async function healthCheck(): Promise<void> {
   try {
     const res = await fetch(`${BACKEND}/healthz`, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -289,7 +284,7 @@ async function walk(
   current: string,
   out: DiscoveredFile[],
   topLevel: string,
-) {
+): Promise<void> {
   const entries = await readdir(current, { withFileTypes: true });
   for (const e of entries) {
     const abs = path.join(current, e.name);
@@ -317,7 +312,7 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-function printByExtension(files: ReadonlyArray<{ abs: string; size: number }>) {
+function printByExtension(files: ReadonlyArray<{ abs: string; size: number }>): void {
   const byExt = new Map<string, { count: number; bytes: number }>();
   for (const f of files) {
     const ext = path.extname(f.abs).toLowerCase().slice(1) || "(none)";
@@ -330,38 +325,41 @@ function printByExtension(files: ReadonlyArray<{ abs: string; size: number }>) {
   console.log("\nBy extension:");
   console.log(`  ${"ext".padEnd(10)} ${"count".padStart(6)} ${"size".padStart(10)}`);
   for (const [ext, s] of rows.slice(0, 20)) {
-    console.log(`  ${ext.padEnd(10)} ${String(s.count).padStart(6)} ${formatBytes(s.bytes).padStart(10)}`);
+    console.log(
+      `  ${ext.padEnd(10)} ${String(s.count).padStart(6)} ${formatBytes(s.bytes).padStart(10)}`,
+    );
   }
 }
 
+const CONTENT_TYPES: Record<string, string> = {
+  ".md": "text/markdown",
+  ".txt": "text/plain",
+  ".html": "text/html",
+  ".htm": "text/html",
+  ".xml": "application/xml",
+  ".json": "application/json",
+  ".pdf": "application/pdf",
+  ".rtf": "application/rtf",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".doc": "application/msword",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".xls": "application/vnd.ms-excel",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".ppt": "application/vnd.ms-powerpoint",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".odt": "application/vnd.oasis.opendocument.text",
+  ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+  ".odp": "application/vnd.oasis.opendocument.presentation",
+};
+
 function guessContentType(file: string): string {
   const ext = path.extname(file).toLowerCase();
-  const map: Record<string, string> = {
-    ".md": "text/markdown",
-    ".txt": "text/plain",
-    ".html": "text/html",
-    ".htm": "text/html",
-    ".xml": "application/xml",
-    ".json": "application/json",
-    ".pdf": "application/pdf",
-    ".rtf": "application/rtf",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".svg": "image/svg+xml",
-    ".doc": "application/msword",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".xls": "application/vnd.ms-excel",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".ppt": "application/vnd.ms-powerpoint",
-    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ".odt": "application/vnd.oasis.opendocument.text",
-    ".ods": "application/vnd.oasis.opendocument.spreadsheet",
-    ".odp": "application/vnd.oasis.opendocument.presentation",
-  };
-  return map[ext] ?? "application/octet-stream";
+  return CONTENT_TYPES[ext] ?? "application/octet-stream";
 }
 
 main().catch((err) => {

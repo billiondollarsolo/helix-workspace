@@ -50,12 +50,16 @@ describe("Meet media lifecycle", { skip: process.env.DATABASE_URL === undefined 
         occurredAt: new Date(START.getTime() + input.seconds * 1_000),
       });
 
-    await expect(event({ eventId: "start", event: "conference.started", seconds: 0 })).resolves.toMatchObject({
+    await expect(
+      event({ eventId: "start", event: "conference.started", seconds: 0 }),
+    ).resolves.toMatchObject({
       status: "active",
       version: 1,
       duplicate: false,
     });
-    await expect(event({ eventId: "start", event: "conference.started", seconds: 0 })).resolves.toMatchObject({
+    await expect(
+      event({ eventId: "start", event: "conference.started", seconds: 0 }),
+    ).resolves.toMatchObject({
       version: 1,
       duplicate: true,
     });
@@ -87,7 +91,9 @@ describe("Meet media lifecycle", { skip: process.env.DATABASE_URL === undefined 
       status: "ended",
       endedAt: new Date(START.getTime() + 40_000),
     });
-    await expect(event({ eventId: "stale-rejoin", event: "participant.joined", sessionId: "c", seconds: 200 })).resolves.toMatchObject({
+    await expect(
+      event({ eventId: "stale-rejoin", event: "participant.joined", sessionId: "c", seconds: 200 }),
+    ).resolves.toMatchObject({
       status: "ended",
       version: 7,
       activeParticipantCount: 0,

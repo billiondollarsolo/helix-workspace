@@ -11,6 +11,7 @@ import {
   getHeader,
   nestedStringField,
   parseJsonPayload,
+  payloadToString,
   safeEqualText,
   stringField,
 } from "./common.js";
@@ -89,10 +90,7 @@ function verifyGitLabStandardWebhookSignature(options: VerifySourceSignatureOpti
   }
 
   const signingSecret = gitLabSigningSecret(options.secret);
-  const body = Buffer.isBuffer(options.payload)
-    ? options.payload.toString("utf8")
-    : Buffer.from(options.payload).toString("utf8");
-  const signedPayload = `${messageId}.${timestamp}.${body}`;
+  const signedPayload = `${messageId}.${timestamp}.${payloadToString(options.payload)}`;
   const expected = getCryptoProvider().hmac("sha256", signingSecret, signedPayload, "base64");
   return safeEqualText(signature, expected);
 }

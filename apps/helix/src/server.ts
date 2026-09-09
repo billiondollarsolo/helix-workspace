@@ -1,13 +1,18 @@
-import { fileURLToPath } from "node:url";
-import { join } from "node:path";
-import { resolveTxt } from "node:dns/promises";
-import { readFile } from "node:fs/promises";
 import { KMSClient } from "@aws-sdk/client-kms";
 import cors from "@fastify/cors";
+import { resolveTxt } from "node:dns/promises";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readDomainsWithRecords } from "./platform/admin/domains.js";
 import cookie from "@fastify/cookie";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import websocket from "@fastify/websocket";
+import { ContractValidationError } from "@helix/contracts";
+import { createMeteringClient } from "@helix/sdk";
+import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
+import { fromNodeHeaders } from "better-auth/node";
 import fastify, {
   type FastifyInstance,
   type FastifyPluginAsync,
@@ -15,24 +20,30 @@ import fastify, {
   type FastifyRequest,
 } from "fastify";
 import { Redis } from "ioredis";
-import { fromNodeHeaders } from "better-auth/node";
-import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
-import { ZodError, z } from "zod";
-import { ContractValidationError } from "@helix/contracts";
-import { createMeteringClient } from "@helix/sdk";
+import { z, ZodError } from "zod";
 import {
-  actorFromRequestWithAccessTokenAndSession,
-  resolveCredentialAuthenticatedActor,
   systemActor,
-  type SessionActorResolver,
+  toolInvocationPrincipalFromRequest,
   unauthenticatedActor,
   untrustedIdentityHeader,
+  type SessionActorResolver,
 } from "./api/actor.js";
 import { ApiError, ForbiddenError, NotFoundError } from "./api/api-error.js";
-import { requireActorScope } from "./api/scopes.js";
 import { buildAsyncApiDocument } from "./api/asyncapi.js";
-import { formatSseEvent, handleMcpJsonRpcRequest, handleMcpStreamingRequest } from "./api/mcp.js";
+import { createResourceClassifier } from "./api/classify-resource.js";
+import { trustedProxyAddresses } from "./api/client-ip.js";
+import { buildErrorEnvelope, toolErrorEnvelope } from "./api/error-envelope.js";
+import {
+  DEFAULT_IDEMPOTENCY_TTL_MS,
+  fingerprintRequestPayload,
+  idempotencyStorageKey,
+  InMemoryIdempotencyStore,
+  RedisIdempotencyStore,
+  resolveIdempotency,
+  type IdempotencyStore,
+} from "./api/idempotency.js";
 import { createStoreBackedMcpResourceProvider } from "./api/mcp-resources.js";
+import { formatSseEvent, handleMcpJsonRpcRequest, handleMcpStreamingRequest } from "./api/mcp.js";
 import { createPlatformMetrics, installHttpMetrics } from "./api/metrics.js";
 import { buildOpenApiDocument, openApiDocumentToYaml } from "./api/openapi.js";
 import {
@@ -40,63 +51,131 @@ import {
   API_REQUEST_TIMEOUT_MS,
   WEBSOCKET_MAX_PAYLOAD_BYTES,
 } from "./api/request-body.js";
+import { requireActorScope } from "./api/scopes.js";
+import { projectToolListItem } from "./api/tool-projection.js";
 import { createRequestContext } from "./api/trace.js";
-import { trustedProxyAddresses } from "./api/client-ip.js";
+import { createHelixTRPCRouter } from "./api/trpc.js";
 import {
   HELIX_API_VERSION_HEADER_VALUE,
   HELIX_API_VERSION_PREFIX,
   HELIX_SERVER_VERSION,
   internalApiUrl,
 } from "./api/version.js";
-import { buildErrorEnvelope, toolErrorEnvelope } from "./api/error-envelope.js";
-import {
-  DEFAULT_IDEMPOTENCY_TTL_MS,
-  InMemoryIdempotencyStore,
-  RedisIdempotencyStore,
-  fingerprintRequestPayload,
-  idempotencyStorageKey,
-  resolveIdempotency,
-  type IdempotencyStore,
-} from "./api/idempotency.js";
-import { projectToolListItem } from "./api/tool-projection.js";
-import { createResourceClassifier } from "./api/classify-resource.js";
-import { createHelixTRPCRouter } from "./api/trpc.js";
+import { env } from "./config/env.js";
+import { resolveRedisConnection } from "./config/redis-connection.js";
 import {
   assertTenantRlsCoverage,
   assertTenantSafeDatabaseRole,
   createSqlClient,
 } from "./db/client.js";
-import { resolvePlatformMigrationSources } from "./db/migration-sources.js";
 import { listPendingMigrations } from "./db/migration-runner.js";
-import { env } from "./config/env.js";
-import { createOutboundHttpClient } from "./platform/outbound-http.js";
+import { resolvePlatformMigrationSources } from "./db/migration-sources.js";
+import { resolveAiEnv } from "./platform/ai/operator-settings.js";
 import { OAuthTokenService } from "./platform/auth/oauth.js";
-import { PostgresAdminServiceStatusStore } from "./platform/admin/service-status.js";
-import { AdminServicesCatalog, registerAdminServicesRoutes } from "./platform/admin/services.js";
+import { createOutboundHttpClient } from "./platform/outbound-http.js";
+import { helixLoggerOptions } from "./platform/security/logger-redaction.js";
+import { parseTrustedOrigins } from "./platform/security/origin-policy.js";
 import { registerAdminIdentityRoutes } from "./platform/admin/identity.js";
 import { registerAdminScimCredentialRoutes } from "./platform/admin/scim-credentials.js";
+import { PostgresAdminServiceStatusStore } from "./platform/admin/service-status.js";
+import { AdminServicesCatalog, registerAdminServicesRoutes } from "./platform/admin/services.js";
+import {
+  actorExistsInOrg,
+  disableActorForOffboard,
+  PostgresAdminUsersStore,
+  registerAdminUsersRoutes,
+  revokeSessionsForActorSql,
+} from "./platform/auth/admin-users.js";
+import {
+  PostgresAppPasswordStore,
+  registerAppPasswordTools,
+} from "./platform/auth/app-passwords.js";
+import { AuthorizationCodeService } from "./platform/auth/authorization-code.js";
+import { PostgresOAuthAuthorizationStore } from "./platform/auth/authorization-store.js";
 import {
   PostgresAgentCredentialStore,
   PostgresAuthorizationCodeStore,
   PostgresOAuthStore,
 } from "./platform/auth/postgres-store.js";
-import { AuthorizationCodeService } from "./platform/auth/authorization-code.js";
-import { PostgresOAuthAuthorizationStore } from "./platform/auth/authorization-store.js";
 import { registerOAuthRoutes } from "./platform/auth/routes.js";
-import { registerTenantScimRoutes } from "./platform/auth/scim-routes.js";
 import { PostgresTenantScimCredentialStore } from "./platform/auth/scim-credentials.js";
 import { PostgresScimProvisioningStore } from "./platform/auth/scim-provisioning.js";
-import { PostgresTenantIdpConfigStore } from "./platform/auth/tenant-idp-configs.js";
+import { registerTenantScimRoutes } from "./platform/auth/scim-routes.js";
 import { resolveTenantOidcPrivateKey, resolveTenantOidcUser } from "./platform/auth/sso-runtime.js";
+import { PostgresTenantIdpConfigStore } from "./platform/auth/tenant-idp-configs.js";
 import {
-  PostgresAppPasswordStore,
-  registerAppPasswordTools,
-} from "./platform/auth/app-passwords.js";
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "./platform/auth/tool-invocation-principal.js";
 import {
   agentCredentialScopeCatalog,
   registerAgentCredentialTools,
 } from "./platform/auth/tools.js";
-import { PostgresAdminUsersStore, registerAdminUsersRoutes } from "./platform/auth/admin-users.js";
+import { PostgresBillingStore, registerAdminBillingRoutes } from "./platform/admin/billing.js";
+import { AuthoritativeDnsResolver } from "./platform/admin/dns-resolver.js";
+import { PostgresDomainsStore, registerAdminDomainsRoutes } from "./platform/admin/domains.js";
+import { PostgresGroupsStore, registerAdminGroupsRoutes } from "./platform/admin/groups.js";
+import {
+  PostgresOAuthAppsStore,
+  registerAdminOAuthAppsRoutes,
+} from "./platform/admin/oauth-apps.js";
+import {
+  PostgresSecurityPoliciesStore,
+  readSecurityPolicies,
+  registerAdminSecurityPoliciesRoutes,
+} from "./platform/admin/security-policies.js";
+import { registerTenantConfigAdminRoutes } from "./platform/admin/tenant-config.js";
+import {
+  AIRouter,
+  createAICostGuard,
+  createAnthropicCompatibleProvider,
+  createBedrockCredentialProvider,
+  createBedrockProvider,
+  createConfiguredVectorStore,
+  createOpenAICompatibleEmbeddingProvider,
+  createOpenAICompatibleProvider,
+  createVertexProvider,
+  deriveClassification,
+  EnrichmentWorker,
+  InMemoryAICostLimiter,
+  ioredisAICostClient,
+  PostgresAICostLimitStore,
+  PostgresAIProvenanceStore,
+  PostgresMemoryStore,
+  PostgresResourceClassificationStore,
+  RedisAICostLimiter,
+  registerAICostLimitAdminRoutes,
+  ResourceClassificationService,
+  type AICostLimiter,
+  type AICostLimitStore,
+  type AICostWarningEvent,
+  type BedrockCredentialSource,
+  type MemoryEmbeddingProvider,
+  type VertexCredentials,
+} from "./platform/ai/index.js";
+import {
+  AssistantOrchestrator,
+  AssistantSlashCommandHooks,
+  PostgresAssistantStore,
+  registerAssistantTools,
+  type AssistantSendMessageInput,
+  type AssistantStreamEvent,
+} from "./platform/assistant/index.js";
+import {
+  createAuditDestinationShipper,
+  type AuditDestinationConfig,
+} from "./platform/audit/destinations.js";
+import {
+  createHmacAuditAnchorAuthenticator,
+  createStorageClientImmutableAuditStore,
+  type ImmutableAuditObjectLockMode,
+} from "./platform/audit/immutable-s3.js";
+import { registerAuditLogAdminRoutes } from "./platform/audit/routes.js";
+import { AuditShippingWorker } from "./platform/audit/shipping-worker.js";
+import type { SiemAuditFormat } from "./platform/audit/siem-format.js";
+import type { SiemSyslogTransport } from "./platform/audit/siem-syslog.js";
+import { PostgresAuditStore } from "./platform/audit/store.js";
+import { AuditVerifierWorker, PostgresAuditVerifierLease } from "./platform/audit/worker.js";
 import {
   createBetterAuthPlatformModule,
   createBetterAuthRuntime,
@@ -117,45 +196,10 @@ import {
   serializeCsrfCookie,
 } from "./platform/auth/browser-security.js";
 import {
-  AssistantOrchestrator,
-  AssistantSlashCommandHooks,
-  PostgresAssistantStore,
-  registerAssistantTools,
-  type AssistantSendMessageInput,
-  type AssistantStreamEvent,
-} from "./platform/assistant/index.js";
-import {
   registerBackupAdminRoutes,
   ScriptedBackupAdminService,
 } from "./platform/backup/admin-routes.js";
 import { PostgresRestoreJobStore, RestoreJobWorker } from "./platform/backup/restore-jobs.js";
-import {
-  AIRouter,
-  EnrichmentWorker,
-  InMemoryAICostLimiter,
-  createAICostGuard,
-  createAnthropicCompatibleProvider,
-  createBedrockCredentialProvider,
-  createBedrockProvider,
-  createConfiguredVectorStore,
-  createOpenAICompatibleEmbeddingProvider,
-  createOpenAICompatibleProvider,
-  createVertexProvider,
-  ioredisAICostClient,
-  PostgresAICostLimitStore,
-  PostgresAIProvenanceStore,
-  PostgresMemoryStore,
-  PostgresResourceClassificationStore,
-  RedisAICostLimiter,
-  registerAICostLimitAdminRoutes,
-  ResourceClassificationService,
-  type AICostLimiter,
-  type AICostLimitStore,
-  type AICostWarningEvent,
-  type BedrockCredentialSource,
-  type MemoryEmbeddingProvider,
-  type VertexCredentials,
-} from "./platform/ai/index.js";
 import {
   CalendarInvitationDeliveryWorker,
   createMailCalendarInvitationSender,
@@ -175,13 +219,16 @@ import {
   registerPeopleRoutes,
 } from "./platform/carddav/index.js";
 import {
+  ChatRetentionWorker,
+  createChatNatsSecurityPolicy,
   EventBusChatRoomBus,
   InMemoryChatPresenceStore,
   PostgresChatAttachmentStore,
   PostgresChatModerationStore,
+  PostgresChatRetentionOrganizationSource,
   PostgresChatRoomEventLog,
-  PostgresChatWebSocketTicketStore,
   PostgresChatStore,
+  PostgresChatWebSocketTicketStore,
   RedisChatPresenceStore,
   registerChatEnrichments,
   registerChatIndexer,
@@ -189,19 +236,11 @@ import {
   registerChatRoutes,
   registerChatTools,
 } from "./platform/chat/index.js";
-import {
-  PostgresDocsStore,
-  registerDocsEnrichments,
-  registerDocsIndexer,
-  registerDocsRoutes,
-  registerDocsTools,
-} from "./platform/docs/index.js";
+import { dlpDecisionError, TenantDlpGuard } from "./platform/dlp.js";
+import { loadDriveConfig } from "./platform/drive/config.js";
 import {
   createClamAvVirusScanner,
-  createIsolatedContentConverter,
   DriveVirusScanRetryWorker,
-  type DrivePreview,
-  isActiveBrowserContent,
   PostgresDriveStore,
   PostgresDriveWorkflowStore,
   registerDriveEnrichments,
@@ -211,85 +250,68 @@ import {
   registerDriveShareLinkRoute,
   registerDriveTools,
   safeDriveContentHeaders,
-  sanitizePreviewFragment,
   sendStreamWithRangeSupport,
-  sendSandboxedHtmlPreview,
 } from "./platform/drive/index.js";
-import { loadDriveConfig } from "./platform/drive/config.js";
 import { InMemoryEventBus } from "./platform/events/in-memory-event-bus.js";
 import { NatsEventBus } from "./platform/events/nats-event-bus.js";
 import { registerEventRoutes } from "./platform/events/routes.js";
 import { createEventSchemaRegistry } from "./platform/events/schema-registry.js";
-import { PostgresAuditStore } from "./platform/audit/store.js";
-import { registerAuditLogAdminRoutes } from "./platform/audit/routes.js";
-import { AuditVerifierWorker, PostgresAuditVerifierLease } from "./platform/audit/worker.js";
+import { EventStreamLimiter } from "./platform/events/stream-limit.js";
+import { PostgresGovernanceStore, registerGovernanceRoutes } from "./platform/governance/index.js";
 import {
   LeaderElection,
   PostgresAdvisoryLockClient,
   SingletonWorkerSupervisor,
   type SupervisedWorker,
 } from "./platform/leader/election.js";
-import { PendingActionExpiryWorker } from "./platform/tools/pending-action-expiry-worker.js";
-import {
-  createStorageClientImmutableAuditStore,
-  createHmacAuditAnchorAuthenticator,
-  type ImmutableAuditObjectLockMode,
-} from "./platform/audit/immutable-s3.js";
-import { AuditShippingWorker } from "./platform/audit/shipping-worker.js";
-import {
-  createAuditDestinationShipper,
-  type AuditDestinationConfig,
-} from "./platform/audit/destinations.js";
-import type { SiemAuditFormat } from "./platform/audit/siem-format.js";
-import type { SiemSyslogTransport } from "./platform/audit/siem-syslog.js";
+import { mailConfig } from "./platform/mail/config.js";
 import {
   ClamavScanner,
-  NodemailerMailTransport,
-  MailDeliveryError,
+  createBetaSpamSecondPass,
+  DispatchTimeTransportResolver,
+  KmsDkimPrivateKeyProtector,
+  MailAdminStatusService,
   MailAttachmentCleanupWorker,
+  MailDeliveryAlertMonitor,
+  MailDeliveryError,
   MailTrashPurgeWorker,
+  NodemailerMailTransport,
   OutboundMailDispatcher,
   OutboundMailWorker,
-  registerOutboundMailAdminRoutes,
-  PostgresMailQuarantineStore,
-  PostgresMailTrashPurger,
+  parseInboundAuthenticationPolicy,
   PostgresMailAttachmentIngestor,
-  PostgresMailStore,
-  SmtpSubmissionServer,
   PostgresMailDeliveryEventStore,
   PostgresMailDkimKeyStore,
-  KmsDkimPrivateKeyProtector,
   PostgresMailDmarcReportStore,
+  PostgresMailQuarantineStore,
   PostgresMailRoutingRuleStore,
+  PostgresMailStore,
+  PostgresMailTrashPurger,
   PostgresOutboundProviderStore,
-  MailAdminStatusService,
   registerMailAdminRoutes,
   registerMailDeliveryAdminRoutes,
+  registerMailDeliveryEventAdminRoutes,
   registerMailDeliveryEventRoutes,
   registerMailEnrichments,
   registerMailIndexer,
+  registerMailProviderWebhookRoutes,
   registerMailQuarantineAdminRoutes,
   registerMailSourceRoutes,
   registerMailStreamRoutes,
   registerMailTools,
-  parseInboundAuthenticationPolicy,
-  resolveOutboundTransport,
+  registerOutboundMailAdminRoutes,
   SmtpMailReceiver,
+  SmtpSubmissionServer,
   SpamdScanner,
 } from "./platform/mail/index.js";
-import { mailConfig } from "./platform/mail/config.js";
 import {
   createJibriRecorderHealthCheck,
   MeetLifecycleWorker,
-  PostgresMeetStore,
   meetSecrets,
+  PostgresMeetStore,
   registerMeetRoutes,
   registerMeetTools,
 } from "./platform/meet/index.js";
-import {
-  PostgresNotificationStore,
-  registerNotificationTools,
-} from "./platform/notifications/index.js";
 import {
   MeteringIngestWorker,
   MeteringRollupWorker,
@@ -297,85 +319,54 @@ import {
   PostgresMeteringRollupStore,
 } from "./platform/metering/index.js";
 import {
-  PostgresSheetsStore,
-  registerSheets,
-  registerSheetsRoutes,
-} from "./platform/sheets/index.js";
+  PostgresNotificationStore,
+  registerNotificationTools,
+} from "./platform/notifications/index.js";
+import { PendingActionExpiryWorker } from "./platform/tools/pending-action-expiry-worker.js";
+import type {
+  Actor,
+  AiConfig,
+  AiProviderConfig,
+  ChatRequest,
+  ChatResponse,
+  EventBus,
+  HelixConfig,
+  JsonObject,
+  LLMProviderCapability,
+  MeteringClient,
+  ModelInfo,
+  SecurityTier,
+} from "@helix/sdk-types";
+import type { CreateFastifyContextOptions } from "@trpc/server/adapters/fastify";
+import type { PlatformMetrics } from "./api/metrics.js";
+import { registerAdminOverviewRoutes } from "./platform/admin/overview.js";
+import { evaluateOrgAdminMfa } from "./platform/admin/security-policy-runtime.js";
 import {
-  PostgresSlidesStore,
-  registerSlides,
-  registerSlidesRoutes,
-} from "./platform/slides/index.js";
-import { PostgresGroupsStore, registerAdminGroupsRoutes } from "./platform/admin/groups.js";
-import { PostgresGovernanceStore, registerGovernanceRoutes } from "./platform/governance/index.js";
+  buildCoreAppsAdminStatus,
+  registerCoreAppsAdminRoutes,
+} from "./platform/apps/admin-routes.js";
+import { CoreAppRegistrationPlan, resolveCoreAppStatuses } from "./platform/apps/core-apps.js";
+import { enforceCredentialPolicy, type AgentCredentialStore } from "./platform/auth/credentials.js";
 import {
-  PostgresSecurityPoliciesStore,
-  registerAdminSecurityPoliciesRoutes,
-} from "./platform/admin/security-policies.js";
-import { dlpDecisionError, TenantDlpGuard } from "./platform/dlp.js";
-import { registerTenantConfigAdminRoutes } from "./platform/admin/tenant-config.js";
+  installCrownJewelGate,
+  PostgresCrownJewelApprovalStore,
+  requestHasCrownJewelApproval,
+} from "./platform/auth/crown-jewel.js";
 import {
-  PostgresOAuthAppsStore,
-  registerAdminOAuthAppsRoutes,
-} from "./platform/admin/oauth-apps.js";
-import { PostgresBillingStore, registerAdminBillingRoutes } from "./platform/admin/billing.js";
-import { PostgresDomainsStore, registerAdminDomainsRoutes } from "./platform/admin/domains.js";
-import { AuthoritativeDnsResolver } from "./platform/admin/dns-resolver.js";
-import { signupEventSchemas } from "./platform/signup/event-schemas.js";
-import { registerSignupRoutesForMode } from "./platform/signup/routes.js";
+  PostgresDomainIdentityStore,
+  registerDomainIdentityDiscoveryRoute,
+} from "./platform/auth/domain-identity.js";
 import {
-  SignupOnboardingInviteEmailWorker,
-  SignupVerificationEmailWorker,
-} from "./platform/signup/email-delivery.js";
-import {
-  InMemorySignupAbuseProtector,
-  RedisSignupAbuseProtector,
-  ioredisSignupRateLimitClient,
-  parseBlockedSignupEmailDomains,
-} from "./platform/signup/abuse.js";
-import {
-  ConfiguredCountrySignupRiskReviewer,
-  parseSignupManualReviewCountries,
-} from "./platform/signup/risk-review.js";
-import {
-  PostgresSignupEmailVerificationTokenStore,
-  PostgresSignupOwnerEmailLookup,
-  PostgresSignupVerifiedIdentityStore,
-} from "./platform/signup/verification.js";
-import {
-  DefaultSignupPasswordScreener,
-  HaveIBeenPwnedPasswordChecker,
-} from "./platform/signup/password-screening.js";
-import { GoogleRecaptchaVerifier } from "./platform/signup/recaptcha.js";
-import { PostgresSignupOnboardingStore } from "./platform/signup/onboarding.js";
-import { PostgresSignupOnboardingInviteTokenStore } from "./platform/signup/invites.js";
-import { OutboxWorker } from "./platform/outbox/outbox.js";
-import { PostgresOutboxStore } from "./platform/outbox/postgres-store.js";
-import { registerPluginAdminRoutes } from "./platform/plugins/admin-routes.js";
-import {
-  PluginLifecycle,
-  PostgresPluginLifecycleStore,
-  registerPluginTools,
-} from "./platform/plugins/tools.js";
-import { loadPluginTrustFile } from "./platform/plugins/trust.js";
-import { TenantConfigFeatureFlagProvider } from "./platform/feature-flags/provider.js";
-import {
-  createMeilisearchHttpClient,
-  MeilisearchSearchEngine,
-  SemanticSearchEngine,
-  SearchEventIndexer,
-  SearchReconciliationWorker,
-  SearchReindexService,
-  AuthorizingSearchEngine,
-  authorizeWorkspaceSearchHit,
-  createPostgresSearchReindexSources,
-  PostgresSearchDurabilityStore,
-  PostgresSearchReindexJobService,
-  SearchMutationWorker,
-  SearchShadowReindexWorker,
-  registerSearchAdminRoutes,
-  registerSearchTools,
-} from "./platform/search/index.js";
+  authResponseSessionToken,
+  PostgresRecoveryCodeBroker,
+  PostgresSessionMfaAssurance,
+  recoveryCodeDigest,
+  unverifiedMfaResolver,
+  verifiedMfaSessionToken,
+  type MfaAssuranceMarker,
+  type MfaVerificationResolver,
+} from "./platform/auth/mfa.js";
+import type { AccessTokenStore } from "./platform/auth/oauth.js";
 import {
   PlatformConfigAdminService,
   PostgresPlatformConfigStore,
@@ -387,152 +378,161 @@ import {
   PostgresOverrideConfigSource,
   subscribeToConfigHotReload,
 } from "./platform/config/loader.js";
-import { tierDefaults } from "./platform/config/tier.js";
 import { evaluateTierReadiness } from "./platform/config/tier-readiness.js";
+import { tierDefaults } from "./platform/config/tier.js";
+import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
+import { TenantConfigFeatureFlagProvider } from "./platform/feature-flags/provider.js";
 import {
   ReadinessMonitor,
   registerHealthRoutes,
   type ReadinessProbe,
 } from "./platform/health/readiness.js";
-import { isSaas } from "./platform/mode/index.js";
-import { CoreAppRegistrationPlan, resolveCoreAppStatuses } from "./platform/apps/core-apps.js";
-import {
-  installTenantContextHook,
-  installTenantPostgresContextHook,
-  PostgresOrgStore,
-  PostgresPlanStore,
-  TenantActorMismatchError,
-  TenantResolutionError,
-  PostgresTenantProvisioningStore,
-  PostgresTenantOwnerActorStore,
-  PostgresTenantStorageNamespaceStore,
-  PostgresTenantBootstrapSeedStore,
-  TenantProvisioningWorker,
-  TenantHardDeleteWorker,
-  TenantDeletionWorkflow,
-  PostgresTenantDeletionStore,
-  createRedisTenantDeletionCachePurger,
-  buildEffectiveTenantConfig,
-  createPostgresTenantExportManifestPlanner,
-  initialOwnerActorStepName,
-  objectStorePrefixStepName,
-  registerTenantLifecycleRoutes,
-  tenantBootstrapSeedStepName,
-  type DefaultOrgInput,
-  type OrgRecord,
-  setTenantPostgresActorId,
-  withTenantPostgresContext,
-  type OrgStore,
-  type TenantProvisioningStep,
-  assertActorMatchesRequestTenant,
-  assertDeploymentResidency,
-  assertRegionalDatabase,
-  ensureDefaultOrgForMode,
-  resolveDefaultOrgInput,
-  resolveTenantContext,
-  regionalResourceName,
-} from "./platform/tenancy/index.js";
-import { registerEditorsCoreApp } from "./platform/editors/index.js";
-import { createEditorsRuntimeHost } from "./platform/editors/core-app.js";
-import { registerCoreAppsAdminRoutes } from "./platform/apps/admin-routes.js";
-import { loadConnectors, registerConnectorsAdminRoute } from "./platform/connectors/index.js";
-import {
-  evaluateAdminMfa,
-  PostgresSessionMfaAssurance,
-  PostgresRecoveryCodeBroker,
-  recoveryCodeDigest,
-  verifiedMfaSessionToken,
-  authResponseSessionToken,
-  type MfaAssuranceMarker,
-  type MfaVerificationResolver,
-  unverifiedMfaResolver,
-} from "./platform/auth/mfa.js";
-import {
-  installCrownJewelGate,
-  PostgresCrownJewelApprovalStore,
-  requestHasCrownJewelApproval,
-} from "./platform/auth/crown-jewel.js";
-import {
-  PostgresDomainIdentityStore,
-  registerDomainIdentityDiscoveryRoute,
-} from "./platform/auth/domain-identity.js";
 import {
   InMemoryAgentRateCostLimiter,
-  InMemoryTenantHourlyQuotaLimiter,
   InMemoryTenantApiRpsLimiter,
+  InMemoryTenantHourlyQuotaLimiter,
   RedisAgentRateCostLimiter,
-  RedisTenantHourlyQuotaLimiter,
   RedisTenantApiRpsLimiter,
+  RedisTenantHourlyQuotaLimiter,
   type AgentLimitBudget,
-  type TenantHourlyQuotaLimiter,
   type TenantApiRpsLimiter,
+  type TenantHourlyQuotaLimiter,
 } from "./platform/limits/index.js";
+import { MailProviderConfigurationError } from "./platform/mail/errors.js";
+import { isSaas } from "./platform/mode/index.js";
+import { OutboxWorker } from "./platform/outbox/outbox.js";
+import { PostgresOutboxStore } from "./platform/outbox/postgres-store.js";
 import {
   CerbosToolAccessPolicy,
   ObservedToolAccessPolicy,
   ScopeToolAccessPolicy,
 } from "./platform/permissions/tool-access.js";
+import { registerPluginAdminRoutes } from "./platform/plugins/admin-routes.js";
 import {
-  ByoStorageHealthWorker,
-  PostgresTenantStorageMigrationJobStore,
-  TenantStorageMigrationWorker,
-  createDefaultTenantStorageResolver,
-  createS3CompatibleStorage,
-  createTenantStorageMigrationPairResolver,
-  createTenantStorageResolver,
-  resolveTenantStorageSnapshot,
-} from "./platform/storage/index.js";
+  PluginLifecycle,
+  PostgresPluginLifecycleStore,
+  registerPluginTools,
+} from "./platform/plugins/tools.js";
+import { loadPluginTrustFile } from "./platform/plugins/trust.js";
+import {
+  authorizeWorkspaceSearchHit,
+  AuthorizingSearchEngine,
+  createMeilisearchHttpClient,
+  createPostgresSearchReindexSources,
+  MeilisearchSearchEngine,
+  PostgresSearchDurabilityStore,
+  PostgresSearchReindexJobService,
+  registerSearchAdminRoutes,
+  registerSearchTools,
+  SearchEventIndexer,
+  SearchMutationWorker,
+  SearchReconciliationWorker,
+  SearchReindexService,
+  SearchShadowReindexWorker,
+  SemanticSearchEngine,
+} from "./platform/search/index.js";
+import type { GlobalSearchType } from "./platform/search/scope.js";
 import {
   createVaultTenantSecretReaderFromEnv,
   TenantEnvelopeCipher,
 } from "./platform/secrets/index.js";
 import {
+  InMemorySignupAbuseProtector,
+  ioredisSignupRateLimitClient,
+  parseBlockedSignupEmailDomains,
+  RedisSignupAbuseProtector,
+} from "./platform/signup/abuse.js";
+import {
+  SignupOnboardingInviteEmailWorker,
+  SignupVerificationEmailWorker,
+} from "./platform/signup/email-delivery.js";
+import { signupEventSchemas } from "./platform/signup/event-schemas.js";
+import { PostgresSignupOnboardingInviteTokenStore } from "./platform/signup/invites.js";
+import { PostgresSignupOnboardingStore } from "./platform/signup/onboarding.js";
+import {
+  DefaultSignupPasswordScreener,
+  HaveIBeenPwnedPasswordChecker,
+} from "./platform/signup/password-screening.js";
+import { GoogleRecaptchaVerifier } from "./platform/signup/recaptcha.js";
+import {
+  ConfiguredCountrySignupRiskReviewer,
+  parseSignupManualReviewCountries,
+} from "./platform/signup/risk-review.js";
+import { registerSignupRoutesForMode } from "./platform/signup/routes.js";
+import {
+  PostgresSignupEmailVerificationTokenStore,
+  PostgresSignupOwnerEmailLookup,
+  PostgresSignupVerifiedIdentityStore,
+} from "./platform/signup/verification.js";
+import {
+  ByoStorageHealthWorker,
+  createDefaultTenantStorageResolver,
+  createS3CompatibleStorage,
+  createTenantStorageMigrationPairResolver,
+  createTenantStorageResolver,
+  PostgresTenantStorageMigrationJobStore,
+  resolveTenantStorageSnapshot,
+  TenantStorageMigrationWorker,
+} from "./platform/storage/index.js";
+import {
+  assertActorMatchesRequestTenant,
+  assertDeploymentResidency,
+  assertRegionalDatabase,
+  buildEffectiveTenantConfig,
+  createPostgresTenantExportManifestPlanner,
+  createRedisTenantDeletionCachePurger,
+  ensureDefaultOrgForMode,
+  initialOwnerActorStepName,
+  installTenantContextHook,
+  installTenantPostgresContextHook,
+  objectStorePrefixStepName,
+  PostgresOrgStore,
+  PostgresPlanStore,
+  PostgresTenantBootstrapSeedStore,
+  PostgresTenantDeletionStore,
+  PostgresTenantOwnerActorStore,
+  PostgresTenantProvisioningStore,
+  PostgresTenantStorageNamespaceStore,
+  regionalResourceName,
+  registerTenantLifecycleRoutes,
+  resolveDefaultOrgInput,
+  resolveTenantContext,
+  setTenantPostgresActorId,
+  TenantActorMismatchError,
+  tenantBootstrapSeedStepName,
+  TenantDeletionWorkflow,
+  TenantHardDeleteWorker,
+  TenantProvisioningWorker,
+  TenantResolutionError,
+  withTenantPostgresContext,
+  type DefaultOrgInput,
+  type OrgRecord,
+  type OrgStore,
+  type TenantProvisioningStep,
+} from "./platform/tenancy/index.js";
+import {
   createToolRegistry,
   type RuntimeToolRegistry,
   type ToolInvokeErrorResult,
 } from "./platform/tool-registry.js";
+import { createAgentOperationalControlTools } from "./platform/tools/agent-operational-controls-tools.js";
+import { RuntimeAgentOperationalControlStore } from "./platform/tools/agent-operational-controls.js";
 import { PostgresPendingActionStore } from "./platform/tools/pending-actions-postgres-store.js";
 import { InMemoryConfirmationGate } from "./platform/tools/registry.js";
 import {
   OutboundWebhookWorker,
   PostgresWebhookStore,
-  TenantEnvelopeWebhookSecretResolver,
-  registerWebhookVerificationDocsRoute,
   registerWebhookRoutes,
   registerWebhookTools,
+  registerWebhookVerificationDocsRoute,
+  TenantEnvelopeWebhookSecretResolver,
 } from "./platform/webhooks/index.js";
-import type { PlatformMetrics } from "./api/metrics.js";
-import type { CreateFastifyContextOptions } from "@trpc/server/adapters/fastify";
-import type { AccessTokenStore } from "./platform/auth/oauth.js";
-import type { AgentCredentialStore } from "./platform/auth/credentials.js";
-import type {
-  AiConfig,
-  AiProviderConfig,
-  ChatRequest,
-  ChatResponse,
-  EventBus,
-  HelixConfig,
-  JsonObject,
-  LLMProviderCapability,
-  ModelInfo,
-  MeteringClient,
-  SecurityTier,
-} from "@helix/sdk-types";
-
-const EDITORS_NATIVE_FEATURE_FLAGS = new Set([
-  "editors_native_document",
-  "editors_native_spreadsheet",
-  "editors_native_presentation",
-  "editors_native_pdf",
-]);
-
 const toolParamsSchema = z.object({
   toolId: z.string().min(1),
 });
 const pendingActionParamsSchema = z.object({
   pendingId: z.string().uuid(),
 });
-
 /**
  * Raised when an API-key / mTLS credential is presented on the request path
  * but fails authentication or per-credential policy enforcement (PRD §9.2).
@@ -548,49 +548,31 @@ export class CredentialAuthError extends Error {
     this.name = "CredentialAuthError";
   }
 }
-
 /**
  * Resolve the request actor, enforcing API-key / mTLS credential policy first
  * (PRD §9.2) and falling back to bearer access tokens and sessions. Shared by
  * the tool REST routes so credential enforcement is live on every surface.
  */
-async function resolveRequestActor(
+async function resolveRequestPrincipal(
   request: FastifyRequest,
   tokenStore: AccessTokenStore,
   sessionResolver: SessionActorResolver | undefined,
   credentialStore: AgentCredentialStore | undefined,
-) {
-  if (credentialStore !== undefined) {
-    const credentialResolution = await resolveCredentialAuthenticatedActor(
-      request,
-      credentialStore,
-    );
-    if (credentialResolution !== null) {
-      if (!credentialResolution.ok) {
-        throw new CredentialAuthError(
-          credentialResolution.statusCode,
-          credentialResolution.code,
-          credentialResolution.message,
-        );
-      }
-      const actor = credentialResolution.actor;
-      assertActorMatchesRequestTenant(request, actor);
-      await setTenantPostgresActorId(actor.id);
-      return actor;
-    }
-  }
-  const actor = await actorFromRequestWithAccessTokenAndSession(
+): Promise<ToolInvocationPrincipal> {
+  const resolution = await toolInvocationPrincipalFromRequest(
     request,
     tokenStore,
     sessionResolver,
+    credentialStore,
   );
-  assertActorMatchesRequestTenant(request, actor);
-  if (actor.id !== unauthenticatedActor.id) {
-    await setTenantPostgresActorId(actor.id);
+  if (!resolution.ok) {
+    throw new CredentialAuthError(resolution.statusCode, resolution.code, resolution.message);
   }
-  return actor;
+  assertActorMatchesRequestTenant(request, resolution.principal.actor);
+  if (resolution.principal.actor.id !== unauthenticatedActor.id)
+    await setTenantPostgresActorId(resolution.principal.actor.id);
+  return resolution.principal;
 }
-
 export interface ToolRestRoutesOptions {
   readonly tools: RuntimeToolRegistry;
   readonly metrics: PlatformMetrics;
@@ -609,19 +591,16 @@ export interface ToolRestRoutesOptions {
   /** TTL for stored idempotency records, in milliseconds. */
   readonly idempotencyTtlMs?: number;
 }
-
 /** Derives a trace identifier for error envelopes and idempotency scoping. */
 function traceIdForRequest(request: FastifyRequest): string {
   const context = createRequestContext(request);
   return context.traceId ?? context.requestId;
 }
-
 export interface TenantApiRpsLimitHookOptions {
   readonly limiter: TenantApiRpsLimiter;
   readonly events?: Pick<EventBus, "publish"> | undefined;
   readonly onQuotaEventError?: ((error: unknown) => void) | undefined;
 }
-
 export function installUntrustedIdentityHeaderGuard(app: FastifyInstance): void {
   app.addHook("onRequest", async (request, reply) => {
     const header = untrustedIdentityHeader(request.headers);
@@ -638,7 +617,17 @@ export function installUntrustedIdentityHeaderGuard(app: FastifyInstance): void 
     }
   });
 }
-
+/* Paths that hold a connection open rather than answering and closing.
+ *
+ * Only `/events/ws` for now, deliberately. `/sse/mail` and `/ws/chat` have the
+ * same shape and the same argument applies to them, but they are metered today
+ * and nothing has been observed to suffer for it — exempting a surface means
+ * moving it onto the concurrency cap instead, and that is a change worth making
+ * per surface, with its own verification, rather than in a sweep. */
+const LONG_LIVED_STREAM_PATHS: ReadonlySet<string> = new Set(["/events/ws"]);
+export function isLongLivedStreamPath(path: string): boolean {
+  return LONG_LIVED_STREAM_PATHS.has(path);
+}
 export function installTenantApiRpsLimitHook(
   app: FastifyInstance,
   options: TenantApiRpsLimitHookOptions,
@@ -648,13 +637,27 @@ export function installTenantApiRpsLimitHook(
     if (path === "/api/auth" || path.startsWith("/api/auth/")) {
       return;
     }
-
+    /* Long-lived streams are exempt from the *rate* meter.
+     *
+     * `api_rps_limit` bounds work per unit time, and that is the wrong shape
+     * for a connection that costs one upgrade and then lives for minutes. The
+     * cost was real and visible: the admin console opens its event sockets as a
+     * section mounts, so the upgrades landed in the same one-second window as
+     * that section's own queries and pushed the page over its own budget — a
+     * liveness feature stealing the request budget from the data it exists to
+     * keep fresh.
+     *
+     * These connections are still bounded, just by the right control: a
+     * per-org cap on *concurrent* streams, enforced at upgrade time by
+     * `assertStreamConnectionAvailable` below. */
+    if (isLongLivedStreamPath(path)) {
+      return;
+    }
     const tenant = request.tenant;
     if (tenant === null) {
       return;
     }
     const effectiveConfig = tenant.effectiveConfig;
-
     const decision = await options.limiter.consume({
       orgId: tenant.orgId,
       limit: effectiveConfig.quotas.api_rps_limit,
@@ -673,7 +676,6 @@ export function installTenantApiRpsLimitHook(
       }
       return;
     }
-
     reply.header("retry-after", String(decision.retryAfterSeconds));
     reply.header("x-helix-quota-api-rps-limit", String(decision.limit));
     reply.header("x-helix-quota-api-rps-remaining", "0");
@@ -712,14 +714,12 @@ export function installTenantApiRpsLimitHook(
     );
   });
 }
-
 /** Extracts the `Idempotency-Key` header value if present. */
 function idempotencyKeyFromRequest(request: FastifyRequest): string | undefined {
   const header = request.headers["idempotency-key"];
   const value = Array.isArray(header) ? header[0] : header;
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
-
 export interface ActionStatusRoutesOptions {
   readonly tools: RuntimeToolRegistry;
   readonly tokenStore: AccessTokenStore;
@@ -727,9 +727,8 @@ export interface ActionStatusRoutesOptions {
   /** Store backing API-key / mTLS credential authentication (PRD §9.2). */
   readonly credentialStore?: AgentCredentialStore;
 }
-
+export type PendingActionMutationRoutesOptions = ActionStatusRoutesOptions;
 type ToolRestRouteMethod = "GET" | "POST";
-
 export function registerToolRestRoutes(
   app: FastifyInstance,
   options: ToolRestRoutesOptions,
@@ -740,30 +739,33 @@ export function registerToolRestRoutes(
       const params = toolParamsSchema.parse(request.params);
       const traceId = traceIdForRequest(request);
       const tool = options.tools.get(params.toolId);
-
+      const principal = await resolveRequestPrincipal(
+        request,
+        options.tokenStore,
+        options.sessionResolver,
+        options.credentialStore,
+      );
       // P1-10: Idempotency-Key replay for mutating (non-read) tool calls. Read
       // tools are naturally idempotent so the key is ignored for them.
       const idempotencyKey = idempotencyKeyFromRequest(request);
       const idempotencyStore = options.idempotencyStore;
       const idempotency:
-        | { readonly store: IdempotencyStore; readonly key: string; readonly hash: string }
+        | {
+            readonly store: IdempotencyStore;
+            readonly key: string;
+            readonly hash: string;
+          }
         | undefined =
         idempotencyStore !== undefined &&
         idempotencyKey !== undefined &&
         tool !== undefined &&
         tool.sideEffects !== "read"
           ? await (async () => {
-              const actor = await resolveRequestActor(
-                request,
-                options.tokenStore,
-                options.sessionResolver,
-                options.credentialStore,
-              );
               return {
                 store: idempotencyStore,
                 key: idempotencyStorageKey({
-                  orgId: actor.orgId,
-                  actorId: actor.id,
+                  orgId: principal.actor.orgId,
+                  actorId: principal.actor.id,
                   toolId: params.toolId,
                   idempotencyKey,
                 }),
@@ -800,17 +802,13 @@ export function registerToolRestRoutes(
           return reply.code(outcome.record.statusCode).send(replayed.output);
         }
       }
-
       const result = await invokeTool(
         options.tools,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
+        principal,
         params.toolId,
         request.body,
         request,
       );
-
       if (idempotency !== undefined) {
         const statusCode = result.ok
           ? result.status === "pending_confirmation"
@@ -828,7 +826,6 @@ export function registerToolRestRoutes(
           });
         }
       }
-
       if (!result.ok) {
         return sendToolInvokeError(reply, result, traceId);
       }
@@ -838,7 +835,6 @@ export function registerToolRestRoutes(
       return result.output;
     });
   }
-
   if (methods.includes("GET")) {
     app.get("/api/tools/:toolId", async (request, reply) => {
       const params = toolParamsSchema.parse(request.params);
@@ -864,12 +860,14 @@ export function registerToolRestRoutes(
           }),
         );
       }
-
       const result = await invokeTool(
         options.tools,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
+        await resolveRequestPrincipal(
+          request,
+          options.tokenStore,
+          options.sessionResolver,
+          options.credentialStore,
+        ),
         params.toolId,
         request.query,
         request,
@@ -884,42 +882,79 @@ export function registerToolRestRoutes(
     });
   }
 }
-
 export function registerActionStatusRoutes(
   app: FastifyInstance,
   options: ActionStatusRoutesOptions,
 ): void {
   const actionStatusHandler = async (request: FastifyRequest, reply: FastifyReply) => {
     const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
     const result = await options.tools.getPendingAction(params.pendingId, {
-      actor: await resolveRequestActor(
-        request,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
-      ),
+      actor: principal.actor,
     });
     if (!result.ok) {
       return sendToolInvokeError(reply, result, traceIdForRequest(request));
     }
     return { action: result.pending };
   };
-
   app.get("/actions/:pendingId", actionStatusHandler);
 }
-
+/** Register authenticated approval/cancellation routes with fresh credential policy resolution. */
+export function registerPendingActionMutationRoutes(
+  app: FastifyInstance,
+  options: PendingActionMutationRoutesOptions,
+): void {
+  app.post("/api/tools/pending/:pendingId/approve", async (request, reply) => {
+    const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
+    const result = await options.tools.approvePending(params.pendingId, {
+      ...toolInvocationOptions(principal, createRequestContext(request)),
+    });
+    if (!result.ok) {
+      return sendToolInvokeError(reply, result, traceIdForRequest(request));
+    }
+    if (result.status === "pending_confirmation") {
+      return reply.code(202).send({ status: result.status, pending: result.pending });
+    }
+    return { status: "executed", output: result.output };
+  });
+  app.post("/api/tools/pending/:pendingId/cancel", async (request, reply) => {
+    const params = pendingActionParamsSchema.parse(request.params);
+    const principal = await resolveRequestPrincipal(
+      request,
+      options.tokenStore,
+      options.sessionResolver,
+      options.credentialStore,
+    );
+    const result = await options.tools.cancelPending(params.pendingId, {
+      ...toolInvocationOptions(principal, createRequestContext(request)),
+    });
+    if (!result.ok) {
+      return sendToolInvokeError(reply, result, traceIdForRequest(request));
+    }
+    return { status: result.status, pending: result.pending };
+  });
+}
 const assistantChatStreamBodySchema = z.object({
-  message: z.string().min(1).max(100_000),
+  message: z.string().min(1).max(100000),
   conversationId: z.string().uuid().optional(),
   title: z.string().min(1).max(200).optional(),
   memoryOptIn: z.boolean().optional(),
 });
-
 /** Minimal orchestrator surface needed by the assistant SSE route. */
 export interface AssistantStreamOrchestrator {
   sendMessageStream(input: AssistantSendMessageInput): AsyncGenerator<AssistantStreamEvent>;
 }
-
 export interface AssistantStreamRouteOptions {
   readonly orchestrator: AssistantStreamOrchestrator;
   /** Tool registry used to serve non-streaming `assistant.chat` requests. */
@@ -929,7 +964,6 @@ export interface AssistantStreamRouteOptions {
   readonly credentialStore?: AgentCredentialStore;
   readonly onError?: (error: unknown) => void;
 }
-
 /**
  * Registers the assistant SSE streaming endpoint (PRD §9.5).
  *
@@ -952,9 +986,12 @@ export function registerAssistantStreamRoute(
       const traceId = traceIdForRequest(request);
       const result = await invokeTool(
         options.tools,
-        options.tokenStore,
-        options.sessionResolver,
-        options.credentialStore,
+        await resolveRequestPrincipal(
+          request,
+          options.tokenStore,
+          options.sessionResolver,
+          options.credentialStore,
+        ),
         "assistant.chat",
         request.body,
         request,
@@ -967,7 +1004,6 @@ export function registerAssistantStreamRoute(
       }
       return result.output;
     }
-
     // Validate the streaming request body BEFORE the SSE headers are written.
     // On invalid input every other tool route returns the canonical HelixError
     // envelope (`{error:{code,message,traceId}}`); align this route to it
@@ -985,13 +1021,12 @@ export function registerAssistantStreamRoute(
       );
     }
     const body = parsedBody.data;
-    const actor = await resolveRequestActor(
+    const principal = await resolveRequestPrincipal(
       request,
       options.tokenStore,
       options.sessionResolver,
       options.credentialStore,
     );
-
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache, no-transform",
@@ -1000,7 +1035,8 @@ export function registerAssistantStreamRoute(
     });
     try {
       const stream = options.orchestrator.sendMessageStream({
-        actor,
+        actor: principal.actor,
+        principal,
         content: body.message,
         request: createRequestContext(request),
         ...(body.conversationId === undefined ? {} : { conversationId: body.conversationId }),
@@ -1024,21 +1060,20 @@ export function registerAssistantStreamRoute(
     return reply;
   });
 }
-
 /** An assistant SSE frame: a stream event or a terminal error notice. */
 export type AssistantSseFrame =
   | AssistantStreamEvent
-  | { readonly type: "error"; readonly message: string };
-
+  | {
+      readonly type: "error";
+      readonly message: string;
+    };
 /** Serializes an assistant SSE frame to the `text/event-stream` wire format. */
 export function formatAssistantSseEvent(event: AssistantSseFrame): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
 }
-
 export interface DefaultOrgBootLogger {
   info(input: JsonObject, message: string): void;
 }
-
 export async function verifyDefaultOrgAtBoot(input: {
   readonly config: Pick<HelixConfig, "mode">;
   readonly orgs: Pick<OrgStore, "getOrCreateDefaultOrg">;
@@ -1062,7 +1097,6 @@ export async function verifyDefaultOrgAtBoot(input: {
   }
   return bootDefaultOrg;
 }
-
 export const HELIX_LOG_REDACT_PATHS = [
   "req.headers.authorization",
   "req.headers.cookie",
@@ -1072,15 +1106,12 @@ export const HELIX_LOG_REDACT_PATHS = [
   "token",
   "ticket",
 ];
-
 export async function createHelixServer(): Promise<FastifyInstance> {
   const bootEnv = env();
+  const trustedOrigins = parseTrustedOrigins(bootEnv.BETTER_AUTH_TRUSTED_ORIGINS);
   const trustedProxies = trustedProxyAddresses(bootEnv.HELIX_TRUSTED_PROXIES);
   const app = fastify({
-    logger: {
-      level: bootEnv.LOG_LEVEL,
-      redact: HELIX_LOG_REDACT_PATHS,
-    },
+    logger: helixLoggerOptions(bootEnv.LOG_LEVEL),
     ...(trustedProxies.length === 0 ? {} : { trustProxy: [...trustedProxies] }),
     // Binary uploads bypass the API tier through scoped storage URLs. Keep
     // JSON control-plane requests small and terminate slow bodies promptly.
@@ -1094,7 +1125,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       maxParamLength: 2048,
     },
   });
-
   const metrics = createPlatformMetrics();
   const responseSecurityHeaders = browserSecurityHeaders({
     production: bootEnv.NODE_ENV === "production",
@@ -1117,7 +1147,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // ZodError share the same envelope path (G4).
   app.setErrorHandler((error, request, reply) => {
     const traceId = traceIdForRequest(request);
-
     if (error instanceof ApiError) {
       if (error.retryAfterSeconds !== undefined) {
         reply.header("retry-after", String(error.retryAfterSeconds));
@@ -1141,7 +1170,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         }),
       );
     }
-
     if (error instanceof ContractValidationError) {
       return reply.code(400).send(
         buildErrorEnvelope({
@@ -1153,7 +1181,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         }),
       );
     }
-
     if (error instanceof ZodError) {
       return reply.code(400).send(
         buildErrorEnvelope({
@@ -1170,7 +1197,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         }),
       );
     }
-
     if (error instanceof CredentialAuthError) {
       return reply.code(error.statusCode).send(
         buildErrorEnvelope({
@@ -1219,7 +1245,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     await assertTenantSafeDatabaseRole(sql);
     await assertTenantRlsCoverage(sql);
   }
-  const redis = bootEnv.REDIS_URL === undefined ? undefined : new Redis(bootEnv.REDIS_URL);
+  const redisConnection = resolveRedisConnection(bootEnv);
+  const redis =
+    redisConnection === undefined
+      ? undefined
+      : new Redis(redisConnection.url, redisConnection.options);
   if (bootEnv.NODE_ENV === "production" && redis === undefined) {
     throw new Error("REDIS_URL is required in production for distributed limits and idempotency.");
   }
@@ -1324,6 +1354,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const tenantStorageNamespaceStore = new PostgresTenantStorageNamespaceStore(sql);
   const tenantBootstrapSeedStore = new PostgresTenantBootstrapSeedStore(sql);
   const tenantIdpConfigStore = new PostgresTenantIdpConfigStore(sql);
+  const securityPoliciesStore = new PostgresSecurityPoliciesStore(sql);
   const tenantScimCredentialStore = new PostgresTenantScimCredentialStore(sql);
   const scimProvisioningStore = new PostgresScimProvisioningStore(sql);
   const signupEmailVerificationTokenStore = new PostgresSignupEmailVerificationTokenStore(sql);
@@ -1407,6 +1438,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const defaultOrg = resolveDefaultOrgInput(process.env);
   const appPasswordStore = new PostgresAppPasswordStore(sql);
   const adminUsersStore = new PostgresAdminUsersStore(sql);
+  /* Built here rather than inline at its route registration because
+       `GET /api/admin/overview` reads through the same instance, and that route is
+       registered earlier in this function. */
+  const adminDomainsStore = new PostgresDomainsStore(sql);
   const auditStore = new PostgresAuditStore(sql, {
     onAppend: (record) => {
       metrics.recordAuditActivity({ verb: record.verb, objectType: record.objectType });
@@ -1425,20 +1460,35 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (bootEnv.NODE_ENV === "production" && bootEnv.NATS_URL === undefined) {
     throw new Error("NATS_URL is required in production for cross-replica events.");
   }
-  const eventBus =
+  const natsSecurityPolicy =
     bootEnv.NATS_URL === undefined
+      ? undefined
+      : createChatNatsSecurityPolicy(
+          {
+            NATS_URL: bootEnv.NATS_URL,
+            NATS_USER: bootEnv.NATS_USER,
+            NATS_PASSWORD: bootEnv.NATS_PASSWORD,
+            NATS_TOKEN: bootEnv.NATS_TOKEN,
+            NATS_TLS_CA_FILE: bootEnv.NATS_TLS_CA_FILE,
+            NATS_TLS_CERT_FILE: bootEnv.NATS_TLS_CERT_FILE,
+            NATS_TLS_KEY_FILE: bootEnv.NATS_TLS_KEY_FILE,
+            NODE_ENV: bootEnv.NODE_ENV,
+          },
+          [defaultOrg.id],
+        );
+  const eventBus =
+    natsSecurityPolicy === undefined
       ? new InMemoryEventBus({
           onError: (error) => {
             app.log.error({ error }, "In-memory event bus subscriber error");
           },
         })
-      : await NatsEventBus.connect(
-          { servers: bootEnv.NATS_URL },
-          { subjectPrefix: `helix.${bootEnv.HELIX_REGION}` },
-        );
+      : await NatsEventBus.connect(natsSecurityPolicy.connection, {
+          subjectPrefix: `helix.${bootEnv.HELIX_REGION}`,
+        });
   const chatStore = new PostgresChatStore(sql);
   const chatRoomBus = new EventBusChatRoomBus(eventBus, {
-    subjectPrefix: "chat.room",
+    subjectPrefix: "chat",
     events: new PostgresChatRoomEventLog(sql),
     metrics,
   });
@@ -1521,7 +1571,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     mailKmsKeyId: bootEnv.MAIL_DKIM_KMS_KEY_ID,
     mailKmsRegion: bootEnv.MAIL_DKIM_KMS_REGION,
     searchIndexUid: bootEnv.MEILI_INDEX_UID ?? bootEnv.MEILISEARCH_INDEX_UID,
-    previewUrl: bootEnv.HELIX_DRIVE_OFFICE_PREVIEW_URL,
     ollamaUrl: bootEnv.OLLAMA_BASE_URL,
     openAiApiKey: bootEnv.OPENAI_API_KEY,
     telemetryEnabled: runtimeConfig.observability?.enabled === true,
@@ -1539,6 +1588,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (bootEnv.HELIX_REGION !== "default") {
     await assertRegionalDatabase(sql, bootEnv.HELIX_REGION);
   }
+  const { applyOperatorAiFromHelixConfig } = await import("./platform/ai/operator-settings.js");
+  applyOperatorAiFromHelixConfig(runtimeConfig);
   await verifyDefaultOrgAtBoot({
     config: runtimeConfig,
     orgs: orgStore,
@@ -1607,35 +1658,23 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   // surface. A presented-but-rejected credential raises `CredentialAuthError`,
   // which the error handler maps to the appropriate 401/403 response. When no
   // credential is presented, falls back to bearer access tokens and sessions.
-  const actorFromAuthenticatedRequest = async (request: FastifyRequest) => {
-    const credentialResolution = await resolveCredentialAuthenticatedActor(
-      request,
-      agentCredentialStore,
-    );
-    if (credentialResolution !== null) {
-      if (!credentialResolution.ok) {
-        throw new CredentialAuthError(
-          credentialResolution.statusCode,
-          credentialResolution.code,
-          credentialResolution.message,
-        );
-      }
-      assertActorMatchesRequestTenant(request, credentialResolution.actor);
-      await setTenantPostgresActorId(credentialResolution.actor.id);
-      return credentialResolution.actor;
-    }
-    const actor = await actorFromRequestWithAccessTokenAndSession(
+  const principalFromAuthenticatedRequest = async (request: FastifyRequest) => {
+    const resolution = await toolInvocationPrincipalFromRequest(
       request,
       oauthStore,
       sessionActorResolver,
+      agentCredentialStore,
     );
-    assertActorMatchesRequestTenant(request, actor);
-    if (actor.id !== unauthenticatedActor.id) {
-      await setTenantPostgresActorId(actor.id);
+    if (!resolution.ok) {
+      throw new CredentialAuthError(resolution.statusCode, resolution.code, resolution.message);
     }
-    return actor;
+    assertActorMatchesRequestTenant(request, resolution.principal.actor);
+    if (resolution.principal.actor.id !== unauthenticatedActor.id)
+      await setTenantPostgresActorId(resolution.principal.actor.id);
+    return resolution.principal;
   };
-
+  const actorFromAuthenticatedRequest = async (request: FastifyRequest) =>
+    (await principalFromAuthenticatedRequest(request)).actor;
   // Confirmed Helix architecture model: core apps (mail, chat, drive, docs,
   // calendar, meet, assistant) are toggleable platform modules — not plugins.
   // The registration plan resolves, once at startup, which core-app modules
@@ -1661,6 +1700,20 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     },
     "Resolved core-app registration plan",
   );
+  const chatRetentionWorker = coreApps.shouldRegister("chat")
+    ? new ChatRetentionWorker({
+        store: chatStore,
+        organizations: new PostgresChatRetentionOrganizationSource(sql),
+        onResult: (result) => {
+          if (result.tombstonedMessages > 0 || result.saturatedOrganizations.length > 0) {
+            app.log.info(result, "Chat retention sweep completed");
+          }
+        },
+        onError: (error) => {
+          app.log.error({ error }, "Chat retention sweep failed");
+        },
+      })
+    : undefined;
   const aiProvenance = new PostgresAIProvenanceStore(sql);
   // P0-6: durable, replica-shared resource classification tags. The Postgres
   // store replaces the restart-volatile in-memory store; derivation applies
@@ -1669,7 +1722,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const resourceClassificationService = new ResourceClassificationService(
     resourceClassificationStore,
   );
-  const securityPoliciesStore = new PostgresSecurityPoliciesStore(sql);
   const dlp = new TenantDlpGuard(securityPoliciesStore, resourceClassificationService, auditStore);
   const assistantMemory = new PostgresMemoryStore(sql, {
     embeddingProvider: createAssistantEmbeddingProvider(runtimeConfig.ai),
@@ -1765,9 +1817,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   });
   const driveConfig = loadDriveConfig(bootEnv);
   const clamavScanner =
-    mailCfg.clamav === undefined ? undefined : new ClamavScanner(mailCfg.clamav);
+    mailCfg.clamav === undefined
+      ? undefined
+      : new ClamavScanner({ ...mailCfg.clamav, tier: securityTier, metrics });
   const spamdScanner = mailCfg.spamd === undefined ? undefined : new SpamdScanner(mailCfg.spamd);
   const inboundMailScanners = {
+    tier: securityTier,
+    betaSpamSecondPass: createBetaSpamSecondPass(process.env),
     ...(spamdScanner === undefined ? {} : { spam: spamdScanner }),
     ...(clamavScanner === undefined ? {} : { antivirus: clamavScanner }),
     onUnavailable: ({
@@ -1808,6 +1864,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
                 serverSideEncryption: parseS3ServerSideEncryption(
                   driveConfig.storage.serverSideEncryption,
                 ),
+                ...(driveConfig.storage.serverSideEncryptionAwsKmsKeyId === undefined
+                  ? {}
+                  : {
+                      serverSideEncryptionAwsKmsKeyId:
+                        driveConfig.storage.serverSideEncryptionAwsKmsKeyId,
+                    }),
               }),
           ...(driveConfig.storage.serverSideEncryptionAwsKmsKeyId === undefined
             ? {}
@@ -1886,9 +1948,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
       })
     : undefined;
-  const docsStore = new PostgresDocsStore(sql, {
-    storageResolver: driveStorageResolver,
-  });
   const mailAttachmentIngestor = new PostgresMailAttachmentIngestor(sql, {
     storageResolver: driveStorageResolver,
     ...(clamavScanner === undefined ? {} : { scanner: clamavScanner }),
@@ -1918,37 +1977,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     attachmentIngestor: mailAttachmentIngestor,
   });
   const mailQuarantineStore = new PostgresMailQuarantineStore(sql, driveStorageResolver);
-  const contentConverter =
-    driveConfig.officePreview.url === undefined
-      ? undefined
-      : createIsolatedContentConverter({
-          endpoint: driveConfig.officePreview.url,
-          timeoutMs: driveConfig.officePreview.timeoutMs,
-          allowedHosts: driveConfig.officePreview.allowedHosts,
-        });
-  const docsPdfRenderer =
-    contentConverter === undefined
-      ? undefined
-      : {
-          async render(input: { readonly title: string; readonly html: string }) {
-            const converted = await contentConverter.renderHtml({
-              name: `${input.title}.html`,
-              html: input.html,
-            });
-            return {
-              buffer: Buffer.from(converted.pdf),
-              metadata: {
-                renderEngine: "isolated-libreoffice",
-                pageCount: converted.pageCount,
-              },
-            };
-          },
-        };
   const driveVirusScanner =
     mailCfg.clamav === undefined
       ? undefined
       : createClamAvVirusScanner({
           ...mailCfg.clamav,
+          tier: securityTier,
+          metrics,
           maxFileBytes: driveConfig.antivirus.maxFileBytes,
           archiveLimits: {
             maxEntries: driveConfig.antivirus.archiveMaxEntries,
@@ -1959,7 +1994,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         });
   const driveStore = new PostgresDriveStore(sql, driveStorage, {
     metrics,
-    ...(contentConverter === undefined ? {} : { officePreviewConverter: contentConverter }),
+    gc: driveConfig.gc,
     storageResolver: driveStorageResolver,
     events: eventBus,
     contentAddressedDedup: driveConfig.contentAddressedDedup,
@@ -1988,6 +2023,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     ...(driveVirusScanner === undefined ? {} : { virusScanner: driveVirusScanner }),
     driveStore,
   });
+  // This leased worker also collects abandoned uploads, multipart sessions, and unreferenced blobs.
   const driveVirusScanRetryWorker =
     !coreApps.shouldRegister("drive") &&
     !coreApps.shouldRegister("chat") &&
@@ -2133,9 +2169,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     if (coreApps.shouldRegister("chat")) {
       registerChatIndexer(searchEventIndexer, chatStore);
     }
-    if (coreApps.shouldRegister("docs")) {
-      registerDocsIndexer(searchEventIndexer, docsStore);
-    }
     if (coreApps.shouldRegister("drive")) {
       registerDriveIndexer(searchEventIndexer, driveStore);
     }
@@ -2173,13 +2206,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       actionItems: envFlag("CHAT_ACTION_ITEMS_ENRICHMENT", true),
     });
   }
-  if (coreApps.shouldRegister("docs")) {
-    registerDocsEnrichments(enrichmentWorker, {
-      store: docsStore,
-      ai: assistantAi,
-      outline: envFlag("DOCS_OUTLINE_ENRICHMENT", true),
-    });
-  }
   if (coreApps.shouldRegister("drive")) {
     registerDriveEnrichments(enrichmentWorker, {
       store: driveStore,
@@ -2214,6 +2240,36 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   );
   const outboundProviderStore = new PostgresOutboundProviderStore(sql);
   const mailDeliveryEventStore = new PostgresMailDeliveryEventStore(sql);
+  const sendingDomainStore = {
+    listDomains: async (orgId: string) =>
+      (await domainsStore.listDomains(orgId))
+        .filter((domain) => domain.status === "verified" && domain.mailEnabled)
+        .map((domain) => ({ ...domain, isDefault: domain.isPrimary })),
+  };
+  const mailSecretProvider = {
+    resolveSecret: async (reference: string, orgId: string): Promise<string | undefined> =>
+      (await tenantStorageSecretReader?.read({ orgId, scope: "mail-provider", handle: reference }))
+        ?.credential,
+  };
+  const outboundTransportResolver = !mailAppRegistered
+    ? undefined
+    : new DispatchTimeTransportResolver({
+        providerStore: outboundProviderStore,
+        domainStore: sendingDomainStore,
+        secrets: mailSecretProvider,
+        dkimResolver: (orgId) => (from) => mailDkimKeyStore.resolveSigningKey(orgId, from),
+        cacheTtlMs: 0,
+        ...(outboundMailConfig === undefined
+          ? {}
+          : {
+              environmentFallback: {
+                id: "validated-smtp-relay",
+                kind: "smtp",
+                managed: true,
+                buildTransport: async () => new NodemailerMailTransport(outboundMailConfig),
+              },
+            }),
+      });
   const outboundMailWorker = !mailAppRegistered
     ? undefined
     : new OutboundMailWorker({
@@ -2222,24 +2278,36 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         batchSize: bootEnv.OUTBOX_BATCH_SIZE,
         dispatcher: new OutboundMailDispatcher(
           mailStore,
-          async (outbound) =>
-            resolveOutboundTransport({
+          async (outbound) => {
+            if (outboundTransportResolver === undefined)
+              throw new MailDeliveryError("Outbound routing is unavailable.", false);
+            const decision = await outboundTransportResolver.transportFor(
+              outbound.orgId,
+              outbound.envelope.from.address.split("@").at(-1) ?? "",
+              outbound.providerId,
+            );
+            const bound = await mailStore.bindOutboundProviderDecision({
+              id: outbound.id,
               orgId: outbound.orgId,
-              providerStore: outboundProviderStore,
-              ...(outboundMailConfig === undefined
-                ? {}
-                : {
-                    fallbackTransport: new NodemailerMailTransport(outboundMailConfig, (from) =>
-                      mailDkimKeyStore.resolveSigningKey(outbound.orgId, from),
-                    ),
-                  }),
-              dkimResolver: (from) => mailDkimKeyStore.resolveSigningKey(outbound.orgId, from),
-              ...(tenantStorageSecretReader === undefined
-                ? {}
-                : { secretReader: tenantStorageSecretReader }),
-            }),
+              providerId: decision.providerId,
+              providerKind: decision.providerKind,
+              source: decision.source,
+              leaseToken: outbound.leaseToken,
+            });
+            if (bound === null)
+              throw new MailProviderConfigurationError(
+                "MAIL_PROVIDER_DECISION_CONFLICT",
+                "Outbound provider binding or lease changed before dispatch.",
+              );
+            return decision.source === "environment" && outboundMailConfig !== undefined
+              ? new NodemailerMailTransport(outboundMailConfig, (from) =>
+                  mailDkimKeyStore.resolveSigningKey(outbound.orgId, from),
+                )
+              : decision.transport;
+          },
           {
             metrics,
+            suppressionStore: mailDeliveryEventStore,
             // Stream/large attachments referenced by Drive objectId (G8 / Mail A2.5).
             resolveAttachment: async (objectId, context) => {
               const file = await driveStore.openFile({
@@ -2265,7 +2333,20 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           },
         ),
         onError: (error) => {
-          app.log.error({ error }, "Outbound mail dispatch error");
+          /* Name and message explicitly: pino renders a bare `{ error }` of a
+                     custom Error subclass as `{}`, which is a log line that proves
+                     something failed while withholding what. */
+          app.log.error(
+            {
+              error,
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              ...(error instanceof MailProviderConfigurationError
+                ? { operatorCode: error.operatorCode }
+                : {}),
+            },
+            "Outbound mail dispatch error",
+          );
         },
       });
   const signupFromAddress = {
@@ -2314,6 +2395,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           },
           runForTenant: (orgId, operation) =>
             withTenantPostgresContext(sql, { orgId }, async () => operation()),
+          transportSecurity: smtpMailReceiverConfig.transportSecurity,
+          limits: smtpMailReceiverConfig.limits,
           logger: app.log,
           maxMessageBytes: smtpMailReceiverConfig.maxMessageBytes,
           maxRecipients: smtpMailReceiverConfig.maxRecipients,
@@ -2485,8 +2568,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     {
       id: "platform.pending_action.created",
       subject: "platform.pending_action.created",
-      title: "Pending action created",
-      description: "A tool invocation is awaiting confirmation.",
+      title: "Pending action status",
+      description: "A pending tool invocation was created or changed state.",
       direction: "publish",
       tags: ["Tools"],
       payloadSchema: {
@@ -2572,6 +2655,25 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         );
       }
     },
+    onPendingActionChanged: async (record) => {
+      try {
+        await eventBus.publish("platform.pending_action.created", {
+          id: record.id,
+          orgId: record.orgId,
+          actorId: record.requesterActorId,
+          toolId: record.toolId,
+          status: record.status,
+          createdAt: record.createdAt.toISOString(),
+          expiresAt: record.expiresAt.toISOString(),
+          ...(record.traceId === null ? {} : { traceId: record.traceId }),
+        });
+      } catch (error) {
+        app.log.error(
+          { error, pendingActionId: record.id, status: record.status },
+          "Failed to publish pending action status notification",
+        );
+      }
+    },
   });
   // P0-4(b): leader-gated worker that transitions stale pending_confirmation
   // actions to `expired` once their per-tier timeout elapses.
@@ -2580,8 +2682,33 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     intervalMs: bootEnv.PENDING_ACTION_EXPIRY_INTERVAL_MS,
     batchSize: bootEnv.PENDING_ACTION_EXPIRY_BATCH_SIZE,
     onResult: (result) => {
-      if (result.expiredCount > 0) {
-        app.log.info({ expiredCount: result.expiredCount }, "Expired stale pending tool actions");
+      if (result.expiredCount > 0 || result.recoveredUnknownCount > 0) {
+        app.log.info(
+          {
+            expiredCount: result.expiredCount,
+            recoveredUnknownCount: result.recoveredUnknownCount,
+          },
+          "Recovered stale pending tool actions",
+        );
+        for (const record of [...result.expired, ...result.recoveredUnknown]) {
+          void eventBus
+            .publish("platform.pending_action.created", {
+              id: record.id,
+              orgId: record.orgId,
+              actorId: record.requesterActorId,
+              toolId: record.toolId,
+              status: record.status,
+              createdAt: record.createdAt.toISOString(),
+              expiresAt: record.expiresAt.toISOString(),
+              ...(record.traceId === null ? {} : { traceId: record.traceId }),
+            })
+            .catch((error: unknown) => {
+              app.log.error(
+                { error, pendingActionId: record.id },
+                "Failed to publish expired pending action notification",
+              );
+            });
+        }
       }
     },
     onError: (error) => {
@@ -2624,15 +2751,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       defaultValue: T,
       context?: Parameters<typeof featureFlags.getAsync<T>>[2],
     ): Promise<T> {
-      if (EDITORS_NATIVE_FEATURE_FLAGS.has(key)) {
-        const status = await platformConfig.getStatus();
-        if (status.config.modules?.editors?.enabled === false) {
-          return false as T;
-        }
-      }
       return featureFlags.getAsync(key, defaultValue, context);
     },
   };
+  // A10: process-local emergency kill / per-org agent-write disable (admin-settable).
+  const agentOperationalControls = new RuntimeAgentOperationalControlStore();
   const tools = createToolRegistry({
     accessPolicy: toolAccessPolicy,
     confirmationGate,
@@ -2640,12 +2763,77 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     auditSink: auditStore,
     agentRateCostLimiter,
     agentLimitTier: securityTier,
+    operationalControls: agentOperationalControls,
     ...(agentLimitBudgetOverride === undefined
       ? {}
       : { agentLimitBudget: agentLimitBudgetOverride }),
     metrics,
     featureFlags: runtimeFeatureFlags,
     dlp,
+    resolvePendingPrincipal: async (record) => {
+      if (record.requesterCredentialId === null) {
+        const rows = (await sql`
+          select id, org_id, type, display_name, email, scopes
+          from actors
+          where id = ${record.requesterActorId}
+            and org_id = ${record.orgId}
+            and disabled_at is null
+          limit 1
+        `) as unknown as readonly {
+          readonly id: string;
+          readonly org_id: string;
+          readonly type: Actor["type"];
+          readonly display_name: string;
+          readonly email: string | null;
+          readonly scopes: readonly string[];
+        }[];
+        const requester = rows[0];
+        if (requester === undefined) {
+          return null;
+        }
+        return {
+          actor: {
+            id: requester.id,
+            orgId: requester.org_id,
+            type: requester.type,
+            displayName: requester.display_name,
+            ...(requester.email === null ? {} : { email: requester.email }),
+            scopes: requester.scopes,
+          },
+        };
+      }
+      const credential = await agentCredentialStore.findById(record.requesterCredentialId);
+      if (
+        credential === null ||
+        credential.actorId !== record.requesterActorId ||
+        credential.orgId !== record.orgId
+      ) {
+        return null;
+      }
+      const enforcement = enforceCredentialPolicy(credential, {
+        ...(record.requesterIp === null ? {} : { ip: record.requesterIp }),
+        ...(credential.certFingerprint === null
+          ? {}
+          : { certFingerprint: credential.certFingerprint }),
+      });
+      if (!enforcement.ok) {
+        return null;
+      }
+      return {
+        actor: {
+          id: credential.actorId,
+          orgId: credential.orgId,
+          type: "agent",
+          scopes: credential.scopes,
+        },
+        credentialId: credential.id,
+        ...(credential.approvalOwnerActorId === undefined ||
+        credential.approvalOwnerActorId === null
+          ? {}
+          : { credentialOwnerActorId: credential.approvalOwnerActorId }),
+        credentialPolicy: credential.policy,
+      };
+    },
   });
   // P0-6 / PRD §8.4: auto-classify newly created resources. The feature tool
   // create / send / upload handlers call this classifier so mail messages,
@@ -2655,6 +2843,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const resourceClassifier = createResourceClassifier(resourceClassificationService, (error) => {
     app.log.error({ error }, "Resource auto-classification failed");
   });
+  for (const tool of createAgentOperationalControlTools(agentOperationalControls)) {
+    tools.register(tool);
+  }
   registerWebhookTools(tools, { store: webhookStore, secretResolver: webhookSecretResolver });
   // Core-app agent tools are contributed per app, conditionally on enablement
   // + role: a disabled app contributes no tools to the registry, so it is
@@ -2693,63 +2884,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
     });
   }
-  if (coreApps.shouldRegister("docs")) {
-    registerDocsTools(tools, {
-      store: docsStore,
-      importSources: driveStore,
-      ai: assistantAi,
-      ...(docsPdfRenderer === undefined ? {} : { pdfRenderer: docsPdfRenderer }),
-      ...(contentConverter === undefined
-        ? {}
-        : {
-            docxToMarkdown: async (input: {
-              readonly buffer: Buffer;
-              readonly filename: string;
-            }) => ({
-              markdown: (
-                await contentConverter.extractText({
-                  name: input.filename,
-                  mimeType:
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                  content: input.buffer,
-                })
-              ).text,
-              messages: [],
-            }),
-          }),
-      ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
-      exportJobLimiter: tenantHourlyQuotaLimiter,
-      exportJobLimit: async (input) => {
-        const org = await orgStore.findById(input.orgId);
-        if (org === null) {
-          return null;
-        }
-        const plan = await planStore.findById(org.planId);
-        return buildEffectiveTenantConfig({ org, plan }).quotas.export_jobs_per_hour;
-      },
-      quotaEvents: eventBus,
-      onQuotaEventError: (error: unknown) => {
-        app.log.error({ error }, "Docs export quota event emission failed");
-      },
-      metering: meteringClient,
-      onMeteringError: (error: unknown) => {
-        app.log.error({ error }, "Docs export metering emission failed");
-      },
-    });
-  }
-  // Wave-1 backend domains. Sheets and Slides stores are instantiated here so
-  // they can be shared with the drive.create tool (unified "New" entry-point)
-  // and their own domain tool registrations below.
-  const sheetsStore = new PostgresSheetsStore(sql, { storageResolver: driveStorageResolver });
-  const slidesStore = new PostgresSlidesStore(sql, { storageResolver: driveStorageResolver });
   if (coreApps.shouldRegister("drive")) {
     registerDriveTools(tools, {
       store: driveStore,
       workflows: driveWorkflowStore,
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
-      docsStore: docsStore,
-      sheetsStore: sheetsStore,
-      slidesStore: slidesStore,
       // Owner-display resolver for drive.list responses. Batches actor
       // id → display_name + email lookups against the actors table so
       // the UI shows "Avery Park" / "leo@helix.local" instead of raw
@@ -2767,7 +2906,13 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           from actors
           where id in ${sql(ids as string[])}
         `;
-        const result = new Map<string, { displayName: string; email?: string }>();
+        const result = new Map<
+          string,
+          {
+            displayName: string;
+            email?: string;
+          }
+        >();
         for (const row of rows) {
           result.set(row.id, {
             displayName: row.display_name ?? row.email ?? row.id,
@@ -2817,6 +2962,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           unresolvedRefs: normalizedRefs.filter((ref) => !matchedRefs.has(ref)),
         };
       },
+      // ADM.6: single source of truth for external sharing — the admin security
+      // policy. Public links and email-targeted shares honor mode/allowlist.
+      getExternalSharingPolicy: async (orgId) =>
+        securityPoliciesStore.get(orgId, "external_sharing"),
     });
   }
   const calendarInvitationSender = createMailCalendarInvitationSender({
@@ -2866,32 +3015,33 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   if (runtimeSearchEngine !== undefined) {
     registerSearchTools(tools, { engine: runtimeSearchEngine });
   }
-  // Register the Sheets and Slides domain tools using the stores instantiated above.
-  registerSheets({
-    registry: tools,
-    store: sheetsStore,
-    importSources: driveStore,
-    ...(contentConverter === undefined
-      ? {}
-      : { officeTextExtractor: contentConverter.extractText.bind(contentConverter) }),
-    ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
-  });
-  registerSlides(tools, {
-    store: slidesStore,
-    driveStore,
-    importSources: driveStore,
-    ...(contentConverter === undefined
-      ? {}
-      : { officeTextExtractor: contentConverter.extractText.bind(contentConverter) }),
-  });
+  const assistantSlashCommands = new AssistantSlashCommandHooks();
+  if (!coreApps.shouldRegister("calendar")) {
+    assistantSlashCommands.register("schedule", () => ({
+      instruction:
+        "Calendar scheduling is unavailable in this deployment. Explain that no calendar action was taken.",
+      searchQuery: "",
+      toolIds: [],
+    }));
+  }
+  const assistantSearchTypes: readonly GlobalSearchType[] = [
+    ...(coreApps.shouldRegister("mail") ? (["mail"] as const) : []),
+    ...(coreApps.shouldRegister("chat") ? (["chat"] as const) : []),
+    ...(coreApps.shouldRegister("drive") ? (["drive"] as const) : []),
+    ...(coreApps.shouldRegister("calendar") ? (["calendar"] as const) : []),
+  ];
   const assistantOrchestrator = new AssistantOrchestrator({
     store: assistantStore,
     ai: assistantAi,
     tools,
     memory: assistantMemory,
     ...(runtimeSearchEngine === undefined ? {} : { search: runtimeSearchEngine }),
+    searchTypes: assistantSearchTypes,
     confirmationGate,
-    slashCommands: new AssistantSlashCommandHooks(),
+    slashCommands: assistantSlashCommands,
+    classifyUserInput: async ({ content }) =>
+      deriveClassification({ content, scanContent: true }).classification,
+    blockHighRiskToolsWhenUntrusted: securityTier !== "personal",
   });
   if (coreApps.shouldRegister("assistant")) {
     registerAssistantTools(tools, {
@@ -2946,67 +3096,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     discovery: pluginDiscovery,
     lifecycle: pluginLifecycle,
   });
-  const leaderGatedWorkers: { readonly name: string; readonly worker: SupervisedWorker }[] = [];
-  if (coreApps.shouldRegister("editors")) {
-    const editorsRuntime = createEditorsRuntimeHost({
-      logger: app.log,
-      env: process.env,
-      app,
-      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-      tools,
-      workers: {
-        register: (name, worker) => {
-          leaderGatedWorkers.push({ name, worker });
-        },
-      },
-      documents: {
-        async getSession(input) {
-          const document = await docsStore.getDocumentForActor({
-            orgId: input.orgId,
-            actorId: input.actor.id,
-            documentId: input.documentId,
-          });
-          if (document === null) {
-            return null;
-          }
-          return {
-            id: document.id,
-            orgId: document.orgId,
-            title: document.title,
-            ownerActorId: document.ownerActorId,
-            editorEngine: document.editorEngine,
-            formatVersion: document.formatVersion,
-            updateSeq: document.updateSeq,
-            stateBase64: document.ydocState?.toString("base64") ?? null,
-            stateVectorBase64: document.ydocStateVector?.toString("base64") ?? null,
-            layoutSettings: nativeDocumentLayoutSettingsFromMetadata(document.metadata),
-            updatedAt: document.updatedAt.toISOString(),
-          };
-        },
-      },
-      metrics,
-      events: eventBus,
-    });
-    const result = await registerEditorsCoreApp({
-      config: runtimeConfig,
-      env: process.env,
-      logger: app.log,
-      host: editorsRuntime.host,
-    });
-    if (result.status === "registered") {
-      app.log.info(
-        {
-          routes: editorsRuntime.registrations.routes.length,
-          tools: editorsRuntime.registrations.tools.length,
-          workers: editorsRuntime.registrations.workers.length,
-          previewRenderers: editorsRuntime.registrations.previewRenderers.length,
-          aiSlots: editorsRuntime.registrations.aiSlots.length,
-          collabGateways: editorsRuntime.registrations.collabGateways.length,
-        },
-        "Editors runtime host registrations applied",
-      );
-    }
-  }
+  const leaderGatedWorkers: {
+    readonly name: string;
+    readonly worker: SupervisedWorker;
+  }[] = [];
   registerAgentCredentialTools(tools, {
     store: agentCredentialStore,
     scopeCatalog: agentCredentialScopeCatalog,
@@ -3016,21 +3109,22 @@ export async function createHelixServer(): Promise<FastifyInstance> {
   const readinessProbes: ReadinessProbe[] = [];
   await registerCanonicalApi(app, async (app) => {
     installHttpMetrics(app, metrics);
-
-    // P2-1: enforce MFA-required-for-admins. Every `/api/admin/*` route shares
-    // this prefix, so a single preHandler hook gates all admin surfaces. The
-    // hook resolves the request actor and, on tiers that require admin MFA,
-    // rejects admin-scoped actors that have not presented a verified MFA factor.
+    // P2-1 / ADM.2: enforce MFA for admin-scoped requests when the security tier
+    // requires it (Tier 2+) *or* the org MFA security policy is enabled+required.
+    // Every `/api/admin/*` route shares this prefix so a single preHandler gates
+    // the surface. Org policy is loaded from the admin security-policies store.
     app.addHook("preHandler", async (request, reply) => {
       const url = request.url.split("?")[0] ?? "";
-      if (!url.startsWith("/api/admin/")) {
+      if (!isAdminMfaProtectedPath(url)) {
         return;
       }
       const actor = await actorFromAuthenticatedRequest(request);
-      const decision = evaluateAdminMfa({
+      const orgMfaPolicy = await securityPoliciesStore.get(actor.orgId, "mfa");
+      const decision = evaluateOrgAdminMfa({
         tier: securityTier,
         actor,
-        mfaVerified: await mfaResolver.isMfaVerified(request),
+        mfaVerified: await mfaResolver.isMfaVerified(request, actor),
+        orgMfaPolicy,
       });
       if (!decision.allowed) {
         const traceId = traceIdForRequest(request);
@@ -3048,14 +3142,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         );
       }
     });
-
     installCrownJewelGate(app, {
       store: new PostgresCrownJewelApprovalStore(sql),
       actorFromRequest: actorFromAuthenticatedRequest,
       mfa: mfaResolver,
       traceId: traceIdForRequest,
     });
-
     const trustedBrowserOrigins = normalizeTrustedOrigins([
       ...(betterAuthConfig?.trustedOrigins ?? []),
       betterAuthConfig?.baseUrl ??
@@ -3126,7 +3218,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         router: trpcRouter,
         createContext: async ({ req }: CreateFastifyContextOptions) => ({
           request: createRequestContext(req),
-          actor: await actorFromAuthenticatedRequest(req),
+          principal: await principalFromAuthenticatedRequest(req),
         }),
       },
     });
@@ -3236,6 +3328,35 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
         auditSink: auditStore,
       });
+      const mailDeliveryAlertMonitor = new MailDeliveryAlertMonitor({
+        store: mailDeliveryEventStore,
+        emit: (alert) => {
+          app.log.warn(
+            {
+              orgId: alert.orgId,
+              category: alert.category,
+              count: alert.count,
+              threshold: alert.threshold,
+              windowMinutes: alert.windowMinutes,
+            },
+            "Managed mail provider delivery threshold reached",
+          );
+        },
+      });
+      await registerMailProviderWebhookRoutes(app, {
+        providerStore: outboundProviderStore,
+        deliveryStore: mailDeliveryEventStore,
+        secrets: mailSecretProvider,
+        alertMonitor: mailDeliveryAlertMonitor,
+        onSignatureFailure: ({ orgId, providerId }) => {
+          app.log.warn({ orgId, providerId }, "Rejected managed mail provider webhook signature");
+        },
+      });
+      await registerMailDeliveryEventAdminRoutes(app, {
+        store: mailDeliveryEventStore,
+        actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+        auditSink: auditStore,
+      });
     }
     // Core-app enablement admin API: org admins view/toggle which core apps are
     // enabled org-wide. Toggling writes `config.modules[appId].enabled` through
@@ -3243,7 +3364,41 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     await registerCoreAppsAdminRoutes(app, {
       service: platformConfig,
       role: coreApps.role,
+      appIds: coreApps.appIds,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+    });
+    /* One request for Admin > Overview instead of five. The page reads five
+         figures from five endpoints, which is the whole of the tenant's
+         five-per-second budget on top of the three the app shell spends — so the
+         console's landing page could not load without tripping the limiter it
+         reports on. The readers below are the *same* functions the individual
+         endpoints use, so the aggregate cannot drift away from the section pages,
+         and each is caught separately so one dead source cannot blank the other
+         four cards. */
+    registerAdminOverviewRoutes(app, {
+      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      readDomains: (actor) => readDomainsWithRecords(adminDomainsStore, actor.orgId),
+      readPolicies: (actor) => readSecurityPolicies(securityPoliciesStore, actor.orgId),
+      readPlatformConfig: () => platformConfig.getStatus(),
+      readDirectory: async (actor) => {
+        /* Same page size Overview's Directory card asks for, so the aggregate and
+                 the Users section share one reading rather than disagreeing by a page. */
+        const users = await adminUsersStore.listUsers({
+          orgId: actor.orgId,
+          includeDisabled: true,
+          limit: 250,
+        });
+        return { users, nextCursor: null };
+      },
+      readCoreApps: () =>
+        buildCoreAppsAdminStatus({
+          service: platformConfig,
+          role: coreApps.role,
+          appIds: coreApps.appIds,
+        }),
+      onSignalError: (input) => {
+        app.log.error({ error: input.error, signal: input.signal }, "Admin overview signal failed");
+      },
     });
     await registerAuditLogAdminRoutes(app, {
       store: auditStore,
@@ -3258,6 +3413,14 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     await registerAdminUsersRoutes(app, {
       store: adminUsersStore,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      // E7.2: production offboard cascade (org-scoped resolve + disable + sessions + credentials).
+      offboardStores: {
+        resolveTargetInOrg: (input) => actorExistsInOrg(sql, input),
+        disableActor: (input) => disableActorForOffboard(sql, input),
+        revokeSessionsForActor: (input) => revokeSessionsForActorSql(sql, input),
+        appPasswords: appPasswordStore,
+        agentCredentials: oauthStore,
+      },
     });
     await registerPeopleRoutes(app, {
       store: new PostgresPeopleStore(sql),
@@ -3401,7 +3564,8 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       service: backupAdminService,
       restoreJobs: restoreJobStore,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-      stepUpVerified: (request) => mfaResolver.isMfaVerified(request),
+      stepUpVerified: async (request) =>
+        mfaResolver.isMfaVerified(request, await actorFromAuthenticatedRequest(request)),
       auditSink: auditStore,
     });
     leaderGatedWorkers.push({ name: "backup-restore-worker", worker: restoreJobWorker });
@@ -3415,6 +3579,9 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     await registerEventRoutes(app, {
       bus: eventBus,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+      /* `/events/ws` is exempt from the tenant request-rate meter, so this cap on
+             concurrent streams is what bounds the resource instead. */
+      streamLimiter: new EventStreamLimiter(),
       // Follow-up B: feed the helix_websocket_connections_active gauge.
       metrics,
       onError: (error) => {
@@ -3438,6 +3605,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
             (await sessionActorResolver?.resolve(request)) ?? unauthenticatedActor,
           bus: chatRoomBus,
           presence: chatPresence,
+          trustedOrigins,
           metrics,
           dlp,
           rateLimit: {
@@ -3454,41 +3622,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         store: chatModerationStore,
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
         audit: auditStore,
-      });
-    }
-    const docsRoutes = coreApps.shouldRegister("docs")
-      ? await registerDocsRoutes(app, {
-          store: docsStore,
-          actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-          concurrentEditorLimit: (input) =>
-            input.request.effectiveConfig?.quotas.collab_concurrent_editors_per_doc ?? null,
-          metrics,
-          metering: meteringClient,
-          onMeteringError: (error: unknown) => {
-            app.log.error({ error }, "Docs collab session metering emission failed");
-          },
-          onError: (error) => {
-            app.log.error({ error }, "Docs websocket error");
-          },
-        })
-      : undefined;
-    if (coreApps.shouldRegister("editors")) {
-      await registerSheetsRoutes(app, {
-        store: sheetsStore,
-        actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-        events: eventBus,
-        metrics,
-        onError: (error) => {
-          app.log.error({ error }, "Sheets websocket error");
-        },
-      });
-      await registerSlidesRoutes(app, {
-        store: slidesStore,
-        actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-        metrics,
-        onError: (error) => {
-          app.log.error({ error }, "Slides websocket error");
-        },
       });
     }
     if (coreApps.shouldRegister("calendar")) {
@@ -3510,6 +3643,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       await registerDriveRoutes(app, {
         store: driveStore,
         appPasswords: appPasswordStore,
+        requireTls: driveConfig.isProduction,
         bodyLimitBytes: driveConfig.antivirus.maxFileBytes,
         dlp,
       });
@@ -3518,156 +3652,64 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
         dlp,
       });
-
       // Session-cookie-authenticated content stream for the Web UI. The /dav/*
       // routes registered above require app-password Basic Auth (the WebDAV
       // contract). The browser-driven "Open file" action in the Drive UI
       // needs a path it can hit with the existing helix_session cookie and
       // have the bytes streamed back. This route fills that gap.
-      app.get<{ Params: { objectId: string } }>(
-        "/api/drive/objects/:objectId/content",
-        async (request, reply) => {
-          const actor = await actorFromAuthenticatedRequest(request);
-          // G6: defense-in-depth scope gate on top of per-object ACL.
-          requireActorScope(actor, "drive.read");
-          const file = await driveStore.openFile({
+      app.get<{
+        Params: {
+          objectId: string;
+        };
+      }>("/api/drive/objects/:objectId/content", async (request, reply) => {
+        const actor = await actorFromAuthenticatedRequest(request);
+        // G6: defense-in-depth scope gate on top of per-object ACL.
+        requireActorScope(actor, "drive.read");
+        const file = await driveStore.openFile({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          objectId: request.params.objectId,
+        });
+        if (file === null) {
+          throw new NotFoundError("File not found.");
+        }
+        const dlpDecision = await dlp.evaluate({
+          orgId: actor.orgId,
+          actorId: actor.id,
+          boundary: "drive_download",
+          resources: [{ resourceType: "drive.file", resourceId: request.params.objectId }],
+          traceId: request.id,
+        });
+        if (dlpDecision.action === "block" || dlpDecision.action === "quarantine") {
+          throw dlpDecisionError(dlpDecision);
+        }
+        if (dlpDecision.action === "warn") {
+          reply.header("x-helix-dlp-warning", dlpDecision.classification);
+        }
+        if (
+          !(await driveStore.canExportFile({
             orgId: actor.orgId,
             actorId: actor.id,
             objectId: request.params.objectId,
-          });
-          if (file === null) {
-            throw new NotFoundError("File not found.");
-          }
-          const dlpDecision = await dlp.evaluate({
-            orgId: actor.orgId,
-            actorId: actor.id,
-            boundary: "drive_download",
-            resources: [{ resourceType: "drive.file", resourceId: request.params.objectId }],
-            traceId: request.id,
-          });
-          if (dlpDecision.action === "block" || dlpDecision.action === "quarantine") {
-            throw dlpDecisionError(dlpDecision);
-          }
-          if (dlpDecision.action === "warn") {
-            reply.header("x-helix-dlp-warning", dlpDecision.classification);
-          }
-          const inline = (request.query as { download?: string }).download !== "1";
-          if (
-            !inline &&
-            !(await driveStore.canExportFile({
-              orgId: actor.orgId,
-              actorId: actor.id,
-              objectId: request.params.objectId,
-            }))
-          ) {
-            throw new ForbiddenError("Export is disabled for this recording.");
-          }
-          const responseHeaders = safeDriveContentHeaders(
-            file.entry.name,
-            file.entry.mimeType ?? "application/octet-stream",
-            inline,
-          );
-          return sendStreamWithRangeSupport({
-            reply,
-            request,
-            byteSize: file.byteSize,
-            etag: file.etag,
-            open: file.open,
-            ...responseHeaders,
-            lastModified: file.entry.updatedAt,
-          });
-        },
-      );
-
-      /* /api/drive/objects/:id/preview
-       *
-       * Returns a browser-renderable preview of the file:
-       *  - PDF / browser-safe raster images / txt / csv / md → forwards to the
-       *    raw content endpoint inline; the browser renders these natively.
-       *  - Office formats → the isolated converter's stored PDF artifact.
-       *  - SVG and unsupported images → no API-process decoding; safe placeholder.
-       *  - uploaded active content → forced download as inert bytes.
-       *  - unknown → wrapped in a sandboxed "preview not yet rendered" shell.
-       *
-       * The UI's "Open" action points here so clicking a file actually opens
-       * something — even for office formats the browser can't display.
-       */
-      app.get<{ Params: { objectId: string } }>(
-        "/api/drive/objects/:objectId/preview",
-        async (request, reply) => {
-          const actor = await actorFromAuthenticatedRequest(request);
-          // G6: defense-in-depth scope gate on top of per-object ACL.
-          requireActorScope(actor, "drive.read");
-          const file = await driveStore.openFile({
-            orgId: actor.orgId,
-            actorId: actor.id,
-            objectId: request.params.objectId,
-          });
-          if (file === null) {
-            throw new NotFoundError("File not found.");
-          }
-          if (isAvailablePdfPreview(file.entry.preview) && file.preview !== undefined) {
-            return sendStreamWithRangeSupport({
-              reply,
-              request,
-              byteSize: file.preview.byteSize,
-              etag: file.preview.etag,
-              open: file.preview.open,
-              mimeType: "application/pdf",
-              disposition: `inline; filename="${previewPdfAsciiFilename(file.entry.name)}"; filename*=UTF-8''${encodeURIComponent(previewPdfFilename(file.entry.name))}`,
-              lastModified: file.entry.updatedAt,
-            });
-          }
-          const mime = file.entry.mimeType ?? "";
-          const filename = file.entry.name;
-
-          // Never let uploaded active content execute on the authenticated app
-          // origin, even when its filename and declared MIME disagree.
-          if (isActiveBrowserContent(filename, mime)) {
-            return sendStreamWithRangeSupport({
-              reply,
-              request,
-              byteSize: file.byteSize,
-              etag: file.etag,
-              open: file.open,
-              ...safeDriveContentHeaders(filename, mime, true),
-              lastModified: file.entry.updatedAt,
-            });
-          }
-
-          // Browser-native inert formats: serve as-is, inline.
-          if (
-            mime.startsWith("application/pdf") ||
-            isBrowserSafeRasterImagePreviewFormat(mime, filename) ||
-            mime.startsWith("video/") ||
-            mime.startsWith("audio/") ||
-            mime.startsWith("text/plain") ||
-            mime.startsWith("text/csv") ||
-            mime.startsWith("text/markdown")
-          ) {
-            return sendStreamWithRangeSupport({
-              reply,
-              request,
-              byteSize: file.byteSize,
-              etag: file.etag,
-              open: file.open,
-              mimeType: mime || "application/octet-stream",
-              disposition: `inline; filename*=UTF-8''${encodeURIComponent(filename)}`,
-              lastModified: file.entry.updatedAt,
-            });
-          }
-
-          // All decoding/conversion happens before this request in the isolated
-          // converter. Missing artifacts fail closed instead of parsing here.
-          return sendSandboxedHtmlPreview(
-            reply,
-            wrapPreview(
-              filename,
-              `<div class="placeholder"><p>This file (${escapeHtml(mime || "binary")}) doesn't have an in-browser preview yet.</p><p>Download it from Drive to open it in a native app.</p></div>`,
-            ),
-          );
-        },
-      );
+          }))
+        ) {
+          throw new ForbiddenError("Export is disabled for this recording.");
+        }
+        const responseHeaders = safeDriveContentHeaders(
+          file.entry.name,
+          file.entry.mimeType ?? "application/octet-stream",
+          false,
+        );
+        return sendStreamWithRangeSupport({
+          reply,
+          request,
+          byteSize: file.byteSize,
+          etag: file.etag,
+          open: file.open,
+          ...responseHeaders,
+          lastModified: file.entry.updatedAt,
+        });
+      });
     }
     if (configuredMeetSecrets !== null) {
       await registerMeetRoutes(app, {
@@ -3689,7 +3731,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
       });
     }
-
     // P0-1: every singleton background worker must run on exactly one replica.
     // `pg_try_advisory_lock` previously protected only the audit verifier; the
     // outbox poller, webhook dispatcher, mail worker, enrichment worker, and
@@ -3783,6 +3824,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         worker: driveVirusScanRetryWorker,
       });
     }
+    if (chatRetentionWorker !== undefined) {
+      leaderGatedWorkers.push({
+        name: "chat-retention-worker",
+        worker: chatRetentionWorker,
+      });
+    }
     if (smtpMailReceiver !== undefined && smtpMailReceiverConfig !== undefined) {
       const receiver = smtpMailReceiver;
       const receiverConfig = smtpMailReceiverConfig;
@@ -3822,7 +3869,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       name: "pending-action-expiry-worker",
       worker: pendingActionExpiryWorker,
     });
-
     const workerRetryIntervalMs = bootEnv.LEADER_ELECTION_RETRY_INTERVAL_MS;
     const workerLockClient = new PostgresAdvisoryLockClient(sql);
     const workerSupervisors = leaderGatedWorkers.map(
@@ -3846,13 +3892,10 @@ export async function createHelixServer(): Promise<FastifyInstance> {
           },
         }),
     );
-
     await Promise.all(workerSupervisors.map((supervisor) => supervisor.start()));
-
     // The audit verifier keeps its own per-run leader lease (it sweeps daily, so
     // gating each brief run is sufficient and avoids holding a connection idle).
     auditVerifierWorker?.start();
-
     app.log.info(
       {
         connectors: connectorResult.loaded.map((connector) => connector.manifest.id),
@@ -3866,7 +3909,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       connectors: connectorResult,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     });
-
     // P2-4: wire config hot-reload. `subscribeToConfigHotReload` was implemented
     // and tested but never called — without this, NATS-published config changes
     // (`helix.config.changed`, emitted by the platform-config admin API) had no
@@ -3877,22 +3919,17 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       reload: () => loadHelixConfig(configSources),
       onReload: (config) => {
         runtimeConfig = config;
+        void import("./platform/ai/operator-settings.js").then(
+          ({ applyOperatorAiFromHelixConfig }) => {
+            applyOperatorAiFromHelixConfig(config);
+          },
+        );
         app.log.info({ tier: config.security.tier }, "Applied hot-reloaded platform configuration");
       },
     });
-
     app.addHook("onClose", async () => {
       await pluginLifecycle.close();
       connectorResult.close();
-      // PRD §16.3 steps 4-5: now that the HTTP server has stopped accepting new
-      // connections, tell still-connected realtime clients to reconnect to a
-      // surviving replica before workers/DB are torn down. Docs (Yjs) sockets
-      // get a "host shutting down" frame; chat sockets get "reconnect required".
-      try {
-        docsRoutes?.broadcastShutdown();
-      } catch (error) {
-        app.log.error({ error }, "Failed to broadcast docs shutdown");
-      }
       try {
         chatRoutes?.broadcastShutdown();
       } catch (error) {
@@ -3912,7 +3949,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       await betterAuthRuntime?.pool.end();
       await sql.end({ timeout: 5 });
     });
-
     const migrationSources = await resolvePlatformMigrationSources();
     readinessProbes.push(
       {
@@ -3953,7 +3989,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
       });
     }
-
     const distributedServicesRequired = securityTier !== "personal";
     if (distributedServicesRequired || redis !== undefined) {
       readinessProbes.push({
@@ -3977,7 +4012,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         },
       });
     }
-
     const productionServiceRequired = bootEnv.NODE_ENV === "production";
     if (productionServiceRequired || distributedServicesRequired || searchEngine !== undefined) {
       readinessProbes.push({
@@ -4059,13 +4093,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       reply.header("content-type", metrics.registry.contentType);
       return metrics.registry.metrics();
     });
-
     app.get("/api/tools", async (request) => ({
       tools: (await tools.listVisible(await actorFromAuthenticatedRequest(request))).map(
         projectToolListItem,
       ),
     }));
-
     // Core-app enablement, projected for the web shell. Any authenticated user
     // can read this — the shell drives its left rail + route gating from it so
     // a disabled (or out-of-role) core app is never shown or routed to. Admins
@@ -4077,6 +4109,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       const currentCoreApps = resolveCoreAppStatuses({
         ...(modules === undefined ? {} : { modules }),
         role: coreApps.role,
+        appIds: coreApps.appIds,
       });
       return {
         role: coreApps.role,
@@ -4088,7 +4121,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         })),
       };
     });
-
     // PRD §9.5: the assistant SSE streaming endpoint. Registered before the
     // parametric `/api/tools/:toolId` route so the static `assistant.chat` path
     // takes precedence and can negotiate `text/event-stream` for streamed turns.
@@ -4102,7 +4134,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         app.log.error({ error }, "Assistant SSE stream error");
       },
     });
-
     registerToolRestRoutes(
       app,
       {
@@ -4121,33 +4152,12 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       credentialStore: agentCredentialStore,
       ...(sessionActorResolver === undefined ? {} : { sessionResolver: sessionActorResolver }),
     });
-
-    app.post("/api/tools/pending/:pendingId/approve", async (request, reply) => {
-      const params = pendingActionParamsSchema.parse(request.params);
-      const result = await tools.approvePending(params.pendingId, {
-        actor: await actorFromAuthenticatedRequest(request),
-        request: createRequestContext(request),
-      });
-      if (!result.ok) {
-        return sendToolInvokeError(reply, result, traceIdForRequest(request));
-      }
-      if (result.status === "pending_confirmation") {
-        return reply.code(202).send({ status: result.status, pending: result.pending });
-      }
-      return { status: "executed", output: result.output };
+    registerPendingActionMutationRoutes(app, {
+      tools,
+      tokenStore: oauthStore,
+      credentialStore: agentCredentialStore,
+      ...(sessionActorResolver === undefined ? {} : { sessionResolver: sessionActorResolver }),
     });
-
-    app.post("/api/tools/pending/:pendingId/cancel", async (request, reply) => {
-      const params = pendingActionParamsSchema.parse(request.params);
-      const result = await tools.cancelPending(params.pendingId, {
-        actor: await actorFromAuthenticatedRequest(request),
-      });
-      if (!result.ok) {
-        return sendToolInvokeError(reply, result, traceIdForRequest(request));
-      }
-      return { status: result.status, pending: result.pending };
-    });
-
     registerToolRestRoutes(
       app,
       {
@@ -4159,7 +4169,6 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       },
       ["GET"],
     );
-
     app.get("/openapi.json", async () =>
       buildOpenApiDocument(app.swagger(), await tools.listVisible(systemActor)),
     );
@@ -4170,28 +4179,16 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       return openApiDocumentToYaml(document);
     });
     app.get("/asyncapi.json", async () => buildAsyncApiDocument({}, eventSchemas.list()));
-
-    const mcpResourceProvider = (request: FastifyRequest) =>
+    const mcpResourceProvider = () =>
       createStoreBackedMcpResourceProvider({
         chat: chatStore,
         calendar: calendarStore,
         mail: mailStore,
         drive: driveStore,
-        docs: docsStore,
-        docsExportJobLimiter: tenantHourlyQuotaLimiter,
-        docsExportJobLimit: () => request.effectiveConfig?.quotas.export_jobs_per_hour ?? null,
-        quotaEvents: eventBus,
-        onQuotaEventError: (error: unknown) => {
-          app.log.error({ error }, "MCP Docs export quota event emission failed");
-        },
-        metering: meteringClient,
-        onMeteringError: (error: unknown) => {
-          app.log.error({ error }, "MCP Docs export metering emission failed");
-        },
       });
-
     app.post("/mcp", async (request, reply) => {
-      const actor = await actorFromAuthenticatedRequest(request);
+      const principal = await principalFromAuthenticatedRequest(request);
+      const requestContext = createRequestContext(request);
       // PRD §9.5: when the client negotiates SSE, stream the JSON-RPC response
       // over text/event-stream so long-running tool calls keep the connection
       // warm; otherwise fall back to a plain JSON-RPC POST response.
@@ -4204,9 +4201,11 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         });
         for await (const event of handleMcpStreamingRequest({
           tools,
-          actor,
+          principal,
+          request: requestContext,
           body: request.body,
-          resources: mcpResourceProvider(request),
+          resources: mcpResourceProvider(),
+          idempotencyStore,
         })) {
           reply.raw.write(formatSseEvent(event));
         }
@@ -4215,105 +4214,33 @@ export async function createHelixServer(): Promise<FastifyInstance> {
       }
       return handleMcpJsonRpcRequest({
         tools,
-        actor,
+        principal,
+        request: requestContext,
         body: request.body,
-        resources: mcpResourceProvider(request),
+        resources: mcpResourceProvider(),
+        idempotencyStore,
       });
     });
   });
-
   // Kubernetes probes are process lifecycle endpoints, not product API
   // operations, and intentionally remain at their conventional root paths.
   registerHealthRoutes(app, new ReadinessMonitor(readinessProbes));
-
   return app;
 }
-
-function nativeDocumentLayoutSettingsFromMetadata(metadata: JsonObject):
-  | {
-      readonly layoutMode: "page" | "pageless";
-      readonly columnCount: 1 | 2;
-      readonly sections?: readonly {
-        readonly id: string;
-        readonly title?: string | undefined;
-        readonly layoutMode?: "page" | "pageless" | undefined;
-        readonly columnCount?: 1 | 2 | undefined;
-        readonly pageSize?: "letter" | "a4" | undefined;
-        readonly orientation?: "portrait" | "landscape" | undefined;
-      }[];
-    }
-  | undefined {
-  const layout = metadata.nativeDocumentLayout;
-  if (typeof layout !== "object" || layout === null || Array.isArray(layout)) {
-    return undefined;
-  }
-  const record = layout as Record<string, unknown>;
-  const sections = nativeDocumentLayoutSectionsFromMetadata(record.sections);
-  return {
-    layoutMode: record.layoutMode === "pageless" ? "pageless" : "page",
-    columnCount: record.columnCount === 2 ? 2 : 1,
-    ...(sections.length === 0 ? {} : { sections }),
-  };
+export function isAdminMfaProtectedPath(url: string): boolean {
+  const path = url.split("?")[0] ?? "";
+  return (
+    path.startsWith("/api/admin/") ||
+    path === "/trpc/tools.explain" ||
+    path.startsWith("/trpc/admin.")
+  );
 }
-
-function nativeDocumentLayoutSectionsFromMetadata(value: unknown): readonly {
-  readonly id: string;
-  readonly title?: string | undefined;
-  readonly layoutMode?: "page" | "pageless" | undefined;
-  readonly columnCount?: 1 | 2 | undefined;
-  readonly pageSize?: "letter" | "a4" | undefined;
-  readonly orientation?: "portrait" | "landscape" | undefined;
-}[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const seen = new Set<string>();
-  const sections: {
-    readonly id: string;
-    readonly title?: string | undefined;
-    readonly layoutMode?: "page" | "pageless" | undefined;
-    readonly columnCount?: 1 | 2 | undefined;
-    readonly pageSize?: "letter" | "a4" | undefined;
-    readonly orientation?: "portrait" | "landscape" | undefined;
-  }[] = [];
-  for (const item of value.slice(0, 24)) {
-    if (typeof item !== "object" || item === null || Array.isArray(item)) {
-      continue;
-    }
-    const record = item as Record<string, unknown>;
-    const id = typeof record.id === "string" ? record.id.trim() : "";
-    if (!/^[A-Za-z0-9_-]{1,120}$/u.test(id) || seen.has(id)) {
-      continue;
-    }
-    seen.add(id);
-    const title = typeof record.title === "string" ? record.title.trim().slice(0, 120) : "";
-    sections.push({
-      id,
-      ...(title.length === 0 ? {} : { title }),
-      ...(record.layoutMode === "page" || record.layoutMode === "pageless"
-        ? { layoutMode: record.layoutMode }
-        : {}),
-      ...(record.columnCount === 1 || record.columnCount === 2
-        ? { columnCount: record.columnCount }
-        : {}),
-      ...(record.pageSize === "letter" || record.pageSize === "a4"
-        ? { pageSize: record.pageSize }
-        : {}),
-      ...(record.orientation === "portrait" || record.orientation === "landscape"
-        ? { orientation: record.orientation }
-        : {}),
-    });
-  }
-  return sections;
-}
-
 /** True when the client accepts an SSE stream for the MCP transport. */
 function acceptsEventStream(request: FastifyRequest): boolean {
   const accept = request.headers.accept;
   const value = Array.isArray(accept) ? accept.join(",") : accept;
   return typeof value === "string" && value.includes("text/event-stream");
 }
-
 /** Registers a product API once, beneath the only supported major-version path. */
 export async function registerCanonicalApi(
   app: FastifyInstance,
@@ -4333,7 +4260,6 @@ export async function registerCanonicalApi(
     { prefix: HELIX_API_VERSION_PREFIX },
   );
 }
-
 function registerBetterAuthRoutes(
   app: FastifyInstance,
   auth: BetterAuthInstance | undefined,
@@ -4345,7 +4271,6 @@ function registerBetterAuthRoutes(
   if (auth === undefined) {
     return;
   }
-
   app.route({
     method: ["GET", "POST"],
     url: "/api/auth/*",
@@ -4457,7 +4382,6 @@ function registerBetterAuthRoutes(
     },
   });
 }
-
 const FACTOR_MUTATION_PATHS = new Set([
   "/api/auth/two-factor/enable",
   "/api/auth/two-factor/disable",
@@ -4466,7 +4390,6 @@ const FACTOR_MUTATION_PATHS = new Set([
   "/api/auth/passkey/verify-registration",
   "/api/auth/passkey/delete-passkey",
 ]);
-
 function jsonRecord(value: string | null): Record<string, unknown> | null {
   if (value === null) return null;
   try {
@@ -4478,7 +4401,6 @@ function jsonRecord(value: string | null): Record<string, unknown> | null {
     return null;
   }
 }
-
 function createBetterAuthRequest(request: FastifyRequest, body = request.body): Request {
   const url = new URL(request.url, `${request.protocol}://${request.hostname}`);
   const headers = fromNodeHeaders(request.headers);
@@ -4504,7 +4426,6 @@ function createBetterAuthRequest(request: FastifyRequest, body = request.body): 
   }
   return new Request(url, init);
 }
-
 function requestBodyForFetch(body: unknown): NonNullable<RequestInit["body"]> {
   if (typeof body === "string" || body instanceof Blob || body instanceof FormData) {
     return body;
@@ -4514,14 +4435,12 @@ function requestBodyForFetch(body: unknown): NonNullable<RequestInit["body"]> {
   }
   return JSON.stringify(body);
 }
-
 type AgentLimitBudgetOverride = {
   requestsPerMinute?: number | null;
   requestsPerDay?: number | null;
   costPerDayUsdMicros?: number | null;
   costWarningThresholdRatio?: number;
 };
-
 function agentLimitBudgetOverrideFromEnv(
   env: NodeJS.ProcessEnv,
 ): Partial<AgentLimitBudget> | undefined {
@@ -4542,7 +4461,6 @@ function agentLimitBudgetOverrideFromEnv(
   }
   return Object.keys(override).length === 0 ? undefined : override;
 }
-
 function assignLimitOverride(
   override: AgentLimitBudgetOverride,
   key: "requestsPerMinute" | "requestsPerDay" | "costPerDayUsdMicros",
@@ -4564,25 +4482,20 @@ function assignLimitOverride(
   }
   override[key] = parsed;
 }
-
 async function invokeTool(
   tools: RuntimeToolRegistry,
-  tokenStore: AccessTokenStore,
-  sessionResolver: SessionActorResolver | undefined,
-  credentialStore: AgentCredentialStore | undefined,
+  principal: ToolInvocationPrincipal,
   toolId: string,
   input: unknown,
   request: FastifyRequest,
 ) {
   const result = await tools.invoke(toolId, input, {
-    request: createRequestContext(request),
-    actor: await resolveRequestActor(request, tokenStore, sessionResolver, credentialStore),
+    ...toolInvocationOptions(principal, createRequestContext(request)),
     enforceConfirmation: true,
     ...(requestHasCrownJewelApproval(request) ? { skipConfirmation: true } : {}),
   });
   return result;
 }
-
 function sendToolInvokeError(reply: FastifyReply, result: ToolInvokeErrorResult, traceId: string) {
   if (result.retryAfterSeconds !== undefined) {
     reply.header("retry-after", String(result.retryAfterSeconds));
@@ -4590,7 +4503,6 @@ function sendToolInvokeError(reply: FastifyReply, result: ToolInvokeErrorResult,
   // P1-10: single canonical error envelope with a traceId across every surface.
   return reply.code(result.statusCode).send(toolErrorEnvelope(result, traceId));
 }
-
 function createAssistantAIRouter(
   provenance: PostgresAIProvenanceStore,
   options: {
@@ -4647,7 +4559,6 @@ function createAssistantAIRouter(
     },
   });
 }
-
 async function createSearchEngine(region: string): Promise<MeilisearchSearchEngine | undefined> {
   const searchEnv = env();
   const baseUrl = searchEnv.MEILI_URL ?? searchEnv.MEILISEARCH_URL ?? searchEnv.MEILI_HOST;
@@ -4671,14 +4582,12 @@ async function createSearchEngine(region: string): Promise<MeilisearchSearchEngi
   await engine.ensureIndex();
   return engine;
 }
-
 function parseS3ServerSideEncryption(value: string): "AES256" | "aws:kms" {
   if (value !== "AES256" && value !== "aws:kms") {
     throw new TypeError("RUSTFS_SERVER_SIDE_ENCRYPTION must be AES256 or aws:kms");
   }
   return value;
 }
-
 interface ImmutableAuditShippingConfig {
   readonly endpoint: string;
   readonly region: string;
@@ -4694,7 +4603,6 @@ interface ImmutableAuditShippingConfig {
   readonly anchorKeyId: string;
   readonly anchorSecret: string;
 }
-
 interface BetterAuthServerConfig {
   readonly databaseUrl: string;
   readonly secret: string;
@@ -4702,7 +4610,6 @@ interface BetterAuthServerConfig {
   readonly secureCookies: boolean;
   readonly trustedOrigins?: readonly string[];
 }
-
 export function getBetterAuthRuntimeConfig(
   env: NodeJS.ProcessEnv,
 ): BetterAuthServerConfig | undefined {
@@ -4712,12 +4619,10 @@ export function getBetterAuthRuntimeConfig(
     }
     return undefined;
   }
-
   const databaseUrl = env.BETTER_AUTH_DATABASE_URL ?? env.DATABASE_URL;
   if (databaseUrl === undefined || databaseUrl.length === 0) {
     throw new TypeError("BETTER_AUTH_DATABASE_URL or DATABASE_URL is required");
   }
-
   const secret =
     env.BETTER_AUTH_SECRET ??
     (env.NODE_ENV === "production"
@@ -4726,7 +4631,6 @@ export function getBetterAuthRuntimeConfig(
   if (secret === undefined || secret.length < 32) {
     throw new TypeError("BETTER_AUTH_SECRET must be at least 32 characters");
   }
-
   const production = env.NODE_ENV === "production";
   const configuredBaseUrl = env.BETTER_AUTH_URL ?? env.HELIX_PUBLIC_URL ?? env.PUBLIC_BASE_URL;
   if (production && configuredBaseUrl === undefined) {
@@ -4736,8 +4640,10 @@ export function getBetterAuthRuntimeConfig(
   if (production && !baseUrl.startsWith("https://")) {
     throw new TypeError("Better Auth's production origin must use HTTPS");
   }
-
-  const trustedOrigins = parseCsv(env.BETTER_AUTH_TRUSTED_ORIGINS ?? env.CLIENT_ORIGIN);
+  const trustedOrigins = (env.BETTER_AUTH_TRUSTED_ORIGINS ?? env.CLIENT_ORIGIN ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
   return {
     databaseUrl,
     secret,
@@ -4746,7 +4652,6 @@ export function getBetterAuthRuntimeConfig(
     ...(trustedOrigins.length === 0 ? {} : { trustedOrigins }),
   };
 }
-
 function canonicalHttpOrigin(value: string): string {
   let url: URL;
   try {
@@ -4766,14 +4671,12 @@ function canonicalHttpOrigin(value: string): string {
   }
   return url.origin;
 }
-
 export function getImmutableAuditShippingConfig(
   env: NodeJS.ProcessEnv,
 ): ImmutableAuditShippingConfig | undefined {
   if (!envValueFlag(env.AUDIT_IMMUTABLE_S3_ENABLED ?? "", false)) {
     return undefined;
   }
-
   const endpoint = env.AUDIT_IMMUTABLE_S3_ENDPOINT ?? env.AUDIT_S3_ENDPOINT;
   const bucket = env.AUDIT_IMMUTABLE_S3_BUCKET ?? env.AUDIT_S3_BUCKET;
   const accessKeyId =
@@ -4782,7 +4685,6 @@ export function getImmutableAuditShippingConfig(
     env.AUDIT_IMMUTABLE_S3_SECRET_KEY ?? env.AUDIT_S3_SECRET_KEY ?? env.RUSTFS_SECRET_KEY;
   const anchorKeyId = env.AUDIT_IMMUTABLE_S3_ANCHOR_KEY_ID;
   const anchorSecret = env.AUDIT_IMMUTABLE_S3_ANCHOR_SECRET;
-
   if (endpoint === undefined || endpoint.length === 0) {
     throw new TypeError("AUDIT_IMMUTABLE_S3_ENDPOINT or AUDIT_S3_ENDPOINT is required");
   }
@@ -4801,7 +4703,6 @@ export function getImmutableAuditShippingConfig(
   if (anchorSecret === undefined || anchorSecret.length < 32) {
     throw new TypeError("AUDIT_IMMUTABLE_S3_ANCHOR_SECRET must be at least 32 characters");
   }
-
   return {
     endpoint,
     bucket,
@@ -4823,14 +4724,12 @@ export function getImmutableAuditShippingConfig(
     anchorSecret,
   };
 }
-
 function parseImmutableAuditObjectLockMode(value: string): ImmutableAuditObjectLockMode {
   if (value !== "COMPLIANCE" && value !== "GOVERNANCE") {
     throw new TypeError("AUDIT_IMMUTABLE_S3_OBJECT_LOCK_MODE must be COMPLIANCE or GOVERNANCE");
   }
   return value;
 }
-
 /**
  * Resolve every configured audit-shipping destination (Follow-up A).
  *
@@ -4846,7 +4745,6 @@ export function getAuditDestinationConfigs(
   env: NodeJS.ProcessEnv,
 ): readonly AuditDestinationConfig[] {
   const configs: AuditDestinationConfig[] = [];
-
   const s3Config = getImmutableAuditShippingConfig(env);
   if (s3Config !== undefined) {
     const anchorAuthenticator = createHmacAuditAnchorAuthenticator(
@@ -4874,7 +4772,6 @@ export function getAuditDestinationConfigs(
       verifier: anchorAuthenticator,
     });
   }
-
   if (envValueFlag(env.AUDIT_SIEM_SYSLOG_ENABLED ?? "", false)) {
     const host = env.AUDIT_SIEM_SYSLOG_HOST;
     if (host === undefined || host.length === 0) {
@@ -4920,7 +4817,6 @@ export function getAuditDestinationConfigs(
         : {}),
     });
   }
-
   if (envValueFlag(env.AUDIT_WORM_POSTGRES_ENABLED ?? "", false)) {
     configs.push({
       destination: "audit-immutable-postgres",
@@ -4932,24 +4828,20 @@ export function getAuditDestinationConfigs(
         : { intervalMs: Number.parseInt(env.AUDIT_WORM_POSTGRES_INTERVAL_MS, 10) }),
     });
   }
-
   return configs;
 }
-
 function parseSiemSyslogTransport(value: string): SiemSyslogTransport {
   if (value !== "tcp" && value !== "tls" && value !== "udp") {
     throw new TypeError("AUDIT_SIEM_SYSLOG_TRANSPORT must be tcp, tls, or udp");
   }
   return value;
 }
-
 function parseSiemAuditFormat(value: string): SiemAuditFormat {
   if (value !== "cef" && value !== "leef") {
     throw new TypeError("AUDIT_SIEM_SYSLOG_FORMAT must be cef or leef");
   }
   return value;
 }
-
 function tenantRootHostFromPublicUrl(value: string | undefined): readonly string[] {
   if (value === undefined) {
     return [];
@@ -4960,7 +4852,24 @@ function tenantRootHostFromPublicUrl(value: string | undefined): readonly string
     return [];
   }
 }
-
+/** @deprecated Prefer mailConfig(loadEnv(...)).receiver — kept for server.test.ts. */
+export function getSmtpMailReceiverConfig(
+  source: NodeJS.ProcessEnv | Record<string, string | undefined>,
+):
+  | {
+      readonly port: number;
+      readonly host?: string;
+    }
+  | undefined {
+  if (!envValueFlag(source.MAIL_SMTP_RECEIVER_ENABLED ?? "", false)) {
+    return undefined;
+  }
+  const host = source.MAIL_SMTP_RECEIVER_HOST;
+  return {
+    port: Number.parseInt(source.MAIL_SMTP_RECEIVER_PORT ?? "2525", 10),
+    ...(host === undefined || host.length === 0 ? {} : { host }),
+  };
+}
 function envFlag(name: string, defaultValue: boolean): boolean {
   // Dynamic flag lookup for keys not all present on Env (e.g. worker toggles).
   // Prefer env() field access for known operational keys; keep process.env only
@@ -4972,14 +4881,12 @@ function envFlag(name: string, defaultValue: boolean): boolean {
   }
   return envValueFlag(value, defaultValue);
 }
-
 function envValueFlag(value: string, defaultValue: boolean): boolean {
   if (value.length === 0) {
     return defaultValue;
   }
   return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
-
 /**
  * Resolves the per-tier confirmation timeout (PRD §9.9). The default window is
  * 10 minutes; higher-assurance tiers expire stale approvals faster so they do
@@ -4993,7 +4900,7 @@ function resolveConfirmationTimeoutMs(tier: SecurityTier, env: NodeJS.ProcessEnv
       return parsed;
     }
   }
-  const minute = 60_000;
+  const minute = 60000;
   switch (tier) {
     case "personal":
       return 10 * minute;
@@ -5005,23 +4912,13 @@ function resolveConfirmationTimeoutMs(tier: SecurityTier, env: NodeJS.ProcessEnv
       return 3 * minute;
   }
 }
-
-function parseCsv(value: string | undefined): readonly string[] {
-  if (value === undefined || value.trim().length === 0) {
-    return [];
-  }
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
 export function createAssistantProviders(
   aiConfig: AiConfig | undefined,
 ): readonly LLMProviderCapability[] {
   if (aiConfig?.enabled === false) return [];
   const providers: LLMProviderCapability[] = [];
-  const aiEnv = env();
+  // Admin platform-config overlay (operator LLM) wins over process env bootstrap.
+  const aiEnv = resolveAiEnv(process.env);
   for (const provider of aiConfig?.providers ?? []) {
     if (provider.enabled === false) {
       continue;
@@ -5073,7 +4970,6 @@ export function createAssistantProviders(
   pushProvider(providers, createLocalAssistantProvider());
   return providers;
 }
-
 export function createAssistantEmbeddingProvider(
   aiConfig: AiConfig | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -5082,11 +4978,9 @@ export function createAssistantEmbeddingProvider(
   if (aiConfig?.enabled === false) {
     return createDeterministicEmbeddingProvider();
   }
-
   const configured = createConfiguredAssistantEmbeddingProvider(aiConfig, env, fetch);
   return configured ?? createDeterministicEmbeddingProvider();
 }
-
 export function createSemanticSearchEmbeddingProvider(
   aiConfig: AiConfig | undefined,
   env: NodeJS.ProcessEnv = process.env,
@@ -5097,7 +4991,6 @@ export function createSemanticSearchEmbeddingProvider(
   }
   return createConfiguredAssistantEmbeddingProvider(aiConfig, env, fetch);
 }
-
 function createConfiguredAssistantEmbeddingProvider(
   aiConfig: AiConfig | undefined,
   env: NodeJS.ProcessEnv,
@@ -5107,12 +5000,10 @@ function createConfiguredAssistantEmbeddingProvider(
   if (embeddingProvider === undefined) {
     return undefined;
   }
-
   const plugin = embeddingProvider.plugin.toLowerCase();
   if (!plugin.includes("openai-compat") && !plugin.includes("openai-compatible")) {
     return undefined;
   }
-
   const config = embeddingProvider.config ?? {};
   const defaultDimensions =
     positiveIntegerConfig(config, "defaultDimensions") ??
@@ -5123,13 +5014,11 @@ function createConfiguredAssistantEmbeddingProvider(
   if (defaultDimensions !== 768) {
     throw new TypeError("Assistant memory embedding provider must use 768 dimensions");
   }
-
   const defaultModel = stringConfig(config, "defaultModel") ?? stringConfig(config, "model");
   const models = modelListFromConfig(config);
   if (defaultModel === undefined && models.length === 0) {
     return undefined;
   }
-
   const providerId = stringConfig(config, "id") ?? embeddingProvider.plugin;
   const baseUrl = stringConfig(config, "baseUrl");
   const apiKey = secretConfig(config, env);
@@ -5149,7 +5038,6 @@ function createConfiguredAssistantEmbeddingProvider(
     ...(modelDimensions === undefined ? {} : { modelDimensions }),
   });
 }
-
 function createConfiguredAssistantProvider(
   provider: AiProviderConfig,
   env: NodeJS.ProcessEnv,
@@ -5165,7 +5053,6 @@ function createConfiguredAssistantProvider(
   const tags = provider.tags ?? tagsFromConfig(config);
   const withTags = (created: LLMProviderCapability): LLMProviderCapability =>
     tags.length === 0 ? created : Object.assign(created, { tags });
-
   if (plugin.includes("openai-compat") || plugin.includes("openai-compatible")) {
     const baseUrl = stringConfig(config, "baseUrl");
     const apiKey = secretConfig(config, env);
@@ -5180,7 +5067,6 @@ function createConfiguredAssistantProvider(
       }),
     );
   }
-
   if (plugin.includes("anthropic-compat") || plugin.includes("anthropic-compatible")) {
     const baseUrl = stringConfig(config, "baseUrl");
     const apiKey = secretConfig(config, env);
@@ -5199,7 +5085,6 @@ function createConfiguredAssistantProvider(
       }),
     );
   }
-
   if (plugin.includes("bedrock")) {
     const region = stringConfig(config, "region");
     if (region === undefined) {
@@ -5217,7 +5102,6 @@ function createConfiguredAssistantProvider(
       }),
     );
   }
-
   if (plugin.includes("vertex")) {
     const project = stringConfig(config, "project");
     const location = stringConfig(config, "location");
@@ -5237,10 +5121,8 @@ function createConfiguredAssistantProvider(
       }),
     );
   }
-
   return undefined;
 }
-
 function configuredProviderFetch(baseUrl: string): typeof globalThis.fetch {
   const url = new URL(baseUrl);
   return createOutboundHttpClient({
@@ -5249,7 +5131,6 @@ function configuredProviderFetch(baseUrl: string): typeof globalThis.fetch {
     allowPrivateNetwork: true,
   });
 }
-
 /**
  * Resolves the Bedrock credential source from provider config.
  *
@@ -5270,7 +5151,6 @@ function resolveBedrockCredentialSource(
     env[stringConfig(config, "secretAccessKeyEnv") ?? ""];
   const sessionToken =
     stringConfig(config, "sessionToken") ?? env[stringConfig(config, "sessionTokenEnv") ?? ""];
-
   const staticCredentials =
     accessKeyId !== undefined && secretAccessKey !== undefined
       ? {
@@ -5280,13 +5160,11 @@ function resolveBedrockCredentialSource(
         }
       : undefined;
   const profile = stringConfig(config, "profile");
-
   return createBedrockCredentialProvider({
     env: profile === undefined ? env : { ...env, AWS_PROFILE: profile },
     ...(staticCredentials === undefined ? {} : { static: staticCredentials }),
   });
 }
-
 /**
  * Resolves Vertex credentials from provider config.
  *
@@ -5315,18 +5193,15 @@ function resolveVertexCredentials(
       ...(scope === undefined ? {} : { scope }),
     };
   }
-
   const accessToken =
     stringConfig(config, "accessToken") ?? env[stringConfig(config, "accessTokenEnv") ?? ""];
   if (accessToken !== undefined) {
     return { accessToken };
   }
-
   throw new TypeError(
     `AI provider ${providerId} requires Vertex credentials: either a service account (clientEmail + privateKey) or an accessToken`,
   );
 }
-
 /**
  * Normalizes a PEM private key supplied via config or env. Environment
  * variables commonly encode newlines as the literal escape sequence `\n`.
@@ -5337,7 +5212,6 @@ function normalizePrivateKey(value: string | undefined): string | undefined {
   }
   return value.includes("\\n") ? value.replace(/\\n/gu, "\n") : value;
 }
-
 export function aiRoutingPolicyFromConfig(
   aiConfig: AiConfig | undefined,
 ): Pick<
@@ -5348,8 +5222,14 @@ export function aiRoutingPolicyFromConfig(
   const featureRoutes: Record<
     string,
     {
-      primary: { providerId: string; model?: string };
-      fallback?: { providerId: string; model?: string };
+      primary: {
+        providerId: string;
+        model?: string;
+      };
+      fallback?: {
+        providerId: string;
+        model?: string;
+      };
     }
   > = {};
   for (const rule of aiConfig?.routing?.rules ?? []) {
@@ -5376,13 +5256,11 @@ export function aiRoutingPolicyFromConfig(
     ...(Object.keys(featureRoutes).length === 0 ? {} : { featureRoutes }),
   };
 }
-
 function pushProvider(providers: LLMProviderCapability[], provider: LLMProviderCapability): void {
   if (!providers.some((candidate) => candidate.id === provider.id)) {
     providers.push(provider);
   }
 }
-
 function modelListFromConfig(config: JsonObject): readonly ModelInfo[] {
   const models = config.models;
   if (Array.isArray(models) && models.length > 0) {
@@ -5416,11 +5294,9 @@ function modelListFromConfig(config: JsonObject): readonly ModelInfo[] {
       return [];
     });
   }
-
   const model = stringConfig(config, "model") ?? stringConfig(config, "defaultModel");
   return model === undefined ? [] : [{ id: model, supportsTools: true }];
 }
-
 function secretConfig(config: JsonObject, env: NodeJS.ProcessEnv): string | undefined {
   const apiKey = stringConfig(config, "apiKey");
   if (apiKey !== undefined) {
@@ -5429,7 +5305,6 @@ function secretConfig(config: JsonObject, env: NodeJS.ProcessEnv): string | unde
   const apiKeyEnv = stringConfig(config, "apiKeyEnv");
   return apiKeyEnv === undefined ? undefined : env[apiKeyEnv];
 }
-
 function headersConfig(config: JsonObject): Record<string, string> | undefined {
   const headers = config.headers;
   if (!isJsonObjectValue(headers)) {
@@ -5441,27 +5316,22 @@ function headersConfig(config: JsonObject): Record<string, string> | undefined {
     ),
   );
 }
-
 function tagsFromConfig(config: JsonObject): readonly string[] {
   const tags = config.tags;
   return Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === "string") : [];
 }
-
 function stringConfig(config: JsonObject, key: string): string | undefined {
   const value = config[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
-
 function numberConfig(config: JsonObject, key: string): number | undefined {
   const value = config[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
-
 function positiveIntegerConfig(config: JsonObject, key: string): number | undefined {
   const value = numberConfig(config, key);
   return value !== undefined && Number.isInteger(value) && value > 0 ? value : undefined;
 }
-
 function modelDimensionsConfig(config: JsonObject): Record<string, number> | undefined {
   const value = config.modelDimensions;
   if (!isJsonObjectValue(value)) {
@@ -5473,11 +5343,9 @@ function modelDimensionsConfig(config: JsonObject): Record<string, number> | und
   );
   return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
-
 function isJsonObjectValue(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
 function createLocalAssistantProvider(): LLMProviderCapability {
   return {
     id: "assistant.local",
@@ -5516,7 +5384,6 @@ function createLocalAssistantProvider(): LLMProviderCapability {
     },
   };
 }
-
 function localAssistantReply(message: string): string {
   const trimmed = message.trim();
   if (trimmed.startsWith("/draft")) {
@@ -5535,7 +5402,6 @@ function localAssistantReply(message: string): string {
     ? "How can I help with this workspace?"
     : `I captured your request and prepared an assistant response using the visible tools, search context, and opt-in memory available to your actor.`;
 }
-
 function createDeterministicEmbeddingProvider() {
   return {
     async embed(texts: readonly string[]): Promise<readonly (readonly number[])[]> {
@@ -5543,7 +5409,6 @@ function createDeterministicEmbeddingProvider() {
     },
   };
 }
-
 function deterministicEmbedding(text: string): readonly number[] {
   const vector = Array.from({ length: 768 }, () => 0);
   for (let index = 0; index < text.length; index += 1) {
@@ -5553,81 +5418,9 @@ function deterministicEmbedding(text: string): readonly number[] {
   const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
   return vector.map((value) => Number((value / magnitude).toFixed(6)));
 }
-
 function countApproximateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
 }
-
-const PREVIEW_CSS = `
-  :root { color-scheme: light dark; }
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f6f7f9; color: #111; }
-  @media (prefers-color-scheme: dark) {
-    body { background: #16171a; color: #e6e7e8; }
-    .doc { background: #1f2024; box-shadow: 0 1px 4px rgba(0,0,0,.6); }
-  }
-  header { padding: 12px 20px; border-bottom: 1px solid #e0e2e6; background: #fff; position: sticky; top: 0; }
-  @media (prefers-color-scheme: dark) { header { background: #1f2024; border-color: #2a2c30; } }
-  header h1 { margin: 0; font-size: 14px; font-weight: 600; }
-  header small { color: #6b7280; font-size: 12px; }
-  main { max-width: 880px; margin: 24px auto; padding: 0 16px 64px; }
-  .doc { background: #fff; padding: 48px 56px; border-radius: 6px; line-height: 1.55; font-size: 15px; }
-  .placeholder { text-align: center; padding: 64px 24px; color: #6b7280; }
-`;
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function wrapPreview(filename: string, body: string): string {
-  const safeName = escapeHtml(filename);
-  const safeBody = sanitizePreviewFragment(body);
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${safeName}</title>
-<style>${PREVIEW_CSS}</style>
-</head>
-<body>
-  <header><h1>${safeName}</h1><small>Helix Drive preview</small></header>
-  <main><div class="doc">${safeBody}</div></main>
-</body>
-</html>`;
-}
-
-function isAvailablePdfPreview(preview: DrivePreview | undefined): boolean {
-  return preview?.kind === "pdf" && preview.status === "available";
-}
-
-function previewPdfFilename(filename: string): string {
-  return filename.replace(/\.[^.]+$/u, "") + ".pdf";
-}
-
-function previewPdfAsciiFilename(filename: string): string {
-  return previewPdfFilename(filename)
-    .replace(/[^\x20-\x7e]/g, "_")
-    .replace(/"/g, '\\"');
-}
-
-function isBrowserSafeRasterImagePreviewFormat(mime: string, filename: string): boolean {
-  const normalizedMime = mime.toLowerCase();
-  const normalizedName = filename.toLowerCase();
-  return (
-    normalizedMime === "image/png" ||
-    normalizedMime === "image/jpeg" ||
-    normalizedMime === "image/gif" ||
-    normalizedMime === "image/webp" ||
-    /\.(png|jpe?g|gif|webp)$/iu.test(normalizedName)
-  );
-}
-
 async function collectBoundedBytes(
   body: Uint8Array | AsyncIterable<Uint8Array>,
   limit: number,

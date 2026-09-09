@@ -425,20 +425,23 @@ describe("admin identity IdP config routes", () => {
 describe("testTenantIdpConfigLogin", () => {
   it("reports only fully projected OIDC providers as ready", () => {
     expect(
-      testTenantIdpConfigLogin({
-        id: "idp-2",
-        orgId,
-        protocol: "oidc",
-        isPrimary: false,
-        displayName: "OIDC",
-        config: { issuer: "https://idp.example.com", clientId: "helix" },
-        signingCertSecretHandle: "oidc-private-key",
-        attrMapping: {},
-        jitProvisioning: false,
-        enabled: true,
-        createdAt: "2026-05-24T00:00:00.000Z",
-        updatedAt: "2026-05-24T00:00:00.000Z",
-      }, true),
+      testTenantIdpConfigLogin(
+        {
+          id: "idp-2",
+          orgId,
+          protocol: "oidc",
+          isPrimary: false,
+          displayName: "OIDC",
+          config: { issuer: "https://idp.example.com", clientId: "helix" },
+          signingCertSecretHandle: "oidc-private-key",
+          attrMapping: {},
+          jitProvisioning: false,
+          enabled: true,
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+        true,
+      ),
     ).toMatchObject({ status: "ready" });
   });
 });

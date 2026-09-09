@@ -1,9 +1,6 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import {
-  auditDestinationKinds,
-  createAuditDestinationShipper,
-} from "./destinations.js";
+import { auditDestinationKinds, createAuditDestinationShipper } from "./destinations.js";
 import { SiemAuditShipper } from "./siem-syslog.js";
 import { PostgresWormAuditShipper } from "./immutable-postgres.js";
 import {
@@ -12,7 +9,9 @@ import {
 } from "./immutable-s3.js";
 import type { AuditVerificationStore } from "./verifier.js";
 
-function fakeStorage(): ImmutableAuditStorageClient & { listKeys(prefix: string): AsyncIterable<string> } {
+function fakeStorage(): ImmutableAuditStorageClient & {
+  listKeys(prefix: string): AsyncIterable<string>;
+} {
   return {
     put: async () => undefined,
     get: async () => null,
@@ -43,13 +42,16 @@ describe("createAuditDestinationShipper", () => {
   });
 
   it("builds an immutable-s3 batch shipper", () => {
-    const shipper = createAuditDestinationShipper({
-      destination: "immutable-s3",
-      storage: fakeStorage(),
-      prefix: "helix-audit",
-      signer: authenticator,
-      verifier: authenticator,
-    }, { audit });
+    const shipper = createAuditDestinationShipper(
+      {
+        destination: "immutable-s3",
+        storage: fakeStorage(),
+        prefix: "helix-audit",
+        signer: authenticator,
+        verifier: authenticator,
+      },
+      { audit },
+    );
     expect(typeof shipper.ship).toBe("function");
   });
 

@@ -1,9 +1,6 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  tenantAwarePostgresSql,
-  withTenantPostgresContext,
-} from "../tenancy/postgres-roles.js";
+import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { PostgresMailStore } from "./store.js";
 
 const adminUrl = process.env.HELIX_MIGRATION_DATABASE_URL;
@@ -118,10 +115,12 @@ describe("mailbox actor RLS", { skip: !enabled }, () => {
     await withTenantPostgresContext(app, { orgId, actorId: aliceId }, async (tx) => {
       const listed = await store.listThreads({ orgId, actorId: aliceId });
       expect(listed.threads.map((thread) => thread.threadId)).toEqual([aliceThreadId]);
-      await expect(store.search({ orgId, actorId: aliceId, query: "bob-search-token" })).resolves.toEqual(
-        [],
-      );
-      await expect(store.getThread({ orgId, actorId: aliceId, threadId: bobThreadId })).resolves.toBeNull();
+      await expect(
+        store.search({ orgId, actorId: aliceId, query: "bob-search-token" }),
+      ).resolves.toEqual([]);
+      await expect(
+        store.getThread({ orgId, actorId: aliceId, threadId: bobThreadId }),
+      ).resolves.toBeNull();
 
       const knownRows = await tx<{ readonly id: string }[]>`
         select id from messages where id = ${bobMessageId}
@@ -141,24 +140,35 @@ describe("mailbox actor RLS", { skip: !enabled }, () => {
         returning actor_id
       `;
       expect(mutations).toEqual([]);
-
     });
     await expect(
-      withTenantPostgresContext(app, { orgId, actorId: aliceId }, (tx) => tx`
+      withTenantPostgresContext(
+        app,
+        { orgId, actorId: aliceId },
+        (tx) => tx`
         insert into mail_message_deliveries (org_id, message_id, actor_id)
         values (${orgId}, ${bobMessageId}, ${aliceId})
-      `),
+      `,
+      ),
     ).rejects.toMatchObject({ code: "42501" });
     await expect(
-      withTenantPostgresContext(app, { orgId, actorId: aliceId }, (tx) => tx`
+      withTenantPostgresContext(
+        app,
+        { orgId, actorId: aliceId },
+        (tx) => tx`
         insert into mail_thread_state (org_id, actor_id, thread_id)
         values (${orgId}, ${aliceId}, ${bobThreadId})
-      `),
+      `,
+      ),
     ).rejects.toMatchObject({ code: "42501" });
     await expect(
-      withTenantPostgresContext(app, { orgId, actorId: aliceId }, (tx) => tx`
+      withTenantPostgresContext(
+        app,
+        { orgId, actorId: aliceId },
+        (tx) => tx`
         update messages set body = 'rewritten' where id = ${aliceMessageId}
-      `),
+      `,
+      ),
     ).rejects.toThrow("canonical mail content is immutable");
   });
 
@@ -177,7 +187,9 @@ describe("mailbox actor RLS", { skip: !enabled }, () => {
     await withTenantPostgresContext(app, { orgId, actorId: delegateId }, async (tx) => {
       const listed = await store.listThreads({ orgId, actorId: bobId });
       expect(listed.threads.map((thread) => thread.threadId)).toEqual([bobThreadId]);
-      expect(await store.search({ orgId, actorId: bobId, query: "bob-search-token" })).toHaveLength(1);
+      expect(await store.search({ orgId, actorId: bobId, query: "bob-search-token" })).toHaveLength(
+        1,
+      );
       expect((await store.getThread({ orgId, actorId: bobId, threadId: bobThreadId }))?.id).toBe(
         bobThreadId,
       );
@@ -205,12 +217,16 @@ describe("mailbox actor RLS", { skip: !enabled }, () => {
 
   it("prevents a mailbox grantee from forging their own delegation", async () => {
     await expect(
-      withTenantPostgresContext(app, { orgId, actorId: aliceId }, (tx) => tx`
+      withTenantPostgresContext(
+        app,
+        { orgId, actorId: aliceId },
+        (tx) => tx`
         insert into permissions (
           org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id
         )
         values (${orgId}, ${aliceId}, 'mailbox', ${bobId}, 'manager', ${bobId})
-      `),
+      `,
+      ),
     ).rejects.toMatchObject({ code: "42501" });
   });
 

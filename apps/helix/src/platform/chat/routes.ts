@@ -1,3 +1,4 @@
+import { evaluateWebSocketOrigin } from "../security/origin-policy.js";
 import { randomUUID } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
 import {
@@ -64,6 +65,7 @@ const CHAT_REPLAY_BATCH_SIZE = 100;
 const CHAT_MAX_CONNECTIONS_PER_MEMBER = 8;
 
 interface ChatSocket {
+  readonly bufferedAmount?: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
   on(event: "message", handler: (data: Buffer | ArrayBuffer | string) => void): void;
@@ -80,6 +82,7 @@ interface ChatSubscription {
 }
 
 export interface RegisterChatRoutesOptions {
+  readonly trustedOrigins: readonly string[];
   readonly store: ChatStore;
   readonly attachments?: ChatAttachmentStore | undefined;
   readonly tickets: ChatWebSocketTicketStore;
@@ -104,6 +107,7 @@ export interface RegisterChatRoutesOptions {
 }
 
 type ChatSocketOptions = {
+  readonly trustedOrigins: readonly string[];
   readonly store: ChatStore;
   readonly tickets: ChatWebSocketTicketStore;
   readonly bus: ChatRoomBus;
@@ -216,6 +220,10 @@ export async function handleChatSocket(
   options: ChatSocketOptions,
 ): Promise<void> {
   trackWebsocketConnection(socket, CHAT_WS_ROUTE, options.metrics);
+  if (!evaluateWebSocketOrigin(request, options.trustedOrigins).allowed) {
+    socket.close(4403, "origin rejected");
+    return;
+  }
 
   const rateLimit = options.rateLimit ?? DEFAULT_CHAT_WS_RATE_LIMIT;
   const subscriptions = new Map<string, ChatSubscription>();
@@ -312,14 +320,14 @@ export async function handleChatSocket(
           (entry) => entry.actorId === resolved.id,
         );
         if (before !== undefined && after === undefined) {
-          await options.bus.publish(roomId, {
+          await options.bus.publish(resolved.orgId, roomId, {
             type: "presence.left",
             roomId,
             orgId: resolved.orgId,
             actorId: resolved.id,
           });
         } else if (after !== undefined && after.status !== before?.status) {
-          await options.bus.publish(roomId, {
+          await options.bus.publish(resolved.orgId, roomId, {
             type: "presence.joined",
             roomId,
             orgId: resolved.orgId,
@@ -514,6 +522,7 @@ async function handleInboundMessage(input: {
           status: message.status,
         });
         await input.options.bus.publish(
+          input.actor.orgId,
           roomId,
           entry.status === "invisible"
             ? {
@@ -545,50 +554,54 @@ async function handleInboundMessage(input: {
         catchUp: undefined,
         closed: false,
       };
-      const unsubscribe = await input.options.bus.subscribe(message.roomId, async (event) => {
-        if (
-          subscription.closed ||
-          event.roomId !== message.roomId ||
-          event.orgId !== input.actor.orgId
-        ) {
-          return;
-        }
-        try {
-          await withSocketActorContext(input.options.store, input.actor, (store) =>
-            requireSocketRoomAccess(store, input.actor, message.roomId),
-          );
-        } catch (error) {
-          if (error instanceof ChatRoomAccessError) {
-            subscription.closed = true;
-            input.denyAccess();
+      const unsubscribe = await input.options.bus.subscribe(
+        input.actor.orgId,
+        message.roomId,
+        async (event) => {
+          if (
+            subscription.closed ||
+            event.roomId !== message.roomId ||
+            event.orgId !== input.actor.orgId
+          ) {
             return;
           }
-          throw error;
-        }
-        if (isDurableChatRoomEvent(event)) {
-          if (!isEventCursor(event.cursor)) {
-            throw new TypeError("Durable Chat event is missing its cursor.");
+          try {
+            await withSocketActorContext(input.options.store, input.actor, (store) =>
+              requireSocketRoomAccess(store, input.actor, message.roomId),
+            );
+          } catch (error) {
+            if (error instanceof ChatRoomAccessError) {
+              subscription.closed = true;
+              input.denyAccess();
+              return;
+            }
+            throw error;
           }
-          subscription.desiredCursor = Math.max(subscription.desiredCursor, event.cursor);
-          await catchUpRoomEvents({
-            socket: input.socket,
-            actor: input.actor,
-            roomId: message.roomId,
-            subscription,
-            options: input.options,
-            denyAccess: input.denyAccess,
-          });
-          return;
-        }
-        if (
-          (event.type === "presence.joined" || event.type === "presence.left") &&
-          typeof event.actorId === "string" &&
-          !(await canSeePresence(input.options.store, input.actor, event.actorId))
-        ) {
-          return;
-        }
-        sendSocket(input.socket, event);
-      });
+          if (isDurableChatRoomEvent(event)) {
+            if (!isEventCursor(event.cursor)) {
+              throw new TypeError("Durable Chat event is missing its cursor.");
+            }
+            subscription.desiredCursor = Math.max(subscription.desiredCursor, event.cursor);
+            await catchUpRoomEvents({
+              socket: input.socket,
+              actor: input.actor,
+              roomId: message.roomId,
+              subscription,
+              options: input.options,
+              denyAccess: input.denyAccess,
+            });
+            return;
+          }
+          if (
+            (event.type === "presence.joined" || event.type === "presence.left") &&
+            typeof event.actorId === "string" &&
+            !(await canSeePresence(input.options.store, input.actor, event.actorId))
+          ) {
+            return;
+          }
+          sendSocket(input.socket, event);
+        },
+      );
       subscription.unsubscribe = unsubscribe;
       input.subscriptions.set(message.roomId, subscription);
       const caughtUp = await catchUpRoomEvents({
@@ -619,7 +632,7 @@ async function handleInboundMessage(input: {
       await input.options.presence.list(message.roomId),
     );
     if (entry.status !== "invisible") {
-      await input.options.bus.publish(message.roomId, {
+      await input.options.bus.publish(input.actor.orgId, message.roomId, {
         type: "presence.joined",
         roomId: message.roomId,
         orgId: input.actor.orgId,
@@ -695,7 +708,11 @@ async function handleInboundMessage(input: {
         derivation: { content: message.body, scanContent: true },
       });
     }
-    await input.options.bus.publish(message.roomId, chatMessageCreatedEvent(stored));
+    await input.options.bus.publish(
+      input.actor.orgId,
+      message.roomId,
+      chatMessageCreatedEvent(stored),
+    );
     return;
   }
 
@@ -706,7 +723,7 @@ async function handleInboundMessage(input: {
       connectionId: input.connectionId,
       status: input.getPresenceStatus(),
     });
-    await input.options.bus.publish(message.roomId, {
+    await input.options.bus.publish(input.actor.orgId, message.roomId, {
       type: "typing",
       roomId: message.roomId,
       orgId: input.actor.orgId,
@@ -732,7 +749,7 @@ async function handleInboundMessage(input: {
       status: input.getPresenceStatus(),
     });
     if (receipt.isShared && receipt.realtimeCursor !== null) {
-      await input.options.bus.publish(message.roomId, chatReadEvent(receipt));
+      await input.options.bus.publish(input.actor.orgId, message.roomId, chatReadEvent(receipt));
     }
     return;
   }
@@ -865,7 +882,10 @@ async function drainRoomEvents(input: {
         input.socket.close(CHAT_RESYNC_CLOSE_CODE, "chat history gap detected");
         return false;
       }
-      sendSocket(input.socket, event);
+      if (!sendSocket(input.socket, event)) {
+        input.subscription.closed = true;
+        return false;
+      }
       input.subscription.cursor = event.cursor;
     }
     if (
@@ -955,8 +975,13 @@ function sendErrorFrame(socket: ChatSocket, error: unknown): void {
   });
 }
 
-function sendSocket(socket: ChatSocket, payload: ChatRoomEvent | Record<string, unknown>): void {
+function sendSocket(socket: ChatSocket, payload: ChatRoomEvent | Record<string, unknown>): boolean {
+  if ((socket.bufferedAmount ?? 0) > 1024 * 1024) {
+    socket.close(CHAT_BACKPRESSURE_CLOSE_CODE, "slow consumer");
+    return false;
+  }
   socket.send(JSON.stringify(payload));
+  return true;
 }
 
 function rawToString(raw: Buffer | ArrayBuffer | string): string {

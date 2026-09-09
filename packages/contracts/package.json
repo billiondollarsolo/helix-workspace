@@ -1,6 +1,6 @@
 {
   "name": "@helix/contracts",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -41,7 +41,7 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --exclude='dist/**'",
     "lint": "eslint src vitest.config.mjs"
   },
   "dependencies": {

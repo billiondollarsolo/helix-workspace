@@ -72,10 +72,11 @@ export function createMailEntityExtractEnrichmentHandler(
         return skipped("mail.entity-extract", event, "message not found");
       }
 
+      const classification = message.classification ?? "standard";
       const response = await options.ai.chat(
         {
           feature: "mail.entity-extract",
-          classification: message.classification ?? "standard",
+          classification,
           messages: [
             {
               role: "system",
@@ -90,7 +91,7 @@ export function createMailEntityExtractEnrichmentHandler(
         },
         {
           feature: "mail.entity-extract",
-          classification: message.classification ?? "standard",
+          classification,
         },
       );
       const data = parseJsonObject(response.message) ?? { text: response.message };

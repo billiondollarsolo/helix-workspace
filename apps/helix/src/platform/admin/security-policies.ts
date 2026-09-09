@@ -11,10 +11,14 @@ import {
   canReadAdminConsole,
   canWriteAdminConsole,
   invalidRequest,
-  notFound,
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "./console-shared.js";
+import {
+  policyRuntimeStatus,
+  validateRecordedOnlyRequiredEnforcement,
+  type PolicyRuntimeStatusView,
+} from "./security-policy-runtime.js";
 
 /**
  * Admin Console — Security policies.
@@ -32,13 +36,7 @@ import {
  */
 
 export type SecurityPolicyType =
-  | "mfa"
-  | "sso"
-  | "session"
-  | "external_sharing"
-  | "dlp"
-  | "device_trust"
-  | "drive_workflows";
+  "mfa" | "sso" | "session" | "external_sharing" | "dlp" | "device_trust" | "drive_workflows";
 
 export type PolicyEnforcement = "disabled" | "optional" | "required";
 
@@ -62,6 +60,24 @@ export interface SecurityPolicyRecord {
   readonly updatedBy: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export type SecurityPolicyView = SecurityPolicyRecord & {
+  readonly runtimeStatus: PolicyRuntimeStatusView;
+};
+
+function toPolicyView(policy: SecurityPolicyRecord): SecurityPolicyView {
+  return {
+    ...policy,
+    runtimeStatus: policyRuntimeStatus(policy),
+  };
+}
+
+export type SsoTestLoginStatus = "configuration_required" | "runtime_pending";
+
+export interface SsoTestLoginResult {
+  readonly status: SsoTestLoginStatus;
+  readonly message: string;
 }
 
 // --------------------------------------------------------------------------
@@ -219,7 +235,7 @@ const updatePolicyBody = z
   .object({
     enabled: z.boolean().optional(),
     enforcement: enforcementSchema.optional(),
-    settings: z.record(z.unknown()).optional(),
+    settings: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
@@ -239,6 +255,16 @@ export interface RegisterAdminSecurityPoliciesRoutesOptions {
  *   GET   /api/admin/security-policies/:policyType
  *   PUT   /api/admin/security-policies/:policyType
  */
+/** The `GET /api/admin/security-policies` body, shared with
+ *  `GET /api/admin/overview` so both serve one implementation. */
+export async function readSecurityPolicies(
+  store: SecurityPoliciesStore,
+  orgId: string,
+): Promise<{ readonly policies: readonly SecurityPolicyView[] }> {
+  const policies = await store.list(orgId);
+  return { policies: policies.map(toPolicyView) };
+}
+
 export async function registerAdminSecurityPoliciesRoutes(
   app: FastifyInstance,
   options: RegisterAdminSecurityPoliciesRoutesOptions,
@@ -250,7 +276,7 @@ export async function registerAdminSecurityPoliciesRoutes(
     if (!canReadAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
-    return { policies: await store.list(actor.orgId) };
+    return readSecurityPolicies(store, actor.orgId);
   });
 
   app.get("/api/admin/security-policies/:policyType", async (request, reply) => {
@@ -264,9 +290,23 @@ export async function registerAdminSecurityPoliciesRoutes(
     }
     const policy = await store.get(actor.orgId, params.data.policyType);
     if (policy === null) {
-      return reply.code(404).send(notFound("Security policy not found."));
+      // Materialize the same defaults list/get consumers already see.
+      const fallback = defaultPolicy(params.data.policyType);
+      return {
+        policy: toPolicyView({
+          id: `default:${params.data.policyType}`,
+          orgId: actor.orgId,
+          policyType: params.data.policyType,
+          enabled: fallback.enabled,
+          enforcement: fallback.enforcement,
+          settings: fallback.settings,
+          updatedBy: null,
+          createdAt: "",
+          updatedAt: "",
+        }),
+      };
     }
-    return { policy };
+    return { policy: toPolicyView(policy) };
   });
 
   app.put("/api/admin/security-policies/:policyType", async (request, reply) => {
@@ -295,6 +335,12 @@ export async function registerAdminSecurityPoliciesRoutes(
       updatedAt: "",
     };
 
+    const nextEnforcement = body.data.enforcement ?? current.enforcement;
+    const enforcementGate = validateRecordedOnlyRequiredEnforcement(policyType, nextEnforcement);
+    if (!enforcementGate.ok) {
+      return reply.code(400).send(invalidRequest(enforcementGate.message));
+    }
+
     const settingsInput = body.data.settings ?? current.settings;
     const parsedSettings = parsePolicySettings(policyType, settingsInput);
     if (!parsedSettings.ok) {
@@ -307,7 +353,7 @@ export async function registerAdminSecurityPoliciesRoutes(
       orgId: actor.orgId,
       policyType,
       enabled: body.data.enabled ?? current.enabled,
-      enforcement: body.data.enforcement ?? current.enforcement,
+      enforcement: enforcementGate.enforcement,
       settings: parsedSettings.settings,
       updatedBy: actor.id,
     });
@@ -323,9 +369,10 @@ export async function registerAdminSecurityPoliciesRoutes(
         enabled: policy.enabled,
         enforcement: policy.enforcement,
         fields: Object.keys(body.data),
+        runtimeMode: policyRuntimeStatus(policy).mode,
       },
     });
-    return { policy };
+    return { policy: toPolicyView(policy) };
   });
 }
 

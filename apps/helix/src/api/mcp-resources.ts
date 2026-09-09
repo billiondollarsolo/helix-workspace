@@ -1,4 +1,4 @@
-import type { Actor, EventBus, MeteringClient } from "@helix/sdk-types";
+import type { Actor } from "@helix/sdk-types";
 import type { McpResource, McpResourceContent, McpResourceProvider } from "./mcp.js";
 import type { CalendarEventRecord } from "../platform/calendar/types.js";
 import type { ChatMessageRecord, ChatRoomRecord } from "../platform/chat/types.js";
@@ -8,14 +8,7 @@ import type {
   DriveFileReadResult,
   DriveFileStreamResult,
 } from "../platform/drive/store.js";
-import type { DocsDocumentRecord, DocsExportDocument } from "../platform/docs/types.js";
-import type {
-  TenantHourlyQuotaExceeded,
-  TenantHourlyQuotaLimiter,
-} from "../platform/limits/index.js";
-import { emitTenantQuotaExceededEvent } from "../platform/limits/index.js";
 import type { MailSearchHit, MailThreadDetail, MailThreadMessage } from "../platform/mail/types.js";
-
 export interface StoreBackedMcpResourceProviderOptions {
   readonly chat?: {
     listRooms(input: {
@@ -73,33 +66,8 @@ export interface StoreBackedMcpResourceProviderOptions {
     readFile?(input: DriveFileReadInput): Promise<DriveFileReadResult | null>;
     openFile?(input: DriveFileReadInput): Promise<DriveFileStreamResult | null>;
   };
-  readonly docs?: {
-    listDocumentsForActor(input: {
-      readonly orgId: string;
-      readonly actorId: string;
-      readonly query?: string;
-      readonly limit: number;
-    }): Promise<readonly DocsDocumentRecord[]>;
-    getDocsExportDocument(input: {
-      readonly orgId: string;
-      readonly actorId: string;
-      readonly docId: string;
-    }): Promise<DocsExportDocument | null>;
-  };
-  readonly docsExportJobLimiter?: TenantHourlyQuotaLimiter | undefined;
-  readonly docsExportJobLimit?: (input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly docId: string;
-    readonly surface: "mcp.resources.read";
-  }) => number | null | undefined | Promise<number | null | undefined>;
-  readonly quotaEvents?: Pick<EventBus, "publish"> | undefined;
-  readonly onQuotaEventError?: ((error: unknown) => void) | undefined;
-  readonly metering?: MeteringClient | undefined;
-  readonly onMeteringError?: ((error: unknown) => void) | undefined;
   readonly limit?: number;
 }
-
 export function createStoreBackedMcpResourceProvider(
   options: StoreBackedMcpResourceProviderOptions,
 ): McpResourceProvider {
@@ -143,15 +111,6 @@ export function createStoreBackedMcpResourceProvider(
         });
         resources.push(...hits.map(driveHitToResource));
       }
-      if (options.docs !== undefined && canRead(actor, "docs.read")) {
-        const documents = await options.docs.listDocumentsForActor({
-          orgId: actor.orgId,
-          actorId: actor.id,
-          query: "",
-          limit,
-        });
-        resources.push(...documents.map(docsRecordToResource));
-      }
       return resources;
     },
     async read(actor, uri) {
@@ -192,40 +151,6 @@ export function createStoreBackedMcpResourceProvider(
         if (options.drive.readFile === undefined) return null;
         const file = await options.drive.readFile(input);
         return file === null ? null : driveFileToContent(uri, file);
-      }
-      if (parsed.kind === "docs") {
-        if (options.docs === undefined || !canRead(actor, "docs.read")) {
-          return null;
-        }
-        await consumeDocsExportJobQuota({
-          limiter: options.docsExportJobLimiter,
-          limit: options.docsExportJobLimit,
-          events: options.quotaEvents,
-          onEventError: options.onQuotaEventError,
-          orgId: actor.orgId,
-          actorId: actor.id,
-          docId: parsed.id,
-        });
-        const document = await options.docs.getDocsExportDocument({
-          orgId: actor.orgId,
-          actorId: actor.id,
-          docId: parsed.id,
-        });
-        if (document === null) {
-          return null;
-        }
-        const text = docsDocumentToMarkdown(document);
-        emitMcpDocsExportMetering({
-          metering: options.metering,
-          onMeteringError: options.onMeteringError,
-          orgId: actor.orgId,
-          byteSize: utf8ByteSize(text),
-        });
-        return {
-          uri,
-          mimeType: "text/markdown",
-          text,
-        };
       }
       if (parsed.kind === "chat") {
         if (options.chat === undefined || !canRead(actor, "chat.read")) {
@@ -269,35 +194,23 @@ export function createStoreBackedMcpResourceProvider(
     },
   };
 }
-
-function emitMcpDocsExportMetering(input: {
-  readonly metering?: MeteringClient | undefined;
-  readonly onMeteringError?: ((error: unknown) => void) | undefined;
-  readonly orgId: string;
-  readonly byteSize: number;
-}): void {
-  void input.metering
-    ?.emit(input.orgId, {
-      type: "export.completed",
-      quantity: 1,
-      metadata: {
-        surface: "mcp.resources.read",
-        format: "markdown",
-        byte_size: input.byteSize,
-      },
-    })
-    .catch((error: unknown) => {
-      input.onMeteringError?.(error);
-    });
-}
-
 type ParsedStoreResourceUri =
-  | { readonly kind: "chat"; readonly id: string }
-  | { readonly kind: "calendar"; readonly id: string }
-  | { readonly kind: "mail"; readonly id: string }
-  | { readonly kind: "drive"; readonly id: string }
-  | { readonly kind: "docs"; readonly id: string };
-
+  | {
+      readonly kind: "chat";
+      readonly id: string;
+    }
+  | {
+      readonly kind: "calendar";
+      readonly id: string;
+    }
+  | {
+      readonly kind: "mail";
+      readonly id: string;
+    }
+  | {
+      readonly kind: "drive";
+      readonly id: string;
+    };
 function parseStoreResourceUri(uri: string): ParsedStoreResourceUri | null {
   let parsed: URL;
   try {
@@ -325,85 +238,14 @@ function parseStoreResourceUri(uri: string): ParsedStoreResourceUri | null {
   if (parsed.hostname === "drive" && resourceType === "file") {
     return { kind: "drive", id };
   }
-  if (parsed.hostname === "docs" && resourceType === "document") {
-    return { kind: "docs", id };
-  }
   return null;
 }
-
 function canRead(
   actor: Actor,
-  scope: "chat.read" | "calendar.read" | "mail.read" | "drive.read" | "docs.read",
+  scope: "chat.read" | "calendar.read" | "mail.read" | "drive.read",
 ): boolean {
   return actor.type === "system" || (actor.scopes ?? []).includes(scope);
 }
-
-async function consumeDocsExportJobQuota(input: {
-  readonly limiter?: TenantHourlyQuotaLimiter | undefined;
-  readonly limit?: StoreBackedMcpResourceProviderOptions["docsExportJobLimit"];
-  readonly events?: Pick<EventBus, "publish"> | undefined;
-  readonly onEventError?: ((error: unknown) => void) | undefined;
-  readonly orgId: string;
-  readonly actorId: string;
-  readonly docId: string;
-}): Promise<void> {
-  if (input.limiter === undefined || input.limit === undefined) {
-    return;
-  }
-  const limit = await input.limit({
-    orgId: input.orgId,
-    actorId: input.actorId,
-    docId: input.docId,
-    surface: "mcp.resources.read",
-  });
-  const decision = await input.limiter.consume({
-    orgId: input.orgId,
-    quota: "export_jobs_per_hour",
-    limit: limit ?? null,
-  });
-  if (!decision.allowed) {
-    emitTenantQuotaExceededEvent({
-      events: input.events,
-      onError: input.onEventError,
-      subject: "quota.export_jobs.exceeded",
-      orgId: input.orgId,
-      surface: "mcp.resources.read",
-      decision,
-      metadata: {
-        format: "markdown",
-      },
-    });
-    throw new McpDocsExportQuotaExceededError(decision);
-  }
-}
-
-class McpDocsExportQuotaExceededError extends Error {
-  readonly statusCode = 429;
-  readonly retryAfterSeconds: number;
-  readonly quotaLimit: {
-    readonly quota: string;
-    readonly limit: number;
-    readonly used: number;
-    readonly remaining: 0;
-    readonly retryAfterSeconds: number;
-    readonly resetsAt: string;
-  };
-
-  constructor(decision: TenantHourlyQuotaExceeded) {
-    super("Tenant export job quota exceeded.");
-    this.name = "McpDocsExportQuotaExceededError";
-    this.retryAfterSeconds = decision.retryAfterSeconds;
-    this.quotaLimit = {
-      quota: decision.quota,
-      limit: decision.limit,
-      used: decision.used,
-      remaining: decision.remaining,
-      retryAfterSeconds: decision.retryAfterSeconds,
-      resetsAt: decision.resetsAt,
-    };
-  }
-}
-
 function chatRoomToResource(room: ChatRoomRecord): McpResource {
   return {
     uri: `helix://chat/room/${encodeURIComponent(room.id)}`,
@@ -412,7 +254,6 @@ function chatRoomToResource(room: ChatRoomRecord): McpResource {
     mimeType: "text/markdown",
   };
 }
-
 function calendarEventToResource(event: CalendarEventRecord): McpResource {
   return {
     uri: `helix://calendar/event/${encodeURIComponent(event.id)}`,
@@ -421,7 +262,6 @@ function calendarEventToResource(event: CalendarEventRecord): McpResource {
     mimeType: "text/markdown",
   };
 }
-
 function mailHitToResource(hit: MailSearchHit): McpResource {
   return {
     uri: `helix://mail/thread/${encodeURIComponent(hit.threadId)}`,
@@ -430,7 +270,6 @@ function mailHitToResource(hit: MailSearchHit): McpResource {
     mimeType: "text/markdown",
   };
 }
-
 function driveHitToResource(hit: DriveSearchHit): McpResource {
   return {
     uri: `helix://drive/file/${encodeURIComponent(hit.objectId)}`,
@@ -439,16 +278,6 @@ function driveHitToResource(hit: DriveSearchHit): McpResource {
     mimeType: hit.mimeType,
   };
 }
-
-function docsRecordToResource(document: DocsDocumentRecord): McpResource {
-  return {
-    uri: `helix://docs/document/${encodeURIComponent(document.id)}`,
-    name: document.title,
-    description: `Docs document updated ${document.updatedAt.toISOString()}`,
-    mimeType: "text/markdown",
-  };
-}
-
 function chatRoomToMarkdown(room: ChatRoomRecord, messages: readonly ChatMessageRecord[]): string {
   const lines = [
     `# ${room.settings?.name ?? room.subject ?? "Chat room"}`,
@@ -473,7 +302,6 @@ function chatRoomToMarkdown(room: ChatRoomRecord, messages: readonly ChatMessage
   }
   return lines.join("\n").trimEnd();
 }
-
 function calendarEventToMarkdown(event: CalendarEventRecord): string {
   return [
     `# ${event.title}`,
@@ -504,7 +332,6 @@ function calendarEventToMarkdown(event: CalendarEventRecord): string {
     .join("\n")
     .trimEnd();
 }
-
 function mailThreadToMarkdown(thread: MailThreadDetail): string {
   const lines = [
     `# ${thread.subject}`,
@@ -520,7 +347,6 @@ function mailThreadToMarkdown(thread: MailThreadDetail): string {
   }
   return lines.join("\n").trimEnd();
 }
-
 function mailMessageToMarkdown(message: MailThreadMessage): readonly string[] {
   return [
     `## ${formatMailAddress(message.from) || "Message"} - ${message.sentAt.toISOString()}`,
@@ -530,7 +356,6 @@ function mailMessageToMarkdown(message: MailThreadMessage): readonly string[] {
     message.body,
   ];
 }
-
 function formatMailAddress(address: MailThreadMessage["from"]): string {
   if (address === undefined) {
     return "";
@@ -538,7 +363,6 @@ function formatMailAddress(address: MailThreadMessage["from"]): string {
   const email = address.email ?? address.address;
   return address.name === undefined ? email : `${address.name} <${email}>`;
 }
-
 function driveFileToContent(uri: string, file: DriveFileReadResult): McpResourceContent {
   if (file.content !== null && isTextLikeMimeType(file.entry.mimeType)) {
     return {
@@ -553,9 +377,7 @@ function driveFileToContent(uri: string, file: DriveFileReadResult): McpResource
     text: driveFileToMarkdown(file.entry),
   };
 }
-
 const MAX_MCP_DRIVE_TEXT_BYTES = 1024 * 1024;
-
 async function driveStreamToContent(
   uri: string,
   file: DriveFileStreamResult,
@@ -580,7 +402,6 @@ async function driveStreamToContent(
         : text,
   };
 }
-
 async function collectDriveText(
   body: Uint8Array | AsyncIterable<Uint8Array>,
   limit: number,
@@ -604,7 +425,6 @@ async function collectDriveText(
   }
   return output;
 }
-
 function isTextLikeMimeType(mimeType: string | undefined): boolean {
   if (mimeType === undefined) {
     return false;
@@ -618,7 +438,6 @@ function isTextLikeMimeType(mimeType: string | undefined): boolean {
     mimeType === "application/javascript"
   );
 }
-
 function driveFileToMarkdown(entry: DriveEntryRecord): string {
   return [
     `# ${entry.name}`,
@@ -631,33 +450,4 @@ function driveFileToMarkdown(entry: DriveEntryRecord): string {
     "",
     "Content is not available as MCP text for this file.",
   ].join("\n");
-}
-
-function docsDocumentToMarkdown(document: DocsExportDocument): string {
-  const body = document.markdown ?? document.plainText ?? document.html ?? "";
-  const comments = document.comments ?? [];
-  return [
-    `# ${document.title}`,
-    "",
-    `Type: docs document`,
-    `Document ID: ${document.id}`,
-    ...(document.updatedAt === undefined
-      ? []
-      : [`Updated: ${formatTimestamp(document.updatedAt)}`]),
-    "",
-    body,
-    ...(comments.length === 0
-      ? []
-      : ["", "## Comments", ...comments.map((comment) => `- ${comment.body}`)]),
-  ]
-    .join("\n")
-    .trimEnd();
-}
-
-function formatTimestamp(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : value;
-}
-
-function utf8ByteSize(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
 }

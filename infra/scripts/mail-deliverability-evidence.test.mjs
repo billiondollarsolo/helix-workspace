@@ -4,7 +4,6 @@ import {
   evaluateAuthenticationResults,
   isProviderAcceptedStatus,
 } from "./mail-deliverability-evidence.mjs";
-
 test("accepts receiver-reported aligned DKIM and DMARC", () => {
   assert.deepEqual(
     evaluateAuthenticationResults(
@@ -23,14 +22,12 @@ test("accepts receiver-reported aligned DKIM and DMARC", () => {
     },
   );
 });
-
 test("recognizes durable post-handoff lifecycle states", () => {
   assert.equal(isProviderAcceptedStatus("accepted"), true);
   assert.equal(isProviderAcceptedStatus("delivered"), true);
   assert.equal(isProviderAcceptedStatus("queued"), false);
   assert.equal(isProviderAcceptedStatus("failed"), false);
 });
-
 test("accepts aligned SPF and rejects unaligned or missing DMARC", () => {
   assert.equal(
     evaluateAuthenticationResults(

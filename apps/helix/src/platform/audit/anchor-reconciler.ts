@@ -130,7 +130,10 @@ async function readAnchor(
     throw new Error(`Immutable audit evidence checksum failed: ${recordsKey}`);
   }
   const lines = decoder.decode(recordsBody).trimEnd().split("\n");
-  const last = parseObject(new TextEncoder().encode(lines.at(-1) ?? ""), `Invalid audit evidence: ${recordsKey}`);
+  const last = parseObject(
+    new TextEncoder().encode(lines.at(-1) ?? ""),
+    `Invalid audit evidence: ${recordsKey}`,
+  );
   if (
     lines.length !== recordCount ||
     last.id !== recordIds.at(-1) ||
@@ -188,12 +191,16 @@ function positiveIntegerString(value: unknown, label: string): string {
 }
 
 function positiveInteger(value: unknown, label: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error(`Expected ${label} to be positive`);
+  if (!Number.isSafeInteger(value) || (value as number) < 1)
+    throw new Error(`Expected ${label} to be positive`);
   return value as number;
 }
 
 function stringArray(value: unknown, label: string): readonly string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string" && item.length > 0)) {
+  if (
+    !Array.isArray(value) ||
+    !value.every((item) => typeof item === "string" && item.length > 0)
+  ) {
     throw new Error(`Expected ${label} to be a string array`);
   }
   return value.map((item) => String(item));

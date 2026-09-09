@@ -13,15 +13,15 @@ export interface SignupPasswordStrength {
 const minScore = 3;
 const predictableTerms = ["password", "qwerty", "letmein", "welcome", "administrator"];
 
-export async function evaluateSignupPasswordStrength(
+export function evaluateSignupPasswordStrength(
   input: SignupPasswordStrengthInput,
 ): Promise<SignupPasswordStrength> {
   const score = scoreSignupPassword(input);
-  return {
+  return Promise.resolve({
     score,
     acceptable: score >= minScore,
     label: passwordStrengthLabel(score),
-  };
+  });
 }
 
 export function preloadSignupPasswordStrengthEstimator(): Promise<void> {

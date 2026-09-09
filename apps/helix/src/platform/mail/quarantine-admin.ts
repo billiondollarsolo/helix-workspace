@@ -25,7 +25,9 @@ import type { MailQuarantineStore, MailQuarantineSummary } from "./quarantine.js
 import type { MailStore } from "./store.js";
 
 const idParams = z.object({ id: z.string().uuid() });
-const resolutionBody = z.object({ reason: z.string().trim().min(1).max(500) }).strict();
+const resolutionBody = z
+  .object({ reason: z.string().trim().min(1).max(500), confirmed: z.literal(true) })
+  .strict();
 
 export function registerMailQuarantineAdminRoutes(
   app: FastifyInstance,

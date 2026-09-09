@@ -359,9 +359,9 @@ class FakeCalendarStore implements CalendarStore {
     this.createInputs.push(input);
     return {
       ...eventRecord({
-      title: input.title,
-      startsAt: input.startsAt,
-      endsAt: input.endsAt,
+        title: input.title,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
       }),
       invitationDeliveriesQueued: input.sendInvitations ? 1 : 0,
     };

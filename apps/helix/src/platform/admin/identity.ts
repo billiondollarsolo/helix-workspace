@@ -367,9 +367,7 @@ export async function registerAdminIdentityRoutes(
   });
 }
 
-function identityView(
-  configs: readonly TenantIdpConfigRecord[],
-): AdminIdentityView {
+function identityView(configs: readonly TenantIdpConfigRecord[]): AdminIdentityView {
   return {
     idpConfigs: configs,
     localLoginRecovery: localLoginRecoveryView(),
@@ -422,7 +420,8 @@ export function testTenantIdpConfigLogin(
   }
   return {
     status: "ready",
-    message: "OIDC discovery, PKCE, signed callback validation, and tenant session routing are ready.",
+    message:
+      "OIDC discovery, PKCE, signed callback validation, and tenant session routing are ready.",
   };
 }
 

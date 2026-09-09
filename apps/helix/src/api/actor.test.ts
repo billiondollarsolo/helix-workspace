@@ -9,6 +9,8 @@ import {
   credentialPolicyOf,
   resolveCredentialAuthenticatedActor,
   untrustedIdentityHeader,
+  resolveCredentialAuthenticatedPrincipal,
+  toolInvocationPrincipalFromRequest,
 } from "./actor.js";
 import {
   createApiKeyMaterial,
@@ -192,11 +194,15 @@ describe("resolveCredentialAuthenticatedActor", () => {
       async findByCertFingerprint(fingerprint) {
         return records.find((r) => r.certFingerprint === fingerprint) ?? null;
       },
+      async findByClientId(clientId) {
+        return records.find((r) => r.clientId === clientId) ?? null;
+      },
     };
   }
 
   it("returns null when no API key or certificate is presented", async () => {
     const result = await resolveCredentialAuthenticatedActor(requestWith({}, {}), storeWith([]));
+
     expect(result).toBeNull();
   });
 
@@ -208,20 +214,23 @@ describe("resolveCredentialAuthenticatedActor", () => {
         policy: { ...EMPTY_CREDENTIAL_POLICY, confirmationOverride: "always" },
       }),
     ]);
-    const result = await resolveCredentialAuthenticatedActor(
+    const result = await resolveCredentialAuthenticatedPrincipal(
       requestWith({ authorization: `Bearer ${apiKey}` }, {}),
       store,
     );
     expect(result?.ok).toBe(true);
     if (result?.ok === true) {
-      expect(result.actor).toMatchObject({ id: "agent-7", type: "agent" });
-      expect(credentialPolicyOf(result.actor)?.confirmationOverride).toBe("always");
+      expect(result.principal.actor).toMatchObject({ id: "agent-7", type: "agent" });
+      expect(result.principal.credentialId).toBe("cred-1");
+      expect(credentialPolicyOf(result.principal.actor)?.confirmationOverride).toBe("always");
+      expect(JSON.stringify(result.principal)).not.toContain("confirmationOverride");
+      expect(JSON.stringify(result.principal)).not.toContain("cred-1");
     }
   });
 
   it("authenticates an API key from the x-api-key header", async () => {
     const { apiKey, apiKeyHash } = createApiKeyMaterial();
-    const result = await resolveCredentialAuthenticatedActor(
+    const result = await resolveCredentialAuthenticatedPrincipal(
       requestWith({ "x-api-key": apiKey }, {}),
       storeWith([agentCredential({ apiKeyHash })]),
     );
@@ -239,7 +248,7 @@ describe("resolveCredentialAuthenticatedActor", () => {
 
   it("rejects an unknown API key", async () => {
     const { apiKey } = createApiKeyMaterial();
-    const result = await resolveCredentialAuthenticatedActor(
+    const result = await resolveCredentialAuthenticatedPrincipal(
       requestWith({ authorization: `Bearer ${apiKey}` }, {}),
       storeWith([]),
     );
@@ -263,14 +272,53 @@ describe("resolveCredentialAuthenticatedActor", () => {
     expect(result).toMatchObject({ ok: false, statusCode: 403, code: "ip_not_allowed" });
   });
 
+  it("rejects an expired agent API key at principal resolution", async () => {
+    const { apiKey, apiKeyHash } = createApiKeyMaterial();
+    const result = await resolveCredentialAuthenticatedPrincipal(
+      requestWith({ authorization: `Bearer ${apiKey}` }, {}),
+      storeWith([
+        agentCredential({
+          apiKeyHash,
+          expiresAt: new Date("2020-01-01T00:00:00.000Z"),
+        }),
+      ]),
+    );
+    expect(result).toMatchObject({ ok: false, statusCode: 403, code: "credential_expired" });
+  });
+
+  it("rejects an API key request outside the credential allowed-hours window", async () => {
+    const { apiKey, apiKeyHash } = createApiKeyMaterial();
+    // days: [99] never matches 0–6, so wall-clock principal resolution always denies.
+    const denied = await resolveCredentialAuthenticatedPrincipal(
+      requestWith({ authorization: `Bearer ${apiKey}` }, {}),
+      storeWith([
+        agentCredential({
+          apiKeyHash,
+          policy: {
+            ...EMPTY_CREDENTIAL_POLICY,
+            allowedHours: {
+              startHour: 0,
+              endHour: 23,
+              timeZone: "UTC",
+              days: [99],
+            },
+          },
+        }),
+      ]),
+    );
+    expect(denied).toMatchObject({ ok: false, statusCode: 403, code: "outside_allowed_hours" });
+  });
+
   it("authenticates the fingerprint of a verified TLS peer certificate", async () => {
     const certificate = Buffer.from("registered peer certificate");
     const fingerprint = createHash("sha256").update(certificate).digest("hex");
+
     const store = storeWith([
       agentCredential({ credentialType: "mtls_cert", certFingerprint: fingerprint }),
     ]);
     const result = await resolveCredentialAuthenticatedActor(
       requestWithPeerCertificate(certificate),
+
       store,
     );
     expect(result?.ok).toBe(true);
@@ -291,6 +339,71 @@ describe("resolveCredentialAuthenticatedActor", () => {
     );
     expect(result).toMatchObject({ ok: false, statusCode: 401, code: "invalid_certificate" });
   });
+
+  it.each(["agent", "user", "service_account"] as const)(
+    "re-evaluates an OAuth credential after access-token issuance for %s actors",
+    async (actorType) => {
+      const credential = agentCredential({
+        credentialType: "oauth_client",
+        clientId: "client-1",
+        policy: {
+          ...EMPTY_CREDENTIAL_POLICY,
+          confirmationOverride: "always",
+          rateLimitOverrides: { requestsPerMinute: 1 },
+        },
+      });
+      let active = true;
+      const store = storeWith([credential]);
+      const credentialStore: AgentCredentialStore = {
+        ...store,
+        async findByClientId(clientId) {
+          return active && clientId === "client-1" ? credential : null;
+        },
+      };
+      const tokenStore = {
+        async saveToken() {},
+        async findToken() {
+          return {
+            token: "token-1",
+            clientId: "client-1",
+            actorId: "agent-7",
+            orgId: "org-1",
+            actorType,
+            scopes: ["mail.read"],
+            issuedAt: new Date("2026-07-28T00:00:00.000Z"),
+            expiresAt: new Date("2026-07-28T01:00:00.000Z"),
+          };
+        },
+      };
+      const request = requestWith({ authorization: "Bearer token-1" }, {});
+
+      const resolved = await toolInvocationPrincipalFromRequest(
+        request,
+        tokenStore,
+        undefined,
+        credentialStore,
+      );
+      expect(resolved).toMatchObject({
+        ok: true,
+        principal: {
+          credentialId: "cred-1",
+          credentialPolicy: {
+            confirmationOverride: "always",
+            rateLimitOverrides: { requestsPerMinute: 1 },
+          },
+        },
+      });
+
+      active = false;
+      await expect(
+        toolInvocationPrincipalFromRequest(request, tokenStore, undefined, credentialStore),
+      ).resolves.toMatchObject({
+        ok: false,
+        statusCode: 403,
+        code: "credential_revoked",
+      });
+    },
+  );
 });
 
 function requestWith(

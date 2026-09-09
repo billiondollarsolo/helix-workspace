@@ -41,29 +41,22 @@ export function parseReindexSearchArgs(args: readonly string[]): ReindexSearchCo
         break;
       case "--type":
       case "--types": {
-        const value = args[index + 1];
-        if (value === undefined || value.startsWith("--")) {
-          throw new Error(`${arg} requires a comma-separated type list`);
-        }
-        options.types = parseTypes(value);
+        options.types = parseTypes(
+          requireOptionValue(args, index, `${arg} requires a comma-separated type list`),
+        );
         index += 1;
         break;
       }
       case "--org-id": {
-        const value = args[index + 1];
-        if (value === undefined || value.startsWith("--")) {
-          throw new Error("--org-id requires an org UUID");
-        }
-        options.orgId = value;
+        options.orgId = requireOptionValue(args, index, "--org-id requires an org UUID");
         index += 1;
         break;
       }
       case "--batch-size": {
-        const value = args[index + 1];
-        if (value === undefined || value.startsWith("--")) {
-          throw new Error("--batch-size requires a positive integer");
-        }
-        options.batchSize = parsePositiveInteger(value, "--batch-size");
+        options.batchSize = parsePositiveInteger(
+          requireOptionValue(args, index, "--batch-size requires a positive integer"),
+          "--batch-size",
+        );
         index += 1;
         break;
       }
@@ -107,6 +100,18 @@ export async function reindexSearch(
 }
 
 const usage = `Usage: pnpm --filter @helix/app db:reindex:search -- --all [--type <mail,chat,docs,drive,calendar>] [--org-id <uuid>] [--batch-size <n>] [--no-prune-stale]`;
+
+/**
+ * Read the value that follows a flag. A missing value, or the next flag, is
+ * rejected so `--org-id --all` cannot silently consume `--all` as an org id.
+ */
+function requireOptionValue(args: readonly string[], index: number, message: string): string {
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(message);
+  }
+  return value;
+}
 
 function parseTypes(value: string): readonly SearchReindexType[] {
   const types = value

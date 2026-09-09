@@ -5,7 +5,6 @@ import {
   validateNonNegativeInteger,
   type AgentCostDecision,
   type AgentCostRecordInput,
-  type AgentCostUsage,
   type AgentLimitBudget,
   type AgentLimitConsumeInput,
   type AgentLimitDecision,
@@ -15,6 +14,7 @@ import {
   type AgentRateCostLimiter,
   type AgentWindowUsage,
 } from "./types.js";
+import { costUsage, secondsUntilNextUtcDay, utcDayKey } from "./usage-math.js";
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -121,7 +121,11 @@ return {
 `;
 
 export interface RedisLimitClient {
-  eval(script: string, numberOfKeys: number, ...args: readonly (string | number)[]): Promise<unknown>;
+  eval(
+    script: string,
+    numberOfKeys: number,
+    ...args: readonly (string | number)[]
+  ): Promise<unknown>;
 }
 
 export interface RedisAgentRateCostLimiterOptions {
@@ -253,8 +257,18 @@ export class RedisAgentRateCostLimiter implements AgentRateCostLimiter {
     readonly at: Date;
   }): AgentLimitUsage {
     return {
-      requestsPerMinute: windowUsage(input.minuteUsed, input.minuteOldestMs, input.budget.requestsPerMinute, MINUTE_MS),
-      requestsPerDay: windowUsage(input.dayUsed, input.dayOldestMs, input.budget.requestsPerDay, DAY_MS),
+      requestsPerMinute: windowUsage(
+        input.minuteUsed,
+        input.minuteOldestMs,
+        input.budget.requestsPerMinute,
+        MINUTE_MS,
+      ),
+      requestsPerDay: windowUsage(
+        input.dayUsed,
+        input.dayOldestMs,
+        input.budget.requestsPerDay,
+        DAY_MS,
+      ),
       costPerDay: costUsage(input.costUsed, input.budget, input.at),
     };
   }
@@ -316,7 +330,8 @@ function scriptArray(value: unknown, name: string): readonly unknown[] {
 }
 
 function scriptNumber(value: unknown, name: string): number {
-  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
     throw new Error(`Invalid Redis ${name}`);
   }
@@ -337,7 +352,12 @@ function scriptReason(value: unknown): AgentLimitReason {
   throw new Error("Invalid Redis consume reason");
 }
 
-function windowUsage(used: number, oldestMs: number | null, limit: number | null, windowMs: number): AgentWindowUsage {
+function windowUsage(
+  used: number,
+  oldestMs: number | null,
+  limit: number | null,
+  windowMs: number,
+): AgentWindowUsage {
   return {
     limit,
     used,
@@ -346,35 +366,6 @@ function windowUsage(used: number, oldestMs: number | null, limit: number | null
   };
 }
 
-function costUsage(usedUsdMicros: number, budget: AgentLimitBudget, at: Date): AgentCostUsage {
-  const warningThresholdUsdMicros =
-    budget.costPerDayUsdMicros === null
-      ? null
-      : Math.floor(budget.costPerDayUsdMicros * budget.costWarningThresholdRatio);
-
-  return {
-    limitUsdMicros: budget.costPerDayUsdMicros,
-    usedUsdMicros,
-    remainingUsdMicros:
-      budget.costPerDayUsdMicros === null ? null : Math.max(budget.costPerDayUsdMicros - usedUsdMicros, 0),
-    resetsAt: nextUtcDay(at).toISOString(),
-    warningThresholdUsdMicros,
-    warningReached: warningThresholdUsdMicros !== null && usedUsdMicros >= warningThresholdUsdMicros,
-  };
-}
-
 function keyPart(value: string): string {
   return encodeURIComponent(value).replaceAll("{", "%7B").replaceAll("}", "%7D");
-}
-
-function utcDayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function nextUtcDay(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
-}
-
-function secondsUntilNextUtcDay(date: Date): number {
-  return Math.max(1, Math.ceil((nextUtcDay(date).getTime() - date.getTime()) / 1000));
 }

@@ -1,25 +1,19 @@
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
 import type {
   DriveItemKind as ContractDriveItemKind,
-  DrivePreview as ContractDrivePreview,
-  DrivePreviewKind as ContractDrivePreviewKind,
   DriveRole,
+  DriveUploadState as ContractDriveUploadState,
 } from "@helix/contracts";
-
 export const drivePluginId = "com.helix.core.drive";
-
 export type DriveItemKind = ContractDriveItemKind;
 export type DriveShareRole = DriveRole;
-export type DrivePreviewKind = ContractDrivePreviewKind;
-export type DrivePreviewStatus = ContractDrivePreview["status"];
+type DriveUploadState = ContractDriveUploadState;
 export type { DriveRole };
-
 export type DriveActor = JsonObject & {
   readonly id: string;
   readonly displayName?: string;
   readonly email?: string;
 };
-
 export interface DriveSearchRecord {
   readonly id: string;
   readonly orgId: string;
@@ -45,37 +39,30 @@ export interface DriveSearchRecord {
   readonly deletedAt?: string | undefined;
   readonly metadata?: JsonObject | undefined;
 }
-
 export interface DriveSearchProjectionStore {
   getDriveSearchRecord(fileId: string): Promise<DriveSearchRecord | null>;
 }
-
 export type DriveEnrichmentRecord = DriveSearchRecord;
-
 export interface DriveEnrichmentWrite {
   readonly fileId: string;
   readonly feature: string;
   readonly data: JsonObject;
 }
-
 export interface DriveAutoTagWrite {
   readonly fileId: string;
   readonly tags: readonly string[];
   readonly source: string;
 }
-
 export interface DriveEnrichmentProjectionStore {
   getDriveEnrichmentRecord(fileId: string): Promise<DriveEnrichmentRecord | null>;
   recordDriveEnrichment?(input: DriveEnrichmentWrite): Promise<void>;
   setDriveAutoTags?(input: DriveAutoTagWrite): Promise<void>;
 }
-
 export type DriveActivityPayload = JsonObject & {
   readonly id?: string | undefined;
   readonly objectId?: string | undefined;
   readonly fileId?: string | undefined;
 };
-
 export interface DriveMultipartUploadInfo {
   readonly uploadId: string;
   readonly partSize: number;
@@ -83,7 +70,6 @@ export interface DriveMultipartUploadInfo {
   readonly partUrls: readonly string[];
   readonly expiresAt: string;
 }
-
 export interface DriveUploadRecord {
   readonly objectId: string;
   readonly orgId: string;
@@ -94,7 +80,7 @@ export interface DriveUploadRecord {
   readonly mimeType: string;
   readonly byteSize: number;
   readonly sha256: string | null;
-  readonly status: string;
+  readonly status: DriveUploadState;
   readonly uploadUrl: string | null;
   readonly uploadHeaders: Record<string, string>;
   readonly metadata: JsonObject;
@@ -103,7 +89,14 @@ export interface DriveUploadRecord {
   /** Present when the server prepared an S3 multipart upload for large files. */
   readonly multipart?: DriveMultipartUploadInfo | undefined;
 }
-
+export interface DriveUploadStatusRecord {
+  readonly objectId: string;
+  readonly state: DriveUploadState;
+  readonly label: string;
+  readonly available: boolean;
+  readonly terminal: boolean;
+  readonly updatedAt: Date;
+}
 export interface DriveVersionRecord {
   readonly id: string;
   readonly orgId: string;
@@ -117,7 +110,6 @@ export interface DriveVersionRecord {
   readonly createdByActorId: string | null;
   readonly createdAt: Date;
 }
-
 export interface DriveFolderRecord {
   readonly id: string;
   readonly orgId: string;
@@ -130,31 +122,30 @@ export interface DriveFolderRecord {
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
-
 export interface DriveEntryRecord {
   readonly id: string;
   readonly type: DriveItemKind;
   readonly name: string;
   readonly folderId: string | null;
   readonly ownerActorId: string | null;
-  readonly app: string | null;
   readonly mimeType?: string | undefined;
   readonly byteSize?: number | undefined;
   readonly sha256?: string | null | undefined;
   readonly storageKey?: string | undefined;
   readonly versionNumber?: number | undefined;
-  readonly preview?: DrivePreview | undefined;
+  /** Upload/scan lifecycle state when known (list/detail). */
+  readonly uploadState?: DriveUploadState | undefined;
+  readonly uploadStatusLabel?: string | undefined;
+  readonly available?: boolean | undefined;
   readonly metadata: JsonObject;
   readonly deletedAt: Date | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
-
 export interface DriveEntryPage {
   readonly entries: readonly DriveEntryRecord[];
   readonly nextCursor: string | null;
 }
-
 export interface DriveWebDavLock {
   readonly pathKey: string;
   readonly token: string;
@@ -165,21 +156,18 @@ export interface DriveWebDavLock {
   readonly createdAt: Date;
   readonly expiresAt: Date;
 }
-
 export interface DriveWebDavChange {
   readonly pathKey: string;
   readonly resourceType: "file" | "folder";
   readonly status: 200 | 404;
   readonly version: string;
 }
-
 export interface DriveWebDavChangePage {
   readonly changes: readonly DriveWebDavChange[];
   readonly version: string;
   readonly valid: boolean;
   readonly hasMore: boolean;
 }
-
 export interface AcquireDriveWebDavLockInput {
   readonly orgId: string;
   readonly actorId: string;
@@ -189,7 +177,6 @@ export interface AcquireDriveWebDavLockInput {
   readonly timeoutSeconds: number;
   readonly token?: string;
 }
-
 export interface DriveAccessGrantRecord {
   readonly actorId: string;
   readonly role: string;
@@ -200,7 +187,6 @@ export interface DriveAccessGrantRecord {
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
-
 export interface DriveSearchHit {
   readonly objectId: string;
   readonly name: string;
@@ -209,10 +195,8 @@ export interface DriveSearchHit {
   readonly sha256: string | null;
   readonly folderId: string | null;
   readonly preview: string;
-  readonly previewMetadata?: DrivePreview | undefined;
   readonly updatedAt: Date;
 }
-
 export interface DriveCommentRecord {
   readonly id: string;
   readonly orgId: string;
@@ -227,16 +211,13 @@ export interface DriveCommentRecord {
   readonly createdAt: Date;
   readonly updatedAt: Date | null;
 }
-
 export interface DriveCommentListItem extends DriveCommentRecord {
   readonly author?: DriveActor | undefined;
 }
-
 export interface DriveCommentPage {
   readonly comments: readonly DriveCommentListItem[];
   readonly nextCursor: string | null;
 }
-
 export interface DriveCommentRevisionRecord {
   readonly id: string;
   readonly orgId: string;
@@ -257,23 +238,7 @@ export interface DriveCommentRevisionRecord {
   readonly changedByActorId: string;
   readonly capturedAt: Date;
 }
-
 export interface DriveCommentRevisionPage {
   readonly revisions: readonly DriveCommentRevisionRecord[];
   readonly nextCursor: string | null;
 }
-
-export interface DrivePdfFormStateRecord {
-  readonly orgId: string;
-  readonly objectId: string;
-  readonly actorId: string;
-  readonly fieldValues: readonly JsonObject[];
-  readonly sourceVersionNumber: number | null;
-  readonly sourceSha256: string | null;
-  readonly sourceByteSize: number | null;
-  readonly sourceChanged: boolean;
-  readonly createdAt: Date;
-  readonly updatedAt: Date;
-}
-
-export type DrivePreview = ContractDrivePreview;

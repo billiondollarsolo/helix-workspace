@@ -3,7 +3,6 @@ import { commandActions } from "./completion.js";
 import { CliUsageError, parseCliArgs } from "./parser.js";
 
 const folderId = "44444444-4444-4444-8444-444444444444";
-const docId = "55555555-5555-4555-8555-555555555555";
 const webhookId = "66666666-6666-4666-8666-666666666666";
 const deliveryId = "77777777-7777-4777-8777-777777777777";
 const actorId = "88888888-8888-4888-8888-888888888888";
@@ -264,16 +263,6 @@ describe("parseCliArgs", () => {
       toolId: "chat.message.list",
       json: { source: "inline", value: '{"roomId":"room-1","limit":20}' },
     });
-    expect(parseCliArgs(["docs", "get", "--doc-id", docId])).toEqual({
-      kind: "tool-call",
-      toolId: "docs.get",
-      json: { source: "inline", value: `{"docId":"${docId}"}` },
-    });
-    expect(parseCliArgs(["docs", "list", "--query", "spec", "--limit", "5"])).toEqual({
-      kind: "tool-call",
-      toolId: "docs.list",
-      json: { source: "inline", value: '{"query":"spec","limit":5}' },
-    });
     expect(
       parseCliArgs(["calendar", "event-list", "--calendar-id", folderId, "--limit", "50"]),
     ).toEqual({
@@ -307,15 +296,7 @@ describe("parseCliArgs", () => {
     // Scopes whose completion-registry entries are genuine flag-routed
     // subcommand names. search/restore/reindex list flags; webhook/admin use
     // families; action/tier route a positional arg (covered by other tests).
-    const subcommandScopes = [
-      "mail",
-      "chat",
-      "drive",
-      "docs",
-      "calendar",
-      "meet",
-      "assistant",
-    ] as const;
+    const subcommandScopes = ["mail", "chat", "drive", "calendar", "meet", "assistant"] as const;
 
     const messageFor = (args: readonly string[]): string | undefined => {
       try {
@@ -390,9 +371,10 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs(["drive", "upload", "./report.pdf", "--folder", folderId])).toEqual({
       kind: "tool-call",
       toolId: "drive.upload",
+      uploadPath: "./report.pdf",
       json: {
         source: "inline",
-        value: `{"name":"report.pdf","metadata":{"localPath":"./report.pdf"},"folderId":"${folderId}"}`,
+        value: `{"name":"report.pdf","metadata":{"source":"cli"},"folderId":"${folderId}"}`,
       },
     });
     expect(
@@ -412,10 +394,11 @@ describe("parseCliArgs", () => {
     ).toEqual({
       kind: "tool-call",
       toolId: "drive.upload",
+      uploadPath: "./brief.pdf",
       json: {
         source: "inline",
         value:
-          '{"name":"brief.pdf","metadata":{"localPath":"./brief.pdf"},"mimeType":"application/pdf","byteSize":128,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
+          '{"name":"brief.pdf","metadata":{"source":"cli"},"mimeType":"application/pdf","byteSize":128,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}',
       },
     });
     expect(parseCliArgs(["drive", "upload", "--json", '{"name":"brief.pdf"}'])).toEqual({
@@ -443,114 +426,6 @@ describe("parseCliArgs", () => {
       toolId: "drive.search",
       json: { source: "stdin" },
     });
-  });
-
-  it("parses docs aliases as tool calls", () => {
-    expect(parseCliArgs(["docs", "create", "--json", '{"title":"Launch notes"}'])).toEqual({
-      kind: "tool-call",
-      toolId: "docs.create",
-      json: { source: "inline", value: '{"title":"Launch notes"}' },
-    });
-    expect(parseCliArgs(["docs", "update-title", "--json"])).toEqual({
-      kind: "tool-call",
-      toolId: "docs.update-title",
-      json: { source: "stdin" },
-    });
-    expect(parseCliArgs(["docs", "export"])).toEqual({
-      kind: "tool-call",
-      toolId: "docs.export",
-      json: { source: "empty" },
-    });
-    expect(parseCliArgs(["docs", "comment", "--json", '{"body":"Looks good"}'])).toEqual({
-      kind: "tool-call",
-      toolId: "docs.comment.create",
-      json: { source: "inline", value: '{"body":"Looks good"}' },
-    });
-  });
-
-  it("parses docs typed flags as tool calls", () => {
-    expect(
-      parseCliArgs([
-        "docs",
-        "create",
-        "--title",
-        "Launch notes",
-        "--initial-markdown",
-        "# Launch",
-        "--folder",
-        folderId,
-        "--metadata",
-        '{"template":"brief"}',
-      ]),
-    ).toEqual({
-      kind: "tool-call",
-      toolId: "docs.create",
-      json: {
-        source: "inline",
-        value:
-          '{"title":"Launch notes","initialMarkdown":"# Launch","folderId":"44444444-4444-4444-8444-444444444444","metadata":{"template":"brief"}}',
-      },
-    });
-    expect(parseCliArgs(["docs", "update-title", "--doc-id", docId, "--title", "Q2 plan"])).toEqual(
-      {
-        kind: "tool-call",
-        toolId: "docs.update-title",
-        json: {
-          source: "inline",
-          value: '{"docId":"55555555-5555-4555-8555-555555555555","title":"Q2 plan"}',
-        },
-      },
-    );
-    expect(
-      parseCliArgs([
-        "docs",
-        "export",
-        "--doc-id",
-        docId,
-        "--format",
-        "pdf",
-        "--include-comments",
-        "--filename",
-        "q2-plan.pdf",
-      ]),
-    ).toEqual({
-      kind: "tool-call",
-      toolId: "docs.export",
-      json: {
-        source: "inline",
-        value:
-          '{"docId":"55555555-5555-4555-8555-555555555555","format":"pdf","includeComments":true,"filename":"q2-plan.pdf"}',
-      },
-    });
-    expect(
-      parseCliArgs([
-        "docs",
-        "comment-create",
-        "--doc-id",
-        docId,
-        "--body",
-        "Looks good",
-        "--anchor",
-        '{"path":[1,2]}',
-        "--metadata",
-        '{"severity":"low"}',
-      ]),
-    ).toEqual({
-      kind: "tool-call",
-      toolId: "docs.comment.create",
-      json: {
-        source: "inline",
-        value:
-          '{"docId":"55555555-5555-4555-8555-555555555555","body":"Looks good","anchor":{"path":[1,2]},"metadata":{"severity":"low"}}',
-      },
-    });
-  });
-
-  it("rejects docs typed flags with invalid JSON object values", () => {
-    expect(() => parseCliArgs(["docs", "create", "--metadata", "[]"])).toThrow(CliUsageError);
-    expect(() => parseCliArgs(["docs", "comment-create", "--anchor", "nope"])).toThrow(
-      CliUsageError,
-    );
   });
 
   it("parses calendar aliases as tool calls", () => {
@@ -724,13 +599,13 @@ describe("parseCliArgs", () => {
       json: { source: "inline", value: '{"query":"project zenith"}' },
     });
     expect(
-      parseCliArgs(["search", "--query", "project zenith", "--type", "mail,docs", "--limit", "5"]),
+      parseCliArgs(["search", "--query", "project zenith", "--type", "mail,drive", "--limit", "5"]),
     ).toEqual({
       kind: "tool-call",
       toolId: "search.query",
       json: {
         source: "inline",
-        value: '{"query":"project zenith","limit":5,"types":["mail","docs"]}',
+        value: '{"query":"project zenith","limit":5,"types":["mail","drive"]}',
       },
     });
     expect(parseCliArgs(["search", "--json", '{"query":"project zenith"}'])).toEqual({
@@ -771,7 +646,7 @@ describe("parseCliArgs", () => {
     ).toEqual({
       kind: "tool-call",
       toolId: "agent.credentials.revoke",
-      json: { source: "inline", value: '{"clientId":"client-1"}' },
+      json: { source: "inline", value: '{"credentialId":"client-1"}' },
     });
     expect(parseCliArgs(["admin", "agent-credentials", "create", "--json"])).toEqual({
       kind: "tool-call",
@@ -793,7 +668,7 @@ describe("parseCliArgs", () => {
         "--scope",
         "mail.read",
         "--scope",
-        "docs.read,drive.read",
+        "chat.read,drive.read",
         "--expires-at",
         "2026-06-01T00:00:00.000Z",
       ]),
@@ -802,7 +677,7 @@ describe("parseCliArgs", () => {
       toolId: "app.passwords.create",
       json: {
         source: "inline",
-        value: `{"actorId":"${actorId}","label":"Local dev","scopes":["mail.read","docs.read","drive.read"],"expiresAt":"2026-06-01T00:00:00.000Z"}`,
+        value: `{"actorId":"${actorId}","label":"Local dev","scopes":["mail.read","chat.read","drive.read"],"expiresAt":"2026-06-01T00:00:00.000Z"}`,
       },
     });
     expect(
@@ -1195,4 +1070,43 @@ describe("parseCliArgs", () => {
     expect(() => parseCliArgs(["tool", "missing"])).toThrow(CliUsageError);
     expect(() => parseCliArgs(["completion", "powershell"])).toThrow(CliUsageError);
   });
+});
+
+it("parses full agent API-key issuance and rotation", () => {
+  const command = parseCliArgs([
+    "admin",
+    "agent-credentials",
+    "create",
+    "--actor-id",
+    "agent-1",
+    "--credential-type",
+    "api_key",
+    "--label",
+    "Automation",
+    "--purpose",
+    "Triage inbox",
+    "--scope",
+    "mail.read",
+    "--expires-at",
+    "2027-01-01T00:00:00Z",
+  ]);
+  expect(command.kind).toBe("tool-call");
+  if (command.kind !== "tool-call" || command.json.source !== "inline")
+    throw new Error("Expected tool call.");
+  expect(JSON.parse(command.json.value)).toMatchObject({
+    credentialType: "api_key",
+    purpose: "Triage inbox",
+    scopes: ["mail.read"],
+  });
+  expect(
+    parseCliArgs([
+      "admin",
+      "agent-credentials",
+      "rotate",
+      "--credential-id",
+      "credential-1",
+      "--expires-at",
+      "2027-01-01T00:00:00Z",
+    ]),
+  ).toMatchObject({ toolId: "agent.credentials.rotate" });
 });

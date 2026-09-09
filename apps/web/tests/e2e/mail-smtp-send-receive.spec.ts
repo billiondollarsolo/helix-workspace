@@ -28,8 +28,7 @@ import { isLiveBackend } from "./support/backend-mode";
 
 const mailpitSmtpHost = process.env.HELIX_E2E_MAILPIT_SMTP_HOST ?? "127.0.0.1";
 const mailpitSmtpPort = Number(process.env.HELIX_E2E_MAILPIT_SMTP_PORT ?? "28457");
-const mailpitApiBaseUrl =
-  process.env.HELIX_E2E_MAILPIT_API_BASE_URL ?? "http://127.0.0.1:28458";
+const mailpitApiBaseUrl = process.env.HELIX_E2E_MAILPIT_API_BASE_URL ?? "http://127.0.0.1:28458";
 
 interface MailpitMessageSummary {
   readonly ID: string;
@@ -153,7 +152,7 @@ async function sendSmtpMessage(message: SmtpMessage): Promise<void> {
 }
 
 async function searchMailpit(query: string): Promise<MailpitSearchResponse> {
-  const url = new URL("/api/v1/search", mailpitApiBaseUrl);
+  const url = new URL("/v1/api/v1/search", mailpitApiBaseUrl);
   url.searchParams.set("query", query);
   const response = await fetch(url);
   if (!response.ok) {

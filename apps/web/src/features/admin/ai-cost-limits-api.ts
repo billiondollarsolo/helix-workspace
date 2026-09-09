@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /** Per-user AI cost limit override as returned by the admin API. */
 export interface AICostLimit {
@@ -37,11 +38,10 @@ export const aiCostLimitsQueryKeys = {
 
 export function aiCostLimitsQueryOptions() {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: aiCostLimitsQueryKeys.list(),
     queryFn: () => listAICostLimits(),
-    retry: false,
     staleTime: 30_000,
-    throwOnError: false,
   });
 }
 

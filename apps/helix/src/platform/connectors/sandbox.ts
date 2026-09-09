@@ -25,9 +25,9 @@ interface PendingRequest {
 }
 
 /**
- * One OS process per connector. Node's permission model denies network,
- * child-process, worker, native-addon and filesystem access except read-only
- * imports from the already-verified bundle. The child receives no environment
+ * One OS process per connector. Node permissions restrict filesystem, process,
+ * worker and native-addon access. Import hooks and removed network globals deny
+ * network access on Node 24. The child receives no environment
  * and exposes only the two connector operations below.
  */
 export class ConnectorSandbox {
@@ -63,7 +63,6 @@ export class ConnectorSandbox {
       process.execPath,
       [
         "--permission",
-        "--allow-worker",
         `--allow-fs-read=${plugin.rootDir}`,
         `--max-old-space-size=${String(MAX_OLD_SPACE_MB)}`,
         "--disable-proto=throw",
@@ -223,22 +222,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const LOADER_SOURCE = `
-let rootUrl;
-export function initialize(data) { rootUrl = data.rootUrl; }
-export async function resolve(specifier, context, nextResolve) {
-  const resolved = await nextResolve(specifier, context);
-  if (typeof rootUrl !== "string" || !resolved.url.startsWith(rootUrl)) {
-    throw new Error("Connector import denied.");
-  }
-  return resolved;
-}
-`;
-
-const LOADER_URL = `data:text/javascript,${encodeURIComponent(LOADER_SOURCE)}`;
-
 const SANDBOX_SOURCE = `
-import { register } from "node:module";
+import { registerHooks } from "node:module";
 const runtime = process;
 const formats = new Map();
 const sources = new Map();
@@ -257,15 +242,22 @@ runtime.on("message", async (message) => {
     if (action === "register") {
       if (initialized) throw new Error("already registered");
       initialized = true;
-      register(${JSON.stringify(LOADER_URL)}, {
-        parentURL: import.meta.url,
-        data: { rootUrl: payload.rootUrl },
+      registerHooks({
+        resolve(specifier, context, nextResolve) {
+          const resolved = nextResolve(specifier, context);
+          if (!resolved.url.startsWith(payload.rootUrl)) throw new Error("Connector import denied.");
+          return resolved;
+        },
       });
+      for (const name of ["fetch", "WebSocket", "EventSource", "process"]) {
+        Object.defineProperty(globalThis, name, {
+          value: undefined, writable: false, configurable: false,
+        });
+      }
       Object.defineProperty(globalThis, "console", {
         value: Object.freeze({ debug() {}, error() {}, info() {}, log() {}, warn() {} }),
         configurable: false,
       });
-      delete globalThis.process;
       const imported = await import(payload.entryUrl);
       const plugin = imported.default;
       if (!plugin || typeof plugin !== "object" || typeof plugin.register !== "function") {

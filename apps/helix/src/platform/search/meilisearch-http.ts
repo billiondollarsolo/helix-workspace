@@ -1,12 +1,12 @@
 import type { JsonObject } from "@helix/sdk-types";
+import type { IndexDocument } from "./types.js";
 import type {
-  IndexDocument,
   MeilisearchClientLike,
   MeilisearchIndexLike,
   MeilisearchIndexSettings,
   MeilisearchSearchOptions,
   MeilisearchSearchResponse,
-} from "./index.js";
+} from "./meilisearch.js";
 
 export interface MeilisearchHttpClientOptions {
   readonly baseUrl: string;
@@ -187,10 +187,8 @@ async function requestJson(
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await response.text();
-  if (!response.ok) {
-    if (response.status === 409 && options?.allowConflict === true) {
-      return text.length === 0 ? null : (JSON.parse(text) as unknown);
-    }
+  const conflictAllowed = response.status === 409 && options?.allowConflict === true;
+  if (!response.ok && !conflictAllowed) {
     throw new MeilisearchHttpError(response.status, response.statusText, text);
   }
   return text.length === 0 ? null : (JSON.parse(text) as unknown);

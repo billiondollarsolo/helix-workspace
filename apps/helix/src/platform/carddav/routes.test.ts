@@ -62,10 +62,10 @@ describe("CardDAV routes", () => {
     expect(response.statusCode).toBe(207);
     expect(response.headers["content-type"]).toContain("application/xml");
     expect(response.body).toContain("<D:current-user-principal>");
-    expect(response.body).toContain(`<D:href>/dav/card/principals/${actor.id}/</D:href>`);
+    expect(response.body).toContain(`<D:href>/v1/dav/card/principals/${actor.id}/</D:href>`);
     expect(response.body).toContain("<C:addressbook-home-set>");
     expect(response.body).toContain("<D:collection/><C:addressbook/>");
-    expect(response.body).toContain(`<D:href>/dav/card/${actor.id}/self.vcf</D:href>`);
+    expect(response.body).toContain(`<D:href>/v1/dav/card/${actor.id}/self.vcf</D:href>`);
     expect(response.body).toContain(
       "<D:getcontenttype>text/vcard; charset=utf-8</D:getcontenttype>",
     );
@@ -151,7 +151,7 @@ describe("CardDAV routes", () => {
       },
     } as unknown as InjectOptions);
     expect(propfind.statusCode).toBe(207);
-    expect(propfind.body).toContain(`<D:href>${contactUrl}</D:href>`);
+    expect(propfind.body).toContain(`<D:href>/v1${contactUrl}</D:href>`);
     expect(propfind.body).toContain("<D:getetag>");
 
     const report = await app.inject({
@@ -167,7 +167,7 @@ describe("CardDAV routes", () => {
     expect(report.body).toContain("<C:address-data>");
     expect(report.body).toContain("Grace Hopper");
     expect(report.body).toContain(
-      `<D:response><D:href>${missingContactUrl}</D:href><D:status>HTTP/1.1 404 Not Found</D:status></D:response>`,
+      `<D:response><D:href>/v1${missingContactUrl}</D:href><D:status>HTTP/1.1 404 Not Found</D:status></D:response>`,
     );
 
     const updated = await app.inject({
@@ -339,7 +339,7 @@ describe("CardDAV routes", () => {
     } as unknown as InjectOptions);
 
     expect(firstSync.statusCode).toBe(207);
-    expect(firstSync.body).toContain(`<D:href>${contactUrl}</D:href>`);
+    expect(firstSync.body).toContain(`<D:href>/v1${contactUrl}</D:href>`);
     expect(firstSync.body).toContain("Katherine Johnson");
     expect(syncTokenFromXml(firstSync.body)).toBe(token);
 
@@ -355,7 +355,7 @@ describe("CardDAV routes", () => {
 
     expect(unchangedSync.statusCode).toBe(207);
     expect(syncTokenFromXml(unchangedSync.body)).toBe(token);
-    expect(unchangedSync.body).not.toContain(`<D:href>${contactUrl}</D:href>`);
+    expect(unchangedSync.body).not.toContain(`<D:href>/v1${contactUrl}</D:href>`);
     expect(unchangedSync.body).not.toContain("Katherine Johnson");
 
     const updated = await app.inject({
@@ -392,7 +392,7 @@ describe("CardDAV routes", () => {
 
     expect(updateDelta.statusCode).toBe(207);
     expect(syncTokenFromXml(updateDelta.body)).toBe(afterUpdate);
-    expect(updateDelta.body).toContain(`<D:href>${contactUrl}</D:href>`);
+    expect(updateDelta.body).toContain(`<D:href>/v1${contactUrl}</D:href>`);
     expect(updateDelta.body).toContain("Katherine Coleman Johnson");
     expect(updateDelta.body).toContain("HTTP/1.1 200 OK");
 
@@ -418,7 +418,7 @@ describe("CardDAV routes", () => {
 
     expect(deleteDelta.statusCode).toBe(207);
     expect(syncTokenFromXml(deleteDelta.body)).toBe(afterDelete);
-    expect(deleteDelta.body).toContain(`<D:href>${contactUrl}</D:href>`);
+    expect(deleteDelta.body).toContain(`<D:href>/v1${contactUrl}</D:href>`);
     expect(deleteDelta.body).toContain("HTTP/1.1 404 Not Found");
     expect(deleteDelta.body).not.toContain("<C:address-data>");
     expect(deleteDelta.body).not.toContain("<D:getetag>");
@@ -497,7 +497,8 @@ describe("CardDAV routes", () => {
         authorization: basic("ada@example.test", "carddav.read"),
         "content-type": "application/xml",
       },
-      payload: '<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><C:filter><C:prop-filter name="FN"><C:text-match match-type="contains">hopper</C:text-match></C:prop-filter></C:filter></C:addressbook-query>',
+      payload:
+        '<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav"><C:filter><C:prop-filter name="FN"><C:text-match match-type="contains">hopper</C:text-match></C:prop-filter></C:filter></C:addressbook-query>',
     } as unknown as InjectOptions);
     expect(filtered.statusCode).toBe(207);
     expect(filtered.body).toContain("Grace Hopper");
@@ -510,7 +511,8 @@ describe("CardDAV routes", () => {
         authorization: basic("ada@example.test", "carddav.read"),
         "content-type": "application/xml",
       },
-      payload: '<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav" xmlns:H="urn:helix:params:xml:ns:carddav"><D:limit><D:nresults>1</D:nresults></D:limit></C:addressbook-query>',
+      payload:
+        '<C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav" xmlns:H="urn:helix:params:xml:ns:carddav"><D:limit><D:nresults>1</D:nresults></D:limit></C:addressbook-query>',
     } as unknown as InjectOptions);
     expect(first.body).toContain("507 Insufficient Storage");
     expect(first.body).toContain("number-of-matches-within-limits");
@@ -540,7 +542,7 @@ describe("CardDAV routes", () => {
       headers: { authorization: basic("ada@example.test", "carddav.read") },
     } as unknown as InjectOptions);
     expect(books.statusCode).toBe(207);
-    expect(books.body).toContain(`/dav/card/${actor.id}/books/${actor.id}/`);
+    expect(books.body).toContain(`/v1/dav/card/${actor.id}/books/${actor.id}/`);
     expect(books.body).toContain("<D:write/>");
 
     const url = `/dav/card/${actor.id}/books/${actor.id}/shared.vcf`;
@@ -554,8 +556,16 @@ describe("CardDAV routes", () => {
       payload: contactVcard("Shared Contact", "shared@example.test"),
     } as unknown as InjectOptions);
     expect(created.statusCode).toBe(201);
-    expect(created.headers.location).toBe(url);
-    expect((await app.inject({ method: "GET", url, headers: { authorization: basic("ada@example.test", "carddav.read") } })).statusCode).toBe(200);
+    expect(created.headers.location).toBe(`/v1${url}`);
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url,
+          headers: { authorization: basic("ada@example.test", "carddav.read") },
+        })
+      ).statusCode,
+    ).toBe(200);
   });
 
   it("creates and shares an address book with standard DAV collection methods", async () => {
@@ -569,10 +579,11 @@ describe("CardDAV routes", () => {
         authorization: basic("ada@example.test", "carddav.write"),
         "content-type": "application/xml",
       },
-      payload: '<D:mkcol xmlns:D="DAV:"><D:set><D:prop><D:displayname>Engineering</D:displayname></D:prop></D:set></D:mkcol>',
+      payload:
+        '<D:mkcol xmlns:D="DAV:"><D:set><D:prop><D:displayname>Engineering</D:displayname></D:prop></D:set></D:mkcol>',
     } as unknown as InjectOptions);
     expect(created.statusCode).toBe(201);
-    expect(created.headers.location).toBe(bookUrl);
+    expect(created.headers.location).toBe(`/v1${bookUrl}`);
 
     const shared = await app.inject({
       method: "ACL",
@@ -581,7 +592,8 @@ describe("CardDAV routes", () => {
         authorization: basic("ada@example.test", "carddav.write"),
         "content-type": "application/xml",
       },
-      payload: '<D:acl xmlns:D="DAV:"><D:ace><D:principal><D:href>/dav/card/principals/33333333-3333-4333-8333-333333333333/</D:href></D:principal><D:grant><D:privilege><D:read/></D:privilege></D:grant></D:ace></D:acl>',
+      payload:
+        '<D:acl xmlns:D="DAV:"><D:ace><D:principal><D:href>/dav/card/principals/33333333-3333-4333-8333-333333333333/</D:href></D:principal><D:grant><D:privilege><D:read/></D:privilege></D:grant></D:ace></D:acl>',
     } as unknown as InjectOptions);
     expect(shared.statusCode).toBe(204);
 
@@ -604,7 +616,8 @@ describe("CardDAV routes", () => {
         authorization: basic("ada@example.test", "carddav.read"),
         "content-type": "application/xml",
       },
-      payload: '<D:sync-collection xmlns:D="DAV:"><D:sync-token/><D:limit><D:nresults>500</D:nresults></D:limit></D:sync-collection>',
+      payload:
+        '<D:sync-collection xmlns:D="DAV:"><D:sync-token/><D:limit><D:nresults>500</D:nresults></D:limit></D:sync-collection>',
     } as unknown as InjectOptions);
     expect(response.statusCode).toBe(207);
     expect(store.syntheticContactCount).toBe(100_001);

@@ -32,7 +32,13 @@ alter table mail_outbound_messages add constraint mail_outbound_lease_state_chec
 );
 
 alter table mail_outbound_providers
-  add column webhook_secret_ref text,
+  add column if not exists webhook_secret_ref text;
+-- Main's provider callbacks used global environment indirections. They must be
+-- reprovisioned as tenant Vault handles, never interpreted as another tenant's secret.
+update mail_outbound_providers set webhook_secret_ref = null, enabled = false
+where webhook_secret_ref is not null
+  and webhook_secret_ref !~ '^[a-z0-9]([a-z0-9._-]{0,98}[a-z0-9])?$';
+alter table mail_outbound_providers
   add constraint mail_outbound_provider_webhook_secret_ref_check check (
     webhook_secret_ref is null
     or webhook_secret_ref ~ '^[a-z0-9]([a-z0-9._-]{0,98}[a-z0-9])?$'

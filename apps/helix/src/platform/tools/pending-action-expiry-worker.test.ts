@@ -28,21 +28,53 @@ const testTool: ToolDefinition = {
 };
 
 describe("InMemoryPendingActionStore.expireStale", () => {
+  it("fails an expired execution lease without re-claiming an unknown side effect", async () => {
+    const store = new InMemoryPendingActionStore();
+    const action = await store.create({
+      ...pendingInput(),
+      expiresAt: new Date("2026-05-21T13:00:00.000Z"),
+    });
+    await store.approve({
+      id: action.id,
+      approverActorId: "owner-1",
+      approvedAt: new Date("2026-05-21T11:00:00.000Z"),
+    });
+    await store.claimExecution({
+      id: action.id,
+      approverActorId: "owner-1",
+      executionActorId: "actor-1",
+      startedAt: new Date("2026-05-21T11:01:00.000Z"),
+      leaseExpiresAt: new Date("2026-05-21T11:02:00.000Z"),
+    });
+
+    const recovered = await store.recoverStaleExecutions({
+      now: new Date("2026-05-21T11:02:01.000Z"),
+    });
+    const reclaimed = await store.claimExecution({
+      id: action.id,
+      approverActorId: "owner-1",
+      executionActorId: "actor-1",
+      startedAt: new Date("2026-05-21T11:02:02.000Z"),
+      leaseExpiresAt: new Date("2026-05-21T11:03:02.000Z"),
+    });
+
+    expect(recovered[0]).toMatchObject({
+      status: "failed",
+      error: "execution_outcome_unknown",
+      executionAttempts: 1,
+    });
+    expect(reclaimed).toBeNull();
+  });
+
   it("transitions only past-due pending actions to expired", async () => {
     const store = new InMemoryPendingActionStore();
     const now = new Date("2026-05-21T12:00:00.000Z");
     const stale = await store.create({
-      orgId: "org-1",
-      actorId: "actor-1",
-      toolId: "platform.test",
-      input: {},
+      ...pendingInput(),
       expiresAt: new Date("2026-05-21T11:00:00.000Z"),
     });
     const fresh = await store.create({
-      orgId: "org-1",
-      actorId: "actor-1",
-      toolId: "platform.test",
-      input: {},
+      ...pendingInput(),
       expiresAt: new Date("2026-05-21T13:00:00.000Z"),
     });
 
@@ -54,36 +86,29 @@ describe("InMemoryPendingActionStore.expireStale", () => {
     expect((await store.get(fresh.id))?.status).toBe("pending_confirmation");
   });
 
-  it("does not re-expire an already-decided action", async () => {
+  it("expires an approved action that was not claimed before its deadline", async () => {
     const store = new InMemoryPendingActionStore();
     const record = await store.create({
-      orgId: "org-1",
-      actorId: "actor-1",
-      toolId: "platform.test",
-      input: {},
+      ...pendingInput(),
       expiresAt: new Date("2026-05-21T11:00:00.000Z"),
     });
-    await store.decide({
+    await store.approve({
       id: record.id,
-      actorId: "actor-1",
-      status: "confirmed",
-      decidedAt: new Date("2026-05-21T11:30:00.000Z"),
+      approverActorId: "actor-2",
+      approvedAt: new Date("2026-05-21T11:30:00.000Z"),
     });
 
     const expired = await store.expireStale({ now: new Date("2026-05-21T12:00:00.000Z") });
 
-    expect(expired).toHaveLength(0);
-    expect((await store.get(record.id))?.status).toBe("confirmed");
+    expect(expired).toHaveLength(1);
+    expect((await store.get(record.id))?.status).toBe("expired");
   });
 
   it("honours the batch limit", async () => {
     const store = new InMemoryPendingActionStore();
     for (let index = 0; index < 5; index += 1) {
       await store.create({
-        orgId: "org-1",
-        actorId: "actor-1",
-        toolId: "platform.test",
-        input: {},
+        ...pendingInput(),
         expiresAt: new Date("2026-05-21T11:00:00.000Z"),
       });
     }
@@ -101,10 +126,7 @@ describe("PendingActionExpiryWorker", () => {
   it("expires stale actions on a single run", async () => {
     const store = new InMemoryPendingActionStore();
     const stale = await store.create({
-      orgId: "org-1",
-      actorId: "actor-1",
-      toolId: "platform.test",
-      input: {},
+      ...pendingInput(),
       expiresAt: new Date("2026-05-21T11:00:00.000Z"),
     });
     const worker = new PendingActionExpiryWorker({
@@ -123,11 +145,14 @@ describe("PendingActionExpiryWorker", () => {
     const failingStore: PendingActionStore = {
       create: vi.fn(),
       get: vi.fn(),
-      decide: vi.fn(),
-      recordExecution: vi.fn(),
-      expireStale: vi.fn<PendingActionStore["expireStale"]>().mockRejectedValue(
-        new Error("db down"),
-      ),
+      approve: vi.fn(),
+      cancel: vi.fn(),
+      claimExecution: vi.fn(),
+      completeExecution: vi.fn(),
+      recoverStaleExecutions: vi.fn().mockResolvedValue([]),
+      expireStale: vi
+        .fn<PendingActionStore["expireStale"]>()
+        .mockRejectedValue(new Error("db down")),
     };
     const errors: unknown[] = [];
     const worker = new PendingActionExpiryWorker({
@@ -142,6 +167,36 @@ describe("PendingActionExpiryWorker", () => {
     expect(errors.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+function pendingInput() {
+  const id = crypto.randomUUID();
+  return {
+    id,
+    orgId: "org-1",
+    actorId: "actor-1",
+    requesterActorId: "actor-1",
+    requesterCredentialId: null,
+    requesterPrincipal: actor,
+    requesterIp: null,
+    approvalOwnerActorId: null,
+    toolId: "platform.test",
+    input: {},
+    inputHash: "0".repeat(64),
+    policySnapshot: {},
+    policyVersion: "actor-session",
+    preview: {
+      toolId: "platform.test",
+      action: "platform.write",
+      resourceIds: [],
+      recipients: [],
+      targets: [],
+      consequence: "Test.",
+    },
+    createdAt: new Date("2026-05-21T10:00:00.000Z"),
+    executionIdempotencyKey: `pending-action:${id}`,
+    traceId: null,
+  } as const;
+}
 
 describe("InMemoryConfirmationGate confirmation timeout", () => {
   it("defaults the confirmation window to 10 minutes (PRD §9.9)", async () => {

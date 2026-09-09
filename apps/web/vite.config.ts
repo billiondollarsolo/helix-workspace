@@ -3,87 +3,76 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath, URL } from "node:url";
 import { defineConfig, type Plugin } from "vite";
-
 const standardChunkBudgetBytes = 500_000;
 const initialGraphBudgetBytes = 450_000;
 const devApiTarget =
   process.env.HELIX_E2E_API_BASE_URL ?? process.env.HELIX_API_BASE_URL ?? "http://localhost:3000";
 
-export default defineConfig({
-  plugins: [
-    tanstackRouter({
-      target: "react",
-      autoCodeSplitting: true,
-    }),
-    react(),
-    tailwindcss(),
-    enforceBundleBudgets(),
-  ],
-  resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-      "@helix/sdk-types": fileURLToPath(
-        new URL("../../packages/sdk-types/src/index.ts", import.meta.url),
-      ),
-      "@helix/sdk-web": fileURLToPath(
-        new URL("../../packages/sdk-web/src/index.ts", import.meta.url),
+export default defineConfig(() => {
+  return {
+    plugins: [
+      tanstackRouter({
+        target: "react",
+        autoCodeSplitting: true,
+      }),
+      react(),
+      tailwindcss(),
+      enforceBundleBudgets(),
+    ],
+    resolve: {
+      alias: [
+        { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
+        {
+          find: "@helix/sdk-types",
+          replacement: fileURLToPath(
+            new URL("../../packages/sdk-types/src/index.ts", import.meta.url),
+          ),
+        },
+        {
+          find: "@helix/sdk-web",
+          replacement: fileURLToPath(
+            new URL("../../packages/sdk-web/src/index.ts", import.meta.url),
+          ),
+        },
+      ],
+    },
+    server: {
+      // Dev: proxy the canonical versioned API plus unversioned lifecycle probes
+      // to the local backend. Legacy product-route aliases are intentionally absent.
+      proxy: Object.fromEntries(
+        [
+          "/api",
+          "/oauth",
+          "/trpc",
+          "/mcp",
+          "/v1",
+          "/healthz",
+          "/readyz",
+          "/openapi.json",
+          "/openapi.yaml",
+          "/asyncapi.json",
+          "/metrics",
+          "/events",
+          // Mail realtime (EventSource) — without this the SPA logs
+          // "Failed to load resource: 404" for GET /sse/mail in dev.
+          "/sse",
+          "/ws",
+          "/sync",
+          "/dav",
+          "/.well-known",
+        ].map((path) => [path, { target: devApiTarget, changeOrigin: true, ws: true }]),
       ),
     },
-  },
-  server: {
-    // Dev: proxy the canonical versioned API plus unversioned lifecycle probes
-    // to the local backend. Legacy product-route aliases are intentionally absent.
-    proxy: Object.fromEntries(
-      ["/v1", "/healthz", "/readyz"].map((path) => [
-        path,
-        { target: devApiTarget, changeOrigin: true, ws: true },
-      ]),
-    ),
-  },
-  build: {
-    chunkSizeWarningLimit: standardChunkBudgetBytes / 1_000,
-    rollupOptions: {
-      output: {
-        manualChunks: semanticVendorChunk,
+    build: {
+      chunkSizeWarningLimit: standardChunkBudgetBytes / 1_000,
+      rollupOptions: {
+        output: {
+          manualChunks: semanticVendorChunk,
+        },
       },
     },
-  },
+  };
 });
-
-function semanticVendorChunk(moduleId: string): string | undefined {
-  if (isDependency(moduleId, "react") || isDependency(moduleId, "react-dom")) {
-    return "vendor-react";
-  }
-  if (isDependency(moduleId, "scheduler")) {
-    return "vendor-react";
-  }
-  if (
-    isDependency(moduleId, "@tanstack/react-query") ||
-    isDependency(moduleId, "@tanstack/query-core") ||
-    isDependency(moduleId, "@tanstack/react-router") ||
-    isDependency(moduleId, "@tanstack/router-core") ||
-    isDependency(moduleId, "@tanstack/history")
-  ) {
-    return "vendor-tanstack";
-  }
-  if (moduleId.includes("/@tiptap+") || isDependency(moduleId, "linkifyjs")) {
-    return "vendor-tiptap";
-  }
-  if (moduleId.includes("/prosemirror-")) {
-    return "vendor-prosemirror";
-  }
-  if (isDependency(moduleId, "pdf-lib")) {
-    return "vendor-pdf-editing";
-  }
-  if (moduleId.includes("/@pdf-lib+") || isDependency(moduleId, "pako")) {
-    return "vendor-pdf-codecs";
-  }
-  return undefined;
-}
-
-function isDependency(moduleId: string, packageName: string): boolean {
-  return moduleId.replaceAll("\\", "/").includes(`/node_modules/${packageName}/`);
-}
 
 function enforceBundleBudgets(): Plugin {
   return {
@@ -148,4 +137,28 @@ function enforceBundleBudgets(): Plugin {
 
 function formatBytes(bytes: number): string {
   return `${(bytes / 1_000).toFixed(1)} kB`;
+}
+
+function semanticVendorChunk(moduleId: string): string | undefined {
+  if (isDependency(moduleId, "react") || isDependency(moduleId, "react-dom")) {
+    return "vendor-react";
+  }
+  if (isDependency(moduleId, "scheduler")) {
+    return "vendor-react";
+  }
+  if (
+    isDependency(moduleId, "@tanstack/react-query") ||
+    isDependency(moduleId, "@tanstack/query-core") ||
+    isDependency(moduleId, "@tanstack/react-router") ||
+    isDependency(moduleId, "@tanstack/router-core") ||
+    isDependency(moduleId, "@tanstack/history")
+  ) {
+    return "vendor-tanstack";
+  }
+
+  return undefined;
+}
+
+function isDependency(moduleId: string, packageName: string): boolean {
+  return moduleId.replaceAll("\\", "/").includes(`/node_modules/${packageName}/`);
 }

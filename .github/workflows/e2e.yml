@@ -25,12 +25,6 @@ on:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      helix_editors_ref:
-        description: Optional helix-editors branch, tag, or SHA to test.
-        required: false
-        type: string
-
 jobs:
   e2e-mocked:
     runs-on: ubuntu-latest
@@ -40,35 +34,25 @@ jobs:
         working-directory: helix-all/helix-workspace
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: helix-all/helix-workspace
 
-      - name: Checkout paired helix-editors
-        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
-        with:
-          requested-ref: ${{ inputs.helix_editors_ref }}
-          candidate-ref: ${{ github.head_ref || github.ref_name }}
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
-          version: 9.15.9
+          version: 11.18.0
 
       - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.23.2
+          node-version: 24.18.0
           cache: pnpm
           cache-dependency-path: |
             helix-all/helix-workspace/pnpm-lock.yaml
-            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Prepare paired helix-editors
-        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
 
       - name: Typecheck E2E specs
         run: pnpm --filter @helix/web typecheck:e2e
@@ -87,7 +71,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report-mocked
           path: |
@@ -107,42 +91,30 @@ jobs:
       DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:28432/helix
       HELIX_E2E_BACKEND: live
       HELIX_E2E_API_BASE_URL: http://127.0.0.1:28431
-      HELIX_E2E_CLIENT_ID: helix-local-oauth-client
-      HELIX_E2E_CLIENT_SECRET: helix-local-dev-secret
       HELIX_E2E_MAILPIT_SMTP_HOST: 127.0.0.1
       HELIX_E2E_MAILPIT_SMTP_PORT: "28457"
       HELIX_E2E_MAILPIT_API_BASE_URL: http://127.0.0.1:28458
     steps:
       - name: Checkout helix-workspace
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: helix-all/helix-workspace
 
-      - name: Checkout paired helix-editors
-        uses: ./helix-all/helix-workspace/.github/actions/checkout-editors
-        with:
-          requested-ref: ${{ inputs.helix_editors_ref }}
-          candidate-ref: ${{ github.head_ref || github.ref_name }}
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         with:
-          version: 9.15.9
+          version: 11.18.0
 
       - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.23.2
+          node-version: 24.18.0
           cache: pnpm
           cache-dependency-path: |
             helix-all/helix-workspace/pnpm-lock.yaml
-            helix-all/helix-editors/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Prepare paired helix-editors
-        uses: ./helix-all/helix-workspace/.github/actions/prepare-editors
 
       - name: Install Playwright browsers
         run: pnpm --filter @helix/web exec playwright install --with-deps chromium
@@ -186,6 +158,7 @@ jobs:
         run: |
           pnpm --filter @helix/app db:migrate
           pnpm --filter @helix/app db:seed:oauth
+          pnpm --filter @helix/app db:seed:logins
 
       - name: Run mandatory real-service contracts
         env:
@@ -220,7 +193,7 @@ jobs:
           BETTER_AUTH_SECRET: helix_local_better_auth_secret_change_me_32_chars
           BETTER_AUTH_TRUSTED_ORIGINS: http://127.0.0.1:28431,http://127.0.0.1:4173
           HELIX_PUBLIC_URL: http://127.0.0.1:28431
-          HELIX_DEFAULT_ORG_ID: 00000000-0000-4000-8000-000000000100
+          HELIX_DEFAULT_ORG_ID: 00000000-0000-0000-0000-000000000000
           HELIX_DEFAULT_ORG_SLUG: local-e2e
           HELIX_DEFAULT_ORG_NAME: Local E2E Workspace
           REDIS_URL: redis://127.0.0.1:28433
@@ -275,7 +248,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report-live
           path: |

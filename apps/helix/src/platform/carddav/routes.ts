@@ -537,6 +537,7 @@ function addressbookMultigetResponseXml(
   href: string,
   addressBookId?: string,
 ): string {
+  href = requestPath(href);
   if (href === selfCardHref(actor)) {
     return selfCardResponseXml(actor, { includeAddressData: true });
   }
@@ -707,9 +708,7 @@ function addressBookGrant(
   const actorId = href?.match(/\/principals\/([0-9a-f-]{36})\/?$/iu)?.[1];
   if (
     actorId === undefined ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      actorId,
-    )
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(actorId)
   ) {
     return null;
   }
@@ -756,11 +755,7 @@ function selfCardHref(actor: Actor): string {
   return `${addressbookHref(actor)}self.vcf`;
 }
 
-function contactHref(
-  actor: Actor,
-  contact: CardDavContactRecord,
-  addressBookId?: string,
-): string {
+function contactHref(actor: Actor, contact: CardDavContactRecord, addressBookId?: string): string {
   return `${addressbookHref(actor, addressBookId)}${encodeURIComponent(contact.href)}`;
 }
 
@@ -772,9 +767,7 @@ function addressBookIdFromRequest(url: string, actor: Actor): string | undefined
   if (value === undefined) return undefined;
   const decoded = safeDecodePathSegment(value);
   return decoded !== null &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
-      decoded,
-    )
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(decoded)
     ? decoded
     : undefined;
 }

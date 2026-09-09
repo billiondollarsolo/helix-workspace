@@ -241,7 +241,10 @@ describe("useChatRealtime reconnect", () => {
       });
     });
     expect(latest?.liveMessages).toHaveLength(1);
-    expect(latest?.liveMessages[0]).toMatchObject({ body: "updated", reactions: [{ emoji: "✅" }] });
+    expect(latest?.liveMessages[0]).toMatchObject({
+      body: "updated",
+      reactions: [{ emoji: "✅" }],
+    });
 
     act(() => {
       socket.receive({

@@ -663,12 +663,7 @@ function jobRow(
     readonly org_id: string;
     readonly target: "byo" | "helix-default";
     readonly status:
-      | "queued"
-      | "running"
-      | "succeeded"
-      | "succeeded_with_errors"
-      | "failed"
-      | "dry_run";
+      "queued" | "running" | "succeeded" | "succeeded_with_errors" | "failed" | "dry_run";
     readonly dry_run: boolean;
     readonly requested_by_actor_id: string | null;
     readonly source_storage: Record<string, unknown> | null;

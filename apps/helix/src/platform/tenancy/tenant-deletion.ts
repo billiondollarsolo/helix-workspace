@@ -201,7 +201,9 @@ export class PostgresTenantDeletionStore implements TenantDeletionStore {
     return (rows[0]?.counts ?? {}) as JsonObject;
   }
 
-  async complete(input: Parameters<TenantDeletionStore["complete"]>[0]): Promise<TenantDeletionProofRecord> {
+  async complete(
+    input: Parameters<TenantDeletionStore["complete"]>[0],
+  ): Promise<TenantDeletionProofRecord> {
     const rows = await this.sql`
       select * from helix_complete_tenant_deletion(
         ${input.orgId}, ${this.sql.json(input.manifest)}, ${input.manifestSha256},
@@ -292,12 +294,17 @@ function mapProof(row: Record<string, unknown> | undefined): TenantDeletionProof
 }
 
 function stringArray(value: unknown): readonly string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function objectArray(value: unknown): readonly JsonObject[] {
   return Array.isArray(value)
-    ? value.filter((item): item is JsonObject => typeof item === "object" && item !== null && !Array.isArray(item))
+    ? value.filter(
+        (item): item is JsonObject =>
+          typeof item === "object" && item !== null && !Array.isArray(item),
+      )
     : [];
 }
 

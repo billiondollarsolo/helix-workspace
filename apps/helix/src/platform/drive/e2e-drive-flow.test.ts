@@ -13,9 +13,19 @@ import type {
   Unsubscribe,
 } from "@helix/sdk-types";
 import { SearchEventIndexer } from "../search/event-indexer.js";
-import type { IndexDocument, SearchEngine, SearchRequest, SearchResponse } from "../search/types.js";
+import type {
+  IndexDocument,
+  SearchEngine,
+  SearchRequest,
+  SearchResponse,
+} from "../search/types.js";
 import { createDriveSuggestionSlotProviders, registerDriveIndexer } from "./index.js";
-import type { DriveActor, DriveSearchProjectionStore, DriveSearchRecord, DriveShareRole } from "./types.js";
+import type {
+  DriveActor,
+  DriveSearchProjectionStore,
+  DriveSearchRecord,
+  DriveShareRole,
+} from "./types.js";
 
 describe("drive AI/search flow", () => {
   it("covers upload finalize list share move trash restore delete search and AI with fakes", async () => {
@@ -198,7 +208,10 @@ class FakeDriveService implements DriveSearchProjectionStore {
       storageKey: `orgs/${input.actor.orgId}/uploads/${uploadId}/${input.name}`,
     };
     this.#uploads.set(uploadId, session);
-    await this.events.publish("activity.drive.upload.created", { uploadId, actorId: input.actor.id });
+    await this.events.publish("activity.drive.upload.created", {
+      uploadId,
+      actorId: input.actor.id,
+    });
     return session;
   }
 
@@ -227,7 +240,10 @@ class FakeDriveService implements DriveSearchProjectionStore {
     });
     this.#records.set(id, record);
     this.#uploads.delete(input.uploadId);
-    await this.events.publish("activity.drive.file.created", { fileId: id, uploadId: input.uploadId });
+    await this.events.publish("activity.drive.file.created", {
+      fileId: id,
+      uploadId: input.uploadId,
+    });
     return record;
   }
 
@@ -263,10 +279,13 @@ class FakeDriveService implements DriveSearchProjectionStore {
   async share(input: ShareInput): Promise<void> {
     this.requireRecord(input.fileId);
     const existing = this.#shares.get(input.fileId) ?? [];
-    this.#shares.set(input.fileId, [...existing.filter((share) => share.actorId !== input.target.id), {
-      actorId: input.target.id,
-      role: input.role,
-    }]);
+    this.#shares.set(input.fileId, [
+      ...existing.filter((share) => share.actorId !== input.target.id),
+      {
+        actorId: input.target.id,
+        role: input.role,
+      },
+    ]);
     await this.events.publish("activity.drive.file.shared", {
       fileId: input.fileId,
       actorId: input.actor.id,
@@ -295,7 +314,10 @@ class FakeDriveService implements DriveSearchProjectionStore {
     const existing = this.requireRecord(input.fileId);
     const trashed = { ...existing, trashedAt: now(), updatedAt: now() };
     this.#records.set(input.fileId, trashed);
-    await this.events.publish("activity.drive.file.trashed", { fileId: input.fileId, actorId: input.actor.id });
+    await this.events.publish("activity.drive.file.trashed", {
+      fileId: input.fileId,
+      actorId: input.actor.id,
+    });
     return trashed;
   }
 
@@ -305,14 +327,20 @@ class FakeDriveService implements DriveSearchProjectionStore {
     void _trashedAt;
     const restored = { ...restoredRecord, updatedAt: now() };
     this.#records.set(input.fileId, restored);
-    await this.events.publish("activity.drive.file.restored", { fileId: input.fileId, actorId: input.actor.id });
+    await this.events.publish("activity.drive.file.restored", {
+      fileId: input.fileId,
+      actorId: input.actor.id,
+    });
     return restored;
   }
 
   async delete(input: FileInput): Promise<void> {
     const existing = this.requireRecord(input.fileId);
     this.#records.set(input.fileId, { ...existing, deletedAt: now(), updatedAt: now() });
-    await this.events.publish("activity.drive.file.deleted", { fileId: input.fileId, actorId: input.actor.id });
+    await this.events.publish("activity.drive.file.deleted", {
+      fileId: input.fileId,
+      actorId: input.actor.id,
+    });
   }
 
   shares(fileId: string): readonly ShareRecord[] {
@@ -332,7 +360,10 @@ class FakeDriveService implements DriveSearchProjectionStore {
   }
 
   private withPath(record: Omit<DriveSearchRecord, "path">): DriveSearchRecord {
-    const folderPath = record.parentFolderId === undefined ? [] : (this.#records.get(record.parentFolderId)?.path ?? []);
+    const folderPath =
+      record.parentFolderId === undefined
+        ? []
+        : (this.#records.get(record.parentFolderId)?.path ?? []);
     return {
       ...record,
       path: [...folderPath, record.name],
@@ -348,7 +379,9 @@ function actorToDriveActor(actor: Actor): DriveActor {
   };
 }
 
-async function collectSuggestion(chunks: AsyncIterable<{ readonly text: string }>): Promise<string> {
+async function collectSuggestion(
+  chunks: AsyncIterable<{ readonly text: string }>,
+): Promise<string> {
   const text: string[] = [];
   for await (const chunk of chunks) {
     text.push(chunk.text);

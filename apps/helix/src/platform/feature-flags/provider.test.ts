@@ -29,7 +29,7 @@ describe("TenantConfigFeatureFlagProvider", () => {
       config({
         features: {
           ...SYSTEM_TENANT_CONFIG.features,
-          editors_ai_rag: true,
+          assistant_retrieval: true,
         },
       }),
     );
@@ -39,7 +39,7 @@ describe("TenantConfigFeatureFlagProvider", () => {
     });
 
     await expect(
-      provider.getAsync("editors_ai_rag", false, { orgId: "org-1", actorId: "actor-1" }),
+      provider.getAsync("assistant_retrieval", false, { orgId: "org-1", actorId: "actor-1" }),
     ).resolves.toBe(true);
     expect(loadTenantConfig).toHaveBeenCalledWith({
       orgId: "org-1",

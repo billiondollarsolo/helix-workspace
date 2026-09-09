@@ -17,7 +17,9 @@ describe("mail HTML rendering boundary", () => {
 
     expect(result.remoteContentBlocked).toBe(true);
     expect(result.html).toContain("<h1>Weekly update</h1>");
-    expect(result.html).toContain("<table><tr><th>Project</th><td><strong>Helix</strong></td></tr></table>");
+    expect(result.html).toContain(
+      "<table><tr><th>Project</th><td><strong>Helix</strong></td></tr></table>",
+    );
     expect(result.html).toContain('<img alt="Chart"/>');
     expect(result.html).toContain(
       '<a href="#helix-link" data-helix-href="https://example.com/report">Read report</a>',
@@ -25,7 +27,9 @@ describe("mail HTML rendering boundary", () => {
     expect(result.html).toContain("<a>Encoded attack</a>");
     expect(result.html).toContain("<a>Relative attack</a>");
     expect(result.html).toContain("<blockquote>Earlier message</blockquote>");
-    expect(result.html).not.toMatch(/script|onclick|onerror|style|@import|url\s*\(|form|input|target/iu);
+    expect(result.html).not.toMatch(
+      /script|onclick|onerror|style|@import|url\s*\(|form|input|target/iu,
+    );
     expect(result.html).not.toContain("evil.example");
     expect(result.html).not.toContain("document.cookie");
   });

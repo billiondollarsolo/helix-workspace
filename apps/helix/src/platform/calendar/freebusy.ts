@@ -1,3 +1,4 @@
+import { expandCalendarEventOccurrences } from "./recurrence.js";
 import type {
   CalendarAvailabilitySlot,
   CalendarBusyBlock,
@@ -8,7 +9,6 @@ import type {
   CalendarFreeBusyStore,
   CalendarWorkingHours,
 } from "./types.js";
-import { expandCalendarEventOccurrences } from "./recurrence.js";
 
 const minuteMs = 60_000;
 
@@ -56,9 +56,7 @@ export function freeBusyEventsToBusyBlocks(
               endsAt: event.endsAt,
               ...(event.timezone === undefined ? {} : { timezone: event.timezone }),
               ...(event.allDay === undefined ? {} : { allDay: event.allDay }),
-              ...(event.timeSemantics === undefined
-                ? {}
-                : { timeSemantics: event.timeSemantics }),
+              ...(event.timeSemantics === undefined ? {} : { timeSemantics: event.timeSemantics }),
               ...(event.startsLocal === undefined ? {} : { startsLocal: event.startsLocal }),
               ...(event.recurrenceRule === undefined
                 ? {}
@@ -137,11 +135,7 @@ export function findAvailableSlots(input: {
       !calendarSlotWithinWorkingHours(startsAt, endsAt, input.workingHours) ||
       input.actorIds.some(
         (actorId) =>
-          !calendarSlotWithinWorkingHours(
-            startsAt,
-            endsAt,
-            input.workingHoursByActorId?.[actorId],
-          ),
+          !calendarSlotWithinWorkingHours(startsAt, endsAt, input.workingHoursByActorId?.[actorId]),
       )
     ) {
       continue;
@@ -197,7 +191,12 @@ export function calendarSlotWithinWorkingHours(
 function localSlotParts(
   value: Date,
   timezone: string,
-): { readonly date: string; readonly day: number; readonly hour: number; readonly minute: number } | null {
+): {
+  readonly date: string;
+  readonly day: number;
+  readonly hour: number;
+  readonly minute: number;
+} | null {
   try {
     const parts = new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
@@ -218,7 +217,10 @@ function localSlotParts(
     const day = part("day");
     const hour = Number(part("hour"));
     const minute = Number(part("minute"));
-    const weekdayIndex = weekday === undefined ? -1 : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekday);
+    const weekdayIndex =
+      weekday === undefined
+        ? -1
+        : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekday);
     return year === undefined || month === undefined || day === undefined || weekdayIndex < 0
       ? null
       : { date: `${year}-${month}-${day}`, day: weekdayIndex, hour, minute };

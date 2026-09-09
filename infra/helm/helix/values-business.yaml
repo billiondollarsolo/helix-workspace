@@ -1,3 +1,6 @@
+# Business pilot overlay. Workspace packaging stays MVP fail-closed
+# (workspace.* from values.yaml). Full Workspace PKG flip:
+# docs/architecture/ha-rpo-rto.md — do not enable Meet/Calendar/Editors here.
 security:
   tier: business
   overrides:

@@ -4,7 +4,7 @@
    arrow-key navigation; Enter selects; Escape closes. */
 
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { usePlatformSnapshot, type CommandItem, type WebPlatformHost } from "@helix/sdk-web";
 import { Icons, type IconName } from "@/components/icons";
 import { APPS } from "@/components/apps";
@@ -23,6 +23,17 @@ interface PaletteItem {
   action: () => void | Promise<void>;
 }
 
+/* "Create X" entries. Each one currently just lands on the owning surface —
+   the surfaces open their own composer from there. */
+const ACTION_COMMANDS: readonly { id: string; title: string; icon: IconName; route: string }[] = [
+  { id: "new-email", title: "New email", icon: "EditPen", route: "/mail" },
+  { id: "new-doc", title: "New doc", icon: "Doc", route: "/docs" },
+  { id: "new-sheet", title: "New sheet", icon: "Sheet", route: "/sheets" },
+  { id: "new-slide-deck", title: "New slide deck", icon: "Image", route: "/slides" },
+  { id: "schedule-meeting", title: "Schedule meeting", icon: "Calendar", route: "/calendar" },
+  { id: "start-meet-call", title: "Start a Helix Meet call", icon: "Video", route: "/meet" },
+];
+
 export interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
@@ -37,8 +48,8 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
   const [index, setIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
-  const goto = useMemo(
-    () => (route: string) => {
+  const goto = useCallback(
+    (route: string) => {
       void navigate({ to: route });
     },
     [navigate],
@@ -54,48 +65,13 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
         keywords: [app.name, app.route],
         action: () => goto(app.route),
       })),
-      {
-        id: "new-email",
+      ...ACTION_COMMANDS.map((command) => ({
+        id: command.id,
         group: "Actions",
-        title: "New email",
-        icon: "EditPen",
-        action: () => goto("/mail"),
-      },
-      {
-        id: "new-doc",
-        group: "Actions",
-        title: "New doc",
-        icon: "Doc",
-        action: () => goto("/docs"),
-      },
-      {
-        id: "new-sheet",
-        group: "Actions",
-        title: "New sheet",
-        icon: "Sheet",
-        action: () => goto("/sheets"),
-      },
-      {
-        id: "new-slide-deck",
-        group: "Actions",
-        title: "New slide deck",
-        icon: "Image",
-        action: () => goto("/slides"),
-      },
-      {
-        id: "schedule-meeting",
-        group: "Actions",
-        title: "Schedule meeting",
-        icon: "Calendar",
-        action: () => goto("/calendar"),
-      },
-      {
-        id: "start-meet-call",
-        group: "Actions",
-        title: "Start a Helix Meet call",
-        icon: "Video",
-        action: () => goto("/meet"),
-      },
+        title: command.title,
+        icon: command.icon,
+        action: () => goto(command.route),
+      })),
       {
         id: "account-settings",
         group: "Settings",
@@ -283,100 +259,101 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
           aria-label="Commands"
           style={{ overflowY: "auto", flex: 1, padding: 6 }}
         >
-          {Array.from(groups.entries()).map(([group, groupItems]) => (
-            <div
-              key={group}
-              role="group"
-              aria-labelledby={`command-palette-group-${group.toLowerCase().replaceAll(" ", "-")}`}
-            >
-              <div
-                id={`command-palette-group-${group.toLowerCase().replaceAll(" ", "-")}`}
-                style={{
-                  fontSize: "var(--text-chip)",
-                  color: "var(--text-3)",
-                  fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: ".06em",
-                  padding: "8px 12px 4px",
-                }}
-              >
-                {group}
-              </div>
-              {groupItems.map((item) => {
-                const myIndex = runningIndex;
-                runningIndex += 1;
-                const Icon = item.icon ? Icons[item.icon] : null;
-                const active = myIndex === index;
-                const disabled = item.disabledReason !== undefined;
-                return (
-                  <button
-                    key={`${item.group}-${item.title}-${myIndex}`}
-                    id={`command-palette-option-${String(myIndex)}`}
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    aria-disabled={disabled}
-                    tabIndex={-1}
-                    disabled={disabled}
-                    title={item.disabledReason}
-                    onClick={() => {
-                      if (disabled) {
-                        return;
-                      }
-                      void item.action();
-                      onClose();
-                    }}
-                    onMouseEnter={() => setIndex(myIndex)}
-                    style={{
-                      width: "100%",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      padding: "8px 12px",
-                      borderRadius: 6,
-                      fontSize: "var(--text-body-sm)",
-                      textAlign: "left",
-                      background: active && !disabled ? "var(--accent-soft)" : "transparent",
-                      color: disabled ? "var(--text-3)" : active ? "var(--accent)" : "var(--text)",
-                      opacity: disabled ? 0.72 : 1,
-                      cursor: disabled ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    <span
+          {Array.from(groups.entries()).map(([group, groupItems]) => {
+            const groupLabelId = `command-palette-group-${group.toLowerCase().replaceAll(" ", "-")}`;
+            return (
+              <div key={group} role="group" aria-labelledby={groupLabelId}>
+                <div
+                  id={groupLabelId}
+                  style={{
+                    fontSize: "var(--text-chip)",
+                    color: "var(--text-3)",
+                    fontWeight: 600,
+                    textTransform: "uppercase",
+                    letterSpacing: ".06em",
+                    padding: "8px 12px 4px",
+                  }}
+                >
+                  {group}
+                </div>
+                {groupItems.map((item) => {
+                  const myIndex = runningIndex;
+                  runningIndex += 1;
+                  const Icon = item.icon ? Icons[item.icon] : null;
+                  const active = myIndex === index;
+                  const disabled = item.disabledReason !== undefined;
+                  let glyph: ReactNode = null;
+                  if (item.avatar) {
+                    glyph = <Avatar name={item.avatar} size={20} />;
+                  } else if (Icon !== null) {
+                    glyph = <Icon />;
+                  }
+                  return (
+                    <button
+                      key={`${item.group}-${item.title}-${myIndex}`}
+                      id={`command-palette-option-${String(myIndex)}`}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      aria-disabled={disabled}
+                      tabIndex={-1}
+                      disabled={disabled}
+                      title={item.disabledReason}
+                      onClick={() => {
+                        if (disabled) {
+                          return;
+                        }
+                        void item.action();
+                        onClose();
+                      }}
+                      onMouseEnter={() => setIndex(myIndex)}
                       style={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: 4,
-                        background: "var(--surface-2)",
-                        display: "grid",
-                        placeItems: "center",
-                        flexShrink: 0,
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "8px 12px",
+                        borderRadius: 6,
+                        fontSize: "var(--text-body-sm)",
+                        textAlign: "left",
+                        background: active && !disabled ? "var(--accent-soft)" : "transparent",
+                        color: paletteItemColor(disabled, active),
+                        opacity: disabled ? 0.72 : 1,
+                        cursor: disabled ? "not-allowed" : "pointer",
                       }}
                     >
-                      {item.avatar ? (
-                        <Avatar name={item.avatar} size={20} />
-                      ) : Icon ? (
-                        <Icon />
-                      ) : null}
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="truncate">{item.title}</div>
-                      {item.sub || item.disabledReason ? (
-                        <div
-                          className="truncate"
-                          style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
-                        >
-                          {item.disabledReason ?? item.sub}
-                        </div>
-                      ) : null}
-                    </div>
-                    {item.shortcut ? <span className="kbd">{item.shortcut}</span> : null}
-                    {active ? <Icons.ChevronRight /> : null}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
+                      <span
+                        style={{
+                          width: 24,
+                          height: 24,
+                          borderRadius: 4,
+                          background: "var(--surface-2)",
+                          display: "grid",
+                          placeItems: "center",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {glyph}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="truncate">{item.title}</div>
+                        {item.sub || item.disabledReason ? (
+                          <div
+                            className="truncate"
+                            style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
+                          >
+                            {item.disabledReason ?? item.sub}
+                          </div>
+                        ) : null}
+                      </div>
+                      {item.shortcut ? <span className="kbd">{item.shortcut}</span> : null}
+                      {active ? <Icons.ChevronRight /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
           {items.length === 0 ? (
             <div className="empty" role="status" aria-live="polite" style={{ padding: 32 }}>
               <Icons.Search />
@@ -407,6 +384,13 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
       </div>
     </div>
   );
+}
+
+function paletteItemColor(disabled: boolean, active: boolean): string {
+  if (disabled) {
+    return "var(--text-3)";
+  }
+  return active ? "var(--accent)" : "var(--text)";
 }
 
 function firstEnabledIndex(items: readonly PaletteItem[]): number {

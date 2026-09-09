@@ -1,7 +1,7 @@
 {
   "name": "@helix/config",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "exports": {
     "./eslint": "./eslint/index.js",
@@ -13,16 +13,16 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "eslint eslint vitest",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude='dist/**'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@eslint/js": "9.39.4",
-    "eslint-plugin-react-hooks": "5.2.0",
-    "typescript-eslint": "8.59.4"
+    "@eslint/js": "10.0.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "typescript-eslint": "8.65.0"
   },
   "peerDependencies": {
-    "eslint": "^9.15.0"
+    "eslint": "^10.0.0"
   },
   "devDependencies": {
     "typescript": "5.9.3",

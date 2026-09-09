@@ -148,14 +148,18 @@ async function getAccessToken(apiBaseUrl) {
   return parsed.access_token;
 }
 
+function authorizedJsonHeaders(accessToken) {
+  return {
+    accept: "application/json",
+    authorization: `Bearer ${accessToken}`,
+    "content-type": "application/json",
+  };
+}
+
 async function queueMail(apiBaseUrl, accessToken, body) {
   const response = await globalThis.fetch(new URL("/api/tools/mail.send", apiBaseUrl), {
     method: "POST",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
-    },
+    headers: authorizedJsonHeaders(accessToken),
     body: JSON.stringify(body),
   });
   const parsed = await readJsonResponse(response, "mail.send");
@@ -171,11 +175,7 @@ async function approvePending(apiBaseUrl, accessToken, pendingId) {
     new URL(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, apiBaseUrl),
     {
       method: "POST",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${accessToken}`,
-        "content-type": "application/json",
-      },
+      headers: authorizedJsonHeaders(accessToken),
       body: "{}",
     },
   );
@@ -213,11 +213,7 @@ async function waitForOutboundAccepted(apiBaseUrl, accessToken, outboundId, time
 async function getOutbound(apiBaseUrl, accessToken, outboundId) {
   const response = await globalThis.fetch(new URL("/api/tools/mail.outbound.get", apiBaseUrl), {
     method: "POST",
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
-    },
+    headers: authorizedJsonHeaders(accessToken),
     body: JSON.stringify({ id: outboundId }),
   });
   const parsed = await readJsonResponse(response, "mail.outbound.get");

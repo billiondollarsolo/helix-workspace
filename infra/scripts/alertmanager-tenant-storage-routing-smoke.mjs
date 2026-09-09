@@ -58,7 +58,8 @@ async function validateStaticConfig() {
   const alertmanagerProductionConfig = await readFile(alertmanagerProductionConfigPath, "utf8");
   const prometheusConfig = await readFile(prometheusConfigPath, "utf8");
   const storageRules = await readFile(storageRulesPath, "utf8");
-  const observabilityConfig = `${alertmanagerConfig}\n${alertmanagerProductionConfig}\n${prometheusConfig}\n${storageRules}`;
+  const alertmanagerConfigs = `${alertmanagerConfig}\n${alertmanagerProductionConfig}`;
+  const observabilityConfig = `${alertmanagerConfigs}\n${prometheusConfig}\n${storageRules}`;
 
   for (const expected of [
     "helix-tenant-storage-migration-webhook",
@@ -97,7 +98,7 @@ async function validateStaticConfig() {
     "user_agent",
     "ip_address",
   ]) {
-    if (`${alertmanagerConfig}\n${alertmanagerProductionConfig}`.includes(forbidden)) {
+    if (alertmanagerConfigs.includes(forbidden)) {
       throw new Error(
         `Alertmanager routing config must not include high-cardinality or private label ${forbidden}`,
       );

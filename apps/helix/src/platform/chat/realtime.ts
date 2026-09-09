@@ -33,8 +33,12 @@ export interface ChatRoomEventLog {
 }
 
 export interface ChatRoomBus {
-  publish(roomId: string, event: ChatRoomEvent): Promise<void>;
-  subscribe(roomId: string, handler: (event: ChatRoomEvent) => Promise<void>): Promise<Unsubscribe>;
+  publish(orgId: string, roomId: string, event: ChatRoomEvent): Promise<void>;
+  subscribe(
+    orgId: string,
+    roomId: string,
+    handler: (event: ChatRoomEvent) => Promise<void>,
+  ): Promise<Unsubscribe>;
   replay(input: ChatRoomReplayInput): Promise<ChatRoomReplayResult>;
 }
 
@@ -115,6 +119,12 @@ export class EventBusChatRoomBus implements ChatRoomBus {
     private readonly options: {
       readonly subjectPrefix?: string;
       readonly events: ChatRoomEventLog;
+      readonly maxPendingEvents?: number;
+      readonly onSlowConsumer?: (input: {
+        readonly orgId: string;
+        readonly roomId: string;
+      }) => void;
+      readonly onError?: (error: unknown) => void;
       readonly metrics?:
         | {
             recordOperationalEvent(input: {
@@ -135,15 +145,18 @@ export class EventBusChatRoomBus implements ChatRoomBus {
     this.#events = options.events;
   }
 
-  async publish(roomId: string, event: ChatRoomEvent): Promise<void> {
+  async publish(orgId: string, roomId: string, event: ChatRoomEvent): Promise<void> {
     const startedAt = Date.now();
-    assertRoomEvent(roomId, event);
+    assertRoomEvent(orgId, roomId, event);
     const published =
       isDurableChatRoomEvent(event) && !isSequencedChatRoomEvent(event)
         ? await this.#events.append(event)
         : event;
     try {
-      await this.eventBus.publish(roomSubject(roomId, this.options.subjectPrefix), published);
+      await this.eventBus.publish(
+        roomSubject(orgId, roomId, this.options.subjectPrefix),
+        published,
+      );
       this.record("fanout", "success", startedAt);
     } catch (error) {
       this.record("fanout", "error", startedAt);
@@ -152,17 +165,31 @@ export class EventBusChatRoomBus implements ChatRoomBus {
   }
 
   async subscribe(
+    orgId: string,
     roomId: string,
     handler: (event: ChatRoomEvent) => Promise<void>,
   ): Promise<Unsubscribe> {
-    return this.eventBus.subscribe(
-      roomSubject(roomId, this.options.subjectPrefix),
+    const delivery = createOrderedDelivery(
+      handler,
+      positiveInteger(this.options.maxPendingEvents ?? 256),
+      () => this.options.onSlowConsumer?.({ orgId, roomId }),
+      this.options.onError,
+    );
+    const unsubscribe = await this.eventBus.subscribe(
+      roomSubject(orgId, roomId, this.options.subjectPrefix),
       async (event) => {
-        if (isChatRoomEvent(event.payload)) {
-          await handler(event.payload);
-        }
+        if (
+          isChatRoomEvent(event.payload) &&
+          event.payload.orgId === orgId &&
+          event.payload.roomId === roomId
+        )
+          delivery.accept(event.payload);
       },
     );
+    return async () => {
+      await unsubscribe();
+      await delivery.drain();
+    };
   }
 
   async replay(input: ChatRoomReplayInput): Promise<ChatRoomReplayResult> {
@@ -196,32 +223,103 @@ export class EventBusChatRoomBus implements ChatRoomBus {
   }
 }
 
+export class ChatSlowConsumerError extends Error {
+  constructor() {
+    super("Chat realtime consumer exceeded its pending-event limit.");
+    this.name = "ChatSlowConsumerError";
+  }
+}
+
+interface OrderedDelivery {
+  accept(event: ChatRoomEvent): void;
+  drain(): Promise<void>;
+}
+
+function createOrderedDelivery(
+  handler: (event: ChatRoomEvent) => Promise<void>,
+  maxPendingEvents: number,
+  onSlowConsumer: () => void,
+  onError: ((error: unknown) => void) | undefined,
+): OrderedDelivery {
+  let pending = 0;
+  let tail = Promise.resolve();
+  const recentEventIds = new Set<string>();
+  const recentOrder: string[] = [];
+  return {
+    accept(event) {
+      const eventId =
+        typeof event.eventId === "string"
+          ? event.eventId
+          : typeof event.cursor === "number"
+            ? `${event.orgId}:${event.roomId}:${String(event.cursor)}`
+            : undefined;
+      if (eventId !== undefined && recentEventIds.has(eventId)) return;
+      if (pending >= maxPendingEvents) {
+        onSlowConsumer();
+        return;
+      }
+      if (eventId !== undefined) {
+        recentEventIds.add(eventId);
+        recentOrder.push(eventId);
+      }
+      if (recentOrder.length > 4_096) {
+        const oldest = recentOrder.shift();
+        if (oldest !== undefined) recentEventIds.delete(oldest);
+      }
+      pending += 1;
+      tail = tail
+        .catch((error: unknown) => {
+          onError?.(error);
+        })
+        .then(() => handler(event))
+        .catch((error: unknown) => {
+          onError?.(error);
+        })
+        .finally(() => {
+          pending -= 1;
+        });
+    },
+    async drain() {
+      await tail;
+    },
+  };
+}
+
+function positiveInteger(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError("Chat maxPendingEvents must be a positive integer.");
+  }
+  return value;
+}
+
 export class InMemoryChatRoomBus implements ChatRoomBus {
   readonly #handlers = new Map<string, Set<(event: ChatRoomEvent) => Promise<void>>>();
   readonly #events = new InMemoryChatRoomEventLog();
 
-  async publish(roomId: string, event: ChatRoomEvent): Promise<void> {
-    assertRoomEvent(roomId, event);
+  async publish(orgId: string, roomId: string, event: ChatRoomEvent): Promise<void> {
+    assertRoomEvent(orgId, roomId, event);
     const published =
       isDurableChatRoomEvent(event) && !isSequencedChatRoomEvent(event)
         ? await this.#events.append(event)
         : event;
-    const handlers = [...(this.#handlers.get(roomId) ?? [])];
+    const handlers = [...(this.#handlers.get(eventLogKey(orgId, roomId)) ?? [])];
     await Promise.all(handlers.map((handler) => handler(published)));
   }
 
   async subscribe(
+    orgId: string,
     roomId: string,
     handler: (event: ChatRoomEvent) => Promise<void>,
   ): Promise<Unsubscribe> {
     const handlers =
-      this.#handlers.get(roomId) ?? new Set<(event: ChatRoomEvent) => Promise<void>>();
+      this.#handlers.get(eventLogKey(orgId, roomId)) ??
+      new Set<(event: ChatRoomEvent) => Promise<void>>();
     handlers.add(handler);
-    this.#handlers.set(roomId, handlers);
+    this.#handlers.set(eventLogKey(orgId, roomId), handlers);
     return () => {
       handlers.delete(handler);
       if (handlers.size === 0) {
-        this.#handlers.delete(roomId);
+        this.#handlers.delete(eventLogKey(orgId, roomId));
       }
     };
   }
@@ -271,8 +369,8 @@ function isSequencedChatRoomEvent(event: ChatRoomEvent): event is SequencedChatR
   return typeof event.cursor === "number" && Number.isSafeInteger(event.cursor) && event.cursor > 0;
 }
 
-function assertRoomEvent(roomId: string, event: ChatRoomEvent): void {
-  if (event.roomId !== roomId) {
+function assertRoomEvent(orgId: string, roomId: string, event: ChatRoomEvent): void {
+  if (event.orgId !== orgId || event.roomId !== roomId) {
     throw new TypeError("Chat event room does not match its subject.");
   }
 }
@@ -517,8 +615,8 @@ export class InMemoryChatPresenceStore implements ChatPresenceStore {
   }
 }
 
-export function roomSubject(roomId: string, prefix = "chat.room"): string {
-  return `${prefix}.${keyPart(roomId)}.events`;
+export function roomSubject(orgId: string, roomId: string, prefix = "chat"): string {
+  return `${prefix}.org.${keyPart(orgId)}.room.${keyPart(roomId)}.events`;
 }
 
 function presenceEntry(actor: Actor, at: Date, status: ChatPresenceStatus): PresenceEntry {

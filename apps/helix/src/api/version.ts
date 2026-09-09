@@ -18,10 +18,8 @@ function resolvePackageVersion(): string {
   } catch {
     // Fall through to the env/default below.
   }
-  const envVersion = env().HELIX_APP_VERSION;
-  return envVersion !== undefined && envVersion.trim().length > 0
-    ? envVersion.trim()
-    : "0.0.0-dev";
+  const envVersion = env().HELIX_APP_VERSION?.trim() ?? "";
+  return envVersion.length > 0 ? envVersion : "0.0.0-dev";
 }
 
 /** Full semver-ish version string, e.g. `1.4.0` or `0.0.0-dev`. */

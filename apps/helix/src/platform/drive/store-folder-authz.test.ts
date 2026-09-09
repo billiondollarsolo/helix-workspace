@@ -119,30 +119,14 @@ describe("Drive folder mutation authorization", () => {
     expect(trashQuery).toContain("not exists (select 1 from unauthorized)");
   });
 
-  it("uses one recursive lifecycle for Drive and every registered editor", async () => {
+  it("uses the recursive lifecycle for stored files", async () => {
     const objectId = "55555555-5555-4555-8555-555555555555";
     const recording = folderSql("editor", false, [objectId]);
-    const synced: Array<{
-      app: string | null | undefined;
-      action: "trash" | "restore" | "purge";
-      deletedAt: Date | null;
-    }> = [];
-    const store = new PostgresDriveStore(recording.sql, undefined, {
-      trashSync: {
-        has: () => true,
-        async run(app, input) {
-          synced.push({ app, action: input.action, deletedAt: input.deletedAt });
-        },
-      },
-    });
+    const store = new PostgresDriveStore(recording.sql);
 
     await store.trashFolder({ orgId, actorId, folderId });
     await store.restoreFolder({ orgId, actorId, folderId });
 
-    expect(synced).toHaveLength(2);
-    expect(synced[0]).toMatchObject({ app: "sheets" });
-    expect(synced[0]?.deletedAt).toBeInstanceOf(Date);
-    expect(synced[1]).toEqual({ app: "sheets", action: "restore", deletedAt: null });
     const lifecycleQueries = recording.calls.filter((query) =>
       query.includes("with recursive folder_tree"),
     );

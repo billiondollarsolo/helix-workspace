@@ -5,8 +5,9 @@ import type { Actor } from "@helix/sdk-types";
 import { ApiError } from "../../api/api-error.js";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
 import {
-  registerDriveRoutes,
+  registerDriveRoutes as registerDriveRoutesStrict,
   registerDriveShareLinkRoute,
+  type RegisterDriveRoutesOptions,
   type WebDavDriveStore,
 } from "./routes.js";
 
@@ -37,6 +38,13 @@ import type {
   DriveWebDavChange,
   DriveWebDavLock,
 } from "./types.js";
+
+function registerDriveRoutes(
+  app: FastifyInstance,
+  options: RegisterDriveRoutesOptions,
+): Promise<void> {
+  return registerDriveRoutesStrict(app, { ...options, requireTls: false });
+}
 
 const now = new Date("2026-05-20T12:00:00.000Z");
 const orgId = "11111111-1111-4111-8111-111111111111";
@@ -107,7 +115,7 @@ describe("Drive WebDAV routes", () => {
 
     expect(response.statusCode).toBe(207);
     expect(response.headers["content-type"]).toContain("application/xml");
-    expect(response.body).toContain("<D:href>/dav/files/</D:href>");
+    expect(response.body).toContain("<D:href>/v1/dav/files/</D:href>");
     expect(response.body).toContain("<D:displayname>Projects</D:displayname>");
     expect(response.body).toContain("<D:displayname>report.txt</D:displayname>");
     expect(response.body).toContain("<D:getcontenttype>text/plain</D:getcontenttype>");
@@ -378,11 +386,11 @@ describe("Drive WebDAV routes", () => {
     });
 
     expect(propfind.statusCode).toBe(207);
-    expect(propfind.body).toContain("<D:href>/dav/files/Projects/</D:href>");
-    expect(propfind.body).toContain("<D:href>/dav/files/Projects/roadmap.md</D:href>");
-    expect(propfind.body).not.toContain("<D:href>/dav/files/roadmap.md</D:href>");
+    expect(propfind.body).toContain("<D:href>/v1/dav/files/Projects/</D:href>");
+    expect(propfind.body).toContain("<D:href>/v1/dav/files/Projects/roadmap.md</D:href>");
+    expect(propfind.body).not.toContain("<D:href>/v1/dav/files/roadmap.md</D:href>");
     expect(createdNestedFolder.statusCode).toBe(201);
-    expect(createdNestedFolder.headers.location).toBe("/dav/files/Projects/Plans/");
+    expect(createdNestedFolder.headers.location).toBe("/v1/dav/files/Projects/Plans/");
     expect(createdNestedFile.statusCode).toBe(201);
     expect(store.uploads.at(-1)).toMatchObject({
       name: "brief.txt",
@@ -1185,7 +1193,7 @@ class FakeWebDavDriveStore implements WebDavDriveStore {
       return null;
     }
     const folderIds = new Set<string>([input.folderId]);
-    for (let changed = true; changed; ) {
+    for (let changed = true; changed;) {
       changed = false;
       for (const candidate of this.folders) {
         if (
@@ -1237,7 +1245,6 @@ function folderEntry(name: string, id: string, parentId: string | null): DriveEn
     name,
     folderId: parentId,
     ownerActorId: actorId,
-    app: null,
     metadata: {},
     deletedAt: null,
     createdAt: now,
@@ -1261,7 +1268,6 @@ function fileEntry(input: {
     name: input.name,
     folderId: input.folderId ?? null,
     ownerActorId: actorId,
-    app: null,
     mimeType: input.mimeType ?? "text/plain",
     byteSize: input.byteSize ?? content.byteLength,
     sha256: input.sha256 ?? createHash("sha256").update(content).digest("hex"),
@@ -1281,3 +1287,83 @@ function basic(username: string, password: string): string {
 function fileKey(folderIdValue: string | null, name: string): string {
   return `${folderIdValue ?? "root"}:${name}`;
 }
+
+describe("Drive transport hardening", () => {
+  it("rejects plaintext WebDAV before checking app-password credentials", async () => {
+    const app = fastify();
+    await registerDriveRoutesStrict(app, {
+      store: new FakeWebDavDriveStore(),
+      appPasswords: new FakeAppPasswordAuthenticator(),
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/dav/files/report.txt",
+      headers: { authorization: basic("ada@example.test", "read") },
+    });
+
+    expect(response.statusCode).toBe(426);
+    expect(response.headers.upgrade).toBe("TLS/1.2");
+  });
+  it("rate-limits WebDAV authentication before password verification", async () => {
+    const app = fastify();
+    await registerDriveRoutes(app, {
+      store: new FakeWebDavDriveStore(),
+      appPasswords: new FakeAppPasswordAuthenticator(),
+      rateLimiter: {
+        consume: () => ({ allowed: false, retryAfterSeconds: 30 }),
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/dav/files/report.txt",
+      headers: { authorization: basic("ada@example.test", "wrong") },
+    });
+
+    expect(response.statusCode).toBe(429);
+    expect(response.headers["retry-after"]).toBe("30");
+  });
+  it("forces same-origin active content to an opaque attachment", async () => {
+    const app = withApiErrorHandler(fastify());
+    await registerDriveShareLinkRoute(app, {
+      store: {
+        openFileByShareToken: async () => ({
+          entry: fileEntry({
+            id: reportId,
+            name: "payload.svg",
+            content: "<svg><script>alert(1)</script></svg>",
+            mimeType: "image/svg+xml",
+          }),
+          byteSize: Buffer.byteLength("<svg><script>alert(1)</script></svg>"),
+          etag: '"svg"',
+          open: async () => Buffer.from("<svg><script>alert(1)</script></svg>"),
+        }),
+      },
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/drive/share/goodtoken",
+    });
+
+    expect(response.headers["content-type"]).toContain("application/octet-stream");
+    expect(response.headers["content-disposition"]).toContain("attachment");
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["content-security-policy"]).toContain("sandbox");
+  });
+  it("rejects a forged forwarded protocol on an untrusted HTTP connection", async () => {
+    const app = fastify();
+    await registerDriveRoutesStrict(app, {
+      store: new FakeWebDavDriveStore(),
+      appPasswords: new FakeAppPasswordAuthenticator(),
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: "/dav/files/report.txt",
+      headers: { "x-forwarded-proto": "https", authorization: basic("ada@example.test", "read") },
+    });
+    expect(response.statusCode).toBe(426);
+    await app.close();
+  });
+});

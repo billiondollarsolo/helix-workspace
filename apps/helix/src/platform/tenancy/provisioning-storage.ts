@@ -9,7 +9,9 @@ export interface TenantStorageNamespaceRecord {
 }
 
 export interface TenantStorageNamespaceStore {
-  ensureDefaultObjectStorePrefix(input: { readonly orgId: string }): Promise<TenantStorageNamespaceRecord>;
+  ensureDefaultObjectStorePrefix(input: {
+    readonly orgId: string;
+  }): Promise<TenantStorageNamespaceRecord>;
 }
 
 interface TenantStorageNamespaceRow {

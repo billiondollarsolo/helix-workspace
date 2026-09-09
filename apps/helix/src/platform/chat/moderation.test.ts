@@ -2,10 +2,7 @@ import type { Actor } from "@helix/sdk-types";
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import type { AdminConsoleAuditSink } from "../admin/console-shared.js";
-import {
-  registerChatModerationRoutes,
-  type ChatModerationStore,
-} from "./moderation.js";
+import { registerChatModerationRoutes, type ChatModerationStore } from "./moderation.js";
 
 const orgId = "c1300000-0000-4000-8000-000000000001";
 const actorId = "c1300000-0000-4000-8000-000000000011";
@@ -36,7 +33,11 @@ describe("chat moderation routes", () => {
         },
       }),
     ).toMatchObject({ statusCode: 201 });
-    await app.inject({ method: "PUT", url: `/api/chat/moderation/blocks/${subjectId}`, payload: {} });
+    await app.inject({
+      method: "PUT",
+      url: `/api/chat/moderation/blocks/${subjectId}`,
+      payload: {},
+    });
     await app.inject({ method: "DELETE", url: `/api/chat/moderation/blocks/${subjectId}` });
     await app.inject({
       method: "PUT",
@@ -79,7 +80,9 @@ describe("chat moderation routes", () => {
       "appeal",
       "evidence",
     ]);
-    expect(store.calls.every((call) => call.orgId === orgId && call.actorId === actorId)).toBe(true);
+    expect(store.calls.every((call) => call.orgId === orgId && call.actorId === actorId)).toBe(
+      true,
+    );
     expect(audit.verbs).toEqual([
       "chat.moderation.reported",
       "chat.moderation.blocked",

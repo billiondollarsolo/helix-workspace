@@ -45,7 +45,8 @@ describe("mail.spam tool", () => {
   });
 
   it("stamps spam_at when marking spam", async () => {
-    const { tool, updateThreadState } = toolById("mail.spam");
+    const recordSpamFeedback = vi.fn().mockResolvedValue(undefined);
+    const { tool, updateThreadState } = toolById("mail.spam", { recordSpamFeedback });
     const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
     const out = (await tool.handler(
       { threadId: "11111111-1111-1111-1111-111111111111", spam: true },
@@ -54,14 +55,27 @@ describe("mail.spam tool", () => {
     expect(out.ok).toBe(true);
     const update = updateThreadState.mock.calls[0]?.[0];
     expect(update?.patch.spamAt).toBeInstanceOf(Date);
+    expect(recordSpamFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "o1",
+        actorId: "a1",
+        threadId: "11111111-1111-1111-1111-111111111111",
+        label: "spam",
+        source: "user",
+      }),
+    );
   });
 
-  it("clears spam_at when un-marking (spam:false)", async () => {
-    const { tool, updateThreadState } = toolById("mail.spam");
+  it("clears spam_at when un-marking (spam:false) and records ham feedback", async () => {
+    const recordSpamFeedback = vi.fn().mockResolvedValue(undefined);
+    const { tool, updateThreadState } = toolById("mail.spam", { recordSpamFeedback });
     const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
     await tool.handler({ threadId: "11111111-1111-1111-1111-111111111111", spam: false }, ctx);
     const update = updateThreadState.mock.calls[0]?.[0];
     expect(update?.patch.spamAt).toBeNull();
+    expect(recordSpamFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({ label: "ham", source: "user" }),
+    );
   });
 
   it("requires the mail.write scope (not mail.read)", () => {
@@ -166,6 +180,55 @@ describe("mail.outbound.cancel tool", () => {
       ctx,
     )) as { outbound: null };
     expect(out.outbound).toBeNull();
+  });
+});
+
+describe("mail.outbound.retry tool", () => {
+  it("requires confirmation and retries only the actor-owned failed record", async () => {
+    const retryOutbound = vi.fn().mockResolvedValue({
+      id: "out-1",
+      messageId: "m1",
+      threadId: "t1",
+      status: "queued",
+      undoUntil: new Date("2026-01-01T00:00:30.000Z"),
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      orgId: "o1",
+      actorId: "a1",
+      outboxId: "ob2",
+      envelope: {
+        from: { address: "a@b.com" },
+        to: [{ address: "c@d.com" }],
+        cc: [],
+        bcc: [],
+        subject: "s",
+        text: "t",
+        attachments: [],
+      },
+      sentAt: null,
+      cancelledAt: null,
+      failedAt: null,
+      lastError: null,
+      providerMessageId: null,
+      deliveryMetadata: {},
+      updatedAt: new Date(),
+    });
+    const { tool } = toolById("mail.outbound.retry", { retryOutbound });
+    expect(tool.permission).toBe("mail.send");
+    expect(tool.confirmationRequired).toBe(true);
+    const ctx = { actor: { id: "a1", orgId: "o1" } } as never;
+
+    const out = (await tool.handler(
+      { outboundId: "11111111-1111-1111-1111-111111111111" },
+      ctx,
+    )) as { outbound: { status: string } | null };
+
+    expect(retryOutbound).toHaveBeenCalledWith({
+      orgId: "o1",
+      actorId: "a1",
+      id: "11111111-1111-1111-1111-111111111111",
+      outboxSubject: "mail.send",
+    });
+    expect(out.outbound?.status).toBe("queued");
   });
 });
 

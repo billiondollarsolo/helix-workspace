@@ -118,10 +118,10 @@ describe("MailHtmlBody", () => {
         }),
       );
     });
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      "opens outside Helix",
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("opens outside Helix");
+    const openLink = container.querySelector<HTMLAnchorElement>(
+      'a[href="https://example.com/report"]',
     );
-    const openLink = container.querySelector<HTMLAnchorElement>('a[href="https://example.com/report"]');
     expect(openLink?.target).toBe("_blank");
     expect(openLink?.rel).toBe("noopener noreferrer");
   });

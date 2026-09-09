@@ -1913,7 +1913,7 @@ describe("signup route skeleton", () => {
     const clicked = await app.inject({
       method: "POST",
       url: "/api/signup/welcome-event",
-      payload: { event: "action_clicked", action: "try_editor" },
+      payload: { event: "action_clicked", action: "view_files" },
     });
 
     expect(viewed.statusCode).toBe(202);
@@ -1937,7 +1937,7 @@ describe("signup route skeleton", () => {
           actorId: "22222222-2222-4222-8222-222222222222",
           source: "signup",
           step: "welcome_action_clicked",
-          action: "try_editor",
+          action: "view_files",
         },
       },
     ]);

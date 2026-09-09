@@ -17,20 +17,14 @@ import { Route as OauthConsentRouteImport } from './routes/oauth.consent'
 import { Route as SignupInviteRouteImport } from './routes/signup_.invite'
 import { Route as SignupVerifyEmailRouteImport } from './routes/signup_.verify-email'
 import { Route as ShellAdminIndexRouteImport } from './routes/_shell/admin/index'
+import { Route as ShellAdminSectionRouteImport } from './routes/_shell/admin/$section'
 import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
 import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar/index'
 import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
-import { Route as ShellDocsIndexRouteImport } from './routes/_shell/docs/index'
-import { Route as ShellDocsDocumentIdRouteImport } from './routes/_shell/docs/$documentId'
 import { Route as ShellDriveIndexRouteImport } from './routes/_shell/drive/index'
 import { Route as ShellMailIndexRouteImport } from './routes/_shell/mail/index'
-import { Route as ShellMediaObjectIdRouteImport } from './routes/_shell/media/$objectId'
 import { Route as ShellMeetIndexRouteImport } from './routes/_shell/meet/index'
 import { Route as ShellOnboardingIndexRouteImport } from './routes/_shell/onboarding/index'
-import { Route as ShellOpenObjectIdRouteImport } from './routes/_shell/open/$objectId'
-import { Route as ShellPdfObjectIdRouteImport } from './routes/_shell/pdf/$objectId'
-import { Route as ShellSheetsIndexRouteImport } from './routes/_shell/sheets/index'
-import { Route as ShellSlidesIndexRouteImport } from './routes/_shell/slides/index'
 import { Route as ShellWelcomeIndexRouteImport } from './routes/_shell/welcome/index'
 
 const IndexRoute = IndexRouteImport.update({
@@ -72,6 +66,11 @@ const ShellAdminIndexRoute = ShellAdminIndexRouteImport.update({
   path: '/admin/',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellAdminSectionRoute = ShellAdminSectionRouteImport.update({
+  id: '/admin/$section',
+  path: '/admin/$section',
+  getParentRoute: () => ShellRoute,
+} as any)
 const ShellAssistantIndexRoute = ShellAssistantIndexRouteImport.update({
   id: '/assistant/',
   path: '/assistant/',
@@ -87,16 +86,6 @@ const ShellChatIndexRoute = ShellChatIndexRouteImport.update({
   path: '/chat/',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellDocsIndexRoute = ShellDocsIndexRouteImport.update({
-  id: '/docs/',
-  path: '/docs/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellDocsDocumentIdRoute = ShellDocsDocumentIdRouteImport.update({
-  id: '/docs/$documentId',
-  path: '/docs/$documentId',
-  getParentRoute: () => ShellRoute,
-} as any)
 const ShellDriveIndexRoute = ShellDriveIndexRouteImport.update({
   id: '/drive/',
   path: '/drive/',
@@ -107,11 +96,6 @@ const ShellMailIndexRoute = ShellMailIndexRouteImport.update({
   path: '/mail/',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellMediaObjectIdRoute = ShellMediaObjectIdRouteImport.update({
-  id: '/media/$objectId',
-  path: '/media/$objectId',
-  getParentRoute: () => ShellRoute,
-} as any)
 const ShellMeetIndexRoute = ShellMeetIndexRouteImport.update({
   id: '/meet/',
   path: '/meet/',
@@ -120,26 +104,6 @@ const ShellMeetIndexRoute = ShellMeetIndexRouteImport.update({
 const ShellOnboardingIndexRoute = ShellOnboardingIndexRouteImport.update({
   id: '/onboarding/',
   path: '/onboarding/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellOpenObjectIdRoute = ShellOpenObjectIdRouteImport.update({
-  id: '/open/$objectId',
-  path: '/open/$objectId',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellPdfObjectIdRoute = ShellPdfObjectIdRouteImport.update({
-  id: '/pdf/$objectId',
-  path: '/pdf/$objectId',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellSheetsIndexRoute = ShellSheetsIndexRouteImport.update({
-  id: '/sheets/',
-  path: '/sheets/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellSlidesIndexRoute = ShellSlidesIndexRouteImport.update({
-  id: '/slides/',
-  path: '/slides/',
   getParentRoute: () => ShellRoute,
 } as any)
 const ShellWelcomeIndexRoute = ShellWelcomeIndexRouteImport.update({
@@ -155,21 +119,15 @@ export interface FileRoutesByFullPath {
   '/oauth/consent': typeof OauthConsentRoute
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
-  '/docs/$documentId': typeof ShellDocsDocumentIdRoute
-  '/media/$objectId': typeof ShellMediaObjectIdRoute
-  '/open/$objectId': typeof ShellOpenObjectIdRoute
-  '/pdf/$objectId': typeof ShellPdfObjectIdRoute
+  '/admin/$section': typeof ShellAdminSectionRoute
   '/admin/': typeof ShellAdminIndexRoute
   '/assistant/': typeof ShellAssistantIndexRoute
   '/calendar/': typeof ShellCalendarIndexRoute
   '/chat/': typeof ShellChatIndexRoute
-  '/docs/': typeof ShellDocsIndexRoute
   '/drive/': typeof ShellDriveIndexRoute
   '/mail/': typeof ShellMailIndexRoute
   '/meet/': typeof ShellMeetIndexRoute
   '/onboarding/': typeof ShellOnboardingIndexRoute
-  '/sheets/': typeof ShellSheetsIndexRoute
-  '/slides/': typeof ShellSlidesIndexRoute
   '/welcome/': typeof ShellWelcomeIndexRoute
 }
 export interface FileRoutesByTo {
@@ -179,21 +137,15 @@ export interface FileRoutesByTo {
   '/oauth/consent': typeof OauthConsentRoute
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
-  '/docs/$documentId': typeof ShellDocsDocumentIdRoute
-  '/media/$objectId': typeof ShellMediaObjectIdRoute
-  '/open/$objectId': typeof ShellOpenObjectIdRoute
-  '/pdf/$objectId': typeof ShellPdfObjectIdRoute
+  '/admin/$section': typeof ShellAdminSectionRoute
   '/admin': typeof ShellAdminIndexRoute
   '/assistant': typeof ShellAssistantIndexRoute
   '/calendar': typeof ShellCalendarIndexRoute
   '/chat': typeof ShellChatIndexRoute
-  '/docs': typeof ShellDocsIndexRoute
   '/drive': typeof ShellDriveIndexRoute
   '/mail': typeof ShellMailIndexRoute
   '/meet': typeof ShellMeetIndexRoute
   '/onboarding': typeof ShellOnboardingIndexRoute
-  '/sheets': typeof ShellSheetsIndexRoute
-  '/slides': typeof ShellSlidesIndexRoute
   '/welcome': typeof ShellWelcomeIndexRoute
 }
 export interface FileRoutesById {
@@ -205,21 +157,15 @@ export interface FileRoutesById {
   '/oauth/consent': typeof OauthConsentRoute
   '/signup_/invite': typeof SignupInviteRoute
   '/signup_/verify-email': typeof SignupVerifyEmailRoute
-  '/_shell/docs/$documentId': typeof ShellDocsDocumentIdRoute
-  '/_shell/media/$objectId': typeof ShellMediaObjectIdRoute
-  '/_shell/open/$objectId': typeof ShellOpenObjectIdRoute
-  '/_shell/pdf/$objectId': typeof ShellPdfObjectIdRoute
+  '/_shell/admin/$section': typeof ShellAdminSectionRoute
   '/_shell/admin/': typeof ShellAdminIndexRoute
   '/_shell/assistant/': typeof ShellAssistantIndexRoute
   '/_shell/calendar/': typeof ShellCalendarIndexRoute
   '/_shell/chat/': typeof ShellChatIndexRoute
-  '/_shell/docs/': typeof ShellDocsIndexRoute
   '/_shell/drive/': typeof ShellDriveIndexRoute
   '/_shell/mail/': typeof ShellMailIndexRoute
   '/_shell/meet/': typeof ShellMeetIndexRoute
   '/_shell/onboarding/': typeof ShellOnboardingIndexRoute
-  '/_shell/sheets/': typeof ShellSheetsIndexRoute
-  '/_shell/slides/': typeof ShellSlidesIndexRoute
   '/_shell/welcome/': typeof ShellWelcomeIndexRoute
 }
 export interface FileRouteTypes {
@@ -231,21 +177,15 @@ export interface FileRouteTypes {
     | '/oauth/consent'
     | '/signup/invite'
     | '/signup/verify-email'
-    | '/docs/$documentId'
-    | '/media/$objectId'
-    | '/open/$objectId'
-    | '/pdf/$objectId'
+    | '/admin/$section'
     | '/admin/'
     | '/assistant/'
     | '/calendar/'
     | '/chat/'
-    | '/docs/'
     | '/drive/'
     | '/mail/'
     | '/meet/'
     | '/onboarding/'
-    | '/sheets/'
-    | '/slides/'
     | '/welcome/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -255,21 +195,15 @@ export interface FileRouteTypes {
     | '/oauth/consent'
     | '/signup/invite'
     | '/signup/verify-email'
-    | '/docs/$documentId'
-    | '/media/$objectId'
-    | '/open/$objectId'
-    | '/pdf/$objectId'
+    | '/admin/$section'
     | '/admin'
     | '/assistant'
     | '/calendar'
     | '/chat'
-    | '/docs'
     | '/drive'
     | '/mail'
     | '/meet'
     | '/onboarding'
-    | '/sheets'
-    | '/slides'
     | '/welcome'
   id:
     | '__root__'
@@ -280,21 +214,15 @@ export interface FileRouteTypes {
     | '/oauth/consent'
     | '/signup_/invite'
     | '/signup_/verify-email'
-    | '/_shell/docs/$documentId'
-    | '/_shell/media/$objectId'
-    | '/_shell/open/$objectId'
-    | '/_shell/pdf/$objectId'
+    | '/_shell/admin/$section'
     | '/_shell/admin/'
     | '/_shell/assistant/'
     | '/_shell/calendar/'
     | '/_shell/chat/'
-    | '/_shell/docs/'
     | '/_shell/drive/'
     | '/_shell/mail/'
     | '/_shell/meet/'
     | '/_shell/onboarding/'
-    | '/_shell/sheets/'
-    | '/_shell/slides/'
     | '/_shell/welcome/'
   fileRoutesById: FileRoutesById
 }
@@ -366,6 +294,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellAdminIndexRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/admin/$section': {
+      id: '/_shell/admin/$section'
+      path: '/admin/$section'
+      fullPath: '/admin/$section'
+      preLoaderRoute: typeof ShellAdminSectionRouteImport
+      parentRoute: typeof ShellRoute
+    }
     '/_shell/assistant/': {
       id: '/_shell/assistant/'
       path: '/assistant'
@@ -387,20 +322,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellChatIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/docs/': {
-      id: '/_shell/docs/'
-      path: '/docs'
-      fullPath: '/docs/'
-      preLoaderRoute: typeof ShellDocsIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/docs/$documentId': {
-      id: '/_shell/docs/$documentId'
-      path: '/docs/$documentId'
-      fullPath: '/docs/$documentId'
-      preLoaderRoute: typeof ShellDocsDocumentIdRouteImport
-      parentRoute: typeof ShellRoute
-    }
     '/_shell/drive/': {
       id: '/_shell/drive/'
       path: '/drive'
@@ -413,13 +334,6 @@ declare module '@tanstack/react-router' {
       path: '/mail'
       fullPath: '/mail/'
       preLoaderRoute: typeof ShellMailIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/media/$objectId': {
-      id: '/_shell/media/$objectId'
-      path: '/media/$objectId'
-      fullPath: '/media/$objectId'
-      preLoaderRoute: typeof ShellMediaObjectIdRouteImport
       parentRoute: typeof ShellRoute
     }
     '/_shell/meet/': {
@@ -436,34 +350,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellOnboardingIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/open/$objectId': {
-      id: '/_shell/open/$objectId'
-      path: '/open/$objectId'
-      fullPath: '/open/$objectId'
-      preLoaderRoute: typeof ShellOpenObjectIdRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/pdf/$objectId': {
-      id: '/_shell/pdf/$objectId'
-      path: '/pdf/$objectId'
-      fullPath: '/pdf/$objectId'
-      preLoaderRoute: typeof ShellPdfObjectIdRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/sheets/': {
-      id: '/_shell/sheets/'
-      path: '/sheets'
-      fullPath: '/sheets/'
-      preLoaderRoute: typeof ShellSheetsIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/slides/': {
-      id: '/_shell/slides/'
-      path: '/slides'
-      fullPath: '/slides/'
-      preLoaderRoute: typeof ShellSlidesIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
     '/_shell/welcome/': {
       id: '/_shell/welcome/'
       path: '/welcome'
@@ -475,40 +361,28 @@ declare module '@tanstack/react-router' {
 }
 
 interface ShellRouteChildren {
-  ShellDocsDocumentIdRoute: typeof ShellDocsDocumentIdRoute
-  ShellMediaObjectIdRoute: typeof ShellMediaObjectIdRoute
-  ShellOpenObjectIdRoute: typeof ShellOpenObjectIdRoute
-  ShellPdfObjectIdRoute: typeof ShellPdfObjectIdRoute
+  ShellAdminSectionRoute: typeof ShellAdminSectionRoute
   ShellAdminIndexRoute: typeof ShellAdminIndexRoute
   ShellAssistantIndexRoute: typeof ShellAssistantIndexRoute
   ShellCalendarIndexRoute: typeof ShellCalendarIndexRoute
   ShellChatIndexRoute: typeof ShellChatIndexRoute
-  ShellDocsIndexRoute: typeof ShellDocsIndexRoute
   ShellDriveIndexRoute: typeof ShellDriveIndexRoute
   ShellMailIndexRoute: typeof ShellMailIndexRoute
   ShellMeetIndexRoute: typeof ShellMeetIndexRoute
   ShellOnboardingIndexRoute: typeof ShellOnboardingIndexRoute
-  ShellSheetsIndexRoute: typeof ShellSheetsIndexRoute
-  ShellSlidesIndexRoute: typeof ShellSlidesIndexRoute
   ShellWelcomeIndexRoute: typeof ShellWelcomeIndexRoute
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
-  ShellDocsDocumentIdRoute: ShellDocsDocumentIdRoute,
-  ShellMediaObjectIdRoute: ShellMediaObjectIdRoute,
-  ShellOpenObjectIdRoute: ShellOpenObjectIdRoute,
-  ShellPdfObjectIdRoute: ShellPdfObjectIdRoute,
+  ShellAdminSectionRoute: ShellAdminSectionRoute,
   ShellAdminIndexRoute: ShellAdminIndexRoute,
   ShellAssistantIndexRoute: ShellAssistantIndexRoute,
   ShellCalendarIndexRoute: ShellCalendarIndexRoute,
   ShellChatIndexRoute: ShellChatIndexRoute,
-  ShellDocsIndexRoute: ShellDocsIndexRoute,
   ShellDriveIndexRoute: ShellDriveIndexRoute,
   ShellMailIndexRoute: ShellMailIndexRoute,
   ShellMeetIndexRoute: ShellMeetIndexRoute,
   ShellOnboardingIndexRoute: ShellOnboardingIndexRoute,
-  ShellSheetsIndexRoute: ShellSheetsIndexRoute,
-  ShellSlidesIndexRoute: ShellSlidesIndexRoute,
   ShellWelcomeIndexRoute: ShellWelcomeIndexRoute,
 }
 

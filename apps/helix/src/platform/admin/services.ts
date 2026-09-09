@@ -6,30 +6,21 @@ import type {
   AdminServiceRuntimeStatus,
   AdminServiceRuntimeStatusStore,
 } from "./service-status.js";
-
 const adminConfigReadScope = "admin.config.read";
 const adminConfigWriteScope = "admin.config.write";
 const adminServicesReadScope = "admin.services.read";
-
 const serviceIdSchema = z
   .string()
   .trim()
   .min(1)
   .max(64)
   .regex(/^[a-z][a-z0-9-]*$/u);
-
 const serviceParamsSchema = z.object({
   serviceId: serviceIdSchema,
 });
-
 export type AdminServiceStatus = "ready" | "configured" | "missing" | "degraded" | "disabled";
 export type AdminServiceCategory =
-  | "workspace"
-  | "communication"
-  | "platform"
-  | "security"
-  | "integrations"
-  | "ai";
+  "workspace" | "communication" | "platform" | "security" | "integrations" | "ai";
 export type AdminDependencyType =
   | "database"
   | "object-storage"
@@ -39,7 +30,6 @@ export type AdminDependencyType =
   | "external-service"
   | "secret"
   | "runtime";
-
 export interface AdminServiceDependency {
   readonly id: string;
   readonly label: string;
@@ -49,7 +39,6 @@ export interface AdminServiceDependency {
   readonly envKeys: readonly string[];
   readonly evidence: string;
 }
-
 export interface AdminServiceConfigItem {
   readonly key: string;
   readonly label: string;
@@ -59,7 +48,6 @@ export interface AdminServiceConfigItem {
   readonly status: AdminServiceStatus;
   readonly evidence: string;
 }
-
 export interface AdminServiceAction {
   readonly id: string;
   readonly label: string;
@@ -68,7 +56,6 @@ export interface AdminServiceAction {
   readonly requiredScope: string;
   readonly destructive: boolean;
 }
-
 export interface AdminServiceSurface {
   readonly id: string;
   readonly label: string;
@@ -93,17 +80,14 @@ export interface AdminServiceSurface {
   readonly adminActions: readonly AdminServiceAction[];
   readonly metrics: readonly string[];
 }
-
 export interface AdminServicesResponse {
   readonly generatedAt: string;
   readonly services: readonly AdminServiceSurface[];
 }
-
 export interface AdminServiceResponse {
   readonly generatedAt: string;
   readonly service: AdminServiceSurface;
 }
-
 export interface AdminServiceReadinessResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
@@ -112,13 +96,11 @@ export interface AdminServiceReadinessResponse {
   readonly evidence: string;
   readonly dependencies: readonly AdminServiceDependency[];
 }
-
 export interface AdminServiceConfigurationResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
   readonly configuration: readonly AdminServiceConfigItem[];
 }
-
 export interface AdminServiceCapabilitiesResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
@@ -132,7 +114,6 @@ export interface AdminServiceCapabilitiesResponse {
     readonly realtime: readonly string[];
   };
 }
-
 export interface AdminServiceToolsResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
@@ -140,13 +121,11 @@ export interface AdminServiceToolsResponse {
   readonly scopes: readonly string[];
   readonly adminScopes: readonly string[];
 }
-
 export interface AdminServiceActionsResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
   readonly actions: readonly AdminServiceAction[];
 }
-
 export interface AdminServiceRoutesResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
@@ -156,56 +135,47 @@ export interface AdminServiceRoutesResponse {
     readonly realtime: readonly string[];
   };
 }
-
 export interface AdminServiceScopesResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
   readonly scopes: readonly string[];
   readonly adminScopes: readonly string[];
 }
-
 export interface AdminServiceDataResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
   readonly dataStores: readonly string[];
 }
-
 export interface AdminServiceDependenciesResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
   readonly dependencies: readonly AdminServiceDependency[];
 }
-
 export interface AdminServiceMetricsResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
   readonly metrics: readonly string[];
 }
-
 export interface AdminServiceAiResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
   readonly aiSlots: readonly string[];
   readonly enrichments: readonly string[];
 }
-
 export interface AdminServiceOperationsResponse {
   readonly generatedAt: string;
   readonly serviceId: string;
   readonly actions: readonly AdminServiceAction[];
   readonly metrics: readonly string[];
 }
-
 export interface AdminServicesStatusResponse {
   readonly generatedAt: string;
   readonly statuses: readonly AdminServiceRuntimeStatus[];
 }
-
 export interface AdminServiceStatusResponse {
   readonly generatedAt: string;
   readonly status: AdminServiceRuntimeStatus;
 }
-
 interface AdminServiceDefinition {
   readonly id: string;
   readonly label: string;
@@ -227,7 +197,6 @@ interface AdminServiceDefinition {
   readonly adminActions: readonly AdminServiceAction[];
   readonly metrics: readonly string[];
 }
-
 interface AdminDependencyDefinition {
   readonly id: string;
   readonly label: string;
@@ -237,7 +206,6 @@ interface AdminDependencyDefinition {
   readonly evidenceWhenConfigured: string;
   readonly evidenceWhenMissing: string;
 }
-
 interface AdminConfigDefinition {
   readonly key: string;
   readonly label: string;
@@ -245,32 +213,26 @@ interface AdminConfigDefinition {
   readonly required: boolean;
   readonly sensitive?: boolean | undefined;
 }
-
 export interface AdminServicesCatalogOptions {
   readonly env: NodeJS.ProcessEnv;
   readonly now?: (() => Date) | undefined;
 }
-
 export class AdminServicesCatalog {
   readonly #env: NodeJS.ProcessEnv;
   readonly #now: () => Date;
-
   constructor(options: AdminServicesCatalogOptions) {
     this.#env = options.env;
     this.#now = options.now ?? (() => new Date());
   }
-
   list(): AdminServicesResponse {
     return {
       generatedAt: this.generatedAt(),
       services: serviceDefinitions.map((definition) => renderServiceSurface(definition, this.#env)),
     };
   }
-
   generatedAt(): string {
     return this.#now().toISOString();
   }
-
   get(serviceId: string): AdminServiceResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -281,7 +243,6 @@ export class AdminServicesCatalog {
       service,
     };
   }
-
   readiness(serviceId: string): AdminServiceReadinessResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -296,7 +257,6 @@ export class AdminServicesCatalog {
       dependencies: service.dependencies,
     };
   }
-
   configuration(serviceId: string): AdminServiceConfigurationResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -308,7 +268,6 @@ export class AdminServicesCatalog {
       configuration: service.configuration,
     };
   }
-
   capabilities(serviceId: string): AdminServiceCapabilitiesResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -328,7 +287,6 @@ export class AdminServicesCatalog {
       },
     };
   }
-
   tools(serviceId: string): AdminServiceToolsResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -342,7 +300,6 @@ export class AdminServicesCatalog {
       adminScopes: service.adminScopes,
     };
   }
-
   actions(serviceId: string): AdminServiceActionsResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -354,7 +311,6 @@ export class AdminServicesCatalog {
       actions: service.adminActions,
     };
   }
-
   routes(serviceId: string): AdminServiceRoutesResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -370,7 +326,6 @@ export class AdminServicesCatalog {
       },
     };
   }
-
   scopes(serviceId: string): AdminServiceScopesResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -383,7 +338,6 @@ export class AdminServicesCatalog {
       adminScopes: service.adminScopes,
     };
   }
-
   data(serviceId: string): AdminServiceDataResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -395,7 +349,6 @@ export class AdminServicesCatalog {
       dataStores: service.dataStores,
     };
   }
-
   dependencies(serviceId: string): AdminServiceDependenciesResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -407,7 +360,6 @@ export class AdminServicesCatalog {
       dependencies: service.dependencies,
     };
   }
-
   metrics(serviceId: string): AdminServiceMetricsResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -419,7 +371,6 @@ export class AdminServicesCatalog {
       metrics: service.metrics,
     };
   }
-
   ai(serviceId: string): AdminServiceAiResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -432,7 +383,6 @@ export class AdminServicesCatalog {
       enrichments: service.enrichments,
     };
   }
-
   operations(serviceId: string): AdminServiceOperationsResponse | null {
     const service = this.#surface(serviceId);
     if (service === null) {
@@ -445,7 +395,6 @@ export class AdminServicesCatalog {
       metrics: service.metrics,
     };
   }
-
   #surface(serviceId: string): AdminServiceSurface | null {
     const definition = serviceDefinitions.find((service) => service.id === serviceId);
     if (definition === undefined) {
@@ -454,13 +403,11 @@ export class AdminServicesCatalog {
     return renderServiceSurface(definition, this.#env);
   }
 }
-
 export interface RegisterAdminServicesRoutesOptions {
   readonly catalog: AdminServicesCatalog;
   readonly statusStore?: AdminServiceRuntimeStatusStore | undefined;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
 }
-
 export async function registerAdminServicesRoutes(
   app: FastifyInstance,
   options: RegisterAdminServicesRoutesOptions,
@@ -472,13 +419,11 @@ export async function registerAdminServicesRoutes(
     }
     return options.catalog.list();
   });
-
   app.get("/api/admin/services/status", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const services = options.catalog.list().services;
     const statusStore = options.statusStore;
     const statuses =
@@ -491,46 +436,39 @@ export async function registerAdminServicesRoutes(
               ),
             )
           ).filter((status): status is AdminServiceRuntimeStatus => status !== null);
-
     return {
       generatedAt: options.catalog.generatedAt(),
       statuses,
     } satisfies AdminServicesStatusResponse;
   });
-
   app.get("/api/admin/services/:serviceId", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const service = options.catalog.get(parsed.data.serviceId);
     if (service === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return service;
   });
-
   app.get("/api/admin/services/:serviceId/status", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const service = options.catalog.get(parsed.data.serviceId);
     if (service === null) {
       return reply.code(404).send({ error: "Admin service not found." });
@@ -538,7 +476,6 @@ export async function registerAdminServicesRoutes(
     if (options.statusStore === undefined) {
       return reply.code(503).send({ error: "Admin service runtime status is not configured." });
     }
-
     const status = await options.statusStore.get({
       serviceId: parsed.data.serviceId,
       orgId: actor.orgId,
@@ -546,246 +483,209 @@ export async function registerAdminServicesRoutes(
     if (status === null) {
       return reply.code(404).send({ error: "Admin service runtime status not found." });
     }
-
     return {
       generatedAt: options.catalog.generatedAt(),
       status,
     } satisfies AdminServiceStatusResponse;
   });
-
   app.get("/api/admin/services/:serviceId/readiness", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const readiness = options.catalog.readiness(parsed.data.serviceId);
     if (readiness === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return readiness;
   });
-
   app.get("/api/admin/services/:serviceId/config", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const configuration = options.catalog.configuration(parsed.data.serviceId);
     if (configuration === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return configuration;
   });
-
   app.get("/api/admin/services/:serviceId/capabilities", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const capabilities = options.catalog.capabilities(parsed.data.serviceId);
     if (capabilities === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return capabilities;
   });
-
   app.get("/api/admin/services/:serviceId/tools", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const tools = options.catalog.tools(parsed.data.serviceId);
     if (tools === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return tools;
   });
-
   app.get("/api/admin/services/:serviceId/actions", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const actions = options.catalog.actions(parsed.data.serviceId);
     if (actions === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return actions;
   });
-
   app.get("/api/admin/services/:serviceId/routes", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const routes = options.catalog.routes(parsed.data.serviceId);
     if (routes === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return routes;
   });
-
   app.get("/api/admin/services/:serviceId/scopes", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const scopes = options.catalog.scopes(parsed.data.serviceId);
     if (scopes === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return scopes;
   });
-
   app.get("/api/admin/services/:serviceId/data", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const data = options.catalog.data(parsed.data.serviceId);
     if (data === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return data;
   });
-
   app.get("/api/admin/services/:serviceId/dependencies", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const dependencies = options.catalog.dependencies(parsed.data.serviceId);
     if (dependencies === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return dependencies;
   });
-
   app.get("/api/admin/services/:serviceId/metrics", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const metrics = options.catalog.metrics(parsed.data.serviceId);
     if (metrics === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return metrics;
   });
-
   app.get("/api/admin/services/:serviceId/ai", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const ai = options.catalog.ai(parsed.data.serviceId);
     if (ai === null) {
       return reply.code(404).send({ error: "Admin service not found." });
     }
     return ai;
   });
-
   app.get("/api/admin/services/:serviceId/operations", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadAdminServices(actor)) {
       return reply.code(403).send(permissionDeniedResponse());
     }
-
     const parsed = serviceParamsSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply
         .code(400)
         .send({ error: "Invalid admin service identifier.", issues: parsed.error.issues });
     }
-
     const operations = options.catalog.operations(parsed.data.serviceId);
     if (operations === null) {
       return reply.code(404).send({ error: "Admin service not found." });
@@ -793,7 +693,6 @@ export async function registerAdminServicesRoutes(
     return operations;
   });
 }
-
 export function canReadAdminServices(actor: Actor): boolean {
   const scopes = actor.scopes ?? [];
   return (
@@ -804,7 +703,6 @@ export function canReadAdminServices(actor: Actor): boolean {
     scopes.includes("admin.*")
   );
 }
-
 function renderServiceSurface(
   definition: AdminServiceDefinition,
   env: NodeJS.ProcessEnv,
@@ -843,13 +741,11 @@ function renderServiceSurface(
     metrics: definition.metrics,
   };
 }
-
 function versionedRoute(route: string): string {
   return route === HELIX_API_VERSION_PREFIX || route.startsWith(`${HELIX_API_VERSION_PREFIX}/`)
     ? route
     : `${HELIX_API_VERSION_PREFIX}${route}`;
 }
-
 function renderDependency(
   definition: AdminDependencyDefinition,
   env: NodeJS.ProcessEnv,
@@ -865,7 +761,6 @@ function renderDependency(
     evidence: configured ? definition.evidenceWhenConfigured : definition.evidenceWhenMissing,
   };
 }
-
 function renderConfigItem(
   definition: AdminConfigDefinition,
   env: NodeJS.ProcessEnv,
@@ -885,7 +780,6 @@ function renderConfigItem(
         : "Optional runtime configuration is not set.",
   };
 }
-
 function serviceStatus(
   dependencies: readonly AdminServiceDependency[],
   configuration: readonly AdminServiceConfigItem[],
@@ -901,7 +795,6 @@ function serviceStatus(
   }
   return "ready";
 }
-
 function serviceEvidence(status: AdminServiceStatus, label: string): string {
   switch (status) {
     case "ready":
@@ -916,7 +809,6 @@ function serviceEvidence(status: AdminServiceStatus, label: string): string {
       return `${label} is disabled by runtime configuration.`;
   }
 }
-
 function serviceEnabled(serviceId: string, env: NodeJS.ProcessEnv): boolean {
   const normalized = serviceId.toUpperCase().replaceAll("-", "_");
   return envFlag(
@@ -924,7 +816,6 @@ function serviceEnabled(serviceId: string, env: NodeJS.ProcessEnv): boolean {
     true,
   );
 }
-
 function anyConfigured(keys: readonly string[], env: NodeJS.ProcessEnv): boolean {
   if (keys.length === 0) {
     return true;
@@ -934,7 +825,6 @@ function anyConfigured(keys: readonly string[], env: NodeJS.ProcessEnv): boolean
     return value !== undefined && value.trim().length > 0;
   });
 }
-
 function envFlag(value: string | undefined, defaultValue: boolean): boolean {
   if (value === undefined || value.trim().length === 0) {
     return defaultValue;
@@ -942,7 +832,6 @@ function envFlag(value: string | undefined, defaultValue: boolean): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
-
 function permissionDeniedResponse(): {
   readonly error: string;
   readonly requiredScope: typeof adminConfigReadScope;
@@ -952,7 +841,6 @@ function permissionDeniedResponse(): {
     requiredScope: adminConfigReadScope,
   };
 }
-
 function dependency(
   input: Omit<AdminDependencyDefinition, "evidenceWhenConfigured" | "evidenceWhenMissing"> & {
     readonly configured?: string | undefined;
@@ -965,15 +853,12 @@ function dependency(
     evidenceWhenMissing: input.missing ?? `${input.label} runtime configuration is missing.`,
   };
 }
-
 function config(input: AdminConfigDefinition): AdminConfigDefinition {
   return input;
 }
-
 function action(input: AdminServiceAction): AdminServiceAction {
   return input;
 }
-
 const postgresDependency = dependency({
   id: "postgres",
   label: "Postgres",
@@ -981,7 +866,6 @@ const postgresDependency = dependency({
   required: true,
   envAnyOf: ["DATABASE_URL"],
 });
-
 const natsDependency = dependency({
   id: "nats",
   label: "NATS event bus",
@@ -990,7 +874,6 @@ const natsDependency = dependency({
   envAnyOf: ["NATS_URL"],
   missing: "NATS_URL is not set; in-memory event bus is active for this process.",
 });
-
 const redisDependency = dependency({
   id: "redis",
   label: "Redis cache",
@@ -999,7 +882,6 @@ const redisDependency = dependency({
   envAnyOf: ["REDIS_URL"],
   missing: "REDIS_URL is not set; ephemeral in-process fallbacks are active.",
 });
-
 const searchDependency = dependency({
   id: "meilisearch",
   label: "Meilisearch",
@@ -1009,7 +891,6 @@ const searchDependency = dependency({
   missing:
     "No Meilisearch URL is configured; keyword search falls back to store-backed behavior where available.",
 });
-
 const storageDependency = dependency({
   id: "rustfs",
   label: "RustFS / S3-compatible storage",
@@ -1019,14 +900,12 @@ const storageDependency = dependency({
   missing:
     "RUSTFS_ENDPOINT is not set; object storage-backed features use in-process fallbacks where available.",
 });
-
 const publicBaseUrlConfig = config({
   key: "publicBaseUrl",
   label: "Public base URL",
   envAnyOf: ["PUBLIC_BASE_URL", "HELIX_PUBLIC_URL"],
   required: false,
 });
-
 const serviceDefinitions: readonly AdminServiceDefinition[] = [
   {
     id: "mail",
@@ -1245,7 +1124,7 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   {
     id: "drive",
     label: "Drive",
-    summary: "Files, folders, versions, previews, sharing, trash, and Drive search.",
+    summary: "Files, folders, versions, sharing, trash, and Drive search.",
     category: "workspace",
     scopes: [
       "drive.read",
@@ -1282,7 +1161,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       "webdav-locking",
       "folder-tree",
       "file-versioning",
-      "preview-renderer",
       "sharing",
       "trash-restore",
       "indexer:drive",
@@ -1290,18 +1168,7 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
     ],
     consumes: ["storage", "search-engine", "event-bus", "ai-router"],
     dataStores: ["objects", "drive_folders", "drive_versions", "permissions", "activity"],
-    dependencies: [
-      postgresDependency,
-      storageDependency,
-      searchDependency,
-      dependency({
-        id: "office-preview",
-        label: "Office preview renderer",
-        type: "external-service",
-        required: false,
-        envAnyOf: ["HELIX_DRIVE_OFFICE_PREVIEW_URL"],
-      }),
-    ],
+    dependencies: [postgresDependency, storageDependency, searchDependency],
     configuration: [
       config({
         key: "storageBucket",
@@ -1315,12 +1182,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         envAnyOf: ["RUSTFS_SERVER_SIDE_ENCRYPTION"],
         required: false,
       }),
-      config({
-        key: "officePreviewEndpoint",
-        label: "Office preview endpoint",
-        envAnyOf: ["HELIX_DRIVE_OFFICE_PREVIEW_URL"],
-        required: false,
-      }),
     ],
     aiSlots: ["drive.summarize-file", "drive.describe-image"],
     enrichments: ["drive.auto-tag"],
@@ -1329,49 +1190,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       'helix_tool_invocations_total{tool_id="drive.*"}',
       'helix_tool_invocation_duration_seconds{tool_id="drive.*"}',
       'helix_permission_checks_total{resource_type="tool",action="drive.*"}',
-      'helix_audit_activity_total{object_type="tool"}',
-    ],
-  },
-  {
-    id: "docs",
-    label: "Docs",
-    summary: "Collaborative documents, Yjs sync, comments, export, and document search.",
-    category: "workspace",
-    scopes: ["docs.read", "docs.write", "docs.comment", "drive.read", "drive.write"],
-    adminScopes: ["docs.admin", adminConfigReadScope],
-    uiRoutes: ["/docs"],
-    apiRoutes: ["/api/tools", "/api/tools/:toolId", "/api/tools/docs.*", "/openapi.json", "/mcp"],
-    realtimeRoutes: ["/sync/docs/:docId"],
-    tools: [
-      "docs.create",
-      "docs.list",
-      "docs.update-title",
-      "docs.get",
-      "docs.export",
-      "docs.comment.create",
-    ],
-    capabilities: [
-      "yjs-sync",
-      "editor:tiptap",
-      "comments",
-      "export:markdown",
-      "export:pdf",
-      "export:docx",
-      "indexer:docs",
-      "exporter:docs",
-      "enrichment:docs.outline",
-    ],
-    consumes: ["event-bus", "search-engine", "ai-router", "drive"],
-    dataStores: ["docs_documents", "docs_updates", "docs_comments", "threads", "messages"],
-    dependencies: [postgresDependency, natsDependency, searchDependency],
-    configuration: [],
-    aiSlots: ["docs.smart-write", "docs.summarize", "docs.translate"],
-    enrichments: ["docs.outline"],
-    adminActions: [],
-    metrics: [
-      'helix_tool_invocations_total{tool_id="docs.*"}',
-      'helix_tool_invocation_duration_seconds{tool_id="docs.*"}',
-      'helix_permission_checks_total{resource_type="tool",action="docs.*"}',
       'helix_audit_activity_total{object_type="tool"}',
     ],
   },
@@ -1572,7 +1390,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       "threads",
       "messages",
       "cal_events",
-      "docs_documents",
     ],
     dependencies: [postgresDependency, searchDependency, natsDependency],
     configuration: [
@@ -1617,8 +1434,7 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   {
     id: "storage",
     label: "Storage",
-    summary:
-      "S3-compatible object storage for Drive files, mail attachments, previews, and recordings.",
+    summary: "S3-compatible object storage for Drive files, mail attachments and recordings.",
     category: "platform",
     scopes: ["storage.read", "storage.write"],
     adminScopes: ["storage.admin", adminConfigReadScope],
@@ -1767,18 +1583,8 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         required: false,
       }),
     ],
-    aiSlots: [
-      "assistant.chat",
-      "mail.compose-help",
-      "docs.smart-write",
-      "calendar.suggest-meeting-time",
-    ],
-    enrichments: [
-      "mail.entity-extract",
-      "mail.classification",
-      "chat.action-items",
-      "docs.outline",
-    ],
+    aiSlots: ["assistant.chat", "mail.compose-help", "calendar.suggest-meeting-time"],
+    enrichments: ["mail.entity-extract", "mail.classification", "chat.action-items"],
     adminActions: [
       action({
         id: "ai.config.read",

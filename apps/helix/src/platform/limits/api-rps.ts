@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { validateNonNegativeInteger } from "./types.js";
+import { pruneWindow } from "./usage-math.js";
 import type { RedisLimitClient } from "./redis-limiter.js";
 
 const SECOND_MS = 1_000;
@@ -53,9 +54,7 @@ export interface TenantApiRpsLimitExceeded {
   readonly resetsAt: string;
 }
 
-export type TenantApiRpsLimitDecision =
-  | TenantApiRpsLimitAllowed
-  | TenantApiRpsLimitExceeded;
+export type TenantApiRpsLimitDecision = TenantApiRpsLimitAllowed | TenantApiRpsLimitExceeded;
 
 export interface TenantApiRpsLimiter {
   consume(input: TenantApiRpsLimitInput): Promise<TenantApiRpsLimitDecision>;
@@ -161,19 +160,6 @@ export function normalizeApiRpsLimit(value: number | null): number | null {
     return null;
   }
   return validateNonNegativeInteger("api_rps_limit", value);
-}
-
-function pruneWindow(timestamps: number[], minimumTimestamp: number): void {
-  let removeCount = 0;
-  for (const timestamp of timestamps) {
-    if (timestamp > minimumTimestamp) {
-      break;
-    }
-    removeCount += 1;
-  }
-  if (removeCount > 0) {
-    timestamps.splice(0, removeCount);
-  }
 }
 
 function retryAfterSeconds(oldestTimestamp: number, at: Date): number {

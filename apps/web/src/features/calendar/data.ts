@@ -8,6 +8,11 @@
 import { instantToLocalDateTime, localDateTimeToInstant } from "@helix/contracts";
 import type { CalendarApiCalendar, CalendarApiEvent, CalendarListEventsInput } from "./api";
 
+/** JS weekdays are Sunday-first; the calendar grid is Monday-first. */
+function mondayRelativeIndex(weekday: number): number {
+  return weekday === 0 ? 6 : weekday - 1;
+}
+
 /** First hour shown in the week grid (7 AM). */
 export const GRID_START_HOUR = 7;
 /** Number of hour rows rendered (7 AM - 6 PM). */
@@ -63,14 +68,13 @@ export interface CalendarSidebarEntry {
 }
 
 /** ISO `yyyy-mm-dd` for today, using the system clock. */
-export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+// Re-exported so the data helpers and the route-state helpers cannot drift.
+export { todayIso } from "./route-state";
 
 /** Monday-relative day index (0-6) for today, using the system clock. */
 export function todayDayIndex(): number {
   const weekday = new Date().getDay();
-  return weekday === 0 ? 6 : weekday - 1;
+  return mondayRelativeIndex(weekday);
 }
 
 /** Decimal hour for "now" using the local clock (e.g. 10:42 → 10.7). */
@@ -108,7 +112,7 @@ function hashIndex(value: string, mod: number): number {
 function dayIndexForLocal(local: string): number {
   const date = new Date(`${local.slice(0, 10)}T00:00:00.000Z`);
   const weekday = date.getUTCDay();
-  return weekday === 0 ? 6 : weekday - 1;
+  return mondayRelativeIndex(weekday);
 }
 
 /** Decimal hour (UTC) for an ISO timestamp. */

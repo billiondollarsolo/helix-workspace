@@ -66,7 +66,7 @@ describe("MailConfiguration admin UI", () => {
     renderMailConfiguration();
     await waitForText("mail-in.helix.test:2525");
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/admin/mail/config");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/v1/api/admin/mail/config");
     expect(container.textContent).toContain("mail-in.helix.test:2525");
     expect(container.textContent).toContain("SES");
     expect(container.textContent).toContain("email-smtp.us-east-1.amazonaws.com:587");
@@ -117,7 +117,7 @@ describe("MailConfiguration admin UI", () => {
     await waitForText(
       "Mail configuration is unavailable or missing admin mail configuration scope.",
     );
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/admin/mail/config");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/v1/api/admin/mail/config");
     expect(alertMock).not.toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
     expect(promptMock).not.toHaveBeenCalled();

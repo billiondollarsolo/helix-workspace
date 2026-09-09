@@ -57,8 +57,7 @@ export interface RegisterTenantConfigAdminRoutesOptions {
   readonly auditSink: AdminConsoleAuditSink;
   readonly storageResolver?: TenantStorageResolver | undefined;
   readonly storageMigrationJobs?:
-    | Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg">
-    | undefined;
+    Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg"> | undefined;
   readonly plans?: Pick<PlanStore, "findById"> | undefined;
   readonly featureFlagEvents?: Pick<EventBus, "publish"> | undefined;
   readonly onFeatureFlagEventError?: ((error: unknown) => void) | undefined;
@@ -76,11 +75,7 @@ const supportTierSchema = z.enum([
 
 const featureFlagsSchema = z
   .object({
-    editors_native_document: z.boolean().optional(),
-    editors_native_spreadsheet: z.boolean().optional(),
-    editors_native_presentation: z.boolean().optional(),
-    editors_native_pdf: z.boolean().optional(),
-    editors_ai_rag: z.boolean().optional(),
+    assistant_retrieval: z.boolean().optional(),
     ai_smart_compose: z.boolean().optional(),
     dlp_enforcement: dlpModeSchema.optional(),
     watermark: watermarkModeSchema.optional(),
@@ -111,7 +106,6 @@ const quotasSchema = z
     actors_limit: quotaValueSchema.optional(),
     outbound_webhooks_limit: quotaValueSchema.optional(),
     api_rps_limit: quotaValueSchema.optional(),
-    collab_concurrent_editors_per_doc: quotaValueSchema.optional(),
     export_jobs_per_hour: quotaValueSchema.optional(),
   })
   .strict();

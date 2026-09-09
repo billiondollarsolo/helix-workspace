@@ -5,20 +5,15 @@ import {
   driveCommentRevisionSchema,
   driveEntrySchema,
   driveEntryPageSchema,
-  drivePdfFormStateSchema,
   driveSearchHitSchema,
   driveShareLinkSchema,
   driveUploadResultSchema,
+  driveUploadStatusSchema,
   driveVersionSchema,
 } from "@helix/contracts";
-
-/** drive.create: folder entry or lightweight app create stub */
-export const driveCreateOutputSchema = z.union([
-  z.object({ id: z.string().uuid(), app: z.string() }),
-  driveEntrySchema,
-]);
-
+export const driveCreateOutputSchema = driveEntrySchema;
 export const driveUploadOutputSchema = driveUploadResultSchema;
+export const driveUploadStatusOutputSchema = driveUploadStatusSchema;
 export const driveFinalizeOutputSchema = driveVersionSchema;
 export const driveListOutputSchema = driveEntryPageSchema;
 export const driveShareOutputSchema = z.object({
@@ -51,14 +46,6 @@ export const driveCommentRevisionListOutputSchema = z.object({
   revisions: driveCommentRevisionSchema.array(),
   nextCursor: z.string().nullable(),
 });
-export const drivePdfFormStateGetOutputSchema = z.object({
-  state: drivePdfFormStateSchema.nullable(),
-});
-export const drivePdfFormStateOutputSchema = drivePdfFormStateSchema;
-export const drivePdfFormStateClearOutputSchema = z.object({
-  objectId: z.string().uuid(),
-  cleared: z.boolean(),
-});
 export const driveVersionsListOutputSchema = z.object({ versions: driveVersionSchema.array() });
 export const driveVersionOutputSchema = driveVersionSchema;
 export const driveShareLinkOutputSchema = driveShareLinkSchema;
@@ -72,7 +59,6 @@ export const driveShareLinkRevokeOutputSchema = z.object({
 export const driveDocumentSurfaceViewOutputSchema = z.object({
   view: z.enum(["grid", "list"]),
 });
-
 export const driveWorkflowSchema = z.object({
   id: z.string().uuid(),
   kind: z.enum([
@@ -99,3 +85,20 @@ export const driveWorkflowSchema = z.object({
   updatedAt: z.string().datetime(),
 });
 export const driveWorkflowListOutputSchema = z.object({ workflows: driveWorkflowSchema.array() });
+/** D11 operator quota usage snapshot. */
+export const driveQuotaUsageOutputSchema = z.object({
+  orgId: z.string().uuid(),
+  usedBytes: z.number().int().nonnegative(),
+  limitBytes: z.number().int().nonnegative().nullable(),
+  unlimited: z.boolean(),
+  percentUsed: z.number().nonnegative().nullable(),
+});
+/** D11 operator lifecycle policy. */
+export const driveLifecyclePolicyOutputSchema = z.object({
+  orgId: z.string().uuid(),
+  trashRetentionDays: z.number().int().min(1).max(3650),
+  orphanGraceHours: z.number().int().min(1).max(720),
+  updatedByActorId: z.string().uuid().nullable(),
+  updatedAt: z.string().nullable(),
+  configured: z.boolean(),
+});

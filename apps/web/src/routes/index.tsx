@@ -4,7 +4,7 @@ import { getSessionUser, type SessionUser } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
   beforeLoad: () => redirectSignedInRoot(),
-  component: LandingRoute,
+  component: LandingPage,
 });
 
 export async function redirectSignedInRoot(
@@ -16,10 +16,6 @@ export async function redirectSignedInRoot(
     // eslint-disable-next-line @typescript-eslint/only-throw-error
     throw redirect({ to: "/mail", search: {} });
   }
-}
-
-function LandingRoute() {
-  return <LandingPage />;
 }
 
 export function LandingPage() {

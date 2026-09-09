@@ -62,10 +62,10 @@ describe("CalendarShell", () => {
 
   const mockEvents = (events: readonly CalendarApiEvent[]) => {
     fetchMock = vi.fn<typeof fetch>((input) => {
-      if (input === "/api/auth/csrf-token") {
+      if (input === "/v1/api/auth/csrf-token") {
         return Promise.resolve(Response.json({ csrfToken: "calendar-test-csrf" }));
       }
-      if (input === "/api/tools/calendar.event.list") {
+      if (input === "/v1/api/tools/calendar.event.list") {
         return Promise.resolve(Response.json({ events }));
       }
       return Promise.resolve(Response.json({ ok: true }));

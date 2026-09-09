@@ -38,7 +38,10 @@ export function canonicalJson(value: JsonValue | undefined): string {
   return JSON.stringify(sortJson(value ?? null));
 }
 
-export function computeAuditHash(record: HashableAuditRecord, previousHash: string | null): AuditHashResult {
+export function computeAuditHash(
+  record: HashableAuditRecord,
+  previousHash: string | null,
+): AuditHashResult {
   const normalized = {
     actorId: record.actorId,
     createdAt: record.createdAt ?? null,
@@ -107,7 +110,12 @@ export function verifyAuditHashChain(
 }
 
 function sortJson(value: unknown): JsonValue {
-  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
     return value;
   }
 

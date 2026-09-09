@@ -9,6 +9,7 @@ const API_VERSION_PREFIX = "/v1";
 export interface HelixCliEnv {
   readonly HELIX_BASE_URL?: string;
   readonly HELIX_ACCESS_TOKEN?: string;
+  readonly HELIX_API_KEY?: string;
   readonly HELIX_TRACE_TOKEN?: string;
   readonly HELIX_CREDENTIALS_FILE?: string;
   readonly XDG_CONFIG_HOME?: string;
@@ -217,25 +218,22 @@ function createRequest(
   input?: unknown,
 ): HelixRequest {
   const headers = commonHeaders(env);
+  const url = new URL(versionedPath(path), baseUrl(env).href).href;
 
-  const init =
-    method !== "GET"
-      ? {
-          method,
-          headers: {
-            ...headers,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(input),
-        }
-      : {
-          method,
-          headers,
-        };
+  if (method === "GET") {
+    return { url, init: { method, headers } };
+  }
 
   return {
-    url: new URL(versionedPath(path), baseUrl(env).href).href,
-    init,
+    url,
+    init: {
+      method,
+      headers: {
+        ...headers,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
   };
 }
 
@@ -261,8 +259,9 @@ function commonHeaders(env: HelixCliEnv): Record<string, string> {
     accept: "application/json",
   };
 
-  if (env.HELIX_ACCESS_TOKEN !== undefined && env.HELIX_ACCESS_TOKEN.length > 0) {
-    headers.authorization = `Bearer ${env.HELIX_ACCESS_TOKEN}`;
+  const token = env.HELIX_API_KEY || env.HELIX_ACCESS_TOKEN;
+  if (token !== undefined && token.length > 0) {
+    headers.authorization = `Bearer ${token}`;
   }
 
   const traceparent = traceparentHeader(env);
@@ -315,11 +314,14 @@ function baseUrl(env: HelixCliEnv): URL {
   }
 
   try {
-    return new URL(
+    const url = new URL(
       env.HELIX_BASE_URL.endsWith("/") ? env.HELIX_BASE_URL : `${env.HELIX_BASE_URL}/`,
     );
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password)
+      throw new Error("Invalid URL.");
+    return url;
   } catch {
-    throw new Error("HELIX_BASE_URL must be a valid URL");
+    throw new Error("HELIX_BASE_URL must be an HTTP(S) URL without embedded credentials");
   }
 }
 

@@ -12,6 +12,7 @@
    `onSearchChange` are passed; otherwise it opens the ⌘K palette. */
 
 import { useState, type ReactNode } from "react";
+import { Icons } from "@/components/icons";
 import { TopBar } from "@/components/shell/top-bar";
 import { SidePanel, SidePanelRail, type SideTool } from "@/components/shell/side-panel";
 import { useQuery } from "@tanstack/react-query";
@@ -45,14 +46,26 @@ export function SurfaceFrame({
   onSearchChange,
   children,
 }: SurfaceFrameProps) {
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [sideTool, setSideTool] = useState<SideTool | null>(null);
   // Live unread count for the bell badge. Polls every 30s and refreshes when
   // notifications.mark-read / mark-all-read run (queryClient invalidation).
   const { data: unreadData } = useQuery(unreadCountQueryOptions());
 
   return (
-    <div className="workspace">
+    <div className="workspace" data-navigation-open={navigationOpen}>
       <TopBar
+        navigationToggle={
+          <button
+            type="button"
+            className="icon-btn workspace-navigation-toggle"
+            aria-label="Toggle section navigation"
+            aria-expanded={navigationOpen}
+            onClick={() => setNavigationOpen((open) => !open)}
+          >
+            <Icons.Menu />
+          </button>
+        }
         title={title}
         icon={icon}
         searchPlaceholder={searchPlaceholder}

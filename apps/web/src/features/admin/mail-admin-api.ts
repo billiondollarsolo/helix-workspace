@@ -68,6 +68,7 @@ export interface CreateMailProviderInput {
 }
 
 export interface PatchMailProviderInput {
+  readonly isDefault?: boolean;
   readonly name?: string;
   readonly enabled?: boolean;
   readonly config?: MailProviderConfig;
@@ -127,8 +128,8 @@ export type DmarcReport = z.infer<typeof dmarcReportSchema>;
 const deliverabilitySchema = z.object({
   /** 0-1 pass fraction across the reporting window. */
   dmarcPassRate: z.number(),
-  spfPassRate: z.number(),
-  dkimPassRate: z.number(),
+  spfPassRate: z.number().nullable().default(null),
+  dkimPassRate: z.number().nullable().default(null),
   messagesEvaluated: z.number().int(),
   windowDays: z.number().int(),
 });
@@ -136,7 +137,7 @@ const deliverabilitySchema = z.object({
 export type Deliverability = z.infer<typeof deliverabilitySchema>;
 
 const dmarcResponseSchema = z.object({
-  summary: deliverabilitySchema,
+  summary: deliverabilitySchema.nullable(),
   reports: z.array(dmarcReportSchema),
 });
 
@@ -439,12 +440,8 @@ export async function patchMailProvider(
 export async function setDefaultMailProvider(
   id: string,
   fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<MailProvidersResponse> {
-  const response = await fetchImpl(
-    `/api/admin/mail/providers/${encodeURIComponent(id)}/set-default`,
-    { method: "POST", headers: jsonHeaders },
-  );
-  return parseResponse(response, "set default mail provider", mailProvidersResponseSchema);
+): Promise<MailProvider> {
+  return patchMailProvider(id, { isDefault: true }, fetchImpl);
 }
 
 // ---------------------------------------------------------------------------
@@ -588,7 +585,7 @@ export async function fetchSpamSettings(
 async function parseResponse<T>(
   response: Response,
   action: string,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
 ): Promise<T> {
   const payload: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {

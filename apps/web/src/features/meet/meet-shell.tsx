@@ -58,6 +58,7 @@ export function MeetShell() {
       searchValue={search}
       onSearchChange={setSearch}
     >
+      <h1 className="sr-only">Meet</h1>
       <MeetHub search={search} onEnterCall={setSession} />
     </SurfaceFrame>
   );

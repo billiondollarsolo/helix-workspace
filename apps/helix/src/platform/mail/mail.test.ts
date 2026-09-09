@@ -493,6 +493,7 @@ describe("mail tools", () => {
       "mail.labels.list",
       "mail.outbound.cancel",
       "mail.outbound.get",
+      "mail.outbound.retry",
       "mail.read.set",
       "mail.reply",
       "mail.restore",
@@ -999,7 +1000,7 @@ describe("mail tools", () => {
     );
     expect(result).toMatchObject({
       ok: false,
-      error: expect.stringContaining("dmarc-reject") as string,
+      error: "Tool invocation failed.",
     });
     expect(store.messages).toEqual([]);
   });

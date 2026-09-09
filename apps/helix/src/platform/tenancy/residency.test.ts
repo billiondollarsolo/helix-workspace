@@ -9,7 +9,6 @@ const regional = {
   region: "us-east-1",
   storageRegion: "us-east-1",
   production: true,
-  previewUrl: "http://helix-content-converter.svc:3000",
   telemetryEnabled: true,
   telemetryRegion: "us-east-1",
 } as const;
@@ -35,7 +34,6 @@ describe("deployment residency", () => {
   it.each([
     [{ ...regional, storageRegion: "eu-west-1" }, /object storage region/u],
     [{ ...regional, searchIndexUid: "helix_search" }, /Search index/u],
-    [{ ...regional, previewUrl: "https://converter.global.example" }, /office preview/u],
     [{ ...regional, telemetryRegion: undefined }, /telemetry collector/u],
     [{ ...regional, openAiApiKey: "secret" }, /no residency declaration/u],
     [

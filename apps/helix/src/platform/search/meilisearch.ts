@@ -184,8 +184,7 @@ function buildTypeFilter(types: readonly string[] | undefined): string | undefin
 }
 
 function toSearchHit(hit: MeilisearchHit): SearchHit {
-  const { _rankingScore, _formatted, ...document } = hit;
-  delete (document as { _key?: string })._key;
+  const { _rankingScore, _formatted, _key: _ignoredKey, ...document } = hit;
   return {
     ...document,
     ...(_rankingScore === undefined ? {} : { score: _rankingScore }),

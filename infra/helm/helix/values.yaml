@@ -27,34 +27,6 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
-# Mandatory isolated parser boundary for Office previews/imports and Docs PDF export.
-contentConverter:
-  replicaCount: 2
-  image:
-    repository: ghcr.io/helix/drive-preview-libreoffice
-    digest: ""
-    pullPolicy: IfNotPresent
-  port: 8080
-  timeoutMs: 30000
-  limits:
-    requestBytes: 73400320
-    sourceBytes: 52428800
-    outputBytes: 67108864
-    textBytes: 10485760
-    archiveEntries: 2048
-    archiveBytes: 268435456
-    archiveRatio: 100
-    cells: 1000000
-    pages: 200
-  tmpSizeLimit: 512Mi
-  resources:
-    requests:
-      cpu: 250m
-      memory: 384Mi
-    limits:
-      cpu: "1"
-      memory: 768Mi
-
 imageVerification:
   publicKeySecret:
     name: helix-image-signing-key
@@ -72,6 +44,28 @@ publicUrl: https://helix.example.com
 tenantRootHosts: []
 logLevel: info
 trustedProxies: []
+
+# Production workspace packaging (AGENTS.md + docs/architecture/v1-packaging-matrix.md).
+# Defaults are MVP fail-closed. Do NOT set profile=full or enable Meet/Calendar/Editors
+# modules until PKG.* domain evidence, O-D/O-K deps, and dual-target RPO/RTO drills pass.
+# PKG flip procedure: docs/architecture/ha-rpo-rto.md
+workspace:
+  # mvp | full — full only after evidenced packaging flip (never a silent default).
+  profile: mvp
+  # Exact production MVP allowlist. Full Workspace allowlist is documented only until PKG.
+  apps: "mail,drive,chat,assistant"
+  modules:
+    calendar:
+      enabled: false
+    meet:
+      enabled: false
+  # O-K.10 — Meet/Jitsi deps for Full Workspace (empty = fail-closed if meet in apps).
+  # Operators inject secrets via sealed-secrets/CSI; do not commit JWT secrets.
+  meet:
+    jitsiDomain: ""
+    # secretKeyRef name for MEET_JITSI_JWT_SECRET (chart does not invent a secret).
+    jitsiJwtSecretName: ""
+    jitsiJwtSecretKey: "jwt-secret"
 
 serviceAccount:
   create: true
@@ -479,6 +473,23 @@ stig:
     expectedReadOnlyRootFilesystem: true
     expectedDropCapabilities:
       - ALL
+
+# Schema migrations run as a Helm pre-install/pre-upgrade hook Job, so new code
+# never starts against an old schema. Disable only if migrations are applied by
+# a pipeline step outside the chart -- a release with neither will serve
+# requests against a schema the code does not expect.
+migrations:
+  enabled: true
+  # One retry: the runner takes an advisory lock, so the usual cause of a
+  # failure is a database that is not reachable yet rather than contention.
+  backoffLimit: 1
+  activeDeadlineSeconds: 900
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
 
 airgap:
   enabled: false

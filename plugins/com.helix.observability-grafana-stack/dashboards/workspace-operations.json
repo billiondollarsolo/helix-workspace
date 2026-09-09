@@ -1,0 +1,349 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "id": null,
+  "links": [
+    {
+      "title": "Workspace incident runbooks",
+      "type": "link",
+      "url": "docs/RUNBOOK.md"
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP availability and error rate",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(helix_http_requests_total{status_code!~\"5..\"}[10m])) / clamp_min(sum(rate(helix_http_requests_total[10m])), 1)"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(helix_http_requests_total{status_code=~\"5..\"}[10m])) / clamp_min(sum(rate(helix_http_requests_total[10m])), 1)"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "HTTP p95 latency",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(helix_http_request_duration_seconds_bucket[10m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Authorization decisions",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (decision) (rate(helix_permission_checks_total[10m]))",
+          "legendFormat": "{{decision}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (decision) (rate(helix_auth_rate_limit_decisions_total[10m]))",
+          "legendFormat": "rate limit {{decision}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Dependency health",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min by (dependency) (helix_dependency_up)",
+          "legendFormat": "{{dependency}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Outbox depth and oldest age",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (worker) (helix_outbox_depth)",
+          "legendFormat": "{{worker}} depth"
+        },
+        {
+          "refId": "B",
+          "expr": "max by (worker) (helix_outbox_oldest_age_seconds)",
+          "legendFormat": "{{worker}} oldest seconds"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Worker failures",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 6 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (worker) (rate(helix_worker_failures_total[10m]))",
+          "legendFormat": "{{worker}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Backup and restore age",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 6 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max(helix_backup_last_success_timestamp_seconds)",
+          "legendFormat": "backup age"
+        },
+        {
+          "refId": "B",
+          "expr": "time() - max(helix_restore_drill_last_success_timestamp_seconds)",
+          "legendFormat": "restore drill age"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Mail receive and send p95",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 13 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(helix_mail_receive_duration_seconds_bucket[10m])) by (le))",
+          "legendFormat": "receive"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(helix_mail_send_duration_seconds_bucket[10m])) by (le))",
+          "legendFormat": "send"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Mail bounces and complaints",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 13 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event_type) (rate(helix_mail_delivery_events_total{event_type=~\"soft_bounce|hard_bounce|complaint\"}[10m]))",
+          "legendFormat": "{{event_type}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Mail suppression and quarantine",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 13 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(helix_mail_suppressions_active)",
+          "legendFormat": "suppressions"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(helix_mail_quarantine_messages)",
+          "legendFormat": "quarantine"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Drive upload outcomes",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(helix_drive_uploads_total[10m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Drive scan queue and p95",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 20 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(helix_security_scan_backlog_items{scanner=\"clamav\"})",
+          "legendFormat": "backlog"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum(rate(helix_security_scan_duration_seconds_bucket{scanner=\"clamav\"}[10m])) by (le))",
+          "legendFormat": "p95 seconds"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Drive scan verdicts and quarantined bytes",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 20 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (state) (rate(helix_security_scans_total{scanner=\"clamav\"}[10m]))",
+          "legendFormat": "{{state}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(helix_security_quarantined_bytes_total{scanner=\"clamav\"}[10m]))",
+          "legendFormat": "quarantined bytes/s"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Chat active sockets",
+      "type": "stat",
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 27 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (helix_websocket_connections_active{route=~\".*chat.*\"})",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Chat publish p95",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 6, "x": 6, "y": 27 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(helix_chat_publish_duration_seconds_bucket[10m])) by (le))"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Chat reconnects and rejected frames",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 27 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(helix_chat_reconnects_total[10m]))",
+          "legendFormat": "reconnects"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(helix_chat_rejected_frames_total[10m]))",
+          "legendFormat": "rejected frames"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Agent approvals and outcomes",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 27 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(helix_llm_calls_total[10m]))",
+          "legendFormat": "model calls"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(helix_agent_pending_approvals)",
+          "legendFormat": "pending"
+        },
+        {
+          "refId": "C",
+          "expr": "sum by (status) (rate(helix_tool_invocations_total[10m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "Agent cost and denials",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 34 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(helix_llm_cost_usd_micros_total[1h])) / 1000000",
+          "legendFormat": "USD/s"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(helix_agent_tool_limiter_denials_total[10m]))",
+          "legendFormat": "denials/s"
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "Audit hash verification",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 34 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(helix_audit_hash_chain_failures_total[10m]))",
+          "legendFormat": "failures"
+        },
+        {
+          "refId": "B",
+          "expr": "time() - max(helix_audit_hash_chain_last_verified_timestamp_seconds)",
+          "legendFormat": "verification age"
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "title": "Audit shipping lag and backlog",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 34 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (destination) (helix_audit_shipping_lag_seconds)",
+          "legendFormat": "{{destination}} lag"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (destination) (helix_audit_shipping_backlog_records)",
+          "legendFormat": "{{destination}} backlog"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["helix", "workspace", "operations", "slo"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "Helix Workspace Operations",
+  "uid": "helix-workspace-operations",
+  "version": 1
+}

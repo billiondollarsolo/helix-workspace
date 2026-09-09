@@ -1,6 +1,6 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import { InMemoryConfirmationGate } from "./registry.js";
+import type { PendingActionRecord } from "./registry.js";
 import { PostgresPendingActionStore } from "./pending-actions-postgres-store.js";
 
 interface RecordedQuery {
@@ -8,230 +8,135 @@ interface RecordedQuery {
   readonly values: readonly unknown[];
 }
 
-interface PendingActionRow {
-  readonly id: string;
-  readonly org_id: string;
-  readonly actor_id: string;
-  readonly tool_id: string;
-  readonly input: unknown;
-  readonly status: "pending_confirmation" | "confirmed" | "cancelled" | "expired";
-  readonly expires_at: Date;
-  readonly created_at: Date;
-  readonly decided_at: Date | null;
-  readonly trace_id: string | null;
-  readonly result: unknown;
-  readonly error: string | null;
-}
-
 describe("PostgresPendingActionStore", () => {
-  it("persists trace ids and nullable execution fields when creating pending actions", async () => {
-    const createdAt = new Date("2026-05-20T12:00:00.000Z");
-    const expiresAt = new Date("2026-05-20T12:15:00.000Z");
+  it("persists requester identity, canonical hash, policy and safe preview", async () => {
     const database = createPendingActionsSql();
     const store = new PostgresPendingActionStore(database.sql);
 
-    const created = await store.create({
-      orgId: "org-1",
-      actorId: "actor-1",
-      toolId: "platform.test",
-      input: { value: true },
-      createdAt,
-      expiresAt,
-      traceId: "trace-create-1",
-    });
-    const selected = await store.get(created.id);
+    const created = await store.create(actionInput());
 
-    expect(created).toEqual({
-      id: "pending-1",
-      orgId: "org-1",
-      actorId: "actor-1",
-      toolId: "platform.test",
-      input: { value: true },
+    expect(created).toMatchObject({
+      requesterActorId: "actor-1",
+      requesterCredentialId: "credential-1",
+      approvalOwnerActorId: "owner-1",
+      inputHash: "a".repeat(64),
+      policyVersion: "7",
       status: "pending_confirmation",
-      createdAt,
-      expiresAt,
-      decidedAt: null,
-      traceId: "trace-create-1",
-      result: null,
-      error: null,
+      executionIdempotencyKey: "pending-action:pending-1",
     });
-    expect(selected).toEqual(created);
-    expect(database.calls[0]?.text).toContain("insert into pending_actions");
-    expect(database.calls[0]?.text).toContain("trace_id");
-    expect(database.calls[0]?.text).toContain("result");
-    expect(database.calls[0]?.text).toContain("error");
-    expect(database.calls[0]?.values).toContain("trace-create-1");
+    expect(database.calls[0]?.text).toContain("requester_credential_id");
+    expect(database.calls[0]?.text).toContain("input_hash");
+    expect(database.calls[0]?.text).toContain("policy_snapshot");
+    expect(database.calls[0]?.text).toContain("execution_idempotency_key");
   });
 
-  it("persists confirmed execution result and replaces the execution trace id", async () => {
-    const decidedAt = new Date("2026-05-20T13:00:00.000Z");
+  it("uses compare-and-set so concurrent approvals and cancellation cannot both win", async () => {
     const database = createPendingActionsSql();
     const store = new PostgresPendingActionStore(database.sql);
-    const created = await store.create(createActionInput({ traceId: "trace-create-1" }));
+    const created = await store.create(actionInput());
+    const approvedAt = new Date("2026-07-28T12:01:00.000Z");
 
-    const confirmed = await store.decide({
+    const [first, second] = await Promise.all([
+      store.approve({ id: created.id, approverActorId: "owner-1", approvedAt }),
+      store.approve({ id: created.id, approverActorId: "admin-1", approvedAt }),
+    ]);
+    const cancelled = await store.cancel({
       id: created.id,
-      actorId: "actor-1",
-      status: "confirmed",
-      decidedAt,
+      actorId: "owner-1",
+      cancelledAt: approvedAt,
     });
-    const executed = await store.recordExecution({
-      id: created.id,
-      actorId: "actor-1",
-      traceId: "trace-run-1",
-      result: { ok: true, count: 2 },
-    });
-    const selected = await store.get(created.id);
 
-    expect(confirmed).toMatchObject({
-      status: "confirmed",
-      decidedAt,
-      traceId: "trace-create-1",
-      result: null,
-      error: null,
-    });
-    expect(executed).toMatchObject({
-      status: "confirmed",
-      traceId: "trace-run-1",
-      result: { ok: true, count: 2 },
-      error: null,
-    });
-    expect(selected).toEqual(executed);
-    expect(database.calls[2]?.text).toContain("trace_id = coalesce");
-    expect(database.calls[2]?.text).toContain("and status = 'confirmed'");
-    expect(database.calls[2]?.values).toContain("trace-run-1");
-    expect(database.calls[2]?.values).toContainEqual({ ok: true, count: 2 });
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect(cancelled).toMatchObject({ status: "cancelled" });
+    const approveSql = database.calls.find((call) => call.text.includes("status = 'approved'"));
+    expect(approveSql?.text).toContain("and status = 'pending_confirmation'");
+    expect(approveSql?.text).toContain("and expires_at >");
   });
 
-  it("persists execution errors while preserving an existing trace id when omitted", async () => {
+  it("claims once and terminally fails an expired unknown outcome without re-execution", async () => {
     const database = createPendingActionsSql();
     const store = new PostgresPendingActionStore(database.sql);
-    const created = await store.create(createActionInput({ traceId: "trace-create-1" }));
-    await store.decide({
+    const created = await store.create(actionInput());
+    const approvedAt = new Date("2026-07-28T12:01:00.000Z");
+    await store.approve({ id: created.id, approverActorId: "owner-1", approvedAt });
+
+    const first = await store.claimExecution({
       id: created.id,
-      actorId: "actor-1",
-      status: "confirmed",
-      decidedAt: new Date("2026-05-20T14:00:00.000Z"),
+      approverActorId: "owner-1",
+      executionActorId: "actor-1",
+      startedAt: new Date("2026-07-28T12:02:00.000Z"),
+      leaseExpiresAt: new Date("2026-07-28T12:03:00.000Z"),
     });
-
-    const executed = await store.recordExecution({
+    const concurrent = await store.claimExecution({
       id: created.id,
-      actorId: "actor-1",
-      error: "Tool invocation failed",
+      approverActorId: "owner-1",
+      executionActorId: "actor-1",
+      startedAt: new Date("2026-07-28T12:02:30.000Z"),
+      leaseExpiresAt: new Date("2026-07-28T12:03:30.000Z"),
     });
-    const selected = await store.get(created.id);
-
-    expect(executed).toMatchObject({
-      traceId: "trace-create-1",
-      result: null,
-      error: "Tool invocation failed",
+    const recovered = await store.recoverStaleExecutions({
+      now: new Date("2026-07-28T12:03:01.000Z"),
     });
-    expect(selected).toEqual(executed);
-    expect(database.calls[2]?.values).toContain("Tool invocation failed");
-  });
-
-  it("maps deny to cancelled status and prevents cancelled actions from recording execution", async () => {
-    const actor = {
-      id: "actor-1",
-      orgId: "org-1",
-      type: "user" as const,
-    };
-    const decidedAt = new Date("2026-05-20T15:00:00.000Z");
-    const database = createPendingActionsSql();
-    const store = new PostgresPendingActionStore(database.sql);
-    const gate = new InMemoryConfirmationGate(store);
-    const pending = await gate.queue({
-      tool: testTool,
-      actor,
-      input: { value: true },
-      traceId: "trace-create-1",
-    });
-
-    const denied = await gate.deny({ id: pending.id, actor, decidedAt });
-    const execution = await gate.recordExecution({
-      id: pending.id,
-      actor,
-      traceId: "trace-run-1",
+    const replay = await store.completeExecution({
+      id: created.id,
+      executionActorId: "actor-1",
+      status: "executed",
+      completedAt: new Date("2026-07-28T12:03:11.000Z"),
       result: { ok: true },
-      error: "should-not-persist",
-    });
-    const selected = await store.get(pending.id);
-
-    expect(denied).toMatchObject({
-      id: pending.id,
-      status: "cancelled",
-      traceId: "trace-create-1",
-    });
-    expect(execution).toBeNull();
-    expect(selected).toMatchObject({
-      status: "cancelled",
-      decidedAt,
-      traceId: "trace-create-1",
-      result: null,
-      error: null,
-    });
-    expect(database.calls[1]?.values).toContain("cancelled");
-    expect(database.calls[2]?.text).toContain("and status = 'confirmed'");
-  });
-
-  it("expires only past-due pending actions and returns the affected rows", async () => {
-    const database = createPendingActionsSql();
-    const store = new PostgresPendingActionStore(database.sql);
-    const stale = await store.create({
-      orgId: "org-1",
-      actorId: "actor-1",
-      toolId: "platform.test",
-      input: { value: true },
-      createdAt: new Date("2026-05-21T11:00:00.000Z"),
-      expiresAt: new Date("2026-05-21T11:10:00.000Z"),
-    });
-    await store.create({
-      orgId: "org-1",
-      actorId: "actor-1",
-      toolId: "platform.test",
-      input: { value: true },
-      createdAt: new Date("2026-05-21T11:55:00.000Z"),
-      expiresAt: new Date("2026-05-21T13:00:00.000Z"),
     });
 
-    const expired = await store.expireStale({ now: new Date("2026-05-21T12:00:00.000Z") });
-
-    expect(expired).toHaveLength(1);
-    expect(expired[0]?.id).toBe(stale.id);
-    expect(expired[0]?.status).toBe("expired");
-    expect(await store.get(stale.id)).toMatchObject({ status: "expired" });
-    const expireCall = database.calls.find((call) =>
-      call.text.includes("set status = 'expired'"),
+    expect(first).toMatchObject({ status: "executing", executionAttempts: 1 });
+    expect(concurrent).toBeNull();
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({
+      status: "failed",
+      error: "execution_outcome_unknown",
+      executionAttempts: 1,
+    });
+    expect(replay).toBeNull();
+    const claimSql = database.calls.find((call) =>
+      call.text.includes("execution_attempts = execution_attempts + 1"),
     );
-    expect(expireCall?.text).toContain("for update skip locked");
+    expect(claimSql?.text).toContain("status = 'approved'");
+    const recoverySql = database.calls.find((call) =>
+      call.text.includes("execution_outcome_unknown"),
+    );
+    expect(recoverySql?.text).toContain("for update skip locked");
   });
 });
 
-const testTool = {
-  id: "platform.test",
-  description: "Test tool",
-  permission: "platform.write",
-  sideEffects: "write",
-  inputSchema: {
-    parse: () => ({ value: true }),
-    toJsonSchema: () => ({ type: "object" }),
-  },
-  outputSchema: {
-    parse: (value: unknown) => value,
-    toJsonSchema: () => ({ type: "object" }),
-  },
-  handler: async () => ({}),
-} as const;
-
-function createActionInput(input: { readonly traceId?: string } = {}) {
+function actionInput() {
   return {
+    id: "pending-1",
     orgId: "org-1",
     actorId: "actor-1",
-    toolId: "platform.test",
-    input: { value: true },
-    createdAt: new Date("2026-05-20T12:00:00.000Z"),
-    expiresAt: new Date("2026-05-20T12:15:00.000Z"),
-    ...(input.traceId === undefined ? {} : { traceId: input.traceId }),
+    requesterActorId: "actor-1",
+    requesterCredentialId: "credential-1",
+    requesterPrincipal: {
+      id: "actor-1",
+      orgId: "org-1",
+      type: "agent" as const,
+      scopes: ["workspace.write"],
+    },
+    requesterIp: "192.0.2.10",
+    approvalOwnerActorId: "owner-1",
+    toolId: "workspace.write",
+    input: { objectId: "object-1", value: true },
+    inputHash: "a".repeat(64),
+    policySnapshot: { schemaVersion: "1", credentialPolicyVersion: "7" },
+    policyVersion: "7",
+    preview: {
+      toolId: "workspace.write",
+      action: "workspace.write",
+      resourceIds: ["object-1"],
+      recipients: [],
+      targets: [],
+      consequence: "Change workspace data using workspace.write.",
+    },
+    createdAt: new Date("2026-07-28T12:00:00.000Z"),
+    expiresAt: new Date("2026-07-28T12:10:00.000Z"),
+    executionIdempotencyKey: "pending-action:pending-1",
+    traceId: "trace-1",
   };
 }
 
@@ -240,86 +145,133 @@ function createPendingActionsSql(): {
   readonly calls: readonly RecordedQuery[];
 } {
   const calls: RecordedQuery[] = [];
-  const rows = new Map<string, PendingActionRow>();
-  let nextId = 1;
-
+  let row: PendingActionRecord | null = null;
   const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join("$");
     calls.push({ text, values });
     if (text.includes("insert into pending_actions")) {
-      const row: PendingActionRow = {
-        id: `pending-${String(nextId)}`,
-        org_id: values[0] as string,
-        actor_id: values[1] as string,
-        tool_id: values[2] as string,
-        input: values[3],
-        status: values[4] as PendingActionRow["status"],
-        expires_at: values[5] as Date,
-        created_at: values[6] as Date,
-        decided_at: values[7] as Date | null,
-        trace_id: values[8] as string | null,
-        result: values[9] ?? null,
-        error: values[10] as string | null,
+      const input = actionInput();
+      row = {
+        ...input,
+        status: "pending_confirmation",
+        approverActorId: null,
+        executionActorId: null,
+        decidedAt: null,
+        approvedAt: null,
+        executionStartedAt: null,
+        executionCompletedAt: null,
+        executionLeaseExpiresAt: null,
+        executionAttempts: 0,
+        result: null,
+        error: null,
       };
-      nextId += 1;
-      rows.set(row.id, row);
-      return Promise.resolve([row]);
+      return Promise.resolve([toRow(row)]);
     }
-    if (text.includes("set status = 'expired'")) {
-      const now = values[0] as Date;
-      const limit = values[1] as number;
-      const expired: PendingActionRow[] = [];
-      for (const row of rows.values()) {
-        if (expired.length >= limit) {
-          break;
-        }
-        if (row.status === "pending_confirmation" && row.expires_at.getTime() <= now.getTime()) {
-          const updated: PendingActionRow = { ...row, status: "expired", decided_at: now };
-          rows.set(row.id, updated);
-          expired.push(updated);
-        }
+    if (text.includes("approver_actor_id =") && !text.includes("execution_attempts =")) {
+      if (row === null || row.status !== "pending_confirmation") return Promise.resolve([]);
+      row = {
+        ...row,
+        status: "approved",
+        approverActorId: values[0] as string,
+        approvedAt: values[1] as Date,
+        decidedAt: values[1] as Date,
+      };
+      return Promise.resolve([toRow(row)]);
+    }
+    if (text.includes("status = 'cancelled'")) {
+      if (row === null || (row.status !== "pending_confirmation" && row.status !== "approved")) {
+        return Promise.resolve([]);
       }
-      return Promise.resolve(expired);
+      row = { ...row, status: "cancelled", decidedAt: values[0] as Date };
+      return Promise.resolve([toRow(row)]);
+    }
+    if (text.includes("execution_attempts = execution_attempts + 1")) {
+      const startedAt = values[1] as Date;
+      if (row === null || row.status !== "approved") {
+        return Promise.resolve([]);
+      }
+      row = {
+        ...row,
+        status: "executing",
+        executionActorId: values[0] as string,
+        executionStartedAt: startedAt,
+        executionLeaseExpiresAt: values[2] as Date,
+        executionAttempts: row.executionAttempts + 1,
+      };
+      return Promise.resolve([toRow(row)]);
+    }
+    if (text.includes("execution_outcome_unknown")) {
+      const now = values[0] as Date;
+      if (
+        row === null ||
+        row.status !== "executing" ||
+        row.executionLeaseExpiresAt === null ||
+        row.executionLeaseExpiresAt > now
+      ) {
+        return Promise.resolve([]);
+      }
+      row = {
+        ...row,
+        status: "failed",
+        error: "execution_outcome_unknown",
+        executionCompletedAt: now,
+        executionLeaseExpiresAt: null,
+      };
+      return Promise.resolve([toRow(row)]);
+    }
+    if (text.includes("execution_completed_at =")) {
+      if (row === null || row.status !== "executing") return Promise.resolve([]);
+      row = {
+        ...row,
+        status: values[0] as "executed" | "failed",
+        executionCompletedAt: values[1] as Date,
+        executionLeaseExpiresAt: null,
+        result: (values[3] as PendingActionRecord["result"]) ?? null,
+        error: (values[4] as string | null) ?? null,
+      };
+      return Promise.resolve([toRow(row)]);
     }
     if (text.includes("from pending_actions")) {
-      const row = rows.get(values[0] as string);
-      return Promise.resolve(row === undefined ? [] : [row]);
-    }
-    if (text.includes("set status =")) {
-      const id = values[2] as string;
-      const actorId = values[3] as string;
-      const row = rows.get(id);
-      if (row === undefined || row.actor_id !== actorId || row.status !== "pending_confirmation") {
-        return Promise.resolve([]);
-      }
-      const updated: PendingActionRow = {
-        ...row,
-        status: values[0] as PendingActionRow["status"],
-        decided_at: values[1] as Date,
-      };
-      rows.set(id, updated);
-      return Promise.resolve([updated]);
-    }
-    if (text.includes("trace_id = coalesce")) {
-      const id = values[3] as string;
-      const actorId = values[4] as string;
-      const row = rows.get(id);
-      if (row === undefined || row.actor_id !== actorId || row.status !== "confirmed") {
-        return Promise.resolve([]);
-      }
-      const updated: PendingActionRow = {
-        ...row,
-        trace_id: (values[0] as string | null) ?? row.trace_id,
-        result: values[1] ?? null,
-        error: values[2] as string | null,
-      };
-      rows.set(id, updated);
-      return Promise.resolve([updated]);
+      return Promise.resolve(row === null ? [] : [toRow(row)]);
     }
     return Promise.resolve([]);
   };
   const sql = Object.assign(tag, {
     json: (value: unknown) => value,
+    unsafe: (value: string) => value,
   }) as unknown as postgres.Sql;
   return { sql, calls };
+}
+
+function toRow(record: PendingActionRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    org_id: record.orgId,
+    actor_id: record.requesterActorId,
+    requester_credential_id: record.requesterCredentialId,
+    requester_principal: record.requesterPrincipal,
+    requester_ip: record.requesterIp,
+    approval_owner_actor_id: record.approvalOwnerActorId,
+    approver_actor_id: record.approverActorId,
+    execution_actor_id: record.executionActorId,
+    tool_id: record.toolId,
+    input: record.input,
+    input_hash: record.inputHash,
+    policy_snapshot: record.policySnapshot,
+    policy_version: record.policyVersion,
+    preview: record.preview,
+    status: record.status,
+    expires_at: record.expiresAt,
+    created_at: record.createdAt,
+    decided_at: record.decidedAt,
+    approved_at: record.approvedAt,
+    execution_started_at: record.executionStartedAt,
+    execution_completed_at: record.executionCompletedAt,
+    execution_lease_expires_at: record.executionLeaseExpiresAt,
+    execution_attempts: record.executionAttempts,
+    execution_idempotency_key: record.executionIdempotencyKey,
+    trace_id: record.traceId,
+    result: record.result,
+    error: record.error,
+  };
 }

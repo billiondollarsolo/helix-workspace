@@ -67,15 +67,19 @@ function createAuthzSql(options: { grants: Readonly<Record<string, string>>; own
     }
 
     // requireObjectRole permission role lookup
-    if (
-      text.includes("helix_drive_effective_role") && text.trimStart().startsWith("select")
-    ) {
+    if (text.includes("helix_drive_effective_role") && text.trimStart().startsWith("select")) {
       const actor = resolveActor(values);
       if (actor === owner) return Promise.resolve([{ role: "owner" }]);
       if (actor === undefined || options.grants[actor] === undefined) {
         return Promise.resolve([]);
       }
       return Promise.resolve([{ role: options.grants[actor] }]);
+    }
+
+    // Share-recipient validation: the target actor exists in this organization.
+    if (text.includes("from actors") && text.includes("disabled_at is null")) {
+      const actor = resolveActor(values);
+      return Promise.resolve(actor === undefined ? [] : [{ id: actor }]);
     }
 
     // App trash-sync lookup

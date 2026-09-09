@@ -6,6 +6,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { readVerifiedManifest } from "./backup-manifest.mjs";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -13,11 +14,13 @@ if (command === "capture") {
   await capture(...args);
 } else if (command === "restore") {
   await restore(...args);
+} else if (command === "restore-legacy") {
+  await restoreLegacy(...args);
 } else if (command === "verify") {
   await verifyLocal(...args);
 } else {
   throw new Error(
-    "usage: object-snapshot.mjs <capture refs.json versions.json boundary bucket endpoint output-dir|restore inventory.json bucket endpoint|verify inventory.json>",
+    "usage: object-snapshot.mjs <capture refs.json versions.json boundary bucket endpoint output-dir|restore inventory.json bucket endpoint|restore-legacy root bucket endpoint|verify inventory.json>",
   );
 }
 
@@ -128,8 +131,26 @@ async function restore(inventoryPath, targetBucket, endpoint) {
   required(endpoint, "endpoint");
   const inventory = await readInventory(inventoryPath);
   const root = resolve(inventoryPath, "..");
+  await restoreObjects(inventory.objects, root, targetBucket, endpoint);
+}
 
-  for (const object of inventory.objects) {
+async function restoreLegacy(root, targetBucket, endpoint) {
+  required(targetBucket, "target bucket");
+  required(endpoint, "endpoint");
+  const manifest = await readVerifiedManifest(root);
+  const prefix = `objects/${manifest.objects.bucket}/`;
+  const objects = manifest.artifacts
+    .filter((artifact) => artifact.path.startsWith(prefix))
+    .map((artifact) => ({
+      file: artifact.path,
+      key: artifact.path.slice(prefix.length),
+      sha256: artifact.sha256,
+    }));
+  await restoreObjects(objects, root, targetBucket, endpoint);
+}
+
+async function restoreObjects(objects, root, targetBucket, endpoint) {
+  for (const object of objects) {
     aws(endpoint, [
       "s3api",
       "put-object",
@@ -144,7 +165,7 @@ async function restore(inventoryPath, targetBucket, endpoint) {
     ]);
   }
 
-  for (const object of inventory.objects) {
+  for (const object of objects) {
     const temporary = resolve(
       tmpdir(),
       `helix-object-verify-${process.pid}-${createHash("sha256").update(object.key).digest("hex")}`,
@@ -166,6 +187,7 @@ async function restore(inventoryPath, targetBucket, endpoint) {
       await rm(temporary, { force: true });
     }
   }
+  process.stdout.write(`${JSON.stringify({ objectCount: objects.length })}\n`);
 }
 
 async function verifyLocal(inventoryPath) {

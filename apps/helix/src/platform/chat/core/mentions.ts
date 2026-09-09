@@ -14,32 +14,28 @@ export function parseMentions(body: string, resolve: MentionResolve): readonly s
   const found: string[] = [];
   const seen = new Set<string>();
 
+  function pushOnce(value: string): void {
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    found.push(value);
+  }
+
   for (const match of body.matchAll(MENTION_RE)) {
     const handle = match[2];
     if (handle === undefined) {
       continue;
     }
     const lower = handle.toLowerCase();
-    if (lower === "here") {
-      if (!seen.has("@here")) {
-        seen.add("@here");
-        found.push("@here");
-      }
-      continue;
-    }
-    if (lower === "channel") {
-      if (!seen.has("@channel")) {
-        seen.add("@channel");
-        found.push("@channel");
-      }
+    if (lower === "here" || lower === "channel") {
+      pushOnce(`@${lower}`);
       continue;
     }
     const actorId = resolve(handle);
-    if (actorId === null || seen.has(actorId)) {
-      continue;
+    if (actorId !== null) {
+      pushOnce(actorId);
     }
-    seen.add(actorId);
-    found.push(actorId);
   }
 
   return found;

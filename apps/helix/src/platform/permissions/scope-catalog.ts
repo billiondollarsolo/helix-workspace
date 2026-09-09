@@ -214,29 +214,10 @@ const scopeCatalog = [
   },
 
   // Docs.
-  { scope: "docs.read", description: "Read documents.", surfaces: ["agent"] },
-  { scope: "docs.write", description: "Create and modify documents.", surfaces: ["agent"] },
-  { scope: "docs.comment", description: "Comment on documents.", surfaces: ["agent"] },
 
   // Sheets.
-  {
-    scope: "sheets.read",
-    description: "Read spreadsheets, tabs, and cell data.",
-    surfaces: ["agent"],
-  },
-  {
-    scope: "sheets.write",
-    description: "Create and modify spreadsheets, tabs, and cells.",
-    surfaces: ["agent"],
-  },
 
   // Slides.
-  { scope: "slides.read", description: "Read presentation decks and slides.", surfaces: ["agent"] },
-  {
-    scope: "slides.write",
-    description: "Create and modify presentation decks and slides.",
-    surfaces: ["agent"],
-  },
 
   // Meet.
   { scope: "meet.read", description: "Read meeting rooms and join tokens.", surfaces: ["agent"] },
@@ -403,6 +384,16 @@ const scopeCatalog = [
     description: "SMTP protocol access.",
     protocolScope: true,
     surfaces: ["app_password"],
+  },
+  {
+    scope: "admin.drive",
+    description: "Administer Drive quota usage and lifecycle policies.",
+    surfaces: ["admin"],
+  },
+  {
+    scope: "admin.chat",
+    description: "Administer Chat retention, legal hold, and exports.",
+    surfaces: ["admin"],
   },
 ] as const satisfies readonly ScopeDefinition[];
 

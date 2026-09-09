@@ -74,7 +74,7 @@ kms_encrypt_file() {
 
 # Decrypt a KMS-envelope-encrypted file produced by kms_encrypt_file.
 kms_decrypt_file() {
-  local src=$1 dest=$2 datakey_file=$3
+  local src=$1 dest=$2 datakey_file=$3 format=${4:-ed25519}
   require_cmd aws
   require_cmd node
   [[ -f "$datakey_file" ]] || die "KMS data key file not found: $datakey_file"
@@ -83,11 +83,21 @@ kms_decrypt_file() {
   # Decode the base64-stored ciphertext blob to a temp file for `fileb://`.
   tmp_blob=$(mktemp "${TMPDIR:-/tmp}/helix-kms.XXXXXX")
   base64 -d <"$datakey_file" >"$tmp_blob"
+  local decrypt_command=(node "$SCRIPT_DIR/aes-gcm-file.mjs" decrypt "$src" "$dest")
+  if [[ "$format" == "hmac-v3" ]]; then
+    require_cmd openssl
+    # Legacy archives used the base64 KMS plaintext as an OpenSSL passphrase.
+    # Keep it on stdin, never in process arguments.
+    decrypt_command=(openssl enc -d -aes-256-cbc -pbkdf2 -in "$src" -out "$dest" -pass stdin)
+  elif [[ "$format" != "ed25519" ]]; then
+    rm -f "$tmp_blob"
+    die "unsupported backup encryption format"
+  fi
   if ! aws kms decrypt \
     --ciphertext-blob "fileb://$tmp_blob" \
     --output text --query Plaintext \
-    "${endpoint_args[@]}" | node "$SCRIPT_DIR/aes-gcm-file.mjs" decrypt "$src" "$dest"; then
-    rm -f "$tmp_blob"
+    "${endpoint_args[@]}" | "${decrypt_command[@]}"; then
+    rm -f "$tmp_blob" "$dest"
     return 1
   fi
   rm -f "$tmp_blob"

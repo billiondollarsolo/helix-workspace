@@ -1,4 +1,4 @@
-import { sanitizeHtmlForExport } from "../docs/export/sanitize-html.js";
+import { sanitizeHtmlForExport } from "../security/sanitize-html.js";
 
 const ACTIVE_DOCUMENT_TAGS = /<\/?(?:html|head|body|meta|title)\b[^>]*>/giu;
 const STYLE_BLOCKS = /<style\b[^>]*>[\s\S]*?(?:<\/style>|$)/giu;
@@ -19,9 +19,7 @@ export function sanitizeMailHtml(source: string): SanitizedMailHtml {
     .replace(ACTIVE_DOCUMENT_TAGS, "")
     .replace(LINK_TARGETS, "")
     .replace(HREFS, (_attribute, href: string) =>
-      isExternalMailHref(href)
-        ? ` href="#helix-link" data-helix-href="${href}"`
-        : "",
+      isExternalMailHref(href) ? ` href="#helix-link" data-helix-href="${href}"` : "",
     );
   return { html, remoteContentBlocked: REMOTE_CONTENT.test(source) };
 }

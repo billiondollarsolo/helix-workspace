@@ -127,7 +127,11 @@ describe("withTenantPostgresContext", () => {
 
     await withTenantPostgresContext(sql, { orgId, actorId }, async () => {
       await expect(
-        withTenantIoSagaPostgresContext(sql, { orgId, serviceContext: true }, async () => undefined),
+        withTenantIoSagaPostgresContext(
+          sql,
+          { orgId, serviceContext: true },
+          async () => undefined,
+        ),
       ).rejects.toThrow("requires an existing actor-free context");
     });
     expect(recording.calls).toContainEqual({

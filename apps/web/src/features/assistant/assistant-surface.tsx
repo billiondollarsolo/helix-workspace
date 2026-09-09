@@ -8,7 +8,6 @@
    pin/unpin/rename/delete and memory-forget all hitting `POST /api/tools/...`.
    Live replies stream from `streamAssistantChat`; selecting a past thread
    reopens it and continues the same backend conversation. */
-
 import {
   useCallback,
   useEffect,
@@ -18,7 +17,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
 } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { bucketThreadsByDate, type ThreadSidebarItem } from "./date-buckets";
@@ -47,9 +46,12 @@ import {
   type AssistantChatMessage,
   type AssistantThread,
 } from "@/features/assistant/assistant-data";
-
+import {
+  PendingApprovalsPanel,
+  type PendingApprovalItem,
+} from "@/features/assistant/pending-approvals";
+import { applyAssistantToolDecision } from "@/features/assistant/tool-decisions";
 const USER_NAME = "You";
-
 /** Maps a backend conversation list item to the seed thread shape. */
 function toThread(item: AssistantConversationListItem): AssistantThread {
   const updatedAtMs = Date.parse(item.updatedAt);
@@ -61,7 +63,6 @@ function toThread(item: AssistantConversationListItem): AssistantThread {
     ...(item.pinned ? { pinned: true } : {}),
   };
 }
-
 /** Renders an ISO timestamp as a coarse "10m ago" style label. */
 function relativeTime(iso: string): string {
   const then = Date.parse(iso);
@@ -69,7 +70,7 @@ function relativeTime(iso: string): string {
     return "";
   }
   const diffMs = Date.now() - then;
-  const minutes = Math.round(diffMs / 60_000);
+  const minutes = Math.round(diffMs / 60000);
   if (minutes < 1) {
     return "just now";
   }
@@ -83,40 +84,70 @@ function relativeTime(iso: string): string {
   const days = Math.round(hours / 24);
   return days === 1 ? "Yesterday" : `${String(days)} days ago`;
 }
-
 /* ---------------------------------------------------------------- shell -- */
-
 export function AssistantSurface() {
   const navigate = useNavigate();
+  const urlSearch: {
+    readonly conversation?: string;
+  } = useSearch({ strict: false });
   const queryClient = useQueryClient();
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(urlSearch.conversation ?? null);
   const [conversation, setConversation] = useState<readonly AssistantChatMessage[]>([]);
-  const [hasMessages, setHasMessages] = useState(false);
+  const [hasMessages, setHasMessages] = useState(() => urlSearch.conversation !== undefined);
   const [pending, setPending] = useState(false);
   const [search, setSearch] = useState("");
   const [renameTarget, setRenameTarget] = useState<AssistantThread | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AssistantThread | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const conversationIdRef = useRef<string | undefined>(undefined);
-
+  const [pendingApprovals, setPendingApprovals] = useState<readonly PendingApprovalItem[]>([]);
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const conversationIdRef = useRef<string | undefined>(urlSearch.conversation);
+  const pushConversationUrl = useCallback(
+    (conversationId: string | null) => {
+      void navigate({
+        to: "/assistant",
+        search: conversationId === null ? {} : { conversation: conversationId },
+        replace: false,
+      });
+    },
+    [navigate],
+  );
+  // Deep link: if the URL conversation id changes (back/forward/share), open it.
+  useEffect(() => {
+    const fromUrl = urlSearch.conversation;
+    if (fromUrl === undefined) {
+      return;
+    }
+    if (conversationIdRef.current === fromUrl && threadId === fromUrl) {
+      return;
+    }
+    conversationIdRef.current = fromUrl;
+    setThreadId(fromUrl);
+    setHasMessages(true);
+    setConversation([
+      {
+        id: `resume-${fromUrl}`,
+        role: "assistant",
+        text: "Conversation reopened. Send a message to pick up where you left off.",
+        time: assistantNowTime(),
+      },
+    ]);
+  }, [threadId, urlSearch.conversation]);
   const trimmedSearch = search.trim();
   const conversationsQuery = useQuery(
     assistantConversationsQueryOptions(trimmedSearch.length === 0 ? {} : { query: trimmedSearch }),
   );
-
   const invalidateConversations = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: [ASSISTANT_QUERY_ROOT, "conversations"] });
   }, [queryClient]);
-
   /* The backend list is the source of truth. On error or while loading the
-     sidebar renders an empty list (the surface shows its own loading/error
-     affordances elsewhere). */
+       sidebar renders an empty list (the surface shows its own loading/error
+       affordances elsewhere). */
   const threads: readonly AssistantThread[] = useMemo(
     () =>
       conversationsQuery.data !== undefined ? conversationsQuery.data.items.map(toThread) : [],
     [conversationsQuery.data],
   );
-
   const send = useCallback(
     (raw: string) => {
       const text = raw.trim();
@@ -144,7 +175,6 @@ export function AssistantSurface() {
         },
       ]);
       setPending(true);
-
       const patch = (changes: Partial<AssistantChatMessage>) => {
         setConversation((prev) =>
           prev.map((message) =>
@@ -152,7 +182,6 @@ export function AssistantSurface() {
           ),
         );
       };
-
       void streamAssistantChat(
         { conversationId: conversationIdRef.current, message: text },
         {
@@ -173,6 +202,7 @@ export function AssistantSurface() {
           conversationIdRef.current = backendId ?? conversationIdRef.current;
           if (backendId !== undefined) {
             setThreadId(backendId);
+            pushConversationUrl(backendId);
           }
           // Hydrate the full persisted history when the turn carries it; this
           // is how a continued conversation keeps every prior message.
@@ -185,6 +215,26 @@ export function AssistantSurface() {
               ...(finalText !== undefined && finalText.length > 0 ? { text: finalText } : {}),
             });
           }
+          // A12: surface pending tool confirmations for explicit approve/deny.
+          const fromTurn: PendingApprovalItem[] = (turn.pendingConfirmations ?? []).map(
+            (pending) => ({
+              id: pending.id,
+              toolId: pending.toolId,
+              status: "pending" as const,
+            }),
+          );
+          const fromCalls: PendingApprovalItem[] = [];
+          for (const call of turn.toolCalls ?? []) {
+            if (call.pending !== undefined) {
+              fromCalls.push({
+                id: call.pending.id,
+                toolId: call.pending.toolId,
+                toolCallId: call.toolCallId,
+                status: "pending",
+              });
+            }
+          }
+          setPendingApprovals(fromTurn.length > 0 ? fromTurn : fromCalls);
           invalidateConversations();
         })
         .catch(() => {
@@ -194,46 +244,97 @@ export function AssistantSurface() {
           setPending(false);
         });
     },
-    [pending, invalidateConversations],
+    [pending, invalidateConversations, pushConversationUrl],
   );
-
-  const openThread = useCallback((id: string) => {
-    setThreadId(id);
-    setHasMessages(true);
-    // Reopen and continue this backend conversation. The full message history
-    // hydrates from the next turn's persisted `messages`; until then we show a
-    // resume hint so the user knows which conversation is active.
-    conversationIdRef.current = id;
-    setConversation([
-      {
-        id: `resume-${id}`,
-        role: "assistant",
-        text: "Conversation reopened. Send a message to pick up where you left off.",
-        time: assistantNowTime(),
-      },
-    ]);
-  }, []);
-
+  const decidePending = useCallback(
+    async (item: PendingApprovalItem, decision: "confirm" | "cancel") => {
+      const conversationId = conversationIdRef.current;
+      if (conversationId === undefined) {
+        return;
+      }
+      setApprovalBusy(true);
+      setPendingApprovals((prev) =>
+        prev.map((entry) =>
+          entry.id === item.id ? { ...entry, status: "running", error: undefined } : entry,
+        ),
+      );
+      try {
+        await applyAssistantToolDecision({
+          conversationId,
+          pendingId: item.id,
+          toolCallId: item.toolCallId ?? item.id,
+          decision,
+          setToolError: (_toolCallId, message) => {
+            setPendingApprovals((prev) =>
+              prev.map((entry) =>
+                entry.id === item.id
+                  ? {
+                      ...entry,
+                      status: "pending",
+                      ...(message === undefined ? {} : { error: message }),
+                    }
+                  : entry,
+              ),
+            );
+          },
+          setToolStatus: (_toolCallId, status) => {
+            setPendingApprovals((prev) =>
+              prev.map((entry) => (entry.id === item.id ? { ...entry, status } : entry)),
+            );
+          },
+        });
+        setPendingApprovals((prev) =>
+          prev.map((entry) =>
+            entry.id === item.id
+              ? { ...entry, status: decision === "confirm" ? "confirmed" : "cancelled" }
+              : entry,
+          ),
+        );
+      } catch {
+        // Error state already set via setToolError when possible.
+      } finally {
+        setApprovalBusy(false);
+      }
+    },
+    [],
+  );
+  const openThread = useCallback(
+    (id: string) => {
+      setThreadId(id);
+      setHasMessages(true);
+      // Reopen and continue this backend conversation. The full message history
+      // hydrates from the next turn's persisted `messages`; until then we show a
+      // resume hint so the user knows which conversation is active.
+      conversationIdRef.current = id;
+      setConversation([
+        {
+          id: `resume-${id}`,
+          role: "assistant",
+          text: "Conversation reopened. Send a message to pick up where you left off.",
+          time: assistantNowTime(),
+        },
+      ]);
+      pushConversationUrl(id);
+    },
+    [pushConversationUrl],
+  );
   const startNewChat = useCallback(() => {
     setThreadId(null);
     setConversation([]);
     setHasMessages(false);
     conversationIdRef.current = undefined;
-  }, []);
-
+    pushConversationUrl(null);
+  }, [pushConversationUrl]);
   const navigateToSurface = useCallback(
     (target: string) => {
       void navigate({ to: `/${target}` });
     },
     [navigate],
   );
-
   /* ------------------------------------------------------------- mutations */
-
   const clearNotice = useCallback(() => {
     setNotice(null);
   }, []);
-
   const pinMutation = useMutation({
     mutationFn: (input: { readonly conversationId: string; readonly pinned: boolean }) =>
       setAssistantConversationPinned(input),
@@ -243,7 +344,6 @@ export function AssistantSurface() {
       setNotice("Couldn't update the pin. Try again.");
     },
   });
-
   const renameMutation = useMutation({
     mutationFn: (input: { readonly conversationId: string; readonly title: string }) =>
       renameAssistantConversation(input),
@@ -256,7 +356,6 @@ export function AssistantSurface() {
       setNotice("Couldn't rename the chat. Try again.");
     },
   });
-
   const deleteMutation = useMutation({
     mutationFn: (input: { readonly conversationId: string }) => deleteAssistantConversation(input),
     onMutate: clearNotice,
@@ -271,7 +370,6 @@ export function AssistantSurface() {
       setNotice("Couldn't delete the chat. Try again.");
     },
   });
-
   const forgetMutation = useMutation({
     mutationFn: () =>
       forgetAssistantMemory(
@@ -287,7 +385,6 @@ export function AssistantSurface() {
       setNotice("Couldn't forget memory. Try again.");
     },
   });
-
   const togglePin = useCallback(
     (thread: AssistantThread) => {
       pinMutation.mutate({
@@ -297,7 +394,6 @@ export function AssistantSurface() {
     },
     [pinMutation],
   );
-
   return (
     <SurfaceFrame title="Helix AI" icon={<Icons.Sparkles />} searchPlaceholder="Search chats">
       <AssistantThreadList
@@ -342,7 +438,17 @@ export function AssistantSurface() {
         ) : (
           <AssistantHero onPrompt={send} />
         )}
-        <AssistantComposer onSend={send} pending={pending} />
+        <PendingApprovalsPanel
+          items={pendingApprovals}
+          busy={approvalBusy}
+          onConfirm={(item) => {
+            void decidePending(item, "confirm");
+          }}
+          onCancel={(item) => {
+            void decidePending(item, "cancel");
+          }}
+        />
+        <AssistantComposer onSend={send} pending={pending || approvalBusy} />
       </div>
       {renameTarget !== null && (
         <RenameDialog
@@ -371,7 +477,6 @@ export function AssistantSurface() {
     </SurfaceFrame>
   );
 }
-
 /** Builds a UI conversation from a turn's persisted `messages`, or null. */
 function hydrateConversation(
   turn: AssistantTurnResponseWithPendingConfirmations,
@@ -396,7 +501,6 @@ function hydrateConversation(
         : assistantNowTime(new Date(message.createdAt)),
   }));
 }
-
 const mainPaneStyle: CSSProperties = {
   flex: 1,
   display: "flex",
@@ -404,7 +508,6 @@ const mainPaneStyle: CSSProperties = {
   minWidth: 0,
   background: "var(--bg)",
 };
-
 const noticeStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -416,9 +519,7 @@ const noticeStyle: CSSProperties = {
   background: "var(--surface-2)",
   borderBottom: "1px solid var(--border)",
 };
-
 /* ----------------------------------------------------------- thread list -- */
-
 interface AssistantThreadListProps {
   readonly threadId: string | null;
   readonly threads: readonly AssistantThread[];
@@ -434,7 +535,6 @@ interface AssistantThreadListProps {
   readonly onForget: () => void;
   readonly forgetPending: boolean;
 }
-
 function AssistantThreadList({
   threadId,
   threads,
@@ -452,9 +552,8 @@ function AssistantThreadList({
 }: AssistantThreadListProps) {
   const pinned = threads.filter((thread) => thread.pinned === true);
   const recent = threads.filter((thread) => thread.pinned !== true);
-
   return (
-    <aside style={threadListStyle}>
+    <aside className="assistant-thread-sidebar" style={threadListStyle}>
       <div style={{ padding: "12px 12px 8px" }}>
         <button
           type="button"
@@ -504,7 +603,6 @@ function AssistantThreadList({
     </aside>
   );
 }
-
 const threadListStyle: CSSProperties = {
   width: 240,
   flexShrink: 0,
@@ -513,26 +611,21 @@ const threadListStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
 };
-
 const threadScrollStyle: CSSProperties = {
   flex: 1,
   overflowY: "auto",
   padding: "4px 8px",
 };
-
 const threadFooterStyle: CSSProperties = {
   padding: "8px 12px",
   borderTop: "1px solid var(--border)",
 };
-
 const sectionLabelStyle: CSSProperties = { padding: "8px 4px 6px" };
-
 const threadEmptyStyle: CSSProperties = {
   padding: "12px 6px",
   fontSize: "var(--text-meta)",
   color: "var(--text-3)",
 };
-
 interface VirtualizedThreadListProps {
   readonly loading: boolean;
   readonly errored: boolean;
@@ -545,7 +638,6 @@ interface VirtualizedThreadListProps {
   readonly onRename: (thread: AssistantThread) => void;
   readonly onDelete: (thread: AssistantThread) => void;
 }
-
 /**
  * ChatGPT-style virtualized thread list.
  *
@@ -575,7 +667,6 @@ function VirtualizedThreadList({
     [recent],
   );
   const scrollRef = useRef<HTMLDivElement | null>(null);
-
   const virtualizer = useVirtualizer({
     count: sidebarItems.length,
     getScrollElement: () => scrollRef.current,
@@ -589,7 +680,6 @@ function VirtualizedThreadList({
       return item.kind === "header" ? `h:${item.id}` : `t:${item.thread.id}`;
     },
   });
-
   if (loading && pinned.length === 0 && recent.length === 0) {
     return (
       <div style={threadScrollStyle} data-testid="assistant-thread-list">
@@ -615,7 +705,6 @@ function VirtualizedThreadList({
       </div>
     );
   }
-
   return (
     <div ref={scrollRef} style={threadScrollStyle} data-testid="assistant-thread-list">
       {pinned.length > 0 && (
@@ -683,7 +772,6 @@ function VirtualizedThreadList({
     </div>
   );
 }
-
 interface ThreadItemProps {
   readonly thread: AssistantThread;
   readonly active: boolean;
@@ -692,7 +780,6 @@ interface ThreadItemProps {
   readonly onRename: (thread: AssistantThread) => void;
   readonly onDelete: (thread: AssistantThread) => void;
 }
-
 function ThreadItem({
   thread,
   active,
@@ -702,7 +789,6 @@ function ThreadItem({
   onDelete,
 }: ThreadItemProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-
   useEffect(() => {
     if (!menuOpen) {
       return;
@@ -715,7 +801,6 @@ function ThreadItem({
       window.removeEventListener("click", close);
     };
   }, [menuOpen]);
-
   return (
     <div style={{ position: "relative" }}>
       <button
@@ -817,7 +902,6 @@ function ThreadItem({
     </div>
   );
 }
-
 const threadMenuButtonStyle: CSSProperties = {
   position: "absolute",
   top: 6,
@@ -825,7 +909,6 @@ const threadMenuButtonStyle: CSSProperties = {
   width: 22,
   height: 22,
 };
-
 const threadMenuStyle: CSSProperties = {
   position: "absolute",
   top: 28,
@@ -840,7 +923,6 @@ const threadMenuStyle: CSSProperties = {
   display: "flex",
   flexDirection: "column",
 };
-
 const threadMenuItemStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -852,16 +934,13 @@ const threadMenuItemStyle: CSSProperties = {
   textAlign: "left",
   background: "transparent",
 };
-
 /* ------------------------------------------------------- rename / delete -- */
-
 interface RenameDialogProps {
   readonly thread: AssistantThread;
   readonly pending: boolean;
   readonly onCancel: () => void;
   readonly onSubmit: (title: string) => void;
 }
-
 function RenameDialog({ thread, pending, onCancel, onSubmit }: RenameDialogProps) {
   const [value, setValue] = useState(thread.title);
   const trimmed = value.trim();
@@ -870,7 +949,6 @@ function RenameDialog({ thread, pending, onCancel, onSubmit }: RenameDialogProps
       onSubmit(trimmed);
     }
   };
-
   return (
     <Dialog
       title="Rename chat"
@@ -913,14 +991,12 @@ function RenameDialog({ thread, pending, onCancel, onSubmit }: RenameDialogProps
     </Dialog>
   );
 }
-
 interface DeleteDialogProps {
   readonly thread: AssistantThread;
   readonly pending: boolean;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
 }
-
 function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProps) {
   return (
     <Dialog
@@ -944,13 +1020,10 @@ function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProp
     </Dialog>
   );
 }
-
 /* ------------------------------------------------------------------ hero -- */
-
 interface AssistantHeroProps {
   readonly onPrompt: (prompt: string) => void;
 }
-
 function AssistantHero({ onPrompt }: AssistantHeroProps) {
   return (
     <div style={heroScrollStyle}>
@@ -962,8 +1035,7 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
           What can I help you with, <span style={{ color: "var(--accent)" }}>Alex</span>?
         </h1>
         <p style={heroSubheadStyle}>
-          Connected to Mail, Docs, Drive, Calendar, and Sheets. Ask anything, draft anything, or
-          pick a prompt below.
+          {"Connected to Mail, Drive, and Chat. Ask about your workspace or pick a prompt below."}
         </p>
         <div style={heroGridStyle}>
           {ASSISTANT_QUICK_PROMPTS.map((prompt) => {
@@ -1017,13 +1089,11 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
     </div>
   );
 }
-
 const heroScrollStyle: CSSProperties = {
   flex: 1,
   overflowY: "auto",
   padding: "48px 32px",
 };
-
 const heroIconStyle: CSSProperties = {
   width: 56,
   height: 56,
@@ -1035,7 +1105,6 @@ const heroIconStyle: CSSProperties = {
   marginBottom: 20,
   boxShadow: "var(--shadow-md)",
 };
-
 const heroTitleStyle: CSSProperties = {
   fontSize: "var(--text-display)",
   fontWeight: 700,
@@ -1043,19 +1112,16 @@ const heroTitleStyle: CSSProperties = {
   margin: "0 0 8px",
   lineHeight: 1.1,
 };
-
 const heroSubheadStyle: CSSProperties = {
   fontSize: "var(--text-body-lg)",
   color: "var(--text-2)",
   margin: "0 0 32px",
 };
-
 const heroGridStyle: CSSProperties = {
   display: "grid",
   gridTemplateColumns: "repeat(2, 1fr)",
   gap: 10,
 };
-
 const quickPromptStyle: CSSProperties = {
   background: "var(--surface)",
   border: "1px solid var(--border)",
@@ -1067,7 +1133,6 @@ const quickPromptStyle: CSSProperties = {
   textAlign: "left",
   transition: "border-color 0.15s",
 };
-
 const quickPromptTileStyle: CSSProperties = {
   width: 36,
   height: 36,
@@ -1076,25 +1141,20 @@ const quickPromptTileStyle: CSSProperties = {
   placeItems: "center",
   flexShrink: 0,
 };
-
 /* ---------------------------------------------------------- conversation -- */
-
 interface AssistantConversationProps {
   readonly conversation: readonly AssistantChatMessage[];
   readonly pending: boolean;
   readonly onNavigate: (target: string) => void;
 }
-
 function AssistantConversation({ conversation, pending, onNavigate }: AssistantConversationProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingText = conversation
     .filter((message) => message.streaming === true)
     .map((message) => message.text)
     .join("");
-
   // Total virtualized count = N messages + 1 disclaimer footer row.
   const totalRows = conversation.length + 1;
-
   const virtualizer = useVirtualizer({
     count: totalRows,
     getScrollElement: () => scrollRef.current,
@@ -1107,7 +1167,6 @@ function AssistantConversation({ conversation, pending, onNavigate }: AssistantC
         ? "disclaimer"
         : (conversation[index]?.id ?? `m:${String(index)}`),
   });
-
   // Streaming: keep the bottom row in view while the assistant types. We use
   // the virtualizer's scrollToIndex (not raw scrollTop) so the windowed list
   // measures + renders the target row before we land on it.
@@ -1117,7 +1176,6 @@ function AssistantConversation({ conversation, pending, onNavigate }: AssistantC
     // We intentionally depend on length + streaming text + pending so every
     // delta nudges us back to the bottom even mid-stream.
   }, [virtualizer, totalRows, pending, streamingText]);
-
   return (
     <div ref={scrollRef} style={conversationScrollStyle} data-testid="assistant-conversation">
       <div
@@ -1163,19 +1221,16 @@ function AssistantConversation({ conversation, pending, onNavigate }: AssistantC
     </div>
   );
 }
-
 const conversationScrollStyle: CSSProperties = {
   flex: 1,
   overflowY: "auto",
   padding: "24px 32px",
 };
-
 const disclaimerRowStyle: CSSProperties = {
   display: "flex",
   justifyContent: "center",
   padding: "16px 0",
 };
-
 const disclaimerStyle: CSSProperties = {
   fontSize: "var(--text-caption)",
   color: "var(--text-3)",
@@ -1183,7 +1238,6 @@ const disclaimerStyle: CSSProperties = {
   alignItems: "center",
   gap: 8,
 };
-
 const sparkleTileStyle: CSSProperties = {
   width: 28,
   height: 28,
@@ -1194,12 +1248,10 @@ const sparkleTileStyle: CSSProperties = {
   display: "grid",
   placeItems: "center",
 };
-
 interface ChatMessageProps {
   readonly message: AssistantChatMessage;
   readonly onNavigate: (target: string) => void;
 }
-
 function ChatMessage({ message, onNavigate }: ChatMessageProps) {
   if (message.role === "user") {
     return (
@@ -1209,7 +1261,6 @@ function ChatMessage({ message, onNavigate }: ChatMessageProps) {
       </div>
     );
   }
-
   const isPending = message.streaming === true && message.text.length === 0;
   return (
     <div style={assistantRowStyle}>
@@ -1249,14 +1300,12 @@ function ChatMessage({ message, onNavigate }: ChatMessageProps) {
     </div>
   );
 }
-
 const userRowStyle: CSSProperties = {
   display: "flex",
   gap: 12,
   marginBottom: 20,
   justifyContent: "flex-end",
 };
-
 const userBubbleStyle: CSSProperties = {
   background: "var(--accent-soft)",
   color: "var(--text)",
@@ -1268,20 +1317,17 @@ const userBubbleStyle: CSSProperties = {
   border: "1px solid var(--accent-soft-border)",
   whiteSpace: "pre-wrap",
 };
-
 const assistantRowStyle: CSSProperties = {
   display: "flex",
   gap: 12,
   marginBottom: 24,
 };
-
 const assistantTextStyle: CSSProperties = {
   fontSize: "var(--text-body-sm)",
   lineHeight: 1.6,
   marginBottom: 12,
   whiteSpace: "pre-wrap",
 };
-
 function PendingDots() {
   return (
     <div
@@ -1304,14 +1350,11 @@ function PendingDots() {
     </div>
   );
 }
-
 /* ----------------------------------------------------------------- block -- */
-
 interface MessageBlockProps {
   readonly block: AssistantBlock;
   readonly onNavigate: (target: string) => void;
 }
-
 function MessageBlock({ block, onNavigate }: MessageBlockProps) {
   if (block.kind === "list") {
     return (
@@ -1329,7 +1372,6 @@ function MessageBlock({ block, onNavigate }: MessageBlockProps) {
       </div>
     );
   }
-
   if (block.kind === "draft") {
     return (
       <div style={draftPanelStyle}>
@@ -1344,7 +1386,6 @@ function MessageBlock({ block, onNavigate }: MessageBlockProps) {
       </div>
     );
   }
-
   return (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
       {block.items.map((action, index) => {
@@ -1367,7 +1408,6 @@ function MessageBlock({ block, onNavigate }: MessageBlockProps) {
     </div>
   );
 }
-
 const listPanelStyle: CSSProperties = {
   background: "var(--surface)",
   border: "1px solid var(--border)",
@@ -1375,7 +1415,6 @@ const listPanelStyle: CSSProperties = {
   padding: "12px 14px",
   marginBottom: 8,
 };
-
 const draftPanelStyle: CSSProperties = {
   background: "var(--surface)",
   border: "1px solid var(--border)",
@@ -1383,7 +1422,6 @@ const draftPanelStyle: CSSProperties = {
   marginBottom: 8,
   overflow: "hidden",
 };
-
 const draftToolbarStyle: CSSProperties = {
   background: "var(--surface-2)",
   padding: "8px 14px",
@@ -1393,24 +1431,19 @@ const draftToolbarStyle: CSSProperties = {
   gap: 6,
   fontSize: "var(--text-meta)",
 };
-
 const draftBodyStyle: CSSProperties = {
   padding: "12px 14px",
   whiteSpace: "pre-wrap",
   fontSize: "var(--text-meta)",
   lineHeight: 1.6,
 };
-
 /* -------------------------------------------------------------- composer -- */
-
 interface AssistantComposerProps {
   readonly onSend: (text: string) => void;
   readonly pending: boolean;
 }
-
 function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
   const [text, setText] = useState("");
-
   const submit = useCallback(() => {
     if (text.trim().length === 0 || pending) {
       return;
@@ -1418,7 +1451,6 @@ function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
     onSend(text);
     setText("");
   }, [text, pending, onSend]);
-
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
       if (event.key === "Enter" && !event.shiftKey) {
@@ -1428,7 +1460,6 @@ function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
     },
     [submit],
   );
-
   return (
     <div style={{ padding: "12px 32px 20px", flexShrink: 0 }}>
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
@@ -1464,7 +1495,6 @@ function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
     </div>
   );
 }
-
 const composerCardStyle: CSSProperties = {
   border: "1px solid var(--border)",
   borderRadius: 14,
@@ -1472,7 +1502,6 @@ const composerCardStyle: CSSProperties = {
   padding: 4,
   boxShadow: "var(--shadow-sm)",
 };
-
 const composerTextareaStyle: CSSProperties = {
   width: "100%",
   padding: "12px 14px",
@@ -1486,7 +1515,6 @@ const composerTextareaStyle: CSSProperties = {
   fontFamily: "inherit",
   color: "var(--text)",
 };
-
 const composerToolbarStyle: CSSProperties = {
   display: "flex",
   padding: "4px 8px 6px",

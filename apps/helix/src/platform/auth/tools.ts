@@ -306,7 +306,9 @@ function normalizeScopes(scopes: readonly string[]): string[] {
   try {
     return parseScope(scopes.join(" "));
   } catch (error) {
-    if (error instanceof OAuthError) throw new TypeError(error.message);
+    if (error instanceof OAuthError) {
+      throw new TypeError(error.message, { cause: error });
+    }
     throw error;
   }
 }

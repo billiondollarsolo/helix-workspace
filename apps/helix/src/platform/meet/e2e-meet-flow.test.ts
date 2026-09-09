@@ -129,11 +129,7 @@ describe("meet flow", () => {
       expect(jwtPayload(participantToken.output.token).context.user.moderator).toBe(false);
     }
     await expect(
-      registry.invoke(
-        "meet.recording.authorize-start",
-        { roomId: created.output.id },
-        { actor },
-      ),
+      registry.invoke("meet.recording.authorize-start", { roomId: created.output.id }, { actor }),
     ).resolves.toMatchObject({ ok: true });
     await expect(
       registry.invoke("meet.end-room", { roomId: created.output.id }, { actor: participant }),

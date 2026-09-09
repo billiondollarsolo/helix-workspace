@@ -5,6 +5,27 @@ private key exists briefly in app memory while it is generated or used by
 Nodemailer. The KMS encryption context binds ciphertext to the tenant, domain,
 and `mail-dkim` purpose.
 
+## Upgrading legacy mail credentials
+
+Before upgrading a deployment that used environment-variable provider references,
+provision each provider credential and callback signing secret in the tenant Vault
+path `tenants/<org-id>/mail-provider/<handle>`. Provider credentials use the
+`credential` field. Configure the provider's opaque `secretRef` and
+`webhookSecretRef` handles through the mail admin API after migration, then enable
+that provider and verify delivery and authenticated callbacks.
+
+Migrations 0110 and 0119 disable providers with incompatible environment or inline
+references and clear those references; they do not copy global secrets into tenant
+storage. Export the non-secret provider settings and map the old references to the
+correct tenant before migration. Keep the original secrets in their existing secret
+manager until the replacement has been verified.
+
+Legacy plaintext or app-envelope DKIM keys are invalidated by migrations 0110 and 0158. Provision KMS access, stage a fresh selector, publish and verify its DNS record,
+and activate it using the procedure below before resuming production sending.
+Existing old-selector DNS records should remain published through the old queue's
+retry window. A successful schema migration alone does not establish mail delivery
+readiness.
+
 ## Least-privilege KMS access
 
 Provision one symmetric KMS/HSM key per tenant (or an equivalently isolated
@@ -19,11 +40,7 @@ the KMS/IAM policy:
     "kms:EncryptionContext:helix:purpose": "mail-dkim"
   },
   "ForAllValues:StringEquals": {
-    "kms:EncryptionContextKeys": [
-      "helix:purpose",
-      "helix:org-id",
-      "helix:domain-id"
-    ]
+    "kms:EncryptionContextKeys": ["helix:purpose", "helix:org-id", "helix:domain-id"]
   }
 }
 ```

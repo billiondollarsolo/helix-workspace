@@ -9,35 +9,27 @@ import {
   type SendWelcomeActivationEvent,
   type WelcomeActivationAction,
 } from "./api";
-
-const actions = [
+const storageOnlyActions = [
   {
-    id: "try_editor",
-    title: "Try the editor",
-    body: "Create a doc and see comments, versions, and Drive storage in context.",
-    to: "/docs",
-    icon: <Icons.Doc />,
-  },
-  {
-    id: "install_integration",
-    title: "Install an integration",
-    body: "Review apps, identity, and workspace settings from the admin console.",
-    to: "/admin",
-    icon: <Icons.Grid />,
+    id: "view_files",
+    title: "Upload and share files",
+    body: "Store, organize, scan, download, and share team files from Drive.",
+    to: "/drive",
+    icon: <Icons.Drive />,
   },
   {
     id: "invite_team",
-    title: "Invite your team",
-    body: "Bring teammates into Mail, Calendar, Drive, Chat, and Meet.",
+    title: "Connect with your team",
+    body: "Invite teammates into Mail, Drive, and secure organization Chat.",
     to: "/chat",
     icon: <Icons.Users />,
   },
   {
-    id: "view_docs",
-    title: "View docs",
-    body: "Open workspace documents and start organizing shared knowledge.",
-    to: "/drive",
-    icon: <Icons.Drive />,
+    id: "install_integration",
+    title: "Configure your workspace",
+    body: "Review identity, agents, and workspace settings from the admin console.",
+    to: "/admin",
+    icon: <Icons.Grid />,
   },
 ] satisfies ReadonlyArray<{
   readonly id: WelcomeActivationAction;
@@ -46,16 +38,14 @@ const actions = [
   readonly to: string;
   readonly icon: ReactNode;
 }>;
-
+const actions = storageOnlyActions;
 export interface WelcomeDashboardProps {
   readonly sendEvent?: SendWelcomeActivationEvent;
 }
-
 export function WelcomeDashboard({
   sendEvent = sendWelcomeActivationEvent,
 }: WelcomeDashboardProps) {
   const viewRecorded = useRef(false);
-
   useEffect(() => {
     if (viewRecorded.current) {
       return;
@@ -63,7 +53,6 @@ export function WelcomeDashboard({
     viewRecorded.current = true;
     void sendEvent({ event: "viewed" }).catch(() => undefined);
   }, [sendEvent]);
-
   return (
     <SurfaceFrame title="Welcome" icon={<Icons.Helix />} searchPlaceholder="Search workspace">
       <div className="welcome-surface">

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { createElement, useState, type ReactNode } from "react";
 import {
   chatAttachmentContentUrl,
   saveChatAttachmentToDrive,
@@ -12,12 +12,22 @@ type MarkdownSegment =
 export function ChatMessageContent({
   body,
   bodyFormat,
+  renderedBodyHtml,
 }: {
   readonly body: string;
   readonly bodyFormat: string;
+  readonly renderedBodyHtml?: string | undefined;
 }) {
   if (bodyFormat !== "markdown") {
     return body.length === 0 ? null : <p className="chat-msg-line">{body}</p>;
+  }
+  if (renderedBodyHtml !== undefined) {
+    const document = new DOMParser().parseFromString(renderedBodyHtml, "text/html");
+    return (
+      <div className="chat-markdown">
+        {Array.from(document.body.childNodes, renderSafeMarkdownNode)}
+      </div>
+    );
   }
   return (
     <div className="chat-markdown">
@@ -35,6 +45,55 @@ export function ChatMessageContent({
         ),
       )}
     </div>
+  );
+}
+
+// Recreate the server's small Markdown vocabulary; never insert HTML or copy attributes.
+function renderSafeMarkdownNode(node: Node, index: number): ReactNode {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+  if (!(node instanceof Element)) return null;
+  const tag = node.tagName.toLowerCase();
+  if (tag === "pre") {
+    const code = node.querySelector("code");
+    return (
+      <ChatCodeBlock
+        key={index}
+        code={code?.textContent ?? node.textContent ?? ""}
+        language={normalizedLanguage(code?.className.replace(/^language-/u, "") ?? "code")}
+      />
+    );
+  }
+  const children = Array.from(node.childNodes, renderSafeMarkdownNode);
+  if (tag === "a") {
+    const href = node.getAttribute("href") ?? "";
+    try {
+      const url = new URL(href);
+      if (
+        !["https:", "http:", "mailto:"].includes(url.protocol) ||
+        url.username ||
+        url.password ||
+        Array.from(href).some((char) => char.charCodeAt(0) <= 31 || char.charCodeAt(0) === 127)
+      )
+        return children;
+      return (
+        <a
+          key={index}
+          href={href}
+          target={url.protocol === "mailto:" ? undefined : "_blank"}
+          rel="noopener noreferrer nofollow"
+        >
+          {children}
+        </a>
+      );
+    } catch {
+      return children;
+    }
+  }
+  if (!["p", "br", "strong", "em", "code", "h1", "h2", "h3", "span"].includes(tag)) return null;
+  return createElement(
+    tag,
+    { key: index, ...(node.classList.contains("sr-only") ? { className: "sr-only" } : {}) },
+    ...(tag === "br" ? [] : children),
   );
 }
 

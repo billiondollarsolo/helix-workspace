@@ -1,20 +1,17 @@
 import type postgres from "postgres";
 import type { AdminServiceStatus } from "./services.js";
-
 export interface AdminServiceRuntimeCounter {
   readonly key: string;
   readonly label: string;
   readonly value: number;
   readonly unit?: string | undefined;
 }
-
 export interface AdminServiceRuntimeCheck {
   readonly key: string;
   readonly label: string;
   readonly status: AdminServiceStatus;
   readonly evidence: string;
 }
-
 export interface AdminServiceRuntimeStatus {
   readonly generatedAt: string;
   readonly serviceId: string;
@@ -24,35 +21,32 @@ export interface AdminServiceRuntimeStatus {
   readonly checks: readonly AdminServiceRuntimeCheck[];
   readonly lastActivityAt?: string | undefined;
 }
-
 export interface AdminServiceRuntimeStatusInput {
   readonly serviceId: string;
   readonly orgId: string;
 }
-
 export interface AdminServiceRuntimeStatusStore {
   get(input: AdminServiceRuntimeStatusInput): Promise<AdminServiceRuntimeStatus | null>;
 }
-
 export interface PostgresAdminServiceStatusStoreOptions {
   readonly env: NodeJS.ProcessEnv;
   readonly now?: (() => Date) | undefined;
 }
-
-type CountRow = { readonly count: string | number | bigint | null };
-type TimestampRow = { readonly value: Date | string | null };
-
+type CountRow = {
+  readonly count: string | number | bigint | null;
+};
+type TimestampRow = {
+  readonly value: Date | string | null;
+};
 export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatusStore {
   readonly #sql: postgres.Sql;
   readonly #env: NodeJS.ProcessEnv;
   readonly #now: () => Date;
-
   constructor(sql: postgres.Sql, options: PostgresAdminServiceStatusStoreOptions) {
     this.#sql = sql;
     this.#env = options.env;
     this.#now = options.now ?? (() => new Date());
   }
-
   async get(input: AdminServiceRuntimeStatusInput): Promise<AdminServiceRuntimeStatus | null> {
     switch (input.serviceId) {
       case "mail":
@@ -61,8 +55,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         return this.#chat(input.orgId);
       case "drive":
         return this.#drive(input.orgId);
-      case "docs":
-        return this.#docs(input.orgId);
       case "calendar":
         return this.#calendar(input.orgId);
       case "meet":
@@ -87,7 +79,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         return null;
     }
   }
-
   async #mail(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [
       threadRows,
@@ -146,7 +137,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         ) as value
       `,
     ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "mail",
@@ -164,7 +154,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #chat(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [roomRows, dmRows, messageRows, reactionRows, pinRows, lastActivityRows] =
       await Promise.all([
@@ -200,7 +189,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
           ) as value
         `,
       ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "chat",
@@ -219,7 +207,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #drive(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [fileRows, folderRows, versionRows, byteRows, trashedRows, lastActivityRows] =
       await Promise.all([
@@ -256,7 +243,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
           ) as value
         `,
       ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "drive",
@@ -280,55 +266,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
-  async #docs(orgId: string): Promise<AdminServiceRuntimeStatus> {
-    const [docRows, updateRows, commentRows, openCommentRows, lastActivityRows] = await Promise.all(
-      [
-        this.#sql<CountRow[]>`
-        select count(*)::bigint as count
-        from docs_documents
-        where org_id = ${orgId} and deleted_at is null
-      `,
-        this.#sql<CountRow[]>`
-        select count(*)::bigint as count
-        from docs_updates
-        where org_id = ${orgId}
-      `,
-        this.#sql<CountRow[]>`
-        select count(*)::bigint as count
-        from docs_comments
-        where org_id = ${orgId}
-      `,
-        this.#sql<CountRow[]>`
-        select count(*)::bigint as count
-        from docs_comments
-        where org_id = ${orgId} and status = 'open' and resolved_at is null
-      `,
-        this.#sql<TimestampRow[]>`
-        select greatest(
-          coalesce((select max(updated_at) from docs_documents where org_id = ${orgId}), 'epoch'::timestamptz),
-          coalesce((select max(created_at) from docs_updates where org_id = ${orgId}), 'epoch'::timestamptz),
-          coalesce((select max(updated_at) from docs_comments where org_id = ${orgId}), 'epoch'::timestamptz)
-        ) as value
-      `,
-      ],
-    );
-
-    return runtimeStatus({
-      now: this.#now,
-      serviceId: "docs",
-      evidence: "Docs documents, CRDT updates, and comments were counted from Postgres.",
-      counters: [
-        counter("documents", "Documents", countValue(docRows[0])),
-        counter("updates", "Yjs updates", countValue(updateRows[0])),
-        counter("comments", "Comments", countValue(commentRows[0])),
-        counter("openComments", "Open comments", countValue(openCommentRows[0])),
-      ],
-      checks: [envCheck("eventBus", "Document sync event bus", this.#env, ["NATS_URL"], false)],
-      lastActivityAt: timestampValue(lastActivityRows[0]),
-    });
-  }
-
   async #calendar(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [calendarRows, upcomingRows, pastRows, attendeeRows, needsActionRows, lastActivityRows] =
       await Promise.all([
@@ -365,7 +302,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
           ) as value
         `,
       ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "calendar",
@@ -383,7 +319,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #meet(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [activeRows, endedRows, totalRows, lastActivityRows] = await Promise.all([
       this.#sql<CountRow[]>`
@@ -408,7 +343,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         ) as value
       `,
     ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "meet",
@@ -425,9 +359,8 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #search(orgId: string): Promise<AdminServiceRuntimeStatus> {
-    const [mailRows, chatRows, driveRows, docsRows, calendarRows] = await Promise.all([
+    const [mailRows, chatRows, driveRows, calendarRows] = await Promise.all([
       this.#sql<CountRow[]>`
         select count(distinct thread_id)::bigint as count
         from mail_thread_state
@@ -445,16 +378,10 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       `,
       this.#sql<CountRow[]>`
         select count(*)::bigint as count
-        from docs_documents
-        where org_id = ${orgId} and deleted_at is null
-      `,
-      this.#sql<CountRow[]>`
-        select count(*)::bigint as count
         from cal_events
         where org_id = ${orgId} and deleted_at is null
       `,
     ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "search",
@@ -464,7 +391,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         counter("mailDocuments", "Mail records", countValue(mailRows[0])),
         counter("chatDocuments", "Chat records", countValue(chatRows[0])),
         counter("driveDocuments", "Drive records", countValue(driveRows[0])),
-        counter("docsDocuments", "Docs records", countValue(docsRows[0])),
         counter("calendarDocuments", "Calendar records", countValue(calendarRows[0])),
       ],
       checks: [
@@ -479,7 +405,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       ],
     });
   }
-
   async #storage(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [objectRows, byteRows, versionRows, attachmentRows, lastActivityRows] = await Promise.all(
       [
@@ -512,7 +437,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       `,
       ],
     );
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "storage",
@@ -536,7 +460,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #ai(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [artifactRows, memoryRows, pendingRows, lastActivityRows] = await Promise.all([
       this.#sql<CountRow[]>`
@@ -562,7 +485,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         ) as value
       `,
     ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "ai",
@@ -585,7 +507,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #assistant(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [conversationRows, messageRows, memoryPreferenceRows, lastActivityRows] =
       await Promise.all([
@@ -612,7 +533,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         ) as value
       `,
       ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "assistant",
@@ -629,7 +549,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #webhooks(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [outboundRows, inboundRows, pendingRows, failedRows, deliveredRows, lastActivityRows] =
       await Promise.all([
@@ -666,7 +585,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
           ) as value
         `,
       ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "webhooks",
@@ -682,7 +600,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #auth(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [userRows, agentRows, disabledRows, passwordRows, credentialRows, lastActivityRows] =
       await Promise.all([
@@ -720,7 +637,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
           ) as value
         `,
       ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "auth",
@@ -738,7 +654,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #audit(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [activityRows, hashedRows, outboxRows, lastActivityRows] = await Promise.all([
       this.#sql<CountRow[]>`
@@ -762,7 +677,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
         where org_id = ${orgId}
       `,
     ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "audit",
@@ -784,7 +698,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });
   }
-
   async #backups(orgId: string): Promise<AdminServiceRuntimeStatus> {
     const [operationRows, lastActivityRows] = await Promise.all([
       this.#sql<CountRow[]>`
@@ -808,7 +721,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
           )
       `,
     ]);
-
     return runtimeStatus({
       now: this.#now,
       serviceId: "backups",
@@ -833,7 +745,6 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
     });
   }
 }
-
 function runtimeStatus(input: {
   readonly now: () => Date;
   readonly serviceId: string;
@@ -855,7 +766,6 @@ function runtimeStatus(input: {
     lastActivityAt: input.lastActivityAt,
   };
 }
-
 function counter(
   key: string,
   label: string,
@@ -864,7 +774,6 @@ function counter(
 ): AdminServiceRuntimeCounter {
   return { key, label, value, unit };
 }
-
 function envCheck(
   key: string,
   label: string,
@@ -885,12 +794,10 @@ function envCheck(
         : `Optional ${anyOf.join(" or ")} is not configured.`,
   };
 }
-
 function hasEnvValue(env: NodeJS.ProcessEnv, key: string): boolean {
   const value = env[key];
   return value !== undefined && value.trim().length > 0;
 }
-
 function countValue(row: CountRow | undefined): number {
   const value = row?.count ?? 0;
   if (typeof value === "bigint") {
@@ -902,7 +809,6 @@ function countValue(row: CountRow | undefined): number {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : 0;
 }
-
 function timestampValue(row: TimestampRow | undefined): string | undefined {
   const value = row?.value;
   if (value === null || value === undefined) {

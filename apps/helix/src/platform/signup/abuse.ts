@@ -95,11 +95,7 @@ export class InMemorySignupAbuseProtector implements SignupAbuseProtector {
 
   async check(input: SignupAbuseCheckInput): Promise<SignupAbuseCheckResult> {
     if (this.maxSignupsPerWindow <= 0) {
-      return rateLimitDecision({
-        retryAfterSeconds: Math.ceil(this.windowMs / 1000),
-        limit: this.maxSignupsPerWindow,
-        windowSeconds: Math.ceil(this.windowMs / 1000),
-      });
+      return disabledRateLimitDecision(this.maxSignupsPerWindow, this.windowMs);
     }
 
     const nowMs = (input.now ?? this.clock()).getTime();
@@ -144,11 +140,7 @@ export class RedisSignupAbuseProtector implements SignupAbuseProtector {
 
   async check(input: SignupAbuseCheckInput): Promise<SignupAbuseCheckResult> {
     if (this.maxSignupsPerWindow <= 0) {
-      return rateLimitDecision({
-        retryAfterSeconds: Math.ceil(this.windowMs / 1000),
-        limit: this.maxSignupsPerWindow,
-        windowSeconds: Math.ceil(this.windowMs / 1000),
-      });
+      return disabledRateLimitDecision(this.maxSignupsPerWindow, this.windowMs);
     }
 
     const raw = await this.redis.evalScript(
@@ -197,6 +189,22 @@ function checkBlockedEmailDomain(
     };
   }
   return { allowed: true };
+}
+
+/**
+ * A non-positive maximum disables signups entirely, so every attempt is rejected
+ * and callers are told to retry after a full window has elapsed.
+ */
+function disabledRateLimitDecision(
+  maxSignupsPerWindow: number,
+  windowMs: number,
+): SignupAbuseCheckResult {
+  const windowSeconds = Math.ceil(windowMs / 1000);
+  return rateLimitDecision({
+    retryAfterSeconds: windowSeconds,
+    limit: maxSignupsPerWindow,
+    windowSeconds,
+  });
 }
 
 function rateLimitDecision(input: {

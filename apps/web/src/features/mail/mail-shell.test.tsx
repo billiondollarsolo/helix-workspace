@@ -5,8 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
+import { MAIL_COMPOSE_RECOVERY_KEY, writeMailComposeRecovery } from "./mail-compose-recovery";
 import { MailShell } from "./mail-shell";
-import { MAIL_COMPOSE_RECOVERY_KEY } from "./mail-compose-recovery";
 
 const navigateMock = vi.fn();
 const uploadDriveFileMock = vi.fn();
@@ -52,6 +52,7 @@ const FOLDERS = [
   { id: "sent", label: "Sent", total: 0, unread: 0 },
   { id: "drafts", label: "Drafts", total: 0, unread: 0 },
   { id: "archive", label: "Archive", total: 0, unread: 0 },
+  { id: "spam", label: "Spam", total: 1, unread: 1 },
   { id: "trash", label: "Trash", total: 0, unread: 0 },
 ];
 
@@ -177,6 +178,18 @@ describe("MailShell", () => {
     if (url.endsWith("/mail.thread.get")) {
       return Promise.resolve(Response.json({ thread: THREAD_DETAIL }));
     }
+    if (url.endsWith("/mail.draft.list")) {
+      return Promise.resolve(Response.json({ drafts: [] }));
+    }
+    if (url.endsWith("/mail.draft.save")) {
+      return Promise.resolve(
+        Response.json({
+          id: "11111111-1111-4111-8111-111111111111",
+          revision: 1,
+          updatedAt: "2026-05-21T11:00:00.000Z",
+        }),
+      );
+    }
     return Promise.resolve(Response.json({ id: "m1", status: "sent" }));
   }
 
@@ -203,6 +216,7 @@ describe("MailShell", () => {
       root.unmount();
     });
     container.remove();
+    window.localStorage.clear();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
@@ -258,8 +272,7 @@ describe("MailShell", () => {
         : HTMLInputElement.prototype;
     const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
     const setter = Reflect.get(descriptor ?? {}, "set") as
-      | ((this: HTMLElement, value: string) => void)
-      | undefined;
+      ((this: HTMLElement, value: string) => void) | undefined;
     if (setter === undefined) {
       throw new Error("value setter not found");
     }
@@ -280,7 +293,7 @@ describe("MailShell", () => {
   it("renders folders, labels, and thread rows from the backend tools", async () => {
     render();
     await flush();
-    for (const folder of ["Inbox", "Starred", "Snoozed", "Drafts", "Archive", "Trash"]) {
+    for (const folder of ["Inbox", "Starred", "Snoozed", "Drafts", "Archive", "Spam", "Trash"]) {
       expect(container.textContent).toContain(folder);
     }
     expect(container.textContent).toContain("Primary");
@@ -293,9 +306,9 @@ describe("MailShell", () => {
     ).toBe(true);
 
     const calledTools = fetchMock.mock.calls.map((call) => call[0]);
-    expect(calledTools).toContain("/api/tools/mail.folders.list");
-    expect(calledTools).toContain("/api/tools/mail.labels.list");
-    expect(calledTools).toContain("/api/tools/mail.threads.list");
+    expect(calledTools).toContain("/v1/api/tools/mail.folders.list");
+    expect(calledTools).toContain("/v1/api/tools/mail.labels.list");
+    expect(calledTools).toContain("/v1/api/tools/mail.threads.list");
   });
 
   it("switches category tabs and re-queries mail.threads.list", async () => {
@@ -307,7 +320,7 @@ describe("MailShell", () => {
     expect(container.textContent).not.toContain("Q3 roadmap sign-off");
 
     const tabCall = fetchMock.mock.calls.find((call) => {
-      if (call[0] !== "/api/tools/mail.threads.list") {
+      if (call[0] !== "/v1/api/tools/mail.threads.list") {
         return false;
       }
       const body = JSON.parse(
@@ -337,7 +350,7 @@ describe("MailShell", () => {
     expect(container.textContent).toContain('No results for "from:nobody"');
 
     const queryCall = fetchMock.mock.calls.find((call) => {
-      if (call[0] !== "/api/tools/mail.threads.list") {
+      if (call[0] !== "/v1/api/tools/mail.threads.list") {
         return false;
       }
       const body = JSON.parse(
@@ -374,8 +387,8 @@ describe("MailShell", () => {
     expect(container.textContent).toContain("Replying all");
 
     const calledTools = fetchMock.mock.calls.map((call) => call[0]);
-    expect(calledTools).toContain("/api/tools/mail.thread.get");
-    expect(calledTools).toContain("/api/tools/mail.read.set");
+    expect(calledTools).toContain("/v1/api/tools/mail.thread.get");
+    expect(calledTools).toContain("/v1/api/tools/mail.read.set");
 
     clickAriaButton("Back");
     expect(container.textContent).toContain("1–1 of 1");
@@ -386,7 +399,7 @@ describe("MailShell", () => {
     await flush();
     clickAriaButton("Star");
     await flush();
-    const starCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.star.set");
+    const starCall = fetchMock.mock.calls.find((call) => call[0] === "/v1/api/tools/mail.star.set");
     expect(starCall).toBeDefined();
     const body = JSON.parse(
       typeof (starCall?.[1] as RequestInit).body === "string"
@@ -411,7 +424,9 @@ describe("MailShell", () => {
     await flush();
     clickAriaButton("Archive");
     await flush();
-    const archiveCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.archive");
+    const archiveCall = fetchMock.mock.calls.find(
+      (call) => call[0] === "/v1/api/tools/mail.archive",
+    );
     expect(archiveCall).toBeDefined();
     expect(container.textContent).toContain("1–1 of 1");
   });
@@ -447,7 +462,7 @@ describe("MailShell", () => {
     clickButtonText("Send");
     await flush();
 
-    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.send");
+    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/v1/api/tools/mail.send");
     expect(sendCall).toBeDefined();
     const rawBody = (sendCall?.[1] as RequestInit).body;
     const body = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as {
@@ -477,7 +492,7 @@ describe("MailShell", () => {
     clickButtonText("Schedule");
     await flush();
 
-    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.send");
+    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/v1/api/tools/mail.send");
     const rawBody = sendCall?.[1]?.body;
     const body = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as {
       readonly sendAt?: string;
@@ -501,7 +516,7 @@ describe("MailShell", () => {
 
     expect(container.textContent).toContain("To contains invalid email address: not-an-address.");
     expect(toInput.getAttribute("aria-invalid")).toBe("true");
-    expect(fetchMock.mock.calls.some((call) => call[0] === "/api/tools/mail.send")).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => call[0] === "/v1/api/tools/mail.send")).toBe(false);
   });
 
   it("restores a local draft, minimizes without losing it, and marks unavailable tools", async () => {
@@ -575,9 +590,331 @@ describe("MailShell", () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="Discard draft"]')?.click(),
     );
     clickButtonText("Discard draft");
+    await flush();
 
     expect(container.textContent).not.toContain("Keep this");
     expect(window.localStorage.getItem(MAIL_COMPOSE_RECOVERY_KEY)).toBeNull();
+  });
+
+  it("restores a local crash draft through the real compose recovery path", async () => {
+    writeMailComposeRecovery({
+      to: [{ address: "recovered@helix.io" }],
+      cc: [{ address: "ops@helix.io" }],
+      bcc: [],
+      attachments: [],
+      subject: "Recovered subject",
+      bodyText: "Recovered body from this device",
+    });
+    expect(window.localStorage.getItem(MAIL_COMPOSE_RECOVERY_KEY)).not.toBeNull();
+
+    render();
+    await flush();
+    clickButtonText("Compose");
+    await flush();
+
+    expect(container.textContent).toContain("Recovered subject");
+    expect(container.textContent).toContain("Recovered your unsent message from this device.");
+    expect(container.querySelector('input[aria-label="To"]')).toHaveProperty(
+      "value",
+      "recovered@helix.io",
+    );
+    expect(container.querySelector('input[aria-label="Subject"]')).toHaveProperty(
+      "value",
+      "Recovered subject",
+    );
+    expect(container.querySelector('textarea[aria-label="Message body"]')).toHaveProperty(
+      "value",
+      "Recovered body from this device",
+    );
+    expect(fetchMock.mock.calls.some((call) => call[0] === "/v1/api/tools/mail.draft.list")).toBe(
+      true,
+    );
+
+    clickAriaButton("Dismiss recovery notice");
+    expect(container.textContent).not.toContain(
+      "Recovered your unsent message from this device. Attachments were not recovered.",
+    );
+  });
+
+  it("offers a server draft without overwriting a different device draft", async () => {
+    const serverDraft = {
+      id: "11111111-1111-4111-8111-111111111111",
+      orgId: "22222222-2222-4222-8222-222222222222",
+      actorId: "33333333-3333-4333-8333-333333333333",
+      threadId: null,
+      to: [{ address: "server@example.test" }],
+      cc: [],
+      bcc: [],
+      subject: "Server version",
+      bodyText: "Saved elsewhere",
+      attachments: [],
+      revision: 3,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-09T00:00:00.000Z",
+      expiresAt: "2027-01-01T00:00:00.000Z",
+    };
+    writeMailComposeRecovery({
+      to: [{ address: "local@example.test" }],
+      cc: [],
+      bcc: [],
+      subject: "Device version",
+      bodyText: "Keep my text",
+      attachments: [],
+    });
+    fetchMock.mockImplementation((input, init) =>
+      urlOf(input).endsWith("/mail.draft.list")
+        ? Promise.resolve(Response.json({ drafts: [serverDraft] }))
+        : defaultFetch(input, init),
+    );
+    render();
+    await flush();
+    clickButtonText("Compose");
+    await flush();
+    expect(container.querySelector('input[aria-label="Subject"]')).toHaveProperty(
+      "value",
+      "Device version",
+    );
+    expect(container.textContent).toContain("A different server draft exists");
+    clickButtonText("Use server draft");
+    await flush();
+    expect(container.querySelector('input[aria-label="Subject"]')).toHaveProperty(
+      "value",
+      "Server version",
+    );
+    expect(container.querySelector('textarea[aria-label="Message body"]')).toHaveProperty(
+      "value",
+      "Saved elsewhere",
+    );
+  });
+
+  it("retries an ambiguous draft creation with the same request before saving newer text", async () => {
+    const requests: Record<string, unknown>[] = [];
+    fetchMock.mockImplementation((input, init) => {
+      if (urlOf(input).endsWith("/mail.draft.save")) {
+        requests.push(
+          JSON.parse(typeof init?.body === "string" ? init.body : "{}") as Record<string, unknown>,
+        );
+        if (requests.length === 1) return Promise.reject(new Error("Response lost"));
+      }
+      return defaultFetch(input, init);
+    });
+    render();
+    await flush();
+    clickButtonText("Compose");
+    await flush();
+    const body = container.querySelector('textarea[aria-label="Message body"]');
+    if (!(body instanceof HTMLTextAreaElement)) throw new Error("Body missing");
+    setInputValue(body, "First text");
+    await flush();
+    act(() => {
+      body.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    await flush();
+    setInputValue(body, "Newer text");
+    await flush();
+    act(() => {
+      body.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    await flush();
+    expect(requests).toHaveLength(3);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[2]).toMatchObject({
+      bodyText: "Newer text",
+      id: "11111111-1111-4111-8111-111111111111",
+      expectedRevision: 1,
+    });
+  });
+
+  it.each([
+    { deleted: true, exists: false },
+    { deleted: false, exists: true },
+    { deleted: false, exists: false },
+  ])(
+    "discards safely after conflicts and lost responses (deleted=$deleted, exists=$exists)",
+    async ({ deleted, exists }) => {
+      let discarded: unknown;
+      fetchMock.mockImplementation((input, init) => {
+        if (urlOf(input).endsWith("/mail.draft.list") && discarded !== undefined)
+          return Promise.resolve(
+            Response.json({
+              drafts: exists ? [{ id: "11111111-1111-4111-8111-111111111111" }] : [],
+            }),
+          );
+        if (urlOf(input).endsWith("/mail.draft.discard")) {
+          discarded = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+          return Promise.resolve(Response.json({ deleted }));
+        }
+        return defaultFetch(input, init);
+      });
+      render();
+      await flush();
+      clickButtonText("Compose");
+      await flush();
+      const body = container.querySelector('textarea[aria-label="Message body"]');
+      if (!(body instanceof HTMLTextAreaElement)) throw new Error("Body missing");
+      setInputValue(body, "Saved text");
+      await flush();
+      act(() => {
+        body.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      });
+      await flush();
+      act(() => {
+        container.querySelector<HTMLButtonElement>('button[aria-label="Discard draft"]')?.click();
+      });
+      clickButtonText("Discard draft");
+      await flush();
+      expect(discarded).toEqual({
+        id: "11111111-1111-4111-8111-111111111111",
+        expectedRevision: 1,
+      });
+      if (deleted || !exists)
+        expect(container.querySelector('textarea[aria-label="Message body"]')).toBeNull();
+      else {
+        expect(container.querySelector('textarea[aria-label="Message body"]')).toHaveProperty(
+          "value",
+          "Saved text",
+        );
+        expect(container.textContent).toContain("changed elsewhere");
+        expect(window.localStorage.getItem(MAIL_COMPOSE_RECOVERY_KEY)).not.toBeNull();
+      }
+    },
+  );
+
+  it("resolves an ambiguous draft save before consuming that draft on send", async () => {
+    const requests: unknown[] = [];
+    let sent: unknown;
+    fetchMock.mockImplementation((input, init) => {
+      const payload: unknown = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+      if (urlOf(input).endsWith("/mail.draft.save")) {
+        requests.push(payload);
+        if (requests.length === 1) return Promise.reject(new Error("Response lost"));
+      }
+      if (urlOf(input).endsWith("/mail.send")) sent = payload;
+      return defaultFetch(input, init);
+    });
+    render();
+    await flush();
+    clickButtonText("Compose");
+    await flush();
+    const to = container.querySelector('input[aria-label="To"]');
+    if (!(to instanceof HTMLInputElement)) throw new Error("Recipient missing");
+    setInputValue(to, "draft@helix.io");
+    await flush();
+    const body = container.querySelector('textarea[aria-label="Message body"]');
+    if (!(body instanceof HTMLTextAreaElement)) throw new Error("Body missing");
+    setInputValue(body, "Draft body");
+    await flush();
+    act(() => {
+      body.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    await flush();
+    clickButtonText("Send");
+    await flush();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(sent).toMatchObject({
+      draft: { id: "11111111-1111-4111-8111-111111111111", revision: 1 },
+    });
+  });
+
+  it("saves a server draft through mail.draft.save when compose fields blur", async () => {
+    render();
+    await flush();
+    clickButtonText("Compose");
+    await flush();
+
+    // Wait for server reconcile so draft-save blur handlers run against stable state.
+    expect(container.textContent).not.toContain("Checking server drafts for conflicts");
+
+    const toInput = container.querySelector('input[aria-label="To"]');
+    if (!(toInput instanceof HTMLInputElement)) {
+      throw new Error("To input not found");
+    }
+    const subjectInput = container.querySelector('input[aria-label="Subject"]');
+    if (!(subjectInput instanceof HTMLInputElement)) {
+      throw new Error("Subject input not found");
+    }
+    const bodyInput = container.querySelector('textarea[aria-label="Message body"]');
+    if (!(bodyInput instanceof HTMLTextAreaElement)) {
+      throw new Error("Body textarea not found");
+    }
+
+    setInputValue(toInput, "draft@helix.io");
+    setInputValue(subjectInput, "Draft subject");
+    setInputValue(bodyInput, "Draft body");
+    await flush();
+
+    // React listens for focusout (delegated onBlur). Move focus into the body,
+    // then out to To so the body onBlur={saveDraft} handler runs.
+    act(() => {
+      bodyInput.focus();
+      bodyInput.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    act(() => {
+      toInput.focus();
+      bodyInput.dispatchEvent(
+        new FocusEvent("focusout", { bubbles: true, relatedTarget: toInput }),
+      );
+      bodyInput.dispatchEvent(new FocusEvent("blur", { bubbles: true, relatedTarget: toInput }));
+    });
+    await flush();
+
+    const draftSaveCall = fetchMock.mock.calls.find((call) => {
+      const url = typeof call[0] === "string" ? call[0] : "";
+      return url.endsWith("/mail.draft.save");
+    });
+    expect(draftSaveCall).toBeDefined();
+    const rawBody = (draftSaveCall?.[1] as RequestInit).body;
+    const body = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as {
+      readonly to: ReadonlyArray<{ readonly address: string }>;
+      readonly subject: string;
+      readonly bodyText: string;
+    };
+    expect(body.to).toEqual([{ address: "draft@helix.io" }]);
+    expect(body.subject).toBe("Draft subject");
+    expect(body.bodyText).toBe("Draft body");
+  });
+
+  it("switches folders and pushes the folder into the mail URL search", async () => {
+    render();
+    await flush();
+
+    clickButtonText("Starred");
+    await flush();
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/mail",
+        search: expect.objectContaining({ folder: "starred" }),
+      }),
+    );
+
+    const starredListCall = fetchMock.mock.calls.find((call) => {
+      if (call[0] !== "/v1/api/tools/mail.threads.list") {
+        return false;
+      }
+      const init = call[1];
+      if (init === undefined || typeof init !== "object" || init === null || !("body" in init)) {
+        return false;
+      }
+      const raw = init.body;
+      if (typeof raw !== "string") {
+        return false;
+      }
+      const parsed: unknown = JSON.parse(raw);
+      return (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "folder" in parsed &&
+        Reflect.get(parsed, "folder") === "starred"
+      );
+    });
+    expect(starredListCall).toBeDefined();
+    // Sidebar marks the active mailbox for assistive tech / styling.
+    const starredButton = Array.from(container.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.includes("Starred") === true,
+    );
+    expect(starredButton?.getAttribute("aria-current")).toBe("page");
   });
 
   it("renders an empty thread list when mail.threads.list fails", async () => {
@@ -713,7 +1050,7 @@ describe("MailShell", () => {
     clickButtonText("Send");
     await flush();
 
-    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/api/tools/mail.send");
+    const sendCall = fetchMock.mock.calls.find((call) => call[0] === "/v1/api/tools/mail.send");
     expect(sendCall).toBeDefined();
     const rawBody = (sendCall?.[1] as RequestInit).body;
     const parsedBody = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as {
@@ -811,7 +1148,7 @@ describe("MailShell", () => {
     clickAriaButton("Archive");
     await flush();
     const archiveCalls = fetchMock.mock.calls.filter(
-      (call) => call[0] === "/api/tools/mail.archive",
+      (call) => call[0] === "/v1/api/tools/mail.archive",
     );
     expect(archiveCalls.length).toBeGreaterThanOrEqual(1);
     const body = JSON.parse(
@@ -827,7 +1164,9 @@ describe("MailShell", () => {
     await flush();
     clickAriaButton("Delete");
     await flush();
-    const deleteCalls = fetchMock.mock.calls.filter((call) => call[0] === "/api/tools/mail.delete");
+    const deleteCalls = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/v1/api/tools/mail.delete",
+    );
     expect(deleteCalls.length).toBeGreaterThanOrEqual(1);
     const body = JSON.parse(
       typeof (deleteCalls[0]?.[1] as RequestInit).body === "string"
@@ -843,7 +1182,9 @@ describe("MailShell", () => {
     // The default threadRow has unread:true, so the button label is "Mark read"
     clickAriaButton("Mark read");
     await flush();
-    const readCalls = fetchMock.mock.calls.filter((call) => call[0] === "/api/tools/mail.read.set");
+    const readCalls = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/v1/api/tools/mail.read.set",
+    );
     expect(readCalls.length).toBeGreaterThanOrEqual(1);
     const body = JSON.parse(
       typeof (readCalls[0]?.[1] as RequestInit).body === "string"
@@ -859,7 +1200,9 @@ describe("MailShell", () => {
     await flush();
     clickAriaButton("Snooze");
     await flush();
-    const snoozeCalls = fetchMock.mock.calls.filter((call) => call[0] === "/api/tools/mail.snooze");
+    const snoozeCalls = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/v1/api/tools/mail.snooze",
+    );
     expect(snoozeCalls.length).toBeGreaterThanOrEqual(1);
     const body = JSON.parse(
       typeof (snoozeCalls[0]?.[1] as RequestInit).body === "string"
@@ -880,7 +1223,7 @@ describe("MailShell", () => {
     await flush();
     clickAriaButton(action);
     await flush();
-    expect(fetchMock.mock.calls.some((call) => call[0] === `/api/tools/${tool}`)).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => call[0] === `/v1/api/tools/${tool}`)).toBe(true);
   });
 
   /* ============================================================
@@ -931,14 +1274,14 @@ describe("MailShell", () => {
     await flush();
 
     const callsBefore = fetchMock.mock.calls.filter(
-      (call) => call[0] === "/api/tools/mail.threads.list",
+      (call) => call[0] === "/v1/api/tools/mail.threads.list",
     ).length;
 
     clickAriaButton("Refresh");
     await flush();
 
     const callsAfter = fetchMock.mock.calls.filter(
-      (call) => call[0] === "/api/tools/mail.threads.list",
+      (call) => call[0] === "/v1/api/tools/mail.threads.list",
     ).length;
 
     expect(callsAfter).toBeGreaterThan(callsBefore);
@@ -975,7 +1318,7 @@ describe("MailShell", () => {
     await flush();
 
     const readCalls = fetchMock.mock.calls
-      .filter((call) => call[0] === "/api/tools/mail.read.set")
+      .filter((call) => call[0] === "/v1/api/tools/mail.read.set")
       .map((call) => {
         const body = JSON.parse(
           typeof (call[1] as RequestInit).body === "string"
@@ -1023,7 +1366,7 @@ describe("MailShell", () => {
     await flush();
 
     const starCalls = fetchMock.mock.calls
-      .filter((call) => call[0] === "/api/tools/mail.star.set")
+      .filter((call) => call[0] === "/v1/api/tools/mail.star.set")
       .map((call) => {
         const body = JSON.parse(
           typeof (call[1] as RequestInit).body === "string"
@@ -1112,7 +1455,7 @@ describe("MailShell", () => {
     await flush();
 
     const filterCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "/api/tools/mail.filter.create",
+      (call) => call[0] === "/v1/api/tools/mail.filter.create",
     );
     expect(filterCall).toBeDefined();
     const body = JSON.parse(
@@ -1173,7 +1516,7 @@ describe("MailShell", () => {
 
     // mail.archive must have been called once for each of the 3 threads.
     const archiveCalls = fetchMock.mock.calls
-      .filter((call) => call[0] === "/api/tools/mail.archive")
+      .filter((call) => call[0] === "/v1/api/tools/mail.archive")
       .map((call) => {
         const body = JSON.parse(
           typeof (call[1] as RequestInit).body === "string"
@@ -1214,7 +1557,7 @@ describe("MailShell", () => {
     await flush();
 
     const spamCalls = fetchMock.mock.calls
-      .filter((call) => call[0] === "/api/tools/mail.spam")
+      .filter((call) => call[0] === "/v1/api/tools/mail.spam")
       .map((call) => {
         const body = JSON.parse(
           typeof (call[1] as RequestInit).body === "string"
@@ -1246,7 +1589,9 @@ describe("MailShell", () => {
     clickAriaButton("Delete selected");
     await flush();
 
-    const deleteCalls = fetchMock.mock.calls.filter((call) => call[0] === "/api/tools/mail.delete");
+    const deleteCalls = fetchMock.mock.calls.filter(
+      (call) => call[0] === "/v1/api/tools/mail.delete",
+    );
     expect(deleteCalls).toHaveLength(3);
   });
 

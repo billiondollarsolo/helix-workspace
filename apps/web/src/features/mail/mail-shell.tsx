@@ -1,58 +1,34 @@
-// ponytail: mail-shell.tsx is the full mail UI composition root (~2700 LOC).
-// Extract thread-list / thread-view / compose / mail-sidebar when next
-// changing a single region (Part A3.1); keep green until that split lands (G9).
-/* Helix Mail — production surface.
-   Recreated from the design handoff (app-mail.jsx): folder/label sidebar,
-   category tab bar, ThreadRow list with live operator search, thread view
-   with AI summary + inline composer, and the bottom-right compose modal.
-
-   Data: wired to the real Mail backend via TanStack Query —
-   `mail.folders.list` / `mail.labels.list` back the sidebar, `mail.threads.list`
-   backs the thread list (folder + category tab + label filter + operator
-   query + pagination), `mail.thread.get` backs the thread view, and the
-   write tools (`mail.send`, `mail.reply`, `mail.archive`, `mail.snooze`,
-   `mail.delete`, `mail.read.set`, `mail.star.set`, `mail.label.apply`) back
-   the row + thread actions. The typed `mail-seed.ts` is kept ONLY as an
-   offline/error fallback when a query fails. */
-
-import "./mail-shell.css";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useDebouncer } from "@tanstack/react-pacer/debouncer";
-import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Icons, type IconName } from "@/components/icons";
-import { Avatar } from "@/components/ui/avatar";
 import { SurfaceFrame } from "@/components/shell";
-import { Dialog } from "@/components/ui/helix-dialog";
-import { useUnsavedChangesWarning } from "@/lib/use-unsaved-changes-warning";
-import { trashDriveObject, uploadDriveFile } from "@/features/drive/api";
+import { Avatar } from "@/components/ui/avatar";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   applyMailLabels,
   archiveMailThread,
-  cancelOutboundMail,
   createMailFilter,
   deleteMailThread,
   replyToMail,
   restoreMailThread,
-  saveMailDraft,
-  sendMail,
   setMailThreadRead,
   setMailThreadStarred,
   snoozeMailThread,
   spamMailThread,
   unarchiveMailThread,
   unsnoozeMailThread,
-  validateMailAttachmentSelection,
-  type MailAttachment,
+  unspamMailThread,
   type MailFolderKey,
   type MailFolderSummary,
   type MailLabelSummary,
   type MailSendInput,
-  type MailSendResult,
   type MailThreadDetail,
   type MailThreadRow,
 } from "./api";
+import { Compose, parseRecipients } from "./mail-compose";
+import { MailHtmlBody } from "./mail-html-body";
 import { MAIL_EMPTY_STATES, MAIL_TABS, type MailTabId } from "./mail-seed";
+import "./mail-shell.css";
 import {
   mailFoldersQueryOptions,
   mailLabelsQueryOptions,
@@ -60,18 +36,14 @@ import {
   mailThreadsQueryOptions,
 } from "./queries";
 import { useMailRealtime } from "./use-mail-realtime";
-import { MailHtmlBody } from "./mail-html-body";
-import {
-  clearMailComposeRecovery,
-  hasMailComposeContent,
-  invalidRecipientTokens,
-  readMailComposeRecovery,
-  recipientTokens,
-  writeMailComposeRecovery,
-} from "./mail-compose-recovery";
 
 function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
+}
+
+/** True when the beta AI/rules second pass — not spamd or a manual move — caught this thread. */
+function isBetaSpamCatch(row: Pick<MailThreadRow, "spamCatcher">): boolean {
+  return row.spamCatcher === "ai" || row.spamCatcher === "rules";
 }
 
 /* ----------------------------------------------------------- icons + time */
@@ -88,7 +60,7 @@ const FOLDER_ICONS: Readonly<Record<MailFolderKey, IconName>> = {
   trash: "Trash",
 };
 
-/** Folder display order in the left rail. */
+/** Folder display order in the left rail. Spam is first-class (always listed). */
 const FOLDER_ORDER: readonly MailFolderKey[] = [
   "inbox",
   "starred",
@@ -96,6 +68,7 @@ const FOLDER_ORDER: readonly MailFolderKey[] = [
   "sent",
   "drafts",
   "archive",
+  "spam",
   "trash",
 ];
 
@@ -163,6 +136,8 @@ function MailSidebar({
   const ordered = FOLDER_ORDER.map((id) => byId.get(id)).filter(
     (entry): entry is MailFolderSummary => entry != null,
   );
+  // Folder and label are exclusive views: never highlight both.
+  const folderActiveId = activeLabel === null ? folder : null;
 
   return (
     <aside className="surf-sidebar">
@@ -177,7 +152,7 @@ function MailSidebar({
       <div style={{ overflowY: "auto", flex: 1 }}>
         {ordered.map((entry) => {
           const Icon = Icons[FOLDER_ICONS[entry.id]];
-          const active = folder === entry.id;
+          const active = folderActiveId === entry.id;
           const badge = entry.id === "inbox" ? entry.unread : entry.total;
           return (
             <button
@@ -286,11 +261,7 @@ function ThreadRow({
         padding: "var(--rd-row-py) 16px",
         borderBottom: "1px solid var(--border)",
         cursor: "pointer",
-        background: checked
-          ? "var(--accent-soft)"
-          : selected
-            ? "var(--accent-soft)"
-            : "transparent",
+        background: checked || selected ? "var(--accent-soft)" : "transparent",
         transition: "background 0.08s",
         fontSize: "var(--rd-row-fs)",
         minHeight: "var(--rd-list-row-h)",
@@ -509,9 +480,20 @@ function EmptyState({
 
 type SelectAllSubset = "all" | "none" | "read" | "unread" | "starred" | "unstarred";
 
+const SELECT_SUBSETS: ReadonlyArray<{ readonly label: string; readonly value: SelectAllSubset }> = [
+  { label: "All", value: "all" },
+  { label: "None", value: "none" },
+  { label: "Read", value: "read" },
+  { label: "Unread", value: "unread" },
+  { label: "Starred", value: "starred" },
+  { label: "Unstarred", value: "unstarred" },
+];
+
 interface ThreadListProps {
   readonly tab: MailTabId;
   readonly onTab: (tab: MailTabId) => void;
+  /** Hide Primary/Updates/… tabs for exclusive label views. */
+  readonly hideCategoryTabs?: boolean;
   readonly selected: string | null;
   readonly onSelect: (id: string) => void;
   readonly threads: readonly MailThreadRow[];
@@ -541,6 +523,7 @@ interface ThreadListProps {
   readonly onBulkArchive: (ids: ReadonlySet<string>) => void;
   readonly onBulkDelete: (ids: ReadonlySet<string>) => void;
   readonly onBulkSpam: (ids: ReadonlySet<string>) => void;
+  readonly onBulkNotSpam: (ids: ReadonlySet<string>) => void;
   readonly onBulkRead: (ids: ReadonlySet<string>, unread: boolean) => void;
   readonly onBulkSnooze: (ids: ReadonlySet<string>) => void;
   readonly onBulkMove: (ids: ReadonlySet<string>, folderId: MailFolderKey) => void;
@@ -617,6 +600,7 @@ function PagerControls({
 function ThreadList({
   tab,
   onTab,
+  hideCategoryTabs = false,
   selected,
   onSelect,
   threads,
@@ -644,6 +628,7 @@ function ThreadList({
   onBulkArchive,
   onBulkDelete,
   onBulkSpam,
+  onBulkNotSpam,
   onBulkRead,
   onBulkSnooze,
   onBulkMove,
@@ -678,21 +663,19 @@ function ThreadList({
 
   // Close dropdowns on outside click
   useEffect(() => {
+    const menus = [
+      [selectDropRef, setSelectDropOpen],
+      [idleMoreRef, setIdleMoreOpen],
+      [moveMenuRef, setMoveMenuOpen],
+      [labelsMenuRef, setLabelsMenuOpen],
+      [bulkMoreRef, setBulkMoreOpen],
+    ] as const;
     function handleClickOutside(e: MouseEvent) {
-      if (selectDropRef.current && !selectDropRef.current.contains(e.target as Node)) {
-        setSelectDropOpen(false);
-      }
-      if (idleMoreRef.current && !idleMoreRef.current.contains(e.target as Node)) {
-        setIdleMoreOpen(false);
-      }
-      if (moveMenuRef.current && !moveMenuRef.current.contains(e.target as Node)) {
-        setMoveMenuOpen(false);
-      }
-      if (labelsMenuRef.current && !labelsMenuRef.current.contains(e.target as Node)) {
-        setLabelsMenuOpen(false);
-      }
-      if (bulkMoreRef.current && !bulkMoreRef.current.contains(e.target as Node)) {
-        setBulkMoreOpen(false);
+      const target = e.target as Node;
+      for (const [ref, setOpen] of menus) {
+        if (ref.current && !ref.current.contains(target)) {
+          setOpen(false);
+        }
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
@@ -770,17 +753,9 @@ function ThreadList({
 
   // Determine if a majority are unread to decide the bulk read button label
   const checkedUnreadCount = threads.filter((t) => checkedIds.has(t.threadId) && t.unread).length;
-  const bulkReadLabel = checkedUnreadCount >= checkedIds.size / 2 ? "Mark read" : "Mark unread";
-  const bulkReadUnread = !(checkedUnreadCount >= checkedIds.size / 2);
-
-  const SELECT_SUBSETS: Array<{ label: string; value: SelectAllSubset }> = [
-    { label: "All", value: "all" },
-    { label: "None", value: "none" },
-    { label: "Read", value: "read" },
-    { label: "Unread", value: "unread" },
-    { label: "Starred", value: "starred" },
-    { label: "Unstarred", value: "unstarred" },
-  ];
+  const majorityUnread = checkedUnreadCount >= checkedIds.size / 2;
+  const bulkReadLabel = majorityUnread ? "Mark read" : "Mark unread";
+  const bulkReadUnread = !majorityUnread;
 
   /* ---- Master checkbox + caret (shared by both toolbar states) ---- */
   const masterCheckboxSection = (
@@ -940,16 +915,29 @@ function ThreadList({
               >
                 <Icons.Archive /> Archive
               </button>
-              <button
-                type="button"
-                className="mail-bulk-btn"
-                aria-label="Report spam"
-                onClick={() => {
-                  onBulkSpam(checkedIds);
-                }}
-              >
-                <Icons.Bell /> Report spam
-              </button>
+              {folder === "spam" ? (
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="Not spam"
+                  onClick={() => {
+                    onBulkNotSpam(checkedIds);
+                  }}
+                >
+                  <Icons.Inbox /> Not spam
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="mail-bulk-btn"
+                  aria-label="Report spam"
+                  onClick={() => {
+                    onBulkSpam(checkedIds);
+                  }}
+                >
+                  <Icons.Bell /> Report spam
+                </button>
+              )}
               <button
                 type="button"
                 className="mail-bulk-btn"
@@ -1129,25 +1117,27 @@ function ThreadList({
         </div>
       </div>
 
-      <div className="tabs" role="tablist" aria-label="Mail categories">
-        {MAIL_TABS.map((entry) => {
-          const Icon = Icons[entry.icon];
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === entry.id}
-              className={cx("tab", tab === entry.id && "active")}
-              onClick={() => {
-                onTab(entry.id);
-              }}
-            >
-              <Icon /> {entry.label}
-            </button>
-          );
-        })}
-      </div>
+      {hideCategoryTabs ? null : (
+        <div className="tabs" role="tablist" aria-label="Mail categories">
+          {MAIL_TABS.map((entry) => {
+            const Icon = Icons[entry.icon];
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                role="tab"
+                aria-selected={tab === entry.id}
+                className={cx("tab", tab === entry.id && "active")}
+                onClick={() => {
+                  onTab(entry.id);
+                }}
+              >
+                <Icon /> {entry.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div style={{ flex: 1, overflowY: "auto" }}>
         {isError && (
@@ -1252,6 +1242,10 @@ interface ThreadViewProps {
   readonly restoreLabel: string | null;
   readonly onRestore: () => void;
   readonly onToggleLabel: () => void;
+  readonly onReportSpam?: (() => void) | undefined;
+  readonly onNotSpam?: (() => void) | undefined;
+  /** Confirm AI beta catch was correct (writes feedback while staying in Spam). */
+  readonly onConfirmAiSpam?: (() => void) | undefined;
   readonly actionBusy: boolean;
   readonly actionError: string | null;
 }
@@ -1269,6 +1263,9 @@ function ThreadView({
   restoreLabel,
   onRestore,
   onToggleLabel,
+  onReportSpam,
+  onNotSpam,
+  onConfirmAiSpam,
   actionBusy,
   actionError,
 }: ThreadViewProps) {
@@ -1382,6 +1379,42 @@ function ThreadView({
             <Icons.Inbox />
           </button>
         )}
+        {onNotSpam !== undefined ? (
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Not spam"
+            disabled={actionBusy}
+            onClick={onNotSpam}
+            style={{ marginLeft: 4 }}
+          >
+            <Icons.Inbox /> Not spam
+          </button>
+        ) : null}
+        {onConfirmAiSpam !== undefined ? (
+          <button
+            type="button"
+            className="btn sm"
+            aria-label="Yes, this is spam"
+            disabled={actionBusy}
+            onClick={onConfirmAiSpam}
+            style={{ marginLeft: 4 }}
+          >
+            Yes, spam
+          </button>
+        ) : null}
+        {onReportSpam !== undefined ? (
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Report spam"
+            title="Report spam"
+            disabled={actionBusy}
+            onClick={onReportSpam}
+          >
+            <Icons.Bell />
+          </button>
+        ) : null}
         <div className="v-divider" style={{ height: 18, margin: "0 4px" }} />
         <button
           type="button"
@@ -1400,6 +1433,45 @@ function ThreadView({
       </div>
       <div style={{ flex: 1, overflowY: "auto", minWidth: 0 }}>
         <div style={{ maxWidth: 880, margin: "0 auto", padding: "20px 32px" }}>
+          {isBetaSpamCatch(row) ? (
+            <div
+              role="status"
+              style={{
+                marginBottom: 16,
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                fontSize: "var(--text-meta)",
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                alignItems: "center",
+              }}
+            >
+              <span>
+                {row.spamCatcher === "ai"
+                  ? "Caught by Helix AI spam (beta)."
+                  : "Caught by Helix spam rules (beta)."}{" "}
+                Was this correct?
+              </span>
+              {onConfirmAiSpam !== undefined ? (
+                <button
+                  type="button"
+                  className="btn sm primary"
+                  disabled={actionBusy}
+                  onClick={onConfirmAiSpam}
+                >
+                  Yes, spam
+                </button>
+              ) : null}
+              {onNotSpam !== undefined ? (
+                <button type="button" className="btn sm" disabled={actionBusy} onClick={onNotSpam}>
+                  No, not spam
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div style={{ marginBottom: 16 }}>
             <h1
               style={{
@@ -1733,750 +1805,6 @@ function ThreadView({
   );
 }
 
-/* ------------------------------------------------------------------ compose */
-
-interface ComposeProps {
-  readonly onClose: () => void;
-  readonly onSent: () => void;
-}
-
-/** Parses a comma/semicolon-separated recipient string into addresses. */
-function parseRecipients(raw: string): MailSendInput["to"] {
-  return recipientTokens(raw).map((address) => ({ address }));
-}
-
-function addressesText(addresses: readonly { readonly address: string }[] | undefined): string {
-  return addresses?.map(({ address }) => address).join(", ") ?? "";
-}
-
-function Compose({ onClose, onSent }: ComposeProps) {
-  const [recoveredDraft] = useState(readMailComposeRecovery);
-  const [to, setTo] = useState(addressesText(recoveredDraft?.to));
-  const [cc, setCc] = useState(addressesText(recoveredDraft?.cc));
-  const [bcc, setBcc] = useState(addressesText(recoveredDraft?.bcc));
-  const [showCc, setShowCc] = useState((recoveredDraft?.cc.length ?? 0) > 0);
-  const [showBcc, setShowBcc] = useState((recoveredDraft?.bcc.length ?? 0) > 0);
-  const [subject, setSubject] = useState(recoveredDraft?.subject ?? "");
-  const [body, setBody] = useState(recoveredDraft?.bodyText ?? "");
-  const [sendAt, setSendAt] = useState("");
-  const [showRecoveryNotice, setShowRecoveryNotice] = useState(recoveredDraft !== null);
-  const [minimized, setMinimized] = useState(false);
-  const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false);
-  const [recipientError, setRecipientError] = useState<string | null>(null);
-  const [sendFailed, setSendFailed] = useState(false);
-  const [attachments, setAttachments] = useState<readonly MailAttachment[]>(
-    recoveredDraft?.attachments ?? [],
-  );
-  const [attaching, setAttaching] = useState(false);
-  const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const draftRef = useRef<{ readonly id: string; readonly revision: number } | null>(
-    recoveredDraft?.id === undefined || recoveredDraft.expectedRevision === undefined
-      ? null
-      : { id: recoveredDraft.id, revision: recoveredDraft.expectedRevision },
-  );
-  const saveQueueRef = useRef(Promise.resolve());
-  const [undo, setUndo] = useState<{
-    readonly outboundId: string;
-    readonly untilMs: number;
-    readonly scheduledAt?: string;
-  } | null>(null);
-  /** Drag-enter depth counter — incremented on dragenter, decremented on
-   *  dragleave.  The overlay shows while > 0, which prevents flickering when
-   *  the cursor moves over child elements (each child fires its own enter/leave
-   *  pair without the counter ever reaching zero). */
-  const dragDepth = useRef(0);
-  const [isDragOver, setIsDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const attachmentUploadRef = useRef<AbortController | null>(null);
-  const toInputRef = useRef<HTMLInputElement>(null);
-  const ccInputRef = useRef<HTMLInputElement>(null);
-  const bccInputRef = useRef<HTMLInputElement>(null);
-  const skipRecoveryFlushRef = useRef(false);
-  const canonicalDraft = {
-    to: parseRecipients(to),
-    cc: parseRecipients(cc),
-    bcc: parseRecipients(bcc),
-    subject,
-    bodyText: body,
-    attachments,
-  };
-  const hasDraft = hasMailComposeContent(canonicalDraft);
-  const recoveryDebouncer = useDebouncer(
-    (draft: typeof canonicalDraft) => {
-      writeMailComposeRecovery(draft);
-    },
-    {
-      wait: 400,
-      onUnmount: (debouncer) => {
-        if (skipRecoveryFlushRef.current) {
-          debouncer.cancel();
-        } else {
-          debouncer.flush();
-        }
-      },
-    },
-  );
-  const unsavedChangesWarning = useUnsavedChangesWarning(hasDraft, "unsent message", {
-    message:
-      "This message is saved on this device. You can leave now and recover it the next time you open Compose.",
-    leaveLabel: "Leave and keep draft",
-  });
-
-  useEffect(() => {
-    if (hasDraft) {
-      const current = draftRef.current;
-      recoveryDebouncer.maybeExecute({
-        ...canonicalDraft,
-        ...(current === null ? {} : { id: current.id, expectedRevision: current.revision }),
-      });
-    } else {
-      recoveryDebouncer.cancel();
-      clearMailComposeRecovery();
-    }
-  }, [attachments, bcc, body, cc, hasDraft, recoveryDebouncer, subject, to]);
-
-  useEffect(() => () => attachmentUploadRef.current?.abort(), []);
-
-  const sendMutation = useMutation({
-    mutationFn: (input: MailSendInput) => sendMail(input),
-    onMutate: () => {
-      setSendFailed(false);
-    },
-    onError: () => {
-      setSendFailed(true);
-    },
-    onSuccess: (result: MailSendResult, input: MailSendInput) => {
-      skipRecoveryFlushRef.current = true;
-      recoveryDebouncer.cancel();
-      clearMailComposeRecovery();
-      onSent();
-      const undoUntil = result.undoUntil;
-      const outboundId = result.id ?? result.outboundId;
-      if (
-        typeof undoUntil === "string" &&
-        typeof outboundId === "string" &&
-        outboundId.length > 0
-      ) {
-        const untilMs = Date.parse(undoUntil);
-        if (Number.isFinite(untilMs) && untilMs > Date.now()) {
-          setUndo({
-            outboundId,
-            untilMs,
-            ...(input.sendAt === undefined ? {} : { scheduledAt: input.sendAt }),
-          });
-          return;
-        }
-      }
-      onClose();
-    },
-  });
-
-  const cancelMutation = useMutation({
-    onMutate: () => {
-      setAttachmentError(null);
-    },
-    onError: (error: unknown) => {
-      setAttachmentError(error instanceof Error ? error.message : "Could not undo send.");
-    },
-    mutationFn: (outboundId: string) => cancelOutboundMail(outboundId),
-    onSuccess: () => {
-      setUndo(null);
-      onSent();
-    },
-  });
-
-  const saveDraft = useCallback(() => {
-    if (!hasDraft) return;
-    const snapshot = canonicalDraft;
-    saveQueueRef.current = saveQueueRef.current
-      .then(async () => {
-        const current = draftRef.current;
-        const saved = await saveMailDraft({
-          ...snapshot,
-          to: [...snapshot.to],
-          cc: [...snapshot.cc],
-          bcc: [...snapshot.bcc],
-          attachments: [...snapshot.attachments],
-          idempotencyKey: crypto.randomUUID(),
-          ...(current === null ? {} : { id: current.id, expectedRevision: current.revision }),
-        });
-        draftRef.current = { id: saved.id, revision: saved.revision };
-        writeMailComposeRecovery({ ...snapshot, id: saved.id, expectedRevision: saved.revision });
-      })
-      .catch((error: unknown) => {
-        setAttachmentError(error instanceof Error ? error.message : "Draft save failed.");
-      });
-  }, [attachments, bcc, body, cc, hasDraft, subject, to]);
-
-  const recipients = parseRecipients(to);
-  const canSend = !sendMutation.isPending && !attaching;
-
-  const handleSend = useCallback(() => {
-    if (recipients.length === 0) {
-      setRecipientError("Enter at least one recipient email address.");
-      toInputRef.current?.focus();
-      return;
-    }
-    const invalidGroups = [
-      { label: "To", invalid: invalidRecipientTokens(to), ref: toInputRef },
-      { label: "Cc", invalid: invalidRecipientTokens(cc), ref: ccInputRef },
-      { label: "Bcc", invalid: invalidRecipientTokens(bcc), ref: bccInputRef },
-    ].filter((group) => group.invalid.length > 0);
-    const firstInvalid = invalidGroups[0];
-    if (firstInvalid !== undefined) {
-      setRecipientError(
-        `${firstInvalid.label} contains invalid email ${firstInvalid.invalid.length === 1 ? "address" : "addresses"}: ${firstInvalid.invalid.join(", ")}.`,
-      );
-      if (firstInvalid.label === "Cc") setShowCc(true);
-      if (firstInvalid.label === "Bcc") setShowBcc(true);
-      queueMicrotask(() => firstInvalid.ref.current?.focus());
-      return;
-    }
-    setRecipientError(null);
-    sendMutation.mutate({
-      to: recipients,
-      cc: parseRecipients(cc),
-      bcc: parseRecipients(bcc),
-      subject,
-      bodyText: body,
-      ...(sendAt === "" ? {} : { sendAt: new Date(sendAt).toISOString() }),
-      attachments: attachments.length > 0 ? attachments : undefined,
-    });
-  }, [attachments, bcc, body, cc, recipients, sendAt, sendMutation, subject, to]);
-
-  const requestClose = useCallback(() => {
-    if (hasDraft) {
-      setConfirmDiscardOpen(true);
-      return;
-    }
-    onClose();
-  }, [hasDraft, onClose]);
-
-  const discardDraft = useCallback(() => {
-    attachmentUploadRef.current?.abort();
-    for (const attachment of attachments) void trashDriveObject(attachment.objectId);
-    skipRecoveryFlushRef.current = true;
-    recoveryDebouncer.cancel();
-    clearMailComposeRecovery();
-    setConfirmDiscardOpen(false);
-    onClose();
-  }, [attachments, onClose, recoveryDebouncer]);
-
-  /** Convert a FileList (from picker or drop) into MailAttachment records and
-   *  append them to the current attachment list. */
-  const attachFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const selected = Array.from(files);
-      const policyError = validateMailAttachmentSelection(attachments, selected);
-      if (policyError !== null) {
-        setAttachmentError(policyError);
-        return;
-      }
-      attachmentUploadRef.current?.abort();
-      const controller = new AbortController();
-      attachmentUploadRef.current = controller;
-      setAttaching(true);
-      setAttachmentError(null);
-      try {
-        for (const file of selected) {
-          const uploaded = await uploadDriveFile({
-            file,
-            folderId: null,
-            signal: controller.signal,
-          });
-          setAttachments((prev) => [
-            ...prev,
-            {
-              filename: file.name,
-              contentType: file.type !== "" ? file.type : "application/octet-stream",
-              objectId: uploaded.objectId,
-              byteSize: file.size,
-            },
-          ]);
-        }
-      } catch (error) {
-        setAttachmentError(
-          controller.signal.aborted
-            ? "Attachment upload cancelled; selecting the same file will resume it."
-            : error instanceof Error
-              ? error.message
-              : "Attachment upload failed.",
-        );
-      } finally {
-        if (attachmentUploadRef.current === controller) {
-          attachmentUploadRef.current = null;
-          setAttaching(false);
-        }
-      }
-    },
-    [attachments],
-  );
-
-  const handleDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    dragDepth.current += 1;
-    if (dragDepth.current === 1) {
-      setIsDragOver(true);
-    }
-  }, []);
-
-  const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    // Setting dropEffect signals to the browser that a drop is accepted.
-    event.dataTransfer.dropEffect = "copy";
-  }, []);
-
-  const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    dragDepth.current -= 1;
-    if (dragDepth.current <= 0) {
-      dragDepth.current = 0;
-      setIsDragOver(false);
-    }
-  }, []);
-
-  const handleDrop = useCallback(
-    (event: React.DragEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      dragDepth.current = 0;
-      setIsDragOver(false);
-      const { files } = event.dataTransfer;
-      if (files.length > 0) {
-        void attachFiles(files);
-      }
-    },
-    [attachFiles],
-  );
-
-  const handleFileInputChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      const { files } = event.target;
-      if (files !== null && files.length > 0) {
-        void attachFiles(files);
-      }
-      // Reset the input so the same file can be re-selected if removed.
-      event.target.value = "";
-    },
-    [attachFiles],
-  );
-
-  const removeAttachment = useCallback((index: number) => {
-    setAttachments((prev) => {
-      const removed = prev[index];
-      if (removed !== undefined) {
-        void trashDriveObject(removed.objectId).catch((error: unknown) => {
-          setAttachmentError(error instanceof Error ? error.message : "Attachment cleanup failed.");
-        });
-      }
-      return prev.filter((_, idx) => idx !== index);
-    });
-  }, []);
-
-  return (
-    <div
-      className={cx("compose compose-drop-root", minimized && "compose-minimized")}
-      role="dialog"
-      aria-modal="false"
-      aria-labelledby="mail-compose-title"
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
-      {isDragOver && (
-        <div className="compose-drop-overlay" aria-label="Drop files to attach">
-          <Icons.Paperclip />
-          Drop files to attach
-        </div>
-      )}
-      {/* Hidden file input — triggered by the Attach toolbar button */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        multiple
-        aria-label="Attach files"
-        style={{ display: "none" }}
-        onChange={handleFileInputChange}
-      />
-      <div className="compose-header">
-        <span id="mail-compose-title" className="truncate">
-          {subject.trim().length > 0 ? subject : "New message"}
-        </span>
-        <div style={{ display: "flex", gap: 2 }}>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label={minimized ? "Expand compose" : "Minimize compose"}
-            aria-expanded={!minimized}
-            onClick={() => setMinimized((value) => !value)}
-          >
-            <Icons.ChevronDown style={{ transform: minimized ? "rotate(180deg)" : undefined }} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Close compose"
-            onClick={requestClose}
-          >
-            <Icons.X />
-          </button>
-        </div>
-      </div>
-      {minimized ? null : (
-        <>
-          {showRecoveryNotice ? (
-            <div className="compose-recovery" role="status" aria-live="polite">
-              <span>Recovered your unsent message from this device.</span>
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label="Dismiss recovery notice"
-                onClick={() => setShowRecoveryNotice(false)}
-              >
-                <Icons.X />
-              </button>
-            </div>
-          ) : null}
-          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)" }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "4px 0",
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
-                To
-              </span>
-              <input
-                ref={toInputRef}
-                name="mail-compose-to"
-                autoComplete="email"
-                inputMode="email"
-                spellCheck={false}
-                value={to}
-                onChange={(event) => {
-                  setTo(event.target.value);
-                  setRecipientError(null);
-                }}
-                aria-label="To"
-                aria-invalid={recipientError !== null}
-                aria-describedby={
-                  recipientError === null ? undefined : "mail-compose-recipient-error"
-                }
-                style={{
-                  flex: 1,
-                  border: "none",
-                  outline: "none",
-                  background: "transparent",
-                  fontSize: "var(--text-body-sm)",
-                }}
-              />
-              <button
-                type="button"
-                aria-pressed={showCc}
-                onClick={() => {
-                  setShowCc((value) => !value);
-                }}
-                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
-              >
-                Cc
-              </button>
-              <span style={{ margin: "0 6px", color: "var(--text-3)" }}>·</span>
-              <button
-                type="button"
-                aria-pressed={showBcc}
-                onClick={() => {
-                  setShowBcc((value) => !value);
-                }}
-                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
-              >
-                Bcc
-              </button>
-            </div>
-            {showCc && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "4px 0",
-                  borderBottom: "1px solid var(--border)",
-                }}
-              >
-                <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
-                  Cc
-                </span>
-                <input
-                  ref={ccInputRef}
-                  name="mail-compose-cc"
-                  autoComplete="email"
-                  inputMode="email"
-                  spellCheck={false}
-                  value={cc}
-                  onChange={(event) => {
-                    setCc(event.target.value);
-                    setRecipientError(null);
-                  }}
-                  aria-label="Cc"
-                  aria-invalid={recipientError !== null}
-                  aria-describedby={
-                    recipientError === null ? undefined : "mail-compose-recipient-error"
-                  }
-                  style={{
-                    flex: 1,
-                    border: "none",
-                    outline: "none",
-                    background: "transparent",
-                    fontSize: "var(--text-body-sm)",
-                  }}
-                />
-              </div>
-            )}
-            {showBcc && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "4px 0",
-                  borderBottom: "1px solid var(--border)",
-                }}
-              >
-                <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
-                  Bcc
-                </span>
-                <input
-                  ref={bccInputRef}
-                  name="mail-compose-bcc"
-                  autoComplete="email"
-                  inputMode="email"
-                  spellCheck={false}
-                  value={bcc}
-                  onChange={(event) => {
-                    setBcc(event.target.value);
-                    setRecipientError(null);
-                  }}
-                  aria-label="Bcc"
-                  aria-invalid={recipientError !== null}
-                  aria-describedby={
-                    recipientError === null ? undefined : "mail-compose-recipient-error"
-                  }
-                  style={{
-                    flex: 1,
-                    border: "none",
-                    outline: "none",
-                    background: "transparent",
-                    fontSize: "var(--text-body-sm)",
-                  }}
-                />
-              </div>
-            )}
-            <div style={{ padding: "4px 0" }}>
-              <input
-                name="mail-compose-subject"
-                autoComplete="off"
-                value={subject}
-                onChange={(event) => {
-                  setSubject(event.target.value);
-                }}
-                onBlur={saveDraft}
-                placeholder="Subject"
-                aria-label="Subject"
-                style={{
-                  width: "100%",
-                  border: "none",
-                  outline: "none",
-                  background: "transparent",
-                  fontSize: "var(--text-body-sm)",
-                  fontWeight: 500,
-                }}
-              />
-            </div>
-            <label
-              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
-            >
-              <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 72 }}>
-                Send later
-              </span>
-              <input
-                type="datetime-local"
-                aria-label="Send later"
-                value={sendAt}
-                onChange={(event) => setSendAt(event.target.value)}
-              />
-            </label>
-          </div>
-          <textarea
-            name="mail-compose-body"
-            autoComplete="off"
-            value={body}
-            onChange={(event) => {
-              setBody(event.target.value);
-            }}
-            onBlur={saveDraft}
-            placeholder="Write your message…"
-            aria-label="Message body"
-            style={{
-              width: "100%",
-              minHeight: 200,
-              padding: 14,
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              fontSize: "var(--text-body-sm)",
-              lineHeight: 1.55,
-              resize: "none",
-              fontFamily: "inherit",
-            }}
-          />
-          {recipientError === null ? null : (
-            <p id="mail-compose-recipient-error" className="compose-inline-error" role="alert">
-              {recipientError}
-            </p>
-          )}
-          {attachmentError === null ? null : (
-            <p className="compose-inline-error" role="alert">
-              {attachmentError}
-            </p>
-          )}
-          {attaching ? (
-            <button
-              type="button"
-              className="btn secondary"
-              onClick={() => attachmentUploadRef.current?.abort()}
-            >
-              Cancel attachment upload
-            </button>
-          ) : null}
-          {attachments.length > 0 && (
-            <div className="compose-attachments" aria-label="Attached files">
-              {attachments.map((attachment, index) => (
-                <div
-                  key={`${attachment.filename}-${String(index)}`}
-                  className="compose-attachment-chip"
-                >
-                  <Icons.Paperclip />
-                  <span title={attachment.filename}>{attachment.filename}</span>
-                  <button
-                    type="button"
-                    aria-label={`Remove attachment ${attachment.filename}`}
-                    onClick={() => {
-                      removeAttachment(index);
-                    }}
-                  >
-                    <Icons.X size={10} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {undo !== null && Date.now() < undo.untilMs && (
-            <div
-              role="status"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                margin: "0 14px 8px",
-                padding: "8px 12px",
-                borderRadius: 8,
-                background: "var(--surface-2)",
-                fontSize: "var(--text-body-sm)",
-              }}
-            >
-              <span>
-                {undo.scheduledAt === undefined
-                  ? "Message queued — you can undo send for a few seconds."
-                  : `Message scheduled for ${new Date(undo.scheduledAt).toLocaleString()}.`}
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  cancelMutation.mutate(undo.outboundId);
-                }}
-                disabled={cancelMutation.isPending}
-              >
-                Undo
-              </button>
-            </div>
-          )}
-          {sendFailed && (
-            <div
-              style={{
-                margin: "0 14px 8px",
-                fontSize: "var(--text-caption)",
-                color: "var(--danger)",
-              }}
-            >
-              Could not send message. Try again.
-            </div>
-          )}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              padding: "8px 12px",
-              borderTop: "1px solid var(--border)",
-            }}
-          >
-            <div style={{ display: "flex" }}>
-              <button
-                type="button"
-                className="btn primary"
-                disabled={!canSend}
-                onClick={handleSend}
-              >
-                <Icons.Send /> {sendMutation.isPending ? "Sending…" : sendAt === "" ? "Send" : "Schedule"}
-              </button>
-            </div>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Attach"
-              disabled={attaching}
-              onClick={() => {
-                fileInputRef.current?.click();
-              }}
-            >
-              <Icons.Paperclip />
-            </button>
-            <button
-              type="button"
-              className="icon-btn"
-              aria-label="Discard draft"
-              style={{ marginLeft: "auto" }}
-              onClick={requestClose}
-            >
-              <Icons.Trash />
-            </button>
-          </div>
-        </>
-      )}
-      {unsavedChangesWarning}
-      {confirmDiscardOpen ? (
-        <Dialog
-          title="Discard this draft?"
-          onClose={() => setConfirmDiscardOpen(false)}
-          footer={
-            <>
-              <button type="button" className="btn" onClick={() => setConfirmDiscardOpen(false)}>
-                Keep editing
-              </button>
-              <button type="button" className="btn danger" onClick={discardDraft}>
-                Discard draft
-              </button>
-            </>
-          }
-        >
-          <p>This permanently removes the recovered copy from this device.</p>
-        </Dialog>
-      ) : null}
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------- shell */
 
 const PAGE_SIZE = 50;
@@ -2511,11 +1839,15 @@ export function MailShell() {
     void navigate({
       to: "/mail",
       search: {
-        ...(folder === "inbox" ? {} : { folder }),
-        ...(tab === "primary" ? {} : { tab }),
+        // Label views are exclusive — omit folder/tab so URL is ?label=…
+        ...(activeLabel
+          ? { label: activeLabel }
+          : {
+              ...(folder === "inbox" ? {} : { folder }),
+              ...(tab === "primary" ? {} : { tab }),
+            }),
         ...(selected ? { thread: selected } : {}),
         ...(query.length === 0 ? {} : { q: query }),
-        ...(activeLabel ? { label: activeLabel } : {}),
       },
       replace: false,
     });
@@ -2545,10 +1877,14 @@ export function MailShell() {
   const foldersQuery = useQuery(mailFoldersQueryOptions());
   const labelsQuery = useQuery(mailLabelsQueryOptions());
 
+  // Label view is exclusive of folder tabs: labeled mail often lives outside
+  // Primary (e.g. Finance → Updates). Applying inbox+primary+label empties the list
+  // while the label still shows a non-zero count.
   const threadsInput = useMemo(
     () => ({
-      folder,
-      tab: folder === "inbox" ? tab : undefined,
+      folder: activeLabel !== null ? "inbox" : folder,
+      // Skip category tabs whenever a label filter is active.
+      tab: activeLabel === null && folder === "inbox" ? tab : undefined,
       label: activeLabel ?? undefined,
       query: query.trim() === "" ? undefined : query.trim(),
       limit: PAGE_SIZE,
@@ -2684,6 +2020,18 @@ export function MailShell() {
     },
   });
 
+  const notSpamMutation = useMutation({
+    mutationFn: (threadId: string) => unspamMailThread(threadId),
+    onMutate: clearActionError,
+    onError: () => {
+      setActionError("Could not mark as not spam. Try again.");
+    },
+    onSuccess: () => {
+      invalidateLists();
+      setSelected(null);
+    },
+  });
+
   const filterMutation = useMutation({
     mutationFn: (input: { readonly from: string }) =>
       createMailFilter({
@@ -2749,54 +2097,53 @@ export function MailShell() {
   );
 
   // Bulk actions — apply to all checked IDs, then clear selection
+  const runBulk = useCallback((ids: ReadonlySet<string>, apply: (threadId: string) => void) => {
+    for (const threadId of ids) {
+      apply(threadId);
+    }
+    setCheckedIds(new Set());
+  }, []);
+
   const handleBulkArchive = useCallback(
     (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        archiveMutation.mutate(threadId);
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => archiveMutation.mutate(threadId));
     },
-    [archiveMutation],
+    [archiveMutation, runBulk],
   );
 
   const handleBulkDelete = useCallback(
     (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        deleteMutation.mutate(threadId);
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => deleteMutation.mutate(threadId));
     },
-    [deleteMutation],
+    [deleteMutation, runBulk],
   );
 
   const handleBulkSpam = useCallback(
     (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        spamMutation.mutate(threadId);
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => spamMutation.mutate(threadId));
     },
-    [spamMutation],
+    [spamMutation, runBulk],
+  );
+
+  const handleBulkNotSpam = useCallback(
+    (ids: ReadonlySet<string>) => {
+      runBulk(ids, (threadId) => notSpamMutation.mutate(threadId));
+    },
+    [notSpamMutation, runBulk],
   );
 
   const handleBulkRead = useCallback(
     (ids: ReadonlySet<string>, unread: boolean) => {
-      for (const threadId of ids) {
-        readMutation.mutate({ threadId, unread });
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => readMutation.mutate({ threadId, unread }));
     },
-    [readMutation],
+    [readMutation, runBulk],
   );
 
   const handleBulkSnooze = useCallback(
     (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        snoozeMutation.mutate(threadId);
-      }
-      setCheckedIds(new Set());
+      runBulk(ids, (threadId) => snoozeMutation.mutate(threadId));
     },
-    [snoozeMutation],
+    [snoozeMutation, runBulk],
   );
 
   const handleBulkMove = useCallback(
@@ -2810,11 +2157,14 @@ export function MailShell() {
           deleteMutation.mutate(threadId);
         } else if (folderId === "spam") {
           spamMutation.mutate(threadId);
+        } else if (folderId === "inbox") {
+          // Moving out of spam (or generic restore to inbox) clears spam flag.
+          notSpamMutation.mutate(threadId);
         }
       }
       setCheckedIds(new Set());
     },
-    [archiveMutation, deleteMutation, spamMutation],
+    [archiveMutation, deleteMutation, spamMutation, notSpamMutation],
   );
 
   const handleBulkLabel = useCallback(
@@ -2873,7 +2223,8 @@ export function MailShell() {
     snoozeMutation.isPending ||
     restoreMutation.isPending ||
     labelMutation.isPending ||
-    spamMutation.isPending;
+    spamMutation.isPending ||
+    notSpamMutation.isPending;
 
   return (
     <>
@@ -2888,10 +2239,13 @@ export function MailShell() {
         }}
       >
         <div style={{ display: "contents" }}>
+          <h1 className="sr-only">Mail</h1>
           <MailSidebar
             folder={folder}
             onFolder={(next) => {
+              // Folder view is exclusive of labels.
               setFolder(next);
+              setActiveLabel(null);
               setSelected(null);
               setOffset(0);
               setCheckedIds(new Set());
@@ -2903,7 +2257,11 @@ export function MailShell() {
             labels={labels}
             activeLabel={activeLabel}
             onLabel={(next) => {
+              // Label view is exclusive of folder chrome (inbox stays data scope only).
               setActiveLabel(next);
+              if (next !== null) {
+                setFolder("inbox");
+              }
               setSelected(null);
               setOffset(0);
               setCheckedIds(new Set());
@@ -2945,6 +2303,28 @@ export function MailShell() {
                   ...(applied ? { remove: [firstLabel.slug] } : { add: [firstLabel.slug] }),
                 });
               }}
+              onReportSpam={
+                folder === "spam"
+                  ? undefined
+                  : () => {
+                      spamMutation.mutate(selectedRow.threadId);
+                    }
+              }
+              onNotSpam={
+                folder === "spam"
+                  ? () => {
+                      notSpamMutation.mutate(selectedRow.threadId);
+                    }
+                  : undefined
+              }
+              onConfirmAiSpam={
+                folder === "spam" && isBetaSpamCatch(selectedRow)
+                  ? () => {
+                      // Re-affirm spam so durable feedback records user agreement with AI/rules.
+                      spamMutation.mutate(selectedRow.threadId);
+                    }
+                  : undefined
+              }
               actionBusy={actionBusy}
               actionError={actionError}
             />
@@ -2955,6 +2335,7 @@ export function MailShell() {
                 setTab(next);
                 setOffset(0);
               }}
+              hideCategoryTabs={activeLabel !== null}
               selected={selected}
               onSelect={handleSelect}
               threads={threads}
@@ -2992,6 +2373,7 @@ export function MailShell() {
               onBulkArchive={handleBulkArchive}
               onBulkDelete={handleBulkDelete}
               onBulkSpam={handleBulkSpam}
+              onBulkNotSpam={handleBulkNotSpam}
               onBulkRead={handleBulkRead}
               onBulkSnooze={handleBulkSnooze}
               onBulkMove={handleBulkMove}

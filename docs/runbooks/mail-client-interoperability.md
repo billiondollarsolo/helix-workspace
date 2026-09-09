@@ -9,14 +9,14 @@ does not issue an `imap` scope.
 
 ## Supported client settings
 
-| Setting | Value |
-| --- | --- |
-| Protocol | SMTP submission (RFC 6409) |
-| Transport | Implicit TLS (RFC 8314) |
-| Port | `465` by default |
-| Authentication | `PLAIN` or `LOGIN` inside TLS |
-| Username | Full Helix user email address |
-| Password | One-time-displayed Helix app password scoped to `smtp` |
+| Setting         | Value                                                  |
+| --------------- | ------------------------------------------------------ |
+| Protocol        | SMTP submission (RFC 6409)                             |
+| Transport       | Implicit TLS (RFC 8314)                                |
+| Port            | `465` by default                                       |
+| Authentication  | `PLAIN` or `LOGIN` inside TLS                          |
+| Username        | Full Helix user email address                          |
+| Password        | One-time-displayed Helix app password scoped to `smtp` |
 | Envelope sender | The user's primary address or an enabled send-as alias |
 
 These settings work with Apple Mail, Thunderbird, and native iOS/Android mail

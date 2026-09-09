@@ -1,16 +1,26 @@
 alter table drive_share_links
-  add column token_hash text,
-  add column password_hash text,
-  add column one_time boolean not null default false,
-  add column allowed_domains text[] not null default '{}',
-  add column allow_download boolean not null default true,
-  add column consumed_at timestamptz,
-  add column access_count bigint not null default 0,
-  add column last_access_at timestamptz,
-  add column classification text not null default 'standard';
+  add column if not exists token_hash text,
+  add column if not exists password_hash text,
+  add column if not exists one_time boolean not null default false,
+  add column if not exists allowed_domains text[] not null default '{}',
+  add column if not exists allow_download boolean not null default true,
+  add column if not exists consumed_at timestamptz,
+  add column if not exists access_count bigint not null default 0,
+  add column if not exists last_access_at timestamptz,
+  add column if not exists classification text not null default 'standard';
+
+-- Earlier releases stored the digest as bytea and already destroyed raw tokens.
+do $$
+begin
+  if exists (select 1 from information_schema.columns where table_schema = 'public'
+    and table_name = 'drive_share_links' and column_name = 'token_hash' and data_type = 'bytea') then
+    alter table drive_share_links alter column token_hash type text using encode(token_hash, 'hex');
+  end if;
+end;
+$$;
 
 update drive_share_links link
-set token_hash = encode(digest(link.token, 'sha256'), 'hex'),
+set token_hash = coalesce(link.token_hash, encode(digest(link.token, 'sha256'), 'hex')),
     role = 'reader',
     classification = coalesce((
       select classification.classification
@@ -48,7 +58,7 @@ alter table drive_share_links
   add constraint drive_share_links_access_count_check check (access_count >= 0),
   drop column token;
 
-create unique index drive_share_links_token_hash_idx on drive_share_links (token_hash);
+create unique index if not exists drive_share_links_token_hash_idx on drive_share_links (token_hash);
 create unique index drive_share_links_org_id_id_idx on drive_share_links (org_id, id);
 
 create function helix_drive_share_link_by_token_hash(input_token_hash text)

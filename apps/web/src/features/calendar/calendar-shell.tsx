@@ -455,6 +455,7 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
       className="calendar-page"
       style={{ display: "flex", flex: 1, minWidth: 0, minHeight: 0, position: "relative" }}
     >
+      <h1 className="sr-only">Calendar</h1>
       <CalendarSidebar
         query={state.query}
         onSearchChange={(value) => updateState({ query: value })}
@@ -722,6 +723,7 @@ function CalendarWeek({
     >
       {/* header */}
       <div
+        className="calendar-toolbar"
         style={{
           height: 44,
           flexShrink: 0,
@@ -882,6 +884,9 @@ function CalendarWeek({
 
           {/* week grid */}
           <div
+            role="region"
+            aria-label="Calendar week"
+            tabIndex={0}
             style={{
               flex: 1,
               overflowY: "auto",

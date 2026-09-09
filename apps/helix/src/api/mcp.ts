@@ -1,8 +1,19 @@
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import type { Actor } from "@helix/sdk-types";
+import type { Actor, RequestContext } from "@helix/sdk-types";
 import type { RuntimeToolRegistry } from "../platform/tool-registry.js";
+import {
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "../platform/auth/tool-invocation-principal.js";
 import { createScopedSearchRequest, type GlobalSearchType } from "../platform/search/scope.js";
 import type { SearchEngine, SearchHit } from "../platform/search/types.js";
+import {
+  DEFAULT_IDEMPOTENCY_TTL_MS,
+  InMemoryIdempotencyStore,
+  fingerprintRequestPayload,
+  idempotencyStorageKey,
+  type IdempotencyStore,
+} from "./idempotency.js";
 import { HELIX_SERVER_VERSION, MCP_PROTOCOL_VERSION } from "./version.js";
 
 type JsonRpcId = string | number | null;
@@ -27,7 +38,37 @@ type JsonRpcResponse =
         readonly message: string;
       };
     };
+type JsonRpcErrorResponse = Extract<JsonRpcResponse, { readonly error: unknown }>;
 
+export const MCP_DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+export const MCP_DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+export const MCP_MAX_IDENTIFIER_LENGTH = 256;
+export const MCP_MAX_RESOURCE_URI_LENGTH = 2_048;
+
+export interface McpRequestLimits {
+  readonly maxBodyBytes?: number;
+  readonly requestTimeoutMs?: number;
+}
+
+type McpHandlerInput = {
+  readonly tools: RuntimeToolRegistry;
+  readonly principal: ToolInvocationPrincipal;
+  readonly request?: RequestContext;
+  readonly body: unknown;
+  readonly resources?: McpResourceProvider;
+  readonly prompts?: McpPromptProvider;
+  readonly idempotencyStore?: IdempotencyStore;
+  readonly limits?: McpRequestLimits;
+};
+
+const defaultIdempotencyStores = new WeakMap<RuntimeToolRegistry, IdempotencyStore>();
+const inFlightMutations = new Map<
+  string,
+  {
+    readonly requestHash: string;
+    readonly result: Promise<Awaited<ReturnType<RuntimeToolRegistry["invoke"]>>>;
+  }
+>();
 /**
  * MCP prompt descriptor surfaced via `prompts/list` (P1-4).
  */
@@ -53,11 +94,7 @@ export interface McpPromptResult {
 
 export interface McpPromptProvider {
   list(actor: Actor): Promise<readonly McpPrompt[]>;
-  get(
-    actor: Actor,
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<McpPromptResult | null>;
+  get(actor: Actor, name: string, args: Record<string, unknown>): Promise<McpPromptResult | null>;
 }
 
 /**
@@ -67,26 +104,35 @@ export interface McpPromptProvider {
  * surface traffic is observable per method alongside the existing LLM / tool /
  * permission spans.
  */
-export async function handleMcpJsonRpcRequest(input: {
-  readonly tools: RuntimeToolRegistry;
-  readonly actor: Actor;
-  readonly body: unknown;
-  readonly resources?: McpResourceProvider;
-  readonly prompts?: McpPromptProvider;
-}): Promise<JsonRpcResponse> {
+export async function handleMcpJsonRpcRequest(input: McpHandlerInput): Promise<JsonRpcResponse> {
   const request = parseJsonRpcRequest(input.body);
+  if (!isAuthenticatedMcpPrincipal(input.principal)) {
+    return jsonRpcError(request.id, -32001, "MCP authentication is required.");
+  }
+  if (
+    serializedByteLength(input.body) > (input.limits?.maxBodyBytes ?? MCP_DEFAULT_MAX_BODY_BYTES)
+  ) {
+    return jsonRpcError(request.id, -32600, "MCP request body exceeds the allowed size.");
+  }
+  if (Array.isArray(input.body)) {
+    return jsonRpcError(request.id, -32600, "MCP JSON-RPC batch requests are not supported.");
+  }
   const method = request.method ?? "invalid";
   return trace.getTracer("helix.mcp").startActiveSpan(
     `mcp.${method}`,
     {
       attributes: {
         "helix.mcp.method": method,
-        "helix.mcp.actor_type": input.actor.type,
+        "helix.mcp.actor_type": input.principal.actor.type,
       },
     },
     async (span) => {
       try {
-        const response = await dispatchMcpJsonRpcRequest(request, input);
+        const response = await dispatchWithDeadline(
+          dispatchMcpJsonRpcRequest(request, input),
+          input.limits?.requestTimeoutMs ?? MCP_DEFAULT_REQUEST_TIMEOUT_MS,
+          request.id,
+        );
         if ("error" in response) {
           span.setAttribute("helix.mcp.error_code", response.error.code);
           span.setStatus({ code: SpanStatusCode.ERROR });
@@ -105,16 +151,13 @@ export async function handleMcpJsonRpcRequest(input: {
 
 async function dispatchMcpJsonRpcRequest(
   request: JsonRpcRequest,
-  input: {
-    readonly tools: RuntimeToolRegistry;
-    readonly actor: Actor;
-    readonly body: unknown;
-    readonly resources?: McpResourceProvider;
-    readonly prompts?: McpPromptProvider;
-  },
+  input: McpHandlerInput,
 ): Promise<JsonRpcResponse> {
   if (request.method === undefined) {
     return jsonRpcError(request.id, -32600, "Invalid MCP JSON-RPC request.");
+  }
+  if (request.method.length > MCP_MAX_IDENTIFIER_LENGTH) {
+    return jsonRpcError(request.id, -32600, "MCP method name exceeds the allowed size.");
   }
 
   switch (request.method) {
@@ -135,7 +178,7 @@ async function dispatchMcpJsonRpcRequest(
       return jsonRpcResult(request.id, {});
     case "tools/list":
       return jsonRpcResult(request.id, {
-        tools: (await input.tools.listVisible(input.actor)).map((tool) => ({
+        tools: (await input.tools.listVisible(input.principal.actor)).map((tool) => ({
           name: tool.id,
           description: tool.description,
           inputSchema: tool.inputSchema.toJsonSchema(),
@@ -154,10 +197,53 @@ async function dispatchMcpJsonRpcRequest(
       if (params === undefined) {
         return jsonRpcError(request.id, -32602, "tools/call requires params.name.");
       }
-      const result = await input.tools.invoke(params.name, params.arguments ?? {}, {
-        actor: input.actor,
-        enforceConfirmation: true,
-      });
+      if (params.name.length > MCP_MAX_IDENTIFIER_LENGTH) {
+        return jsonRpcError(request.id, -32602, "Tool name exceeds the allowed size.");
+      }
+      const tool = input.tools.get(params.name);
+      const mutationRequiresIdempotency =
+        input.principal.actor.type === "agent" && tool !== undefined && tool.sideEffects !== "read";
+      if (mutationRequiresIdempotency && params.idempotencyKey === undefined) {
+        return jsonRpcError(
+          request.id,
+          -32602,
+          "Agent tools/call mutations require params._meta.idempotencyKey.",
+        );
+      }
+      if (params.idempotencyKey !== undefined && !isValidIdempotencyKey(params.idempotencyKey)) {
+        return jsonRpcError(request.id, -32602, "MCP idempotency key is invalid.");
+      }
+      const invoke = () =>
+        input.tools.invoke(params.name, params.arguments ?? {}, {
+          ...toolInvocationOptions(input.principal, input.request),
+          ...(params.idempotencyKey === undefined
+            ? {}
+            : {
+                executionIdempotencyKey: params.idempotencyKey,
+                idempotencyFingerprint: fingerprintRequestPayload(params.idempotencyKey),
+              }),
+          policyContext: {
+            effectiveClassification: "standard",
+            sourceIds: [],
+            containsUntrustedContext: false,
+            requestChannel: "mcp",
+            tenantId: input.principal.actor.orgId,
+          },
+          enforceConfirmation: true,
+        });
+      const result =
+        mutationRequiresIdempotency && params.idempotencyKey !== undefined
+          ? await invokeMcpMutationIdempotently({
+              input,
+              toolId: params.name,
+              arguments: params.arguments ?? {},
+              idempotencyKey: params.idempotencyKey,
+              invoke,
+            })
+          : await invoke();
+      if ("jsonrpc" in result) {
+        return { ...result, id: request.id ?? null };
+      }
       if (!result.ok) {
         return jsonRpcError(request.id, statusToJsonRpcCode(result.statusCode), result.error);
       }
@@ -185,7 +271,7 @@ async function dispatchMcpJsonRpcRequest(
     case "resources/list": {
       const provider = input.resources ?? emptyResourceProvider;
       return jsonRpcResult(request.id, {
-        resources: await provider.list(input.actor),
+        resources: await provider.list(input.principal.actor),
       });
     }
     case "resources/read": {
@@ -193,10 +279,13 @@ async function dispatchMcpJsonRpcRequest(
       if (params === undefined) {
         return jsonRpcError(request.id, -32602, "resources/read requires params.uri.");
       }
+      if (params.uri.length > MCP_MAX_RESOURCE_URI_LENGTH) {
+        return jsonRpcError(request.id, -32602, "Resource URI exceeds the allowed size.");
+      }
       const provider = input.resources ?? emptyResourceProvider;
       let resource: McpResourceContent | null;
       try {
-        resource = await provider.read(input.actor, params.uri);
+        resource = await provider.read(input.principal.actor, params.uri);
       } catch (error) {
         const httpError = mcpHttpError(error);
         if (httpError !== null) {
@@ -218,7 +307,7 @@ async function dispatchMcpJsonRpcRequest(
     case "prompts/list": {
       const provider = input.prompts ?? createToolPromptProvider(input.tools);
       return jsonRpcResult(request.id, {
-        prompts: await provider.list(input.actor),
+        prompts: await provider.list(input.principal.actor),
       });
     }
     case "prompts/get": {
@@ -226,8 +315,11 @@ async function dispatchMcpJsonRpcRequest(
       if (params === undefined) {
         return jsonRpcError(request.id, -32602, "prompts/get requires params.name.");
       }
+      if (params.name.length > MCP_MAX_IDENTIFIER_LENGTH) {
+        return jsonRpcError(request.id, -32602, "Prompt name exceeds the allowed size.");
+      }
       const provider = input.prompts ?? createToolPromptProvider(input.tools);
-      const prompt = await provider.get(input.actor, params.name, params.arguments ?? {});
+      const prompt = await provider.get(input.principal.actor, params.name, params.arguments ?? {});
       if (prompt === null) {
         return jsonRpcError(request.id, -32004, `Prompt not found: ${params.name}`);
       }
@@ -268,8 +360,7 @@ export function createToolPromptProvider(tools: RuntimeToolRegistry): McpPromptP
       if (tool === undefined) {
         return null;
       }
-      const inputText =
-        args.input === undefined ? "{}" : JSON.stringify(args.input, null, 2);
+      const inputText = args.input === undefined ? "{}" : JSON.stringify(args.input, null, 2);
       return {
         description: `Invoke the ${tool.id} tool.`,
         messages: [
@@ -308,10 +399,13 @@ export interface McpStreamEvent {
  */
 export async function* handleMcpStreamingRequest(input: {
   readonly tools: RuntimeToolRegistry;
-  readonly actor: Actor;
+  readonly principal: ToolInvocationPrincipal;
+  readonly request?: RequestContext;
   readonly body: unknown;
   readonly resources?: McpResourceProvider;
   readonly prompts?: McpPromptProvider;
+  readonly idempotencyStore?: IdempotencyStore;
+  readonly limits?: McpRequestLimits;
 }): AsyncGenerator<McpStreamEvent> {
   const request = parseJsonRpcRequest(input.body);
   if (request.method === "tools/call") {
@@ -401,16 +495,142 @@ function parseJsonRpcRequest(body: unknown): JsonRpcRequest {
   return typeof record.method === "string" ? { ...request, method: record.method } : request;
 }
 
-function parseToolCallParams(
-  params: unknown,
-): { readonly name: string; readonly arguments?: unknown } | undefined {
+function parseToolCallParams(params: unknown):
+  | {
+      readonly name: string;
+      readonly arguments?: unknown;
+      readonly idempotencyKey?: string;
+    }
+  | undefined {
   if (typeof params !== "object" || params === null || Array.isArray(params)) {
     return undefined;
   }
   const record = params as Record<string, unknown>;
+  const metadata =
+    typeof record._meta === "object" && record._meta !== null && !Array.isArray(record._meta)
+      ? (record._meta as Record<string, unknown>)
+      : undefined;
+  const idempotencyKey =
+    typeof metadata?.idempotencyKey === "string"
+      ? metadata.idempotencyKey
+      : typeof record.idempotencyKey === "string"
+        ? record.idempotencyKey
+        : undefined;
   return typeof record.name === "string"
-    ? { name: record.name, arguments: record.arguments }
+    ? {
+        name: record.name,
+        arguments: record.arguments,
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+      }
     : undefined;
+}
+
+async function invokeMcpMutationIdempotently(input: {
+  readonly input: McpHandlerInput;
+  readonly toolId: string;
+  readonly arguments: unknown;
+  readonly idempotencyKey: string;
+  readonly invoke: () => ReturnType<RuntimeToolRegistry["invoke"]>;
+}): Promise<Awaited<ReturnType<RuntimeToolRegistry["invoke"]>> | JsonRpcErrorResponse> {
+  const store = input.input.idempotencyStore ?? defaultIdempotencyStore(input.input.tools);
+  const storageKey = idempotencyStorageKey({
+    orgId: input.input.principal.actor.orgId,
+    actorId: input.input.principal.actor.id,
+    toolId: input.toolId,
+    idempotencyKey: input.idempotencyKey,
+  });
+  const requestHash = fingerprintRequestPayload({
+    toolId: input.toolId,
+    arguments: input.arguments,
+  });
+  const claim = await store.claim(storageKey, requestHash, DEFAULT_IDEMPOTENCY_TTL_MS);
+  if (claim.kind === "conflict") {
+    return jsonRpcError(null, -32009, "MCP idempotency key was reused with different arguments.");
+  }
+  if (claim.kind === "replay") {
+    return claim.record.result;
+  }
+  if (claim.kind === "in_progress") {
+    const local = inFlightMutations.get(storageKey);
+    if (local !== undefined && local.requestHash === requestHash) {
+      return local.result;
+    }
+    return jsonRpcError(null, -32010, "MCP mutation with this idempotency key is in progress.");
+  }
+
+  const result = input.invoke();
+  inFlightMutations.set(storageKey, { requestHash, result });
+  try {
+    const completed = await result;
+    await store.complete(storageKey, claim.claimToken, {
+      result: completed,
+      statusCode: completed.ok
+        ? completed.status === "pending_confirmation"
+          ? 202
+          : 200
+        : completed.statusCode,
+      requestHash,
+      expiresAt: Date.now() + DEFAULT_IDEMPOTENCY_TTL_MS,
+    });
+    return completed;
+  } catch (error) {
+    await store.release(storageKey, claim.claimToken);
+    throw error;
+  } finally {
+    inFlightMutations.delete(storageKey);
+  }
+}
+
+function defaultIdempotencyStore(tools: RuntimeToolRegistry): IdempotencyStore {
+  const existing = defaultIdempotencyStores.get(tools);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created = new InMemoryIdempotencyStore();
+  defaultIdempotencyStores.set(tools, created);
+  return created;
+}
+
+function isAuthenticatedMcpPrincipal(principal: ToolInvocationPrincipal): boolean {
+  return principal.actor.id !== "anonymous" && principal.actor.type !== "system"
+    ? principal.actor.orgId !== "00000000-0000-0000-0000-000000000000"
+    : principal.actor.type === "system";
+}
+
+function serializedByteLength(value: unknown): number {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function isValidIdempotencyKey(value: string): boolean {
+  return value.length >= 8 && value.length <= 200 && /^[\x21-\x7e]+$/u.test(value);
+}
+
+async function dispatchWithDeadline(
+  operation: Promise<JsonRpcResponse>,
+  timeoutMs: number,
+  id: JsonRpcId | undefined,
+): Promise<JsonRpcResponse> {
+  const boundedTimeoutMs = Math.min(Math.max(Math.trunc(timeoutMs), 1), 120_000);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<JsonRpcResponse>((resolve) => {
+        timeout = setTimeout(() => {
+          resolve(jsonRpcError(id, -32008, "MCP request exceeded its execution deadline."));
+        }, boundedTimeoutMs);
+        timeout.unref();
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function parseResourceReadParams(params: unknown): { readonly uri: string } | undefined {
@@ -444,7 +664,11 @@ function jsonRpcResult(id: JsonRpcId | undefined, result: unknown): JsonRpcRespo
   return { jsonrpc: "2.0", id: id ?? null, result };
 }
 
-function jsonRpcError(id: JsonRpcId | undefined, code: number, message: string): JsonRpcResponse {
+function jsonRpcError(
+  id: JsonRpcId | undefined,
+  code: number,
+  message: string,
+): JsonRpcErrorResponse {
   return { jsonrpc: "2.0", id: id ?? null, error: { code, message } };
 }
 
@@ -522,7 +746,9 @@ function hitToMarkdown(hit: SearchHit): string {
     ...(hit.updatedAt === undefined ? [] : [`Updated: ${hit.updatedAt}`]),
     "",
     hit.body ?? "",
-  ].join("\n").trimEnd();
+  ]
+    .join("\n")
+    .trimEnd();
 }
 
 function resourceUri(type: string, id: string): string {

@@ -34,7 +34,8 @@ run("CardDAV PostgreSQL scalability and ACL", () => {
       orgId,
       actorId: ownerId,
       href: "seed.vcf",
-      vcard: "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:seed\r\nFN:Seed Contact\r\nEMAIL:seed@example.test\r\nEND:VCARD\r\n",
+      vcard:
+        "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:seed\r\nFN:Seed Contact\r\nEMAIL:seed@example.test\r\nEND:VCARD\r\n",
     });
     const bookId = created.contact.addressBookId;
     if (bookId === undefined) throw new Error("Expected default address book.");

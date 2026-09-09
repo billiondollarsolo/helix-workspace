@@ -3,10 +3,7 @@ import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { BadRequestError, ForbiddenError } from "../../api/api-error.js";
-import {
-  type AdminConsoleAuditSink,
-  auditAdminAction,
-} from "../admin/console-shared.js";
+import { type AdminConsoleAuditSink, auditAdminAction } from "../admin/console-shared.js";
 import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
 
 const categorySchema = z.enum([
@@ -30,9 +27,7 @@ const reportSchema = z
     evidence: evidenceSchema,
   })
   .strict();
-const blockSchema = z
-  .object({ reason: z.string().max(1000).default("") })
-  .strict();
+const blockSchema = z.object({ reason: z.string().max(1000).default("") }).strict();
 const controlsSchema = z
   .object({
     slowModeSeconds: z.number().int().min(0).max(86_400),
@@ -98,28 +93,37 @@ export interface ChatModerationStore {
     blocked: boolean;
     reason: string;
   }): Promise<void>;
-  configure(input: z.infer<typeof controlsSchema> & {
-    orgId: string;
-    actorId: string;
-    roomId: string;
-  }): Promise<void>;
+  configure(
+    input: z.infer<typeof controlsSchema> & {
+      orgId: string;
+      actorId: string;
+      roomId: string;
+    },
+  ): Promise<void>;
   listQueue(input: {
     orgId: string;
     actorId: string;
     roomId: string;
     status?: string | undefined;
     limit: number;
-  }): Promise<{ cases: readonly ChatModerationCase[]; signals: readonly ChatModerationSignal[] } | null>;
-  moderate(input: z.infer<typeof actionSchema> & {
-    orgId: string;
-    actorId: string;
-    caseId: string;
-  }): Promise<void>;
-  appeal(input: z.infer<typeof appealSchema> & {
-    orgId: string;
-    actorId: string;
-    caseId: string;
-  }): Promise<void>;
+  }): Promise<{
+    cases: readonly ChatModerationCase[];
+    signals: readonly ChatModerationSignal[];
+  } | null>;
+  moderate(
+    input: z.infer<typeof actionSchema> & {
+      orgId: string;
+      actorId: string;
+      caseId: string;
+    },
+  ): Promise<void>;
+  appeal(
+    input: z.infer<typeof appealSchema> & {
+      orgId: string;
+      actorId: string;
+      caseId: string;
+    },
+  ): Promise<void>;
   addEvidence(input: {
     orgId: string;
     actorId: string;
@@ -176,24 +180,32 @@ export class PostgresChatModerationStore implements ChatModerationStore {
     blocked: boolean;
     reason: string;
   }) {
-    await this.withActor(input, (tx) => tx`
+    await this.withActor(
+      input,
+      (tx) => tx`
       select helix_set_chat_block(
         ${input.orgId}, ${input.actorId}, ${input.blockedActorId}, ${input.blocked}, ${input.reason}
       )
-    `);
+    `,
+    );
   }
 
-  async configure(input: z.infer<typeof controlsSchema> & {
-    orgId: string;
-    actorId: string;
-    roomId: string;
-  }) {
-    await this.withActor(input, (tx) => tx`
+  async configure(
+    input: z.infer<typeof controlsSchema> & {
+      orgId: string;
+      actorId: string;
+      roomId: string;
+    },
+  ) {
+    await this.withActor(
+      input,
+      (tx) => tx`
       select helix_configure_chat_moderation(
         ${input.orgId}, ${input.actorId}, ${input.roomId}, ${input.slowModeSeconds},
         ${input.blockedTerms}, ${input.allowedBodyFormats}, ${input.allowExternalGuests}
       )
-    `);
+    `,
+    );
   }
 
   async listQueue(input: {
@@ -263,30 +275,40 @@ export class PostgresChatModerationStore implements ChatModerationStore {
     });
   }
 
-  async moderate(input: z.infer<typeof actionSchema> & {
-    orgId: string;
-    actorId: string;
-    caseId: string;
-  }) {
-    await this.withActor(input, (tx) => tx`
+  async moderate(
+    input: z.infer<typeof actionSchema> & {
+      orgId: string;
+      actorId: string;
+      caseId: string;
+    },
+  ) {
+    await this.withActor(
+      input,
+      (tx) => tx`
       select helix_moderate_chat_case(
         ${input.orgId}, ${input.actorId}, ${input.caseId}, ${input.action}, ${input.reason},
         ${input.banExpiresAt}, ${tx.json(input.evidence as postgres.JSONValue)}
       )
-    `);
+    `,
+    );
   }
 
-  async appeal(input: z.infer<typeof appealSchema> & {
-    orgId: string;
-    actorId: string;
-    caseId: string;
-  }) {
-    await this.withActor(input, (tx) => tx`
+  async appeal(
+    input: z.infer<typeof appealSchema> & {
+      orgId: string;
+      actorId: string;
+      caseId: string;
+    },
+  ) {
+    await this.withActor(
+      input,
+      (tx) => tx`
       select helix_appeal_chat_case(
         ${input.orgId}, ${input.actorId}, ${input.caseId}, ${input.reason},
         ${tx.json(input.evidence as postgres.JSONValue)}
       )
-    `);
+    `,
+    );
   }
 
   async addEvidence(input: {
@@ -295,12 +317,15 @@ export class PostgresChatModerationStore implements ChatModerationStore {
     caseId: string;
     evidence: Record<string, unknown>;
   }) {
-    await this.withActor(input, (tx) => tx`
+    await this.withActor(
+      input,
+      (tx) => tx`
       select helix_add_chat_case_evidence(
         ${input.orgId}, ${input.actorId}, ${input.caseId},
         ${tx.json(input.evidence as postgres.JSONValue)}
       )
-    `);
+    `,
+    );
   }
 
   private async withActor<T>(
@@ -311,7 +336,8 @@ export class PostgresChatModerationStore implements ChatModerationStore {
       return await withTenantIoSagaPostgresContext(this.sql, input, operation);
     } catch (error) {
       if (isPostgresError(error, "42501")) throw new ForbiddenError("Chat moderation denied.");
-      if (isPostgresError(error, "23514")) throw new BadRequestError("Chat moderation request rejected.");
+      if (isPostgresError(error, "23514"))
+        throw new BadRequestError("Chat moderation request rejected.");
       throw error;
     }
   }
@@ -380,7 +406,11 @@ export async function registerChatModerationRoutes(
   app.get("/api/chat/moderation/queue", async (request) => {
     const actor = await options.actorFromRequest(request);
     const query = queueQuerySchema.parse(request.query);
-    const queue = await options.store.listQueue({ orgId: actor.orgId, actorId: actor.id, ...query });
+    const queue = await options.store.listQueue({
+      orgId: actor.orgId,
+      actorId: actor.id,
+      ...query,
+    });
     if (queue === null) throw new ForbiddenError("Chat moderator access required.");
     return queue;
   });

@@ -11,7 +11,7 @@ import type {
 import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
 
-export type ChatMessageRecord = Omit<
+export type ChatMessageRecord = { readonly renderedBodyHtml?: string } & Omit<
   ChatMessage,
   "revision" | "reactions" | "replyCount" | "pin" | "attachmentObjectIds" | "attachments"
 > &

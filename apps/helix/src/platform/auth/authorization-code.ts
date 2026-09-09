@@ -119,10 +119,18 @@ export class AuthorizationCodeService {
       );
     }
     if (!constantTimeEquals(record.clientId, input.clientId)) {
-      throw new OAuthError("invalid_grant", "Authorization code was issued to another client.", 400);
+      throw new OAuthError(
+        "invalid_grant",
+        "Authorization code was issued to another client.",
+        400,
+      );
     }
     if (!constantTimeEquals(record.redirectUri, input.redirectUri)) {
-      throw new OAuthError("invalid_grant", "redirect_uri does not match the authorization request.", 400);
+      throw new OAuthError(
+        "invalid_grant",
+        "redirect_uri does not match the authorization request.",
+        400,
+      );
     }
     if (!verifyPkce(record.codeChallenge, input.codeVerifier)) {
       throw new OAuthError("invalid_grant", "PKCE verification failed.", 400);
@@ -173,8 +181,5 @@ export function verifyPkce(codeChallenge: string, codeVerifier: string): boolean
 }
 
 function constantTimeEquals(left: string, right: string): boolean {
-  return getCryptoProvider().timingSafeEqual(
-    Buffer.from(left, "utf8"),
-    Buffer.from(right, "utf8"),
-  );
+  return getCryptoProvider().timingSafeEqual(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 }

@@ -222,7 +222,7 @@ describe("drive API", () => {
           mimeType: "application/pdf",
           byteSize: 128,
           sha256,
-          status: "prepared",
+          status: "pending_upload",
           uploadUrl: "https://storage.example/upload",
           uploadHeaders: { "content-type": "application/pdf" },
           metadata: { source: "web-shell" },
@@ -316,7 +316,7 @@ describe("drive API", () => {
           mimeType: "image/png",
           byteSize: 3,
           sha256: "0".repeat(64),
-          status: "prepared",
+          status: "pending_upload",
           uploadUrl: "https://storage.example/upload",
           uploadHeaders: { "content-type": "image/png" },
           metadata: { source: "web-shell" },
@@ -811,61 +811,15 @@ describe("drive API", () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(6, "/api/tools/drive.link.revoke", expect.anything());
   });
 
-  it("resolves PDFs to the native viewer and other raw files to preview URLs", () => {
-    const pdf: DriveApiEntry = {
-      id: "obj-1",
-      type: "file",
-      name: "report.pdf",
-      folderId: null,
-      ownerActorId: null,
-      mimeType: "application/pdf",
-      metadata: {},
-      deletedAt: null,
-      createdAt: "2026-05-20T12:00:00.000Z",
-      updatedAt: "2026-05-20T12:00:00.000Z",
-    };
-    expect(driveDownloadResult(pdf).url).toBe("/pdf/obj-1");
-    expect(
-      driveDownloadResult({
-        ...pdf,
-        folderId: "folder-eng",
-      }).url,
-    ).toBe("/pdf/obj-1?folder=folder-eng");
-    expect(
-      driveDownloadResult({
-        ...pdf,
-        preview: {
-          kind: "pdf",
-          status: "available",
-          mimeType: "application/pdf",
-          url: "https://cdn.example/report.pdf",
-        },
-      }).url,
-    ).toBe("/pdf/obj-1");
-    expect(
-      driveDownloadResult({
-        ...pdf,
-        id: "text-1",
-        name: "notes.txt",
-        mimeType: "text/plain",
-      }).url,
-    ).toBe("/api/drive/objects/text-1/preview");
-    expect(
-      driveDownloadResult({
-        ...pdf,
-        id: "fake-pdf",
-        name: "notes.pdf",
-        mimeType: "text/plain",
-      }).url,
-    ).toBe("/api/drive/objects/fake-pdf/preview");
-    expect(
-      driveDownloadResult({
-        ...pdf,
-        id: "generic-pdf",
-        name: "scanned-form.pdf",
-        mimeType: "application/octet-stream",
-      }).url,
-    ).toBe("/api/drive/objects/generic-pdf/preview");
+  it("downloads stored files without a viewer or conversion", () => {
+    const entry = {
+      id: "folder/file",
+      name: "Report.xlsx",
+      mimeType: "application/octet-stream",
+    } as DriveApiEntry;
+    expect(driveDownloadResult(entry).url).toBe(
+      "/v1/api/drive/objects/folder%2Ffile/content?download=1",
+    );
   });
 
   it("surfaces backend tool errors", async () => {

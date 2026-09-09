@@ -1,3 +1,14 @@
+export * from "./provider-delivery-events.js";
+import { normalizeMailboxAddress } from "./address-normalization.js";
+import {
+  ProviderWebhookPayloadError,
+  type ProviderDeliveryEventStore,
+  type ProviderDeliveryEventRecord,
+  type ProviderMailSuppressionRecord,
+  type MailDeliveryEventType,
+  type NormalizedMailDeliveryEvent,
+  type IngestMailDeliveryEventResult,
+} from "./provider-delivery-events.js";
 import { Readable } from "node:stream";
 import type postgres from "postgres";
 import type { FastifyInstance } from "fastify";
@@ -15,7 +26,12 @@ const eventSchema = z
     source: z.enum(["provider", "dsn"]),
     kind: z.enum(["accepted", "delivered", "deferred", "bounced", "complained"]),
     retryClass: z.enum(["none", "transient", "permanent"]),
-    recipient: z.string().trim().email().max(320).transform((value) => value.toLowerCase()),
+    recipient: z
+      .string()
+      .trim()
+      .email()
+      .max(320)
+      .transform((value) => value.toLowerCase()),
     providerMessageId: z.string().trim().min(1).max(1000).optional(),
     handoffKey: z.string().uuid().optional(),
     occurredAt: z.coerce.date(),
@@ -48,6 +64,7 @@ export interface MailDeliveryEventInput {
   readonly handoffKey?: string | undefined;
   readonly occurredAt: Date;
   readonly diagnostic?: string | undefined;
+  readonly providerEventType?: MailDeliveryEventType | undefined;
 }
 
 export interface MailDeliveryEventRecord {
@@ -96,17 +113,158 @@ interface EventRow {
   readonly occurred_at: Date;
 }
 
-export class PostgresMailDeliveryEventStore implements MailDeliveryEventStore {
+export class PostgresMailDeliveryEventStore
+  implements MailDeliveryEventStore, ProviderDeliveryEventStore
+{
   constructor(private readonly sql: postgres.Sql) {}
 
+  async ingestEvent(input: {
+    readonly orgId: string;
+    readonly providerId: string;
+    readonly event: NormalizedMailDeliveryEvent;
+  }): Promise<IngestMailDeliveryEventResult> {
+    const kind =
+      input.event.type === "delivered"
+        ? "delivered"
+        : input.event.type === "complaint"
+          ? "complained"
+          : input.event.type === "delayed" || input.event.type === "soft_bounce"
+            ? "deferred"
+            : "bounced";
+    const event = await this.record({
+      orgId: input.orgId,
+      providerId: input.providerId,
+      providerEventId: input.event.providerEventId,
+      providerMessageId: input.event.providerMessageId,
+      source: "provider",
+      kind,
+      retryClass: kind === "delivered" ? "none" : kind === "deferred" ? "transient" : "permanent",
+      recipient: input.event.recipient,
+      occurredAt: input.event.occurredAt,
+      providerEventType: input.event.type,
+    });
+    if (event === null)
+      throw new ProviderWebhookPayloadError(
+        "Delivery event does not match this provider's outbound message and recipient.",
+      );
+    return {
+      event: {
+        ...input.event,
+        id: event.id,
+        orgId: input.orgId,
+        providerId: input.providerId,
+        outboundId: event.outboundId,
+        normalizedRecipient: event.recipient,
+        createdAt: event.occurredAt,
+      },
+      duplicate: event.duplicate,
+      outboundMatched: true,
+      suppressed: kind === "bounced" || kind === "complained",
+    };
+  }
+
+  async listProviderEvents(input: {
+    readonly orgId: string;
+    readonly outboundId: string;
+  }): Promise<readonly ProviderDeliveryEventRecord[]> {
+    return withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
+      const rows = await tx<
+        (EventRow & {
+          readonly provider_event_type: MailDeliveryEventType | null;
+          readonly provider_message_id: string | null;
+          readonly created_at: Date;
+        })[]
+      >`
+        select event.*, outbound.provider_message_id from mail_delivery_events event
+        join mail_outbound_messages outbound on outbound.org_id = event.org_id and outbound.id = event.outbound_id
+        where event.org_id = ${input.orgId} and event.outbound_id = ${input.outboundId}
+          and event.kind <> 'accepted'
+        order by event.occurred_at, event.created_at, event.id
+      `;
+      return rows.map((row) => ({
+        id: row.id,
+        orgId: input.orgId,
+        providerId: row.provider_id,
+        outboundId: row.outbound_id,
+        providerEventId: row.provider_event_id,
+        providerMessageId: row.provider_message_id ?? "",
+        recipient: row.recipient,
+        normalizedRecipient: row.recipient,
+        type:
+          row.provider_event_type ??
+          (row.kind === "delivered"
+            ? "delivered"
+            : row.kind === "complained"
+              ? "complaint"
+              : row.kind === "deferred"
+                ? "delayed"
+                : "hard_bounce"),
+        occurredAt: row.occurred_at,
+        createdAt: row.created_at,
+        metadata: {},
+      }));
+    });
+  }
+
+  async findActiveSuppressions(
+    orgId: string,
+    normalizedRecipients: readonly string[],
+  ): Promise<readonly ProviderMailSuppressionRecord[]> {
+    if (normalizedRecipients.length === 0) return [];
+    return withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
+      const rows = await tx<MailSuppressionRow[]>`
+        select * from mail_suppressions where org_id = ${orgId} and removed_at is null
+          and address = any(${tx.array([...normalizedRecipients])}::text[])
+      `;
+      return rows.map(mapProviderSuppression);
+    });
+  }
+
+  async clearSuppression(input: {
+    readonly orgId: string;
+    readonly id: string;
+    readonly clearedBy: string;
+    readonly reason: string;
+    readonly clearedAt?: Date;
+  }): Promise<ProviderMailSuppressionRecord | null> {
+    return withTenantPostgresContext(
+      this.sql,
+      { orgId: input.orgId, actorId: input.clearedBy },
+      async (tx) => {
+        const rows = await tx<MailSuppressionRow[]>`
+        update mail_suppressions set removed_at = ${input.clearedAt ?? new Date()}, removed_by = ${input.clearedBy}, remove_reason = ${input.reason}
+        where org_id = ${input.orgId} and id = ${input.id} and removed_at is null returning *
+      `;
+        return rows[0] === undefined ? null : mapProviderSuppression(rows[0]);
+      },
+    );
+  }
+
+  async countEvents(input: {
+    readonly orgId: string;
+    readonly types: readonly MailDeliveryEventType[];
+    readonly since: Date;
+  }): Promise<number> {
+    return withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
+      const rows = await tx<{ readonly count: string }[]>`
+        select count(*)::text as count from mail_delivery_events
+        where org_id = ${input.orgId} and occurred_at >= ${input.since}
+          and coalesce(provider_event_type, case kind when 'delivered' then 'delivered' when 'complained' then 'complaint' when 'deferred' then 'delayed' when 'bounced' then 'hard_bounce' else null end) = any(${tx.array([...input.types])}::text[])
+      `;
+      return Number(rows[0]?.count ?? 0);
+    });
+  }
+
   async record(input: MailDeliveryEventInput): Promise<MailDeliveryEventRecord | null> {
+    input = { ...input, recipient: normalizeMailboxAddress(input.recipient).address };
     return withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
       const outbound = await tx<{ readonly id: string }[]>`
         select outbound.id from mail_outbound_messages outbound
         join mail_outbound_providers provider
           on provider.org_id = outbound.org_id and provider.id = ${input.providerId}
         where outbound.org_id = ${input.orgId}
-          and outbound.delivery_metadata->>'providerId' = provider.id::text
+          and (outbound.delivery_metadata->>'providerId' = provider.id::text or outbound.provider_id = provider.id::text)
+          and exists (select 1 from jsonb_array_elements(coalesce(outbound.envelope->'to', '[]'::jsonb) || coalesce(outbound.envelope->'cc', '[]'::jsonb) || coalesce(outbound.envelope->'bcc', '[]'::jsonb)) recipient where lower(recipient->>'address') = ${input.recipient})
           and (
             (${input.providerMessageId ?? null}::text is not null and outbound.provider_message_id = ${input.providerMessageId ?? null})
             or (${input.handoffKey ?? null}::uuid is not null and outbound.handoff_key = ${input.handoffKey ?? null}::uuid)
@@ -117,11 +275,11 @@ export class PostgresMailDeliveryEventStore implements MailDeliveryEventStore {
       const inserted = await tx<EventRow[]>`
         insert into mail_delivery_events (
           org_id, provider_id, outbound_id, provider_event_id, source, kind, retry_class,
-          recipient, diagnostic, occurred_at
+          recipient, diagnostic, occurred_at, provider_event_type
         ) values (
           ${input.orgId}, ${input.providerId}, ${outbound[0].id}, ${input.providerEventId}, ${input.source},
           ${input.kind}, ${input.retryClass}, ${input.recipient}, ${input.diagnostic ?? null},
-          ${input.occurredAt}
+          ${input.occurredAt}, ${input.providerEventType ?? null}
         )
         on conflict (org_id, provider_id, provider_event_id) do nothing
         returning *
@@ -141,12 +299,21 @@ export class PostgresMailDeliveryEventStore implements MailDeliveryEventStore {
             when ${input.kind}::text = 'complained' then 'complained'::mail_outbound_status
             when ${input.kind}::text = 'bounced' and status <> 'complained' then 'bounced'::mail_outbound_status
             when ${input.kind}::text = 'delivered' and status not in ('bounced', 'complained') then 'delivered'::mail_outbound_status
-            when ${input.kind}::text = 'deferred' and status in ('accepted', 'deferred') then 'deferred'::mail_outbound_status
-            when ${input.kind}::text = 'accepted' and status in ('sending', 'accepted') then 'accepted'::mail_outbound_status
+            when ${input.kind}::text = 'deferred' and status in ('queued', 'sending', 'accepted', 'deferred') then 'deferred'::mail_outbound_status
+            when ${input.kind}::text = 'accepted' and status in ('queued', 'sending', 'accepted') then 'accepted'::mail_outbound_status
             else status
           end,
-          last_error = case when ${input.kind}::text in ('deferred', 'bounced', 'complained')
-            then ${input.diagnostic ?? input.kind} else null end,
+          lease_owner = null,
+          lease_token = null,
+          lease_expires_at = null,
+          next_attempt_at = null,
+          provider_message_id = coalesce(provider_message_id, ${input.providerMessageId ?? null}),
+          last_error = case
+            when status = 'complained' and ${input.kind}::text <> 'complained' then last_error
+            when status = 'bounced' and ${input.kind}::text not in ('bounced', 'complained') then last_error
+            when status = 'delivered' and ${input.kind}::text in ('accepted', 'deferred') then last_error
+            when ${input.kind}::text in ('deferred', 'bounced', 'complained') then ${input.diagnostic ?? input.kind}
+            else null end,
           delivery_metadata = delivery_metadata || ${tx.json({
             lastEvent: {
               kind: input.kind,
@@ -185,7 +352,12 @@ export class PostgresMailDeliveryEventStore implements MailDeliveryEventStore {
   async listSuppressions(orgId: string, limit = 100): Promise<readonly MailSuppressionRecord[]> {
     return withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
       const rows = await tx<
-        { readonly id: string; readonly address: string; readonly reason: MailSuppressionRecord["reason"]; readonly created_at: Date }[]
+        {
+          readonly id: string;
+          readonly address: string;
+          readonly reason: MailSuppressionRecord["reason"];
+          readonly created_at: Date;
+        }[]
       >`
         select id, address, reason, created_at from mail_suppressions
         where org_id = ${orgId} and removed_at is null
@@ -238,7 +410,8 @@ export function registerMailDeliveryEventRoutes(
         const raw = await readBody(payload, BODY_LIMIT);
         rawBodies.set(request, raw);
         const replay = Readable.from(raw);
-        (replay as Readable & { receivedEncodedLength?: number }).receivedEncodedLength = raw.length;
+        (replay as Readable & { receivedEncodedLength?: number }).receivedEncodedLength =
+          raw.length;
         return replay;
       },
     },
@@ -277,7 +450,9 @@ export function registerMailDeliveryEventRoutes(
         providerId: params.data.providerId,
       });
       if (event === null) return reply.code(404).send({ error: "Outbound message not found." });
-      return reply.code(event.duplicate ? 200 : 202).send({ accepted: true, duplicate: event.duplicate });
+      return reply
+        .code(event.duplicate ? 200 : 202)
+        .send({ accepted: true, duplicate: event.duplicate });
     },
   );
 }
@@ -312,4 +487,29 @@ async function readBody(stream: NodeJS.ReadableStream, limit: number): Promise<B
     chunks.push(bytes);
   }
   return Buffer.concat(chunks);
+}
+
+interface MailSuppressionRow {
+  readonly id: string;
+  readonly org_id: string;
+  readonly address: string;
+  readonly reason: MailSuppressionRecord["reason"];
+  readonly source_event_id: string | null;
+  readonly created_at: Date;
+  readonly removed_at: Date | null;
+  readonly removed_by: string | null;
+  readonly remove_reason: string | null;
+}
+function mapProviderSuppression(row: MailSuppressionRow): ProviderMailSuppressionRecord {
+  return {
+    id: row.id,
+    orgId: row.org_id,
+    normalizedRecipient: row.address,
+    reason: row.reason,
+    sourceEventId: row.source_event_id,
+    createdAt: row.created_at,
+    clearedAt: row.removed_at,
+    clearedBy: row.removed_by,
+    clearReason: row.remove_reason,
+  };
 }

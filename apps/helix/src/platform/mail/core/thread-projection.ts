@@ -43,10 +43,7 @@ export function folderPredicate(
     case "sent":
       return row.deletedAt === null && row.hasOutbound;
     case "drafts":
-      return (
-        row.deletedAt === null &&
-        (row.isDraft === true || row.outboundStatus === "queued")
-      );
+      return row.deletedAt === null && (row.isDraft === true || row.outboundStatus === "queued");
     case "inbox":
     default:
       return (
@@ -60,26 +57,20 @@ export function folderPredicate(
   }
 }
 
-export function resolveFolderForRow(
-  row: ThreadProjectionSource,
-  now: Date,
-): MailFolderId {
-  const folders: readonly MailFolderId[] = [
-    "trash",
-    "spam",
-    "drafts",
-    "snoozed",
-    "starred",
-    "archive",
-    "sent",
-    "inbox",
-  ];
-  for (const folder of folders) {
-    if (folderPredicate(folder, row, now)) {
-      return folder;
-    }
-  }
-  return "inbox";
+/** First matching folder wins — order encodes precedence (trash beats spam, …). */
+const FOLDER_RESOLUTION_ORDER: readonly MailFolderId[] = [
+  "trash",
+  "spam",
+  "drafts",
+  "snoozed",
+  "starred",
+  "archive",
+  "sent",
+  "inbox",
+];
+
+export function resolveFolderForRow(row: ThreadProjectionSource, now: Date): MailFolderId {
+  return FOLDER_RESOLUTION_ORDER.find((folder) => folderPredicate(folder, row, now)) ?? "inbox";
 }
 
 export interface ProjectThreadRowInput {
@@ -140,30 +131,17 @@ export function matchesFilterCriteria(
     readonly hasAttachment?: boolean;
   },
 ): boolean {
-  if (
-    criteria.fromContains !== undefined &&
-    !message.from.address.toLowerCase().includes(criteria.fromContains.toLowerCase())
-  ) {
+  const toContains = criteria.toContains;
+  if (!containsFold(message.from.address, criteria.fromContains)) {
     return false;
   }
-  if (
-    criteria.toContains !== undefined &&
-    !message.to.some((address) =>
-      address.address.toLowerCase().includes(criteria.toContains?.toLowerCase() ?? ""),
-    )
-  ) {
+  if (toContains !== undefined && !message.to.some((a) => containsFold(a.address, toContains))) {
     return false;
   }
-  if (
-    criteria.subjectContains !== undefined &&
-    !message.subject.toLowerCase().includes(criteria.subjectContains.toLowerCase())
-  ) {
+  if (!containsFold(message.subject, criteria.subjectContains)) {
     return false;
   }
-  if (
-    criteria.bodyContains !== undefined &&
-    !message.bodyText.toLowerCase().includes(criteria.bodyContains.toLowerCase())
-  ) {
+  if (!containsFold(message.bodyText, criteria.bodyContains)) {
     return false;
   }
   if (
@@ -173,6 +151,11 @@ export function matchesFilterCriteria(
     return false;
   }
   return true;
+}
+
+/** Case-insensitive substring test. An undefined `needle` means "no constraint". */
+function containsFold(haystack: string, needle: string | undefined): boolean {
+  return needle === undefined || haystack.toLowerCase().includes(needle.toLowerCase());
 }
 
 /** Loop-prevention guards for vacation auto-responders. */
@@ -198,7 +181,11 @@ export function shouldSkipVacationResponse(input: {
   if (precedence === "bulk" || precedence === "junk" || precedence === "list") {
     return true;
   }
-  const autoSubmitted = (headers["auto-submitted"] ?? headers["Auto-Submitted"] ?? "").toLowerCase();
+  const autoSubmitted = (
+    headers["auto-submitted"] ??
+    headers["Auto-Submitted"] ??
+    ""
+  ).toLowerCase();
   if (autoSubmitted.length > 0 && autoSubmitted !== "no") {
     return true;
   }

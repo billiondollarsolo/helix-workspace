@@ -224,6 +224,9 @@ describe("connector runtime", () => {
              try { await import(module); denied[name] = false; } catch { denied[name] = true; }
            }
            try { await fetch("https://example.com"); denied.network = false; } catch { denied.network = true; }
+           denied.websocket = typeof WebSocket === "undefined";
+           denied.eventSource = typeof EventSource === "undefined";
+           try { await import("./escape.cjs"); denied.commonjs = false; } catch { denied.commonjs = true; }
            sink.registerWebhookFormat({
              id: "authority-check",
              render: () => ({ contentType: "application/json", body: denied }),
@@ -232,6 +235,10 @@ describe("connector runtime", () => {
        };`,
     );
 
+    await writeFile(
+      join(pluginsDir, "com.example.untrusted", "escape.cjs"),
+      'module.exports = require("node:net");',
+    );
     const result = await load({ pluginsDir });
     const rendered = await result.registry.getWebhookFormat("authority-check")?.render({
       deliveryId: "d1",
@@ -244,6 +251,9 @@ describe("connector runtime", () => {
       environment: true,
       filesystem: true,
       network: true,
+      websocket: true,
+      eventSource: true,
+      commonjs: true,
       process: true,
       worker: true,
     });

@@ -6,9 +6,9 @@ const interactionBudgetMs = 2_000;
 test("stays responsive on a throttled low-end browser and network", async ({ context, page }) => {
   await page.route("**/api/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
-    if (pathname === "/api/auth/csrf-token") {
+    if (pathname === "/v1/api/auth/csrf-token") {
       await route.fulfill({ json: { csrfToken: "performance-csrf" } });
-    } else if (pathname === "/api/auth/sign-in/email") {
+    } else if (pathname === "/v1/api/auth/sign-in/email") {
       await route.fulfill({ status: 401, json: { error: "Invalid email or password." } });
     } else {
       await route.fulfill({ json: {} });

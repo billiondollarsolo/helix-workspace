@@ -123,11 +123,13 @@ describe("Meet recording promotion", { skip: process.env.DATABASE_URL === undefi
     await expect(
       drive.delete({ orgId: ORG, actorId: HOST, objectId: attachment.objectId }),
     ).rejects.toThrow("protected by retention or legal hold");
-    const governance = await sql<{
-      readonly classification: string;
-      readonly region: string;
-      readonly export_allowed: boolean;
-    }[]>`
+    const governance = await sql<
+      {
+        readonly classification: string;
+        readonly region: string;
+        readonly export_allowed: boolean;
+      }[]
+    >`
       update meet_recording_governance set legal_hold = false, retention_until = now() - interval '1 day'
       where org_id = ${ORG} and object_id = ${attachment.objectId}
       returning classification, region, export_allowed

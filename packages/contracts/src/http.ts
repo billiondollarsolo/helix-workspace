@@ -21,6 +21,6 @@ export function parseInput<T>(schema: ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
   if (result.success) return result.data;
   throw new ContractValidationError(
-    result.error.issues.map((i) => ({ path: [...i.path], message: i.message })),
+    result.error.issues.map((issue) => ({ path: [...issue.path], message: issue.message })),
   );
 }

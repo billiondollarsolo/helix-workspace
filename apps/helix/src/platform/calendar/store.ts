@@ -31,6 +31,7 @@ import type {
 } from "./types.js";
 import { expandCalendarEventOccurrences } from "./recurrence.js";
 import { enqueueCalendarInvitationDeliveries } from "./invitation-outbox.js";
+import { activityChainHash } from "../activity/hash-chain.js";
 
 export interface CalendarAttendeeInput {
   readonly actorId?: string | null | undefined;
@@ -587,7 +588,8 @@ export class PostgresCalendarStore implements CalendarStore, CalendarSearchProje
         },
       );
       const event = await selectEventById(tx, row.org_id, row.event_id);
-      if (event !== null) await appendEventRevision(tx, event.id, "responded", input.actorId ?? null);
+      if (event !== null)
+        await appendEventRevision(tx, event.id, "responded", input.actorId ?? null);
       return event;
     });
   }
@@ -597,11 +599,13 @@ export class PostgresCalendarStore implements CalendarStore, CalendarSearchProje
     readonly responseStatus: CalendarResponseStatus;
   }): Promise<CalendarRsvpResult | null> {
     return this.sql.begin(async (tx) => {
-      const rows = await tx<{
-        readonly event_id: string;
-        readonly org_id: string;
-        readonly email: string;
-      }[]>`
+      const rows = await tx<
+        {
+          readonly event_id: string;
+          readonly org_id: string;
+          readonly email: string;
+        }[]
+      >`
         update cal_attendees
         set response_status = ${input.responseStatus},
             responded_at = now(),
@@ -753,20 +757,22 @@ export class PostgresCalendarStore implements CalendarStore, CalendarSearchProje
   }): Promise<readonly CalendarFindTimeSlot[]> {
     const targetActorIds = [...new Set([input.actorId, ...input.attendeeActorIds])];
     const targetEmails = [...new Set(input.attendeeEmails.map((email) => email.toLowerCase()))];
-    const busyRows = await this.sql<{
-      readonly event_id: string;
-      readonly starts_at: Date;
-      readonly ends_at: Date;
-      readonly timezone: string;
-      readonly all_day: boolean;
-      readonly time_semantics: CalendarTimeSemantics;
-      readonly starts_local: string;
-      readonly recurrence_rule: string | null;
-      readonly metadata: JsonObject;
-      readonly actor_id: string | null;
-      readonly email: string | null;
-      readonly title: string;
-    }[]>`
+    const busyRows = await this.sql<
+      {
+        readonly event_id: string;
+        readonly starts_at: Date;
+        readonly ends_at: Date;
+        readonly timezone: string;
+        readonly all_day: boolean;
+        readonly time_semantics: CalendarTimeSemantics;
+        readonly starts_local: string;
+        readonly recurrence_rule: string | null;
+        readonly metadata: JsonObject;
+        readonly actor_id: string | null;
+        readonly email: string | null;
+        readonly title: string;
+      }[]
+    >`
       select e.id as event_id, e.starts_at, e.ends_at, e.timezone, e.all_day,
         e.time_semantics, e.starts_local, e.recurrence_rule, e.metadata, a.actor_id, a.email, e.title
       from cal_events e
@@ -896,13 +902,13 @@ export class PostgresCalendarStore implements CalendarStore, CalendarSearchProje
     const eventRows =
       activeIds.length === 0
         ? []
-        : (await this.sql<EventRow[]>`
+        : await this.sql<EventRow[]>`
             select * from cal_events
             where org_id = ${input.orgId}
               and calendar_id = ${input.calendarId}
               and id = any(${activeIds}::uuid[])
               and deleted_at is null
-          `);
+          `;
     const events = new Map(
       (await hydrateEvents(this.sql, eventRows)).map((event) => [event.id, event] as const),
     );
@@ -924,19 +930,21 @@ export class PostgresCalendarStore implements CalendarStore, CalendarSearchProje
   async listCalendarFreeBusyEvents(
     input: CalendarFreeBusyRequest,
   ): Promise<readonly CalendarFreeBusyEvent[]> {
-    const rows = await this.sql<{
-      readonly event_id: string;
-      readonly starts_at: Date;
-      readonly ends_at: Date;
-      readonly timezone: string;
-      readonly all_day: boolean;
-      readonly time_semantics: CalendarTimeSemantics;
-      readonly starts_local: string;
-      readonly status: CalendarEventStatus;
-      readonly recurrence_rule: string | null;
-      readonly metadata: JsonObject;
-      readonly actor_id: string;
-    }[]>`
+    const rows = await this.sql<
+      {
+        readonly event_id: string;
+        readonly starts_at: Date;
+        readonly ends_at: Date;
+        readonly timezone: string;
+        readonly all_day: boolean;
+        readonly time_semantics: CalendarTimeSemantics;
+        readonly starts_local: string;
+        readonly status: CalendarEventStatus;
+        readonly recurrence_rule: string | null;
+        readonly metadata: JsonObject;
+        readonly actor_id: string;
+      }[]
+    >`
       select e.id as event_id, e.starts_at, e.ends_at, e.timezone, e.all_day,
         e.time_semantics, e.starts_local, e.status, e.recurrence_rule, e.metadata, a.actor_id
       from cal_events e
@@ -979,17 +987,19 @@ export class PostgresCalendarStore implements CalendarStore, CalendarSearchProje
     readonly password: string;
     readonly requiredScope: string;
   }): Promise<Actor | null> {
-    const rows = await this.sql<{
-      readonly id: string;
-      readonly org_id: string;
-      readonly type: Actor["type"];
-      readonly email: string | null;
-      readonly display_name: string;
-      readonly actor_scopes: readonly string[];
-      readonly password_id: string;
-      readonly hash: string;
-      readonly password_scopes: readonly string[];
-    }[]>`
+    const rows = await this.sql<
+      {
+        readonly id: string;
+        readonly org_id: string;
+        readonly type: Actor["type"];
+        readonly email: string | null;
+        readonly display_name: string;
+        readonly actor_scopes: readonly string[];
+        readonly password_id: string;
+        readonly hash: string;
+        readonly password_scopes: readonly string[];
+      }[]
+    >`
       select a.id, a.org_id, a.type, a.email, a.display_name, a.scopes as actor_scopes, p.id as password_id, p.hash, p.scopes as password_scopes
       from app_passwords p
       join actors a on a.id = p.actor_id
@@ -1675,7 +1685,12 @@ async function appendCalendarActivity(
     select this_hash from activity where org_id = ${orgId} order by created_at desc limit 1
   `;
   const prevHash = previousRows[0]?.this_hash ?? null;
-  const thisHash = `${prevHash ?? "root"}:${verb}:${eventId}:${String(Date.now())}`;
+  const thisHash = activityChainHash({
+    prevHash,
+    verb,
+    objectId: eventId,
+    timestamp: Date.now(),
+  });
   await sql`
     insert into activity (org_id, actor_id, verb, object_type, object_id, payload, prev_hash, this_hash)
     values (${orgId}, ${actorId}, ${verb}, 'event', ${eventId}, ${sql.json(toSqlJson(payload))}, ${prevHash}, ${thisHash})
@@ -1711,10 +1726,10 @@ function findOpenSlots(
     startsMs += stepMs
   ) {
     const endsMs = startsMs + durationMs;
-    const conflicts = busy.filter(
+    const conflicts = busy.some(
       (interval) => interval.startsAt.getTime() < endsMs && interval.endsAt.getTime() > startsMs,
     );
-    if (conflicts.length === 0) {
+    if (!conflicts) {
       slots.push({ startsAt: new Date(startsMs), endsAt: new Date(endsMs), busy: [] });
       if (slots.length >= limit) {
         break;
@@ -1820,7 +1835,7 @@ function mapCalendar(row: CalendarRow | undefined): CalendarRecord {
 const DEFAULT_CALENDAR_COLOR = "#4f46e5";
 
 function mapCalendarListEntry(row: CalendarMembershipRow, actorId: string): CalendarListEntry {
-  const writable = row.role !== "reader";
+  const writable = row.role === "owner" || row.role === "writer";
   return {
     id: row.id,
     orgId: row.org_id,
@@ -1900,7 +1915,9 @@ function mapEventRevision(row: EventRevisionRow): CalendarEventRevisionRecord {
 
 function mapCalendarSearchRecord(event: CalendarEventRecord): CalendarSearchRecord {
   const visibility = calendarVisibility(event.metadata.visibility);
-  const classification = calendarClassification(sensitivityClassificationFromMetadata(event.metadata));
+  const classification = calendarClassification(
+    sensitivityClassificationFromMetadata(event.metadata),
+  );
   return {
     id: event.id,
     orgId: event.orgId,

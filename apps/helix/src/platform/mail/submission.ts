@@ -60,7 +60,8 @@ export class SmtpSubmissionServer {
           callback(smtpError(451, "Sender authorization is unavailable."));
           return;
         }
-        store.resolveAuthorizedSender(actor.orgId, actor.id, address.address)
+        store
+          .resolveAuthorizedSender(actor.orgId, actor.id, address.address)
           .then((authorized) => {
             if (authorized === null) {
               callback(smtpError(553, "Sender address is not authorized."));
@@ -208,9 +209,7 @@ export class SmtpSubmissionServer {
       ...(parsed.references === undefined
         ? {}
         : {
-            references: Array.isArray(parsed.references)
-              ? parsed.references
-              : [parsed.references],
+            references: Array.isArray(parsed.references) ? parsed.references : [parsed.references],
           }),
     };
     const queued = await new MailSendService({ store: this.options.store, undoWindowMs: 0 }).queue({
@@ -222,7 +221,10 @@ export class SmtpSubmissionServer {
   }
 }
 
-function includedRecipients(addresses: readonly MailAddress[], envelope: readonly string[]): MailAddress[] {
+function includedRecipients(
+  addresses: readonly MailAddress[],
+  envelope: readonly string[],
+): MailAddress[] {
   const accepted = new Set(envelope.map((address) => address.toLowerCase()));
   return addresses.filter((address) => accepted.has(address.address.toLowerCase()));
 }

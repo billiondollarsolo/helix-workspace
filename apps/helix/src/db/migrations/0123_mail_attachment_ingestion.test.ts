@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("0123 staged mail attachments", () => {
-  const sql = readFileSync(new URL("./0123_mail_attachment_ingestion.sql", import.meta.url), "utf8");
+  const sql = readFileSync(
+    new URL("./0123_mail_attachment_ingestion.sql", import.meta.url),
+    "utf8",
+  );
 
   it("models only staged, verified, scanned attachment promotion", () => {
     for (const state of [

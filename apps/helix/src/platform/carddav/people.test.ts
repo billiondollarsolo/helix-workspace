@@ -22,7 +22,10 @@ describe("People API", () => {
     const app = fastify();
     await registerPeopleRoutes(app, { store, actorFromRequest: () => actor() });
 
-    const response = await app.inject({ method: "GET", url: "/api/people?query=ada&favorites=true" });
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/people?query=ada&favorites=true",
+    });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ people: await store.list.mock.results[0]?.value });
@@ -105,12 +108,14 @@ describe("People API", () => {
     ]);
     const store = new PostgresPeopleStore(sql);
 
-    await expect(store.list({
-      orgId: "00000000-0000-4000-8000-000000000101",
-      actorId: "00000000-0000-4000-8000-000000000001",
-      query: "ada",
-      limit: 25,
-    })).resolves.toHaveLength(1);
+    await expect(
+      store.list({
+        orgId: "00000000-0000-4000-8000-000000000101",
+        actorId: "00000000-0000-4000-8000-000000000001",
+        query: "ada",
+        limit: 25,
+      }),
+    ).resolves.toHaveLength(1);
 
     expect(queries.slice(0, 2).join(" ")).toContain("set_config('helix.org_id'");
     const directoryQuery = queries.at(-1) ?? "";

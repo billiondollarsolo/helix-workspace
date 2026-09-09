@@ -154,7 +154,9 @@ function assertRecord(record: ImmutableAuditActivityRecord): void {
     throw new TypeError("WORM Postgres audit record createdAt must be an ISO date string");
   }
   if (!/^[a-f0-9]{64}$/.test(record.thisHash)) {
-    throw new TypeError("WORM Postgres audit record thisHash must be a lowercase sha256 hex digest");
+    throw new TypeError(
+      "WORM Postgres audit record thisHash must be a lowercase sha256 hex digest",
+    );
   }
 }
 

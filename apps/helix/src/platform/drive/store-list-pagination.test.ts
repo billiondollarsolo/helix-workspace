@@ -48,6 +48,7 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("Drive mixed-entry curso
   afterAll(async () => {
     await sql`delete from objects where org_id = ${ORG_ID}`;
     await sql`delete from drive_folders where org_id = ${ORG_ID}`;
+    await sql`delete from resource_classifications where org_id = ${ORG_ID}`;
     await sql`delete from actors where id = ${ACTOR_ID}`;
     await sql`delete from orgs where id = ${ORG_ID}`;
     await sql.end();
@@ -65,17 +66,19 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("Drive mixed-entry curso
     `;
     await sql`update objects set deleted_at = now() where id = ${IDS.delta}`;
 
+    if (first.nextCursor === null) throw new Error("Expected a next page");
     const second = await store.list({
       orgId: ORG_ID,
       actorId: ACTOR_ID,
       limit: 2,
-      cursor: first.nextCursor!,
+      cursor: first.nextCursor,
     });
+    if (second.nextCursor === null) throw new Error("Expected a third page");
     const third = await store.list({
       orgId: ORG_ID,
       actorId: ACTOR_ID,
       limit: 2,
-      cursor: second.nextCursor!,
+      cursor: second.nextCursor,
     });
 
     expect(
@@ -87,13 +90,14 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("Drive mixed-entry curso
 
   it("rejects reusing a cursor with different filters", async () => {
     const first = await store.list({ orgId: ORG_ID, actorId: ACTOR_ID, limit: 1 });
+    if (first.nextCursor === null) throw new Error("Expected a next page");
     await expect(
       store.list({
         orgId: ORG_ID,
         actorId: ACTOR_ID,
         includeTrashed: true,
         limit: 1,
-        cursor: first.nextCursor!,
+        cursor: first.nextCursor,
       }),
     ).rejects.toThrow("Invalid Drive list cursor");
   });

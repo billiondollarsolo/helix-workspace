@@ -1,19 +1,8 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
-import { Check, KeyRound, Plus, RotateCcw, ShieldAlert, Trash2 } from "lucide-react";
+import { Check, KeyRound, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -24,6 +13,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import type { AdminUser } from "@/features/admin/admin-users";
+import { AdminAccessRelatedNav } from "@/features/admin/admin-related-nav";
+import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { EmptyRow, PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import {
+  ActorNoticeBanner,
+  ActorSearchField,
+  ActorSelectField,
+  ExpiresAtField,
+  ScopesField,
+  useActorPicker,
+} from "@/features/admin/credentials-form-fields";
+import {
+  actorStatusOf,
+  errorMessage,
+  formatDateTime,
+  invalidExpiresAt,
+  normalizeExpiresAt,
+  parseScopes,
+  type ActorStatus,
+} from "@/features/admin/credentials-shared";
 import {
   agentCredentialsQueryOptions,
   createAgentCredential,
@@ -36,6 +46,17 @@ interface AgentCredentialFormState {
   readonly actorId: string;
   readonly scopes: string;
   readonly expiresAt: string;
+}
+
+interface ActorGroup {
+  readonly type: string;
+  readonly label: string;
+  readonly actors: readonly AdminUser[];
+}
+
+interface ActorDirectoryStatus {
+  readonly kind: "loading" | "error" | "info";
+  readonly message: string;
 }
 
 const defaultFormValues: AgentCredentialFormState = {
@@ -56,12 +77,23 @@ const commonScopes = [
   "drive.write",
   "calendar.read",
   "calendar.write",
-  "docs.read",
-  "docs.write",
   "admin.agents",
 ] as const;
 
-const invalidExpiresAt = Symbol("invalidExpiresAt");
+const AGENT_ACTOR_TYPE = "agent";
+
+/** The picker's status banner; referenced by the controls it explains. */
+const ACTOR_STATUS_ID = "agent-actor-status";
+
+/* A disabled picker still shows its first option, so that option has to say
+   which of the three reasons it is empty for. */
+const actorPlaceholders: Record<ActorStatus, string> = {
+  loading: "Loading actors…",
+  error: "Actor directory unavailable",
+  empty: "No actors available",
+  truncated: "Select an actor",
+  ready: "Select an actor",
+};
 
 export function AgentCredentialsManagement() {
   const queryClient = useQueryClient();
@@ -72,6 +104,10 @@ export function AgentCredentialsManagement() {
   );
   const [credentialToRevoke, setCredentialToRevoke] = useState<AgentCredential | null>(null);
   const credentialsQuery = useQuery(agentCredentialsQueryOptions(includeRevoked));
+  /* A credential is minted for an actor id the admin cannot be expected to know
+     by heart, so the directory drives both the picker and the id -> name lookup
+     that every actor id in this section is rendered through. */
+  const { actorsQuery, searchDraft: actorSearchDraft, onSearchChange } = useActorPicker();
 
   const createMutation = useMutation({
     mutationFn: (input: Parameters<typeof createAgentCredential>[0]) =>
@@ -96,6 +132,45 @@ export function AgentCredentialsManagement() {
     },
   });
 
+  const actors = useMemo(() => actorsQuery.data?.users ?? [], [actorsQuery.data]);
+  const actorsById = useMemo(
+    () => new Map(actors.map((actor) => [actor.id, actor] as const)),
+    [actors],
+  );
+  const actorGroups = useMemo(() => groupActorsByType(actors), [actors]);
+  const canPickActor = !actorsQuery.isLoading && !actorsQuery.isError && actors.length > 0;
+  const actorStatus = actorStatusOf({
+    actorCount: actors.length,
+    hasMore: (actorsQuery.data?.nextCursor ?? null) !== null,
+    isError: actorsQuery.isError,
+    isPending: actorsQuery.isLoading,
+  });
+  const actorNotice = useMemo<ActorDirectoryStatus | null>(() => {
+    if (actorStatus === "loading") {
+      return { kind: "loading", message: "Loading workspace actors…" };
+    }
+    if (actorStatus === "error") {
+      return {
+        kind: "error",
+        message: `${errorMessage(actorsQuery.error, "Could not load workspace actors.")} Credentials cannot be issued until the actor directory loads.`,
+      };
+    }
+    if (actorStatus === "empty") {
+      return {
+        kind: "info",
+        message:
+          "This workspace has no enabled actors, so there is nothing to issue a credential to.",
+      };
+    }
+    if (actorStatus === "truncated") {
+      return {
+        kind: "info",
+        message: `Showing the first ${actors.length} enabled actors; the directory holds more.`,
+      };
+    }
+    return null;
+  }, [actorStatus, actorsQuery.error, actors.length]);
+
   const credentials = credentialsQuery.data ?? [];
   const tableData = useMemo(() => [...credentials], [credentials]);
   const columns = useMemo<ColumnDef<AgentCredential>[]>(
@@ -112,11 +187,21 @@ export function AgentCredentialsManagement() {
       {
         accessorKey: "actorId",
         header: "Actor",
-        cell: ({ row }) => (
-          <code className="block max-w-[18rem] truncate text-[0.6875rem] text-muted-foreground">
-            {row.original.actorId}
-          </code>
-        ),
+        cell: ({ row }) => {
+          /* Absent from the directory means disabled or deleted, not "no actor":
+             show the id alone rather than inventing a name for it. */
+          const actor = actorsById.get(row.original.actorId);
+          return (
+            <div className="grid max-w-[18rem] gap-0.5">
+              {actor === undefined ? null : (
+                <span className="truncate font-medium">{actorLabel(actor)}</span>
+              )}
+              <code className="block truncate text-[0.6875rem] text-muted-foreground">
+                {row.original.actorId}
+              </code>
+            </div>
+          );
+        },
       },
       {
         accessorKey: "scopes",
@@ -149,12 +234,17 @@ export function AgentCredentialsManagement() {
               Active
             </span>
           ) : (
-            <span className="text-muted-foreground">Revoked {formatDateTime(row.original.revokedAt)}</span>
+            <span className="text-muted-foreground">
+              Revoked {formatDateTime(row.original.revokedAt)}
+            </span>
           ),
       },
       {
         id: "actions",
-        header: "",
+        /* Not `""`: an empty <th> gives screen readers an unnamed column.
+           Visually hidden text names it without adding a visible caption to a
+           column of icon buttons. */
+        header: () => <span className="sr-only">Credential actions</span>,
         cell: ({ row }) => (
           <Button
             aria-label={`Revoke credential ${row.original.clientId}`}
@@ -170,7 +260,7 @@ export function AgentCredentialsManagement() {
         ),
       },
     ],
-    [revokeMutation.isPending],
+    [actorsById, revokeMutation.isPending],
   );
   const table = useReactTable({
     data: tableData,
@@ -191,38 +281,22 @@ export function AgentCredentialsManagement() {
     },
   });
 
-  return (
-    <section
-      aria-labelledby="agent-credentials-title"
-      className="mx-auto grid w-full max-w-7xl gap-4 px-4 py-4 sm:px-6 lg:px-8"
-    >
-      <header className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Agent credentials
-          </p>
-          <h2 className="text-xl font-semibold tracking-normal" id="agent-credentials-title">
-            OAuth client credentials
-          </h2>
-          <p className="max-w-3xl text-sm text-muted-foreground">
-            Create scoped client credentials for agent actors and revoke credentials that should no
-            longer mint access tokens.
-          </p>
-        </div>
-        <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            checked={includeRevoked}
-            className="size-3.5"
-            onChange={(event) => setIncludeRevoked(event.target.checked)}
-            type="checkbox"
-          />
-          Include revoked
-        </label>
-      </header>
+  const revokeTargetActor =
+    credentialToRevoke === null ? undefined : actorsById.get(credentialToRevoke.actorId);
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(20rem,0.8fr)_minmax(0,1.2fr)]">
+  return (
+    /* No PageScroll here: `agent-credentials` is registered through
+       `withPageScroll` in admin-console.tsx, which already supplies it. */
+    <section className="grid gap-4">
+      <PageHeading
+        title="Agent credentials"
+        subtitle="Issue scoped OAuth client credentials for agent actors. Revoke credentials that should no longer mint tokens. Emergency kill switches live under Agent emergency controls; human protocol secrets live under App passwords."
+      />
+      <AdminAccessRelatedNav current="agent-credentials" />
+
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(20rem,0.8fr)_minmax(0,1.2fr)]">
         <form
-          className="grid gap-4 rounded-lg border border-border bg-card p-4"
+          className="grid content-start gap-4 rounded-lg border border-border bg-card p-4"
           onSubmit={(event) => {
             event.preventDefault();
             void credentialForm.handleSubmit();
@@ -230,92 +304,102 @@ export function AgentCredentialsManagement() {
         >
           <div className="flex items-center gap-2">
             <KeyRound className="size-4 text-muted-foreground" />
-            <h3 className="text-sm font-medium">Create credential</h3>
+            <h2 className="text-sm font-medium">Create credential</h2>
           </div>
 
-          <credentialForm.Field name="actorId">
-            {(field) => (
-              <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-actor-id">
-                Actor ID
-                <Input
-                  id="agent-actor-id"
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  placeholder="00000000-0000-4000-8000-000000000000"
-                  required
-                  value={field.state.value}
-                />
-              </label>
-            )}
-          </credentialForm.Field>
+          {actorNotice !== null ? (
+            <ActorNoticeBanner
+              id={ACTOR_STATUS_ID}
+              kind={actorNotice.kind}
+              message={actorNotice.message}
+              /* Only the failed-directory notice has a way back to offer; the
+                 empty and truncated ones are answers, not faults. */
+              retryable={actorNotice.kind === "error"}
+              onRetry={() => {
+                void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+              }}
+            />
+          ) : null}
 
-          <credentialForm.Field name="scopes">
+          <credentialForm.Field name="actorId">
             {(field) => {
-              const selectedScopes = new Set(parseScopes(field.state.value));
+              const selectedActor = actorsById.get(field.state.value);
               return (
                 <div className="grid gap-2">
-                  <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-scopes">
-                    Scopes
-                    <textarea
-                      className="min-h-20 rounded-md border border-input bg-input/20 px-2 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                      id="agent-scopes"
-                      onBlur={field.handleBlur}
-                      onChange={(event) => field.handleChange(event.target.value)}
-                      required
-                      value={field.state.value}
-                    />
-                  </label>
-                  <div className="flex flex-wrap gap-1" aria-label="Common scopes">
-                    {commonScopes.map((scope) => {
-                      const selected = selectedScopes.has(scope);
-                      return (
-                        <Button
-                          aria-pressed={selected}
-                          key={scope}
-                          onClick={() =>
-                            field.handleChange(toggleScope(field.state.value, scope, selected))
-                          }
-                          size="xs"
-                          type="button"
-                          variant={selected ? "secondary" : "outline"}
-                        >
-                          {scope}
-                        </Button>
-                      );
-                    })}
-                  </div>
+                  <ActorSearchField
+                    id="agent-actor-search"
+                    value={actorSearchDraft}
+                    onChange={onSearchChange}
+                  />
+                  <ActorSelectField
+                    id="agent-actor-id"
+                    describedBy={actorNotice === null ? undefined : ACTOR_STATUS_ID}
+                    disabled={!canPickActor}
+                    placeholder={actorPlaceholders[actorStatus]}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(value) => field.handleChange(value)}
+                  >
+                    {actorGroups.map((group) => (
+                      <optgroup key={group.type} label={group.label}>
+                        {group.actors.map((actor) => (
+                          <option key={actor.id} value={actor.id}>
+                            {actorLabel(actor)}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </ActorSelectField>
+                  {/* Client credentials for a human actor mint tokens that act as
+                      that person — legal, rarely intended, and invisible once the
+                      credential exists. Say so while it can still be changed. */}
+                  {selectedActor !== undefined && !isAgentActor(selectedActor) ? (
+                    <StateBanner kind="info">
+                      {actorLabel(selectedActor)} is a {selectedActor.type} actor, not an agent.
+                      Tokens minted with this credential will act as that {selectedActor.type}.
+                    </StateBanner>
+                  ) : null}
                 </div>
               );
             }}
           </credentialForm.Field>
 
-          <credentialForm.Field name="expiresAt">
+          <credentialForm.Field name="scopes">
             {(field) => (
-              <label className="grid gap-1.5 text-xs font-medium" htmlFor="agent-expires-at">
-                Expires at
-                <Input
-                  id="agent-expires-at"
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  type="datetime-local"
-                  value={field.state.value}
-                />
-              </label>
+              <ScopesField
+                id="agent-scopes"
+                scopes={commonScopes}
+                scopesLabel="Common scopes"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(value) => field.handleChange(value)}
+              />
             )}
           </credentialForm.Field>
 
-          {formError !== null ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive" role="alert">
-              {formError}
-            </p>
-          ) : null}
+          <credentialForm.Field name="expiresAt">
+            {(field) => (
+              <ExpiresAtField
+                id="agent-expires-at"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(value) => field.handleChange(value)}
+              />
+            )}
+          </credentialForm.Field>
+
+          {formError !== null ? <StateBanner kind="error">{formError}</StateBanner> : null}
           {createMutation.isError ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive" role="alert">
+            <StateBanner kind="error">
               {errorMessage(createMutation.error, "Could not create the agent credential.")}
-            </p>
+            </StateBanner>
           ) : null}
 
-          <Button disabled={createMutation.isPending} type="submit">
+          <Button
+            aria-describedby={canPickActor ? undefined : ACTOR_STATUS_ID}
+            disabled={createMutation.isPending || !canPickActor}
+            type="submit"
+          >
             <Plus />
             {createMutation.isPending ? "Creating" : "Create credential"}
           </Button>
@@ -343,35 +427,46 @@ export function AgentCredentialsManagement() {
           ) : null}
         </form>
 
-        <section className="grid min-w-0 gap-3 rounded-lg border border-border bg-card p-4">
+        <section className="grid min-w-0 content-start gap-3 rounded-lg border border-border bg-card p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h3 className="text-sm font-medium">Issued credentials</h3>
+              <h2 className="text-sm font-medium">Issued credentials</h2>
               <p className="text-xs text-muted-foreground">
                 {credentials.length} credential{credentials.length === 1 ? "" : "s"} returned
               </p>
             </div>
-            <Button
-              disabled={credentialsQuery.isFetching}
-              onClick={() => void invalidateAgentCredentialLists(queryClient)}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <RotateCcw />
-              Refresh
-            </Button>
+            <div className="flex items-center gap-3">
+              <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  checked={includeRevoked}
+                  className="size-3.5"
+                  onChange={(event) => setIncludeRevoked(event.target.checked)}
+                  type="checkbox"
+                />
+                Include revoked
+              </label>
+              <Button
+                disabled={credentialsQuery.isFetching}
+                onClick={() => void invalidateAgentCredentialLists(queryClient)}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <RotateCcw />
+                Refresh
+              </Button>
+            </div>
           </div>
 
           {credentialsQuery.isError ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive" role="alert">
+            <StateBanner kind="error">
               {errorMessage(credentialsQuery.error, "Could not load agent credentials.")}
-            </p>
+            </StateBanner>
           ) : null}
           {revokeMutation.isError ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive" role="alert">
+            <StateBanner kind="error">
               {errorMessage(revokeMutation.error, "Could not revoke the agent credential.")}
-            </p>
+            </StateBanner>
           ) : null}
 
           <Table aria-label="Agent credentials">
@@ -391,11 +486,29 @@ export function AgentCredentialsManagement() {
             <TableBody>
               {credentialsQuery.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={columns.length}>Loading credentials</TableCell>
+                  <TableCell colSpan={columns.length}>
+                    <EmptyRow>Loading credentials…</EmptyRow>
+                  </TableCell>
+                </TableRow>
+              ) : credentialsQuery.isError ? (
+                /* `credentials` falls back to [] on failure, so without this
+                   branch a failed request rendered the same sentence as a
+                   genuinely empty workspace — a positive claim about state we
+                   could not read. */
+                <TableRow>
+                  <TableCell colSpan={columns.length}>
+                    <EmptyRow>Could not load credentials.</EmptyRow>
+                  </TableCell>
                 </TableRow>
               ) : table.getRowModel().rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={columns.length}>No agent credentials found.</TableCell>
+                  <TableCell colSpan={columns.length}>
+                    <EmptyRow>
+                      {includeRevoked
+                        ? "No credentials have been issued in this workspace yet."
+                        : "No active credentials. Select “Include revoked” to see credentials that were already revoked."}
+                    </EmptyRow>
+                  </TableCell>
                 </TableRow>
               ) : (
                 table.getRowModel().rows.map((row) => (
@@ -413,42 +526,50 @@ export function AgentCredentialsManagement() {
         </section>
       </div>
 
-      <AlertDialog
-        open={credentialToRevoke !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setCredentialToRevoke(null);
-          }
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogMedia>
-              <ShieldAlert />
-            </AlertDialogMedia>
-            <AlertDialogTitle>Revoke agent credential</AlertDialogTitle>
-            <AlertDialogDescription>
-              This credential will stop minting OAuth access tokens for actor{" "}
-              <code>{credentialToRevoke?.actorId}</code>.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={revokeMutation.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={credentialToRevoke === null || revokeMutation.isPending}
-              onClick={(event) => {
-                event.preventDefault();
-                if (credentialToRevoke !== null) {
-                  void revokeMutation.mutateAsync(credentialToRevoke.clientId);
-                }
-              }}
-              variant="destructive"
-            >
-              Revoke
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* The shared confirmation rather than a private copy of the AlertDialog
+          stack: the policy for destructive admin actions is written in that one
+          component, and a section that rebuilds the markup drifts away from it
+          without anything failing. Tier: irreversible, one object → name the
+          target, no `blastRadius`. One credential mints tokens for one actor,
+          and nothing here counts the agents holding it. */}
+      {credentialToRevoke === null ? null : (
+        <ConfirmDestructive
+          open
+          onOpenChange={(next) => {
+            if (!next) {
+              setCredentialToRevoke(null);
+            }
+          }}
+          title="Revoke agent credential"
+          confirmLabel="Revoke"
+          isPending={revokeMutation.isPending}
+          /* `mutate`, not `mutateAsync`: nothing awaits the result, and a
+             floating rejection surfaces as an unhandled promise rejection even
+             though the banner already reports the failure. */
+          onConfirm={() => {
+            revokeMutation.mutate(credentialToRevoke.clientId);
+          }}
+        >
+          This credential stops minting OAuth access tokens for{" "}
+          {revokeTargetActor === undefined
+            ? "an actor that is no longer in the enabled directory"
+            : actorLabel(revokeTargetActor)}
+          .
+          {credentialToRevoke.scopes.length === 0
+            ? ""
+            : ` Anything running as this client loses ${credentialToRevoke.scopes.join(", ")}.`}{" "}
+          The client secret cannot be shown again, so restoring access means issuing a new
+          credential and redeploying it.
+          <span className="mt-2 block text-xs">
+            <span className="block">
+              Actor ID <code>{credentialToRevoke.actorId}</code>
+            </span>
+            <span className="block">
+              Client ID <code>{credentialToRevoke.clientId}</code>
+            </span>
+          </span>
+        </ConfirmDestructive>
+      )}
     </section>
   );
 }
@@ -459,7 +580,7 @@ function normalizeCreateInput(value: AgentCredentialFormState) {
   const expiresAt = normalizeExpiresAt(value.expiresAt);
 
   if (actorId.length === 0) {
-    return "Actor ID is required.";
+    return "Select the actor this credential will act as.";
   }
   if (scopes.length === 0) {
     return "At least one scope is required.";
@@ -475,39 +596,54 @@ function normalizeCreateInput(value: AgentCredentialFormState) {
   };
 }
 
-function parseScopes(value: string): string[] {
-  return value
-    .split(/[\s,]+/u)
-    .map((scope) => scope.trim())
-    .filter((scope) => scope.length > 0);
+function actorLabel(actor: AdminUser): string {
+  const displayName = actor.displayName.trim();
+  const email = actor.email?.trim() ?? "";
+  if (displayName.length === 0) {
+    return email.length > 0 ? email : actor.id;
+  }
+  return email.length > 0 ? `${displayName} (${email})` : displayName;
 }
 
-function toggleScope(value: string, scope: string, selected: boolean): string {
-  const scopes = parseScopes(value).filter((candidate) => candidate !== scope);
-  return (selected ? scopes : [...scopes, scope]).join(" ");
+function isAgentActor(actor: AdminUser): boolean {
+  return actor.type.trim().toLowerCase() === AGENT_ACTOR_TYPE;
 }
 
-function normalizeExpiresAt(value: string): string | null | typeof invalidExpiresAt {
-  const trimmed = value.trim();
+/** `agent` -> `Agent actors`; the directory returns the raw actor type. */
+function actorGroupLabel(type: string): string {
+  const trimmed = type.trim();
   if (trimmed.length === 0) {
-    return null;
+    return "Untyped actors";
   }
-  const date = new Date(trimmed);
-  return Number.isNaN(date.getTime()) ? invalidExpiresAt : date.toISOString();
+  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)} actors`;
 }
 
-function formatDateTime(value: string | null): string | null {
-  if (value === null) {
-    return null;
+function groupActorsByType(actors: readonly AdminUser[]): readonly ActorGroup[] {
+  const byType = new Map<string, AdminUser[]>();
+  for (const actor of actors) {
+    const group = byType.get(actor.type);
+    if (group === undefined) {
+      byType.set(actor.type, [actor]);
+    } else {
+      group.push(actor);
+    }
   }
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  return [...byType.entries()]
+    .sort(([left], [right]) => compareActorTypes(left, right))
+    .map(([type, group]) => ({
+      type,
+      label: actorGroupLabel(type),
+      actors: group.sort((left, right) => actorLabel(left).localeCompare(actorLabel(right))),
+    }));
 }
 
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message.length > 0 ? error.message : fallback;
+/* Agents first: this form exists to credential agents, so the humans it can
+   also reach should not sit above them in the list. */
+function compareActorTypes(left: string, right: string): number {
+  if (left === AGENT_ACTOR_TYPE || right === AGENT_ACTOR_TYPE) {
+    return left === AGENT_ACTOR_TYPE ? -1 : 1;
+  }
+  return left.localeCompare(right);
 }
 
 async function invalidateAgentCredentialLists(

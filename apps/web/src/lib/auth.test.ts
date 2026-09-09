@@ -98,7 +98,13 @@ describe("web auth helpers", () => {
       "/api/auth/domain-discovery",
       "/api/auth/sign-in/sso",
     ]);
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toMatchObject({
+    expect(
+      JSON.parse(
+        typeof fetchMock.mock.calls[1]?.[1]?.body === "string"
+          ? fetchMock.mock.calls[1][1].body
+          : "",
+      ),
+    ).toMatchObject({
       email: "member@acme.example",
       providerType: "oidc",
       requestSignUp: false,

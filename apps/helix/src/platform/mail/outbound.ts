@@ -10,13 +10,22 @@ import type {
   MailOutboundRecord,
 } from "./types.js";
 import type { ClaimedOutboundMail, MailStore, OutboundMailQueueStore } from "./store.js";
-import { MailDeliveryError, MailProviderError } from "./errors.js";
+import {
+  MailDeliveryError,
+  MailProviderError,
+  MailAttachmentSizeError,
+  MailProviderConfigurationError,
+  MailSendIdempotencyRequiredError,
+} from "./errors.js";
 import { prepareOutboundEnvelope } from "./threading.js";
+import { normalizeMailboxAddress } from "./address-normalization.js";
 
 export interface OutboundMailConfig {
   readonly host: string;
   readonly port?: number;
   readonly secure?: boolean;
+  /** Test/development-only override; production environment loading never sets this false. */
+  readonly requireTls?: boolean;
   readonly user?: string;
   readonly pass?: string;
 }
@@ -29,17 +38,14 @@ export interface OutboundMailTransport {
   ): Promise<MailOutboundDeliveryResult>;
 }
 
-export type DkimOptionsResolver = (fromAddress: string) => Promise<
-  | {
-      readonly domainName: string;
-      readonly keySelector: string;
-      readonly privateKey: string;
-    }
-  | null
->;
+export type DkimOptionsResolver = (fromAddress: string) => Promise<{
+  readonly domainName: string;
+  readonly keySelector: string;
+  readonly privateKey: string;
+} | null>;
 
 export type OutboundMailTransportResolver = (
-  outbound: MailOutboundRecord,
+  outbound: ClaimedOutboundMail,
 ) => Promise<OutboundMailTransport>;
 
 /** Resolve Drive objectId attachments to bytes before SMTP send. */
@@ -65,6 +71,7 @@ export interface OutboundMailWorkerOptions {
 }
 
 export interface QueueMailInput {
+  readonly draft?: { readonly id: string; readonly revision: number };
   readonly orgId: string;
   readonly actorId: string;
   readonly threadId?: string;
@@ -73,9 +80,23 @@ export interface QueueMailInput {
   readonly envelope: MailOutboundEnvelope;
   readonly now?: Date;
   readonly sendAt?: Date;
+  readonly source?: "interactive" | "api" | "agent";
+  readonly idempotencyKey?: string;
 }
 
 export interface OutboundDispatchOptions {
+  /**
+   * Called when a dispatch attempt finds nothing to do.
+   *
+   * `dispatch` reaching this state is not benign: the message stays `queued`
+   * with no error, no `lastError`, and — before this hook — nothing in the log.
+   * A send that will never leave looked exactly like a send that had not left
+   * *yet*, which is how two probe messages sat stranded and silent.
+   */
+  readonly onDispatchSkipped?: (input: {
+    readonly outboundId: string;
+    readonly reason: string;
+  }) => void;
   readonly maxAttempts?: number;
   readonly baseDelayMs?: number;
   readonly maxDelayMs?: number;
@@ -92,12 +113,20 @@ export interface OutboundDispatchOptions {
         }): void;
       }
     | undefined;
+  readonly suppressionStore?: {
+    findActiveSuppressions(
+      orgId: string,
+      normalizedRecipients: readonly string[],
+    ): Promise<readonly { readonly normalizedRecipient: string }[]>;
+  };
 }
 
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_BASE_DELAY_MS = 1_000;
 const DEFAULT_MAX_DELAY_MS = 60_000;
 const DEFAULT_LEASE_MS = 5 * 60_000;
+/** Leaves headroom for base64/MIME expansion below the common 25 MiB provider limit. */
+export const MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES = 18 * 1024 * 1024;
 
 export class NodemailerMailTransport implements OutboundMailTransport {
   private readonly transporter: Transporter<SMTPTransport.SentMessageInfo>;
@@ -113,6 +142,9 @@ export class NodemailerMailTransport implements OutboundMailTransport {
             host: config.host,
             port: config.port ?? 587,
             secure: config.secure ?? false,
+            // `secure: false` selects explicit STARTTLS. Require the upgrade so
+            // an on-path peer cannot downgrade production mail to plaintext.
+            requireTLS: config.requireTls ?? config.secure !== true,
             ...(config.user === undefined
               ? {}
               : {
@@ -190,6 +222,7 @@ export async function resolveOutboundAttachments(
     return envelope;
   }
   const attachments: MailAttachmentInput[] = [];
+  let totalBytes = 0;
   for (const attachment of envelope.attachments) {
     if (attachment.objectId !== undefined && attachment.objectId.length > 0) {
       if (resolveObject === undefined || context === undefined) {
@@ -200,6 +233,7 @@ export async function resolveOutboundAttachments(
         );
       }
       const content = await resolveObject(attachment.objectId, context);
+      totalBytes = addAttachmentBytes(totalBytes, content.byteLength);
       attachments.push({
         ...attachment,
         content,
@@ -211,6 +245,7 @@ export async function resolveOutboundAttachments(
         cause: new Error("missing_attachment_content"),
       });
     }
+    totalBytes = addAttachmentBytes(totalBytes, attachment.content.byteLength);
     attachments.push(attachment);
   }
   return { ...envelope, attachments };
@@ -226,6 +261,14 @@ export class MailSendService {
   }
 
   queue(input: QueueMailInput): Promise<MailOutboundRecord> {
+    if (
+      input.source !== undefined &&
+      input.source !== "interactive" &&
+      (input.idempotencyKey === undefined || input.idempotencyKey.trim().length === 0)
+    ) {
+      throw new MailSendIdempotencyRequiredError();
+    }
+    assertKnownOutboundAttachmentSizes(input.envelope);
     const now = input.now ?? new Date();
     const sendAt = input.sendAt;
     if (
@@ -248,6 +291,10 @@ export class MailSendService {
       envelope,
       undoUntil: sendAt ?? new Date(now.getTime() + this.undoWindowMs),
       outboxSubject: this.outboxSubject,
+      ...(input.draft === undefined ? {} : { draft: input.draft }),
+      ...(input.idempotencyKey === undefined
+        ? {}
+        : { idempotencyKey: input.idempotencyKey.trim() }),
     });
   }
 
@@ -258,6 +305,37 @@ export class MailSendService {
   }): Promise<MailOutboundRecord | null> {
     return this.options.store.cancelOutbound(input);
   }
+
+  retry(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<MailOutboundRecord | null> {
+    if (this.options.store.retryOutbound === undefined) {
+      return Promise.resolve(null);
+    }
+    return this.options.store.retryOutbound({
+      ...input,
+      outboxSubject: this.outboxSubject,
+    });
+  }
+}
+
+function assertKnownOutboundAttachmentSizes(envelope: MailOutboundEnvelope): void {
+  let totalBytes = 0;
+  for (const attachment of envelope.attachments) {
+    totalBytes = addAttachmentBytes(totalBytes, attachment.content?.byteLength ?? 0);
+  }
+}
+
+function addAttachmentBytes(totalBytes: number, attachmentBytes: number): number {
+  if (
+    attachmentBytes > MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES ||
+    totalBytes + attachmentBytes > MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES
+  ) {
+    throw new MailAttachmentSizeError(MAIL_MAX_OUTBOUND_ATTACHMENT_BYTES);
+  }
+  return totalBytes + attachmentBytes;
 }
 
 export class OutboundMailDispatcher {
@@ -268,6 +346,7 @@ export class OutboundMailDispatcher {
   private readonly random: () => number;
   private readonly resolveAttachment: AttachmentObjectResolver | undefined;
   private readonly metrics: OutboundDispatchOptions["metrics"];
+  private readonly suppressionStore: OutboundDispatchOptions["suppressionStore"];
 
   constructor(
     private readonly store: OutboundMailQueueStore,
@@ -281,6 +360,7 @@ export class OutboundMailDispatcher {
     this.random = options.random ?? Math.random;
     this.resolveAttachment = options.resolveAttachment;
     this.metrics = options.metrics;
+    this.suppressionStore = options.suppressionStore;
   }
 
   async dispatch(outbound: ClaimedOutboundMail): Promise<MailOutboundRecord | null> {
@@ -309,6 +389,21 @@ export class OutboundMailDispatcher {
             span.setAttribute("helix.mail.attempt", outbound.attemptCount);
             let delivery: MailOutboundDeliveryResult;
             try {
+              const recipients = [
+                ...outbound.envelope.to,
+                ...outbound.envelope.cc,
+                ...outbound.envelope.bcc,
+              ].map((recipient) => normalizeMailboxAddress(recipient.address).address);
+              const suppressed = await this.suppressionStore?.findActiveSuppressions(
+                outbound.orgId,
+                recipients,
+              );
+              if (suppressed !== undefined && suppressed.length > 0) {
+                throw new MailProviderConfigurationError(
+                  "MAIL_RECIPIENT_SUPPRESSED",
+                  "Delivery is blocked for a suppressed recipient.",
+                );
+              }
               const resolved = await resolveOutboundAttachments(
                 outbound.envelope,
                 this.resolveAttachment,

@@ -31,7 +31,6 @@ import {
 import { createS3CompatibleStorage } from "../platform/storage/index.js";
 import { PostgresCalendarStore } from "../platform/calendar/index.js";
 import { PostgresChatStore } from "../platform/chat/index.js";
-import { PostgresDocsStore } from "../platform/docs/index.js";
 import { PostgresDriveStore } from "../platform/drive/index.js";
 import { PostgresMailStore } from "../platform/mail/index.js";
 import type { SearchEngine } from "../platform/search/index.js";
@@ -50,13 +49,11 @@ export interface VerifyLocalDemoOptions {
 export interface LocalDemoVerificationSnapshot {
   readonly orgCount: number;
   readonly actorCount: number;
-  readonly hasDocsCommentScope: boolean;
   readonly betterAuthUserCount: number;
   readonly betterAuthCredentialCount: number;
   readonly oauthCredentialCount: number;
   readonly mailHitCount: number;
   readonly mailThreadMessageCount: number;
-  readonly docsCount: number;
   readonly rootDriveEntryCount: number;
   readonly projectDriveEntryCount: number;
   readonly calendarEventCount: number;
@@ -64,7 +61,6 @@ export interface LocalDemoVerificationSnapshot {
   readonly chatMessageHitCount: number;
   readonly hasRenovateMail: boolean;
   readonly hasAmazonMailWithAttachment: boolean;
-  readonly hasQuarterlyPlanningDoc: boolean;
   readonly hasAiServicesDriveFile: boolean;
   readonly hasProjectsDriveFolder: boolean;
   readonly hasTrainingCourseDriveFile: boolean;
@@ -109,7 +105,6 @@ export async function verifyLocalDemo(
   const storage = options.storage ?? createLocalDemoStorageFromEnv();
   const searchEngine = options.searchEngine ?? (await createLocalDemoSearchEngineFromEnv());
   const mailStore = new PostgresMailStore(sql);
-  const docsStore = new PostgresDocsStore(sql);
   const driveStore = new PostgresDriveStore(sql);
   const calendarStore = new PostgresCalendarStore(sql);
   const chatStore = new PostgresChatStore(sql);
@@ -123,7 +118,6 @@ export async function verifyLocalDemo(
     renovateMailHits,
     amazonMailHits,
     mailThread,
-    docs,
     rootDriveEntries,
     projectDriveEntries,
     trainingDriveHits,
@@ -180,7 +174,6 @@ export async function verifyLocalDemo(
     mailStore.search({ orgId, actorId, query: "Renovate", limit: 10 }),
     mailStore.search({ orgId, actorId, query: "Amazon", limit: 10 }),
     mailStore.getThread({ orgId, actorId, threadId: LOCAL_DEMO_IDS.mailAmazonThread }),
-    docsStore.listDocumentsForActor({ orgId, actorId, query: "Quarterly", limit: 10 }),
     driveStore.list({ orgId, actorId, limit: 25 }),
     driveStore.list({
       orgId,
@@ -222,13 +215,11 @@ export async function verifyLocalDemo(
   const snapshot = {
     orgCount: orgRows.length,
     actorCount: actorRows.length,
-    hasDocsCommentScope: actorRows.some((actor) => actor.scopes.includes("docs.comment")),
     betterAuthUserCount: betterAuthRows.length,
     betterAuthCredentialCount: betterAuthCredentialRows.length,
     oauthCredentialCount: credentialRows.length,
     mailHitCount: renovateMailHits.length + amazonMailHits.length,
     mailThreadMessageCount: mailThread?.messages.length ?? 0,
-    docsCount: docs.length,
     rootDriveEntryCount: rootDriveEntries.entries.length,
     projectDriveEntryCount: projectDriveEntries.entries.length,
     calendarEventCount: calendarEvents.length,
@@ -238,7 +229,6 @@ export async function verifyLocalDemo(
     hasAmazonMailWithAttachment:
       amazonMailHits.some((hit) => hit.subject.includes("Amazon")) &&
       (mailThread?.messages.some((message) => message.hasAttachment) ?? false),
-    hasQuarterlyPlanningDoc: docs.some((doc) => doc.title === "Quarterly Planning Notes"),
     hasAiServicesDriveFile: rootDriveEntries.entries.some(
       (entry) => entry.name === "AI Services and Keys",
     ),
@@ -280,13 +270,11 @@ export function assertLocalDemoVerified(snapshot: LocalDemoVerificationSnapshot)
   const failures: string[] = [];
   requireAtLeast(failures, "local demo org", snapshot.orgCount, 1);
   requireAtLeast(failures, "actor", snapshot.actorCount, 1);
-  requireTrue(failures, "Docs comment/suggestion scope", snapshot.hasDocsCommentScope);
   requireAtLeast(failures, "Better Auth user linkage", snapshot.betterAuthUserCount, 1);
   requireAtLeast(failures, "Better Auth credential", snapshot.betterAuthCredentialCount, 1);
   requireAtLeast(failures, "OAuth credential", snapshot.oauthCredentialCount, 1);
   requireAtLeast(failures, "mail search hits", snapshot.mailHitCount, 1);
   requireAtLeast(failures, "mail thread messages", snapshot.mailThreadMessageCount, 1);
-  requireAtLeast(failures, "docs list results", snapshot.docsCount, 1);
   requireAtLeast(failures, "root Drive entries", snapshot.rootDriveEntryCount, 2);
   requireAtLeast(failures, "project Drive entries", snapshot.projectDriveEntryCount, 1);
   requireAtLeast(failures, "calendar events", snapshot.calendarEventCount, 2);
@@ -294,7 +282,6 @@ export function assertLocalDemoVerified(snapshot: LocalDemoVerificationSnapshot)
   requireAtLeast(failures, "chat message hits", snapshot.chatMessageHitCount, 1);
   requireTrue(failures, "Renovate mail", snapshot.hasRenovateMail);
   requireTrue(failures, "Amazon mail attachment", snapshot.hasAmazonMailWithAttachment);
-  requireTrue(failures, "Quarterly Planning Notes doc", snapshot.hasQuarterlyPlanningDoc);
   requireTrue(failures, "AI Services and Keys Drive file", snapshot.hasAiServicesDriveFile);
   requireTrue(failures, "Projects Drive folder", snapshot.hasProjectsDriveFolder);
   requireTrue(failures, "Training Course Links Drive file", snapshot.hasTrainingCourseDriveFile);
@@ -309,7 +296,7 @@ export function assertLocalDemoVerified(snapshot: LocalDemoVerificationSnapshot)
   requireTrue(failures, "Better Auth email/password login", snapshot.betterAuthPasswordVerified);
   requireTrue(failures, "Better Auth session login", snapshot.betterAuthSignInVerified);
   if (snapshot.storageConfigured) {
-    requireAtLeast(failures, "seeded storage objects", snapshot.storageObjectCount, 5);
+    requireAtLeast(failures, "seeded storage objects", snapshot.storageObjectCount, 3);
     requireTrue(failures, "seeded storage object content", snapshot.storageObjectsVerified);
   }
   if (snapshot.volumeMailMessageCount > 0) {
@@ -604,8 +591,6 @@ async function verifySeededStorageObjects(
 const LOCAL_DEMO_STORAGE_OBJECT_IDS = [
   LOCAL_DEMO_IDS.driveFileAiServices,
   LOCAL_DEMO_IDS.driveFileTraining,
-  LOCAL_DEMO_IDS.docsQuarterly,
-  LOCAL_DEMO_IDS.docsRunbook,
   LOCAL_DEMO_IDS.mailAttachmentAmazon,
 ] as const;
 

@@ -1,59 +1,41 @@
 import { describe, expect, it } from "vitest";
-import type {
-  Actor,
-  MeteringClient,
-  MeteringEmitInput,
-  MeteringEvent,
-  TraceContext,
-} from "@helix/sdk-types";
+import type { Actor } from "@helix/sdk-types";
 import { createStoreBackedMcpResourceProvider } from "./mcp-resources.js";
 import { handleMcpJsonRpcRequest } from "./mcp.js";
 import { systemActor } from "./actor.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
 import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
-import { InMemoryTenantHourlyQuotaLimiter } from "../platform/limits/index.js";
 import type { CalendarEventRecord } from "../platform/calendar/types.js";
 import type { ChatMessageRecord, ChatRoomRecord } from "../platform/chat/types.js";
 import type { DriveEntryRecord, DriveSearchHit } from "../platform/drive/types.js";
 import type { DriveFileReadInput, DriveFileReadResult } from "../platform/drive/store.js";
-import type { DocsDocumentRecord, DocsExportDocument } from "../platform/docs/types.js";
 import type {
   MailSearchHit,
   MailThreadDetail,
   MailThreadGetRequest,
   MailSearchRequest,
 } from "../platform/mail/types.js";
-
 describe("createStoreBackedMcpResourceProvider", () => {
   it("lists only resources allowed by actor scopes and store access", async () => {
     const mail = new FakeMailStore();
     const chat = new FakeChatStore();
     const calendar = new FakeCalendarStore();
     const drive = new FakeDriveStore();
-    const docs = new FakeDocsStore();
     const resources = createStoreBackedMcpResourceProvider({
       chat,
       calendar,
       mail,
       drive,
-      docs,
       limit: 10,
     });
-
     const listed = await resources.list({
       ...agentActor,
       scopes: ["mail.read", "docs.read"],
     });
-
     expect(listed).toMatchObject([
       {
         uri: "helix://mail/thread/thread-1",
         name: "Launch mail",
-        mimeType: "text/markdown",
-      },
-      {
-        uri: "helix://docs/document/doc-1",
-        name: "Launch plan",
         mimeType: "text/markdown",
       },
     ]);
@@ -63,25 +45,16 @@ describe("createStoreBackedMcpResourceProvider", () => {
       query: "",
       limit: 10,
     });
-    expect(docs.lists[0]).toMatchObject({
-      orgId: "org-mcp",
-      actorId: "agent-mcp",
-      query: "",
-      limit: 10,
-    });
     expect(chat.lists).toHaveLength(0);
     expect(calendar.lists).toHaveLength(0);
     expect(drive.searches).toHaveLength(0);
   });
-
-  it("reads actor-scoped chat, calendar, mail, docs, text drive files, and binary drive metadata", async () => {
+  it("reads actor-scoped chat, calendar, mail, text drive files, and binary drive metadata", async () => {
     const chat = new FakeChatStore();
     const calendar = new FakeCalendarStore();
     const mail = new FakeMailStore();
     const drive = new FakeDriveStore();
-    const docs = new FakeDocsStore();
-    const resources = createStoreBackedMcpResourceProvider({ chat, calendar, mail, drive, docs });
-
+    const resources = createStoreBackedMcpResourceProvider({ chat, calendar, mail, drive });
     const chatContent = await resources.read(agentActor, "helix://chat/room/room-1");
     expect(chatContent).toMatchObject({
       uri: "helix://chat/room/room-1",
@@ -89,7 +62,6 @@ describe("createStoreBackedMcpResourceProvider", () => {
     });
     expect(chatContent?.text).toContain("Daily standup");
     expect(chatContent?.text).toContain("Ship the launch plan.");
-
     const calendarContent = await resources.read(agentActor, "helix://calendar/event/event-1");
     expect(calendarContent).toMatchObject({
       uri: "helix://calendar/event/event-1",
@@ -97,21 +69,12 @@ describe("createStoreBackedMcpResourceProvider", () => {
     });
     expect(calendarContent?.text).toContain("Launch review");
     expect(calendarContent?.text).toContain("Conference Room A");
-
     const mailContent = await resources.read(agentActor, "helix://mail/thread/thread-1");
     expect(mailContent).toMatchObject({
       uri: "helix://mail/thread/thread-1",
       mimeType: "text/markdown",
     });
     expect(mailContent?.text).toContain("Schedule moved to Friday.");
-
-    const docsContent = await resources.read(agentActor, "helix://docs/document/doc-1");
-    expect(docsContent).toMatchObject({
-      uri: "helix://docs/document/doc-1",
-      mimeType: "text/markdown",
-    });
-    expect(docsContent?.text).toContain("## Comments\n- Needs timeline.");
-
     await expect(resources.read(agentActor, "helix://drive/file/file-text")).resolves.toMatchObject(
       {
         uri: "helix://drive/file/file-text",
@@ -150,18 +113,12 @@ describe("createStoreBackedMcpResourceProvider", () => {
       { orgId: "org-mcp", actorId: "agent-mcp", objectId: "file-text" },
       { orgId: "org-mcp", actorId: "agent-mcp", objectId: "file-binary" },
     ]);
-    expect(docs.reads[0]).toMatchObject({
-      orgId: "org-mcp",
-      actorId: "agent-mcp",
-      docId: "doc-1",
-    });
   });
-
   it("uses the store-backed provider through MCP resources/read", async () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const response = await handleMcpJsonRpcRequest({
       tools,
-      actor: agentActor,
+      principal: { actor: agentActor },
       resources: createStoreBackedMcpResourceProvider({
         mail: new FakeMailStore(),
       }),
@@ -172,7 +129,6 @@ describe("createStoreBackedMcpResourceProvider", () => {
         params: { uri: "helix://mail/thread/thread-1" },
       },
     });
-
     expect(response).toMatchObject({
       jsonrpc: "2.0",
       id: "read-mail",
@@ -189,112 +145,12 @@ describe("createStoreBackedMcpResourceProvider", () => {
       throw new Error("Expected MCP result.");
     }
     const result = response.result as {
-      readonly contents: readonly { readonly text: string }[];
+      readonly contents: readonly {
+        readonly text: string;
+      }[];
     };
     expect(result.contents[0]?.text).toContain("Launch mail");
   });
-
-  it("enforces export_jobs_per_hour for Docs MCP resource reads", async () => {
-    const docs = new FakeDocsStore();
-    const events = new RecordingEventBus();
-    const metering = new RecordingMeteringClient();
-    const resources = createStoreBackedMcpResourceProvider({
-      docs,
-      docsExportJobLimiter: new InMemoryTenantHourlyQuotaLimiter(),
-      docsExportJobLimit: () => 1,
-      quotaEvents: events,
-      metering,
-    });
-
-    await expect(resources.read(agentActor, "helix://docs/document/doc-1")).resolves.toMatchObject({
-      uri: "helix://docs/document/doc-1",
-      mimeType: "text/markdown",
-    });
-    await expect(resources.read(agentActor, "helix://docs/document/doc-1")).rejects.toMatchObject({
-      statusCode: 429,
-      message: "Tenant export job quota exceeded.",
-      quotaLimit: {
-        quota: "export_jobs_per_hour",
-        limit: 1,
-        used: 1,
-        remaining: 0,
-      },
-    });
-    expect(docs.reads).toHaveLength(1);
-    expect(metering.records).toHaveLength(1);
-    expect(events.records).toHaveLength(1);
-    expect(events.records[0]).toMatchObject({
-      subject: "quota.export_jobs.exceeded",
-      payload: {
-        orgId: "org-mcp",
-        quota: "export_jobs_per_hour",
-        surface: "mcp.resources.read",
-        limit: 1,
-        used: 1,
-        remaining: 0,
-        metadata: {
-          format: "markdown",
-        },
-      },
-    });
-    const payload = asRecord(events.records[0]?.payload);
-    expect(typeof payload.retryAfterSeconds).toBe("number");
-    expect(typeof payload.resetsAt).toBe("string");
-  });
-
-  it("emits privacy-safe export metering after Docs MCP resource reads", async () => {
-    const docs = new FakeDocsStore();
-    const metering = new RecordingMeteringClient();
-    const resources = createStoreBackedMcpResourceProvider({ docs, metering });
-
-    const content = await resources.read(agentActor, "helix://docs/document/doc-1");
-
-    expect(content).toMatchObject({
-      uri: "helix://docs/document/doc-1",
-      mimeType: "text/markdown",
-    });
-    expect(metering.records).toEqual([
-      {
-        orgId: "org-mcp",
-        event: {
-          type: "export.completed",
-          quantity: 1,
-          metadata: {
-            surface: "mcp.resources.read",
-            format: "markdown",
-            byte_size: new TextEncoder().encode(content?.text ?? "").byteLength,
-          },
-        },
-        trace: undefined,
-      },
-    ]);
-    const serializedMetering = JSON.stringify(metering.records);
-    expect(serializedMetering).not.toContain("doc-1");
-    expect(serializedMetering).not.toContain("agent-mcp");
-    expect(serializedMetering).not.toContain("helix://docs/document/doc-1");
-    expect(serializedMetering).not.toContain("Launch plan");
-    expect(serializedMetering).not.toContain("The launch plan.");
-    expect(serializedMetering).not.toContain("Needs timeline.");
-    expect(serializedMetering).not.toContain("comment-1");
-  });
-
-  it("does not consume the Docs export quota for non-Docs MCP resource reads", async () => {
-    const mail = new FakeMailStore();
-    const resources = createStoreBackedMcpResourceProvider({
-      mail,
-      docsExportJobLimiter: new InMemoryTenantHourlyQuotaLimiter(),
-      docsExportJobLimit: () => 0,
-    });
-
-    await expect(resources.read(agentActor, "helix://mail/thread/thread-1")).resolves.toMatchObject(
-      {
-        uri: "helix://mail/thread/thread-1",
-        mimeType: "text/markdown",
-      },
-    );
-    expect(mail.threadReads).toHaveLength(1);
-  });
-
   it("bounds Drive MCP text reads and never opens large binary content", async () => {
     const ranges: unknown[] = [];
     let binaryOpened = false;
@@ -325,7 +181,6 @@ describe("createStoreBackedMcpResourceProvider", () => {
         },
       },
     });
-
     await expect(
       resources.read(agentActor, "helix://drive/file/large-text"),
     ).resolves.toMatchObject({
@@ -338,7 +193,6 @@ describe("createStoreBackedMcpResourceProvider", () => {
     expect(ranges).toEqual([{ start: 0, end: 1024 * 1024 - 1 }]);
     expect(binaryOpened).toBe(false);
   });
-
   it("denies unreadable chat and calendar resources before calling stores", async () => {
     const chat = new FakeChatStore();
     const calendar = new FakeCalendarStore();
@@ -347,7 +201,6 @@ describe("createStoreBackedMcpResourceProvider", () => {
       ...agentActor,
       scopes: ["mail.read"],
     };
-
     await expect(resources.read(mailOnlyActor, "helix://chat/room/room-1")).resolves.toBeNull();
     await expect(
       resources.read(mailOnlyActor, "helix://calendar/event/event-1"),
@@ -356,37 +209,30 @@ describe("createStoreBackedMcpResourceProvider", () => {
     expect(chat.messageLists).toHaveLength(0);
     expect(calendar.reads).toHaveLength(0);
   });
-
   it("returns null for unknown actor-scoped chat and calendar resources", async () => {
     const resources = createStoreBackedMcpResourceProvider({
       chat: new FakeChatStore(),
       calendar: new FakeCalendarStore(),
     });
-
     await expect(resources.read(agentActor, "helix://chat/room/missing")).resolves.toBeNull();
     await expect(resources.read(agentActor, "helix://calendar/event/missing")).resolves.toBeNull();
   });
-
   it("lets system actors list all configured resource stores", async () => {
     const resources = createStoreBackedMcpResourceProvider({
       chat: new FakeChatStore(),
       calendar: new FakeCalendarStore(),
       mail: new FakeMailStore(),
       drive: new FakeDriveStore(),
-      docs: new FakeDocsStore(),
     });
-
-    await expect(resources.list(systemActor)).resolves.toHaveLength(5);
+    await expect(resources.list(systemActor)).resolves.toHaveLength(4);
   });
 });
-
 const agentActor: Actor = {
   id: "agent-mcp",
   orgId: "org-mcp",
   type: "agent",
   scopes: ["chat.read", "calendar.read", "mail.read", "drive.read", "docs.read"],
 };
-
 class FakeChatStore {
   readonly lists: Parameters<
     NonNullable<Parameters<typeof createStoreBackedMcpResourceProvider>[0]["chat"]>["listRooms"]
@@ -399,17 +245,14 @@ class FakeChatStore {
   readonly messageLists: Parameters<
     NonNullable<Parameters<typeof createStoreBackedMcpResourceProvider>[0]["chat"]>["listMessages"]
   >[0][] = [];
-
   async listRooms(input: (typeof this.lists)[number]): Promise<readonly ChatRoomRecord[]> {
     this.lists.push(input);
     return [chatRoomRecord()];
   }
-
   async getRoomForActor(input: (typeof this.roomReads)[number]): Promise<ChatRoomRecord | null> {
     this.roomReads.push(input);
     return input.roomId === "room-1" ? chatRoomRecord() : null;
   }
-
   async listMessages(
     input: (typeof this.messageLists)[number],
   ): Promise<readonly ChatMessageRecord[]> {
@@ -433,7 +276,6 @@ class FakeChatStore {
     ];
   }
 }
-
 class FakeCalendarStore {
   readonly lists: Parameters<
     NonNullable<
@@ -445,24 +287,20 @@ class FakeCalendarStore {
       Parameters<typeof createStoreBackedMcpResourceProvider>[0]["calendar"]
     >["getEventForActor"]
   >[0][] = [];
-
   async listCalendarEventsForActor(
     input: (typeof this.lists)[number],
   ): Promise<readonly CalendarEventRecord[]> {
     this.lists.push(input);
     return [calendarEventRecord()];
   }
-
   async getEventForActor(input: (typeof this.reads)[number]): Promise<CalendarEventRecord | null> {
     this.reads.push(input);
     return input.eventId === "event-1" ? calendarEventRecord() : null;
   }
 }
-
 class FakeMailStore {
   readonly searches: MailSearchRequest[] = [];
   readonly threadReads: MailThreadGetRequest[] = [];
-
   async search(input: MailSearchRequest): Promise<readonly MailSearchHit[]> {
     this.searches.push(input);
     return [
@@ -478,7 +316,6 @@ class FakeMailStore {
       },
     ];
   }
-
   async getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null> {
     this.threadReads.push(input);
     if (input.threadId !== "thread-1") {
@@ -514,7 +351,6 @@ class FakeMailStore {
     };
   }
 }
-
 function chatRoomRecord(): ChatRoomRecord {
   return {
     id: "room-1",
@@ -552,7 +388,6 @@ function chatRoomRecord(): ChatRoomRecord {
     updatedAt: new Date("2026-05-20T12:10:00.000Z"),
   };
 }
-
 function calendarEventRecord(): CalendarEventRecord {
   return {
     id: "event-1",
@@ -586,13 +421,11 @@ function calendarEventRecord(): CalendarEventRecord {
     ],
   };
 }
-
 class FakeDriveStore {
   readonly searches: Parameters<
     NonNullable<Parameters<typeof createStoreBackedMcpResourceProvider>[0]["drive"]>["search"]
   >[0][] = [];
   readonly reads: DriveFileReadInput[] = [];
-
   async search(input: (typeof this.searches)[number]): Promise<readonly DriveSearchHit[]> {
     this.searches.push(input);
     return [
@@ -608,7 +441,6 @@ class FakeDriveStore {
       },
     ];
   }
-
   async readFile(input: DriveFileReadInput): Promise<DriveFileReadResult | null> {
     this.reads.push(input);
     if (input.objectId === "file-text") {
@@ -626,75 +458,6 @@ class FakeDriveStore {
     return null;
   }
 }
-
-class FakeDocsStore {
-  readonly lists: Parameters<
-    NonNullable<
-      Parameters<typeof createStoreBackedMcpResourceProvider>[0]["docs"]
-    >["listDocumentsForActor"]
-  >[0][] = [];
-  readonly reads: Parameters<
-    NonNullable<
-      Parameters<typeof createStoreBackedMcpResourceProvider>[0]["docs"]
-    >["getDocsExportDocument"]
-  >[0][] = [];
-
-  async listDocumentsForActor(
-    input: (typeof this.lists)[number],
-  ): Promise<readonly DocsDocumentRecord[]> {
-    this.lists.push(input);
-    return [docsRecord()];
-  }
-
-  async getDocsExportDocument(
-    input: (typeof this.reads)[number],
-  ): Promise<DocsExportDocument | null> {
-    this.reads.push(input);
-    return input.docId === "doc-1"
-      ? {
-          id: "doc-1",
-          title: "Launch plan",
-          markdown: "The launch plan.",
-          comments: [{ id: "comment-1", body: "Needs timeline." }],
-          updatedAt: new Date("2026-05-20T13:00:00.000Z"),
-        }
-      : null;
-  }
-}
-
-class RecordingEventBus {
-  readonly records: { readonly subject: string; readonly payload: unknown }[] = [];
-
-  async publish(subject: string, payload: unknown): Promise<void> {
-    this.records.push({ subject, payload });
-  }
-}
-
-class RecordingMeteringClient implements MeteringClient {
-  readonly records: Array<{
-    readonly orgId: string;
-    readonly event: MeteringEvent;
-    readonly trace: TraceContext | undefined;
-  }> = [];
-
-  async emit(orgId: string, event: MeteringEvent, trace?: TraceContext): Promise<void> {
-    this.records.push({ orgId, event, trace });
-  }
-
-  async emitBatch(inputs: readonly MeteringEmitInput[]): Promise<void> {
-    for (const input of inputs) {
-      await this.emit(input.orgId, input.event, input.trace);
-    }
-  }
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null) {
-    throw new Error("Expected quota event payload to be an object.");
-  }
-  return value as Record<string, unknown>;
-}
-
 function driveEntry(id: string, name: string, mimeType: string): DriveEntryRecord {
   return {
     id,
@@ -702,7 +465,6 @@ function driveEntry(id: string, name: string, mimeType: string): DriveEntryRecor
     name,
     folderId: null,
     ownerActorId: "agent-mcp",
-    app: null,
     mimeType,
     byteSize: 16,
     sha256: null,
@@ -712,25 +474,5 @@ function driveEntry(id: string, name: string, mimeType: string): DriveEntryRecor
     deletedAt: null,
     createdAt: new Date("2026-05-20T12:00:00.000Z"),
     updatedAt: new Date("2026-05-20T12:30:00.000Z"),
-  };
-}
-
-function docsRecord(): DocsDocumentRecord {
-  return {
-    id: "doc-1",
-    orgId: "org-mcp",
-    title: "Launch plan",
-    threadId: null,
-    ownerActorId: "agent-mcp",
-    createdByActorId: "agent-mcp",
-    ydocState: null,
-    ydocStateVector: null,
-    updateSeq: 1,
-    editorEngine: "legacy-yjs",
-    formatVersion: 1,
-    metadata: {},
-    deletedAt: null,
-    createdAt: new Date("2026-05-20T12:00:00.000Z"),
-    updatedAt: new Date("2026-05-20T13:00:00.000Z"),
   };
 }

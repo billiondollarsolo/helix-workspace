@@ -137,8 +137,7 @@ export function expandCalendarOccurrencePage(
         ? {}
         : { recurrenceId }),
     })),
-    nextCursor:
-      visible.length > limit ? (page.at(-1)?.recurrenceId.toISOString() ?? null) : null,
+    nextCursor: visible.length > limit ? (page.at(-1)?.recurrenceId.toISOString() ?? null) : null,
   };
 }
 
@@ -189,22 +188,26 @@ function parseOverride(value: unknown): readonly CalendarRecurrenceOverride[] {
   const description = optionalNullableString(value.description);
   const location = optionalNullableString(value.location);
   if (title === false || description === false || location === false) return [];
-  return [{
-    recurrenceId,
-    range,
-    startsAt,
-    endsAt,
-    status,
-    sequence,
-    dtstamp,
-    attendees,
-    ...(title === undefined ? {} : { title }),
-    ...(description === undefined ? {} : { description }),
-    ...(location === undefined ? {} : { location }),
-  }];
+  return [
+    {
+      recurrenceId,
+      range,
+      startsAt,
+      endsAt,
+      status,
+      sequence,
+      dtstamp,
+      attendees,
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      ...(location === undefined ? {} : { location }),
+    },
+  ];
 }
 
-function parseOverrideAttendee(value: unknown): readonly CalendarRecurrenceOverride["attendees"][number][] {
+function parseOverrideAttendee(
+  value: unknown,
+): readonly CalendarRecurrenceOverride["attendees"][number][] {
   if (!isJsonObject(value)) return [];
   const email = stringValue(value.email);
   const responseStatus = value.responseStatus;
@@ -212,17 +215,22 @@ function parseOverrideAttendee(value: unknown): readonly CalendarRecurrenceOverr
   const displayName = optionalNullableString(value.displayName);
   if (
     email === undefined ||
-    (responseStatus !== "needs_action" && responseStatus !== "accepted" &&
-      responseStatus !== "declined" && responseStatus !== "tentative") ||
+    (responseStatus !== "needs_action" &&
+      responseStatus !== "accepted" &&
+      responseStatus !== "declined" &&
+      responseStatus !== "tentative") ||
     (role !== undefined && role !== "required" && role !== "optional" && role !== "resource") ||
     displayName === false
-  ) return [];
-  return [{
-    email,
-    responseStatus,
-    ...(role === undefined ? {} : { role }),
-    ...(displayName === undefined ? {} : { displayName }),
-  }];
+  )
+    return [];
+  return [
+    {
+      email,
+      responseStatus,
+      ...(role === undefined ? {} : { role }),
+      ...(displayName === undefined ? {} : { displayName }),
+    },
+  ];
 }
 
 function optionalString(value: unknown): string | undefined | false {
@@ -245,7 +253,8 @@ function applicableOverride(
   return overrides
     .filter(
       (candidate) =>
-        candidate.range === "this_and_future" && new Date(candidate.recurrenceId).getTime() <= target,
+        candidate.range === "this_and_future" &&
+        new Date(candidate.recurrenceId).getTime() <= target,
     )
     .sort(
       (left, right) =>

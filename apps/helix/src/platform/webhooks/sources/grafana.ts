@@ -7,12 +7,14 @@ import type {
 } from "./common.js";
 import {
   arrayField,
+  bearerToken,
   getHeader,
   hmacSha256Base64,
   hmacSha256Hex,
   numberField,
   objectField,
   parseJsonPayload,
+  payloadToString,
   safeEqualText,
   stringField,
 } from "./common.js";
@@ -80,15 +82,6 @@ export function parseGrafanaWebhook(options: {
   };
 }
 
-function bearerToken(headers: WebhookHeaders | undefined): string | undefined {
-  const authorization = getHeader(headers, "authorization");
-  if (authorization === undefined) {
-    return undefined;
-  }
-  const match = /^bearer\s+(.+)$/iu.exec(authorization);
-  return match?.[1]?.trim();
-}
-
 function verifyGrafanaHmacSignature(options: VerifySourceSignatureOptions): boolean {
   const header = options.header ?? getHeader(options.headers, "x-grafana-alerting-signature");
   if (header === undefined || header.length === 0) {
@@ -96,9 +89,7 @@ function verifyGrafanaHmacSignature(options: VerifySourceSignatureOptions): bool
   }
 
   const timestamp = getHeader(options.headers, "x-grafana-alerting-timestamp");
-  const body = Buffer.isBuffer(options.payload)
-    ? options.payload.toString("utf8")
-    : Buffer.from(options.payload).toString("utf8");
+  const body = payloadToString(options.payload);
   const signedPayload = timestamp === undefined ? body : `${timestamp}:${body}`;
   const expectedHex = hmacSha256Hex(options.secret, signedPayload);
   const expectedBase64 = hmacSha256Base64(options.secret, signedPayload);

@@ -100,7 +100,11 @@ function workflowWith(input: {
     );
   return new TenantDeletionWorkflow({
     store: input.store,
-    storageResolver: () => ({ client: input.storage, managedBy: "helix-default", prefix: "tenant/" }),
+    storageResolver: () => ({
+      client: input.storage,
+      managedBy: "helix-default",
+      prefix: "tenant/",
+    }),
     proofStore: {
       async putObject(object) {
         input.written?.push(object);
@@ -108,8 +112,16 @@ function workflowWith(input: {
     },
     signer,
     ...(input.search === undefined ? {} : { search: input.search }),
-    cache: { async purgeTenant() { return 2; } },
-    secrets: { async deleteTenantSecrets() { return 3; } },
+    cache: {
+      async purgeTenant() {
+        return 2;
+      },
+    },
+    secrets: {
+      async deleteTenantSecrets() {
+        return 3;
+      },
+    },
     now: () => new Date("2026-02-01T00:00:00.000Z"),
   });
 }
@@ -122,8 +134,12 @@ class MemoryStorage {
     this.keys = new Set(keys);
   }
 
-  async put(object: StorageObject) { this.keys.add(object.key); }
-  async get() { return null; }
+  async put(object: StorageObject) {
+    this.keys.add(object.key);
+  }
+  async get() {
+    return null;
+  }
   async delete(key: string) {
     if (this.failOnceFor === key) {
       this.failOnceFor = undefined;
@@ -150,7 +166,13 @@ class MemorySearch implements SearchEngine {
   async search(_request: SearchRequest): Promise<SearchResponse> {
     return {
       query: "",
-      hits: this.documents.map((id) => ({ id, type: "drive", title: id, body: "", attributes: {} })),
+      hits: this.documents.map((id) => ({
+        id,
+        type: "drive",
+        title: id,
+        body: "",
+        attributes: {},
+      })),
     };
   }
 }
@@ -158,7 +180,9 @@ class MemorySearch implements SearchEngine {
 class MemoryStore implements TenantDeletionStore {
   record = proof();
   sqlPurges = 0;
-  async prepare() { return this.record; }
+  async prepare() {
+    return this.record;
+  }
   async recordStep() {}
   async purgeSql() {
     this.sqlPurges += 1;
@@ -176,7 +200,9 @@ class MemoryStore implements TenantDeletionStore {
     });
     return this.record;
   }
-  async find() { return this.record; }
+  async find() {
+    return this.record;
+  }
 }
 
 function proof(overrides: Partial<TenantDeletionProofRecord> = {}): TenantDeletionProofRecord {

@@ -50,21 +50,6 @@ const requiredCoverage = [
     envOverrides: ["CHAT_TOOL_ID", "CHAT_BODY", "CHAT_QUERY", "CHAT_EXPECT"],
   },
   {
-    label: "concurrent editors in one doc",
-    group: "docs",
-    metric: "helix_docs_collaboration_ms",
-    thresholdEnv: "DOCS_COLLABORATION_P95_MS",
-    defaultThreshold: 200,
-    envOverrides: [
-      "DOCS_CREATE_TOOL_ID",
-      "DOCS_CREATE_BODY",
-      "DOCS_EXPORT_TOOL_ID",
-      "DOCS_EXPORT_BODY",
-      "DOCS_DOC_ID",
-      "DOCS_EXPECT",
-    ],
-  },
-  {
     label: "Jitsi call join time",
     group: "meet_jitsi",
     metric: "helix_jitsi_join_ms",
@@ -163,14 +148,13 @@ expectLiveAuthSmoke(
 );
 expectLiveAuthSmoke(
   "backend realism smoke default k6 bundle",
-  "api_smoke,mail_api,inbound_mail,search,chat,docs,meet_jitsi,mcp,otel_health",
+  "api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,mcp,otel_health",
 );
 for (const backendGroup of [
   "mail_api",
   "inbound_mail",
   "search",
   "chat",
-  "docs",
   "meet_jitsi",
   "mcp",
   "otel_health",

@@ -19,13 +19,17 @@ export function extractTraceContext(carrier: TraceCarrier): PropagatedTraceConte
   const traceparent = firstHeaderValue(carrier.traceparent);
   const tracestate = firstHeaderValue(carrier.tracestate);
 
+  // Result when the traceparent is absent or unusable: a malformed header must
+  // not poison the context, but any tracestate still propagates on its own.
+  const tracestateOnly: PropagatedTraceContext = tracestate === undefined ? {} : { tracestate };
+
   if (traceparent === undefined) {
-    return tracestate === undefined ? {} : { tracestate };
+    return tracestateOnly;
   }
 
   const match = traceparentPattern.exec(traceparent);
   if (match === null) {
-    return tracestate === undefined ? {} : { tracestate };
+    return tracestateOnly;
   }
 
   const [, , traceId, spanId] = match;
@@ -35,20 +39,22 @@ export function extractTraceContext(carrier: TraceCarrier): PropagatedTraceConte
     traceId === emptyTraceId ||
     spanId === emptySpanId
   ) {
-    return tracestate === undefined ? {} : { tracestate };
+    return tracestateOnly;
   }
 
   return {
     traceId,
     spanId,
     traceparent,
-    ...(tracestate === undefined ? {} : { tracestate }),
+    ...tracestateOnly,
   };
 }
 
 export function extractTraceContextFromRequest(request: FastifyRequest): PropagatedTraceContext {
   return extractTraceContext({
-    ...(request.headers.traceparent === undefined ? {} : { traceparent: request.headers.traceparent }),
+    ...(request.headers.traceparent === undefined
+      ? {}
+      : { traceparent: request.headers.traceparent }),
     ...(request.headers.tracestate === undefined ? {} : { tracestate: request.headers.tracestate }),
   });
 }

@@ -16,11 +16,7 @@ describe("SearchReindexService", () => {
     const service = new SearchReindexService({
       engine,
       batchSize: 2,
-      sources: [
-        source("mail", ["mail:1", "mail:2", "mail:3"]),
-        source("drive", ["drive:1"]),
-        source("docs", ["docs:1"]),
-      ],
+      sources: [source("mail", ["mail:1", "mail:2", "mail:3"]), source("drive", ["drive:1"])],
     });
 
     await expect(service.reindex({ types: ["mail", "drive"] })).resolves.toEqual({
@@ -32,7 +28,7 @@ describe("SearchReindexService", () => {
       counts: {
         mail: 3,
         chat: 0,
-        docs: 0,
+
         drive: 1,
         calendar: 0,
       },
@@ -49,10 +45,11 @@ describe("SearchReindexService", () => {
   });
 
   it("prunes stale indexed documents after current rows are reindexed", async () => {
+    const orgId = "11111111-1111-4111-8111-111111111111";
     const engine = new FakeSearchEngine([
-      { id: "mail:1", type: "mail" },
-      { id: "mail:stale", type: "mail" },
-      { id: "drive:stale", type: "drive" },
+      { id: "mail:1", type: "mail", attributes: { orgId } },
+      { id: "mail:stale", type: "mail", attributes: { orgId } },
+      { id: "drive:stale", type: "drive", attributes: { orgId } },
     ]);
     const service = new SearchReindexService({
       engine,
@@ -60,9 +57,7 @@ describe("SearchReindexService", () => {
       sources: [source("mail", ["mail:1", "mail:2"]), source("drive", [])],
     });
 
-    await expect(
-      service.reindex({ types: ["mail", "drive"], orgId: "11111111-1111-4111-8111-111111111111" }),
-    ).resolves.toMatchObject({
+    await expect(service.reindex({ types: ["mail", "drive"], orgId })).resolves.toMatchObject({
       totalDocuments: 2,
       deletedDocuments: 2,
       counts: {
@@ -79,7 +74,7 @@ describe("SearchReindexService", () => {
         types: ["mail"],
         limit: 1000,
         offset: 0,
-        filter: 'attributes.orgId = "11111111-1111-4111-8111-111111111111"',
+        filter: `attributes.orgId = ${JSON.stringify(orgId)}`,
         attributesToRetrieve: ["id", "type", "attributes"],
       },
       {
@@ -87,7 +82,7 @@ describe("SearchReindexService", () => {
         types: ["drive"],
         limit: 1000,
         offset: 0,
-        filter: 'attributes.orgId = "11111111-1111-4111-8111-111111111111"',
+        filter: `attributes.orgId = ${JSON.stringify(orgId)}`,
         attributesToRetrieve: ["id", "type", "attributes"],
       },
     ]);
@@ -163,7 +158,7 @@ describe("SearchReindexService", () => {
     const service = new SearchReindexService({
       engine,
       sources: [
-        ...(["mail", "chat", "docs", "drive", "calendar"] as const).map((type) => ({
+        ...(["mail", "chat", "drive", "calendar"] as const).map((type) => ({
           type,
           collect: async ({ orgId }: { readonly orgId?: string | undefined }) => {
             calls.push(`${type}:${orgId ?? "all"}`);
@@ -175,13 +170,13 @@ describe("SearchReindexService", () => {
 
     const result = await service.reindex({ orgId: "11111111-1111-4111-8111-111111111111" });
 
-    expect(result.totalDocuments).toBe(5);
+    expect(result.totalDocuments).toBe(4);
     expect(result.deletedDocuments).toBe(0);
-    expect(result.types).toEqual(["mail", "chat", "docs", "drive", "calendar"]);
+    expect(result.types).toEqual(["mail", "chat", "drive", "calendar"]);
     expect(calls).toEqual([
       "mail:11111111-1111-4111-8111-111111111111",
       "chat:11111111-1111-4111-8111-111111111111",
-      "docs:11111111-1111-4111-8111-111111111111",
+
       "drive:11111111-1111-4111-8111-111111111111",
       "calendar:11111111-1111-4111-8111-111111111111",
     ]);
@@ -237,7 +232,7 @@ describe("SearchReconciliationWorker", () => {
           types: ["drive"],
           totalDocuments: 0,
           deletedDocuments: 0,
-          counts: { mail: 0, chat: 0, docs: 0, drive: 0, calendar: 0 },
+          counts: { mail: 0, chat: 0, drive: 0, calendar: 0 },
           batchSize: 100,
         };
       },
@@ -247,6 +242,47 @@ describe("SearchReconciliationWorker", () => {
     await Promise.all([worker.reconcileOnce(), worker.reconcileOnce()]);
 
     expect(calls).toEqual([{ types: ["drive"], pruneStale: true }]);
+  });
+
+  it("never prunes or lists indexed documents outside the requested org scope", async () => {
+    const orgA = "11111111-1111-4111-8111-111111111111";
+    const orgB = "22222222-2222-4222-8222-222222222222";
+    const engine = new FakeSearchEngine([
+      { id: "mail:a", type: "mail", attributes: { orgId: orgA } },
+      { id: "mail:b-stale", type: "mail", attributes: { orgId: orgB } },
+      { id: "mail:a-stale", type: "mail", attributes: { orgId: orgA } },
+    ]);
+    const service = new SearchReindexService({
+      engine,
+      sources: [
+        {
+          type: "mail",
+          collect: async ({ orgId }) => {
+            expect(orgId).toBe(orgA);
+            return [{ id: "mail:a", type: "mail", attributes: { orgId: orgA } }];
+          },
+        },
+      ],
+    });
+
+    await expect(service.reindex({ types: ["mail"], orgId: orgA })).resolves.toMatchObject({
+      totalDocuments: 1,
+      deletedDocuments: 1,
+    });
+
+    // Stale prune must filter by orgA so orgB's index entries are never listed
+    // or deleted from a foreign-tenant reindex path.
+    expect(engine.searches).toEqual([
+      {
+        query: "",
+        types: ["mail"],
+        limit: 1000,
+        offset: 0,
+        filter: `attributes.orgId = ${JSON.stringify(orgA)}`,
+        attributesToRetrieve: ["id", "type", "attributes"],
+      },
+    ]);
+    expect(engine.deletes).toEqual([["mail:a-stale"]]);
   });
 });
 
@@ -282,10 +318,20 @@ class FakeSearchEngine implements SearchEngine {
   async search(request: SearchRequest): Promise<SearchResponse> {
     this.searches.push(request);
     const types = new Set(request.types ?? []);
+    const orgMatch =
+      typeof request.filter === "string"
+        ? request.filter.match(/^attributes\.orgId = "(.+)"$/u)?.[1]
+        : undefined;
     return {
-      hits: this.indexedDocuments.filter(
-        (document) => types.size === 0 || types.has(document.type),
-      ),
+      hits: this.indexedDocuments.filter((document) => {
+        if (types.size > 0 && !types.has(document.type)) {
+          return false;
+        }
+        if (orgMatch === undefined) {
+          return true;
+        }
+        return document.attributes?.orgId === orgMatch;
+      }),
       query: request.query,
     };
   }

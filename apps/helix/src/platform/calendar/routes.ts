@@ -10,10 +10,7 @@ import { z } from "zod";
 import { DAV_BODY_LIMIT_BYTES } from "../../api/request-body.js";
 import { internalApiUrl, versionedApiPath } from "../../api/version.js";
 import { createIcsCalendar, type CalendarInvitationSender } from "./ics.js";
-import {
-  expandCalendarEventOccurrences,
-  type CalendarRecurrenceOverride,
-} from "./recurrence.js";
+import { expandCalendarEventOccurrences, type CalendarRecurrenceOverride } from "./recurrence.js";
 import {
   DavStandardsParseError,
   davElements,
@@ -839,10 +836,7 @@ function calendarHomeHref(actor: Actor): string {
 
 function calendarQueryMultistatusXml(events: readonly CalendarEventRecord[]): string {
   const responses = events.map((event) =>
-    calendarDataResponse(
-      versionedApiPath(`/dav/cal/${event.calendarId}/${event.id}.ics`),
-      event,
-    ),
+    calendarDataResponse(versionedApiPath(`/dav/cal/${event.calendarId}/${event.id}.ics`), event),
   );
   return calendarMultistatusXml(responses);
 }
@@ -1176,12 +1170,15 @@ function parseRecurrenceOverride(
     location: componentText(component, "location"),
     sequence,
     dtstamp: dtstamp.toISOString(),
-    attendees: component.getAllProperties("attendee").flatMap(parseAttendee).map((attendee) => ({
-      email: attendee.email,
-      displayName: attendee.displayName,
-      role: attendee.role,
-      responseStatus: attendee.responseStatus ?? "needs_action",
-    })),
+    attendees: component
+      .getAllProperties("attendee")
+      .flatMap(parseAttendee)
+      .map((attendee) => ({
+        email: attendee.email,
+        displayName: attendee.displayName,
+        role: attendee.role,
+        responseStatus: attendee.responseStatus ?? "needs_action",
+      })),
   };
 }
 

@@ -66,7 +66,9 @@
   border-radius: 4px;
   color: var(--text-3);
   background: transparent;
-  transition: background 0.08s, color 0.08s;
+  transition:
+    background 0.08s,
+    color 0.08s;
   flex-shrink: 0;
 }
 
@@ -164,7 +166,9 @@
   font-weight: 500;
   color: var(--text-2);
   background: transparent;
-  transition: background 0.08s, color 0.08s;
+  transition:
+    background 0.08s,
+    color 0.08s;
   white-space: nowrap;
 }
 
@@ -188,12 +192,17 @@
   position: relative;
 }
 
+.mail-select-all-wrap input {
+  width: 24px;
+  height: 24px;
+}
+
 .mail-select-caret {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
   color: var(--text-3);
   border-radius: 3px;
   cursor: pointer;
@@ -227,7 +236,9 @@
   font-size: var(--text-meta);
   color: var(--text-2);
   background: transparent;
-  transition: background 0.07s, color 0.07s;
+  transition:
+    background 0.07s,
+    color 0.07s;
   text-align: left;
 }
 
@@ -268,7 +279,9 @@
   font-size: var(--text-meta);
   color: var(--text-2);
   background: transparent;
-  transition: background 0.07s, color 0.07s;
+  transition:
+    background 0.07s,
+    color 0.07s;
   text-align: left;
 }
 

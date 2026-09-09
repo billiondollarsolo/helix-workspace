@@ -46,7 +46,6 @@ export interface SeedLocalDemoResult {
   readonly actors: number;
   readonly mailThreads: number;
   readonly driveEntries: number;
-  readonly docs: number;
   readonly calendarEvents: number;
   readonly chatRooms: number;
   readonly chatMessages: number;
@@ -107,10 +106,6 @@ const demoIds = {
   driveFileTraining: "00000000-0000-4000-8000-000000000303",
   driveVersionAiServices: "00000000-0000-4000-8000-000000000304",
   driveVersionTraining: "00000000-0000-4000-8000-000000000305",
-  docsQuarterly: "00000000-0000-4000-8000-000000000401",
-  docsQuarterlyThread: "00000000-0000-4000-8000-000000000402",
-  docsRunbook: "00000000-0000-4000-8000-000000000403",
-  docsRunbookThread: "00000000-0000-4000-8000-000000000404",
   calendarPrimary: "00000000-0000-4000-8000-000000000501",
   eventOrderMatch: "00000000-0000-4000-8000-000000000502",
   eventOrderMatchThread: "00000000-0000-4000-8000-000000000503",
@@ -134,8 +129,6 @@ const demoIds = {
 export const LOCAL_DEMO_IDS = demoIds;
 
 const demoThreads = [
-  demoIds.docsQuarterlyThread,
-  demoIds.docsRunbookThread,
   demoIds.eventOrderMatchThread,
   demoIds.eventPlanningThread,
   demoIds.mailAmazonThread,
@@ -148,13 +141,10 @@ const demoThreads = [
 const demoObjects = [
   demoIds.driveFileAiServices,
   demoIds.driveFileTraining,
-  demoIds.docsQuarterly,
-  demoIds.docsRunbook,
   demoIds.mailAttachmentAmazon,
 ] as const;
 
 const demoFolders = [demoIds.driveFolderProjects] as const;
-const demoDocuments = [demoIds.docsQuarterly, demoIds.docsRunbook] as const;
 const demoEvents = [demoIds.eventOrderMatch, demoIds.eventPlanning] as const;
 const demoMessages = [
   demoIds.mailAmazonMessage,
@@ -192,7 +182,6 @@ export async function seedLocalDemo(
     await clearDemoContent(tx, orgId);
     await seedBetterAuthUser(tx, orgId, actorId, email, displayName, passwordHash);
     await seedDrive(tx, orgId, actorId, storage);
-    await seedDocs(tx, orgId, actorId, storage);
     await seedCalendar(tx, orgId, actorId, email, timeline);
     await seedMail(tx, orgId, actorId, email, storage, timeline);
     if (volumeMailMessages > 0) {
@@ -207,11 +196,10 @@ export async function seedLocalDemo(
     actors: 3,
     mailThreads: 4,
     driveEntries: 3,
-    docs: 2,
     calendarEvents: 2,
     chatRooms: 1,
     chatMessages: 3,
-    storageObjects: storage === undefined ? 0 : 5,
+    storageObjects: storage === undefined ? 0 : 3,
     volumeMailMessages,
     anchorDate: timeline.anchorDate,
   };
@@ -262,9 +250,6 @@ async function seedActors(
         "mail.send",
         "drive.read",
         "drive.write",
-        "docs.read",
-        "docs.write",
-        "docs.comment",
         "calendar.read",
         "calendar.write",
         "chat.read",
@@ -278,7 +263,7 @@ async function seedActors(
       id: demoIds.colleagueActor,
       email: "maya@helix.local",
       displayName: "Maya Sharma",
-      scopes: ["mail.read", "drive.read", "docs.read", "calendar.read", "chat.read"],
+      scopes: ["mail.read", "drive.read", "calendar.read", "chat.read"],
     },
     {
       id: demoIds.familyActor,
@@ -323,7 +308,6 @@ async function clearDemoContent(sql: SeedSql, orgId: string): Promise<void> {
         (resource_type = 'thread' and resource_id = any(${sql.array([...demoThreads])}::uuid[]))
         or (resource_type = 'object' and resource_id = any(${sql.array([...demoObjects])}::uuid[]))
         or (resource_type = 'folder' and resource_id = any(${sql.array([...demoFolders])}::uuid[]))
-        or (resource_type = 'document' and resource_id = any(${sql.array([...demoDocuments])}::uuid[]))
         or (resource_type = 'calendar' and resource_id = ${demoIds.calendarPrimary})
         or (resource_type = 'event' and resource_id = any(${sql.array([...demoEvents])}::uuid[]))
       )
@@ -332,9 +316,6 @@ async function clearDemoContent(sql: SeedSql, orgId: string): Promise<void> {
   await sql`delete from mail_thread_state where thread_id = any(${sql.array([...demoThreads])}::uuid[])`;
   await sql`delete from chat_read_receipts where thread_id = ${demoIds.chatRoomLaunch}`;
   await sql`delete from messages where id = any(${sql.array([...demoMessages])}::uuid[])`;
-  await sql`delete from docs_comments where document_id = any(${sql.array([...demoDocuments])}::uuid[])`;
-  await sql`delete from docs_updates where document_id = any(${sql.array([...demoDocuments])}::uuid[])`;
-  await sql`delete from docs_documents where id = any(${sql.array([...demoDocuments])}::uuid[])`;
   await sql`delete from cal_attendees where event_id = any(${sql.array([...demoEvents])}::uuid[])`;
   await sql`delete from cal_events where id = any(${sql.array([...demoEvents])}::uuid[])`;
   await sql`delete from cal_calendars where id = ${demoIds.calendarPrimary}`;
@@ -538,115 +519,6 @@ async function seedDriveFile(
   await grant(sql, input.orgId, input.actorId, "object", input.objectId, "owner", input.actorId);
 }
 
-async function seedDocs(
-  sql: SeedSql,
-  orgId: string,
-  actorId: string,
-  storage: DemoStorageClient | undefined,
-): Promise<void> {
-  await seedDoc(sql, {
-    orgId,
-    actorId,
-    documentId: demoIds.docsQuarterly,
-    threadId: demoIds.docsQuarterlyThread,
-    title: "Quarterly Planning Notes",
-    markdown:
-      "# Quarterly Planning Notes\n\n- Tighten mail list density.\n- Validate Better Auth session flows.\n- Finish Drive/docs/calendar seeded data.\n",
-    tags: ["planning", "product"],
-    storage,
-  });
-  await seedDoc(sql, {
-    orgId,
-    actorId,
-    documentId: demoIds.docsRunbook,
-    threadId: demoIds.docsRunbookThread,
-    title: "Local Testing Runbook",
-    markdown:
-      "# Local Testing Runbook\n\nUse the seeded OAuth client, open Mail, inspect Drive, and create a calendar RSVP.\n",
-    tags: ["runbook", "local"],
-    storage,
-  });
-}
-
-async function seedDoc(
-  sql: SeedSql,
-  input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly documentId: string;
-    readonly threadId: string;
-    readonly title: string;
-    readonly markdown: string;
-    readonly tags: readonly string[];
-    readonly storage: DemoStorageClient | undefined;
-  },
-): Promise<void> {
-  const storageKey = `docs/${input.orgId}/${input.documentId}`;
-  await putDemoStorageObject(input.storage, {
-    key: storageKey,
-    body: input.markdown,
-    contentType: "application/vnd.helix.document",
-    metadata: {
-      source: LOCAL_DEMO_SOURCE,
-      objectId: input.documentId,
-      documentId: input.documentId,
-      sha256: sha(input.markdown),
-    },
-  });
-  await sql`
-    insert into threads (id, org_id, kind, subject, created_by_actor_id, metadata)
-    values (${input.threadId}, ${input.orgId}, 'doc', ${input.title}, ${input.actorId}, ${json(sql, { source: LOCAL_DEMO_SOURCE })})
-  `;
-  await sql`
-    insert into docs_documents (
-      id, org_id, title, thread_id, owner_actor_id, created_by_actor_id, ydoc_state, update_seq, metadata
-    )
-    values (
-      ${input.documentId},
-      ${input.orgId},
-      ${input.title},
-      ${input.threadId},
-      ${input.actorId},
-      ${input.actorId},
-      ${Buffer.from(input.markdown, "utf8")},
-      0,
-      ${json(sql, { source: LOCAL_DEMO_SOURCE, plainText: input.markdown, tags: input.tags })}
-    )
-  `;
-  await sql`
-    insert into objects (id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata)
-    values (
-      ${input.documentId},
-      ${input.orgId},
-      ${input.actorId},
-      'file',
-      ${storageKey},
-      'application/vnd.helix.document',
-      ${Buffer.byteLength(input.markdown, "utf8")},
-      ${sha(input.markdown)},
-      ${json(sql, {
-        source: LOCAL_DEMO_SOURCE,
-        app: "docs",
-        docId: input.documentId,
-        name: `${input.title}.helixdoc`,
-        title: input.title,
-        folderId: demoIds.driveFolderProjects,
-      })}
-    )
-  `;
-  await grant(sql, input.orgId, input.actorId, "thread", input.threadId, "owner", input.actorId);
-  await grant(
-    sql,
-    input.orgId,
-    input.actorId,
-    "document",
-    input.documentId,
-    "owner",
-    input.actorId,
-  );
-  await grant(sql, input.orgId, input.actorId, "object", input.documentId, "owner", input.actorId);
-}
-
 async function seedCalendar(
   sql: SeedSql,
   orgId: string,
@@ -692,7 +564,7 @@ async function seedCalendar(
     eventId: demoIds.eventPlanning,
     uid: "demo-planning@helix.local",
     title: "Product planning review",
-    description: "Review seeded mail, Drive, docs, and calendar flows.",
+    description: "Review seeded mail, Drive and calendar flows.",
     location: "Helix Meet",
     startsAt: timeline.at("2026-05-21T17:00:00.000Z"),
     endsAt: timeline.at("2026-05-21T17:45:00.000Z"),
@@ -1120,7 +992,7 @@ async function seedChat(
       ${demoIds.chatRoomLaunch},
       ${orgId},
       'Helix launch room',
-      'Coordinate Mail, Drive, Docs, and Calendar launch testing.',
+      'Coordinate Mail, Drive and Calendar launch testing.',
       false,
       ${json(sql, { source: LOCAL_DEMO_SOURCE, color: "blue" })}
     )
@@ -1140,7 +1012,7 @@ async function seedChat(
     {
       id: demoIds.chatMessageLaunchPlan,
       actorId,
-      body: "I loaded the Helix launch room with real seeded Mail, Drive, Docs, and Calendar data for end-to-end testing.",
+      body: "I loaded the Helix launch room with real seeded Mail, Drive and Calendar data for end-to-end testing.",
       sentAt: timeline.at("2026-05-20T13:05:00.000Z"),
     },
     {

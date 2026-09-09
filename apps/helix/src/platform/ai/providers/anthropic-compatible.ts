@@ -21,6 +21,7 @@ import {
   textFromAnthropicContent,
   toolCallsFromAnthropicContent,
   usageFromAnthropic,
+  type ProviderRequestConfig,
 } from "./shared.js";
 
 export interface AnthropicCompatibleProviderConfig {
@@ -36,7 +37,9 @@ export interface AnthropicCompatibleProviderConfig {
   readonly headers?: Record<string, string>;
 }
 
-export function createAnthropicCompatibleProvider(config: AnthropicCompatibleProviderConfig): LLMProviderCapability {
+export function createAnthropicCompatibleProvider(
+  config: AnthropicCompatibleProviderConfig,
+): LLMProviderCapability {
   return new AnthropicCompatibleProvider(config);
 }
 
@@ -73,15 +76,7 @@ class AnthropicCompatibleProvider implements LLMProviderCapability {
     const payload = await postJson(
       joinUrl(this.#baseUrl, "messages"),
       anthropicRequestBody(model, req.messages, this.#maxTokens, this.#anthropicVersion),
-      {
-        fetch: this.#fetch,
-        headers: {
-          "anthropic-version": this.#anthropicVersion,
-          ...(this.#apiKey === undefined || this.#apiKey.length === 0 ? {} : { "x-api-key": this.#apiKey }),
-          ...(this.#betaHeaders.length === 0 ? {} : { "anthropic-beta": this.#betaHeaders.join(",") }),
-          ...(this.#headers ?? {}),
-        },
-      },
+      this.#requestConfig(),
     );
 
     return anthropicChatResponse(payload, this.id, model);
@@ -95,17 +90,25 @@ class AnthropicCompatibleProvider implements LLMProviderCapability {
         ...anthropicRequestBody(model, req.messages, this.#maxTokens, this.#anthropicVersion),
         stream: true,
       },
-      {
-        fetch: this.#fetch,
-        headers: {
-          "anthropic-version": this.#anthropicVersion,
-          ...(this.#apiKey === undefined || this.#apiKey.length === 0 ? {} : { "x-api-key": this.#apiKey }),
-          ...(this.#betaHeaders.length === 0 ? {} : { "anthropic-beta": this.#betaHeaders.join(",") }),
-          ...(this.#headers ?? {}),
-        },
-      },
+      this.#requestConfig(),
     );
     yield* anthropicChatChunks(events, model);
+  }
+
+  #requestConfig(): ProviderRequestConfig {
+    return {
+      fetch: this.#fetch,
+      headers: {
+        "anthropic-version": this.#anthropicVersion,
+        ...(this.#apiKey === undefined || this.#apiKey.length === 0
+          ? {}
+          : { "x-api-key": this.#apiKey }),
+        ...(this.#betaHeaders.length === 0
+          ? {}
+          : { "anthropic-beta": this.#betaHeaders.join(",") }),
+        ...(this.#headers ?? {}),
+      },
+    };
   }
 
   async models(): Promise<readonly ModelInfo[]> {
@@ -117,7 +120,11 @@ class AnthropicCompatibleProvider implements LLMProviderCapability {
   }
 }
 
-export function anthropicChatResponse(payload: unknown, providerId: string, fallbackModel: string): ChatResponse {
+export function anthropicChatResponse(
+  payload: unknown,
+  providerId: string,
+  fallbackModel: string,
+): ChatResponse {
   const record = assertRecord(payload, "Anthropic-compatible chat response");
   const content = arrayField(record, "content");
   const model = stringField(record, "model") ?? fallbackModel;

@@ -301,7 +301,7 @@ describe("bundled plugin catalog", () => {
     const plugins = await discoverPluginsDirectory(bundledPluginsDir);
     const ids = plugins.map((plugin) => plugin.manifest.id).sort();
 
-    expect(ids).toEqual(["com.helix.drive-preview-libreoffice", "com.helix.webhook-out-slack"]);
+    expect(ids).toEqual(["com.helix.webhook-out-slack"]);
     for (const id of removedPlaceholderIds) {
       expect(ids).not.toContain(id);
     }

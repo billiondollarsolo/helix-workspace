@@ -1,3 +1,4 @@
+import { useAdminSectionTab } from "./admin-section-search";
 /* Helix Admin — Mail section.
  *
  * Production TSX for the Admin console's "Mail" section. Four sub-views wired
@@ -11,7 +12,14 @@
  * styles, `.panel` / `.chip` / `.btn` classes, no hard-coded colors.
  */
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useMemo,
+  useState,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import {
@@ -56,7 +64,30 @@ export const MAIL_SUBVIEWS = [
   { id: "spam", label: "Spam filtering" },
 ] as const;
 
-type MailSubviewId = (typeof MAIL_SUBVIEWS)[number]["id"];
+export type MailSubviewId = (typeof MAIL_SUBVIEWS)[number]["id"];
+
+/** Default tab when `?tab=` is missing or unknown (keeps `/admin/mail` clean). */
+export const DEFAULT_MAIL_SUBVIEW: MailSubviewId = "providers";
+
+export function isMailSubviewId(value: string): value is MailSubviewId {
+  return MAIL_SUBVIEWS.some((view) => view.id === value);
+}
+
+/** Map URL `?tab=` to a known mail admin subview. Unknown → default. */
+export function mailSubviewFromSearch(tab: string | undefined): MailSubviewId {
+  return tab !== undefined && isMailSubviewId(tab) ? tab : DEFAULT_MAIL_SUBVIEW;
+}
+
+/**
+ * Search fragment for the admin section route. Default tab is omitted so the
+ * URL stays `/admin/mail` rather than `/admin/mail?tab=providers`.
+ */
+export function mailAdminSearchForSubview(subview: MailSubviewId): { readonly tab?: string } {
+  return subview === DEFAULT_MAIL_SUBVIEW ? {} : { tab: subview };
+}
+
+const tabDomId = (id: MailSubviewId) => `mail-tab-${id}`;
+const panelDomId = (id: MailSubviewId) => `mail-panel-${id}`;
 
 /* ------------------------------------------------------------------ */
 /* Shared layout primitives (mirror admin-console.tsx)                */
@@ -603,7 +634,8 @@ function MailDomains() {
 
 const DMARC_GRID = "1fr 1fr 1.4fr 90px 90px 90px";
 
-function percent(fraction: number): string {
+function percent(fraction: number | null): string {
+  if (fraction === null) return "Not reported";
   return `${(fraction * 100).toFixed(1)}%`;
 }
 
@@ -1453,48 +1485,96 @@ const MAIL_SUBVIEW_CONTENT: Record<MailSubviewId, () => ReactNode> = {
   spam: SpamFiltering,
 };
 
+const MAIL_SUBVIEW_IDS = MAIL_SUBVIEWS.map((view) => view.id);
+
 export function MailAdminSection() {
-  const [subview, setSubview] = useState<MailSubviewId>("providers");
+  const [subview, selectSubview] = useAdminSectionTab(
+    MAIL_SUBVIEW_IDS,
+    DEFAULT_MAIL_SUBVIEW,
+    "mail",
+  );
+  const tabRefs = useRef<Partial<Record<MailSubviewId, HTMLButtonElement | null>>>({});
   const Subview = MAIL_SUBVIEW_CONTENT[subview];
 
+  /* Arrow keys move between tabs and only the selected tab sits in the tab
+     order — the ARIA tabs pattern. Five plain buttons would otherwise cost a
+     keyboard user five stops before reaching the panel. */
+  const moveSelection = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const last = MAIL_SUBVIEWS.length - 1;
+    const current = MAIL_SUBVIEWS.findIndex((view) => view.id === subview);
+    let nextIndex: number;
+    switch (event.key) {
+      case "ArrowRight":
+        nextIndex = (current + 1) % MAIL_SUBVIEWS.length;
+        break;
+      case "ArrowLeft":
+        nextIndex = (current + last) % MAIL_SUBVIEWS.length;
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = last;
+        break;
+      default:
+        return;
+    }
+    const next = MAIL_SUBVIEWS[nextIndex];
+    if (next === undefined) {
+      return;
+    }
+    event.preventDefault();
+    selectSubview(next.id);
+    tabRefs.current[next.id]?.focus();
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+    <div className="flex min-w-0 flex-1 flex-col">
+      <PageHeading
+        title="Mail"
+        subtitle="Outbound delivery, mail domains, deliverability, routing, and spam filtering."
+      />
+
+      {/* The console's only second-level nav: sibling views of one section,
+          which is what a tab bar is for. The buttons wear the app-wide `.tab`
+          look; the bar itself is built here rather than with `.tabs` because
+          that class carries a 12px inset that would knock the tabs out of line
+          with the heading above them. */}
       <div
         role="tablist"
         aria-label="Mail admin views"
-        style={{
-          display: "flex",
-          gap: 4,
-          padding: "8px 24px 0",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--surface)",
-        }}
+        className="mb-5 flex gap-0.5 overflow-x-auto border-b border-[var(--border)]"
+        onKeyDown={moveSelection}
       >
         {MAIL_SUBVIEWS.map((view) => {
           const active = view.id === subview;
           return (
             <button
               key={view.id}
+              id={tabDomId(view.id)}
+              ref={(node) => {
+                tabRefs.current[view.id] = node;
+              }}
               type="button"
               role="tab"
               aria-selected={active}
-              onClick={() => setSubview(view.id)}
-              style={{
-                height: 34,
-                padding: "0 12px",
-                fontSize: "var(--text-body-sm)",
-                fontWeight: active ? 600 : 400,
-                color: active ? "var(--accent)" : "var(--text-2)",
-                background: "transparent",
-                borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
-              }}
+              aria-controls={panelDomId(view.id)}
+              tabIndex={active ? 0 : -1}
+              /* Roving tabindex moves focus programmatically, so the focused
+                 tab has to be visible even though `.tab` styles only hover and
+                 selection. */
+              className={`tab shrink-0 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)] ${active ? "active" : ""}`.trim()}
+              onClick={() => selectSubview(view.id)}
             >
               {view.label}
             </button>
           );
         })}
       </div>
-      <Subview />
+
+      <div id={panelDomId(subview)} role="tabpanel" aria-labelledby={tabDomId(subview)}>
+        <Subview />
+      </div>
     </div>
   );
 }

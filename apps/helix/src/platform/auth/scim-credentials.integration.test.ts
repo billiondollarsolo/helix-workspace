@@ -83,18 +83,18 @@ describe("Postgres SCIM credential governance", { skip: DATABASE_URL === undefin
 
     await expect(store.list(ORG_A)).resolves.toHaveLength(2);
     await expect(store.findById(ORG_B, oldToken.id)).resolves.toBeNull();
-    await expect(
-      store.markUsed(ORG_A, newToken.id, new Date(), "198.51.100.7"),
-    ).resolves.toBe(true);
+    await expect(store.markUsed(ORG_A, newToken.id, new Date(), "198.51.100.7")).resolves.toBe(
+      true,
+    );
     await expect(store.findById(ORG_A, newToken.id)).resolves.toMatchObject({
       lastUsedAt: expect.any(Date),
       lastUsedIp: "198.51.100.7/32",
     });
     const revoked = await store.revoke(ORG_A, oldToken.id, ADMIN_A);
     expect(revoked).toMatchObject({ revokedByActorId: ADMIN_A });
-    await expect(
-      store.markUsed(ORG_A, oldToken.id, new Date(), "198.51.100.7"),
-    ).resolves.toBe(false);
+    await expect(store.markUsed(ORG_A, oldToken.id, new Date(), "198.51.100.7")).resolves.toBe(
+      false,
+    );
     await expect(store.findById(ORG_A, newToken.id)).resolves.toMatchObject({ revokedAt: null });
 
     const duplicate = await issueScimBearerToken();

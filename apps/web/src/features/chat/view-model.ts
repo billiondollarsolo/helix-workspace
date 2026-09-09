@@ -54,6 +54,7 @@ export interface ChatMessageView {
   readonly bodyFormat: string;
   readonly attachmentObjectIds: readonly string[];
   readonly attachments: readonly ChatAttachmentRecord[];
+  readonly renderedBodyHtml?: string;
   readonly isMine: boolean;
   readonly editedAt: string | null;
   readonly reactions: readonly ChatReactionView[];
@@ -144,7 +145,6 @@ export function partitionRooms(
   const directs: ChatDirectView[] = [];
 
   for (const room of rooms) {
-    const memberCount = room.members?.length ?? 0;
     if (room.kind === "chat_dm") {
       const peer = (room.members ?? []).find((m) => m.actorId !== selfActorId);
       directs.push({
@@ -159,7 +159,7 @@ export function partitionRooms(
         id: room.id,
         name: roomDisplayName(room, selfActorId),
         kind: room.kind,
-        memberCount,
+        memberCount: room.members?.length ?? 0,
         unread: 0,
       });
     }
@@ -219,6 +219,7 @@ export function toMessageView(input: {
     bodyFormat: record.bodyFormat,
     attachmentObjectIds: record.attachmentObjectIds,
     attachments: record.attachments ?? [],
+    ...(record.renderedBodyHtml === undefined ? {} : { renderedBodyHtml: record.renderedBodyHtml }),
     isMine: record.actorId !== null && record.actorId === selfActorId,
     editedAt: record.editedAt,
     reactions: reactionViews(record.reactions ?? [], selfActorId),
@@ -311,21 +312,7 @@ export function readCountFor(
   receipts: readonly ChatReadReceiptRecord[],
   selfActorId: string | null,
 ): number {
-  const messageIndex = orderedIds.indexOf(messageId);
-  if (messageIndex < 0) {
-    return 0;
-  }
-  let count = 0;
-  for (const receipt of receipts) {
-    if (receipt.actorId === selfActorId || receipt.lastReadMessageId === null) {
-      continue;
-    }
-    const receiptIndex = orderedIds.indexOf(receipt.lastReadMessageId);
-    if (receiptIndex >= messageIndex) {
-      count += 1;
-    }
-  }
-  return count;
+  return seenByForMessage(messageId, orderedIds, receipts, selfActorId).length;
 }
 
 /** Map a presence roster to a `actorId -> online` lookup. */

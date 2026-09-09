@@ -26,7 +26,7 @@ smtp_receive_port="${HELIX_SMTP_RECEIVE_PORT:-28456}"
 
 export DATABASE_URL="${DATABASE_URL:-postgres://${postgres_user}:${postgres_password}@127.0.0.1:${postgres_port}/${postgres_db}}"
 export BETTER_AUTH_DATABASE_URL="${BETTER_AUTH_DATABASE_URL:-${DATABASE_URL}}"
-export HELIX_DEFAULT_ORG_ID="${HELIX_DEFAULT_ORG_ID:-00000000-0000-4000-8000-000000000100}"
+export HELIX_DEFAULT_ORG_ID="${HELIX_DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000000}"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:${redis_port}}"
 export NATS_URL="${NATS_URL:-nats://127.0.0.1:${nats_port}}"
 export MEILI_URL="${MEILI_URL:-http://127.0.0.1:${meili_port}}"

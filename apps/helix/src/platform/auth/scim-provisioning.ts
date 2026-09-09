@@ -1,18 +1,14 @@
 import type postgres from "postgres";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
-
 export type ScimFilterAttribute = "id" | "externalId" | "userName" | "displayName";
-
 export interface ScimFilter {
   readonly attribute: ScimFilterAttribute;
   readonly value: string;
 }
-
 export interface ScimPage<T> {
   readonly resources: readonly T[];
   readonly total: number;
 }
-
 export interface ScimUserRecord {
   readonly id: string;
   readonly orgId: string;
@@ -27,12 +23,10 @@ export interface ScimUserRecord {
   readonly updatedAt: Date;
   readonly version: number;
 }
-
 export interface ScimGroupMember {
   readonly value: string;
   readonly display: string;
 }
-
 export interface ScimGroupRecord {
   readonly id: string;
   readonly orgId: string;
@@ -43,7 +37,6 @@ export interface ScimGroupRecord {
   readonly updatedAt: Date;
   readonly version: number;
 }
-
 export interface PutScimUser {
   readonly externalId: string | null;
   readonly userName: string;
@@ -53,18 +46,15 @@ export interface PutScimUser {
   readonly active: boolean;
   readonly dataTransferTargetId?: string | null | undefined;
 }
-
 export interface PutScimGroup {
   readonly externalId: string | null;
   readonly displayName: string;
   readonly memberIds: readonly string[];
 }
-
 export interface ScimWriteResult<T> {
   readonly record: T;
   readonly created: boolean;
 }
-
 export interface ScimProvisioningStore {
   listUsers(
     orgId: string,
@@ -102,21 +92,18 @@ export interface ScimProvisioningStore {
   ): Promise<ScimGroupRecord | null>;
   deleteGroup(orgId: string, id: string, expectedVersion: number | null): Promise<boolean>;
 }
-
 export class ScimConflictError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ScimConflictError";
   }
 }
-
 export class ScimPreconditionError extends Error {
   constructor() {
     super("The resource changed after the supplied ETag was issued.");
     this.name = "ScimPreconditionError";
   }
 }
-
 interface UserRow {
   readonly id: string;
   readonly org_id: string;
@@ -132,7 +119,6 @@ interface UserRow {
   readonly version: string | number;
   readonly total_count?: string | number | undefined;
 }
-
 interface GroupRow {
   readonly id: string;
   readonly org_id: string;
@@ -144,10 +130,8 @@ interface GroupRow {
   readonly version: string | number;
   readonly total_count?: string | number | undefined;
 }
-
 export class PostgresScimProvisioningStore implements ScimProvisioningStore {
   constructor(private readonly sql: postgres.Sql) {}
-
   async listUsers(
     orgId: string,
     filter: ScimFilter | null,
@@ -180,11 +164,9 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
       };
     });
   }
-
   async getUser(orgId: string, id: string): Promise<ScimUserRecord | null> {
     return withTenantPostgresContext(this.sql, { orgId }, (tx) => selectUser(tx, orgId, id));
   }
-
   async createUser(orgId: string, input: PutScimUser): Promise<ScimWriteResult<ScimUserRecord>> {
     try {
       return await withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
@@ -214,7 +196,6 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
       throw new ScimConflictError("userName and externalId must be unique within the tenant.");
     }
   }
-
   async putUser(
     orgId: string,
     id: string,
@@ -232,7 +213,6 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
       throw error;
     }
   }
-
   async deleteUser(
     orgId: string,
     id: string,
@@ -258,7 +238,6 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
       return true;
     });
   }
-
   async listGroups(
     orgId: string,
     filter: ScimFilter | null,
@@ -294,16 +273,18 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
       };
     });
   }
-
   async getGroup(orgId: string, id: string): Promise<ScimGroupRecord | null> {
     return withTenantPostgresContext(this.sql, { orgId }, (tx) => selectGroup(tx, orgId, id));
   }
-
   async createGroup(orgId: string, input: PutScimGroup): Promise<ScimWriteResult<ScimGroupRecord>> {
     try {
       const record = await withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
         await requireMembers(tx, orgId, input.memberIds);
-        const rows = await tx<{ readonly id: string }[]>`
+        const rows = await tx<
+          {
+            readonly id: string;
+          }[]
+        >`
           insert into admin_groups (org_id, name, kind, scim_external_id)
           values (${orgId}, ${input.displayName}, 'group', ${input.externalId})
           returning id
@@ -326,7 +307,6 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
       throw new ScimConflictError("displayName and externalId must be unique within the tenant.");
     }
   }
-
   async putGroup(
     orgId: string,
     id: string,
@@ -336,7 +316,11 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
     try {
       return await withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
         await requireMembers(tx, orgId, input.memberIds);
-        const rows = await tx<{ readonly id: string }[]>`
+        const rows = await tx<
+          {
+            readonly id: string;
+          }[]
+        >`
           update admin_groups
           set name = ${input.displayName}, scim_external_id = ${input.externalId}
           where org_id = ${orgId} and id = ${id}
@@ -358,10 +342,13 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
       throw error;
     }
   }
-
   async deleteGroup(orgId: string, id: string, expectedVersion: number | null): Promise<boolean> {
     return withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
-      const rows = await tx<{ readonly id: string }[]>`
+      const rows = await tx<
+        {
+          readonly id: string;
+        }[]
+      >`
         delete from admin_groups
         where org_id = ${orgId} and id = ${id}
           and (${expectedVersion === null} or scim_version = ${expectedVersion ?? 0})
@@ -373,7 +360,6 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
       return false;
     });
   }
-
   private async putUserInTransaction(
     tx: postgres.TransactionSql,
     orgId: string,
@@ -437,7 +423,6 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
       throw error;
     }
   }
-
   private async findUserByCorrelation(
     orgId: string,
     input: PutScimUser,
@@ -452,7 +437,6 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
     );
     return page.resources[0] ?? null;
   }
-
   private async findGroupByCorrelation(
     orgId: string,
     input: PutScimGroup,
@@ -468,11 +452,13 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
     return page.resources[0] ?? null;
   }
 }
-
 type SqlLike = postgres.Sql | postgres.TransactionSql;
-
 async function countUsers(sql: SqlLike, orgId: string, filter: ScimFilter | null): Promise<number> {
-  const rows = await sql<{ readonly count: string | number }[]>`
+  const rows = await sql<
+    {
+      readonly count: string | number;
+    }[]
+  >`
     select count(*) as count from actors
     where org_id = ${orgId} and type = 'user' and email is not null
       and (
@@ -484,13 +470,16 @@ async function countUsers(sql: SqlLike, orgId: string, filter: ScimFilter | null
   `;
   return Number(rows[0]?.count ?? 0);
 }
-
 async function countGroups(
   sql: SqlLike,
   orgId: string,
   filter: ScimFilter | null,
 ): Promise<number> {
-  const rows = await sql<{ readonly count: string | number }[]>`
+  const rows = await sql<
+    {
+      readonly count: string | number;
+    }[]
+  >`
     select count(*) as count from admin_groups
     where org_id = ${orgId}
       and (
@@ -502,7 +491,6 @@ async function countGroups(
   `;
   return Number(rows[0]?.count ?? 0);
 }
-
 async function selectUser(
   sql: SqlLike,
   orgId: string,
@@ -522,7 +510,6 @@ async function selectUser(
   `;
   return rows[0] === undefined ? null : mapUserRow(rows[0]);
 }
-
 async function selectGroup(
   sql: SqlLike,
   orgId: string,
@@ -544,7 +531,6 @@ async function selectGroup(
   `;
   return rows[0] === undefined ? null : mapGroupRow(rows[0]);
 }
-
 async function requireMembers(
   sql: SqlLike,
   orgId: string,
@@ -552,7 +538,11 @@ async function requireMembers(
 ): Promise<void> {
   const unique = [...new Set(memberIds)];
   if (unique.length === 0) return;
-  const rows = await sql<{ readonly id: string }[]>`
+  const rows = await sql<
+    {
+      readonly id: string;
+    }[]
+  >`
     select id from actors
     where org_id = ${orgId} and type = 'user' and disabled_at is null
       and id in ${sql(unique)}
@@ -561,7 +551,6 @@ async function requireMembers(
     throw new ScimConflictError("Every group member must be an active user in the same tenant.");
   }
 }
-
 async function replaceMembers(
   sql: SqlLike,
   orgId: string,
@@ -578,7 +567,6 @@ async function replaceMembers(
     where org_id = ${orgId} and id in ${sql(unique)} and disabled_at is null
   `;
 }
-
 async function deprovisionUser(
   tx: postgres.TransactionSql,
   orgId: string,
@@ -589,7 +577,11 @@ async function deprovisionUser(
     throw new ScimConflictError("Data cannot be transferred to the deprovisioned user.");
   }
   if (transferToActorId !== null) {
-    const target = await tx<{ readonly id: string }[]>`
+    const target = await tx<
+      {
+        readonly id: string;
+      }[]
+    >`
       select id from actors
       where org_id = ${orgId} and id = ${transferToActorId}
         and type = 'user' and disabled_at is null
@@ -615,12 +607,6 @@ async function deprovisionUser(
                and kind <> 'mail_source'`;
     await tx`update drive_folders set owner_actor_id = ${transferToActorId}, updated_at = now()
              where org_id = ${orgId} and owner_actor_id = ${actorId}`;
-    await tx`update docs_documents set owner_actor_id = ${transferToActorId}, updated_at = now()
-             where org_id = ${orgId} and owner_actor_id = ${actorId}`;
-    await tx`update sheets set owner_actor_id = ${transferToActorId}, updated_at = now()
-             where org_id = ${orgId} and owner_actor_id = ${actorId}`;
-    await tx`update slide_decks set owner_actor_id = ${transferToActorId}, updated_at = now()
-             where org_id = ${orgId} and owner_actor_id = ${actorId}`;
     await tx`update cal_calendars set owner_actor_id = ${transferToActorId}, updated_at = now()
              where org_id = ${orgId} and owner_actor_id = ${actorId}`;
     await tx`update vector_items set owner_actor_id = ${transferToActorId}, updated_at = now()
@@ -628,7 +614,6 @@ async function deprovisionUser(
     await tx`update carddav_contacts set owner_actor_id = ${transferToActorId}, updated_at = now()
              where org_id = ${orgId} and owner_actor_id = ${actorId}`;
   }
-
   await tx`delete from admin_group_members where org_id = ${orgId} and actor_id = ${actorId}`;
   await tx`delete from permissions where org_id = ${orgId} and actor_id = ${actorId}`;
   await tx`delete from cal_calendar_memberships where org_id = ${orgId} and actor_id = ${actorId}`;
@@ -656,7 +641,6 @@ async function deprovisionUser(
   await tx`delete from oauth_authorization_codes where org_id = ${orgId} and actor_id = ${actorId}`;
   await tx`delete from oauth_consent_nonces where org_id = ${orgId} and actor_id = ${actorId}`;
 }
-
 function scimMetadata(input: PutScimUser): Record<string, unknown> {
   return {
     givenName: input.givenName,
@@ -666,7 +650,6 @@ function scimMetadata(input: PutScimUser): Record<string, unknown> {
       : { dataTransferTargetId: input.dataTransferTargetId }),
   };
 }
-
 function mapUserRow(row: UserRow): ScimUserRecord {
   return {
     id: row.id,
@@ -683,12 +666,10 @@ function mapUserRow(row: UserRow): ScimUserRecord {
     version: Number(row.version),
   };
 }
-
 function mapRequiredUserRow(row: UserRow | undefined): ScimUserRecord {
   if (row === undefined) throw new Error("SCIM user insert returned no row.");
   return mapUserRow(row);
 }
-
 function mapGroupRow(row: GroupRow): ScimGroupRecord {
   const members = Array.isArray(row.members)
     ? row.members.flatMap((member) => {
@@ -710,11 +691,9 @@ function mapGroupRow(row: GroupRow): ScimGroupRecord {
     version: Number(row.version),
   };
 }
-
 function countFromRows(rows: readonly (UserRow | GroupRow)[]): number {
   return rows[0]?.total_count === undefined ? 0 : Number(rows[0].total_count);
 }
-
 function sameUser(record: ScimUserRecord, input: PutScimUser): boolean {
   return (
     record.externalId === input.externalId &&
@@ -725,7 +704,6 @@ function sameUser(record: ScimUserRecord, input: PutScimUser): boolean {
     record.active === input.active
   );
 }
-
 function sameGroup(record: ScimGroupRecord, input: PutScimGroup): boolean {
   return (
     record.externalId === input.externalId &&
@@ -734,11 +712,9 @@ function sameGroup(record: ScimGroupRecord, input: PutScimGroup): boolean {
       [...new Set(input.memberIds)].sort().join("\0")
   );
 }
-
 function assertVersion(actual: number, expected: number | null): void {
   if (expected !== null && actual !== expected) throw new ScimPreconditionError();
 }
-
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === "object" && error !== null && Reflect.get(error, "code") === "23505";
 }

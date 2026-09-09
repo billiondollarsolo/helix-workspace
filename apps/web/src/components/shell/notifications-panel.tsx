@@ -2,30 +2,27 @@
    Wired to the notifications.* helix tools (replaces the prior static stub).
    Tabs (All / Unread); rows mark themselves read on click and navigate to
    the source app via the verb→route map below. */
-
 import { useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Icons, type IconComponent } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import {
   notificationsListQueryOptions,
+  notificationsQueryKey,
   useMarkAllRead,
   useMarkRead,
   type NotificationItem,
 } from "@/features/notifications/api";
-
 type NotificationKind =
-  | "mention"
-  | "share"
-  | "comment"
-  | "calendar"
-  | "dm"
-  | "approval"
-  | "recording"
-  | "system";
-
-const NOTIF_ICONS: Record<NotificationKind, { Icon: IconComponent; bg: string }> = {
+  "mention" | "share" | "comment" | "calendar" | "dm" | "approval" | "recording" | "system";
+const NOTIF_ICONS: Record<
+  NotificationKind,
+  {
+    Icon: IconComponent;
+    bg: string;
+  }
+> = {
   mention: { Icon: Icons.Comment, bg: "#7c3aed" },
   share: { Icon: Icons.Drive, bg: "#7c3aed" },
   comment: { Icon: Icons.Comment, bg: "#0891b2" },
@@ -35,7 +32,6 @@ const NOTIF_ICONS: Record<NotificationKind, { Icon: IconComponent; bg: string }>
   recording: { Icon: Icons.Drive, bg: "#dc2626" },
   system: { Icon: Icons.Bell, bg: "#475569" },
 };
-
 /** Map server-side verbs to the icon kind and the in-app route to open. */
 function kindForVerb(verb: string): NotificationKind {
   if (verb.startsWith("meet.recording")) return "recording";
@@ -48,24 +44,40 @@ function kindForVerb(verb: string): NotificationKind {
   if (verb.includes("approval")) return "approval";
   return "system";
 }
-
-function routeForNotification(item: NotificationItem): string | null {
+export function routeForNotification(item: Pick<NotificationItem, "verb">): string | null {
   if (item.verb.startsWith("meet.")) {
     return "/meet";
   }
   if (item.verb.startsWith("calendar.")) return "/calendar";
-  if (item.verb.startsWith("docs.")) return "/docs";
   if (item.verb.startsWith("drive.")) return "/drive";
   if (item.verb.startsWith("chat.")) return "/chat";
   if (item.verb.startsWith("mail.")) return "/mail";
   return null;
 }
-
+interface RelativeTimeUnit {
+  readonly upperBound: number;
+  readonly unit: Intl.RelativeTimeFormatUnit;
+  readonly divisor: number;
+}
+/* Ordered finest → coarsest. Anything past the last bound reads in days. */
+const RELATIVE_TIME_UNITS: readonly RelativeTimeUnit[] = [
+  { upperBound: 60000, unit: "second", divisor: 1000 },
+  { upperBound: 3600000, unit: "minute", divisor: 60000 },
+  { upperBound: 86400000, unit: "hour", divisor: 3600000 },
+];
+const RELATIVE_TIME_DAYS: RelativeTimeUnit = {
+  upperBound: Number.POSITIVE_INFINITY,
+  unit: "day",
+  divisor: 86400000,
+};
 export function formatRelativeNotificationTime(
   iso: string,
   now = Date.now(),
   locales?: Intl.LocalesArgument,
-): { readonly relative: string; readonly absolute: string } {
+): {
+  readonly relative: string;
+  readonly absolute: string;
+} {
   const created = new Date(iso);
   const createdAt = created.getTime();
   if (!Number.isFinite(createdAt)) {
@@ -73,14 +85,10 @@ export function formatRelativeNotificationTime(
   }
   const elapsed = createdAt - now;
   const absoluteElapsed = Math.abs(elapsed);
-  const [unit, divisor] =
-    absoluteElapsed < 60_000
-      ? (["second", 1_000] as const)
-      : absoluteElapsed < 3_600_000
-        ? (["minute", 60_000] as const)
-        : absoluteElapsed < 86_400_000
-          ? (["hour", 3_600_000] as const)
-          : (["day", 86_400_000] as const);
+  // Coarsest unit whose threshold the elapsed time has not yet crossed.
+  const { unit, divisor } =
+    RELATIVE_TIME_UNITS.find((candidate) => absoluteElapsed < candidate.upperBound) ??
+    RELATIVE_TIME_DAYS;
   return {
     relative: new Intl.RelativeTimeFormat(locales, { numeric: "auto" }).format(
       Math.round(elapsed / divisor),
@@ -92,22 +100,34 @@ export function formatRelativeNotificationTime(
     }).format(created),
   };
 }
-
+/** Decorative bell used by the panel's loading / error / empty states. */
+function BellGlyph() {
+  return (
+    <span aria-hidden="true">
+      <Icons.Bell />
+    </span>
+  );
+}
 export interface NotificationsPanelProps {
   open: boolean;
   onClose: () => void;
 }
-
 export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
   const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [filter, setFilter] = useState<"all" | "unread">("all");
-  const { data, isLoading, isError, isFetching, refetch } = useQuery(
-    notificationsListQueryOptions(false),
-  );
+  const { data, isLoading, isError, isFetching } = useQuery(notificationsListQueryOptions(false));
+  const queryClient = useQueryClient();
+  /* Invalidate the shared key rather than this observer's own `refetch`, so a
+       recovery here also un-sticks the unread-count badge in the topbar, which
+       reads a sibling key under the same root. Destructuring `refetch` also hid
+       this call from `helix/query-refresh-discipline`, which only matched member
+       calls — the rule now catches the bare form too. */
+  const retry = () => {
+    void queryClient.invalidateQueries({ queryKey: notificationsQueryKey });
+  };
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
-
   useEffect(() => {
     if (!open) return;
     const previousFocus =
@@ -130,9 +150,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
       }
     };
   }, [open, onClose]);
-
   if (!open) return null;
-
   const all = data?.items ?? [];
   const items = filter === "all" ? all : all.filter((n) => n.unread);
   const unreadCount = all.filter((n) => n.unread).length;
@@ -140,7 +158,6 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
     { id: "all" as const, label: `All (${all.length})` },
     { id: "unread" as const, label: `Unread (${unreadCount})` },
   ];
-
   return (
     <div
       ref={panelRef}
@@ -221,23 +238,20 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
       >
         {isLoading ? (
           <div className="empty" role="status" aria-live="polite" style={{ padding: 32 }}>
-            <span aria-hidden="true">
-              <Icons.Bell />
-            </span>
+            <BellGlyph />
             <div>Loading…</div>
           </div>
-        ) : isError ? (
+        ) : null}
+        {!isLoading && isError ? (
           <div className="empty" role="alert" style={{ padding: 32, color: "var(--danger)" }}>
-            <span aria-hidden="true">
-              <Icons.Bell />
-            </span>
+            <BellGlyph />
             <div>Could not load notifications. Check your connection and try again.</div>
             <button
               type="button"
               className="btn sm"
               disabled={isFetching}
               aria-busy={isFetching}
-              onClick={() => void refetch()}
+              onClick={retry}
             >
               {isFetching ? "Retrying…" : "Retry"}
             </button>
@@ -337,9 +351,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
         })}
         {!isLoading && !isError && items.length === 0 ? (
           <div className="empty" style={{ padding: 32 }}>
-            <span aria-hidden="true">
-              <Icons.Bell />
-            </span>
+            <BellGlyph />
             <div>You&apos;re all caught up</div>
           </div>
         ) : null}

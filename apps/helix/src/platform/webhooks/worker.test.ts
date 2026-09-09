@@ -302,7 +302,7 @@ describe("OutboundWebhookWorker", () => {
       throw new Error("Expected webhook replay to be blocked.");
     }
     expect(result.statusCode).toBe(500);
-    expect(result.error).toContain("Outbound webhook policy blocks restricted payloads");
+    expect(result.error).toBe("Tool invocation failed.");
     expect(httpClient.requests).toHaveLength(0);
     expect(store.deliveries).toHaveLength(1);
   });

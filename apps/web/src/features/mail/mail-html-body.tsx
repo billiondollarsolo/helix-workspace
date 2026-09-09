@@ -11,12 +11,7 @@ interface MailHtmlBodyProps {
   readonly remoteContentBlocked: boolean;
 }
 
-export function MailHtmlBody({
-  html,
-  source,
-  plainBody,
-  remoteContentBlocked,
-}: MailHtmlBodyProps) {
+export function MailHtmlBody({ html, source, plainBody, remoteContentBlocked }: MailHtmlBodyProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [view, setView] = useState<"html" | "plain" | "source">("html");
   const [height, setHeight] = useState(240);
@@ -27,7 +22,10 @@ export function MailHtmlBody({
 
   useEffect(() => {
     const receive = (event: MessageEvent<unknown>) => {
-      if (event.source !== iframeRef.current?.contentWindow || !isRendererMessage(event.data, channel)) {
+      if (
+        event.source !== iframeRef.current?.contentWindow ||
+        !isRendererMessage(event.data, channel)
+      ) {
         return;
       }
       if (event.data.kind === "height") {
@@ -47,7 +45,11 @@ export function MailHtmlBody({
 
   return (
     <div>
-      <div role="group" aria-label="Message body view" style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+      <div
+        role="group"
+        aria-label="Message body view"
+        style={{ display: "flex", gap: 4, marginBottom: 8 }}
+      >
         {(["html", "plain", "source"] as const).map((mode) => (
           <button
             key={mode}
@@ -142,13 +144,28 @@ function isRendererMessage(
   value: unknown,
   channel: string,
 ): value is
-  | { readonly type: typeof MESSAGE_TYPE; readonly channel: string; readonly kind: "height"; readonly value: number }
-  | { readonly type: typeof MESSAGE_TYPE; readonly channel: string; readonly kind: "link"; readonly value: string } {
+  | {
+      readonly type: typeof MESSAGE_TYPE;
+      readonly channel: string;
+      readonly kind: "height";
+      readonly value: number;
+    }
+  | {
+      readonly type: typeof MESSAGE_TYPE;
+      readonly channel: string;
+      readonly kind: "link";
+      readonly value: string;
+    } {
   if (typeof value !== "object" || value === null) {
     return false;
   }
   const message = value as Record<string, unknown>;
-  return message.type === MESSAGE_TYPE && message.channel === channel &&
-    ((message.kind === "height" && typeof message.value === "number" && Number.isFinite(message.value)) ||
-      (message.kind === "link" && typeof message.value === "string"));
+  return (
+    message.type === MESSAGE_TYPE &&
+    message.channel === channel &&
+    ((message.kind === "height" &&
+      typeof message.value === "number" &&
+      Number.isFinite(message.value)) ||
+      (message.kind === "link" && typeof message.value === "string"))
+  );
 }

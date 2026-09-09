@@ -10,8 +10,8 @@ import { defineConfig, devices } from "@playwright/test";
  *    including the `e2e` CI job's mocked matrix leg.
  *  - LIVE (`HELIX_E2E_BACKEND=live`): the same UI is served by Vite but talks to
  *    a real Helix backend brought up via docker-compose. Set
- *    `HELIX_E2E_API_BASE_URL` (and optionally `HELIX_E2E_CLIENT_ID/SECRET`,
- *    `HELIX_E2E_MAILPIT_*`) so specs mint real OAuth tokens and exercise the
+ *    `HELIX_E2E_API_BASE_URL` (and optionally `HELIX_E2E_EMAIL/PASSWORD`,
+ *    `HELIX_E2E_MAILPIT_*`) so specs establish real cookie sessions and exercise the
  *    live tools. CI wiring: `.github/workflows/e2e.yml`.
  *
  * The web app itself is always served locally on 4173; only the backend the UI

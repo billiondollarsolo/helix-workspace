@@ -44,7 +44,9 @@ export function validateWebPluginManifest(value: WebPluginManifest): WebPluginMa
   return value;
 }
 
-export function discoverWebPlugins(descriptors: readonly WebPluginDescriptor[]): readonly WebPluginDescriptor[] {
+export function discoverWebPlugins(
+  descriptors: readonly WebPluginDescriptor[],
+): readonly WebPluginDescriptor[] {
   const byId = new Map<string, WebPluginDescriptor>();
   for (const descriptor of descriptors) {
     const manifest = validateWebPluginManifest(descriptor.manifest);
@@ -91,7 +93,9 @@ export async function loadWebPlugin(descriptor: WebPluginDescriptor): Promise<Lo
   const imported = await descriptor.load();
   const plugin = unwrapWebPluginModule(imported);
   if (plugin.manifest !== undefined && plugin.manifest.id !== descriptor.manifest.id) {
-    throw new Error(`Web plugin module manifest id ${plugin.manifest.id} does not match ${descriptor.manifest.id}`);
+    throw new Error(
+      `Web plugin module manifest id ${plugin.manifest.id} does not match ${descriptor.manifest.id}`,
+    );
   }
 
   return {
@@ -101,7 +105,9 @@ export async function loadWebPlugin(descriptor: WebPluginDescriptor): Promise<Lo
   };
 }
 
-export async function loadWebPlugins(descriptors: readonly WebPluginDescriptor[]): Promise<readonly LoadedWebPlugin[]> {
+export async function loadWebPlugins(
+  descriptors: readonly WebPluginDescriptor[],
+): Promise<readonly LoadedWebPlugin[]> {
   const loaded: LoadedWebPlugin[] = [];
   for (const descriptor of discoverWebPlugins(descriptors)) {
     loaded.push(await loadWebPlugin(descriptor));
@@ -122,14 +128,17 @@ export async function registerWebPluginContributions(
   return enabled;
 }
 
-export async function disableWebPlugin(host: WebPlatformHost, plugin: LoadedWebPlugin): Promise<LoadedWebPlugin> {
+export async function disableWebPlugin(
+  host: WebPlatformHost,
+  plugin: LoadedWebPlugin,
+): Promise<LoadedWebPlugin> {
   await plugin.module.onDisable?.(host);
   return { ...plugin, state: "disabled" };
 }
 
 function unwrapWebPluginModule(value: unknown): WebPlugin {
   const candidate =
-    typeof value === "object" && value !== null && "default" in value ? (value as { readonly default?: unknown }).default : value;
+    typeof value === "object" && value !== null && "default" in value ? value.default : value;
   if (!isWebPlugin(candidate)) {
     throw new TypeError("Web plugin module must export a plugin with register(host)");
   }

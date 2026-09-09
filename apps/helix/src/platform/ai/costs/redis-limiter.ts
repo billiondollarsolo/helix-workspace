@@ -1,6 +1,11 @@
 import { resolveAICostBudget, validateNonNegativeInteger } from "./budget.js";
+import {
+  costUsage,
+  limitExceeded as usageLimitExceeded,
+  secondsUntilNextUtcDay,
+  utcDayKey,
+} from "./daily-window.js";
 import type {
-  AICostBudget,
   AICostLimitCheckInput,
   AICostLimitDecision,
   AICostLimiter,
@@ -9,7 +14,6 @@ import type {
   AICostRecordResult,
   AICostUsage,
   AICostUsageInput,
-  AICostUsageWindow,
 } from "./types.js";
 
 /**
@@ -175,11 +179,7 @@ export class RedisAICostLimiter implements AICostLimiter {
     const totals = recordScriptResponse(raw);
     const usage = costUsage(totals.actorUsed, totals.featureUsed, budget, at);
     const warningReached = usage.actorDaily.warningReached || usage.featureDaily.warningReached;
-    const limitExceeded =
-      (usage.actorDaily.limitUsdMicros !== null &&
-        usage.actorDaily.usedUsdMicros >= usage.actorDaily.limitUsdMicros) ||
-      (usage.featureDaily.limitUsdMicros !== null &&
-        usage.featureDaily.usedUsdMicros >= usage.featureDaily.limitUsdMicros);
+    const limitExceeded = usageLimitExceeded(usage);
 
     const record: AICostRecord = {
       id: globalThis.crypto.randomUUID(),
@@ -281,53 +281,6 @@ function scriptReason(value: unknown): "actor_daily_cost" | "feature_daily_cost"
   throw new Error("Invalid Redis AI cost check reason");
 }
 
-function costUsage(
-  actorUsed: number,
-  featureUsed: number,
-  budget: AICostBudget,
-  at: Date,
-): AICostUsage {
-  return {
-    actorDaily: usageWindow(actorUsed, budget.actorDailyUsdMicros, budget.warningThresholdRatio, at),
-    featureDaily: usageWindow(
-      featureUsed,
-      budget.featureDailyUsdMicros,
-      budget.warningThresholdRatio,
-      at,
-    ),
-  };
-}
-
-function usageWindow(
-  usedUsdMicros: number,
-  limitUsdMicros: number | null,
-  warningThresholdRatio: number,
-  at: Date,
-): AICostUsageWindow {
-  const warningThresholdUsdMicros =
-    limitUsdMicros === null ? null : Math.floor(limitUsdMicros * warningThresholdRatio);
-  return {
-    limitUsdMicros,
-    usedUsdMicros,
-    remainingUsdMicros: limitUsdMicros === null ? null : Math.max(limitUsdMicros - usedUsdMicros, 0),
-    resetsAt: nextUtcDay(at).toISOString(),
-    warningThresholdUsdMicros,
-    warningReached: warningThresholdUsdMicros !== null && usedUsdMicros >= warningThresholdUsdMicros,
-  };
-}
-
 function keyPart(value: string): string {
   return encodeURIComponent(value).replaceAll("{", "%7B").replaceAll("}", "%7D");
-}
-
-function utcDayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function nextUtcDay(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
-}
-
-function secondsUntilNextUtcDay(date: Date): number {
-  return Math.max(1, Math.ceil((nextUtcDay(date).getTime() - date.getTime()) / 1000));
 }

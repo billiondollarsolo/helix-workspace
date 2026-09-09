@@ -1,10 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
-import {
-  sensitivityLabelFor,
-  type DataClassification,
-} from "../ai/classification/index.js";
+import { sensitivityLabelFor, type DataClassification } from "../ai/classification/index.js";
 import { commitStorageUsage } from "../drive/index.js";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import type {
@@ -428,13 +425,15 @@ export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
 
   async applyMediaEvent(input: MeetMediaEventInput): Promise<MeetMediaEventResult | null> {
     return withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
-      const roomRows = await tx<{
-        readonly id: string;
-        readonly room_name: string;
-        readonly status: MeetRoomStatus;
-        readonly lifecycle_version: string | number;
-        readonly active_participant_count: number;
-      }[]>`
+      const roomRows = await tx<
+        {
+          readonly id: string;
+          readonly room_name: string;
+          readonly status: MeetRoomStatus;
+          readonly lifecycle_version: string | number;
+          readonly active_participant_count: number;
+        }[]
+      >`
         select id, room_name, status, lifecycle_version, active_participant_count
         from meet_rooms
         where org_id = ${input.orgId} and id = ${input.roomId}
@@ -488,11 +487,13 @@ export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
         `;
       }
 
-      const countRows = await tx<{
-        readonly active_count: number;
-        readonly participant_duration_seconds: number | string | null;
-        readonly reconnected: boolean;
-      }[]>`
+      const countRows = await tx<
+        {
+          readonly active_count: number;
+          readonly participant_duration_seconds: number | string | null;
+          readonly reconnected: boolean;
+        }[]
+      >`
         select
           count(*) filter (
             where joined_at is not null and (left_at is null or joined_at > left_at)
@@ -520,12 +521,14 @@ export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
       const active = input.event === "conference.started" || input.event === "participant.joined";
       const recordingStarted = input.event === "recording.started";
       const recordingEnded = input.event === "recording.ended";
-      const updatedRows = await tx<{
-        readonly id: string;
-        readonly status: MeetRoomStatus;
-        readonly lifecycle_version: string | number;
-        readonly active_participant_count: number;
-      }[]>`
+      const updatedRows = await tx<
+        {
+          readonly id: string;
+          readonly status: MeetRoomStatus;
+          readonly lifecycle_version: string | number;
+          readonly active_participant_count: number;
+        }[]
+      >`
         update meet_rooms set
           status = case when ${ended} then 'ended' when ${active} then 'active' else status end,
           started_at = case when ${active} then
@@ -1766,14 +1769,13 @@ export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
           from unnest(${tx.array([...recipients])}::uuid[]) as actor_id
         `;
       }
-      const attachment = {
+      return {
         roomId: room.id,
         threadId: room.threadId,
         objectId,
         messageId,
         storageKey: input.storageKey,
       };
-      return attachment;
     });
   }
 
@@ -1783,22 +1785,19 @@ export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
       throw new Error("Meet summary body is required.");
     }
     return this.sql.begin(async (tx) => {
-      const room =
-        input.roomId === undefined
-          ? input.roomName === undefined
-            ? null
-            : await selectRoomByName(tx, input.orgId, input.roomName)
-          : await selectRoomById(tx, input.orgId, input.roomId);
+      const room = await selectRoomByRef(tx, input.orgId, input);
       if (room === null) {
         return null;
       }
       const metadata: JsonObject = { ...(input.metadata ?? {}), type: "meet.summary" };
-      const rows = await tx<{
-        readonly id: string;
-        readonly body: string;
-        readonly metadata: JsonObject;
-        readonly created_at: Date;
-      }[]>`
+      const rows = await tx<
+        {
+          readonly id: string;
+          readonly body: string;
+          readonly metadata: JsonObject;
+          readonly created_at: Date;
+        }[]
+      >`
         insert into messages (org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
         values (
           ${input.orgId},
@@ -2453,12 +2452,7 @@ export class InMemoryMeetStore implements MeetStore {
   async attachRecording(
     input: AttachMeetRecordingInput,
   ): Promise<MeetRecordingAttachmentRecord | null> {
-    const room =
-      input.roomId === undefined
-        ? input.roomName === undefined
-          ? null
-          : await this.getRoomByName({ orgId: input.orgId, roomName: input.roomName })
-        : (this.#rooms.get(input.roomId) ?? null);
+    const room = await this.#resolveRoomByRef(input.orgId, input);
     if (room === null || room.orgId !== input.orgId) {
       return null;
     }
@@ -2506,12 +2500,7 @@ export class InMemoryMeetStore implements MeetStore {
     if (body.length === 0) {
       throw new Error("Meet summary body is required.");
     }
-    const room =
-      input.roomId === undefined
-        ? input.roomName === undefined
-          ? null
-          : await this.getRoomByName({ orgId: input.orgId, roomName: input.roomName })
-        : (this.#rooms.get(input.roomId) ?? null);
+    const room = await this.#resolveRoomByRef(input.orgId, input);
     if (room === null || room.orgId !== input.orgId) {
       return null;
     }
@@ -2524,6 +2513,24 @@ export class InMemoryMeetStore implements MeetStore {
     const existing = this.#summaries.get(room.id) ?? [];
     this.#summaries.set(room.id, [summary, ...existing]);
     return summary;
+  }
+
+  /**
+   * Resolve the room a recording/summary attachment targets. Callers may address
+   * a room by id or by name; id wins when both are supplied. The id lookup is not
+   * org-scoped here — callers re-check `orgId` on the result.
+   */
+  async #resolveRoomByRef(
+    orgId: string,
+    ref: { readonly roomId?: string | undefined; readonly roomName?: string | undefined },
+  ): Promise<MeetRoomRecord | null> {
+    if (ref.roomId !== undefined) {
+      return this.#rooms.get(ref.roomId) ?? null;
+    }
+    if (ref.roomName !== undefined) {
+      return this.getRoomByName({ orgId, roomName: ref.roomName });
+    }
+    return null;
   }
 
   #withRecordingArtifacts(room: MeetRoomRecord): MeetRoomRecord {
@@ -2743,6 +2750,24 @@ async function selectRoomByName(
     limit 1
   `;
   return rows[0] === undefined ? null : mapRoom(rows[0]);
+}
+
+/**
+ * Resolve the room a recording/summary attachment targets. Callers may address a
+ * room by id or by name; id wins when both are supplied.
+ */
+async function selectRoomByRef(
+  sql: SqlLike,
+  orgId: string,
+  ref: { readonly roomId?: string | undefined; readonly roomName?: string | undefined },
+): Promise<MeetRoomRecord | null> {
+  if (ref.roomId !== undefined) {
+    return selectRoomById(sql, orgId, ref.roomId);
+  }
+  if (ref.roomName !== undefined) {
+    return selectRoomByName(sql, orgId, ref.roomName);
+  }
+  return null;
 }
 
 async function grantThreadAccess(

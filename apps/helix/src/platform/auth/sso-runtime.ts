@@ -74,7 +74,8 @@ export async function resolveTenantOidcPrivateKey(
   input: { readonly providerId: string; readonly keyId?: string; readonly issuer: string },
 ): Promise<{ readonly privateKeyPem: string; readonly kid?: string; readonly algorithm?: string }> {
   const binding = parseProviderId(input.providerId);
-  if (binding === null || secrets === undefined) throw new Error("OIDC signing key is unavailable.");
+  if (binding === null || secrets === undefined)
+    throw new Error("OIDC signing key is unavailable.");
   const rows = await sql.begin(async (tx) => {
     await tx`select set_config('helix.org_id', ${binding.orgId}, true)`;
     return tx<{ readonly handle: string }[]>`
@@ -104,7 +105,9 @@ export async function resolveTenantOidcPrivateKey(
   };
 }
 
-function parseProviderId(providerId: string): { readonly orgId: string; readonly configId: string } | null {
+function parseProviderId(
+  providerId: string,
+): { readonly orgId: string; readonly configId: string } | null {
   const match = providerIdPattern.exec(providerId);
   return match?.[1] === undefined || match[2] === undefined
     ? null
@@ -112,5 +115,9 @@ function parseProviderId(providerId: string): { readonly orgId: string; readonly
 }
 
 function rejected(code: string) {
-  return { action: "reject", code, message: "SSO sign-in is not authorized for this workspace." } as const;
+  return {
+    action: "reject",
+    code,
+    message: "SSO sign-in is not authorized for this workspace.",
+  } as const;
 }

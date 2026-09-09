@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ToolContext } from "@helix/sdk-types";
 import { createToolRegistry } from "../tool-registry.js";
 import { createChatToolDefinitions, registerChatTools } from "./tools.js";
 import type { ChatStore } from "./store.js";
@@ -28,27 +29,34 @@ describe("chat tools", () => {
         .list()
         .map((tool) => tool.id)
         .sort(),
-    ).toEqual([
-      "chat.create_room",
-      "chat.delete",
-      "chat.edit",
-      "chat.export",
-      "chat.import",
-      "chat.invite",
-      "chat.message.list",
-      "chat.pin",
-      "chat.pins.list",
-      "chat.react",
-      "chat.reply_in_thread",
-      "chat.room.discover",
-      "chat.room.join",
-      "chat.room.list",
-      "chat.search",
-      "chat.send",
-      "chat.thread.list",
-      "chat.unpin",
-      "platform.ping",
-    ]);
+    ).toEqual(
+      [
+        "chat.create_room",
+        "chat.delete",
+        "chat.edit",
+        "chat.export",
+        "chat.import",
+        "chat.export.organization",
+        "chat.invite",
+        "chat.legal_hold.set",
+        "chat.member.remove",
+        "chat.message.list",
+        "chat.pin",
+        "chat.pins.list",
+        "chat.react",
+        "chat.reply_in_thread",
+        "chat.room.discover",
+        "chat.room.join",
+        "chat.retention.get",
+        "chat.retention.set",
+        "chat.room.list",
+        "chat.search",
+        "chat.send",
+        "chat.thread.list",
+        "chat.unpin",
+        "platform.ping",
+      ].sort(),
+    );
   });
 
   it("registers chat.reply_in_thread with chat.post", () => {
@@ -63,6 +71,87 @@ describe("chat tools", () => {
       (t) => t.id === "chat.pin",
     );
     expect(tool?.permission).toBe("chat.post");
+  });
+
+  it("requires confirmation before removing a room member", () => {
+    const tool = createChatToolDefinitions({ store: new FakeChatStore() }).find(
+      (candidate) => candidate.id === "chat.member.remove",
+    );
+    expect(tool).toMatchObject({
+      permission: "chat.create",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+    });
+  });
+
+  it("gates retention, legal hold, and exports behind confirmed admin tools", () => {
+    const tools = createChatToolDefinitions({ store: new FakeChatStore() });
+    for (const id of ["chat.retention.set", "chat.legal_hold.set", "chat.export.organization"]) {
+      expect(tools.find((candidate) => candidate.id === id)).toMatchObject({
+        permission: "admin.chat",
+        confirmationRequired: true,
+      });
+    }
+    expect(tools.find((candidate) => candidate.id === "chat.retention.get")).toMatchObject({
+      permission: "admin.chat",
+      sideEffects: "read",
+    });
+    expect(
+      tools.find((candidate) => candidate.id === "chat.retention.get")?.confirmationRequired,
+    ).toBeUndefined();
+    expect(tools.find((candidate) => candidate.id === "chat.export.organization")).toMatchObject({
+      sideEffects: "read",
+      rateLimit: { perActor: { perHour: 2, perDay: 4 } },
+    });
+  });
+
+  it("reads retention policy for the authenticated actor organization only", async () => {
+    const store = new FakeChatStore();
+    const tool = createChatToolDefinitions({ store }).find(
+      (candidate) => candidate.id === "chat.retention.get",
+    );
+    if (tool === undefined) throw new Error("Expected Chat retention get tool.");
+    const context: ToolContext = {
+      actor: {
+        id: actorId,
+        orgId,
+        type: "user",
+        scopes: ["admin.chat"],
+      },
+      can: async () => true,
+      requirePermission: async () => {},
+      audit: async () => {},
+    };
+    const output = await tool.handler(tool.inputSchema.parse({}), context);
+    expect(output).toMatchObject({
+      orgId,
+      configured: false,
+      retentionDays: 2555,
+    });
+    expect(store.getRetentionInputs).toEqual([expect.objectContaining({ orgId, actorId })]);
+  });
+
+  it("exports only the authenticated actor organization after confirmation", async () => {
+    const store = new FakeChatStore();
+    const requestingActor = {
+      id: actorId,
+      orgId,
+      type: "user" as const,
+      scopes: ["admin.chat"],
+    };
+    const tool = createChatToolDefinitions({ store }).find(
+      (candidate) => candidate.id === "chat.export.organization",
+    );
+    if (tool === undefined) throw new Error("Expected Chat export tool.");
+    const context: ToolContext = {
+      actor: requestingActor,
+      can: async () => true,
+      requirePermission: async () => {},
+      audit: async () => {},
+    };
+    const output = await tool.handler(tool.inputSchema.parse({ roomIds: [], limit: 10 }), context);
+    expect(output).toMatchObject({ orgId });
+    expect(store.exportInputs).toEqual([expect.objectContaining({ orgId, actorId, limit: 10 })]);
   });
 
   it("sends messages through the shared store contract", async () => {
@@ -103,6 +192,7 @@ describe("chat tools", () => {
       sentAt: now.toISOString(),
     });
     expect(publish).toHaveBeenCalledWith(
+      orgId,
       roomId,
       expect.objectContaining({ type: "message.created", roomId, orgId }),
     );
@@ -121,6 +211,7 @@ describe("chat tools", () => {
 
     expect(result.ok).toBe(true);
     expect(publish).toHaveBeenCalledWith(
+      orgId,
       roomId,
       expect.objectContaining({
         type: "message.updated",
@@ -321,6 +412,37 @@ describe("chat tools", () => {
 
 class FakeChatStore implements ChatStore {
   readonly sent: unknown[] = [];
+  readonly exportInputs: unknown[] = [];
+  readonly getRetentionInputs: unknown[] = [];
+
+  async getRetentionPolicy(
+    input: Parameters<NonNullable<ChatStore["getRetentionPolicy"]>>[0],
+  ): Promise<Awaited<ReturnType<NonNullable<ChatStore["getRetentionPolicy"]>>>> {
+    this.getRetentionInputs.push(input);
+    return {
+      orgId: input.orgId,
+      roomId: input.roomId ?? null,
+      retentionDays: 2555,
+      editWindowSeconds: 86_400,
+      deleteWindowSeconds: 86_400,
+      legalHold: false,
+      updatedAt: null,
+      configured: false,
+    };
+  }
+
+  async exportOrganization(
+    input: Parameters<NonNullable<ChatStore["exportOrganization"]>>[0],
+  ): Promise<Awaited<ReturnType<NonNullable<ChatStore["exportOrganization"]>>>> {
+    this.exportInputs.push(input);
+    return {
+      exportId: "66666666-6666-4666-8666-666666666666",
+      orgId: input.orgId,
+      generatedAt: now,
+      messages: [],
+      truncated: false,
+    };
+  }
 
   async createRoom(): Promise<ChatRoomRecord> {
     return {

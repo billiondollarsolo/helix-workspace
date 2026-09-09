@@ -26,7 +26,7 @@ describe("assistant slash commands", () => {
       {
         command: "/draft mail to bruno about launch",
         instruction: "Draft content",
-        includes: ["mail.search", "docs.get", "drive.search"],
+        includes: ["mail.search", "mail.thread.get", "drive.search"],
         excludes: ["mail.send", "calendar.event.create"],
       },
       {

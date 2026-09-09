@@ -76,13 +76,11 @@ export class VaultTenantSecretReader implements TenantStorageSecretReader {
     this.staticToken = firstNonEmpty(options.token);
   }
 
-  async read(
-    input: {
-      readonly orgId: string;
-      readonly scope: "byo-storage" | "idp" | "byo-identity" | "mail-provider";
-      readonly handle: string;
-    },
-  ): Promise<Record<string, string> | undefined> {
+  async read(input: {
+    readonly orgId: string;
+    readonly scope: "byo-storage" | "idp" | "byo-identity" | "mail-provider";
+    readonly handle: string;
+  }): Promise<Record<string, string> | undefined> {
     const path = tenantSecretPath(input);
     let response = await this.request(path);
     if (response.status === 403 && this.staticToken === undefined) {
@@ -99,7 +97,9 @@ export class VaultTenantSecretReader implements TenantStorageSecretReader {
   }
 
   async deleteTenantSecrets(input: { readonly orgId: string }): Promise<number> {
-    return this.deleteSecretTree(`tenants/${canonicalSecretSegment(input.orgId, "organization id", 200)}`);
+    return this.deleteSecretTree(
+      `tenants/${canonicalSecretSegment(input.orgId, "organization id", 200)}`,
+    );
   }
 
   private async deleteSecretTree(path: string): Promise<number> {
@@ -239,7 +239,9 @@ export class VaultTenantSecretReader implements TenantStorageSecretReader {
 }
 
 function readStringArray(value: unknown): readonly string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 export function tenantSecretPath(input: {

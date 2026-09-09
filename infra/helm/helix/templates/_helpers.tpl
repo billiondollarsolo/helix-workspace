@@ -102,13 +102,6 @@ topologySpreadConstraints:
 {{- if eq $digest "sha256:0000000000000000000000000000000000000000000000000000000000000000" -}}
 {{- fail "selected image digest cannot be a placeholder" -}}
 {{- end -}}
-{{- $converterDigest := required "contentConverter.image.digest must be an approved sha256 digest" .Values.contentConverter.image.digest -}}
-{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $converterDigest) -}}
-{{- fail "content converter image digest must match sha256:<64 lowercase hex characters>" -}}
-{{- end -}}
-{{- if eq $converterDigest "sha256:0000000000000000000000000000000000000000000000000000000000000000" -}}
-{{- fail "content converter image digest cannot be a placeholder" -}}
-{{- end -}}
 {{- if not (regexMatch "^https://[^/?#@]+/?$" .Values.publicUrl) -}}
 {{- fail "publicUrl must be one canonical HTTPS origin without credentials, path, query, or fragment" -}}
 {{- end -}}
@@ -209,6 +202,20 @@ topologySpreadConstraints:
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /* MVP packaging fail-closed: refuse accidental Full Workspace defaults without profile=full. */ -}}
+{{- $profile := "mvp" -}}
+{{- if and .Values.workspace .Values.workspace.profile -}}
+{{- $profile = .Values.workspace.profile -}}
+{{- end -}}
+{{- if ne $profile "full" -}}
+{{- $apps := "mail,drive,chat,assistant" -}}
+{{- if and .Values.workspace .Values.workspace.apps -}}
+{{- $apps = .Values.workspace.apps -}}
+{{- end -}}
+{{- if ne $apps "mail,drive,chat,assistant" -}}
+{{- fail "workspace.apps must be mail,drive,chat,assistant unless workspace.profile=full (PKG flip; see docs/architecture/ha-rpo-rto.md)" -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "helix.serviceAccountName" -}}
@@ -227,7 +234,13 @@ topologySpreadConstraints:
 {{- $platform := deepCopy .Values.helixConfig.platform -}}
 {{- $_ := set $platform "endpoints" (dict "postgres" (dict "external" true "cloudNativePg" .Values.cloudnativepg.enabled) "cloudNativePg" (dict "enabled" .Values.cloudnativepg.enabled "endpoint" (printf "%s-rw" .Values.cloudnativepg.clusterName)) "s3" (dict "endpoint" .Values.external.s3.endpoint "bucket" .Values.external.s3.bucket "region" .Values.external.s3.region) "kms" (dict "enabled" .Values.external.kms.enabled "endpoint" .Values.external.kms.endpoint "keyId" .Values.external.kms.keyId) "vault" (dict "enabled" .Values.external.vault.enabled "address" .Values.external.vault.address "namespace" .Values.external.vault.namespace) "siem" (dict "enabled" .Values.external.siem.enabled "endpoint" .Values.external.siem.endpoint "format" .Values.external.siem.format)) -}}
 {{- $_ := set $platform "runtime" (dict "fips" (dict "enabled" .Values.fips.enabled "crypto" .Values.fips.crypto) "stig" (dict "enabled" .Values.stig.enabled "profile" .Values.stig.profile "imagePolicy" .Values.stig.imagePolicy) "airgap" .Values.airgap) -}}
-{{- dict "security" $security "plugins" .Values.helixConfig.plugins "platform" $platform | toJson -}}
+{{- $modules := dict -}}
+{{- if .Values.workspace -}}
+{{- if .Values.workspace.modules -}}
+{{- $modules = .Values.workspace.modules -}}
+{{- end -}}
+{{- end -}}
+{{- dict "security" $security "modules" $modules "plugins" .Values.helixConfig.plugins "platform" $platform | toJson -}}
 {{- end -}}
 
 {{/*
@@ -263,12 +276,6 @@ default role. Input is the chart root context.
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: MEET_JITSI_REGION
-- name: HELIX_DRIVE_OFFICE_PREVIEW_URL
-  value: {{ printf "http://%s-content-converter:%d" (include "helix.fullname" .) (int .Values.contentConverter.port) | quote }}
-- name: HELIX_DRIVE_OFFICE_PREVIEW_ALLOWED_HOSTS
-  value: {{ printf "%s-content-converter" (include "helix.fullname" .) | quote }}
-- name: HELIX_DRIVE_OFFICE_PREVIEW_TIMEOUT_MS
-  value: {{ .Values.contentConverter.timeoutMs | quote }}
 - name: HELIX_CONFIG_JSON
   valueFrom:
     configMapKeyRef:
@@ -289,6 +296,16 @@ default role. Input is the chart root context.
     configMapKeyRef:
       name: {{ include "helix.fullname" . }}-config
       key: HELIX_TENANT_ROOT_HOSTS
+- name: HELIX_WORKSPACE_PROFILE
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_WORKSPACE_PROFILE
+- name: HELIX_APPS
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "helix.fullname" . }}-config
+      key: HELIX_APPS
 {{- /*
   FIPS env is opt-in: emitted only when fips.enabled is true. When omitted the
   crypto adapter sees no HELIX_FIPS_* / HELIX_CRYPTO_* env and self-initializes

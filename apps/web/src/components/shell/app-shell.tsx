@@ -31,34 +31,38 @@ export function AppShell() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
+  /* The settings overlay lives in `?settings=<section>` so it survives reload
+     and back/forward. Every open/switch/close is the same navigation with a
+     different section value. */
+  const setSettingsSection = useCallback(
+    (section: SettingsSectionId | undefined, replace: boolean) => {
+      void navigate({
+        to: location.pathname,
+        replace,
+        search: (previous: Record<string, unknown>) => ({
+          ...previous,
+          settings: section,
+        }),
+      } as never);
+    },
+    [location.pathname, navigate],
+  );
+
   const overlays = useMemo<ShellOverlayApi>(
     () => ({
       openNotifications: () => setNotifOpen(true),
       openPalette: () => setPaletteOpen(true),
       openSettings: (section = "profile") => {
         setPaletteOpen(false);
-        void navigate({
-          to: location.pathname,
-          search: (previous: Record<string, unknown>) => ({
-            ...previous,
-            settings: section,
-          }),
-        } as never);
+        setSettingsSection(section, false);
       },
     }),
-    [location.pathname, navigate],
+    [setSettingsSection],
   );
 
   const closeSettings = useCallback(() => {
-    void navigate({
-      to: location.pathname,
-      replace: true,
-      search: (previous: Record<string, unknown>) => ({
-        ...previous,
-        settings: undefined,
-      }),
-    } as never);
-  }, [location.pathname, navigate]);
+    setSettingsSection(undefined, true);
+  }, [setSettingsSection]);
 
   // ⌘K global shortcut.
   useEffect(() => {
@@ -117,14 +121,7 @@ export function AppShell() {
           open={settingsSection !== null}
           section={settingsSection ?? "profile"}
           onSectionChange={(section) => {
-            void navigate({
-              to: location.pathname,
-              replace: true,
-              search: (previous: Record<string, unknown>) => ({
-                ...previous,
-                settings: section,
-              }),
-            } as never);
+            setSettingsSection(section, true);
           }}
           onClose={closeSettings}
         />

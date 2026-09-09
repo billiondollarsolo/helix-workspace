@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import type { ChatRequest, ChatResponse, LLMProviderCapability, ModelInfo } from "@helix/sdk-types";
 import { anthropicChatResponse } from "./anthropic-compatible.js";
+import { joinPaths } from "./url-path.js";
 import {
   resolveAwsCredentials,
   type AwsCredentialResolverOptions,
@@ -274,13 +275,6 @@ function canonicalHeaders(headers: Record<string, string>): string {
 
 function signedHeaderNames(headers: Record<string, string>): string {
   return Object.keys(headers).sort().join(";");
-}
-
-function joinPaths(...parts: readonly string[]): string {
-  return `/${parts
-    .flatMap((part) => part.split("/"))
-    .filter((part) => part.length > 0)
-    .join("/")}`;
 }
 
 function encodeRfc3986(value: string): string {

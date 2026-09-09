@@ -44,7 +44,7 @@ spec:
   ingress: []
   {{- end }}
   {{- $egress := $policy.egress }}
-  {{- if or $root.Values.networkPolicy.dns.enabled $egress.publicHttps $egress.endpoints $egress.inCluster (and .database $root.Values.cloudnativepg.enabled) .contentConverter }}
+  {{- if or $root.Values.networkPolicy.dns.enabled $egress.publicHttps $egress.endpoints $egress.inCluster (and .database $root.Values.cloudnativepg.enabled) }}
   egress:
     {{- if $root.Values.networkPolicy.dns.enabled }}
     - to:
@@ -133,26 +133,13 @@ spec:
         - protocol: TCP
           port: 5432
     {{- end }}
-    {{- if .contentConverter }}
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: {{ $root.Release.Namespace | quote }}
-          podSelector:
-            matchLabels:
-              {{- include "helix.selectorLabels" $root | nindent 14 }}
-              helix.io/role: content-converter
-              helix.io/service-account: {{ include "helix.serviceAccountName" $root | quote }}
-      ports:
-        - protocol: TCP
-          port: {{ $root.Values.contentConverter.port }}
-    {{- end }}
+
   {{- else }}
   egress: []
   {{- end }}
 {{- end }}
 
-{{ include "helix.networkPolicy" (dict "root" . "role" "default" "policy" .Values.networkPolicy.application "database" true "contentConverter" true) }}
+{{ include "helix.networkPolicy" (dict "root" . "role" "default" "policy" .Values.networkPolicy.application "database" true) }}
 {{- range $role := .Values.roleDeployments }}
 {{- $rolePolicy := $role.networkPolicy | default $.Values.networkPolicy.roleDefault }}
 ---

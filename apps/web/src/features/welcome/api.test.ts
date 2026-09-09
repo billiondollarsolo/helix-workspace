@@ -8,13 +8,13 @@ describe("welcome api", () => {
       .fn<AuthFetch>()
       .mockResolvedValue(Response.json({ status: "accepted" }, { status: 202 }));
 
-    await sendWelcomeActivationEvent({ event: "action_clicked", action: "try_editor" }, fetchImpl);
+    await sendWelcomeActivationEvent({ event: "action_clicked", action: "view_files" }, fetchImpl);
 
     expect(fetchImpl).toHaveBeenCalledWith("/api/signup/welcome-event", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ event: "action_clicked", action: "try_editor" }),
+      body: JSON.stringify({ event: "action_clicked", action: "view_files" }),
     });
   });
 

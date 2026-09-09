@@ -8,7 +8,6 @@ import {
   resolveCoreAppStatuses,
   resolveRoleAppSet,
 } from "./core-apps.js";
-
 describe("core-app enablement", () => {
   it("defaults every core app to enabled when no module config is present", () => {
     const plan = new CoreAppRegistrationPlan({});
@@ -18,14 +17,12 @@ describe("core-app enablement", () => {
     }
     expect(plan.registeredAppIds()).toEqual([...CORE_APP_IDS]);
   });
-
   it("treats a core app as enabled unless explicitly disabled", () => {
     expect(isCoreAppEnabled({ mail: {} }, "mail")).toBe(true);
     expect(isCoreAppEnabled({ mail: { enabled: true } }, "mail")).toBe(true);
     expect(isCoreAppEnabled({ mail: { enabled: false } }, "mail")).toBe(false);
     expect(isCoreAppEnabled(undefined, "chat")).toBe(true);
   });
-
   it("does not register a disabled core app", () => {
     const plan = new CoreAppRegistrationPlan({
       modules: { chat: { enabled: false }, meet: { enabled: false } },
@@ -38,7 +35,6 @@ describe("core-app enablement", () => {
     expect(plan.registeredAppIds()).not.toContain("chat");
     expect(plan.registeredAppIds()).toContain("mail");
   });
-
   it("reports per-app status with enabled/inRole/registered", () => {
     const { statuses } = resolveCoreAppStatuses({
       modules: { drive: { enabled: false } },
@@ -49,44 +45,26 @@ describe("core-app enablement", () => {
     expect(mail).toMatchObject({ enabled: true, inRole: true, registered: true });
   });
 });
-
 describe("role-based boot", () => {
   it("the default role runs every core app", () => {
     const { role, appIds } = resolveRoleAppSet({});
     expect(role).toBe("all");
     expect([...appIds].sort()).toEqual([...CORE_APP_IDS].sort());
   });
-
   it("a named role runs only its subset of apps", () => {
     const plan = new CoreAppRegistrationPlan({ role: "realtime" });
     expect(plan.role).toBe("realtime");
     expect(plan.shouldRegister("chat")).toBe(true);
     expect(plan.shouldRegister("meet")).toBe(true);
     expect(plan.shouldRegister("mail")).toBe(false);
-    expect(plan.shouldRegister("docs")).toBe(false);
+    expect(plan.shouldRegister("drive")).toBe(false);
     expect([...plan.registeredAppIds()].sort()).toEqual(["chat", "meet"]);
   });
-
-  it("a named editors role runs only the editors core app", () => {
-    const plan = new CoreAppRegistrationPlan({ role: "editors-conv-worker" });
-    expect(plan.role).toBe("editors-conv-worker");
-    expect(plan.shouldRegister("editors")).toBe(true);
-    expect(plan.shouldRegister("mail")).toBe(false);
-    expect([...plan.registeredAppIds()]).toEqual(["editors"]);
-  });
-
   it("HELIX_APPS overrides the role with an explicit subset", () => {
-    const { role, appIds } = resolveRoleAppSet({ role: "realtime", apps: "mail,docs" });
+    const { role, appIds } = resolveRoleAppSet({ role: "realtime", apps: "mail,drive" });
     expect(role).toBe("custom");
-    expect([...appIds].sort()).toEqual(["docs", "mail"]);
+    expect([...appIds].sort()).toEqual(["drive", "mail"]);
   });
-
-  it("HELIX_APPS accepts editor role ids as aliases for the editors core app", () => {
-    const { role, appIds } = resolveRoleAppSet({ apps: "editors-conv-worker" });
-    expect(role).toBe("custom");
-    expect([...appIds]).toEqual(["editors"]);
-  });
-
   it("an out-of-role app is not registered even when enabled", () => {
     const plan = new CoreAppRegistrationPlan({ apps: "chat,meet" });
     // mail is enabled org-wide but not in this role.
@@ -94,7 +72,6 @@ describe("role-based boot", () => {
     expect(plan.status("mail").inRole).toBe(false);
     expect(plan.shouldRegister("mail")).toBe(false);
   });
-
   it("enablement AND role are both required to register an app", () => {
     const plan = new CoreAppRegistrationPlan({
       modules: { chat: { enabled: false } },
@@ -105,20 +82,16 @@ describe("role-based boot", () => {
     // meet is in-role and enabled => registered.
     expect(plan.shouldRegister("meet")).toBe(true);
   });
-
   it("rejects an unknown role", () => {
     expect(() => resolveRoleAppSet({ role: "bogus" })).toThrow(CoreAppRoleError);
   });
-
   it("rejects an unknown app in HELIX_APPS", () => {
     expect(() => resolveRoleAppSet({ apps: "mail,notanapp" })).toThrow(CoreAppRoleError);
   });
-
   it("rejects an empty explicit app set", () => {
     expect(() => resolveRoleAppSet({ apps: " , " })).toThrow(CoreAppRoleError);
   });
 });
-
 describe("isCoreAppId", () => {
   it("recognizes the eight core apps", () => {
     for (const appId of CORE_APP_IDS) {

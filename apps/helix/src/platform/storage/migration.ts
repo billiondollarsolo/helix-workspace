@@ -45,12 +45,7 @@ export interface RunTenantStorageMigrationInput {
 }
 
 export type TenantStorageMigrationJobStatus =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "succeeded_with_errors"
-  | "failed"
-  | "dry_run";
+  "queued" | "running" | "succeeded" | "succeeded_with_errors" | "failed" | "dry_run";
 
 export interface TenantStorageMigrationStorageState {
   readonly managedBy: TenantStorageMigrationTarget;
@@ -231,6 +226,12 @@ export async function listTenantStorageMigrationObjects(
 export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigrationJobStore {
   constructor(private readonly sql: postgres.Sql) {}
 
+  #jsonOrNull(
+    state: TenantStorageMigrationStorageState | null | undefined,
+  ): postgres.Parameter | null {
+    return state === undefined || state === null ? null : this.sql.json(toSqlJson(state));
+  }
+
   async create(
     input: CreateTenantStorageMigrationJobInput,
   ): Promise<TenantStorageMigrationJobRecord> {
@@ -248,16 +249,8 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
         ${input.target},
         ${input.dryRun === true},
         ${input.requestedByActorId ?? null},
-        ${
-          input.sourceStorage === undefined || input.sourceStorage === null
-            ? null
-            : this.sql.json(toSqlJson(input.sourceStorage))
-        },
-        ${
-          input.targetStorage === undefined || input.targetStorage === null
-            ? null
-            : this.sql.json(toSqlJson(input.targetStorage))
-        }
+        ${this.#jsonOrNull(input.sourceStorage)},
+        ${this.#jsonOrNull(input.targetStorage)}
       )
       returning
         id,
@@ -807,13 +800,14 @@ function sha256Hex(body: Uint8Array): string {
 function jobStatusFromMigrationResult(
   result: TenantStorageMigrationResult,
 ): TenantStorageMigrationJobStatus {
-  if (result.status === "completed") {
-    return "succeeded";
+  switch (result.status) {
+    case "completed":
+      return "succeeded";
+    case "completed_with_errors":
+      return "succeeded_with_errors";
+    default:
+      return "dry_run";
   }
-  if (result.status === "completed_with_errors") {
-    return "succeeded_with_errors";
-  }
-  return "dry_run";
 }
 
 function mapTenantStorageMigrationJobRow(

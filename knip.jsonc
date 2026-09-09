@@ -1,13 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreDependencies": [
-    // Loaded by name so editor migrations stay owned by the paired package.
-    "@helix/editors-core-app",
-    // CommonJS libraries loaded through createRequire for ESM compatibility.
-    "pptxgenjs",
-    // Test-only dynamic import used by the span capture harness.
-    "@opentelemetry/context-async-hooks",
-    // Required from the shell-based live WebSocket smoke test.
-    "ws"
-  ]
+  "ignoreBinaries": ["openssl", "helm", "rclone"],
+  "ignoreDependencies": ["ws"],
 }

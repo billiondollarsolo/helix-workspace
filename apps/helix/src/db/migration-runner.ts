@@ -23,6 +23,11 @@ export interface PendingMigration {
   readonly name: string;
 }
 
+export interface UnknownAppliedMigration {
+  readonly namespace: string;
+  readonly name: string;
+}
+
 export interface MigrationRunResult {
   readonly applied: readonly AppliedMigration[];
   readonly skipped: readonly AppliedMigration[];
@@ -35,15 +40,22 @@ export async function runMigrations(
 ): Promise<MigrationRunResult> {
   const applied: AppliedMigration[] = [];
   const skipped: AppliedMigration[] = [];
+  const connection = await sql.reserve();
+  let locked = false;
 
-  await sql`select pg_advisory_lock(${migrationLockKey})`;
   try {
-    await ensureMigrationTable(sql);
+    // Session advisory locks are connection-bound. Reserve one connection for
+    // the entire migration run so another pool connection cannot accidentally
+    // execute migrations outside the lock or attempt to unlock the wrong
+    // PostgreSQL session.
+    await connection`select pg_advisory_lock(${migrationLockKey})`;
+    locked = true;
+    await ensureMigrationTable(connection);
     for (const source of sources) {
       const migrations = await listMigrations(source);
       for (const migration of migrations) {
         const name = migration.name;
-        const existing = await sql<{ exists: boolean }[]>`
+        const existing = await connection<{ exists: boolean }[]>`
           select exists(
             select 1 from schema_migrations where namespace = ${source.namespace} and name = ${name}
           ) as exists
@@ -54,12 +66,13 @@ export async function runMigrations(
           continue;
         }
 
-        const statement = migration.sql;
-        await sql.begin(async (tx) => {
+        const statements: readonly string[] =
+          typeof migration.sql === "string" ? [migration.sql] : migration.sql;
+        await runReservedTransaction(connection, async () => {
           if (options.deploymentRegion !== undefined) {
-            await tx`select set_config('helix.deployment_region', ${options.deploymentRegion}, true)`;
+            await connection`select set_config('helix.deployment_region', ${options.deploymentRegion}, true)`;
           }
-          const ownerRows = await tx<{ readonly available: boolean }[]>`
+          const ownerRows = await connection<{ readonly available: boolean }[]>`
             select exists (
               select 1 from pg_roles
               where rolname = 'helix_migration_owner'
@@ -72,14 +85,13 @@ export async function runMigrations(
             ) as available
           `;
           if (ownerRows[0]?.available === true) {
-            await tx.unsafe("set local role helix_migration_owner");
+            await connection.unsafe("set local role helix_migration_owner");
           }
-          const statements: readonly string[] =
-            typeof statement === "string" ? [statement] : statement;
+
           for (const sqlStatement of statements) {
-            await tx.unsafe(sqlStatement);
+            await connection.unsafe(sqlStatement);
           }
-          await tx`
+          await connection`
             insert into schema_migrations (namespace, name)
             values (${source.namespace}, ${name})
           `;
@@ -88,10 +100,42 @@ export async function runMigrations(
       }
     }
   } finally {
-    await sql`select pg_advisory_unlock(${migrationLockKey})`;
+    try {
+      if (locked) {
+        await connection`select pg_advisory_unlock(${migrationLockKey})`;
+      }
+    } finally {
+      connection.release();
+    }
   }
 
   return { applied, skipped };
+}
+
+async function runReservedTransaction(
+  connection: postgres.ReservedSql,
+  callback: () => Promise<void>,
+): Promise<void> {
+  // postgres.js 3.4.x declares ReservedSql.begin() in its public types but the
+  // runtime object returned by reserve() does not attach that method. Execute
+  // the transaction control statements on the reserved connection directly so
+  // the advisory lock and every migration statement remain on one session.
+  await connection.unsafe("begin");
+  try {
+    await callback();
+    await connection.unsafe("commit");
+  } catch (error) {
+    try {
+      await connection.unsafe("rollback");
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Migration failed and its reserved transaction could not be rolled back",
+        { cause: rollbackError },
+      );
+    }
+    throw error;
+  }
 }
 
 export async function listPendingMigrations(
@@ -102,10 +146,7 @@ export async function listPendingMigrations(
   const pending: PendingMigration[] = [];
   for (const source of sources) {
     const migrations = await listMigrations(source);
-    const appliedRows = await sql<{ readonly name: string }[]>`
-      select name from schema_migrations where namespace = ${source.namespace}
-    `;
-    const applied = new Set(appliedRows.map((row) => row.name));
+    const applied = await appliedMigrationNames(sql, source.namespace);
     for (const migration of migrations) {
       if (!applied.has(migration.name)) {
         pending.push({ namespace: source.namespace, name: migration.name });
@@ -113,6 +154,43 @@ export async function listPendingMigrations(
     }
   }
   return pending;
+}
+
+/**
+ * Find migration rows for an enabled namespace that the running application
+ * image does not contain. This indicates that the database is newer than the
+ * image's compatible schema range.
+ */
+export async function listUnknownAppliedMigrations(
+  sql: postgres.Sql,
+  sources: readonly MigrationSource[],
+): Promise<readonly UnknownAppliedMigration[]> {
+  await ensureMigrationTable(sql);
+  const unknown: UnknownAppliedMigration[] = [];
+  for (const source of sources) {
+    const known = new Set((await listMigrations(source)).map((migration) => migration.name));
+    const applied = await appliedMigrationNames(sql, source.namespace);
+    for (const name of applied) {
+      if (!known.has(name)) {
+        unknown.push({ namespace: source.namespace, name });
+      }
+    }
+  }
+  return unknown;
+}
+
+/**
+ * Names already recorded for a namespace. `schema_migrations` is keyed by
+ * `(namespace, name)`, so collapsing the rows into a set cannot lose entries.
+ */
+async function appliedMigrationNames(
+  sql: postgres.Sql,
+  namespace: string,
+): Promise<ReadonlySet<string>> {
+  const rows = await sql<{ readonly name: string }[]>`
+    select name from schema_migrations where namespace = ${namespace}
+  `;
+  return new Set(rows.map((row) => row.name));
 }
 
 async function ensureMigrationTable(sql: postgres.Sql): Promise<void> {

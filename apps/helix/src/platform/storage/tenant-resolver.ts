@@ -1,3 +1,4 @@
+import type { S3CompatibleObjectEvidence } from "./s3-compatible.js";
 import { createHash } from "node:crypto";
 import type { JsonObject, StorageClient, StorageObject } from "@helix/sdk-types";
 import {
@@ -8,6 +9,8 @@ import {
 import { assertStorageRegion } from "../tenancy/residency.js";
 
 export interface TenantStorageClient extends StorageClient {
+  headObject?(key: string): Promise<S3CompatibleObjectEvidence | null>;
+  copyObject?(sourceKey: string, destinationKey: string): Promise<void>;
   checkHealth?(): Promise<void>;
   listKeys?(prefix: string): AsyncIterable<string>;
   presignGetUrl?(
@@ -36,7 +39,7 @@ export interface TenantStorageClient extends StorageClient {
   ): Promise<TenantPresignedPutUpload>;
   createMultipartUpload?(
     key: string,
-    options?: { readonly contentType?: string },
+    options?: { readonly contentType?: string; readonly metadata?: Record<string, string> },
   ): Promise<{ readonly uploadId: string }>;
   presignUploadPart?(
     key: string,
@@ -464,6 +467,8 @@ export function createPrefixedStorageClient(
   const presignGetUrl = client.presignGetUrl?.bind(client);
   const presignPutUrl = client.presignPutUrl?.bind(client);
   const presignPutRequest = client.presignPutRequest?.bind(client);
+  const headObject = client.headObject?.bind(client);
+  const copyObject = client.copyObject?.bind(client);
   const head = client.head?.bind(client);
   const getStream = client.getStream?.bind(client);
   const getRange = client.getRange?.bind(client);
@@ -491,6 +496,23 @@ export function createPrefixedStorageClient(
     async delete(key: string): Promise<void> {
       await client.delete(prefixedKey(normalizedPrefix, key));
     },
+    ...(headObject === undefined
+      ? {}
+      : {
+          headObject(key: string) {
+            return headObject(prefixedKey(normalizedPrefix, key));
+          },
+        }),
+    ...(copyObject === undefined
+      ? {}
+      : {
+          copyObject(sourceKey: string, destinationKey: string) {
+            return copyObject(
+              prefixedKey(normalizedPrefix, sourceKey),
+              prefixedKey(normalizedPrefix, destinationKey),
+            );
+          },
+        }),
     ...(checkHealth === undefined ? {} : { checkHealth }),
     ...(listKeys === undefined
       ? {}

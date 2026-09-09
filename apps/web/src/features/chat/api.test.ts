@@ -294,6 +294,15 @@ describe("chat API", () => {
   });
 
   it("serializes chat websocket messages and parses realtime events", () => {
+    const storage = new Map([["helix.access_token", "reusable-browser-token"]]);
+    vi.stubGlobal("window", {
+      location: { href: "https://app.helix.test/chat" },
+      localStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => storage.set(key, value),
+        removeItem: (key: string) => storage.delete(key),
+      },
+    });
     const events: unknown[] = [];
     const client = createChatRealtimeClient({
       ticket: "t".repeat(43),
@@ -307,6 +316,8 @@ describe("chat API", () => {
     }
     expect(socket.url).toBe("ws://localhost/ws/chat");
     expect(socket.protocols).toEqual(["helix.chat.v1", `helix.ticket.${"t".repeat(43)}`]);
+    expect(socket.url).not.toContain("reusable-browser-token");
+    vi.unstubAllGlobals();
 
     client.subscribe("33333333-3333-4333-8333-333333333333", 7);
     client.setTyping("33333333-3333-4333-8333-333333333333", true);

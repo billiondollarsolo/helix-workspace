@@ -4,7 +4,6 @@ import {
   validateNonNegativeInteger,
   type AgentCostDecision,
   type AgentCostRecordInput,
-  type AgentCostUsage,
   type AgentLimitBudget,
   type AgentLimitConsumeInput,
   type AgentLimitDecision,
@@ -14,6 +13,7 @@ import {
   type AgentRateCostLimiter,
   type AgentWindowUsage,
 } from "./types.js";
+import { costUsage, pruneWindow, secondsUntilNextUtcDay, utcDayKey } from "./usage-math.js";
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -127,7 +127,11 @@ export class InMemoryAgentRateCostLimiter implements AgentRateCostLimiter {
     ) {
       return {
         reason: "requests_per_minute",
-        retryAfterSeconds: retryAfterSeconds(input.state.minuteRequests[0] ?? input.at.getTime(), MINUTE_MS, input.at),
+        retryAfterSeconds: retryAfterSeconds(
+          input.state.minuteRequests[0] ?? input.at.getTime(),
+          MINUTE_MS,
+          input.at,
+        ),
       };
     }
 
@@ -137,7 +141,11 @@ export class InMemoryAgentRateCostLimiter implements AgentRateCostLimiter {
     ) {
       return {
         reason: "requests_per_day",
-        retryAfterSeconds: retryAfterSeconds(input.state.dayRequests[0] ?? input.at.getTime(), DAY_MS, input.at),
+        retryAfterSeconds: retryAfterSeconds(
+          input.state.dayRequests[0] ?? input.at.getTime(),
+          DAY_MS,
+          input.at,
+        ),
       };
     }
 
@@ -166,20 +174,11 @@ function actorStateKey(orgId: string, actorId: string): string {
   return `${orgId}:${actorId}`;
 }
 
-function pruneWindow(timestamps: number[], minimumTimestamp: number): void {
-  let removeCount = 0;
-  for (const timestamp of timestamps) {
-    if (timestamp > minimumTimestamp) {
-      break;
-    }
-    removeCount += 1;
-  }
-  if (removeCount > 0) {
-    timestamps.splice(0, removeCount);
-  }
-}
-
-function windowUsage(timestamps: readonly number[], limit: number | null, windowMs: number): AgentWindowUsage {
+function windowUsage(
+  timestamps: readonly number[],
+  limit: number | null,
+  windowMs: number,
+): AgentWindowUsage {
   const oldest = timestamps.at(0);
   const resetsAt = oldest === undefined ? null : new Date(oldest + windowMs).toISOString();
   return {
@@ -190,35 +189,6 @@ function windowUsage(timestamps: readonly number[], limit: number | null, window
   };
 }
 
-function costUsage(usedUsdMicros: number, budget: AgentLimitBudget, at: Date): AgentCostUsage {
-  const warningThresholdUsdMicros =
-    budget.costPerDayUsdMicros === null
-      ? null
-      : Math.floor(budget.costPerDayUsdMicros * budget.costWarningThresholdRatio);
-
-  return {
-    limitUsdMicros: budget.costPerDayUsdMicros,
-    usedUsdMicros,
-    remainingUsdMicros:
-      budget.costPerDayUsdMicros === null ? null : Math.max(budget.costPerDayUsdMicros - usedUsdMicros, 0),
-    resetsAt: nextUtcDay(at).toISOString(),
-    warningThresholdUsdMicros,
-    warningReached: warningThresholdUsdMicros !== null && usedUsdMicros >= warningThresholdUsdMicros,
-  };
-}
-
 function retryAfterSeconds(oldestTimestamp: number, windowMs: number, at: Date): number {
   return Math.max(1, Math.ceil((oldestTimestamp + windowMs - at.getTime()) / 1000));
-}
-
-function utcDayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function nextUtcDay(date: Date): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
-}
-
-function secondsUntilNextUtcDay(date: Date): number {
-  return Math.max(1, Math.ceil((nextUtcDay(date).getTime() - date.getTime()) / 1000));
 }

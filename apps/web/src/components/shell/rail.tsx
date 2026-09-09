@@ -24,7 +24,12 @@ export function Rail({ onOpenLauncher, launcherOpen, onOpenHelp }: RailProps) {
   const enabled = useEnabledApps();
 
   return (
-    <div className="rail">
+    /* `nav`, not `div`: these are the product's primary destinations, and as a
+       bare div their links sat outside every landmark — axe's `region` rule,
+       and in practice a screen-reader user with no way to jump to app
+       navigation. The label distinguishes it from the in-app navigation each
+       surface renders. */
+    <nav className="rail" aria-label="Apps">
       <button
         type="button"
         className="rail-logo"
@@ -59,6 +64,6 @@ export function Rail({ onOpenLauncher, launcherOpen, onOpenHelp }: RailProps) {
         <Icons.Help />
         <span className="rail-tip">Help</span>
       </button>
-    </div>
+    </nav>
   );
 }

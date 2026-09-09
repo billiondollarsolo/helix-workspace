@@ -183,10 +183,10 @@ describe("Chat grant validity", { skip: process.env.DATABASE_URL === undefined }
           messageId: MESSAGE_A,
           body: "must not edit",
         }),
-      ).resolves.toBeNull();
+      ).rejects.toBeInstanceOf(ChatRoomAccessError);
       await expect(
         store.deleteMessage({ orgId: ORG_A, actorId: ACTOR_A, messageId: MESSAGE_A }),
-      ).resolves.toBeNull();
+      ).rejects.toBeInstanceOf(ChatRoomAccessError);
       await expect(
         store.pinMessage({
           orgId: ORG_A,
@@ -319,6 +319,7 @@ async function realtimeClose(
       tickets: new BoundTicketStore(actor, roomId),
       bus: new InMemoryChatRoomBus(),
       presence: new InMemoryChatPresenceStore(),
+      trustedOrigins: [],
     },
   );
   return socket.closed;

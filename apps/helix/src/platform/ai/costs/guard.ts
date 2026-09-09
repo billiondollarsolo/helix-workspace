@@ -1,6 +1,7 @@
 import type { Actor, SecurityTier } from "@helix/sdk-types";
 import type { AICostGuard } from "../routing.js";
 import { resolveAICostBudget, validateNonNegativeInteger } from "./budget.js";
+import { utcDayKey } from "./daily-window.js";
 import type {
   AICostBudget,
   AICostLimitReason,
@@ -106,8 +107,4 @@ function costScope(actor: Actor, feature: string, tier: SecurityTier, budget: AI
     tier,
     budget,
   };
-}
-
-function utcDayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
 }

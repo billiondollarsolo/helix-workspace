@@ -13,13 +13,13 @@ const skipProtectedWithoutAuth =
 
 const webRoutes = csv(
   __ENV.WEB_ROUTES ||
-    "/,/login,/signup,/mail,/chat,/drive,/docs,/calendar,/meet,/assistant,/settings,/admin",
+    "/,/login,/signup,/mail,/chat,/drive,/calendar,/meet,/assistant,/settings,/admin",
 );
 const apiTargets = csv(__ENV.API_TARGETS || "/healthz,/readyz,/metrics,/openapi.json");
 const enabledGroups = new Set(
   csv(
     __ENV.K6_SCENARIO_GROUPS ||
-      "web_navigation,api_smoke,mail_api,inbound_mail,search,chat,docs,meet_jitsi,plugin_install,assistant_llm,mcp,otel_health",
+      "web_navigation,api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,plugin_install,assistant_llm,mcp,otel_health",
   ),
 );
 
@@ -58,13 +58,6 @@ const prdTargets = [
     exec: "chat",
     metric: "helix_chat_delivery_ms",
     threshold: Number(__ENV.CHAT_DELIVERY_P95_MS || 150),
-    protected: true,
-  },
-  {
-    group: "docs",
-    exec: "docs",
-    metric: "helix_docs_collaboration_ms",
-    threshold: Number(__ENV.DOCS_COLLABORATION_P95_MS || 200),
     protected: true,
   },
   {
@@ -137,7 +130,6 @@ const metrics = {
   inbound_mail: new Trend("helix_inbound_mail_searchable_ms", true),
   search: new Trend("helix_search_query_ms", true),
   chat: new Trend("helix_chat_delivery_ms", true),
-  docs: new Trend("helix_docs_collaboration_ms", true),
   meet_jitsi: new Trend("helix_jitsi_join_ms", true),
   plugin_install: new Trend("helix_plugin_install_ms", true),
   assistant_llm: new Trend("helix_llm_routing_overhead_ms", true),
@@ -262,52 +254,6 @@ export function chat() {
     body: jsonEnv("CHAT_BODY", { query: __ENV.CHAT_QUERY || "", limit: 20 }),
     okStatuses: [200, 404],
     expect: __ENV.CHAT_EXPECT || "",
-  });
-}
-
-export function docs() {
-  const marker = __ENV.DOCS_EXPECT || `Helix Docs k6 ${Date.now()}-${__VU}-${__ITER}`;
-  const startedAt = Date.now();
-  let docId = __ENV.DOCS_DOC_ID || "";
-  const providedDocId = docId.length > 0;
-  let createResponse = null;
-
-  if (!docId) {
-    createResponse = toolCall(
-      __ENV.DOCS_CREATE_TOOL_ID || "docs.create",
-      jsonEnv("DOCS_CREATE_BODY", {
-        title: `k6 Docs collaboration probe ${marker}`,
-        initialMarkdown: `Synthetic Docs backend probe ${marker}`,
-        metadata: { source: "k6", marker },
-      }),
-      { group: "docs", step: "create" },
-    );
-    const created = parseJson(createResponse);
-    docId = typeof created?.id === "string" ? created.id : "";
-  }
-
-  const exportResponse = toolCall(
-    __ENV.DOCS_EXPORT_TOOL_ID || "docs.export",
-    {
-      ...jsonEnv("DOCS_EXPORT_BODY", {
-        docId,
-        format: "markdown",
-        includeComments: true,
-      }),
-      docId,
-    },
-    { group: "docs", step: "export" },
-  );
-  metrics.docs.add(Date.now() - startedAt, { group: "docs" });
-
-  check(exportResponse, {
-    "docs create tool accepted probe": () =>
-      createResponse === null || [200, 202].includes(createResponse.status),
-    "docs backend probe returned a document id": () => docId.length > 0,
-    "docs export tool is reachable": (res) => [200, 404].includes(res.status),
-    "docs export is authorized with AUTH_TOKEN": (res) => !authToken || res.status !== 401,
-    "docs export contains expected marker": (res) =>
-      (providedDocId && !__ENV.DOCS_EXPECT) || responseContains(res, marker),
   });
 }
 

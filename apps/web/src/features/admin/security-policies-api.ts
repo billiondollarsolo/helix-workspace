@@ -1,6 +1,8 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
+import { parseResponse } from "@/features/admin/api-response";
 
 /**
  * Admin Console — Security policies client.
@@ -49,19 +51,30 @@ export const securityPolicyGroup: Record<SecurityPolicyType, "Authentication" | 
 export const POLICY_ENFORCEMENTS = ["disabled", "optional", "required"] as const;
 export type PolicyEnforcement = (typeof POLICY_ENFORCEMENTS)[number];
 
+const policyRuntimeStatusSchema = z.object({
+  mode: z.enum(["enforced", "partial", "recorded_only"]),
+  summary: z.string(),
+  enforcementPoints: z.array(z.string()),
+  displayLevel: z.enum(["off", "recorded", "active", "required"]),
+  displayLevelOn: z.boolean(),
+});
+
 const securityPolicySchema = z.object({
   id: z.string(),
   orgId: z.string(),
   policyType: z.enum(SECURITY_POLICY_TYPES),
   enabled: z.boolean(),
   enforcement: z.enum(POLICY_ENFORCEMENTS),
-  settings: z.record(z.unknown()),
+  settings: z.record(z.string(), z.unknown()),
   updatedBy: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  /** Present on current API; optional so older fixtures still parse. */
+  runtimeStatus: policyRuntimeStatusSchema.optional(),
 });
 
 export type SecurityPolicy = z.infer<typeof securityPolicySchema>;
+export type PolicyRuntimeStatus = z.infer<typeof policyRuntimeStatusSchema>;
 
 const policiesResponseSchema = z.object({ policies: z.array(securityPolicySchema) });
 const policyResponseSchema = z.object({ policy: securityPolicySchema });
@@ -81,10 +94,9 @@ export const securityPoliciesQueryKeys = {
 
 export function securityPoliciesQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: securityPoliciesQueryKeys.list(),
     queryFn: () => fetchSecurityPolicies(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 
@@ -124,36 +136,4 @@ export async function updateSecurityPolicy(
     },
   );
   return (await parseResponse(response, "update security policy", policyResponseSchema)).policy;
-}
-
-// ---------------------------------------------------------------------------
-// Shared response handling
-// ---------------------------------------------------------------------------
-
-async function parseResponse<T>(
-  response: Response,
-  action: string,
-  schema: z.ZodType<T>,
-): Promise<T> {
-  const payload: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-  }
-  const parsed = schema.safeParse(payload);
-  if (parsed.success) {
-    return parsed.data;
-  }
-  throw new Error(`Failed to ${action}: malformed response.`);
-}
-
-function errorMessage(payload: unknown): string | undefined {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof payload.error === "string"
-  ) {
-    return payload.error;
-  }
-  return undefined;
 }

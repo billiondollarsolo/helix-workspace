@@ -1,25 +1,20 @@
 /* Right side panel — the 44px tool rail + 320px mini panels. */
-
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
-import { useDeferredValue, useState, type ReactNode } from "react";
 import { Icons, type IconName } from "@/components/icons";
 import { peopleDirectoryQueryOptions } from "@/features/people/api";
-
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { useDeferredValue, useState, type CSSProperties, type ReactNode } from "react";
 export type SideTool = "calendar" | "contacts" | "ai";
-
 interface SideToolDef {
   id: SideTool;
   label: string;
   icon: IconName;
 }
-
 const SIDE_TOOLS: readonly SideToolDef[] = [
   { id: "calendar", label: "Calendar", icon: "Calendar" },
   { id: "contacts", label: "Contacts", icon: "Users" },
   { id: "ai", label: "Helix AI", icon: "Sparkles" },
 ];
-
 const sectionLabelStyle = {
   fontSize: "var(--text-chip)",
   color: "var(--text-3)",
@@ -28,9 +23,13 @@ const sectionLabelStyle = {
   letterSpacing: ".06em",
   marginBottom: 8,
 };
-
+/** Every mini panel fills the 320px column top-to-bottom. */
+const panelColumnStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  height: "100%",
+};
 /* ---------- Mini Calendar ---------- */
-
 function MiniCalendar() {
   const navigate = useNavigate();
   const todayDate = new Date();
@@ -53,7 +52,7 @@ function MiniCalendar() {
     month.getFullYear() === todayDate.getFullYear() && month.getMonth() === todayDate.getMonth();
   const days = ["S", "M", "T", "W", "T", "F", "S"];
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div style={panelColumnStyle}>
       <div style={{ padding: "12px 14px 6px" }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
           <span style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>{monthLabel}</span>
@@ -108,6 +107,12 @@ function MiniCalendar() {
             const day = index - leadingBlanks + 1;
             const valid = day >= 1 && day <= daysInMonth;
             const isToday = isCurrentMonth && valid && day === today;
+            let dayColor = "var(--text)";
+            if (!valid) {
+              dayColor = "var(--text-3)";
+            } else if (isToday) {
+              dayColor = "white";
+            }
             return (
               <button
                 type="button"
@@ -124,7 +129,7 @@ function MiniCalendar() {
                   display: "grid",
                   placeItems: "center",
                   borderRadius: 999,
-                  color: !valid ? "var(--text-3)" : isToday ? "white" : "var(--text)",
+                  color: dayColor,
                   background: isToday ? "var(--accent)" : "transparent",
                   fontWeight: isToday ? 600 : 400,
                   cursor: valid ? "pointer" : "default",
@@ -151,9 +156,7 @@ function MiniCalendar() {
     </div>
   );
 }
-
 /* ---------- Mini Contacts ---------- */
-
 function MiniContacts() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
@@ -192,12 +195,22 @@ function MiniContacts() {
           style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 4px" }}
         >
           {person.avatarDataUrl === null ? null : (
-            <img src={person.avatarDataUrl} alt="" width={28} height={28} style={{ borderRadius: "50%" }} />
+            <img
+              src={person.avatarDataUrl}
+              alt=""
+              width={28}
+              height={28}
+              style={{ borderRadius: "50%" }}
+            />
           )}
           <span>
             <strong>{person.favorite ? `★ ${person.displayName}` : person.displayName}</strong>
-            {person.email === null ? null : <span style={{ display: "block" }}>{person.email}</span>}
-            <span style={{ display: "block", color: "var(--text-3)", fontSize: "var(--text-caption)" }}>
+            {person.email === null ? null : (
+              <span style={{ display: "block" }}>{person.email}</span>
+            )}
+            <span
+              style={{ display: "block", color: "var(--text-3)", fontSize: "var(--text-caption)" }}
+            >
               {person.kind}
             </span>
           </span>
@@ -206,9 +219,7 @@ function MiniContacts() {
     </div>
   );
 }
-
 /* ---------- Mini Helix AI ---------- */
-
 function MiniAI() {
   const navigate = useNavigate();
   const suggestions = [
@@ -218,7 +229,7 @@ function MiniAI() {
     "Find time on my calendar this week",
   ];
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+    <div style={panelColumnStyle}>
       <div style={{ padding: 14, borderBottom: "1px solid var(--border)" }}>
         <div
           style={{
@@ -264,14 +275,12 @@ function MiniAI() {
     </div>
   );
 }
-
 interface MiniView {
   title: string;
   icon: IconName;
   Component: () => ReactNode;
   fullRoute?: "/calendar" | "/assistant";
 }
-
 const MINI_VIEWS: Record<SideTool, MiniView> = {
   calendar: {
     title: "Calendar",
@@ -282,14 +291,11 @@ const MINI_VIEWS: Record<SideTool, MiniView> = {
   contacts: { title: "Contacts", icon: "Users", Component: MiniContacts },
   ai: { title: "Helix AI", icon: "Sparkles", Component: MiniAI, fullRoute: "/assistant" },
 };
-
 /* ---------- Rail + Panel ---------- */
-
 export interface SidePanelRailProps {
   activeTool: SideTool | null;
   onToggle: (tool: SideTool) => void;
 }
-
 export function SidePanelRail({ activeTool, onToggle }: SidePanelRailProps) {
   return (
     <div
@@ -347,12 +353,10 @@ export function SidePanelRail({ activeTool, onToggle }: SidePanelRailProps) {
     </div>
   );
 }
-
 export interface SidePanelProps {
   activeTool: SideTool | null;
   onClose: () => void;
 }
-
 export function SidePanel({ activeTool, onClose }: SidePanelProps) {
   const navigate = useNavigate();
   if (!activeTool) {

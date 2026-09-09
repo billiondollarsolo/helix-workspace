@@ -9,7 +9,6 @@ export * from "./carddav/index.js";
 export * from "./chat/index.js";
 export * from "./config/loader.js";
 export * from "./config/tier.js";
-export * from "./docs/index.js";
 export * from "./drive/index.js";
 export * from "./events/nats-event-bus.js";
 export * from "./events/schema-registry.js";

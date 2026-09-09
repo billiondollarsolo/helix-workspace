@@ -180,7 +180,7 @@ alter table webhook_deliveries
 -- Persist only an opaque tenant Vault handle and an allowlisted public config
 -- for outbound mail providers.
 update mail_outbound_providers
-set secret_ref = null
+set secret_ref = null, enabled = false
 where secret_ref is not null
   and secret_ref !~ '^[a-z0-9]([a-z0-9._-]{0,98}[a-z0-9])?$';
 

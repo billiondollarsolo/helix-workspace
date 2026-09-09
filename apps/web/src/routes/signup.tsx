@@ -10,10 +10,5 @@ export const Route = createFileRoute("/signup")({
       throw redirect({ to: "/mail", search: {} });
     }
   },
-  component: SignupRoute,
+  component: SignupShell,
 });
-
-function SignupRoute() {
-  return <SignupShell />;
-}
-

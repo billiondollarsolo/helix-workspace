@@ -8,6 +8,7 @@ import {
   invalidRecipientTokens,
   readMailComposeRecovery,
   recipientTokens,
+  reconcileMailComposeDrafts,
   writeMailComposeRecovery,
 } from "./mail-compose-recovery";
 
@@ -67,5 +68,52 @@ describe("mail compose recovery", () => {
         attachments: [],
       }),
     ).toBe(true);
+  });
+
+  it("reconciles local recovery against server drafts without silent overwrite", () => {
+    const local = {
+      to: [{ address: "mira@helix.test" }],
+      cc: [],
+      bcc: [],
+      subject: "Local",
+      bodyText: "from local",
+      attachments: [],
+      updatedAt: "2026-08-01T12:00:00.000Z",
+    };
+    expect(reconcileMailComposeDrafts({ local: null, server: null })).toEqual({ action: "empty" });
+    expect(
+      reconcileMailComposeDrafts({
+        local,
+        server: null,
+      }),
+    ).toEqual({ action: "use-local", local });
+    expect(
+      reconcileMailComposeDrafts({
+        local,
+        server: {
+          to: local.to,
+          cc: [],
+          bcc: [],
+          attachments: [],
+          subject: local.subject,
+          bodyText: local.bodyText,
+          updatedAt: "2026-08-01T13:00:00.000Z",
+        },
+      }),
+    ).toEqual({ action: "use-server", clearLocal: true });
+    expect(
+      reconcileMailComposeDrafts({
+        local,
+        server: {
+          to: [{ address: "other@helix.test" }],
+          cc: [],
+          bcc: [],
+          attachments: [],
+          subject: "Server",
+          bodyText: "from server",
+          updatedAt: "2026-08-01T11:00:00.000Z",
+        },
+      }).action,
+    ).toBe("conflict");
   });
 });

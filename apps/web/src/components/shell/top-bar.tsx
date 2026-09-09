@@ -18,6 +18,7 @@ import { toggleTheme, useAppearance } from "@/components/settings-store";
 export interface TopBarProps {
   /** Surface name shown left of search. */
   title: string;
+  navigationToggle?: ReactNode;
   /** Icon next to the title. */
   icon?: ReactNode;
   /** Search input / palette button placeholder text. */
@@ -35,6 +36,7 @@ export interface TopBarProps {
 
 export function TopBar({
   title,
+  navigationToggle,
   icon,
   searchPlaceholder = "Search",
   actions,
@@ -52,7 +54,8 @@ export function TopBar({
   const hasLiveSearch = typeof onSearchChange === "function";
 
   return (
-    <div className="topbar" style={{ position: "relative" }}>
+    <header className="topbar" style={{ position: "relative" }}>
+      {navigationToggle}
       <div className="topbar-title">
         {icon}
         <span>{title}</span>
@@ -174,6 +177,6 @@ export function TopBar({
         anchorRef={profileButtonRef}
         openSettings={overlays.openSettings}
       />
-    </div>
+    </header>
   );
 }

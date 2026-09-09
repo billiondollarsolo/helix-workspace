@@ -1,11 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import type {
-  MeteringClient,
-  MeteringEmitInput,
-  MeteringEvent,
-  TraceContext,
-} from "@helix/sdk";
+import type { MeteringClient, MeteringEmitInput, MeteringEvent, TraceContext } from "@helix/sdk";
 import {
   ImmutableS3AuditShipper,
   createHmacAuditAnchorAuthenticator,
@@ -215,9 +210,11 @@ describe("ImmutableS3AuditShipper", () => {
       thisHash: "not-a-digest",
     };
 
-    await expect(shipImmutableAuditBatch({ store: new RecordingImmutableAuditStore(), signer }, [invalidRecord])).rejects.toThrow(
-      "thisHash must be a lowercase sha256 hex digest",
-    );
+    await expect(
+      shipImmutableAuditBatch({ store: new RecordingImmutableAuditStore(), signer }, [
+        invalidRecord,
+      ]),
+    ).rejects.toThrow("thisHash must be a lowercase sha256 hex digest");
   });
 });
 
@@ -253,7 +250,10 @@ class RecordingMeteringClient implements MeteringClient {
   }
 }
 
-function record(id: string, overrides: Partial<ImmutableAuditActivityRecord> = {}): ImmutableAuditActivityRecord {
+function record(
+  id: string,
+  overrides: Partial<ImmutableAuditActivityRecord> = {},
+): ImmutableAuditActivityRecord {
   return {
     actorId: "actor-1",
     createdAt: "2026-05-20T11:59:00.000Z",

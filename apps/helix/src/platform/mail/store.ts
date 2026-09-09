@@ -1,74 +1,75 @@
-import { randomUUID } from "node:crypto";
-import type postgres from "postgres";
-import type { JsonObject, StorageObject } from "@helix/sdk-types";
-import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
 import {
   MAIL_ATTACHMENT_MAX_FILE_BYTES,
   MAIL_ATTACHMENT_MAX_FILES,
   MAIL_ATTACHMENT_MAX_TOTAL_BYTES,
 } from "@helix/contracts";
-import type { MailOutboundDeliveryHealth } from "./admin-config.js";
+import type { JsonObject, StorageObject } from "@helix/sdk-types";
+import { randomUUID } from "node:crypto";
+import type postgres from "postgres";
+import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
 import type { TenantStorageClient, TenantStorageResolver } from "../storage/tenant-resolver.js";
+import type { MailOutboundDeliveryHealth } from "./admin-config.js";
 import type {
-  MailFilterActions,
-  MailFilterCriteria,
-  MailFilterRecord,
-  MailClassificationWrite,
-  MailEnrichmentProjectionStore,
-  MailEnrichmentRecord,
-  MailEnrichmentWrite,
-  MailFolderId,
-  MailFolderSummary,
-  MailInboundAddressResolution,
-  MailInboundRecipient,
-  MailInboundRoutingAction,
-  MailInboundRoutingRule,
-  MailAttachmentInput,
-  MailLabelRecord,
-  MailMessageInput,
-  MailRawSourceRecord,
-  MailOutboundEnvelope,
-  MailOutboundDeliveryResult,
-  MailOutboundRecord,
-  MailOutboundStatus,
-  MailSearchHit,
-  MailSearchProjectionStore,
-  MailSearchRequest,
-  MailSearchRecord,
-  MailThreadDetail,
-  MailThreadAttachment,
-  MailThreadGetRequest,
-  MailThreadListRequest,
-  MailThreadListResult,
-  MailThreadMessage,
-  MailThreadRowRecord,
-  MailAliasRecord,
-  MailDraftRecord,
-  MailThreadStatePatch,
-  MailVacationRecord,
-  MailUserSettings,
-  StoredMailMessage,
-} from "./types.js";
-import { MAIL_FOLDER_IDS } from "./types.js";
+  PostgresMailAttachmentIngestor,
+  StagedMailAttachment,
+} from "./attachment-ingestion.js";
 import { classifyMailCategory, coerceMailCategory } from "./category.js";
+import { sanitizeMailHtml } from "./content-safety.js";
 import {
-  MailInboundQuotaExceededError,
   MailAttachmentQuotaError,
+  MailInboundQuotaExceededError,
   MailRawSourceIntegrityError,
   MailRecipientSuppressedError,
   MailThreadNotFoundError,
 } from "./errors.js";
 import { MAIL_RAW_SOURCE_MAX_BYTES, verifyMailRawSource } from "./raw-source.js";
-import type {
-  PostgresMailAttachmentIngestor,
-  StagedMailAttachment,
-} from "./attachment-ingestion.js";
 import {
   normalizeMessageId,
   normalizeProviderDeliveryId,
   prepareOutboundEnvelope,
   threadReferenceIds,
 } from "./threading.js";
+import type {
+  MailAliasRecord,
+  MailAttachmentInput,
+  MailClassificationWrite,
+  MailDraftRecord,
+  MailEnrichmentProjectionStore,
+  MailEnrichmentRecord,
+  MailEnrichmentWrite,
+  MailFilterActions,
+  MailFilterCriteria,
+  MailFilterRecord,
+  MailFolderId,
+  MailFolderSummary,
+  MailInboundAddressResolution,
+  MailInboundRecipient,
+  MailInboundRoutingAction,
+  MailInboundRoutingRule,
+  MailLabelRecord,
+  MailMessageInput,
+  MailOutboundDeliveryResult,
+  MailOutboundEnvelope,
+  MailOutboundRecord,
+  MailOutboundStatus,
+  MailRawSourceRecord,
+  MailSearchHit,
+  MailSearchProjectionStore,
+  MailSearchRecord,
+  MailSearchRequest,
+  MailThreadAttachment,
+  MailThreadDetail,
+  MailThreadGetRequest,
+  MailThreadListRequest,
+  MailThreadListResult,
+  MailThreadMessage,
+  MailThreadRowRecord,
+  MailThreadStatePatch,
+  MailUserSettings,
+  MailVacationRecord,
+  StoredMailMessage,
+} from "./types.js";
+import { MAIL_FOLDER_IDS } from "./types.js";
 // ponytail: store.ts is the mail IO adapter surface (~1700 LOC). Split list/folder
 // projection into store-threads when next touching listThreads; keep god-file note
 // until that extraction lands fully (G9).
@@ -110,6 +111,7 @@ export interface MailboxDelegateRecord {
 }
 
 export interface CreateOutboundMailInput {
+  readonly draft?: { readonly id: string; readonly revision: number };
   readonly orgId: string;
   readonly actorId: string;
   readonly threadId?: string;
@@ -177,6 +179,25 @@ export interface OutboundMailQueueStore {
   listDeadLetteredOutbound(orgId: string, limit?: number): Promise<readonly MailOutboundRecord[]>;
 }
 
+export interface BindOutboundProviderDecisionInput {
+  readonly leaseToken: string;
+  readonly id: string;
+  readonly orgId: string;
+  readonly providerId: string;
+  readonly providerKind: string;
+  readonly source: "sending_domain" | "org_default" | "environment";
+  readonly decidedAt?: Date;
+}
+
+export interface MailInboundDedupInput {
+  readonly key: string;
+  readonly normalizedMessageId: string | null;
+  readonly rawSha256: string;
+  readonly envelopeFrom: string | null;
+  readonly envelopeTo: readonly string[];
+  readonly receivedAt: Date;
+}
+
 export interface MailStore {
   findActorByAddress(
     orgId: string,
@@ -196,6 +217,19 @@ export interface MailStore {
     readonly actorId: string;
     readonly threadId: string;
     readonly patch: MailThreadStatePatch;
+  }): Promise<void>;
+  /**
+   * Durable spam/ham feedback for user Report spam / Not spam and optional
+   * auto classifiers. Best-effort when the table is not yet migrated.
+   */
+  recordSpamFeedback?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly threadId: string;
+    readonly messageId?: string | null;
+    readonly label: "spam" | "ham";
+    readonly source?: "user" | "auto_spamd" | "auto_ai" | "auto_rules";
+    readonly evidence?: JsonObject;
   }): Promise<void>;
   createFilter(input: CreateMailFilterInput): Promise<MailFilterRecord>;
   updateFilter(input: UpdateMailFilterInput): Promise<MailFilterRecord | null>;
@@ -271,7 +305,14 @@ export interface MailStore {
     readonly orgId: string;
     readonly actorId: string;
     readonly id: string;
+    readonly expectedRevision?: number;
   }): Promise<boolean>;
+  retryOutbound?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+    readonly outboxSubject?: string;
+  }): Promise<MailOutboundRecord | null>;
   listAliases?(orgId: string, actorId?: string): Promise<readonly MailAliasRecord[]>;
   createAlias?(input: {
     readonly orgId: string;
@@ -307,12 +348,10 @@ export interface MailRawSourceStore {
     readonly messageId: string;
   }): Promise<MailRawSourceRecord | null>;
 }
-
 export interface PostgresMailStoreOptions {
   readonly storageResolver?: TenantStorageResolver | undefined;
   readonly attachmentIngestor?:
-    | Pick<PostgresMailAttachmentIngestor, "stage" | "release">
-    | undefined;
+    Pick<PostgresMailAttachmentIngestor, "stage" | "release"> | undefined;
 }
 
 interface MailFilterRow {
@@ -372,6 +411,10 @@ interface MailOutboundRow {
   readonly failed_at: Date | null;
   readonly last_error: string | null;
   readonly provider_message_id: string | null;
+  readonly provider_id?: string | null;
+  readonly provider_kind?: string | null;
+  readonly provider_decision_source?: "sending_domain" | "org_default" | "environment" | null;
+  readonly provider_decided_at?: Date | null;
   readonly attempt_count?: number;
   readonly next_attempt_at?: Date | null;
   readonly dead_lettered_at?: Date | null;
@@ -768,13 +811,10 @@ export class PostgresMailStore
     const normalized = normalizeAddress(address);
     const rows = await this.sql<{ readonly address: string }[]>`
       with member as (
-        select actor.email
+        select actor.email, actor.type as actor_type
         from actors actor
-        join organization_memberships membership
-          on membership.org_id = actor.org_id and membership.actor_id = actor.id
         where actor.org_id = ${orgId} and actor.id = ${actorId}
-          and actor.type = 'user' and actor.disabled_at is null
-          and membership.status = 'active' and membership.guest_type = 'member'
+          and helix_mailbox_principal_is_active(actor.org_id, actor.id)
       )
       select ${normalized}::text as address
       from member
@@ -784,7 +824,8 @@ export class PostgresMailStore
           select 1 from admin_domains domain
           where domain.org_id = ${orgId}
             and domain.domain = split_part(${normalized}, '@', 2)
-            and domain.status = 'verified' and domain.identity_enabled and domain.mail_enabled
+            and domain.status = 'verified' and domain.mail_enabled
+            and (domain.identity_enabled or member.actor_type in ('agent', 'service_account'))
         )
       ) or exists (
         select 1 from mail_aliases alias
@@ -966,10 +1007,11 @@ export class PostgresMailStore
     try {
       const result = await this.sql.begin(async (tx) => {
         if (input.idempotencyKey !== undefined) {
-          await tx`select pg_advisory_xact_lock(hashtextextended(${`${input.orgId}:${input.idempotencyKey}`}, 0))`;
+          await tx`select pg_advisory_xact_lock(hashtextextended(${`${input.orgId}:${input.actorId}:${input.idempotencyKey}`}, 0))`;
           const existing = await tx<MailOutboundRow[]>`
             select * from mail_outbound_messages
-            where org_id = ${input.orgId} and idempotency_key = ${input.idempotencyKey}
+            where org_id = ${input.orgId} and actor_id = ${input.actorId}
+              and idempotency_key = ${input.idempotencyKey}
             limit 1
           `;
           if (existing[0] !== undefined)
@@ -1042,6 +1084,12 @@ export class PostgresMailStore
         returning *
       `;
 
+        // Consume only the revision sent; a newer edit on another device must survive.
+        if (input.draft !== undefined) {
+          await tx`delete from mail_drafts where id = ${input.draft.id}
+            and org_id = ${input.orgId} and actor_id = ${input.actorId}
+            and revision = ${input.draft.revision}`;
+        }
         const outbound = mapOutbound(outboundRows[0]);
         return { outbound, created: true };
       });
@@ -1151,6 +1199,27 @@ export class PostgresMailStore
     return outbound as ClaimedOutboundMail;
   }
 
+  async bindOutboundProviderDecision(
+    input: BindOutboundProviderDecisionInput,
+  ): Promise<MailOutboundRecord | null> {
+    const rows = await this.sql<readonly MailOutboundRow[]>`
+      update mail_outbound_messages
+      set
+        provider_id = ${input.providerId},
+        provider_kind = ${input.providerKind},
+        provider_decision_source = ${input.source},
+        provider_decided_at = coalesce(provider_decided_at, ${input.decidedAt ?? new Date()}),
+        updated_at = now()
+      where id = ${input.id}
+        and org_id = ${input.orgId}
+        and status = 'sending' and lease_token = ${input.leaseToken}
+        and lease_expires_at > now()
+        and (provider_id is null or provider_id = ${input.providerId})
+      returning *
+    `;
+    return rows[0] === undefined ? null : mapOutbound(rows[0]);
+  }
+
   async markOutboundSent(input: MarkOutboundSentInput): Promise<MailOutboundRecord | null> {
     const rows = await this.sql<MailOutboundRow[]>`
       update mail_outbound_messages
@@ -1159,7 +1228,7 @@ export class PostgresMailStore
         sent_at = ${input.sentAt ?? new Date()},
         last_error = null,
         provider_message_id = ${input.providerMessageId ?? null},
-        delivery_metadata = ${this.sql.json(toSqlJson(input.deliveryMetadata ?? {}))},
+        delivery_metadata = delivery_metadata || ${this.sql.json(toSqlJson(input.deliveryMetadata ?? {}))},
         lease_owner = null,
         lease_token = null,
         lease_expires_at = null,
@@ -1340,6 +1409,40 @@ export class PostgresMailStore
         and actor_id = ${input.actorId}
         and thread_id = ${input.threadId}
     `;
+  }
+
+  async recordSpamFeedback(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly threadId: string;
+    readonly messageId?: string | null;
+    readonly label: "spam" | "ham";
+    readonly source?: "user" | "auto_spamd" | "auto_ai" | "auto_rules";
+    readonly evidence?: JsonObject;
+  }): Promise<void> {
+    try {
+      await this.sql`
+        insert into mail_spam_feedback (
+          org_id, actor_id, thread_id, message_id, label, source, evidence
+        )
+        values (
+          ${input.orgId},
+          ${input.actorId},
+          ${input.threadId},
+          ${input.messageId ?? null},
+          ${input.label},
+          ${input.source ?? "user"},
+          ${this.sql.json(toSqlJson(input.evidence ?? {}))}
+        )
+      `;
+    } catch (error) {
+      // Pre-migration deploys: do not fail spam mark/unmark on missing table.
+      const message = error instanceof Error ? error.message : String(error);
+      if (/mail_spam_feedback|does not exist/iu.test(message)) {
+        return;
+      }
+      throw error;
+    }
   }
 
   async createFilter(input: CreateMailFilterInput): Promise<MailFilterRecord> {
@@ -1584,6 +1687,29 @@ export class PostgresMailStore
       where m.org_id = ${input.orgId}
         and m.kind = 'mail'
         and m.deleted_at is null
+        and (
+          exists (
+            select 1 from messages visible_message
+            where visible_message.thread_id = t.id
+              and visible_message.org_id = ${input.orgId}
+              and visible_message.kind = 'mail'
+              and visible_message.actor_id = ${input.actorId}
+          )
+          or exists (
+            select 1
+            from messages recipient_message
+            join mail_inbound_deliveries visible_delivery
+              on visible_delivery.message_id = recipient_message.id
+              and visible_delivery.org_id = ${input.orgId}
+            join mail_inbound_recipients visible_recipient
+              on visible_recipient.delivery_id = visible_delivery.id
+              and visible_recipient.org_id = ${input.orgId}
+              and visible_recipient.actor_id = ${input.actorId}
+            where recipient_message.thread_id = t.id
+              and recipient_message.org_id = ${input.orgId}
+              and recipient_message.kind = 'mail'
+          )
+        )
         and coalesce(mts.deleted_at, t.archived_at) is null
         and (mts.snoozed_until is null or mts.snoozed_until <= now())
         and (${query} = '' or t.subject ilike ${`%${query}%`} or m.body ilike ${`%${query}%`})
@@ -1779,6 +1905,29 @@ export class PostgresMailStore
       where t.org_id = ${input.orgId}
         and t.kind = 'mail'
         and t.id = ${input.threadId}
+        and (
+          exists (
+            select 1 from messages visible_message
+            where visible_message.thread_id = t.id
+              and visible_message.org_id = ${input.orgId}
+              and visible_message.kind = 'mail'
+              and visible_message.actor_id = ${input.actorId}
+          )
+          or exists (
+            select 1
+            from messages recipient_message
+            join mail_inbound_deliveries visible_delivery
+              on visible_delivery.message_id = recipient_message.id
+              and visible_delivery.org_id = ${input.orgId}
+            join mail_inbound_recipients visible_recipient
+              on visible_recipient.delivery_id = visible_delivery.id
+              and visible_recipient.org_id = ${input.orgId}
+              and visible_recipient.actor_id = ${input.actorId}
+            where recipient_message.thread_id = t.id
+              and recipient_message.org_id = ${input.orgId}
+              and recipient_message.kind = 'mail'
+          )
+        )
         and m.kind = 'mail'
         and m.deleted_at is null
       order by m.sent_at asc
@@ -1874,6 +2023,29 @@ export class PostgresMailStore
           and m.kind = 'mail'
           and m.deleted_at is null
           and t.kind = 'mail'
+          and (
+            exists (
+              select 1 from messages visible_message
+              where visible_message.thread_id = t.id
+                and visible_message.org_id = ${input.orgId}
+                and visible_message.kind = 'mail'
+                and visible_message.actor_id = ${input.actorId}
+            )
+            or exists (
+              select 1
+              from messages recipient_message
+              join mail_inbound_deliveries visible_delivery
+                on visible_delivery.message_id = recipient_message.id
+                and visible_delivery.org_id = ${input.orgId}
+              join mail_inbound_recipients visible_recipient
+                on visible_recipient.delivery_id = visible_delivery.id
+                and visible_recipient.org_id = ${input.orgId}
+                and visible_recipient.actor_id = ${input.actorId}
+              where recipient_message.thread_id = t.id
+                and recipient_message.org_id = ${input.orgId}
+                and recipient_message.kind = 'mail'
+            )
+          )
         order by m.thread_id, m.sent_at desc, m.id desc
       ),
       filtered as (
@@ -1968,6 +2140,29 @@ export class PostgresMailStore
           and m.kind = 'mail'
           and m.deleted_at is null
           and t.kind = 'mail'
+          and (
+            exists (
+              select 1 from messages visible_message
+              where visible_message.thread_id = t.id
+                and visible_message.org_id = ${input.orgId}
+                and visible_message.kind = 'mail'
+                and visible_message.actor_id = ${input.actorId}
+            )
+            or exists (
+              select 1
+              from messages recipient_message
+              join mail_inbound_deliveries visible_delivery
+                on visible_delivery.message_id = recipient_message.id
+                and visible_delivery.org_id = ${input.orgId}
+              join mail_inbound_recipients visible_recipient
+                on visible_recipient.delivery_id = visible_delivery.id
+                and visible_recipient.org_id = ${input.orgId}
+                and visible_recipient.actor_id = ${input.actorId}
+              where recipient_message.thread_id = t.id
+                and recipient_message.org_id = ${input.orgId}
+                and recipient_message.kind = 'mail'
+            )
+          )
         order by m.thread_id, m.sent_at desc, m.id desc
       )
       select count(*)::int as total from latest
@@ -2054,6 +2249,29 @@ export class PostgresMailStore
           and m.kind = 'mail'
           and m.deleted_at is null
           and t.kind = 'mail'
+          and (
+            exists (
+              select 1 from messages visible_message
+              where visible_message.thread_id = t.id
+                and visible_message.org_id = ${input.orgId}
+                and visible_message.kind = 'mail'
+                and visible_message.actor_id = ${input.actorId}
+            )
+            or exists (
+              select 1
+              from messages recipient_message
+              join mail_inbound_deliveries visible_delivery
+                on visible_delivery.message_id = recipient_message.id
+                and visible_delivery.org_id = ${input.orgId}
+              join mail_inbound_recipients visible_recipient
+                on visible_recipient.delivery_id = visible_delivery.id
+                and visible_recipient.org_id = ${input.orgId}
+                and visible_recipient.actor_id = ${input.actorId}
+              where recipient_message.thread_id = t.id
+                and recipient_message.org_id = ${input.orgId}
+                and recipient_message.kind = 'mail'
+            )
+          )
         order by m.thread_id, m.sent_at desc, m.id desc
       ),
       classified as (
@@ -2364,15 +2582,66 @@ export class PostgresMailStore
     readonly orgId: string;
     readonly actorId: string;
     readonly id: string;
+    readonly expectedRevision?: number;
   }): Promise<boolean> {
     const rows = await this.sql<{ readonly id: string }[]>`
       delete from mail_drafts
       where id = ${input.id}
         and org_id = ${input.orgId}
         and actor_id = ${input.actorId}
+        and (${input.expectedRevision ?? null}::integer is null or revision = ${input.expectedRevision ?? null})
       returning id
     `;
     return rows[0] !== undefined;
+  }
+
+  async retryOutbound(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+    readonly outboxSubject?: string;
+  }): Promise<MailOutboundRecord | null> {
+    return this.sql.begin(async (tx) => {
+      const current = await tx<readonly { readonly id: string }[]>`
+        select id from mail_outbound_messages
+        where id = ${input.id}
+          and org_id = ${input.orgId}
+          and actor_id = ${input.actorId}
+          and status = 'failed'
+        for update
+      `;
+      if (current[0] === undefined) return null;
+      const outbox = await tx<readonly { readonly id: string }[]>`
+        insert into outbox (subject, payload, deliver_after)
+        values (
+          ${input.outboxSubject ?? "mail.send"},
+          ${tx.json(
+            toSqlJson({
+              mailOutboundId: input.id,
+              orgId: input.orgId,
+              actorId: input.actorId,
+            }),
+          )},
+          now()
+        )
+        returning id
+      `;
+      const rows = await tx<readonly MailOutboundRow[]>`
+        update mail_outbound_messages
+        set
+          outbox_id = ${outbox[0]?.id ?? null},
+          status = 'queued',
+          failed_at = null,
+          dead_lettered_at = null,
+          last_error = null,
+          attempt_count = 0,
+          next_attempt_at = now(),
+          updated_at = now()
+        where id = ${input.id} and org_id = ${input.orgId} and actor_id = ${input.actorId}
+        returning *
+      `;
+      return rows[0] === undefined ? null : mapOutbound(rows[0]);
+    });
   }
 
   async listAliases(orgId: string, actorId?: string): Promise<readonly MailAliasRecord[]> {
@@ -3115,6 +3384,10 @@ function mapOutbound(row: MailOutboundRow | undefined): MailOutboundRecord {
     failedAt: row.failed_at,
     lastError: row.last_error,
     providerMessageId: row.provider_message_id,
+    providerId: row.provider_id ?? null,
+    providerKind: row.provider_kind ?? null,
+    providerDecisionSource: row.provider_decision_source ?? null,
+    providerDecidedAt: row.provider_decided_at ?? null,
     deliveryMetadata: row.delivery_metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -3153,6 +3426,9 @@ function outboundStatusCounts(
 
 function mapSearchHit(row: MailSearchRow): MailSearchHit {
   const from = row.metadata.from as MailSearchHit["from"] | undefined;
+  const attachments = row.metadata.attachments;
+  const hasAttachment =
+    row.metadata.hasAttachment === true || (Array.isArray(attachments) && attachments.length > 0);
   return {
     threadId: row.thread_id,
     messageId: row.message_id,
@@ -3163,6 +3439,7 @@ function mapSearchHit(row: MailSearchRow): MailSearchHit {
     labels: row.labels ?? [],
     unread: row.read_at === null || row.read_at < row.sent_at,
     starred: row.starred ?? false,
+    ...(hasAttachment ? { hasAttachment: true } : {}),
     ...(row.outbound_status === null ? {} : { outboundStatus: row.outbound_status }),
     ...(row.provider_message_id === null ? {} : { providerMessageId: row.provider_message_id }),
     ...(row.delivery_metadata === null ? {} : { deliveryMetadata: row.delivery_metadata }),
@@ -3189,6 +3466,21 @@ function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): MailThreadR
           subject: row.subject ?? "",
         })
       : coerceMailCategory(row.category);
+  const spamMeta =
+    typeof row.metadata === "object" && "spam" in row.metadata
+      ? (row.metadata as { spam?: { catcher?: string | null } }).spam
+      : undefined;
+  const catcherRaw = spamMeta?.catcher;
+  const spamCatcher =
+    catcherRaw === "spamd" ||
+    catcherRaw === "ai" ||
+    catcherRaw === "rules" ||
+    catcherRaw === "user" ||
+    catcherRaw === "virus" ||
+    catcherRaw === "scanner-policy" ||
+    catcherRaw === "auth-failure"
+      ? catcherRaw
+      : null;
   return {
     threadId: row.thread_id,
     messageId: row.message_id,
@@ -3205,6 +3497,7 @@ function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): MailThreadR
     category,
     folder,
     snoozedUntil: row.snoozed_until?.toISOString() ?? null,
+    ...(folder === "spam" || spamCatcher !== null ? { spamCatcher } : {}),
   };
 }
 
@@ -3294,6 +3587,7 @@ function mapThreadDetail(rows: readonly MailThreadRow[]): MailThreadDetail {
 }
 
 function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
+  const html = row.body_format === "html" ? sanitizeMailHtml(row.body).html : row.body;
   return {
     id: row.message_id,
     from: mailAddress(row.metadata.from),
@@ -3301,7 +3595,7 @@ function mapThreadMessage(row: MailThreadRow): MailThreadMessage {
     cc: mailAddressArray(row.metadata.cc),
     bcc: mailAddressArray(row.metadata.bcc),
     sentAt: row.sent_at,
-    body: row.body,
+    body: html,
     bodyFormat: row.body_format === "html" ? "html" : "plain",
     ...(typeof row.metadata.plainBody === "string" ? { plainBody: row.metadata.plainBody } : {}),
     hasAttachment: row.has_attachment,

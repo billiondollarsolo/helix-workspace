@@ -3,7 +3,7 @@ import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 
 const accessTokenStorageKey = "helix.accessToken";
 const adminToken = "e2e-admin-token";
-const expectedAuthorization = `Bearer ${adminToken}`;
+const expectedAuthorization = null;
 
 interface BackendCall {
   readonly authorization: string | null;
@@ -12,8 +12,14 @@ interface BackendCall {
   readonly pathname: string;
 }
 
+/** The admin sidebar. Scoped because the "related pages" chips inside a
+ *  section are real links too, so an unscoped role=link query can match twice. */
+function adminNav(page: Page) {
+  return page.getByRole("navigation", { name: "Administration" });
+}
+
 test.describe("/admin dashboard", () => {
-  test("renders mocked admin evidence with bearer-authenticated backend calls", async ({
+  test("renders mocked admin evidence with session-authenticated backend calls", async ({
     page,
   }) => {
     const backendCalls: BackendCall[] = [];
@@ -26,22 +32,27 @@ test.describe("/admin dashboard", () => {
     );
     await mockAdminDashboardBackend(page, backendCalls);
 
+    await page
+      .context()
+      .addCookies([{ name: "helix_session", value: adminToken, url: "http://127.0.0.1:4173" }]);
     await page.goto("/admin");
 
-    await page.getByRole("button", { name: "Audit log", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "Audit log", exact: true }).click();
     await expect(page.getByRole("region", { name: "Audit log" })).toBeVisible();
     await expect(page.getByRole("table", { name: "Audit log" })).toContainText("tool.invoked");
     await expect(page.getByRole("table", { name: "Audit log" })).toContainText(
       "source: playwright",
     );
 
-    await page.getByRole("button", { name: "Users", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "Users", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Users" })).toBeVisible();
     await expect(page.getByText("E2E Admin", { exact: true })).toBeVisible();
     await expect(page.getByText("admin-e2e@example.test", { exact: true })).toBeVisible();
 
-    await page.getByRole("button", { name: "Agent credentials", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "OAuth client credentials" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "Agent credentials", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Agent credentials", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByRole("table", { name: "Agent credentials" })).toContainText(
       "agent-client-e2e",
     );
@@ -49,56 +60,67 @@ test.describe("/admin dashboard", () => {
       "admin.agents",
     );
 
-    await page.getByRole("button", { name: "App passwords", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Scoped app access" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "App passwords", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "App passwords", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByRole("table", { name: "App passwords" })).toContainText(
       "Calendar sync e2e",
     );
     await expect(page.getByRole("table", { name: "App passwords" })).toContainText("caldav");
 
-    await page.getByRole("button", { name: "Tier readiness", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Security tier readiness" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "Tier readiness", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Tier readiness", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByText("Live platform config connected").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "Business platform state" })).toBeVisible();
     await expect(page.getByText("Audit destinations").first()).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Install permissions prompt" })).toBeVisible();
+    /* The plugin catalog moved behind a tab in the tier-readiness restructure;
+       this spec predates it. */
+    await page.getByRole("tab", { name: "Plugins" }).click();
+    await expect(page.getByRole("heading", { name: "Catalog and install" })).toBeVisible();
     await expect(page.getByRole("table", { name: "Plugin catalog" })).toContainText(
       "Evidence Plugin",
     );
 
-    await page.getByRole("button", { name: "AI observability", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "AI observability" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "Observability", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Observability", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByText("30 day retention").first()).toBeVisible();
 
-    await page.getByRole("button", { name: "Services", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Admin services" })).toBeVisible();
+    await adminNav(page).getByRole("link", { name: "Services", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Services", exact: true, level: 1 }),
+    ).toBeVisible();
     await expect(page.getByRole("table", { name: "Admin services" })).toContainText("Mail");
     await expect(page.getByRole("table", { name: "Admin services" })).toContainText(
-      "com.helix.core.mail",
+      "Configured / Enabled",
     );
 
     expect(backendCalls).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ method: "GET", pathname: "/api/admin/audit-log" }),
-        expect.objectContaining({ method: "GET", pathname: "/api/admin/users" }),
-        expect.objectContaining({ method: "GET", pathname: "/api/admin/platform-config" }),
-        expect.objectContaining({ method: "GET", pathname: "/api/admin/services" }),
-        expect.objectContaining({ method: "POST", pathname: "/api/tools/plugin.list" }),
+        expect.objectContaining({ method: "GET", pathname: "/v1/api/admin/audit-log" }),
+        expect.objectContaining({ method: "GET", pathname: "/v1/api/admin/users" }),
+        expect.objectContaining({ method: "GET", pathname: "/v1/api/admin/platform-config" }),
+        expect.objectContaining({ method: "GET", pathname: "/v1/api/admin/services" }),
+        expect.objectContaining({ method: "POST", pathname: "/v1/api/tools/plugin.list" }),
         expect.objectContaining({
           body: { includeRevoked: false },
           method: "POST",
-          pathname: "/api/tools/agent.credentials.list",
+          pathname: "/v1/api/tools/agent.credentials.list",
         }),
         expect.objectContaining({
           body: { includeRevoked: false },
           method: "POST",
-          pathname: "/api/tools/app.passwords.list",
+          pathname: "/v1/api/tools/app.passwords.list",
         }),
       ]),
     );
     expect(
       backendCalls
-        .filter((call) => call.pathname !== "/api/auth/get-session")
+        .filter((call) => call.pathname !== "/v1/api/auth/get-session")
         .every((call) => call.authorization === expectedAuthorization),
     ).toBe(true);
   });
@@ -117,7 +139,8 @@ async function mockAdminDashboardBackend(page: Page, backendCalls: BackendCall[]
     } satisfies BackendCall;
     backendCalls.push(call);
 
-    if (call.authorization !== expectedAuthorization) {
+    if (await fulfillCoreAppsRoute(route)) return;
+    if (!(request.headers().cookie ?? "").includes(`helix_session=${adminToken}`)) {
       await route.fulfill({
         status: 401,
         contentType: "application/json",
@@ -133,47 +156,47 @@ async function mockAdminDashboardBackend(page: Page, backendCalls: BackendCall[]
       return;
     }
 
-    if (call.method === "GET" && call.pathname === "/api/admin/audit-log") {
+    if (call.method === "GET" && call.pathname === "/v1/api/admin/audit-log") {
       await fulfillJson(route, auditLogResponse());
       return;
     }
-    if (call.method === "GET" && call.pathname === "/api/admin/users") {
+    if (call.method === "GET" && call.pathname === "/v1/api/admin/users") {
       await fulfillJson(route, adminUsersResponse());
       return;
     }
-    if (call.method === "GET" && call.pathname === "/api/admin/platform-config") {
+    if (call.method === "GET" && call.pathname === "/v1/api/admin/platform-config") {
       await fulfillJson(route, platformConfigResponse());
       return;
     }
-    if (call.method === "GET" && call.pathname === "/api/admin/services") {
+    if (call.method === "GET" && call.pathname === "/v1/api/admin/services") {
       await fulfillJson(route, adminServicesResponse());
       return;
     }
-    if (call.method === "GET" && call.pathname === "/api/admin/mail/config") {
+    if (call.method === "GET" && call.pathname === "/v1/api/admin/mail/config") {
       await fulfillJson(route, mailConfigResponse());
       return;
     }
-    if (call.method === "POST" && call.pathname === "/api/tools/plugin.list") {
+    if (call.method === "POST" && call.pathname === "/v1/api/tools/plugin.list") {
       await fulfillJson(route, pluginListResponse());
       return;
     }
-    if (call.method === "POST" && call.pathname === "/api/tools/webhook.outbound.list") {
+    if (call.method === "POST" && call.pathname === "/v1/api/tools/webhook.outbound.list") {
       await fulfillJson(route, { webhooks: [] });
       return;
     }
-    if (call.method === "POST" && call.pathname === "/api/tools/webhook.inbound.list") {
+    if (call.method === "POST" && call.pathname === "/v1/api/tools/webhook.inbound.list") {
       await fulfillJson(route, { webhooks: [] });
       return;
     }
-    if (call.method === "POST" && call.pathname === "/api/tools/webhook.delivery.list") {
+    if (call.method === "POST" && call.pathname === "/v1/api/tools/webhook.delivery.list") {
       await fulfillJson(route, { deliveries: [] });
       return;
     }
-    if (call.method === "POST" && call.pathname === "/api/tools/agent.credentials.list") {
+    if (call.method === "POST" && call.pathname === "/v1/api/tools/agent.credentials.list") {
       await fulfillJson(route, agentCredentialsListResponse());
       return;
     }
-    if (call.method === "POST" && call.pathname === "/api/tools/app.passwords.list") {
+    if (call.method === "POST" && call.pathname === "/v1/api/tools/app.passwords.list") {
       await fulfillJson(route, appPasswordsListResponse());
       return;
     }
@@ -314,7 +337,7 @@ function adminServicesResponse() {
         scopes: ["mail.read", "mail.send"],
         adminScopes: ["mail.admin", "admin.config.read"],
         uiRoutes: ["/mail"],
-        apiRoutes: ["/api/admin/mail/config", "/api/tools/mail.*"],
+        apiRoutes: ["/v1/api/admin/mail/config", "/v1/api/tools/mail.*"],
         realtimeRoutes: [],
         tools: ["mail.send", "mail.search"],
         capabilities: ["smtp-listener", "smtp-relay"],
@@ -349,7 +372,7 @@ function adminServicesResponse() {
             id: "mail.config.read",
             label: "Read mail configuration status",
             method: "GET",
-            path: "/api/admin/mail/config",
+            path: "/v1/api/admin/mail/config",
             requiredScope: "admin.config.read",
             destructive: false,
           },

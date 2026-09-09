@@ -20,21 +20,25 @@ beforeAll(() => {
   certificateDirectory = mkdtempSync(join(tmpdir(), "helix-submission-tls-"));
   const keyPath = join(certificateDirectory, "key.pem");
   const certPath = join(certificateDirectory, "cert.pem");
-  execFileSync("openssl", [
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-nodes",
-    "-keyout",
-    keyPath,
-    "-out",
-    certPath,
-    "-subj",
-    "/CN=localhost",
-    "-days",
-    "1",
-  ], { stdio: "ignore" });
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      keyPath,
+      "-out",
+      certPath,
+      "-subj",
+      "/CN=localhost",
+      "-days",
+      "1",
+    ],
+    { stdio: "ignore" },
+  );
   tlsKey = readFileSync(keyPath);
   tlsCert = readFileSync(certPath);
 });
@@ -48,56 +52,59 @@ describe("authenticated SMTP submission", () => {
     ["Apple Mail", "PLAIN"],
     ["Thunderbird", "LOGIN"],
     ["mobile mail", "PLAIN"],
-  ] as const)("accepts the %s implicit-TLS profile with AUTH %s", async (_clientName, authMethod) => {
-    const { password, appPasswords } = await credentials();
-    const createOutbound = vi.fn(async (input: CreateOutboundMailInput) => outbound(input));
-    const server = new SmtpSubmissionServer({
-      appPasswords,
-      store: mailStore(createOutbound),
-      tls: { key: tlsKey, cert: tlsCert },
-    });
-    await server.listen(0, "127.0.0.1");
-    const address = server.nodeServer.server.address();
-    if (address === null || typeof address === "string") throw new Error("Expected TCP address.");
-    const client = nodemailer.createTransport({
-      host: "127.0.0.1",
-      port: address.port,
-      secure: true,
-      auth: { user: "user@example.test", pass: password },
-      authMethod,
-      tls: { rejectUnauthorized: false },
-    });
-    try {
-      await expect(
-        client.sendMail({
-          from: "User <user@example.test>",
-          to: "one@outside.test",
-          cc: "two@outside.test",
-          bcc: "hidden@outside.test",
-          subject: "Client interoperability",
-          text: "Sent from a standards client",
-          attachments: [{ filename: "proof.txt", content: "attached" }],
-        }),
-      ).resolves.toMatchObject({ accepted: expect.arrayContaining(["one@outside.test"]) });
-      expect(createOutbound).toHaveBeenCalledOnce();
-      expect(createOutbound.mock.calls[0]?.[0]).toMatchObject({
-        orgId,
-        actorId,
-        envelope: {
-          from: { address: "user@example.test", name: "User" },
-          to: [{ address: "one@outside.test" }],
-          cc: [{ address: "two@outside.test" }],
-          bcc: [{ address: "hidden@outside.test" }],
-          subject: "Client interoperability",
-          text: "Sent from a standards client",
-          attachments: [expect.objectContaining({ filename: "proof.txt" })],
-        },
+  ] as const)(
+    "accepts the %s implicit-TLS profile with AUTH %s",
+    async (_clientName, authMethod) => {
+      const { password, appPasswords } = await credentials();
+      const createOutbound = vi.fn(async (input: CreateOutboundMailInput) => outbound(input));
+      const server = new SmtpSubmissionServer({
+        appPasswords,
+        store: mailStore(createOutbound),
+        tls: { key: tlsKey, cert: tlsCert },
       });
-    } finally {
-      client.close();
-      await server.close();
-    }
-  });
+      await server.listen(0, "127.0.0.1");
+      const address = server.nodeServer.server.address();
+      if (address === null || typeof address === "string") throw new Error("Expected TCP address.");
+      const client = nodemailer.createTransport({
+        host: "127.0.0.1",
+        port: address.port,
+        secure: true,
+        auth: { user: "user@example.test", pass: password },
+        authMethod,
+        tls: { rejectUnauthorized: false },
+      });
+      try {
+        await expect(
+          client.sendMail({
+            from: "User <user@example.test>",
+            to: "one@outside.test",
+            cc: "two@outside.test",
+            bcc: "hidden@outside.test",
+            subject: "Client interoperability",
+            text: "Sent from a standards client",
+            attachments: [{ filename: "proof.txt", content: "attached" }],
+          }),
+        ).resolves.toMatchObject({ accepted: expect.arrayContaining(["one@outside.test"]) });
+        expect(createOutbound).toHaveBeenCalledOnce();
+        expect(createOutbound.mock.calls[0]?.[0]).toMatchObject({
+          orgId,
+          actorId,
+          envelope: {
+            from: { address: "user@example.test", name: "User" },
+            to: [{ address: "one@outside.test" }],
+            cc: [{ address: "two@outside.test" }],
+            bcc: [{ address: "hidden@outside.test" }],
+            subject: "Client interoperability",
+            text: "Sent from a standards client",
+            attachments: [expect.objectContaining({ filename: "proof.txt" })],
+          },
+        });
+      } finally {
+        client.close();
+        await server.close();
+      }
+    },
+  );
 
   it("rejects bad, revoked, and sender-spoofing client sessions", async () => {
     const { registration, password, manager, appPasswords } = await credentials();
@@ -182,7 +189,9 @@ async function credentials(scopes: readonly string[] = ["mail.send", "mail.exter
   return { appPasswords, manager, password: registration.password, registration };
 }
 
-function mailStore(createOutbound: (input: CreateOutboundMailInput) => Promise<MailOutboundRecord>) {
+function mailStore(
+  createOutbound: (input: CreateOutboundMailInput) => Promise<MailOutboundRecord>,
+) {
   return {
     createOutbound,
     resolveAuthorizedSender: async (_orgId: string, _actorId: string, address: string) =>

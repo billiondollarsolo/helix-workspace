@@ -5,7 +5,10 @@ import { PostgresAuditStore } from "../../platform/audit/store.js";
 import { verifyAuditHashChain } from "../../platform/audit/verifier.js";
 import { tenantAwarePostgresSql } from "../../platform/tenancy/postgres-roles.js";
 
-const migration = readFileSync(new URL("./0149_audit_chain_integrity.sql", import.meta.url), "utf8");
+const migration = readFileSync(
+  new URL("./0149_audit_chain_integrity.sql", import.meta.url),
+  "utf8",
+);
 
 describe("0149 audit chain integrity migration", () => {
   it("serializes a tenant-bound, schema-versioned chain in the database", () => {
@@ -84,10 +87,13 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("concurrent audit chain"
     expect(records.map((record) => Number(record.sequence))).toEqual(
       Array.from({ length: 100 }, (_, index) => index + 1),
     );
+    if (records[0] === undefined || records[1] === undefined)
+      throw new Error("Expected audit records");
     expect(verifyAuditHashChain(records).valid).toBe(true);
-    expect(verifyAuditHashChain([records[1]!, records[0]!, ...records.slice(2)]).valid).toBe(false);
+    expect(verifyAuditHashChain([records[1], records[0], ...records.slice(2)]).valid).toBe(false);
     expect(
-      verifyAuditHashChain([{ ...records[0]!, orgId: "f1490000-0000-4000-8000-000000000099" }]).valid,
+      verifyAuditHashChain([{ ...records[0], orgId: "f1490000-0000-4000-8000-000000000099" }])
+        .valid,
     ).toBe(false);
 
     await store.append({

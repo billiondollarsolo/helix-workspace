@@ -100,19 +100,16 @@ export function mergeObservabilityConfig(
     ...override.sampling,
   };
 
+  // Optional fields stay *absent* rather than explicitly `undefined`, so a
+  // merged config can be spread over another without erasing its values.
+  const tracesEndpoint = override.tracesEndpoint ?? base.tracesEndpoint;
+  const headers = override.headers ?? base.headers;
+
   return {
     enabled: override.enabled ?? base.enabled ?? defaultObservabilityConfig.enabled,
     serviceName: override.serviceName ?? base.serviceName ?? defaultObservabilityConfig.serviceName,
-    ...(override.tracesEndpoint !== undefined
-      ? { tracesEndpoint: override.tracesEndpoint }
-      : base.tracesEndpoint === undefined
-        ? {}
-        : { tracesEndpoint: base.tracesEndpoint }),
-    ...(override.headers !== undefined
-      ? { headers: override.headers }
-      : base.headers === undefined
-        ? {}
-        : { headers: base.headers }),
+    ...(tracesEndpoint === undefined ? {} : { tracesEndpoint }),
+    ...(headers === undefined ? {} : { headers }),
     sampling: {
       traces: normalizeSampleRate(sampling.traces),
       llmCalls: normalizeSampleRate(sampling.llmCalls),

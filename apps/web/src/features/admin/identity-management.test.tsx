@@ -69,16 +69,17 @@ describe("IdentityManagement", () => {
     );
     await render();
     await waitFor(() => expect(input("IdP display name").value).toBe(""));
-    await act(async () => {
+    await act(() => {
       change(input("IdP display name"), "Acme OIDC");
       change(input("OIDC issuer URL"), "https://idp.example.com");
       change(input("OIDC client ID"), "helix");
       change(input("OIDC private-key secret handle"), "oidc-private-key");
       button("Add IdP").click();
+      return Promise.resolve();
     });
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
-      expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+      expect(JSON.parse(typeof call?.[1]?.body === "string" ? call[1].body : "")).toMatchObject({
         protocol: "oidc",
         config: { issuer: "https://idp.example.com", clientId: "helix" },
         signingCertSecretHandle: "oidc-private-key",
@@ -100,14 +101,14 @@ describe("IdentityManagement", () => {
     );
     await render();
     await waitFor(() => expect(container.textContent).toContain("Acme OIDC"));
-    await act(async () => button("Test login").click());
+    await act(() => Promise.resolve(button("Test login").click()));
     await waitFor(() =>
       expect(container.textContent).toContain("OIDC callback validation is ready."),
     );
   });
 
   async function render(): Promise<void> {
-    await act(async () => {
+    await act(() => {
       root.render(
         createElement(
           QueryClientProvider,
@@ -115,6 +116,7 @@ describe("IdentityManagement", () => {
           createElement(IdentityManagement),
         ),
       );
+      return Promise.resolve();
     });
   }
 

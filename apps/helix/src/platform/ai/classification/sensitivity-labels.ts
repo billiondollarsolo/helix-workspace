@@ -94,19 +94,11 @@ export function sensitivityClassificationFromMetadata(
   const label = metadata?.sensitivityLabel;
   if (label === null || typeof label !== "object" || Array.isArray(label)) return undefined;
   const key = (label as JsonObject).key;
-  return key === "public" ||
-    key === "standard" ||
-    key === "confidential" ||
-    key === "restricted"
+  return key === "public" || key === "standard" || key === "confidential" || key === "restricted"
     ? key
     : undefined;
 }
 
 export function canonicalClassificationResourceType(resourceType: string): string {
-  return resourceType === "docs.document" ||
-    resourceType === "sheets.sheet" ||
-    resourceType === "slides.deck" ||
-    resourceType === "object"
-    ? "drive.file"
-    : resourceType;
+  return resourceType === "object" ? "drive.file" : resourceType;
 }

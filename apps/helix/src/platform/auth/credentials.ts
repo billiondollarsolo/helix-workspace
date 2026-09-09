@@ -44,11 +44,31 @@ export interface AllowedHoursWindow {
   readonly days?: readonly number[];
 }
 
+export interface AgentAutomationPolicyRule {
+  readonly id: string;
+  readonly toolId: string;
+  readonly action: string;
+  readonly resourceIds: readonly string[];
+  readonly recipients: readonly string[];
+  readonly targets: readonly string[];
+  readonly activeFrom: string;
+  readonly expiresAt: string;
+  readonly requestsPerMinute: number;
+  readonly requestsPerDay: number;
+}
+
+export interface AgentAutomationPolicy {
+  readonly version: string;
+  readonly rules: readonly AgentAutomationPolicyRule[];
+}
+
 export interface AgentCredentialPolicy {
   readonly ipAllowlist: readonly string[];
   readonly allowedHours: AllowedHoursWindow | null;
   readonly confirmationOverride: ConfirmationOverride;
   readonly rateLimitOverrides: RateLimitOverrides;
+  readonly automationPolicy: AgentAutomationPolicy | null;
+  readonly version: string;
 }
 
 export interface AgentCredentialRecord {
@@ -67,7 +87,9 @@ export interface AgentCredentialRecord {
   /** Present for `mtls_cert` credentials (lowercase hex SHA-256 fingerprint). */
   readonly certFingerprint: string | null;
   readonly label: string | null;
+  readonly approvalOwnerActorId?: string | null;
   readonly policy: AgentCredentialPolicy;
+  readonly lastUsedAt?: Date | null;
   readonly expiresAt: Date | null;
   readonly revokedAt: Date | null;
 }
@@ -77,6 +99,8 @@ export const EMPTY_CREDENTIAL_POLICY: AgentCredentialPolicy = {
   allowedHours: null,
   confirmationOverride: "inherit",
   rateLimitOverrides: {},
+  automationPolicy: null,
+  version: "1",
 };
 
 // --- credential store -------------------------------------------------------
@@ -84,6 +108,14 @@ export const EMPTY_CREDENTIAL_POLICY: AgentCredentialPolicy = {
 export interface AgentCredentialStore {
   findByApiKeyHash(apiKeyHash: string): Promise<AgentCredentialRecord | null>;
   findByCertFingerprint(fingerprint: string): Promise<AgentCredentialRecord | null>;
+  /**
+   * Resolve the credential behind an already-issued OAuth access token so
+   * revocation, expiry and policy changes take effect without waiting for the
+   * token to expire. Optional only for compatibility with non-production
+   * stores that predate policy-bearing OAuth credentials.
+   */
+  findByClientId?(clientId: string): Promise<AgentCredentialRecord | null>;
+  findById?(credentialId: string): Promise<AgentCredentialRecord | null>;
   markUsed?(credentialId: string, usedAt: Date): Promise<void>;
 }
 

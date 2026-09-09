@@ -1,12 +1,13 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
+import { actorToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { AssistantOrchestrator } from "./orchestrator.js";
-import type { AssistantStore } from "./types.js";
+import type { AssistantConversation, AssistantStore } from "./types.js";
 
 const uuidSchema = z.string().uuid();
-const metadataSchema = z.record(z.unknown()).default({});
+const metadataSchema = z.record(z.string(), z.unknown()).default({});
 
 const createConversationSchema = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -124,10 +125,7 @@ export function createAssistantToolDefinitions(
           conversationId: input.conversationId,
           pinned: true,
         });
-        if (conversation === null) {
-          throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
-        }
-        return conversation;
+        return requireConversation(conversation, input.conversationId);
       },
     }),
     defineTool<z.output<typeof pinConversationSchema>, unknown>({
@@ -144,10 +142,7 @@ export function createAssistantToolDefinitions(
           conversationId: input.conversationId,
           pinned: false,
         });
-        if (conversation === null) {
-          throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
-        }
-        return conversation;
+        return requireConversation(conversation, input.conversationId);
       },
     }),
     defineTool<z.output<typeof renameConversationSchema>, unknown>({
@@ -164,10 +159,7 @@ export function createAssistantToolDefinitions(
           conversationId: input.conversationId,
           title: input.title,
         });
-        if (conversation === null) {
-          throw new Error(`Unknown assistant conversation: ${input.conversationId}`);
-        }
-        return conversation;
+        return requireConversation(conversation, input.conversationId);
       },
     }),
     defineTool<z.output<typeof deleteConversationSchema>, unknown>({
@@ -201,6 +193,7 @@ export function createAssistantToolDefinitions(
       handler: async (input, ctx) =>
         options.orchestrator.sendMessage({
           actor: ctx.actor,
+          principal: actorToolInvocationPrincipal(ctx.actor),
           content: input.message,
           ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
           ...(input.title === undefined ? {} : { title: input.title }),
@@ -241,6 +234,7 @@ export function createAssistantToolDefinitions(
       handler: async (input, ctx) =>
         options.orchestrator.approvePendingTool({
           actor: ctx.actor,
+          principal: actorToolInvocationPrincipal(ctx.actor),
           conversationId: input.conversationId,
           pendingId: input.pendingId,
           metadata: toJsonObject(input.metadata),
@@ -258,6 +252,7 @@ export function createAssistantToolDefinitions(
       handler: async (input, ctx) =>
         options.orchestrator.cancelPendingTool({
           actor: ctx.actor,
+          principal: actorToolInvocationPrincipal(ctx.actor),
           conversationId: input.conversationId,
           pendingId: input.pendingId,
           metadata: toJsonObject(input.metadata),
@@ -274,6 +269,17 @@ export function registerAssistantTools(
   for (const tool of createAssistantToolDefinitions(options)) {
     registry.register(tool);
   }
+}
+
+/** Narrows a store result that returns null for an unknown conversation. */
+function requireConversation(
+  conversation: AssistantConversation | null,
+  conversationId: string,
+): AssistantConversation {
+  if (conversation === null) {
+    throw new Error(`Unknown assistant conversation: ${conversationId}`);
+  }
+  return conversation;
 }
 
 function defineTool<Input, Output>(

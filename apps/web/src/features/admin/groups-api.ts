@@ -1,6 +1,8 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
+import { ensureOk, parseResponse } from "@/features/admin/api-response";
 
 /**
  * Admin Console — Groups & Organizational Units client.
@@ -135,19 +137,17 @@ export const groupsAdminQueryKeys = {
 
 export function orgUnitsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: groupsAdminQueryKeys.orgUnits(),
     queryFn: () => fetchOrgUnits(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 
 export function groupsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: groupsAdminQueryKeys.groups(),
     queryFn: () => fetchGroups(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 
@@ -156,11 +156,10 @@ export function groupMembersQueryOptions(
   fetchImpl: AuthFetch = authenticatedFetch,
 ) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: groupsAdminQueryKeys.groupMembers(groupId ?? ""),
     queryFn: () => fetchGroupMembers(groupId ?? "", fetchImpl),
     enabled: groupId !== null,
-    retry: false,
-    throwOnError: false,
   });
 }
 
@@ -264,12 +263,10 @@ export async function fetchGroupMembers(
   groupId: string,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly GroupMember[]> {
-  const response = await fetchImpl(
-    `/api/admin/groups/${encodeURIComponent(groupId)}/members`,
-    { method: "GET" },
-  );
-  return (await parseResponse(response, "load group members", groupMembersResponseSchema))
-    .members;
+  const response = await fetchImpl(`/api/admin/groups/${encodeURIComponent(groupId)}/members`, {
+    method: "GET",
+  });
+  return (await parseResponse(response, "load group members", groupMembersResponseSchema)).members;
 }
 
 export async function addGroupMember(
@@ -277,16 +274,12 @@ export async function addGroupMember(
   input: AddGroupMemberInput,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<GroupMember> {
-  const response = await fetchImpl(
-    `/api/admin/groups/${encodeURIComponent(groupId)}/members`,
-    {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify(input),
-    },
-  );
-  return (await parseResponse(response, "add group member", groupMemberResponseSchema))
-    .member;
+  const response = await fetchImpl(`/api/admin/groups/${encodeURIComponent(groupId)}/members`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+  return (await parseResponse(response, "add group member", groupMemberResponseSchema)).member;
 }
 
 export async function removeGroupMember(
@@ -299,44 +292,4 @@ export async function removeGroupMember(
     { method: "DELETE" },
   );
   await ensureOk(response, "remove group member");
-}
-
-// ---------------------------------------------------------------------------
-// Shared response handling
-// ---------------------------------------------------------------------------
-
-async function parseResponse<T>(
-  response: Response,
-  action: string,
-  schema: z.ZodType<T>,
-): Promise<T> {
-  const payload: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-  }
-  const parsed = schema.safeParse(payload);
-  if (parsed.success) {
-    return parsed.data;
-  }
-  throw new Error(`Failed to ${action}: malformed response.`);
-}
-
-async function ensureOk(response: Response, action: string): Promise<void> {
-  if (response.ok) {
-    return;
-  }
-  const payload: unknown = await response.json().catch(() => ({}));
-  throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-}
-
-function errorMessage(payload: unknown): string | undefined {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof payload.error === "string"
-  ) {
-    return payload.error;
-  }
-  return undefined;
 }

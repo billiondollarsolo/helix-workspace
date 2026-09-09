@@ -5,7 +5,6 @@ const topLevelCommands = [
   "mail",
   "chat",
   "drive",
-  "docs",
   "calendar",
   "meet",
   "assistant",
@@ -68,7 +67,6 @@ export const commandActions: Record<string, readonly string[]> = {
     "message-list",
   ],
   drive: ["upload", "finalize", "list", "share", "move", "trash", "restore", "delete", "search"],
-  docs: ["create", "get", "list", "update-title", "export", "comment-create", "comment"],
   calendar: [
     "event-create",
     "create",
@@ -178,16 +176,6 @@ const driveActionFlags: Record<string, readonly string[]> = {
   upload: ["--folder", "--name", "--mime-type", "--byte-size", "--sha256", "--json"],
   list: ["--folder", "--limit", "--include-trashed", "--json"],
   search: ["--query", "--folder", "--limit", "--json"],
-};
-
-const docsActionFlags: Record<string, readonly string[]> = {
-  create: ["--title", "--initial-markdown", "--folder", "--folder-id", "--metadata", "--json"],
-  get: ["--doc-id", "--json"],
-  list: ["--query", "--limit", "--json"],
-  "update-title": ["--doc-id", "--title", "--json"],
-  export: ["--doc-id", "--format", "--include-comments", "--filename", "--json"],
-  "comment-create": ["--doc-id", "--body", "--anchor", "--metadata", "--json"],
-  comment: ["--doc-id", "--body", "--anchor", "--metadata", "--json"],
 };
 
 const calendarActionFlags: Record<string, readonly string[]> = {
@@ -362,8 +350,8 @@ const webhookActionFlags: Record<string, readonly string[]> = {
 
 const adminFamilyActions: Record<string, readonly string[]> = {
   "app-passwords": ["list", "create", "revoke"],
-  "agent-credentials": ["list", "create", "revoke"],
-  credentials: ["list", "create", "revoke"],
+  "agent-credentials": ["list", "create", "rotate", "revoke"],
+  credentials: ["list", "create", "rotate", "revoke"],
   users: ["list"],
   audit: ["list"],
   "audit-log": ["list"],
@@ -374,11 +362,36 @@ const adminActionFlags: Record<string, readonly string[]> = {
   "app-passwords:create": ["--actor-id", "--label", "--scope", "--expires-at", "--json"],
   "app-passwords:revoke": ["--password-id", "--json"],
   "agent-credentials:list": ["--actor-id", "--include-revoked", "--json"],
-  "agent-credentials:create": ["--actor-id", "--scope", "--expires-at", "--json"],
-  "agent-credentials:revoke": ["--client-id", "--json"],
+  "agent-credentials:create": [
+    "--actor-id",
+    "--credential-type",
+    "--label",
+    "--purpose",
+    "--certificate-fingerprint",
+    "--scope",
+    "--expires-at",
+    "--json",
+  ],
+  "agent-credentials:revoke": ["--credential-id", "--json"],
+  "agent-credentials:rotate": [
+    "--credential-id",
+    "--expires-at",
+    "--certificate-fingerprint",
+    "--json",
+  ],
   "credentials:list": ["--actor-id", "--include-revoked", "--json"],
-  "credentials:create": ["--actor-id", "--scope", "--expires-at", "--json"],
-  "credentials:revoke": ["--client-id", "--json"],
+  "credentials:create": [
+    "--actor-id",
+    "--credential-type",
+    "--label",
+    "--purpose",
+    "--certificate-fingerprint",
+    "--scope",
+    "--expires-at",
+    "--json",
+  ],
+  "credentials:revoke": ["--credential-id", "--json"],
+  "credentials:rotate": ["--credential-id", "--expires-at", "--certificate-fingerprint", "--json"],
   "users:list": ["--query", "--type", "--include-disabled", "--limit", "--cursor"],
   "audit:list": ["--actor-id", "--object-id", "--object-type", "--verb", "--limit", "--cursor"],
   "audit-log:list": ["--actor-id", "--object-id", "--object-type", "--verb", "--limit", "--cursor"],
@@ -415,7 +428,7 @@ function generateBashCompletion(): string {
     '  case "$prev" in',
     `    --source) COMPREPLY=( $(compgen -W "${wordList(["api", "openapi", "mcp"])}" -- "$cur") ); return ;;`,
     `    --transport) COMPREPLY=( $(compgen -W "${wordList(["rest", "mcp"])}" -- "$cur") ); return ;;`,
-    `    --type) [[ $scope == search ]] && COMPREPLY=( $(compgen -W "${wordList(["mail", "chat", "docs", "drive", "calendar"])}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["user", "agent", "service_account", "system"])}" -- "$cur") ); return ;;`,
+    `    --type) [[ $scope == search ]] && COMPREPLY=( $(compgen -W "${wordList(["mail", "chat", "drive", "calendar"])}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["user", "agent", "service_account", "system"])}" -- "$cur") ); return ;;`,
     `    --direction) COMPREPLY=( $(compgen -W "${wordList(["outbound", "inbound"])}" -- "$cur") ); return ;;`,
     `    --response) COMPREPLY=( $(compgen -W "${wordList(["accepted", "declined", "tentative"])}" -- "$cur") ); return ;;`,
     `    --status) [[ $scope == meet ]] && COMPREPLY=( $(compgen -W "${wordList(["active", "ended"])}" -- "$cur") ) || COMPREPLY=( $(compgen -W "${wordList(["pending", "in_progress", "delivered", "failed", "abandoned"])}" -- "$cur") ); return ;;`,
@@ -439,12 +452,12 @@ function generateBashCompletion(): string {
     "  fi",
     "",
     "  if [[ $scope == webhook && $COMP_CWORD -eq 3 ]]; then",
-    bashWebhookActionCases(),
+    bashFamilyActionCases(webhookFamilyActions),
     "    return",
     "  fi",
     "",
     "  if [[ $scope == admin && $COMP_CWORD -eq 3 ]]; then",
-    bashAdminActionCases(),
+    bashFamilyActionCases(adminFamilyActions),
     "    return",
     "  fi",
     "",
@@ -469,7 +482,7 @@ function generateBashCompletion(): string {
     "  fi",
     "",
     "  if [[ $scope == mail ]]; then",
-    bashMailFlagCases(),
+    bashActionFlagCases(mailActionFlags),
     "    return",
     "  fi",
     "",
@@ -479,12 +492,7 @@ function generateBashCompletion(): string {
     "  fi",
     "",
     "  if [[ $scope == drive ]]; then",
-    bashDriveFlagCases(),
-    "    return",
-    "  fi",
-    "",
-    "  if [[ $scope == docs ]]; then",
-    bashDocsFlagCases(),
+    bashActionFlagCases(driveActionFlags),
     "    return",
     "  fi",
     "",
@@ -504,7 +512,7 @@ function generateBashCompletion(): string {
     "  fi",
     "",
     "  if [[ $scope == webhook ]]; then",
-    bashWebhookFlagCases(),
+    bashFamilyFlagCases(webhookActionFlags, "webhook"),
     "    return",
     "  fi",
     "",
@@ -514,7 +522,7 @@ function generateBashCompletion(): string {
     "  fi",
     "",
     "  if [[ $scope == admin ]]; then",
-    bashAdminFlagCases(),
+    bashFamilyFlagCases(adminActionFlags, "admin"),
     "    return",
     "  fi",
     "",
@@ -553,7 +561,7 @@ function generateZshCompletion(): string {
     `  top=(${zshWords(topLevelCommands)})`,
     "  source_values=(api openapi mcp)",
     "  transport_values=(rest mcp)",
-    "  search_type_values=(mail chat docs drive calendar)",
+    "  search_type_values=(mail chat drive calendar)",
     "  admin_user_type_values=(user agent service_account system)",
     "  tier_values=(personal business enterprise sovereign)",
     "  direction_values=(outbound inbound)",
@@ -605,16 +613,13 @@ function generateZshCompletion(): string {
     "      if [[ ${words[3]} == token ]]; then compadd -- $auth_flags; fi",
     "      ;;",
     "    mail)",
-    zshMailFlagCases(),
+    zshActionFlagCases(mailActionFlags),
     "      ;;",
     "    chat)",
     zshActionFlagCases(chatActionFlags),
     "      ;;",
     "    drive)",
-    zshDriveFlagCases(),
-    "      ;;",
-    "    docs)",
-    zshDocsFlagCases(),
+    zshActionFlagCases(driveActionFlags),
     "      ;;",
     "    calendar)",
     zshActionFlagCases(calendarActionFlags),
@@ -632,14 +637,14 @@ function generateZshCompletion(): string {
     "    webhook)",
     "      if (( CURRENT == 4 )); then",
     "        case ${words[3]} in",
-    zshWebhookActionCases(),
+    zshFamilyActionCases(webhookFamilyActions),
     "        esac",
     "      elif [[ ${words[CURRENT-1]} == --direction ]]; then",
     "        compadd -- $direction_values",
     "      elif [[ ${words[CURRENT-1]} == --status ]]; then",
     "        compadd -- $webhook_status_values",
     "      else",
-    zshWebhookFlagCases(),
+    zshFamilyFlagCases(webhookActionFlags, "webhook"),
     "      fi",
     "      ;;",
     "    search)",
@@ -652,12 +657,12 @@ function generateZshCompletion(): string {
     "    admin)",
     "      if (( CURRENT == 4 )); then",
     "        case ${words[3]} in",
-    zshAdminActionCases(),
+    zshFamilyActionCases(adminFamilyActions),
     "        esac",
     "      elif [[ ${words[CURRENT-1]} == --type ]]; then",
     "        compadd -- $admin_user_type_values",
     "      else",
-    zshAdminFlagCases(),
+    zshFamilyFlagCases(adminActionFlags, "admin"),
     "      fi",
     "      ;;",
     "    mcp)",
@@ -710,19 +715,18 @@ function generateFishCompletion(): string {
     'complete -c helix -n "__fish_seen_subcommand_from restore" -l encrypted',
     ...searchFlags.map(
       (flag) =>
-        `complete -c helix -n "__fish_seen_subcommand_from search" -l ${flag.slice(2)} -x${flag === "--type" ? ' -a "mail chat docs drive calendar"' : ""}`,
+        `complete -c helix -n "__fish_seen_subcommand_from search" -l ${flag.slice(2)} -x${flag === "--type" ? ' -a "mail chat drive calendar"' : ""}`,
     ),
-    ...fishMailFlagCompletions(),
+    ...fishActionFlagCompletions("mail", mailActionFlags),
     ...fishActionFlagCompletions("chat", chatActionFlags),
-    ...fishDriveFlagCompletions(),
-    ...fishDocsFlagCompletions(),
+    ...fishActionFlagCompletions("drive", driveActionFlags),
     ...fishActionFlagCompletions("calendar", calendarActionFlags),
     ...fishActionFlagCompletions("meet", meetActionFlags),
     ...fishAssistantFlagCompletions(),
-    ...fishWebhookActionCompletions(),
-    ...fishWebhookFlagCompletions(),
-    ...fishAdminActionCompletions(),
-    ...fishAdminFlagCompletions(),
+    ...fishFamilyActionCompletions("webhook", webhookFamilyActions),
+    ...fishFamilyFlagCompletions("webhook", webhookActionFlags, webhookFlagValues),
+    ...fishFamilyActionCompletions("admin", adminFamilyActions),
+    ...fishFamilyFlagCompletions("admin", adminActionFlags, adminFlagValues),
     `complete -c helix -n "__fish_seen_subcommand_from tier; and __fish_seen_subcommand_from set" -a "${wordList(securityTierValues)}"`,
     `complete -c helix -n "__fish_seen_subcommand_from ${jsonScopes.join(" ")}" -l json -x`,
     "",
@@ -746,8 +750,8 @@ function zshActionCases(): string {
     .join("\n");
 }
 
-function bashWebhookActionCases(): string {
-  return Object.entries(webhookFamilyActions)
+function bashFamilyActionCases(familyActions: Record<string, readonly string[]>): string {
+  return Object.entries(familyActions)
     .map(
       ([family, actions]) =>
         `    [[ $action == ${family} ]] && COMPREPLY=( $(compgen -W "${wordList(actions)}" -- "$cur") )`,
@@ -755,73 +759,31 @@ function bashWebhookActionCases(): string {
     .join("\n");
 }
 
-function bashAdminActionCases(): string {
-  return Object.entries(adminFamilyActions)
-    .map(
-      ([family, actions]) =>
-        `    [[ $action == ${family} ]] && COMPREPLY=( $(compgen -W "${wordList(actions)}" -- "$cur") )`,
-    )
-    .join("\n");
-}
-
-function bashWebhookFlagCases(): string {
-  return Object.entries(webhookActionFlags)
+function bashFamilyFlagCases(
+  actionFlags: Record<string, readonly string[]>,
+  label: string,
+): string {
+  return Object.entries(actionFlags)
     .map(([key, flags]) => {
-      const [family, action] = splitWebhookActionKey(key);
+      const [family, action] = splitActionKey(key, label);
       return `    [[ $action == ${family} && \${COMP_WORDS[3]} == ${action} ]] && COMPREPLY=( $(compgen -W "${wordList(flags)}" -- "$cur") )`;
     })
     .join("\n");
 }
 
-function bashAdminFlagCases(): string {
-  return Object.entries(adminActionFlags)
-    .map(([key, flags]) => {
-      const [family, action] = splitActionKey(key, "admin");
-      return `    [[ $action == ${family} && \${COMP_WORDS[3]} == ${action} ]] && COMPREPLY=( $(compgen -W "${wordList(flags)}" -- "$cur") )`;
-    })
-    .join("\n");
-}
-
-function zshWebhookActionCases(): string {
-  return Object.entries(webhookFamilyActions)
+function zshFamilyActionCases(familyActions: Record<string, readonly string[]>): string {
+  return Object.entries(familyActions)
     .map(([family, actions]) => `          ${family}) compadd -- ${zshWords(actions)} ;;`)
     .join("\n");
 }
 
-function zshAdminActionCases(): string {
-  return Object.entries(adminFamilyActions)
-    .map(([family, actions]) => `          ${family}) compadd -- ${zshWords(actions)} ;;`)
-    .join("\n");
-}
-
-function zshWebhookFlagCases(): string {
-  return Object.entries(webhookActionFlags)
+function zshFamilyFlagCases(actionFlags: Record<string, readonly string[]>, label: string): string {
+  return Object.entries(actionFlags)
     .map(([key, flags]) => {
-      const [family, action] = splitWebhookActionKey(key);
+      const [family, action] = splitActionKey(key, label);
       return `        if [[ \${words[3]} == ${family} && \${words[4]} == ${action} ]]; then compadd -- ${zshWords(flags)}; fi`;
     })
     .join("\n");
-}
-
-function zshAdminFlagCases(): string {
-  return Object.entries(adminActionFlags)
-    .map(([key, flags]) => {
-      const [family, action] = splitActionKey(key, "admin");
-      return `        if [[ \${words[3]} == ${family} && \${words[4]} == ${action} ]]; then compadd -- ${zshWords(flags)}; fi`;
-    })
-    .join("\n");
-}
-
-function bashMailFlagCases(): string {
-  return bashActionFlagCases(mailActionFlags);
-}
-
-function bashDriveFlagCases(): string {
-  return bashActionFlagCases(driveActionFlags);
-}
-
-function bashDocsFlagCases(): string {
-  return bashActionFlagCases(docsActionFlags);
 }
 
 function bashActionFlagCases(actionFlags: Record<string, readonly string[]>): string {
@@ -833,18 +795,6 @@ function bashActionFlagCases(actionFlags: Record<string, readonly string[]>): st
     .join("\n");
 }
 
-function zshMailFlagCases(): string {
-  return zshActionFlagCases(mailActionFlags);
-}
-
-function zshDriveFlagCases(): string {
-  return zshActionFlagCases(driveActionFlags);
-}
-
-function zshDocsFlagCases(): string {
-  return zshActionFlagCases(docsActionFlags);
-}
-
 function zshActionFlagCases(actionFlags: Record<string, readonly string[]>): string {
   return Object.entries(actionFlags)
     .map(
@@ -854,48 +804,26 @@ function zshActionFlagCases(actionFlags: Record<string, readonly string[]>): str
     .join("\n");
 }
 
-function fishMailFlagCompletions(): string[] {
-  return fishActionFlagCompletions("mail", mailActionFlags);
-}
-
-function fishDriveFlagCompletions(): string[] {
-  return fishActionFlagCompletions("drive", driveActionFlags);
-}
-
-function fishDocsFlagCompletions(): string[] {
-  return fishActionFlagCompletions("docs", docsActionFlags);
-}
-
-function fishWebhookActionCompletions(): string[] {
-  return Object.entries(webhookFamilyActions).map(
+function fishFamilyActionCompletions(
+  scope: string,
+  familyActions: Record<string, readonly string[]>,
+): string[] {
+  return Object.entries(familyActions).map(
     ([family, actions]) =>
-      `complete -c helix -n "__fish_seen_subcommand_from webhook; and __fish_seen_subcommand_from ${family}; and not __fish_seen_subcommand_from ${actions.join(" ")}" -a "${wordList(actions)}"`,
+      `complete -c helix -n "__fish_seen_subcommand_from ${scope}; and __fish_seen_subcommand_from ${family}; and not __fish_seen_subcommand_from ${actions.join(" ")}" -a "${wordList(actions)}"`,
   );
 }
 
-function fishWebhookFlagCompletions(): string[] {
-  return Object.entries(webhookActionFlags).flatMap(([key, flags]) => {
-    const [family, action] = splitWebhookActionKey(key);
+function fishFamilyFlagCompletions(
+  scope: string,
+  actionFlags: Record<string, readonly string[]>,
+  flagValues: (flag: string) => string,
+): string[] {
+  return Object.entries(actionFlags).flatMap(([key, flags]) => {
+    const [family, action] = splitActionKey(key, scope);
     return flags.map((flag) => {
-      const values = webhookFlagValues(flag);
-      return `complete -c helix -n "__fish_seen_subcommand_from webhook; and __fish_seen_subcommand_from ${family}; and __fish_seen_subcommand_from ${action}" -l ${flag.slice(2)} -x${values}`;
-    });
-  });
-}
-
-function fishAdminActionCompletions(): string[] {
-  return Object.entries(adminFamilyActions).map(
-    ([family, actions]) =>
-      `complete -c helix -n "__fish_seen_subcommand_from admin; and __fish_seen_subcommand_from ${family}; and not __fish_seen_subcommand_from ${actions.join(" ")}" -a "${wordList(actions)}"`,
-  );
-}
-
-function fishAdminFlagCompletions(): string[] {
-  return Object.entries(adminActionFlags).flatMap(([key, flags]) => {
-    const [family, action] = splitActionKey(key, "admin");
-    return flags.map((flag) => {
-      const values = adminFlagValues(flag);
-      return `complete -c helix -n "__fish_seen_subcommand_from admin; and __fish_seen_subcommand_from ${family}; and __fish_seen_subcommand_from ${action}" -l ${flag.slice(2)} -x${values}`;
+      const values = flagValues(flag);
+      return `complete -c helix -n "__fish_seen_subcommand_from ${scope}; and __fish_seen_subcommand_from ${family}; and __fish_seen_subcommand_from ${action}" -l ${flag.slice(2)} -x${values}`;
     });
   });
 }
@@ -936,10 +864,6 @@ function adminFlagValues(flag: string): string {
     return ' -a "user agent service_account system"';
   }
   return "";
-}
-
-function splitWebhookActionKey(key: string): readonly [string, string] {
-  return splitActionKey(key, "webhook");
 }
 
 function splitActionKey(key: string, label: string): readonly [string, string] {

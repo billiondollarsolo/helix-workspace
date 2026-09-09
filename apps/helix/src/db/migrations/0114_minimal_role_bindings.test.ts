@@ -16,8 +16,14 @@ describe("0114 minimal role bindings migration", () => {
       new URL("./0116_delegated_administration.sql", import.meta.url),
       "utf8",
     );
+    const mergeMigration = await readFile(
+      new URL("./0178_merge_permission_catalog.sql", import.meta.url),
+      "utf8",
+    );
     for (const permission of ALL_SCOPES) {
-      expect(`${migration}\n${delegatedMigration}`).toContain(`('${permission}',`);
+      expect(`${migration}\n${delegatedMigration}\n${mergeMigration}`).toContain(
+        `('${permission}',`,
+      );
     }
     expect(migration).toContain("references organization_memberships(org_id, id)");
     expect(migration).toContain("references actors(org_id, id)");

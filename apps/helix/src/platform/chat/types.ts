@@ -1,4 +1,5 @@
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
+import type { ChatBodyFormat } from "@helix/contracts";
 
 export const chatPluginId = "com.helix.core.chat";
 
@@ -63,7 +64,8 @@ export interface ChatMessageRecord {
   readonly roomId: string;
   readonly actorId: string | null;
   readonly body: string;
-  readonly bodyFormat: string;
+  readonly bodyFormat: ChatBodyFormat;
+  readonly renderedBodyHtml?: string;
   readonly metadata: JsonObject;
   readonly attachmentObjectIds: readonly string[];
   readonly attachments?: readonly ChatAttachmentRecord[] | undefined;
@@ -131,6 +133,48 @@ export interface ChatReadReceiptRecord {
   readonly isShared: boolean;
   /** Internal cursor, or null when this call did not advance the durable receipt. */
   readonly realtimeCursor?: number | null | undefined;
+}
+
+export interface ChatRetentionPolicyRecord {
+  readonly orgId: string;
+  readonly roomId: string | null;
+  readonly retentionDays: number;
+  readonly editWindowSeconds: number;
+  readonly deleteWindowSeconds: number;
+  readonly legalHold: boolean;
+  readonly updatedAt: Date;
+}
+
+/** Effective policy returned by get — platform defaults when no row exists. */
+export interface ChatRetentionPolicyView {
+  readonly orgId: string;
+  readonly roomId: string | null;
+  readonly retentionDays: number;
+  readonly editWindowSeconds: number;
+  readonly deleteWindowSeconds: number;
+  readonly legalHold: boolean;
+  /** Null when the organization has not configured a policy row. */
+  readonly updatedAt: Date | null;
+  readonly configured: boolean;
+}
+
+export interface ChatExportMessageRecord {
+  readonly id: string;
+  readonly roomId: string;
+  readonly actorId: string | null;
+  readonly body: string | null;
+  readonly bodyFormat: "plain" | "markdown";
+  readonly sentAt: Date;
+  readonly editedAt: Date | null;
+  readonly deletedAt: Date | null;
+}
+
+export interface ChatOrganizationExportRecord {
+  readonly exportId: string;
+  readonly orgId: string;
+  readonly generatedAt: Date;
+  readonly messages: readonly ChatExportMessageRecord[];
+  readonly truncated: boolean;
 }
 
 export interface ChatSearchRequest {

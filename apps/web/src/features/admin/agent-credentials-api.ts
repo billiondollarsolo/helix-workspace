@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 export interface AgentCredential {
   readonly clientId: string;
@@ -55,11 +56,10 @@ export const agentCredentialsQueryKeys = {
 
 export function agentCredentialsQueryOptions(includeRevoked = false) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: agentCredentialsQueryKeys.list(includeRevoked),
     queryFn: () => listAgentCredentials({ includeRevoked }),
-    retry: false,
     staleTime: 30_000,
-    throwOnError: false,
   });
 }
 
@@ -137,7 +137,9 @@ async function callToolWithApproval<Output>(
 async function parseToolResponse<Output>(response: Response, toolId: string): Promise<Output> {
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(errorMessageFromOutput(output) ?? `Tool ${toolId} failed with ${response.status}`);
+    throw new Error(
+      errorMessageFromOutput(output) ?? `Tool ${toolId} failed with ${response.status}`,
+    );
   }
   return output as Output;
 }

@@ -66,9 +66,7 @@ export class PgVectorStore implements VectorStore {
         validateVector(item.vector, collectionRow.dim);
         const visibility = item.visibility ?? "org";
         if (visibility === "private" && item.ownerActorId === undefined) {
-          throw new TypeError(
-            `Private vector item ${item.id} requires ownerActorId`,
-          );
+          throw new TypeError(`Private vector item ${item.id} requires ownerActorId`);
         }
         const ownerActorId = visibility === "private" ? item.ownerActorId : null;
         await tx`
@@ -177,7 +175,8 @@ export class PgVectorStore implements VectorStore {
     if (actorId === undefined) {
       return this.sql`and visibility = 'org'`;
     }
-    return this.sql`and (visibility = 'org' or (visibility = 'private' and owner_actor_id = ${actorId}))`;
+    return this
+      .sql`and (visibility = 'org' or (visibility = 'private' and owner_actor_id = ${actorId}))`;
   }
 
   private async queryWithoutFilter(

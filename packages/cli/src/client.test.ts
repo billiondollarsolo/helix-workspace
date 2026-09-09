@@ -572,3 +572,18 @@ describe("credentialFilePath", () => {
     );
   });
 });
+
+it("uses an explicit agent API key and rejects credential-bearing base URLs", () => {
+  const request = buildHelixRequest(
+    { kind: "tool-list" },
+    {
+      HELIX_BASE_URL: "https://helix.example",
+      HELIX_API_KEY: "agent-key",
+      HELIX_ACCESS_TOKEN: "user-token",
+    },
+  );
+  expect(request.init.headers.authorization).toBe("Bearer agent-key");
+  for (const HELIX_BASE_URL of ["ftp://helix.example", "https://user:secret@helix.example"]) {
+    expect(() => buildHelixRequest({ kind: "tool-list" }, { HELIX_BASE_URL })).toThrow("HTTP(S)");
+  }
+});

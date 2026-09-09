@@ -50,9 +50,7 @@ describe("CEF audit formatting", () => {
   });
 
   it("escapes pipes in the CEF header and equals signs in extensions", () => {
-    const cef = formatAuditCef(
-      record({ verb: "weird|verb", objectType: "ty=pe", metadata: {} }),
-    );
+    const cef = formatAuditCef(record({ verb: "weird|verb", objectType: "ty=pe", metadata: {} }));
     expect(cef).toContain("weird\\|verb");
   });
 

@@ -11,7 +11,6 @@ export interface DeploymentResidencyInput {
   readonly mailKmsKeyId?: string | undefined;
   readonly mailKmsRegion?: string | undefined;
   readonly searchIndexUid?: string | undefined;
-  readonly previewUrl?: string | undefined;
   readonly ollamaUrl?: string | undefined;
   readonly openAiApiKey?: string | undefined;
   readonly telemetryEnabled?: boolean | undefined;
@@ -45,7 +44,6 @@ export function assertDeploymentResidency(input: DeploymentResidencyInput): void
   if (index !== undefined && !index.startsWith(`${input.region}_`)) {
     throw new Error(`Search index must start with '${input.region}_'.`);
   }
-  assertRegionalInternalUrl(input.previewUrl, "office preview");
   assertRegionalInternalUrl(input.ollamaUrl, "Ollama");
 
   if (input.production === true && input.openAiApiKey !== undefined) {

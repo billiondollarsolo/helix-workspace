@@ -33,6 +33,7 @@ describe.skipIf(sql === null)("durable mail drafts", () => {
   async function cleanup(): Promise<void> {
     await database`delete from mail_drafts where org_id = ${orgId}`;
     await database`delete from objects where org_id = ${orgId}`;
+    await database`delete from resource_classifications where org_id = ${orgId}`;
     await database`delete from actors where id = ${actorId}`;
     await database`delete from orgs where id = ${orgId}`;
   }
@@ -75,6 +76,10 @@ describe.skipIf(sql === null)("durable mail drafts", () => {
         idempotencyKey: "d2200000-0000-4000-8000-000000000006",
       }),
     ).rejects.toThrow("changed elsewhere");
+    expect(await store.discardDraft({ orgId, actorId, id: first.id, expectedRevision: 1 })).toBe(
+      false,
+    );
+    expect(await store.getDraft({ orgId, actorId, id: first.id })).toMatchObject({ revision: 2 });
   });
 
   it("expires drafts only from an unscoped worker context", async () => {

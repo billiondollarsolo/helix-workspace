@@ -201,9 +201,9 @@ describe("ProviderMailTransport", () => {
       keySelector: "s1",
       privateKey: "kms-unwrapped-key",
     }));
-    await expect(
-      transport.send(envelope, { idempotencyKey: "handoff-1" }),
-    ).rejects.toThrow(/use SMTP or SES/u);
+    await expect(transport.send(envelope, { idempotencyKey: "handoff-1" })).rejects.toThrow(
+      /use SMTP or SES/u,
+    );
   });
 });
 

@@ -9,12 +9,49 @@
 @import "@fontsource-variable/geist/index.css";
 @import "@fontsource-variable/geist-mono/index.css";
 
-/* Tailwind v4: include the @helix/editors-ui package in JIT scanning so
-   className strings used by the shared editor chrome (EditorAppBar,
-   EditorMenuBar, EditorRibbon, EditorSidePanel, EditorWorkspace) are
-   compiled into this stylesheet. */
-@source "../../../../helix-editors/packages/ui-kit/dist/**/*.{js,mjs,cjs}";
-@source "../../../../helix-editors/packages/ui-kit/src/**/*.{ts,tsx}";
+/* ============================================================
+   Tailwind token bridge
+
+   Utilities like `bg-card` / `text-muted-foreground` / `border-border`
+   only exist if Tailwind v4 knows the matching `--color-*` theme key.
+   Without this block they compile to nothing and silently fall back to
+   `currentColor`, which is how ~150 admin call sites ended up drawing
+   near-black borders and un-muted "muted" text.
+
+   `inline` makes each utility emit `var(--surface)` directly rather than
+   a copied literal, so [data-theme="dark"] keeps working for free.
+   ============================================================ */
+@theme inline {
+  /* shadcn/ui vocabulary (components/ui/*, features/admin/*) */
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--text);
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--text-3);
+  --color-border: var(--border);
+  /* shadcn `--input` is the field *border* hue; `bg-input/20` reuses it as a
+     faint wash, so a border-strength value is correct for both. */
+  --color-input: var(--border-2);
+  --color-ring: var(--accent);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-fg);
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--text-2);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--accent-fg);
+  /* shadcn "accent" is the menu/hover highlight, not the Helix brand hue */
+  --color-accent: var(--surface-2);
+  --color-accent-foreground: var(--text);
+
+  /* Material-3 vocabulary used by components/ui/button.tsx */
+  --color-outline: var(--border);
+  --color-outline-variant: var(--border-2);
+  --color-surface-container: var(--surface-2);
+  --color-surface-container-lowest: var(--surface);
+}
 
 /* ============================================================
    Tokens — light theme + base density
@@ -32,22 +69,30 @@
   --border-2: #d6d3d1;
   --text: #1c1917;
   --text-2: #57534e;
-  --text-3: #a8a29e;
+  /* Muted text. Was #a8a29e — 2.52:1 on --surface, far below AA, and this token
+     carries muted text product-wide.
+
+     Tuned against --surface-3 (#ececea) rather than --surface, because that is
+     the darkest background it actually sits on and therefore the binding
+     constraint; a value that passes on white alone still fails inside .search,
+     which sits on --surface-2. Clears AA on all three: 5.55 / 5.09 / 4.69.
+     Hue and saturation unchanged, only lightness. */
+  --text-3: #6e6763;
 
   /* Accent (violet by default; hue is swappable) */
   --accent-h: 290;
-  --accent: oklch(56% 0.21 var(--accent-h));
+  --accent: oklch(54% 0.21 var(--accent-h));
   --accent-fg: #ffffff;
   --accent-soft: oklch(96% 0.04 var(--accent-h));
   --accent-soft-border: oklch(88% 0.08 var(--accent-h));
   --accent-2: oklch(50% 0.21 var(--accent-h));
 
   /* Semantic */
-  --danger: oklch(58% 0.22 25);
+  --danger: oklch(54% 0.22 25);
   --danger-soft: oklch(96% 0.04 25);
-  --success: oklch(58% 0.16 150);
+  --success: oklch(51% 0.16 150);
   --success-soft: oklch(96% 0.04 150);
-  --warning: oklch(72% 0.18 70);
+  --warning: oklch(51% 0.14 70);
   --warning-soft: oklch(96% 0.04 70);
   --info: oklch(62% 0.16 240);
   --info-soft: oklch(96% 0.04 240);
@@ -71,15 +116,6 @@
   --gap-sm: 8px;
   --radius: 6px;
   --radius-lg: 10px;
-
-  /* Editor chrome dimensions (consumed by @helix/editors-ui) */
-  --editor-app-bar-h: 48px;
-  --editor-menu-bar-h: 28px;
-  --editor-ribbon-h: 44px;
-  --editor-formula-bar-h: 32px;
-  --editor-side-panel-w: 320px;
-  --editor-side-panel-tab-h: 40px;
-  --editor-ribbon-button-size: 32px;
 
   /* ============================================================
      Layout primitives — the *structural* design system. Same role
@@ -116,7 +152,11 @@
   --border-2: #3a3a42;
   --text: #ededee;
   --text-2: #a1a1aa;
-  --text-3: #71717a;
+  /* Was #71717a — 3.84:1, also below AA. The audit recorded only the light-mode
+     failure; dark missed too, by less. Tuned against the *lightest* dark
+     surface for the same reason light is tuned against the darkest light one.
+     Clears AA on all three: 5.28 / 4.94 / 4.56. */
+  --text-3: #888891;
 
   --accent: oklch(68% 0.19 var(--accent-h));
   --accent-fg: #0a0a0b;
@@ -507,26 +547,47 @@ aside,
   font-feature-settings: "ss01", "ss02";
 }
 
-/* Native form-element reset. Tailwind utilities (px-*, py-*, p-*) handle
-   per-button padding, so we deliberately do not zero `padding` here — that
-   was killing every utility class on bare <button> elements. */
-button,
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
-}
+/* ============================================================
+   Native element resets. Element selectors go INSIDE the @layer base block
+   below, never after it. Read this first.
 
-button {
-  cursor: pointer;
-  background: none;
-  border: none;
-}
+   Rules written at the top level of this file are UNLAYERED, and unlayered
+   declarations outrank every cascade layer -- including the utilities layer
+   that Tailwind puts bg-*, text-*, font-* and friends into. Specificity does
+   not save you: bare `button` (0,0,1) still beats `.bg-primary` (0,1,0),
+   because the layer comparison happens before specificity is considered.
 
-a {
-  color: inherit;
-  text-decoration: none;
+   An unlayered element reset therefore silently beats the utility a component
+   asked for, on every element of that type in the app. Four bugs came out of
+   this one block:
+
+     padding: 0        killed px-* / py-* / p-* on bare <button>
+     background: none  killed bg-* -- the Workspace apps switches rendered as
+                       empty rings while aria-checked said "true"
+     font: inherit     killed text-sm / font-medium / font-mono
+     color: inherit    killed text-* -- <Button variant="default"> drew
+                       bg-primary violet with a near-black label instead of
+                       text-primary-foreground white, on every Button in the
+                       app, and <a class="underline"> lost colour and underline
+
+   All four were also redundant: Tailwind preflight already applies
+   font: inherit + color: inherit to button/input/select/textarea, and
+   color: inherit + text-decoration: inherit to <a>, from inside `base` where
+   utilities can still override. Our copies added nothing but the bug.
+
+   Only `cursor` survives, because preflight does not set a button cursor and
+   we want pointer. Declared in `base` so cursor-* utilities (for instance
+   disabled:cursor-not-allowed) can override it.
+
+   One parser trap: an apostrophe anywhere in a comment in this file makes the
+   Tailwind v4 CSS parser fail with "Unterminated string", the compile is
+   dropped, and the dev server keeps serving the last good stylesheet -- so
+   edits appear to do nothing rather than erroring. Avoid apostrophes here.
+   ============================================================ */
+@layer base {
+  button {
+    cursor: pointer;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -558,6 +619,72 @@ a {
   height: 100dvh;
   overflow: hidden;
   background: var(--bg);
+  position: relative;
+}
+
+/* Skip link: a11y-only. Never painted for mouse users.
+   - Must not occupy a grid track (used to steal column 1 / break the shell).
+   - Must not appear on click-focus (:focus alone) — only keyboard :focus-visible.
+   - pointer-events: none so it cannot be clicked when "invisible". */
+.skip-link {
+  position: fixed;
+  inset-inline-start: -10000px;
+  top: 0;
+  z-index: 10000;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+.skip-link:focus:not(:focus-visible) {
+  /* Mouse/touch focus must stay fully hidden */
+  position: fixed;
+  inset-inline-start: -10000px;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  opacity: 0;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+.skip-link:focus-visible {
+  inset-inline-start: 12px;
+  top: 12px;
+  width: auto;
+  height: auto;
+  padding: 10px 14px;
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  font-weight: 600;
+  opacity: 1;
+  pointer-events: auto;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Explicit placement so overlays / banners cannot auto-place into tracks. */
+.app > .rail {
+  grid-column: 1;
+  grid-row: 1;
+  min-height: 0;
+}
+.app > .workspace {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* === Icon rail (always visible, always dark) === */
@@ -688,6 +815,15 @@ a {
   outline: none;
   font-size: var(--text-body-lg);
 }
+
+/* Placeholders had no rule at all, so every input used the engine's default
+   grey — 4.22:1 against .search's --surface-2 background in Chrome, and a
+   different value in every other engine. Bound to the token instead, which is
+   tuned to clear AA on the surfaces inputs actually sit on. */
+::placeholder {
+  color: var(--text-3);
+  opacity: 1; /* Firefox applies its own opacity to placeholders. */
+}
 .kbd {
   font-family: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
   font-size: var(--text-chip);
@@ -714,7 +850,7 @@ a {
 
 /* ============================================================
    Surface chrome primitives — used by every feature shell
-   (drive / mail / chat / docs / sheets / slides / calendar /
+   (drive / mail / chat / calendar /
    meet / assistant / admin).
 
    Apply these classes in the JSX instead of redefining the same
@@ -813,8 +949,16 @@ a {
     border 0.1s;
   white-space: nowrap;
 }
-.btn:hover {
+.btn:hover:not(:disabled) {
   background: var(--surface-2);
+}
+/* `.btn` had no disabled state, so a disabled console button still looked
+   pressable and three sections were hand-dimming with their own inline object.
+   Disabled controls must say so, since we disable-with-a-reason rather than
+   hide. */
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .btn.primary {
   background: var(--accent);
@@ -2182,514 +2326,6 @@ a {
   }
 }
 
-/* Docs editor — Tiptap body + Yjs collaboration carets. */
-.docs-prose {
-  outline: none;
-  font-size: var(--text-body-lg);
-  line-height: 1.65;
-  color: var(--text);
-}
-
-.docs-prose:focus {
-  outline: none;
-}
-
-.docs-prose p {
-  margin: 0 0 12px;
-}
-
-.docs-prose h1 {
-  font-size: var(--text-h1);
-  font-weight: 600;
-  margin: 20px 0 10px;
-}
-
-.docs-prose h2 {
-  font-size: var(--text-h2);
-  font-weight: 600;
-  margin: 18px 0 8px;
-}
-
-.docs-prose h3 {
-  font-size: var(--text-body-lg);
-  font-weight: 600;
-  margin: 14px 0 6px;
-}
-
-.docs-prose ul,
-.docs-prose ol {
-  margin: 0 0 12px;
-  padding-left: 24px;
-}
-
-.docs-prose blockquote {
-  margin: 0 0 12px;
-  padding-left: 12px;
-  border-left: 3px solid var(--border-2);
-  color: var(--text-2);
-}
-
-.docs-prose pre {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px 12px;
-  font-size: var(--text-meta);
-  overflow-x: auto;
-}
-
-.docs-prose code {
-  font-family: var(--font-mono, monospace);
-  font-size: 0.9em;
-}
-
-.docs-prose hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 16px 0;
-}
-
-/* Remote collaborator caret rendered by @tiptap/extension-collaboration-caret. */
-.collaboration-carets__caret {
-  position: relative;
-  border-left: 1px solid currentColor;
-  border-right: 1px solid currentColor;
-  margin-left: -1px;
-  margin-right: -1px;
-  pointer-events: none;
-  word-break: normal;
-}
-
-.collaboration-carets__label {
-  position: absolute;
-  top: -1.4em;
-  left: -1px;
-  font-size: var(--text-chip);
-  font-weight: 600;
-  line-height: 1;
-  color: #fff;
-  padding: 2px 4px;
-  border-radius: 3px 3px 3px 0;
-  white-space: nowrap;
-  user-select: none;
-}
-
-/* Remote collaborator selection highlight. */
-.collaboration-carets__selection {
-  border-radius: 2px;
-}
-
-.native-document-editor__content {
-  min-height: 360px;
-  outline: none;
-  /* Text colors inherit from --text vars so light/dark theme just works. */
-  color: var(--text-1);
-  font-family: "Arial", "Helvetica", sans-serif;
-  font-size: 11pt;
-  line-height: 1.5;
-  /* Force any unbreakable run (huge data: URIs from misimported DOCX images,
-     long URLs, base64 blobs in code blocks) to wrap at the document edge. */
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  min-width: 0;
-}
-
-.native-document-editor__content .ProseMirror a {
-  color: var(--accent);
-}
-
-.native-document-editor__content .ProseMirror code {
-  background: var(--surface-2);
-  color: var(--text-1);
-  padding: 1px 4px;
-  border-radius: 3px;
-  font-size: 0.92em;
-}
-
-.native-document-editor__content .ProseMirror {
-  min-height: 360px;
-  outline: none;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  min-width: 0;
-}
-
-/* Inline code + code blocks: also wrap; otherwise long token strings push
-   the layout. Code blocks use horizontal scroll as a fallback below. */
-.native-document-editor__content .ProseMirror p,
-.native-document-editor__content .ProseMirror li,
-.native-document-editor__content .ProseMirror code {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.native-document-editor__content .ProseMirror > * + * {
-  margin-top: 0.85em;
-}
-
-.native-document-editor__content-layout[data-show-nonprinting="true"]
-  .native-document-editor__content.ProseMirror
-  p::after,
-.native-document-editor__content-layout[data-show-nonprinting="true"]
-  .native-document-editor__content.ProseMirror
-  li::after {
-  content: " ¶";
-  color: var(--text-3);
-  font-weight: 400;
-  opacity: 0.75;
-}
-
-.native-document-editor__content .ProseMirror h1,
-.native-document-editor__content .ProseMirror h2,
-.native-document-editor__content .ProseMirror h3 {
-  color: var(--text-1);
-  line-height: 1.35;
-}
-
-.native-document-editor__content .ProseMirror pre {
-  overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  background: var(--surface-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-body-sm);
-}
-
-.native-document-editor__content .ProseMirror .native-document-image {
-  display: block;
-  max-width: 100%;
-  max-height: 520px;
-  margin: 1rem auto;
-  border-radius: 4px;
-  object-fit: contain;
-}
-
-.native-document-editor__content .ProseMirror .native-document-image-frame {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  margin: 1rem auto;
-}
-
-.native-document-editor__content .ProseMirror .native-document-image-frame .native-document-image {
-  margin: 0;
-}
-
-.native-document-editor__content .ProseMirror .native-document-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-  margin: 12px 0;
-}
-
-.native-document-editor__content .ProseMirror .native-document-table__cell {
-  min-width: 72px;
-  min-height: 32px;
-  border: 1px solid var(--border);
-  padding: 6px 8px;
-  vertical-align: top;
-}
-
-.native-document-editor__content .ProseMirror .native-document-table__cell > :first-child {
-  margin-top: 0;
-}
-
-.native-document-editor__content .ProseMirror .native-document-table__cell > :last-child {
-  margin-bottom: 0;
-}
-
-.native-document-editor__content .ProseMirror .native-document-checklist {
-  display: grid;
-  gap: 4px;
-  padding-left: 0;
-  margin: 8px 0;
-  list-style: none;
-}
-
-.native-document-editor__content .ProseMirror .native-document-checklist__item {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: start;
-  gap: 6px;
-}
-
-.native-document-editor__content .ProseMirror .native-document-checklist__control {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 24px;
-  user-select: none;
-}
-
-.native-document-editor__content .ProseMirror .native-document-checklist__control input {
-  width: 15px;
-  height: 15px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.native-document-editor__content .ProseMirror .native-document-checklist__content > :first-child {
-  margin-top: 0;
-}
-
-.native-document-editor__content .ProseMirror .native-document-checklist__content > :last-child {
-  margin-bottom: 0;
-}
-
-.native-document-editor__content
-  .ProseMirror
-  .native-document-checklist__item[data-checked="true"] {
-  color: var(--text-3);
-}
-
-.native-document-editor__content
-  .ProseMirror
-  .native-document-checklist__item[data-checked="true"]
-  .native-document-checklist__content {
-  text-decoration: line-through;
-}
-
-.native-document-image-resize-handle {
-  position: absolute;
-  right: 8px;
-  bottom: 34px;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  border: 2px solid var(--surface);
-  border-radius: 3px;
-  background: var(--accent);
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.24);
-  cursor: nwse-resize;
-}
-
-.native-document-image-caption-input {
-  width: min(100%, 560px);
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--text-body-sm);
-  text-align: center;
-  outline: none;
-}
-
-.native-document-image-caption-input:focus {
-  border-bottom-color: var(--accent);
-  color: var(--text);
-}
-
-.native-document-anchor-decoration {
-  border-radius: 3px;
-  box-decoration-break: clone;
-  padding: 0 1px;
-}
-
-.native-document-anchor-decoration--comment {
-  background: color-mix(in srgb, #facc15 24%, transparent);
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, #ca8a04 58%, transparent);
-}
-
-.native-document-anchor-decoration--suggestion {
-  background: color-mix(in srgb, #22c55e 18%, transparent);
-  box-shadow: inset 0 -2px 0 color-mix(in srgb, #15803d 58%, transparent);
-}
-
-.native-document-find-decoration {
-  border-radius: 3px;
-  background: color-mix(in srgb, #fde047 34%, transparent);
-  box-decoration-break: clone;
-}
-
-.native-document-find-decoration--active {
-  background: color-mix(in srgb, #facc15 58%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, #ca8a04 58%, transparent),
-    inset 0 -2px 0 color-mix(in srgb, #ca8a04 64%, transparent);
-}
-
-.native-document-smart-compose-inline-ghost {
-  margin-left: 4px;
-  color: var(--text-3);
-  font-style: italic;
-  pointer-events: none;
-  opacity: 0.82;
-}
-
-.native-document-token-decoration {
-  display: inline-flex;
-  align-items: center;
-  position: relative;
-  max-width: 100%;
-  border: 1px solid var(--border-2);
-  border-radius: 999px;
-  padding: 0 7px;
-  background: var(--surface-2);
-  color: transparent;
-  font-size: 0;
-  line-height: 1.6;
-  vertical-align: baseline;
-  white-space: nowrap;
-  box-decoration-break: clone;
-}
-
-.native-document-token-decoration::after {
-  content: attr(data-native-document-token-label);
-  overflow: hidden;
-  max-width: 28ch;
-  color: var(--text-1);
-  font-size: var(--text-body-sm);
-  text-overflow: ellipsis;
-}
-
-.native-document-token-decoration--chip-person,
-.native-document-token-decoration--chip-doc,
-.native-document-token-decoration--chip-file,
-.native-document-token-decoration--chip-event {
-  border-color: var(--accent-soft-border);
-  background: var(--accent-soft);
-}
-
-.native-document-token-decoration--chip-person:focus-visible,
-.native-document-token-decoration--chip-doc:focus-visible,
-.native-document-token-decoration--chip-file:focus-visible,
-.native-document-token-decoration--chip-event:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.native-document-token-decoration--chip-person::before,
-.native-document-token-decoration--chip-doc::before,
-.native-document-token-decoration--chip-file::before,
-.native-document-token-decoration--chip-event::before {
-  position: absolute;
-  z-index: 8;
-  bottom: calc(100% + 8px);
-  left: 0;
-  display: none;
-  width: max-content;
-  max-width: min(280px, 80vw);
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
-  color: var(--text-1);
-  content: attr(data-native-document-token-card);
-  font-size: var(--text-caption);
-  line-height: 1.35;
-  white-space: normal;
-}
-
-.native-document-token-decoration--chip-person:hover::before,
-.native-document-token-decoration--chip-doc:hover::before,
-.native-document-token-decoration--chip-file:hover::before,
-.native-document-token-decoration--chip-event:hover::before,
-.native-document-token-decoration--chip-person:focus-visible::before,
-.native-document-token-decoration--chip-doc:focus-visible::before,
-.native-document-token-decoration--chip-file:focus-visible::before,
-.native-document-token-decoration--chip-event:focus-visible::before {
-  display: block;
-}
-
-.native-document-token-decoration--reference {
-  border-color: color-mix(in srgb, var(--info) 34%, var(--border));
-  background: var(--info-soft);
-}
-
-.native-document-token-decoration--equation {
-  border-color: color-mix(in srgb, var(--success) 34%, var(--border));
-  background: var(--success-soft);
-  font-family: var(--font-mono);
-}
-
-.native-document-token-decoration--field {
-  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
-  background: var(--warning-soft);
-}
-
-.native-document-workspace {
-  grid-template-columns: minmax(0, 860px) minmax(220px, 260px);
-}
-
-.native-document-workspace--print-preview {
-  grid-template-columns: minmax(0, 860px);
-  justify-content: center;
-}
-
-.native-document-workspace--print-preview .native-document-side-rail,
-.native-document-workspace--print-preview .native-document-editor__tools,
-.native-document-workspace--print-preview .native-document-editor__status,
-.native-document-workspace--print-preview .native-document-session-facts {
-  display: none;
-}
-
-@media (max-width: 960px) {
-  .native-document-workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 760px) {
-  .native-document-editor__tools {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .native-document-editor__tools label,
-  .native-document-editor__tools output {
-    grid-column: span 2;
-  }
-}
-
-@media print {
-  body {
-    background: #fff;
-  }
-
-  .native-document-toolbar,
-  .native-document-side-rail,
-  .native-document-editor__tools,
-  .native-document-editor__status,
-  .native-document-session-facts {
-    display: none !important;
-  }
-
-  .native-document-workspace {
-    display: block;
-    width: 100%;
-  }
-
-  .native-document-page {
-    min-height: auto !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-  }
-
-  .native-document-editor__content,
-  .native-document-editor__content .ProseMirror {
-    min-height: auto;
-  }
-}
-
-/* ============================================================
-   Docs — editable title button affordance
-   ============================================================ */
-.docs-title-rename-btn:hover,
-.docs-title-rename-btn:focus-visible {
-  border-color: var(--border) !important;
-  background: var(--hover) !important;
-  outline: none;
-}
-.docs-title-rename-btn:hover .docs-title-pencil,
-.docs-title-rename-btn:focus-visible .docs-title-pencil {
-  opacity: 1 !important;
-}
 /* Keyboard-only navigation utilities. */
 .sr-only {
   position: absolute !important;
@@ -2814,5 +2450,1919 @@ a {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   Admin console — panels, stat grids, status cards
+
+   These class names were already in the admin TSX but had no rules
+   anywhere, so Tier readiness / Services / AI observability / Mail
+   config rendered as unstyled text. Built on the same tokens as
+   `.panel` so the admin surface matches the rest of the shell.
+   ============================================================ */
+
+/* No max-width here. This section is registered through `withPageScroll`, so
+   `.admin-page-inner` already caps it at 1280px; a second 1200px cap made the
+   content width jump 80px as an operator moved between sidebar sections. */
+.admin-tier-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.admin-tier-kicker,
+.admin-tier-live-status {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+  margin: 0;
+}
+
+.admin-tier-score {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.admin-tier-score strong {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  line-height: 1;
+}
+.admin-tier-score span {
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+/* Unscoreable reads as muted, not as a number. A large confident "100%" was
+   the whole problem; an em dash at full weight would still look like a score. */
+.admin-tier-score[data-unknown] strong {
+  color: var(--text-2);
+  font-size: var(--text-h3);
+}
+
+/* The config-API connection readout. Was a <button> with no handler, styled
+   like the Apply control next to it; now a plain status line. */
+.admin-tier-live-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+
+/* Tier selector — segmented cards, one per tier */
+.admin-tier-selector {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--gap-sm);
+}
+.admin-tier-selector button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+.admin-tier-selector button:hover:not(:disabled) {
+  background: var(--hover);
+}
+.admin-tier-selector button.selected {
+  border-color: var(--accent-soft-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.admin-tier-selector button:disabled {
+  opacity: 0.5;
+}
+.admin-tier-selector span {
+  font-size: var(--text-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+}
+.admin-tier-selector strong {
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+.admin-tier-selector small {
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+
+/* Panels */
+.admin-tier-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .admin-tier-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.admin-tier-panel,
+.admin-plugin-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+.admin-tier-panel h2,
+.admin-plugin-panel h2 {
+  font-size: var(--text-body);
+  font-weight: 600;
+  margin: 2px 0 0;
+}
+.admin-tier-panel > p,
+.admin-tier-panel-header p:not(.admin-tier-kicker) {
+  margin: 4px 0 0;
+  font-size: var(--text-body-sm);
+  color: var(--text-2);
+}
+
+/* The readiness panel is the scrolling body; the summary aside carries the
+   "Apply tier draft" action, so it sticks while the gate list scrolls past. */
+.admin-tier-readiness {
+  min-height: 0;
+}
+.admin-tier-summary {
+  position: sticky;
+  top: 0;
+  gap: var(--gap-sm);
+}
+@media (max-width: 1100px) {
+  .admin-tier-summary {
+    position: static;
+  }
+}
+
+.admin-tier-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--gap);
+  flex-wrap: wrap;
+}
+
+.admin-tier-progress {
+  flex: 0 0 160px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.admin-tier-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* Card grids — same shape for services, stat rollups, AI usage */
+.admin-service-grid,
+.admin-ai-cost-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--gap-sm);
+}
+
+.admin-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
+
+.admin-check-row,
+.admin-service-card,
+.admin-ai-cost-card,
+.admin-plugin-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-left-color: var(--border-2);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+.admin-check-row > div,
+.admin-service-card > div,
+.admin-ai-cost-card > div,
+.admin-plugin-card > div {
+  min-width: 0;
+  flex: 1;
+}
+.admin-check-row h3,
+.admin-service-card h3,
+.admin-ai-cost-card h3,
+.admin-plugin-card h3 {
+  font-size: var(--text-body-sm);
+  font-weight: 600;
+  margin: 0;
+}
+.admin-check-row p,
+.admin-service-card p,
+.admin-plugin-card p {
+  margin: 2px 0 0;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+.admin-check-row > span:last-child,
+.admin-service-card > span:last-child {
+  flex-shrink: 0;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+/* Status accent — drives the left rule and the trailing label.
+   Scoped to the admin card classes: `data-status` is also used by
+   features/ai/provenance.tsx, which must not inherit these rules. */
+:is(.admin-check-row, .admin-service-card, .admin-ai-cost-card, .admin-plugin-card) {
+  &:is([data-status="ready"], [data-status="online"], [data-status="enabled"]) {
+    border-left-color: var(--success);
+    & > span:last-child {
+      color: var(--success);
+    }
+  }
+  &:is(
+    [data-status="configured"],
+    [data-status="warning"],
+    [data-status="pending"],
+    [data-status="degraded"]
+  ) {
+    border-left-color: var(--warning);
+    & > span:last-child {
+      color: var(--warning);
+    }
+  }
+  &:is([data-status="blocked"], [data-status="missing"], [data-status="failed"]) {
+    border-left-color: var(--danger);
+    & > span:last-child {
+      color: var(--danger);
+    }
+  }
+  &:is([data-status="disabled"], [data-status="unknown"], [data-status="not-required"]) {
+    border-left-color: var(--border-2);
+  }
+}
+
+/* Definition lists — label/value pairs inside cards and summaries */
+.admin-tier-panel dl,
+.admin-ai-cost-card dl,
+.admin-plugin-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+}
+.admin-tier-panel dl > div,
+.admin-ai-cost-card dl > div,
+.admin-plugin-facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+  font-size: var(--text-meta);
+}
+.admin-tier-panel dt,
+.admin-ai-cost-card dt,
+.admin-plugin-facts dt {
+  color: var(--text-3);
+}
+/* `space-between` already pushes the value to the right edge. Leaving the
+   text left-aligned keeps multi-line prose values readable — right-aligning
+   them produces a ragged left edge. Short values shrink to fit either way. */
+.admin-tier-panel dd,
+.admin-ai-cost-card dd,
+.admin-plugin-facts dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Requirement facts — expected vs observed, nested in a check row */
+.admin-requirement-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--gap-sm);
+  margin-top: 8px;
+}
+.admin-requirement-fact-group > span {
+  display: block;
+  font-size: var(--text-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+  margin-bottom: 2px;
+}
+.admin-requirement-fact-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--text-meta);
+}
+.admin-requirement-fact-group li {
+  overflow-wrap: anywhere;
+}
+
+/* Plugin picker + confirmations */
+.admin-plugin-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  flex-wrap: wrap;
+}
+.admin-plugin-confirmations {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+
+/* Tables. The markup already wraps these in `.overflow-x-auto`, so the
+   table itself stays a real table — going display:block here would
+   collapse the cell widths. */
+.admin-tier-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-meta);
+}
+.admin-tier-table th,
+.admin-tier-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.admin-tier-table th {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.admin-tier-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* Plugin rows carry prose (descriptions, dependency lists) rather than the
+   short scalar values the tier table holds, so they wrap instead of forcing
+   the container to scroll. */
+.admin-plugin-table td {
+  white-space: normal;
+  min-width: 10ch;
+}
+
+/* helix-button — alias onto the shell's button so admin CTAs match */
+.helix-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--row-h);
+  padding: 0 12px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.helix-button:hover:not(:disabled) {
+  background: var(--accent-2);
+}
+.helix-button:disabled {
+  opacity: 0.5;
+}
+.helix-button-secondary {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+.helix-button-secondary:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+/* ============================================================
+   Admin console — grouped sidebar navigation
+   ============================================================ */
+
+/* Nineteen sections plus six group headings will not fit every viewport —
+   `[data-density="comfortable"]` alone puts the rows at 44px. The nav scrolls
+   rather than pretending otherwise; the spacing below is tuned so the default
+   density fits a standard laptop without one. */
+.admin-nav {
+  width: 232px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  /* Extra bottom padding so Platform / Services is not flush with the
+     viewport edge (or under the sticky overflow fade). */
+  padding: 8px 8px 28px;
+  overflow-y: auto;
+  scroll-padding-bottom: 28px;
+}
+.admin-nav-group {
+  margin-top: 8px;
+}
+/* Spacing only. The element already carries `.section-label`, which supplies
+   the caption size, weight and colour — an earlier `font-size: inherit` here
+   out-specified it and threw all three away, rendering these at body size. */
+.admin-nav-group h2 {
+  padding: 6px 10px 2px;
+  line-height: 1.3;
+  margin: 0;
+}
+.admin-nav-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.admin-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--rd-list-row-h);
+  padding: 0 10px;
+  border-radius: var(--radius);
+  font-size: var(--rd-row-fs);
+  color: var(--text);
+  text-decoration: none;
+}
+.admin-nav-link:hover {
+  background: var(--hover);
+}
+.admin-nav-link[data-active] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Collapsible group headings. The group holding the active section renders as
+   a plain heading rather than a toggle — collapsing the group you are standing
+   in would hide the page you are on. */
+.admin-nav-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.admin-nav-group-toggle {
+  cursor: pointer;
+  /* WCAG 2.2 target size (2.5.8): the toggle was 14.3px tall, so the row an
+     operator has to hit to fold a group was half the minimum. The heading's own
+     padding supplies the rest of the box, so this only has to guarantee the
+     floor. */
+  min-height: 24px;
+}
+.admin-nav-group-toggle:hover {
+  color: var(--text-2);
+}
+.admin-nav-group-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+/* `--text-3` on `--surface` measures 2.52:1 at 11px — below the 4.5:1 these
+   uppercase 11px labels need. They are structural navigation headings, not
+   incidental text, so they take the readable token rather than the faint one. */
+.admin-nav-group-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+}
+/* What is behind the fold, stated in the summary. */
+.admin-nav-group-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+.admin-nav-group-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.admin-nav-group-toggle[aria-expanded="false"] .admin-nav-group-chevron {
+  transform: rotate(-90deg);
+}
+
+/* Scroll affordance. Nineteen sections plus six headings will not fit a laptop
+   viewport at any density we ship, so the nav scrolls — but a silent scroll
+   leaves the last group invisible with nothing saying more exists. Sticky and
+   pulled out of flow, so the affordance costs no vertical space.
+   Only paint when the matching edge actually overflows — a permanent bottom
+   fade washed out Platform/Services even when the list fit. */
+.admin-nav-fade {
+  position: sticky;
+  z-index: 1;
+  height: 24px;
+  pointer-events: none;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.admin-nav[data-overflow-top] .admin-nav-fade-top,
+.admin-nav[data-overflow-bottom] .admin-nav-fade-bottom {
+  opacity: 1;
+}
+.admin-nav-fade-top {
+  top: 0;
+  margin-bottom: -24px;
+  background: linear-gradient(to bottom, var(--surface) 20%, transparent);
+}
+.admin-nav-fade-bottom {
+  bottom: 0;
+  margin-top: -24px;
+  background: linear-gradient(to top, var(--surface) 20%, transparent);
+}
+
+/* Note under the tier Apply control explaining why it is de-emphasised. */
+.admin-tier-apply-note {
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+/* Sidebar section filter. 22 sections across 6 groups do not fit the nav; the
+   overflow fade, autoscroll and folding groups all compensate for the absence
+   of this one control. */
+.admin-nav-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 4px 8px;
+  padding: 0 8px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.admin-nav-filter:focus-within {
+  border-color: var(--accent, var(--text-3));
+}
+.admin-nav-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: var(--text-meta);
+  outline: none;
+}
+/* The UA's own clear button in a search input sits at a different size in every
+   engine and fights the 30px row. */
+.admin-nav-filter input::-webkit-search-cancel-button {
+  appearance: none;
+}
+.admin-nav-empty {
+  margin: 4px 8px 8px;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+
+/* Only rendered when the event socket is NOT healthy — a permanent green light
+   is noise, and the failure this guards against is a dead connection reading as
+   a quiet system. */
+.admin-nav-realtime {
+  margin: 12px 4px 0;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+.admin-nav-realtime[data-state="offline"] {
+  color: var(--text-2);
+}
+
+/* ============================================================
+   Admin console — page chrome
+
+   The console body is as wide as the window. Without a cap, a form field
+   stretches to whatever is left (a hostname input at 1350px), and a row's
+   trailing control drifts a screen's width from the label it belongs to.
+   ============================================================ */
+
+/* Shown while a section's chunk is in flight, in place of the blank pane that
+   used to be there. Page-shaped so the geometry survives the swap: a spinner
+   centred in an empty column would move every element once the real content
+   arrives. */
+.admin-skeleton {
+  display: grid;
+  gap: 12px;
+}
+.admin-skeleton-title,
+.admin-skeleton-subtitle,
+.admin-skeleton-row {
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  animation: admin-skeleton-pulse 1.4s ease-in-out infinite;
+}
+.admin-skeleton-title {
+  height: 26px;
+  width: 220px;
+}
+.admin-skeleton-subtitle {
+  height: 14px;
+  width: 340px;
+  max-width: 100%;
+}
+.admin-skeleton-panel {
+  display: grid;
+  gap: 1px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.admin-skeleton-row {
+  height: var(--rd-list-row-h, 36px);
+}
+/* Staggered, so the block reads as one loading surface rather than four
+   elements flashing in lockstep. */
+.admin-skeleton-row:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.admin-skeleton-row:nth-child(3) {
+  animation-delay: 0.2s;
+}
+.admin-skeleton-row:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+@keyframes admin-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.admin-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  min-width: 0;
+}
+.admin-page-inner {
+  max-width: 1280px;
+}
+
+.admin-page-header {
+  margin-bottom: 20px;
+}
+.admin-page-header-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+}
+.admin-page-header h1 {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  margin: 0;
+}
+.admin-page-actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--gap-sm);
+}
+.admin-page-subtitle {
+  margin: 4px 0 0;
+  font-size: var(--text-body-sm);
+  color: var(--text-2);
+  max-width: 76ch;
+}
+
+/* Form fields in a config surface are read left-to-right against their label;
+   a field wider than its longest plausible value just adds travel. Sections
+   that need a wide field (search, URLs) opt out with any max-w-* utility.
+   In @layer base so that opt-out actually works -- unlayered, this beat every
+   max-w-* utility and the escape hatch would have been a lie. See the
+   element-reset block near the top of this file. */
+@layer base {
+  .admin-page-inner input:not([type="checkbox"]):not([type="radio"]),
+  .admin-page-inner select,
+  .admin-page-inner textarea {
+    max-width: 420px;
+  }
+}
+
+.admin-banner {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  font-size: var(--text-meta);
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.admin-banner[data-kind="error"] {
+  background: var(--danger-soft);
+  border-color: var(--danger-soft);
+  color: var(--danger);
+}
+
+.admin-empty-row {
+  padding: 32px;
+  text-align: center;
+  font-size: var(--text-body-sm);
+  color: var(--text-2);
+}
+
+/* One empty state for the whole console: mark, what this surface holds, and
+   the action that fills it. */
+.admin-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 48px 24px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.admin-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+.admin-empty-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+.admin-empty-body {
+  margin: 0;
+  font-size: var(--text-body-sm);
+  color: var(--text-2);
+  max-width: 52ch;
+  line-height: 1.5;
+}
+.admin-empty-action {
+  margin-top: 10px;
+}
+
+/* Recoverable-error banner: summary, honest cause, raw detail, retry. Shared
+   by every admin surface via QueryFailureBanner. */
+.admin-failure {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.admin-failure-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.admin-failure-summary {
+  font-weight: 600;
+}
+.admin-failure-detail {
+  font-size: var(--text-caption);
+  /* Was `opacity: 0.85`, which dims the text *and* whatever it sits on, so the
+     ratio fell below AA in both themes. This line is the raw error message —
+     the one thing here support can act on — so it is de-emphasised by colour,
+     which the contrast tokens account for, rather than by transparency, which
+     they cannot. */
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin console — shared section furniture                            */
+/* ------------------------------------------------------------------ */
+
+/* Search + filter row above a table. Recurs across sections, so it is a class
+   rather than a repeated inline object. */
+.admin-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin-bottom: 12px;
+}
+
+/* Bulk-selection action bar. */
+.admin-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+/* ---- Shared form + table vocabulary (console/controls.tsx, console/table.tsx)
+   Every rule below replaces something that was written three to five times per
+   section, or an exported CSSProperties object that could not be themed. ---- */
+
+.admin-field {
+  display: grid;
+  gap: 4px;
+}
+.admin-field-label {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+}
+
+/* Replaces the exported `INPUT_STYLE` object. Same metrics, but now it can
+   carry a focus ring — which an inline style never could. */
+.admin-control {
+  height: 30px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0 8px;
+  font-size: var(--text-meta);
+}
+.admin-control:focus-visible {
+  outline: 2px solid var(--text-3);
+  outline-offset: -1px;
+}
+.admin-control:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* The frame every admin table sits in. Replaces the per-section
+   `TABLE_FRAME = "panel overflow-hidden"` constants, and the six different
+   panel radii that surrounded the pseudo-tables. */
+.admin-table {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--surface);
+  /* So the header row's background is clipped by the rounded corners rather
+     than squaring them off. */
+  overflow: hidden;
+}
+
+/* Scroll container for a virtualized table. Only rendered above the row
+   threshold, so a short table keeps its natural height and no scroll box. */
+.admin-table-scroll {
+  overflow-y: auto;
+  border-radius: 8px;
+}
+.admin-table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A sortable caption is a button, so it has to look like the caption it
+   replaced rather than like a control bolted into a header row. */
+.admin-table-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.admin-table-sort:hover {
+  color: var(--text);
+}
+.admin-table-sort:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+/* The direction indicator, drawn from `aria-sort` rather than rendered as an
+   element. Generated content keeps the glyph out of the header's text content
+   and out of its accessible name — the semantics live in `aria-sort`, which is
+   what assistive tech reads anyway. The unsorted state is dimmed rather than
+   hidden: a column that *can* sort should say so before it is clicked, without
+   competing with the one that currently is. */
+.admin-table-sort::after {
+  content: "↕";
+  font-size: 0.85em;
+  opacity: 0.45;
+}
+.admin-table-head[aria-sort="ascending"] .admin-table-sort::after {
+  content: "▲";
+  opacity: 1;
+}
+.admin-table-head[aria-sort="descending"] .admin-table-sort::after {
+  content: "▼";
+  opacity: 1;
+}
+
+/* One caption treatment for the console, replacing `HEADER_CELL` and its four
+   near-copies. */
+.admin-table-head {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.admin-table-head[data-align="right"],
+.admin-table-cell[data-align="right"] {
+  text-align: right;
+}
+/* The one row height, from the density token — so a row is the same height in
+   Users as in Domains, and both grow under [data-density="comfortable"]. Five
+   sections previously hardcoded five different heights. */
+.admin-table-cell {
+  height: var(--rd-list-row-h);
+  font-size: var(--rd-row-fs);
+}
+
+.admin-stat-row {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+.admin-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+}
+.admin-stat-label {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.admin-stat-value {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.admin-stat[data-tone="success"] .admin-stat-value {
+  color: var(--success, var(--text));
+}
+.admin-stat[data-tone="warning"] .admin-stat-value {
+  color: var(--warning, var(--text));
+}
+.admin-stat[data-tone="danger"] .admin-stat-value {
+  color: var(--danger, var(--text));
+}
+.admin-stat-note {
+  font-size: var(--text-caption);
+  color: var(--text-2);
+}
+
+/* Progressive disclosure. One look for every <details> in the console so a
+   drill-down is recognisable wherever an operator meets it. */
+.admin-disclosure > summary {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  cursor: pointer;
+}
+.admin-disclosure > summary:hover {
+  color: var(--text-2);
+}
+
+/* Expanded table-row detail (actor id, scopes). Indented past the row's
+   checkbox column so it reads as belonging to the row above. */
+
+/* A disabled control shown beside the reason it is disabled. We disable with a
+   stated reason rather than hiding, so the reason needs somewhere to live. */
+.admin-unavailable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin-top: 8px;
+}
+.admin-unavailable-reason {
+  font-size: var(--text-caption);
+  color: var(--text-3);
+}
+
+/* `.row` does not wrap; the Overview empty state carries four destination
+   links that would overflow the card on a narrow console. */
+.admin-empty-action > .row {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Destructive-confirm dialog. The blast-radius line is the decision input —
+   it must not read as boilerplate small print. */
+.admin-confirm-blast {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger-soft);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--text-body-sm);
+}
+.admin-confirm-phrase {
+  display: grid;
+  gap: 4px;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+.admin-confirm-phrase code {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Feature-flag group headings inside the tenant-settings form. A <legend> in
+   a display:grid <fieldset> needs floating out of flow to sit above the rows
+   rather than inline with the first one. */
+.admin-flag-group-legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  margin-bottom: 2px;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.admin-flag-group-legend + * {
+  clear: both;
+}
+
+/* ============================================================
+   Webhooks admin section
+
+   This section lives outside features/admin and shipped referencing 27
+   class names that were never written, so /admin/webhooks rendered as raw
+   text. Built on the same tokens and metrics as the rest of the console so
+   it reads as one product; the guard in styles.test.ts now covers this
+   namespace too.
+   ============================================================ */
+
+.webhooks-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.webhooks-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap);
+  flex-wrap: wrap;
+}
+.webhooks-header h1 {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  margin: 0;
+}
+.webhooks-header p {
+  margin: 4px 0 0;
+  font-size: var(--text-body-sm);
+  color: var(--text-3);
+  max-width: 76ch;
+}
+.webhooks-kicker {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  margin: 0;
+}
+.webhooks-header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--gap-sm);
+  flex-wrap: wrap;
+}
+
+/* Summary strip — one figure per metric. */
+.webhooks-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--gap-sm);
+}
+.webhooks-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.webhooks-summary-item > span {
+  font-size: var(--text-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.webhooks-summary-item > strong {
+  font-size: var(--text-h3);
+  font-weight: 600;
+  line-height: 1.1;
+}
+/* Failed deliveries is the one figure that should catch the eye. */
+.webhooks-summary-item.danger > strong {
+  color: var(--danger);
+}
+/* A figure the console could not read. Muted, never the danger colour: an
+   unknown failure count must not look like a healthy zero OR like an alarm. */
+.webhooks-summary-item[data-unknown] > strong {
+  color: var(--text-3);
+}
+
+/* Section tabs — same shape as the console's other second-level nav. */
+.webhooks-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.webhooks-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
+  font-size: var(--text-body-sm);
+  color: var(--text-2);
+  background: none;
+}
+.webhooks-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.webhooks-tab[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.webhooks-grid {
+  display: grid;
+  gap: var(--gap);
+}
+
+.webhooks-panel,
+.webhooks-editor {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  min-width: 0;
+}
+.webhooks-panel-title,
+.webhooks-editor-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-sm);
+  flex-wrap: wrap;
+}
+.webhooks-panel-title h2,
+.webhooks-editor-title h2,
+.webhooks-panel-title h3,
+.webhooks-editor-title h3 {
+  font-size: var(--text-body);
+  font-weight: 600;
+  margin: 0;
+}
+.webhooks-panel-title p,
+.webhooks-editor-title p {
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+/* Forms */
+.webhooks-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.webhooks-field > span,
+.webhooks-field > label {
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+.webhooks-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sm);
+}
+.webhooks-form-actions,
+.webhooks-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sm);
+}
+.webhooks-form-actions {
+  margin-top: 4px;
+}
+.webhooks-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+
+/* Tables. The wrapper scrolls so a long endpoint URL never widens the page. */
+.webhooks-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.webhooks-table-wrap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.webhooks-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-meta);
+}
+.webhooks-table th,
+.webhooks-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.webhooks-table th {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+.webhooks-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* The delivery-detail pane renders label/value pairs as span + code, not as a
+   table row. Only the `td` variant below was styled, so every pair rendered as
+   one run-together string — "Directionoutbound", "Errorfetch failed". */
+.webhooks-detail-row {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.webhooks-detail-row:last-of-type {
+  border-bottom: 0;
+}
+.webhooks-detail-row > span {
+  font-size: var(--text-caption);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.webhooks-detail-row > code {
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+}
+
+.webhooks-detail-row td {
+  white-space: normal;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.webhooks-empty-cell {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--text-3);
+}
+.webhooks-url {
+  font-family: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
+  font-size: var(--text-caption);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* Status pill on a row. */
+.webhooks-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.webhooks-pill.success {
+  border-color: var(--success);
+  color: var(--success);
+}
+.webhooks-pill.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.webhooks-pill.warning {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+/* Banners */
+.webhooks-error-panel,
+.webhooks-secret-banner,
+.webhooks-confirm-delete {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: var(--text-meta);
+}
+.webhooks-error-panel {
+  background: var(--danger-soft);
+  border-color: var(--danger-soft);
+  color: var(--danger);
+}
+/* A signing secret is shown once; it must not read like ordinary help text. */
+.webhooks-secret-banner {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sm);
+}
+.webhooks-confirm-delete {
+  background: var(--danger-soft);
+  border-color: var(--danger-soft);
+  color: var(--danger);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sm);
+}
+
+/* ---------------------------------------------------------------- */
+/* Admin — Domains                                                   */
+/* ---------------------------------------------------------------- */
+
+/* One domain, its proof of ownership, and what it is used for. Replaced three
+   separate lists (Domains, Mail > Sending domains, Mail > Inbound domains)
+   that modelled the same object with nothing joining them. */
+
+.admin-domain-entry {
+  margin-bottom: var(--gap);
+}
+
+.admin-domain-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+
+.admin-domain-icon {
+  color: var(--text-3);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.admin-domain-identity {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-domain-name {
+  align-items: center;
+  display: flex;
+  font-size: var(--text-body);
+  font-weight: 600;
+  gap: 8px;
+}
+
+.admin-domain-summary {
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  margin-top: 2px;
+}
+
+.admin-domain-capabilities {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: var(--gap-sm);
+  padding: 12px 16px 16px;
+}
+
+.admin-domain-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.admin-domain-block-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.admin-domain-block-title {
+  font-size: var(--text-body-sm);
+  font-weight: 600;
+  margin: 0;
+}
+
+.admin-domain-block-note {
+  color: var(--text-3);
+  font-size: var(--text-body-sm);
+  margin: 6px 0 0;
+  max-width: 76ch;
+}
+
+.admin-domain-block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* The one-time challenge. Values wrap because a DNS TXT value is long and
+   must stay readable rather than forcing the page to scroll sideways. */
+.admin-domain-challenge {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 4px 12px;
+  grid-template-columns: auto 1fr;
+  margin: 10px 0 0;
+  padding: 10px;
+}
+
+.admin-domain-challenge dt {
+  color: var(--text-3);
+  font-size: var(--text-body-sm);
+}
+
+.admin-domain-challenge dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--text-body-sm);
+}
+
+.admin-domain-challenge-note {
+  color: var(--text-3);
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
+/* ============================================================
+   Shell resilience — network status, compose recovery, mobile rail
+   ============================================================ */
+.compose-minimized {
+  width: min(360px, calc(100vw - 32px));
+}
+
+.compose-recovery {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  color: var(--success);
+  font-size: var(--text-meta);
+  background: var(--success-soft, color-mix(in oklab, var(--success) 12%, transparent));
+  border-bottom: 1px solid var(--border);
+}
+
+.compose-inline-error {
+  margin: 0;
+  padding: 6px 14px;
+  color: var(--danger);
+  font-size: var(--text-caption);
+}
+
+.compose input:focus-visible,
+.compose textarea:focus-visible {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.network-status {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 9px 14px;
+  color: #fff;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  line-height: 1.4;
+  background: #334155;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 999px;
+  box-shadow: var(--shadow-lg);
+  transform: translateX(-50%);
+}
+
+.network-status.reconnected {
+  background: #047857;
+}
+
+.network-status-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  background: #fbbf24;
+  border-radius: 999px;
+}
+
+.network-status.reconnected .network-status-dot {
+  background: #a7f3d0;
+}
+
+.profile-menu-action:hover,
+.profile-menu-action:focus-visible {
+  background: var(--hover) !important;
+}
+
+.profile-menu button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.search-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: clamp(16px, 3vw, 32px);
+  overflow: hidden;
+}
+
+.search-page-header h1 {
+  margin: 0;
+  font-size: var(--text-h1);
+  text-wrap: balance;
+}
+
+.search-page-header p {
+  margin: 4px 0 0;
+  color: var(--text-2);
+}
+
+.search-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.search-query-field {
+  display: flex;
+  flex: 1 1 280px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.search-type-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.search-results-meta {
+  min-height: 32px;
+  padding: 10px 2px 6px;
+  color: var(--text-2);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.search-results-scroll {
+  flex: 1;
+  min-height: 240px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 8px);
+  background: var(--surface);
+}
+
+.search-results-table {
+  min-width: 680px;
+}
+
+.search-results-body {
+  position: relative;
+}
+
+.search-result-open {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px;
+  text-align: left;
+  border-radius: var(--radius, 6px);
+}
+
+.search-result-open:hover,
+.search-result-open:focus-visible {
+  background: var(--hover);
+}
+
+.search-result-open > span {
+  display: grid;
+  min-width: 0;
+}
+
+.search-result-open strong,
+.search-result-open small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result-open small {
+  color: var(--text-2);
+}
+
+.search-results-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+  color: var(--danger);
+}
+
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .app > .workspace,
+  .workspace {
+    grid-row: 1;
+    grid-column: 1;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .app > .rail,
+  .rail {
+    grid-row: 2;
+    grid-column: 1;
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    min-height: 56px;
+    padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    border-top: 1px solid var(--border);
+    border-right: 0;
+  }
+
+  .rail-logo,
+  .rail-item {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    margin: 0;
+  }
+
+  .rail-divider {
+    width: 1px;
+    height: 28px;
+    flex: 0 0 1px;
+    margin: 0 5px;
+  }
+
+  .rail-spacer {
+    display: none;
+  }
+
+  .rail-tip {
+    display: none;
+  }
+
+  .topbar {
+    min-height: 52px;
+    height: auto;
+    padding: max(4px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 4px
+      max(8px, env(safe-area-inset-left));
+    gap: 6px;
+  }
+
+  .topbar-title {
+    max-width: 112px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .topbar .search {
+    min-width: 100px;
+  }
+
+  .topbar-actions {
+    flex: 0 0 auto;
+    gap: 2px;
+  }
+
+  .topbar-actions .icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .kbd {
+    display: none;
+  }
+
+  .surf-sidebar {
+    width: min(42vw, 160px);
+    padding: 8px 6px;
+  }
+
+  .launcher {
+    position: fixed;
+    inset: auto max(8px, env(safe-area-inset-right)) calc(88px + env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
+    width: auto;
+    max-height: min(55dvh, 420px);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .compose {
+    right: max(8px, env(safe-area-inset-right));
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    left: max(8px, env(safe-area-inset-left));
+    width: auto;
+    max-height: calc(100dvh - 116px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow: auto;
+    overscroll-behavior: contain;
+    border-bottom: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  .dialog-backdrop {
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+
+  .dialog {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .search-page {
+    padding: 14px;
+  }
+
+  .search-results-error {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 520px) {
+  .topbar-title {
+    display: none;
+  }
+
+  .topbar-actions > button[title="Toggle theme"],
+  .topbar-actions > button[title="Settings"] {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .network-status {
+    transition: none;
+  }
+  /* The skeleton still has to read as "not the real content", so it keeps a
+     dimmed resting state rather than losing the distinction entirely. */
+  .admin-skeleton-title,
+  .admin-skeleton-subtitle,
+  .admin-skeleton-row {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+/* Keep section navigation available without squeezing the primary mobile pane. */
+.workspace-navigation-toggle {
+  display: none;
+}
+@media (max-width: 700px) {
+  .workspace-body {
+    position: relative;
+  }
+  .workspace:has(.surf-sidebar, .admin-nav, .assistant-thread-sidebar)
+    .workspace-navigation-toggle {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  .workspace .surf-sidebar,
+  .workspace .admin-nav {
+    display: none;
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: min(280px, 85vw);
+    max-height: 100%;
+    z-index: 30;
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+  }
+  .workspace[data-navigation-open="true"] .surf-sidebar {
+    display: flex;
+  }
+  .workspace[data-navigation-open="true"] .admin-nav {
+    display: block;
+  }
+  .workspace-body .tabs {
+    overflow-x: auto;
+    flex-shrink: 0;
+  }
+  .workspace-body .tabs .tab {
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .workspace .assistant-thread-sidebar {
+    display: none !important;
+    position: absolute;
+    inset: 0 auto 0 0;
+    max-width: 85vw;
+    z-index: 30;
+  }
+  .workspace[data-navigation-open="true"] .assistant-thread-sidebar {
+    display: flex !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .calendar-toolbar {
+    height: auto !important;
+    min-height: 44px;
+    flex-wrap: wrap;
+    padding: 8px !important;
+    gap: 8px !important;
   }
 }

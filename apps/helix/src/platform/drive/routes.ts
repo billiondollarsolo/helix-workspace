@@ -24,9 +24,14 @@ import type {
   DriveWebDavChangePage,
   DriveWebDavLock,
 } from "./types.js";
-import { safeDriveContentHeaders } from "./preview-security.js";
+import { safeDriveContentHeaders } from "./content-security.js";
 import { sendBytesWithRangeSupport, sendStreamWithRangeSupport } from "./range-response.js";
 import { dlpDecisionError, type DlpGuard } from "../dlp.js";
+import {
+  createWebDavRateLimiter,
+  isSecureWebDavRequest,
+  type WebDavRateLimiter,
+} from "./webdav-security.js";
 
 export interface WebDavDriveStore extends DriveStore {
   createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord>;
@@ -64,6 +69,8 @@ export interface RegisterDriveRoutesOptions {
    * direct-to-storage multipart URLs and never cross the API body parser. */
   readonly bodyLimitBytes?: number;
   readonly dlp?: DlpGuard;
+  readonly requireTls?: boolean;
+  readonly rateLimiter?: WebDavRateLimiter;
 }
 
 export interface RegisterDriveShareLinkRouteOptions {
@@ -173,6 +180,7 @@ export async function registerDriveRoutes(
   safeAddContentTypeParser(app, "application/octet-stream");
   safeAddContentTypeParser(app, "text/xml");
 
+  const rateLimiter = options.rateLimiter ?? createWebDavRateLimiter();
   app.route({
     method: "OPTIONS",
     url: "/dav/files/*",
@@ -190,12 +198,40 @@ export async function registerDriveRoutes(
     bodyLimit: options.bodyLimitBytes ?? 128 * 1024 * 1024,
     handler: async (request, reply) => {
       const method = request.method as WebDavMethod;
+      if (
+        options.requireTls !== false &&
+        !isSecureWebDavRequest({
+          protocol: request.protocol,
+        })
+      ) {
+        return reply.code(426).header("Upgrade", "TLS/1.2").send("WebDAV requires HTTPS.");
+      }
+      const authLimit = rateLimiter.consume(`auth:${request.ip}`, 20, 60_000);
+      if (!authLimit.allowed) {
+        return reply
+          .code(429)
+          .header("Retry-After", String(authLimit.retryAfterSeconds))
+          .send("WebDAV authentication rate limit exceeded.");
+      }
       const actor = await authenticateWebDav(request, options.appPasswords, requiredScope(method));
       if (actor === null) {
         return reply
           .header("www-authenticate", 'Basic realm="Helix WebDAV"')
           .code(401)
           .send("WebDAV app password required.");
+      }
+      if (method !== "GET" && method !== "PROPFIND") {
+        const mutationLimit = rateLimiter.consume(
+          `mutation:${actor.orgId}:${actor.id}`,
+          120,
+          60_000,
+        );
+        if (!mutationLimit.allowed) {
+          return reply
+            .code(429)
+            .header("Retry-After", String(mutationLimit.retryAfterSeconds))
+            .send("WebDAV mutation rate limit exceeded.");
+        }
       }
 
       const path = parseDavFilePath(request.url);
@@ -352,7 +388,7 @@ export async function registerDriveRoutes(
           actorId: actor.id,
           objectId: target.entry.id,
         });
-        if (file?.content === null || file === null) {
+        if (file === null || file.content === null) {
           return reply.code(404).send("WebDAV file content is not available.");
         }
         await enforceDriveDlp(options.dlp, reply, {
@@ -597,12 +633,17 @@ async function authenticateWebDav(
 }
 
 function requiredScope(method: WebDavMethod): "drive.read" | "drive.write" | "drive.delete" {
-  if (method === "DELETE") {
-    return "drive.delete";
+  switch (method) {
+    case "DELETE":
+      return "drive.delete";
+    case "PUT":
+    case "MKCOL":
+    case "LOCK":
+    case "UNLOCK":
+      return "drive.write";
+    default:
+      return "drive.read";
   }
-  return method === "PUT" || method === "MKCOL" || method === "LOCK" || method === "UNLOCK"
-    ? "drive.write"
-    : "drive.read";
 }
 
 interface ResolvedTarget {
@@ -994,10 +1035,7 @@ function activeLockXml(lock: WebDavLock, href: string): string {
 }
 
 function requestedProperties(request: PropfindRequest): readonly WebDavProperty[] {
-  if (request.mode === "propname") {
-    return [...supportedWebDavProperties];
-  }
-  if (request.mode === "allprop") {
+  if (request.mode !== "prop") {
     return [...supportedWebDavProperties];
   }
   return request.names.filter(isWebDavProperty);

@@ -1,39 +1,19 @@
 # Helix Workspace Agent Guide
 
-## Scope and topology
+This repository owns the communication and file-storage platform, web app, CLI,
+MCP interface, infrastructure, and SDK contracts. The product includes Mail,
+Drive storage, Chat, Calendar, Meet, Assistant, and Admin. Editors, file viewers,
+and converters are outside the product and must not remain as dependencies,
+optional integrations, disabled controls, or compatibility stubs.
 
-- This repository owns the Helix host, web shell, services, infrastructure, and SDK contracts.
-- `../helix-editors` is the required sibling repository. Editor UI primitives and editor-owned
-  packages belong there; host integration and product surfaces belong here.
-- When a change spans both repositories, use the same branch name in each and validate the paired
-  refs together. Do not copy editor source into this repository.
-- Keep unrelated work in the workspace intact. Never edit generated dependencies or commit build
-  output.
+Keep unrelated local work intact. Do not edit sibling repositories, generated
+dependencies, or generated route trees. Do not commit build output or secrets.
 
-## Implementation rules
+Reuse existing helpers. Preserve tenant isolation, actor-scoped authorization,
+malware scanning, retention, audit trails, and actionable errors. Meet requires
+configured Jitsi credentials; do not bypass deployment evidence or dependency gates.
+Use semantic HTML, labelled controls, keyboard focus, and reduced motion.
 
-- Preserve the core-app boundary enforced by `infra/scripts/verify-workspace-editor-boundaries.mjs`.
-  Import public `@helix/editors-*` packages rather than sibling source paths.
-- Do not ship controls that silently do nothing. Hide them or disable them with a useful reason.
-- Use semantic HTML, visible keyboard focus, labelled forms, actionable errors, and reduced-motion
-  support. New routes must retain the shell's `#main-content` navigation target.
-- Keep route/search state in the URL when it needs to survive refresh, sharing, or back/forward.
-- Add focused tests beside changed code. Do not manually edit `apps/web/src/routeTree.gen.ts`.
-- Never add secrets, production credentials, or customer data to fixtures, logs, or commits.
-
-## Verification
-
-Run the narrowest relevant tests while iterating, then from this repository run:
-
-```sh
-pnpm format:check
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
-pnpm quality:editors-boundaries:test
-pnpm quality:editors-boundaries
-```
-
-For web UI changes also run the relevant Playwright/a11y checks. If `../helix-editors` changed,
-build and test it first so this repository consumes the current package output.
+Run focused checks while iterating, then `pnpm format:check`, `pnpm typecheck`,
+`pnpm lint`, `pnpm test`, `pnpm build`, and `pnpm quality:boundaries`.
+For web changes also run the relevant Playwright and accessibility checks.

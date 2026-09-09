@@ -126,7 +126,10 @@ export class ImmutableS3AuditShipper {
     this.#pending.push(record);
     this.#pendingBytes += bytes;
 
-    if (this.#pending.length >= this.#options.batchSize || this.#pendingBytes >= this.#options.maxBatchBytes) {
+    if (
+      this.#pending.length >= this.#options.batchSize ||
+      this.#pendingBytes >= this.#options.maxBatchBytes
+    ) {
       return this.flush();
     }
 
@@ -151,7 +154,9 @@ export async function shipImmutableAuditBatch(
   return writeImmutableAuditBatch(normalizeOptions(options), records);
 }
 
-export function createStorageClientImmutableAuditStore(storage: ImmutableAuditStorageClient): ImmutableAuditObjectStore {
+export function createStorageClientImmutableAuditStore(
+  storage: ImmutableAuditStorageClient,
+): ImmutableAuditObjectStore {
   return {
     async putObject(object: ImmutableAuditObject): Promise<void> {
       const storedObject = {
@@ -282,7 +287,9 @@ function normalizeOptions(options: ImmutableS3AuditShipperOptions): NormalizedOp
   }
 
   return {
-    store: isImmutableAuditObjectStore(options.store) ? options.store : createStorageClientImmutableAuditStore(options.store),
+    store: isImmutableAuditObjectStore(options.store)
+      ? options.store
+      : createStorageClientImmutableAuditStore(options.store),
     ...(options.metering === undefined ? {} : { metering: options.metering }),
     ...(options.onMeteringError === undefined ? {} : { onMeteringError: options.onMeteringError }),
     prefix: trimSlashes(options.prefix ?? defaultPrefix),
@@ -355,7 +362,9 @@ function estimateRecordBytes(record: ImmutableAuditActivityRecord): number {
 }
 
 function encodeRecords(records: readonly ImmutableAuditActivityRecord[]): Uint8Array {
-  return encoder.encode(records.map((record) => canonicalJson(toExportRecord(record))).join("\n") + "\n");
+  return encoder.encode(
+    records.map((record) => canonicalJson(toExportRecord(record))).join("\n") + "\n",
+  );
 }
 
 function toExportRecord(record: ImmutableAuditActivityRecord): JsonObject {
@@ -458,7 +467,10 @@ function datePrefix(date: Date): string {
 }
 
 function joinKey(...parts: readonly string[]): string {
-  return parts.map(trimSlashes).filter((part) => part.length > 0).join("/");
+  return parts
+    .map(trimSlashes)
+    .filter((part) => part.length > 0)
+    .join("/");
 }
 
 function trimSlashes(value: string): string {
@@ -466,7 +478,10 @@ function trimSlashes(value: string): string {
 }
 
 function safeSegment(value: string): string {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 }
 
 function encodeJson(value: JsonValue): Uint8Array {

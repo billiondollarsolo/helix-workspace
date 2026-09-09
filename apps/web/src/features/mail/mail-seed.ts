@@ -10,13 +10,7 @@
 import type { IconName } from "@/components/icons";
 
 export type MailFolderId =
-  | "inbox"
-  | "starred"
-  | "snoozed"
-  | "sent"
-  | "drafts"
-  | "archive"
-  | "trash";
+  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
 export type MailTabId = "primary" | "updates" | "promotions" | "social";
 
@@ -71,6 +65,7 @@ export const MAIL_EMPTY_FOLDERS = [
   "trash",
   "archive",
   "sent",
+  "spam",
 ] as const satisfies readonly MailFolderId[];
 
 export interface MailEmptyState {
@@ -104,5 +99,10 @@ export const MAIL_EMPTY_STATES: Readonly<Record<string, MailEmptyState>> = {
     icon: "Send",
     title: "Nothing sent yet",
     body: "Messages you send appear here.",
+  },
+  spam: {
+    icon: "Bell",
+    title: "No spam",
+    body: "Messages you report as spam (or that Helix auto-filters) show up here. Use Not spam if something is wrong.",
   },
 };

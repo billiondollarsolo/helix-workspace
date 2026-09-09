@@ -1,14 +1,14 @@
 import type { Actor } from "@helix/sdk-types";
 import type { SearchRequest } from "./types.js";
 
-export const globalSearchTypes = ["mail", "chat", "docs", "drive", "calendar"] as const;
+export const globalSearchTypes = ["mail", "chat", "drive", "calendar"] as const;
 
 export type GlobalSearchType = (typeof globalSearchTypes)[number];
 
 const readScopeByType: Record<GlobalSearchType, string> = {
   mail: "mail.read",
   chat: "chat.read",
-  docs: "docs.read",
+
   drive: "drive.read",
   calendar: "calendar.read",
 };

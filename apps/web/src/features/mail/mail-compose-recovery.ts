@@ -102,6 +102,70 @@ export function clearMailComposeRecovery(
   }
 }
 
+/** Text fields comparable between local recovery and a server draft. */
+export type MailComposeDraftFields = Pick<
+  MailComposeRecovery,
+  "to" | "cc" | "bcc" | "subject" | "bodyText" | "attachments"
+>;
+
+export type MailComposeReconcileDecision =
+  | { readonly action: "empty" }
+  | { readonly action: "use-local"; readonly local: MailComposeRecovery }
+  | { readonly action: "use-server"; readonly clearLocal: boolean }
+  | {
+      readonly action: "conflict";
+      readonly local: MailComposeRecovery;
+      readonly server: MailComposeDraftFields & { readonly updatedAt?: string };
+    };
+
+function draftFieldsEqual(a: MailComposeDraftFields, b: MailComposeDraftFields): boolean {
+  return (
+    JSON.stringify(a.to) === JSON.stringify(b.to) &&
+    JSON.stringify(a.cc) === JSON.stringify(b.cc) &&
+    JSON.stringify(a.bcc) === JSON.stringify(b.bcc) &&
+    a.subject === b.subject &&
+    a.bodyText === b.bodyText &&
+    JSON.stringify(a.attachments) === JSON.stringify(b.attachments)
+  );
+}
+
+/**
+ * Decide how local crash recovery should relate to a server draft.
+ * Server drafts are authoritative when equal/newer; never silent-overwrite server.
+ */
+export function reconcileMailComposeDrafts(input: {
+  readonly local: MailComposeRecovery | null;
+  readonly server: (MailComposeDraftFields & { readonly updatedAt?: string }) | null;
+}): MailComposeReconcileDecision {
+  const { local, server } = input;
+  if (local === null && server === null) {
+    return { action: "empty" };
+  }
+  if (local === null && server !== null) {
+    return { action: "use-server", clearLocal: false };
+  }
+  if (local !== null && server === null) {
+    return { action: "use-local", local };
+  }
+  // Both present — local and server are non-null after the guards above.
+  const localDraft = local!;
+  const serverDraft = server!;
+  if (draftFieldsEqual(localDraft, serverDraft)) {
+    return { action: "use-server", clearLocal: true };
+  }
+  const localMs = Date.parse(localDraft.updatedAt);
+  const serverMs =
+    typeof serverDraft.updatedAt === "string" ? Date.parse(serverDraft.updatedAt) : Number.NaN;
+  if (Number.isFinite(serverMs) && Number.isFinite(localMs) && serverMs >= localMs) {
+    return { action: "use-server", clearLocal: true };
+  }
+  if (Number.isFinite(serverMs) && Number.isFinite(localMs) && localMs > serverMs) {
+    return { action: "conflict", local: localDraft, server: serverDraft };
+  }
+  // Unknown server timestamp with differing content — require explicit choice.
+  return { action: "conflict", local: localDraft, server: serverDraft };
+}
+
 function browserStorage(): Storage | null {
   if (typeof window === "undefined") return null;
   try {

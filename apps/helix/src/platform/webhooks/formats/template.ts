@@ -111,7 +111,9 @@ export function renderTemplateString(template: string, context: TemplateContext)
     const rendered: unknown = engine.parseAndRenderSync(template, { ...context });
     return typeof rendered === "string" ? rendered : String(rendered);
   } catch (error) {
-    throw new Error(`Custom webhook template failed to render: ${describeError(error)}`);
+    throw new Error(`Custom webhook template failed to render: ${describeError(error)}`, {
+      cause: error,
+    });
   }
 }
 
@@ -141,6 +143,7 @@ function parseJsonObjectTemplate(text: string): JsonValue {
   } catch (error) {
     throw new Error(
       `Custom webhook template rendered text that is not valid JSON: ${describeError(error)}`,
+      { cause: error },
     );
   }
   if (!isJsonValue(parsed)) {

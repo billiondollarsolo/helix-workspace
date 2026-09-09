@@ -1,12 +1,12 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import type { SearchReindexJob, SearchReindexJobService } from "./durable.js";
 import {
   searchReindexTypes,
   type SearchReindexRequest,
   type SearchReindexRunner,
 } from "./reindex.js";
-import type { SearchReindexJob, SearchReindexJobService } from "./durable.js";
 
 const adminConfigWriteScope = "admin.config.write";
 
@@ -36,7 +36,7 @@ export async function registerSearchAdminRoutes(
   app.post("/api/admin/search/reindex", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReindexSearch(actor)) {
-      return reply.code(403).send(permissionDeniedResponse());
+      return reply.code(403).send(permissionDenied);
     }
 
     const parsed = reindexSchema.safeParse(request.body ?? {});
@@ -46,9 +46,15 @@ export async function registerSearchAdminRoutes(
         .send({ error: "Invalid search reindex request.", issues: parsed.error.issues });
     }
 
+    // Fail closed: tenant admins reindex only their own org. A missing body
+    // orgId scopes to the actor org rather than the entire corpus.
+    if (parsed.data.orgId !== undefined && parsed.data.orgId !== actor.orgId) {
+      return reply.code(403).send(crossOrgDenied);
+    }
+
     const input: SearchReindexRequest = {
+      orgId: actor.orgId,
       ...(parsed.data.types === undefined ? {} : { types: parsed.data.types }),
-      ...(parsed.data.orgId === undefined ? {} : { orgId: parsed.data.orgId }),
       ...(parsed.data.batchSize === undefined ? {} : { batchSize: parsed.data.batchSize }),
       ...(parsed.data.pruneStale === undefined ? {} : { pruneStale: parsed.data.pruneStale }),
     };
@@ -59,7 +65,7 @@ export async function registerSearchAdminRoutes(
     const jobs = options.jobs;
     app.post("/api/admin/search/reindex/jobs", async (request, reply) => {
       const actor = await options.actorFromRequest(request);
-      if (!canReindexSearch(actor)) return reply.code(403).send(permissionDeniedResponse());
+      if (!canReindexSearch(actor)) return reply.code(403).send(permissionDenied);
       const parsed = shadowReindexSchema.safeParse(request.body ?? {});
       if (!parsed.success) {
         return reply
@@ -77,7 +83,7 @@ export async function registerSearchAdminRoutes(
       "/api/admin/search/reindex/jobs/:id",
       async (request, reply) => {
         const actor = await options.actorFromRequest(request);
-        if (!canReindexSearch(actor)) return reply.code(403).send(permissionDeniedResponse());
+        if (!canReindexSearch(actor)) return reply.code(403).send(permissionDenied);
         const job = await jobs.get(request.params.id, actor.orgId);
         return job === undefined
           ? reply.code(404).send({ error: "Search reindex job not found." })
@@ -89,22 +95,13 @@ export async function registerSearchAdminRoutes(
       "/api/admin/search/reindex/jobs/:id/cancel",
       async (request, reply) => {
         const actor = await options.actorFromRequest(request);
-        if (!canReindexSearch(actor)) return reply.code(403).send(permissionDeniedResponse());
+        if (!canReindexSearch(actor)) return reply.code(403).send(permissionDenied);
         return (await jobs.cancel(request.params.id, actor.orgId))
           ? { status: "cancelled" }
           : reply.code(409).send({ error: "Search reindex job is not cancellable." });
       },
     );
   }
-}
-
-function toRequest(data: z.infer<typeof reindexSchema>): SearchReindexRequest {
-  return {
-    ...(data.types === undefined ? {} : { types: data.types }),
-    ...(data.orgId === undefined ? {} : { orgId: data.orgId }),
-    ...(data.batchSize === undefined ? {} : { batchSize: data.batchSize }),
-    ...(data.pruneStale === undefined ? {} : { pruneStale: data.pruneStale }),
-  };
 }
 
 function serializeJob(job: SearchReindexJob): Record<string, unknown> {
@@ -116,23 +113,25 @@ function serializeJob(job: SearchReindexJob): Record<string, unknown> {
   };
 }
 
+const reindexScopes = [
+  adminConfigWriteScope,
+  "admin.config.*",
+  "admin.search.write",
+  "admin.search.*",
+  "admin.*",
+] as const;
+
 export function canReindexSearch(actor: Actor): boolean {
   const scopes = actor.scopes ?? [];
-  return (
-    scopes.includes(adminConfigWriteScope) ||
-    scopes.includes("admin.config.*") ||
-    scopes.includes("admin.search.write") ||
-    scopes.includes("admin.search.*") ||
-    scopes.includes("admin.*")
-  );
+  return reindexScopes.some((scope) => scopes.includes(scope));
 }
 
-function permissionDeniedResponse(): {
-  readonly error: string;
-  readonly requiredScope: typeof adminConfigWriteScope;
-} {
-  return {
-    error: "Admin search reindex permission denied.",
-    requiredScope: adminConfigWriteScope,
-  };
-}
+const permissionDenied = {
+  error: "Admin search reindex permission denied.",
+  requiredScope: adminConfigWriteScope,
+} as const;
+
+const crossOrgDenied = {
+  error: "Cross-organization search reindex denied.",
+  code: "cross_org_reindex_denied",
+} as const;

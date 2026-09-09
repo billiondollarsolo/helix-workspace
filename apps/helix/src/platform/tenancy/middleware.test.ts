@@ -165,7 +165,9 @@ describe("tenant Fastify hook", () => {
       return { ok: true };
     });
 
-    expect((await app.inject({ method: "POST", url: "/api/admin/fail-audit" })).statusCode).toBe(500);
+    expect((await app.inject({ method: "POST", url: "/api/admin/fail-audit" })).statusCode).toBe(
+      500,
+    );
     expect(database.calls).toContain("update admin_groups set name = 'changed'");
     expect(database.calls.at(-1)).toBe("rollback");
   });
@@ -183,7 +185,9 @@ describe("tenant resolution route filter", () => {
   it("skips public SaaS signup endpoints so tenant resolution does not preempt signup", () => {
     expect(shouldResolveTenantForRequest(request("POST", "/api/signup"))).toBe(false);
     expect(shouldResolveTenantForRequest(request("POST", "/api/signup/verify-email"))).toBe(false);
-    expect(shouldResolveTenantForRequest(request("POST", "/api/auth/domain-discovery"))).toBe(false);
+    expect(shouldResolveTenantForRequest(request("POST", "/api/auth/domain-discovery"))).toBe(
+      false,
+    );
     expect(
       shouldResolveTenantForRequest(
         request("GET", "/api/signup/org-slug/acme/availability?source=form"),
@@ -232,6 +236,19 @@ describe("tenant actor boundary", () => {
         {
           id: "actor-1",
           orgId: "99999999-9999-4999-8999-999999999999",
+          type: "user",
+        },
+      );
+    }).toThrow(TenantActorMismatchError);
+  });
+
+  it("rejects empty actor org ids without inventing a bootstrap default tenant", () => {
+    expect(() => {
+      assertActorMatchesRequestTenant(
+        { tenant },
+        {
+          id: "actor-1",
+          orgId: "",
           type: "user",
         },
       );

@@ -2,11 +2,7 @@ import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
 
 export type TenantProvisioningStatus =
-  | "pending"
-  | "running"
-  | "waiting_for_verification"
-  | "succeeded"
-  | "failed";
+  "pending" | "running" | "waiting_for_verification" | "succeeded" | "failed";
 
 export interface TenantProvisioningRecord {
   readonly orgId: string;

@@ -1,16 +1,52 @@
 # Helix Workspace
 
-Helix is a productivity platform implemented from `PRD.md`. The same runtime
-codebase serves self-hosted and multi-tenant SaaS deployments; `HELIX_MODE`
-selects the operating shape at process boot.
+Helix is a productivity platform being productionized as a self-hostable workspace for web email,
+shared file storage, authenticated organization chat, calendar, video meetings, and approval-gated AI/agent workflows. The
+initial production target is one organization with 5–50 trusted users on the `business` security
+tier. Until the production-readiness gates below pass, these are target boundaries rather than a
+production-readiness claim.
+
+See [integration validation](docs/merge-validation-2026-09-09.md) for the tested v1 code scope.
+
+## Business pilot boundaries
+
+- Internet mail delivery requires a supported managed outbound email provider. Helix does not
+  operate direct-to-MX outbound delivery for the pilot.
+- Mail is available through the Helix web UI and supported APIs. The pilot does not include a
+  Helix-hosted IMAP server.
+- Drive provides file upload, storage, organization, versions, sharing, download, and WebDAV.
+  Editors, file viewers, and converters are not part of this product.
+- Chat uses TLS, organization and room authorization, retention controls, and deployment-attested
+  encrypted storage. Chat is **not end-to-end encrypted**, and authorized server administrators can
+  technically access stored messages.
+- Authorized agent reads may execute immediately. Agent writes require authenticated human
+  confirmation by default unless an explicit, audited automation policy limits the exact action,
+  resource, target, time window, and rate.
+- Untrusted Business-tier uploads remain unavailable until integrity checks and a real malware
+  scanner return a clean verdict. Scanner failures remain quarantined.
+- Pilot objectives are 99.5% monthly availability, an RPO of no more than 24 hours, and an RTO of
+  no more than 4 hours. These are engineering objectives, not a contractual SLA.
+
+The runtime retains tenant-aware interfaces and test modes, but public multi-tenant SaaS is not an
+approved launch claim. See:
+
+- [MVP product claims and non-claims](docs/product-claims-mvp.md)
+- [Elite MVP enterprise production plan](docs/superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md)
+  (active execution track)
+- [Architecture decision records](docs/architecture/README.md)
+- Historical: [2026-07-28 production-readiness plan](docs/superpowers/plans/2026-07-28-core-workspace-production-readiness.md)
 
 ## Development
 
 Required local tools:
 
-- Node.js 22 LTS
-- pnpm 9.x
-- Docker with Compose v2
+- Node.js 24.18.0 LTS (the exact version is in `.node-version`)
+- pnpm 11.18.0 (activated from `packageManager` with Corepack)
+- Docker Engine 29.x with Compose 5.x for the fully validated local stack
+- Helm 4.2.3 and kubeconform 0.8.0 for Kubernetes chart validation
+
+See the [platform version policy](docs/platform-version-policy.md) for the complete runtime,
+container, Kubernetes, and compatibility matrix.
 
 Common commands:
 

@@ -7,8 +7,6 @@ import { calendarRecordToIndexDocument } from "../platform/calendar/search/index
 import { PostgresCalendarStore } from "../platform/calendar/store.js";
 import { chatRecordToIndexDocument } from "../platform/chat/search/indexer.js";
 import { PostgresChatStore } from "../platform/chat/store.js";
-import { docsRecordToIndexDocument } from "../platform/docs/search/indexer.js";
-import { PostgresDocsStore } from "../platform/docs/store.js";
 import { driveRecordToIndexDocument } from "../platform/drive/search/indexer.js";
 import { PostgresDriveStore } from "../platform/drive/store.js";
 import { mailRecordToIndexDocument } from "../platform/mail/search/indexer.js";
@@ -31,7 +29,7 @@ export interface IndexLocalDemoSearchResult {
   readonly documentIds: readonly string[];
 }
 
-export type LocalDemoSearchDocumentType = "mail" | "drive" | "docs" | "calendar" | "chat";
+export type LocalDemoSearchDocumentType = "mail" | "drive" | "calendar" | "chat";
 
 export interface LocalDemoSearchDocumentDescriptor {
   readonly type: LocalDemoSearchDocumentType;
@@ -90,7 +88,6 @@ async function demoIndexDocuments(
 ): Promise<readonly IndexDocument[]> {
   const mail = new PostgresMailStore(sql);
   const drive = new PostgresDriveStore(sql);
-  const docs = new PostgresDocsStore(sql);
   const calendar = new PostgresCalendarStore(sql);
   const chat = new PostgresChatStore(sql);
 
@@ -103,12 +100,6 @@ async function demoIndexDocuments(
     const record = await drive.getDriveSearchRecord(fileId);
     if (record !== null && record.orgId === orgId) {
       documents.push(driveRecordToIndexDocument(record));
-    }
-  }
-  for (const docId of searchRecordIds("docs")) {
-    const record = await docs.getDocsSearchRecord(docId);
-    if (record !== null && record.orgId === orgId) {
-      documents.push(docsRecordToIndexDocument(record));
     }
   }
   for (const eventId of searchRecordIds("calendar")) {
@@ -231,34 +222,6 @@ export const LOCAL_DEMO_SEARCH_DOCUMENTS = [
     },
   },
   {
-    type: "docs",
-    recordId: LOCAL_DEMO_IDS.docsQuarterly,
-    expectedId: `docs:${LOCAL_DEMO_IDS.docsQuarterly}`,
-    query: "Quarterly Planning",
-    expectedTitle: "Quarterly Planning Notes",
-    expectedUrl: `/docs/${LOCAL_DEMO_IDS.docsQuarterly}`,
-    attributeIdKey: "docId",
-    expectedAttributes: {
-      docId: LOCAL_DEMO_IDS.docsQuarterly,
-      tags: ["planning", "product"],
-    },
-    expectedBodyIncludes: ["Tighten mail list density"],
-  },
-  {
-    type: "docs",
-    recordId: LOCAL_DEMO_IDS.docsRunbook,
-    expectedId: `docs:${LOCAL_DEMO_IDS.docsRunbook}`,
-    query: "Local Testing",
-    expectedTitle: "Local Testing Runbook",
-    expectedUrl: `/docs/${LOCAL_DEMO_IDS.docsRunbook}`,
-    attributeIdKey: "docId",
-    expectedAttributes: {
-      docId: LOCAL_DEMO_IDS.docsRunbook,
-      tags: ["runbook", "local"],
-    },
-    expectedBodyIncludes: ["seeded OAuth client"],
-  },
-  {
     type: "calendar",
     recordId: LOCAL_DEMO_IDS.eventOrderMatch,
     expectedId: `calendar:${LOCAL_DEMO_IDS.eventOrderMatch}`,
@@ -294,7 +257,7 @@ export const LOCAL_DEMO_SEARCH_DOCUMENTS = [
       status: "confirmed",
       icsUid: "demo-planning@helix.local",
     },
-    expectedBodyIncludes: ["Drive, docs, and calendar flows"],
+    expectedBodyIncludes: ["Drive and calendar flows"],
   },
   {
     type: "chat",

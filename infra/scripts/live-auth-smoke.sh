@@ -24,15 +24,15 @@ Options:
   --backup-id <id>             Backup id for --backup-restore. Default: helix-smoke-backup
   --backup-restore-encrypted   Deprecated alias for --backup-restore
   --search-reindex             Also POST /api/admin/search/reindex with pruneStale=false
-  --seeded-demo-tools          Also assert seeded mail/chat/docs/drive/calendar/search tool results
+  --seeded-demo-tools          Also assert seeded mail/chat/drive/calendar/search tool results
   --seeded-demo                Alias for --seeded-demo-tools
   --seeded-volume-search-smoke Also assert opt-in seeded volume mail through global search.query
-  --drive-docs-calendar-smoke  Also create live Drive, Docs, and Calendar data and verify it through tools/MCP
-  --drive-docs-calendar-search-smoke
-                              Also reindex and verify live Drive, Docs, and Calendar data through search.query
-  --drive-docs-calendar-event-search-smoke
-                              Also verify live Drive, Docs, and Calendar search.query via event-driven indexing without reindex
-  --workspace-search-smoke     Alias for --drive-docs-calendar-search-smoke
+  --drive-calendar-smoke  Also create live Drive and Calendar data and verify it through tools/MCP
+  --drive-calendar-search-smoke
+                              Also reindex and verify live Drive and Calendar data through search.query
+  --drive-calendar-event-search-smoke
+                              Also verify live Drive and Calendar search.query via event-driven indexing without reindex
+  --workspace-search-smoke     Alias for --drive-calendar-search-smoke
   --cli-checks                 Also run live checks through the built helix CLI
   --cli-bin <path>             CLI executable for --cli-checks. Default: node packages/cli/dist/index.js
   --pending-action-cli         Also create, poll, and cancel a pending action through the CLI
@@ -78,7 +78,7 @@ EOF
 BASE_URL=${HELIX_BASE_URL:-http://127.0.0.1:28431}
 CLIENT_ID=${HELIX_SMOKE_CLIENT_ID:-}
 CLIENT_SECRET=${HELIX_SMOKE_CLIENT_SECRET:-}
-SCOPE=${HELIX_SMOKE_SCOPE:-platform.read mail.read mail.write mail.send docs.read docs.write docs.comment drive.read drive.write calendar.read calendar.write calendar.write:respond calendar.read:freebusy chat.read chat.post chat.create meet.read meet.write assistant.write assistant.memory admin.users admin.audit admin.agents admin.plugins admin.webhooks admin.config.write}
+SCOPE=${HELIX_SMOKE_SCOPE:-platform.read mail.read mail.write mail.send drive.read drive.write calendar.read calendar.write calendar.write:respond calendar.read:freebusy chat.read chat.post chat.create meet.read meet.write assistant.write assistant.memory admin.users admin.audit admin.agents admin.plugins admin.webhooks admin.config.write}
 MUTATE=false
 TIER=${HELIX_SMOKE_TIER:-personal}
 BACKUP_RESTORE=${HELIX_SMOKE_BACKUP_RESTORE:-false}
@@ -87,7 +87,7 @@ BACKUP_RESTORE_ENCRYPTED=${HELIX_SMOKE_BACKUP_RESTORE_ENCRYPTED:-false}
 SEARCH_REINDEX=${HELIX_SMOKE_SEARCH_REINDEX:-false}
 SEEDED_DEMO=${HELIX_SMOKE_SEEDED_DEMO:-false}
 SEEDED_VOLUME_SEARCH=${HELIX_SMOKE_SEEDED_VOLUME_SEARCH:-false}
-DRIVE_DOCS_CALENDAR_SMOKE=${HELIX_SMOKE_DRIVE_DOCS_CALENDAR_SMOKE:-false}
+DRIVE_CALENDAR_SMOKE=${HELIX_SMOKE_DRIVE_CALENDAR_SMOKE:-false}
 WORKSPACE_SEARCH_SMOKE=${HELIX_SMOKE_WORKSPACE_SEARCH_SMOKE:-false}
 WORKSPACE_SEARCH_REINDEX=true
 CLI_CHECKS=${HELIX_SMOKE_CLI_CHECKS:-false}
@@ -103,7 +103,7 @@ AGENT_LIMIT_SCOPE=${HELIX_SMOKE_AGENT_SCOPE:-platform.read}
 EVENTS_WS=${HELIX_SMOKE_EVENTS_WS:-false}
 CHAT_REALTIME_SMOKE=${HELIX_SMOKE_CHAT_REALTIME_SMOKE:-false}
 MEET_SMOKE=${HELIX_SMOKE_MEET_SMOKE:-false}
-MEET_SMOKE_ORG_ID=${HELIX_SMOKE_MEET_ORG_ID:-${HELIX_DEFAULT_ORG_ID:-00000000-0000-4000-8000-000000000100}}
+MEET_SMOKE_ORG_ID=${HELIX_SMOKE_MEET_ORG_ID:-${HELIX_DEFAULT_ORG_ID:-00000000-0000-0000-0000-000000000000}}
 MEET_SMOKE_JITSI_DOMAIN=${HELIX_SMOKE_MEET_JITSI_DOMAIN:-${MEET_JITSI_DOMAIN:-meet.localhost}}
 MEET_SMOKE_WEBHOOK_SECRET=${HELIX_SMOKE_MEET_WEBHOOK_SECRET:-${MEET_JITSI_WEBHOOK_SHARED_SECRET:-helix_dev_jitsi_webhook_secret_change_me}}
 ASSISTANT_SMOKE=${HELIX_SMOKE_ASSISTANT_SMOKE:-false}
@@ -156,9 +156,9 @@ while [[ $# -gt 0 ]]; do
     --search-reindex) SEARCH_REINDEX=true; shift ;;
     --seeded-demo|--seeded-demo-tools) SEEDED_DEMO=true; shift ;;
     --seeded-volume-search-smoke) SEEDED_VOLUME_SEARCH=true; shift ;;
-    --drive-docs-calendar-smoke) DRIVE_DOCS_CALENDAR_SMOKE=true; shift ;;
-    --drive-docs-calendar-search-smoke|--workspace-search-smoke) WORKSPACE_SEARCH_SMOKE=true; shift ;;
-    --drive-docs-calendar-event-search-smoke)
+    --drive-calendar-smoke) DRIVE_CALENDAR_SMOKE=true; shift ;;
+    --drive-calendar-search-smoke|--workspace-search-smoke) WORKSPACE_SEARCH_SMOKE=true; shift ;;
+    --drive-calendar-event-search-smoke)
       WORKSPACE_SEARCH_SMOKE=true
       WORKSPACE_SEARCH_REINDEX=false
       shift
@@ -187,7 +187,7 @@ while [[ $# -gt 0 ]]; do
     --plugin-lifecycle-smoke) PLUGIN_LIFECYCLE_SMOKE=true; shift ;;
     --backend-realism-smoke)
       SEEDED_DEMO=true
-      DRIVE_DOCS_CALENDAR_SMOKE=true
+      DRIVE_CALENDAR_SMOKE=true
       WORKSPACE_SEARCH_SMOKE=true
       MAIL_SMTP_SMOKE=true
       MAIL_CHAT_SEARCH_SMOKE=true
@@ -197,7 +197,7 @@ while [[ $# -gt 0 ]]; do
       CALDAV_SMOKE=true
       K6_TARGET_SMOKE=true
       if ! bool_true "$K6_SCENARIO_GROUPS_USER_SET"; then
-        K6_SCENARIO_GROUPS=api_smoke,mail_api,inbound_mail,search,chat,docs,meet_jitsi,mcp,otel_health
+        K6_SCENARIO_GROUPS=api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,mcp,otel_health
       fi
       shift
       ;;
@@ -760,24 +760,6 @@ run_seeded_demo_checks() {
     '"mimeType":"text/plain"' \
     '"disposition":"attachment"'
 
-  request_contains POST /api/tools/docs.list 200 \
-    '{"query":"Quarterly","limit":10}' \
-    "seeded Docs list" \
-    "00000000-0000-4000-8000-000000000401" \
-    "Quarterly Planning Notes"
-
-  request_contains POST /api/tools/docs.get 200 \
-    '{"docId":"00000000-0000-4000-8000-000000000401"}' \
-    "seeded Docs get" \
-    "00000000-0000-4000-8000-000000000401" \
-    "Quarterly Planning Notes"
-
-  request_contains POST /api/tools/docs.export 200 \
-    '{"docId":"00000000-0000-4000-8000-000000000401","format":"markdown"}' \
-    "seeded Docs export" \
-    "Quarterly Planning Notes" \
-    "contentBase64"
-
   request_contains POST /api/tools/drive.list 200 \
     '{"limit":25}' \
     "seeded Drive list" \
@@ -837,17 +819,6 @@ run_seeded_demo_checks() {
     '"path":["AI Services and Keys"]'
 
   request_search_projection_retry POST /api/tools/search.query \
-    '{"query":"Quarterly Planning","types":["docs"],"limit":10}' \
-    "seeded global Docs search" \
-    10 \
-    "docs:00000000-0000-4000-8000-000000000401" \
-    "docs" \
-    "Quarterly Planning Notes" \
-    "/docs/00000000-0000-4000-8000-000000000401" \
-    "Tighten mail list density" \
-    '"tags":["planning","product"]'
-
-  request_search_projection_retry POST /api/tools/search.query \
     '{"query":"Order match","types":["calendar"],"limit":10}' \
     "seeded global Calendar search" \
     10 \
@@ -876,14 +847,8 @@ run_seeded_demo_checks() {
     "seeded MCP resources list" \
     "helix://chat/room/00000000-0000-4000-8000-000000000701" \
     "helix://mail/thread/00000000-0000-4000-8000-000000000601" \
-    "helix://docs/document/00000000-0000-4000-8000-000000000401" \
     "helix://drive/file/00000000-0000-4000-8000-000000000302" \
     "helix://calendar/event/00000000-0000-4000-8000-000000000502"
-
-  request_contains POST /mcp 200 \
-    '{"jsonrpc":"2.0","id":"seeded-doc-read","method":"resources/read","params":{"uri":"helix://docs/document/00000000-0000-4000-8000-000000000401"}}' \
-    "seeded MCP Docs read" \
-    "Quarterly Planning Notes"
 
   request_contains POST /mcp 200 \
     '{"jsonrpc":"2.0","id":"seeded-mail-read","method":"resources/read","params":{"uri":"helix://mail/thread/00000000-0000-4000-8000-000000000601"}}' \
@@ -1144,10 +1109,9 @@ if (
   log "ok: agent tool limiter metric exposed"
 }
 
-run_drive_docs_calendar_smoke() {
+run_drive_calendar_smoke() {
   local suffix marker drive_name drive_content drive_sha drive_upload_file drive_finalize_file drive_object_id drive_upload_url drive_upload_status
   local -a drive_upload_headers
-  local docs_title docs_updated_title docs_body docs_file docs_id docs_export_file
   local starts_at ends_at window_starts_at window_ends_at calendar_title calendar_file calendar_pending_id calendar_approve_file calendar_event_id
   suffix=$(date +%Y%m%d%H%M%S)
   marker="helix-workspace-smoke-${suffix}"
@@ -1233,75 +1197,6 @@ process.stdout.write(JSON.stringify({
     "$(node -e 'process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: "drive-smoke-read", method: "resources/read", params: { uri: `helix://drive/file/${process.argv[1]}` } }))' "$drive_object_id")" \
     "Drive MCP byte read" \
     "$drive_content"
-
-  docs_title="Helix Docs smoke ${suffix}"
-  docs_updated_title="Helix Docs smoke updated ${suffix}"
-  docs_body="# ${docs_title}\n\nDocs marker: ${marker}\n\n- Created by live workspace smoke."
-  docs_file=$(mktemp "${TMPDIR:-/tmp}/helix-docs-smoke.XXXXXX")
-  request_capture POST /api/tools/docs.create 200 \
-    "$(node -e '
-const [title, markdown, marker] = process.argv.slice(1);
-process.stdout.write(JSON.stringify({
-  title,
-  initialMarkdown: markdown,
-  metadata: { smoke: true, marker },
-}));
-' "$docs_title" "$docs_body" "$marker")" \
-    "docs.create" \
-    "$docs_file"
-  docs_id=$(json_field_from_file "$docs_file" "parsed.id") || {
-    log "response body from docs.create:"
-    cat "$docs_file" >&2
-    rm -f "$docs_file"
-    die "docs.create did not return id"
-  }
-  rm -f "$docs_file"
-
-  request_contains POST /api/tools/docs.update-title 200 \
-    "$(node -e 'process.stdout.write(JSON.stringify({ docId: process.argv[1], title: process.argv[2] }))' "$docs_id" "$docs_updated_title")" \
-    "Docs update title" \
-    "$docs_id" \
-    "$docs_updated_title"
-
-  request_contains POST /api/tools/docs.comment.create 200 \
-    "$(node -e 'process.stdout.write(JSON.stringify({ docId: process.argv[1], body: `Comment marker: ${process.argv[2]}`, anchor: { type: "document" }, metadata: { smoke: true } }))' "$docs_id" "$marker")" \
-    "Docs comment create" \
-    "$docs_id" \
-    "$marker"
-
-  request_contains POST /api/tools/docs.get 200 \
-    "$(node -e 'process.stdout.write(JSON.stringify({ docId: process.argv[1] }))' "$docs_id")" \
-    "Docs live get" \
-    "$docs_id" \
-    "$docs_updated_title"
-
-  docs_export_file=$(mktemp "${TMPDIR:-/tmp}/helix-docs-export.XXXXXX")
-  request_capture POST /api/tools/docs.export 200 \
-    "$(node -e 'process.stdout.write(JSON.stringify({ docId: process.argv[1], format: "markdown", includeComments: true }))' "$docs_id")" \
-    "Docs markdown export" \
-    "$docs_export_file"
-  node -e '
-const fs = require("node:fs");
-const [file, marker, title] = process.argv.slice(1);
-const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-const text = Buffer.from(String(parsed.contentBase64 ?? ""), "base64").toString("utf8");
-if (!text.includes(marker) || !text.includes(title)) {
-  process.exit(2);
-}
-' "$docs_export_file" "$marker" "$docs_updated_title" || {
-    log "response body from docs.export:"
-    cat "$docs_export_file" >&2
-    rm -f "$docs_export_file"
-    die "Docs markdown export did not include title and marker"
-  }
-  rm -f "$docs_export_file"
-  log "ok: Docs markdown export content"
-
-  request_contains POST /mcp 200 \
-    "$(node -e 'process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: "docs-smoke-read", method: "resources/read", params: { uri: `helix://docs/document/${process.argv[1]}` } }))' "$docs_id")" \
-    "Docs MCP read" \
-    "$docs_updated_title" \
-    "$marker"
 
   read -r starts_at ends_at window_starts_at window_ends_at < <(node -e '
 const start = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -1401,22 +1296,6 @@ process.stdout.write(JSON.stringify({
       "drive:$drive_object_id" \
       "drive" \
       "$drive_name"
-
-    request_search_hit_retry POST /api/tools/search.query \
-      "$(node -e 'process.stdout.write(JSON.stringify({ query: process.argv[1], types: ["docs"], limit: 10 }))' "$docs_updated_title")" \
-      "Docs live global search" \
-      20 \
-      "docs:$docs_id" \
-      "docs" \
-      "$docs_updated_title"
-    request_search_hit_retry GET \
-      "$(node -e 'const params = new URLSearchParams({ query: process.argv[1], types: "docs", limit: "10" }); process.stdout.write(`/api/tools/search.query?${params}`);' "$docs_updated_title")" \
-      "" \
-      "Docs live global GET search" \
-      20 \
-      "docs:$docs_id" \
-      "docs" \
-      "$docs_updated_title"
 
     request_search_hit_retry POST /api/tools/search.query \
       "$(node -e 'process.stdout.write(JSON.stringify({ query: process.argv[1], types: ["calendar"], limit: 10 }))' "$calendar_title")" \
@@ -1540,12 +1419,8 @@ run_cli_checks() {
     run_cli_contains "seeded MCP resources list" \
       mcp resources list \
       --expect \
-      "helix://docs/document/00000000-0000-4000-8000-000000000401" \
       "helix://mail/thread/00000000-0000-4000-8000-000000000601"
 
-    run_cli_contains "seeded MCP Docs read" \
-      mcp resources read helix://docs/document/00000000-0000-4000-8000-000000000401 \
-      --expect "Quarterly Planning Notes"
   fi
 }
 
@@ -4334,12 +4209,6 @@ run_k6_target_smoke() {
   WEB_VUS="${WEB_VUS:-1}" \
   API_VUS="${API_VUS:-1}" \
   PRD_VUS="${PRD_VUS:-1}" \
-  DOCS_CREATE_TOOL_ID="${DOCS_CREATE_TOOL_ID:-}" \
-  DOCS_CREATE_BODY="${DOCS_CREATE_BODY:-}" \
-  DOCS_EXPORT_TOOL_ID="${DOCS_EXPORT_TOOL_ID:-}" \
-  DOCS_EXPORT_BODY="${DOCS_EXPORT_BODY:-}" \
-  DOCS_DOC_ID="${DOCS_DOC_ID:-}" \
-  DOCS_EXPECT="${DOCS_EXPECT:-}" \
   MEET_CREATE_TOOL_ID="${MEET_CREATE_TOOL_ID:-}" \
   MEET_CREATE_BODY="${MEET_CREATE_BODY:-}" \
   MEET_MINT_TOOL_ID="${MEET_MINT_TOOL_ID:-}" \
@@ -4416,10 +4285,10 @@ else
   log "skipping seeded volume search check; pass --seeded-volume-search-smoke after running db:prepare:demo -- --volume-search"
 fi
 
-if bool_true "$DRIVE_DOCS_CALENDAR_SMOKE" || bool_true "$WORKSPACE_SEARCH_SMOKE"; then
-  run_drive_docs_calendar_smoke
+if bool_true "$DRIVE_CALENDAR_SMOKE" || bool_true "$WORKSPACE_SEARCH_SMOKE"; then
+  run_drive_calendar_smoke
 else
-  log "skipping Drive/Docs/Calendar live data smoke; pass --drive-docs-calendar-smoke for live workspace mutations"
+  log "skipping Drive/Calendar live data smoke; pass --drive-calendar-smoke for live workspace mutations"
 fi
 
 if bool_true "$CLI_CHECKS"; then

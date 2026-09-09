@@ -177,11 +177,14 @@ describe("ResourceClassificationService", () => {
 
     const heuristic = await service.classify({
       orgId: "org-1",
-      resourceType: "docs.document",
+      resourceType: "object",
       resourceId: "doc-1",
       derivation: { content: "ssn 123-45-6789", scanContent: true },
     });
-    expect(heuristic.derivation).toMatchObject({ classification: "confidential", source: "heuristic" });
+    expect(heuristic.derivation).toMatchObject({
+      classification: "confidential",
+      source: "heuristic",
+    });
 
     const folder = await service.classify({
       orgId: "org-1",
@@ -214,18 +217,18 @@ describe("ResourceClassificationService", () => {
     expect(resolved.classification).toBe("restricted");
   });
 
-  it("uses one Drive identity for editor content and never silently downgrades", async () => {
+  it("uses one Drive object identity and never silently downgrades", async () => {
     const store = new InMemoryResourceClassificationStore();
     const service = new ResourceClassificationService(store);
     await service.classify({
       orgId: "org-1",
-      resourceType: "docs.document",
+      resourceType: "object",
       resourceId: "file-1",
       derivation: { explicit: "restricted" },
     });
     const second = await service.classify({
       orgId: "org-1",
-      resourceType: "slides.deck",
+      resourceType: "drive.file",
       resourceId: "file-1",
       derivation: { explicit: "public" },
     });

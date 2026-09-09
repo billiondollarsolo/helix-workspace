@@ -1,12 +1,38 @@
+import type { JsonObject, JsonValue, SecurityTier } from "@helix/sdk-types";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { authenticate, type AuthenticateResult, type AuthStatus } from "mailauth";
+import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
 import { createHash } from "node:crypto";
 import { mkdtemp, open as openFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SMTPServer, type SMTPServerDataStream, type SMTPServerSession } from "smtp-server";
-import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
-import { authenticate, type AuthStatus, type AuthenticateResult } from "mailauth";
-import { SpanStatusCode, trace } from "@opentelemetry/api";
-import type { JsonObject, JsonValue } from "@helix/sdk-types";
+import { MailAddressNormalizationError, normalizeMailboxAddress } from "./address-normalization.js";
+import type { AntivirusScanner, AntivirusScanResult } from "./antivirus.js";
+import {
+  inspectInboundAttachments,
+  sanitizeMailHeaderDisplayValue,
+  sanitizeMailHtml,
+} from "./content-safety.js";
+import { MailMalwareRejectedError } from "./errors.js";
+import { evaluateInboundMail, type MailFilterEvaluationResult } from "./filters.js";
+import {
+  evaluateInboundAuthenticationPolicy,
+  parseInboundAuthenticationPolicy,
+  type InboundAuthenticationPolicy,
+  type InboundPolicyDecision,
+  type InboundThreatVerdicts,
+} from "./inbound-policy.js";
+import type { MailQuarantineStore } from "./quarantine.js";
+import { prepareMailRawSource } from "./raw-source.js";
+import { InMemorySmtpRateLimitStore, type SmtpRateLimitStore } from "./smtp-rate-limit.js";
+import {
+  smtpDisabledCommands,
+  smtpTransportSecurityOptions,
+  type SmtpTransportSecurity,
+} from "./smtp-transport-security.js";
+import type { SpamScanner, SpamScanResult } from "./spam.js";
+import type { MailStore } from "./store.js";
 import type {
   MailAddress,
   MailAttachmentInput,
@@ -16,20 +42,6 @@ import type {
   MailMessageInput,
   StoredMailMessage,
 } from "./types.js";
-import type { MailStore } from "./store.js";
-import { evaluateInboundMail, type MailFilterEvaluationResult } from "./filters.js";
-import type { SpamScanner, SpamScanResult } from "./spam.js";
-import type { AntivirusScanner, AntivirusScanResult } from "./antivirus.js";
-import { prepareMailRawSource } from "./raw-source.js";
-import type { MailQuarantineStore } from "./quarantine.js";
-import { MailMalwareRejectedError } from "./errors.js";
-import {
-  evaluateInboundAuthenticationPolicy,
-  parseInboundAuthenticationPolicy,
-  type InboundAuthenticationPolicy,
-  type InboundPolicyDecision,
-  type InboundThreatVerdicts,
-} from "./inbound-policy.js";
 
 export interface MailAuthenticationSummary {
   readonly spf: string;
@@ -53,10 +65,7 @@ export interface IngestRawMailInput {
 }
 
 export type MailInboundRecipientResolution =
-  | MailInboundAddressResolution
-  | MailInboundRecipient
-  | readonly MailInboundRecipient[]
-  | null;
+  MailInboundAddressResolution | MailInboundRecipient | readonly MailInboundRecipient[] | null;
 
 export function resolvedMailRecipients(
   resolution: MailInboundRecipientResolution,
@@ -89,7 +98,16 @@ export interface InboundScanResult {
   readonly spam: SpamScanResult | null;
   readonly antivirus: AntivirusScanResult | null;
   readonly routedToSpam: boolean;
-  readonly spamReason: "spam-score" | "virus" | null;
+  /** True when malware policy withheld the message because no clean verdict exists. */
+  readonly quarantined: boolean;
+  readonly spamReason: "spam-score" | "virus" | "scanner-policy" | "auth-failure" | null;
+  /**
+   * Who put the message in Spam (for UI + feedback).
+   * Layering: spamd first; AI/rules only after spamd passes (not spam).
+   */
+  readonly spamCatcher?: SpamCatcher;
+  readonly quarantineReasons?: readonly string[];
+  readonly scannerUnavailable?: boolean;
 }
 
 export interface IngestRawMailResult {
@@ -110,6 +128,23 @@ export interface InboundScannerUnavailableEvent {
 
 /** Optional scanners plus the tenant's explicit scanner-outage policy. */
 export interface InboundMailScanners {
+  /** Business and higher tiers fail closed when no clean antivirus verdict exists. */
+  readonly tier?: SecurityTier;
+  /**
+   * Optional beta AI+rules second pass after spamd. Must not throw; callers
+   * treat missing/failed AI as no additional vote. Return `null` when beta is
+   * disabled at call time (config is re-resolved per invocation for hot-reload).
+   */
+  readonly betaSpamSecondPass?:
+    | ((features: {
+        readonly subject: string;
+        readonly bodyText: string;
+        readonly fromAddress: string;
+        readonly spamdScore?: number | undefined;
+        readonly spamdIsSpam?: boolean | undefined;
+      }) => Promise<{ readonly isSpam: boolean; readonly evidence: JsonObject } | null>)
+    | undefined;
+
   readonly spam?: SpamScanner | undefined;
   readonly antivirus?: AntivirusScanner | undefined;
   readonly failurePolicy?: InboundScanFailurePolicy | undefined;
@@ -121,6 +156,9 @@ export interface MailAuthenticator {
 }
 
 export interface SmtpReceiverOptions {
+  readonly transportSecurity: SmtpTransportSecurity;
+  readonly limits?: Partial<SmtpReceiverLimits> | undefined;
+  readonly rateLimitStore?: SmtpRateLimitStore | undefined;
   readonly store: MailStore;
   readonly quarantineStore?: MailQuarantineStore | undefined;
   readonly resolveRecipient: (address: string) => Promise<MailInboundRecipientResolution>;
@@ -136,15 +174,12 @@ export interface SmtpReceiverOptions {
   readonly scanners?: InboundMailScanners | undefined;
   /** Resolve the receiving tenant's scanner-outage policy before persistence. */
   readonly resolveScanFailurePolicy?:
-    | ((orgId: string) => Promise<InboundScanFailurePolicy>)
-    | undefined;
+    ((orgId: string) => Promise<InboundScanFailurePolicy>) | undefined;
   readonly resolveAuthenticationPolicy?:
-    | ((orgId: string) => Promise<InboundAuthenticationPolicy>)
-    | undefined;
+    ((orgId: string) => Promise<InboundAuthenticationPolicy>) | undefined;
   /** Establish the tenant-local database context for a direct SMTP delivery. */
   readonly runForTenant?:
-    | (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>)
-    | undefined;
+    (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>) | undefined;
   readonly authorizeForward?:
     | ((input: {
         readonly orgId: string;
@@ -167,77 +202,203 @@ export class MailauthAuthenticator implements MailAuthenticator {
 
 export class SmtpMailReceiver {
   private readonly server: SMTPServer;
+  private readonly sessions = new WeakMap<SMTPServerSession, SmtpSessionState>();
+  private readonly activeConnectionsByIp = new Map<string, number>();
+  private readonly limits: SmtpReceiverLimits;
+  private readonly rateLimits: SmtpRateLimitStore;
 
   constructor(private readonly options: SmtpReceiverOptions) {
-    const maxMessageBytes = options.maxMessageBytes ?? 52_428_800;
-    const maxRecipients = options.maxRecipients ?? 100;
+    this.limits = resolveSmtpReceiverLimits({
+      ...options.limits,
+      ...(options.maxMessageBytes === undefined
+        ? {}
+        : { maxMessageBytes: options.maxMessageBytes }),
+      ...(options.maxRecipients === undefined
+        ? {}
+        : { maxRecipientsPerMessage: options.maxRecipients }),
+      ...(options.maxConnections === undefined
+        ? {}
+        : { maxConcurrentConnections: options.maxConnections }),
+      ...(options.socketTimeoutMs === undefined
+        ? {}
+        : { socketTimeoutMs: options.socketTimeoutMs }),
+    });
+    this.rateLimits = options.rateLimitStore ?? new InMemorySmtpRateLimitStore();
     this.server = new SMTPServer({
-      disabledCommands: [...(options.disabledCommands ?? ["AUTH"])],
-      size: maxMessageBytes,
-      maxClients: options.maxConnections ?? 100,
-      socketTimeout: options.socketTimeoutMs ?? 60_000,
-      closeTimeout: 10_000,
-      onRcptTo: (address, session, callback) => {
-        if (session.envelope.rcptTo.length >= maxRecipients) {
-          callback(tooManyRecipients());
-          return;
+      ...smtpTransportSecurityOptions(options.transportSecurity),
+      disabledCommands: smtpDisabledCommands(
+        options.transportSecurity,
+        options.disabledCommands ?? ["AUTH"],
+      ),
+      maxClients: this.limits.maxConcurrentConnections,
+      size: this.limits.maxMessageBytes,
+      socketTimeout: this.limits.socketTimeoutMs,
+      hideSMTPUTF8: true,
+      onConnect: (session, callback) => {
+        void this.handleConnect(session).then(
+          () => {
+            callback();
+          },
+          (error: unknown) => {
+            callback(asSmtpError(error, 421, "Connection temporarily refused."));
+          },
+        );
+      },
+      onClose: (session) => {
+        this.handleClose(session);
+      },
+      onMailFrom: (address, session, callback) => {
+        try {
+          const state = this.requireCommandCapacity(session);
+          if (state.messageAttempts >= this.limits.maxMessagesPerConnection) {
+            callback(smtpError(452, "Message limit for this connection exceeded."));
+            return;
+          }
+          state.recipients.clear();
+          state.envelopeFrom =
+            address.address.length === 0
+              ? undefined
+              : normalizeMailboxAddress(address.address).address;
+          callback();
+        } catch (error) {
+          callback(
+            error instanceof MailAddressNormalizationError
+              ? smtpError(553, "Malformed envelope sender.")
+              : asSmtpError(error, 421, "Command limit exceeded."),
+          );
         }
-        this.options
-          .resolveRecipient(address.address)
-          .then((resolution) => {
-            callback(
-              acceptsInboundRecipient(resolution) ? undefined : rejectedRecipient(address.address),
-            );
-          })
-          .catch((error: unknown) => {
-            this.options.logger?.error(error, "SMTP recipient validation deferred");
-            callback(deferredRecipient(address.address));
-          });
+      },
+      onRcptTo: (address, session, callback) => {
+        void this.handleRecipient(address.address, session).then(
+          () => {
+            callback();
+          },
+          (error: unknown) => {
+            callback(asSmtpError(error, 451, "Recipient lookup unavailable."));
+          },
+        );
       },
       onData: (stream, session, callback) => {
-        spoolStream(stream, {
-          maxBytes: maxMessageBytes,
-          timeoutMs: options.dataTimeoutMs ?? 120_000,
-        })
-          .then(async (raw) => {
-            await ingestSmtpEnvelope({
-              store: this.options.store,
-              ...(this.options.quarantineStore === undefined
-                ? {}
-                : { quarantineStore: this.options.quarantineStore }),
-              resolveRecipient: this.options.resolveRecipient,
-              ...(this.options.authenticator === undefined
-                ? {}
-                : { authenticator: this.options.authenticator }),
-              ...(this.options.scanners === undefined ? {} : { scanners: this.options.scanners }),
-              ...(this.options.resolveScanFailurePolicy === undefined
-                ? {}
-                : { resolveScanFailurePolicy: this.options.resolveScanFailurePolicy }),
-              ...(this.options.resolveAuthenticationPolicy === undefined
-                ? {}
-                : { resolveAuthenticationPolicy: this.options.resolveAuthenticationPolicy }),
-              ...(this.options.runForTenant === undefined
-                ? {}
-                : { runForTenant: this.options.runForTenant }),
-              ...(this.options.authorizeForward === undefined
-                ? {}
-                : { authorizeForward: this.options.authorizeForward }),
-              raw,
-              ...(session.envelope.mailFrom === false
-                ? {}
-                : { envelopeFrom: session.envelope.mailFrom.address }),
-              envelopeTo: session.envelope.rcptTo.map((recipient) => recipient.address),
-              remoteAddress: session.remoteAddress,
-              helo: session.hostNameAppearsAs,
-            });
-            callback();
+        this.handleData(stream, session)
+          .then(() => {
+            callback(null, "Message accepted for delivery.");
           })
           .catch((error: unknown) => {
             this.options.logger?.error(error, "SMTP mail ingest failed");
-            callback(error instanceof Error ? error : new Error(String(error)));
+            callback(asSmtpError(error, 451, "Message persistence temporarily unavailable."));
           });
       },
     });
+  }
+
+  private async handleConnect(session: SMTPServerSession): Promise<void> {
+    const allowed = await this.rateLimits.consume({
+      scope: "connection",
+      key: session.remoteAddress,
+      limit: this.limits.connectionsPerWindow,
+      windowMs: this.limits.connectionWindowMs,
+    });
+    if (!allowed) {
+      throw smtpError(421, "Connection rate limit exceeded.");
+    }
+    const current = this.activeConnectionsByIp.get(session.remoteAddress) ?? 0;
+    if (current >= this.limits.maxConcurrentConnectionsPerIp) {
+      throw smtpError(421, "Concurrent connection limit exceeded.");
+    }
+    this.activeConnectionsByIp.set(session.remoteAddress, current + 1);
+    this.sessions.set(session, {
+      commands: 0,
+      messageAttempts: 0,
+      connected: true,
+      recipients: new Map(),
+    });
+  }
+
+  private handleClose(session: SMTPServerSession): void {
+    const state = this.sessions.get(session);
+    if (state?.connected !== true) {
+      return;
+    }
+    state.connected = false;
+    const current = this.activeConnectionsByIp.get(session.remoteAddress) ?? 0;
+    if (current <= 1) {
+      this.activeConnectionsByIp.delete(session.remoteAddress);
+    } else {
+      this.activeConnectionsByIp.set(session.remoteAddress, current - 1);
+    }
+  }
+
+  private async handleRecipient(address: string, session: SMTPServerSession): Promise<void> {
+    const state = this.requireCommandCapacity(session);
+    let normalized: string;
+    try {
+      normalized = normalizeMailboxAddress(address).address;
+    } catch {
+      throw smtpError(550, "Unknown or malformed recipient.");
+    }
+    if (state.recipients.has(normalized)) {
+      return;
+    }
+    if (state.recipients.size >= this.limits.maxRecipientsPerMessage) {
+      throw smtpError(452, "Recipient limit exceeded.");
+    }
+    let recipient: MailInboundRecipientResolution;
+    try {
+      recipient = await withTimeout(
+        this.options.resolveRecipient(normalized),
+        this.limits.recipientResolutionTimeoutMs,
+      );
+    } catch {
+      throw smtpError(451, "Recipient lookup temporarily unavailable.");
+    }
+    if (!acceptsInboundRecipient(recipient)) {
+      throw smtpError(550, "Unknown recipient domain or mailbox.");
+    }
+    state.recipients.set(normalized, recipient);
+  }
+
+  private async handleData(
+    stream: SMTPServerDataStream,
+    session: SMTPServerSession,
+  ): Promise<void> {
+    const state = this.requireCommandCapacity(session);
+    if (state.recipients.size === 0) {
+      throw smtpError(554, "No accepted recipients.");
+    }
+    state.messageAttempts += 1;
+    const rateAllowed = await this.rateLimits.consume({
+      scope: "message",
+      key: session.remoteAddress,
+      limit: this.limits.messagesPerWindow,
+      windowMs: this.limits.messageWindowMs,
+    });
+    if (!rateAllowed) {
+      throw smtpError(451, "Message rate limit exceeded.");
+    }
+    const raw = await spoolStream(stream, {
+      maxBytes: this.limits.maxMessageBytes,
+      timeoutMs: this.options.dataTimeoutMs ?? 120000,
+    });
+    await ingestSmtpEnvelope({
+      ...this.options,
+      raw,
+      envelopeTo: [...state.recipients.keys()],
+      ...(state.envelopeFrom === undefined ? {} : { envelopeFrom: state.envelopeFrom }),
+      remoteAddress: session.remoteAddress,
+      helo: session.hostNameAppearsAs,
+    });
+  }
+
+  private requireCommandCapacity(session: SMTPServerSession): SmtpSessionState {
+    const state = this.sessions.get(session);
+    if (state === undefined || !state.connected) {
+      throw smtpError(421, "SMTP session is not active.");
+    }
+    state.commands += 1;
+    if (state.commands > this.limits.maxCommandsPerConnection) {
+      throw smtpError(421, "Command limit exceeded.");
+    }
+    return state;
   }
 
   listen(port: number, host?: string): Promise<void> {
@@ -439,14 +600,11 @@ export async function ingestSmtpEnvelope(input: {
   readonly authenticator?: MailAuthenticator | undefined;
   readonly scanners?: InboundMailScanners | undefined;
   readonly resolveScanFailurePolicy?:
-    | ((orgId: string) => Promise<InboundScanFailurePolicy>)
-    | undefined;
+    ((orgId: string) => Promise<InboundScanFailurePolicy>) | undefined;
   readonly resolveAuthenticationPolicy?:
-    | ((orgId: string) => Promise<InboundAuthenticationPolicy>)
-    | undefined;
+    ((orgId: string) => Promise<InboundAuthenticationPolicy>) | undefined;
   readonly runForTenant?:
-    | (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>)
-    | undefined;
+    (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>) | undefined;
   readonly authorizeForward?: SmtpReceiverOptions["authorizeForward"];
 }): Promise<readonly IngestRawMailResult[]> {
   const resolved = await Promise.all(input.envelopeTo.map(input.resolveRecipient));
@@ -546,7 +704,7 @@ export async function ingestSmtpEnvelope(input: {
           ]);
           return result;
         } catch (error) {
-          if (error instanceof MailQuarantinedAcceptance) return null;
+          if (error instanceof MailInboundQuarantinedError) return null;
           throw error;
         }
       };
@@ -581,7 +739,7 @@ export async function ingestRawMail(input: {
           const raw = Buffer.from(input.input.raw);
           const canonicalInput = { ...input.input, raw };
           const authenticator = input.authenticator ?? new MailauthAuthenticator();
-          const [auth, parsed, scan] = await Promise.all([
+          const [auth, parsed, scannerResult] = await Promise.all([
             authenticator.authenticate(canonicalInput),
             canonicalInput.parsed === undefined
               ? simpleParser(raw, { maxHtmlLengthToParse: 5 * 1024 * 1024, skipTextToHtml: true })
@@ -589,12 +747,18 @@ export async function ingestRawMail(input: {
             scanInboundMail(input.scanners, raw),
           ]);
           assertParsedMailBounds(parsed);
-          if (scan.antivirus?.infected === true) {
-            const disposition = input.malwareDisposition ?? "spam";
+          if (addressObjectToList(parsed.from).length === 0)
+            throw smtpError(550, "Malformed message: a valid From header is required.");
+          // Published DMARC and tenant authentication policy are evaluated below.
+          const scan = applyInboundSecurityPolicy(scannerResult, auth, parsed, false);
+          if (scan.quarantined) {
+            const disposition = input.malwareDisposition === "reject" ? "reject" : "quarantine";
             if (disposition === "reject") {
-              throw new MailMalwareRejectedError(scan.antivirus.signature ?? "unknown");
+              throw new MailMalwareRejectedError(
+                scan.antivirus?.signature ?? scan.quarantineReasons?.join(",") ?? "scanner-policy",
+              );
             }
-            if (disposition === "quarantine") {
+            {
               if (input.quarantineStore === undefined) {
                 throw deferredMalwareQuarantine();
               }
@@ -602,9 +766,14 @@ export async function ingestRawMail(input: {
                 orgId: canonicalInput.orgId,
                 recipientAddresses: canonicalInput.recipients.map((recipient) => recipient.address),
                 raw,
-                signature: scan.antivirus.signature ?? "unknown",
+                signature:
+                  scan.antivirus?.signature ??
+                  scan.quarantineReasons?.join(",") ??
+                  "scanner-policy",
                 authentication: quarantineAuthentication(auth),
-                scanEvidence: scan.antivirus.evidence,
+                scanEvidence: scan.antivirus?.evidence ?? {
+                  reasons: [...(scan.quarantineReasons ?? [])],
+                },
                 ...(canonicalInput.envelopeFrom === undefined
                   ? {}
                   : { envelopeFrom: canonicalInput.envelopeFrom }),
@@ -617,7 +786,7 @@ export async function ingestRawMail(input: {
                   : { providerDeliveryId: canonicalInput.providerDeliveryId }),
               });
               span.setAttribute("helix.mail.quarantine_id", quarantine.id);
-              throw new MailQuarantinedAcceptance(quarantine.id);
+              throw new MailInboundQuarantinedError(quarantine.id);
             }
           }
           const fromAddress =
@@ -666,7 +835,7 @@ export async function ingestRawMail(input: {
                 : { providerDeliveryId: canonicalInput.providerDeliveryId }),
             });
             span.setAttribute("helix.mail.quarantine_id", quarantine.id);
-            throw new MailQuarantinedAcceptance(quarantine.id);
+            throw new MailInboundQuarantinedError(quarantine.id);
           }
           const message = withPolicyMetadata(
             withScanMetadata(
@@ -713,9 +882,21 @@ export async function ingestRawMail(input: {
               ),
             );
           }
+          if (scan.routedToSpam && stored.created && input.store.recordSpamFeedback !== undefined) {
+            const feedback = autoSpamFeedback(scan);
+            for (const recipient of deliveredRecipients)
+              await input.store.recordSpamFeedback({
+                orgId: input.input.orgId,
+                actorId: recipient.actorId,
+                threadId: stored.threadId,
+                label: "spam",
+                source: feedback.source,
+                evidence: feedback.evidence,
+              });
+          }
           return { stored, auth, filterResult, scan, policy };
         } catch (error) {
-          if (!(error instanceof MailQuarantinedAcceptance)) {
+          if (!(error instanceof MailInboundQuarantinedError)) {
             span.recordException(error instanceof Error ? error : new Error(String(error)));
             span.setStatus({ code: SpanStatusCode.ERROR });
           }
@@ -727,10 +908,11 @@ export async function ingestRawMail(input: {
     );
 }
 
-class MailQuarantinedAcceptance extends Error {
+export class MailInboundQuarantinedError extends Error {
   constructor(readonly quarantineId: string) {
     super("Inbound mail accepted into quarantine.");
-    this.name = "MailQuarantinedAcceptance";
+    this.name = "MailInboundQuarantinedError";
+    this.name = "MailInboundQuarantinedError";
   }
 }
 
@@ -780,7 +962,12 @@ function parsedMailToMessage(
   parsed: ParsedMail,
   auth: MailAuthenticationSummary,
 ): MailMessageInput {
-  const to = addressObjectToList(parsed.to);
+  const visibleRecipients = new Set(
+    input.recipients.map((recipient) => recipient.address.toLowerCase()),
+  );
+  const to = addressObjectToList(parsed.to).filter((recipient) =>
+    visibleRecipients.has(recipient.address.toLowerCase()),
+  );
 
   return {
     orgId: input.orgId,
@@ -790,11 +977,13 @@ function parsedMailToMessage(
       address: input.envelopeFrom ?? "unknown@localhost",
     },
     to,
-    cc: addressObjectToList(parsed.cc),
+    cc: addressObjectToList(parsed.cc).filter((recipient) =>
+      visibleRecipients.has(recipient.address.toLowerCase()),
+    ),
     bcc: [],
-    subject: parsed.subject ?? "",
+    subject: sanitizeMailHeaderDisplayValue(parsed.subject ?? ""),
     bodyText: parsed.text ?? "",
-    ...(typeof parsed.html === "string" ? { bodyHtml: parsed.html } : {}),
+    ...(typeof parsed.html === "string" ? { bodyHtml: sanitizeMailHtml(parsed.html).html } : {}),
     messageId: parsed.messageId,
     ...(input.providerDeliveryId === undefined
       ? {}
@@ -854,46 +1043,118 @@ export async function scanInboundMail(
   raw: Buffer | string,
 ): Promise<InboundScanResult> {
   if (scanners === undefined) {
-    return { spam: null, antivirus: null, routedToSpam: false, spamReason: null };
+    return {
+      spam: null,
+      antivirus: null,
+      routedToSpam: false,
+      quarantined: false,
+      spamReason: null,
+    };
   }
-  const [spam, antivirus] = await Promise.all([
-    runScan("spam", scanners.spam, scanners, raw),
-    runScan("antivirus", scanners.antivirus, scanners, raw),
+  const tier = scanners.tier ?? "personal";
+  const [spamOutcome, antivirusOutcome] = await Promise.all([
+    runScan(scanners.spam, raw),
+    runScan(scanners.antivirus, raw),
   ]);
-  if (antivirus !== null && !antivirus.scanned) {
-    handleUnavailable(
-      scanners,
-      "antivirus",
-      new Error("antivirus scanner did not scan the complete message"),
-    );
-  }
+  if (scanners.spam === undefined || spamOutcome.failed)
+    handleUnavailable(scanners, "spam", new Error("Spam scanner unavailable"));
+  if (
+    scanners.antivirus === undefined ||
+    antivirusOutcome.failed ||
+    antivirusOutcome.result?.scanned === false
+  )
+    handleUnavailable(scanners, "antivirus", new Error("Antivirus scanner unavailable"));
+  const spam = spamOutcome.result;
+  const antivirus = antivirusOutcome.result;
   const virusRouted = antivirus !== null && antivirus.infected;
-  const spamRouted = spam !== null && spam.isSpam;
+  const spamScannerUnavailable = scanners.spam === undefined || spamOutcome.failed;
+  const antivirusScannerUnavailable =
+    scanners.antivirus === undefined || antivirusOutcome.failed || antivirus?.scanned === false;
+  const scannerUnavailable = spamScannerUnavailable || antivirusScannerUnavailable;
+  const policyQuarantined =
+    virusRouted ||
+    antivirus?.disposition === "quarantine" ||
+    (tier !== "personal" && scannerUnavailable);
+  // Layer 1: SpamAssassin. If it says spam, do not run AI.
+  const spamdIsSpam = spam !== null && spam.isSpam;
+  let spamRouted = spamdIsSpam;
+  let spamCatcher: SpamCatcher = null;
+  let spamReason: InboundScanResult["spamReason"] = null;
+  if (virusRouted) {
+    spamCatcher = "virus";
+    spamReason = "virus";
+  } else if (policyQuarantined) {
+    spamCatcher = "scanner-policy";
+    spamReason = "scanner-policy";
+  } else if (spamdIsSpam) {
+    spamCatcher = "spamd";
+    spamReason = "spam-score";
+  }
+
+  // Layer 2: beta AI spam tool — only when spamd passed (not spam) and not quarantined.
+  // Fail-open: never block SMTP accept on LLM/rules errors.
+  let betaEvidence: JsonObject | null = null;
+  const spamdPassed =
+    spam !== null && !spamOutcome.failed && !spamdIsSpam && !virusRouted && !policyQuarantined;
+  if (scanners.betaSpamSecondPass !== undefined && spamdPassed) {
+    try {
+      const features = extractSpamFeaturesFromRaw(raw, spam);
+      const decision = await scanners.betaSpamSecondPass(features);
+      // null = beta disabled at call time (Admin/env may flip after boot).
+      if (decision !== null) {
+        betaEvidence = decision.evidence;
+        if (decision.isSpam) {
+          spamRouted = true;
+          spamReason = "spam-score";
+          const src = (decision.evidence as { source?: string }).source ?? "ai";
+          spamCatcher = src === "rules" ? "rules" : "ai";
+        }
+      }
+    } catch {
+      betaEvidence = { beta: true, failed: true, layer: "ai-after-spamd-pass" };
+    }
+  }
+
+  const spamWithBeta: SpamScanResult | null =
+    spam === null && betaEvidence === null
+      ? null
+      : {
+          score: spam?.score ?? 0,
+          thresholdReportedBySpamd: spam?.thresholdReportedBySpamd ?? null,
+          isSpam: spamRouted && !virusRouted && !policyQuarantined,
+          symbols: spam?.symbols ?? [],
+          evidence: {
+            ...(spam?.evidence ?? {}),
+            layering: "spamd_then_ai_if_pass",
+            spamdPassed,
+            ...(betaEvidence === null ? {} : { betaSecondPass: betaEvidence }),
+            ...(spamCatcher === null ? {} : { catcher: spamCatcher }),
+          },
+        };
+
   return {
-    spam,
+    spam: spamWithBeta,
     antivirus,
-    routedToSpam: virusRouted || spamRouted,
-    spamReason: virusRouted ? "virus" : spamRouted ? "spam-score" : null,
+    routedToSpam: virusRouted || policyQuarantined || spamRouted,
+    quarantined: policyQuarantined,
+    quarantineReasons: policyQuarantined ? [quarantineReason(virusRouted, scannerUnavailable)] : [],
+    scannerUnavailable,
+    spamReason,
+    spamCatcher,
   };
 }
 
 async function runScan<T>(
-  kind: "spam" | "antivirus",
   scanner: { scan(raw: Buffer | string): Promise<T> } | undefined,
-  scanners: InboundMailScanners,
   raw: Buffer | string,
-): Promise<T | null> {
+): Promise<{ readonly result: T | null; readonly failed: boolean }> {
   if (scanner === undefined) {
-    if (scanners.failurePolicy === "defer") {
-      handleUnavailable(scanners, kind, new Error(`${kind} scanner is not configured`));
-    }
-    return null;
+    return { result: null, failed: false };
   }
   try {
-    return await scanner.scan(raw);
-  } catch (error) {
-    handleUnavailable(scanners, kind, error);
-    return null;
+    return { result: await scanner.scan(raw), failed: false };
+  } catch {
+    return { result: null, failed: true };
   }
 }
 
@@ -919,7 +1180,7 @@ function handleUnavailable(
 
 /** Merge spam + antivirus scan evidence into the stored message metadata. */
 function withScanMetadata(message: MailMessageInput, scan: InboundScanResult): MailMessageInput {
-  if (scan.spam === null && scan.antivirus === null) {
+  if (scan.spam === null && scan.antivirus === null && !scan.routedToSpam) {
     return message;
   }
   return {
@@ -928,7 +1189,9 @@ function withScanMetadata(message: MailMessageInput, scan: InboundScanResult): M
       ...(message.metadata ?? {}),
       spam: {
         routedToSpam: scan.routedToSpam,
+        quarantined: scan.quarantined,
         reason: scan.spamReason,
+        catcher: scan.spamCatcher ?? null,
         ...(scan.spam === null
           ? {}
           : {
@@ -943,6 +1206,9 @@ function withScanMetadata(message: MailMessageInput, scan: InboundScanResult): M
               antivirus: {
                 infected: scan.antivirus.infected,
                 signature: scan.antivirus.signature,
+                scanned: scan.antivirus.scanned,
+                disposition: scan.antivirus.disposition ?? null,
+                state: scan.antivirus.securityScan?.state ?? null,
                 scan: scan.antivirus.evidence,
               },
             }),
@@ -1066,7 +1332,7 @@ export function addressObjectToList(
     .flatMap((object) =>
       object.value.map((address) => ({
         address: address.address ?? "",
-        ...(address.name === "" ? {} : { name: address.name }),
+        ...(address.name === "" ? {} : { name: sanitizeMailHeaderDisplayValue(address.name, 320) }),
       })),
     )
     .filter((address) => address.address.length > 0);
@@ -1119,14 +1385,167 @@ function rejectedRecipient(address: string): Error {
   return Object.assign(new Error(`Mailbox unavailable: ${address}`), { responseCode: 550 });
 }
 
-function deferredRecipient(address: string): Error {
-  return Object.assign(new Error(`Mailbox temporarily unavailable: ${address}`), {
-    responseCode: 450,
-  });
-}
-
-function tooManyRecipients(): Error {
-  return Object.assign(new Error("Too many recipients."), { responseCode: 452 });
-}
-
 export type { SMTPServerSession };
+
+export type SpamCatcher =
+  "spamd" | "ai" | "rules" | "virus" | "scanner-policy" | "auth-failure" | null;
+
+export interface SmtpReceiverLimits {
+  readonly maxMessageBytes: number;
+  readonly maxRecipientsPerMessage: number;
+  readonly maxMessagesPerConnection: number;
+  readonly maxCommandsPerConnection: number;
+  readonly maxConcurrentConnections: number;
+  readonly maxConcurrentConnectionsPerIp: number;
+  readonly connectionsPerWindow: number;
+  readonly connectionWindowMs: number;
+  readonly messagesPerWindow: number;
+  readonly messageWindowMs: number;
+  readonly recipientResolutionTimeoutMs: number;
+  readonly socketTimeoutMs: number;
+}
+
+interface SmtpSessionState {
+  commands: number;
+  messageAttempts: number;
+  connected: boolean;
+  envelopeFrom?: string | undefined;
+  readonly recipients: Map<string, MailInboundRecipientResolution>;
+}
+
+function resolveSmtpReceiverLimits(
+  configured: Partial<SmtpReceiverLimits> | undefined,
+): SmtpReceiverLimits {
+  const limits = { ...DEFAULT_SMTP_RECEIVER_LIMITS, ...configured };
+  for (const [name, value] of Object.entries(limits)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new TypeError(`${name} must be a positive safe integer.`);
+    }
+  }
+  return limits;
+}
+
+function smtpError(responseCode: number, message: string): Error {
+  return Object.assign(new Error(message), { responseCode });
+}
+
+function asSmtpError(error: unknown, fallbackCode: number, fallbackMessage: string): Error {
+  if (
+    error instanceof Error &&
+    "responseCode" in error &&
+    typeof (error as { readonly responseCode?: unknown }).responseCode === "number"
+  ) {
+    return error;
+  }
+  return smtpError(fallbackCode, fallbackMessage);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(() => {
+          reject(new Error("SMTP recipient resolution timed out."));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+function quarantineReason(virusRouted: boolean, scannerUnavailable: boolean): string {
+  if (virusRouted) return "malware";
+  return scannerUnavailable ? "scanner_unavailable" : "scanner_policy";
+}
+
+export function extractSpamFeaturesFromRaw(
+  raw: Buffer | string,
+  spam: SpamScanResult | null,
+): {
+  readonly subject: string;
+  readonly bodyText: string;
+  readonly fromAddress: string;
+  readonly spamdScore?: number | undefined;
+  readonly spamdIsSpam?: boolean | undefined;
+} {
+  const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : raw;
+  const subject = (/^subject:\s*(.+)$/imu.exec(text)?.[1] ?? "").trim();
+  const fromAddress = (/^from:\s*(.+)$/imu.exec(text)?.[1] ?? "").trim();
+  const bodySplit = text.split(/\r?\n\r?\n/u);
+  const bodyText = bodySplit.slice(1).join("\n\n").slice(0, 8_000);
+  return {
+    subject,
+    bodyText,
+    fromAddress,
+    ...(spam === null ? {} : { spamdScore: spam.score, spamdIsSpam: spam.isSpam }),
+  };
+}
+
+export function applyInboundSecurityPolicy(
+  scan: InboundScanResult,
+  auth: MailAuthenticationSummary,
+  parsed: ParsedMail,
+  evaluateAuthentication = true,
+): InboundScanResult {
+  const attachmentPolicy = inspectInboundAttachments(parsed.attachments);
+  const authFailed =
+    evaluateAuthentication &&
+    (auth.dmarc === "fail" ||
+      ((auth.spf === "fail" || auth.spf === "softfail") &&
+        (auth.dkim === "fail" || auth.dkim === "none")));
+  const quarantineReasons = new Set(scan.quarantineReasons ?? []);
+  for (const reason of attachmentPolicy.reasons) quarantineReasons.add(reason);
+  const routedToSpam = scan.routedToSpam || authFailed || attachmentPolicy.quarantine;
+  let spamCatcher: SpamCatcher = scan.spamCatcher ?? null;
+  let policyReason: InboundScanResult["spamReason"] = null;
+  if (attachmentPolicy.quarantine) {
+    spamCatcher ??= "scanner-policy";
+    policyReason = "scanner-policy";
+  } else if (authFailed) {
+    if (!scan.routedToSpam) spamCatcher = "auth-failure";
+    policyReason = "auth-failure";
+  }
+  return {
+    ...scan,
+    routedToSpam,
+    quarantined: scan.quarantined || attachmentPolicy.quarantine,
+    spamReason: scan.spamReason ?? policyReason,
+    spamCatcher,
+    quarantineReasons: [...quarantineReasons],
+  };
+}
+
+function autoSpamFeedback(scan: InboundScanResult): {
+  readonly source: "auto_ai" | "auto_rules" | "auto_spamd";
+  readonly evidence: JsonObject;
+} {
+  const catcher = scan.spamCatcher ?? null;
+  let source: "auto_ai" | "auto_rules" | "auto_spamd" = "auto_spamd";
+  if (catcher === "ai") source = "auto_ai";
+  else if (catcher === "rules") source = "auto_rules";
+  return {
+    source,
+    evidence: {
+      catcher,
+      reason: scan.spamReason,
+      layering: "spamd_then_ai_if_pass",
+    },
+  };
+}
+const DEFAULT_SMTP_RECEIVER_LIMITS: SmtpReceiverLimits = {
+  maxMessageBytes: 25 * 1024 * 1024,
+  maxRecipientsPerMessage: 100,
+  maxMessagesPerConnection: 20,
+  maxCommandsPerConnection: 500,
+  maxConcurrentConnections: 250,
+  maxConcurrentConnectionsPerIp: 20,
+  connectionsPerWindow: 60,
+  connectionWindowMs: 60_000,
+  messagesPerWindow: 120,
+  messageWindowMs: 60_000,
+  recipientResolutionTimeoutMs: 5_000,
+  socketTimeoutMs: 60_000,
+};

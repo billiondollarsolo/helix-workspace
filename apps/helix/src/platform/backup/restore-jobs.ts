@@ -5,12 +5,7 @@ import type postgres from "postgres";
 import type { BackupOperationResult, RestoreExecutor } from "./admin-routes.js";
 
 export type RestoreJobStatus =
-  | "pending_approval"
-  | "queued"
-  | "processing"
-  | "completed"
-  | "cancelled"
-  | "failed";
+  "pending_approval" | "queued" | "processing" | "completed" | "cancelled" | "failed";
 
 export interface RestoreJobRequest {
   readonly backupId: string;

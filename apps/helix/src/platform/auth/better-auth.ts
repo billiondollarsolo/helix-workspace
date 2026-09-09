@@ -59,6 +59,13 @@ export interface BetterAuthActorResolution {
   readonly user: BetterAuthUser;
 }
 
+export class BetterAuthVerifiedEmailRequiredError extends Error {
+  constructor() {
+    super("A verified email is required to link this sign-in to an existing user.");
+    this.name = "BetterAuthVerifiedEmailRequiredError";
+  }
+}
+
 export class BetterAuthPlatformModule {
   constructor(private readonly options: BetterAuthPlatformModuleOptions) {}
 
@@ -337,7 +344,11 @@ export interface BetterAuthRuntimeConfig {
     readonly providerId: string;
     readonly keyId?: string;
     readonly issuer: string;
-  }) => Promise<{ readonly privateKeyPem: string; readonly kid?: string; readonly algorithm?: string }>;
+  }) => Promise<{
+    readonly privateKeyPem: string;
+    readonly kid?: string;
+    readonly algorithm?: string;
+  }>;
 }
 
 export interface BetterAuthRuntime {
@@ -349,6 +360,7 @@ export interface BetterAuthRuntime {
 export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): BetterAuthRuntime {
   const pool = new Pool({ connectionString: config.databaseUrl });
   const sendPasswordReset = config.sendPasswordReset;
+  const cookiePolicy = sessionCookiePolicyForBaseUrl(config.baseUrl);
   const auth = betterAuth({
     database: pool,
     secrets: [{ version: 1, value: config.secret }],
@@ -375,7 +387,11 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
       ...(sendPasswordReset === undefined
         ? {}
         : {
-            sendResetPassword: ({ user, url, token }: {
+            sendResetPassword: ({
+              user,
+              url,
+              token,
+            }: {
               user: { email: string };
               url: string;
               token: string;
@@ -448,17 +464,13 @@ export function createBetterAuthRuntime(config: BetterAuthRuntimeConfig): Better
       }),
     ],
     advanced: {
-      useSecureCookies: config.secureCookies,
-      defaultCookieAttributes: {
-        secure: config.secureCookies,
-        httpOnly: true,
-        sameSite: "lax",
-        path: "/",
-      },
+      useSecureCookies: cookiePolicy.secure,
+      defaultCookieAttributes: cookiePolicy,
       cookiePrefix: "helix",
       cookies: {
         session_token: {
           name: "helix_session",
+          attributes: cookiePolicy,
         },
       },
     },
@@ -499,6 +511,20 @@ function oidcTrustedOrigins(issuer: string, serializedConfig: string): string[] 
   ];
 }
 
+export function sessionCookiePolicyForBaseUrl(baseUrl: string): {
+  readonly secure: boolean;
+  readonly httpOnly: true;
+  readonly sameSite: "lax";
+  readonly path: "/";
+} {
+  return {
+    secure: new URL(baseUrl).protocol === "https:",
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+  };
+}
+
 export function createBetterAuthSessionActorResolver(
   module: BetterAuthPlatformModule,
   verifier: BetterAuthSessionVerifier,
@@ -514,27 +540,34 @@ export function createBetterAuthSessionActorResolver(
       return null;
     }
     const orgId = await options.resolveOrgId?.(request);
-    const resolved = await module.resolveUserActor(user, orgId);
-    if (resolved === null) {
-      return null;
-    }
-    if (options.policyAuthorizer !== undefined) {
-      const token = await verifier.getSessionToken?.(request);
-      if (
-        token === null ||
-        token === undefined ||
-        !(await options.policyAuthorizer.authorize({
-          token,
-          authUserId: user.id,
-          orgId: resolved.actor.orgId,
-          actorId: resolved.actor.id,
-          adminAction: isAdminSessionRequest(request),
-        }))
-      ) {
+    try {
+      const resolved = await module.resolveUserActor(user, orgId);
+      if (resolved === null) {
         return null;
       }
+      if (options.policyAuthorizer !== undefined) {
+        const token = await verifier.getSessionToken?.(request);
+        if (
+          token === null ||
+          token === undefined ||
+          !(await options.policyAuthorizer.authorize({
+            token,
+            authUserId: user.id,
+            orgId: resolved.actor.orgId,
+            actorId: resolved.actor.id,
+            adminAction: isAdminSessionRequest(request),
+          }))
+        ) {
+          return null;
+        }
+      }
+      return resolved.actor;
+    } catch (error) {
+      if (error instanceof BetterAuthVerifiedEmailRequiredError) {
+        return null;
+      }
+      throw error;
     }
-    return resolved.actor;
   };
 }
 

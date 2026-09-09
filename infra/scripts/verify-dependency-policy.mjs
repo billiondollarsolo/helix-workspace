@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import assert from "node:assert/strict";
+import * as prettier from "prettier";
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
@@ -7,11 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const policy = JSON.parse(readFileSync(resolve(root, "security/license-policy.json"), "utf8"));
-const manifests = [
-  "package.json",
-  ...manifestFiles("apps"),
-  ...manifestFiles("packages"),
-];
+const manifests = ["package.json", ...manifestFiles("apps"), ...manifestFiles("packages")];
 
 const errors = [];
 const versions = new Map();
@@ -60,8 +58,11 @@ for (const item of licenses.Unknown ?? []) {
   }
 }
 
-const notices = renderNotices(licenses);
 const noticesFile = resolve(root, "THIRD_PARTY_NOTICES.md");
+const notices = await prettier.format(renderNotices(licenses), {
+  ...(await prettier.resolveConfig(noticesFile)),
+  filepath: noticesFile,
+});
 if (process.argv.includes("--write-notices")) {
   writeFileSync(noticesFile, notices);
 } else if (readFileSync(noticesFile, "utf8") !== notices) {
@@ -72,7 +73,9 @@ if (errors.length > 0) {
   for (const error of errors) process.stderr.write(`${error}\n`);
   process.exitCode = 1;
 } else {
-  console.log(`Dependency policy passed for ${manifests.length} manifests and ${packageCount(licenses)} production packages.`);
+  console.log(
+    `Dependency policy passed for ${manifests.length} manifests and ${packageCount(licenses)} production packages.`,
+  );
 }
 
 function manifestFiles(directory) {
@@ -92,10 +95,18 @@ function manifestFiles(directory) {
 function isExactSpecifier(specifier) {
   return (
     /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(specifier) ||
+    /^npm:(?:@[^/]+\/)?[^@]+@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(specifier) ||
     /^workspace:(?:\*|\d+\.\d+\.\d+)$/.test(specifier) ||
     specifier.startsWith("file:") ||
     (/^https:\/\//.test(specifier) && /#sha512-/.test(specifier))
   );
+}
+
+if (process.argv.includes("--self-test")) {
+  assert.equal(isExactSpecifier("npm:zod@3.25.76"), true);
+  assert.equal(isExactSpecifier("npm:@scope/package@1.2.3"), true);
+  assert.equal(isExactSpecifier("npm:zod@^3.25.76"), false);
+  assert.equal(isExactSpecifier("npm:zod@latest"), false);
 }
 
 function matches(pattern, value) {
@@ -119,7 +130,10 @@ function renderNotices(report) {
           homepage: policy.licenseOverrides[item.name]?.source ?? item.homepage,
         })),
     )
-    .sort((left, right) => left.name.localeCompare(right.name) || left.license.localeCompare(right.license));
+    .sort(
+      (left, right) =>
+        left.name.localeCompare(right.name) || left.license.localeCompare(right.license),
+    );
   const rows = entries.map(
     ({ license, name, version, homepage }) =>
       `| ${escapeCell(name)} | ${escapeCell(version)} | ${escapeCell(license)} | ${homepage ? `[source](${homepage})` : "—"} |`,
@@ -128,6 +142,8 @@ function renderNotices(report) {
     "# Third-party notices",
     "",
     "Generated from the locked production dependency graph. Package source distributions contain the authoritative license text.",
+    "",
+    "Includes caniuse-lite browser compatibility data by Ben Briggs and contributors, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See the package source and bundled license for attribution details.",
     "",
     "| Package | Version | License | Project |",
     "| --- | --- | --- | --- |",

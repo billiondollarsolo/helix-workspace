@@ -335,15 +335,7 @@ export async function registerAdminDomainsRoutes(
     if (!canReadAdminConsole(actor, "admin.domains")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
-    const domains = await store.listDomains(actor.orgId);
-    const withRecords: DomainWithRecords[] = [];
-    for (const domain of domains) {
-      withRecords.push({
-        domain,
-        dnsRecords: await store.listDnsRecords(actor.orgId, domain.id),
-      });
-    }
-    return { domains: withRecords };
+    return { domains: await readDomainsWithRecords(store, actor.orgId) };
   });
 
   app.post("/api/admin/domains", async (request, reply) => {
@@ -1667,4 +1659,17 @@ export class InMemoryDomainsStore implements DomainsStore {
     record.updatedAt = this.#now();
     return { ...record };
   }
+}
+
+export async function readDomainsWithRecords(
+  store: DomainsStore,
+  orgId: string,
+): Promise<readonly DomainWithRecords[]> {
+  const domains = await store.listDomains(orgId);
+  return Promise.all(
+    domains.map(async (domain) => ({
+      domain,
+      dnsRecords: await store.listDnsRecords(orgId, domain.id),
+    })),
+  );
 }

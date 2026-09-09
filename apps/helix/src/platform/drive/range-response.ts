@@ -1,3 +1,4 @@
+import { SANDBOXED_CONTENT_CSP } from "./content-security.js";
 /* HTTP Range request support for Drive content streaming.
  *
  * HTML5 `<audio>` and `<video>` elements seek by issuing `Range: bytes=N-M`
@@ -96,6 +97,8 @@ export async function sendStreamWithRangeSupport(
     throw new TypeError("Drive stream byteSize must be a non-negative safe integer");
   }
   reply.header("content-disposition", opts.disposition);
+  reply.header("content-security-policy", SANDBOXED_CONTENT_CSP);
+  reply.header("x-content-type-options", "nosniff");
   reply.header("accept-ranges", "bytes");
   reply.header("etag", opts.etag);
   if (opts.lastModified !== undefined) {

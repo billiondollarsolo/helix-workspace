@@ -3,10 +3,7 @@ import type { JsonObject } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import type { CalendarStore } from "./store.js";
 import type { CalendarEventRecord, CalendarFreeBusyStore } from "./types.js";
-import {
-  CalendarResourceConflictError,
-  PostgresCalendarSchedulingStore,
-} from "./scheduling.js";
+import { CalendarResourceConflictError, PostgresCalendarSchedulingStore } from "./scheduling.js";
 
 describe("calendar scheduling operations", () => {
   it("combines per-person time zones, focus time, and a holiday calendar", async () => {
@@ -24,12 +21,14 @@ describe("calendar scheduling operations", () => {
         return [{ id: "00000000-0000-4000-8000-000000000099", timezone: "America/New_York" }];
       }
       if (query.includes("from cal_resource_bookings")) {
-        return [{
-          id: "booking-1",
-          resource_id: "00000000-0000-4000-8000-000000000099",
-          starts_at: new Date("2026-06-01T13:00:00Z"),
-          ends_at: new Date("2026-06-01T14:00:00Z"),
-        }];
+        return [
+          {
+            id: "booking-1",
+            resource_id: "00000000-0000-4000-8000-000000000099",
+            starts_at: new Date("2026-06-01T13:00:00Z"),
+            ends_at: new Date("2026-06-01T14:00:00Z"),
+          },
+        ];
       }
       return [];
     });

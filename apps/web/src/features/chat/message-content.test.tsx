@@ -26,6 +26,21 @@ afterEach(() => {
 });
 
 describe("Chat Markdown and attachments", () => {
+  it("keeps rich server Markdown inert outside the allowed vocabulary and retains code copying", () => {
+    const container = render(
+      <ChatMessageContent
+        body="markdown"
+        bodyFormat="markdown"
+        renderedBodyHtml={
+          '<p onclick="alert(1)"><strong>Safe</strong><a href="javascript:alert(1)">bad</a><img src="x" onerror="alert(1)"><script>alert(1)</script></p><pre><code class="language-js">const x = 1;</code></pre>'
+        }
+      />,
+    );
+    expect(container.querySelector("strong")?.textContent).toBe("Safe");
+    expect(container.querySelector("script, img, a, [onclick]")).toBeNull();
+    expect(container.querySelector('[aria-label="Copy js code"]')).not.toBeNull();
+  });
+
   it("renders fenced code with a language label, copy action, and no HTML injection", () => {
     const container = render(
       <ChatMessageContent

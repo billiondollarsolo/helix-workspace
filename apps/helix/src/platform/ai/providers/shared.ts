@@ -220,10 +220,6 @@ export function anthropicRequestBody(
   };
 }
 
-export function responseMetadata(responseId: string | undefined): JsonObject | undefined {
-  return responseId === undefined ? undefined : { responseId };
-}
-
 export function textFromAnthropicContent(content: readonly unknown[]): string {
   return content
     .flatMap((part) => {
@@ -437,8 +433,12 @@ export async function postSse(
   return parseSseStream(responseBody);
 }
 
-/** Accumulates streamed OpenAI tool-call deltas keyed by their array index. */
-interface OpenAIToolCallAccumulator {
+/**
+ * Accumulates a streamed tool call keyed by its index in the provider's
+ * content/tool-call array. Shared by both the OpenAI (`tool_calls` deltas) and
+ * the Anthropic (`tool_use` + `input_json_delta`) stream translators.
+ */
+interface StreamToolCallAccumulator {
   id: string | undefined;
   name: string | undefined;
   arguments: string;
@@ -454,7 +454,7 @@ export async function* openAIChatChunks(
   events: AsyncIterable<SseEvent>,
   fallbackModel: string,
 ): AsyncGenerator<ChatChunk> {
-  const toolCalls = new Map<number, OpenAIToolCallAccumulator>();
+  const toolCalls = new Map<number, StreamToolCallAccumulator>();
   let usage: ChatUsage | undefined;
   let model: string | undefined;
   for await (const event of events) {
@@ -481,11 +481,11 @@ export async function* openAIChatChunks(
       yield { delta: text };
     }
   }
-  yield finalOpenAIChunk(toolCalls, usage, model ?? fallbackModel);
+  yield finalStreamChunk(toolCalls, usage, model ?? fallbackModel);
 }
 
 function accumulateOpenAIToolCallDeltas(
-  toolCalls: Map<number, OpenAIToolCallAccumulator>,
+  toolCalls: Map<number, StreamToolCallAccumulator>,
   delta: Record<string, unknown> | undefined,
 ): void {
   if (delta === undefined) {
@@ -514,12 +514,16 @@ function accumulateOpenAIToolCallDeltas(
   }
 }
 
-function finalOpenAIChunk(
-  toolCalls: Map<number, OpenAIToolCallAccumulator>,
+/**
+ * Builds the closing `done: true` chunk: assembles accumulated tool calls in
+ * content-index order and attaches the resolved model plus any usage.
+ */
+function finalStreamChunk(
+  accumulators: ReadonlyMap<number, StreamToolCallAccumulator>,
   usage: ChatUsage | undefined,
   model: string,
 ): ChatChunk {
-  const assembled = [...toolCalls.entries()]
+  const assembled = [...accumulators.entries()]
     .sort((left, right) => left[0] - right[0])
     .flatMap(([, accumulator]) => {
       const id = accumulator.name ?? accumulator.id;
@@ -538,13 +542,6 @@ function finalOpenAIChunk(
   };
 }
 
-/** Accumulates a streamed Anthropic `tool_use` content block. */
-interface AnthropicToolUseAccumulator {
-  id: string | undefined;
-  name: string | undefined;
-  json: string;
-}
-
 /**
  * Translates an Anthropic-compatible Messages SSE stream into
  * {@link ChatChunk} values. Handles `content_block_delta` text deltas,
@@ -554,7 +551,7 @@ export async function* anthropicChatChunks(
   events: AsyncIterable<SseEvent>,
   fallbackModel: string,
 ): AsyncGenerator<ChatChunk> {
-  const toolUses = new Map<number, AnthropicToolUseAccumulator>();
+  const toolUses = new Map<number, StreamToolCallAccumulator>();
   let usage: ChatUsage | undefined;
   let model = fallbackModel;
   for await (const event of events) {
@@ -579,7 +576,7 @@ export async function* anthropicChatChunks(
         toolUses.set(index, {
           id: stringField(block, "id"),
           name: stringField(block, "name"),
-          json: "",
+          arguments: "",
         });
       }
     } else if (type === "content_block_delta") {
@@ -594,7 +591,7 @@ export async function* anthropicChatChunks(
         const partial = stringField(blockDelta, "partial_json") ?? "";
         const accumulator = toolUses.get(index);
         if (accumulator !== undefined) {
-          accumulator.json += partial;
+          accumulator.arguments += partial;
         }
       }
     } else if (type === "message_delta") {
@@ -604,31 +601,7 @@ export async function* anthropicChatChunks(
       }
     }
   }
-  yield finalAnthropicChunk(toolUses, usage, model);
-}
-
-function finalAnthropicChunk(
-  toolUses: Map<number, AnthropicToolUseAccumulator>,
-  usage: ChatUsage | undefined,
-  model: string,
-): ChatChunk {
-  const assembled = [...toolUses.entries()]
-    .sort((left, right) => left[0] - right[0])
-    .flatMap(([, accumulator]) => {
-      const id = accumulator.name ?? accumulator.id;
-      if (id === undefined) {
-        return [];
-      }
-      const input = accumulator.json.length === 0 ? undefined : parseJsonObject(accumulator.json);
-      return [{ id, ...(input === undefined ? {} : { input }) }];
-    });
-  const metadata = streamMetadata(model, assembled);
-  return {
-    delta: "",
-    done: true,
-    ...(usage === undefined ? {} : { usage }),
-    ...(metadata === undefined ? {} : { metadata }),
-  };
+  yield finalStreamChunk(toolUses, usage, model);
 }
 
 function mergeUsage(base: ChatUsage | undefined, next: ChatUsage): ChatUsage {

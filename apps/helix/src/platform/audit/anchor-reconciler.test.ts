@@ -40,7 +40,9 @@ describe("audit anchor reconciliation", () => {
   it("rejects tampering with an authenticated immutable manifest", async () => {
     const records = chain();
     const archive = await anchoredArchive(records);
-    const key = [...archive.objects.keys()].find((candidate) => candidate.endsWith(".manifest.json"));
+    const key = [...archive.objects.keys()].find((candidate) =>
+      candidate.endsWith(".manifest.json"),
+    );
     if (key === undefined) throw new Error("missing test manifest");
     const manifest = JSON.parse(new TextDecoder().decode(archive.objects.get(key))) as {
       recordCount: number;
@@ -70,7 +72,9 @@ class MemoryArchive implements ImmutableAuditObjectStore, AuditAnchorArchive {
   }
 }
 
-async function anchoredArchive(records: readonly ImmutableAuditActivityRecord[]): Promise<MemoryArchive> {
+async function anchoredArchive(
+  records: readonly ImmutableAuditActivityRecord[],
+): Promise<MemoryArchive> {
   const archive = new MemoryArchive();
   await shipImmutableAuditBatch(
     { store: archive, signer: authenticator, now: () => new Date("2026-09-03T12:00:00.000Z") },

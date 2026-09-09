@@ -417,6 +417,7 @@ describe("registerTenantLifecycleRoutes", () => {
       resolveTenantContext: (request) =>
         resolveTenantContext({
           config: { mode: "multi-tenant-saas" },
+          rootHosts: ["helix.app"],
           orgs: store,
           request,
         }),

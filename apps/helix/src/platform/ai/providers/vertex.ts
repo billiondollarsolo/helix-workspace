@@ -1,6 +1,7 @@
 import { createSign } from "node:crypto";
 import type { ChatRequest, ChatResponse, LLMProviderCapability, ModelInfo } from "@helix/sdk-types";
 import { anthropicChatResponse } from "./anthropic-compatible.js";
+import { joinPaths } from "./url-path.js";
 import {
   anthropicRequestBody,
   approximateTokenCount,
@@ -282,11 +283,4 @@ function base64UrlJson(value: Record<string, string | number>): string {
 
 function base64Url(value: Buffer): string {
   return value.toString("base64url");
-}
-
-function joinPaths(...parts: readonly string[]): string {
-  return `/${parts
-    .flatMap((part) => part.split("/"))
-    .filter((part) => part.length > 0)
-    .join("/")}`;
 }

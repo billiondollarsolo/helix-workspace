@@ -2,10 +2,7 @@ import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { canonicalTimeZone } from "@helix/contracts";
-import {
-  CalendarResourceConflictError,
-  type CalendarSchedulingStore,
-} from "./scheduling.js";
+import { CalendarResourceConflictError, type CalendarSchedulingStore } from "./scheduling.js";
 
 const uuid = z.string().uuid();
 const windowSchema = z.object({
@@ -28,20 +25,26 @@ const findTimeSchema = windowSchema.extend({
   incrementMinutes: z.number().int().min(5).max(240).default(15),
   limit: z.number().int().min(1).max(100).default(10),
 });
-const resourceSchema = z.object({
-  calendarId: uuid,
-  name: z.string().min(1).max(200),
-  kind: z.enum(["room", "equipment"]),
-  timezone: z.string().min(1).refine(isIanaTimeZone),
-  capacity: z.number().int().positive().nullable().optional(),
-  approvalPolicy: z.enum(["auto", "manual"]),
-  approverActorId: uuid.nullable().optional(),
-  metadata: z.record(z.unknown()).default({}),
-}).superRefine((value, context) => {
-  if (value.approvalPolicy === "manual" && value.approverActorId == null) {
-    context.addIssue({ code: "custom", path: ["approverActorId"], message: "manual approval requires an approver" });
-  }
-});
+const resourceSchema = z
+  .object({
+    calendarId: uuid,
+    name: z.string().min(1).max(200),
+    kind: z.enum(["room", "equipment"]),
+    timezone: z.string().min(1).refine(isIanaTimeZone),
+    capacity: z.number().int().positive().nullable().optional(),
+    approvalPolicy: z.enum(["auto", "manual"]),
+    approverActorId: uuid.nullable().optional(),
+    metadata: z.record(z.unknown()).default({}),
+  })
+  .superRefine((value, context) => {
+    if (value.approvalPolicy === "manual" && value.approverActorId == null) {
+      context.addIssue({
+        code: "custom",
+        path: ["approverActorId"],
+        message: "manual approval requires an approver",
+      });
+    }
+  });
 const resourceParams = z.object({ resourceId: uuid });
 const bookingParams = z.object({ bookingId: uuid });
 const bookingSchema = windowSchema.extend({
@@ -71,9 +74,7 @@ export async function registerCalendarSchedulingRoutes(
       actorId: actor.id,
       ...body.data,
     });
-    return profile === null
-      ? reply.code(404).send({ error: "not_found" })
-      : reply.send(profile);
+    return profile === null ? reply.code(404).send({ error: "not_found" }) : reply.send(profile);
   });
 
   app.post("/api/calendar/scheduling/find-time", async (request, reply) => {

@@ -16,7 +16,7 @@ describe("webhook API helpers", () => {
   beforeEach(() => {
     document.cookie = `helix_csrf=${"c".repeat(43)}; Path=/`;
     fetchMock = vi.fn<typeof fetch>((input) => {
-      if (input === "/api/tools/webhook.outbound.list") {
+      if (input === "/v1/api/tools/webhook.outbound.list") {
         return Promise.resolve(
           Response.json({
             webhooks: [
@@ -38,7 +38,7 @@ describe("webhook API helpers", () => {
           }),
         );
       }
-      if (input === "/api/tools/webhook.delivery.list") {
+      if (input === "/v1/api/tools/webhook.delivery.list") {
         return Promise.resolve(
           Response.json({
             deliveries: [
@@ -106,12 +106,12 @@ describe("webhook API helpers", () => {
       }),
     ).resolves.toHaveLength(1);
 
-    expect(fetchBody("/api/tools/webhook.outbound.update")).toEqual({
+    expect(fetchBody("/v1/api/tools/webhook.outbound.update")).toEqual({
       id: "11111111-1111-4111-8111-111111111111",
       enabled: false,
       secretRef: "inline:new-secret",
     });
-    expect(fetchBody("/api/tools/webhook.inbound.create")).toMatchObject({
+    expect(fetchBody("/v1/api/tools/webhook.inbound.create")).toMatchObject({
       name: "GitHub deploy hook",
       slug: "github-deploy",
       source: "github",
@@ -119,15 +119,19 @@ describe("webhook API helpers", () => {
       metadata: { action: { toolId: "chat.send" } },
       secretRef: "inline:test-secret",
     });
-    expect(fetchBody("/api/tools/webhook.delivery.list")).toEqual({
+    expect(fetchBody("/v1/api/tools/webhook.delivery.list")).toEqual({
       direction: "outbound",
       status: "delivered",
-      webhookId: "11111111-1111-4111-8111-111111111111",
+      /* `webhookId` is one field in the UI but two columns on the delivery row,
+         so the direction decides which one it filters. Sent under the UI's own
+         name the server ignored it and returned every endpoint's deliveries —
+         a filter that looks applied and is not. */
+      outboundWebhookId: "11111111-1111-4111-8111-111111111111",
       createdAfter: "2026-05-20T12:00:00.000Z",
       createdBefore: "2026-05-20T13:00:00.000Z",
       limit: 50,
     });
-    expect(headersForCall("/api/tools/webhook.outbound.list").get("authorization")).toBeNull();
+    expect(headersForCall("/v1/api/tools/webhook.outbound.list").get("authorization")).toBeNull();
   });
 
   it("posts inbound verification probes to the public webhook endpoint with source-specific signatures", async () => {

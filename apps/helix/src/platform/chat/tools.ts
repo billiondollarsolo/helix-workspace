@@ -1,18 +1,24 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import {
   chatCreateRoomInputSchema,
+  chatBodyFormatSchema,
   chatDeleteInputSchema,
   chatEditInputSchema,
   chatExportInputSchema,
+  chatRoomExportInputSchema,
   chatImportInputSchema,
   chatImportResultSchema,
   chatInviteInputSchema,
+  chatLegalHoldInputSchema,
   chatListMessagesInputSchema,
   chatMessageSchema,
+  chatRemoveMemberInputSchema,
   chatPinInputSchema,
   chatReactInputSchema,
   chatReactionSchema,
   chatReplyInThreadInputSchema,
+  chatRetentionPolicyGetInputSchema,
+  chatRetentionPolicyInputSchema,
   chatRoomSchema,
   chatRoomExportSchema,
   chatSearchHitSchema,
@@ -23,6 +29,7 @@ import { z } from "zod";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
+import { renderChatBodyHtml } from "./content-safety.js";
 import { ChatMessageNotFoundError, ChatRoomAccessError } from "./errors.js";
 import {
   chatMessageCreatedEvent,
@@ -85,6 +92,52 @@ const chatInviteResultSchema = z.object({
   invitedActorIds: z.array(z.string()),
 });
 
+const chatRemoveMemberResultSchema = z.object({
+  roomId: z.string().uuid(),
+  removedActorId: z.string().uuid(),
+  removed: z.literal(true),
+});
+
+const chatRetentionPolicyResultSchema = z.object({
+  orgId: z.string().uuid(),
+  roomId: z.string().uuid().nullable(),
+  retentionDays: z.number().int(),
+  editWindowSeconds: z.number().int(),
+  deleteWindowSeconds: z.number().int(),
+  legalHold: z.boolean(),
+  updatedAt: z.string(),
+});
+
+const chatRetentionPolicyViewSchema = z.object({
+  orgId: z.string().uuid(),
+  roomId: z.string().uuid().nullable(),
+  retentionDays: z.number().int(),
+  editWindowSeconds: z.number().int(),
+  deleteWindowSeconds: z.number().int(),
+  legalHold: z.boolean(),
+  updatedAt: z.string().nullable(),
+  configured: z.boolean(),
+});
+
+const chatExportResultSchema = z.object({
+  exportId: z.string().uuid(),
+  orgId: z.string().uuid(),
+  generatedAt: z.string(),
+  truncated: z.boolean(),
+  messages: z.array(
+    z.object({
+      id: z.string().uuid(),
+      roomId: z.string().uuid(),
+      actorId: z.string().uuid().nullable(),
+      body: z.string().nullable(),
+      bodyFormat: chatBodyFormatSchema,
+      sentAt: z.string(),
+      editedAt: z.string().nullable(),
+      deletedAt: z.string().nullable(),
+    }),
+  ),
+});
+
 const chatPinRecordSchema = z.object({
   roomId: z.string().uuid(),
   messageId: z.string().uuid(),
@@ -142,7 +195,11 @@ export function createChatToolDefinitions(
             ? {}
             : { clientMessageId: input.clientMessageId }),
         });
-        await options.bus?.publish(message.roomId, chatMessageCreatedEvent(message));
+        await options.bus?.publish(
+          ctx.actor.orgId,
+          message.roomId,
+          chatMessageCreatedEvent(message),
+        );
         await options.classifyResource?.({
           actor: ctx.actor,
           resourceType: "chat.message",
@@ -172,7 +229,11 @@ export function createChatToolDefinitions(
             ? {}
             : { clientMessageId: input.clientMessageId }),
         });
-        await options.bus?.publish(message.roomId, chatMessageCreatedEvent(message));
+        await options.bus?.publish(
+          ctx.actor.orgId,
+          message.roomId,
+          chatMessageCreatedEvent(message),
+        );
         return serializeMessage(message);
       },
     }),
@@ -263,7 +324,11 @@ export function createChatToolDefinitions(
           emoji: input.emoji,
           op: input.op,
         });
-        await options.bus?.publish(result.message.roomId, chatMessageUpdatedEvent(result.message));
+        await options.bus?.publish(
+          ctx.actor.orgId,
+          result.message.roomId,
+          chatMessageUpdatedEvent(result.message),
+        );
         return {
           reaction: result.reaction === null ? null : serializeReaction(result.reaction),
         };
@@ -360,11 +425,16 @@ export function createChatToolDefinitions(
           actorId: ctx.actor.id,
           messageId: input.messageId,
           body: input.body,
+          ...(input.bodyFormat === undefined ? {} : { bodyFormat: input.bodyFormat }),
         });
         if (message === null) {
           throw new ChatMessageNotFoundError(input.messageId);
         }
-        await options.bus?.publish(message.roomId, chatMessageUpdatedEvent(message));
+        await options.bus?.publish(
+          ctx.actor.orgId,
+          message.roomId,
+          chatMessageUpdatedEvent(message),
+        );
         return serializeMessage(message);
       },
     }),
@@ -384,7 +454,11 @@ export function createChatToolDefinitions(
         if (message === null) {
           throw new ChatMessageNotFoundError(input.messageId);
         }
-        await options.bus?.publish(message.roomId, chatMessageDeletedEvent(message, ctx.actor.id));
+        await options.bus?.publish(
+          ctx.actor.orgId,
+          message.roomId,
+          chatMessageDeletedEvent(message, ctx.actor.id),
+        );
         return serializeMessage(message);
       },
     }),
@@ -416,12 +490,12 @@ export function createChatToolDefinitions(
           }),
         ),
     }),
-    defineTool<z.output<typeof chatExportInputSchema>, z.output<typeof chatRoomExportSchema>>({
+    defineTool<z.output<typeof chatRoomExportInputSchema>, z.output<typeof chatRoomExportSchema>>({
       id: "chat.export",
       description: "Export the room history visible to the current actor.",
       permission: "chat.read",
       sideEffects: "read",
-      inputSchema: zodToolSchema(chatExportInputSchema, genericObjectJsonSchema),
+      inputSchema: zodToolSchema(chatRoomExportInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(chatRoomExportSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
         if (options.store.exportRoom === undefined) {
@@ -487,6 +561,29 @@ export function createChatToolDefinitions(
         };
       },
     }),
+    defineTool<
+      z.output<typeof chatRemoveMemberInputSchema>,
+      z.output<typeof chatRemoveMemberResultSchema>
+    >({
+      id: "chat.member.remove",
+      description: "Remove a member from a chat room.",
+      permission: "chat.create",
+      sideEffects: "destructive",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(chatRemoveMemberInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRemoveMemberResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.removeMember === undefined) {
+          throw new Error("This Chat store does not support member removal.");
+        }
+        return options.store.removeMember({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          roomId: input.roomId,
+          removedActorId: input.actorId,
+        });
+      },
+    }),
     defineTool<z.output<typeof chatSearchInputSchema>, z.output<typeof chatSearchResultSchema>>({
       id: "chat.search",
       description: "Search chat messages visible to the current actor.",
@@ -505,6 +602,117 @@ export function createChatToolDefinitions(
           })
         ).map(serializeSearchHit),
       }),
+    }),
+    defineTool<
+      z.output<typeof chatRetentionPolicyGetInputSchema>,
+      z.output<typeof chatRetentionPolicyViewSchema>
+    >({
+      id: "chat.retention.get",
+      description:
+        "Read the organization-default or room-specific Chat retention policy (platform defaults when unset).",
+      permission: "admin.chat",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(chatRetentionPolicyGetInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRetentionPolicyViewSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.getRetentionPolicy === undefined) {
+          throw new Error("This Chat store does not support reading retention policies.");
+        }
+        return serializeRetentionPolicyView(
+          await options.store.getRetentionPolicy({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            ...(input.roomId === undefined ? {} : { roomId: input.roomId }),
+          }),
+        );
+      },
+    }),
+    defineTool<
+      z.output<typeof chatRetentionPolicyInputSchema>,
+      z.output<typeof chatRetentionPolicyResultSchema>
+    >({
+      id: "chat.retention.set",
+      description: "Set organization-default or room-specific Chat retention windows.",
+      permission: "admin.chat",
+      sideEffects: "write",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(chatRetentionPolicyInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRetentionPolicyResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.setRetentionPolicy === undefined) {
+          throw new Error("This Chat store does not support retention policies.");
+        }
+        return serializeRetentionPolicy(
+          await options.store.setRetentionPolicy({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            ...(input.roomId === undefined ? {} : { roomId: input.roomId }),
+            retentionDays: input.retentionDays,
+            editWindowSeconds: input.editWindowSeconds,
+            deleteWindowSeconds: input.deleteWindowSeconds,
+          }),
+        );
+      },
+    }),
+    defineTool<
+      z.output<typeof chatLegalHoldInputSchema>,
+      z.output<typeof chatRetentionPolicyResultSchema>
+    >({
+      id: "chat.legal_hold.set",
+      description: "Enable or disable an organization or room Chat legal hold.",
+      permission: "admin.chat",
+      sideEffects: "write",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(chatLegalHoldInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatRetentionPolicyResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.setLegalHold === undefined) {
+          throw new Error("This Chat store does not support legal holds.");
+        }
+        return serializeRetentionPolicy(
+          await options.store.setLegalHold({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            ...(input.roomId === undefined ? {} : { roomId: input.roomId }),
+            enabled: input.enabled,
+          }),
+        );
+      },
+    }),
+    defineTool<z.output<typeof chatExportInputSchema>, z.output<typeof chatExportResultSchema>>({
+      id: "chat.export.organization",
+      description: "Export stored Chat messages for the current organization.",
+      permission: "admin.chat",
+      sideEffects: "read",
+      confirmationRequired: true,
+      rateLimit: { perActor: { perHour: 2, perDay: 4 } },
+      inputSchema: zodToolSchema(chatExportInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(chatExportResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        if (options.store.exportOrganization === undefined) {
+          throw new Error("This Chat store does not support organization exports.");
+        }
+        const exported = await options.store.exportOrganization({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          roomIds: input.roomIds,
+          ...(input.from === undefined ? {} : { from: new Date(input.from) }),
+          ...(input.to === undefined ? {} : { to: new Date(input.to) }),
+          limit: input.limit,
+        });
+        return {
+          exportId: exported.exportId,
+          orgId: exported.orgId,
+          generatedAt: exported.generatedAt.toISOString(),
+          truncated: exported.truncated,
+          messages: exported.messages.map((message) => ({
+            ...message,
+            sentAt: message.sentAt.toISOString(),
+            editedAt: message.editedAt?.toISOString() ?? null,
+            deletedAt: message.deletedAt?.toISOString() ?? null,
+          })),
+        };
+      },
     }),
   ];
 }
@@ -558,7 +766,11 @@ function serializeMessage(message: ChatMessageRecord) {
     roomId: message.roomId,
     actorId: message.actorId,
     body: message.body,
-    bodyFormat: message.bodyFormat,
+    bodyFormat: chatBodyFormatSchema.parse(message.bodyFormat),
+    renderedBodyHtml: renderChatBodyHtml(
+      message.body,
+      chatBodyFormatSchema.parse(message.bodyFormat),
+    ),
     metadata: message.metadata,
     attachmentObjectIds: [...message.attachmentObjectIds],
     attachments: [...(message.attachments ?? [])],
@@ -615,6 +827,24 @@ function serializeSearchHit(hit: ChatSearchHit) {
     subject: hit.subject,
     preview: hit.preview,
     sentAt: hit.sentAt.toISOString(),
+  };
+}
+
+function serializeRetentionPolicy(
+  policy: Awaited<ReturnType<NonNullable<ChatStore["setRetentionPolicy"]>>>,
+) {
+  return {
+    ...policy,
+    updatedAt: policy.updatedAt.toISOString(),
+  };
+}
+
+function serializeRetentionPolicyView(
+  policy: Awaited<ReturnType<NonNullable<ChatStore["getRetentionPolicy"]>>>,
+) {
+  return {
+    ...policy,
+    updatedAt: policy.updatedAt?.toISOString() ?? null,
   };
 }
 

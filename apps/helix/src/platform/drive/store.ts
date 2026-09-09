@@ -1,17 +1,69 @@
+import type { DriveConfig } from "./config.js";
+import type { DriveUploadStatusRecord } from "./types.js";
+import { driveUploadStateFromMetadata, userFacingDriveUploadState } from "./upload-state.js";
 // ponytail: IO adapter still >400 LOC (quota SQL, comments, PDF form, WebDAV read); follow-up split: comments-store, pdf-form-store, share-links-store.
+import type {
+  Actor,
+  EventBus,
+  JsonObject,
+  JsonValue,
+  StorageClient,
+  StorageObject,
+} from "@helix/sdk-types";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import type { Actor, EventBus, JsonObject, StorageClient, StorageObject } from "@helix/sdk-types";
-import { RateLimitedError } from "../../api/api-error.js";
+import { BadRequestError, RateLimitedError } from "../../api/api-error.js";
 import { env } from "../../config/env.js";
 import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
 import { canonicalizeJson } from "../audit.js";
 import { computeAuditHash } from "../audit/hash.js";
 import { hashSecret, verifySecret } from "../auth/oauth.js";
+import { dlpDecisionError, type DlpGuard } from "../dlp.js";
 import { insertNotification } from "../notifications/index.js";
 import { grantObjectAccess } from "../permissions/grant-object-access.js";
 import type { TenantPresignedPutUpload, TenantStorageResolver } from "../storage/index.js";
 import { withTenantIoSagaPostgresContext as withTenantPostgresContext } from "../tenancy/postgres-roles.js";
+import {
+  isDriveBlobStorageKey,
+  resolveFinalizeStorageKey,
+  shouldDeleteBlobStorage,
+} from "./core/dedup.js";
+import {
+  bytesFromDatabase,
+  mapDriveAccessGrant as mapDriveAccessGrantCore,
+  mapObjectEntry as mapObjectEntryCore,
+  mapSearchHit as mapSearchHitCore,
+  mapVersion as mapVersionCore,
+  nullableStringMetadata,
+  stringMetadata,
+} from "./core/mappers.js";
+import { mentionedActorIds, mentionTokensForComment } from "./core/mentions.js";
+import { distinctStoredBytes } from "./core/quota.js";
+import { driveRoleRank, hasRoleAtLeast, parseDriveRole, type DriveRole } from "./core/roles.js";
+import { driveQuarantineStorageKey, driveStorageKey } from "./core/storage-key.js";
+import {
+  DriveConflictError,
+  DriveForbiddenError,
+  DriveNotFoundError,
+  DriveStorageQuotaExceededError,
+} from "./errors.js";
+import {
+  DEFAULT_MULTIPART_PART_SIZE,
+  DEFAULT_MULTIPART_THRESHOLD,
+  MAX_MULTIPART_PARTS,
+  planMultipartParts,
+  shouldUseMultipartUpload,
+  validateCompletedParts,
+} from "./multipart.js";
+import {
+  createNoopVirusScanner,
+  isNoopVirusScanner,
+  resolveEffectiveMime,
+  sniffMimeType,
+  type VirusScanner,
+  type VirusScanResult,
+} from "./scanning.js";
+import { verifyDriveSharePassword } from "./share-link-security.js";
 import type {
   AcquireDriveWebDavLockInput,
   DriveAccessGrantRecord,
@@ -25,63 +77,15 @@ import type {
   DriveEnrichmentWrite,
   DriveEntryPage,
   DriveEntryRecord,
-  DrivePdfFormStateRecord,
-  DrivePreview,
-  DriveSearchProjectionStore,
   DriveSearchHit,
+  DriveSearchProjectionStore,
   DriveSearchRecord,
   DriveUploadRecord,
   DriveVersionRecord,
   DriveWebDavChangePage,
   DriveWebDavLock,
 } from "./types.js";
-import { BadRequestError } from "../../api/api-error.js";
-import {
-  DriveConflictError,
-  DriveForbiddenError,
-  DriveNotFoundError,
-  DriveStorageQuotaExceededError,
-} from "./errors.js";
-import { type DriveRole, driveRoleRank, hasRoleAtLeast, parseDriveRole } from "./core/roles.js";
-import { driveQuarantineStorageKey, driveStorageKey } from "./core/storage-key.js";
-import {
-  isDriveBlobStorageKey,
-  resolveFinalizeStorageKey,
-  shouldDeleteBlobStorage,
-} from "./core/dedup.js";
-import {
-  DEFAULT_MULTIPART_PART_SIZE,
-  DEFAULT_MULTIPART_THRESHOLD,
-  MAX_MULTIPART_PARTS,
-  planMultipartParts,
-  shouldUseMultipartUpload,
-  validateCompletedParts,
-} from "./multipart.js";
-import { distinctStoredBytes } from "./core/quota.js";
-import { mentionedActorIds, mentionTokensForComment } from "./core/mentions.js";
-import { createDefaultTrashSyncRegistry, type TrashSyncRegistry } from "./core/trash-sync.js";
-import {
-  bytesFromDatabase,
-  mapDriveAccessGrant as mapDriveAccessGrantCore,
-  mapObjectEntry as mapObjectEntryCore,
-  mapSearchHit as mapSearchHitCore,
-  mapVersion as mapVersionCore,
-  nullableStringMetadata,
-  stringMetadata,
-} from "./core/mappers.js";
-import { officePreviewStorageKey, type OfficePreviewConverter } from "./preview.js";
-import {
-  createNoopVirusScanner,
-  isNoopVirusScanner,
-  resolveEffectiveMime,
-  sniffMimeType,
-  type VirusScanResult,
-  type VirusScanner,
-} from "./scanning.js";
-import { dlpDecisionError, type DlpGuard } from "../dlp.js";
-
 export { DriveStorageQuotaExceededError } from "./errors.js";
-
 export interface DriveStorageClient extends StorageClient {
   presignGetUrl?(
     key: string,
@@ -109,22 +113,31 @@ export interface DriveStorageClient extends StorageClient {
   ): Promise<TenantPresignedPutUpload>;
   createMultipartUpload?(
     key: string,
-    options?: { readonly contentType?: string },
-  ): Promise<{ readonly uploadId: string }>;
+    options?: {
+      readonly contentType?: string;
+    },
+  ): Promise<{
+    readonly uploadId: string;
+  }>;
   presignUploadPart?(
     key: string,
     uploadId: string,
     partNumber: number,
-    options?: { readonly contentType?: string; readonly expiresSeconds?: number },
+    options?: {
+      readonly contentType?: string;
+      readonly expiresSeconds?: number;
+    },
   ): Promise<string>;
   completeMultipartUpload?(
     key: string,
     uploadId: string,
-    parts: readonly { readonly partNumber: number; readonly etag: string }[],
+    parts: readonly {
+      readonly partNumber: number;
+      readonly etag: string;
+    }[],
   ): Promise<void>;
   abortMultipartUpload?(key: string, uploadId: string): Promise<void>;
 }
-
 export interface PrepareDriveUploadInput {
   readonly orgId: string;
   readonly actorId: string;
@@ -135,7 +148,6 @@ export interface PrepareDriveUploadInput {
   readonly sha256?: string;
   readonly metadata?: JsonObject;
 }
-
 export interface FinalizeDriveUploadInput {
   readonly orgId: string;
   readonly actorId: string;
@@ -147,22 +159,35 @@ export interface FinalizeDriveUploadInput {
   readonly metadata?: JsonObject;
   readonly idempotencyKey?: string;
 }
-
 export interface CompleteMultipartUploadInput {
   readonly orgId: string;
   readonly actorId: string;
   readonly objectId: string;
   readonly uploadId: string;
-  readonly parts: readonly { readonly partNumber: number; readonly etag: string }[];
+  readonly parts: readonly {
+    readonly partNumber: number;
+    readonly etag: string;
+  }[];
   readonly byteSize: number;
   readonly sha256?: string;
   readonly mimeType?: string;
   readonly metadata?: JsonObject;
 }
-
 export type DriveDocumentSurfaceView = "grid" | "list";
-
 export interface DriveStore {
+  getStorageQuotaUsage?(input: { readonly orgId: string }): Promise<DriveStorageQuotaUsageRecord>;
+  getLifecyclePolicy?(input: { readonly orgId: string }): Promise<DriveLifecyclePolicyRecord>;
+  setLifecyclePolicy?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly trashRetentionDays: number;
+    readonly orphanGraceHours: number;
+  }): Promise<DriveLifecyclePolicyRecord>;
+  getUploadStatus?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<DriveUploadStatusRecord | null>;
   prepareUpload(input: PrepareDriveUploadInput): Promise<DriveUploadRecord>;
   finalizeUpload(input: FinalizeDriveUploadInput): Promise<DriveVersionRecord>;
   openFile?(input: DriveFileReadInput): Promise<DriveFileStreamResult | null>;
@@ -174,7 +199,6 @@ export interface DriveStore {
     readonly includeTrashed?: boolean;
     readonly limit?: number;
     readonly cursor?: string;
-    readonly app?: string | null;
     /** Filter by object kind. Defaults to 'file' so existing callers stay
      *  unchanged; pass 'recording' for the Recordings drive surface. */
     readonly kind?: string | null;
@@ -322,22 +346,6 @@ export interface DriveStore {
     readonly actorId: string;
     readonly commentId: string;
   }): Promise<DriveCommentRecord | null>;
-  getPdfFormState?(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly objectId: string;
-  }): Promise<DrivePdfFormStateRecord | null>;
-  savePdfFormState?(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly objectId: string;
-    readonly fieldValues: readonly JsonObject[];
-  }): Promise<DrivePdfFormStateRecord>;
-  clearPdfFormState?(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly objectId: string;
-  }): Promise<boolean>;
   rename?(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -362,6 +370,8 @@ export interface DriveStore {
     readonly objectId: string;
     readonly password?: string | undefined;
     readonly expiresAt?: Date | null;
+    readonly maxDownloads?: number | null;
+    readonly rateLimitPerHour?: number;
     readonly oneTime?: boolean | undefined;
     readonly allowedDomains?: readonly string[] | undefined;
     readonly allowDownload?: boolean | undefined;
@@ -383,7 +393,6 @@ export interface DriveStore {
   /** Public-link content access. The raw token is never persisted. */
   openFileByShareToken?(input: DriveShareAccessInput): Promise<DriveFileStreamResult | null>;
 }
-
 export interface DriveShareAccessInput {
   readonly token: string;
   readonly clientKey: string;
@@ -391,7 +400,6 @@ export interface DriveShareAccessInput {
   readonly actor?: Pick<Actor, "id" | "orgId" | "email"> | undefined;
   readonly download?: boolean | undefined;
 }
-
 export interface DriveShareLinkRecord {
   readonly id: string;
   readonly orgId: string;
@@ -400,6 +408,9 @@ export interface DriveShareLinkRecord {
   readonly role: "reader";
   readonly expiresAt: Date | null;
   readonly passwordProtected: boolean;
+  readonly maxDownloads: number | null;
+  readonly downloadCount: number;
+  readonly rateLimitPerHour: number;
   readonly oneTime: boolean;
   readonly allowedDomains: readonly string[];
   readonly allowDownload: boolean;
@@ -408,7 +419,6 @@ export interface DriveShareLinkRecord {
   readonly createdAt: Date;
   readonly revokedAt: Date | null;
 }
-
 export interface DriveFolderCreateInput {
   readonly orgId: string;
   readonly actorId: string;
@@ -416,19 +426,15 @@ export interface DriveFolderCreateInput {
   readonly parentFolderId?: string | null;
   readonly metadata?: JsonObject;
 }
-
 export interface DriveFileReadInput {
   readonly orgId: string;
   readonly actorId: string;
   readonly objectId: string;
 }
-
 export interface DriveFileReadResult {
   readonly entry: DriveEntryRecord;
   readonly content: Uint8Array | null;
-  readonly previewContent?: Uint8Array | null;
 }
-
 export interface DriveObjectStream {
   readonly byteSize: number;
   readonly etag: string;
@@ -437,15 +443,12 @@ export interface DriveObjectStream {
     readonly end: number;
   }) => Promise<StorageObject["body"] | null>;
 }
-
 export interface DriveFileStreamResult extends DriveObjectStream {
   readonly orgId?: string;
   readonly entry: DriveEntryRecord;
-  readonly preview?: DriveObjectStream;
 }
-
 export interface PostgresDriveStoreOptions {
-  readonly officePreviewConverter?: OfficePreviewConverter;
+  readonly gc?: DriveConfig["gc"];
   readonly events?: Pick<EventBus, "publish">;
   readonly onQuotaEventError?: (error: unknown) => void;
   readonly metrics?:
@@ -472,11 +475,6 @@ export interface PostgresDriveStoreOptions {
   readonly virusScanRetryDelayMs?: number;
   readonly onVirusScanUnavailable?: (event: DriveVirusScanUnavailableEvent) => void;
   readonly onQuarantineDeleteError?: (event: DriveQuarantineDeleteErrorEvent) => void;
-  /**
-   * Cross-app trash/restore cascade registry (docs/sheets/slides handlers).
-   * Defaults to {@link createDefaultTrashSyncRegistry}.
-   */
-  readonly trashSync?: TrashSyncRegistry;
   /** When true, finalize uses content-addressed blob keys + refcounts. */
   readonly contentAddressedDedup?: boolean;
   /** Multipart threshold in bytes (default 8 MiB). */
@@ -486,7 +484,6 @@ export interface PostgresDriveStoreOptions {
   readonly multipartSessionTtlMs?: number;
   readonly dlp?: DlpGuard;
 }
-
 export interface DriveVirusScanUnavailableEvent {
   readonly orgId: string;
   readonly objectId: string;
@@ -494,7 +491,6 @@ export interface DriveVirusScanUnavailableEvent {
   readonly status: "pending" | "dead_lettered";
   readonly error: string;
 }
-
 export interface DriveQuarantineDeleteErrorEvent {
   readonly orgId: string;
   readonly objectId: string;
@@ -502,20 +498,17 @@ export interface DriveQuarantineDeleteErrorEvent {
   readonly attempts: number;
   readonly error: string;
 }
-
 export interface DriveVirusScanRetryBatchResult {
   readonly claimed: number;
   readonly completed: number;
   readonly failed: number;
 }
-
 export interface RetryDeadLetteredVirusScanInput {
   readonly orgId: string;
   readonly objectId: string;
   readonly actorId: string;
   readonly reason: string;
 }
-
 interface ObjectRow {
   readonly id: string;
   readonly org_id: string;
@@ -532,7 +525,6 @@ interface ObjectRow {
   readonly created_at: Date;
   readonly updated_at: Date;
 }
-
 interface DriveVersionRow {
   readonly id: string;
   readonly org_id: string;
@@ -546,7 +538,6 @@ interface DriveVersionRow {
   readonly created_by_actor_id: string | null;
   readonly created_at: Date;
 }
-
 interface DriveFolderRow {
   readonly id: string;
   readonly org_id: string;
@@ -561,21 +552,18 @@ interface DriveFolderRow {
   readonly created_at: Date;
   readonly updated_at: Date;
 }
-
 interface DriveSearchRow extends ObjectRow {
   readonly version_number: number | null;
   readonly mine?: boolean | null;
   readonly shared_count?: number | string | null;
   readonly starred?: boolean | null;
 }
-
 interface DriveListRow {
   readonly entry_type: "file" | "folder";
   readonly id: string;
   readonly name: string;
   readonly folder_id: string | null;
   readonly owner_actor_id: string | null;
-  readonly app: string | null;
   readonly mime_type: string | null;
   readonly byte_size: string | number | null;
   readonly sha256: string | null;
@@ -592,14 +580,12 @@ interface DriveListRow {
   readonly sort_type: number;
   readonly snapshot_at: Date;
 }
-
 interface DriveSearchProjectionRow extends ObjectRow {
   readonly owner_display_name: string | null;
   readonly owner_email: string | null;
   readonly folder_path: readonly string[];
   readonly allowed_actor_ids: readonly string[];
 }
-
 interface StorageQuotaDecisionRow {
   readonly accepted: boolean;
   readonly used_bytes: string | number;
@@ -607,7 +593,6 @@ interface StorageQuotaDecisionRow {
   readonly limit_bytes: string | number | null;
   readonly projected_bytes: string | number;
 }
-
 interface DriveAccessGrantRow {
   readonly actor_id: string;
   readonly role: string;
@@ -618,7 +603,6 @@ interface DriveAccessGrantRow {
   readonly created_at: Date;
   readonly updated_at: Date;
 }
-
 interface DriveCommentRow {
   readonly id: string;
   readonly org_id: string;
@@ -638,7 +622,6 @@ interface DriveCommentRow {
   readonly created_at: Date;
   readonly updated_at: Date | null;
 }
-
 interface DriveCommentRevisionRow {
   readonly id: string;
   readonly org_id: string;
@@ -659,7 +642,6 @@ interface DriveCommentRevisionRow {
   readonly changed_by_actor_id: string;
   readonly captured_at: Date;
 }
-
 interface DriveShareLinkRow {
   readonly id: string;
   readonly org_id: string;
@@ -667,6 +649,9 @@ interface DriveShareLinkRow {
   readonly object_id: string;
   readonly role: "reader";
   readonly password_hash: string | null;
+  readonly max_downloads: number | null;
+  readonly download_count: number;
+  readonly rate_limit_per_hour: number;
   readonly one_time: boolean;
   readonly allowed_domains: readonly string[];
   readonly allow_download: boolean;
@@ -679,7 +664,6 @@ interface DriveShareLinkRow {
   readonly created_at: Date;
   readonly revoked_at: Date | null;
 }
-
 interface DriveShareLinkAccessRow extends ObjectRow {
   readonly link_id: string;
   readonly link_org_id: string;
@@ -687,6 +671,9 @@ interface DriveShareLinkAccessRow extends ObjectRow {
   readonly token_hash: string;
   readonly role: "reader";
   readonly password_hash: string | null;
+  readonly max_downloads: number | null;
+  readonly download_count: number;
+  readonly rate_limit_per_hour: number;
   readonly one_time: boolean;
   readonly allowed_domains: readonly string[];
   readonly allow_download: boolean;
@@ -699,7 +686,6 @@ interface DriveShareLinkAccessRow extends ObjectRow {
   readonly link_created_at: Date;
   readonly revoked_at: Date | null;
 }
-
 interface DriveScanJobRow {
   readonly id: string;
   readonly org_id: string;
@@ -710,11 +696,9 @@ interface DriveScanJobRow {
   readonly next_attempt_at: Date | null;
   readonly finalize_metadata: JsonObject;
 }
-
 interface DriveScanFailureRow extends DriveScanJobRow {
   readonly status: "pending" | "dead_lettered";
 }
-
 interface DriveScanClaimRow extends DriveScanJobRow {
   readonly owner_actor_id: string | null;
   readonly storage_key: string;
@@ -722,7 +706,6 @@ interface DriveScanClaimRow extends DriveScanJobRow {
   readonly byte_size: string | number;
   readonly sha256: string | null;
 }
-
 interface DriveQuarantineDeletionRow {
   readonly id: string;
   readonly org_id: string;
@@ -734,7 +717,6 @@ interface DriveQuarantineDeletionRow {
   readonly next_attempt_at: Date;
   readonly completed_at?: Date | null;
 }
-
 interface DriveMultipartSessionRow {
   readonly id: string;
   readonly org_id: string;
@@ -743,12 +725,7 @@ interface DriveMultipartSessionRow {
   readonly storage_key: string;
   readonly upload_id: string | null;
   readonly status:
-    | "provisioning"
-    | "pending"
-    | "completing"
-    | "uploaded"
-    | "completed"
-    | "aborting";
+    "provisioning" | "pending" | "completing" | "uploaded" | "completed" | "aborting";
   readonly byte_size: string | number;
   readonly part_size: number;
   readonly part_count: number;
@@ -758,32 +735,15 @@ interface DriveMultipartSessionRow {
   readonly version_id: string | null;
   readonly last_error: string | null;
 }
-
 interface DriveMultipartSweepRow extends DriveMultipartSessionRow {
   readonly prior_status: DriveMultipartSessionRow["status"];
 }
-
 interface DriveMultipartClaim {
   readonly session: DriveMultipartSessionRow;
   readonly object: ObjectRow;
   readonly version?: DriveVersionRecord;
   readonly completeStorage: boolean;
 }
-
-interface DrivePreviewJobRow {
-  readonly id: string;
-  readonly org_id: string;
-  readonly object_id: string;
-  readonly version_id: string;
-  readonly actor_id: string | null;
-  readonly attempt_count: number;
-  readonly storage_key: string;
-  readonly mime_type: string;
-  readonly byte_size: string | number;
-  readonly version_number: number;
-  readonly object_metadata: JsonObject;
-}
-
 interface DriveFinalizationClaim {
   readonly object: ObjectRow;
   readonly token: string;
@@ -791,33 +751,14 @@ interface DriveFinalizationClaim {
   readonly reservedKey: string;
   readonly versionNumber: number;
 }
-
 type DrivePreparedUploadSweepRow = ObjectRow;
-
 interface DriveCommentProjectionRow extends DriveCommentRow {
   readonly actor_display_name: string | null;
   readonly actor_email: string | null;
 }
-
 interface DriveCommentObjectContext extends ObjectRow {
   readonly comment_role_rank: number;
 }
-
-interface DrivePdfFormStateRow {
-  readonly org_id: string;
-  readonly object_id: string;
-  readonly actor_id: string;
-  readonly field_values: readonly JsonObject[];
-  readonly source_version_number: number | null;
-  readonly source_sha256: string | null;
-  readonly source_byte_size: string | number | null;
-  readonly created_at: Date;
-  readonly updated_at: Date;
-  readonly current_source_version_number?: number | null;
-  readonly current_source_sha256?: string | null;
-  readonly current_source_byte_size?: string | number | null;
-}
-
 interface DriveWebDavLockRow {
   readonly path_key: string;
   readonly token: string;
@@ -828,52 +769,245 @@ interface DriveWebDavLockRow {
   readonly created_at: Date;
   readonly expires_at: Date;
 }
-
 interface DriveWebDavCollectionRow {
   readonly version: string | number;
   readonly min_version: string | number;
 }
-
 interface DriveWebDavChangeRow {
   readonly resource_path_key: string;
   readonly resource_type: "file" | "folder";
   readonly status: 200 | 404;
   readonly version: string | number;
 }
-
 type SqlLike = postgres.Sql | postgres.TransactionSql;
-
 const DEFAULT_VIRUS_SCAN_MAX_ATTEMPTS = 5;
-const DEFAULT_VIRUS_SCAN_RETRY_DELAY_MS = 30_000;
-const DEFAULT_UPLOAD_LEASE_MS = 120_000;
-const DEFAULT_MULTIPART_SESSION_TTL_MS = 15 * 60_000;
-
-interface PdfFormSourceMetadata {
-  readonly versionNumber: number | null;
-  readonly sha256: string | null;
-  readonly byteSize: number | null;
+const DEFAULT_VIRUS_SCAN_RETRY_DELAY_MS = 30000;
+const DEFAULT_UPLOAD_LEASE_MS = 120000;
+const DEFAULT_MULTIPART_SESSION_TTL_MS = 15 * 60000;
+export interface DriveStorageQuotaUsageRecord {
+  readonly orgId: string;
+  readonly usedBytes: number;
+  readonly limitBytes: number | null;
+  readonly unlimited: boolean;
+  readonly percentUsed: number | null;
 }
-
+export interface DriveLifecyclePolicyRecord {
+  readonly orgId: string;
+  readonly trashRetentionDays: number;
+  readonly orphanGraceHours: number;
+  readonly updatedByActorId: string | null;
+  readonly updatedAt: Date | null;
+  readonly configured: boolean;
+}
+interface DriveStorageQuotaRow {
+  readonly storage_bytes_limit: JsonValue | null;
+  readonly storage_used_bytes: string | number;
+}
+function storageLimitFromJson(value: JsonValue | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 5000000000;
+}
 export class PostgresDriveStore
   implements DriveStore, DriveSearchProjectionStore, DriveEnrichmentProjectionStore
 {
-  private readonly trashSync: TrashSyncRegistry;
+  async getStorageQuotaUsage(input: {
+    readonly orgId: string;
+  }): Promise<DriveStorageQuotaUsageRecord> {
+    const rows = await this.sql<readonly DriveStorageQuotaRow[]>`
+      select
+        case
+          when o.quotas ? 'storage_bytes_limit' then o.quotas -> 'storage_bytes_limit'
+          when p.quotas_default ? 'storage_bytes_limit' then p.quotas_default -> 'storage_bytes_limit'
+          else '5000000000'::jsonb
+        end as storage_bytes_limit,
+        helix_storage_usage_bytes(${input.orgId}) as storage_used_bytes
+      from orgs o
+      left join plans p on p.id = o.plan_id
+      where o.id = ${input.orgId}
+      limit 1
+    `;
+    const row = rows[0];
+    const usedBytes = row === undefined ? 0 : bytesFromDatabase(row.storage_used_bytes);
+    const limitBytes =
+      row === undefined ? 5000000000 : storageLimitFromJson(row.storage_bytes_limit);
+    const unlimited = limitBytes === null;
+    const percentUsed =
+      unlimited || limitBytes === 0
+        ? null
+        : Math.min(100, Math.round((usedBytes / limitBytes) * 10000) / 100);
+    return {
+      orgId: input.orgId,
+      usedBytes,
+      limitBytes,
+      unlimited,
+      percentUsed,
+    };
+  }
+  async getLifecyclePolicy(input: { readonly orgId: string }): Promise<DriveLifecyclePolicyRecord> {
+    const rows = await this.sql<
+      readonly {
+        readonly org_id: string;
+        readonly trash_retention_days: number;
+        readonly orphan_grace_hours: number;
+        readonly updated_by_actor_id: string | null;
+        readonly updated_at: Date;
+      }[]
+    >`
+      select org_id, trash_retention_days, orphan_grace_hours, updated_by_actor_id, updated_at
+      from drive_lifecycle_policies
+      where org_id = ${input.orgId}
+      limit 1
+    `;
+    const row = rows[0];
+    if (row === undefined) {
+      return {
+        orgId: input.orgId,
+        trashRetentionDays: 30,
+        orphanGraceHours: 24,
+        updatedByActorId: null,
+        updatedAt: null,
+        configured: false,
+      };
+    }
+    return {
+      orgId: row.org_id,
+      trashRetentionDays: row.trash_retention_days,
+      orphanGraceHours: row.orphan_grace_hours,
+      updatedByActorId: row.updated_by_actor_id,
+      updatedAt: row.updated_at,
+      configured: true,
+    };
+  }
+  async setLifecyclePolicy(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly trashRetentionDays: number;
+    readonly orphanGraceHours: number;
+  }): Promise<DriveLifecyclePolicyRecord> {
+    if (
+      !Number.isInteger(input.trashRetentionDays) ||
+      input.trashRetentionDays < 1 ||
+      input.trashRetentionDays > 3650
+    ) {
+      throw new DriveConflictError("trash_retention_days must be an integer from 1 to 3650.");
+    }
+    if (
+      !Number.isInteger(input.orphanGraceHours) ||
+      input.orphanGraceHours < 1 ||
+      input.orphanGraceHours > 720
+    ) {
+      throw new DriveConflictError("orphan_grace_hours must be an integer from 1 to 720.");
+    }
+    const rows = await this.sql<
+      readonly {
+        readonly org_id: string;
+        readonly trash_retention_days: number;
+        readonly orphan_grace_hours: number;
+        readonly updated_by_actor_id: string | null;
+        readonly updated_at: Date;
+      }[]
+    >`
+      insert into drive_lifecycle_policies (
+        org_id, trash_retention_days, orphan_grace_hours, updated_by_actor_id, updated_at
+      )
+      values (
+        ${input.orgId},
+        ${input.trashRetentionDays},
+        ${input.orphanGraceHours},
+        ${input.actorId},
+        now()
+      )
+      on conflict (org_id) do update set
+        trash_retention_days = excluded.trash_retention_days,
+        orphan_grace_hours = excluded.orphan_grace_hours,
+        updated_by_actor_id = excluded.updated_by_actor_id,
+        updated_at = now()
+      returning org_id, trash_retention_days, orphan_grace_hours, updated_by_actor_id, updated_at
+    `;
+    const row = rows[0];
+    if (row === undefined) {
+      throw new DriveConflictError("Expected drive_lifecycle_policies row.");
+    }
+    await appendDriveActivity(this.sql, {
+      orgId: input.orgId,
+      actorId: input.actorId,
+      // Org-scoped policy: record against the org id as the activity object.
+      objectId: input.orgId,
+      verb: "drive.lifecycle.policy_updated",
+      payload: {
+        trashRetentionDays: row.trash_retention_days,
+        orphanGraceHours: row.orphan_grace_hours,
+      },
+    });
+    return {
+      orgId: row.org_id,
+      trashRetentionDays: row.trash_retention_days,
+      orphanGraceHours: row.orphan_grace_hours,
+      updatedByActorId: row.updated_by_actor_id,
+      updatedAt: row.updated_at,
+      configured: true,
+    };
+  }
+  async getUploadStatus(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+  }): Promise<DriveUploadStatusRecord | null> {
+    const rows = await this.sql<
+      readonly {
+        readonly id: string;
+        readonly deleted_at: Date | null;
+        readonly metadata: JsonObject;
+        readonly updated_at: Date;
+      }[]
+    >`
+      select id, updated_at, deleted_at, metadata
+      from objects
+      where id = ${input.objectId}
+        and org_id = ${input.orgId}
+        and kind = 'file'
+        and (
+          owner_actor_id = ${input.actorId}
+          or exists (
+            select 1 from permissions p
+            where p.resource_type = 'object'
+              and p.resource_id = objects.id
+              and p.org_id = ${input.orgId}
+              and p.actor_id = ${input.actorId}
+              and (p.expires_at is null or p.expires_at > now())
+          )
+        )
+      limit 1
+    `;
+    const row = rows[0];
+    if (row === undefined) {
+      return null;
+    }
+    const state = driveUploadStateFromMetadata(row.metadata.status, row.deleted_at);
+    const userFacing = userFacingDriveUploadState(state);
+    return {
+      objectId: row.id,
+      state,
+      ...userFacing,
+      updatedAt: row.updated_at,
+    };
+  }
   private readonly virusScanner: VirusScanner;
   private virusScanOrgCursor: string | undefined;
-
+  private readonly nextBlobReconciliation = new Map<string, number>();
   constructor(
     private readonly sql: postgres.Sql,
     private readonly storage?: DriveStorageClient,
     private readonly options: PostgresDriveStoreOptions = {},
   ) {
-    this.trashSync = options.trashSync ?? createDefaultTrashSyncRegistry();
     this.virusScanner = options.virusScanner ?? createNoopVirusScanner();
     const scannerRequired = options.requireVirusScanner ?? env().NODE_ENV === "production";
     if (scannerRequired && isNoopVirusScanner(this.virusScanner)) {
       throw new Error("Drive antivirus scanner is required in production and secure tiers.");
     }
   }
-
   async acquireWebDavLock(input: AcquireDriveWebDavLockInput): Promise<DriveWebDavLock | null> {
     assertWebDavPathKey(input.pathKey);
     const refreshToken = input.token === undefined ? undefined : webDavLockUuid(input.token);
@@ -918,7 +1052,6 @@ export class PostgresDriveStore
       },
     );
   }
-
   async listWebDavLocks(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -948,7 +1081,6 @@ export class PostgresDriveStore
         ).map(mapDriveWebDavLock),
     );
   }
-
   async releaseWebDavLock(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -969,7 +1101,6 @@ export class PostgresDriveStore
     );
     return rows.length === 1;
   }
-
   async listWebDavChanges(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -1026,7 +1157,6 @@ export class PostgresDriveStore
       },
     );
   }
-
   async prepareUpload(input: PrepareDriveUploadInput): Promise<DriveUploadRecord> {
     const storage = await this.storageForOrg(input.orgId);
     const threshold = this.options.multipartThresholdBytes ?? DEFAULT_MULTIPART_THRESHOLD;
@@ -1039,7 +1169,7 @@ export class PostgresDriveStore
         : undefined;
     const expiresAt = new Date(
       Date.now() +
-        Math.max(1_000, this.options.multipartSessionTtlMs ?? DEFAULT_MULTIPART_SESSION_TTL_MS),
+        Math.max(1000, this.options.multipartSessionTtlMs ?? DEFAULT_MULTIPART_SESSION_TTL_MS),
     );
     const prepared = await withTenantPostgresContext(
       this.sql,
@@ -1048,7 +1178,6 @@ export class PostgresDriveStore
         if (input.folderId !== undefined && input.folderId !== null) {
           await requireFolderAddChildren(tx, input.orgId, input.actorId, input.folderId);
         }
-
         const objectId = randomUUID();
         const storageKey = driveStorageKey(input.orgId, objectId, 1, input.name);
         const metadata = driveObjectMetadata({
@@ -1074,7 +1203,6 @@ export class PostgresDriveStore
         )
         returning *
       `;
-
         await reserveDriveStorageQuota(
           tx,
           input.orgId,
@@ -1085,7 +1213,6 @@ export class PostgresDriveStore
             this.emitStorageQuotaExceeded(input.orgId, event);
           },
         );
-
         await grantObjectAccess(tx, {
           orgId: input.orgId,
           actorId: input.actorId,
@@ -1119,7 +1246,6 @@ export class PostgresDriveStore
         return mapUpload(rows[0]);
       },
     );
-
     if (multipart === undefined) {
       try {
         const upload = await this.presignPutRequest(storage, prepared.storageKey, input.mimeType);
@@ -1133,7 +1259,6 @@ export class PostgresDriveStore
         throw error;
       }
     }
-
     let uploadId: string | undefined;
     try {
       if (storage?.createMultipartUpload === undefined || storage.presignUploadPart === undefined) {
@@ -1146,7 +1271,7 @@ export class PostgresDriveStore
       await withTenantPostgresContext(this.sql, { orgId: input.orgId }, (tx) =>
         bindDriveMultipartSession(tx, input.orgId, prepared.objectId, uploadId as string),
       );
-      const expiresSeconds = Math.max(1, Math.ceil((expiresAt.getTime() - Date.now()) / 1_000));
+      const expiresSeconds = Math.max(1, Math.ceil((expiresAt.getTime() - Date.now()) / 1000));
       const partUrls = await Promise.all(
         multipart.parts.map((part) =>
           presignUploadPart(prepared.storageKey, uploadId as string, part.partNumber, {
@@ -1183,7 +1308,6 @@ export class PostgresDriveStore
       throw error;
     }
   }
-
   async completeMultipartUpload(input: CompleteMultipartUploadInput): Promise<DriveVersionRecord> {
     const validated = validateCompletedParts(input.parts, input.parts.length);
     if (!validated.ok) {
@@ -1196,7 +1320,6 @@ export class PostgresDriveStore
       (tx) => claimDriveMultipartCompletion(tx, input, completionHash),
     );
     if (claim.version !== undefined) return claim.version;
-
     const storage = await this.storageForOrg(input.orgId);
     if (storage?.completeMultipartUpload === undefined) {
       await this.releaseMultipartCompletion(claim.session, "Multipart storage is unavailable.");
@@ -1220,7 +1343,6 @@ export class PostgresDriveStore
         markDriveMultipartUploaded(tx, claim.session, completionHash),
       );
     }
-
     const version = await this.finalizeUpload({
       orgId: input.orgId,
       actorId: input.actorId,
@@ -1236,7 +1358,6 @@ export class PostgresDriveStore
     );
     return version;
   }
-
   async finalizeUpload(input: FinalizeDriveUploadInput): Promise<DriveVersionRecord> {
     const startedAt = Date.now();
     try {
@@ -1245,7 +1366,7 @@ export class PostgresDriveStore
         capability: "drive",
         operation: "finalize",
         status: "success",
-        durationSeconds: (Date.now() - startedAt) / 1_000,
+        durationSeconds: (Date.now() - startedAt) / 1000,
       });
       return version;
     } catch (error) {
@@ -1253,12 +1374,11 @@ export class PostgresDriveStore
         capability: "drive",
         operation: "finalize",
         status: "error",
-        durationSeconds: (Date.now() - startedAt) / 1_000,
+        durationSeconds: (Date.now() - startedAt) / 1000,
       });
       throw error;
     }
   }
-
   private async finalizeUploadForScan(
     input: FinalizeDriveUploadInput,
     fromRetryWorker: boolean,
@@ -1278,7 +1398,6 @@ export class PostgresDriveStore
     );
     let committed = false;
     let writtenStorageKey: string | undefined;
-    let previewStorageKey: string | undefined;
     let blobReservationId: string | undefined;
     try {
       const storage = await this.storageForOrg(input.orgId);
@@ -1344,12 +1463,11 @@ export class PostgresDriveStore
             : {
                 retryAfterSeconds: Math.max(
                   1,
-                  Math.ceil((failure.next_attempt_at.getTime() - Date.now()) / 1_000),
+                  Math.ceil((failure.next_attempt_at.getTime() - Date.now()) / 1000),
                 ),
               }),
         });
       }
-
       const dlpDecision = await this.options.dlp?.evaluate({
         orgId: input.orgId,
         actorId: input.actorId,
@@ -1359,7 +1477,6 @@ export class PostgresDriveStore
       });
       if (dlpDecision?.action === "block") throw dlpDecisionError(dlpDecision);
       const dlpQuarantine = dlpDecision?.action === "quarantine";
-
       if (!scan.clean || dlpQuarantine) {
         this.options.metrics?.recordOperationalEvent({
           capability: "drive",
@@ -1436,7 +1553,6 @@ export class PostgresDriveStore
         );
       }
       if (storage === undefined) throw new Error("Drive upload content storage is not configured.");
-
       const dedup = this.options.contentAddressedDedup === true;
       const objectName = stringMetadata(claim.object.metadata, "name") ?? claim.object.storage_key;
       const inlineOverwriteKey =
@@ -1481,18 +1597,6 @@ export class PostgresDriveStore
         });
         writtenStorageKey = storageKey;
       }
-
-      const preview = await this.generatePreview({
-        orgId: input.orgId,
-        objectId: input.objectId,
-        name: objectName,
-        storageKey,
-        mimeType,
-        versionNumber: claim.versionNumber,
-        byteSize: actualByteSize,
-        ...(bufferedBytes === undefined ? {} : { inlineContent: bufferedBytes }),
-      });
-      previewStorageKey = preview.writtenStorageKey;
       const result = await withTenantPostgresContext(
         this.sql,
         { orgId: input.orgId, actorId: input.actorId },
@@ -1504,7 +1608,6 @@ export class PostgresDriveStore
             mimeType,
             byteSize: actualByteSize,
             sha256: actualSha256,
-            preview: preview.metadata,
             dedup,
             ...(blobReservationId === undefined ? {} : { blobReservationId }),
             emitQuotaExceeded: (event) => {
@@ -1524,7 +1627,6 @@ export class PostgresDriveStore
       });
       committed = true;
       writtenStorageKey = undefined;
-      previewStorageKey = undefined;
       if (result.stagedDeletion !== undefined) {
         await this.deleteQuarantinedBytes(result.stagedDeletion);
       }
@@ -1536,7 +1638,7 @@ export class PostgresDriveStore
             releaseDriveBlobReservation(tx, input.orgId, blobReservationId as string),
           ).catch(() => undefined);
         }
-        for (const key of new Set([writtenStorageKey, previewStorageKey])) {
+        for (const key of new Set([writtenStorageKey])) {
           if (key === undefined) continue;
           if (
             key === writtenStorageKey &&
@@ -1565,7 +1667,6 @@ export class PostgresDriveStore
       throw error;
     }
   }
-
   /** Claim due jobs once and retry their authoritative stored bytes. */
   async runVirusScanRetryBatch(input: {
     readonly limit: number;
@@ -1578,15 +1679,27 @@ export class PostgresDriveStore
     const multipartClaims: DriveMultipartSweepRow[] = [];
     const preparedUploadClaims: DrivePreparedUploadSweepRow[] = [];
     const quarantineClaims: DriveQuarantineDeletionRow[] = [];
-    const previewClaims: DrivePreviewJobRow[] = [];
     const claims: DriveScanClaimRow[] = [];
-    const orgIds = await this.nextVirusScanOrgPage(Math.min(1_000, Math.max(50, limit * 5)));
+    // Drop elapsed entries so scheduling state only covers tenants visited within one GC interval.
+    for (const [orgId, next] of this.nextBlobReconciliation) {
+      if (next <= now.getTime()) this.nextBlobReconciliation.delete(orgId);
+    }
+    const orgIds = await this.nextVirusScanOrgPage(Math.min(1000, Math.max(50, limit * 5)));
     for (const orgId of orgIds) {
       this.virusScanOrgCursor = orgId;
       await withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
-        await reconcileDriveBlobReferences(tx, orgId);
+        if (this.options.gc?.enabled !== false && !this.nextBlobReconciliation.has(orgId)) {
+          await reconcileDriveBlobReferences(tx, orgId, this.options.gc);
+        }
         await tx`select * from helix_reconcile_storage_usage(${orgId})`;
       });
+      if (
+        this.options.gc !== undefined &&
+        this.options.gc.enabled &&
+        !this.nextBlobReconciliation.has(orgId)
+      ) {
+        this.nextBlobReconciliation.set(orgId, now.getTime() + this.options.gc.intervalMs);
+      }
       const tenantMultipartClaims = await withTenantPostgresContext(this.sql, { orgId }, (tx) =>
         claimExpiredDriveMultipartSessions(tx, {
           limit:
@@ -1594,7 +1707,6 @@ export class PostgresDriveStore
             multipartClaims.length -
             preparedUploadClaims.length -
             quarantineClaims.length -
-            previewClaims.length -
             claims.length,
           leaseExpiresAt: new Date(now.getTime() + input.leaseMs),
           now,
@@ -1605,7 +1717,6 @@ export class PostgresDriveStore
         multipartClaims.length +
           preparedUploadClaims.length +
           quarantineClaims.length +
-          previewClaims.length +
           claims.length >=
         limit
       )
@@ -1620,7 +1731,6 @@ export class PostgresDriveStore
               multipartClaims.length -
               preparedUploadClaims.length -
               quarantineClaims.length -
-              previewClaims.length -
               claims.length,
             leaseExpiresAt: new Date(now.getTime() + input.leaseMs),
             now,
@@ -1631,7 +1741,6 @@ export class PostgresDriveStore
         multipartClaims.length +
           preparedUploadClaims.length +
           quarantineClaims.length +
-          previewClaims.length +
           claims.length >=
         limit
       )
@@ -1643,36 +1752,16 @@ export class PostgresDriveStore
             multipartClaims.length -
             preparedUploadClaims.length -
             quarantineClaims.length -
-            previewClaims.length -
             claims.length,
           leaseExpiresAt: new Date(now.getTime() + input.leaseMs),
           now,
         }),
       );
       quarantineClaims.push(...tenantQuarantineClaims);
-      const remaining =
-        limit -
-        multipartClaims.length -
-        preparedUploadClaims.length -
-        quarantineClaims.length -
-        previewClaims.length -
-        claims.length;
-      if (remaining > 0) {
-        previewClaims.push(
-          ...(await withTenantPostgresContext(this.sql, { orgId }, (tx) =>
-            claimDrivePreviewJobs(tx, {
-              limit: remaining,
-              leaseExpiresAt: new Date(now.getTime() + input.leaseMs),
-              now,
-            }),
-          )),
-        );
-      }
       if (
         multipartClaims.length +
           preparedUploadClaims.length +
           quarantineClaims.length +
-          previewClaims.length +
           claims.length >=
         limit
       )
@@ -1685,7 +1774,6 @@ export class PostgresDriveStore
               multipartClaims.length -
               preparedUploadClaims.length -
               quarantineClaims.length -
-              previewClaims.length -
               claims.length,
             leaseExpiresAt: new Date(now.getTime() + input.leaseMs),
             now,
@@ -1697,7 +1785,6 @@ export class PostgresDriveStore
         multipartClaims.length +
           preparedUploadClaims.length +
           quarantineClaims.length +
-          previewClaims.length +
           claims.length >=
         limit
       )
@@ -1715,10 +1802,6 @@ export class PostgresDriveStore
     }
     for (const claim of quarantineClaims) {
       if (await this.deleteQuarantinedBytes(claim)) completed += 1;
-      else failed += 1;
-    }
-    for (const claim of previewClaims) {
-      if (await this.processDrivePreviewJob(claim)) completed += 1;
       else failed += 1;
     }
     for (const claim of claims) {
@@ -1798,13 +1881,11 @@ export class PostgresDriveStore
         multipartClaims.length +
         preparedUploadClaims.length +
         quarantineClaims.length +
-        previewClaims.length +
         claims.length,
       completed,
       failed,
     };
   }
-
   private async nextVirusScanOrgPage(limit: number): Promise<readonly string[]> {
     let rows = await listDriveScanOrgIds(this.sql, this.virusScanOrgCursor, limit);
     if (rows.length === 0 && this.virusScanOrgCursor !== undefined) {
@@ -1814,15 +1895,18 @@ export class PostgresDriveStore
     if (rows.length < limit) this.virusScanOrgCursor = undefined;
     return rows;
   }
-
   /** Admin-only caller resets a DLQ item for another real scan; it never bypasses AV. */
   async retryDeadLetteredVirusScan(input: RetryDeadLetteredVirusScanInput): Promise<boolean> {
     const reason = input.reason.trim();
-    if (reason.length < 10 || reason.length > 1_000) {
+    if (reason.length < 10 || reason.length > 1000) {
       throw new TypeError("A specific antivirus retry reason is required.");
     }
     return withTenantPostgresContext(this.sql, { orgId: input.orgId }, async (tx) => {
-      const rows = await tx<{ readonly id: string }[]>`
+      const rows = await tx<
+        {
+          readonly id: string;
+        }[]
+      >`
         update drive_scan_jobs
         set
           status = 'pending',
@@ -1860,7 +1944,6 @@ export class PostgresDriveStore
       return true;
     });
   }
-
   async list(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -1868,13 +1951,11 @@ export class PostgresDriveStore
     readonly includeTrashed?: boolean;
     readonly limit?: number;
     readonly cursor?: string;
-    readonly app?: string | null;
     /** Filter by object kind. Defaults to 'file'; the Recordings drive
      *  scope passes 'recording'. */
     readonly kind?: string | null;
     /** When true, return every visible file regardless of which folder
-     *  it lives in. Used by the typed surfaces (`/docs`, `/sheets`,
-     *  `/slides`) which present a cross-folder app-shaped list. Folder
+     *  it lives in. Folder
      *  rows are suppressed in this mode — the result is a flat file list. */
     readonly acrossFolders?: boolean;
   }): Promise<DriveEntryPage> {
@@ -1890,7 +1971,6 @@ export class PostgresDriveStore
       actorId: input.actorId,
       folderId: input.folderId ?? null,
       includeTrashed: input.includeTrashed ?? false,
-      app: input.app ?? null,
       kind,
       acrossFolders,
     });
@@ -1912,7 +1992,6 @@ export class PostgresDriveStore
               drive_folders.name,
               drive_folders.parent_folder_id::text as folder_id,
               drive_folders.owner_actor_id,
-              null::text as app,
               null::text as mime_type,
               null::bigint as byte_size,
               null::text as sha256,
@@ -1948,7 +2027,6 @@ export class PostgresDriveStore
               coalesce(o.metadata->>'name', o.storage_key) as name,
               nullif(o.metadata->>'folderId', '') as folder_id,
               o.owner_actor_id,
-              nullif(o.metadata->>'app', '') as app,
               o.mime_type,
               o.byte_size,
               o.sha256,
@@ -1980,35 +2058,12 @@ export class PostgresDriveStore
             cross join page
             where o.org_id = ${input.orgId}
               and o.kind = ${kind}
-              and coalesce(o.metadata->>'status', 'ready') = 'ready'
+              and (coalesce(o.metadata->>'status', 'ready') = 'ready'
+                or (o.owner_actor_id = ${input.actorId}
+                  and o.metadata->>'status' in ('scan_pending', 'scan_processing', 'infected', 'quarantined', 'scan_failed', 'scan_dead_letter')))
               and (${acrossFolders} or coalesce(o.metadata->>'folderId', '') = coalesce(${input.folderId ?? null}::text, ''))
               and (${input.includeTrashed ?? false} or o.deleted_at is null or o.deleted_at > page.snapshot_at)
               and o.created_at <= page.snapshot_at
-              and (
-                ${input.app ?? null}::text is null
-                or coalesce(o.metadata->>'app', 'file') = ${input.app ?? null}
-                or (${input.app ?? null}::text = 'docs' and (
-                  o.mime_type ilike '%wordprocessingml%'
-                  or o.mime_type = 'application/msword'
-                  or o.mime_type ilike '%opendocument.text%'
-                  or o.mime_type = 'application/rtf'
-                  or lower(coalesce(o.metadata->>'name', o.storage_key)) ~ '\\.(docx?|docm|dotx?|dotm|rtf|odt|helixdoc)$'
-                ))
-                or (${input.app ?? null}::text = 'sheets' and (
-                  o.mime_type ilike '%spreadsheetml%'
-                  or o.mime_type = 'application/vnd.ms-excel'
-                  or o.mime_type = 'application/vnd.oasis.opendocument.spreadsheet'
-                  or o.mime_type like 'text/csv%'
-                  or o.mime_type = 'text/tab-separated-values'
-                  or lower(coalesce(o.metadata->>'name', o.storage_key)) ~ '\\.(xlsx?|xlsm|xlsb|xltx?|xltm|csv|tsv|ods|helixsheet)$'
-                ))
-                or (${input.app ?? null}::text = 'slides' and (
-                  o.mime_type ilike '%presentationml%'
-                  or o.mime_type = 'application/vnd.ms-powerpoint'
-                  or o.mime_type = 'application/vnd.oasis.opendocument.presentation'
-                  or lower(coalesce(o.metadata->>'name', o.storage_key)) ~ '\\.(pptx?|pptm|ppsx?|ppsm|potx?|potm|odp|helixdeck)$'
-                ))
-              )
               and helix_drive_effective_role(
                 ${input.orgId}, ${input.actorId}, 'object', o.id
               ) is not null
@@ -2037,7 +2092,6 @@ export class PostgresDriveStore
             }),
     };
   }
-
   async createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord> {
     return this.sql.begin(async (tx) => {
       if (input.parentFolderId !== undefined && input.parentFolderId !== null) {
@@ -2080,7 +2134,6 @@ export class PostgresDriveStore
       return folder;
     });
   }
-
   async trashFolder(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2129,7 +2182,7 @@ export class PostgresDriveStore
         trashed_files as (
           update objects
           set deleted_at = now(),
-              metadata = metadata || jsonb_build_object('trashRootFolderId', ${input.folderId}),
+              metadata = metadata || jsonb_build_object('trashRootFolderId', ${input.folderId}::text),
               updated_at = now()
           where org_id = ${input.orgId}
             and kind = 'file'
@@ -2141,7 +2194,7 @@ export class PostgresDriveStore
         trashed_folders as (
           update drive_folders
           set deleted_at = now(),
-              metadata = metadata || jsonb_build_object('trashRootFolderId', ${input.folderId}),
+              metadata = metadata || jsonb_build_object('trashRootFolderId', ${input.folderId}::text),
               updated_at = now()
           where id in (select id from folder_tree)
             and not exists (select 1 from unauthorized)
@@ -2161,7 +2214,6 @@ export class PostgresDriveStore
           );
         }
         for (const objectId of row.trashed_file_ids) {
-          await syncTargetDeletedAt(tx, input.orgId, objectId, "trash", this.trashSync);
           await appendDriveActivity(tx, {
             orgId: input.orgId,
             actorId: input.actorId,
@@ -2181,7 +2233,6 @@ export class PostgresDriveStore
       },
     );
   }
-
   async restoreFolder(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2256,7 +2307,6 @@ export class PostgresDriveStore
           );
         }
         for (const objectId of row.restored_file_ids) {
-          await syncTargetDeletedAt(tx, input.orgId, objectId, "restore", this.trashSync);
           await appendDriveActivity(tx, {
             orgId: input.orgId,
             actorId: input.actorId,
@@ -2276,7 +2326,6 @@ export class PostgresDriveStore
       },
     );
   }
-
   /** Purge a previously trashed subtree as a restart-safe saga. The durable
    * marker prevents restore while each file is independently tombstoned and
    * its bytes are handed to the deletion outbox. */
@@ -2352,14 +2401,14 @@ export class PostgresDriveStore
               )
           ), marked_folders as (
             update drive_folders
-            set metadata = metadata || jsonb_build_object('purgeRootFolderId', ${input.folderId}),
+            set metadata = metadata || jsonb_build_object('purgeRootFolderId', ${input.folderId}::text),
                 updated_at = now()
             where id in (select id from folder_tree)
               and not exists (select 1 from unauthorized)
             returning id
           ), marked_files as (
             update objects
-            set metadata = metadata || jsonb_build_object('purgeRootFolderId', ${input.folderId}),
+            set metadata = metadata || jsonb_build_object('purgeRootFolderId', ${input.folderId}::text),
                 updated_at = now()
             where org_id = ${input.orgId}
               and metadata->>'trashRootFolderId' = ${input.folderId}
@@ -2379,11 +2428,9 @@ export class PostgresDriveStore
         return row.file_ids;
       },
     );
-
     for (const objectId of fileIds) {
       await this.delete({ ...input, objectId });
     }
-
     return withTenantPostgresContext(
       this.sql,
       { orgId: input.orgId, actorId: input.actorId },
@@ -2438,30 +2485,28 @@ export class PostgresDriveStore
       },
     );
   }
-
   async readFile(input: DriveFileReadInput): Promise<DriveFileReadResult | null> {
     const opened = await this.openFile(input);
     if (opened === null) return null;
     const content = await opened
       .open()
       .then(async (body) => (body === null ? null : toUint8Array(body)));
-    const previewContent = await opened.preview
-      ?.open()
-      .then(async (body) => (body === null ? null : toUint8Array(body)));
     return {
       entry: opened.entry,
       content,
-      previewContent: previewContent ?? null,
     };
   }
-
   async canExportFile(input: DriveFileReadInput): Promise<boolean> {
     return withTenantPostgresContext(
       this.sql,
       { orgId: input.orgId, actorId: input.actorId },
       async (tx) => {
         await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
-        const rows = await tx<{ readonly export_allowed: boolean }[]>`
+        const rows = await tx<
+          {
+            readonly export_allowed: boolean;
+          }[]
+        >`
           select coalesce((
             select export_allowed from meet_recording_governance
             where org_id = ${input.orgId} and object_id = ${input.objectId}
@@ -2471,7 +2516,6 @@ export class PostgresDriveStore
       },
     );
   }
-
   async openFile(input: DriveFileReadInput): Promise<DriveFileStreamResult | null> {
     const startedAt = Date.now();
     try {
@@ -2486,7 +2530,11 @@ export class PostgresDriveStore
             input.objectId,
           );
           if (accessible.deleted_at !== null || !isDriveObjectReady(accessible)) return null;
-          const versions = await tx<{ readonly version_number: number }[]>`
+          const versions = await tx<
+            {
+              readonly version_number: number;
+            }[]
+          >`
           select version_number
           from drive_versions
           where org_id = ${input.orgId} and object_id = ${input.objectId}
@@ -2501,7 +2549,7 @@ export class PostgresDriveStore
         capability: "drive",
         operation: "download",
         status: opened === null ? "blocked" : "success",
-        durationSeconds: (Date.now() - startedAt) / 1_000,
+        durationSeconds: (Date.now() - startedAt) / 1000,
       });
       if (opened !== null) {
         this.options.metrics?.addOperationalUnits({
@@ -2516,12 +2564,11 @@ export class PostgresDriveStore
         capability: "drive",
         operation: "download",
         status: "error",
-        durationSeconds: (Date.now() - startedAt) / 1_000,
+        durationSeconds: (Date.now() - startedAt) / 1000,
       });
       throw error;
     }
   }
-
   async share(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2562,7 +2609,6 @@ export class PostgresDriveStore
       return { objectId: input.objectId, sharedWithActorIds, role };
     });
   }
-
   async listAccess(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2595,7 +2641,6 @@ export class PostgresDriveStore
     `;
     return rows.map(mapDriveAccessGrant);
   }
-
   async removeAccess(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2609,7 +2654,11 @@ export class PostgresDriveStore
       } else {
         await requireObjectAccess(tx, input.orgId, input.actorId, input.objectId);
       }
-      const rows = await tx<{ readonly removed_count: number | string }[]>`
+      const rows = await tx<
+        {
+          readonly removed_count: number | string;
+        }[]
+      >`
         with target_object as (
           select id, owner_actor_id
           from objects
@@ -2650,7 +2699,6 @@ export class PostgresDriveStore
       return removed;
     });
   }
-
   async updateAccess(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2725,7 +2773,6 @@ export class PostgresDriveStore
       return grant;
     });
   }
-
   async move(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2755,7 +2802,6 @@ export class PostgresDriveStore
       return rows[0] === undefined ? null : mapObjectEntry(rows[0]);
     });
   }
-
   async moveFolder(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2785,7 +2831,6 @@ export class PostgresDriveStore
       },
     );
   }
-
   async setStarred(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2865,7 +2910,6 @@ export class PostgresDriveStore
       },
     );
   }
-
   async getDocumentSurfaceView(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2874,7 +2918,11 @@ export class PostgresDriveStore
       this.sql,
       { orgId: input.orgId, actorId: input.actorId },
       async (tx) => {
-        const rows = await tx<{ readonly view: DriveDocumentSurfaceView }[]>`
+        const rows = await tx<
+          {
+            readonly view: DriveDocumentSurfaceView;
+          }[]
+        >`
           select coalesce(preference.document_surface_view, 'grid') as view
           from organization_memberships membership
           left join workspace_member_preferences preference
@@ -2893,7 +2941,6 @@ export class PostgresDriveStore
       },
     );
   }
-
   async setDocumentSurfaceView(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2903,7 +2950,11 @@ export class PostgresDriveStore
       this.sql,
       { orgId: input.orgId, actorId: input.actorId },
       async (tx) => {
-        const rows = await tx<{ readonly view: DriveDocumentSurfaceView }[]>`
+        const rows = await tx<
+          {
+            readonly view: DriveDocumentSurfaceView;
+          }[]
+        >`
           insert into workspace_member_preferences (
             org_id,
             membership_id,
@@ -2926,7 +2977,6 @@ export class PostgresDriveStore
       },
     );
   }
-
   async rename(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2961,7 +3011,6 @@ export class PostgresDriveStore
       return rows[0] === undefined ? null : mapObjectEntry(rows[0]);
     });
   }
-
   async listVersions(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2977,7 +3026,6 @@ export class PostgresDriveStore
     `;
     return rows.map((row) => mapVersion(row));
   }
-
   async revertToVersion(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -2989,13 +3037,7 @@ export class PostgresDriveStore
       this.sql,
       { orgId: input.orgId, actorId: input.actorId },
       async (tx) => {
-        const current = await requireReadyObjectRole(
-          tx,
-          input.orgId,
-          input.actorId,
-          input.objectId,
-          "editor",
-        );
+        await requireReadyObjectRole(tx, input.orgId, input.actorId, input.objectId, "editor");
         await tx`
         select id from objects
         where org_id = ${input.orgId} and id = ${input.objectId}
@@ -3024,17 +3066,11 @@ export class PostgresDriveStore
             `Unknown Drive version ${String(input.versionNumber)} for object ${input.objectId}.`,
           );
         }
-        const requiresPreviewJob = isOfficePreviewCandidate(
-          target.mime_type,
-          stringMetadata(current.metadata, "name") ?? "",
-        );
-        const pendingPreview = {
-          kind: "office",
-          status: "pending",
-          mimeType: target.mime_type,
-          blocker: "Preview regeneration is queued.",
-        };
-        const maxRows = await tx<{ readonly max_version: number }[]>`
+        const maxRows = await tx<
+          {
+            readonly max_version: number;
+          }[]
+        >`
         select coalesce(max(version_number), 0)::int as max_version
         from drive_versions
         where org_id = ${input.orgId}
@@ -3058,7 +3094,6 @@ export class PostgresDriveStore
             toSqlJson({
               ...target.metadata,
               revertedFromVersion: input.versionNumber,
-              ...(requiresPreviewJob ? { preview: pendingPreview } : {}),
             }),
           )},
           ${input.actorId}, ${input.idempotencyKey ?? null}
@@ -3078,9 +3113,6 @@ export class PostgresDriveStore
                 status: "ready",
                 versionNumber: nextVersion,
                 latestVersionId: insertedVersion.id,
-                ...(requiresPreviewJob
-                  ? { preview: pendingPreview }
-                  : { preview: target.metadata.preview ?? null }),
               }),
             )}::jsonb,
             updated_at = now()
@@ -3094,13 +3126,6 @@ export class PostgresDriveStore
           objectId: input.objectId,
           payload: { fromVersion: input.versionNumber, toVersion: nextVersion },
         });
-        if (requiresPreviewJob) {
-          await tx`
-          insert into drive_preview_jobs (org_id, object_id, version_id, actor_id)
-          values (${input.orgId}, ${input.objectId}, ${insertedVersion.id}, ${input.actorId})
-          on conflict (org_id, version_id) do nothing
-        `;
-        }
         if (isDriveBlobStorageKey(target.storage_key)) {
           await upsertDriveBlobRef(tx, {
             orgId: input.orgId,
@@ -3112,16 +3137,16 @@ export class PostgresDriveStore
         return mapVersion(insertedVersion);
       },
     );
-    await this.runPreviewJobForVersion(input.orgId, version.id).catch(() => undefined);
     return version;
   }
-
   async createShareLink(input: {
     readonly orgId: string;
     readonly actorId: string;
     readonly objectId: string;
     readonly password?: string | undefined;
     readonly expiresAt?: Date | null;
+    readonly maxDownloads?: number | null;
+    readonly rateLimitPerHour?: number;
     readonly oneTime?: boolean | undefined;
     readonly allowedDomains?: readonly string[] | undefined;
     readonly allowDownload?: boolean | undefined;
@@ -3151,7 +3176,7 @@ export class PostgresDriveStore
       const rows = await tx<DriveShareLinkRow[]>`
         insert into drive_share_links (
           org_id, token_hash, object_id, role, password_hash, expires_at, one_time,
-          allowed_domains, allow_download, classification, created_by_actor_id
+          allowed_domains, allow_download, classification, created_by_actor_id, max_downloads, rate_limit_per_hour
         )
         values (
           ${input.orgId},
@@ -3164,7 +3189,9 @@ export class PostgresDriveStore
           ${allowedDomains},
           ${input.allowDownload ?? true},
           ${classification},
-          ${input.actorId}
+          ${input.actorId},
+          ${input.maxDownloads ?? null},
+          ${input.rateLimitPerHour ?? 120}
         )
         returning *
       `;
@@ -3191,7 +3218,6 @@ export class PostgresDriveStore
       return mapShareLink(row, token);
     });
   }
-
   async listShareLinks(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3208,7 +3234,6 @@ export class PostgresDriveStore
     `;
     return rows.map((row) => mapShareLink(row));
   }
-
   async revokeShareLink(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3248,13 +3273,15 @@ export class PostgresDriveStore
       return true;
     });
   }
-
   async resolveShareLink(input: DriveShareAccessInput): Promise<{
     readonly orgId: string;
     readonly objectId: string;
     readonly linkId: string;
   } | null> {
-    if (!/^[A-Za-z0-9_-]{43}$/u.test(input.token) || !/^[a-f0-9]{64}$/u.test(input.clientKey)) {
+    if (
+      !/^(?:[A-Za-z0-9_-]{43}|[a-f0-9]{64})$/u.test(input.token) ||
+      !/^[a-f0-9]{64}$/u.test(input.clientKey)
+    ) {
       return null;
     }
     await consumeDriveShareRateLimit(this.sql, sha256Hex(`ip:${input.clientKey}`), 120);
@@ -3265,6 +3292,12 @@ export class PostgresDriveStore
     `;
     const link = linkRows[0];
     if (link === undefined) return null;
+    await consumeDriveShareRateLimit(
+      this.sql,
+      sha256Hex(`hour:${tokenHash}`),
+      link.rate_limit_per_hour,
+      3600,
+    );
     const row = await withTenantPostgresContext(this.sql, { orgId: link.org_id }, async (tx) => {
       const objects = await tx<ObjectRow[]>`
         select * from objects
@@ -3299,7 +3332,6 @@ export class PostgresDriveStore
     }
     return { orgId: row.link_org_id, objectId: row.link_object_id, linkId: row.link_id };
   }
-
   async openFileByShareToken(input: DriveShareAccessInput): Promise<DriveFileStreamResult | null> {
     const resolved = await this.resolveShareLink(input);
     if (resolved === null) {
@@ -3321,7 +3353,11 @@ export class PostgresDriveStore
         `;
         const found = rows[0];
         if (found === undefined) return undefined;
-        const versions = await tx<{ readonly version_number: number }[]>`
+        const versions = await tx<
+          {
+            readonly version_number: number;
+          }[]
+        >`
           select version_number
           from drive_versions
           where org_id = ${resolved.orgId} and object_id = ${resolved.objectId}
@@ -3374,12 +3410,14 @@ export class PostgresDriveStore
           update drive_share_links link
           set consumed_at = case when link.one_time then statement_timestamp() else link.consumed_at end,
               access_count = link.access_count + 1,
+              download_count = link.download_count + 1,
               last_access_at = statement_timestamp()
           where link.id = ${resolved.linkId}
             and link.org_id = ${resolved.orgId}
             and link.revoked_at is null
             and (link.expires_at is null or link.expires_at > statement_timestamp())
             and (not link.one_time or link.consumed_at is null)
+            and (link.max_downloads is null or link.download_count < link.max_downloads)
           returning *
         `,
     );
@@ -3396,7 +3434,6 @@ export class PostgresDriveStore
     );
     return this.openStoredObject(resolved.orgId, object);
   }
-
   async trash(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3419,7 +3456,6 @@ export class PostgresDriveStore
         returning *, (select max(version_number) from drive_versions v where v.object_id = objects.id) as version_number
       `;
           if (rows[0] !== undefined) {
-            await syncTargetDeletedAt(tx, input.orgId, input.objectId, "trash", this.trashSync);
             await appendDriveActivity(tx, {
               orgId: input.orgId,
               actorId: input.actorId,
@@ -3440,7 +3476,6 @@ export class PostgresDriveStore
       });
     }
   }
-
   async restore(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3462,7 +3497,6 @@ export class PostgresDriveStore
       });
     }
   }
-
   async delete(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3500,9 +3534,6 @@ export class PostgresDriveStore
         delete from drive_versions
         where object_id = ${input.objectId} and org_id = ${input.orgId}
       `;
-          // syncTargetDeletedAt no-ops when the object has no linked app, so it is
-          // called unconditionally here — matching the trash and restore paths.
-          await syncTargetDeletedAt(tx, input.orgId, input.objectId, "purge", this.trashSync);
           const deleted = await tx`
         delete from objects
         where id = ${input.objectId} and org_id = ${input.orgId} and kind in ('file', 'recording')
@@ -3599,7 +3630,6 @@ export class PostgresDriveStore
       });
     }
   }
-
   async search(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3625,7 +3655,6 @@ export class PostgresDriveStore
     `;
     return rows.map(mapSearchHit);
   }
-
   async createComment(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3695,7 +3724,6 @@ export class PostgresDriveStore
       return comment;
     });
   }
-
   async listComments(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3744,7 +3772,6 @@ export class PostgresDriveStore
         rows.length > limit && last !== undefined ? encodeDriveCommentCursor(last.id) : null,
     };
   }
-
   async listCommentRevisions(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3791,7 +3818,6 @@ export class PostgresDriveStore
       };
     });
   }
-
   async resolveComment(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3834,7 +3860,6 @@ export class PostgresDriveStore
       return comment;
     });
   }
-
   async reopenComment(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3877,7 +3902,6 @@ export class PostgresDriveStore
       return comment;
     });
   }
-
   async updateComment(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3941,7 +3965,6 @@ export class PostgresDriveStore
       return comment;
     });
   }
-
   async deleteComment(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -3981,111 +4004,6 @@ export class PostgresDriveStore
       return comment;
     });
   }
-
-  async getPdfFormState(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly objectId: string;
-  }): Promise<DrivePdfFormStateRecord | null> {
-    await requireReadyObjectAccess(this.sql, input.orgId, input.actorId, input.objectId);
-    const rows = await this.sql<DrivePdfFormStateRow[]>`
-      with latest_version as (
-        select version_number, sha256, byte_size
-        from drive_versions
-        where org_id = ${input.orgId}
-          and object_id = ${input.objectId}
-        order by version_number desc
-        limit 1
-      )
-      select
-        s.*,
-        latest_version.version_number as current_source_version_number,
-        latest_version.sha256 as current_source_sha256,
-        latest_version.byte_size as current_source_byte_size
-      from drive_pdf_form_states s
-      left join latest_version on true
-      where s.org_id = ${input.orgId}
-        and s.object_id = ${input.objectId}
-        and s.actor_id = ${input.actorId}
-      limit 1
-    `;
-    const row = rows[0];
-    return row === undefined ? null : mapDrivePdfFormState(row);
-  }
-
-  async savePdfFormState(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly objectId: string;
-    readonly fieldValues: readonly JsonObject[];
-  }): Promise<DrivePdfFormStateRecord> {
-    return this.sql.begin(async (tx) => {
-      const object = await requireReadyObjectAccess(tx, input.orgId, input.actorId, input.objectId);
-      const source = await pdfFormSourceMetadata(tx, object);
-      const rows = await tx<DrivePdfFormStateRow[]>`
-        insert into drive_pdf_form_states
-          (org_id, object_id, actor_id, field_values, source_version_number, source_sha256, source_byte_size)
-        values (
-          ${input.orgId},
-          ${input.objectId},
-          ${input.actorId},
-          ${tx.json(toSqlJson(input.fieldValues))},
-          ${source.versionNumber},
-          ${source.sha256},
-          ${source.byteSize}
-        )
-        on conflict (org_id, object_id, actor_id)
-        do update set
-          field_values = excluded.field_values,
-          source_version_number = excluded.source_version_number,
-          source_sha256 = excluded.source_sha256,
-          source_byte_size = excluded.source_byte_size,
-          updated_at = now()
-        returning *
-      `;
-      const state = mapDrivePdfFormState(rows[0], source);
-      await appendDriveActivity(tx, {
-        orgId: input.orgId,
-        actorId: input.actorId,
-        verb: "drive.pdf_form_state.saved",
-        objectId: input.objectId,
-        payload: {
-          fieldCount: input.fieldValues.length,
-          sourceVersionNumber: source.versionNumber,
-        },
-      });
-      return state;
-    });
-  }
-
-  async clearPdfFormState(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly objectId: string;
-  }): Promise<boolean> {
-    return this.sql.begin(async (tx) => {
-      await requireReadyObjectAccess(tx, input.orgId, input.actorId, input.objectId);
-      const rows = await tx<{ readonly object_id: string }[]>`
-        delete from drive_pdf_form_states
-        where org_id = ${input.orgId}
-          and object_id = ${input.objectId}
-          and actor_id = ${input.actorId}
-        returning object_id
-      `;
-      const cleared = rows.length > 0;
-      if (cleared) {
-        await appendDriveActivity(tx, {
-          orgId: input.orgId,
-          actorId: input.actorId,
-          verb: "drive.pdf_form_state.cleared",
-          objectId: input.objectId,
-          payload: {},
-        });
-      }
-      return cleared;
-    });
-  }
-
   async getDriveSearchRecord(fileId: string): Promise<DriveSearchRecord | null> {
     const rows = await this.sql<DriveSearchProjectionRow[]>`
       with recursive target as (
@@ -4120,11 +4038,9 @@ export class PostgresDriveStore
     `;
     return rows[0] === undefined ? null : mapDriveSearchRecord(rows[0]);
   }
-
   getDriveEnrichmentRecord(fileId: string): Promise<DriveSearchRecord | null> {
     return this.getDriveSearchRecord(fileId);
   }
-
   async recordDriveEnrichment(input: DriveEnrichmentWrite): Promise<void> {
     await this.sql`
       update objects
@@ -4143,7 +4059,6 @@ export class PostgresDriveStore
         and coalesce(metadata->>'status', 'ready') = 'ready'
     `;
   }
-
   async setDriveAutoTags(input: DriveAutoTagWrite): Promise<void> {
     const tags = uniqueStrings(input.tags);
     await this.sql`
@@ -4166,7 +4081,6 @@ export class PostgresDriveStore
         and coalesce(metadata->>'status', 'ready') = 'ready'
     `;
   }
-
   private async deleteQuarantinedBytes(deletion: DriveQuarantineDeletionRow): Promise<boolean> {
     if (deletion.status === "completed") return true;
     const deletionStatus = deletion.status;
@@ -4212,7 +4126,7 @@ export class PostgresDriveStore
       return true;
     } catch (error) {
       const errorMessage = virusScanErrorMessage(error);
-      let released: DriveQuarantineDeletionRow | null = null;
+      let released: DriveQuarantineDeletionRow | null;
       try {
         released = await withTenantPostgresContext(this.sql, { orgId: deletion.org_id }, (tx) =>
           releaseDriveQuarantineDeletion(tx, {
@@ -4243,7 +4157,6 @@ export class PostgresDriveStore
       return false;
     }
   }
-
   private async discardOrphanedQuarantineCopy(orphan: DriveQuarantineDeletionRow): Promise<void> {
     const storage = await this.storageForOrg(orphan.org_id);
     try {
@@ -4279,7 +4192,6 @@ export class PostgresDriveStore
       }
     }
   }
-
   private emitQuarantineDeleteError(event: DriveQuarantineDeleteErrorEvent): void {
     try {
       this.options.onQuarantineDeleteError?.(event);
@@ -4287,7 +4199,6 @@ export class PostgresDriveStore
       // Reporting must never roll back or release quarantined content.
     }
   }
-
   private async discardPreparedUpload(
     orgId: string,
     actorId: string,
@@ -4313,7 +4224,6 @@ export class PostgresDriveStore
       `;
     });
   }
-
   private async compensatePreparedMultipart(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -4344,7 +4254,6 @@ export class PostgresDriveStore
       );
     }
   }
-
   private async releaseMultipartCompletion(
     session: DriveMultipartSessionRow,
     error: string,
@@ -4353,7 +4262,6 @@ export class PostgresDriveStore
       releaseDriveMultipartCompletion(tx, session, error),
     );
   }
-
   private async abortExpiredMultipart(session: DriveMultipartSweepRow): Promise<boolean> {
     try {
       const storage = await this.storageForOrg(session.org_id);
@@ -4410,7 +4318,6 @@ export class PostgresDriveStore
       return false;
     }
   }
-
   private async deleteExpiredPreparedUpload(object: DrivePreparedUploadSweepRow): Promise<boolean> {
     try {
       const storage = await this.storageForOrg(object.org_id);
@@ -4450,70 +4357,15 @@ export class PostgresDriveStore
       return false;
     }
   }
-
   private async storageForOrg(orgId: string): Promise<DriveStorageClient | undefined> {
     if (this.options.storageResolver === undefined) return this.storage;
     return (await this.options.storageResolver({ orgId }))?.client;
   }
-
-  private async runPreviewJobForVersion(orgId: string, versionId: string): Promise<boolean> {
-    const claims = await withTenantPostgresContext(this.sql, { orgId }, (tx) =>
-      claimDrivePreviewJobs(tx, {
-        limit: 1,
-        leaseExpiresAt: new Date(Date.now() + DEFAULT_UPLOAD_LEASE_MS),
-        now: new Date(),
-        versionId,
-      }),
-    );
-    return claims[0] === undefined ? true : this.processDrivePreviewJob(claims[0]);
-  }
-
-  private async processDrivePreviewJob(job: DrivePreviewJobRow): Promise<boolean> {
-    let writtenStorageKey: string | undefined;
-    try {
-      const preview = await this.generatePreview({
-        orgId: job.org_id,
-        objectId: job.object_id,
-        name: stringMetadata(job.object_metadata, "name") ?? job.storage_key,
-        storageKey: job.storage_key,
-        mimeType: job.mime_type,
-        versionNumber: job.version_number,
-        byteSize: bytesFromDatabase(job.byte_size),
-      });
-      writtenStorageKey = preview.writtenStorageKey;
-      await withTenantPostgresContext(this.sql, { orgId: job.org_id }, async (tx) => {
-        const updated = await completeDrivePreviewJob(tx, job, preview.metadata);
-        if (!updated) throw new Error("Drive preview job lease was lost.");
-      });
-      return true;
-    } catch (error) {
-      if (writtenStorageKey !== undefined) {
-        await this.discardOrphanedQuarantineCopy({
-          id: "",
-          org_id: job.org_id,
-          object_id: job.object_id,
-          actor_id: job.actor_id,
-          storage_key: writtenStorageKey,
-          status: "pending",
-          attempt_count: 0,
-          next_attempt_at: new Date(),
-        });
-      }
-      await withTenantPostgresContext(this.sql, { orgId: job.org_id }, (tx) =>
-        releaseDrivePreviewJob(
-          tx,
-          job,
-          virusScanErrorMessage(error),
-          this.options.virusScanRetryDelayMs ?? DEFAULT_VIRUS_SCAN_RETRY_DELAY_MS,
-        ),
-      ).catch(() => undefined);
-      return false;
-    }
-  }
-
   private async openStoredObject(
     orgId: string,
-    object: ObjectRow & { readonly version_number: number | null },
+    object: ObjectRow & {
+      readonly version_number: number | null;
+    },
   ): Promise<DriveFileStreamResult> {
     const storage = await this.storageForOrg(orgId);
     const entry = mapObjectEntry(object);
@@ -4528,33 +4380,14 @@ export class PostgresDriveStore
         if (stored === null) return null;
         return range === undefined ? stored.body : sliceStorageBody(stored.body, range);
       };
-    const previewKey =
-      entry.preview?.kind === "pdf" && entry.preview.status === "available"
-        ? entry.preview.storageKey
-        : undefined;
-    const previewHead =
-      previewKey === undefined || storage?.head === undefined
-        ? null
-        : await storage.head(previewKey).catch(() => null);
     return {
       orgId,
       entry,
       byteSize: bytesFromDatabase(object.byte_size),
       etag: driveContentEtag(object.sha256, object.id, object.version_number),
       open: readStorage(object.storage_key),
-      ...(previewKey === undefined || previewHead === null
-        ? {}
-        : {
-            preview: {
-              byteSize: previewHead.byteSize,
-              etag:
-                previewHead.etag ?? `"preview-${object.id}-${String(object.version_number ?? 0)}"`,
-              open: readStorage(previewKey),
-            },
-          }),
     };
   }
-
   private async presignPutRequest(
     storage: DriveStorageClient | undefined,
     storageKey: string,
@@ -4575,123 +4408,6 @@ export class PostgresDriveStore
       headers: { "content-type": mimeType },
     };
   }
-
-  private async generatePreview(input: {
-    readonly orgId: string;
-    readonly objectId: string;
-    readonly name: string;
-    readonly storageKey: string;
-    readonly mimeType: string;
-    readonly versionNumber: number;
-    readonly byteSize: number;
-    readonly inlineContent?: Uint8Array;
-  }): Promise<{
-    readonly metadata: { readonly preview: DrivePreview } | Record<string, never>;
-    readonly writtenStorageKey?: string;
-  }> {
-    if (!isOfficePreviewCandidate(input.mimeType, input.name)) {
-      return { metadata: {} };
-    }
-
-    if (input.byteSize > MAX_BUFFERED_DRIVE_SCAN_BYTES) {
-      return {
-        metadata: {
-          preview: unsupportedOfficePreview(
-            input.mimeType,
-            "Office preview exceeds the bounded conversion size.",
-          ),
-        },
-      };
-    }
-
-    const converter = this.options.officePreviewConverter;
-    const storage = await this.storageForOrg(input.orgId);
-    if (converter === undefined || storage === undefined) {
-      return {
-        metadata: {
-          preview: unsupportedOfficePreview(
-            input.mimeType,
-            "Office preview conversion requires the LibreOffice preview service.",
-          ),
-        },
-      };
-    }
-
-    const content =
-      input.inlineContent ?? (await this.readObjectBytes(input.orgId, input.storageKey));
-    if (content === undefined) {
-      return {
-        metadata: {
-          preview: unsupportedOfficePreview(
-            input.mimeType,
-            "Office preview conversion could not read the uploaded object bytes.",
-          ),
-        },
-      };
-    }
-
-    let converted;
-    try {
-      converted = await converter.convert({
-        objectId: input.objectId,
-        name: input.name,
-        storageKey: input.storageKey,
-        sourceMimeType: input.mimeType,
-        content,
-      });
-    } catch (error) {
-      return {
-        metadata: {
-          preview: unsupportedOfficePreview(
-            input.mimeType,
-            error instanceof Error ? error.message : "Office preview conversion failed.",
-          ),
-        },
-      };
-    }
-    const previewStorageKey = officePreviewStorageKey(
-      input.orgId,
-      input.objectId,
-      input.versionNumber,
-    );
-    await storage.put({
-      key: previewStorageKey,
-      body: converted.pdf,
-      contentType: "application/pdf",
-      metadata: { objectId: input.objectId, sourceStorageKey: input.storageKey },
-    });
-    let previewUrl: string | undefined;
-    try {
-      previewUrl = await storage.presignGetUrl?.(previewStorageKey, { expiresSeconds: 3600 });
-    } catch (error) {
-      await this.discardOrphanedQuarantineCopy({
-        id: "",
-        org_id: input.orgId,
-        object_id: input.objectId,
-        actor_id: null,
-        storage_key: previewStorageKey,
-        status: "pending",
-        attempt_count: 0,
-        next_attempt_at: new Date(),
-      });
-      throw error;
-    }
-    return {
-      metadata: {
-        preview: {
-          kind: "pdf",
-          status: "available",
-          mimeType: "application/pdf",
-          storageKey: previewStorageKey,
-          ...(previewUrl === undefined ? {} : { url: previewUrl }),
-          pageCount: converted.pageCount,
-          generatedAt: converted.generatedAt,
-        },
-      },
-      writtenStorageKey: previewStorageKey,
-    };
-  }
-
   private async readObjectBytes(
     orgId: string,
     storageKey: string,
@@ -4702,7 +4418,6 @@ export class PostgresDriveStore
     }
     return toUint8Array(object.body);
   }
-
   private emitStorageQuotaExceeded(
     orgId: string,
     event: Omit<StorageQuotaExceededEvent, "bucket" | "quota">,
@@ -4722,7 +4437,6 @@ export class PostgresDriveStore
         this.options.onQuotaEventError?.(error);
       });
   }
-
   private async updateFileFolder(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -4759,9 +4473,6 @@ export class PostgresDriveStore
           and kind = 'file'
         returning *, (select max(version_number) from drive_versions v where v.object_id = objects.id) as version_number
       `;
-      if (rows[0] !== undefined && input.restore) {
-        await syncTargetDeletedAt(tx, input.orgId, input.objectId, "restore", this.trashSync);
-      }
       await appendDriveActivity(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
@@ -4773,7 +4484,6 @@ export class PostgresDriveStore
     });
   }
 }
-
 export interface StorageQuotaExceededEvent {
   readonly quota: "storage_bytes_limit";
   readonly bucket: "drive";
@@ -4782,7 +4492,6 @@ export interface StorageQuotaExceededEvent {
   readonly byte_delta: number;
   readonly projected_bytes: number;
 }
-
 async function reserveDriveStorageQuota(
   sql: SqlLike,
   orgId: string,
@@ -4798,7 +4507,6 @@ async function reserveDriveStorageQuota(
   `;
   assertStorageQuotaDecision(orgId, byteSize, rows[0], onExceeded);
 }
-
 export async function commitStorageUsage(
   sql: SqlLike,
   orgId: string,
@@ -4812,7 +4520,6 @@ export async function commitStorageUsage(
   `;
   assertStorageQuotaDecision(orgId, byteDelta, rows[0], onExceeded);
 }
-
 function assertStorageQuotaDecision(
   orgId: string,
   byteDelta: number,
@@ -4833,7 +4540,6 @@ function assertStorageQuotaDecision(
   });
   throw new DriveStorageQuotaExceededError(orgId, limit, projected);
 }
-
 async function requireObjectAccess(
   sql: SqlLike,
   orgId: string,
@@ -4859,7 +4565,6 @@ async function requireObjectAccess(
   }
   return object;
 }
-
 /**
  * Least-privilege gate: requires read access first (404 to strangers), then a
  * role at least `minRole`. Owners always pass. Throws DriveForbiddenError (403)
@@ -4874,7 +4579,11 @@ async function requireObjectRole(
 ): Promise<ObjectRow> {
   const object = await requireObjectAccess(sql, orgId, actorId, objectId);
   if (object.owner_actor_id === actorId) return object;
-  const rows = await sql<{ readonly role: string | null }[]>`
+  const rows = await sql<
+    {
+      readonly role: string | null;
+    }[]
+  >`
     select helix_drive_effective_role(${orgId}, ${actorId}, 'object', ${objectId}) as role
   `;
   const best = parseDriveRole(rows[0]?.role ?? "reader");
@@ -4885,7 +4594,6 @@ async function requireObjectRole(
   }
   return object;
 }
-
 async function requireReadyObjectAccess(
   sql: SqlLike,
   orgId: string,
@@ -4896,7 +4604,6 @@ async function requireReadyObjectAccess(
   assertDriveObjectReady(object);
   return object;
 }
-
 async function requireReadyObjectRole(
   sql: SqlLike,
   orgId: string,
@@ -4908,7 +4615,6 @@ async function requireReadyObjectRole(
   assertDriveObjectReady(object);
   return object;
 }
-
 async function requireUploadWriteAccess(
   sql: SqlLike,
   orgId: string,
@@ -4922,18 +4628,15 @@ async function requireUploadWriteAccess(
   }
   return object;
 }
-
 function isDriveObjectReady(object: ObjectRow): boolean {
   const status = stringMetadata(object.metadata, "status");
   return status === undefined || status === "ready";
 }
-
 function assertDriveObjectReady(object: ObjectRow): void {
   if (!isDriveObjectReady(object)) {
     throw new DriveConflictError("Drive object is not ready.");
   }
 }
-
 async function requireFolderAccess(
   sql: SqlLike,
   orgId: string,
@@ -4943,7 +4646,12 @@ async function requireFolderAccess(
   readonly id: string;
   readonly owner_actor_id: string | null;
 }> {
-  const rows = await sql<{ readonly id: string; readonly owner_actor_id: string | null }[]>`
+  const rows = await sql<
+    {
+      readonly id: string;
+      readonly owner_actor_id: string | null;
+    }[]
+  >`
     select id, owner_actor_id
     from drive_folders
     where id = ${folderId}
@@ -4958,7 +4666,6 @@ async function requireFolderAccess(
   }
   return folder;
 }
-
 async function requireFolderRole(
   sql: SqlLike,
   orgId: string,
@@ -4968,7 +4675,11 @@ async function requireFolderRole(
 ): Promise<void> {
   const folder = await requireFolderAccess(sql, orgId, actorId, folderId);
   if (folder.owner_actor_id === actorId) return;
-  const rows = await sql<{ readonly role: string | null }[]>`
+  const rows = await sql<
+    {
+      readonly role: string | null;
+    }[]
+  >`
     select helix_drive_effective_role(${orgId}, ${actorId}, 'drive_folder', ${folderId}) as role
   `;
   const best = parseDriveRole(rows[0]?.role ?? "reader");
@@ -4978,7 +4689,6 @@ async function requireFolderRole(
     );
   }
 }
-
 async function requireFolderRoleIncludingDeleted(
   sql: SqlLike,
   orgId: string,
@@ -5004,7 +4714,6 @@ async function requireFolderRoleIncludingDeleted(
   if (row.permission_rank >= driveRoleRank(minRole)) return;
   throw new DriveForbiddenError(`Requires '${minRole}' access on Drive folder ${folderId}.`);
 }
-
 /** Commenters are folder contributors: they may add children, but cannot trash or manage the folder. */
 function requireFolderAddChildren(
   sql: SqlLike,
@@ -5014,7 +4723,6 @@ function requireFolderAddChildren(
 ): Promise<void> {
   return requireFolderRole(sql, orgId, actorId, folderId, "commenter");
 }
-
 async function insertDriveMultipartSession(
   sql: SqlLike,
   input: {
@@ -5037,14 +4745,17 @@ async function insertDriveMultipartSession(
     )
   `;
 }
-
 async function bindDriveMultipartSession(
   sql: SqlLike,
   orgId: string,
   objectId: string,
   uploadId: string,
 ): Promise<void> {
-  const rows = await sql<{ readonly id: string }[]>`
+  const rows = await sql<
+    {
+      readonly id: string;
+    }[]
+  >`
     update drive_multipart_sessions
     set upload_id = ${uploadId}, updated_at = now()
     where org_id = ${orgId} and object_id = ${objectId} and status = 'provisioning'
@@ -5053,14 +4764,17 @@ async function bindDriveMultipartSession(
   if (rows[0] === undefined)
     throw new DriveConflictError("Multipart upload session is unavailable.");
 }
-
 async function activateDriveMultipartSession(
   sql: SqlLike,
   orgId: string,
   objectId: string,
   uploadId: string,
 ): Promise<void> {
-  const rows = await sql<{ readonly id: string }[]>`
+  const rows = await sql<
+    {
+      readonly id: string;
+    }[]
+  >`
     update drive_multipart_sessions
     set status = 'pending', next_attempt_at = expires_at, updated_at = now()
     where org_id = ${orgId} and object_id = ${objectId}
@@ -5070,7 +4784,6 @@ async function activateDriveMultipartSession(
   if (rows[0] === undefined)
     throw new DriveConflictError("Multipart upload session is unavailable.");
 }
-
 async function scheduleDriveMultipartAbort(
   sql: SqlLike,
   input: {
@@ -5089,7 +4802,6 @@ async function scheduleDriveMultipartAbort(
       and (upload_id is null or upload_id = ${input.uploadId})
   `;
 }
-
 function multipartCompletionHash(input: CompleteMultipartUploadInput): string {
   return createHash("sha256")
     .update(
@@ -5105,7 +4817,6 @@ function multipartCompletionHash(input: CompleteMultipartUploadInput): string {
     )
     .digest("hex");
 }
-
 async function claimDriveMultipartCompletion(
   sql: SqlLike,
   input: CompleteMultipartUploadInput,
@@ -5174,7 +4885,6 @@ async function claimDriveMultipartCompletion(
     throw new DriveConflictError("Multipart upload completion raced another request.");
   return { session: claimed, object, completeStorage: true };
 }
-
 async function markDriveMultipartUploaded(
   sql: SqlLike,
   session: DriveMultipartSessionRow,
@@ -5188,7 +4898,6 @@ async function markDriveMultipartUploaded(
       and status in ('completing', 'uploaded')
   `;
 }
-
 async function markDriveMultipartCompleted(
   sql: SqlLike,
   session: DriveMultipartSessionRow,
@@ -5203,7 +4912,6 @@ async function markDriveMultipartCompleted(
       and completion_hash = ${completionHash} and status in ('uploaded', 'completed')
   `;
 }
-
 async function releaseDriveMultipartCompletion(
   sql: SqlLike,
   session: DriveMultipartSessionRow,
@@ -5216,10 +4924,13 @@ async function releaseDriveMultipartCompletion(
     where id = ${session.id} and org_id = ${session.org_id} and status = 'completing'
   `;
 }
-
 async function claimExpiredDriveMultipartSessions(
   sql: SqlLike,
-  input: { readonly limit: number; readonly now: Date; readonly leaseExpiresAt: Date },
+  input: {
+    readonly limit: number;
+    readonly now: Date;
+    readonly leaseExpiresAt: Date;
+  },
 ): Promise<readonly DriveMultipartSweepRow[]> {
   return await sql<DriveMultipartSweepRow[]>`
     with candidates as materialized (
@@ -5263,7 +4974,6 @@ async function claimExpiredDriveMultipartSessions(
     from claimed join candidates on candidates.id = claimed.id
   `;
 }
-
 async function releaseDriveMultipartAbort(
   sql: SqlLike,
   session: DriveMultipartSessionRow,
@@ -5278,10 +4988,13 @@ async function releaseDriveMultipartAbort(
     where id = ${session.id} and org_id = ${session.org_id} and status = 'aborting'
   `;
 }
-
 async function claimExpiredPreparedUploads(
   sql: SqlLike,
-  input: { readonly limit: number; readonly now: Date; readonly leaseExpiresAt: Date },
+  input: {
+    readonly limit: number;
+    readonly now: Date;
+    readonly leaseExpiresAt: Date;
+  },
 ): Promise<readonly DrivePreparedUploadSweepRow[]> {
   return await sql<DrivePreparedUploadSweepRow[]>`
     with candidates as (
@@ -5313,7 +5026,7 @@ async function claimExpiredPreparedUploads(
     update objects object
     set metadata = object.metadata || jsonb_build_object(
           'status', 'upload_expiring',
-          'uploadCleanupLeaseExpiresAt', ${input.leaseExpiresAt.toISOString()}
+          'uploadCleanupLeaseExpiresAt', ${input.leaseExpiresAt.toISOString()}::text
         ),
         updated_at = now()
     from candidates
@@ -5321,7 +5034,6 @@ async function claimExpiredPreparedUploads(
     returning object.*
   `;
 }
-
 async function releaseExpiredPreparedUpload(
   sql: SqlLike,
   object: DrivePreparedUploadSweepRow,
@@ -5333,15 +5045,14 @@ async function releaseExpiredPreparedUpload(
     update objects
     set metadata = metadata || jsonb_build_object(
           'status', 'upload_expiring',
-          'uploadCleanupLeaseExpiresAt', ${retryAt},
-          'uploadCleanupError', ${error}
+          'uploadCleanupLeaseExpiresAt', ${retryAt}::text,
+          'uploadCleanupError', ${error}::text
         ),
         updated_at = now()
     where org_id = ${object.org_id} and id = ${object.id}
       and metadata->>'status' = 'upload_expiring'
   `;
 }
-
 async function getDriveMultipartVersion(
   sql: SqlLike,
   session: DriveMultipartSessionRow,
@@ -5354,7 +5065,6 @@ async function getDriveMultipartVersion(
   `;
   return rows[0] === undefined ? null : mapVersion(rows[0]);
 }
-
 async function getLatestDriveVersion(
   sql: SqlLike,
   orgId: string,
@@ -5367,7 +5077,6 @@ async function getLatestDriveVersion(
   `;
   return rows[0] === undefined ? null : mapVersion(rows[0]);
 }
-
 async function claimDriveUploadFinalization(
   sql: SqlLike,
   input: FinalizeDriveUploadInput,
@@ -5406,7 +5115,11 @@ async function claimDriveUploadFinalization(
     throw new DriveForbiddenError("Only the actor who started this upload may resume it.");
   }
   const reservedKey = current.storage_key;
-  const versionRows = await sql<{ readonly version_number: number }[]>`
+  const versionRows = await sql<
+    {
+      readonly version_number: number;
+    }[]
+  >`
     select coalesce(max(version_number), 0)::integer + 1 as version_number
     from drive_versions where org_id = ${input.orgId} and object_id = ${input.objectId}
   `;
@@ -5434,7 +5147,6 @@ async function claimDriveUploadFinalization(
   }
   return { object, token, previousStatus, reservedKey, versionNumber };
 }
-
 async function findIdempotentDriveVersion(
   sql: SqlLike,
   input: FinalizeDriveUploadInput,
@@ -5449,7 +5161,6 @@ async function findIdempotentDriveVersion(
   `;
   return rows[0] === undefined ? null : mapVersion(rows[0]);
 }
-
 async function requireDriveFinalizationClaim(
   sql: SqlLike,
   claim: DriveFinalizationClaim,
@@ -5464,7 +5175,6 @@ async function requireDriveFinalizationClaim(
   }
   return object;
 }
-
 async function commitDriveScanFailure(
   sql: SqlLike,
   input: {
@@ -5488,7 +5198,11 @@ async function commitDriveScanFailure(
     maxAttempts: input.maxAttempts,
     retryDelayMs: input.retryDelayMs,
   });
-  const rows = await sql<{ readonly id: string }[]>`
+  const rows = await sql<
+    {
+      readonly id: string;
+    }[]
+  >`
     update objects
     set mime_type = ${input.mimeType}, byte_size = ${input.byteSize}, sha256 = ${input.sha256},
         metadata = ${sql.json(
@@ -5522,7 +5236,6 @@ async function commitDriveScanFailure(
   });
   return failure;
 }
-
 async function commitDriveInfectedVerdict(
   sql: SqlLike,
   input: {
@@ -5540,10 +5253,6 @@ async function commitDriveInfectedVerdict(
   },
 ): Promise<readonly DriveQuarantineDeletionRow[]> {
   const current = await requireDriveFinalizationClaim(sql, input.claim, input.input.actorId);
-  const priorPreviewStorageKey = drivePreviewFromMetadata(
-    input.claim.object.mime_type,
-    input.claim.object.metadata,
-  )?.storageKey;
   await sql`
     delete from drive_scan_jobs
     where org_id = ${input.input.orgId} and object_id = ${input.input.objectId}
@@ -5553,7 +5262,11 @@ async function commitDriveInfectedVerdict(
     where org_id = ${input.input.orgId} and object_id = ${input.input.objectId}
       and status in ('uploaded', 'completing')
   `;
-  const rows = await sql<{ readonly id: string }[]>`
+  const rows = await sql<
+    {
+      readonly id: string;
+    }[]
+  >`
     update objects
     set storage_key = ${input.quarantineStored ? input.quarantineKey : current.storage_key},
         mime_type = ${input.mimeType}, byte_size = ${input.byteSize}, sha256 = ${input.sha256},
@@ -5583,7 +5296,6 @@ async function commitDriveInfectedVerdict(
   const keys = new Set<string>();
   if (input.quarantineStored) keys.add(input.quarantineKey);
   if (input.hasStagedBytes) keys.add(input.claim.reservedKey);
-  if (priorPreviewStorageKey !== undefined) keys.add(priorPreviewStorageKey);
   const deletions: DriveQuarantineDeletionRow[] = [];
   for (const storageKey of keys) {
     deletions.push(
@@ -5608,7 +5320,6 @@ async function commitDriveInfectedVerdict(
   });
   return deletions;
 }
-
 async function commitDriveCleanUpload(
   sql: SqlLike,
   input: {
@@ -5618,7 +5329,6 @@ async function commitDriveCleanUpload(
     readonly mimeType: string;
     readonly byteSize: number;
     readonly sha256: string;
-    readonly preview: { readonly preview: DrivePreview } | Record<string, never>;
     readonly dedup: boolean;
     readonly blobReservationId?: string;
     readonly emitQuotaExceeded: (
@@ -5661,14 +5371,17 @@ async function commitDriveCleanUpload(
       ${sql.json(
         toSqlJson({
           ...withoutDriveDerivedContentMetadata(input.input.metadata ?? {}),
-          ...input.preview,
         }),
       )},
       ${input.input.actorId}, ${input.input.idempotencyKey ?? null}
     ) returning *
   `;
   const version = mapVersion(versionRows[0]);
-  const rows = await sql<{ readonly id: string }[]>`
+  const rows = await sql<
+    {
+      readonly id: string;
+    }[]
+  >`
     update objects
     set storage_key = ${input.storageKey}, mime_type = ${input.mimeType}, byte_size = ${input.byteSize},
         sha256 = ${input.sha256},
@@ -5684,7 +5397,6 @@ async function commitDriveCleanUpload(
             avScannedAt: new Date().toISOString(),
             latestVersionId: version.id,
             versionNumber: version.versionNumber,
-            ...input.preview,
           }),
         )}, updated_at = now()
     where id = ${input.input.objectId} and org_id = ${input.input.orgId}
@@ -5737,7 +5449,6 @@ async function commitDriveCleanUpload(
   });
   return { version, ...(stagedDeletion === undefined ? {} : { stagedDeletion }) };
 }
-
 async function releaseDriveFinalizationClaim(
   sql: SqlLike,
   claim: DriveFinalizationClaim,
@@ -5754,7 +5465,6 @@ async function releaseDriveFinalizationClaim(
       and metadata->>'scanToken' = ${claim.token}
   `;
 }
-
 async function claimDriveBlobDestination(
   sql: SqlLike,
   orgId: string,
@@ -5767,7 +5477,12 @@ async function claimDriveBlobDestination(
   readonly reservationId: string;
 }> {
   await sql`select pg_advisory_xact_lock(hashtextextended(${`${orgId}:${sha256}`}, 0))`;
-  const rows = await sql<{ readonly storage_key: string; readonly refcount: number }[]>`
+  const rows = await sql<
+    {
+      readonly storage_key: string;
+      readonly refcount: number;
+    }[]
+  >`
     select storage_key, refcount
     from drive_blobs
     where org_id = ${orgId} and sha256 = ${sha256}
@@ -5794,12 +5509,16 @@ async function claimDriveBlobDestination(
       set storage_key = excluded.storage_key, updated_at = now()
     where drive_blobs.refcount = 0
   `;
-  const reservations = await sql<{ readonly id: string }[]>`
+  const reservations = await sql<
+    {
+      readonly id: string;
+    }[]
+  >`
     insert into drive_blob_reservations (
       org_id, object_id, sha256, storage_key, expires_at
     ) values (
       ${orgId}, ${objectId}, ${sha256}, ${storageKey},
-      ${new Date(Date.now() + 24 * 60 * 60 * 1_000)}
+      ${new Date(Date.now() + 24 * 60 * 60 * 1000)}
     )
     on conflict (org_id, object_id) do update
       set sha256 = excluded.sha256, storage_key = excluded.storage_key,
@@ -5810,7 +5529,6 @@ async function claimDriveBlobDestination(
   if (reservationId === undefined) throw new Error("Failed to reserve Drive blob storage.");
   return { storageKey, referenced, reservationId };
 }
-
 async function driveBlobStorageIsReferenced(
   sql: SqlLike,
   orgId: string,
@@ -5829,7 +5547,6 @@ async function driveBlobStorageIsReferenced(
   `;
   return rows[0] !== undefined;
 }
-
 async function releaseDriveBlobReservation(
   sql: SqlLike,
   orgId: string,
@@ -5840,8 +5557,11 @@ async function releaseDriveBlobReservation(
     where org_id = ${orgId} and id = ${reservationId}
   `;
 }
-
-async function reconcileDriveBlobReferences(sql: SqlLike, orgId: string): Promise<void> {
+async function reconcileDriveBlobReferences(
+  sql: SqlLike,
+  orgId: string,
+  gc?: DriveConfig["gc"],
+): Promise<void> {
   await sql`
     delete from drive_blob_reservations
     where org_id = ${orgId} and expires_at <= now()
@@ -5859,7 +5579,7 @@ async function reconcileDriveBlobReferences(sql: SqlLike, orgId: string): Promis
   await sql`
     update drive_blobs blob
     set refcount = 0, updated_at = now()
-    where blob.org_id = ${orgId}
+    where blob.org_id = ${orgId} and blob.refcount <> 0
       and not exists (
         select 1 from drive_versions version
         where version.org_id = blob.org_id and version.storage_key = blob.storage_key
@@ -5872,18 +5592,24 @@ async function reconcileDriveBlobReferences(sql: SqlLike, orgId: string): Promis
     select blob.org_id, gen_random_uuid(), null, blob.storage_key, 'pending', now()
     from drive_blobs blob
     where blob.org_id = ${orgId} and blob.refcount = 0
+      and blob.updated_at <= now() - coalesce(
+        (select orphan_grace_hours from drive_lifecycle_policies where org_id = ${orgId}),
+        ${gc?.orphanGraceHours ?? 24}
+      ) * interval '1 hour'
       and not exists (
         select 1 from drive_blob_reservations reservation
         where reservation.org_id = blob.org_id
           and reservation.storage_key = blob.storage_key
           and reservation.expires_at > now()
       )
+    order by blob.updated_at, blob.storage_key
+    limit ${gc?.batchSize ?? 100}
     on conflict (org_id, storage_key) do update
       set status = 'pending', next_attempt_at = now(), lease_expires_at = null,
           completed_at = null, updated_at = now()
+      where drive_quarantine_deletions.status = 'completed'
   `;
 }
-
 async function requireReadyDriveCommentObject(
   sql: SqlLike,
   orgId: string,
@@ -5913,7 +5639,6 @@ async function requireReadyDriveCommentObject(
   }
   return object;
 }
-
 async function requireDriveCommentMutation(
   sql: SqlLike,
   orgId: string,
@@ -5938,22 +5663,23 @@ async function requireDriveCommentMutation(
   }
   return object;
 }
-
 async function driveCommentThreadOwnerId(
   sql: SqlLike,
   orgId: string,
   commentId: string,
 ): Promise<string | null> {
-  const rows = await sql<{ readonly actor_id: string | null }[]>`
+  const rows = await sql<
+    {
+      readonly actor_id: string | null;
+    }[]
+  >`
     select drive_comment_thread_owner_id(${orgId}, ${commentId}) as actor_id
   `;
   return rows[0]?.actor_id ?? null;
 }
-
 interface DriveCommentCursor {
   readonly id: string;
 }
-
 interface DriveListCursor {
   readonly name: string;
   readonly type: number;
@@ -5961,19 +5687,16 @@ interface DriveListCursor {
   readonly snapshotAt: Date;
   readonly filter: string;
 }
-
 function driveListFilterKey(input: {
   readonly orgId: string;
   readonly actorId: string;
   readonly folderId: string | null;
   readonly includeTrashed: boolean;
-  readonly app: string | null;
   readonly kind: string;
   readonly acrossFolders: boolean;
 }): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("base64url").slice(0, 16);
 }
-
 function encodeDriveListCursor(cursor: DriveListCursor): string {
   return Buffer.from(
     JSON.stringify({
@@ -5987,7 +5710,6 @@ function encodeDriveListCursor(cursor: DriveListCursor): string {
     "utf8",
   ).toString("base64url");
 }
-
 function decodeDriveListCursor(
   encoded: string | undefined,
   expectedFilter: string,
@@ -6017,15 +5739,12 @@ function decodeDriveListCursor(
     throw new BadRequestError("Invalid Drive list cursor.");
   }
 }
-
 function boundedDriveCommentLimit(limit: number | undefined): number {
   return Math.min(100, Math.max(1, Math.trunc(limit ?? 50)));
 }
-
 function encodeDriveCommentCursor(id: string): string {
   return Buffer.from(id, "utf8").toString("base64url");
 }
-
 function decodeDriveCommentCursor(cursor: string | undefined): DriveCommentCursor | undefined {
   if (cursor === undefined) {
     return undefined;
@@ -6040,7 +5759,6 @@ function decodeDriveCommentCursor(cursor: string | undefined): DriveCommentCurso
     throw new BadRequestError("Invalid Drive comment cursor.");
   }
 }
-
 async function requireDriveCommentParent(
   sql: SqlLike,
   input: {
@@ -6049,7 +5767,11 @@ async function requireDriveCommentParent(
     readonly parentCommentId: string;
   },
 ): Promise<void> {
-  const rows = await sql<{ readonly id: string }[]>`
+  const rows = await sql<
+    {
+      readonly id: string;
+    }[]
+  >`
     select id
     from drive_comments
     where id = ${input.parentCommentId}
@@ -6062,40 +5784,6 @@ async function requireDriveCommentParent(
     throw new Error(`Unknown parent Drive comment: ${input.parentCommentId}`);
   }
 }
-
-async function pdfFormSourceMetadata(
-  sql: SqlLike,
-  object: ObjectRow,
-): Promise<PdfFormSourceMetadata> {
-  const rows = await sql<
-    {
-      readonly version_number: number;
-      readonly sha256: string;
-      readonly byte_size: string | number;
-    }[]
-  >`
-    select version_number, sha256, byte_size
-    from drive_versions
-    where org_id = ${object.org_id}
-      and object_id = ${object.id}
-    order by version_number desc
-    limit 1
-  `;
-  const latest = rows[0];
-  if (latest === undefined) {
-    return {
-      versionNumber: null,
-      sha256: object.sha256,
-      byteSize: numberFromBigIntLike(object.byte_size),
-    };
-  }
-  return {
-    versionNumber: latest.version_number,
-    sha256: latest.sha256,
-    byteSize: numberFromBigIntLike(latest.byte_size),
-  };
-}
-
 function canReadObjectSql(
   sql: SqlLike,
   orgId: string,
@@ -6126,13 +5814,16 @@ function canReadObjectSql(
     )
   `;
 }
-
 async function assertRecordingPurgeAllowed(
   sql: SqlLike,
   orgId: string,
   objectId: string,
 ): Promise<void> {
-  const rows = await sql<{ readonly blocked: boolean }[]>`
+  const rows = await sql<
+    {
+      readonly blocked: boolean;
+    }[]
+  >`
     select exists (
       select 1 from meet_recording_governance
       where org_id = ${orgId} and object_id = ${objectId}
@@ -6143,7 +5834,6 @@ async function assertRecordingPurgeAllowed(
     throw new DriveConflictError("Meet recording is protected by retention or legal hold.");
   }
 }
-
 function assertDriveRestoreAllowed(object: ObjectRow): void {
   if (object.deleted_at === null) {
     throw new DriveConflictError("Drive object is not in trash.");
@@ -6152,7 +5842,6 @@ function assertDriveRestoreAllowed(object: ObjectRow): void {
     throw new DriveConflictError("Drive object recovery window has expired.");
   }
 }
-
 async function assertDriveObjectPurgeAllowed(sql: SqlLike, object: ObjectRow): Promise<void> {
   if (object.deleted_at === null) {
     throw new DriveConflictError("Move the Drive object to trash before purging it.");
@@ -6163,7 +5852,11 @@ async function assertDriveObjectPurgeAllowed(sql: SqlLike, object: ObjectRow): P
   if (object.retain_until !== null && object.retain_until > new Date()) {
     throw new DriveConflictError("Drive object is protected by retention policy.");
   }
-  const rows = await sql<{ readonly blocked: boolean }[]>`
+  const rows = await sql<
+    {
+      readonly blocked: boolean;
+    }[]
+  >`
     select exists (
       select 1 from drive_retention_holds hold
       where hold.org_id = ${object.org_id}
@@ -6171,13 +5864,23 @@ async function assertDriveObjectPurgeAllowed(sql: SqlLike, object: ObjectRow): P
         and hold.resource_id = ${object.id}
         and hold.released_at is null
         and (hold.expires_at is null or hold.expires_at > now())
+    ) or exists (
+      select 1 from drive_share_links link
+      where link.org_id = ${object.org_id} and link.object_id = ${object.id}
+        and link.revoked_at is null
+        and (link.expires_at is null or link.expires_at > now())
+    ) or exists (
+      select 1 from drive_scan_jobs job
+      where job.org_id = ${object.org_id} and job.object_id = ${object.id}
+        and job.status in ('pending', 'processing')
     ) as blocked
   `;
   if (rows[0]?.blocked === true) {
-    throw new DriveConflictError("Drive object is protected by a retention hold.");
+    throw new DriveConflictError(
+      "Drive object is protected by a retention hold, active share, or pending scan.",
+    );
   }
 }
-
 /**
  * Upsert drive_blobs refcount. Returns true when this call created the row
  * (first reference → storage write required).
@@ -6191,7 +5894,11 @@ async function upsertDriveBlobRef(
     readonly byteSize: number;
   },
 ): Promise<boolean> {
-  const rows = await sql<{ readonly newly_referenced: boolean }[]>`
+  const rows = await sql<
+    {
+      readonly newly_referenced: boolean;
+    }[]
+  >`
     insert into drive_blobs (org_id, sha256, storage_key, byte_size, refcount)
     values (${input.orgId}, ${input.sha256}, ${input.storageKey}, ${input.byteSize}, 1)
     on conflict (org_id, sha256) do update
@@ -6203,19 +5910,26 @@ async function upsertDriveBlobRef(
   `;
   return rows[0]?.newly_referenced === true;
 }
-
 /**
  * Decrement drive_blobs.refcount for a blob storage key.
  * Returns the refcount after decrement (0 if row was removed / already gone).
  */
 async function decrementDriveBlobRef(
   sql: SqlLike,
-  input: { readonly orgId: string; readonly storageKey: string; readonly amount: number },
+  input: {
+    readonly orgId: string;
+    readonly storageKey: string;
+    readonly amount: number;
+  },
 ): Promise<number> {
   if (!Number.isSafeInteger(input.amount) || input.amount <= 0) {
     throw new TypeError("Drive blob reference decrement must be a positive safe integer.");
   }
-  const rows = await sql<{ readonly refcount: number }[]>`
+  const rows = await sql<
+    {
+      readonly refcount: number;
+    }[]
+  >`
     update drive_blobs
     set refcount = refcount - ${input.amount},
         updated_at = now()
@@ -6230,29 +5944,6 @@ async function decrementDriveBlobRef(
   }
   return refcount;
 }
-
-async function syncTargetDeletedAt(
-  sql: SqlLike,
-  orgId: string,
-  objectId: string,
-  action: "restore" | "trash" | "purge",
-  trashSync: TrashSyncRegistry,
-): Promise<void> {
-  const deletedAt = action === "restore" ? null : new Date();
-  const rows = await sql<{ readonly app: string | null }[]>`
-    select metadata->>'app' as app from objects
-    where id = ${objectId} and org_id = ${orgId}
-  `;
-  const app = rows[0]?.app ?? null;
-  await trashSync.run(app, {
-    sql: sql,
-    orgId,
-    objectId,
-    action,
-    deletedAt,
-  });
-}
-
 function canReadFolderSql(
   sql: SqlLike,
   orgId: string,
@@ -6264,7 +5955,6 @@ function canReadFolderSql(
     ) is not null
   `;
 }
-
 async function grantFolderAccess(
   sql: SqlLike,
   input: {
@@ -6281,7 +5971,6 @@ async function grantFolderAccess(
     on conflict do nothing
   `;
 }
-
 async function recordDriveScanFailure(
   sql: SqlLike,
   input: {
@@ -6340,7 +6029,6 @@ async function recordDriveScanFailure(
   }
   return row;
 }
-
 async function insertDriveQuarantineDeletion(
   sql: SqlLike,
   input: {
@@ -6373,10 +6061,13 @@ async function insertDriveQuarantineDeletion(
   if (row === undefined) throw new Error("Failed to persist Drive quarantine cleanup state.");
   return row;
 }
-
 async function claimDriveQuarantineDeletions(
   sql: SqlLike,
-  input: { readonly limit: number; readonly now: Date; readonly leaseExpiresAt: Date },
+  input: {
+    readonly limit: number;
+    readonly now: Date;
+    readonly leaseExpiresAt: Date;
+  },
 ): Promise<readonly DriveQuarantineDeletionRow[]> {
   return await sql<DriveQuarantineDeletionRow[]>`
     with candidates as (
@@ -6397,7 +6088,6 @@ async function claimDriveQuarantineDeletions(
               deletion.next_attempt_at
   `;
 }
-
 async function completeDriveQuarantineDeletion(
   sql: SqlLike,
   deletion: Pick<DriveQuarantineDeletionRow, "id" | "org_id" | "status">,
@@ -6412,7 +6102,6 @@ async function completeDriveQuarantineDeletion(
   `;
   return rows[0] ?? null;
 }
-
 async function releaseDriveQuarantineDeletion(
   sql: SqlLike,
   input: {
@@ -6436,10 +6125,13 @@ async function releaseDriveQuarantineDeletion(
   `;
   return rows[0] ?? null;
 }
-
 async function claimDriveScanJobs(
   sql: SqlLike,
-  input: { readonly limit: number; readonly now: Date; readonly leaseExpiresAt: Date },
+  input: {
+    readonly limit: number;
+    readonly now: Date;
+    readonly leaseExpiresAt: Date;
+  },
 ): Promise<readonly DriveScanClaimRow[]> {
   return await sql<DriveScanClaimRow[]>`
     with candidates as (
@@ -6467,7 +6159,6 @@ async function claimDriveScanJobs(
     join objects object on object.id = claimed.object_id and object.org_id = claimed.org_id
   `;
 }
-
 async function listDriveScanOrgIds(
   sql: postgres.Sql,
   afterId: string | undefined,
@@ -6475,12 +6166,20 @@ async function listDriveScanOrgIds(
 ): Promise<readonly string[]> {
   const rows =
     afterId === undefined
-      ? await sql<{ readonly id: string }[]>`
+      ? await sql<
+          {
+            readonly id: string;
+          }[]
+        >`
           select id from orgs
           order by id
           limit ${limit}
         `
-      : await sql<{ readonly id: string }[]>`
+      : await sql<
+          {
+            readonly id: string;
+          }[]
+        >`
           select id from orgs
           where id > ${afterId}::uuid
           order by id
@@ -6488,89 +6187,6 @@ async function listDriveScanOrgIds(
         `;
   return rows.map((row) => row.id);
 }
-
-async function claimDrivePreviewJobs(
-  sql: SqlLike,
-  input: {
-    readonly limit: number;
-    readonly now: Date;
-    readonly leaseExpiresAt: Date;
-    readonly versionId?: string;
-  },
-): Promise<readonly DrivePreviewJobRow[]> {
-  return await sql<DrivePreviewJobRow[]>`
-    with candidates as (
-      select id
-      from drive_preview_jobs
-      where (${input.versionId ?? null}::uuid is null or version_id = ${input.versionId ?? null})
-        and ((status = 'pending' and next_attempt_at <= ${input.now})
-          or (status = 'processing' and lease_expires_at <= ${input.now}))
-      order by next_attempt_at, created_at
-      limit ${Math.max(1, Math.trunc(input.limit))}
-      for update skip locked
-    ), claimed as (
-      update drive_preview_jobs job
-      set status = 'processing', lease_expires_at = ${input.leaseExpiresAt}, updated_at = now()
-      from candidates
-      where job.id = candidates.id
-      returning job.*
-    )
-    select claimed.id, claimed.org_id, claimed.object_id, claimed.version_id,
-      claimed.actor_id, claimed.attempt_count, version.storage_key, version.mime_type,
-      version.byte_size, version.version_number, object.metadata as object_metadata
-    from claimed
-    join drive_versions version
-      on version.org_id = claimed.org_id and version.id = claimed.version_id
-    join objects object
-      on object.org_id = claimed.org_id and object.id = claimed.object_id
-  `;
-}
-
-async function completeDrivePreviewJob(
-  sql: SqlLike,
-  job: DrivePreviewJobRow,
-  metadata: { readonly preview: DrivePreview } | Record<string, never>,
-): Promise<boolean> {
-  const rows = await sql<{ readonly id: string }[]>`
-    update drive_versions
-    set metadata = (metadata - 'preview') || ${sql.json(toSqlJson(metadata))}::jsonb
-    where org_id = ${job.org_id} and id = ${job.version_id}
-      and exists (
-        select 1 from drive_preview_jobs
-        where id = ${job.id} and org_id = ${job.org_id} and status = 'processing'
-      )
-    returning id
-  `;
-  if (rows[0] === undefined) return false;
-  await sql`
-    update objects
-    set metadata = (metadata - 'preview') || ${sql.json(toSqlJson(metadata))}::jsonb,
-        updated_at = now()
-    where org_id = ${job.org_id} and id = ${job.object_id}
-      and metadata->>'latestVersionId' = ${job.version_id}
-  `;
-  await sql`
-    delete from drive_preview_jobs
-    where id = ${job.id} and org_id = ${job.org_id} and status = 'processing'
-  `;
-  return true;
-}
-
-async function releaseDrivePreviewJob(
-  sql: SqlLike,
-  job: DrivePreviewJobRow,
-  error: string,
-  retryDelayMs: number,
-): Promise<void> {
-  await sql`
-    update drive_preview_jobs
-    set status = 'pending', attempt_count = attempt_count + 1,
-        next_attempt_at = ${new Date(Date.now() + Math.max(1, retryDelayMs))},
-        lease_expires_at = null, last_error = ${error}, updated_at = now()
-    where id = ${job.id} and org_id = ${job.org_id} and status = 'processing'
-  `;
-}
-
 async function releaseDriveScanClaim(
   sql: SqlLike,
   input: {
@@ -6601,7 +6217,6 @@ async function releaseDriveScanClaim(
   `;
   return rows[0] ?? null;
 }
-
 async function updateDriveScanObjectState(
   sql: SqlLike,
   failure: DriveScanFailureRow,
@@ -6609,29 +6224,30 @@ async function updateDriveScanObjectState(
   await sql`
     update objects
     set metadata = metadata || jsonb_build_object(
-          'status', ${failure.status === "dead_lettered" ? "scan_dead_letter" : "scan_pending"},
-          'avScanAttempts', ${failure.attempt_count},
-          'avScanNextAttemptAt', ${failure.next_attempt_at?.toISOString() ?? null}
+          'status', ${failure.status === "dead_lettered" ? "scan_dead_letter" : "scan_pending"}::text,
+          'avScanAttempts', ${failure.attempt_count}::integer,
+          'avScanNextAttemptAt', ${failure.next_attempt_at?.toISOString() ?? null}::text
         ),
         updated_at = now()
     where org_id = ${failure.org_id} and id = ${failure.object_id}
   `;
 }
-
 function virusScanErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.replaceAll(/[\r\n\t]+/gu, " ").slice(0, 500) || "Antivirus scan failed.";
 }
-
 function isMissingStorageObject(error: unknown): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
     "status" in error &&
-    (error as { readonly status?: unknown }).status === 404
+    (
+      error as {
+        readonly status?: unknown;
+      }
+    ).status === 404
   );
 }
-
 function isQuarantineVerdict(error: unknown): boolean {
   if (!(error instanceof DriveConflictError)) return false;
   const details = error.details;
@@ -6642,16 +6258,13 @@ function isQuarantineVerdict(error: unknown): boolean {
     details.scanOutcome === "quarantined"
   );
 }
-
 function withoutVirusScanFailureMetadata(metadata: JsonObject): JsonObject {
   const failureKeys = new Set(["avScanAttempts", "avScanLastError", "avScanNextAttemptAt"]);
   return Object.fromEntries(Object.entries(metadata).filter(([key]) => !failureKeys.has(key)));
 }
-
 function withoutMetadataKey(metadata: JsonObject, key: string): JsonObject {
   return Object.fromEntries(Object.entries(metadata).filter(([candidate]) => candidate !== key));
 }
-
 function withoutDriveFinalizationMetadata(metadata: JsonObject): JsonObject {
   const transientKeys = new Set([
     "scanActorId",
@@ -6661,7 +6274,6 @@ function withoutDriveFinalizationMetadata(metadata: JsonObject): JsonObject {
   ]);
   return Object.fromEntries(Object.entries(metadata).filter(([key]) => !transientKeys.has(key)));
 }
-
 function withoutDriveUploadLifecycleMetadata(metadata: JsonObject): JsonObject {
   const lifecycleKeys = new Set([
     "uploadCleanupError",
@@ -6670,7 +6282,6 @@ function withoutDriveUploadLifecycleMetadata(metadata: JsonObject): JsonObject {
   ]);
   return Object.fromEntries(Object.entries(metadata).filter(([key]) => !lifecycleKeys.has(key)));
 }
-
 function withoutDriveDerivedContentMetadata(metadata: JsonObject): JsonObject {
   const derivedKeys = new Set([
     "autoTag",
@@ -6686,7 +6297,6 @@ function withoutDriveDerivedContentMetadata(metadata: JsonObject): JsonObject {
   ]);
   return Object.fromEntries(Object.entries(metadata).filter(([key]) => !derivedKeys.has(key)));
 }
-
 async function appendDriveActivity(
   sql: SqlLike,
   input: {
@@ -6697,7 +6307,11 @@ async function appendDriveActivity(
     readonly payload: JsonObject;
   },
 ): Promise<void> {
-  const previousRows = await sql<{ readonly this_hash: string }[]>`
+  const previousRows = await sql<
+    {
+      readonly this_hash: string;
+    }[]
+  >`
     select this_hash from activity
     where org_id = ${input.orgId}
     order by created_at desc, id desc
@@ -6733,7 +6347,6 @@ async function appendDriveActivity(
     )})
   `;
 }
-
 async function notifyDriveCommentMentions(
   sql: SqlLike,
   input: {
@@ -6799,7 +6412,6 @@ async function notifyDriveCommentMentions(
     });
   }
 }
-
 async function notifyDriveCommentReply(
   sql: SqlLike,
   input: {
@@ -6814,7 +6426,11 @@ async function notifyDriveCommentReply(
   if (input.parentCommentId === null) {
     return;
   }
-  const rows = await sql<{ readonly actor_id: string }[]>`
+  const rows = await sql<
+    {
+      readonly actor_id: string;
+    }[]
+  >`
     select parent.actor_id
     from drive_comments parent
     where parent.org_id = ${input.orgId}
@@ -6854,7 +6470,6 @@ async function notifyDriveCommentReply(
     },
   });
 }
-
 function driveObjectNotificationTitle(object: ObjectRow): string {
   return (
     stringMetadata(object.metadata, "title") ??
@@ -6864,7 +6479,6 @@ function driveObjectNotificationTitle(object: ObjectRow): string {
     "Drive object"
   );
 }
-
 function mapUpload(
   row: ObjectRow | undefined,
 ): Omit<DriveUploadRecord, "uploadUrl" | "uploadHeaders"> {
@@ -6882,13 +6496,12 @@ function mapUpload(
     mimeType: row.mime_type,
     byteSize: bytesFromDatabase(row.byte_size),
     sha256: row.sha256,
-    status: stringMetadata(metadata, "status") ?? "ready",
+    status: driveUploadStateFromMetadata(metadata.status, row.deleted_at),
     metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
-
 function mapDriveWebDavLock(row: DriveWebDavLockRow | undefined): DriveWebDavLock {
   if (row === undefined) throw new Error("Expected Drive WebDAV lock row.");
   return {
@@ -6902,48 +6515,40 @@ function mapDriveWebDavLock(row: DriveWebDavLockRow | undefined): DriveWebDavLoc
     expiresAt: row.expires_at,
   };
 }
-
 function assertWebDavPathKey(value: string): void {
-  if (!value.startsWith("/") || value.length > 4_096 || value.includes("\0")) {
+  if (!value.startsWith("/") || value.length > 4096 || value.includes("\0")) {
     throw new BadRequestError("Invalid WebDAV lock path.");
   }
 }
-
 function webDavLockUuid(token: string): string {
   const value = token.replace(/^opaquelocktoken:/u, "");
   if (!UUID_RE.test(value)) throw new BadRequestError("Invalid WebDAV lock token.");
   return value;
 }
-
 function webDavSyncVersion(value: string): string {
-  if (!/^(0|[1-9][0-9]{0,18})$/u.test(value) || BigInt(value) > 9_223_372_036_854_775_807n) {
+  if (!/^(0|[1-9][0-9]{0,18})$/u.test(value) || BigInt(value) > 9223372036854775807n) {
     throw new BadRequestError("Invalid WebDAV sync token.");
   }
   return value;
 }
-
 function mapVersion(row: DriveVersionRow | undefined): DriveVersionRecord {
   if (row === undefined) {
     throw new DriveNotFoundError("Expected Drive version row.");
   }
   return mapVersionCore(row);
 }
-
 const SHARE_DOMAIN_RE =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
-
 function requireSharePassword(password: string): string {
   if (password.length < 12 || password.length > 256) {
     throw new TypeError("Share-link passwords must contain 12 to 256 characters.");
   }
   return password;
 }
-
 function normalizeShareDomains(domains: readonly string[]): readonly string[] {
   const normalized = [...new Set(domains.map((domain) => domain.trim().toLowerCase()))].sort();
   if (normalized.length > 50 || normalized.some((domain) => !SHARE_DOMAIN_RE.test(domain))) {
@@ -6951,18 +6556,19 @@ function normalizeShareDomains(domains: readonly string[]): readonly string[] {
   }
   return normalized;
 }
-
 interface DriveSharePolicyRow {
   readonly classification: string | null;
   readonly external_settings: JsonObject | null;
   readonly dlp_settings: JsonObject | null;
 }
-
 async function driveSharePolicyReason(
   sql: SqlLike,
   object: Pick<ObjectRow, "id" | "org_id" | "metadata">,
   allowedDomains: readonly string[],
-): Promise<{ readonly reason: string | null; readonly classification: string }> {
+): Promise<{
+  readonly reason: string | null;
+  readonly classification: string;
+}> {
   const rows = await sql<DriveSharePolicyRow[]>`
     select
       (select classification.classification
@@ -7018,7 +6624,6 @@ async function driveSharePolicyReason(
   }
   return { reason: null, classification };
 }
-
 async function assertDriveSharePolicy(
   sql: SqlLike,
   object: ObjectRow,
@@ -7030,20 +6635,25 @@ async function assertDriveSharePolicy(
   }
   return denied.classification;
 }
-
 async function consumeDriveShareRateLimit(
   sql: SqlLike,
   scopeHash: string,
   limit: number,
+  windowSeconds = 60,
 ): Promise<void> {
-  const rows = await sql<{ readonly allowed: boolean }[]>`
-    select helix_consume_drive_share_rate_limit(${scopeHash}, ${limit}, 60) as allowed
+  const rows = await sql<
+    {
+      readonly allowed: boolean;
+    }[]
+  >`
+    select helix_consume_drive_share_rate_limit(${scopeHash}, ${limit}, ${windowSeconds}) as allowed
   `;
   if (rows[0]?.allowed !== true) {
-    throw new RateLimitedError("Share-link request limit exceeded.", { retryAfterSeconds: 60 });
+    throw new RateLimitedError("Share-link request limit exceeded.", {
+      retryAfterSeconds: windowSeconds,
+    });
   }
 }
-
 function shareLinkRow(row: DriveShareLinkAccessRow): DriveShareLinkRow {
   return {
     id: row.link_id,
@@ -7052,6 +6662,9 @@ function shareLinkRow(row: DriveShareLinkAccessRow): DriveShareLinkRow {
     object_id: row.link_object_id,
     role: "reader",
     password_hash: row.password_hash,
+    max_downloads: row.max_downloads,
+    download_count: row.download_count,
+    rate_limit_per_hour: row.rate_limit_per_hour,
     one_time: row.one_time,
     allowed_domains: row.allowed_domains,
     allow_download: row.allow_download,
@@ -7065,14 +6678,12 @@ function shareLinkRow(row: DriveShareLinkAccessRow): DriveShareLinkRow {
     revoked_at: row.revoked_at,
   };
 }
-
 function shareActorId(
   link: Pick<DriveShareLinkRow, "org_id">,
   actor: DriveShareAccessInput["actor"],
 ): string | null {
   return actor?.orgId === link.org_id && UUID_RE.test(actor.id) ? actor.id : null;
 }
-
 async function appendDriveShareLinkEvent(
   sql: SqlLike,
   link: DriveShareLinkRow,
@@ -7089,7 +6700,6 @@ async function appendDriveShareLinkEvent(
     )
   `;
 }
-
 async function driveShareDenialReason(
   sql: SqlLike,
   row: DriveShareLinkAccessRow,
@@ -7099,6 +6709,7 @@ async function driveShareDenialReason(
     row.revoked_at !== null ||
     (row.expires_at !== null && row.expires_at <= new Date()) ||
     (row.one_time && row.consumed_at !== null) ||
+    (row.max_downloads !== null && row.download_count >= row.max_downloads) ||
     row.deleted_at !== null ||
     (stringMetadata(row.metadata, "status") !== undefined &&
       stringMetadata(row.metadata, "status") !== "ready")
@@ -7108,7 +6719,10 @@ async function driveShareDenialReason(
   if (input.download === true && !row.allow_download) return "download_blocked";
   if (
     row.password_hash !== null &&
-    (input.password === undefined || !(await verifySecret(input.password, row.password_hash)))
+    (input.password === undefined ||
+      !(await (row.password_hash.startsWith("scrypt:")
+        ? verifyDriveSharePassword(input.password, row.password_hash)
+        : verifySecret(input.password, row.password_hash))))
   ) {
     return "password_invalid";
   }
@@ -7124,7 +6738,6 @@ async function driveShareDenialReason(
   }
   return (await driveSharePolicyReason(sql, row, row.allowed_domains)).reason;
 }
-
 function mapShareLink(row: DriveShareLinkRow, token: string | null = null): DriveShareLinkRecord {
   return {
     id: row.id,
@@ -7134,6 +6747,9 @@ function mapShareLink(row: DriveShareLinkRow, token: string | null = null): Driv
     role: "reader",
     expiresAt: row.expires_at,
     passwordProtected: row.password_hash !== null,
+    maxDownloads: row.max_downloads,
+    downloadCount: row.download_count,
+    rateLimitPerHour: row.rate_limit_per_hour,
     oneTime: row.one_time,
     allowedDomains: [...row.allowed_domains],
     allowDownload: row.allow_download,
@@ -7143,7 +6759,6 @@ function mapShareLink(row: DriveShareLinkRow, token: string | null = null): Driv
     revokedAt: row.revoked_at,
   };
 }
-
 function mapFolderEntry(row: DriveFolderRow): DriveEntryRecord {
   return {
     id: row.id,
@@ -7151,14 +6766,12 @@ function mapFolderEntry(row: DriveFolderRow): DriveEntryRecord {
     name: row.name,
     folderId: row.parent_folder_id,
     ownerActorId: row.owner_actor_id,
-    app: null,
     metadata: row.metadata,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
-
 function mapDriveListEntry(row: DriveListRow): DriveEntryRecord {
   if (row.entry_type === "folder") {
     return {
@@ -7167,7 +6780,6 @@ function mapDriveListEntry(row: DriveListRow): DriveEntryRecord {
       name: row.name,
       folderId: row.folder_id,
       ownerActorId: row.owner_actor_id,
-      app: null,
       metadata: row.metadata,
       deletedAt: row.deleted_at,
       createdAt: row.created_at,
@@ -7198,14 +6810,12 @@ function mapDriveListEntry(row: DriveListRow): DriveEntryRecord {
     starred: row.starred,
   });
 }
-
 function missingFolderRow(): DriveFolderRow {
   throw new Error("Expected Drive folder row.");
 }
-
 function mapObjectEntry(row: DriveSearchRow): DriveEntryRecord {
-  const preview = drivePreviewFromMetadata(row.mime_type, row.metadata);
   return mapObjectEntryCore({
+    upload_state: driveUploadStateFromMetadata(row.metadata.status, row.deleted_at),
     id: row.id,
     owner_actor_id: row.owner_actor_id,
     storage_key: row.storage_key,
@@ -7222,16 +6832,12 @@ function mapObjectEntry(row: DriveSearchRow): DriveEntryRecord {
       ? {}
       : { shared_count: row.shared_count }),
     ...(typeof row.starred === "boolean" ? { starred: row.starred } : {}),
-    ...(preview === undefined ? {} : { preview }),
   });
 }
-
 function mapDriveAccessGrant(row: DriveAccessGrantRow): DriveAccessGrantRecord {
   return mapDriveAccessGrantCore(row);
 }
-
 function mapSearchHit(row: DriveSearchRow): DriveSearchHit {
-  const previewMetadata = drivePreviewFromMetadata(row.mime_type, row.metadata);
   return mapSearchHitCore({
     id: row.id,
     storage_key: row.storage_key,
@@ -7240,10 +6846,8 @@ function mapSearchHit(row: DriveSearchRow): DriveSearchHit {
     sha256: row.sha256,
     metadata: row.metadata,
     updated_at: row.updated_at,
-    ...(previewMetadata === undefined ? {} : { previewMetadata }),
   });
 }
-
 function mapDriveComment(row: DriveCommentRow | undefined): DriveCommentRecord {
   if (row === undefined) {
     throw new Error("Expected Drive comment row.");
@@ -7263,7 +6867,6 @@ function mapDriveComment(row: DriveCommentRow | undefined): DriveCommentRecord {
     updatedAt: row.updated_at,
   };
 }
-
 function mapDriveCommentListItem(row: DriveCommentProjectionRow): DriveCommentListItem {
   const comment = mapDriveComment(row);
   return {
@@ -7279,7 +6882,6 @@ function mapDriveCommentListItem(row: DriveCommentProjectionRow): DriveCommentLi
         }),
   };
 }
-
 function mapDriveCommentRevision(row: DriveCommentRevisionRow): DriveCommentRevisionRecord {
   return {
     id: row.id,
@@ -7302,35 +6904,6 @@ function mapDriveCommentRevision(row: DriveCommentRevisionRow): DriveCommentRevi
     capturedAt: row.captured_at,
   };
 }
-
-function mapDrivePdfFormState(
-  row: DrivePdfFormStateRow | undefined,
-  currentSource?: PdfFormSourceMetadata,
-): DrivePdfFormStateRecord {
-  if (row === undefined) {
-    throw new Error("Expected Drive PDF form state row.");
-  }
-  const currentVersionNumber =
-    currentSource?.versionNumber ?? row.current_source_version_number ?? null;
-  const currentSha256 = currentSource?.sha256 ?? row.current_source_sha256 ?? null;
-  return {
-    orgId: row.org_id,
-    objectId: row.object_id,
-    actorId: row.actor_id,
-    fieldValues: jsonObjectArray(row.field_values),
-    sourceVersionNumber: row.source_version_number,
-    sourceSha256: row.source_sha256,
-    sourceByteSize: numberFromBigIntLike(row.source_byte_size),
-    sourceChanged:
-      (row.source_version_number !== null &&
-        currentVersionNumber !== null &&
-        row.source_version_number !== currentVersionNumber) ||
-      (row.source_sha256 !== null && currentSha256 !== null && row.source_sha256 !== currentSha256),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 function mapDriveSearchRecord(row: DriveSearchProjectionRow): DriveSearchRecord {
   const metadata = row.metadata;
   const name = stringMetadata(metadata, "name") ?? row.storage_key;
@@ -7369,11 +6942,9 @@ function mapDriveSearchRecord(row: DriveSearchProjectionRow): DriveSearchRecord 
     metadata,
   };
 }
-
 function driveObjectMetadata(value: JsonObject): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
-
 function finalizedStorageDelta(current: ObjectRow, storageKey: string, byteSize: number): number {
   const status = stringMetadata(current.metadata, "status");
   if (status !== "ready") return byteSize;
@@ -7382,191 +6953,30 @@ function finalizedStorageDelta(current: ObjectRow, storageKey: string, byteSize:
   }
   return byteSize;
 }
-
 function numberFromBigIntLike(value: string | number | null): number | null {
   return value === null ? null : bytesFromDatabase(value);
 }
-
-function jsonObjectArray(value: unknown): readonly JsonObject[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const result: JsonObject[] = [];
-  for (const item of value) {
-    if (typeof item === "object" && item !== null && !Array.isArray(item)) {
-      result.push(item as JsonObject);
-    }
-  }
-  return result;
-}
-
 function metadataStringProperty(metadata: JsonObject, key: string): Record<string, string> {
   const value = metadata[key];
   return typeof value === "string" ? { [key]: value } : {};
 }
-
 function metadataStringArrayProperty(
   metadata: JsonObject,
   key: string,
-): { readonly tags?: readonly string[] } {
+): {
+  readonly tags?: readonly string[];
+} {
   const value = metadata[key];
   return Array.isArray(value) && value.every((entry): entry is string => typeof entry === "string")
     ? { tags: value }
     : {};
 }
-
 function metadataClassificationProperty(
   metadata: JsonObject,
 ): Pick<DriveSearchRecord, "classification"> {
   const classification = sensitivityClassificationFromMetadata(metadata);
   return classification === undefined ? {} : { classification };
 }
-
-function drivePreviewFromMetadata(
-  mimeType: string,
-  metadata: JsonObject,
-): DrivePreview | undefined {
-  const preview = metadata.preview;
-  if (isJsonObject(preview)) {
-    const kind = stringMetadata(preview, "kind");
-    const status = stringMetadata(preview, "status");
-    const text = stringMetadata(preview, "text");
-    const url = stringMetadata(preview, "url") ?? stringMetadata(preview, "previewUrl");
-    const storageKey = stringMetadata(preview, "storageKey");
-    const blocker = stringMetadata(preview, "blocker");
-    const generatedAt = stringMetadata(preview, "generatedAt");
-    if (
-      (kind === "text" ||
-        kind === "image" ||
-        kind === "pdf" ||
-        kind === "office" ||
-        kind === "unsupported") &&
-      (status === "pending" || status === "available" || status === "unsupported")
-    ) {
-      return {
-        kind,
-        status,
-        mimeType: stringMetadata(preview, "mimeType") ?? mimeType,
-        ...(text === undefined ? {} : { text }),
-        ...(url === undefined ? {} : { url }),
-        ...(storageKey === undefined ? {} : { storageKey }),
-        ...numberPreviewProperty(preview, "pageCount"),
-        ...numberPreviewProperty(preview, "width"),
-        ...numberPreviewProperty(preview, "height"),
-        ...(blocker === undefined ? {} : { blocker }),
-        ...(generatedAt === undefined ? {} : { generatedAt }),
-      };
-    }
-  }
-
-  const previewText =
-    stringMetadata(metadata, "previewText") ?? stringMetadata(metadata, "textContent");
-  if (previewText !== undefined && isTextPreviewMime(mimeType)) {
-    return { kind: "text", status: "available", mimeType, text: previewText };
-  }
-
-  const previewUrl =
-    stringMetadata(metadata, "previewUrl") ?? stringMetadata(metadata, "contentUrl");
-  if (previewUrl !== undefined && mimeType.startsWith("image/")) {
-    return {
-      kind: "image",
-      status: "available",
-      mimeType,
-      url: previewUrl,
-      ...numberPreviewProperty(metadata, "width"),
-      ...numberPreviewProperty(metadata, "height"),
-    };
-  }
-  if (previewUrl !== undefined && mimeType === "application/pdf") {
-    return {
-      kind: "pdf",
-      status: "available",
-      mimeType,
-      url: previewUrl,
-      ...numberPreviewProperty(metadata, "pageCount"),
-    };
-  }
-  if (isOfficeMime(mimeType)) {
-    return unsupportedOfficePreview(
-      mimeType,
-      "Office preview conversion requires the LibreOffice preview service.",
-    );
-  }
-
-  return undefined;
-}
-
-function unsupportedOfficePreview(mimeType: string, blocker: string): DrivePreview {
-  return {
-    kind: "office",
-    status: "unsupported",
-    mimeType,
-    blocker,
-  };
-}
-
-function isTextPreviewMime(mimeType: string): boolean {
-  return (
-    mimeType.startsWith("text/") ||
-    mimeType === "application/json" ||
-    mimeType === "application/xml"
-  );
-}
-
-function isOfficePreviewCandidate(mimeType: string, filename: string): boolean {
-  const normalizedMime = mimeType.toLowerCase();
-  const normalizedName = filename.toLowerCase();
-  if (
-    [
-      "application/vnd.oasis.opendocument.text",
-      "application/vnd.oasis.opendocument.spreadsheet",
-      "application/vnd.oasis.opendocument.presentation",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
-      "application/vnd.ms-word.document.macroenabled.12",
-      "application/vnd.ms-word.template.macroenabled.12",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
-      "application/vnd.ms-excel.sheet.macroenabled.12",
-      "application/vnd.ms-excel.template.macroenabled.12",
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
-      "application/vnd.openxmlformats-officedocument.presentationml.template",
-      "application/vnd.ms-powerpoint.presentation.macroenabled.12",
-      "application/vnd.ms-powerpoint.slideshow.macroenabled.12",
-      "application/vnd.ms-powerpoint.template.macroenabled.12",
-    ].includes(normalizedMime)
-  ) {
-    return true;
-  }
-  return /\.(docx|docm|dotx|dotm|odt|xlsx|xlsm|xltx|xltm|ods|pptx|pptm|ppsx|ppsm|potx|potm|odp)$/iu.test(
-    normalizedName,
-  );
-}
-
-function isOfficeMime(mimeType: string): boolean {
-  return [
-    "application/msword",
-    "application/vnd.ms-excel",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  ].includes(mimeType);
-}
-
-function numberPreviewProperty(
-  metadata: JsonObject,
-  key: "height" | "pageCount" | "width",
-): Partial<Pick<DrivePreview, "height" | "pageCount" | "width">> {
-  const value = metadata[key];
-  return typeof value === "number" && Number.isFinite(value) ? { [key]: value } : {};
-}
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 async function toUint8Array(body: AsyncIterable<Uint8Array> | Uint8Array): Promise<Uint8Array> {
   if (body instanceof Uint8Array) {
     return body;
@@ -7584,9 +6994,7 @@ async function toUint8Array(body: AsyncIterable<Uint8Array> | Uint8Array): Promi
   }
   return output;
 }
-
 const MAX_BUFFERED_DRIVE_SCAN_BYTES = 128 * 1024 * 1024;
-
 async function readStoredUpload(
   storage: DriveStorageClient | undefined,
   key: string,
@@ -7594,7 +7002,6 @@ async function readStoredUpload(
   if (storage === undefined) return undefined;
   return storage.getStream === undefined ? storage.get(key) : storage.getStream(key);
 }
-
 async function inspectAndScanUpload(input: {
   readonly open: () => Promise<StorageObject["body"] | null>;
   readonly declaredByteSize: number;
@@ -7651,7 +7058,6 @@ async function inspectAndScanUpload(input: {
     ...(bufferedBytes === undefined ? {} : { bufferedBytes }),
   };
 }
-
 async function hashStorageBody(body: StorageObject["body"]): Promise<{
   readonly byteSize: number;
   readonly sha256: string;
@@ -7673,7 +7079,6 @@ async function hashStorageBody(body: StorageObject["body"]): Promise<{
   }
   return { byteSize, sha256: hash.digest("hex"), head: head.subarray(0, headSize) };
 }
-
 async function* asAsyncIterable(body: StorageObject["body"]): AsyncIterable<Uint8Array> {
   if (body instanceof Uint8Array) {
     yield body;
@@ -7681,11 +7086,9 @@ async function* asAsyncIterable(body: StorageObject["body"]): AsyncIterable<Uint
   }
   yield* body;
 }
-
 function isGzipHead(bytes: Uint8Array): boolean {
   return bytes.byteLength >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
 }
-
 function driveContentEtag(
   sha256: string | null,
   objectId: string,
@@ -7695,10 +7098,12 @@ function driveContentEtag(
     ? `"drive-${objectId}-${String(versionNumber ?? 0)}"`
     : `"sha256-${sha256}"`;
 }
-
 function sliceStorageBody(
   body: StorageObject["body"],
-  range: { readonly start: number; readonly end: number },
+  range: {
+    readonly start: number;
+    readonly end: number;
+  },
 ): StorageObject["body"] {
   if (body instanceof Uint8Array) return body.subarray(range.start, range.end + 1);
   return (async function* () {
@@ -7715,7 +7120,6 @@ function sliceStorageBody(
     }
   })();
 }
-
 function uniqueStrings(values: readonly string[]): readonly string[] {
   const seen = new Set<string>();
   const output: string[] = [];
@@ -7728,7 +7132,6 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
   }
   return output;
 }
-
 function toSqlJson(value: unknown): postgres.JSONValue {
   return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }

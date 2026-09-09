@@ -1,6 +1,8 @@
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
+import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
+import { ensureOk, parseResponse } from "@/features/admin/api-response";
 
 /**
  * Admin Console — Domain & DNS client.
@@ -111,10 +113,9 @@ export const domainsQueryKeys = {
 
 export function domainsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: domainsQueryKeys.domains(),
     queryFn: () => fetchDomains(fetchImpl),
-    retry: false,
-    throwOnError: false,
   });
 }
 
@@ -123,11 +124,10 @@ export function dnsRecordsQueryOptions(
   fetchImpl: AuthFetch = authenticatedFetch,
 ) {
   return queryOptions({
+    ...ADMIN_QUERY_DEFAULTS,
     queryKey: domainsQueryKeys.dnsRecords(domainId ?? ""),
     queryFn: () => fetchDnsRecords(domainId ?? "", fetchImpl),
     enabled: domainId !== null,
-    retry: false,
-    throwOnError: false,
   });
 }
 
@@ -160,7 +160,6 @@ export async function setPrimaryDomain(
 ): Promise<Domain> {
   const response = await fetchImpl(`/api/admin/domains/${encodeURIComponent(id)}/primary`, {
     method: "POST",
-    headers: jsonHeaders,
   });
   return (await parseResponse(response, "set primary domain", domainResponseSchema)).domain;
 }
@@ -171,7 +170,6 @@ export async function verifyDomainOwnership(
 ): Promise<Domain> {
   const response = await fetchImpl(`/api/admin/domains/${encodeURIComponent(id)}/verify`, {
     method: "POST",
-    headers: jsonHeaders,
   });
   return (await parseResponse(response, "verify domain ownership", domainResponseSchema)).domain;
 }
@@ -182,7 +180,6 @@ export async function rotateDomainChallenge(
 ): Promise<Domain> {
   const response = await fetchImpl(`/api/admin/domains/${encodeURIComponent(id)}/challenge`, {
     method: "POST",
-    headers: jsonHeaders,
   });
   return (await parseResponse(response, "rotate domain challenge", domainResponseSchema)).domain;
 }
@@ -244,47 +241,12 @@ export async function verifyDnsRecord(
 ): Promise<DnsRecord> {
   const response = await fetchImpl(
     `/api/admin/domains/${encodeURIComponent(domainId)}/dns/${encodeURIComponent(recordId)}/verify`,
-    { method: "POST", headers: jsonHeaders },
+    /* No `content-type: application/json` header. Verify takes no body, and
+       Fastify's JSON parser rejects a bodyless request that declares one with
+       `FST_ERR_CTP_EMPTY_JSON_BODY` — a 400 raised before the route handler
+       runs, which is why verification failed with "Bad Request" no matter what
+       the DNS said. */
+    { method: "POST" },
   );
   return (await parseResponse(response, "verify DNS record", dnsRecordResponseSchema)).dnsRecord;
-}
-
-// ---------------------------------------------------------------------------
-// Shared response handling
-// ---------------------------------------------------------------------------
-
-async function parseResponse<T>(
-  response: Response,
-  action: string,
-  schema: z.ZodType<T>,
-): Promise<T> {
-  const payload: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-  }
-  const parsed = schema.safeParse(payload);
-  if (parsed.success) {
-    return parsed.data;
-  }
-  throw new Error(`Failed to ${action}: malformed response.`);
-}
-
-async function ensureOk(response: Response, action: string): Promise<void> {
-  if (response.ok) {
-    return;
-  }
-  const payload: unknown = await response.json().catch(() => ({}));
-  throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-}
-
-function errorMessage(payload: unknown): string | undefined {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof payload.error === "string"
-  ) {
-    return payload.error;
-  }
-  return undefined;
 }

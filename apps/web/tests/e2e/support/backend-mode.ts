@@ -1,9 +1,11 @@
+import type { Page } from "@playwright/test";
+
 /**
  * Shared E2E backend-mode helper (P1-1, PRD alignment plan 2026-05-21).
  *
  * The feature E2E specs in this directory run in two modes:
  *
- *  - MOCKED (default): Playwright `page.route` intercepts every `/api/**` call
+ *  - MOCKED (default): Playwright `page.route` intercepts every `/v1/api/**` call
  *    and serves deterministic fixtures. This runs anywhere — locally and in CI —
  *    against the real, production web UI served by Vite. It exercises real
  *    routing, rendering, hydration and accessibility of each feature shell.
@@ -40,40 +42,31 @@ export function liveApiBaseUrl(): string {
   return process.env.HELIX_E2E_API_BASE_URL ?? "http://127.0.0.1:28431";
 }
 
-/**
- * OAuth client-credentials used to mint a real access token against the live
- * backend. These match the local dev client seeded by docker-compose.
- */
-export function liveOAuthClient(): { readonly clientId: string; readonly clientSecret: string } {
-  return {
-    clientId: process.env.HELIX_E2E_CLIENT_ID ?? "helix-local-oauth-client",
-    clientSecret: process.env.HELIX_E2E_CLIENT_SECRET ?? "helix-local-dev-secret",
-  };
-}
-
-/**
- * Mint a real OAuth access token from the live backend so a spec can seed
- * `localStorage` exactly as the login flow would. Throws if the exchange fails
- * so a misconfigured live run fails loud instead of silently mocking nothing.
- */
-export async function mintLiveAccessToken(scope: string): Promise<string> {
-  const { clientId, clientSecret } = liveOAuthClient();
-  const response = await fetch(`${liveApiBaseUrl()}/oauth/token`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+/** Establish the same cookie session used by the web login flow. */
+export async function seedBrowserSession(page: Page, mockToken: string): Promise<string> {
+  const baseUrl = process.env.HELIX_E2E_WEB_BASE_URL ?? "http://127.0.0.1:4173";
+  if (!isLiveBackend()) {
+    await page.context().addCookies([{ name: "helix_session", value: mockToken, url: baseUrl }]);
+    return mockToken;
+  }
+  const csrf = await page.request.get(`${baseUrl}/v1/api/auth/csrf-token`);
+  const payload = (await csrf.json()) as { readonly csrfToken?: string };
+  if (!csrf.ok() || typeof payload.csrfToken !== "string")
+    throw new Error("Live CSRF session setup failed.");
+  const response = await page.request.post(`${baseUrl}/v1/api/auth/sign-in/email`, {
+    headers: { origin: baseUrl, "x-helix-csrf-token": payload.csrfToken },
+    data: {
+      email: process.env.HELIX_E2E_EMAIL ?? "user@helix.local",
+      password: process.env.HELIX_E2E_PASSWORD ?? "helix-user-password",
     },
-    body: new URLSearchParams({ grant_type: "client_credentials", scope }).toString(),
   });
-  if (!response.ok) {
+  if (!response.ok())
     throw new Error(
-      `Live OAuth token exchange failed with ${String(response.status)}: ${await response.text()}`,
+      `Live browser sign-in failed (${String(response.status())}). Seed login accounts or set HELIX_E2E_EMAIL/PASSWORD.`,
     );
-  }
-  const payload = (await response.json()) as { readonly access_token?: string };
-  if (typeof payload.access_token !== "string" || payload.access_token.length === 0) {
-    throw new Error("Live OAuth token exchange returned no access_token.");
-  }
-  return payload.access_token;
+  const session = await page.request.get(`${baseUrl}/v1/api/auth/get-session`);
+  const identity = (await session.json()) as { readonly user?: { readonly id?: string } };
+  if (!session.ok() || typeof identity.user?.id !== "string")
+    throw new Error("Live browser sign-in did not establish a session.");
+  return "live-cookie-session";
 }

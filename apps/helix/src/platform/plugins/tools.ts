@@ -75,11 +75,7 @@ export interface PluginLifecycleStore {
 
 export type PluginLifecycleSource = "official" | "sideload";
 export type PersistedPluginLifecycleState =
-  | "installed"
-  | "enabled"
-  | "disabled"
-  | "degraded"
-  | "uninstalled";
+  "installed" | "enabled" | "disabled" | "degraded" | "uninstalled";
 type PersistedPluginManifest = PluginManifest & {
   readonly helixLifecycleSource?: PluginLifecycleSource | undefined;
 };

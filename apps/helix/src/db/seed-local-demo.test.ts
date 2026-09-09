@@ -28,11 +28,10 @@ describe("seedLocalDemo", () => {
       actors: 3,
       mailThreads: 4,
       driveEntries: 3,
-      docs: 2,
       calendarEvents: 2,
       chatRooms: 1,
       chatMessages: 3,
-      storageObjects: 5,
+      storageObjects: 3,
       volumeMailMessages: 0,
       oauth: {
         clientId: DEFAULT_LOCAL_OAUTH_CLIENT_ID,
@@ -57,7 +56,6 @@ describe("seedLocalDemo", () => {
     expect(sqlText).toContain("credential");
     expect(sqlText).toContain("insert into messages");
     expect(sqlText).toContain("insert into drive_folders");
-    expect(sqlText).toContain("insert into docs_documents");
     expect(sqlText).toContain("insert into cal_events");
     expect(sqlText).toContain("insert into chat_room_settings");
     expect(sqlText).toContain("insert into chat_read_receipts");
@@ -70,13 +68,11 @@ describe("seedLocalDemo", () => {
         call.text.includes("insert into actors") &&
         call.values.includes(DEFAULT_LOCAL_OAUTH_ACTOR_ID),
     );
-    expect(localAdminActorInsert?.values).toContainEqual(expect.arrayContaining(["docs.comment"]));
+    expect(localAdminActorInsert?.values).toContainEqual(expect.arrayContaining(["drive.read"]));
     expect(storage.ensureBucketCalls).toBe(1);
     expect(storage.puts.map((put) => put.key)).toEqual([
       "demo/00000000-0000-4000-8000-000000000100/00000000-0000-4000-8000-000000000302/AI Services and Keys",
       "demo/00000000-0000-4000-8000-000000000100/00000000-0000-4000-8000-000000000303/Training Course Links",
-      "docs/00000000-0000-4000-8000-000000000100/00000000-0000-4000-8000-000000000401",
-      "docs/00000000-0000-4000-8000-000000000100/00000000-0000-4000-8000-000000000403",
       "mail/00000000-0000-4000-8000-000000000602/order-summary.txt",
     ]);
   });
@@ -93,7 +89,7 @@ describe("seedLocalDemo", () => {
     expect(result).toMatchObject({
       mailThreads: 4,
       volumeMailMessages: 2,
-      storageObjects: 5,
+      storageObjects: 3,
     });
     const sqlText = recording.calls.map((call) => call.text).join("\n");
     const volumeJsonRows = recording.jsonValues.flatMap((value): readonly unknown[] =>
@@ -107,7 +103,7 @@ describe("seedLocalDemo", () => {
         (row) => isRecord(row) && row.subject === "helix-volume-mail-search message 00001",
       ),
     ).toBe(true);
-    expect(storage.puts).toHaveLength(5);
+    expect(storage.puts).toHaveLength(3);
   });
 
   it("shifts visible demo activity dates with an anchor date while keeping ids stable", async () => {

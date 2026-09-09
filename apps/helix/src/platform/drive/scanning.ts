@@ -1,15 +1,32 @@
-/** MIME sniffing + pluggable antivirus hooks for Drive finalize. */
+/**
+ * MIME sniffing + pluggable antivirus hooks for Drive finalize.
+ * ClamAV (or other engines) plug in via VirusScanner; default is no-op.
+ */
 
-import { ClamavScanner } from "../mail/antivirus.js";
+import type { SecurityScanResult } from "@helix/contracts";
+import type { SecurityTier } from "@helix/sdk-types";
+import {
+  ClamdInstreamClient,
+  resolveTerminalSecurityScanPolicy,
+  type SecurityScanningMetrics,
+  type SecurityScanDisposition,
+  type SecurityScanInput,
+} from "../security/scanning/index.js";
 
 export interface VirusScanResult {
+  /** True only when a real scanner returned the clean terminal verdict. */
   readonly clean: boolean;
   readonly signature?: string;
+  /** Shared content-free evidence when a real scanner ran. */
+  readonly securityScan?: SecurityScanResult;
+  /** Tier-specific availability decision; consumers must not infer it from `clean`. */
+  readonly disposition?: SecurityScanDisposition;
 }
 
 export interface VirusScanner {
-  readonly kind?: "clamav" | "noop";
-  scan(bytes: Buffer | Uint8Array): Promise<VirusScanResult>;
+  /** Identifies whether production is backed by a real scanning engine. */
+  readonly kind?: "noop" | "clamav";
+  scan(bytes: SecurityScanInput): Promise<VirusScanResult>;
   scanStream?(bytes: AsyncIterable<Uint8Array>, byteSize: number): Promise<VirusScanResult>;
 }
 
@@ -39,8 +56,6 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
 const GIF87 = Buffer.from("GIF87a", "ascii");
 const GIF89 = Buffer.from("GIF89a", "ascii");
-const RIFF_MAGIC = Buffer.from("RIFF", "ascii");
-const WEBP_MAGIC = Buffer.from("WEBP", "ascii");
 const PDF_MAGIC = Buffer.from("%PDF", "ascii");
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 const WEBM_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
@@ -75,7 +90,12 @@ export function sniffMimeType(bytes: Buffer | Uint8Array): string | null {
   if (startsWith(buf, GIF87) || startsWith(buf, GIF89)) {
     return "image/gif";
   }
-  if (startsWith(buf, RIFF_MAGIC) && buf.length >= 12 && buf.subarray(8, 12).equals(WEBP_MAGIC)) {
+  if (
+    buf.length >= 16 &&
+    buf.toString("ascii", 0, 4) === "RIFF" &&
+    buf.toString("ascii", 8, 12) === "WEBP" &&
+    ["VP8 ", "VP8L", "VP8X"].includes(buf.toString("ascii", 12, 16))
+  ) {
     return "image/webp";
   }
   if (startsWith(buf, PDF_MAGIC)) {
@@ -151,61 +171,97 @@ export function isNoopVirusScanner(scanner: VirusScanner): boolean {
   return scanner.kind === "noop";
 }
 
-/** Reuse the bounded clamd INSTREAM client already used by mail ingestion. */
+export interface DriveClamAvVirusScannerOptions {
+  readonly maxFileBytes?: number;
+  readonly archiveLimits?: Partial<ArchiveScanLimits>;
+  readonly host?: string;
+  readonly port?: number;
+  readonly timeoutMs?: number;
+  readonly maxBytes?: number;
+  readonly chunkSizeBytes?: number;
+  readonly scannerVersion?: string;
+  /**
+   * Business and higher tiers quarantine scanner failures. Defaults to
+   * `business` so an omitted policy cannot silently fail open.
+   */
+  readonly tier?: SecurityTier;
+  readonly metrics?: SecurityScanningMetrics;
+}
+
+/**
+ * Real Drive adapter over the shared, streaming clamd client.
+ *
+ * `server.ts` wires this when `driveConfig.malwareScanner` is present
+ * (`createClamAvVirusScanner` + `assertDriveMalwareScannerReady` on production
+ * boots). Business/higher tiers reject a missing or no-op scanner at startup;
+ * personal may omit the adapter. Store/worker code never invents a silent
+ * no-op in production Business configuration.
+ */
 export function createClamAvVirusScanner(
-  options: {
-    readonly host?: string;
-    readonly port?: number;
-    readonly timeoutMs?: number;
-    readonly maxFileBytes?: number;
-    readonly archiveLimits?: Partial<ArchiveScanLimits>;
-  } = {},
+  options: DriveClamAvVirusScannerOptions = {},
 ): VirusScanner {
-  const maxFileBytes = options.maxFileBytes ?? DEFAULT_DRIVE_MAX_SCAN_BYTES;
-  const scanner = new ClamavScanner({
+  const tier = options.tier ?? "business";
+  const metrics = options.metrics;
+  const client = new ClamdInstreamClient({
     host: options.host ?? "clamav",
     port: options.port ?? 3310,
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-    maxMessageBytes: maxFileBytes,
+    maxBytes: options.maxFileBytes ?? options.maxBytes ?? DEFAULT_DRIVE_MAX_SCAN_BYTES,
+    ...(options.chunkSizeBytes === undefined ? {} : { chunkSizeBytes: options.chunkSizeBytes }),
+    ...(options.scannerVersion === undefined ? {} : { scannerVersion: options.scannerVersion }),
+    ...(metrics === undefined ? {} : { metrics }),
   });
+
   return {
     kind: "clamav",
-    async scan(bytes): Promise<VirusScanResult> {
-      if (bytes.byteLength > maxFileBytes) {
-        return { clean: false, signature: "Heuristics.Limits.Exceeded" };
-      }
-      try {
-        assertArchiveWithinLimits(bytes, {
-          ...DEFAULT_ARCHIVE_LIMITS,
-          ...options.archiveLimits,
-        });
-      } catch (error) {
-        if (error instanceof UnsafeArchiveError) {
-          return { clean: false, signature: "Heuristics.ArchiveBomb" };
-        }
-        throw error;
-      }
-      const verdict = await scanner.scan(Buffer.from(bytes));
-      if (!verdict.scanned) {
-        throw new Error("Drive file was not scanned by ClamAV.");
-      }
-      return {
-        clean: !verdict.infected,
-        ...(verdict.signature === null ? {} : { signature: verdict.signature }),
-      };
-    },
     async scanStream(bytes, byteSize): Promise<VirusScanResult> {
-      if (byteSize > maxFileBytes) {
-        return { clean: false, signature: "Heuristics.Limits.Exceeded" };
+      if (!Number.isSafeInteger(byteSize) || byteSize < 0)
+        throw new TypeError("Invalid scan byte size");
+      async function* checkedChunks(): AsyncIterable<Uint8Array> {
+        let observed = 0;
+        for await (const chunk of bytes) {
+          observed += chunk.byteLength;
+          if (observed > byteSize) throw new Error("Scan stream exceeded its declared size");
+          yield chunk;
+        }
+        if (observed !== byteSize)
+          throw new Error("Scan stream size did not match its declared size");
       }
-      const verdict = await scanner.scanStream(bytes, byteSize);
-      if (!verdict.scanned) throw new Error("Drive file was not scanned by ClamAV.");
+      return this.scan(checkedChunks());
+    },
+    async scan(bytes: SecurityScanInput): Promise<VirusScanResult> {
+      if (bytes instanceof Uint8Array) {
+        try {
+          assertArchiveWithinLimits(bytes, { ...DEFAULT_ARCHIVE_LIMITS, ...options.archiveLimits });
+        } catch (error) {
+          if (error instanceof UnsafeArchiveError)
+            return { clean: false, signature: "Heuristics.ArchiveBomb" };
+          throw error;
+        }
+      }
+      const securityScan = await client.scan(bytes);
+      const disposition = resolveTerminalSecurityScanPolicy(tier, securityScan, metrics);
       return {
-        clean: !verdict.infected,
-        ...(verdict.signature === null ? {} : { signature: verdict.signature }),
+        clean: securityScan.state === "clean",
+        ...(securityScan.state === "infected"
+          ? { signature: securityScan.evidence.signature }
+          : {}),
+        securityScan,
+        disposition,
       };
     },
   };
+}
+
+export function assertDriveMalwareScannerReady(
+  tier: SecurityTier,
+  scanner: VirusScanner | undefined,
+): void {
+  if (tier !== "personal" && (scanner === undefined || scanner.kind !== "clamav")) {
+    throw new Error(
+      "Business Drive requires the real streaming ClamAV adapter; the no-op scanner is forbidden.",
+    );
+  }
 }
 
 /**

@@ -1,7 +1,10 @@
+import type { RequestContext, ToolDefinition } from "@helix/sdk-types";
 import { TRPCError, initTRPC } from "@trpc/server";
 import { z, type ZodTypeAny } from "zod";
-import type { Actor, RequestContext, ToolDefinition } from "@helix/sdk-types";
-import type { PlatformMetrics } from "./metrics.js";
+import {
+  toolInvocationOptions,
+  type ToolInvocationPrincipal,
+} from "../platform/auth/tool-invocation-principal.js";
 import {
   canReadPlatformConfig,
   canWritePlatformConfig,
@@ -9,18 +12,19 @@ import {
   platformConfigUpdateSchema,
   type PlatformConfigAdminService,
 } from "../platform/config/admin.js";
-import { projectToolListItem } from "./tool-projection.js";
-import { jsonSchemaToZod } from "./json-schema-zod.js";
 import type { RuntimeToolRegistry, ToolInvokeResult } from "../platform/tool-registry.js";
+import { jsonSchemaToZod } from "./json-schema-zod.js";
+import type { PlatformMetrics } from "./metrics.js";
+import { projectToolListItem } from "./tool-projection.js";
 
 export interface HelixTRPCContext {
   readonly request: RequestContext;
-  readonly actor: Actor;
+  readonly principal: ToolInvocationPrincipal;
 }
 
 const trpc = initTRPC.context<HelixTRPCContext>().create();
 const adminConfigReadProcedure = trpc.procedure.use(({ ctx, next }) => {
-  if (!canReadPlatformConfig(ctx.actor)) {
+  if (!canReadPlatformConfig(ctx.principal.actor)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: `Missing required scope: ${platformConfigAdminScopes.read}`,
@@ -29,13 +33,26 @@ const adminConfigReadProcedure = trpc.procedure.use(({ ctx, next }) => {
   return next();
 });
 const adminConfigWriteProcedure = trpc.procedure.use(({ ctx, next }) => {
-  if (!canWritePlatformConfig(ctx.actor)) {
+  if (!canWritePlatformConfig(ctx.principal.actor)) {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: `Missing required scope: ${platformConfigAdminScopes.write}`,
     });
   }
   return next();
+});
+
+const toolCallSchema = z.object({
+  toolId: z.string().min(1),
+  input: z.unknown().optional(),
+});
+const toolPolicyExplainSchema = toolCallSchema.extend({
+  effectiveClassification: z
+    .enum(["public", "standard", "confidential", "restricted"])
+    .default("standard"),
+  sourceIds: z.array(z.string().min(1).max(512)).max(100).default([]),
+  containsUntrustedContext: z.boolean().default(false),
+  blockHighRiskWhenUntrusted: z.boolean().default(false),
 });
 
 /**
@@ -52,8 +69,14 @@ function buildToolProcedure(tools: RuntimeToolRegistry, tool: ToolDefinition) {
   const outputSchema: ZodTypeAny = jsonSchemaToZod(tool.outputSchema.toJsonSchema());
   const resolve = async ({ ctx, input }: { ctx: HelixTRPCContext; input: unknown }) => {
     const result = await tools.invoke(tool.id, input, {
-      request: ctx.request,
-      actor: ctx.actor,
+      ...toolInvocationOptions(ctx.principal, ctx.request),
+      policyContext: {
+        effectiveClassification: "standard",
+        sourceIds: [],
+        containsUntrustedContext: false,
+        requestChannel: "trpc",
+        tenantId: ctx.principal.actor.orgId,
+      },
       enforceConfirmation: true,
     });
     return unwrapToolResult(result);
@@ -127,14 +150,49 @@ export function createHelixTRPCRouter(input: {
                 message: "Platform config service is not configured.",
               });
             }
-            return input.platformConfig.update(update, ctx.actor);
+            return input.platformConfig.update(update, ctx.principal.actor);
           }),
       }),
     }),
     tools: trpc.router({
       list: trpc.procedure.query(async ({ ctx }) => ({
-        tools: (await input.tools.listVisible(ctx.actor)).map(projectToolListItem),
+        tools: (await input.tools.listVisible(ctx.principal.actor)).map(projectToolListItem),
       })),
+      visible: trpc.procedure.query(async ({ ctx }) => ({
+        tools: (await input.tools.listVisible(ctx.principal.actor)).map(projectToolListItem),
+      })),
+      explain: adminConfigReadProcedure
+        .input(toolPolicyExplainSchema)
+        .query(async ({ ctx, input: request }) =>
+          input.tools.explainPolicy(request.toolId, request.input, {
+            ...toolInvocationOptions(ctx.principal, ctx.request),
+            policyContext: {
+              effectiveClassification: request.effectiveClassification,
+              sourceIds: request.sourceIds,
+              containsUntrustedContext: request.containsUntrustedContext,
+              requestChannel: "trpc",
+              tenantId: ctx.principal.actor.orgId,
+              blockHighRiskWhenUntrusted: request.blockHighRiskWhenUntrusted,
+            },
+            enforceConfirmation: true,
+          }),
+        ),
+      // Generic back-compat procedure — kept so untyped callers and dynamic
+      // tooling keep working alongside the per-tool projection below.
+      invoke: trpc.procedure.input(toolCallSchema).mutation(async ({ ctx, input: call }) => {
+        const result = await input.tools.invoke(call.toolId, call.input, {
+          ...toolInvocationOptions(ctx.principal, ctx.request),
+          policyContext: {
+            effectiveClassification: "standard",
+            sourceIds: [],
+            containsUntrustedContext: false,
+            requestChannel: "trpc",
+            tenantId: ctx.principal.actor.orgId,
+          },
+          enforceConfirmation: true,
+        });
+        return unwrapToolResult(result);
+      }),
       // P1-3: one typed procedure per registered tool, keyed by verbatim id.
       byId: buildToolProjectionRouter(input.tools),
     }),

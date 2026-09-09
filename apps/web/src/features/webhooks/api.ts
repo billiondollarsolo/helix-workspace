@@ -20,6 +20,8 @@ const jsonHeaders = {
 } as const;
 
 export const webhookQueryKeys = {
+  /** The whole section in one request. See `webhookOverviewQueryOptions`. */
+  overview: (deliveryLimit: number) => ["webhooks", "overview", deliveryLimit] as const,
   outbound: ["webhooks", "outbound"] as const,
   inbound: ["webhooks", "inbound"] as const,
   deliveries: (filters: WebhookDeliveryListInput) =>
@@ -35,9 +37,40 @@ export const webhookQueryKeys = {
     ] as const,
 };
 
+/** One page of deliveries. Shared by the overview and the filtered list so both
+ *  ask for the same window. */
+export const DEFAULT_DELIVERY_LIMIT = 100;
+
 export const defaultWebhookDeliveriesInput = {
-  limit: 100,
+  limit: DEFAULT_DELIVERY_LIMIT,
 } as const satisfies WebhookDeliveryListInput;
+
+export interface WebhookOverview {
+  readonly outbound: readonly OutboundWebhook[];
+  readonly inbound: readonly InboundWebhook[];
+  readonly deliveries: readonly WebhookDelivery[];
+}
+
+/** Every list the section renders, in one request.
+ *
+ *  Three separate tool calls is three of the tenant's five requests per second
+ *  (`api_rps_limit`) on top of the two the app shell always spends, so the
+ *  section reliably tripped the limiter and rendered "Webhook API unavailable:
+ *  Tenant API request rate limit exceeded" instead of its content — and with
+ *  `retry: false` the refusal stuck until the operator pressed Refresh. This
+ *  was reproducible on every cold load in a running workspace, not a
+ *  theoretical budget.
+ *
+ *  The three narrower query options below are kept: they are what the mutations
+ *  invalidate, and a caller that genuinely wants one list should not have to
+ *  read all three. */
+export function webhookOverviewQueryOptions(deliveryLimit: number = DEFAULT_DELIVERY_LIMIT) {
+  return queryOptions({
+    queryKey: webhookQueryKeys.overview(deliveryLimit),
+    queryFn: () => fetchWebhookOverview(deliveryLimit),
+    throwOnError: false,
+  });
+}
 
 export function outboundWebhooksQueryOptions() {
   return queryOptions({
@@ -63,6 +96,37 @@ export function webhookDeliveriesQueryOptions(
     queryFn: () => listWebhookDeliveries(input),
     throwOnError: false,
   });
+}
+
+export async function fetchWebhookOverview(
+  deliveryLimit: number = DEFAULT_DELIVERY_LIMIT,
+): Promise<WebhookOverview> {
+  const output = await callTool<{
+    readonly outbound?: readonly OutboundWebhook[];
+    readonly inbound?: readonly InboundWebhook[];
+    readonly deliveries?: readonly WebhookDelivery[];
+  }>("webhook.overview", { deliveryLimit });
+  /* Defaulting to empty is safe here and only here: the tool either answers or
+     throws, so an absent list means the server sent no such key, not that a
+     request failed. A failure reaches the caller as a rejected promise and is
+     rendered as a failure, never as "no webhooks configured". */
+  return {
+    outbound: output.outbound ?? [],
+    inbound: output.inbound ?? [],
+    deliveries: output.deliveries ?? [],
+  };
+}
+
+/** Replay a failed outbound delivery.
+ *
+ *  `webhook.outbound.replay` has existed on the backend since the feature
+ *  landed and nothing in the UI could reach it, so a failed delivery was a dead
+ *  end: an operator could read the error and had no way to act on it short of
+ *  re-triggering whatever produced the event. */
+export async function replayWebhookDelivery(
+  deliveryId: string,
+): Promise<{ readonly delivery: WebhookDelivery | null }> {
+  return callTool("webhook.outbound.replay", { deliveryId });
 }
 
 export async function listOutboundWebhooks(): Promise<readonly OutboundWebhook[]> {
@@ -160,9 +224,21 @@ export async function rotateInboundSecret(
 export async function listWebhookDeliveries(
   input: WebhookDeliveryListInput,
 ): Promise<readonly WebhookDelivery[]> {
+  /* `webhookId` is one field in the UI but two columns on the delivery row, so
+     the direction decides which one it filters. Sending it under the wrong name
+     would silently return everything — a filter that appears to apply and does
+     not is worse than no filter, so an unspecified direction sends neither and
+     the caller gets the unfiltered log it asked for. */
+  const { webhookId, direction, ...rest } = input;
+  const endpoint =
+    webhookId === undefined || direction === undefined
+      ? {}
+      : direction === "outbound"
+        ? { outboundWebhookId: webhookId }
+        : { inboundWebhookId: webhookId };
   const output = await callTool<{ readonly deliveries: readonly WebhookDelivery[] }>(
     "webhook.delivery.list",
-    input,
+    { ...rest, ...(direction === undefined ? {} : { direction }), ...endpoint },
   );
   return output.deliveries;
 }

@@ -2,10 +2,7 @@ import type { Actor } from "@helix/sdk-types";
 import fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import { registerCalendarSchedulingRoutes } from "./scheduling-routes.js";
-import {
-  CalendarResourceConflictError,
-  type CalendarSchedulingStore,
-} from "./scheduling.js";
+import { CalendarResourceConflictError, type CalendarSchedulingStore } from "./scheduling.js";
 
 describe("calendar scheduling routes", () => {
   it("exposes consented availability as anonymous intervals only", async () => {

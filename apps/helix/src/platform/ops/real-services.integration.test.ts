@@ -79,9 +79,7 @@ describe.runIf(enabled)("mandatory real-service contracts", () => {
     });
     await expect(
       scanner.scan(
-        Buffer.from(
-          "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
-        ),
+        Buffer.from("X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"),
       ),
     ).resolves.toMatchObject({ clean: false });
     await expect(
@@ -104,9 +102,7 @@ describe.runIf(enabled)("mandatory real-service contracts", () => {
       attributes: { permission: "drive.read", sideEffects: "read" },
     };
     await expect(policy.can(actor, "drive.read", resource)).resolves.toBe(true);
-    await expect(
-      policy.can({ ...actor, scopes: [] }, "drive.read", resource),
-    ).resolves.toBe(false);
+    await expect(policy.can({ ...actor, scopes: [] }, "drive.read", resource)).resolves.toBe(false);
   });
 });
 

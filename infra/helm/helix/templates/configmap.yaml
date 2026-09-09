@@ -15,6 +15,12 @@ data:
   MEET_JITSI_REGION: {{ .Values.external.s3.region | quote }}
   LOG_LEVEL: {{ .Values.logLevel | quote }}
   HELIX_TRUSTED_PROXIES: {{ join "," .Values.trustedProxies | quote }}
+  {{- /* Workspace packaging: MVP fail-closed defaults. PKG flip only with evidence. */}}
+  HELIX_WORKSPACE_PROFILE: {{ default "mvp" .Values.workspace.profile | quote }}
+  HELIX_APPS: {{ default "mail,drive,chat,assistant" .Values.workspace.apps | quote }}
+  {{- if and .Values.workspace.meet .Values.workspace.meet.jitsiDomain }}
+  MEET_JITSI_DOMAIN: {{ .Values.workspace.meet.jitsiDomain | quote }}
+  {{- end }}
   {{- /*
     FIPS is opt-in. The Helix crypto adapter treats an explicit
     HELIX_CRYPTO_ADAPTER as an override that selects the FipsCryptoProvider

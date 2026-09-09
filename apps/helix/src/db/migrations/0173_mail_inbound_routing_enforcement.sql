@@ -1,12 +1,12 @@
 -- Enforce tenant-owned inbound routing in the SMTP delivery path.
 
 alter table mail_outbound_messages
-  add column idempotency_key text,
+  add column if not exists idempotency_key text,
   add constraint mail_outbound_idempotency_key_check check (
     idempotency_key is null or char_length(idempotency_key) between 1 and 512
   );
 create unique index mail_outbound_idempotency_key_uidx
-  on mail_outbound_messages (org_id, idempotency_key)
+  on mail_outbound_messages (org_id, actor_id, idempotency_key)
   where idempotency_key is not null;
 
 create table mail_journal_settings (

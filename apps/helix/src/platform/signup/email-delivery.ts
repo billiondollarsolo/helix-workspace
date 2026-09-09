@@ -309,7 +309,7 @@ function renderBrandedEmailHtml(input: {
     '<body style="margin:0;background:#f8fafc;padding:32px 16px;">',
     `<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(input.preheader)}</div>`,
     '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">',
-    "<tr><td align=\"center\">",
+    '<tr><td align="center">',
     '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;max-width:560px;background:#ffffff;border:1px solid #e2e8f0;">',
     '<tr><td style="padding:28px 32px 8px;">',
     `<div style="color:#0f766e;font:700 13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:.04em;text-transform:uppercase;">${escapeHtml(input.productName)}</div>`,

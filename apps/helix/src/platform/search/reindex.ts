@@ -3,25 +3,20 @@ import { calendarRecordToIndexDocument } from "../calendar/search/indexer.js";
 import { PostgresCalendarStore } from "../calendar/index.js";
 import { chatRecordToIndexDocument } from "../chat/search/indexer.js";
 import { PostgresChatStore } from "../chat/index.js";
-import { docsRecordToIndexDocument } from "../docs/search/indexer.js";
-import { PostgresDocsStore } from "../docs/index.js";
 import { driveRecordToIndexDocument } from "../drive/search/indexer.js";
 import { PostgresDriveStore } from "../drive/index.js";
 import { mailRecordToIndexDocument } from "../mail/search/indexer.js";
 import { PostgresMailStore } from "../mail/index.js";
 import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
 import type { IndexDocument, SearchEngine } from "./types.js";
-
-export const searchReindexTypes = ["mail", "chat", "docs", "drive", "calendar"] as const;
+export const searchReindexTypes = ["mail", "chat", "drive", "calendar"] as const;
 export type SearchReindexType = (typeof searchReindexTypes)[number];
-
 export interface SearchReindexRequest {
   readonly types?: readonly SearchReindexType[] | undefined;
   readonly orgId?: string | undefined;
   readonly batchSize?: number | undefined;
   readonly pruneStale?: boolean | undefined;
 }
-
 export interface SearchReindexResult {
   readonly status: "completed";
   readonly engineId: string;
@@ -31,44 +26,36 @@ export interface SearchReindexResult {
   readonly counts: Record<SearchReindexType, number>;
   readonly batchSize: number;
 }
-
 export interface SearchReindexRunner {
   reindex(input?: SearchReindexRequest): Promise<SearchReindexResult>;
 }
-
 export interface SearchReconciliationWorkerOptions {
   readonly service: SearchReindexRunner;
   readonly intervalMs?: number;
   readonly onResult?: (result: SearchReindexResult) => void;
   readonly onError?: (error: unknown) => void;
 }
-
 /** Repairs missed Drive projections from the authoritative database. */
 export class SearchReconciliationWorker {
   private timer: NodeJS.Timeout | undefined;
   private active: Promise<SearchReindexResult> | undefined;
-
   constructor(private readonly options: SearchReconciliationWorkerOptions) {}
-
   start(): void {
     if (this.timer !== undefined) return;
     this.timer = setInterval(
       () => void this.run().catch(() => undefined),
-      this.options.intervalMs ?? 300_000,
+      this.options.intervalMs ?? 300000,
     );
     void this.run().catch(() => undefined);
   }
-
   async stop(): Promise<void> {
     if (this.timer !== undefined) clearInterval(this.timer);
     this.timer = undefined;
     await this.active;
   }
-
   reconcileOnce(): Promise<SearchReindexResult> {
     return this.run();
   }
-
   private run(): Promise<SearchReindexResult> {
     if (this.active !== undefined) return this.active;
     this.active = this.options.service
@@ -87,7 +74,6 @@ export class SearchReconciliationWorker {
     return this.active;
   }
 }
-
 export interface SearchReindexSource {
   readonly type: SearchReindexType;
   collect(input: { readonly orgId?: string | undefined }): Promise<readonly IndexDocument[]>;
@@ -101,27 +87,22 @@ export interface SearchReindexSource {
     readonly cursor?: SearchReindexCursor | undefined;
   }): Promise<SearchReindexPage>;
 }
-
 export interface SearchReindexCursor {
   readonly updatedAt: string;
   readonly id: string;
 }
-
 export interface SearchReindexPage {
   readonly documents: readonly IndexDocument[];
   readonly cursor?: SearchReindexCursor | undefined;
   readonly done: boolean;
 }
-
 export interface SearchReindexServiceOptions {
   readonly engine: SearchEngine;
   readonly sources: readonly SearchReindexSource[];
   readonly batchSize?: number | undefined;
 }
-
 export class SearchReindexService implements SearchReindexRunner {
   constructor(private readonly options: SearchReindexServiceOptions) {}
-
   async reindex(input: SearchReindexRequest = {}): Promise<SearchReindexResult> {
     const batchSize = normalizeBatchSize(input.batchSize ?? this.options.batchSize);
     const requestedTypes = normalizeTypes(input.types);
@@ -129,7 +110,6 @@ export class SearchReindexService implements SearchReindexRunner {
     const counts = emptyCounts();
     const currentIdsByType = emptyIdSets();
     let totalDocuments = 0;
-
     for (const source of sources) {
       for await (const documents of collectSourceBatches(source, {
         orgId: input.orgId,
@@ -145,7 +125,6 @@ export class SearchReindexService implements SearchReindexRunner {
         }
       }
     }
-
     const deletedDocuments =
       input.pruneStale === false
         ? 0
@@ -155,7 +134,6 @@ export class SearchReindexService implements SearchReindexRunner {
             currentIdsByType,
             batchSize,
           });
-
     return {
       status: "completed",
       engineId: this.options.engine.id,
@@ -166,7 +144,6 @@ export class SearchReindexService implements SearchReindexRunner {
       batchSize,
     };
   }
-
   private async pruneStaleDocuments(input: {
     readonly types: readonly SearchReindexType[];
     readonly orgId?: string | undefined;
@@ -186,7 +163,6 @@ export class SearchReindexService implements SearchReindexRunner {
         }
       }
     }
-
     let deletedDocuments = 0;
     for (const [orgId, staleIds] of staleIdsByOrg) {
       deletedDocuments += staleIds.length;
@@ -196,12 +172,19 @@ export class SearchReindexService implements SearchReindexRunner {
     }
     return deletedDocuments;
   }
-
   private async collectIndexedDocuments(input: {
     readonly type: SearchReindexType;
     readonly orgId?: string | undefined;
-  }): Promise<readonly { readonly id: string; readonly orgId?: string }[]> {
-    const documents: { readonly id: string; readonly orgId?: string }[] = [];
+  }): Promise<
+    readonly {
+      readonly id: string;
+      readonly orgId?: string;
+    }[]
+  > {
+    const documents: {
+      readonly id: string;
+      readonly orgId?: string;
+    }[] = [];
     const pageSize = 1000;
     let offset = 0;
     for (;;) {
@@ -232,22 +215,18 @@ export class SearchReindexService implements SearchReindexRunner {
     return documents;
   }
 }
-
 export interface PostgresSearchReindexSourcesOptions {
   readonly pageSize?: number | undefined;
 }
-
 export function createPostgresSearchReindexSources(
   sql: postgres.Sql,
   options: PostgresSearchReindexSourcesOptions = {},
 ): readonly SearchReindexSource[] {
   const mail = new PostgresMailStore(sql);
   const chat = new PostgresChatStore(sql);
-  const docs = new PostgresDocsStore(sql);
   const drive = new PostgresDriveStore(sql);
   const calendar = new PostgresCalendarStore(sql);
   const pageSize = normalizeBatchSize(options.pageSize);
-
   return [
     postgresSource({
       sql,
@@ -270,15 +249,6 @@ export function createPostgresSearchReindexSources(
     postgresSource({
       sql,
       pageSize,
-      type: "docs",
-      tableName: "docs_documents",
-      predicate: "deleted_at is null",
-      load: (id) => docs.getDocsSearchRecord(id),
-      map: docsRecordToIndexDocument,
-    }),
-    postgresSource({
-      sql,
-      pageSize,
       type: "drive",
       tableName: "objects",
       predicate: "kind = 'file' and deleted_at is null",
@@ -296,17 +266,16 @@ export function createPostgresSearchReindexSources(
     }),
   ];
 }
-
+type ReindexTableName = "messages" | "objects" | "cal_events";
 interface PostgresSourceOptions<Record> {
   readonly sql: postgres.Sql;
   readonly pageSize: number;
   readonly type: SearchReindexType;
-  readonly tableName: "messages" | "docs_documents" | "objects" | "cal_events";
+  readonly tableName: ReindexTableName;
   readonly predicate: string;
   readonly load: (id: string, orgId?: string) => Promise<Record | readonly Record[] | null>;
   readonly map: (record: Record) => IndexDocument;
 }
-
 function postgresSource<Record>(options: PostgresSourceOptions<Record>): SearchReindexSource {
   return {
     type: options.type,
@@ -384,25 +353,42 @@ function postgresSource<Record>(options: PostgresSourceOptions<Record>): SearchR
     },
   };
 }
-
 async function collectDurableIdPage(
   sql: postgres.Sql,
   type: SearchReindexType,
   limit: number,
   cursor: SearchReindexCursor | undefined,
-): Promise<readonly { readonly id: string; readonly orgId: string; readonly updatedAt: Date }[]> {
-  const rows = await sql<{ id: string; org_id: string; updated_at: Date }[]>`
+): Promise<
+  readonly {
+    readonly id: string;
+    readonly orgId: string;
+    readonly updatedAt: Date;
+  }[]
+> {
+  const rows = await sql<
+    {
+      id: string;
+      org_id: string;
+      updated_at: Date;
+    }[]
+  >`
     select * from helix_search_reindex_id_page(
       ${type}, ${cursor?.updatedAt ?? null}, ${cursor?.id ?? null}, ${limit}
     )
   `;
   return rows.map((row) => ({ id: row.id, orgId: row.org_id, updatedAt: row.updated_at }));
 }
-
 async function* collectPostgresDocumentBatches<Record>(
-  options: PostgresSourceOptions<Record> & { readonly orgId?: string | undefined },
+  options: PostgresSourceOptions<Record> & {
+    readonly orgId?: string | undefined;
+  },
 ): AsyncIterable<readonly IndexDocument[]> {
-  let cursor: { readonly updatedAt: Date; readonly id: string } | undefined;
+  let cursor:
+    | {
+        readonly updatedAt: Date;
+        readonly id: string;
+      }
+    | undefined;
   for (;;) {
     const rows = await collectIdPage({
       sql: options.sql,
@@ -415,7 +401,6 @@ async function* collectPostgresDocumentBatches<Record>(
     if (rows.length === 0) {
       return;
     }
-
     const ids = rows.map((row) => row.id);
     const documents = await collectDocuments(
       ids,
@@ -433,7 +418,6 @@ async function* collectPostgresDocumentBatches<Record>(
     cursor = { id: last.id, updatedAt: last.updatedAt };
   }
 }
-
 async function collectDocuments<Record>(
   ids: readonly string[],
   load: (id: string) => Promise<Record | readonly Record[] | null>,
@@ -449,25 +433,41 @@ async function collectDocuments<Record>(
   }
   return documents;
 }
-
 async function collectIdPage(input: {
   readonly sql: postgres.Sql;
-  readonly tableName: "messages" | "docs_documents" | "objects" | "cal_events";
+  readonly tableName: ReindexTableName;
   readonly predicate: string;
   readonly orgId: string | undefined;
   readonly limit: number;
-  readonly cursor: { readonly updatedAt: Date; readonly id: string } | undefined;
-}): Promise<readonly { readonly id: string; readonly updatedAt: Date }[]> {
-  const rows = await input.sql.unsafe<{ readonly id: string; readonly updated_at: Date }[]>(
+  readonly cursor:
+    | {
+        readonly updatedAt: Date;
+        readonly id: string;
+      }
+    | undefined;
+}): Promise<
+  readonly {
+    readonly id: string;
+    readonly updatedAt: Date;
+  }[]
+> {
+  const rows = await input.sql.unsafe<
+    {
+      readonly id: string;
+      readonly updated_at: Date;
+    }[]
+  >(
     `select id, updated_at from ${input.tableName} where ${input.predicate} and ($1::uuid is null or org_id = $1::uuid) and ($3::timestamptz is null or (updated_at, id) > ($3::timestamptz, $4::uuid)) order by updated_at asc, id asc limit $2`,
     [input.orgId ?? null, input.limit, input.cursor?.updatedAt ?? null, input.cursor?.id ?? null],
   );
   return rows.map((row) => ({ id: row.id, updatedAt: row.updated_at }));
 }
-
 async function* collectSourceBatches(
   source: SearchReindexSource,
-  input: { readonly orgId?: string | undefined; readonly batchSize: number },
+  input: {
+    readonly orgId?: string | undefined;
+    readonly batchSize: number;
+  },
 ): AsyncIterable<readonly IndexDocument[]> {
   if (source.collectBatches !== undefined) {
     yield* source.collectBatches(input);
@@ -478,7 +478,6 @@ async function* collectSourceBatches(
     yield batch;
   }
 }
-
 function normalizeTypes(
   types: readonly SearchReindexType[] | undefined,
 ): readonly SearchReindexType[] {
@@ -487,34 +486,30 @@ function normalizeTypes(
   }
   return searchReindexTypes.filter((type) => types.includes(type));
 }
-
 function normalizeBatchSize(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value) || value < 1) {
     return 100;
   }
   return Math.min(Math.floor(value), 1000);
 }
-
 function emptyCounts(): Record<SearchReindexType, number> {
   return {
     mail: 0,
     chat: 0,
-    docs: 0,
+
     drive: 0,
     calendar: 0,
   };
 }
-
 function emptyIdSets(): Record<SearchReindexType, Set<string>> {
   return {
     mail: new Set<string>(),
     chat: new Set<string>(),
-    docs: new Set<string>(),
+
     drive: new Set<string>(),
     calendar: new Set<string>(),
   };
 }
-
 function chunks<T>(values: readonly T[], size: number): readonly T[][] {
   const batches: T[][] = [];
   for (let index = 0; index < values.length; index += size) {

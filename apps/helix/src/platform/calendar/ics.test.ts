@@ -154,7 +154,7 @@ describe("calendar ICS mail invitations", () => {
     expect(firstEnvelope?.from).toEqual({ address: "ada@example.com" });
     expect(firstEnvelope?.subject).toBe("Invitation: Launch review");
     expect(firstEnvelope?.text).toContain(
-      "Accept: https://helix.example.com/dav/cal/rsvp/rsvp-bruno?response=accepted",
+      "Accept: https://helix.example.com/v1/dav/cal/rsvp/rsvp-bruno?response=accepted",
     );
 
     const attachment = firstEnvelope?.attachments[0];
@@ -169,7 +169,9 @@ describe("calendar ICS mail invitations", () => {
     expect(ics).toContain("METHOD:REQUEST");
     expect(ics).toContain("SUMMARY:Launch review");
     expect(ics).toContain('ATTENDEE;CN="Bruno"');
-    expect(ics).toContain("X-HELIX-RSVP-ACCEPT:https://helix.example.com/dav/cal/rsvp/rsvp-bruno?");
+    expect(ics).toContain(
+      "X-HELIX-RSVP-ACCEPT:https://helix.example.com/v1/dav/cal/rsvp/rsvp-bruno?",
+    );
   });
 
   it("emits attendee-only METHOD:REPLY ICS and queues it to the organizer", async () => {

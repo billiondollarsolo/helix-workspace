@@ -74,6 +74,10 @@ export function ChatShell() {
   });
   const [activeRoomId, setActiveRoomId] = useState<string | undefined>(urlSearch.room);
   const [threadId, setThreadId] = useState<string | null>(urlSearch.thread ?? null);
+  const [infoOpen, setInfoOpen] = useState(
+    () =>
+      typeof window.matchMedia !== "function" || !window.matchMedia("(max-width: 900px)").matches,
+  );
   const [infoTab, setInfoTab] = useState<InfoTab>(urlSearch.tab ?? "about");
   const [search, setSearch] = useState("");
 
@@ -443,6 +447,7 @@ export function ChatShell() {
       onSearchChange={setSearch}
     >
       <div className="chat-body">
+        <h1 className="sr-only">Chat</h1>
         <ChatSidebar
           loading={roomsQuery.isLoading}
           offline={offline}
@@ -473,6 +478,8 @@ export function ChatShell() {
           ) : null}
 
           <ChatChannelHeader
+            infoOpen={infoOpen}
+            onToggleInfo={() => setInfoOpen((open) => !open)}
             name={roomName}
             memberCount={about.memberCount}
             onInvite={(actorId) => {
@@ -530,8 +537,9 @@ export function ChatShell() {
             onReply={handleThreadReply}
             onTyping={realtime.setTyping}
           />
-        ) : (
+        ) : infoOpen ? (
           <ChatInfoPanel
+            onClose={() => setInfoOpen(false)}
             tab={infoTab}
             onTabChange={setInfoTab}
             about={about}
@@ -547,7 +555,7 @@ export function ChatShell() {
               }
             }}
           />
-        )}
+        ) : null}
       </div>
     </SurfaceFrame>
   );
@@ -876,12 +884,20 @@ function ChatSidebar({
    ---------------------------------------------------------------- */
 
 interface ChatChannelHeaderProps {
+  readonly infoOpen: boolean;
+  readonly onToggleInfo: () => void;
   readonly name: string;
   readonly memberCount: number;
   readonly onInvite?: ((actorId: string) => void) | undefined;
 }
 
-function ChatChannelHeader({ name, memberCount, onInvite }: ChatChannelHeaderProps) {
+function ChatChannelHeader({
+  name,
+  memberCount,
+  onInvite,
+  infoOpen,
+  onToggleInfo,
+}: ChatChannelHeaderProps) {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteId, setInviteId] = useState("");
   return (
@@ -890,6 +906,15 @@ function ChatChannelHeader({ name, memberCount, onInvite }: ChatChannelHeaderPro
       <span className="chat-channel-name">{name}</span>
       <span className="chat-channel-meta">· {memberCount} members</span>
       <div className="chat-channel-actions">
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Channel info"
+          aria-expanded={infoOpen}
+          onClick={onToggleInfo}
+        >
+          <Icons.Users size={16} />
+        </button>
         <Tooltip label="Add people" side="bottom">
           <button
             type="button"
@@ -973,7 +998,7 @@ function ChatMessageList({
 }: ChatMessageListProps) {
   if (loading) {
     return (
-      <div className="chat-messages" role="log" aria-label="Messages">
+      <div className="chat-messages" tabIndex={0} role="log" aria-label="Messages">
         <p className="chat-messages-state">Loading messages…</p>
       </div>
     );
@@ -981,7 +1006,7 @@ function ChatMessageList({
 
   if (error !== null && error !== undefined && !offline) {
     return (
-      <div className="chat-messages" role="log" aria-label="Messages">
+      <div className="chat-messages" tabIndex={0} role="log" aria-label="Messages">
         <div className="chat-messages-state chat-messages-error">
           <p>Couldn’t load messages.</p>
           <button type="button" className="btn sm" onClick={onRetry}>
@@ -994,7 +1019,7 @@ function ChatMessageList({
 
   if (messages.length === 0) {
     return (
-      <div className="chat-messages" role="log" aria-label="Messages">
+      <div className="chat-messages" tabIndex={0} role="log" aria-label="Messages">
         <p className="chat-messages-state">
           {offline ? "Offline — no messages available." : "No messages yet. Say hello!"}
         </p>
@@ -1110,7 +1135,7 @@ function VirtualizedChatMessages({
   }, [hasOlder, loadingOlder, onLoadOlder]);
 
   return (
-    <div ref={scrollRef} className="chat-messages" role="log" aria-label="Messages">
+    <div ref={scrollRef} className="chat-messages" tabIndex={0} role="log" aria-label="Messages">
       <div
         style={{
           position: "relative",
@@ -1271,13 +1296,7 @@ function ChatMessageRow({
             </div>
           </div>
         ) : (
-          <>
-            <ChatMessageContent body={message.body} bodyFormat={message.bodyFormat} />
-            <ChatAttachmentGallery
-              attachments={message.attachments}
-              attachmentObjectIds={message.attachmentObjectIds}
-            />
-          </>
+          <ChatMessageBody className="chat-msg-line" message={message} />
         )}
 
         {message.reactions.length > 0 ? (
@@ -1479,11 +1498,7 @@ function ChatThreadPanel({
               <span className="chat-thread-author">{parent.authorName}</span>
               <span className="chat-thread-time">{parent.time}</span>
             </div>
-            <ChatMessageContent body={parent.body} bodyFormat={parent.bodyFormat} />
-            <ChatAttachmentGallery
-              attachments={parent.attachments}
-              attachmentObjectIds={parent.attachmentObjectIds}
-            />
+            <ChatMessageBody className="chat-thread-line" message={parent} />
           </div>
         </div>
 
@@ -1502,11 +1517,34 @@ function ChatThreadPanel({
   );
 }
 
+function ChatMessageBody(input: {
+  readonly className: string;
+  readonly message: Pick<
+    ChatMessageView,
+    "body" | "bodyFormat" | "renderedBodyHtml" | "attachments" | "attachmentObjectIds"
+  >;
+}) {
+  return (
+    <div className={input.className}>
+      <ChatMessageContent
+        body={input.message.body}
+        bodyFormat={input.message.bodyFormat}
+        renderedBodyHtml={input.message.renderedBodyHtml}
+      />
+      <ChatAttachmentGallery
+        attachments={input.message.attachments}
+        attachmentObjectIds={input.message.attachmentObjectIds}
+      />
+    </div>
+  );
+}
+
 /* ----------------------------------------------------------------
    Info panel — 260px tabbed
    ---------------------------------------------------------------- */
 
 interface ChatInfoPanelProps {
+  readonly onClose: () => void;
   readonly tab: InfoTab;
   readonly onTabChange: (tab: InfoTab) => void;
   readonly about: ChatAboutView;
@@ -1515,7 +1553,15 @@ interface ChatInfoPanelProps {
   readonly onInvite: (raw: string) => void;
 }
 
-function ChatInfoPanel({ tab, onTabChange, about, members, pins, onInvite }: ChatInfoPanelProps) {
+function ChatInfoPanel({
+  tab,
+  onTabChange,
+  about,
+  members,
+  pins,
+  onInvite,
+  onClose,
+}: ChatInfoPanelProps) {
   const [inviteDraft, setInviteDraft] = useState("");
   const tabs: ReadonlyArray<{ readonly id: InfoTab; readonly label: string }> = [
     { id: "about", label: "About" },
@@ -1526,6 +1572,9 @@ function ChatInfoPanel({ tab, onTabChange, about, members, pins, onInvite }: Cha
 
   return (
     <aside className="chat-info-panel" aria-label="Channel info">
+      <button type="button" className="icon-btn" aria-label="Close channel info" onClick={onClose}>
+        <Icons.X />
+      </button>
       <div className="chat-info-tabs" role="tablist">
         {tabs.map((item) => (
           <button

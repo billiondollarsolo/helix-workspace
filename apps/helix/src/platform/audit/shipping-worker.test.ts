@@ -43,10 +43,7 @@ describe("AuditShippingWorker", () => {
       "00000000-0000-4000-8000-000000000002",
     ]);
     expect(shipper.shippedGroups).toEqual([
-      [
-        "00000000-0000-4000-8000-000000000001",
-        "00000000-0000-4000-8000-000000000002",
-      ],
+      ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"],
     ]);
     expect(store.savedCheckpoints).toEqual([
       {
@@ -89,10 +86,7 @@ describe("AuditShippingWorker", () => {
     });
 
     expect(shipper.shippedGroups).toEqual([
-      [
-        "00000000-0000-4000-8000-000000000001",
-        "00000000-0000-4000-8000-000000000003",
-      ],
+      ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000003"],
       ["00000000-0000-4000-8000-000000000002"],
     ]);
     expect(store.savedCheckpoints).toEqual([
@@ -172,9 +166,7 @@ describe("AuditShippingWorker", () => {
   });
 
   it("does not checkpoint a batch when independent anchor reconciliation fails", async () => {
-    const store = new InMemoryAuditShippingStore([
-      auditRecord("1", "2026-05-20T00:00:00.000Z"),
-    ]);
+    const store = new InMemoryAuditShippingStore([auditRecord("1", "2026-05-20T00:00:00.000Z")]);
     const worker = new AuditShippingWorker({
       store,
       shipper: new ReconciliationFailShipper(),
@@ -247,10 +239,12 @@ class InMemoryAuditShippingStore implements AuditShippingStore {
   }
 
   async getAuditShippingBacklog(): Promise<AuditShippingBacklog> {
-    return this.backlog ?? {
-      recordCount: this.records.length,
-      ...(this.records[0] === undefined ? {} : { oldestCreatedAt: this.records[0].createdAt }),
-    };
+    return (
+      this.backlog ?? {
+        recordCount: this.records.length,
+        ...(this.records[0] === undefined ? {} : { oldestCreatedAt: this.records[0].createdAt }),
+      }
+    );
   }
 }
 

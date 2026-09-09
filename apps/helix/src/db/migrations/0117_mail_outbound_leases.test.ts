@@ -17,7 +17,15 @@ describe("0117 mail outbound leases", () => {
   it("claims one due/stale row atomically and fences every completion", () => {
     expect(store).toContain("for update skip locked");
     expect(store).toContain("status = 'sending' and lease_expires_at <=");
-    expect(store.match(/status = 'sending' and lease_token =/gu)).toHaveLength(3);
+    for (const method of [
+      "bindOutboundProviderDecision",
+      "markOutboundSent",
+      "markOutboundRetry",
+      "markOutboundDeadLettered",
+    ]) {
+      const body = store.slice(store.indexOf(`async ${method}(`)).split("\n  async ")[0];
+      expect(body).toContain("status = 'sending' and lease_token =");
+    }
   });
 
   it("has one timestamp-driven scheduler and no broker or inline sleep path", () => {

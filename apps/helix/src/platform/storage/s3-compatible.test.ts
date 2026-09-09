@@ -120,7 +120,9 @@ describe("S3-compatible storage", () => {
         );
       }
       if (url.searchParams.has("versioning")) {
-        return xmlResponse(`<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`);
+        return xmlResponse(
+          `<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`,
+        );
       }
       if (url.searchParams.has("object-lock")) {
         return xmlResponse(
@@ -158,7 +160,9 @@ describe("S3-compatible storage", () => {
         );
       }
       if (url.searchParams.has("versioning")) {
-        return xmlResponse(`<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`);
+        return xmlResponse(
+          `<VersioningConfiguration><Status>Enabled</Status></VersioningConfiguration>`,
+        );
       }
       if (url.searchParams.has("object-lock")) {
         return xmlResponse(
@@ -259,12 +263,13 @@ describe("S3-compatible storage", () => {
 
     const object = await storage(fetchStub.fetch).get("result.json");
 
-    expect(object).toEqual({
+    expect(object).toMatchObject({
       key: "result.json",
-      body: new TextEncoder().encode("payload"),
       contentType: "application/json",
       metadata: { owner: "agent-1" },
     });
+    if (object === null) throw new Error("Expected stored object.");
+    expect(await collectBody(object.body)).toEqual(new TextEncoder().encode("payload"));
     expect(firstUrlCall(fetchStub)[1].method).toBe("GET");
   });
 
@@ -312,6 +317,38 @@ describe("S3-compatible storage", () => {
     expect(requestHeaders(init)["x-amz-server-side-encryption-aws-kms-key-id"]).toBe(
       "rotated-kms-key",
     );
+  });
+
+  it("reads provider encryption evidence without fetching object bytes", async () => {
+    const fetchStub = createFetchStub(
+      () =>
+        new Response(null, {
+          status: 200,
+          headers: {
+            "content-length": "4096",
+            etag: '"encrypted-etag"',
+            "x-amz-server-side-encryption": "aws:kms",
+            "x-amz-server-side-encryption-aws-kms-key-id":
+              "arn:aws:kms:us-east-1:123456789012:key/tenant-a",
+            "x-amz-meta-objectid": "object-a",
+          },
+        }),
+    );
+
+    await expect(storage(fetchStub.fetch).headObject("encrypted.bin")).resolves.toEqual({
+      byteSize: 4096,
+      etag: '"encrypted-etag"',
+      serverSideEncryption: "aws:kms",
+      serverSideEncryptionAwsKmsKeyId: "arn:aws:kms:us-east-1:123456789012:key/tenant-a",
+      metadata: { objectid: "object-a" },
+    });
+    expect(firstUrlCall(fetchStub)[1].method).toBe("HEAD");
+  });
+
+  it("returns no encryption evidence for a missing object", async () => {
+    const fetchStub = createFetchStub(() => new Response(null, { status: 404 }));
+
+    await expect(storage(fetchStub.fetch).headObject("missing")).resolves.toBeNull();
   });
 
   it("sends configurable SSE-S3 headers on signed PUT requests", async () => {
@@ -569,6 +606,46 @@ describe("S3-compatible storage", () => {
     expect(url.searchParams.has("uploads")).toBe(true);
   });
 
+  it("carries tenant KMS policy on multipart initiation", async () => {
+    const fetchStub = createFetchStub(
+      () =>
+        new Response(
+          "<InitiateMultipartUploadResult><UploadId>kms-upload</UploadId></InitiateMultipartUploadResult>",
+          {
+            status: 200,
+          },
+        ),
+    );
+    await storage(fetchStub.fetch, {
+      serverSideEncryption: "aws:kms",
+      serverSideEncryptionAwsKmsKeyId: "kms-tenant-a",
+    }).createMultipartUpload("drive/o/encrypted.bin");
+
+    expect(requestHeaders(firstUrlCall(fetchStub)[1])).toMatchObject({
+      "x-amz-server-side-encryption": "aws:kms",
+      "x-amz-server-side-encryption-aws-kms-key-id": "kms-tenant-a",
+    });
+  });
+
+  it("carries tenant KMS policy when copying objects", async () => {
+    const fetchStub = createFetchStub(
+      () =>
+        new Response("<CopyObjectResult><ETag>&quot;copied&quot;</ETag></CopyObjectResult>", {
+          status: 200,
+        }),
+    );
+    await storage(fetchStub.fetch, {
+      serverSideEncryption: "aws:kms",
+      serverSideEncryptionAwsKmsKeyId: "kms-tenant-a",
+    }).copyObject("source.bin", "copy.bin");
+
+    expect(requestHeaders(firstUrlCall(fetchStub)[1])).toMatchObject({
+      "x-amz-copy-source": "/helix-objects/source.bin",
+      "x-amz-server-side-encryption": "aws:kms",
+      "x-amz-server-side-encryption-aws-kms-key-id": "kms-tenant-a",
+    });
+  });
+
   it("presignUploadPart signs partNumber and uploadId", async () => {
     const fetchStub = createFetchStub();
     const url = await storage(fetchStub.fetch).presignUploadPart("drive/o/x.bin", "up-1", 2);
@@ -597,6 +674,7 @@ describe("S3-compatible storage", () => {
     const body =
       typeof init.body === "string" ? init.body : new TextDecoder().decode(init.body as Uint8Array);
     expect(body).toContain("<CompleteMultipartUpload ");
+
     expect(body).toContain("<PartNumber>1</PartNumber>");
     expect(body).toContain("<ETag>&quot;etag1&quot;</ETag>");
   });
@@ -657,3 +735,20 @@ describe("S3-compatible storage", () => {
     });
   });
 });
+
+async function collectBody(body: Uint8Array | AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  if (body instanceof Uint8Array) return body;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of body) {
+    chunks.push(chunk);
+    size += chunk.byteLength;
+  }
+  const result = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}

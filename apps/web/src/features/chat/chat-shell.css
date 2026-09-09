@@ -796,8 +796,8 @@
 .chat-banner {
   padding: 6px 16px;
   font-size: var(--text-meta);
-  color: var(--warn, #9a6700);
-  background: var(--warn-soft, #fff4d6);
+  color: var(--warning);
+  background: var(--warning-soft);
   border-bottom: 1px solid var(--border);
 }
 
@@ -809,7 +809,7 @@
 
 .chat-sidebar-offline {
   margin-top: auto;
-  color: var(--warn, #9a6700);
+  color: var(--warning);
 }
 
 .chat-messages-state {
@@ -890,4 +890,17 @@
 
 .chat-msg[data-mine="true"] .chat-msg-author {
   color: var(--accent);
+}
+
+@media (max-width: 900px) {
+  .chat-body {
+    position: relative;
+  }
+  .chat-info-panel,
+  .chat-thread-panel {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: min(280px, 85vw);
+    z-index: 20;
+  }
 }

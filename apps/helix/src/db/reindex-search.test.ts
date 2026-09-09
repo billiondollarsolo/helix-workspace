@@ -8,7 +8,7 @@ describe("parseReindexSearchArgs", () => {
         "--",
         "--all",
         "--types",
-        "mail,docs,drive",
+        "mail,chat,drive",
         "--org-id",
         "11111111-1111-4111-8111-111111111111",
         "--batch-size",
@@ -17,7 +17,7 @@ describe("parseReindexSearchArgs", () => {
       ]),
     ).toEqual({
       requireAll: true,
-      types: ["mail", "docs", "drive"],
+      types: ["mail", "chat", "drive"],
       orgId: "11111111-1111-4111-8111-111111111111",
       batchSize: 25,
       pruneStale: false,

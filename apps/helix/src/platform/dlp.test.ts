@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { PendingToolInvocation, ToolDefinition } from "@helix/sdk-types";
+import type { ToolDefinition } from "@helix/sdk-types";
 import type { SecurityPolicyRecord } from "./admin/security-policies.js";
 import { createToolRegistry } from "./tool-registry.js";
-import type { ConfirmationGate } from "./tools/registry.js";
+import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "./tools/registry.js";
 import { TenantDlpGuard, dlpBoundaries, dlpToolInvocation, type DlpAction } from "./dlp.js";
 
 const orgId = "00000000-0000-4000-8000-000000000001";
@@ -191,9 +191,12 @@ describe("tool egress enforcement", () => {
 
   it("uses the existing confirmation gate for warn, then executes acknowledged content", async () => {
     let calls = 0;
-    const confirmationGate = memoryConfirmationGate();
+    const confirmationGate = new InMemoryConfirmationGate(new InMemoryPendingActionStore());
     const registry = createToolRegistry({
       confirmationGate,
+      resolvePendingPrincipal: async () => ({
+        actor: { id: actorId, orgId, type: "user", scopes: ["mail.send"] },
+      }),
       dlp: {
         evaluate: async (input) => ({
           action: "warn",
@@ -325,27 +328,5 @@ function testMailTool(onCall: () => void): ToolDefinition {
       onCall();
       return { sent: true };
     },
-  };
-}
-
-function memoryConfirmationGate(): ConfirmationGate {
-  let pending: PendingToolInvocation | null = null;
-  return {
-    queue: async ({ tool, actor, input }) => {
-      pending = {
-        id: "pending-1",
-        toolId: tool.id,
-        actorId: actor.id,
-        input,
-        status: "pending_confirmation",
-        createdAt: "2026-09-03T00:00:00.000Z",
-        expiresAt: "2026-09-03T00:10:00.000Z",
-      };
-      return pending;
-    },
-    approve: async () => (pending === null ? null : { ...pending, status: "confirmed" }),
-    deny: async () => (pending === null ? null : { ...pending, status: "cancelled" }),
-    recordExecution: async () => pending,
-    get: async () => pending,
   };
 }

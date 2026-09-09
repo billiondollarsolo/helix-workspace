@@ -164,19 +164,21 @@ describe("enforceCredentialPolicy", () => {
   it("rejects a request outside the allowed-hours window", () => {
     const cred = credential({ policy: { allowedHours: { startHour: 9, endHour: 17 } } });
     expect(enforceCredentialPolicy(cred, { at })).toEqual({ ok: true });
-    expect(
-      enforceCredentialPolicy(cred, { at: new Date("2026-05-21T20:00:00Z") }),
-    ).toMatchObject({ ok: false, code: "outside_allowed_hours" });
+    expect(enforceCredentialPolicy(cred, { at: new Date("2026-05-21T20:00:00Z") })).toMatchObject({
+      ok: false,
+      code: "outside_allowed_hours",
+    });
   });
 
   it("rejects an mTLS credential when the presented fingerprint mismatches", () => {
     const cred = credential({ credentialType: "mtls_cert", certFingerprint: "aabbcc" });
-    expect(
-      enforceCredentialPolicy(cred, { certFingerprint: "AA:BB:CC", at }),
-    ).toEqual({ ok: true });
-    expect(
-      enforceCredentialPolicy(cred, { certFingerprint: "deadbeef", at }),
-    ).toMatchObject({ ok: false, code: "cert_fingerprint_mismatch" });
+    expect(enforceCredentialPolicy(cred, { certFingerprint: "AA:BB:CC", at })).toEqual({
+      ok: true,
+    });
+    expect(enforceCredentialPolicy(cred, { certFingerprint: "deadbeef", at })).toMatchObject({
+      ok: false,
+      code: "cert_fingerprint_mismatch",
+    });
     expect(enforceCredentialPolicy(cred, { at })).toMatchObject({
       ok: false,
       code: "cert_fingerprint_mismatch",
@@ -193,12 +195,13 @@ describe("authenticateApiKey", () => {
       credential({ apiKeyHash, policy: { ipAllowlist: ["10.0.0.0/8"] } }),
     );
 
-    await expect(
-      authenticateApiKey(store, apiKey, { ip: "10.1.1.1" }),
-    ).resolves.toMatchObject({ ok: true });
-    await expect(
-      authenticateApiKey(store, apiKey, { ip: "8.8.8.8" }),
-    ).resolves.toMatchObject({ ok: false, code: "ip_not_allowed" });
+    await expect(authenticateApiKey(store, apiKey, { ip: "10.1.1.1" })).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(authenticateApiKey(store, apiKey, { ip: "8.8.8.8" })).resolves.toMatchObject({
+      ok: false,
+      code: "ip_not_allowed",
+    });
     expect(store.used).toHaveLength(1);
     expect(store.used[0]?.credentialId).toBe("cred-1");
   });
@@ -216,21 +219,19 @@ describe("authenticateApiKey", () => {
 describe("authenticateMtlsCertificate", () => {
   it("authenticates a registered certificate fingerprint", async () => {
     const store = new FakeCredentialStore();
-    store.addCert(
-      "aabbcc",
-      credential({ credentialType: "mtls_cert", certFingerprint: "aabbcc" }),
-    );
-    await expect(
-      authenticateMtlsCertificate(store, "AA:BB:CC", {}),
-    ).resolves.toMatchObject({ ok: true });
+    store.addCert("aabbcc", credential({ credentialType: "mtls_cert", certFingerprint: "aabbcc" }));
+    await expect(authenticateMtlsCertificate(store, "AA:BB:CC", {})).resolves.toMatchObject({
+      ok: true,
+    });
     expect(store.used).toHaveLength(1);
   });
 
   it("rejects an unregistered certificate", async () => {
     const store = new FakeCredentialStore();
-    await expect(
-      authenticateMtlsCertificate(store, "deadbeef", {}),
-    ).resolves.toMatchObject({ ok: false, code: "invalid_certificate" });
+    await expect(authenticateMtlsCertificate(store, "deadbeef", {})).resolves.toMatchObject({
+      ok: false,
+      code: "invalid_certificate",
+    });
   });
 
   it("rejects when no certificate is presented", async () => {

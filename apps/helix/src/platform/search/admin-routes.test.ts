@@ -27,7 +27,7 @@ describe("search admin routes", () => {
       engineId: "fake-search",
       totalDocuments: 2,
     });
-    expect(service.calls).toEqual([{ types: ["mail", "drive"], batchSize: 25 }]);
+    expect(service.calls).toEqual([{ orgId, types: ["mail", "drive"], batchSize: 25 }]);
   });
 
   it("passes org scoping and stale-prune options to the reindex service", async () => {
@@ -48,6 +48,43 @@ describe("search admin routes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(service.calls).toEqual([{ orgId, pruneStale: false }]);
+  });
+
+  it("defaults reindex org scope to the actor org when body omits orgId", async () => {
+    const service = new FakeSearchReindexService();
+    const app = fastify();
+    await registerSearchAdminRoutes(app, { service, actorFromRequest });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/search/reindex",
+      headers: adminHeaders("admin.search.write"),
+      payload: { all: true, types: ["mail"] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(service.calls).toEqual([{ orgId, types: ["mail"] }]);
+  });
+
+  it("denies cross-organization reindex requests before invoking the service", async () => {
+    const foreignOrgId = "33333333-3333-4333-8333-333333333333";
+    const service = new FakeSearchReindexService();
+    const app = fastify();
+    await registerSearchAdminRoutes(app, { service, actorFromRequest });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/search/reindex",
+      headers: adminHeaders("admin.search.write"),
+      payload: { all: true, orgId: foreignOrgId, types: ["mail"] },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: "Cross-organization search reindex denied.",
+      code: "cross_org_reindex_denied",
+    });
+    expect(service.calls).toEqual([]);
   });
 
   it("requires an admin search or config scope", async () => {
@@ -94,7 +131,7 @@ describe("search admin routes", () => {
       id: "33333333-3333-4333-8333-333333333333",
       orgId,
       requestedByActorId: actorId,
-      types: ["mail", "chat", "docs", "drive", "calendar"] as const,
+      types: ["mail", "chat", "drive", "calendar"] as const,
       batchSize: 50,
       shadowIndexUid: "shadow",
       status: "queued" as const,
@@ -151,7 +188,7 @@ class FakeSearchReindexService {
 
   async reindex(input: SearchReindexRequest): Promise<SearchReindexResult> {
     this.calls.push(input);
-    const types = input.types ?? ["mail", "chat", "docs", "drive", "calendar"];
+    const types = input.types ?? ["mail", "chat", "drive", "calendar"];
     return {
       status: "completed",
       engineId: "fake-search",
@@ -168,7 +205,7 @@ function counts(types: readonly SearchReindexType[]): Record<SearchReindexType, 
   return {
     mail: types.includes("mail") ? 1 : 0,
     chat: types.includes("chat") ? 1 : 0,
-    docs: types.includes("docs") ? 1 : 0,
+
     drive: types.includes("drive") ? 1 : 0,
     calendar: types.includes("calendar") ? 1 : 0,
   };

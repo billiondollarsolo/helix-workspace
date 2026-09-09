@@ -1,21 +1,19 @@
 /**
  * Drive feature E2E (P1-1) — drives the real /drive UI in a real browser.
  *
- * MOCKED (default): `/api/**` is intercepted with deterministic fixtures.
+ * MOCKED (default): `/v1/api/**` is intercepted with deterministic fixtures.
  * LIVE (`HELIX_E2E_BACKEND=live`): drives the docker-compose backend's drive
  * tools with a real OAuth token. See `support/backend-mode.ts`.
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
-import { isLiveBackend, mintLiveAccessToken } from "./support/backend-mode";
+import { isLiveBackend, seedBrowserSession } from "./support/backend-mode";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 
-const accessTokenStorageKey = "helix.accessToken";
-const driveScope = "platform.read drive.read";
 const fileId = "00000000-0000-4000-8000-000000000701";
 
 test.describe("/drive feature flow", () => {
   test("renders backend Drive items in the virtualized list", async ({ page }) => {
-    const accessToken = await seedAccessToken(page, driveScope, "e2e-drive-token");
+    const accessToken = await seedBrowserSession(page, "e2e-drive-token");
     if (!isLiveBackend()) {
       await mockDriveBackend(page, accessToken);
     }
@@ -33,30 +31,22 @@ test.describe("/drive feature flow", () => {
   });
 });
 
-async function seedAccessToken(page: Page, scope: string, mockToken: string): Promise<string> {
-  const token = isLiveBackend() ? await mintLiveAccessToken(scope) : mockToken;
-  await page.addInitScript(
-    ({ key, value }) => window.localStorage.setItem(key, value),
-    { key: accessTokenStorageKey, value: token },
-  );
-  return token;
-}
-
 async function mockDriveBackend(page: Page, accessToken: string) {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
+    if (await fulfillCoreAppsRoute(route)) return;
 
-    if (request.headers().authorization !== `Bearer ${accessToken}`) {
+    if (!(request.headers().cookie ?? "").includes(`helix_session=${accessToken}`)) {
       await route.fulfill({
         status: 401,
         contentType: "application/json",
-        body: JSON.stringify({ error: "missing bearer token" }),
+        body: JSON.stringify({ error: "missing session cookie" }),
       });
       return;
     }
 
-    if (pathname === "/api/tools/drive.list") {
+    if (pathname === "/v1/api/tools/drive.list") {
       await fulfillJson(route, {
         entries: [
           {
@@ -79,7 +69,7 @@ async function mockDriveBackend(page: Page, accessToken: string) {
       });
       return;
     }
-    if (pathname === "/api/tools/drive.search") {
+    if (pathname === "/v1/api/tools/drive.search") {
       await fulfillJson(route, { entries: [] });
       return;
     }

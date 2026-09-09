@@ -32,8 +32,7 @@ export function createJibriRecorderHealthCheck(
       if (!response.ok) return false;
       const payload = (await response.json()) as JibriHealthPayload;
       return (
-        payload.status?.health?.healthStatus === "HEALTHY" &&
-        payload.status.busyStatus === "IDLE"
+        payload.status?.health?.healthStatus === "HEALTHY" && payload.status.busyStatus === "IDLE"
       );
     } catch {
       return false;

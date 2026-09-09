@@ -287,7 +287,7 @@ describe("plugin tools", () => {
       { actor },
     );
     expect(tampered.ok).toBe(false);
-    expect(tampered.ok ? undefined : tampered.error).toContain("bundle digest mismatch");
+    expect(tampered.ok ? undefined : tampered.error).toBe("Tool invocation failed.");
   });
 
   it("starts and removes hooks on every replica and rolls back a failed state commit", async () => {

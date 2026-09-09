@@ -94,6 +94,23 @@ export class MailRecipientSuppressedError extends Error {
   }
 }
 
+/** Stable, operator-visible non-retryable outbound routing failure. */
+export class MailProviderConfigurationError extends Error {
+  readonly retryable = false;
+
+  constructor(
+    readonly operatorCode:
+      | "MAIL_PROVIDER_NOT_CONFIGURED"
+      | "MAIL_PROVIDER_DISABLED"
+      | "MAIL_PROVIDER_DECISION_CONFLICT"
+      | "MAIL_RECIPIENT_SUPPRESSED",
+    message: string,
+  ) {
+    super(`${operatorCode}: ${message}`);
+    this.name = "MailProviderConfigurationError";
+  }
+}
+
 export class MailDraftNotFoundError extends NotFoundError {
   constructor(draftId: string) {
     super(`Unknown or inaccessible mail draft: ${draftId}`, {
@@ -109,5 +126,39 @@ export class MailAliasNotFoundError extends NotFoundError {
       details: { mailCode: "mail.alias_not_found", aliasId },
     });
     this.name = "MailAliasNotFoundError";
+  }
+}
+
+export class MailDraftVersionConflictError extends ApiError {
+  constructor(
+    readonly draftId: string,
+    readonly currentVersion: number,
+  ) {
+    super("conflict", "The server draft is newer; reload or explicitly merge before saving.", {
+      details: {
+        mailCode: "mail.draft_version_conflict",
+        draftId,
+        currentVersion,
+      },
+    });
+    this.name = "MailDraftVersionConflictError";
+  }
+}
+
+export class MailSendIdempotencyRequiredError extends BadRequestError {
+  constructor() {
+    super("Agent and API mail sends require an idempotency key.", {
+      details: { mailCode: "mail.send_idempotency_required" },
+    });
+    this.name = "MailSendIdempotencyRequiredError";
+  }
+}
+
+export class MailAttachmentSizeError extends Error {
+  readonly retryable = false;
+
+  constructor(readonly maxBytes: number) {
+    super(`Mail attachments exceed the ${String(maxBytes)} byte outbound limit.`);
+    this.name = "MailAttachmentSizeError";
   }
 }

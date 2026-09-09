@@ -65,7 +65,7 @@ test.describe("/login authenticated handoff", () => {
     const firstCall = await firstBackendCall;
     expect(firstCall.authorization).toBeNull();
     expect(firstCall.cookie).toContain(expectedCookie);
-    expect(firstCall.pathname).toMatch(/^\/api\//);
+    expect(firstCall.pathname).toMatch(/^\/v1\/api\//);
     expect(backendCalls[0]).toEqual(firstCall);
     expect(signInCalls).toEqual([
       {
@@ -74,7 +74,7 @@ test.describe("/login authenticated handoff", () => {
           password: "helix-admin-password",
         },
         method: "POST",
-        pathname: "/api/auth/sign-in/email",
+        pathname: "/v1/api/auth/sign-in/email",
       },
     ]);
   });
@@ -112,7 +112,7 @@ test.describe("/login authenticated handoff", () => {
           password: "wrong-password",
         },
         method: "POST",
-        pathname: "/api/auth/sign-in/email",
+        pathname: "/v1/api/auth/sign-in/email",
       },
     ]);
   });
@@ -130,8 +130,12 @@ async function mockAppApi(
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
+    if (pathname === "/v1/api/auth/csrf-token") {
+      await fulfillJson(route, { csrfToken: "e2e-csrf-token" });
+      return;
+    }
 
-    if (pathname === "/api/auth/get-session") {
+    if (pathname === "/v1/api/auth/get-session") {
       await fulfillJson(
         route,
         request.headers().cookie?.includes(expectedCookie) ? { user: sessionUser } : {},
@@ -139,7 +143,7 @@ async function mockAppApi(
       return;
     }
 
-    if (pathname === "/api/auth/sign-in/email") {
+    if (pathname === "/v1/api/auth/sign-in/email") {
       options.signInCalls.push({
         body: JSON.parse(request.postData() ?? "{}") as Record<string, unknown>,
         method: request.method(),
@@ -183,15 +187,15 @@ async function fulfillMailTool(route: Route, pathname: string): Promise<void> {
   if (await fulfillCoreAppsRoute(route)) {
     return;
   }
-  if (pathname === "/api/tools/mail.search") {
+  if (pathname === "/v1/api/tools/mail.search") {
     await fulfillJson(route, { hits: [] });
     return;
   }
-  if (pathname === "/api/tools/mail.filter.list") {
+  if (pathname === "/v1/api/tools/mail.filter.list") {
     await fulfillJson(route, { filters: [] });
     return;
   }
-  if (pathname === "/api/tools/mail.vacation.get") {
+  if (pathname === "/v1/api/tools/mail.vacation.get") {
     await fulfillJson(route, {
       vacation: {
         enabled: false,

@@ -10,7 +10,7 @@ usage() {
 Usage: infra/scripts/live-demo-data-smoke.sh [options]
 
 Starts the add-on services needed for realistic local demo data, then prepares and
-verifies seeded Mail, Drive, Docs, Calendar, Chat, RustFS object bytes, and
+verifies seeded Mail, Drive, Calendar, Chat, RustFS object bytes, and
 Meilisearch projections. Dry-run is the default.
 
 Options:

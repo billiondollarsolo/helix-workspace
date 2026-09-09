@@ -20,21 +20,6 @@ describe("0111 composite tenant foreign keys migration", () => {
     expect(migration).toContain("drive_folders_require_acyclic_parent");
     expect(migration).toContain("drive_folders_acyclic");
   });
-
-  it("finishes editor relationships after editor migrations run", async () => {
-    const migration = await readFile(
-      new URL(
-        "../post-editor-migrations/0112_editor_composite_tenant_foreign_keys.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-
-    expect(migration).toContain("foreign key (org_id, document_id)");
-    expect(migration).toContain("foreign key (org_id, created_by_actor_id)");
-    expect(migration).toContain("references docs_documents (org_id, id)");
-    expect(migration).toContain("references actors (org_id, id)");
-  });
 });
 
 describe.skipIf(sql === null)("0111 live tenant relationship enforcement", () => {

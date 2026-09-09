@@ -87,11 +87,13 @@ bash -n \
   infra/scripts/restore-drill.sh \
   infra/scripts/live-restore-drill-smoke.sh \
   infra/scripts/validate-restore-drill.sh
+node --check infra/scripts/backup-manifest.mjs
+node --check infra/scripts/restore-drill-evidence.mjs
 
 log "checking safe archive extraction"
 python3 infra/scripts/test_safe_extract_tar.py
 node infra/scripts/aes-gcm-file.test.mjs
-node infra/scripts/backup-manifest.test.mjs
+pnpm exec vitest run infra/scripts/backup-manifest.test.mjs infra/scripts/backup-manifest-signature.test.mjs
 node infra/scripts/object-snapshot.test.mjs
 
 log "checking personal backup dry-run"
@@ -104,6 +106,9 @@ assert_output_contains "$personal_output" "pg_dump --snapshot=" "personal backup
 assert_output_contains "$personal_output" "--format=custom" "personal backup dry-run did not include pg_dump"
 assert_output_contains "$personal_output" "tar -C" "personal backup dry-run did not include archive creation"
 assert_output_contains "$personal_output" "signed SHA-256 manifest" "backup dry-run did not sign its integrity manifest"
+assert_output_contains "$personal_output" "consistency/database.tsv" "backup dry-run did not capture consistency metadata"
+assert_output_contains "$personal_output" "signed SHA-256 manifest" "backup dry-run did not build the v3 recovery set"
+assert_output_contains "$personal_output" ".sha256" "backup dry-run did not publish an archive checksum sidecar"
 
 log "checking encrypted business backup dry-run"
 business_output=$(HELIX_BACKUP_RUSTFS_BUCKET=helix-business \
@@ -154,6 +159,7 @@ log "checking business backup fails closed without object storage"
 if "$SCRIPT_DIR/backup.sh" --tier business --age-recipient age1test --dry-run >/dev/null 2>&1; then
   die "business backup accepted omitted object storage"
 fi
+assert_output_contains "$object_output" "list-object-versions" "object backup dry-run did not capture version identifiers"
 
 log "checking restore dry-run"
 restore_output=$("$SCRIPT_DIR/restore.sh" \
@@ -164,8 +170,11 @@ restore_output=$("$SCRIPT_DIR/restore.sh" \
   --dry-run)
 assert_output_contains "$restore_output" "createdb -U" "restore dry-run did not include target database creation"
 assert_output_contains "$restore_output" "pg_restore --no-owner --no-acl --exit-on-error" "restore dry-run did not include pg_restore"
-assert_output_contains "$restore_output" "verify Ed25519 signature" "restore dry-run did not verify the signed manifest"
+assert_output_contains "$restore_output" "verify ed25519 manifest and every file digest" "restore dry-run did not verify the signed manifest"
 assert_output_contains "$restore_output" "public.actors" "restore dry-run did not include core table verification"
+assert_output_contains "$restore_output" "verify ed25519 manifest and every file digest" "restore dry-run did not verify the recovery-set manifest"
+assert_output_contains "$restore_output" "audit.invalid_links" "restore dry-run did not verify the audit chain"
+assert_output_contains "$restore_output" "outbound queue counts match" "restore dry-run did not verify outbound queues"
 
 log "checking PITR restore dry-run"
 pitr_restore_output=$("$SCRIPT_DIR/restore.sh" \
@@ -264,5 +273,25 @@ assert_output_contains "$live_drill_output" "pnpm --filter @helix/app db:seed:oa
 assert_output_contains "$live_drill_output" "restore-drill.sh --create-backup" "live restore-drill dry-run did not invoke restore-drill"
 assert_output_contains "$live_drill_output" "helix_restore_validation_live" "live restore-drill dry-run did not use target drill DB"
 assert_output_contains "$live_drill_output" "public.actors" "live restore-drill dry-run did not include restored actor verification"
+
+log "checking strict encrypted restore evidence dry-run"
+strict_output=$(HELIX_BACKUP_RUSTFS_BUCKET=helix-objects "$SCRIPT_DIR/restore-drill.sh" \
+  --backup "$BACKUP_DIR/validation-business.tar.gz.age" \
+  --target-db helix_restore_validation_strict \
+  --target-object-bucket helix-objects-restore-validation \
+  --age-identity /secure/validation-age-identity \
+  --reindex \
+  --target-database-url postgres://helix:redacted@127.0.0.1:28432/helix_restore_validation_strict \
+  --evidence-output "$BACKUP_DIR/restore-drill-evidence.json" \
+  --dry-run 2>&1)
+assert_output_contains "$strict_output" "verify ed25519 manifest and every file digest" "strict drill did not require the v3 manifest"
+assert_output_contains "$strict_output" "restore and SHA-256 verify every signed inventory object" "strict drill did not restore object bytes"
+assert_output_contains "$strict_output" "SHA-256 verify every signed inventory object" "strict drill did not hash-compare object samples"
+assert_output_contains "$strict_output" "db:reindex:search" "strict drill did not rebuild search from restored data"
+assert_output_contains "$strict_output" "measured RPO/RTO" "strict drill did not include evidence finalization"
+
+static_evidence=$(node "$SCRIPT_DIR/restore-drill-evidence.mjs" --static)
+assert_output_contains "$static_evidence" '"status": "static_validated"' "static evidence status was not truthful"
+assert_output_contains "$static_evidence" '"status": "not_run"' "static evidence claimed live execution"
 
 log "restore drill validation complete"

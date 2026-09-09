@@ -23,7 +23,9 @@ export interface PostgresAuditStoreOptions {
   readonly onAppend?: (record: AuditRecord & { readonly orgId: string }) => void;
 }
 
-export class PostgresAuditStore implements AuditLogStore, AuditVerificationStore, AuditShippingStore {
+export class PostgresAuditStore
+  implements AuditLogStore, AuditVerificationStore, AuditShippingStore
+{
   constructor(
     private readonly sql: postgres.Sql,
     private readonly options: PostgresAuditStoreOptions = {},
@@ -32,9 +34,7 @@ export class PostgresAuditStore implements AuditLogStore, AuditVerificationStore
   async append(record: AuditRecord & { readonly orgId: string }): Promise<AuditAppendResult> {
     return this.sql.begin(async (tx) => {
       await tx`select set_config('helix.org_id', ${record.orgId}, true)`;
-      const rows = await tx<
-        { readonly id: string; readonly this_hash: string }[]
-      >`
+      const rows = await tx<{ readonly id: string; readonly this_hash: string }[]>`
         insert into activity (
           org_id,
           actor_id,
@@ -203,13 +203,17 @@ export class PostgresAuditStore implements AuditLogStore, AuditVerificationStore
     return rows.map(mapImmutableAuditActivityRow);
   }
 
-  async getAuditShippingBacklog(after: AuditShippingCheckpoint | null): Promise<AuditShippingBacklog> {
+  async getAuditShippingBacklog(
+    after: AuditShippingCheckpoint | null,
+  ): Promise<AuditShippingBacklog> {
     const cursorCreatedAt = after?.createdAt ?? null;
     const cursorId = after?.id ?? null;
-    const rows = await this.sql<{
-      readonly record_count: number;
-      readonly oldest_created_at: Date | null;
-    }[]>`
+    const rows = await this.sql<
+      {
+        readonly record_count: number;
+        readonly oldest_created_at: Date | null;
+      }[]
+    >`
       select record_count::int, oldest_created_at
       from helix_get_audit_shipping_backlog(
         ${cursorCreatedAt}::timestamptz,

@@ -1,16 +1,16 @@
-import { createHash } from "node:crypto";
-import { lstat, readdir, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
+  HelixConfig,
   PluginDependencyDeclaration,
   PluginLifecycleState,
   PluginManifest,
-  HelixConfig,
   SecurityTier,
   TierSecurityDefaults,
 } from "@helix/sdk";
-import { isCanonicalPluginId } from "@helix/sdk-types";
 import { assertPluginManifest, isJsonObject } from "@helix/sdk";
+import { isCanonicalPluginId } from "@helix/sdk-types";
+import { createHash } from "node:crypto";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { resolveTierDefaults, tierDefaults as securityTierDefaults } from "../config/tier.js";
 import {
   catalogArtifact,
@@ -223,7 +223,7 @@ export function resolvePluginDependencies(
   const visiting = new Set<string>();
   const visited = new Set<string>();
 
-  const visit = (plugin: DiscoveredPlugin, stack: readonly string[]): void => {
+  function visit(plugin: DiscoveredPlugin, stack: readonly string[]): void {
     const pluginId = plugin.manifest.id;
     if (visited.has(pluginId)) {
       return;
@@ -243,7 +243,7 @@ export function resolvePluginDependencies(
     visiting.delete(pluginId);
     visited.add(pluginId);
     resolved.push(plugin);
-  };
+  }
 
   for (const plugin of plugins) {
     visit(plugin, []);
@@ -353,8 +353,7 @@ function assertMinimumTier(manifest: PluginManifest, tier: SecurityTier): void {
 
 function assertTierRestriction(manifest: PluginManifest, tier: SecurityTier): void {
   const restrictions = manifest.tierRequirements?.tierRestrictions as
-    | Partial<Record<SecurityTier, unknown>>
-    | undefined;
+    Partial<Record<SecurityTier, unknown>> | undefined;
   const restriction = restrictions?.[tier];
   if (restriction === undefined) {
     return;
@@ -534,7 +533,9 @@ function parseManifestJson(text: string, manifestPath: string): unknown {
     return JSON.parse(text);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new SyntaxError(`Invalid plugin manifest JSON at ${manifestPath}: ${message}`);
+    throw new SyntaxError(`Invalid plugin manifest JSON at ${manifestPath}: ${message}`, {
+      cause: error,
+    });
   }
 }
 

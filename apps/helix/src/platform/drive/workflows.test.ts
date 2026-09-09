@@ -100,9 +100,9 @@ describe("PostgresDriveWorkflowStore", () => {
       payload: { classification: "public" },
       allowSensitivityDowngrade: true,
     });
-    expect(
-      recording.calls.some((call) => call.text.includes("allow_sensitivity_downgrade")),
-    ).toBe(true);
+    expect(recording.calls.some((call) => call.text.includes("allow_sensitivity_downgrade"))).toBe(
+      true,
+    );
   });
 
   it("rejects kind-incompatible terminal transitions without updating", async () => {

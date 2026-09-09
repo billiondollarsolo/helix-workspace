@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyMailLabels,
   archiveMailThread,
+  cancelOutboundMail,
   createMailFilter,
   deleteMailFilter,
   deleteMailThread,
+  getMailOutbound,
   getMailVacation,
   getMailThread,
   listMailFilters,
@@ -22,6 +24,7 @@ import {
   updateMailFilter,
   validateMailAttachmentSelection,
 } from "./api";
+import { mapMailSendUiStatus } from "./mail-send-status";
 import {
   mailRouteSearchFromState,
   mailSearchInputFromRouteSearch,
@@ -165,6 +168,48 @@ describe("mail API", () => {
     const request = fetchImpl.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
     expect(JSON.parse(request[1].body as string)).not.toHaveProperty("attachments.0.byteSize");
     expect(request[1].body).not.toContain("byteSize");
+  });
+
+  it("reads outbound delivery status through mail.outbound.get and maps it for UI", async () => {
+    const outbound = {
+      id: "outbound-1",
+      messageId: "msg-1",
+      threadId: "thread-1",
+      status: "sending",
+      deliveryStatus: "sending" as const,
+      undoUntil: "2026-08-02T11:59:00.000Z",
+      queuedAt: "2026-08-02T11:58:30.000Z",
+      sentAt: null,
+      cancelledAt: null,
+      failedAt: null,
+      lastError: null,
+    };
+    const fetchImpl = vi.fn(() => Promise.resolve(Response.json({ outbound })));
+
+    await expect(getMailOutbound("outbound-1", fetchImpl)).resolves.toEqual(outbound);
+    expect(fetchImpl).toHaveBeenCalledWith("/api/tools/mail.outbound.get", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "outbound-1" }),
+    });
+    // Drive UI phase from the real mapper + shipped fields (no hardcoded phase in isolation).
+    expect(mapMailSendUiStatus(outbound).phase).toBe("sending");
+  });
+
+  it("cancels outbound mail through mail.outbound.cancel", async () => {
+    const cancelled = {
+      id: "outbound-1",
+      messageId: "msg-1",
+      threadId: "thread-1",
+      status: "cancelled",
+      deliveryStatus: "cancelled" as const,
+      undoUntil: "2026-08-02T12:00:30.000Z",
+      queuedAt: "2026-08-02T12:00:00.000Z",
+      cancelledAt: "2026-08-02T12:00:05.000Z",
+    };
+    const fetchImpl = vi.fn(() => Promise.resolve(Response.json({ outbound: cancelled })));
+    await expect(cancelOutboundMail("outbound-1", fetchImpl)).resolves.toEqual(cancelled);
+    expect(mapMailSendUiStatus(cancelled).phase).toBe("cancelled");
   });
 
   it("fetches a selected mail thread", async () => {

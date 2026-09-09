@@ -27,9 +27,6 @@ const ADMIN_SCOPES = [
   "drive.read",
   "drive.write",
   "drive.delete",
-  "docs.read",
-  "docs.write",
-  "docs.comment",
   "calendar.read",
   "calendar.write",
   "calendar.manage",
@@ -42,10 +39,6 @@ const ADMIN_SCOPES = [
   "assistant.read",
   "assistant.write",
   "assistant.memory",
-  "sheets.read",
-  "sheets.write",
-  "slides.read",
-  "slides.write",
   "notifications.read",
   "notifications.write",
   "search.read",
@@ -64,6 +57,9 @@ const ADMIN_SCOPES = [
   "admin.console.read",
   "admin.console.write",
   "admin.ai",
+  // Product admin surfaces (tools gate on these; bare `admin` is not a wildcard).
+  "admin.chat",
+  "admin.drive",
 ] as const;
 
 const USER_SCOPES = [
@@ -73,9 +69,6 @@ const USER_SCOPES = [
   "mail.send",
   "drive.read",
   "drive.write",
-  "docs.read",
-  "docs.write",
-  "docs.comment",
   "calendar.read",
   "calendar.write",
   "calendar.manage",
@@ -87,10 +80,6 @@ const USER_SCOPES = [
   "assistant.read",
   "assistant.write",
   "assistant.memory",
-  "sheets.read",
-  "sheets.write",
-  "slides.read",
-  "slides.write",
   "notifications.read",
   "notifications.write",
   "search.read",
@@ -273,7 +262,8 @@ async function upsertCredentialAccount(
 async function main(): Promise<void> {
   const sql = createSqlClient();
   try {
-    const result = await seedLoginAccounts(sql);
+    const orgId = process.env.HELIX_DEFAULT_ORG_ID ?? DEFAULT_LOCAL_OAUTH_ORG_ID;
+    const result = await seedLoginAccounts(sql, { orgId });
     console.log(JSON.stringify(result, null, 2));
   } finally {
     await sql.end();

@@ -47,14 +47,9 @@ function createRecordingSql(responses: readonly (readonly unknown[])[] = []): {
   const tag = (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown> => {
     const text = strings.join("$");
     calls.push({ text, values });
-    if (
-      /audit_immutable_postgres/i.test(text) &&
-      /\b(update|delete|truncate)\b/i.test(text)
-    ) {
+    if (/audit_immutable_postgres/i.test(text) && /\b(update|delete|truncate)\b/i.test(text)) {
       return Promise.reject(
-        new Error(
-          "audit_immutable_postgres is append-only (WORM): mutation is not permitted",
-        ),
+        new Error("audit_immutable_postgres is append-only (WORM): mutation is not permitted"),
       );
     }
     return Promise.resolve(queue.shift() ?? []);
@@ -98,9 +93,9 @@ describe("PostgresWormAuditShipper", () => {
 
   it("rejects records without valid hash-chain material", async () => {
     const shipper = new PostgresWormAuditShipper(createRecordingSql().sql);
-    await expect(
-      shipper.ship([record("rec-1", { thisHash: "not-a-digest" })]),
-    ).rejects.toThrow("thisHash must be a lowercase sha256 hex digest");
+    await expect(shipper.ship([record("rec-1", { thisHash: "not-a-digest" })])).rejects.toThrow(
+      "thisHash must be a lowercase sha256 hex digest",
+    );
   });
 
   it("rejects an empty batch", async () => {
@@ -125,12 +120,10 @@ describe("PostgresWormAuditShipper", () => {
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => Promise<unknown>;
-    await expect(
-      tag`update audit_immutable_postgres set verb = 'tampered'`,
-    ).rejects.toThrow("append-only (WORM)");
-    await expect(
-      tag`delete from audit_immutable_postgres`,
-    ).rejects.toThrow("append-only (WORM)");
+    await expect(tag`update audit_immutable_postgres set verb = 'tampered'`).rejects.toThrow(
+      "append-only (WORM)",
+    );
+    await expect(tag`delete from audit_immutable_postgres`).rejects.toThrow("append-only (WORM)");
   });
 });
 
@@ -143,9 +136,6 @@ describe("PostgresWormAuditReader", () => {
     const reader = new PostgresWormAuditReader(recording.sql);
 
     await expect(reader.countForOrg("org-1")).resolves.toBe(3);
-    await expect(reader.listHashesForOrg("org-1")).resolves.toEqual([
-      digest("a"),
-      digest("b"),
-    ]);
+    await expect(reader.listHashesForOrg("org-1")).resolves.toEqual([digest("a"), digest("b")]);
   });
 });

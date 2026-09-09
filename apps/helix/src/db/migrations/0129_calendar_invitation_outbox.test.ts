@@ -19,7 +19,9 @@ describe("0129 calendar invitation outbox migration", () => {
       new URL("./0129_calendar_invitation_outbox.sql", import.meta.url),
       "utf8",
     );
-    expect(migration).toContain("unique (org_id, event_id, event_revision, recipient, message_type)");
+    expect(migration).toContain(
+      "unique (org_id, event_id, event_revision, recipient, message_type)",
+    );
     expect(migration).toContain("for update skip locked");
     expect(migration).toContain("dead_lettered");
     expect(migration).toContain("calendar_invitation_delivery_events");
@@ -37,7 +39,7 @@ describe.skipIf(sql === null)("0129 live calendar invitation outbox", () => {
   const database = sql as postgres.Sql;
   const store = new PostgresCalendarStore(database);
   const deliveryStore = new PostgresCalendarInvitationDeliveryStore(database);
-  const tenantSql = tenantAwarePostgresSql(database);
+  let tenantSql: postgres.Sql;
   const orgA = "c0800000-0000-4000-8000-000000000001";
   const orgB = "c0800000-0000-4000-8000-000000000002";
   const ownerA = "c0800000-0000-4000-8000-000000000011";
@@ -45,6 +47,7 @@ describe.skipIf(sql === null)("0129 live calendar invitation outbox", () => {
   const invalidEvent = "c0800000-0000-4000-8000-000000000099";
 
   beforeAll(async () => {
+    tenantSql = tenantAwarePostgresSql(database);
     await cleanup();
     await database`
       insert into orgs (id, slug, display_name) values
@@ -111,21 +114,43 @@ describe.skipIf(sql === null)("0129 live calendar invitation outbox", () => {
     });
     expect(updated?.invitationDeliveriesQueued).toBe(2);
 
-    const rows = await database<{
-      event_revision: number;
-      recipient: string;
-      message_type: string;
-      status: string;
-    }[]>`
+    const rows = await database<
+      {
+        event_revision: number;
+        recipient: string;
+        message_type: string;
+        status: string;
+      }[]
+    >`
       select event_revision, recipient, message_type, status
       from calendar_invitation_deliveries where event_id = ${created.id}
       order by event_revision, recipient, message_type
     `;
     expect(rows).toEqual([
-      { event_revision: 0, recipient: "kept@example.test", message_type: "REQUEST", status: "superseded" },
-      { event_revision: 0, recipient: "removed@example.test", message_type: "REQUEST", status: "superseded" },
-      { event_revision: 1, recipient: "kept@example.test", message_type: "REQUEST", status: "queued" },
-      { event_revision: 1, recipient: "removed@example.test", message_type: "CANCEL", status: "queued" },
+      {
+        event_revision: 0,
+        recipient: "kept@example.test",
+        message_type: "REQUEST",
+        status: "superseded",
+      },
+      {
+        event_revision: 0,
+        recipient: "removed@example.test",
+        message_type: "REQUEST",
+        status: "superseded",
+      },
+      {
+        event_revision: 1,
+        recipient: "kept@example.test",
+        message_type: "REQUEST",
+        status: "queued",
+      },
+      {
+        event_revision: 1,
+        recipient: "removed@example.test",
+        message_type: "CANCEL",
+        status: "queued",
+      },
     ]);
 
     const deleted = await store.deleteEvent({
@@ -135,7 +160,9 @@ describe.skipIf(sql === null)("0129 live calendar invitation outbox", () => {
       sendInvitations: true,
     });
     expect(deleted?.invitationDeliveriesQueued).toBe(1);
-    const active = await database<{ recipient: string; message_type: string; event_revision: number }[]>`
+    const active = await database<
+      { recipient: string; message_type: string; event_revision: number }[]
+    >`
       select recipient, message_type, event_revision from calendar_invitation_deliveries
       where event_id = ${created.id} and status = 'queued'
       order by recipient
@@ -251,9 +278,7 @@ describe.skipIf(sql === null)("0129 live calendar invitation outbox", () => {
               stageId: "c0800000-0000-4000-8000-000000000032",
               objectId: attachmentObjectId,
               orgId: input.orgId,
-              ...(input.ownerActorId === undefined
-                ? {}
-                : { ownerActorId: input.ownerActorId }),
+              ...(input.ownerActorId === undefined ? {} : { ownerActorId: input.ownerActorId }),
               storageKey: "col08/invite.ics",
               attachment: { ...attachment, objectId: attachmentObjectId },
             };

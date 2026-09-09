@@ -9,6 +9,26 @@ This chart deploys Helix against external production services. It does not insta
 - `values-enterprise.yaml`: TASK-A02 / enterprise profile with SPIRE, Vault, KMS, SIEM, CloudNativePG HA Postgres, daily base backups, and PITR/WAL archiving to object storage.
 - `values-sovereign.yaml`: TASK-A03 / Tier 4 sovereign profile with SPIRE, Vault CSI, KMS, SIEM, digest-pinned FIPS image selection, STIG image policy, FIPS node targeting, and default-deny egress.
 
+## Workspace packaging (MVP fail-closed)
+
+Defaults match production Compose and `AGENTS.md`:
+
+| Value                                                    | Default                     |
+| -------------------------------------------------------- | --------------------------- |
+| `workspace.profile`                                      | `mvp`                       |
+| `workspace.apps`                                         | `mail,drive,chat,assistant` |
+| `workspace.editorsMigrationsEnabled`                     | `false`                     |
+| `workspace.modules.{docs,calendar,meet,editors}.enabled` | `false`                     |
+
+These render into `HELIX_WORKSPACE_PROFILE`, `HELIX_APPS`,
+and `HELIX_CONFIG_JSON.modules`. Expanding
+`workspace.apps` without `workspace.profile=full` fails chart render (PKG flip
+guard). Full Workspace enablement is **not** a chart default — see
+`docs/architecture/ha-rpo-rto.md` and `docs/architecture/compose-helm-parity.md`.
+
+RPO ≤ 24h / RTO ≤ 4h drills use the same backup/restore scripts as Compose
+against external Postgres, or CloudNativePG recovery on the enterprise overlay.
+
 Render examples:
 
 ```sh
@@ -24,10 +44,11 @@ Run the PRD hardening contract validation for every tier overlay:
 pnpm infra:helm:validate
 ```
 
-The script runs `helm lint` and `helm template` for the base, business, enterprise, and sovereign
-profiles, then verifies the rendered HPA, PDB, NetworkPolicy, CloudNativePG, Vault, SIEM,
-FIPS/STIG, air-gap, and opt-in PrometheusRule contracts. If `kubeconform` is installed it
-also validates rendered manifests against Kubernetes schemas.
+The script runs with Helm 4.2.3 and targets Kubernetes 1.34 through 1.36. It executes `helm lint`
+and `helm template` for the base, business, enterprise, and sovereign profiles, then verifies the
+rendered HPA, PDB, NetworkPolicy, CloudNativePG, Vault, SIEM, FIPS/STIG, air-gap, and opt-in
+PrometheusRule contracts. CI also requires kubeconform 0.8.0 and validates rendered manifests
+against Kubernetes schemas; local validation reports an explicit skip when kubeconform is absent.
 
 ## Signed plugin trust
 
@@ -276,7 +297,7 @@ queue, search, object-store, scanner, policy, or observability control planes.
 
 ## Availability and safe rollout
 
-The default, role, and content-converter Deployments use zero-unavailable rolling
+The default and role Deployments use zero-unavailable rolling
 updates, advance one surge replica at a time, wait for a truthful readiness probe,
 and stop after a finite progress deadline. Each workload has its own disruption
 budget, soft zone and node spread, pod anti-affinity, a startup probe, and graceful

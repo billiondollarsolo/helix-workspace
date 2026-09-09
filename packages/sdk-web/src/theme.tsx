@@ -5,7 +5,7 @@ import {
   useEffect,
   useMemo,
   useState,
-  type ReactNode
+  type ReactNode,
 } from "react";
 
 export type ColorMode = "light" | "dark" | "system";
@@ -19,6 +19,7 @@ export interface ColorModeApi {
 }
 
 const storageKey = "helix-color-mode";
+const prefersDarkQuery = "(prefers-color-scheme: dark)";
 
 function isColorMode(value: string | null): value is ColorMode {
   return value === "light" || value === "dark" || value === "system";
@@ -38,10 +39,10 @@ function resolveMode(mode: ColorMode): ResolvedColorMode {
     return mode;
   }
 
-  return globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return globalThis.matchMedia?.(prefersDarkQuery).matches ? "dark" : "light";
 }
 
-function applyMode(mode: ColorMode) {
+function applyMode(mode: ColorMode): void {
   const resolved = resolveMode(mode);
   document.documentElement.classList.toggle("dark", resolved === "dark");
   document.documentElement.classList.toggle("light", resolved === "light");
@@ -52,7 +53,9 @@ const ColorModeContext = createContext<ColorModeApi | null>(null);
 
 export function ColorModeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<ColorMode>(() => getStoredMode());
-  const [resolvedMode, setResolvedMode] = useState<ResolvedColorMode>(() => resolveMode(getStoredMode()));
+  const [resolvedMode, setResolvedMode] = useState<ResolvedColorMode>(() =>
+    resolveMode(getStoredMode()),
+  );
 
   const setMode = useCallback((nextMode: ColorMode) => {
     localStorage.setItem(storageKey, nextMode);
@@ -64,7 +67,7 @@ export function ColorModeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     applyMode(mode);
 
-    const media = globalThis.matchMedia?.("(prefers-color-scheme: dark)");
+    const media = globalThis.matchMedia?.(prefersDarkQuery);
     if (!media) {
       return undefined;
     }
@@ -86,7 +89,7 @@ export function ColorModeProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ColorModeApi>(
     () => ({ mode, resolvedMode, setMode, toggle }),
-    [mode, resolvedMode, setMode, toggle]
+    [mode, resolvedMode, setMode, toggle],
   );
 
   return <ColorModeContext.Provider value={value}>{children}</ColorModeContext.Provider>;

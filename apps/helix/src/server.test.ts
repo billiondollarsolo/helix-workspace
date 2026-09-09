@@ -1,3 +1,5 @@
+import { buildOutboundConfig } from "./platform/mail/config.js";
+import { loadEnv } from "./config/env.js";
 import fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SYSTEM_TENANT_CONFIG, type ToolDefinition } from "@helix/sdk-types";
@@ -25,6 +27,7 @@ import {
   createAssistantProviders,
   formatAssistantSseEvent,
   getAuditDestinationConfigs,
+  getSmtpMailReceiverConfig,
   getBetterAuthRuntimeConfig,
   getImmutableAuditShippingConfig,
   HELIX_LOG_REDACT_PATHS,
@@ -32,6 +35,7 @@ import {
   registerAssistantStreamRoute,
   installTenantApiRpsLimitHook,
   registerCanonicalApi,
+  isAdminMfaProtectedPath,
   registerToolRestRoutes,
   verifyDefaultOrgAtBoot,
   type AssistantStreamOrchestrator,
@@ -57,6 +61,38 @@ describe("log secret redaction", () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("mail server env config", () => {
+  it("uses Mailpit-compatible outbound SMTP env", () => {
+    expect(
+      buildOutboundConfig(
+        loadEnv({
+          MAIL_SMTP_HOST: "mailpit",
+          MAIL_SMTP_PORT: "1025",
+          MAIL_SMTP_SECURE: "false",
+        }),
+      ),
+    ).toEqual({
+      host: "mailpit",
+      port: 1025,
+      secure: false,
+    });
+  });
+
+  it("starts the in-process SMTP receiver only when explicitly enabled", () => {
+    expect(getSmtpMailReceiverConfig({})).toBeUndefined();
+    expect(
+      getSmtpMailReceiverConfig({
+        MAIL_SMTP_RECEIVER_ENABLED: "true",
+        MAIL_SMTP_RECEIVER_HOST: "0.0.0.0",
+        MAIL_SMTP_RECEIVER_PORT: "2525",
+      }),
+    ).toEqual({
+      host: "0.0.0.0",
+      port: 2525,
+    });
+  });
 });
 
 describe("BetterAuth server env config", () => {
@@ -118,6 +154,24 @@ describe("BetterAuth server env config", () => {
       secureCookies: true,
     });
   });
+});
+
+describe("admin MFA route coverage", () => {
+  it.each([
+    "/api/admin/platform-config",
+    "/trpc/tools.explain",
+    "/trpc/tools.explain?batch=1",
+    "/trpc/admin.platformConfig.get",
+  ])("protects every admin-scoped HTTP and tRPC path (%s)", (url) => {
+    expect(isAdminMfaProtectedPath(url)).toBe(true);
+  });
+
+  it.each(["/api/tools/platform.ping", "/trpc/tools.list", "/trpc/tools.invoke"])(
+    "does not classify ordinary tool paths as admin MFA surfaces (%s)",
+    (url) => {
+      expect(isAdminMfaProtectedPath(url)).toBe(false);
+    },
+  );
 });
 
 describe("default org boot verification", () => {
@@ -626,14 +680,14 @@ describe("tool REST routes", () => {
   });
 
   it("invokes search.query over POST with bearer-token actor auth and scoped JSON input", async () => {
-    const engine = new FakeSearchEngine([{ id: "docs:1", type: "docs", title: "Launch plan" }]);
+    const engine = new FakeSearchEngine([{ id: "drive:1", type: "drive", title: "Launch plan" }]);
     const tokenStore = new InMemoryOAuthClientStore();
     await tokenStore.saveToken(
       accessToken({
         token: "post-token",
         actorId: "actor-post",
         orgId: "org-post",
-        scopes: ["platform.read", "docs.read"],
+        scopes: ["platform.read", "drive.read"],
       }),
     );
     const app = createToolRouteTestApp({ engine, tokenStore });
@@ -646,7 +700,7 @@ describe("tool REST routes", () => {
       },
       payload: {
         query: "launch",
-        types: ["docs", "calendar"],
+        types: ["drive", "calendar"],
         limit: 3,
       },
     });
@@ -655,15 +709,15 @@ describe("tool REST routes", () => {
     expect(response.json()).toMatchObject({
       query: "launch",
       estimatedTotalHits: 1,
-      hits: [{ id: "docs:1", type: "docs", title: "Launch plan" }],
+      hits: [{ id: "drive:1", type: "drive", title: "Launch plan" }],
     });
     expect(engine.searches).toEqual([
       {
         query: "launch",
-        types: ["docs"],
+        types: ["drive"],
         limit: 3,
         offset: 0,
-        filter: 'attributes.orgId = "org-post"',
+        filter: ['attributes.orgId = "org-post"', 'attributes.allowedActorIds = "actor-post"'],
         forActorId: "actor-post",
       },
     ]);
@@ -968,9 +1022,8 @@ describe("tool REST idempotency (P1-10)", () => {
     await tokenStore.saveToken(
       accessToken({
         token: "idem-token",
-        actorId: "agent-idem",
+        actorId: "user-idem",
         orgId: "org-idem",
-        actorType: "agent",
         scopes: ["platform.read"],
       }),
     );
@@ -1022,9 +1075,8 @@ describe("tool REST idempotency (P1-10)", () => {
     await tokenStore.saveToken(
       accessToken({
         token: "idem-token-2",
-        actorId: "agent-idem-2",
+        actorId: "user-idem-2",
         orgId: "org-idem",
-        actorType: "agent",
         scopes: ["platform.read"],
       }),
     );
@@ -1102,7 +1154,7 @@ describe("action status routes", () => {
         type: "agent",
         scopes: actorToken.scopes,
       },
-      input: { value: true },
+      input: { value: true, secret: "sensitive-action-input" },
       traceId: "trace-action-1",
     });
     const app = fastify();
@@ -1121,9 +1173,17 @@ describe("action status routes", () => {
       actorId: "agent-action",
       toolId: "external.write",
       status: "pending_confirmation",
-      input: { value: true },
+      preview: {
+        toolId: "external.write",
+        action: "platform.read",
+        resourceIds: [],
+        recipients: [],
+        targets: [],
+      },
       traceId: "trace-action-1",
     });
+    expect(body.action).not.toHaveProperty("input");
+    expect(response.body).not.toContain("sensitive-action-input");
     await app.close();
   });
 
@@ -1291,7 +1351,13 @@ interface ActionStatusBody {
     readonly actorId: string;
     readonly toolId: string;
     readonly status: string;
-    readonly input: unknown;
+    readonly preview: {
+      readonly toolId: string;
+      readonly action: string;
+      readonly resourceIds: readonly string[];
+      readonly recipients: readonly string[];
+      readonly targets: readonly string[];
+    };
     readonly traceId?: string;
   };
 }

@@ -1,4 +1,6 @@
-import { existsSync, rmSync } from "node:fs";
+import { once } from "node:events";
+import { uploadLocalDriveFile } from "./upload.js";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 
 import {
   buildHelixRequest,
@@ -11,7 +13,7 @@ import {
   type HelixCliEnv,
 } from "./client.js";
 import { generateCompletionScript } from "./completion.js";
-import { CliUsageError, parseCliArgs, usage } from "./parser.js";
+import { CliUsageError, type HelixCommand, parseCliArgs, usage } from "./parser.js";
 
 export interface CliIo {
   readonly stdout: NodeJS.WritableStream;
@@ -27,7 +29,17 @@ export async function runCli(
   io: CliIo,
   fetchImpl: FetchLike = fetch,
 ): Promise<number> {
+  const transport = fetchImpl;
+  fetchImpl = (url, init) =>
+    transport(url, { ...init, redirect: "error", signal: AbortSignal.timeout(120_000) });
   try {
+    if (args.length === 1 && args[0] === "--version") {
+      const metadata = JSON.parse(
+        readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+      ) as { readonly version: string };
+      io.stdout.write(`helix ${metadata.version}\n`);
+      return 0;
+    }
     const command = parseCliArgs(args);
     if (command.kind === "help") {
       io.stdout.write(`${usage}\n`);
@@ -78,6 +90,9 @@ export async function runCli(
       command.kind === "plugin-lifecycle"
         ? await resolveToolInput(command.json, io.stdin)
         : undefined;
+    if (command.kind === "tool-call" && command.uploadPath !== undefined) {
+      return await uploadLocalDriveFile(command.uploadPath, input, env, io, fetchImpl);
+    }
     const request = buildHelixRequest(command, env, input);
     const response = await fetchImpl(request.url, request.init);
     const text = await response.text();
@@ -178,18 +193,35 @@ async function fetchOpenApiDocument(
   return parsed;
 }
 
-async function listMcpTools(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike): Promise<number> {
-  const request = buildMcpToolListRequest(env);
+/**
+ * Performs an MCP JSON-RPC request and returns the wrapped `result` payload.
+ * Returns `undefined` after writing the HTTP or JSON-RPC failure to stderr, so
+ * callers only have to decide how to render a success.
+ */
+async function fetchMcpResult(
+  request: ReturnType<typeof buildMcpRequest>,
+  io: CliIo,
+  fetchImpl: FetchLike,
+): Promise<{ readonly value: unknown } | undefined> {
   const response = await fetchImpl(request.url, request.init);
   const text = await response.text();
   if (!response.ok) {
     io.stderr.write(formatHttpError(response.status, text));
-    return 1;
+    return undefined;
   }
 
   const result = parseMcpResult(text);
   if (!result.ok) {
     io.stderr.write(`${result.message}\n`);
+    return undefined;
+  }
+
+  return { value: result.value };
+}
+
+async function listMcpTools(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike): Promise<number> {
+  const result = await fetchMcpResult(buildMcpToolListRequest(env), io, fetchImpl);
+  if (result === undefined) {
     return 1;
   }
 
@@ -204,22 +236,13 @@ async function callMcpTool(
   io: CliIo,
   fetchImpl: FetchLike,
 ): Promise<number> {
-  const request = buildMcpToolCallRequest(env, toolId, input);
-  const response = await fetchImpl(request.url, request.init);
-  const text = await response.text();
-  if (!response.ok) {
-    io.stderr.write(formatHttpError(response.status, text));
-    return 1;
-  }
-
-  const result = parseMcpResult(text);
-  if (!result.ok) {
-    io.stderr.write(`${result.message}\n`);
+  const result = await fetchMcpResult(buildMcpToolCallRequest(env, toolId, input), io, fetchImpl);
+  if (result === undefined) {
     return 1;
   }
 
   io.stdout.write(formatJsonValue(unwrapMcpToolCallResult(result.value)));
-  return 0;
+  return isRecord(result.value) && result.value.isError === true ? 1 : 0;
 }
 
 async function listMcpResources(
@@ -246,16 +269,8 @@ async function writeMcpJsonResult(
   io: CliIo,
   fetchImpl: FetchLike,
 ): Promise<number> {
-  const response = await fetchImpl(request.url, request.init);
-  const text = await response.text();
-  if (!response.ok) {
-    io.stderr.write(formatHttpError(response.status, text));
-    return 1;
-  }
-
-  const result = parseMcpResult(text);
-  if (!result.ok) {
-    io.stderr.write(`${result.message}\n`);
+  const result = await fetchMcpResult(request, io, fetchImpl);
+  if (result === undefined) {
     return 1;
   }
 
@@ -404,6 +419,9 @@ function parseMcpResult(
     return { ok: false, message };
   }
 
+  if (parsed.jsonrpc !== "2.0" || !Object.hasOwn(parsed, "result")) {
+    return { ok: false, message: "Invalid MCP response." };
+  }
   return { ok: true, value: parsed.result };
 }
 
@@ -425,11 +443,10 @@ type McpInputFrame = {
 };
 
 async function serveMcpStdio(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike): Promise<number> {
-  let buffer = "";
-  io.stdin.setEncoding("utf8");
+  let buffer: Buffer = Buffer.alloc(0);
 
   for await (const chunk of io.stdin) {
-    buffer += String(chunk);
+    buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
     const parsed = extractMcpFrames(buffer, false);
     buffer = parsed.remaining;
     for (const frame of parsed.frames) {
@@ -441,7 +458,7 @@ async function serveMcpStdio(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike):
   for (const frame of parsed.frames) {
     await forwardMcpFrame(frame, env, io, fetchImpl);
   }
-  if (parsed.remaining.trim().length > 0) {
+  if (parsed.remaining.toString("utf8").trim().length > 0) {
     throw new Error("Incomplete MCP JSON-RPC message.");
   }
 
@@ -454,123 +471,132 @@ async function forwardMcpFrame(
   io: CliIo,
   fetchImpl: FetchLike,
 ): Promise<void> {
-  let id: string | number | null = null;
+  let message: unknown;
+  const failure = (id: string | number | null, code: number, reason: string) =>
+    writeMcpFrame(
+      io.stdout,
+      frame.framing,
+      JSON.stringify({ jsonrpc: "2.0", id, error: { code, message: reason } }),
+    );
   try {
-    const message = JSON.parse(frame.body) as unknown;
-    if (typeof message === "object" && message !== null && !Array.isArray(message)) {
-      const nextId = (message as Record<string, unknown>).id;
-      if (typeof nextId === "string" || typeof nextId === "number" || nextId === null) {
-        id = nextId;
-      }
-    }
+    message = JSON.parse(frame.body) as unknown;
   } catch {
-    writeMcpFrame(
-      io.stdout,
-      frame.framing,
-      JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32700, message: "Parse error." } }),
-    );
+    await failure(null, -32700, "Parse error.");
     return;
   }
-
-  const request = buildMcpRequest(env, frame.body);
-  const response = await fetchImpl(request.url, request.init);
-  const text = await response.text();
-  if (!response.ok) {
-    writeMcpFrame(
-      io.stdout,
-      frame.framing,
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id,
-        error: {
-          code: -32000,
-          message: `Helix MCP request failed (${String(response.status)}).`,
-        },
-      }),
-    );
-    if (text.trim().length > 0) {
-      io.stderr.write(formatHttpError(response.status, text));
+  if (
+    !isRecord(message) ||
+    message.jsonrpc !== "2.0" ||
+    typeof message.method !== "string" ||
+    (Object.hasOwn(message, "id") &&
+      message.id !== null &&
+      typeof message.id !== "string" &&
+      typeof message.id !== "number")
+  ) {
+    await failure(null, -32600, "Invalid request.");
+    return;
+  }
+  const notification = !Object.hasOwn(message, "id");
+  const id = notification ? null : (message.id as string | number | null);
+  try {
+    const request = buildMcpRequest(env, frame.body);
+    const response = await fetchImpl(request.url, request.init);
+    if (!response.ok) {
+      if (!notification)
+        await failure(id, -32000, `Helix MCP request failed (${String(response.status)}).`);
+      io.stderr.write(`Helix MCP request failed (${String(response.status)}).\n`);
+      return;
     }
-    return;
+    if (notification) return;
+    const text = await response.text();
+    const result: unknown = JSON.parse(text);
+    if (
+      !isRecord(result) ||
+      result.jsonrpc !== "2.0" ||
+      result.id !== id ||
+      Object.hasOwn(result, "result") === Object.hasOwn(result, "error")
+    ) {
+      await failure(id, -32603, "Invalid Helix MCP response.");
+      return;
+    }
+    await writeMcpFrame(io.stdout, frame.framing, text);
+  } catch {
+    if (!notification) await failure(id, -32000, "Helix MCP transport failed.");
+    io.stderr.write("Helix MCP transport failed.\n");
   }
-
-  writeMcpFrame(io.stdout, frame.framing, text);
 }
 
+const MAX_MCP_FRAME_BYTES = 1024 * 1024;
+
 function extractMcpFrames(
-  buffer: string,
+  buffer: Buffer,
   endOfInput: boolean,
-): { readonly frames: readonly McpInputFrame[]; readonly remaining: string } {
+): { readonly frames: readonly McpInputFrame[]; readonly remaining: Buffer } {
   const frames: McpInputFrame[] = [];
   let remaining = buffer;
-
   while (remaining.length > 0) {
-    const trimmedStart = remaining.replace(/^\s+/, "");
-    if (trimmedStart.length !== remaining.length) {
-      remaining = trimmedStart;
-      continue;
-    }
-
-    if (/^content-length:/i.test(remaining)) {
-      const separator = remaining.includes("\r\n\r\n")
-        ? "\r\n\r\n"
-        : remaining.includes("\n\n")
-          ? "\n\n"
-          : undefined;
-      if (separator === undefined) {
+    while (remaining.length > 0 && [9, 10, 13, 32].includes(remaining[0] ?? -1))
+      remaining = remaining.subarray(1);
+    if (remaining.length === 0) break;
+    if (/^content-length:/i.test(remaining.subarray(0, 15).toString("ascii"))) {
+      let separatorLength = 4;
+      let headerEnd = remaining.indexOf("\r\n\r\n");
+      if (headerEnd < 0) {
+        headerEnd = remaining.indexOf("\n\n");
+        separatorLength = 2;
+      }
+      if (headerEnd < 0) {
+        if (remaining.length > 8192) throw new Error("MCP headers exceed the size limit.");
         break;
       }
-
-      const headerEnd = remaining.indexOf(separator);
-      const header = remaining.slice(0, headerEnd);
-      const lengthLine = header.split(/\r?\n/).find((line) => /^content-length:/i.test(line));
-      const length = Number.parseInt(lengthLine?.split(":")[1]?.trim() ?? "", 10);
-      if (!Number.isFinite(length) || length < 0) {
-        throw new Error("Invalid MCP Content-Length header.");
-      }
-
-      const bodyStart = headerEnd + separator.length;
+      if (headerEnd > 8192) throw new Error("MCP headers exceed the size limit.");
+      const lengths = remaining
+        .subarray(0, headerEnd)
+        .toString("ascii")
+        .split(/\r?\n/)
+        .filter((line) => /^content-length:/i.test(line));
+      const value = lengths[0]?.slice("content-length:".length).trim() ?? "";
+      const length = Number(value);
+      if (
+        lengths.length !== 1 ||
+        !/^\d+$/.test(value) ||
+        !Number.isSafeInteger(length) ||
+        length > MAX_MCP_FRAME_BYTES
+      )
+        throw new Error("Invalid or oversized MCP Content-Length header.");
+      const bodyStart = headerEnd + separatorLength;
       const bodyEnd = bodyStart + length;
-      if (remaining.length < bodyEnd) {
-        break;
-      }
-
-      frames.push({ body: remaining.slice(bodyStart, bodyEnd), framing: "content-length" });
-      remaining = remaining.slice(bodyEnd);
+      if (remaining.length < bodyEnd) break;
+      frames.push({
+        body: remaining.subarray(bodyStart, bodyEnd).toString("utf8"),
+        framing: "content-length",
+      });
+      remaining = remaining.subarray(bodyEnd);
       continue;
     }
-
-    const lineEnd = remaining.indexOf("\n");
-    if (lineEnd === -1) {
-      if (endOfInput && remaining.trim().length > 0) {
-        frames.push({ body: remaining.trim(), framing: "line" });
-        remaining = "";
-      }
-      break;
-    }
-
-    const line = remaining.slice(0, lineEnd).trim();
-    remaining = remaining.slice(lineEnd + 1);
-    if (line.length > 0) {
-      frames.push({ body: line, framing: "line" });
-    }
+    const lineEnd = remaining.indexOf(10);
+    if ((lineEnd < 0 ? remaining.length : lineEnd) > MAX_MCP_FRAME_BYTES)
+      throw new Error("MCP message exceeds the size limit.");
+    if (lineEnd < 0 && !endOfInput) break;
+    const end = lineEnd < 0 ? remaining.length : lineEnd;
+    const body = remaining.subarray(0, end).toString("utf8").trim();
+    if (body.length > 0) frames.push({ body, framing: "line" });
+    remaining = remaining.subarray(lineEnd < 0 ? end : end + 1);
   }
-
   return { frames, remaining };
 }
 
-function writeMcpFrame(
+async function writeMcpFrame(
   stream: NodeJS.WritableStream,
   framing: McpInputFrame["framing"],
   body: string,
-): void {
-  const normalizedBody = body.trim().length === 0 ? "{}" : body.trim();
-  if (framing === "content-length") {
-    const byteLength = String(Buffer.byteLength(normalizedBody, "utf8"));
-    stream.write(`Content-Length: ${byteLength}\r\n\r\n${normalizedBody}`);
-    return;
-  }
-  stream.write(`${normalizedBody}\n`);
+): Promise<void> {
+  const normalizedBody = body.trim();
+  const output =
+    framing === "content-length"
+      ? `Content-Length: ${String(Buffer.byteLength(normalizedBody, "utf8"))}\r\n\r\n${normalizedBody}`
+      : `${normalizedBody}\n`;
+  if (!stream.write(output)) await once(stream, "drain");
 }
 
 async function resolveToolInput(
@@ -594,6 +620,8 @@ async function readAll(stream: NodeJS.ReadableStream): Promise<string> {
   stream.setEncoding("utf8");
   for await (const chunk of stream) {
     output += String(chunk);
+    if (Buffer.byteLength(output, "utf8") > 16 * 1024 * 1024)
+      throw new Error("JSON input exceeds 16 MiB.");
   }
   return output;
 }
@@ -614,7 +642,7 @@ function formatJsonValue(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-function formatCommandOutput(command: ReturnType<typeof parseCliArgs>, text: string): string {
+function formatCommandOutput(command: HelixCommand, text: string): string {
   const formatted = formatJsonText(text);
   if (command.kind !== "auth-token" || command.printExport !== true) {
     return formatted;
@@ -656,7 +684,7 @@ function formatError(error: unknown): string {
 
 function logout(env: HelixCliEnv, io: CliIo): number {
   const path = credentialFilePath(env);
-  let removed = false;
+  let removed: boolean;
   try {
     removed = existsSync(path);
     rmSync(path, { force: true });

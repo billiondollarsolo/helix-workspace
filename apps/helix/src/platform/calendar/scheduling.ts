@@ -155,7 +155,12 @@ export class PostgresCalendarSchedulingStore {
           if (resourceTimezone !== undefined) {
             return [
               actorId,
-              { timezone: resourceTimezone, daysOfWeek: [0, 1, 2, 3, 4, 5, 6], startsAtHour: 0, endsAtHour: 24 },
+              {
+                timezone: resourceTimezone,
+                daysOfWeek: [0, 1, 2, 3, 4, 5, 6],
+                startsAtHour: 0,
+                endsAtHour: 24,
+              },
             ];
           }
           const profile = profiles.find((candidate) => candidate.actorId === actorId);
@@ -398,12 +403,14 @@ export class PostgresCalendarSchedulingStore {
     if (resources.length !== resourceIds.length) {
       throw new RangeError("Scheduling resource is unavailable.");
     }
-    const bookings = await this.sql<{
-      readonly id: string;
-      readonly resource_id: string;
-      readonly starts_at: Date;
-      readonly ends_at: Date;
-    }[]>`
+    const bookings = await this.sql<
+      {
+        readonly id: string;
+        readonly resource_id: string;
+        readonly starts_at: Date;
+        readonly ends_at: Date;
+      }[]
+    >`
       select id, resource_id, starts_at, ends_at from cal_resource_bookings
       where org_id = ${orgId} and resource_id = any(${resourceIds}::uuid[])
         and status = 'approved' and starts_at < ${endsAt} and ends_at > ${startsAt}

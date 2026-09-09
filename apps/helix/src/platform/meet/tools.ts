@@ -15,9 +15,15 @@ import type {
   MeetRecordingArtifactRecord,
   MeetRoomRecord,
 } from "./types.js";
+import {
+  InMemoryMeetRateLimiter,
+  meetRateLimitError,
+  type MeetRateLimitBudget,
+  type MeetRateLimiter,
+} from "./rate-limit.js";
 
 const uuidSchema = z.string().uuid();
-const metadataSchema = z.record(z.unknown()).default({});
+const metadataSchema = z.record(z.string(), z.unknown()).default({});
 
 const createRoomSchema = z
   .object({
@@ -220,6 +226,9 @@ const genericObjectJsonSchema = {
   additionalProperties: true,
 } as const;
 
+/** Every Meet tool declares the same open output shape; the adapter is stateless. */
+const unknownOutputSchema = zodToolSchema(z.unknown(), genericObjectJsonSchema);
+
 export interface CreateMeetToolDefinitionsOptions {
   readonly store: MeetStore;
   readonly jwtSecret: string;
@@ -238,6 +247,9 @@ export interface CreateMeetToolDefinitionsOptions {
   readonly recordingAvailable?: (() => Promise<boolean>) | undefined;
   readonly metrics?: PlatformMetrics | undefined;
   readonly guestInviteSecret?: string | undefined;
+  /** Abuse rate limiter for create/join (MT.6). Defaults to in-memory. */
+  readonly rateLimiter?: MeetRateLimiter | undefined;
+  readonly rateLimitBudget?: Partial<MeetRateLimitBudget> | undefined;
 }
 
 export function createMeetToolDefinitions(
@@ -245,6 +257,10 @@ export function createMeetToolDefinitions(
 ): readonly ToolDefinition[] {
   const jitsiOrigin = deploymentJitsiOrigin(options);
   const jitsiDomain = new URL(jitsiOrigin).hostname;
+  // Spread rather than pass `budget: undefined` so exactOptionalPropertyTypes holds.
+  const budgetOption =
+    options.rateLimitBudget === undefined ? {} : { budget: options.rateLimitBudget };
+  const rateLimiter = options.rateLimiter ?? new InMemoryMeetRateLimiter({ ...budgetOption });
   return [
     defineTool<z.output<typeof createRoomSchema>, unknown>({
       id: "meet.create-room",
@@ -252,9 +268,18 @@ export function createMeetToolDefinitions(
       permission: "meet.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(createRoomSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
-      handler: async (input, ctx) =>
-        serializeRoom(
+      outputSchema: unknownOutputSchema,
+      handler: async (input, ctx) => {
+        const decision = await rateLimiter.consume({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          action: "create_room",
+          ...budgetOption,
+        });
+        if (!decision.allowed) {
+          throw meetRateLimitError(decision);
+        }
+        return serializeRoom(
           await options.store.createRoom({
             orgId: ctx.actor.orgId,
             actorId: ctx.actor.id,
@@ -273,7 +298,8 @@ export function createMeetToolDefinitions(
             lobbyEnabled: input.lobbyEnabled,
             metadata: toJsonObject(input.metadata),
           }),
-        ),
+        );
+      },
     }),
     defineTool<z.output<typeof listRoomsSchema>, unknown>({
       id: "meet.room.list",
@@ -281,7 +307,7 @@ export function createMeetToolDefinitions(
       permission: "meet.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listRoomsSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => ({
         rooms: (
           await options.store.listRoomsForActor({
@@ -301,7 +327,7 @@ export function createMeetToolDefinitions(
       permission: "meet.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listMeetingsSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const meetings = (
           await options.store.listMeetingsForActor({
@@ -388,7 +414,7 @@ export function createMeetToolDefinitions(
       permission: "meet.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(mintTokenSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const room = await options.store.getRoomForActor({
           orgId: ctx.actor.orgId,
@@ -400,6 +426,15 @@ export function createMeetToolDefinitions(
         }
         if (room.status !== "active") {
           throw new Error(`Meet room has ended: ${input.roomId}`);
+        }
+        const decision = await rateLimiter.consume({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          action: "join_room",
+          ...budgetOption,
+        });
+        if (!decision.allowed) {
+          throw meetRateLimitError(decision);
         }
         return mintMemberJoin(options, room, ctx.actor, input, jitsiOrigin, input.expiresInSeconds);
       },
@@ -538,7 +573,7 @@ export function createMeetToolDefinitions(
       permission: "meet.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(endRoomSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
         const room = await options.store.endRoom({
           orgId: ctx.actor.orgId,

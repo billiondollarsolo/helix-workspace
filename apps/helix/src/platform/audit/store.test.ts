@@ -32,7 +32,8 @@ describe("PostgresAuditStore", () => {
   });
 
   it("loads verification records in hash-chain order", async () => {
-    const recording = createRecordingSql([[],
+    const recording = createRecordingSql([
+      [],
       [
         {
           id: "record-1",
@@ -78,9 +79,7 @@ describe("PostgresAuditStore", () => {
   });
 
   it("lists orgs with audit activity for verification", async () => {
-    const recording = createRecordingSql([
-      [{ org_id: "org-a" }, { org_id: "org-b" }],
-    ]);
+    const recording = createRecordingSql([[{ org_id: "org-a" }, { org_id: "org-b" }]]);
     const store = new PostgresAuditStore(recording.sql);
 
     await expect(store.listVerificationOrgIds()).resolves.toEqual(["org-a", "org-b"]);
@@ -115,22 +114,22 @@ describe("PostgresAuditStore", () => {
     const store = new PostgresAuditStore(recording.sql);
 
     await expect(store.loadAuditShippingCheckpoint("immutable-s3")).resolves.toEqual(checkpoint);
-    await expect(
-      store.listAuditShippingRecords({ after: checkpoint, limit: 10 }),
-    ).resolves.toEqual([
-      {
-        id: "00000000-0000-4000-8000-000000000002",
-        orgId: "22222222-2222-4222-8222-222222222222",
-        actorId: "11111111-1111-4111-8111-111111111111",
-        verb: "object.created",
-        objectType: "object",
-        trace: { traceId: "trace-1" },
-        metadata: { source: "test" },
-        prevHash: null,
-        thisHash: "this-hash",
-        createdAt: "2026-05-20T00:01:00.000Z",
-      },
-    ]);
+    await expect(store.listAuditShippingRecords({ after: checkpoint, limit: 10 })).resolves.toEqual(
+      [
+        {
+          id: "00000000-0000-4000-8000-000000000002",
+          orgId: "22222222-2222-4222-8222-222222222222",
+          actorId: "11111111-1111-4111-8111-111111111111",
+          verb: "object.created",
+          objectType: "object",
+          trace: { traceId: "trace-1" },
+          metadata: { source: "test" },
+          prevHash: null,
+          thisHash: "this-hash",
+          createdAt: "2026-05-20T00:01:00.000Z",
+        },
+      ],
+    );
     await store.saveAuditShippingCheckpoint("immutable-s3", {
       id: "00000000-0000-4000-8000-000000000002",
       createdAt: "2026-05-20T00:01:00.000Z",

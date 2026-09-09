@@ -15,6 +15,8 @@ import {
   mailFiltersListResultSchema,
   mailOutboundCancelInputSchema,
   mailOutboundCancelResultSchema,
+  mailOutboundRetryInputSchema,
+  mailOutboundRetryResultSchema,
   mailSpamInputSchema,
   mailSpamResultSchema,
   mailThreadsListResultSchema,
@@ -43,6 +45,7 @@ import type {
 import { MAIL_FOLDER_IDS } from "./types.js";
 import { normalizeProviderDeliveryId } from "./threading.js";
 import { sanitizeMailHtml } from "./html-rendering.js";
+import { mailOutboundDisplayStatus } from "./reliability.js";
 
 // ponytail: tools.ts is the mail tool surface (~1100 LOC). Split draft/alias
 // tool groups into tools-drafts.ts / tools-aliases.ts when next expanding (G9).
@@ -68,6 +71,7 @@ const attachmentSchema = z
   .strict();
 
 const sendSchema = z.object({
+  draft: z.object({ id: uuidSchema, revision: z.number().int().positive() }).optional(),
   from: addressSchema.optional(),
   to: z.array(addressSchema).min(1),
   cc: z.array(addressSchema).default([]),
@@ -85,6 +89,7 @@ const sendSchema = z.object({
       return delay > 0 && delay <= 366 * 24 * 60 * 60_000;
     }, "Scheduled mail must be sent within the next 366 days.")
     .optional(),
+  idempotencyKey: z.string().trim().min(8).max(200).optional(),
 });
 
 const headerValueSchema = z
@@ -186,7 +191,7 @@ const vacationSetSchema = z
     body: z.string().default(""),
     startsAt: z.string().datetime().nullable().default(null),
     endsAt: z.string().datetime().nullable().default(null),
-    metadata: z.record(z.unknown()).default({}),
+    metadata: z.record(z.string(), z.unknown()).default({}),
   })
   .refine(
     (input) =>
@@ -425,7 +430,10 @@ export function createMailToolDefinitions(
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           envelope: applySignature(toEnvelope(input, from), settings, false),
+          ...(input.draft === undefined ? {} : { draft: input.draft }),
           ...(input.sendAt === undefined ? {} : { sendAt: new Date(input.sendAt) }),
+          source: ctx.actor.type === "agent" ? "agent" : "interactive",
+          ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
         });
         await options.classifyResource?.({
           actor: ctx.actor,
@@ -454,6 +462,8 @@ export function createMailToolDefinitions(
           threadId: input.threadId,
           ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
           references: input.references,
+          source: ctx.actor.type === "agent" ? "agent" : "interactive",
+          ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
           ...(input.sendAt === undefined ? {} : { sendAt: new Date(input.sendAt) }),
           envelope: applySignature(
             toEnvelope(
@@ -624,7 +634,8 @@ export function createMailToolDefinitions(
     ),
     defineTool<z.output<typeof spamSchema>, z.output<typeof mailSpamResultSchema>>({
       id: "mail.spam",
-      description: "Mark or unmark a mail thread as spam.",
+      description:
+        "Mark or unmark a mail thread as spam (Not spam when spam:false). Writes durable feedback.",
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(spamSchema, genericObjectJsonSchema),
@@ -637,6 +648,16 @@ export function createMailToolDefinitions(
           threadId: input.threadId,
           patch: { spamAt },
         });
+        if (options.store.recordSpamFeedback !== undefined) {
+          await options.store.recordSpamFeedback({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            threadId: input.threadId,
+            label: input.spam ? "spam" : "ham",
+            source: "user",
+            evidence: { via: "mail.spam", spam: input.spam },
+          });
+        }
         return {
           ok: true as const,
           threadId: input.threadId,
@@ -834,9 +855,7 @@ export function createMailToolDefinitions(
       inputSchema: zodToolSchema(userSettingsGetSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailUserSettingsOutputSchema, genericObjectJsonSchema),
       handler: async (_input, ctx) =>
-        serializeUserSettings(
-          await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id),
-        ),
+        serializeUserSettings(await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id)),
     }),
     defineTool<
       z.output<typeof userSettingsSetSchema>,
@@ -858,11 +877,11 @@ export function createMailToolDefinitions(
             actorId: ctx.actor.id,
             signatureText: input.signatureText.trim(),
             signatureHtml:
-              input.signatureHtml === null
-                ? null
-                : sanitizeMailHtml(input.signatureHtml).html,
+              input.signatureHtml === null ? null : sanitizeMailHtml(input.signatureHtml).html,
             includeSignatureOnReplies: input.includeSignatureOnReplies,
-            blockedSenders: [...new Set(input.blockedSenders.map((address) => address.toLowerCase()))],
+            blockedSenders: [
+              ...new Set(input.blockedSenders.map((address) => address.toLowerCase())),
+            ],
           }),
         );
       },
@@ -1038,6 +1057,26 @@ export function createMailToolDefinitions(
         };
       },
     }),
+    defineTool<
+      z.output<typeof mailOutboundRetryInputSchema>,
+      z.output<typeof mailOutboundRetryResultSchema>
+    >({
+      id: "mail.outbound.retry",
+      description: "Explicitly retry a failed outbound message through its bound provider.",
+      permission: "mail.send",
+      sideEffects: "external_communication",
+      confirmationRequired: true,
+      inputSchema: zodToolSchema(mailOutboundRetryInputSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(mailOutboundRetryResultSchema, genericObjectJsonSchema),
+      handler: async (input, ctx) => {
+        const retried = await sendService.retry({
+          orgId: ctx.actor.orgId,
+          actorId: ctx.actor.id,
+          id: input.outboundId,
+        });
+        return { outbound: retried === null ? null : serializeOutboundDetail(retried) };
+      },
+    }),
     defineTool<z.output<typeof mailDraftSaveInputSchema>, z.output<typeof mailDraftSchema>>({
       id: "mail.draft.save",
       description: "Create or update a mail draft for the current actor.",
@@ -1070,6 +1109,9 @@ export function createMailToolDefinitions(
               ...(input.bodyHtml === undefined ? {} : { bodyHtml: input.bodyHtml }),
               attachments: input.attachments,
             } as JsonObject,
+            ...(input.expectedVersion === undefined
+              ? {}
+              : { expectedVersion: input.expectedVersion }),
           });
         } catch (error) {
           if (error instanceof MailDraftConflictError) throw new ConflictError(error.message);
@@ -1137,6 +1179,9 @@ export function createMailToolDefinitions(
             orgId: ctx.actor.orgId,
             actorId: ctx.actor.id,
             id: input.id,
+            ...(input.expectedRevision === undefined
+              ? {}
+              : { expectedRevision: input.expectedRevision }),
           }),
         };
       },
@@ -1468,19 +1513,18 @@ function actorFrom(
   };
 }
 
-function serializeOutbound(outbound: {
-  readonly id: string;
-  readonly messageId: string;
-  readonly threadId: string;
-  readonly status: string;
-  readonly undoUntil: Date;
-  readonly createdAt: Date;
-}) {
+function serializeOutbound(
+  outbound: Pick<
+    MailOutboundRecord,
+    "id" | "messageId" | "threadId" | "status" | "undoUntil" | "createdAt" | "deliveryMetadata"
+  >,
+) {
   return {
     id: outbound.id,
     messageId: outbound.messageId,
     threadId: outbound.threadId,
     status: outbound.status,
+    deliveryStatus: mailOutboundDisplayStatus(outbound),
     undoUntil: outbound.undoUntil.toISOString(),
     queuedAt: outbound.createdAt.toISOString(),
   };

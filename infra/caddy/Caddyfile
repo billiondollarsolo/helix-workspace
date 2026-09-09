@@ -58,6 +58,7 @@
 	# Caddy streams bodies by default. Keep its buffering knobs unset so slow
 	# upstreams apply TCP backpressure instead of allocating whole bodies.
 	reverse_proxy {$HELIX_UPSTREAM:host.docker.internal:3000} {
+		header_up -X-Helix-Mfa-Verified
 		stream_timeout 24h
 		stream_close_delay 5m
 		transport http {

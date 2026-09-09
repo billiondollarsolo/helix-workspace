@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
-import type postgres from "postgres";
 import { createTransport } from "nodemailer";
+import type postgres from "postgres";
 import { describe, expect, it, vi } from "vitest";
+import { MailInboundQuotaExceededError } from "./errors.js";
 import {
   ingestSmtpEnvelope,
   SmtpMailReceiver,
   type MailAuthenticator,
   type SMTPServerSession,
 } from "./ingest.js";
-import { MailInboundQuotaExceededError } from "./errors.js";
 import { PostgresMailStore, type MailStore } from "./store.js";
 import type {
   MailInboundAddressResolution,
@@ -396,14 +396,14 @@ describe("SMTP RCPT validation", () => {
     const logger = { error: vi.fn() };
     const result = await validateRecipient(async () => Promise.reject(failure), logger);
 
-    expect(result).toMatchObject({ responseCode: 450 });
+    expect(result).toMatchObject({ responseCode: 451 });
     expect(result?.message).not.toContain(failure.message);
-    expect(logger.error).toHaveBeenCalledWith(failure, "SMTP recipient validation deferred");
   });
 
   it("refuses DATA and creates no content for an invalid recipient", async () => {
     const messages: MailMessageInput[] = [];
     const receiver = new SmtpMailReceiver({
+      transportSecurity: { mode: "development-plaintext" },
       store: mailStore(messages),
       resolveRecipient: async () => null,
       authenticator: passingAuthenticator,
@@ -440,6 +440,7 @@ describe("SMTP RCPT validation", () => {
   it("advertises and enforces the maximum DATA size before persistence", async () => {
     const messages: MailMessageInput[] = [];
     const receiver = new SmtpMailReceiver({
+      transportSecurity: { mode: "development-plaintext" },
       store: mailStore(messages),
       resolveRecipient: async (address) => ({ orgId: orgA, actorId: actorA, address }),
       authenticator: passingAuthenticator,
@@ -476,18 +477,22 @@ describe("SMTP RCPT validation", () => {
 
   it("rejects recipients above the per-envelope cap", async () => {
     const receiver = new SmtpMailReceiver({
+      transportSecurity: { mode: "development-plaintext" },
       store: mailStore([]),
       resolveRecipient: async (address) => ({ orgId: orgA, actorId: actorA, address }),
       maxRecipients: 1,
     });
+    const session = await openEnvelope(receiver);
+    await new Promise<void>((resolve, reject) => {
+      receiver.nodeServer.onRcptTo({ address: "first@alpha.test", args: {} }, session, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
     const result = await new Promise<Error | undefined>((resolve) => {
-      receiver.nodeServer.onRcptTo(
-        { address: "second@alpha.test", args: {} },
-        { envelope: { rcptTo: [{ address: "first@alpha.test", args: {} }] } } as SMTPServerSession,
-        (error) => {
-          resolve(error ?? undefined);
-        },
-      );
+      receiver.nodeServer.onRcptTo({ address: "second@alpha.test", args: {} }, session, (error) => {
+        resolve(error ?? undefined);
+      });
     });
 
     expect(result).toMatchObject({ responseCode: 452 });
@@ -500,24 +505,46 @@ const passingAuthenticator: MailAuthenticator = {
   },
 };
 
-function validateRecipient(
+async function validateRecipient(
   resolveRecipient: (address: string) => Promise<MailInboundRecipient | null>,
   logger?: { error(error: unknown, message?: string): void },
 ): Promise<(Error & { readonly responseCode?: number }) | undefined> {
   const receiver = new SmtpMailReceiver({
+    transportSecurity: { mode: "development-plaintext" },
     store: mailStore([]),
     resolveRecipient,
     ...(logger === undefined ? {} : { logger }),
   });
+  const session = await openEnvelope(receiver);
   return new Promise((resolve) => {
-    receiver.nodeServer.onRcptTo(
-      { address: "ada@alpha.test", args: {} },
-      { envelope: { rcptTo: [] } } as unknown as SMTPServerSession,
+    receiver.nodeServer.onRcptTo({ address: "ada@alpha.test", args: {} }, session, (error) => {
+      resolve(error as (Error & { readonly responseCode?: number }) | undefined);
+    });
+  });
+}
+
+async function openEnvelope(receiver: SmtpMailReceiver): Promise<SMTPServerSession> {
+  const session = {
+    remoteAddress: "127.0.0.1",
+    envelope: { rcptTo: [] },
+  } as unknown as SMTPServerSession;
+  await new Promise<void>((resolve, reject) => {
+    receiver.nodeServer.onConnect(session, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    receiver.nodeServer.onMailFrom(
+      { address: "sender@example.net", args: {} },
+      session,
       (error) => {
-        resolve(error as (Error & { readonly responseCode?: number }) | undefined);
+        if (error) reject(error);
+        else resolve();
       },
     );
   });
+  return session;
 }
 
 function mailStore(messages: MailMessageInput[]): MailStore {

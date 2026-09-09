@@ -38,13 +38,18 @@ Options:
   --no-object-switch               Validate an isolated object restore without changing routing
   --object-rollback-state <path>   Durable rollback receipt. Default: ./backups/object-restore-state.json
   --rollback-objects <path>        Roll route back using a prior receipt; no backup is required
+  --target-object-bucket <name>    Alias for --object-target-bucket
+  --manifest-format <ed25519|hmac-v3>  Explicit legacy archive compatibility (default: ed25519)
   --verify                         Run DB verification after a logical restore
+  --require-manifest-v3            Require checksum/recovery-set sidecars and schema v3
+  --verification-output <path>     Write content-free verification observations
   -h, --help
 
 Environment:
   POSTGRES_DB, POSTGRES_USER, POSTGRES_SERVICE
   AGE_IDENTITY_FILE, HELIX_BACKUP_KMS_DATAKEY, HELIX_KMS_ENDPOINT
   HELIX_BACKUP_SIGNING_PUBLIC_KEY, HELIX_RESTORE_EXPECTED_APP_VERSION
+  HELIX_BACKUP_MANIFEST_HMAC_KEY   Same independent 32+ byte key used at backup time
   HELIX_BACKUP_RUSTFS_BUCKET, RUSTFS_ENDPOINT/RUSTFS_ACCESS_KEY/RUSTFS_SECRET_KEY
   HELIX_OBJECT_ROUTE_COMMAND, HELIX_OBJECT_RESTORE_STATE, HELIX_PITR_POSTGRES_IMAGE
 EOF
@@ -67,13 +72,21 @@ FORCE_PITR=false
 RECOVERY_TARGET_TIME=${HELIX_RECOVERY_TARGET_TIME:-}
 PITR_DATA_DIR=${HELIX_PITR_DATA_DIR:-./backups/pitr-restore}
 RESTORE_OBJECTS=false
-OBJECT_TARGET_BUCKET=${HELIX_OBJECT_RESTORE_BUCKET:-}
+OBJECT_TARGET_BUCKET=${HELIX_OBJECT_RESTORE_BUCKET:-${HELIX_RESTORE_TARGET_OBJECT_BUCKET:-}}
+MANIFEST_FORMAT=ed25519
 OBJECT_ROUTE_COMMAND=${HELIX_OBJECT_ROUTE_COMMAND:-}
 OBJECT_SWITCH=true
 OBJECT_ROLLBACK_STATE=${HELIX_OBJECT_RESTORE_STATE:-./backups/object-restore-state.json}
 ROLLBACK_OBJECTS=
 WORK_DIR=
 PITR_CONTAINER=
+REQUIRE_MANIFEST_V3=false
+VERIFICATION_OUTPUT=
+MANIFEST_VERIFIED=false
+DATABASE_CONSISTENCY=not_run
+OBJECT_CONSISTENCY=not_run
+SAMPLE_COUNT=0
+SAMPLE_MATCHES=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -96,13 +109,31 @@ while [[ $# -gt 0 ]]; do
     --no-object-switch) OBJECT_SWITCH=false; shift ;;
     --object-rollback-state) OBJECT_ROLLBACK_STATE=${2:?missing rollback state}; shift 2 ;;
     --rollback-objects) ROLLBACK_OBJECTS=${2:?missing rollback state}; shift 2 ;;
+    --target-object-bucket) OBJECT_TARGET_BUCKET=${2:?missing target object bucket}; shift 2 ;;
+    --manifest-format) MANIFEST_FORMAT=${2:?missing manifest format}; shift 2 ;;
     --verify) VERIFY=true; shift ;;
+    --require-manifest-v3) REQUIRE_MANIFEST_V3=true; shift ;;
+    --verification-output) VERIFICATION_OUTPUT=${2:?missing verification output}; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
 done
 
+case "$MANIFEST_FORMAT" in ed25519|hmac-v3) ;; *) die "unsupported manifest format" ;; esac
+
 [[ -n "$BACKUP_PATH" || -n "$ROLLBACK_OBJECTS" ]] || die "--backup is required"
+if bool_true "$REQUIRE_MANIFEST_V3" && [[ -d "$BACKUP_PATH" ]]; then
+  die "strict restore requires an encrypted archive, not an already extracted directory"
+fi
+if bool_true "$REQUIRE_MANIFEST_V3"; then
+  OBJECT_SWITCH=false
+  VERIFY=true
+  [[ "$TARGET_DB" != "$POSTGRES_DB" ]] || die "strict restore requires an isolated database"
+  case "$BACKUP_PATH" in
+    *.age|*.kms) ;;
+    *) die "strict restore requires a .age or .kms ciphertext archive" ;;
+  esac
+fi
 
 if [[ "$TARGET_DB" == "$POSTGRES_DB" ]] && ! bool_true "$ALLOW_LIVE_TARGET"; then
   die "refusing to restore into live database '$TARGET_DB'; use a drill database or pass --allow-live-target"
@@ -113,7 +144,9 @@ if [[ "$DRY_RUN" == "0" ]]; then
   require_cmd node
   if [[ -z "$ROLLBACK_OBJECTS" ]]; then
     require_cmd docker
-    [[ -f "$SIGNING_PUBLIC_KEY" ]] || die "restore requires --manifest-public-key or HELIX_BACKUP_SIGNING_PUBLIC_KEY"
+    if [[ "$MANIFEST_FORMAT" == "ed25519" ]]; then
+      [[ -f "$SIGNING_PUBLIC_KEY" ]] || die "restore requires --manifest-public-key or HELIX_BACKUP_SIGNING_PUBLIC_KEY"
+    fi
   fi
 fi
 
@@ -128,7 +161,7 @@ cleanup() {
 trap cleanup EXIT
 
 json_field() {
-  node -e 'const fs=require("fs"); const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"))[process.argv[2]]; if(typeof value!=="string" || !value) process.exit(1); process.stdout.write(value)' "$1" "$2"
+  node -e 'const fs=require("fs"); const value=process.argv[2].split(".").reduce((value,key)=>value?.[key],JSON.parse(fs.readFileSync(process.argv[1],"utf8"))); if(typeof value!=="string" || !value) process.exit(1); process.stdout.write(value)' "$1" "$2"
 }
 
 rollback_objects() {
@@ -169,8 +202,16 @@ extract_backup() {
     return
   fi
 
-  WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/helix-restore.XXXXXX")
   local plain_tar="$WORK_DIR/archive.tar.gz"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ shasum -a 256 -c %q\n' "$source.sha256" >&2
+  elif [[ -f "$source.sha256" ]]; then
+    (cd "$(dirname "$source")" && shasum -a 256 -c "$(basename "$source").sha256") >&2
+  elif bool_true "$REQUIRE_MANIFEST_V3"; then
+    die "strict restore requires archive checksum sidecar: $source.sha256"
+  else
+    log "warning: archive checksum sidecar not found; restoring legacy backup"
+  fi
   case "$source" in
     *.age)
       [[ -n "$AGE_IDENTITY" ]] || die "encrypted backup requires --age-identity or AGE_IDENTITY_FILE"
@@ -194,7 +235,7 @@ extract_backup() {
         require_cmd aws
         require_cmd node
         require_cmd python3
-        kms_decrypt_file "$source" "$plain_tar" "$datakey"
+        kms_decrypt_file "$source" "$plain_tar" "$datakey" "$MANIFEST_FORMAT"
         python3 "$SCRIPT_DIR/safe_extract_tar.py" "$plain_tar" "$WORK_DIR"
         rm -f "$plain_tar"
       fi
@@ -219,6 +260,7 @@ extract_backup() {
   fi
 }
 
+if [[ ! -d "$BACKUP_PATH" ]]; then WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/helix-restore.XXXXXX"); fi
 BACKUP_DIR=$(extract_backup "$BACKUP_PATH")
 POSTGRES_DUMP="$BACKUP_DIR/postgres.dump"
 BASEBACKUP_DIR="$BACKUP_DIR/postgres-basebackup"
@@ -227,17 +269,33 @@ OBJECTS_DIR="$BACKUP_DIR/objects"
 MANIFEST="$BACKUP_DIR/manifest.json"
 MANIFEST_SIGNATURE="$BACKUP_DIR/manifest.sig"
 
-if [[ "$DRY_RUN" == "1" ]]; then
-  printf '+ verify Ed25519 signature and every manifest file digest before restore\n'
-else
+verify_manifest() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ verify %s manifest and every file digest before restoring data\n' "$MANIFEST_FORMAT"
+    return
+  fi
   [[ -f "$MANIFEST" ]] || die "backup manifest not found: $MANIFEST"
-  [[ -f "$MANIFEST_SIGNATURE" ]] || die "backup manifest signature not found: $MANIFEST_SIGNATURE"
-  node "$SCRIPT_DIR/backup-manifest.mjs" verify \
-    "$BACKUP_DIR" "$MANIFEST" "$SIGNING_PUBLIC_KEY" "$EXPECTED_APP_VERSION"
-fi
+  if [[ "$MANIFEST_FORMAT" == "ed25519" ]]; then
+    [[ -f "$MANIFEST_SIGNATURE" ]] || die "backup manifest signature not found"
+    node "$SCRIPT_DIR/backup-manifest.mjs" verify "$BACKUP_DIR" "$MANIFEST" "$SIGNING_PUBLIC_KEY" "$EXPECTED_APP_VERSION"
+  else
+    node "$SCRIPT_DIR/backup-manifest.mjs" verify --root "$BACKUP_DIR" >/dev/null
+    [[ -z "$EXPECTED_APP_VERSION" ]] || die "legacy HMAC backups do not attest an application version"
+  fi
+  if bool_true "$REQUIRE_MANIFEST_V3"; then
+    node -e 'const fs=require("fs"),m=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(m.schema!=="helix.backup-manifest.v3" || !["age","kms"].includes(m.encryption?.method) || m.objects?.included!==true) process.exit(1)' "$MANIFEST" \
+      || die "strict restore requires an encrypted recovery-set manifest with objects"
+  fi
+  if [[ -f "$BACKUP_PATH.manifest.json" ]]; then
+    cmp "$BACKUP_PATH.manifest.json" "$MANIFEST" >/dev/null || die "external manifest differs from the verified embedded manifest"
+  elif bool_true "$REQUIRE_MANIFEST_V3"; then
+    die "strict restore requires an external manifest sidecar"
+  fi
+  MANIFEST_VERIFIED=true
+}
+verify_manifest
 
-# Logical restore is the coherent DB/object snapshot. PITR is explicit because
-# it intentionally recovers the physical cluster to a caller-selected target.
+# Logical restoration preserves the exported DB/object snapshot; PITR is explicit.
 RESTORE_MODE=logical
 if bool_true "$FORCE_PITR"; then
   RESTORE_MODE=pitr
@@ -380,22 +438,73 @@ restore_logical() {
     run_shell "$(printf '%s exec -T %q psql -U %q -d %q -v ON_ERROR_STOP=1 -c %q' \
       "$(compose)" "$POSTGRES_SERVICE" "$POSTGRES_USER" "$TARGET_DB" \
       "select count(*) as activity_rows, count(this_hash) as hashed_activity_rows from public.activity;")"
+    verify_database_consistency
   fi
+}
+
+capture_database_consistency() {
+  local database=$1 output=$2
+  local sql
+  sql="select metric, value from (
+    select 'activity.count'::text metric, count(*)::text value from public.activity
+    union all select 'audit.invalid_links', count(*)::text from (
+      select prev_hash, lag(this_hash) over (partition by org_id order by sequence) expected
+      from public.activity
+    ) links where prev_hash is distinct from expected
+    union all select 'drive_versions.count', count(*)::text from public.drive_versions
+    union all select 'mail_outbound_messages.count', count(*)::text from public.mail_outbound_messages
+    union all select 'objects.count', count(*)::text from public.objects
+    union all select 'outbox.count', count(*)::text from public.outbox
+  ) metrics order by metric;
+  select 'drive_version.sample', concat_ws('|', id::text, storage_key, sha256)
+  from public.drive_versions order by id limit 25;"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ %s exec -T %q psql -At -F <tab> -U %q -d %q > %q # compare database, versions, outbound queues, audit chain\n' \
+      "$(compose)" "$POSTGRES_SERVICE" "$POSTGRES_USER" "$database" "$output"
+  else
+    bash -c "$(printf '%s exec -T %q psql -X -qAt -F %q -v ON_ERROR_STOP=1 -U %q -d %q -c %q > %q' \
+      "$(compose)" "$POSTGRES_SERVICE" $'\t' "$POSTGRES_USER" "$database" "$sql" "$output")"
+  fi
+}
+
+verify_database_consistency() {
+  local expected="$BACKUP_DIR/consistency/database.tsv"
+  local observed="${WORK_DIR:-${TMPDIR:-/tmp}}/restored-database.tsv"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    capture_database_consistency "$TARGET_DB" "$observed"
+    printf '+ cmp %q %q\n' "$expected" "$observed"
+    printf '+ assert audit.invalid_links == 0 and outbound queue counts match\n'
+    return
+  fi
+  [[ -f "$expected" ]] || {
+    bool_true "$REQUIRE_MANIFEST_V3" && die "strict restore requires database consistency snapshot"
+    log "warning: database consistency snapshot missing"
+    return
+  }
+  capture_database_consistency "$TARGET_DB" "$observed"
+  cmp "$expected" "$observed" >/dev/null || die "restored database consistency snapshot differs from source"
+  [[ "$(awk -F $'\t' '$1 == "audit.invalid_links" { print $2 }' "$observed")" == "0" ]] \
+    || die "restored audit hash chain has broken links"
+  DATABASE_CONSISTENCY=passed
 }
 
 # --- Object-store restore: stage, validate, then atomically switch -----------
 restore_objects() {
-  local bucket=${HELIX_BACKUP_RUSTFS_BUCKET:-}
+  local configured_source_bucket=${HELIX_BACKUP_RUSTFS_BUCKET:-}
+  local bucket=$configured_source_bucket
   local endpoint
   endpoint=$(object_store_endpoint)
   local inventory="$OBJECTS_DIR/inventory.json"
-  if [[ -z "$bucket" && "$DRY_RUN" == "0" ]]; then
-    bucket=$(json_field "$inventory" bucket) || die "object inventory does not name its source bucket"
+  if [[ "$DRY_RUN" == "0" ]]; then
+    local source_bucket
+    source_bucket=$(json_field "$MANIFEST" objects.bucket) || die "manifest does not name its source bucket"
+    [[ -z "$bucket" || "$bucket" == "$source_bucket" ]] || die "configured source bucket differs from manifest"
+    bucket=$source_bucket
   fi
   [[ -n "$bucket" ]] || bucket='helix-source'
   local backup_id=restore
   if [[ "$DRY_RUN" == "0" ]]; then
-    backup_id=$(json_field "$MANIFEST" backup_id) || die "backup manifest does not name its backup id"
+    backup_id=$(json_field "$MANIFEST" backup_id || json_field "$MANIFEST" backupId) || die "backup manifest does not name its backup id"
   fi
   local suffix
   suffix=$(printf '%s' "$backup_id" | tr '[:upper:]_' '[:lower:]-' | tr -cd 'a-z0-9.-' | cut -c1-24)
@@ -413,7 +522,9 @@ restore_objects() {
     fi
     return
   fi
-  [[ -f "$inventory" ]] || die "object inventory not found in archive: $inventory"
+  if [[ "$MANIFEST_FORMAT" == "ed25519" ]]; then
+    [[ -f "$inventory" ]] || die "object inventory not found in archive: $inventory"
+  fi
   require_cmd aws
   export_object_store_credentials
   if aws --no-cli-pager --endpoint-url "$endpoint" s3api head-bucket --bucket "$target" >/dev/null 2>&1; then
@@ -425,7 +536,15 @@ restore_objects() {
   [[ "$(aws --no-cli-pager --endpoint-url "$endpoint" s3api get-bucket-versioning \
     --bucket "$target" --query Status --output text)" == "Enabled" ]] \
     || die "object restore target did not enable versioning"
-  node "$SCRIPT_DIR/object-snapshot.mjs" restore "$inventory" "$target" "$endpoint"
+  local observations
+  if [[ "$MANIFEST_FORMAT" == "ed25519" ]]; then
+    observations=$(node "$SCRIPT_DIR/object-snapshot.mjs" restore "$inventory" "$target" "$endpoint")
+  else
+    observations=$(node "$SCRIPT_DIR/object-snapshot.mjs" restore-legacy "$BACKUP_DIR" "$target" "$endpoint")
+  fi
+  SAMPLE_COUNT=$(printf '%s' "$observations" | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const n=JSON.parse(s).objectCount;if(!Number.isSafeInteger(n)||n<0)process.exit(1);process.stdout.write(String(n))})')
+  SAMPLE_MATCHES=$SAMPLE_COUNT
+  OBJECT_CONSISTENCY=passed
 
   if bool_true "$OBJECT_SWITCH"; then
     [[ -x "$OBJECT_ROUTE_COMMAND" ]] || die "object restore switch requires executable --object-route-command"
@@ -448,6 +567,24 @@ restore_objects() {
   fi
 }
 
+write_verification_observations() {
+  [[ -n "$VERIFICATION_OUTPUT" ]] || return 0
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ write content-free restore verification observations: %q\n' "$VERIFICATION_OUTPUT"
+    return
+  fi
+  mkdir -p "$(dirname "$VERIFICATION_OUTPUT")"
+  {
+    printf 'manifest_integrity\t%s\n' "$([ "$MANIFEST_VERIFIED" == "true" ] && printf passed || printf failed)"
+    printf 'database_consistency\t%s\n' "$DATABASE_CONSISTENCY"
+    printf 'object_version_consistency\t%s\n' "$OBJECT_CONSISTENCY"
+    printf 'outbound_queue_consistency\t%s\n' "$DATABASE_CONSISTENCY"
+    printf 'audit_chain\t%s\n' "$DATABASE_CONSISTENCY"
+    printf 'sample_count\t%s\n' "$SAMPLE_COUNT"
+    printf 'sample_matches\t%s\n' "$SAMPLE_MATCHES"
+  } >"$VERIFICATION_OUTPUT"
+}
+
 if [[ "$RESTORE_MODE" == "pitr" ]]; then
   restore_pitr
 else
@@ -458,4 +595,5 @@ if bool_true "$RESTORE_OBJECTS"; then
   restore_objects
 fi
 
+write_verification_observations
 log "restore workflow complete"

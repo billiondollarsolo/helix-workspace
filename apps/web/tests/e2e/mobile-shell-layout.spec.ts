@@ -46,6 +46,21 @@ test.describe("mobile shell layout", () => {
     expect((launcherBox?.x ?? 0) + (launcherBox?.width ?? 0)).toBeLessThanOrEqual(390);
     expect((launcherBox?.y ?? 0) + (launcherBox?.height ?? 0)).toBeLessThanOrEqual(layout.railTop);
   });
+  test("keeps Mail controls usable while section navigation is collapsed", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockBackend(page);
+    await page.goto("/mail");
+    const navigation = page.getByRole("button", { name: "Toggle section navigation" });
+    await expect(navigation).toBeVisible();
+    await expect(page.getByRole("button", { name: "Compose", exact: true })).toBeHidden();
+    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+    await expect(refresh).toBeVisible();
+    await refresh.click();
+    await navigation.click();
+    await expect(page.getByRole("button", { name: "Compose", exact: true })).toBeVisible();
+    await navigation.click();
+    await expect(page.getByRole("button", { name: "Compose", exact: true })).toBeHidden();
+  });
 });
 
 async function seedSession(page: Page): Promise<void> {
@@ -57,7 +72,7 @@ async function seedSession(page: Page): Promise<void> {
 async function mockBackend(page: Page): Promise<void> {
   await page.route("**/api/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
-    if (pathname === "/api/auth/get-session") {
+    if (pathname === "/v1/api/auth/get-session") {
       await fulfillJson(route, {
         user: {
           id: "mobile-user",
@@ -69,15 +84,15 @@ async function mockBackend(page: Page): Promise<void> {
       return;
     }
     if (await fulfillCoreAppsRoute(route)) return;
-    if (pathname === "/api/tools/drive.list") {
+    if (pathname === "/v1/api/tools/drive.list") {
       await fulfillJson(route, { entries: [] });
       return;
     }
-    if (pathname === "/api/tools/drive.search") {
+    if (pathname === "/v1/api/tools/drive.search") {
       await fulfillJson(route, { hits: [] });
       return;
     }
-    if (pathname === "/api/tools/notifications.unread-count") {
+    if (pathname === "/v1/api/tools/notifications.unread-count") {
       await fulfillJson(route, { count: 0 });
       return;
     }

@@ -489,7 +489,10 @@ export class PostgresCardDavContactStore implements CardDavContactStore {
     return this.sql.begin(async (transaction) => {
       await setCardDavContext(transaction, input.orgId, input.actorId);
       const addressBook = await writableAddressBook(transaction, input);
-      const existing = await getActiveContact(transaction, { ...input, addressBookId: addressBook.id });
+      const existing = await getActiveContact(transaction, {
+        ...input,
+        addressBookId: addressBook.id,
+      });
       const rows =
         existing === null
           ? await transaction<ContactRow[]>`
@@ -901,11 +904,7 @@ async function withCardDavContext<T>(
   })) as T;
 }
 
-async function setCardDavContext(
-  sql: SqlLike,
-  orgId: string,
-  actorId: string,
-): Promise<void> {
+async function setCardDavContext(sql: SqlLike, orgId: string, actorId: string): Promise<void> {
   await sql`select set_config('helix.org_id', ${orgId}, true), set_config('helix.actor_id', ${actorId}, true)`;
 }
 

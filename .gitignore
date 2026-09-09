@@ -20,6 +20,9 @@ test-results
 playwright-report
 .playwright
 **/reports/a11y/
+# Generated run output: a11y screenshots, soak reports, release-readiness
+# evidence. Timestamped per run, so committing them accretes forever.
+/artifacts/
 .tmp/
 .codex-artifacts/
 .claude/
@@ -30,6 +33,7 @@ New
 .env
 .env.*
 !.env.example
+!.env.production.example
 !**/.env.example
 .local/
 

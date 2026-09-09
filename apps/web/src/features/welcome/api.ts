@@ -3,11 +3,7 @@ import { authenticatedFetch } from "@/lib/auth";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
 
-export type WelcomeActivationAction =
-  | "try_editor"
-  | "install_integration"
-  | "invite_team"
-  | "view_docs";
+export type WelcomeActivationAction = "view_files" | "install_integration" | "invite_team";
 
 export type WelcomeActivationEvent =
   | { readonly event: "viewed" }

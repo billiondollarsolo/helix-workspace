@@ -111,6 +111,21 @@ const aiRoutingRuleSchema = z
   })
   .strict();
 
+const aiOperatorLlmUpdateSchema = z
+  .object({
+    baseUrl: z.string().min(1).max(500).optional(),
+    model: z.string().min(1).max(200).optional(),
+    /** Write-only; never returned by GET after save. */
+    apiKey: z.string().min(1).max(4000).optional(),
+  })
+  .strict();
+
+const aiMailSpamUpdateSchema = z
+  .object({
+    betaEnabled: z.boolean().optional(),
+  })
+  .strict();
+
 const aiConfigUpdateSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -147,6 +162,8 @@ const aiConfigUpdateSchema = z
       })
       .strict()
       .optional(),
+    operatorLlm: aiOperatorLlmUpdateSchema.optional(),
+    mailSpamAi: aiMailSpamUpdateSchema.optional(),
   })
   .strict();
 
@@ -268,7 +285,7 @@ export const platformConfigUpdateSchema = z
       })
       .strict()
       .optional(),
-    modules: z.record(moduleConfigUpdateSchema).optional(),
+    modules: z.record(z.string(), moduleConfigUpdateSchema).optional(),
     ai: aiConfigUpdateSchema.optional(),
     observability: observabilityConfigUpdateSchema.optional(),
     platform: z
@@ -441,7 +458,7 @@ export class PlatformConfigAdminService {
     const readinessConfig = applyObservedPlatformReadiness(config, this.env);
     const tierDefaults = resolveTierDefaults(readinessConfig);
     return {
-      config: readinessConfig,
+      config: redactAiSecretsForAdmin(readinessConfig),
       tierDefaults,
       readiness: buildPlatformReadinessReport(readinessConfig, tierDefaults),
     };
@@ -538,10 +555,11 @@ function mergeReadinessObjects(observed: JsonObject, existing: JsonObject): Json
 
 function observedPlatformReadiness(config: HelixConfig, env: NodeJS.ProcessEnv): JsonObject {
   const endpoints = platformEndpoints(config.platform);
+  const vaultEndpointConfig = platformServiceEndpoint(endpoints.vault);
   const vaultEndpoint = firstNonEmptyString(
     env.VAULT_ADDR,
-    objectString(platformServiceEndpoint(endpoints.vault), "address"),
-    objectString(platformServiceEndpoint(endpoints.vault), "endpoint"),
+    objectString(vaultEndpointConfig, "address"),
+    objectString(vaultEndpointConfig, "endpoint"),
   );
   const siemEndpoint = firstNonEmptyString(
     env.SIEM_ENDPOINT,
@@ -808,6 +826,13 @@ function mergePlatformConfigUpdate(
   update: PlatformConfigUpdate,
 ): PartialHelixConfig {
   const next = mergeConfig(current, updateToPartialConfig(update));
+  // Providers are replaced as arrays; re-merge so omitted apiKeys keep stored secrets.
+  if (update.ai?.providers !== undefined) {
+    const mergedAi = mergeAiProvidersPreservingSecrets(current.ai, next.ai);
+    if (mergedAi !== undefined) {
+      Object.assign(next, { ai: mergedAi });
+    }
+  }
   const readinessUpdate = update.platform?.readiness;
   if (readinessUpdate === undefined) {
     return next;
@@ -838,7 +863,7 @@ function normalizeModulesConfig(
   label: string,
 ): NonNullable<PartialHelixConfig["modules"]> {
   const object = normalizeJsonObject(value, label);
-  const parsed = z.record(moduleConfigUpdateSchema).parse(object);
+  const parsed = z.record(z.string(), moduleConfigUpdateSchema).parse(object);
   return Object.fromEntries(
     Object.entries(parsed).map(([id, module]) => [
       id,
@@ -854,6 +879,200 @@ function normalizeModulesConfig(
 function normalizeAiConfig(value: unknown, label: string): NonNullable<PartialHelixConfig["ai"]> {
   const parsed = aiConfigUpdateSchema.parse(normalizeJsonObject(value, label));
   return jsonObjectFromDefined(parsed);
+}
+
+/** Known product AI slots for Admin routing UI (feature id → purpose). */
+export const AI_FEATURE_SLOTS = [
+  { feature: "assistant.chat", label: "Assistant chat (default)" },
+  { feature: "mail.spam-ai", label: "Mail spam AI (beta)" },
+  { feature: "mail.compose-help", label: "Mail compose assist" },
+] as const;
+
+/** Strip write-only API keys from admin GET responses; expose apiKeyConfigured. */
+export function redactAiSecretsForAdmin(config: HelixConfig): HelixConfig {
+  const ai = config.ai;
+  if (ai === undefined) {
+    return config;
+  }
+  const operatorLlm = ai.operatorLlm;
+  const redactedOperator =
+    operatorLlm === undefined
+      ? undefined
+      : {
+          ...(operatorLlm.baseUrl === undefined ? {} : { baseUrl: operatorLlm.baseUrl }),
+          ...(operatorLlm.model === undefined ? {} : { model: operatorLlm.model }),
+          apiKeyConfigured:
+            typeof operatorLlm.apiKey === "string" && operatorLlm.apiKey.trim().length > 0,
+        };
+  const redactedProviders = ai.providers?.map((provider) => {
+    const cfg = provider.config ?? {};
+    const hasKey =
+      typeof cfg.apiKey === "string" && cfg.apiKey.trim().length > 0
+        ? true
+        : cfg.apiKeyConfigured === true;
+    const { apiKey: _apiKey, ...restConfig } = cfg as Record<string, unknown>;
+    return {
+      ...provider,
+      config: {
+        ...restConfig,
+        apiKeyConfigured: hasKey,
+      },
+    };
+  });
+  return {
+    ...config,
+    ai: {
+      ...ai,
+      ...(redactedOperator === undefined ? {} : { operatorLlm: redactedOperator }),
+      ...(redactedProviders === undefined ? {} : { providers: redactedProviders }),
+    },
+  };
+}
+
+function providerCredentialFields(provider: {
+  readonly config?: Readonly<Record<string, unknown>> | undefined;
+}): {
+  readonly apiKey?: string;
+  readonly baseUrl?: string;
+  readonly model?: string;
+} {
+  const cfg = provider.config ?? {};
+  const apiKey =
+    typeof cfg.apiKey === "string" && cfg.apiKey.trim().length > 0 ? cfg.apiKey : undefined;
+  const baseUrl =
+    typeof cfg.baseUrl === "string" && cfg.baseUrl.trim().length > 0 ? cfg.baseUrl : undefined;
+  const model =
+    (typeof cfg.defaultModel === "string" && cfg.defaultModel.trim().length > 0
+      ? cfg.defaultModel
+      : undefined) ??
+    (typeof cfg.model === "string" && cfg.model.trim().length > 0 ? cfg.model : undefined);
+  return {
+    ...(apiKey === undefined ? {} : { apiKey }),
+    ...(baseUrl === undefined ? {} : { baseUrl }),
+    ...(model === undefined ? {} : { model }),
+  };
+}
+
+/** Resolve provider credentials for a routing feature (primary rule). */
+export function resolveFeatureProviderCredentials(
+  config: HelixConfig,
+  feature: string,
+): {
+  readonly apiKey?: string;
+  readonly baseUrl?: string;
+  readonly model?: string;
+  readonly providerId?: string;
+} {
+  const rule = config.ai?.routing?.rules?.find((entry) => entry.feature === feature);
+  if (rule === undefined) {
+    return {};
+  }
+  const provider = config.ai?.providers?.find((entry) => entry.id === rule.primary.providerId);
+  if (provider === undefined || provider.enabled === false) {
+    return { providerId: rule.primary.providerId };
+  }
+  const creds = providerCredentialFields(provider);
+  const model = rule.primary.model ?? creds.model;
+  return {
+    providerId: provider.id,
+    ...(creds.apiKey === undefined ? {} : { apiKey: creds.apiKey }),
+    ...(creds.baseUrl === undefined ? {} : { baseUrl: creds.baseUrl }),
+    ...(model === undefined ? {} : { model }),
+  };
+}
+
+/**
+ * Preserve per-provider apiKey when Admin PATCHes a providers list without
+ * re-sending secrets (empty/omitted apiKey keeps the stored value).
+ */
+export function mergeAiProvidersPreservingSecrets(
+  current: HelixConfig["ai"] | undefined,
+  next: NonNullable<HelixConfig["ai"]> | undefined,
+): HelixConfig["ai"] | undefined {
+  if (next === undefined) {
+    return current;
+  }
+  if (next.providers === undefined) {
+    return next;
+  }
+  const priorById = new Map((current?.providers ?? []).map((provider) => [provider.id, provider]));
+  const providers = next.providers.map((provider) => {
+    const prior = priorById.get(provider.id);
+    const nextCfg = { ...(provider.config ?? {}) };
+    const nextKey = typeof nextCfg.apiKey === "string" ? nextCfg.apiKey.trim() : "";
+    if (nextKey.length === 0) {
+      delete nextCfg.apiKey;
+      const priorKey = prior?.config?.apiKey;
+      if (typeof priorKey === "string" && priorKey.trim().length > 0) {
+        nextCfg.apiKey = priorKey;
+      }
+    }
+    delete nextCfg.apiKeyConfigured;
+    return {
+      ...provider,
+      config: nextCfg,
+    };
+  });
+  return { ...next, providers };
+}
+
+/** Merge operator LLM + feature routing + mail spam AI into env-style overlay. */
+export function operatorAiEnvFromConfig(
+  config: HelixConfig,
+): Readonly<Record<string, string | undefined>> {
+  const op = config.ai?.operatorLlm;
+  const spam = config.ai?.mailSpamAi;
+  const assistant = resolveFeatureProviderCredentials(config, "assistant.chat");
+  const spamRoute = resolveFeatureProviderCredentials(config, "mail.spam-ai");
+  const mailAssist = resolveFeatureProviderCredentials(config, "mail.compose-help");
+
+  // Precedence for shared OPENAI_*: feature route for assistant.chat, then operatorLlm.
+  const openAiKey = assistant.apiKey ?? op?.apiKey;
+  const openAiBase = assistant.baseUrl ?? op?.baseUrl;
+  const openAiModel = assistant.model ?? op?.model;
+
+  const spamKey = spamRoute.apiKey ?? openAiKey;
+  const spamBase = spamRoute.baseUrl ?? openAiBase;
+  const spamModel = spamRoute.model ?? openAiModel;
+
+  const mailKey = mailAssist.apiKey ?? openAiKey;
+  const mailBase = mailAssist.baseUrl ?? openAiBase;
+  const mailModel = mailAssist.model ?? openAiModel;
+
+  return {
+    ...(typeof openAiKey === "string" && openAiKey.trim().length > 0
+      ? { OPENAI_API_KEY: openAiKey }
+      : {}),
+    ...(typeof openAiBase === "string" && openAiBase.trim().length > 0
+      ? { OPENAI_BASE_URL: openAiBase }
+      : {}),
+    ...(typeof openAiModel === "string" && openAiModel.trim().length > 0
+      ? { OPENAI_MODEL: openAiModel }
+      : {}),
+    ...(typeof spamKey === "string" && spamKey.trim().length > 0
+      ? { MAIL_SPAM_AI_API_KEY: spamKey }
+      : {}),
+    ...(typeof spamBase === "string" && spamBase.trim().length > 0
+      ? { MAIL_SPAM_AI_BASE_URL: spamBase }
+      : {}),
+    ...(typeof spamModel === "string" && spamModel.trim().length > 0
+      ? { MAIL_SPAM_AI_MODEL: spamModel }
+      : {}),
+    ...(typeof mailKey === "string" && mailKey.trim().length > 0
+      ? { MAIL_ASSIST_AI_API_KEY: mailKey }
+      : {}),
+    ...(typeof mailBase === "string" && mailBase.trim().length > 0
+      ? { MAIL_ASSIST_AI_BASE_URL: mailBase }
+      : {}),
+    ...(typeof mailModel === "string" && mailModel.trim().length > 0
+      ? { MAIL_ASSIST_AI_MODEL: mailModel }
+      : {}),
+    ...(spam?.betaEnabled === true
+      ? { MAIL_SPAM_AI_BETA_ENABLED: "true" }
+      : spam?.betaEnabled === false
+        ? { MAIL_SPAM_AI_BETA_ENABLED: "false" }
+        : {}),
+  };
 }
 
 function normalizeObservabilityConfig(
@@ -941,12 +1160,13 @@ function mfaRequirement(
   tier: SecurityTier,
   state: PlatformReadinessUpdate["mfa"],
 ): PlatformReadinessRequirement {
-  const requiredScope = tier === "personal" ? "none" : tier === "business" ? "admins" : "org";
+  const requiredScope = requiredMfaScope(tier);
   const required = requiredScope !== "none";
   const observedScope = state?.scope ?? "none";
-  const ready = required
-    ? mfaScopeRank(observedScope) >= mfaScopeRank(requiredScope) && isReady(state)
-    : isReady(state);
+  // When no scope is required the rank comparison is trivially satisfied
+  // (`mfaScopeRank("none")` is 0), so readiness collapses to the same
+  // expression on both the required and not-required paths.
+  const ready = mfaScopeRank(observedScope) >= mfaScopeRank(requiredScope) && isReady(state);
   return {
     key: "mfa",
     label: "MFA",
@@ -990,11 +1210,20 @@ function auditDestinationsRequirement(
   const missing = requiredDestinations.filter(
     (destination) => !observedDestinations.has(destination),
   );
+  // Deliberately not `requirementStatus`: an unsatisfied destination set is
+  // reported as `missing` even when the control self-reports `unknown`, because
+  // the missing destinations are directly observable here.
+  let status: PlatformReadinessRequirement["status"] = "missing";
+  if (missing.length === 0) {
+    status = "ready";
+  } else if (state?.status === "degraded") {
+    status = "degraded";
+  }
   return {
     key: "auditDestinations",
     label: "Audit destinations",
     required: true,
-    status: missing.length === 0 ? "ready" : state?.status === "degraded" ? "degraded" : "missing",
+    status,
     expected: { destinations: [...requiredDestinations] },
     observed: compactJsonObject({
       destinations: [...observedDestinations],
@@ -1238,22 +1467,42 @@ function requirementStatus(
   if (ready) {
     return "ready";
   }
-  return status === "degraded" ? "degraded" : status === "unknown" ? "unknown" : "missing";
+  if (status === "degraded") {
+    return "degraded";
+  }
+  if (status === "unknown") {
+    return "unknown";
+  }
+  return "missing";
 }
 
 function isReady(
   state:
-    | { readonly enabled?: boolean | undefined; readonly status?: string | undefined }
-    | undefined,
+    { readonly enabled?: boolean | undefined; readonly status?: string | undefined } | undefined,
 ): boolean {
   return state?.status === "ready" || state?.enabled === true;
 }
 
-function mfaScopeRank(scope: "none" | "admins" | "org"): number {
-  if (scope === "org") {
-    return 2;
+function requiredMfaScope(tier: SecurityTier): "none" | "admins" | "org" {
+  switch (tier) {
+    case "personal":
+      return "none";
+    case "business":
+      return "admins";
+    default:
+      return "org";
   }
-  return scope === "admins" ? 1 : 0;
+}
+
+function mfaScopeRank(scope: "none" | "admins" | "org"): number {
+  switch (scope) {
+    case "org":
+      return 2;
+    case "admins":
+      return 1;
+    case "none":
+      return 0;
+  }
 }
 
 function compactJsonObject(value: Record<string, JsonValue | undefined>): JsonObject {

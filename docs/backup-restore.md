@@ -2,14 +2,58 @@
 
 Phase 9 TASK-A04/A05 artifacts live under `infra/scripts/` and are safe by default: every script runs in dry-run mode unless `--execute` is passed.
 
+**RPO/RTO contract (ADR-0006):** Business pilot targets are **RPO ≤ 24 hours** and
+**RTO ≤ 4 hours** (engineering objectives, not a contractual SLA). Operator
+measurement, dual-target HA notes, and the PKG flip procedure live in
+[`docs/architecture/ha-rpo-rto.md`](./architecture/ha-rpo-rto.md). Gate helpers:
+
+```sh
+node infra/scripts/rpo-rto-check.mjs --print-contract
+node infra/scripts/rpo-rto-check.mjs --backup-dir ./backups --rpo-hours 24 --require-pass
+node infra/scripts/rpo-rto-check.mjs --evidence <restore-drill-evidence.json> --require-pass
+```
+
+## O4 Production Recovery Contract
+
+New backups use `helix.backup-manifest.v3`. The embedded manifest binds one
+database recovery point and one object-store recovery point to a single
+recovery-set digest. It inventories and SHA-256 hashes every database, WAL,
+consistency, object, and object-version artifact. The final ciphertext has a
+separate `.sha256` sidecar and a content-identical `.manifest.json` sidecar.
+Restore verifies the ciphertext checksum before decryption, then verifies the
+embedded manifest, all artifact hashes, and equality with the external manifest
+before changing a target.
+
+Business, enterprise, and sovereign executions fail closed unless all of these
+are true:
+
+- the archive is encrypted (`age` or KMS; sovereign requires KMS);
+- the database and full object snapshot are both present;
+- source object-store versioning is enabled and replication is configured;
+- an `s3://` off-host destination has enabled versioning, replication, and an
+  enabled lifecycle expiration at least as long as `--retention-days`;
+- a non-secret `--key-custody-ref` identifies the independent KMS/HSM/vault or
+  keychain recovery procedure.
+
+Private identities and plaintext data keys must never be put in the archive,
+manifest, CI artifacts, or source control. KMS backups contain only the
+KMS-wrapped data-key sidecar. The off-host copy happens only after all local
+checks pass and includes ciphertext plus checksum/manifest sidecars (and the
+wrapped KMS key where applicable).
+
+Minimum enforced retention is 30 days for Business, 90 days for Enterprise, and
+365 days for Sovereign. Sovereign also requires S3 Object Lock on the off-host
+bucket. Longer legal-hold or sector-specific periods should be configured by
+the operator.
+
 ## Backup Tiers
 
-| Tier       | Backup workflow                                                                                                                                                                        |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Personal   | Exported-snapshot `pg_dump` plus the exact immutable version of every ready object reference. Copy the resulting archive off-host.                                                     |
-| Business   | The coherent logical backup plus optional `pg_basebackup`/WAL PITR evidence, encrypted with `age`; object storage is mandatory and must have versioning enabled.                       |
-| Enterprise | PITR base backup + WAL, object-store copy, **KMS-envelope-encrypted** archive (`--kms-key-id`); or CloudNativePG HA Postgres with `barmanObjectStore` continuous WAL/PITR and SSE-KMS. |
-| Sovereign  | Enterprise workflow with **mandatory** KMS/HSM-backed encryption and a WORM destination.                                                                                               |
+| Tier       | Backup workflow                                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Personal   | Exported-snapshot `pg_dump` plus optional immutable object snapshot. Copy the archive off-host.                                                              |
+| Business   | Coherent logical database and immutable object snapshot, encrypted with age or KMS, with enforced off-host recovery policy. Optional physical PITR evidence. |
+| Enterprise | Business workflow with at least 90-day retention; optional physical PITR or CloudNativePG continuous WAL/PITR.                                               |
+| Sovereign  | Enterprise workflow with mandatory KMS encryption, at least 365-day retention, and an Object Lock destination.                                               |
 
 Postgres is the source of truth for Helix metadata and object references. Backup opens one
 repeatable-read transaction, exports its snapshot, and uses that snapshot for both `pg_dump` and the
@@ -57,6 +101,13 @@ Three encryption options, selected per tier:
 
 `age` and KMS encryption are mutually exclusive. Business+ backups fail closed if neither is configured.
 
+New manifests use Ed25519 signatures. Existing HMAC-SHA256 v3 archives can be
+restored only with explicit `--manifest-format hmac-v3` and their independent
+`HELIX_BACKUP_MANIFEST_HMAC_KEY`. This also selects the legacy KMS AES-CBC
+archive format when applicable. There is no automatic authentication fallback;
+new backups always use Ed25519 and authenticated AES-GCM for KMS encryption.
+Legacy manifests cannot attest an expected application version.
+
 ## Create a Backup
 
 Dry-run:
@@ -76,6 +127,9 @@ Execute an encrypted Tier 2 PITR backup with an object-store copy:
 
 ```sh
 AGE_RECIPIENTS="age1..." \
+HELIX_BACKUP_SIGNING_PRIVATE_KEY=/secure/helix-backup-signing-private.pem \
+HELIX_BACKUP_OFFHOST_URI=s3://company-dr/helix \
+HELIX_BACKUP_KEY_CUSTODY_REF=vault://production/helix-backup-age \
 HELIX_BACKUP_RUSTFS_BUCKET=helix-objects \
   infra/scripts/backup.sh --tier business --pitr --object-backup --execute
 ```
@@ -83,6 +137,9 @@ HELIX_BACKUP_RUSTFS_BUCKET=helix-objects \
 Execute a Tier 3 KMS-encrypted PITR backup:
 
 ```sh
+HELIX_BACKUP_SIGNING_PRIVATE_KEY=/secure/helix-backup-signing-private.pem \
+HELIX_BACKUP_OFFHOST_URI=s3://company-dr/helix \
+HELIX_BACKUP_KEY_CUSTODY_REF=kms://helix-backup-recovery \
 HELIX_BACKUP_RUSTFS_BUCKET=helix-objects \
   infra/scripts/backup.sh --tier enterprise --pitr --object-backup \
     --kms-key-id alias/helix-backup --execute
@@ -102,6 +159,21 @@ Artifacts (staged under `backups/<backup-id>/`, then archived):
   sorted SHA-256/size inventory for every backup file (`schema_version: 3`).
 - `manifest.sig`: Ed25519 signature plus trusted public-key identity for the exact manifest bytes.
 - `backups/<backup-id>.tar.gz`, `.tar.gz.age`, or `.tar.gz.kms` (+ `.kms.datakey`): final archive.
+- `consistency/database.tsv`: deterministic database counts, samples, queue state, and audit-chain continuity.
+- `.sha256`, `.manifest.json`, and `.manifest.sig` sidecars accompany the final archive.
+
+Production example:
+
+```sh
+AGE_RECIPIENTS="age1..." \
+HELIX_BACKUP_SIGNING_PRIVATE_KEY=/secure/helix-backup-signing-private.pem \
+HELIX_BACKUP_RUSTFS_BUCKET=helix-objects \
+HELIX_BACKUP_OFFHOST_URI=s3://company-dr/helix \
+HELIX_BACKUP_RETENTION_DAYS=35 \
+HELIX_BACKUP_KEY_CUSTODY_REF=vault://production/helix-backup-age \
+  infra/scripts/backup.sh \
+    --tier business --pitr --object-backup --execute
+```
 
 ## Enterprise CloudNativePG PITR
 
@@ -267,6 +339,52 @@ The wrapper remains dry-run by default, refuses to target the live
 `POSTGRES_DB`, and restores through `restore-drill.sh` into the drill database
 with `--verify`.
 
+### Strict encrypted drill and release evidence
+
+Release evidence must come from an executed, encrypted, pre-existing recovery
+artifact in disposable database and object-store targets. It is not produced by
+the default smoke command. A strict drill verifies:
+
+- archive, external/embedded manifest, recovery-set, and artifact hashes;
+- exact restored counts/samples for objects, Drive versions, outbound mail,
+  transactional outbox, and audit rows;
+- zero broken `activity.prev_hash` links;
+- byte-for-byte SHA-256 matches for up to 25 sampled object files;
+- a real search rebuild using a database URL whose database name is the
+  disposable restore target;
+- measured RPO from the manifest database recovery point and measured RTO from
+  drill start to completed verification.
+
+```sh
+AGE_IDENTITY_FILE=/secure/helix-backup.agekey \
+RUSTFS_ENDPOINT=https://restore-object-store.example \
+RUSTFS_ACCESS_KEY=<ephemeral-restore-access> \
+RUSTFS_SECRET_KEY=<ephemeral-restore-secret> \
+MEILI_HOST=https://restore-search.example \
+MEILI_MASTER_KEY=<ephemeral-restore-key> \
+  infra/scripts/restore-drill.sh \
+    --backup backups/20260727T200000Z.tar.gz.age \
+    --target-db helix_restore_20260728 \
+    --target-object-bucket helix-objects-restore-20260728 \
+    --age-identity /secure/helix-backup.agekey \
+    --strict \
+    --reindex \
+    --target-database-url postgres://helix:<password>@restore-db/helix_restore_20260728 \
+    --evidence-output artifacts/restore-drill-evidence.json \
+    --execute
+```
+
+`restore-drill-evidence.mjs` writes `status: passed` only when every strict
+scenario passed and measured RPO is at most 24 hours and RTO is at most 4
+hours. `--static` writes `static_validated` with every live scenario
+`not_run`; it can never satisfy the release gate. Import a genuine report with:
+
+```sh
+node infra/scripts/release-readiness-manifest.mjs \
+  ... \
+  --restore-drill-evidence restore-drill-evidence.json
+```
+
 Use a prior backup:
 
 ```sh
@@ -275,9 +393,10 @@ infra/scripts/restore-drill.sh --backup backups/<backup-id>.tar.gz --execute
 
 ### Nightly CI restore drill
 
-`.github/workflows/restore-drill.yml` runs every night at 08:17 UTC. It does
-**not** drill a freshly created backup — it restores the **prior day's** backup
-artifact, satisfying PRD §2.3/§16.5:
+`.github/workflows/restore-drill.yml` runs every night at 08:17 UTC. The
+repository workflow validates the shell/manifest/evidence contracts and runs a
+disposable database smoke. It uploads a truthful **static** evidence report and
+does not claim a production RPO/RTO pass.
 
 1. It queries completed earlier workflow runs and downloads that run's immutable
    `helix-nightly-backup` artifact; the current run can never supply the input.
@@ -288,6 +407,13 @@ artifact, satisfying PRD §2.3/§16.5:
 4. A separate `if: always()` job creates tonight's independent backup, including a referenced run-unique
    proof blob, and uploads it for the next run. The first-ever run intentionally fails the missing-
    previous-backup check while bootstrapping the next artifact.
+
+   The deployment operator must schedule the strict command above against the
+   off-host backup repository and disposable database/object/search endpoints.
+   Store the resulting live JSON with release evidence. A missing service,
+   identity, object sample, search rebuild, stale recovery point, slow recovery, or
+   failed consistency check produces failed/not-run evidence and blocks
+   `--restore-drill-evidence`.
 
 Run the prior-day selection manually:
 

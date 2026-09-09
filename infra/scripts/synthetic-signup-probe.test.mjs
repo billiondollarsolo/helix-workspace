@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { extractVerificationToken, slugify } from "./synthetic-signup-probe.mjs";
-
 describe("synthetic signup probe helpers", () => {
   it("extracts and decodes verification tokens from Mailpit message content", () => {
     expect(
@@ -10,7 +9,6 @@ describe("synthetic signup probe helpers", () => {
     ).toBe("token+with+spaces");
     expect(extractVerificationToken("no verification link")).toBeNull();
   });
-
   it("builds bounded lowercase org slug prefixes", () => {
     expect(slugify(" Synthetic Signup Probe! ")).toBe("synthetic-signup-probe");
     expect(slugify("")).toBe("synth");

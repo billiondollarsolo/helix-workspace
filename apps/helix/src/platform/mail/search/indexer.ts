@@ -59,9 +59,9 @@ export function registerMailIndexer(
 
 export function mailRecordToIndexDocument(record: MailSearchRecord): IndexDocument {
   const labels = record.labels ?? [];
-  const to = record.to.map(addressSearchText).join(", ");
-  const cc = (record.cc ?? []).map(addressSearchText).join(", ");
-  const bcc = (record.bcc ?? []).map(addressSearchText).join(", ");
+  const to = joinAddresses(record.to);
+  const cc = joinAddresses(record.cc);
+  const bcc = joinAddresses(record.bcc);
   const body = [
     record.subject,
     addressSearchText(record.from),
@@ -116,6 +116,10 @@ function isDeleteSubject(subject: string): boolean {
   return subject.endsWith(".deleted") || subject.endsWith(".delete");
 }
 
+function joinAddresses(addresses: readonly MailAddress[] | undefined): string {
+  return (addresses ?? []).map(addressSearchText).join(", ");
+}
+
 function addressSearchText(address: MailAddress): string {
   const email = addressEmail(address);
   return address.name === undefined ? email : `${address.name} <${email}>`;
@@ -126,11 +130,7 @@ function addressEmail(address: MailAddress): string {
 }
 
 function compactJsonObject(input: Record<string, unknown>): JsonObject {
-  const output: Record<string, JsonObject[keyof JsonObject]> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (value !== undefined) {
-      output[key] = value as JsonObject[keyof JsonObject];
-    }
-  }
-  return output;
+  return Object.fromEntries(
+    Object.entries(input).filter((entry) => entry[1] !== undefined),
+  ) as JsonObject;
 }

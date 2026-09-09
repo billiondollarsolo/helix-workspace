@@ -400,7 +400,7 @@ export function installCrownJewelGate(app: FastifyInstance, options: CrownJewelG
     if (action === null) return;
     const actor = await options.actorFromRequest(request);
     if (!canAuthorize(action, actor)) return;
-    if (!(await options.mfa.isMfaVerified(request))) {
+    if (!(await options.mfa.isMfaVerified(request, actor))) {
       await options.store.reject({
         orgId: actor.orgId,
         actorId: actor.id,
@@ -459,7 +459,7 @@ export function installCrownJewelGate(app: FastifyInstance, options: CrownJewelG
     if (!params.success)
       return reply.code(400).send({ code: "invalid_approval_id", error: "Invalid approval id." });
     const actor = await options.actorFromRequest(request);
-    if (!(await options.mfa.isMfaVerified(request))) {
+    if (!(await options.mfa.isMfaVerified(request, actor))) {
       await options.store.reject({
         orgId: actor.orgId,
         actorId: actor.id,

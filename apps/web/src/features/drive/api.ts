@@ -4,28 +4,22 @@ import type {
   DriveEntry,
   DriveEntryPage,
   DriveItemKind,
-  DrivePreview,
   DriveRenameInput,
   DriveRole,
   DriveSearchHit,
   DriveShareLink,
   DriveUploadResult as DriveUploadResultContract,
+  DriveUploadStatus,
   DriveVersion,
 } from "@helix/contracts";
-
 export type DriveApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-
 export type DriveApiEntryType = DriveItemKind;
-export type DriveApiPreviewKind = DrivePreview["kind"];
-export type DriveApiPreviewStatus = DrivePreview["status"];
-export type DriveApiPreview = DrivePreview;
 /** Wire DTO for a Drive list/detail entry — sourced from @helix/contracts. */
 export type DriveApiEntry = DriveEntry;
 export type DriveApiSearchHit = DriveSearchHit;
 export type { DriveAccessGrant, DriveShareLink, DriveVersion };
 export type DriveVersionResult = DriveVersion;
 export type DriveDocumentSurfaceView = "grid" | "list";
-
 export type DriveWorkflowKind =
   | "shortcut"
   | "file_request"
@@ -51,7 +45,6 @@ export interface DriveWorkflow {
   readonly createdAt: string;
   readonly updatedAt: string;
 }
-
 export interface DriveShareInput {
   readonly objectId: string;
   readonly actorIds?: readonly string[];
@@ -59,9 +52,7 @@ export interface DriveShareInput {
   readonly role?: DriveRole;
   readonly expiresAt?: string | null;
 }
-
 export type DriveAccessRole = Exclude<DriveRole, "owner">;
-
 export interface DriveUploadInput {
   readonly name: string;
   readonly folderId?: string | null;
@@ -70,9 +61,8 @@ export interface DriveUploadInput {
   readonly sha256?: string;
   readonly metadata?: Record<string, unknown>;
 }
-
 export type DriveUploadResult = DriveUploadResultContract;
-
+export type { DriveUploadStatus };
 export interface DriveFinalizeInput {
   readonly objectId: string;
   readonly byteSize: number;
@@ -81,7 +71,6 @@ export interface DriveFinalizeInput {
   readonly idempotencyKey?: string;
   readonly metadata?: Record<string, unknown>;
 }
-
 export interface DriveShareLinkCreateInput {
   readonly objectId: string;
   readonly password?: string;
@@ -90,7 +79,6 @@ export interface DriveShareLinkCreateInput {
   readonly allowedDomains?: readonly string[];
   readonly allowDownload?: boolean;
 }
-
 export async function prepareDriveUpload(
   input: DriveUploadInput,
   fetchImpl: DriveApiFetch = authenticatedFetch,
@@ -108,7 +96,6 @@ export async function prepareDriveUpload(
     fetchImpl,
   );
 }
-
 export async function finalizeDriveUpload(
   input: DriveFinalizeInput,
   fetchImpl: DriveApiFetch = authenticatedFetch,
@@ -126,20 +113,25 @@ export async function finalizeDriveUpload(
     fetchImpl,
   );
 }
-
+export async function getDriveUploadStatus(
+  objectId: string,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<DriveUploadStatus> {
+  return callDriveTool<DriveUploadStatus>("drive.upload.status", { objectId }, fetchImpl);
+}
 const MULTIPART_RESUME_PREFIX = "helix.drive.multipart.v1:";
 const MULTIPART_CONCURRENCY = 3;
 const UPLOAD_ATTEMPTS = 3;
-
-type CompletedPart = { readonly partNumber: number; readonly etag: string };
-
+type CompletedPart = {
+  readonly partNumber: number;
+  readonly etag: string;
+};
 interface MultipartResumeRecord {
   readonly version: 1;
   readonly fingerprint: string;
   readonly prepared: DriveUploadResult;
   readonly completed: readonly CompletedPart[];
 }
-
 /** Upload directly to tenant storage without materializing the file in JS memory. */
 export async function uploadDriveFile(
   input: {
@@ -153,7 +145,6 @@ export async function uploadDriveFile(
   const mimeType = input.file.type.length > 0 ? input.file.type : "application/octet-stream";
   const resumeKey = multipartResumeKey(input.file, input.folderId);
   const resumed = loadMultipartResume(resumeKey, input.file, input.folderId, mimeType);
-
   const prepared =
     resumed?.prepared ??
     (await prepareDriveUpload(
@@ -166,7 +157,6 @@ export async function uploadDriveFile(
       },
       fetchImpl,
     ));
-
   if (prepared.multipart !== undefined) {
     assertMultipartPlan(prepared.multipart, input.file.size);
     const record: MultipartResumeRecord = resumed ?? {
@@ -202,11 +192,9 @@ export async function uploadDriveFile(
     clearMultipartResume(resumeKey);
     return prepared;
   }
-
   if (prepared.uploadUrl === null || prepared.uploadUrl.length === 0) {
     throw new Error("Drive storage did not provide an upload URL.");
   }
-
   await putWithRetry(
     prepared.uploadUrl,
     {
@@ -227,10 +215,8 @@ export async function uploadDriveFile(
     },
     fetchImpl,
   );
-
   return prepared;
 }
-
 async function uploadMultipartParts(
   file: File,
   multipart: NonNullable<DriveUploadResult["multipart"]>,
@@ -274,13 +260,11 @@ async function uploadMultipartParts(
   );
   return sortedCompletedParts(completed);
 }
-
 function sortedCompletedParts(parts: ReadonlyMap<number, string>): readonly CompletedPart[] {
   return [...parts]
     .map(([partNumber, etag]) => ({ partNumber, etag }))
     .sort((a, b) => a.partNumber - b.partNumber);
 }
-
 async function putWithRetry(
   url: string,
   init: Omit<RequestInit, "method" | "signal">,
@@ -307,11 +291,9 @@ async function putWithRetry(
   }
   throw new Error(`${label} failed.`);
 }
-
 function isRetryableUploadStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
 }
-
 function assertMultipartPlan(
   multipart: NonNullable<DriveUploadResult["multipart"]>,
   byteSize: number,
@@ -323,15 +305,12 @@ function assertMultipartPlan(
     throw new Error("Drive storage returned an invalid multipart upload plan.");
   }
 }
-
 function multipartResumeKey(file: File, folderId: string | null): string {
   return `${MULTIPART_RESUME_PREFIX}${encodeURIComponent(multipartFingerprint(file, folderId))}`;
 }
-
 function multipartFingerprint(file: File, folderId: string | null): string {
   return JSON.stringify([folderId, file.name, file.size, file.type, file.lastModified]);
 }
-
 function loadMultipartResume(
   key: string,
   file: File,
@@ -375,7 +354,6 @@ function loadMultipartResume(
   clearMultipartResume(key);
   return null;
 }
-
 function validCompletedPart(value: unknown, partCount: number): value is CompletedPart {
   return (
     isRecord(value) &&
@@ -387,7 +365,6 @@ function validCompletedPart(value: unknown, partCount: number): value is Complet
     value.etag.trim().length > 0
   );
 }
-
 function saveMultipartResume(key: string, record: MultipartResumeRecord): void {
   try {
     globalThis.localStorage.setItem(key, JSON.stringify(record));
@@ -395,7 +372,6 @@ function saveMultipartResume(key: string, record: MultipartResumeRecord): void {
     // Upload remains functional when storage is unavailable or full.
   }
 }
-
 function readLocalStorage(key: string): string | null {
   try {
     return globalThis.localStorage.getItem(key);
@@ -403,7 +379,6 @@ function readLocalStorage(key: string): string | null {
     return null;
   }
 }
-
 function clearMultipartResume(key: string): void {
   try {
     globalThis.localStorage.removeItem(key);
@@ -411,21 +386,17 @@ function clearMultipartResume(key: string): void {
     // Nothing else is required; the server expires abandoned sessions.
   }
 }
-
 export async function listDrive(
   input: {
     readonly folderId?: string | null;
     readonly includeTrashed?: boolean;
     readonly limit?: number;
     readonly cursor?: string;
-    /** Filter to entries owned by a specific editor app: "docs" | "sheets" | "slides". */
-    readonly app?: string | null;
     /** Filter by object kind. Defaults server-side to 'file'; pass
      *  'recording' for the Recordings drive scope. */
     readonly kind?: "file" | "recording";
     /** When true, return every visible file across all folders. Folder
-     *  rows are suppressed (the result is a flat file list). Used by
-     *  /docs, /sheets, /slides which present app-shaped cross-folder lists. */
+     *  rows are suppressed (the result is a flat file list). */
     readonly acrossFolders?: boolean;
   } = {},
   fetchImpl: DriveApiFetch = authenticatedFetch,
@@ -437,19 +408,23 @@ export async function listDrive(
       includeTrashed: input.includeTrashed ?? false,
       limit: input.limit ?? 100,
       ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-      ...(input.app === undefined || input.app === null ? {} : { app: input.app }),
       ...(input.kind === undefined ? {} : { kind: input.kind }),
       ...(input.acrossFolders === undefined ? {} : { acrossFolders: input.acrossFolders }),
     },
     fetchImpl,
   );
 }
-
 export async function searchDrive(
-  input: { readonly query?: string; readonly folderId?: string | null; readonly limit?: number },
+  input: {
+    readonly query?: string;
+    readonly folderId?: string | null;
+    readonly limit?: number;
+  },
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<readonly DriveApiSearchHit[]> {
-  const output = await callDriveTool<{ readonly hits?: readonly DriveApiSearchHit[] }>(
+  const output = await callDriveTool<{
+    readonly hits?: readonly DriveApiSearchHit[];
+  }>(
     "drive.search",
     {
       query: input.query,
@@ -458,10 +433,8 @@ export async function searchDrive(
     },
     fetchImpl,
   );
-
   return output.hits ?? [];
 }
-
 export async function shareDrive(
   input: DriveShareInput,
   fetchImpl: DriveApiFetch = authenticatedFetch,
@@ -478,7 +451,6 @@ export async function shareDrive(
     fetchImpl,
   );
 }
-
 export async function createDriveWorkflow(
   input: {
     readonly kind: DriveWorkflowKind;
@@ -497,19 +469,15 @@ export async function createDriveWorkflow(
     fetchImpl,
   );
 }
-
 export async function listDriveWorkflows(
   state?: DriveWorkflow["state"],
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<readonly DriveWorkflow[]> {
-  const output = await callDriveTool<{ readonly workflows?: readonly DriveWorkflow[] }>(
-    "drive.workflow.list",
-    { ...(state === undefined ? {} : { state }), limit: 100 },
-    fetchImpl,
-  );
+  const output = await callDriveTool<{
+    readonly workflows?: readonly DriveWorkflow[];
+  }>("drive.workflow.list", { ...(state === undefined ? {} : { state }), limit: 100 }, fetchImpl);
   return output.workflows ?? [];
 }
-
 export async function transitionDriveWorkflow(
   workflow: Pick<DriveWorkflow, "id" | "version">,
   state: "approved" | "rejected" | "cancelled" | "completed",
@@ -522,27 +490,26 @@ export async function transitionDriveWorkflow(
     fetchImpl,
   );
 }
-
 export async function listDriveAccess(
   objectId: string,
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<readonly DriveAccessGrant[]> {
-  const output = await callDriveTool<{ readonly grants?: readonly DriveAccessGrant[] }>(
-    "drive.access.list",
-    { objectId },
-    fetchImpl,
-  );
+  const output = await callDriveTool<{
+    readonly grants?: readonly DriveAccessGrant[];
+  }>("drive.access.list", { objectId }, fetchImpl);
   return output.grants ?? [];
 }
-
 export async function removeDriveAccess(
   objectId: string,
   actorId: string,
   fetchImpl: DriveApiFetch = authenticatedFetch,
-): Promise<{ readonly objectId: string; readonly actorId: string; readonly removed: boolean }> {
+): Promise<{
+  readonly objectId: string;
+  readonly actorId: string;
+  readonly removed: boolean;
+}> {
   return callDriveTool("drive.access.remove", { objectId, actorId }, fetchImpl);
 }
-
 export async function updateDriveAccessRole(
   objectId: string,
   actorId: string,
@@ -559,7 +526,6 @@ export async function updateDriveAccessRole(
     fetchImpl,
   );
 }
-
 export async function moveDriveObject(
   objectId: string,
   folderId: string | null,
@@ -567,7 +533,6 @@ export async function moveDriveObject(
 ): Promise<DriveApiEntry | null> {
   return callDriveTool<DriveApiEntry | null>("drive.move", { objectId, folderId }, fetchImpl);
 }
-
 export async function setDriveObjectStarred(
   objectId: string,
   starred: boolean,
@@ -575,114 +540,51 @@ export async function setDriveObjectStarred(
 ): Promise<DriveApiEntry | null> {
   return callDriveTool<DriveApiEntry | null>("drive.star.set", { objectId, starred }, fetchImpl);
 }
-
 export async function getDriveDocumentSurfaceView(
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<DriveDocumentSurfaceView> {
-  const output = await callDriveTool<{ readonly view: DriveDocumentSurfaceView }>(
-    "drive.view.get",
-    {},
-    fetchImpl,
-  );
+  const output = await callDriveTool<{
+    readonly view: DriveDocumentSurfaceView;
+  }>("drive.view.get", {}, fetchImpl);
   return parseDriveDocumentSurfaceView(output.view);
 }
-
 export async function setDriveDocumentSurfaceView(
   view: DriveDocumentSurfaceView,
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<DriveDocumentSurfaceView> {
-  const output = await callDriveTool<{ readonly view: DriveDocumentSurfaceView }>(
-    "drive.view.set",
-    { view },
-    fetchImpl,
-  );
+  const output = await callDriveTool<{
+    readonly view: DriveDocumentSurfaceView;
+  }>("drive.view.set", { view }, fetchImpl);
   return parseDriveDocumentSurfaceView(output.view);
 }
-
 function parseDriveDocumentSurfaceView(value: unknown): DriveDocumentSurfaceView {
   if (value !== "grid" && value !== "list") {
     throw new Error("Drive returned an invalid document surface view preference.");
   }
   return value;
 }
-
 export interface DriveDownloadResult {
   readonly url: string;
   readonly name: string;
   readonly mimeType: string;
 }
-
-/**
- * Resolve where a preview/download URL should point for a Drive entry. Native
- * editor files (docs / sheets / slides) and PDFs open in their in-app
- * surfaces; raw binaries stream through the browser preview path. Editable
- * foreign formats are intentionally not routed through silent import here; the
- * Drive UI owns the explicit copy/convert prompt.
- *
- * (The historical `/dav/<id>` URL never existed as a backend route —
- * `/dav/*` is reserved for CalDAV / CardDAV / WebDAV with app-password
- * Basic Auth, not the in-browser SPA.)
- */
 export function driveDownloadResult(entry: DriveApiEntry): DriveDownloadResult {
-  const editorUrl = inAppEditorUrl(entry);
-  // For non-native raw files, point "Open" at the browser-renderable preview endpoint
-  // (`/preview`) — it returns HTML for DOCX/XLSX, forwards PDFs / images
-  // / text directly, and shows a friendly placeholder + download link for
-  // formats the browser can't display.
-  const url = editorUrl ?? entry.preview?.url ?? `/api/drive/objects/${entry.id}/preview`;
   return {
-    url,
+    url: driveRawDownloadUrl(entry),
     name: entry.name,
-    mimeType: entry.mimeType ?? entry.preview?.mimeType ?? "application/octet-stream",
+    mimeType: entry.mimeType ?? "application/octet-stream",
   };
 }
 
-/** Resolve the in-app editor URL for a drive entry, or null when the file
- *  isn't natively editable.
- *
- *  Priority:
- *   1. Native Helix editors (.helixdoc / .helixsheet / .helixdeck) — these
- *      use the in-app Tiptap / sheets / slides surfaces.
- *   2. Plain PDFs — open in the in-app PDF viewer shell.
- *   3. Everything else — return null so the caller falls back to the
- *      read-only preview endpoint. */
-function inAppEditorUrl(entry: DriveApiEntry): string | null {
-  if (entry.app === "docs") {
-    return `/docs/${encodeURIComponent(entry.id)}`;
-  }
-  if (entry.app === "sheets") {
-    return `/sheets?sheet=${encodeURIComponent(entry.id)}`;
-  }
-  if (entry.app === "slides") {
-    return `/slides?deck=${encodeURIComponent(entry.id)}`;
-  }
-  const mime = entry.mimeType ?? "";
-  const name = entry.name.toLowerCase();
-  if (mime === "application/pdf" || (mime.length === 0 && name.endsWith(".pdf"))) {
-    const sourceFolder =
-      entry.folderId === null ? "" : `?folder=${encodeURIComponent(entry.folderId)}`;
-    return `/pdf/${encodeURIComponent(entry.id)}${sourceFolder}`;
-  }
-  return null;
-}
-
-/**
- * Distinct URL specifically for the "Download" button — always streams the
- * raw bytes, never opens the editor. For native editor docs the bytes are
- * the Yjs state, which the API will return with the
- * `application/vnd.helix.*` mime type so the browser saves it as a file.
- */
 export function driveRawDownloadUrl(entry: DriveApiEntry): string {
-  return `/v1/api/drive/objects/${entry.id}/content?download=1`;
+  return `/v1/api/drive/objects/${encodeURIComponent(entry.id)}/content?download=1`;
 }
-
 export async function trashDriveObject(
   objectId: string,
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<DriveApiEntry | null> {
   return callDriveTool<DriveApiEntry | null>("drive.trash", { objectId }, fetchImpl);
 }
-
 export async function restoreDriveObject(
   objectId: string,
   folderId: string | null = null,
@@ -690,21 +592,16 @@ export async function restoreDriveObject(
 ): Promise<DriveApiEntry | null> {
   return callDriveTool<DriveApiEntry | null>("drive.restore", { objectId, folderId }, fetchImpl);
 }
-
-export type DriveCreateKind = "folder" | "document" | "spreadsheet" | "presentation";
-
+export type DriveCreateKind = "folder";
 export interface DriveCreateInput {
   readonly kind: DriveCreateKind;
   readonly name: string;
   readonly folderId: string | null;
 }
-
 /** Result for doc/sheet/deck kinds — `{ id, app }`. Folder returns a DriveApiEntry. */
 export interface DriveCreateResult {
   readonly id: string;
-  readonly app?: string;
 }
-
 export async function createDriveEntry(
   input: DriveCreateInput,
   fetchImpl: DriveApiFetch = authenticatedFetch,
@@ -719,14 +616,12 @@ export async function createDriveEntry(
     fetchImpl,
   );
 }
-
 export async function deleteDriveObject(
   objectId: string,
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<void> {
   await callDriveTool("drive.delete", { objectId }, fetchImpl);
 }
-
 export async function renameDriveObject(
   input: DriveRenameInput,
   fetchImpl: DriveApiFetch = authenticatedFetch,
@@ -737,19 +632,15 @@ export async function renameDriveObject(
     fetchImpl,
   );
 }
-
 export async function listDriveVersions(
   objectId: string,
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<readonly DriveVersion[]> {
-  const output = await callDriveTool<{ readonly versions?: readonly DriveVersion[] }>(
-    "drive.versions.list",
-    { objectId },
-    fetchImpl,
-  );
+  const output = await callDriveTool<{
+    readonly versions?: readonly DriveVersion[];
+  }>("drive.versions.list", { objectId }, fetchImpl);
   return output.versions ?? [];
 }
-
 export async function revertDriveVersion(
   objectId: string,
   versionNumber: number,
@@ -761,7 +652,6 @@ export async function revertDriveVersion(
     fetchImpl,
   );
 }
-
 export async function createDriveShareLink(
   input: DriveShareLinkCreateInput,
   fetchImpl: DriveApiFetch = authenticatedFetch,
@@ -779,26 +669,24 @@ export async function createDriveShareLink(
     fetchImpl,
   );
 }
-
 export async function listDriveShareLinks(
   objectId: string,
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<readonly DriveShareLink[]> {
-  const output = await callDriveTool<{ readonly links?: readonly DriveShareLink[] }>(
-    "drive.link.list",
-    { objectId },
-    fetchImpl,
-  );
+  const output = await callDriveTool<{
+    readonly links?: readonly DriveShareLink[];
+  }>("drive.link.list", { objectId }, fetchImpl);
   return output.links ?? [];
 }
-
 export async function revokeDriveShareLink(
   linkId: string,
   fetchImpl: DriveApiFetch = authenticatedFetch,
-): Promise<{ readonly id: string; readonly revoked: boolean }> {
+): Promise<{
+  readonly id: string;
+  readonly revoked: boolean;
+}> {
   return callDriveTool("drive.link.revoke", { linkId }, fetchImpl);
 }
-
 /** Public unauthenticated URL for a share-link token. */
 export function drivePublicShareUrl(
   token: string,
@@ -807,7 +695,6 @@ export function drivePublicShareUrl(
   const base = origin.replace(/\/$/u, "");
   return `${base}/v1/api/drive/share/${encodeURIComponent(token)}`;
 }
-
 async function callDriveTool<Output = unknown>(
   toolId: string,
   input: unknown,
@@ -819,13 +706,11 @@ async function callDriveTool<Output = unknown>(
     body: JSON.stringify(input),
   });
   const output: unknown = await response.json().catch(() => ({}));
-
   if (!response.ok) {
     throw new Error(
       errorMessageFromOutput(output) ?? `${toolId} failed with ${String(response.status)}`,
     );
   }
-
   // Confirmation-gated tools (`drive.share`, `drive.delete`) reply 202 with a
   // pending action. The Drive surface already gathers explicit user intent
   // before invoking these, so we approve the pending action inline and use
@@ -833,15 +718,14 @@ async function callDriveTool<Output = unknown>(
   if (response.status === 202 && isPendingConfirmation(output)) {
     return approvePendingDriveAction<Output>(output.pending.id, fetchImpl);
   }
-
   return output as Output;
 }
-
 interface PendingConfirmationEnvelope {
   readonly status: "pending_confirmation";
-  readonly pending: { readonly id: string };
+  readonly pending: {
+    readonly id: string;
+  };
 }
-
 function isPendingConfirmation(output: unknown): output is PendingConfirmationEnvelope {
   return (
     isRecord(output) &&
@@ -850,7 +734,6 @@ function isPendingConfirmation(output: unknown): output is PendingConfirmationEn
     typeof output.pending.id === "string"
   );
 }
-
 async function approvePendingDriveAction<Output>(
   pendingId: string,
   fetchImpl: DriveApiFetch,
@@ -861,7 +744,6 @@ async function approvePendingDriveAction<Output>(
     body: "{}",
   });
   const output: unknown = await response.json().catch(() => ({}));
-
   if (!response.ok) {
     throw new Error(
       errorMessageFromOutput(output) ?? `pending action failed with ${String(response.status)}`,
@@ -873,7 +755,6 @@ async function approvePendingDriveAction<Output>(
   // Still pending (e.g. multi-approver tier) — surface as a soft success.
   return output as Output;
 }
-
 function errorMessageFromOutput(output: unknown): string | undefined {
   if (!isRecord(output)) {
     return undefined;
@@ -891,7 +772,6 @@ function errorMessageFromOutput(output: unknown): string | undefined {
   }
   return undefined;
 }
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

@@ -8,7 +8,6 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { driveBlobKey, driveQuarantineStorageKey } from "./core/storage-key.js";
 import { PostgresDriveStore, type DriveStorageClient } from "./store.js";
-
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
 const objectIdA = "33333333-3333-4333-8333-333333333333";
@@ -18,7 +17,6 @@ const reservedKeyB = `drive/${orgId}/${objectIdB}/v1/b.bin`;
 const content = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
 const sha256 = createHash("sha256").update(content).digest("hex");
 const blobKey = driveBlobKey(orgId, sha256);
-
 interface ScanJobState {
   id: string;
   org_id: string;
@@ -29,7 +27,6 @@ interface ScanJobState {
   next_attempt_at: Date | null;
   finalize_metadata: Record<string, unknown>;
 }
-
 interface QuarantineDeletionState {
   id: string;
   org_id: string;
@@ -40,7 +37,6 @@ interface QuarantineDeletionState {
   attempt_count: number;
   next_attempt_at: Date;
 }
-
 interface DedupObjectRow {
   id: string;
   org_id: string;
@@ -50,14 +46,17 @@ interface DedupObjectRow {
   mime_type: string;
   byte_size: number;
   sha256: string | null;
-  metadata: { name: string; folderId: null; status: string };
+  metadata: {
+    name: string;
+    folderId: null;
+    status: string;
+  };
   deleted_at: Date | null;
   trash_purge_after: Date | null;
   retain_until: Date | null;
   created_at: Date;
   updated_at: Date;
 }
-
 function objectRow(
   objectId: string,
   storageKey: string,
@@ -81,7 +80,6 @@ function objectRow(
     updated_at: now,
   };
 }
-
 function versionRow(objectId: string, storageKey: string, versionNumber: number) {
   return {
     id: `ver-${objectId}-${String(versionNumber)}`,
@@ -97,15 +95,15 @@ function versionRow(objectId: string, storageKey: string, versionNumber: number)
     created_at: new Date("2026-07-18T00:00:00.000Z"),
   };
 }
-
 class MemoryStorage implements DriveStorageClient {
-  readonly puts: Array<{ key: string; body: Uint8Array }> = [];
+  readonly puts: Array<{
+    key: string;
+    body: Uint8Array;
+  }> = [];
   readonly deletes: string[] = [];
   readonly objects = new Map<string, Uint8Array>();
   readonly deleteFailures = new Map<string, number>();
-
   constructor(private readonly onExternalCall?: () => void) {}
-
   async put(object: { key: string; body: Uint8Array | AsyncIterable<Uint8Array> }): Promise<void> {
     this.onExternalCall?.();
     const body =
@@ -115,13 +113,14 @@ class MemoryStorage implements DriveStorageClient {
     this.puts.push({ key: object.key, body });
     this.objects.set(object.key, body);
   }
-
-  async get(key: string): Promise<{ key: string; body: Uint8Array } | null> {
+  async get(key: string): Promise<{
+    key: string;
+    body: Uint8Array;
+  } | null> {
     this.onExternalCall?.();
     const body = this.objects.get(key);
     return body === undefined ? null : { key, body };
   }
-
   async delete(key: string): Promise<void> {
     this.onExternalCall?.();
     this.deletes.push(key);
@@ -133,13 +132,6 @@ class MemoryStorage implements DriveStorageClient {
     this.objects.delete(key);
   }
 }
-
-class FailingPreviewStorage extends MemoryStorage {
-  async presignGetUrl(): Promise<string> {
-    throw new Error("preview presign failed");
-  }
-}
-
 async function collectAsync(stream: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   for await (const chunk of stream) chunks.push(chunk);
@@ -152,7 +144,6 @@ async function collectAsync(stream: AsyncIterable<Uint8Array>): Promise<Uint8Arr
   }
   return out;
 }
-
 /**
  * Stateful fake SQL that models:
  * - requireObjectAccess (select objects)
@@ -163,7 +154,15 @@ async function collectAsync(stream: AsyncIterable<Uint8Array>): Promise<Uint8Arr
  */
 function createDedupSql(state: {
   objects: Map<string, DedupObjectRow>;
-  blobs: Map<string, { sha256: string; storageKey: string; refcount: number; byteSize: number }>;
+  blobs: Map<
+    string,
+    {
+      sha256: string;
+      storageKey: string;
+      refcount: number;
+      byteSize: number;
+    }
+  >;
   versions: Array<ReturnType<typeof versionRow>>;
   scanJobs?: Map<string, ScanJobState>;
   quarantineDeletions?: Map<string, QuarantineDeletionState>;
@@ -175,11 +174,9 @@ function createDedupSql(state: {
     if (text.includes("objects.owner_actor_id") || text.includes("drive_folders.owner_actor_id")) {
       return { text, values };
     }
-
     if (text.includes("select id from orgs")) {
       return Promise.resolve(values.includes(orgId) ? [] : [{ id: orgId }]);
     }
-
     if (text.includes("helix_reconcile_storage_usage")) return Promise.resolve([]);
     if (
       text.includes("helix_reserve_drive_storage") ||
@@ -198,7 +195,6 @@ function createDedupSql(state: {
         },
       ]);
     }
-
     if (text.includes("pg_advisory_xact_lock")) return Promise.resolve([]);
     if (text.includes("delete from drive_blob_reservations")) return Promise.resolve([]);
     if (text.includes("insert into drive_blob_reservations")) {
@@ -216,7 +212,6 @@ function createDedupSql(state: {
     if (text.includes("update drive_blobs blob") && text.includes("set refcount = 0")) {
       return Promise.resolve([]);
     }
-
     if (text.includes("with candidates as") && text.includes("drive_quarantine_deletions")) {
       return Promise.resolve(
         [...(state.quarantineDeletions?.values() ?? [])]
@@ -227,11 +222,9 @@ function createDedupSql(state: {
           }),
       );
     }
-
     if (text.includes("with candidates as") && text.includes("upload_expiring")) {
       return Promise.resolve([]);
     }
-
     if (text.includes("insert into drive_quarantine_deletions")) {
       const objectId = values.find((value) => value === objectIdA || value === objectIdB) as string;
       const storageKey = values.find(
@@ -252,7 +245,6 @@ function createDedupSql(state: {
       state.quarantineDeletions?.set(storageKey, job);
       return Promise.resolve([job]);
     }
-
     if (text.includes("delete from drive_quarantine_deletions")) {
       const id = values.find(
         (value): value is string => typeof value === "string" && value.startsWith("delete-"),
@@ -264,7 +256,6 @@ function createDedupSql(state: {
       state.quarantineDeletions?.delete(job.storage_key);
       return Promise.resolve([job]);
     }
-
     if (text.includes("drive_comment_actor_role_rank")) {
       const objectId = values.find(
         (value) => typeof value === "string" && state.objects.has(value),
@@ -272,7 +263,6 @@ function createDedupSql(state: {
       const row = typeof objectId === "string" ? state.objects.get(objectId) : undefined;
       return Promise.resolve(row === undefined ? [] : [{ ...row, comment_role_rank: 3 }]);
     }
-
     if (
       text.includes("update drive_quarantine_deletions") &&
       text.includes("status = 'completed'")
@@ -287,7 +277,6 @@ function createDedupSql(state: {
       state.quarantineDeletions?.delete(job.storage_key);
       return Promise.resolve([{ ...job, status: "completed", completed_at: new Date() }]);
     }
-
     if (text.includes("update drive_quarantine_deletions")) {
       const id = values.find(
         (value): value is string => typeof value === "string" && value.startsWith("delete-"),
@@ -302,22 +291,18 @@ function createDedupSql(state: {
         values.find((value): value is Date => value instanceof Date) ?? new Date();
       return Promise.resolve([{ ...job }]);
     }
-
     // requireObjectAccess
     if (text.includes("select *") && text.includes("from objects") && text.includes("kind in")) {
       const objectId = values.find((v) => typeof v === "string" && state.objects.has(v)) as
-        | string
-        | undefined;
+        string | undefined;
       if (objectId === undefined) return Promise.resolve([]);
       const row = state.objects.get(objectId);
       return Promise.resolve(row === undefined ? [] : [row]);
     }
-
     // quota select — unlimited
     if (text.includes("storage_bytes_limit") || text.includes("storage_used")) {
       return Promise.resolve([{ storage_bytes_limit: null, storage_used_bytes: 0 }]);
     }
-
     if (text.includes("select storage_key, refcount") && text.includes("from drive_blobs")) {
       const sha = values.find((value) => typeof value === "string" && value.length === 64);
       const blob = [...state.blobs.values()].find((candidate) => candidate.sha256 === sha);
@@ -325,7 +310,6 @@ function createDedupSql(state: {
         blob === undefined ? [] : [{ storage_key: blob.storageKey, refcount: blob.refcount }],
       );
     }
-
     if (text.trimStart().startsWith("select 1") && text.includes("from drive_blobs")) {
       const sha = values.find((value) => typeof value === "string" && value.length === 64);
       const key = values.find((value) => typeof value === "string" && value.includes("/blobs/"));
@@ -337,7 +321,6 @@ function createDedupSql(state: {
           : [],
       );
     }
-
     if (
       text.includes("with candidates as") &&
       text.includes("drive_scan_jobs") &&
@@ -360,7 +343,6 @@ function createDedupSql(state: {
           }),
       );
     }
-
     if (text.includes("insert into drive_scan_jobs")) {
       const objectId = values.find((value) => value === objectIdA || value === objectIdB) as string;
       const existing = state.scanJobs?.get(objectId);
@@ -391,7 +373,6 @@ function createDedupSql(state: {
       state.scanJobs?.set(objectId, job);
       return Promise.resolve([job]);
     }
-
     if (text.includes("update drive_scan_jobs") && text.includes("override_count")) {
       const objectId = values.find((value) => value === objectIdA || value === objectIdB) as string;
       const job = state.scanJobs?.get(objectId);
@@ -401,13 +382,11 @@ function createDedupSql(state: {
       job.next_attempt_at = new Date();
       return Promise.resolve([{ id: job.id }]);
     }
-
     if (text.includes("delete from drive_scan_jobs")) {
       const objectId = values.find((value) => value === objectIdA || value === objectIdB) as string;
       state.scanJobs?.delete(objectId);
       return Promise.resolve([]);
     }
-
     // drive_blobs upsert
     if (text.includes("insert into drive_blobs")) {
       const sha = values.find((v) => typeof v === "string" && v.length === 64) as string;
@@ -431,7 +410,6 @@ function createDedupSql(state: {
       existing.refcount += 1;
       return Promise.resolve([{ newly_referenced: newlyReferenced }]);
     }
-
     // drive_blobs decrement
     if (text.includes("update drive_blobs") && text.includes("refcount = refcount -")) {
       const key = values.find(
@@ -447,7 +425,6 @@ function createDedupSql(state: {
       }
       return Promise.resolve([]);
     }
-
     // drive_blobs delete at zero
     if (text.includes("delete from drive_blobs")) {
       const key = values.find(
@@ -462,7 +439,6 @@ function createDedupSql(state: {
       }
       return Promise.resolve([]);
     }
-
     // version insert
     if (text.includes("insert into drive_versions")) {
       const objectId = values.find(
@@ -476,7 +452,6 @@ function createDedupSql(state: {
       state.versions.push(ver);
       return Promise.resolve([ver]);
     }
-
     // objects update after finalize/quarantine
     if (text.includes("update objects") && text.includes("storage_key")) {
       const objectId = values.find(
@@ -505,7 +480,6 @@ function createDedupSql(state: {
       }
       return Promise.resolve(objectId === undefined ? [] : [{ id: objectId }]);
     }
-
     // quarantine verdict update
     if (text.includes("update objects") && text.includes("metadata =")) {
       const objectId = values.find(
@@ -539,7 +513,6 @@ function createDedupSql(state: {
         objectId === undefined ? [] : [state.objects.get(objectId) ?? { id: objectId }],
       );
     }
-
     // activity / outbox
     if (text.includes("from activity") || text.includes("insert into activity")) {
       return Promise.resolve([{ hash: "0".repeat(64) }]);
@@ -547,7 +520,6 @@ function createDedupSql(state: {
     if (text.includes("insert into outbox") || text.includes("from outbox")) {
       return Promise.resolve([]);
     }
-
     // list versions for delete
     if (text.includes("select storage_key, byte_size from drive_versions")) {
       const objectId = values.find(
@@ -559,7 +531,6 @@ function createDedupSql(state: {
           .map((v) => ({ storage_key: v.storage_key, byte_size: v.byte_size })),
       );
     }
-
     // delete versions / permissions / objects
     if (text.includes("delete from permissions")) return Promise.resolve({ count: 1 });
     if (text.includes("delete from drive_versions")) {
@@ -576,12 +547,10 @@ function createDedupSql(state: {
       if (objectId !== undefined) state.objects.delete(objectId);
       return Promise.resolve({ count: 1 });
     }
-
     // metadata app lookup for trash-sync
     if (text.includes("metadata->>'app'")) {
       return Promise.resolve([{ app: null }]);
     }
-
     // max version for various selects
     if (text.includes("max(version_number)")) {
       return Promise.resolve([
@@ -592,10 +561,8 @@ function createDedupSql(state: {
         },
       ]);
     }
-
     return Promise.resolve([]);
   };
-
   const sql = Object.assign(tag, {
     json: (value: unknown) => value,
     array: (value: unknown) => value,
@@ -608,125 +575,9 @@ function createDedupSql(state: {
       }
     },
   }) as unknown as postgres.Sql;
-
   return sql;
 }
-
 describe("PostgresDriveStore content-addressed dedup", () => {
-  it("never waits on storage, antivirus, or preview conversion inside a SQL transaction", async () => {
-    let inTransaction = false;
-    let externalCalls = 0;
-    const assertOutsideTransaction = () => {
-      externalCalls += 1;
-      expect(inTransaction).toBe(false);
-    };
-    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]);
-    const digest = createHash("sha256").update(bytes).digest("hex");
-    const state = {
-      objects: new Map([
-        [
-          objectIdA,
-          {
-            ...objectRow(objectIdA, reservedKeyA),
-            mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            metadata: { name: "report.docx", folderId: null, status: "pending_upload" },
-          },
-        ],
-      ]),
-      blobs: new Map<
-        string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
-      >(),
-      versions: [] as Array<ReturnType<typeof versionRow>>,
-      storageDeltas: [] as number[],
-      onTransactionChange(active: boolean) {
-        inTransaction = active;
-      },
-    };
-    const storage = new MemoryStorage(assertOutsideTransaction);
-    storage.objects.set(reservedKeyA, bytes);
-    const store = new PostgresDriveStore(createDedupSql(state), undefined, {
-      contentAddressedDedup: true,
-      storageResolver: () => {
-        assertOutsideTransaction();
-        return { client: storage, managedBy: "helix-default", prefix: "" };
-      },
-      virusScanner: {
-        async scan() {
-          assertOutsideTransaction();
-          return { clean: true };
-        },
-      },
-      officePreviewConverter: {
-        async convert() {
-          assertOutsideTransaction();
-          return {
-            pdf: new Uint8Array([1, 2, 3]),
-            pageCount: 1,
-            generatedAt: new Date().toISOString(),
-          };
-        },
-      },
-    });
-
-    await expect(
-      store.finalizeUpload({
-        orgId,
-        actorId,
-        objectId: objectIdA,
-        byteSize: bytes.byteLength,
-        sha256: digest,
-      }),
-    ).resolves.toBeDefined();
-    expect(externalCalls).toBeGreaterThanOrEqual(6);
-  });
-
-  it("compensates clean and preview bytes when preview publication fails", async () => {
-    const bytes = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]);
-    const digest = createHash("sha256").update(bytes).digest("hex");
-    const target = {
-      ...objectRow(objectIdA, reservedKeyA),
-      mime_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      metadata: { name: "report.docx", folderId: null, status: "pending_upload" },
-    };
-    const state = {
-      objects: new Map([[objectIdA, target]]),
-      blobs: new Map<
-        string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
-      >(),
-      versions: [] as Array<ReturnType<typeof versionRow>>,
-      storageDeltas: [] as number[],
-    };
-    const storage = new FailingPreviewStorage();
-    const store = new PostgresDriveStore(createDedupSql(state), storage, {
-      officePreviewConverter: {
-        async convert() {
-          return {
-            pdf: new Uint8Array([9, 8, 7]),
-            pageCount: 1,
-            generatedAt: new Date().toISOString(),
-          };
-        },
-      },
-    });
-
-    await expect(
-      store.finalizeUpload({
-        orgId,
-        actorId,
-        objectId: objectIdA,
-        byteSize: bytes.byteLength,
-        sha256: digest,
-        content: bytes,
-      }),
-    ).rejects.toThrow("preview presign failed");
-
-    expect(storage.objects.size).toBe(0);
-    expect(state.versions).toEqual([]);
-    expect(state.objects.get(objectIdA)?.metadata).toMatchObject({ status: "pending_upload" });
-  });
-
   it("cannot carry or inject preview metadata across a new file version", async () => {
     const target = {
       ...objectRow(objectIdA, reservedKeyA),
@@ -745,12 +596,16 @@ describe("PostgresDriveStore content-addressed dedup", () => {
       objects: new Map([[objectIdA, target]]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [versionRow(objectIdA, reservedKeyA, 1)],
     };
     const store = new PostgresDriveStore(createDedupSql(state), new MemoryStorage());
-
     await store.finalizeUpload({
       orgId,
       actorId,
@@ -765,10 +620,8 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         },
       },
     });
-
     expect(state.objects.get(objectIdA)?.metadata).not.toHaveProperty("preview");
   });
-
   it("verifies staged bytes before a known digest can acquire a blob reference", async () => {
     const attackerBytes = new Uint8Array([1, 2, 3, 4]);
     const state = {
@@ -784,7 +637,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     const store = new PostgresDriveStore(createDedupSql(state), storage, {
       contentAddressedDedup: true,
     });
-
     await expect(
       store.finalizeUpload({
         orgId,
@@ -794,18 +646,21 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         sha256,
       }),
     ).rejects.toThrow("stored bytes");
-
     expect(state.blobs.get(sha256)?.refcount).toBe(1);
     expect(state.versions).toEqual([]);
     expect(storage.puts).toEqual([]);
   });
-
   it("commits an infected verdict, deletes staged bytes, and denies read/share", async () => {
     const state = {
       objects: new Map([[objectIdA, objectRow(objectIdA, reservedKeyA)]]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [] as Array<ReturnType<typeof versionRow>>,
     };
@@ -819,7 +674,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         },
       },
     });
-
     await expect(
       store.finalizeUpload({
         orgId,
@@ -829,7 +683,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         sha256,
       }),
     ).rejects.toThrow("virus scan");
-
     expect(state.objects.get(objectIdA)?.metadata).toMatchObject({
       status: "infected",
       avSignature: "Eicar-Test-Signature",
@@ -847,17 +700,14 @@ describe("PostgresDriveStore content-addressed dedup", () => {
       }),
     ).rejects.toThrow("not ready");
   });
-
   it("keeps EICAR unreadable while failed byte deletions durably retry to completion", async () => {
     const quarantineKey = driveQuarantineStorageKey(orgId, objectIdA, sha256);
-    const previewKey = `drive-previews/${orgId}/${objectIdA}/v1.pdf`;
     const target = {
       ...objectRow(objectIdA, reservedKeyA),
       metadata: {
         name: "a.bin",
         folderId: null,
         status: "ready",
-        preview: { kind: "pdf", status: "available", storageKey: previewKey },
         textContent: "must disappear",
         tags: ["sensitive"],
       },
@@ -866,18 +716,24 @@ describe("PostgresDriveStore content-addressed dedup", () => {
       objects: new Map([[objectIdA, target]]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [] as Array<ReturnType<typeof versionRow>>,
       quarantineDeletions: new Map<string, QuarantineDeletionState>(),
     };
     const storage = new MemoryStorage();
     storage.objects.set(reservedKeyA, content);
-    storage.objects.set(previewKey, content);
     storage.deleteFailures.set(quarantineKey, 1);
     storage.deleteFailures.set(reservedKeyA, 1);
-    storage.deleteFailures.set(previewKey, 1);
-    const deletionErrors: Array<{ storageKey: string; attempts: number }> = [];
+    const deletionErrors: Array<{
+      storageKey: string;
+      attempts: number;
+    }> = [];
     const store = new PostgresDriveStore(createDedupSql(state), storage, {
       virusScanner: {
         kind: "clamav",
@@ -889,7 +745,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
       onQuarantineDeleteError: ({ storageKey, attempts }) =>
         deletionErrors.push({ storageKey, attempts }),
     });
-
     await expect(
       store.finalizeUpload({
         orgId,
@@ -901,7 +756,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     ).rejects.toMatchObject({
       details: { scanOutcome: "quarantined", signature: "Eicar-Test-Signature" },
     });
-
     expect(state.objects.get(objectIdA)).toMatchObject({
       storage_key: quarantineKey,
       metadata: { status: "infected" },
@@ -909,12 +763,11 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     expect(state.objects.get(objectIdA)?.metadata).not.toHaveProperty("preview");
     expect(state.objects.get(objectIdA)?.metadata).not.toHaveProperty("textContent");
     expect(state.objects.get(objectIdA)?.metadata).not.toHaveProperty("tags");
-    expect([...state.quarantineDeletions.values()]).toHaveLength(3);
+    expect([...state.quarantineDeletions.values()]).toHaveLength(2);
     expect([...state.quarantineDeletions.values()]).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ storage_key: quarantineKey, attempt_count: 1 }),
         expect.objectContaining({ storage_key: reservedKeyA, attempt_count: 1 }),
-        expect.objectContaining({ storage_key: previewKey, attempt_count: 1 }),
       ]),
     );
     expect(storage.objects.has(quarantineKey)).toBe(true);
@@ -923,10 +776,8 @@ describe("PostgresDriveStore content-addressed dedup", () => {
       expect.arrayContaining([
         { storageKey: quarantineKey, attempts: 1 },
         { storageKey: reservedKeyA, attempts: 1 },
-        { storageKey: previewKey, attempts: 1 },
       ]),
     );
-
     await expect(store.readFile({ orgId, actorId, objectId: objectIdA })).resolves.toBeNull();
     await expect(store.listVersions({ orgId, actorId, objectId: objectIdA })).rejects.toThrow(
       "not ready",
@@ -946,25 +797,27 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         sha256,
       }),
     ).rejects.toThrow("quarantined");
-
-    await expect(store.runVirusScanRetryBatch({ limit: 10, leaseMs: 30_000 })).resolves.toEqual({
-      claimed: 3,
-      completed: 3,
+    await expect(store.runVirusScanRetryBatch({ limit: 10, leaseMs: 30000 })).resolves.toEqual({
+      claimed: 2,
+      completed: 2,
       failed: 0,
     });
     expect(state.quarantineDeletions.size).toBe(0);
     expect(storage.objects.has(quarantineKey)).toBe(false);
     expect(storage.objects.has(reservedKeyA)).toBe(false);
-    expect(storage.objects.has(previewKey)).toBe(false);
   });
-
   it("routes a DLP quarantine decision through the inaccessible Drive quarantine", async () => {
     const quarantineKey = driveQuarantineStorageKey(orgId, objectIdA, sha256);
     const state = {
       objects: new Map([[objectIdA, objectRow(objectIdA, reservedKeyA)]]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [] as Array<ReturnType<typeof versionRow>>,
       quarantineDeletions: new Map<string, QuarantineDeletionState>(),
@@ -987,7 +840,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         }),
       },
     });
-
     await expect(
       store.finalizeUpload({
         orgId,
@@ -1014,20 +866,27 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     });
     await expect(store.readFile({ orgId, actorId, objectId: objectIdA })).resolves.toBeNull();
   });
-
   it("persists scanner outages through retry, DLQ, and an audited retry override", async () => {
     const state = {
       objects: new Map([[objectIdA, objectRow(objectIdA, reservedKeyA)]]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [] as Array<ReturnType<typeof versionRow>>,
       scanJobs: new Map<string, ScanJobState>(),
     };
     const storage = new MemoryStorage();
     storage.objects.set(reservedKeyA, content);
-    const unavailable: Array<{ status: string; attempts: number }> = [];
+    const unavailable: Array<{
+      status: string;
+      attempts: number;
+    }> = [];
     const scan = vi.fn(async () => {
       throw new Error("clamd unavailable\ninternal detail");
     });
@@ -1046,13 +905,12 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         sha256,
         metadata: { source: "test" },
       });
-
     await expect(finalize()).rejects.toThrow("temporarily unavailable");
     expect(state.scanJobs.get(objectIdA)).toMatchObject({ status: "pending", attempt_count: 1 });
     expect(state.objects.get(objectIdA)?.metadata).toMatchObject({ status: "scan_pending" });
     await expect(finalize()).rejects.toThrow("queued for retry");
     expect(scan).toHaveBeenCalledOnce();
-    await expect(store.runVirusScanRetryBatch({ limit: 1, leaseMs: 60_000 })).resolves.toEqual({
+    await expect(store.runVirusScanRetryBatch({ limit: 1, leaseMs: 60000 })).resolves.toEqual({
       claimed: 1,
       completed: 0,
       failed: 1,
@@ -1087,7 +945,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     ]);
     expect(state.versions).toEqual([]);
   });
-
   it("does not promote pending scans when only quarantine cleanup is enabled", async () => {
     const scanJob: ScanJobState = {
       id: "scan-disabled",
@@ -1103,30 +960,38 @@ describe("PostgresDriveStore content-addressed dedup", () => {
       objects: new Map([[objectIdA, objectRow(objectIdA, reservedKeyA)]]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [] as Array<ReturnType<typeof versionRow>>,
       scanJobs: new Map([[objectIdA, scanJob]]),
     };
     const store = new PostgresDriveStore(createDedupSql(state), new MemoryStorage());
-
     await expect(
       store.runVirusScanRetryBatch({
         limit: 10,
-        leaseMs: 30_000,
+        leaseMs: 30000,
         includeVirusScans: false,
       }),
     ).resolves.toEqual({ claimed: 0, completed: 0, failed: 0 });
     expect(state.scanJobs.get(objectIdA)).toMatchObject({ status: "pending", attempt_count: 1 });
     expect(state.versions).toEqual([]);
   });
-
   it("promotes a blocked upload when the durable retry sees a clean scanner", async () => {
     const state = {
       objects: new Map([[objectIdA, objectRow(objectIdA, reservedKeyA)]]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [] as Array<ReturnType<typeof versionRow>>,
       scanJobs: new Map<string, ScanJobState>(),
@@ -1154,9 +1019,8 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         sha256,
       }),
     ).rejects.toThrow("temporarily unavailable");
-
     available = true;
-    await expect(store.runVirusScanRetryBatch({ limit: 10, leaseMs: 30_000 })).resolves.toEqual({
+    await expect(store.runVirusScanRetryBatch({ limit: 10, leaseMs: 30000 })).resolves.toEqual({
       claimed: 1,
       completed: 1,
       failed: 0,
@@ -1164,13 +1028,17 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     expect(state.scanJobs.has(objectIdA)).toBe(false);
     expect(state.versions).toHaveLength(1);
   });
-
   it("counts a quarantined retry as completed rather than a worker failure", async () => {
     const state = {
       objects: new Map([[objectIdA, objectRow(objectIdA, reservedKeyA)]]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [] as Array<ReturnType<typeof versionRow>>,
       scanJobs: new Map<string, ScanJobState>(),
@@ -1196,9 +1064,8 @@ describe("PostgresDriveStore content-addressed dedup", () => {
         sha256,
       }),
     ).rejects.toThrow("temporarily unavailable");
-
     infected = true;
-    await expect(store.runVirusScanRetryBatch({ limit: 1, leaseMs: 60_000 })).resolves.toEqual({
+    await expect(store.runVirusScanRetryBatch({ limit: 1, leaseMs: 60000 })).resolves.toEqual({
       claimed: 1,
       completed: 1,
       failed: 0,
@@ -1206,7 +1073,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     expect(state.objects.get(objectIdA)?.metadata).toMatchObject({ status: "infected" });
     expect(state.scanJobs.has(objectIdA)).toBe(false);
   });
-
   it("uploads identical bytes twice with one storage write and refcount=2", async () => {
     const state = {
       objects: new Map([
@@ -1215,7 +1081,12 @@ describe("PostgresDriveStore content-addressed dedup", () => {
       ]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [] as Array<ReturnType<typeof versionRow>>,
       storageDeltas: [] as number[],
@@ -1224,11 +1095,9 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     // Simulate presigned PUT already writing to reserved keys (no inline content).
     storage.objects.set(reservedKeyA, content);
     storage.objects.set(reservedKeyB, content);
-
     const store = new PostgresDriveStore(createDedupSql(state), storage, {
       contentAddressedDedup: true,
     });
-
     // Finalize A without inline content — must copy reserved → blob on first ref.
     const v1 = await store.finalizeUpload({
       orgId,
@@ -1241,7 +1110,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     expect(storage.puts.map((p) => p.key)).toEqual([blobKey]);
     expect(state.blobs.get(sha256)?.refcount).toBe(1);
     expect(storage.objects.has(blobKey)).toBe(true);
-
     // Finalize B with same bytes — second ref, no additional storage put.
     const putsBefore = storage.puts.length;
     const v2 = await store.finalizeUpload({
@@ -1256,7 +1124,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     expect(state.blobs.get(sha256)?.refcount).toBe(2);
     expect(state.storageDeltas).toEqual([content.byteLength, 0]);
   });
-
   it("delete decrements refcount and only removes storage at zero", async () => {
     const state = {
       objects: new Map([
@@ -1287,24 +1154,20 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     };
     const storage = new MemoryStorage();
     storage.objects.set(blobKey, content);
-
     const store = new PostgresDriveStore(createDedupSql(state), storage, {
       contentAddressedDedup: true,
     });
-
     await store.delete({ orgId, actorId, objectId: objectIdA });
     expect(state.blobs.get(sha256)?.refcount).toBe(1);
     expect(storage.deletes).toEqual([]);
     expect(storage.objects.has(blobKey)).toBe(true);
     expect(state.storageDeltas).toEqual([0]);
-
     await store.delete({ orgId, actorId, objectId: objectIdB });
     expect(state.blobs.has(sha256)).toBe(false);
     expect(storage.deletes).toEqual([blobKey]);
     expect(storage.objects.has(blobKey)).toBe(false);
     expect(state.storageDeltas).toEqual([0, -content.byteLength]);
   });
-
   it("removes one blob reference for every immutable version of the deleted object", async () => {
     const target = {
       ...objectRow(objectIdA, blobKey, sha256),
@@ -1321,22 +1184,24 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     };
     const storage = new MemoryStorage();
     storage.objects.set(blobKey, content);
-
     await new PostgresDriveStore(createDedupSql(state), storage, {
       contentAddressedDedup: true,
     }).delete({ orgId, actorId, objectId: objectIdA });
-
     expect(state.versions).toEqual([]);
     expect(state.blobs.has(sha256)).toBe(false);
     expect(storage.deletes).toEqual([blobKey]);
   });
-
   it("inline content path puts once to the blob key on first finalize", async () => {
     const state = {
       objects: new Map([[objectIdA, objectRow(objectIdA, reservedKeyA)]]),
       blobs: new Map<
         string,
-        { sha256: string; storageKey: string; refcount: number; byteSize: number }
+        {
+          sha256: string;
+          storageKey: string;
+          refcount: number;
+          byteSize: number;
+        }
       >(),
       versions: [] as Array<ReturnType<typeof versionRow>>,
     };
@@ -1344,7 +1209,6 @@ describe("PostgresDriveStore content-addressed dedup", () => {
     const store = new PostgresDriveStore(createDedupSql(state), storage, {
       contentAddressedDedup: true,
     });
-
     const version = await store.finalizeUpload({
       orgId,
       actorId,

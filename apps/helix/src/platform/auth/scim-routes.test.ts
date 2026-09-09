@@ -413,18 +413,32 @@ describe("tenant SCIM discovery routes (authenticated)", () => {
       { acme: orgRecord({ id: ORG_ID, slug: "acme" }) },
       { seedToken: VALID_TOKEN },
     );
-    const headers = { authorization: `Bearer ${VALID_TOKEN}`, "content-type": "application/scim+json" };
+    const headers = {
+      authorization: `Bearer ${VALID_TOKEN}`,
+      "content-type": "application/scim+json",
+    };
     const target = await app.inject({
       method: "POST",
       url: "/api/scim/v2/acme/Users",
       headers,
-      payload: { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], externalId: "idp-2", userName: "owner@acme.test", displayName: "Owner" },
+      payload: {
+        schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        externalId: "idp-2",
+        userName: "owner@acme.test",
+        displayName: "Owner",
+      },
     });
     const created = await app.inject({
       method: "POST",
       url: "/api/scim/v2/acme/Users",
       headers,
-      payload: { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], externalId: "idp-1", userName: "ada@acme.test", displayName: "Ada", name: { givenName: "Ada", familyName: "Lovelace" } },
+      payload: {
+        schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        externalId: "idp-1",
+        userName: "ada@acme.test",
+        displayName: "Ada",
+        name: { givenName: "Ada", familyName: "Lovelace" },
+      },
     });
     expect(created.statusCode).toBe(201);
     expect(created.headers.etag).toBe('W/"1"');
@@ -434,23 +448,39 @@ describe("tenant SCIM discovery routes (authenticated)", () => {
       method: "POST",
       url: "/api/scim/v2/acme/Users",
       headers,
-      payload: { schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"], externalId: "idp-1", userName: "ada@acme.test", displayName: "Ada", name: { givenName: "Ada", familyName: "Lovelace" } },
+      payload: {
+        schemas: ["urn:ietf:params:scim:schemas:core:2.0:User"],
+        externalId: "idp-1",
+        userName: "ada@acme.test",
+        displayName: "Ada",
+        name: { givenName: "Ada", familyName: "Lovelace" },
+      },
     });
     expect(retry.statusCode).toBe(200);
     expect(retry.json()).toMatchObject({ id: user.id, externalId: "idp-1" });
 
     const list = await app.inject({
       method: "GET",
-      url: '/api/scim/v2/acme/Users?startIndex=1&count=1&filter=userName%20eq%20%22ada%40acme.test%22',
+      url: "/api/scim/v2/acme/Users?startIndex=1&count=1&filter=userName%20eq%20%22ada%40acme.test%22",
       headers,
     });
-    expect(list.json()).toMatchObject({ totalResults: 1, startIndex: 1, itemsPerPage: 1, Resources: [{ id: user.id }] });
+    expect(list.json()).toMatchObject({
+      totalResults: 1,
+      startIndex: 1,
+      itemsPerPage: 1,
+      Resources: [{ id: user.id }],
+    });
     const emptyPage = await app.inject({
       method: "GET",
       url: "/api/scim/v2/acme/Users?startIndex=99&count=1",
       headers,
     });
-    expect(emptyPage.json()).toMatchObject({ totalResults: 2, startIndex: 99, itemsPerPage: 0, Resources: [] });
+    expect(emptyPage.json()).toMatchObject({
+      totalResults: 2,
+      startIndex: 99,
+      itemsPerPage: 0,
+      Resources: [],
+    });
 
     const patched = await app.inject({
       method: "PATCH",
@@ -458,12 +488,22 @@ describe("tenant SCIM discovery routes (authenticated)", () => {
       headers: { ...headers, "if-match": created.headers.etag ?? "" },
       payload: {
         schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-        Operations: [{ op: "replace", path: "active", value: false }, { op: "replace", path: "urn:helix:params:scim:schemas:extension:2.0:User.dataTransferTargetId", value: target.json<{ id: string }>().id }],
+        Operations: [
+          { op: "replace", path: "active", value: false },
+          {
+            op: "replace",
+            path: "urn:helix:params:scim:schemas:extension:2.0:User.dataTransferTargetId",
+            value: target.json<{ id: string }>().id,
+          },
+        ],
       },
     });
     expect(patched.statusCode).toBe(200);
     expect(patched.json()).toMatchObject({ id: user.id, active: false });
-    expect(provisioning.deprovisioned).toContainEqual({ actorId: user.id, transferToActorId: target.json<{ id: string }>().id });
+    expect(provisioning.deprovisioned).toContainEqual({
+      actorId: user.id,
+      transferToActorId: target.json<{ id: string }>().id,
+    });
 
     const stale = await app.inject({
       method: "PUT",
@@ -510,12 +550,30 @@ describe("tenant SCIM discovery routes (authenticated)", () => {
       { acme: orgRecord({ id: ORG_ID, slug: "acme" }) },
       { seedToken: VALID_TOKEN },
     );
-    const headers = { authorization: `Bearer ${VALID_TOKEN}`, "content-type": "application/scim+json" };
-    const first = await app.inject({ method: "POST", url: "/api/scim/v2/acme/Users", headers, payload: { externalId: "u-1", userName: "one@acme.test", displayName: "One" } });
-    const second = await app.inject({ method: "POST", url: "/api/scim/v2/acme/Users", headers, payload: { externalId: "u-2", userName: "two@acme.test", displayName: "Two" } });
+    const headers = {
+      authorization: `Bearer ${VALID_TOKEN}`,
+      "content-type": "application/scim+json",
+    };
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/scim/v2/acme/Users",
+      headers,
+      payload: { externalId: "u-1", userName: "one@acme.test", displayName: "One" },
+    });
+    const second = await app.inject({
+      method: "POST",
+      url: "/api/scim/v2/acme/Users",
+      headers,
+      payload: { externalId: "u-2", userName: "two@acme.test", displayName: "Two" },
+    });
     const firstId = first.json<{ id: string }>().id;
     const secondId = second.json<{ id: string }>().id;
-    const created = await app.inject({ method: "POST", url: "/api/scim/v2/acme/Groups", headers, payload: { externalId: "g-1", displayName: "Engineering", members: [{ value: firstId }] } });
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/scim/v2/acme/Groups",
+      headers,
+      payload: { externalId: "g-1", displayName: "Engineering", members: [{ value: firstId }] },
+    });
     expect(created.statusCode).toBe(201);
     const groupId = created.json<{ id: string }>().id;
 
@@ -523,7 +581,12 @@ describe("tenant SCIM discovery routes (authenticated)", () => {
       method: "PUT",
       url: `/api/scim/v2/acme/Groups/${groupId}`,
       headers: { ...headers, "if-match": created.headers.etag ?? "" },
-      payload: { schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"], externalId: "g-1", displayName: "Engineering", members: [{ value: firstId }, { value: secondId }] },
+      payload: {
+        schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+        externalId: "g-1",
+        displayName: "Engineering",
+        members: [{ value: firstId }, { value: secondId }],
+      },
     });
     expect(added.json()).toMatchObject({ members: [{ value: firstId }, { value: secondId }] });
 
@@ -531,17 +594,28 @@ describe("tenant SCIM discovery routes (authenticated)", () => {
       method: "PATCH",
       url: `/api/scim/v2/acme/Groups/${groupId}`,
       headers: { ...headers, "if-match": added.headers.etag ?? "" },
-      payload: { schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], Operations: [{ op: "remove", path: `members[value eq "${firstId}"]` }] },
+      payload: {
+        schemas: ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+        Operations: [{ op: "remove", path: `members[value eq "${firstId}"]` }],
+      },
     });
     expect(removed.json()).toMatchObject({ members: [{ value: secondId }] });
 
-    const invalid = await app.inject({ method: "GET", url: '/api/scim/v2/acme/Groups?filter=userName%20eq%20%22x%22', headers });
+    const invalid = await app.inject({
+      method: "GET",
+      url: "/api/scim/v2/acme/Groups?filter=userName%20eq%20%22x%22",
+      headers,
+    });
     expect(invalid.statusCode).toBe(400);
     expect(invalid.json()).toMatchObject({ scimType: "invalidFilter" });
-    const foreign = await provisioning.createUser(
-      "22222222-2222-2222-2222-222222222222",
-      { externalId: "foreign", userName: "foreign@other.test", displayName: "Foreign", givenName: null, familyName: null, active: true },
-    );
+    const foreign = await provisioning.createUser("22222222-2222-2222-2222-222222222222", {
+      externalId: "foreign",
+      userName: "foreign@other.test",
+      displayName: "Foreign",
+      givenName: null,
+      familyName: null,
+      active: true,
+    });
     const crossTenant = await app.inject({
       method: "PUT",
       url: `/api/scim/v2/acme/Groups/${groupId}`,
@@ -602,7 +676,11 @@ class TestScimStore implements ScimProvisioningStore {
     offset: number,
     limit: number,
   ): Promise<ScimPage<ScimUserRecord>> {
-    return page([...this.users.values()].filter((user) => user.orgId === orgId && matchesUser(user, filter)), offset, limit);
+    return page(
+      [...this.users.values()].filter((user) => user.orgId === orgId && matchesUser(user, filter)),
+      offset,
+      limit,
+    );
   }
 
   async getUser(orgId: string, id: string): Promise<ScimUserRecord | null> {
@@ -614,7 +692,8 @@ class TestScimStore implements ScimProvisioningStore {
     const correlated = [...this.users.values()].find(
       (user) =>
         user.orgId === orgId &&
-        ((input.externalId !== null && user.externalId?.toLowerCase() === input.externalId.toLowerCase()) ||
+        ((input.externalId !== null &&
+          user.externalId?.toLowerCase() === input.externalId.toLowerCase()) ||
           user.userName.toLowerCase() === input.userName.toLowerCase()),
     );
     if (correlated !== undefined) {
@@ -673,7 +752,13 @@ class TestScimStore implements ScimProvisioningStore {
     if (current === null) return false;
     stale(current.version, expectedVersion);
     await this.deprovision(orgId, id, transferToActorId);
-    this.users.set(id, { ...current, active: false, dataTransferTargetId: transferToActorId, version: current.version + 1, updatedAt: new Date() });
+    this.users.set(id, {
+      ...current,
+      active: false,
+      dataTransferTargetId: transferToActorId,
+      version: current.version + 1,
+      updatedAt: new Date(),
+    });
     return true;
   }
 
@@ -683,7 +768,13 @@ class TestScimStore implements ScimProvisioningStore {
     offset: number,
     limit: number,
   ): Promise<ScimPage<ScimGroupRecord>> {
-    return page([...this.groups.values()].filter((group) => group.orgId === orgId && matchesGroup(group, filter)), offset, limit);
+    return page(
+      [...this.groups.values()].filter(
+        (group) => group.orgId === orgId && matchesGroup(group, filter),
+      ),
+      offset,
+      limit,
+    );
   }
 
   async getGroup(orgId: string, id: string): Promise<ScimGroupRecord | null> {
@@ -695,7 +786,8 @@ class TestScimStore implements ScimProvisioningStore {
     const correlated = [...this.groups.values()].find(
       (group) =>
         group.orgId === orgId &&
-        ((input.externalId !== null && group.externalId?.toLowerCase() === input.externalId.toLowerCase()) ||
+        ((input.externalId !== null &&
+          group.externalId?.toLowerCase() === input.externalId.toLowerCase()) ||
           group.displayName.toLowerCase() === input.displayName.toLowerCase()),
     );
     if (correlated !== undefined) {
@@ -745,16 +837,25 @@ class TestScimStore implements ScimProvisioningStore {
     return this.groups.delete(id);
   }
 
-  private async deprovision(orgId: string, actorId: string, transferToActorId: string | null): Promise<void> {
+  private async deprovision(
+    orgId: string,
+    actorId: string,
+    transferToActorId: string | null,
+  ): Promise<void> {
     if (transferToActorId !== null) {
       const target = await this.getUser(orgId, transferToActorId);
       if (target === null || !target.active || target.id === actorId) {
-        throw new ScimConflictError("The data-transfer target must be an active user in the same tenant.");
+        throw new ScimConflictError(
+          "The data-transfer target must be an active user in the same tenant.",
+        );
       }
     }
     this.deprovisioned.push({ actorId, transferToActorId });
     for (const [id, group] of this.groups) {
-      this.groups.set(id, { ...group, members: group.members.filter((member) => member.value !== actorId) });
+      this.groups.set(id, {
+        ...group,
+        members: group.members.filter((member) => member.value !== actorId),
+      });
     }
   }
 
@@ -795,11 +896,25 @@ function matchesGroup(group: ScimGroupRecord, filter: ScimFilter | null): boolea
 }
 
 function sameTestUser(user: ScimUserRecord, input: PutScimUser): boolean {
-  return user.externalId === input.externalId && user.userName.toLowerCase() === input.userName.toLowerCase() && user.displayName === input.displayName && user.givenName === input.givenName && user.familyName === input.familyName && user.active === input.active;
+  return (
+    user.externalId === input.externalId &&
+    user.userName.toLowerCase() === input.userName.toLowerCase() &&
+    user.displayName === input.displayName &&
+    user.givenName === input.givenName &&
+    user.familyName === input.familyName &&
+    user.active === input.active
+  );
 }
 
 function sameTestGroup(group: ScimGroupRecord, input: PutScimGroup): boolean {
-  return group.externalId === input.externalId && group.displayName === input.displayName && group.members.map((member) => member.value).sort().join() === [...new Set(input.memberIds)].sort().join();
+  return (
+    group.externalId === input.externalId &&
+    group.displayName === input.displayName &&
+    group.members
+      .map((member) => member.value)
+      .sort()
+      .join() === [...new Set(input.memberIds)].sort().join()
+  );
 }
 
 function stale(version: number, expected: number | null): void {

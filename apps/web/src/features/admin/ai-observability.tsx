@@ -1,4 +1,11 @@
-import { BadgeDollarSign, Gauge, RadioTower, Route, TriangleAlert } from "lucide-react";
+import {
+  BadgeDollarSign,
+  Gauge,
+  RadioTower,
+  Route,
+  TriangleAlert,
+  type LucideIcon,
+} from "lucide-react";
 import {
   Table,
   TableBody,
@@ -7,6 +14,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AdminAiRelatedNav } from "@/features/admin/admin-related-nav";
+import { PageHeading, StateBanner } from "@/features/admin/console/primitives";
 import { useQuery } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
@@ -39,6 +48,14 @@ interface AIMetricRow {
   readonly dimension: string;
   readonly evidence: string;
   readonly status: "configured" | "dashboard" | "pending";
+}
+
+interface AIGovernanceRow {
+  readonly id: string;
+  readonly icon: LucideIcon;
+  readonly label: string;
+  readonly value: string;
+  readonly evidence: string;
 }
 
 const metricRows: readonly AIMetricRow[] = [
@@ -94,9 +111,17 @@ export async function prefetchAdminAIObservabilityQuery(
 
 export function AIObservabilityDashboard() {
   const platformConfigQuery = useQuery(adminPlatformConfigQueryOptions());
-  const tier = platformConfigQuery.data?.config.security.tier ?? "business";
-  const aiConfig = platformConfigQuery.data?.config.ai;
-  const governanceRows = useMemo(() => aiGovernanceRows(tier, aiConfig), [aiConfig, tier]);
+  const platformConfig = platformConfigQuery.data;
+  // No governance cards until the config actually loads: the tier decides what
+  // the blank fields fall back to, so guessing a tier would put invented
+  // budgets and an invented gating state on a security surface.
+  const governanceRows = useMemo<readonly AIGovernanceRow[]>(
+    () =>
+      platformConfig === undefined
+        ? []
+        : aiGovernanceRows(platformConfig.config.security.tier, platformConfig.config.ai),
+    [platformConfig],
+  );
   const metricColumns = useMemo<ColumnDef<AIMetricRow>[]>(
     () => [
       { accessorKey: "metric", header: "Metric" },
@@ -118,77 +143,108 @@ export function AIObservabilityDashboard() {
   });
 
   return (
-    <section className="admin-tier-panel" aria-labelledby="admin-ai-observability-title">
-      <div className="admin-tier-panel-header">
-        <div>
-          <p className="admin-tier-kicker">AI dashboard</p>
-          <h2 id="admin-ai-observability-title">AI observability</h2>
-          <p>
-            PRD dashboard coverage for provider routing, spend, latency, errors, fallback, and
-            top-cost actor review.
-          </p>
-        </div>
-      </div>
+    // No PageScroll: `ai-observability` is registered through `withPageScroll`
+    // in admin-console.tsx, so the scroll container already wraps this.
+    <>
+      <PageHeading
+        title="Observability"
+        subtitle="Spend, audit, and privacy controls in force for AI calls, plus which metrics already have a provisioned dashboard panel. Live series are read in Grafana, not here. Keys and models are under AI providers."
+      />
+      <AdminAiRelatedNav current="ai-observability" />
 
-      <div className="admin-ai-cost-grid">
-        {governanceRows.map((row) => (
-          <article className="admin-ai-cost-card" key={row.id}>
-            <row.icon aria-hidden="true" size={18} />
-            <div>
-              <h3>{row.label}</h3>
-              <dl>
-                <div>
-                  <dt>Configured</dt>
-                  <dd>{row.value}</dd>
-                </div>
-                <div>
-                  <dt>Evidence</dt>
-                  <dd>{row.evidence}</dd>
-                </div>
-              </dl>
-            </div>
-          </article>
-        ))}
-      </div>
-
-      {platformConfigQuery.isError ? (
-        <p role="alert">
-          AI observability config is unavailable or missing admin config scope.
-        </p>
+      {platformConfigQuery.isPending ? (
+        <StateBanner kind="loading">Loading observability config…</StateBanner>
       ) : null}
-      {platformConfigQuery.isPending ? <p role="status">Loading AI observability config</p> : null}
+      {platformConfigQuery.isError ? (
+        <StateBanner kind="error">
+          Observability config is unavailable or missing admin config scope.
+        </StateBanner>
+      ) : null}
 
-      <Table aria-label="AI observability metrics" className="admin-tier-table" role="table">
-        <TableHeader>
-          {metricTable.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id} role="row">
-              {headerGroup.headers.map((header) => (
-                <TableHead key={header.id} role="columnheader">
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(header.column.columnDef.header, header.getContext())}
-                </TableHead>
+      <div className="admin-tier-page">
+        {governanceRows.length === 0 ? null : (
+          <section className="admin-tier-panel" aria-labelledby="admin-ai-governance-title">
+            <div className="admin-tier-panel-header">
+              <div>
+                <p className="admin-tier-kicker">AI governance</p>
+                <h2 id="admin-ai-governance-title">Controls in force</h2>
+                <p>
+                  Budgets, request auditing, and classification gating as this org resolves them.
+                </p>
+              </div>
+            </div>
+
+            <div className="admin-ai-cost-grid">
+              {governanceRows.map((row) => (
+                <article className="admin-ai-cost-card" key={row.id}>
+                  <row.icon aria-hidden="true" size={18} />
+                  <div>
+                    <h3>{row.label}</h3>
+                    <dl>
+                      <div>
+                        <dt>Configured</dt>
+                        <dd>{row.value}</dd>
+                      </div>
+                      <div>
+                        <dt>Evidence</dt>
+                        <dd>{row.evidence}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                </article>
               ))}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {metricTable.getRowModel().rows.map((row) => (
-            <TableRow key={row.id} role="row">
-              {row.getVisibleCells().map((cell) => (
-                <TableCell key={cell.id} role="cell">
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </TableCell>
+            </div>
+          </section>
+        )}
+
+        <section className="admin-tier-panel" aria-labelledby="admin-ai-metrics-title">
+          <div className="admin-tier-panel-header">
+            <div>
+              <p className="admin-tier-kicker">Dashboard coverage</p>
+              <h2 id="admin-ai-metrics-title">Required AI metrics</h2>
+              <p>
+                Each metric the PRD requires, the breakdown it must support, and the panel or
+                telemetry that backs it.
+              </p>
+            </div>
+          </div>
+
+          <Table aria-label="AI observability metrics" className="admin-tier-table" role="table">
+            <TableHeader>
+              {metricTable.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id} role="row">
+                  {headerGroup.headers.map((header) => (
+                    <TableHead key={header.id} role="columnheader">
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(header.column.columnDef.header, header.getContext())}
+                    </TableHead>
+                  ))}
+                </TableRow>
               ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </section>
+            </TableHeader>
+            <TableBody>
+              {metricTable.getRowModel().rows.map((row) => (
+                <TableRow key={row.id} role="row">
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id} role="cell">
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </section>
+      </div>
+    </>
   );
 }
 
-function aiGovernanceRows(tier: TierId, aiConfig: AIConfigStatus | undefined) {
+function aiGovernanceRows(
+  tier: TierId,
+  aiConfig: AIConfigStatus | undefined,
+): readonly AIGovernanceRow[] {
   const limits = aiConfig?.costLimits;
   const audit = aiConfig?.audit;
   const privacy = aiConfig?.privacy;
@@ -210,8 +266,11 @@ function aiGovernanceRows(tier: TierId, aiConfig: AIConfigStatus | undefined) {
     {
       id: "audit",
       icon: RadioTower,
+      // There is no platform default for `logRequests`: an unset field means
+      // nobody has chosen a mode, not that metadata-only logging is running.
+      // Naming a mode here would be a false claim on an audit surface.
       label: "Request audit",
-      value: audit?.logRequests ?? "metadata-only",
+      value: audit?.logRequests ?? "Not configured",
       evidence:
         audit?.retainDays === undefined
           ? "Retention follows platform audit policy"
@@ -221,7 +280,7 @@ function aiGovernanceRows(tier: TierId, aiConfig: AIConfigStatus | undefined) {
       id: "privacy",
       icon: TriangleAlert,
       label: "Classification gating",
-      value: privacy?.classificationGating === false ? "Disabled" : "Enabled",
+      value: classificationGatingLabel(tier, privacy?.classificationGating),
       evidence:
         privacy?.blockExternalForClassifications === undefined ||
         privacy.blockExternalForClassifications.length === 0
@@ -242,30 +301,40 @@ function aiGovernanceRows(tier: TierId, aiConfig: AIConfigStatus | undefined) {
       value: "Dashboard panel provisioned",
       evidence: "Runtime fallback rates appear when provider routing emits metrics",
     },
-  ] as const;
+  ];
 }
 
-function statusLabel(status: AIMetricRow["status"]): string {
-  switch (status) {
-    case "configured":
-      return "Configured";
-    case "dashboard":
-      return "Dashboard provisioned";
-    case "pending":
-      return "Pending live telemetry";
-  }
+/* Mirrors the server gate (platform/ai/classification/gating.ts): every tier
+ * except personal gates classified content unless the org sets the flag, so an
+ * unset flag is not the same answer on every tier. */
+function classificationGatingLabel(tier: TierId, override: boolean | undefined): string {
+  return (override ?? tier !== "personal") ? "Enabled" : "Disabled";
 }
+
+const STATUS_LABELS: Readonly<Record<AIMetricRow["status"], string>> = {
+  configured: "Configured",
+  dashboard: "Dashboard provisioned",
+  pending: "Pending live telemetry",
+};
+
+function statusLabel(status: AIMetricRow["status"]): string {
+  return STATUS_LABELS[status];
+}
+
+/* Built once: `Intl.NumberFormat` resolves its locale data on construction, and
+   every budget on this page is the same two-decimal USD amount. */
+const usdFormat = new Intl.NumberFormat("en-US", {
+  currency: "USD",
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 2,
+  style: "currency",
+});
 
 function formatUsdLimit(value: number | undefined): string {
   if (value === undefined) {
     return "tier default";
   }
-  return new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-    style: "currency",
-  }).format(value);
+  return usdFormat.format(value);
 }
 
 function formatValue(value: string): string {
@@ -276,15 +345,13 @@ function formatValue(value: string): string {
     .join(" ");
 }
 
+const TIER_TITLES: Readonly<Record<TierId, string>> = {
+  personal: "Personal",
+  business: "Business",
+  enterprise: "Enterprise",
+  sovereign: "Sovereign",
+};
+
 function titleForTier(tier: TierId): string {
-  switch (tier) {
-    case "personal":
-      return "Personal";
-    case "business":
-      return "Business";
-    case "enterprise":
-      return "Enterprise";
-    case "sovereign":
-      return "Sovereign";
-  }
+  return TIER_TITLES[tier];
 }

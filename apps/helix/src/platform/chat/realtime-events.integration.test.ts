@@ -282,10 +282,10 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
     const receivedB: unknown[] = [];
     const subscriberA = new EventBusChatRoomBus(transport, { events: eventLog });
     const subscriberB = new EventBusChatRoomBus(transport, { events: eventLog });
-    await subscriberA.subscribe(ROOM, async (event) => {
+    await subscriberA.subscribe(ORG, ROOM, async (event) => {
       receivedA.push(event);
     });
-    await subscriberB.subscribe(ROOM, async (event) => {
+    await subscriberB.subscribe(ORG, ROOM, async (event) => {
       receivedB.push(event);
     });
     const registry = createToolRegistry();
@@ -298,9 +298,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
       { roomId: ROOM, body: "REST fanout", clientMessageId: "chat-rest-fanout" },
       context,
     );
-    const sentMessageId = sent.ok
-      ? (sent.output as { readonly id?: unknown }).id
-      : undefined;
+    const sentMessageId = sent.ok ? (sent.output as { readonly id?: unknown }).id : undefined;
     if (typeof sentMessageId !== "string") throw new Error("REST send failed.");
     await registry.invoke(
       "chat.react",
@@ -325,7 +323,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
   });
 
   it("durably emits ACL events for revocation and principal suspension", async () => {
-    await sql`delete from outbox where subject = ${roomSubject(ROOM)}`;
+    await sql`delete from outbox where subject = ${roomSubject(ORG, ROOM)}`;
     const transport = new InMemoryEventBus();
     const replica = new EventBusChatRoomBus(transport, {
       events: new PostgresChatRoomEventLog(appSql),
@@ -341,6 +339,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
         tickets: new IntegrationTicketStore(),
         bus: replica,
         presence: new InMemoryChatPresenceStore(),
+        trustedOrigins: [],
       });
     });
     socketResource?.runInAsyncScope(() => {
@@ -378,11 +377,11 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
     ]);
     const revokeOutbox = await sql`
       select subject, payload from outbox
-      where subject = ${roomSubject(ROOM)}
+      where subject = ${roomSubject(ORG, ROOM)}
         and (payload->>'cursor')::bigint = ${beforeRevoke + 1}
     `;
     await transport.publish(String(revokeOutbox[0]?.subject), revokeOutbox[0]?.payload);
-    expect(socket.closed).toEqual({ code: 1008, reason: "access denied" });
+    await expect.poll(() => socket.closed).toEqual({ code: 1008, reason: "access denied" });
 
     await sql`
       update permissions
@@ -430,7 +429,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
     const outboxRows = await sql`
       select payload
       from outbox
-      where subject = ${`chat.room.${ROOM}.events`}
+      where subject = ${roomSubject(ORG, ROOM)}
         and (payload->>'cursor')::bigint > ${beforeRevoke}
       order by (payload->>'cursor')::bigint
     `;
@@ -486,9 +485,7 @@ class IntegrationSocket {
   on(
     event: "message" | "close" | "error",
     handler:
-      | ((data: Buffer | ArrayBuffer | string) => void)
-      | (() => void)
-      | ((error: Error) => void),
+      ((data: Buffer | ArrayBuffer | string) => void) | (() => void) | ((error: Error) => void),
   ): void {
     if (event === "message") {
       this.#messageHandlers.push(handler as (data: Buffer | ArrayBuffer | string) => void);
@@ -539,6 +536,7 @@ async function cleanup(sql: postgres.Sql): Promise<void> {
   await sql`delete from permissions where actor_id = ${OWNER} or resource_id = ${ROOM}`;
   await sql`delete from threads where id = ${ROOM}`;
   await sql`delete from organization_memberships where actor_id = ${OWNER}`;
+  await sql`delete from activity where org_id in (${ORG}, ${FOREIGN_ORG})`;
   await sql`delete from actors where id = ${OWNER}`;
   await sql`delete from orgs where id in (${ORG}, ${FOREIGN_ORG})`;
   await sql`delete from identity_subjects where canonical_email = ${EMAIL}`;

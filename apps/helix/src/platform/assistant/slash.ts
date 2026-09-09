@@ -114,8 +114,6 @@ interface DefaultAssistantSlashCommandRoute {
 
 const readContextToolIds = [
   "chat.search",
-  "docs.get",
-  "docs.export",
   "drive.list",
   "drive.search",
   "mail.search",
@@ -145,15 +143,7 @@ const defaultSlashCommandRoutes: Readonly<Record<string, DefaultAssistantSlashCo
   },
   find: {
     name: "find",
-    toolIds: [
-      "calendar.event.list",
-      "chat.search",
-      "docs.get",
-      "docs.export",
-      "drive.list",
-      "drive.search",
-      "mail.search",
-    ],
+    toolIds: ["calendar.event.list", "chat.search", "drive.list", "drive.search", "mail.search"],
     instruction: (args) =>
       [
         "Find actor-visible Helix content matching this request.",

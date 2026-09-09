@@ -55,21 +55,22 @@ describe("EventBusChatRoomBus multi-replica fan-out", () => {
     const replicaB = replica(shared, "chat.room");
 
     const delivered: unknown[] = [];
-    await replicaB.subscribe(roomA, async (event) => {
+    await replicaB.subscribe(orgId, roomA, async (event) => {
       delivered.push(event);
     });
 
-    await replicaA.publish(roomA, {
+    await replicaA.publish(orgId, roomA, {
       type: "message.created",
-      roomId: roomA,
+      eventId: "event-1",
       orgId,
+      roomId: roomA,
       actorId: "11111111-1111-4111-8111-111111111111",
     });
 
     expect(delivered).toEqual([
       expect.objectContaining({ type: "message.created", roomId: roomA }),
     ]);
-    expect(roomSubject(roomA)).toBe(`chat.room.${roomA}.events`);
+    expect(roomSubject(orgId, roomA)).toBe(`chat.org.${orgId}.room.${roomA}.events`);
   });
 
   it("keeps room subjects isolated", async () => {
@@ -77,13 +78,18 @@ describe("EventBusChatRoomBus multi-replica fan-out", () => {
     const bus = replica(shared);
     const a: unknown[] = [];
     const b: unknown[] = [];
-    await bus.subscribe(roomA, async (e) => {
+    await bus.subscribe(orgId, roomA, async (e) => {
       a.push(e);
     });
-    await bus.subscribe(roomB, async (e) => {
+    await bus.subscribe(orgId, roomB, async (e) => {
       b.push(e);
     });
-    await bus.publish(roomA, { type: "typing", roomId: roomA, orgId });
+    await bus.publish(orgId, roomA, {
+      type: "typing",
+      eventId: "event-2",
+      orgId,
+      roomId: roomA,
+    });
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(0);
   });
@@ -95,16 +101,16 @@ describe("EventBusChatRoomBus multi-replica fan-out", () => {
     const received: unknown[][] = [[], []];
     await Promise.all(
       clients.map((client, index) =>
-        client.subscribe(roomA, async (event) => {
+        client.subscribe(orgId, roomA, async (event) => {
           received[index]?.push(event);
         }),
       ),
     );
-    await sender.publish(roomA, {
+    await sender.publish(orgId, roomA, {
+      orgId,
       version: 1,
       type: "message.created",
       roomId: roomA,
-      orgId,
       message: {
         body: "```ts\nconst ready = true;\n```",
         bodyFormat: "markdown",
@@ -136,23 +142,28 @@ describe("EventBusChatRoomBus multi-replica fan-out", () => {
     const replicaB = replica(shared);
     const a: unknown[] = [];
     const b: unknown[] = [];
-    const unsubA = await replicaA.subscribe(roomA, async (e) => {
+    const unsubA = await replicaA.subscribe(orgId, roomA, async (e) => {
       a.push(e);
     });
-    await replicaB.subscribe(roomA, async (e) => {
+    await replicaB.subscribe(orgId, roomA, async (e) => {
       b.push(e);
     });
     await unsubA();
-    await replicaA.publish(roomA, { type: "typing", roomId: roomA, orgId });
+    await replicaA.publish(orgId, roomA, {
+      type: "typing",
+      eventId: "event-3",
+      orgId,
+      roomId: roomA,
+    });
     expect(a).toHaveLength(0);
     expect(b).toHaveLength(1);
   });
 
   it("retains only durable events and pages them in sequence order", async () => {
     const bus = new InMemoryChatRoomBus();
-    await bus.publish(roomA, { type: "typing", roomId: roomA, orgId, isTyping: true });
+    await bus.publish(orgId, roomA, { type: "typing", roomId: roomA, orgId, isTyping: true });
     for (const id of ["one", "two", "three"]) {
-      await bus.publish(roomA, {
+      await bus.publish(orgId, roomA, {
         type: "message.created",
         roomId: roomA,
         orgId,
@@ -173,5 +184,69 @@ describe("EventBusChatRoomBus multi-replica fan-out", () => {
     expect(first.hasMore).toBe(true);
     expect(second.events.map((event) => event.cursor)).toEqual([3]);
     expect(second.hasMore).toBe(false);
+  });
+
+  it("drops forged wrong-organization payloads and duplicate deliveries", async () => {
+    const shared = new SharedInMemoryEventBus();
+    const bus = new EventBusChatRoomBus(shared, { events: new InMemoryChatRoomEventLog() });
+    const delivered: unknown[] = [];
+    const unsubscribe = await bus.subscribe(orgId, roomA, async (event) => {
+      delivered.push(event);
+    });
+    const subject = roomSubject(orgId, roomA);
+    await shared.publish(subject, {
+      type: "typing",
+      eventId: "forged",
+      orgId: "99999999-9999-4999-8999-999999999999",
+      roomId: roomA,
+    });
+    const valid = {
+      type: "typing",
+      eventId: "dedupe",
+      orgId,
+      roomId: roomA,
+    } as const;
+    await shared.publish(subject, valid);
+    await shared.publish(subject, valid);
+    await unsubscribe();
+    expect(delivered).toEqual([valid]);
+  });
+
+  it("bounds pending delivery for a slow consumer", async () => {
+    const shared = new SharedInMemoryEventBus();
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let slowConsumerCount = 0;
+    const bus = new EventBusChatRoomBus(shared, {
+      events: new InMemoryChatRoomEventLog(),
+      maxPendingEvents: 1,
+      onSlowConsumer: () => {
+        slowConsumerCount += 1;
+      },
+    });
+    const delivered: string[] = [];
+    const unsubscribe = await bus.subscribe(orgId, roomA, async (event) => {
+      if (typeof event.eventId !== "string") throw new Error("Expected event ID.");
+      delivered.push(event.eventId);
+      await gate;
+    });
+    await bus.publish(orgId, roomA, {
+      type: "typing",
+      eventId: "first",
+      orgId,
+      roomId: roomA,
+    });
+    await bus.publish(orgId, roomA, {
+      type: "typing",
+      eventId: "dropped",
+      orgId,
+      roomId: roomA,
+    });
+    expect(slowConsumerCount).toBe(1);
+    release?.();
+    await unsubscribe();
+    expect(delivered).toEqual(["first"]);
   });
 });

@@ -1,8 +1,5 @@
 import { deriveClassification, defaultClassificationPolicy } from "./policy.js";
-import {
-  canonicalClassificationResourceType,
-  sensitivityLabelFor,
-} from "./sensitivity-labels.js";
+import { canonicalClassificationResourceType, sensitivityLabelFor } from "./sensitivity-labels.js";
 import type {
   ClassificationDerivation,
   ClassificationDerivationInput,
@@ -71,7 +68,8 @@ export class ResourceClassificationService {
     const existing = await this.#store.get({ ...input, resourceType });
     const derivation =
       existing !== null &&
-      sensitivityLabelFor(existing.classification).rank > sensitivityLabelFor(derived.classification).rank
+      sensitivityLabelFor(existing.classification).rank >
+        sensitivityLabelFor(derived.classification).rank
         ? {
             classification: existing.classification,
             source: existing.source,

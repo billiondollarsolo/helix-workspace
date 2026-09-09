@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const MIGRATION_FILE = join(currentDir, "0027_drive_unification_backfill.sql");
@@ -38,7 +39,7 @@ describe(
   "migration 0027_drive_unification_backfill",
   {
     // Skip the entire suite when no DATABASE_URL is configured.
-    skip: !process.env.DATABASE_URL,
+    skip: skipUnlessLiveDatabase("migration 0027 drive unification"),
   },
   () => {
     let sql: postgres.Sql;

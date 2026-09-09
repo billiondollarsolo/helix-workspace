@@ -84,7 +84,9 @@ describe("audit hash chain — byte-identical with FIPS off", () => {
 describe("webhook HMAC — byte-identical with FIPS off", () => {
   /** The pre-adapter implementation: direct createHmac over `${ts}.${payload}`. */
   function legacySignature(secret: string, timestamp: number, payload: string): string {
-    return createHmac("sha256", secret).update(`${String(timestamp)}.${payload}`).digest("hex");
+    return createHmac("sha256", secret)
+      .update(`${String(timestamp)}.${payload}`)
+      .digest("hex");
   }
 
   it("signWebhookPayload produces the same HMAC as direct node:crypto", () => {
@@ -100,9 +102,7 @@ describe("webhook HMAC — byte-identical with FIPS off", () => {
     const payload = "raw-body";
     const timestamp = 1_747_000_000;
     const header = `t=${String(timestamp)},v1=${legacySignature(secret, timestamp, payload)}`;
-    expect(
-      verifyWebhookSignature({ payload, secret, header, toleranceSeconds: -1 }),
-    ).toBe(true);
+    expect(verifyWebhookSignature({ payload, secret, header, toleranceSeconds: -1 })).toBe(true);
   });
 });
 

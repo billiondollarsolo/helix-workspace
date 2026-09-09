@@ -61,7 +61,9 @@ function schemaType(schema: JsonObject): string | undefined {
 function objectSchema(schema: JsonObject): ZodTypeAny {
   const propertiesValue = schema.properties;
   const properties =
-    typeof propertiesValue === "object" && propertiesValue !== null && !Array.isArray(propertiesValue)
+    typeof propertiesValue === "object" &&
+    propertiesValue !== null &&
+    !Array.isArray(propertiesValue)
       ? (propertiesValue as Record<string, unknown>)
       : {};
   const required = new Set(

@@ -60,8 +60,14 @@ describe("mail delivery feedback", () => {
       timestamp: now.getTime() - 301_000,
     }).header;
     expect(
-      (await app.inject({ method: "POST", url, payload: payload(), headers: { ...contentType, "x-helix-signature": stale } }))
-        .statusCode,
+      (
+        await app.inject({
+          method: "POST",
+          url,
+          payload: payload(),
+          headers: { ...contentType, "x-helix-signature": stale },
+        })
+      ).statusCode,
     ).toBe(401);
     const valid = signWebhookPayload({ payload: payload(), secret, timestamp: now }).header;
     expect(

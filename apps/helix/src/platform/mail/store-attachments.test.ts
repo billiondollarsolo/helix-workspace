@@ -81,9 +81,9 @@ describe("PostgresMailStore attachment storage", () => {
     });
 
     expect(recording.calls.some((call) => call.text.includes("insert into objects"))).toBe(false);
-    expect(recording.calls.find((call) => call.text.includes("message_attachments"))?.values).toContain(
-      objectId,
-    );
+    expect(
+      recording.calls.find((call) => call.text.includes("message_attachments"))?.values,
+    ).toContain(objectId);
   });
 
   it("fails closed when inline ingestion is not configured", async () => {
@@ -167,7 +167,9 @@ describe("PostgresMailStore attachment storage", () => {
       bodyHtml: "<strong>Readable fallback</strong>",
     });
 
-    const messageInsert = recording.calls.find((call) => call.text.includes("insert into messages"));
+    const messageInsert = recording.calls.find((call) =>
+      call.text.includes("insert into messages"),
+    );
     expect(messageInsert?.values).toContainEqual(
       expect.objectContaining({ plainBody: "Readable fallback" }),
     );
@@ -271,6 +273,34 @@ describe("PostgresMailStore attachment storage", () => {
     expect(recording.calls.find((call) => call.text.includes("from objects"))?.text).toContain(
       "metadata->>'status', 'ready'",
     );
+  });
+});
+
+describe("PostgresMailStore mailbox visibility", () => {
+  it("authorizes every mailbox read by message ownership or inbound recipient", async () => {
+    const recording = createRecordingSql([]);
+    const store = new PostgresMailStore(recording.sql);
+    const actorId = "77777777-7777-4777-8777-777777777777";
+
+    await store.search({ orgId, actorId });
+    await store.getThread({ orgId, actorId, threadId });
+    await store.listThreads({ orgId, actorId });
+    await store.listFolders({ orgId, actorId });
+
+    const mailboxReadQueries = recording.calls.filter(
+      (call) =>
+        (call.text.includes("join threads t") || call.text.includes("from threads t")) &&
+        call.text.includes("visible_message"),
+    );
+    expect(mailboxReadQueries).toHaveLength(5);
+    for (const query of mailboxReadQueries) {
+      expect(query.text).toContain("visible_message.actor_id = ?");
+      expect(query.text).toContain("join mail_inbound_deliveries visible_delivery");
+      expect(query.text).toContain("join mail_inbound_recipients visible_recipient");
+      expect(query.text).toContain("visible_recipient.actor_id = ?");
+      expect(query.values).toContain(actorId);
+      expect(query.values).toContain(orgId);
+    }
   });
 });
 

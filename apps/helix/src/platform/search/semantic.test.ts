@@ -92,6 +92,37 @@ describe("SemanticSearchEngine", () => {
     expect(vectorStore.collections).toEqual([]);
   });
 
+  it("paginates the keyword fallback when embeddings return nothing", async () => {
+    /* `search` deliberately over-fetches the keyword side — `limit + offset`
+       rows starting at 0 — and every path that returns those rows owes the
+       caller a slice. Two fallbacks did. The third, taken when the embedding
+       provider yields no vector, returned the raw over-fetched response: the
+       caller asked for 2 rows starting at 2 and got all 5 starting at 0, so
+       page two repeated page one. An outage in embeddings silently became a
+       pagination bug in every paged search. */
+    const paged = Array.from({ length: 5 }, (_, index) => ({
+      id: `mail:${String(index)}`,
+      type: "mail",
+      title: `Message ${String(index)}`,
+      attributes: { orgId: "org-1" },
+    })) satisfies readonly IndexDocument[];
+    const keyword = new FakeSearchEngine(paged);
+    const engine = new SemanticSearchEngine({
+      keyword,
+      embeddings: new EmptyEmbeddingProvider(),
+      vectorStore: new FakeVectorStore(),
+    });
+
+    const response = await engine.search({
+      query: "message",
+      limit: 2,
+      offset: 2,
+      filter: 'attributes.orgId = "org-1"',
+    });
+
+    expect(response.hits.map((hit) => hit.id)).toEqual(["mail:2", "mail:3"]);
+  });
+
   it("embeds the query and fuses semantic results without leaking other orgs", async () => {
     const keyword = new FakeSearchEngine([
       docs[0] ?? failDocument(),
@@ -237,6 +268,14 @@ describe("SemanticSearchEngine", () => {
     ]);
   });
 });
+
+/** Yields no vector at all, so `search` falls back to keyword-only results.
+ *  Mirrors a real embedding provider being unavailable or returning nothing. */
+class EmptyEmbeddingProvider {
+  async embed(): Promise<readonly (readonly number[])[]> {
+    return [];
+  }
+}
 
 class FakeEmbeddingProvider {
   readonly texts: readonly string[][] = [];

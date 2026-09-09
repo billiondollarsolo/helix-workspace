@@ -30,9 +30,10 @@ test.describe("/meet Jitsi embed", () => {
     await expect(page.getByText("Backend launch review", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Join now", exact: true }).click();
+    await page.getByRole("button", { name: "I consent and join", exact: true }).click();
 
     await expect
-      .poll(() => calls.find((call) => call.pathname === "/api/tools/meet.mint-token")?.body)
+      .poll(() => calls.find((call) => call.pathname === "/v1/api/tools/meet.mint-token")?.body)
       .toEqual(
         expect.objectContaining({
           roomId,
@@ -124,7 +125,7 @@ async function mockMeetTools(page: Page, calls: MeetToolCall[]) {
     } satisfies MeetToolCall;
     calls.push(call);
 
-    if (pathname === "/api/tools/meet.meetings.list") {
+    if (pathname === "/v1/api/tools/meet.meetings.list") {
       await fulfillJson(route, {
         meetings: [meetMeeting],
         active: [meetMeeting],
@@ -133,7 +134,7 @@ async function mockMeetTools(page: Page, calls: MeetToolCall[]) {
       });
       return;
     }
-    if (pathname === "/api/tools/meet.mint-token") {
+    if (pathname === "/v1/api/tools/meet.mint-token") {
       await fulfillJson(route, {
         roomId,
         roomName: "backend-launch-review",

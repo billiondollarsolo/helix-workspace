@@ -434,14 +434,11 @@ describe("NodemailerMailTransport attachment content", () => {
 
   it("passes the active tenant DKIM key to Nodemailer", async () => {
     const sendMail = vi.fn(async () => ({ messageId: "provider-1" }));
-    const transport = new NodemailerMailTransport(
-      { sendMail } as never,
-      async () => ({
-        domainName: "example.com",
-        keySelector: "s1",
-        privateKey: "kms-unwrapped-private-key",
-      }),
-    );
+    const transport = new NodemailerMailTransport({ sendMail } as never, async () => ({
+      domainName: "example.com",
+      keySelector: "s1",
+      privateKey: "kms-unwrapped-private-key",
+    }));
     await transport.send(envelope(), { idempotencyKey: "handoff-1" });
     expect(sendMail).toHaveBeenCalledWith(
       expect.objectContaining({

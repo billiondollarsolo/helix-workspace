@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { validateNonNegativeInteger } from "./types.js";
+import { pruneWindow } from "./usage-math.js";
 import type { RedisLimitClient } from "./redis-limiter.js";
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -60,9 +61,7 @@ export interface TenantHourlyQuotaExceeded {
   readonly resetsAt: string;
 }
 
-export type TenantHourlyQuotaDecision =
-  | TenantHourlyQuotaAllowed
-  | TenantHourlyQuotaExceeded;
+export type TenantHourlyQuotaDecision = TenantHourlyQuotaAllowed | TenantHourlyQuotaExceeded;
 
 export interface TenantHourlyQuotaLimiter {
   consume(input: TenantHourlyQuotaInput): Promise<TenantHourlyQuotaDecision>;
@@ -180,19 +179,6 @@ export function normalizeTenantHourlyQuotaLimit(
 
 function stateKey(orgId: string, quota: string): string {
   return `${orgId}:${quota}`;
-}
-
-function pruneWindow(timestamps: number[], minimumTimestamp: number): void {
-  let removeCount = 0;
-  for (const timestamp of timestamps) {
-    if (timestamp > minimumTimestamp) {
-      break;
-    }
-    removeCount += 1;
-  }
-  if (removeCount > 0) {
-    timestamps.splice(0, removeCount);
-  }
 }
 
 function retryAfterSeconds(oldestTimestamp: number, at: Date): number {

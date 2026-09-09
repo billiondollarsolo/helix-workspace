@@ -21,32 +21,18 @@
  *
  * An app is registered iff it is enabled AND in the booting role's app set.
  */
-
-export const CORE_APP_IDS = [
-  "mail",
-  "chat",
-  "drive",
-  "docs",
-  "calendar",
-  "meet",
-  "assistant",
-  "editors",
-] as const;
-
+export const CORE_APP_IDS = ["mail", "chat", "drive", "calendar", "meet", "assistant"] as const;
 export type CoreAppId = (typeof CORE_APP_IDS)[number];
-
 export interface CoreAppDefinition {
   readonly id: CoreAppId;
   /** Human-readable name shown in the admin UI. */
   readonly name: string;
   readonly description: string;
 }
-
 export const CORE_APPS: readonly CoreAppDefinition[] = [
   { id: "mail", name: "Mail", description: "SMTP send/receive, threading, labels, filters." },
   { id: "chat", name: "Chat", description: "Realtime channels, presence, read receipts." },
   { id: "drive", name: "Drive", description: "File storage, folders, sharing, previews." },
-  { id: "docs", name: "Docs", description: "Collaborative documents with Yjs sync." },
   { id: "calendar", name: "Calendar", description: "Events, invitations, free/busy, CalDAV." },
   { id: "meet", name: "Meet", description: "Video meetings via Jitsi." },
   {
@@ -54,22 +40,14 @@ export const CORE_APPS: readonly CoreAppDefinition[] = [
     name: "Assistant",
     description: "The Helix conversational AI assistant.",
   },
-  {
-    id: "editors",
-    name: "Editors",
-    description: "Alpha native Docs, Sheets, Slides, and PDF editor suite.",
-  },
 ];
-
 export function isCoreAppId(value: string): value is CoreAppId {
   return (CORE_APP_IDS as readonly string[]).includes(value);
 }
-
 /** Module-config shape: only the fields the core-app registry consults. */
 export interface ModuleEnablementConfig {
   readonly enabled?: boolean;
 }
-
 export interface CoreAppEnablementInput {
   /** `config.modules` from the merged {@link HelixConfig}. */
   readonly modules?: Record<string, ModuleEnablementConfig>;
@@ -77,21 +55,21 @@ export interface CoreAppEnablementInput {
   readonly role?: string;
   /** `HELIX_APPS` env value — a comma-separated explicit app subset. */
   readonly apps?: string;
+  /**
+   * A pre-resolved app set, taking precedence over `role` and `apps`.
+   *
+   * Resolution happens once at boot; the read endpoints re-derive statuses on
+   * every request only because `enabled` can change at runtime (an admin
+   * toggle). `inRole` cannot — it is fixed by how the process booted.
+   *
+   * Re-deriving it from `role` alone is lossy: `HELIX_APPS` resolves to the
+   * sentinel role `"custom"`, which by construction is not in
+   * {@link HELIX_ROLES}, so the lookup threw for every process that set
+   * `HELIX_APPS` — the entire production configuration. Passing the set the
+   * process actually booted with is what makes the round-trip total.
+   */
+  readonly appIds?: ReadonlySet<CoreAppId>;
 }
-
-export const EDITOR_CORE_APP_ROLE_IDS = [
-  "editors-conv-worker",
-  "editors-export-worker",
-  "editors-ocr-worker",
-  "editors-collab-gw",
-] as const;
-
-export type EditorCoreAppRoleId = (typeof EDITOR_CORE_APP_ROLE_IDS)[number];
-
-function isEditorCoreAppRoleId(value: string): value is EditorCoreAppRoleId {
-  return (EDITOR_CORE_APP_ROLE_IDS as readonly string[]).includes(value);
-}
-
 /**
  * The status of a single core app for the *currently booting process*.
  */
@@ -106,7 +84,6 @@ export interface CoreAppStatus {
   /** Registered (routes/tools/workers) iff `enabled && inRole`. */
   readonly registered: boolean;
 }
-
 /**
  * Named roles for role-based boot. The `all` role (the default) runs every
  * enabled core app. Additional roles run a curated subset of the *same image*
@@ -122,31 +99,30 @@ export const HELIX_ROLES: Record<string, readonly CoreAppId[]> = {
   /** Async/worker-heavy apps — mail SMTP + indexing/enrichment. */
   workers: ["mail"],
   /** Web/API surface without realtime fan-out. */
-  web: ["mail", "drive", "docs", "calendar", "assistant", "editors"],
-  /** Editors scale-out roles. Each boots the Editors core app in a specialized mode. */
-  "editors-conv-worker": ["editors"],
-  "editors-export-worker": ["editors"],
-  "editors-ocr-worker": ["editors"],
-  "editors-collab-gw": ["editors"],
+  web: ["mail", "drive", "calendar", "assistant"],
 };
-
 export const DEFAULT_HELIX_ROLE = "all";
-
 export class CoreAppRoleError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CoreAppRoleError";
   }
 }
-
 /**
  * Resolve the set of core app ids this process's role is permitted to run.
  * `HELIX_APPS` (explicit list) takes precedence over `HELIX_ROLE` (named role).
  */
-export function resolveRoleAppSet(input: Pick<CoreAppEnablementInput, "role" | "apps">): {
+export function resolveRoleAppSet(
+  input: Pick<CoreAppEnablementInput, "role" | "apps" | "appIds">,
+): {
   readonly role: string;
   readonly appIds: ReadonlySet<CoreAppId>;
 } {
+  /* An already-resolved set is authoritative — there is nothing left to look
+       up, and the role name it came from may be the `"custom"` sentinel. */
+  if (input.appIds !== undefined) {
+    return { role: input.role ?? DEFAULT_HELIX_ROLE, appIds: input.appIds };
+  }
   const explicit = (input.apps ?? "").trim();
   if (explicit.length > 0) {
     const ids = explicit
@@ -155,16 +131,11 @@ export function resolveRoleAppSet(input: Pick<CoreAppEnablementInput, "role" | "
       .filter((part) => part.length > 0);
     const resolved = new Set<CoreAppId>();
     for (const id of ids) {
-      if (isEditorCoreAppRoleId(id)) {
-        resolved.add("editors");
-        continue;
-      }
       if (!isCoreAppId(id)) {
         throw new CoreAppRoleError(
-          `HELIX_APPS contains unknown core app "${id}"; valid apps: ${[
-            ...CORE_APP_IDS,
-            ...EDITOR_CORE_APP_ROLE_IDS,
-          ].join(", ")}`,
+          `HELIX_APPS contains unknown core app "${id}"; valid apps: ${[...CORE_APP_IDS].join(
+            ", ",
+          )}`,
         );
       }
       resolved.add(id);
@@ -174,19 +145,15 @@ export function resolveRoleAppSet(input: Pick<CoreAppEnablementInput, "role" | "
     }
     return { role: "custom", appIds: resolved };
   }
-
   const roleName = (input.role ?? DEFAULT_HELIX_ROLE).trim() || DEFAULT_HELIX_ROLE;
   const roleApps = HELIX_ROLES[roleName];
   if (roleApps === undefined) {
     throw new CoreAppRoleError(
-      `HELIX_ROLE "${roleName}" is not a known role; valid roles: ${Object.keys(HELIX_ROLES).join(
-        ", ",
-      )}`,
+      `HELIX_ROLE "${roleName}" is not a known role; valid roles: ${Object.keys(HELIX_ROLES).join(", ")}`,
     );
   }
   return { role: roleName, appIds: new Set(roleApps) };
 }
-
 /**
  * Compute the registration status of every core app for this process.
  *
@@ -213,7 +180,6 @@ export function resolveCoreAppStatuses(input: CoreAppEnablementInput): {
   });
   return { role, statuses };
 }
-
 /** Org-admin global enablement check for a single core app (default-on). */
 export function isCoreAppEnabled(
   modules: Record<string, ModuleEnablementConfig> | undefined,
@@ -221,7 +187,6 @@ export function isCoreAppEnabled(
 ): boolean {
   return modules?.[appId]?.enabled !== false;
 }
-
 /**
  * A resolved view of which core-app modules this process should register.
  * Built once at startup and consulted by every conditional `register*Module`
@@ -229,24 +194,27 @@ export function isCoreAppEnabled(
  */
 export class CoreAppRegistrationPlan {
   readonly role: string;
+  /**
+   * The app set this process booted with. Hand this to anything that needs to
+   * recompute statuses later — {@link role} is a display string and cannot be
+   * resolved back to a set when it is `"custom"`.
+   */
+  readonly appIds: ReadonlySet<CoreAppId>;
   private readonly byId: Map<CoreAppId, CoreAppStatus>;
-
   constructor(input: CoreAppEnablementInput) {
     const { role, statuses } = resolveCoreAppStatuses(input);
     this.role = role;
+    this.appIds = new Set(statuses.filter((status) => status.inRole).map((status) => status.id));
     this.byId = new Map(statuses.map((status) => [status.id, status]));
   }
-
   /** True iff the app's module should be registered in this process. */
   shouldRegister(appId: CoreAppId): boolean {
     return this.byId.get(appId)?.registered ?? false;
   }
-
   /** Org-admin enablement, independent of role. */
   isEnabled(appId: CoreAppId): boolean {
     return this.byId.get(appId)?.enabled ?? false;
   }
-
   status(appId: CoreAppId): CoreAppStatus {
     const status = this.byId.get(appId);
     if (status === undefined) {
@@ -254,11 +222,9 @@ export class CoreAppRegistrationPlan {
     }
     return status;
   }
-
   statuses(): readonly CoreAppStatus[] {
     return [...this.byId.values()];
   }
-
   /** Core app ids actually registered in this process. */
   registeredAppIds(): readonly CoreAppId[] {
     return this.statuses()

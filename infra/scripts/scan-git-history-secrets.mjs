@@ -3,7 +3,8 @@ import { createPrivateKey, generateKeyPairSync } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import process from "node:process";
 
-const PRIVATE_KEY = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/gu;
+const PRIVATE_KEY =
+  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/gu;
 const CREDENTIALS = [
   /\bAKIA[0-9A-Z]{16}\b/u,
   /\bghp_[0-9A-Za-z]{36}\b/u,
@@ -17,7 +18,10 @@ if (!process.argv.includes("--self-test-only")) {
   const objects = reachableObjects();
   const blobs = batch(objects.map(({ oid }) => oid)).filter(({ type }) => type === "blob");
   const paths = new Map(objects.map(({ oid, path }) => [oid, path]));
-  const findings = batch(blobs.map(({ oid }) => oid), true).flatMap(({ oid, body }) =>
+  const findings = batch(
+    blobs.map(({ oid }) => oid),
+    true,
+  ).flatMap(({ oid, body }) =>
     secretKinds(body.toString("utf8")).map((kind) => ({ kind, oid, path: paths.get(oid) })),
   );
 
@@ -30,7 +34,9 @@ if (!process.argv.includes("--self-test-only")) {
     );
     process.exitCode = 1;
   } else {
-    process.stdout.write(`No usable private key or provider credential found in ${String(blobs.length)} reachable Git blobs.\n`);
+    process.stdout.write(
+      `No usable private key or provider credential found in ${String(blobs.length)} reachable Git blobs.\n`,
+    );
   }
 }
 
@@ -105,7 +111,11 @@ function selfTest() {
     publicKeyEncoding: { type: "spki", format: "pem" },
   });
   assert.deepEqual(secretKinds(privateKey), ["usable private key"]);
-  const invalidPem = ["-----BEGIN", " PRIVATE KEY-----\nnot-a-key\n-----END", " PRIVATE KEY-----"].join("");
+  const invalidPem = [
+    "-----BEGIN",
+    " PRIVATE KEY-----\nnot-a-key\n-----END",
+    " PRIVATE KEY-----",
+  ].join("");
   assert.deepEqual(secretKinds(invalidPem), []);
   assert.deepEqual(secretKinds(`token=${["ghp", "_", "a".repeat(36)].join("")}`), [
     "provider credential",

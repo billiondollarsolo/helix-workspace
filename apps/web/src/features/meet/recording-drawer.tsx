@@ -14,6 +14,7 @@
 import { Icons } from "@/components/icons";
 import { useEffect, useId, useRef } from "react";
 import type { MeetMeetingRecord, MeetRecordingArtifactRecord } from "./api";
+import { formatElapsed } from "./meet-call";
 
 export interface RecordingDrawerProps {
   readonly meeting: MeetMeetingRecord;
@@ -310,12 +311,7 @@ function formatDurationFromRange(start: string | null, end: string | null): stri
   const startMs = Date.parse(start);
   const endMs = Date.parse(end);
   if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs < startMs) return null;
-  const seconds = Math.round((endMs - startMs) / 1000);
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return h > 0 ? `${String(h)}:${pad(m)}:${pad(s)}` : `${String(m)}:${pad(s)}`;
+  return formatElapsed(Math.round((endMs - startMs) / 1000));
 }
 
 function formatTimestamp(iso: string | null | undefined): string {

@@ -66,10 +66,9 @@ describe("WelcomeDashboard", () => {
     });
 
     expect(container.textContent).toContain("Welcome to Helix");
-    expect(linkNamed("Try the editor")?.getAttribute("href")).toBe("/docs");
-    expect(linkNamed("Install an integration")?.getAttribute("href")).toBe("/admin");
-    expect(linkNamed("Invite your team")?.getAttribute("href")).toBe("/chat");
-    expect(linkNamed("View docs")?.getAttribute("href")).toBe("/drive");
+    expect(linkNamed("Configure your workspace")?.getAttribute("href")).toBe("/admin");
+    expect(linkNamed("Connect with your team")?.getAttribute("href")).toBe("/chat");
+    expect(linkNamed("Upload and share files")?.getAttribute("href")).toBe("/drive");
     expect(sendEvent).toHaveBeenCalledWith({ event: "viewed" });
   });
 
@@ -79,11 +78,11 @@ describe("WelcomeDashboard", () => {
       root.render(<WelcomeDashboard sendEvent={sendEvent} />);
     });
 
-    clickLink("Try the editor");
+    clickLink("Upload and share files");
 
     expect(sendEvent).toHaveBeenCalledWith({
       event: "action_clicked",
-      action: "try_editor",
+      action: "view_files",
     });
   });
 });

@@ -2,6 +2,7 @@ import { hashPassword } from "better-auth/crypto";
 import { pathToFileURL } from "node:url";
 import type postgres from "postgres";
 import { loadSeedEnv } from "../config/env.js";
+import type { Permission } from "../platform/permissions/scope-catalog.js";
 import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
 import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
@@ -42,12 +43,8 @@ const ADMIN_SCOPES = [
   "assistant.memory",
   "notifications.read",
   "notifications.write",
-  "search.read",
   "tools:read",
   "tools:write",
-  "webhooks.read",
-  "webhooks.write",
-  "admin",
   "admin.users",
   "admin.audit",
   "admin.agents",
@@ -58,10 +55,10 @@ const ADMIN_SCOPES = [
   "admin.console.read",
   "admin.console.write",
   "admin.ai",
-  // Product admin surfaces (tools gate on these; bare `admin` is not a wildcard).
+  // Product admin surfaces require explicit permissions.
   "admin.chat",
   "admin.drive",
-] as const;
+] as const satisfies readonly Permission[];
 
 const USER_SCOPES = [
   "platform.read",
@@ -83,8 +80,7 @@ const USER_SCOPES = [
   "assistant.memory",
   "notifications.read",
   "notifications.write",
-  "search.read",
-] as const;
+] as const satisfies readonly Permission[];
 
 interface LoginAccountSpec {
   readonly key: "admin" | "user";

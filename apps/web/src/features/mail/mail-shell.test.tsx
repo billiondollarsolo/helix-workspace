@@ -927,7 +927,7 @@ describe("MailShell", () => {
     });
     render();
     await flush();
-    // No fabricated rows leak through when the backend fails.
+    expect(container.textContent).toContain("Could not load mail. Select Refresh to try again.");
     expect(container.textContent).not.toContain("Q3 roadmap — final sign-off needed by Friday");
   });
 

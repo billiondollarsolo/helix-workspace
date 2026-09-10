@@ -8,6 +8,7 @@ import {
 } from "../api/actor.js";
 import { buildErrorEnvelope } from "../api/error-envelope.js";
 import { createRequestContext } from "../api/trace.js";
+import { internalApiUrl } from "../api/version.js";
 import { type AgentCredentialStore } from "../platform/auth/credentials.js";
 import type { AccessTokenStore } from "../platform/auth/oauth.js";
 import { type ToolInvocationPrincipal } from "../platform/auth/tool-invocation-principal.js";
@@ -106,7 +107,7 @@ export function installTenantApiRpsLimitHook(
   options: TenantApiRpsLimitHookOptions,
 ): void {
   app.addHook("preHandler", async (request, reply) => {
-    const path = request.url.split("?")[0] ?? request.url;
+    const path = internalApiUrl(request.url).split("?")[0] ?? request.url;
     if (path === "/api/auth" || path.startsWith("/api/auth/")) {
       return;
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { verifySecret } from "../platform/auth/oauth.js";
+import { validatedPermissions } from "../platform/permissions/scope-catalog.js";
 import { createRecordingSql as sharedRecordingSql } from "../test-support/recording-sql.js";
 import {
   DEFAULT_LOCAL_OAUTH_ACTOR_ID,
@@ -24,6 +25,7 @@ describe("seedLocalOAuth", () => {
       scopes: [...DEFAULT_LOCAL_OAUTH_SCOPES],
     });
     expect(result.sampleTokenCommand).toContain("/v1/oauth/token");
+    expect(validatedPermissions(result.scopes)).toEqual(result.scopes);
     expect(result.sampleTokenCommand).toContain("grant_type=client_credentials");
     expect(JSON.stringify(result)).not.toContain("scrypt$");
 

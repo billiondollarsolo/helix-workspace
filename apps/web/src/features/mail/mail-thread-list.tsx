@@ -687,7 +687,7 @@ export function ThreadList({
       <div className="flex-1 overflow-y-auto">
         {isError && (
           <div className="[margin:8px_16px_0] [font-size:var(--text-caption)] text-destructive">
-            Could not load mail from the server — showing offline data.
+            Could not load mail. Select Refresh to try again.
           </div>
         )}
         {isLoading && (

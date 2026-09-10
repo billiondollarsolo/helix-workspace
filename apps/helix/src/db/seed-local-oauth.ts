@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 import type postgres from "postgres";
 import { loadSeedEnv } from "../config/env.js";
 import { hashSecret } from "../platform/auth/oauth.js";
+import type { Permission } from "../platform/permissions/scope-catalog.js";
 import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
 
@@ -40,8 +41,7 @@ export const DEFAULT_LOCAL_OAUTH_SCOPES = [
   "admin.webhooks",
   "admin.config.read",
   "admin.config.write",
-  "admin.config.*",
-] as const;
+] as const satisfies readonly Permission[];
 
 export interface SeedLocalOAuthOptions {
   readonly orgId?: string;

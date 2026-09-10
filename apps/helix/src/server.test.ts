@@ -247,83 +247,82 @@ describe("default org boot verification", () => {
 });
 
 describe("tenant API RPS limiting", () => {
-  it("leaves authentication endpoints to the auth service rate limiter", async () => {
+  it.each(
+    ["/api/auth", "/api/auth/get-session", "/events/ws"].flatMap((path) => [path, `/v1${path}`]),
+  )("preserves the tenant RPS exemption for %s", async (path) => {
     const app = fastify();
     installTenantContextHook(app, {
       async resolveTenantContext() {
         return tenantContext({ orgId: "org-rps", apiRpsLimit: 1 });
       },
     });
-    installTenantApiRpsLimitHook(app, {
-      limiter: new InMemoryTenantApiRpsLimiter(),
-    });
-    app.get("/api/auth/get-session", async () => ({ authenticated: true }));
+    installTenantApiRpsLimitHook(app, { limiter: new InMemoryTenantApiRpsLimiter() });
+    app.get(path, async () => ({ ok: true }));
 
-    const first = await app.inject({ method: "GET", url: "/api/auth/get-session" });
-    const second = await app.inject({ method: "GET", url: "/api/auth/get-session?fresh=true" });
+    const first = await app.inject({ method: "GET", url: path });
+    const second = await app.inject({ method: "GET", url: `${path}?fresh=true` });
 
-    expect(first.statusCode).toBe(200);
-    expect(second.statusCode).toBe(200);
+    expect([first.statusCode, second.statusCode]).toEqual([200, 200]);
     expect(first.headers["x-helix-quota-api-rps-limit"]).toBeUndefined();
     expect(second.headers["x-helix-quota-api-rps-limit"]).toBeUndefined();
   });
 
-  it("returns quota headers and a canonical 429 when api_rps_limit is exceeded", async () => {
-    const app = fastify();
-    const events = new RecordingEventBus();
-    installTenantContextHook(app, {
-      async resolveTenantContext() {
-        return tenantContext({ orgId: "org-rps", apiRpsLimit: 1 });
-      },
-    });
-    installTenantApiRpsLimitHook(app, {
-      limiter: new InMemoryTenantApiRpsLimiter(),
-      events,
-    });
-    app.get("/api/ping", async () => ({ ok: true }));
+  it.each(["/api/ping", "/v1/api/ping", "/v1/api/auth-other", "/v1/events/ws-other"])(
+    "returns quota headers and a canonical 429 for %s when api_rps_limit is exceeded",
+    async (path) => {
+      const app = fastify();
+      const events = new RecordingEventBus();
+      installTenantContextHook(app, {
+        async resolveTenantContext() {
+          return tenantContext({ orgId: "org-rps", apiRpsLimit: 1 });
+        },
+      });
+      installTenantApiRpsLimitHook(app, { limiter: new InMemoryTenantApiRpsLimiter(), events });
+      app.get(path, async () => ({ ok: true }));
 
-    const first = await app.inject({ method: "GET", url: "/api/ping" });
-    expect(first.statusCode).toBe(200);
-    expect(first.headers["x-helix-quota-api-rps-limit"]).toBe("1");
-    expect(first.headers["x-helix-quota-api-rps-remaining"]).toBe("0");
+      const first = await app.inject({ method: "GET", url: path });
+      expect(first.statusCode).toBe(200);
+      expect(first.headers["x-helix-quota-api-rps-limit"]).toBe("1");
+      expect(first.headers["x-helix-quota-api-rps-remaining"]).toBe("0");
 
-    const second = await app.inject({ method: "GET", url: "/api/ping" });
-    expect(second.statusCode).toBe(429);
-    expect(second.headers["retry-after"]).toBe("1");
-    expect(second.headers["x-helix-quota-api-rps-limit"]).toBe("1");
-    expect(second.headers["x-helix-quota-api-rps-remaining"]).toBe("0");
-    expect(second.json()).toMatchObject({
-      error: {
-        code: "quota.api_rps.exceeded",
-        message: "Tenant API request rate limit exceeded.",
-        details: {
+      const second = await app.inject({ method: "GET", url: path });
+      expect(second.statusCode).toBe(429);
+      expect(second.headers["retry-after"]).toBe("1");
+      expect(second.headers["x-helix-quota-api-rps-limit"]).toBe("1");
+      expect(second.headers["x-helix-quota-api-rps-remaining"]).toBe("0");
+      expect(second.json()).toMatchObject({
+        error: {
+          code: "quota.api_rps.exceeded",
+          message: "Tenant API request rate limit exceeded.",
+          details: {
+            quota: "api_rps_limit",
+            limit: 1,
+            used: 1,
+            remaining: 0,
+            retryAfterSeconds: 1,
+          },
+        },
+      });
+      expect(events.records).toHaveLength(1);
+      expect(events.records[0]).toMatchObject({
+        subject: "quota.api_rps.exceeded",
+        payload: {
+          orgId: "org-rps",
           quota: "api_rps_limit",
+          surface: "http.request",
           limit: 1,
           used: 1,
           remaining: 0,
           retryAfterSeconds: 1,
+          method: "GET",
+          path: path.replace(/^\/v1/u, ""),
         },
-      },
-    });
-    expect(events.records).toHaveLength(1);
-    expect(events.records[0]).toMatchObject({
-      subject: "quota.api_rps.exceeded",
-      payload: {
-        orgId: "org-rps",
-        quota: "api_rps_limit",
-        surface: "http.request",
-        limit: 1,
-        used: 1,
-        remaining: 0,
-        retryAfterSeconds: 1,
-        method: "GET",
-        path: "/api/ping",
-      },
-    });
-    const eventPayload = asRecord(events.records[0]?.payload);
-    expect(typeof eventPayload.resetsAt).toBe("string");
-    await app.close();
-  });
+      });
+      const eventPayload = asRecord(events.records[0]?.payload);
+      expect(typeof eventPayload.resetsAt).toBe("string");
+      await app.close();
+    },
+  );
 
   it("treats null api_rps_limit as unlimited", async () => {
     const app = fastify();

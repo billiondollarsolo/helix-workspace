@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDebouncedCallback } from "@tanstack/react-pacer";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   adminUsersInfiniteQueryOptions,
   adminUsersQueryKeys,
+  createAdminUser,
+  inviteAdminUsers,
+  suspendAdminUser,
   type AdminUser,
   type AdminUsersQueryInput,
 } from "@/features/admin/admin-users";
@@ -108,14 +111,9 @@ export async function prefetchAdminDirectoryQuery(queryClient: AdminDirectoryRou
     .catch(() => undefined);
 }
 
-/* Every write path this page could offer is absent from the backend:
-   `registerAdminUsersRoutes` exposes GET /api/admin/users and nothing else,
-   and the only invite route in the tree (POST /api/signup/onboarding-invites)
-   is a SaaS signup-funnel endpoint that answers 501 in this build. So the
-   controls stay, disabled, naming the reason — rather than looking live and
-   doing nothing when clicked. */
-const READ_ONLY_REASON =
-  "The admin users API is read-only in this build — it serves the directory but has no endpoint to create, invite, or modify an account.";
+const ROLE_CHANGE_UNAVAILABLE =
+  "Changing roles is not available from this page — create or invite with Member or Admin instead.";
+const IMPORT_CSV_UNAVAILABLE = "CSV import is not available. Invite or create accounts below.";
 
 const ROLE_FILTERS = ["all", ...USER_ROLES] as const satisfies readonly RoleFilter[];
 const STATUS_FILTERS = ["all", "active", "suspended"] as const satisfies readonly StatusFilter[];
@@ -393,15 +391,84 @@ export function AdminUsers() {
   };
 
   const queryClient = useQueryClient();
+  const [inviteDraft, setInviteDraft] = useState("");
+  const [inviteMessage, setInviteMessage] = useState<string | null>(null);
+  const [createEmail, setCreateEmail] = useState("");
+  const [createName, setCreateName] = useState("");
+  const [createPassword, setCreatePassword] = useState("");
+  const [createRole, setCreateRole] = useState<"member" | "admin">("member");
+  const [createMessage, setCreateMessage] = useState<string | null>(null);
+  const [suspendMessage, setSuspendMessage] = useState<string | null>(null);
   const queryInput = useMemo(
     () => directoryQueryInput({ query, actorType: actorTypeFilter, status: statusFilter }),
     [query, actorTypeFilter, statusFilter],
   );
   const usersQuery = useInfiniteQuery(adminUsersInfiniteQueryOptions(queryInput));
-  const failure = useQueryFailure(usersQuery, () => {
+  const invalidateDirectory = useCallback(() => {
     void queryClient.invalidateQueries({
       queryKey: adminUsersQueryKeys.infinite(queryInput),
     });
+  }, [queryClient, queryInput]);
+  const failure = useQueryFailure(usersQuery, invalidateDirectory);
+
+  const inviteMutation = useMutation({
+    mutationFn: (emails: readonly string[]) => inviteAdminUsers({ emails }),
+    onMutate: () => {
+      setInviteMessage(null);
+    },
+    onSuccess: (result) => {
+      setInviteDraft("");
+      setInviteMessage(
+        result.skippedCount === 0
+          ? `Sent ${String(result.inviteCount)} invite${result.inviteCount === 1 ? "" : "s"}.`
+          : `Sent ${String(result.inviteCount)} invite${result.inviteCount === 1 ? "" : "s"}; skipped ${String(result.skippedCount)} existing account${result.skippedCount === 1 ? "" : "s"}.`,
+      );
+    },
+    onError: (error: unknown) => {
+      setInviteMessage(error instanceof Error ? error.message : "Could not send invites.");
+    },
+  });
+  const createMutation = useMutation({
+    mutationFn: () =>
+      createAdminUser({
+        email: createEmail.trim(),
+        password: createPassword,
+        ...(createName.trim().length === 0 ? {} : { displayName: createName.trim() }),
+        role: createRole,
+      }),
+    onMutate: () => {
+      setCreateMessage(null);
+    },
+    onSuccess: (user) => {
+      setCreateEmail("");
+      setCreateName("");
+      setCreatePassword("");
+      setCreateMessage(`Created ${user.displayName}.`);
+      invalidateDirectory();
+    },
+    onError: (error: unknown) => {
+      setCreateMessage(error instanceof Error ? error.message : "Could not create the user.");
+    },
+  });
+  const suspendMutation = useMutation({
+    mutationFn: async (actorIds: readonly string[]) => {
+      for (const actorId of actorIds) {
+        await suspendAdminUser(actorId);
+      }
+    },
+    onMutate: () => {
+      setSuspendMessage(null);
+    },
+    onSuccess: (_value, actorIds) => {
+      setSelected(new Set());
+      setSuspendMessage(
+        `Suspended ${String(actorIds.length)} account${actorIds.length === 1 ? "" : "s"}.`,
+      );
+      invalidateDirectory();
+    },
+    onError: (error: unknown) => {
+      setSuspendMessage(error instanceof Error ? error.message : "Could not suspend the user.");
+    },
   });
 
   const directory = useMemo<readonly DirectoryUser[]>(
@@ -846,8 +913,8 @@ export function AdminUsers() {
                 size="sm"
                 variant="outline"
                 disabled
-                title={READ_ONLY_REASON}
-                aria-describedby="users-read-only-reason"
+                title={ROLE_CHANGE_UNAVAILABLE}
+                aria-describedby="users-role-unavailable-reason"
               >
                 Change role
               </Button>
@@ -855,17 +922,20 @@ export function AdminUsers() {
                 type="button"
                 size="sm"
                 variant="destructive"
-                disabled
-                title={READ_ONLY_REASON}
-                aria-describedby="users-read-only-reason"
+                disabled={suspendMutation.isPending || selectedVisible.length === 0}
+                title="Suspend the selected accounts and revoke their sessions."
+                onClick={() => {
+                  suspendMutation.mutate(selectedVisible.map((user) => user.id));
+                }}
               >
-                Suspend
+                {suspendMutation.isPending ? "Suspending…" : "Suspend"}
               </Button>
               <span
-                id="users-read-only-reason"
+                id="users-role-unavailable-reason"
                 className="text-[var(--text-3)] [font-size:var(--text-caption)]"
               >
-                {READ_ONLY_REASON}
+                {ROLE_CHANGE_UNAVAILABLE}
+                {suspendMessage === null ? "" : ` ${suspendMessage}`}
               </span>
             </div>
           </details>
@@ -924,41 +994,112 @@ export function AdminUsers() {
         ) : null}
       </div>
 
-      {/* Account creation is not a rare action — it is simply absent from this
-          build. Keeping it visible but disabled, with the reason beside it, is
-          the honest reading; a live-looking "Invite users" button that did
-          nothing was not. */}
       <details className="mt-3">
         <summary className="cursor-pointer [font-size:var(--text-meta)]">
-          Adding accounts (unavailable in this build)
+          Invite or create accounts
         </summary>
-        <div className="row mt-2 flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled
-            title={READ_ONLY_REASON}
-            aria-describedby="users-add-reason"
+        <div className="mt-2 grid gap-3">
+          <form
+            className="row mt-2 flex-wrap items-end gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const emails = inviteDraft
+                .split(/[\s,;]+/u)
+                .map((value) => value.trim())
+                .filter((value) => value.length > 0);
+              if (emails.length === 0) {
+                setInviteMessage("Add at least one email address.");
+                return;
+              }
+              setInviteMessage(null);
+              inviteMutation.mutate(emails);
+            }}
           >
-            <Icons.Upload /> Import CSV
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled
-            title={READ_ONLY_REASON}
-            aria-describedby="users-add-reason"
+            <AdminInput
+              className="w-full max-w-[320px]"
+              value={inviteDraft}
+              onChange={(event) => setInviteDraft(event.target.value)}
+              placeholder="email@company.example, …"
+              aria-label="Emails to invite"
+            />
+            <Button type="submit" size="sm" disabled={inviteMutation.isPending}>
+              <Icons.Plus /> {inviteMutation.isPending ? "Sending…" : "Invite users"}
+            </Button>
+            {inviteMessage === null ? null : (
+              <span className="text-[var(--text-3)] [font-size:var(--text-caption)]">
+                {inviteMessage}
+              </span>
+            )}
+          </form>
+          <form
+            className="row mt-2 flex-wrap items-end gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setCreateMessage(null);
+              createMutation.mutate();
+            }}
           >
-            <Icons.Plus /> Invite users
-          </Button>
-          <span
-            id="users-add-reason"
-            className="text-[var(--text-3)] [font-size:var(--text-caption)]"
-          >
-            {READ_ONLY_REASON}
-          </span>
+            <AdminInput
+              className="w-full max-w-[220px]"
+              value={createEmail}
+              onChange={(event) => setCreateEmail(event.target.value)}
+              placeholder="email@company.example"
+              aria-label="New user email"
+              type="email"
+              required
+            />
+            <AdminInput
+              className="w-full max-w-[180px]"
+              value={createName}
+              onChange={(event) => setCreateName(event.target.value)}
+              placeholder="Display name"
+              aria-label="New user display name"
+            />
+            <AdminInput
+              className="w-full max-w-[180px]"
+              value={createPassword}
+              onChange={(event) => setCreatePassword(event.target.value)}
+              placeholder="Password (12+ characters)"
+              aria-label="New user password"
+              type="password"
+              minLength={12}
+              required
+            />
+            <AdminSelect
+              aria-label="New user role"
+              value={createRole}
+              onChange={(event) => setCreateRole(event.target.value as "member" | "admin")}
+            >
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </AdminSelect>
+            <Button type="submit" size="sm" disabled={createMutation.isPending}>
+              {createMutation.isPending ? "Creating…" : "Create user"}
+            </Button>
+            {createMessage === null ? null : (
+              <span className="text-[var(--text-3)] [font-size:var(--text-caption)]">
+                {createMessage}
+              </span>
+            )}
+          </form>
+          <div className="row mt-2 flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled
+              title={IMPORT_CSV_UNAVAILABLE}
+              aria-describedby="users-import-reason"
+            >
+              <Icons.Upload /> Import CSV
+            </Button>
+            <span
+              id="users-import-reason"
+              className="text-[var(--text-3)] [font-size:var(--text-caption)]"
+            >
+              {IMPORT_CSV_UNAVAILABLE}
+            </span>
+          </div>
         </div>
       </details>
     </PageScroll>

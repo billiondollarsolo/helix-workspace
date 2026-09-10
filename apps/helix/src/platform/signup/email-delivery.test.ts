@@ -119,6 +119,11 @@ describe("signup onboarding invite email delivery", () => {
       "Invalid signup onboarding invite email payload.",
     );
   });
+
+  it("accepts admin-sourced invite payloads for single-tenant delivery", () => {
+    const payload = invitePayload({ source: "admin" });
+    expect(parseSignupOnboardingInviteEmailPayload(payload)).toEqual(payload);
+  });
 });
 
 function payload(): SignupVerificationEmailPayload {

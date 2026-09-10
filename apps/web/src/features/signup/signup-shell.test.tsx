@@ -400,49 +400,29 @@ describe("signup invite shell", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows local email/password login before accepting an invite without a session", async () => {
+  it("shows a password join form for a single-tenant invite", async () => {
     await act(async () => {
-      root.render(
-        <SignupInviteShell
-          token="invite-token"
-          getSession={() => Promise.resolve(null)}
-          signIn={() =>
-            Promise.resolve({
-              id: "user-1",
-              email: "ada@example.com",
-              name: "Ada",
-              actorId: "actor-1",
-            })
-          }
-        />,
-      );
+      root.render(<SignupInviteShell token="invite-token" />);
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Local email/password login");
-    expect(container.textContent).toContain("Email + password");
-    expect(container.querySelector('input[type="email"]')).not.toBeNull();
+    expect(container.textContent).toContain("Join this workspace");
+    expect(container.textContent).toContain("Set a password");
     expect(container.querySelector('input[type="password"]')).not.toBeNull();
   });
 
-  it("accepts an invite after local login succeeds", async () => {
+  it("accepts an invite by setting a password", async () => {
     const fetchImpl = vi.fn<typeof fetch>((input) => {
-      if (urlForRequest(input) === "/v1/api/signup/onboarding-invite/accept") {
+      if (urlForRequest(input) === "/v1/api/invites/accept") {
         return Promise.resolve(
           Response.json({
             status: "accepted",
-            org: {
-              id: "11111111-1111-4111-8111-111111111111",
-              slug: "acme",
-              displayName: "Acme",
-              status: "active",
-              region: "default",
+            user: {
+              id: "actor-1",
+              email: "ada@example.com",
+              displayName: "Ada",
             },
-            actorId: "actor-1",
-            workspace: {
-              onboardingUrl: "https://acme.helix.example/onboarding",
-              welcomeUrl: "https://acme.helix.example/welcome",
-            },
+            org: { slug: "acme" },
           }),
         );
       }
@@ -452,48 +432,37 @@ describe("signup invite shell", () => {
     });
 
     await act(async () => {
-      root.render(
-        <SignupInviteShell
-          token="invite-token"
-          fetchImpl={fetchImpl}
-          getSession={() => Promise.resolve(null)}
-          signIn={() =>
-            Promise.resolve({
-              id: "user-1",
-              email: "ada@example.com",
-              name: "Ada",
-              actorId: "actor-1",
-            })
-          }
-        />,
-      );
+      root.render(<SignupInviteShell token="invite-token" fetchImpl={fetchImpl} />);
       await Promise.resolve();
     });
 
+    const password = container.querySelector<HTMLInputElement>('input[type="password"]');
+    if (password === null) {
+      throw new Error("Password field was not rendered.");
+    }
+    change(password, "correct-horse-battery-staple");
     const form = container.querySelector("form");
     if (form === null) {
-      throw new Error("Local login form was not rendered.");
+      throw new Error("Invite join form was not rendered.");
     }
-    await act(async () => {
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      await Promise.resolve();
-    });
+    await submitInviteForm(form);
 
     expect(fetchImpl).toHaveBeenCalledWith(
-      "/v1/api/signup/onboarding-invite/accept",
+      "/v1/api/invites/accept",
       expect.objectContaining({
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token: "invite-token" }),
+        body: JSON.stringify({
+          token: "invite-token",
+          password: "correct-horse-battery-staple",
+        }),
         signal: expect.any(AbortSignal),
       }),
     );
     expect(container.textContent).toContain("Invitation accepted");
-    expect(container.textContent).toContain("Local email/password login remains available");
-    expect(container.querySelector<HTMLAnchorElement>("a")?.getAttribute("href")).toBe(
-      "https://acme.helix.example/welcome",
-    );
+    expect(container.textContent).toContain("acme");
+    expect(container.querySelector<HTMLAnchorElement>("a")?.getAttribute("href")).toBe("/login");
   });
 
   it("retries invite acceptance after a transient backend failure", async () => {
@@ -505,45 +474,39 @@ describe("signup invite shell", () => {
       .mockResolvedValueOnce(
         Response.json({
           status: "accepted",
-          org: {
-            id: "11111111-1111-4111-8111-111111111111",
-            slug: "acme",
-            displayName: "Acme",
-            status: "active",
-            region: "default",
+          user: {
+            id: "actor-1",
+            email: "ada@example.com",
+            displayName: "Ada",
           },
-          actorId: "actor-1",
-          workspace: {
-            onboardingUrl: "https://acme.helix.example/onboarding",
-            welcomeUrl: "https://acme.helix.example/welcome",
-          },
+          org: { slug: "acme" },
         }),
       );
 
     await act(async () => {
-      root.render(
-        <SignupInviteShell
-          token="invite-token"
-          fetchImpl={fetchImpl}
-          getSession={() =>
-            Promise.resolve({
-              id: "user-1",
-              email: "ada@example.com",
-              name: "Ada",
-              actorId: "actor-1",
-            })
-          }
-        />,
-      );
-      await Promise.resolve();
+      root.render(<SignupInviteShell token="invite-token" fetchImpl={fetchImpl} />);
       await Promise.resolve();
     });
-    expect(container.textContent).toContain("Try joining again");
 
-    clickButton("Try joining again");
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const password = container.querySelector<HTMLInputElement>('input[type="password"]');
+    if (password === null) {
+      throw new Error("Password field was not rendered.");
+    }
+    change(password, "correct-horse-battery-staple");
+    const form = container.querySelector("form");
+    if (form === null) {
+      throw new Error("Invite join form was not rendered.");
+    }
+    await submitInviteForm(form);
+    expect(container.textContent).toContain("Invitation failed");
+
+    const retryPassword = container.querySelector<HTMLInputElement>('input[type="password"]');
+    const retryForm = container.querySelector("form");
+    if (retryPassword === null || retryForm === null) {
+      throw new Error("Invite join form was not re-rendered after failure.");
+    }
+    change(retryPassword, "correct-horse-battery-staple");
+    await submitInviteForm(retryForm);
 
     expect(container.textContent).toContain("Invitation accepted");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -570,6 +533,14 @@ function check(input: HTMLInputElement | undefined, checked: boolean): void {
   if (input.checked !== checked) {
     input.click();
   }
+}
+
+async function submitInviteForm(form: HTMLFormElement): Promise<void> {
+  await act(async () => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 function clickButton(name: string): void {

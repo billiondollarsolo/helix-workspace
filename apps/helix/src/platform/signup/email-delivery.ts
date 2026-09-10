@@ -14,13 +14,15 @@ export interface SignupVerificationEmailPayload extends JsonObject {
   readonly source: "signup";
 }
 
+export type InviteEmailSource = "signup" | "admin";
+
 export interface SignupOnboardingInviteEmailPayload extends JsonObject {
   readonly orgId: string;
   readonly orgSlug: string;
   readonly actorId: string;
   readonly email: string;
   readonly inviteUrl: string;
-  readonly source: "signup";
+  readonly source: InviteEmailSource;
 }
 
 export interface SignupVerificationEmailWorkerOptions {
@@ -268,7 +270,7 @@ export function parseSignupOnboardingInviteEmailPayload(
     typeof (value as { readonly actorId?: unknown }).actorId === "string" &&
     typeof (value as { readonly email?: unknown }).email === "string" &&
     typeof (value as { readonly inviteUrl?: unknown }).inviteUrl === "string" &&
-    (value as { readonly source?: unknown }).source === "signup"
+    isInviteEmailSource((value as { readonly source?: unknown }).source)
   ) {
     return {
       orgId: (value as { readonly orgId: string }).orgId,
@@ -276,10 +278,14 @@ export function parseSignupOnboardingInviteEmailPayload(
       actorId: (value as { readonly actorId: string }).actorId,
       email: (value as { readonly email: string }).email,
       inviteUrl: (value as { readonly inviteUrl: string }).inviteUrl,
-      source: "signup",
+      source: (value as { readonly source: InviteEmailSource }).source,
     };
   }
   throw new Error("Invalid signup onboarding invite email payload.");
+}
+
+function isInviteEmailSource(value: unknown): value is InviteEmailSource {
+  return value === "signup" || value === "admin";
 }
 
 function renderBrandedEmailHtml(input: {

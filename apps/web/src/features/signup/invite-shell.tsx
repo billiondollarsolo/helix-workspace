@@ -1,56 +1,52 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, Dna, Loader2, TriangleAlert } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { LocalLoginPanel } from "@/routes/login";
-import { getSessionUser, signInWithEmail, type AuthFetch, type SessionUser } from "@/lib/auth";
-import { acceptSignupOnboardingInvite, type SignupOnboardingInviteAcceptResponse } from "./api";
+import { useCallback, useState } from "react";
+import type { AuthFetch } from "@/lib/auth";
+import { acceptWorkspaceInvite, type WorkspaceInviteAcceptResponse } from "./api";
 
 interface SignupInviteShellProps {
   readonly token: string;
   readonly fetchImpl?: AuthFetch;
-  readonly getSession?: (fetchImpl?: AuthFetch) => Promise<SessionUser | null>;
-  readonly signIn?: typeof signInWithEmail;
 }
 
 type InviteState =
-  | { readonly status: "checking" }
-  | { readonly status: "sign_in" }
+  | { readonly status: "join" }
   | { readonly status: "accepting" }
-  | { readonly status: "accepted"; readonly result: SignupOnboardingInviteAcceptResponse }
+  | { readonly status: "accepted"; readonly result: WorkspaceInviteAcceptResponse }
   | { readonly status: "error"; readonly message: string };
 
-export function SignupInviteShell({
-  token,
-  fetchImpl = fetch,
-  getSession = getSessionUser,
-  signIn = signInWithEmail,
-}: SignupInviteShellProps) {
-  const [state, setState] = useState<InviteState>({ status: "checking" });
-  const acceptedTokenRef = useRef<string | null>(null);
-  const activeInviteRequestRef = useRef<AbortController | null>(null);
+export function SignupInviteShell({ token, fetchImpl = fetch }: SignupInviteShellProps) {
+  const [state, setState] = useState<InviteState>({ status: "join" });
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
 
   const acceptInvite = useCallback(
-    (nextToken: string) => {
+    (nextToken: string, nextPassword: string, nextDisplayName: string) => {
       if (nextToken.trim().length === 0) {
         setState({ status: "error", message: "This invitation link is missing its token." });
         return;
       }
-      if (acceptedTokenRef.current === nextToken) {
+      if (nextPassword.length < 12) {
+        setState({ status: "error", message: "Choose a password of at least 12 characters." });
         return;
       }
-      acceptedTokenRef.current = nextToken;
-      activeInviteRequestRef.current?.abort();
       const controller = new AbortController();
-      activeInviteRequestRef.current = controller;
       setState({ status: "accepting" });
-      void acceptSignupOnboardingInvite(nextToken, fetchImpl, { signal: controller.signal })
+      void acceptWorkspaceInvite(
+        {
+          token: nextToken,
+          password: nextPassword,
+          ...(nextDisplayName.trim().length === 0 ? {} : { displayName: nextDisplayName.trim() }),
+        },
+        fetchImpl,
+        { signal: controller.signal },
+      )
         .then((result) => {
           if (controller.signal.aborted) return;
           setState({ status: "accepted", result });
         })
         .catch((caught) => {
           if (controller.signal.aborted) return;
-          acceptedTokenRef.current = null;
           setState({
             status: "error",
             message: caught instanceof Error ? caught.message : "Invitation could not be accepted.",
@@ -59,35 +55,6 @@ export function SignupInviteShell({
     },
     [fetchImpl],
   );
-
-  useEffect(() => {
-    let active = true;
-    void getSession(fetchImpl)
-      .then((user) => {
-        if (!active) return;
-        if (user === null) {
-          setState({ status: "sign_in" });
-          return;
-        }
-        acceptInvite(token);
-      })
-      .catch(() => {
-        if (active) setState({ status: "sign_in" });
-      });
-    return () => {
-      active = false;
-      activeInviteRequestRef.current?.abort();
-    };
-  }, [acceptInvite, fetchImpl, getSession, token]);
-
-  if (state.status === "sign_in") {
-    return (
-      <LocalLoginPanel
-        signIn={(input) => signIn(input, fetchImpl)}
-        onSignedIn={() => acceptInvite(token)}
-      />
-    );
-  }
 
   return (
     <main className="auth-screen">
@@ -109,44 +76,69 @@ export function SignupInviteShell({
           <p className="auth-subtitle">{subtitleForState(state)}</p>
         </div>
 
-        {state.status === "checking" || state.status === "accepting" ? (
+        {state.status === "accepting" ? (
           <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
             <Loader2 className="auth-spinner" aria-hidden="true" />
-            <span>{state.status === "checking" ? "Checking session…" : "Joining workspace…"}</span>
+            <span>Joining workspace…</span>
           </div>
         ) : null}
 
-        {state.status === "error" ? (
-          <>
-            <p className="auth-error" role="alert">
-              {state.message}
-            </p>
-            {token.trim().length > 0 ? (
-              <button
-                className="btn primary lg auth-submit"
-                type="button"
-                onClick={() => acceptInvite(token)}
-              >
-                Try joining again
-                <ArrowRight aria-hidden="true" />
-              </button>
+        {state.status === "join" || state.status === "error" ? (
+          <form
+            className="auth-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              acceptInvite(token, password, displayName);
+            }}
+          >
+            {state.status === "error" ? (
+              <p className="auth-error" role="alert">
+                {state.message}
+              </p>
             ) : null}
-          </>
+            <label className="auth-field">
+              <span>Display name</span>
+              <input
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                autoComplete="name"
+                maxLength={120}
+              />
+            </label>
+            <label className="auth-field">
+              <span>Password</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="new-password"
+                minLength={12}
+                required
+              />
+            </label>
+            <button className="btn primary lg auth-submit" type="submit">
+              Join workspace
+              <ArrowRight aria-hidden="true" />
+            </button>
+          </form>
         ) : null}
 
         {state.status === "accepted" ? (
           <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
             <CheckCircle2 aria-hidden="true" />
             <span>
-              Workspace <strong>{state.result.org.slug}</strong> is ready.
+              Workspace{state.result.org === null ? "" : ` ${state.result.org.slug}`} is ready. Sign
+              in with the password you just set.
             </span>
           </div>
         ) : null}
 
-        <Link className="btn primary lg auth-submit" to={continuePathForState(state)}>
-          {continueLabelForState(state)}
-          <ArrowRight aria-hidden="true" />
-        </Link>
+        {state.status === "accepted" ? (
+          <Link className="btn primary lg auth-submit" to="/login">
+            Sign in
+            <ArrowRight aria-hidden="true" />
+          </Link>
+        ) : null}
       </section>
     </main>
   );
@@ -159,23 +151,15 @@ function titleForState(state: InviteState): string {
   if (state.status === "error") {
     return "Invitation failed";
   }
-  return "Joining workspace";
+  return "Join this workspace";
 }
 
 function subtitleForState(state: InviteState): string {
   if (state.status === "accepted") {
-    return `${state.result.org.displayName} is ready. Local email/password login remains available.`;
+    return "Your account is ready. Sign in with email and the password you just chose.";
   }
   if (state.status === "error") {
     return "Use the latest invitation link from your inbox.";
   }
-  return "This usually finishes in a few seconds.";
-}
-
-function continuePathForState(state: InviteState): string {
-  return state.status === "accepted" ? state.result.workspace.welcomeUrl : "/login";
-}
-
-function continueLabelForState(state: InviteState): string {
-  return state.status === "accepted" ? "Continue" : "Sign in with email/password";
+  return "Set a password to join the organization you were invited to.";
 }

@@ -95,9 +95,16 @@ export const ADMIN_CONTROL_INVENTORY: readonly AdminControlInventoryEntry[] = [
     id: "directory.users_groups",
     surface: "users_groups",
     title: "Users & groups",
-    paths: ["GET /api/admin/users", "GET/POST /api/admin/groups"],
+    paths: [
+      "GET /api/admin/users",
+      "POST /api/admin/users",
+      "POST /api/admin/users/invites",
+      "POST /api/admin/users/:actorId/suspend",
+      "GET/POST /api/admin/groups",
+    ],
     mode: "enforced",
-    notes: "Admin console scope gates; org_id scoped stores.",
+    notes:
+      "Admin console scope gates; org_id scoped stores. Invite/create/suspend are single-tenant admin APIs.",
   },
   {
     id: "domains.dns",

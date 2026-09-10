@@ -9,6 +9,8 @@ import { randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { Pool } from "pg";
 import type postgres from "postgres";
+import { ApiError } from "../../api/api-error.js";
+import { internalApiUrl } from "../../api/version.js";
 import { parseActorRoleBindings } from "../permissions/roles.js";
 import { validatedPermissions } from "../permissions/scope-catalog.js";
 import { isRecord } from "../util/json.js";
@@ -559,7 +561,10 @@ export function createBetterAuthSessionActorResolver(
             adminAction: isAdminSessionRequest(request),
           }))
         ) {
-          return null;
+          throw new ApiError(
+            "session_reauthentication_required",
+            "Your session must be verified again. Sign in again to continue.",
+          );
         }
       }
       return resolved.actor;
@@ -621,7 +626,7 @@ function isAdminSessionRequest(request: {
   readonly method?: string;
   readonly url?: string;
 }): boolean {
-  const path = request.url?.split("?", 1)[0] ?? "";
+  const path = internalApiUrl(request.url ?? "").split("?", 1)[0] ?? "";
   return (
     path === "/api/admin" ||
     path.startsWith("/api/admin/") ||

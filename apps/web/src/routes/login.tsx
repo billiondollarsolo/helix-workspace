@@ -3,6 +3,7 @@ import { Dna, Loader2, LogIn } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react";
 import {
   getSessionUser,
+  safeLoginReturnTo,
   requestPasswordReset,
   resetPassword,
   SecondFactorRequiredError,
@@ -16,10 +17,20 @@ import {
 } from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({
-  beforeLoad: async () => {
-    if ((await getSessionUser()) !== null) {
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { returnTo?: string; reauthenticate?: boolean } => ({
+    ...(typeof search.returnTo === "string"
+      ? { returnTo: safeLoginReturnTo(search.returnTo) }
+      : {}),
+    ...(search.reauthenticate === true || search.reauthenticate === "true"
+      ? { reauthenticate: true }
+      : {}),
+  }),
+  beforeLoad: async ({ search }) => {
+    if (search.reauthenticate !== true && (await getSessionUser()) !== null) {
       // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: "/mail", search: {} });
+      throw redirect({ href: safeLoginReturnTo(search.returnTo) });
     }
   },
   component: LoginRoute,
@@ -31,16 +42,25 @@ const DEMO_ACCOUNTS = [
 ] as const;
 
 function LoginRoute() {
-  const navigate = Route.useNavigate();
-  return <LocalLoginPanel onSignedIn={() => navigate({ to: "/mail", search: {} })} />;
+  const search = Route.useSearch();
+  return (
+    <LocalLoginPanel
+      reauthenticate={search.reauthenticate === true}
+      onSignedIn={() => {
+        window.location.replace(safeLoginReturnTo(search.returnTo));
+      }}
+    />
+  );
 }
 
 export interface LocalLoginPanelProps {
+  readonly reauthenticate?: boolean;
   readonly signIn?: (input: SignInInput) => Promise<SessionUser>;
   readonly onSignedIn?: (user: SessionUser) => Promise<void> | void;
 }
 
 export function LocalLoginPanel({
+  reauthenticate = false,
   signIn = signInWithEmail,
   onSignedIn,
 }: LocalLoginPanelProps = {}) {
@@ -98,6 +118,12 @@ export function LocalLoginPanel({
                   : "Complete your secure sign-in."}
           </p>
         </div>
+
+        {reauthenticate ? (
+          <p role="status" className="auth-subtitle">
+            Your session must be verified again. Sign in again to continue.
+          </p>
+        ) : null}
 
         {mode === "password" ? (
           <>

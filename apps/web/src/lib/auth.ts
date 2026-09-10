@@ -1,5 +1,6 @@
 const csrfCookieNames = ["__Host-helix_csrf", "helix_csrf"] as const;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+let redirectingForSession = false;
 export const API_VERSION_PREFIX = "/v1";
 
 export type AuthFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -48,11 +49,36 @@ export async function authenticatedFetch(
   if (!SAFE_METHODS.has((init?.method ?? "GET").toUpperCase())) {
     headers.set("x-helix-csrf-token", await browserCsrfToken());
   }
-  return fetch(versionedApiInput(input), {
+  const response = await fetch(versionedApiInput(input), {
     ...init,
     credentials: "include",
     headers,
   });
+  if (
+    response.status === 401 &&
+    typeof window !== "undefined" &&
+    window.location.pathname !== "/login" &&
+    !redirectingForSession
+  ) {
+    const output: unknown = await response
+      .clone()
+      .json()
+      .catch(() => null);
+    if (
+      isRecord(output) &&
+      isRecord(output.error) &&
+      output.error.code === "session_reauthentication_required" &&
+      !redirectingForSession
+    ) {
+      redirectingForSession = true;
+      const search = new URLSearchParams({
+        reauthenticate: "true",
+        returnTo: window.location.pathname + window.location.search + window.location.hash,
+      });
+      window.location.replace(`/login?${search.toString()}`);
+    }
+  }
+  return response;
 }
 
 /** Signs in with email + password via Better-Auth. Sets the session cookie. */
@@ -111,7 +137,7 @@ export async function signInWithOidc(
       email: normalizedEmail,
       providerType: "oidc",
       requestSignUp: false,
-      callbackURL: `${window.location.origin}/mail`,
+      callbackURL: `${window.location.origin}${safeLoginReturnTo(new URLSearchParams(window.location.search).get("returnTo"))}`,
       errorCallbackURL: `${window.location.origin}/login`,
     }),
   });
@@ -399,3 +425,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 import { passkeyClient } from "@better-auth/passkey/client";
 import { createAuthClient } from "better-auth/client";
 import { twoFactorClient } from "better-auth/client/plugins";
+
+/** Keep post-login navigation inside this app, excluding a login loop. */
+export function safeLoginReturnTo(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    value.includes("\\")
+  )
+    return "/mail";
+  const target = new URL(value, window.location.origin);
+  return target.origin === window.location.origin && target.pathname !== "/login"
+    ? target.pathname + target.search + target.hash
+    : "/mail";
+}

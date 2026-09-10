@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authenticatedFetch,
+  safeLoginReturnTo,
   getSessionUser,
   signInWithEmail,
   signInWithOidc,
@@ -17,6 +18,19 @@ describe("web auth helpers", () => {
   afterEach(() => {
     document.cookie = "helix_csrf=; Max-Age=0; Path=/";
     vi.restoreAllMocks();
+  });
+
+  it("keeps login return paths local and prevents login redirect loops", () => {
+    expect(safeLoginReturnTo("/admin?tab=users#selected")).toBe("/admin?tab=users#selected");
+    for (const value of [
+      undefined,
+      "https://evil.test",
+      "//evil.test",
+      "/\\evil.test",
+      "/login?returnTo=/admin",
+      "javascript:alert(1)",
+    ])
+      expect(safeLoginReturnTo(value)).toBe("/mail");
   });
 
   it("sends the session cookie on backend requests", async () => {

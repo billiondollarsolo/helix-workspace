@@ -3,12 +3,12 @@ import { AppShell } from "@/components/shell";
 import { getSessionUser } from "@/lib/auth";
 
 export const Route = createFileRoute("/_shell")({
-  beforeLoad: async () => {
+  beforeLoad: async ({ location }) => {
     const user = await getSessionUser();
     if (user === null) {
       // TanStack Router signals navigation by throwing a redirect.
       // eslint-disable-next-line @typescript-eslint/only-throw-error
-      throw redirect({ to: "/login" });
+      throw redirect({ to: "/login", search: { returnTo: location.href } });
     }
   },
   component: AppShell,

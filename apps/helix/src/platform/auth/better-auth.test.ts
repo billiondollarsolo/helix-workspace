@@ -255,48 +255,52 @@ describe("PostgresBetterAuthActorStore", () => {
     expect(actor?.orgId).toBe("33333333-3333-4333-8333-333333333333");
   });
 
-  it("enforces the tenant session policy on the shared actor resolution path", async () => {
-    const actorStore = new InMemoryBetterAuthActorStore();
-    const module = createBetterAuthPlatformModule({
-      actorStore,
-      defaultOrgId: "22222222-2222-4222-8222-222222222222",
-    });
-    const authorizations: unknown[] = [];
-    const verifier: BetterAuthSessionVerifier = {
-      async getSessionUser() {
-        return {
-          id: "auth-user-tenant",
-          email: "tenant@example.com",
-          name: "Tenant User",
-          emailVerified: true,
-        };
-      },
-      async getSessionToken() {
-        return "server-verified-token";
-      },
-    };
-    const resolver = createBetterAuthSessionActorResolver(module, verifier, {
-      policyAuthorizer: {
-        async authorize(input) {
-          authorizations.push(input);
-          return false;
+  it.each(["/api/admin/overview", "/v1/api/admin/overview"])(
+    "reports required reauthentication through the shared resolver (%s)",
+    async (url) => {
+      const actorStore = new InMemoryBetterAuthActorStore();
+      const module = createBetterAuthPlatformModule({
+        actorStore,
+        defaultOrgId: "22222222-2222-4222-8222-222222222222",
+      });
+      const authorizations: unknown[] = [];
+      const verifier: BetterAuthSessionVerifier = {
+        async getSessionUser() {
+          return {
+            id: "auth-user-tenant",
+            email: "tenant@example.com",
+            name: "Tenant User",
+            emailVerified: true,
+          };
         },
-      },
-    });
+        async getSessionToken() {
+          return "server-verified-token";
+        },
+      };
+      const resolver = createBetterAuthSessionActorResolver(module, verifier, {
+        policyAuthorizer: {
+          async authorize(input) {
+            authorizations.push(input);
+            return false;
+          },
+        },
+      });
 
-    await expect(
-      resolver({ headers: {}, method: "PUT", url: "/api/admin/security-policies/session" }),
-    ).resolves.toBeNull();
-    expect(authorizations).toEqual([
-      {
-        token: "server-verified-token",
-        authUserId: "auth-user-tenant",
-        orgId: "22222222-2222-4222-8222-222222222222",
-        actorId: "11111111-1111-4111-8111-111111111111",
-        adminAction: true,
-      },
-    ]);
-  });
+      await expect(resolver({ headers: {}, method: "GET", url })).rejects.toMatchObject({
+        statusCode: 401,
+        code: "session_reauthentication_required",
+      });
+      expect(authorizations).toEqual([
+        {
+          token: "server-verified-token",
+          authUserId: "auth-user-tenant",
+          orgId: "22222222-2222-4222-8222-222222222222",
+          actorId: "11111111-1111-4111-8111-111111111111",
+          adminAction: true,
+        },
+      ]);
+    },
+  );
 
   it("rejects unverified and unknown users without creating a platform actor", async () => {
     const actorStore = new InMemoryBetterAuthActorStore(false);

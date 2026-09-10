@@ -1,21 +1,21 @@
 export * from "./provider-delivery-events.js";
-import { normalizeMailboxAddress } from "./address-normalization.js";
-import {
-  ProviderWebhookPayloadError,
-  type ProviderDeliveryEventStore,
-  type ProviderDeliveryEventRecord,
-  type ProviderMailSuppressionRecord,
-  type MailDeliveryEventType,
-  type NormalizedMailDeliveryEvent,
-  type IngestMailDeliveryEventResult,
-} from "./provider-delivery-events.js";
+import type { FastifyInstance } from "fastify";
 import { Readable } from "node:stream";
 import type postgres from "postgres";
-import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { verifyWebhookSignature } from "../webhooks/signatures.js";
+import { normalizeMailboxAddress } from "./address-normalization.js";
 import type { OutboundProviderStore } from "./admin-store.js";
+import {
+  ProviderWebhookPayloadError,
+  type IngestMailDeliveryEventResult,
+  type MailDeliveryEventType,
+  type NormalizedMailDeliveryEvent,
+  type ProviderDeliveryEventRecord,
+  type ProviderDeliveryEventStore,
+  type ProviderMailSuppressionRecord,
+} from "./provider-delivery-events.js";
 
 const BODY_LIMIT = 256 * 1024;
 const rawBodies = new WeakMap<object, Buffer>();

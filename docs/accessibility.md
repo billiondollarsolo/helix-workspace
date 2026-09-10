@@ -61,11 +61,11 @@ Routes in scope:
 
 - `/`
 - `/login`
-- `/signup`
+- `/signup/invite`
+- `/signup/verify`
 - `/mail`
 - `/chat`
 - `/drive`
-- `/docs`
 - `/calendar`
 - `/meet`
 - `/assistant`

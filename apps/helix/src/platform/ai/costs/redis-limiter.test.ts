@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { aiUsdToMicros } from "./budget.js";
-import {
-  createAICostGuard,
-  type AICostWarningEvent,
-} from "./guard.js";
-import {
-  InMemoryAICostLimitStore,
-  type AICostLimitStore,
-} from "./limit-store.js";
+import { createAICostGuard, type AICostWarningEvent } from "./guard.js";
+import { InMemoryAICostLimitStore, type AICostLimitStore } from "./limit-store.js";
 import {
   RedisAICostLimiter,
   ioredisAICostClient,
@@ -258,9 +252,6 @@ class FakeRedisAICostClient implements RedisAICostClient {
   }
 
   private usage(keys: readonly string[]): unknown[] {
-    return [
-      this.#strings.get(String(keys[0])) ?? 0,
-      this.#strings.get(String(keys[1])) ?? 0,
-    ];
+    return [this.#strings.get(String(keys[0])) ?? 0, this.#strings.get(String(keys[1])) ?? 0];
   }
 }

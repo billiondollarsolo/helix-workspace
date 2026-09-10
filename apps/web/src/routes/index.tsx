@@ -1,5 +1,5 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
-import { ArrowRight, Dna, LogIn } from "lucide-react";
+import { Dna, LogIn } from "lucide-react";
 import { getSessionUser, type SessionUser } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
@@ -28,15 +28,11 @@ export function LandingPage() {
           </div>
           <h1 className="auth-title landing-title">Helix</h1>
           <p className="auth-subtitle landing-subtitle">
-            One workspace for mail, docs, drive, meetings, and governed AI.
+            One workspace for mail, file storage, chat, and governed AI.
           </p>
         </div>
 
         <div className="landing-actions">
-          <Link className="btn primary lg" to="/signup">
-            Get started free
-            <ArrowRight aria-hidden="true" />
-          </Link>
           <Link className="btn lg" to="/login">
             <LogIn aria-hidden="true" />
             Sign in

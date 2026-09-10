@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { assertTenantRlsCoverage, assertTenantSafeDatabaseRole } from "../../db/client.js";
@@ -198,6 +199,46 @@ describe("forced tenant RLS roles and schema gate", { skip: !enabled }, () => {
       await expect(assertTenantRlsCoverage(admin)).rejects.toThrow("helix_uncovered_tenant_test");
     } finally {
       await admin`drop table helix_uncovered_tenant_test`;
+    }
+  });
+
+  it("ANDs tenant isolation with actor policies and rejects a permissive substitute", async () => {
+    await admin`create table helix_tenant_boundary_test (org_id uuid, actor_id uuid)`;
+    try {
+      await admin`create policy own_rows on helix_tenant_boundary_test
+        using (actor_id = helix_current_actor_id())`;
+      await admin.unsafe(
+        await readFile(
+          new URL("../../db/migrations/0185_restrictive_tenant_boundary.sql", import.meta.url),
+          "utf8",
+        ),
+      );
+      await admin`grant select on helix_tenant_boundary_test to helix_app`;
+      await admin`insert into helix_tenant_boundary_test values
+        (${orgA}, ${actorA}), (${orgA}, ${actorB}), (${orgB}, ${actorA})`;
+      const visible = () =>
+        withTenantPostgresContext(
+          app,
+          { orgId: orgA, actorId: actorA },
+          (tx) => tx`select org_id, actor_id from helix_tenant_boundary_test order by actor_id`,
+        );
+      expect(await visible()).toEqual([{ org_id: orgA, actor_id: actorA }]);
+      await admin`create policy accidental_allow_all on helix_tenant_boundary_test using (true)`;
+      expect(await visible()).toEqual([
+        { org_id: orgA, actor_id: actorA },
+        { org_id: orgA, actor_id: actorB },
+      ]);
+      await admin`drop policy helix_tenant_boundary on helix_tenant_boundary_test`;
+      await admin`create policy helix_tenant_boundary on helix_tenant_boundary_test
+        using (org_id = helix_current_org_id()) with check (org_id = helix_current_org_id())`;
+      await expect(assertTenantRlsCoverage(app)).rejects.toThrow("helix_tenant_boundary_test");
+      await admin`drop policy helix_tenant_boundary on helix_tenant_boundary_test`;
+      await admin`create policy helix_tenant_boundary on helix_tenant_boundary_test as restrictive
+        using (org_id = helix_current_org_id() or true)
+        with check (org_id = helix_current_org_id())`;
+      await expect(assertTenantRlsCoverage(app)).rejects.toThrow("helix_tenant_boundary_test");
+    } finally {
+      await admin`drop table helix_tenant_boundary_test`;
     }
   });
 

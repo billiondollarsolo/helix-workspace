@@ -1,6 +1,6 @@
+import type { MeteringClient, MeteringEmitInput, MeteringEvent, TraceContext } from "@helix/sdk";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import type { MeteringClient, MeteringEmitInput, MeteringEvent, TraceContext } from "@helix/sdk";
 import {
   ImmutableS3AuditShipper,
   createHmacAuditAnchorAuthenticator,

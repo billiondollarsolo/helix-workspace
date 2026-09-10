@@ -1,3 +1,4 @@
+import { createLegacyTestDatabase } from "../../test-support/legacy-database.js";
 /* Executes 0087 against a live database.
  *
  * The risk here is silent de-verification: a domain an operator proved and put
@@ -8,19 +9,20 @@
  * Gated on DATABASE_URL, matching the other live-Postgres suites in this repo. */
 
 import { readFile } from "node:fs/promises";
-import postgres from "postgres";
+import type postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
+import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 
 const migrationUrl = new URL("./0087_domain_ownership_proof.sql", import.meta.url);
 const rollbackUrl = new URL("./rollbacks/0087_domain_ownership_proof.sql", import.meta.url);
 const live = describe.skipIf(skipUnlessLiveDatabase("migration 0087 domain ownership proof"));
 
 live("0087 domain ownership proof", () => {
-  const schema = "helix_0087_ownership_test";
+  const schema = "public";
   const orgA = "87000000-0000-4000-8000-0000000000a0";
   const proofHash = "a".repeat(64);
   let sql: postgres.Sql;
+  let fixtureDatabase: Awaited<ReturnType<typeof createLegacyTestDatabase>>;
 
   async function buildFixture(): Promise<void> {
     await sql.unsafe(`drop schema if exists ${schema} cascade`);
@@ -91,13 +93,14 @@ live("0087 domain ownership proof", () => {
   }
 
   beforeAll(async () => {
-    sql = postgres(process.env.DATABASE_URL ?? "", { max: 1, onnotice: () => undefined });
+    fixtureDatabase = await createLegacyTestDatabase();
+    sql = fixtureDatabase.sql;
     await buildFixture();
   });
 
   afterAll(async () => {
     await sql.unsafe(`drop schema if exists ${schema} cascade`);
-    await sql.end();
+    await fixtureDatabase.close();
   });
 
   it("keeps a proven domain proven", async () => {

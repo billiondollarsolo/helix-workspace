@@ -17,8 +17,8 @@ import { join, resolve } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-export const RPO_RTO_CONTRACT_SCHEMA = "helix.rpo-rto-contract.v1";
-export const BACKUP_MANIFEST_SCHEMA = "helix.backup-manifest.v3";
+const RPO_RTO_CONTRACT_SCHEMA = "helix.rpo-rto-contract.v1";
+const BACKUP_MANIFEST_SCHEMA = "helix.backup-manifest.v3";
 export const RESTORE_DRILL_EVIDENCE_SCHEMA = "helix.restore-drill-evidence.v1";
 
 /** Business pilot targets from ADR-0006 (engineering objectives, not SLA). */
@@ -50,7 +50,7 @@ if (isMain()) {
 export function engineeringContract() {
   return {
     schema: RPO_RTO_CONTRACT_SCHEMA,
-    source: "docs/architecture/adr-0006-business-pilot-recovery-targets.md",
+    source: "docs/adr/adr-0006-business-pilot-recovery-targets.md",
     documentation: "docs/architecture/ha-rpo-rto.md",
     availabilityObjectiveMonthly: 0.995,
     rpoTargetHours: DEFAULT_RPO_HOURS,
@@ -126,7 +126,7 @@ export function parseArgs(argv) {
   return options;
 }
 
-export async function runCheck(options) {
+async function runCheck(options) {
   if (options.mode === "contract") {
     return { status: "passed", contract: engineeringContract() };
   }

@@ -1,5 +1,7 @@
-import type postgres from "postgres";
 import type { MeteringClient } from "@helix/sdk";
+import type postgres from "postgres";
+import { reconcileAuditAnchors, storageClientAuditAnchorArchive } from "./anchor-reconciler.js";
+import { PostgresWormAuditShipper } from "./immutable-postgres.js";
 import {
   shipImmutableAuditBatch,
   type AuditAnchorSigner,
@@ -8,14 +10,12 @@ import {
   type ImmutableAuditStorageClient,
 } from "./immutable-s3.js";
 import type { AuditBatchShipper } from "./shipping-worker.js";
-import { PostgresWormAuditShipper } from "./immutable-postgres.js";
+import type { SiemAuditFormat } from "./siem-format.js";
 import {
   SiemAuditShipper,
   type SiemSyslogTlsOptions,
   type SiemSyslogTransport,
 } from "./siem-syslog.js";
-import type { SiemAuditFormat } from "./siem-format.js";
-import { reconcileAuditAnchors, storageClientAuditAnchorArchive } from "./anchor-reconciler.js";
 import type { AuditVerificationStore } from "./verifier.js";
 
 /**
@@ -70,7 +70,7 @@ import type { AuditVerificationStore } from "./verifier.js";
 
 export type AuditDestinationKind = "immutable-s3" | "siem-syslog" | "audit-immutable-postgres";
 
-export interface ImmutableS3AuditDestinationConfig {
+interface ImmutableS3AuditDestinationConfig {
   readonly destination: "immutable-s3";
   readonly batchSize?: number;
   readonly intervalMs?: number;
@@ -84,7 +84,7 @@ export interface ImmutableS3AuditDestinationConfig {
   readonly retentionDays?: number;
 }
 
-export interface SiemSyslogAuditDestinationConfig {
+interface SiemSyslogAuditDestinationConfig {
   readonly destination: "siem-syslog";
   readonly batchSize?: number;
   readonly intervalMs?: number;
@@ -98,7 +98,7 @@ export interface SiemSyslogAuditDestinationConfig {
   readonly tls?: SiemSyslogTlsOptions;
 }
 
-export interface WormPostgresAuditDestinationConfig {
+interface WormPostgresAuditDestinationConfig {
   readonly destination: "audit-immutable-postgres";
   readonly batchSize?: number;
   readonly intervalMs?: number;

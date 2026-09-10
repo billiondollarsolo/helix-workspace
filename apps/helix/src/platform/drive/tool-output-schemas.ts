@@ -1,16 +1,16 @@
-import { z } from "zod";
 import {
   driveAccessGrantSchema,
-  driveCommentSchema,
   driveCommentRevisionSchema,
-  driveEntrySchema,
+  driveCommentSchema,
   driveEntryPageSchema,
+  driveEntrySchema,
   driveSearchHitSchema,
   driveShareLinkSchema,
   driveUploadResultSchema,
   driveUploadStatusSchema,
   driveVersionSchema,
 } from "@helix/contracts";
+import { z } from "zod";
 export const driveCreateOutputSchema = driveEntrySchema;
 export const driveUploadOutputSchema = driveUploadResultSchema;
 export const driveUploadStatusOutputSchema = driveUploadStatusSchema;
@@ -34,7 +34,6 @@ export const driveAccessUpdateOutputSchema = z.object({
 });
 /** move / star / trash / restore / rename return a serialized entry (handlers throw if missing). */
 export const driveEntryOutputSchema = driveEntrySchema;
-export const driveEntryOrNullOutputSchema = driveEntrySchema.nullable();
 export const driveDeleteOutputSchema = z.object({ deleted: z.boolean() });
 export const driveSearchOutputSchema = z.object({ hits: driveSearchHitSchema.array() });
 export const driveCommentOutputSchema = driveCommentSchema;

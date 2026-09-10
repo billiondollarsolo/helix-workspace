@@ -1,12 +1,12 @@
-import { randomUUID } from "node:crypto";
 import { Redis } from "ioredis";
+import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
-import { NatsEventBus } from "../events/nats-event-bus.js";
-import { CerbosToolAccessPolicy } from "../permissions/tool-access.js";
 import { createClamAvVirusScanner } from "../drive/scanning.js";
+import { NatsEventBus } from "../events/nats-event-bus.js";
 import { SpamdScanner } from "../mail/spam.js";
-import { MeilisearchSearchEngine } from "../search/meilisearch.js";
+import { CerbosToolAccessPolicy } from "../permissions/tool-access.js";
 import { createMeilisearchHttpClient } from "../search/meilisearch-http.js";
+import { MeilisearchSearchEngine } from "../search/meilisearch.js";
 
 const enabled = process.env.HELIX_REAL_SERVICES_INTEGRATION === "1";
 const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:28433";

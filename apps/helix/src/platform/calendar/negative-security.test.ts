@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { PostgresCalendarStore } from "./store.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
@@ -78,25 +78,15 @@ describe("Calendar negative-security / tenant isolation (CAL.2 / CAL.11)", () =>
     expect(recording.values.some((values) => values.includes(orgId))).toBe(true);
   });
 });
-
-function recordingSql(responses: readonly unknown[][]): {
-  readonly sql: postgres.Sql;
-  readonly calls: string[];
-  readonly values: unknown[][];
-} {
-  const calls: string[] = [];
-  const values: unknown[][] = [];
-  let responseIndex = 0;
-  const tag = (async (strings: TemplateStringsArray, ...params: unknown[]) => {
-    calls.push(strings.join("?"));
-    values.push(params);
-    return responses[responseIndex++] ?? [];
-  }) as unknown as postgres.Sql;
-  Object.assign(tag, {
-    array: (items: readonly unknown[]) => items,
-    json: (value: unknown) => value,
-    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) =>
-      callback(tag as unknown as postgres.TransactionSql),
-  });
-  return { sql: tag, calls, values };
+function recordingSql(responses: readonly unknown[]) {
+  const recording = sharedRecordingSql(responses, "?");
+  return {
+    sql: recording.sql,
+    get calls() {
+      return recording.queries;
+    },
+    get values() {
+      return recording.values;
+    },
+  };
 }

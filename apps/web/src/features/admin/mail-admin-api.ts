@@ -78,8 +78,7 @@ export interface PatchMailProviderInput {
 // Canonical mail domains + DKIM
 // ---------------------------------------------------------------------------
 
-export const DKIM_KEY_STATES = ["active", "retiring", "retired"] as const;
-export type DkimKeyState = (typeof DKIM_KEY_STATES)[number];
+const DKIM_KEY_STATES = ["active", "retiring", "retired"] as const;
 
 const dkimKeySchema = z.object({
   id: z.string(),
@@ -99,8 +98,6 @@ const mailDomainSchema = z.object({
   providerId: z.string().nullable(),
   dkimKeys: z.array(dkimKeySchema),
 });
-
-export type MailDomain = z.infer<typeof mailDomainSchema>;
 
 const mailDomainsResponseSchema = z.object({
   domains: z.array(mailDomainSchema),
@@ -123,8 +120,6 @@ const dmarcReportSchema = z.object({
   failCount: z.number().int(),
 });
 
-export type DmarcReport = z.infer<typeof dmarcReportSchema>;
-
 const deliverabilitySchema = z.object({
   /** 0-1 pass fraction across the reporting window. */
   dmarcPassRate: z.number(),
@@ -133,8 +128,6 @@ const deliverabilitySchema = z.object({
   messagesEvaluated: z.number().int(),
   windowDays: z.number().int(),
 });
-
-export type Deliverability = z.infer<typeof deliverabilitySchema>;
 
 const dmarcResponseSchema = z.object({
   summary: deliverabilitySchema.nullable(),

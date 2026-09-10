@@ -9,11 +9,7 @@ export interface FeatureFlagEvaluationContext {
 
 export interface FeatureFlagProvider {
   get<T>(key: string, defaultValue: T, context?: FeatureFlagEvaluationContext): T;
-  getAsync<T>(
-    key: string,
-    defaultValue: T,
-    context?: FeatureFlagEvaluationContext,
-  ): Promise<T>;
+  getAsync<T>(key: string, defaultValue: T, context?: FeatureFlagEvaluationContext): Promise<T>;
 }
 
 export class FeatureFlagClient implements FeatureFlagProvider {
@@ -31,11 +27,7 @@ export class FeatureFlagClient implements FeatureFlagProvider {
     return this.#provider.get(key, defaultValue, context);
   }
 
-  getAsync<T>(
-    key: string,
-    defaultValue: T,
-    context?: FeatureFlagEvaluationContext,
-  ): Promise<T> {
+  getAsync<T>(key: string, defaultValue: T, context?: FeatureFlagEvaluationContext): Promise<T> {
     return this.#provider.getAsync(key, defaultValue, context);
   }
 }

@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import type postgres from "postgres";
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { createHash, randomUUID } from "node:crypto";
+import type postgres from "postgres";
 import { z } from "zod";
 import {
   adminConsoleReadScope,
@@ -17,7 +17,7 @@ import { canonicalJson } from "../audit/hash.js";
 import type { TenantStorageResolver } from "../storage/index.js";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 
-export const governanceProducts = [
+const governanceProducts = [
   "all",
   "mail",
   "chat",

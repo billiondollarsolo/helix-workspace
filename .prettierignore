@@ -31,3 +31,6 @@
 
 # Non-source metadata with no Prettier parser.
 /.github/CODEOWNERS
+
+# Generated Vitest CI reports are uploaded as artifacts.
+**/vitest-results.json

@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { computeAuditHash } from "./hash.js";
+import type { AuditVerificationRecord } from "./verifier.js";
 import {
   AuditVerifierWorker,
   type AuditVerifierLease,
   type AuditVerifierLeaseHandle,
   type AuditVerifierStore,
 } from "./worker.js";
-import type { AuditVerificationRecord } from "./verifier.js";
 
 describe("AuditVerifierWorker", () => {
   it("verifies every org and reports hash-chain failures", async () => {
@@ -19,7 +19,10 @@ describe("AuditVerifierWorker", () => {
     ]);
     const store = new InMemoryAuditVerifierStore({
       "org-a": orgARecords,
-      "org-b": [requireRecord(orgBRecords, 0), { ...requireRecord(orgBRecords, 1), prevHash: "bad" }],
+      "org-b": [
+        requireRecord(orgBRecords, 0),
+        { ...requireRecord(orgBRecords, 1), prevHash: "bad" },
+      ],
     });
     const worker = new AuditVerifierWorker({
       store,
@@ -43,7 +46,9 @@ describe("AuditVerifierWorker", () => {
 
   it("reports per-org verifier exceptions without aborting the daily run", async () => {
     const store = new InMemoryAuditVerifierStore({
-      "org-a": buildChain([auditRecord("record-a-1", "2026-05-20T00:00:00.000Z", "object.created")]),
+      "org-a": buildChain([
+        auditRecord("record-a-1", "2026-05-20T00:00:00.000Z", "object.created"),
+      ]),
       "org-b": new Error("database read failed"),
     });
     const worker = new AuditVerifierWorker({
@@ -119,7 +124,9 @@ describe("AuditVerifierWorker", () => {
       vi.useRealTimers();
     }
 
-    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "org listing failed" }));
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "org listing failed" }),
+    );
     expect(onResult).not.toHaveBeenCalled();
   });
 });

@@ -1,45 +1,13 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import { PostgresGroupsStore } from "./groups.js";
-import { PostgresSecurityPoliciesStore } from "./security-policies.js";
-import { PostgresOAuthAppsStore } from "./oauth-apps.js";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import { PostgresBillingStore } from "./billing.js";
 import { PostgresDomainsStore } from "./domains.js";
-
-/**
- * Query-shape tests for the admin-console Postgres stores. These use the same
- * `createRecordingSql` mock the rest of the platform uses: they assert that
- * each store issues org-scoped, correctly-shaped SQL without needing a live
- * database. Behavioral coverage lives in the in-memory store tests.
- */
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
+import { PostgresGroupsStore } from "./groups.js";
+import { PostgresOAuthAppsStore } from "./oauth-apps.js";
+import { PostgresSecurityPoliciesStore } from "./security-policies.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const actorId = "11111111-1111-4111-8111-111111111111";
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  let callIndex = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
-    return Promise.resolve(responses[callIndex++] ?? []);
-  };
-  const helpers = {
-    json: (value: unknown) => value,
-    array: (value: unknown) => value,
-  };
-  const sql = Object.assign(tag, helpers, {
-    begin: async <T>(callback: (tx: typeof tag) => Promise<T>) => callback(tag),
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}
 
 describe("PostgresGroupsStore", () => {
   it("lists org units scoped to the org with member and child counts", async () => {

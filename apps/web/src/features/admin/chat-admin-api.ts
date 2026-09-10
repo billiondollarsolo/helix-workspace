@@ -20,12 +20,10 @@ import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /** Platform defaults when no `chat_retention_policies` row exists for the org. */
 export const CHAT_PLATFORM_DEFAULT_RETENTION_DAYS = 2555;
-export const CHAT_PLATFORM_DEFAULT_EDIT_WINDOW_SECONDS = 86_400;
-export const CHAT_PLATFORM_DEFAULT_DELETE_WINDOW_SECONDS = 86_400;
 
 const uuidSchema = z.string().uuid();
 
-export const chatRetentionPolicyViewSchema = z.object({
+const chatRetentionPolicyViewSchema = z.object({
   orgId: uuidSchema,
   roomId: uuidSchema.nullable(),
   retentionDays: z.number().int().min(1).max(36_500),
@@ -38,7 +36,7 @@ export const chatRetentionPolicyViewSchema = z.object({
 
 export type ChatRetentionPolicyView = z.infer<typeof chatRetentionPolicyViewSchema>;
 
-export const chatRetentionPolicyResultSchema = z.object({
+const chatRetentionPolicyResultSchema = z.object({
   orgId: uuidSchema,
   roomId: uuidSchema.nullable(),
   retentionDays: z.number().int(),
@@ -50,7 +48,7 @@ export const chatRetentionPolicyResultSchema = z.object({
 
 export type ChatRetentionPolicyResult = z.infer<typeof chatRetentionPolicyResultSchema>;
 
-export const chatExportMessageSchema = z.object({
+const chatExportMessageSchema = z.object({
   id: uuidSchema,
   roomId: uuidSchema,
   actorId: uuidSchema.nullable(),
@@ -61,7 +59,7 @@ export const chatExportMessageSchema = z.object({
   deletedAt: z.string().nullable(),
 });
 
-export const chatExportResultSchema = z.object({
+const chatExportResultSchema = z.object({
   exportId: uuidSchema,
   orgId: uuidSchema,
   generatedAt: z.string(),

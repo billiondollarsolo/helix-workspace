@@ -1,11 +1,11 @@
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
+import { createTemplateContext, renderTemplateString } from "./template.js";
 import type {
   JsonObject,
   JsonValue,
   OutboundWebhookEvent,
   RenderedWebhookRequest,
-  WebhookFormatAdapter,
 } from "./types.js";
-import { createTemplateContext, renderTemplateString } from "./template.js";
 
 export interface SlackWebhookConfig {
   readonly textTemplate?: string;
@@ -14,17 +14,12 @@ export interface SlackWebhookConfig {
   readonly iconEmoji?: string;
 }
 
-export interface SlackWebhookPayload extends JsonObject {
+interface SlackWebhookPayload extends JsonObject {
   readonly text: string;
   readonly blocks?: readonly JsonObject[];
   readonly username?: string;
   readonly icon_emoji?: string;
 }
-
-export const slackWebhookFormat: WebhookFormatAdapter<SlackWebhookConfig> = {
-  id: "slack",
-  render: renderSlackWebhookPayload,
-};
 
 export function renderSlackWebhookPayload(
   event: OutboundWebhookEvent,
@@ -89,8 +84,4 @@ function summarizePayload(payload: JsonValue): readonly JsonObject[] {
         : [];
     })
     .slice(0, 6);
-}
-
-function isJsonObject(value: JsonValue): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -35,10 +35,7 @@ const FIPS_APPROVED_HASHES: ReadonlySet<string> = new Set([
  * remains FIPS-approved inside HMAC (NIST SP 800-107) even though it is
  * disallowed as a standalone digest.
  */
-const FIPS_APPROVED_KEYED_HASHES: ReadonlySet<string> = new Set([
-  ...FIPS_APPROVED_HASHES,
-  "sha1",
-]);
+const FIPS_APPROVED_KEYED_HASHES: ReadonlySet<string> = new Set([...FIPS_APPROVED_HASHES, "sha1"]);
 
 /**
  * Explicitly disallowed algorithm tokens. Surfaced for clear error messages
@@ -58,7 +55,7 @@ const NEVER_APPROVED: ReadonlySet<string> = new Set([
 const FIPS_APPROVED_KDFS: ReadonlySet<string> = new Set(["pbkdf2", "hkdf"]);
 
 /** Normalize an algorithm name to the lowercase form used for lookups. */
-export function normalizeAlgorithm(name: string): string {
+function normalizeAlgorithm(name: string): string {
   return name.trim().toLowerCase();
 }
 
@@ -123,6 +120,3 @@ export const FIPS_MIN_PBKDF2_ITERATIONS = 10_000;
 
 /** The minimum derived-key / random-byte length (bits) accepted under FIPS. */
 export const FIPS_MIN_KEY_BITS = 112;
-
-/** Exposed for tests and diagnostics. */
-export const FIPS_APPROVED_HASH_LIST: readonly string[] = [...FIPS_APPROVED_HASHES].sort();

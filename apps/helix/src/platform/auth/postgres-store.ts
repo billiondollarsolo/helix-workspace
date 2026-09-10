@@ -1,5 +1,22 @@
 import type postgres from "postgres";
 import { sha256Hex } from "../crypto/index.js";
+import { parseActorRoleBindings } from "../permissions/roles.js";
+import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
+import type { AuthorizationCodeRecord, AuthorizationCodeStore } from "./authorization-code.js";
+import type {
+  AgentAutomationPolicy,
+  AgentCredentialInventoryRecord,
+  AgentCredentialLifecycleStore,
+  AgentCredentialPolicy,
+  AgentCredentialRecord,
+  AgentCredentialType,
+  AllowedHoursWindow,
+  ConfirmationOverride,
+  IssueAgentCredentialInput,
+  RateLimitOverrides,
+  RotateAgentCredentialInput,
+} from "./credentials.js";
+import { EMPTY_CREDENTIAL_POLICY } from "./credentials.js";
 import type {
   AccessTokenRecord,
   OAuthClientCreateInput,
@@ -11,23 +28,6 @@ import type {
   RefreshTokenRotationResult,
   StoredAccessTokenRecord,
 } from "./oauth.js";
-import type { AuthorizationCodeRecord, AuthorizationCodeStore } from "./authorization-code.js";
-import type {
-  AgentCredentialInventoryRecord,
-  AgentCredentialLifecycleStore,
-  AgentAutomationPolicy,
-  AgentCredentialPolicy,
-  AgentCredentialRecord,
-  AgentCredentialType,
-  AllowedHoursWindow,
-  ConfirmationOverride,
-  IssueAgentCredentialInput,
-  RateLimitOverrides,
-  RotateAgentCredentialInput,
-} from "./credentials.js";
-import { EMPTY_CREDENTIAL_POLICY } from "./credentials.js";
-import { parseActorRoleBindings } from "../permissions/roles.js";
-import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 
 interface OAuthClientRow {
   readonly client_id: string;

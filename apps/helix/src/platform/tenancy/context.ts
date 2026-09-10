@@ -35,7 +35,7 @@ export interface TenantResolutionOptions {
   readonly deploymentRegion?: string;
 }
 
-export interface TenantDomainResolver {
+interface TenantDomainResolver {
   findVerifiedOrgId(hostname: string): Promise<string | null>;
 }
 

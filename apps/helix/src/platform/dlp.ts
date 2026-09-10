@@ -2,6 +2,7 @@ import type { Actor } from "@helix/sdk-types";
 import type { SecurityPoliciesStore, SecurityPolicyRecord } from "./admin/security-policies.js";
 import type { DataClassification, ResourceClassificationService } from "./ai/index.js";
 import { sensitivityLabelFor } from "./ai/index.js";
+import { stringArray } from "./util/strings.js";
 
 export const dlpBoundaries = [
   "mail_send",
@@ -16,10 +17,10 @@ export const dlpBoundaries = [
 ] as const;
 
 export type DlpBoundary = (typeof dlpBoundaries)[number];
-export type DlpDetector = "pii" | "credentials" | "credit_card" | "source_code";
+type DlpDetector = "pii" | "credentials" | "credit_card" | "source_code";
 export type DlpAction = "allow" | "audit" | "warn" | "quarantine" | "block";
 
-export interface DlpResourceRef {
+interface DlpResourceRef {
   readonly resourceType: string;
   readonly resourceId: string;
 }
@@ -35,7 +36,7 @@ export interface DlpEvaluationInput {
   readonly traceId?: string;
 }
 
-export interface DlpFinding {
+interface DlpFinding {
   readonly detector: DlpDetector | "classification" | "scan_limit";
   readonly classification: "confidential" | "restricted";
 }
@@ -368,15 +369,9 @@ export function dlpToolInvocation(
 }
 
 function resourceRefs(toolId: string, input: Record<string, unknown>): DlpResourceRef[] {
-  const candidates: readonly [string, string][] = toolId.startsWith("docs.")
-    ? [["drive.file", "docId"]]
-    : toolId.startsWith("sheets.")
-      ? [["drive.file", "sheetId"]]
-      : toolId.startsWith("slides.")
-        ? [["drive.file", "deckId"]]
-        : toolId.startsWith("drive.")
-          ? [["drive.file", "objectId"]]
-          : [];
+  const candidates: readonly [string, string][] = toolId.startsWith("drive.")
+    ? [["drive.file", "objectId"]]
+    : [];
   return candidates.flatMap(([resourceType, key]) =>
     typeof input[key] === "string" ? [{ resourceType, resourceId: input[key] }] : [],
   );
@@ -397,12 +392,6 @@ function objectInput(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
 }
 
 export function dlpDecisionError(decision: DlpDecision): Error & { readonly statusCode: number } {

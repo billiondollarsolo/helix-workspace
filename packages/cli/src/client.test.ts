@@ -179,7 +179,7 @@ describe("buildHelixRequest", () => {
     });
   });
 
-  it("builds OAuth token and install tool requests", () => {
+  it("builds OAuth token requests", () => {
     expect(
       buildHelixRequest(
         {
@@ -199,57 +199,6 @@ describe("buildHelixRequest", () => {
           "content-type": "application/x-www-form-urlencoded",
         },
         body: "grant_type=client_credentials&client_id=agent-1&client_secret=secret&scope=tools%3Aread+admin.webhooks",
-      },
-    });
-
-    expect(
-      buildHelixRequest(
-        { kind: "install-plugin", pluginId: "com.helix.core.mail", json: { source: "empty" } },
-        { HELIX_BASE_URL: "https://helix.example" },
-        { version: "1.0.0" },
-      ),
-    ).toMatchObject({
-      url: "https://helix.example/v1/api/tools/plugin.install",
-      init: {
-        method: "POST",
-        body: '{"version":"1.0.0","pluginId":"com.helix.core.mail"}',
-      },
-    });
-
-    expect(
-      buildHelixRequest(
-        {
-          kind: "install-plugin",
-          pluginId: "com.helix.core.mail",
-          version: "1.2.3",
-          json: { source: "empty" },
-        },
-        { HELIX_BASE_URL: "https://helix.example" },
-      ),
-    ).toMatchObject({
-      url: "https://helix.example/v1/api/tools/plugin.install",
-      init: {
-        method: "POST",
-        body: '{"pluginId":"com.helix.core.mail","version":"1.2.3"}',
-      },
-    });
-
-    expect(
-      buildHelixRequest(
-        {
-          kind: "plugin-lifecycle",
-          action: "disable",
-          pluginId: "com.helix.core.mail",
-          json: { source: "empty" },
-        },
-        { HELIX_BASE_URL: "https://helix.example" },
-        { reason: "maintenance" },
-      ),
-    ).toMatchObject({
-      url: "https://helix.example/v1/api/tools/plugin.disable",
-      init: {
-        method: "POST",
-        body: '{"reason":"maintenance","pluginId":"com.helix.core.mail"}',
       },
     });
   });

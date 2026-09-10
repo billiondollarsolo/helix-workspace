@@ -9,7 +9,7 @@
 2. Negative security matrix executed for tenant isolation.
 3. Packaging profile decision recorded:
    - MVP: `HELIX_WORKSPACE_PROFILE=mvp` (default), `HELIX_APPS=mail,drive,chat,assistant`
-   - Full Workspace: `HELIX_WORKSPACE_PROFILE=full` only after domain gates + Meet/Jitsi + ClamAV + editors pin
+   - Full Workspace: `HELIX_WORKSPACE_PROFILE=full` only after domain gates + Meet/Jitsi + ClamAV
 4. HA RPO/RTO targets understood (`docs/architecture/ha-rpo-rto.md`).
 
 ## R0 — Staging promote
@@ -37,5 +37,5 @@
 ## Rollback
 
 Set `HELIX_WORKSPACE_PROFILE=mvp`, `HELIX_APPS=mail,drive,chat,assistant`,
-`HELIX_EDITORS_MIGRATIONS_ENABLED=false`, modules calendar/meet/docs/editors disabled,
+modules calendar/meet disabled,
 `VITE_HELIX_MVP_ONLY=true`. Redeploy previous digests.

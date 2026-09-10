@@ -1,8 +1,11 @@
+import { hashPassword } from "better-auth/crypto";
+import type { StorageClient } from "@helix/sdk-types";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
-import { hashPassword } from "@better-auth/utils/password";
 import type postgres from "postgres";
-import type { StorageClient } from "@helix/sdk-types";
+import { loadSeedEnv } from "../config/env.js";
+import { createS3CompatibleStorage } from "../platform/storage/index.js";
+import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
 import {
   DEFAULT_LOCAL_OAUTH_ACTOR_ID,
@@ -12,8 +15,6 @@ import {
   seedLocalOAuth,
   type SeedLocalOAuthResult,
 } from "./seed-local-oauth.js";
-import { createS3CompatibleStorage } from "../platform/storage/index.js";
-import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 
 export const LOCAL_DEMO_SOURCE = "local-demo";
 export const LOCAL_DEMO_VOLUME_SOURCE = "local-demo-volume";
@@ -168,7 +169,7 @@ export async function seedLocalDemo(
   const email = options.email ?? DEFAULT_LOCAL_OAUTH_EMAIL;
   const displayName = options.displayName ?? DEFAULT_LOCAL_OAUTH_DISPLAY_NAME;
   const password =
-    options.password ?? process.env.HELIX_LOCAL_DEMO_PASSWORD ?? DEFAULT_LOCAL_DEMO_PASSWORD;
+    options.password ?? loadSeedEnv().HELIX_LOCAL_DEMO_PASSWORD ?? DEFAULT_LOCAL_DEMO_PASSWORD;
   const timeline = createDemoTimeline(options.anchorDate);
   const storage = options.storage ?? createLocalDemoStorageFromEnv();
   const volumeMailMessages = normalizeVolumeMailCount(options.volumeSearch?.mailMessages);
@@ -1165,17 +1166,17 @@ async function putDemoStorageObject(
 }
 
 function createLocalDemoStorageFromEnv(): DemoStorageClient | undefined {
-  const endpoint = process.env.RUSTFS_ENDPOINT;
+  const endpoint = loadSeedEnv().RUSTFS_ENDPOINT;
   if (endpoint === undefined || endpoint.length === 0) {
     return undefined;
   }
   return createS3CompatibleStorage({
     endpoint,
-    region: process.env.RUSTFS_REGION ?? "us-east-1",
-    bucket: process.env.RUSTFS_BUCKET ?? "helix-objects",
+    region: loadSeedEnv().RUSTFS_REGION ?? "us-east-1",
+    bucket: loadSeedEnv().RUSTFS_BUCKET ?? "helix-objects",
     credentials: {
-      accessKeyId: process.env.RUSTFS_ACCESS_KEY ?? "helixrustfs",
-      secretAccessKey: process.env.RUSTFS_SECRET_KEY ?? "helix_rustfs_dev_secret",
+      accessKeyId: loadSeedEnv().RUSTFS_ACCESS_KEY ?? "helixrustfs",
+      secretAccessKey: loadSeedEnv().RUSTFS_SECRET_KEY ?? "helix_rustfs_dev_secret",
     },
     forcePathStyle: true,
   });
@@ -1185,9 +1186,9 @@ async function main(): Promise<void> {
   const sql = createSqlClient();
   try {
     const result = await seedLocalDemo(sql, {
-      anchorDate: process.env.HELIX_LOCAL_DEMO_ANCHOR_DATE,
+      anchorDate: loadSeedEnv().HELIX_LOCAL_DEMO_ANCHOR_DATE,
       volumeSearch:
-        process.env.HELIX_LOCAL_DEMO_VOLUME_SEARCH === "true"
+        loadSeedEnv().HELIX_LOCAL_DEMO_VOLUME_SEARCH === "true"
           ? { mailMessages: DEFAULT_LOCAL_DEMO_VOLUME_MAIL_COUNT }
           : undefined,
     });

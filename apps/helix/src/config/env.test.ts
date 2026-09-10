@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadEnv, loadMigrationEnv } from "./env.js";
+import { loadEnv, loadMigrationEnv, loadSeedEnv } from "./env.js";
 const base = {
   DATABASE_URL: "postgres://u:p@localhost:5432/helix",
   REDIS_URL: "redis://localhost:6379",
@@ -90,14 +90,6 @@ describe("loadEnv", () => {
   it("accepts empty REDIS_URL as undefined", () => {
     const env = loadEnv({ ...base, REDIS_URL: "" });
     expect(env.REDIS_URL).toBeUndefined();
-  });
-  it("normalizes an empty plugin trust path as undefined", () => {
-    expect(
-      loadEnv({ ...base, HELIX_PLUGIN_TRUST_FILE: "" }).HELIX_PLUGIN_TRUST_FILE,
-    ).toBeUndefined();
-    expect(
-      loadEnv({ ...base, HELIX_PLUGIN_TRUST_FILE: "/run/helix/plugin-trust.json" }),
-    ).toMatchObject({ HELIX_PLUGIN_TRUST_FILE: "/run/helix/plugin-trust.json" });
   });
   it("validates the outbound egress proxy URL", () => {
     expect(
@@ -247,4 +239,12 @@ describe("loadMigrationEnv", () => {
       }),
     ).toThrow(/DATABASE_URL_FILE/u);
   });
+});
+
+it("validates seed inputs without applying application defaults", () => {
+  expect(loadSeedEnv({})).toEqual({});
+  expect(() => loadSeedEnv({ HELIX_API_BASE_URL: "invalid url" })).toThrow();
+  expect(loadSeedEnv({ HELIX_API_BASE_URL: "http://localhost:3000" }).HELIX_API_BASE_URL).toBe(
+    "http://localhost:3000",
+  );
 });

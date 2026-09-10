@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
 import type { Actor, ToolDefinition } from "@helix/sdk-types";
-import { buildErrorEnvelope, errorCodeForStatus, toolErrorEnvelope } from "./error-envelope.js";
+import { describe, expect, it } from "vitest";
 import {
   createToolRegistry,
   type ToolInvokeErrorResult,
   type ToolRateLimitMetadata,
 } from "../platform/tool-registry.js";
 import { RuntimeAgentOperationalControlStore } from "../platform/tools/agent-operational-controls.js";
+import { buildErrorEnvelope, errorCodeForStatus, toolErrorEnvelope } from "./error-envelope.js";
 
 const rateLimitMetadata: ToolRateLimitMetadata = {
   reason: "requests_per_minute",

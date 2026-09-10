@@ -20,10 +20,8 @@ import type {
   AIConfigStatus,
   BackendRequirement,
   CheckStatus,
-  ControlRow,
   ReadinessCheck,
   RequiredService,
-  ServiceStatus,
   TierDefinition,
   TierId,
 } from "@/features/admin/tier-readiness/types";
@@ -103,7 +101,7 @@ export const tiers: readonly TierDefinition[] = [
   },
 ];
 
-export const requiredServices: readonly RequiredService[] = [
+const requiredServices: readonly RequiredService[] = [
   {
     id: "postgres",
     name: "Postgres",
@@ -121,7 +119,7 @@ export const requiredServices: readonly RequiredService[] = [
   {
     id: "nats",
     name: "NATS JetStream",
-    description: "Durable events, plugin broadcasts, activity fanout",
+    description: "Durable events and activity fanout",
     icon: RadioTower,
     status: "online",
   },
@@ -212,7 +210,7 @@ export const requiredServices: readonly RequiredService[] = [
   {
     id: "airgap",
     name: "Air-gap tooling",
-    description: "Offline plugin bundle and registry import workflow",
+    description: "Offline container bundle and registry import workflow",
     icon: ArchiveRestore,
     status: "missing",
   },
@@ -297,69 +295,6 @@ export const readinessChecks: readonly ReadinessCheck[] = [
   },
 ];
 
-export const controls: readonly ControlRow[] = [
-  {
-    id: "backup",
-    label: "Backup encryption",
-    icon: ArchiveRestore,
-    currentValue: "age encrypted backup to S3 with versioning",
-    valuesByTier: {
-      personal: "none or optional gpg",
-      business: "age encryption before upload",
-      enterprise: "KMS-backed envelope encryption",
-      sovereign: "HSM-backed encryption to WORM destination",
-    },
-  },
-  {
-    id: "audit",
-    label: "Audit destinations",
-    icon: RadioTower,
-    currentValue: "Postgres plus immutable S3",
-    valuesByTier: {
-      personal: "Postgres only",
-      business: "immutable S3 Object Lock",
-      enterprise: "immutable S3 plus SIEM",
-      sovereign: "WORM storage plus SIEM in CEF/LEEF",
-    },
-  },
-  {
-    id: "mfa",
-    label: "MFA",
-    icon: ShieldCheck,
-    currentValue: "admins required, passkeys enabled",
-    valuesByTier: {
-      personal: "optional TOTP",
-      business: "admins required",
-      enterprise: "org-wide required, SAML/OIDC plugin",
-      sovereign: "CAC/PIV smartcard",
-    },
-  },
-  {
-    id: "secrets",
-    label: "Secrets",
-    icon: KeyRound,
-    currentValue: "SOPS with age keys",
-    valuesByTier: {
-      personal: "environment variables",
-      business: "SOPS or Vault",
-      enterprise: "Vault mandatory, 90-day rotation",
-      sovereign: "Vault plus HSM-backed keys",
-    },
-  },
-  {
-    id: "ha",
-    label: "Availability",
-    icon: Database,
-    currentValue: "single Postgres instance",
-    valuesByTier: {
-      personal: "single instance",
-      business: "single region",
-      enterprise: "CloudNativePG, 3-replica NATS",
-      sovereign: "Tier 3 HA with air-gap evidence",
-    },
-  },
-];
-
 export const aiCostDefaultsByTier: Readonly<Record<TierId, AIConfigStatus["costLimits"]>> = {
   personal: {},
   business: {
@@ -383,13 +318,6 @@ export const statusText: Readonly<Record<CheckStatus, string>> = {
   warning: "Needs evidence",
   blocked: "Blocked",
   "not-required": "Not required",
-};
-
-export const serviceStatusText: Readonly<Record<ServiceStatus, string>> = {
-  online: "Online",
-  configured: "Configured",
-  pending: "Pending",
-  missing: "Missing",
 };
 
 export const serviceById = new Map(requiredServices.map((service) => [service.id, service]));

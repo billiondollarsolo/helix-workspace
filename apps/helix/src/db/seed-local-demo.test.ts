@@ -1,21 +1,17 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { isRecord } from "../platform/util/json.js";
+import { createRecordingSql as sharedRecordingSql } from "../test-support/recording-sql.js";
+import {
+  DEFAULT_LOCAL_DEMO_PASSWORD,
+  LOCAL_DEMO_SOURCE,
+  seedLocalDemo,
+} from "./seed-local-demo.js";
 import {
   DEFAULT_LOCAL_OAUTH_ACTOR_ID,
   DEFAULT_LOCAL_OAUTH_CLIENT_ID,
   DEFAULT_LOCAL_OAUTH_EMAIL,
   DEFAULT_LOCAL_OAUTH_ORG_ID,
 } from "./seed-local-oauth.js";
-import {
-  DEFAULT_LOCAL_DEMO_PASSWORD,
-  LOCAL_DEMO_SOURCE,
-  seedLocalDemo,
-} from "./seed-local-demo.js";
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 describe("seedLocalDemo", () => {
   it("seeds local login credentials plus persisted workspace data", async () => {
@@ -142,59 +138,26 @@ describe("seedLocalDemo", () => {
     ).toBe(true);
   });
 });
-
-function createRecordingSql(): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-  readonly arrays: readonly (readonly unknown[])[];
-  readonly jsonValues: readonly unknown[];
-  readonly beginCalls: number;
-} {
-  const calls: RecordedQuery[] = [];
-  const arrays: (readonly unknown[])[] = [];
-  const jsonValues: unknown[] = [];
-  let beginCalls = 0;
-
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const text = strings.join("$");
-    calls.push({ text, values });
+function createRecordingSql() {
+  const recording = sharedRecordingSql(({ text }) => {
     if (text.includes("helix_activate_identity_membership")) {
       return Promise.resolve([{ actor_id: DEFAULT_LOCAL_OAUTH_ACTOR_ID }]);
     }
     return Promise.resolve([]);
-  };
-  const sql = Object.assign(tag, {
-    array: <T extends readonly unknown[]>(value: T) => {
-      arrays.push(value);
-      return value;
-    },
-    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) => {
-      beginCalls += 1;
-      return callback(sql as unknown as postgres.TransactionSql);
-    },
-    json: (value: unknown) => {
-      jsonValues.push(value);
-      return value;
-    },
-  }) as unknown as postgres.Sql;
-
+  }, "$");
   return {
-    sql,
-    calls,
-    arrays,
-    jsonValues,
+    ...recording,
+    get transactions() {
+      return recording.beginCalls;
+    },
     get beginCalls() {
-      return beginCalls;
+      return recording.beginCalls;
     },
   };
 }
 
 function isUnknownArray(value: unknown): value is readonly unknown[] {
   return Array.isArray(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isDate(value: unknown): value is Date {

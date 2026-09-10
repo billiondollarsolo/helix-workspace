@@ -56,8 +56,8 @@ export interface S3CompatibleStorageConfig {
   readonly requestTimeoutMs?: number;
   readonly maxAttempts?: number;
 }
-export type S3ServerSideEncryption = "AES256" | "aws:kms";
-export interface S3StorageSecurityPolicy {
+type S3ServerSideEncryption = "AES256" | "aws:kms";
+interface S3StorageSecurityPolicy {
   readonly requireTls: boolean;
   readonly requireVersioning: boolean;
   readonly objectLock: {
@@ -65,13 +65,13 @@ export interface S3StorageSecurityPolicy {
     readonly retentionDays: number;
   };
 }
-export interface S3CompatiblePresignOptions {
+interface S3CompatiblePresignOptions {
   readonly expiresSeconds?: number;
   readonly contentType?: string;
   readonly metadata?: Record<string, string>;
 }
 
-export interface S3CompatiblePresignedPutUpload {
+interface S3CompatiblePresignedPutUpload {
   readonly url: string;
   readonly headers: Record<string, string>;
 }
@@ -84,12 +84,12 @@ export interface S3CompatibleObjectEvidence {
   readonly metadata: Record<string, string>;
 }
 
-export interface S3MultipartCompletedPart {
+interface S3MultipartCompletedPart {
   readonly partNumber: number;
   readonly etag: string;
 }
 
-export interface S3ObjectLock {
+interface S3ObjectLock {
   readonly mode: "COMPLIANCE" | "GOVERNANCE";
   readonly retainUntil: string;
 }

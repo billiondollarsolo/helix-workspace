@@ -48,7 +48,7 @@ type ClamdFailureCode =
   | "timeout"
   | "transport_error";
 
-export class ClamdClientError extends Error {
+class ClamdClientError extends Error {
   readonly code: ClamdFailureCode;
 
   constructor(code: ClamdFailureCode, message: string, options?: ErrorOptions) {

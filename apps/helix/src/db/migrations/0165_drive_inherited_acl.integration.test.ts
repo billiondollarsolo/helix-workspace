@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -23,19 +24,7 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("inherited Drive ACL mat
   };
 
   async function cleanup() {
-    await sql`delete from drive_workflows where org_id = ${org}`;
-    await sql`delete from drive_acl_exceptions where org_id = ${org}`;
-    await sql`delete from drive_domain_grants where org_id = ${org}`;
-    await sql`delete from directory_group_resource_grants where org_id = ${org}`;
-    await sql`delete from drive_shared_drives where org_id = ${org}`;
-    await sql`delete from permissions where org_id = ${org}`;
-    await sql`delete from objects where org_id = ${org}`;
-    await sql`delete from drive_folders where org_id = ${org}`;
-    await sql`delete from admin_group_members where org_id = ${org}`;
-    await sql`delete from admin_groups where org_id = ${org}`;
-    await sql`delete from admin_security_policies where org_id = ${org}`;
-    await sql`delete from actors where org_id = ${org}`;
-    await sql`delete from orgs where id = ${org}`;
+    await cleanupTestTenants(sql, [org]);
   }
 
   beforeAll(async () => {
@@ -71,6 +60,17 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("inherited Drive ACL mat
   afterAll(async () => {
     await cleanup();
     await sql.end();
+  });
+
+  it("denies a domain grant when the caller has no effective resource role", async () => {
+    await expect(
+      sql.begin(async (tx) => {
+        await tx`select set_config('helix.org_id', ${org}, true), set_config('helix.actor_id', ${guest}, true)`;
+        await tx`select helix_set_drive_domain_grant(
+        ${org}, ${guest}, 'drive_folder', ${root}, 'partner.test', 'reader', null
+      )`;
+      }),
+    ).rejects.toThrow("domain grant requires resource ownership");
   });
 
   it("handles nested group/domain grants, explicit exceptions, moves, and transfer atomically", async () => {

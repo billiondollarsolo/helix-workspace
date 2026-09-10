@@ -1,5 +1,5 @@
+// postgres serves application queries; pg is retained only for Better Auth's Pool adapter.
 import postgres from "postgres";
-import { tenantAwarePostgresSql } from "../platform/tenancy/postgres-roles.js";
 import { env as loadValidatedEnv, type Env, type MigrationEnv } from "../config/env.js";
 import {
   resolvePostgresSsl,
@@ -9,6 +9,7 @@ import {
   assertProductionDeploymentConfiguration,
   assertProductionPostgresConfiguration,
 } from "../config/production-assertions.js";
+import { tenantAwarePostgresSql } from "../platform/tenancy/postgres-roles.js";
 
 const DEFAULT_DATABASE_URL = "postgres://helix:helix_dev_password@localhost:28432/helix";
 
@@ -175,7 +176,7 @@ export async function assertTenantSafeDatabaseRole(sql: postgres.Sql): Promise<v
   }
 }
 
-/** Fail deployment when any public org_id table lacks the one canonical forced-RLS policy. */
+/** Fail deployment when any public org_id table lacks the canonical restrictive tenant boundary. */
 export async function assertTenantRlsCoverage(sql: postgres.Sql): Promise<void> {
   const gaps = (await sql`
     select c.relname as table_name
@@ -193,12 +194,16 @@ export async function assertTenantRlsCoverage(sql: postgres.Sql): Promise<void> 
           select count(*)
           from pg_policy p
           where p.polrelid = c.oid
-            and p.polname = 'helix_tenant_isolation'
+            and p.polname = 'helix_tenant_boundary'
+            and not p.polpermissive
             and p.polcmd = '*'
-            and position('helix_current_org_id()' in pg_get_expr(p.polqual, p.polrelid)) > 0
-            and position('helix_current_org_id()' in pg_get_expr(p.polwithcheck, p.polrelid)) > 0
+            and pg_get_expr(p.polqual, p.polrelid) in (
+              '(org_id = helix_current_org_id())', '(org_id = public.helix_current_org_id())'
+            )
+            and pg_get_expr(p.polwithcheck, p.polrelid) in (
+              '(org_id = helix_current_org_id())', '(org_id = public.helix_current_org_id())'
+            )
         )
-        or 1 <> (select count(*) from pg_policy p where p.polrelid = c.oid)
       )
     order by c.relname
   `) as unknown as readonly TenantRlsGapRow[];

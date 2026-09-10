@@ -1,10 +1,10 @@
 import type postgres from "postgres";
 import {
-  advisoryLockKey,
   LeaderElection,
   PostgresAdvisoryLockClient,
   type LeaderLease,
 } from "../leader/election.js";
+import { errorMessage } from "../util/errors.js";
 import {
   verifyLatestAuditHashChain,
   type AuditVerificationStore,
@@ -23,9 +23,9 @@ export interface AuditVerifierLeaseHandle {
   release(): Promise<void>;
 }
 
-export type AuditVerifierOrgRunStatus = "verified" | "failed" | "error";
+type AuditVerifierOrgRunStatus = "verified" | "failed" | "error";
 
-export interface AuditVerifierOrgRunResult {
+interface AuditVerifierOrgRunResult {
   readonly orgId: string;
   readonly status: AuditVerifierOrgRunStatus;
   readonly verification?: LatestAuditVerificationStatus;
@@ -205,18 +205,10 @@ export class PostgresAuditVerifierLease implements AuditVerifierLease {
   }
 }
 
-export function auditVerifierLeaseLockKey(name = "audit-verifier-daily"): bigint {
-  return advisoryLockKey(name);
-}
-
 class PostgresAuditVerifierLeaseHandle implements AuditVerifierLeaseHandle {
   constructor(private readonly lease: LeaderLease) {}
 
   release(): Promise<void> {
     return this.lease.release();
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

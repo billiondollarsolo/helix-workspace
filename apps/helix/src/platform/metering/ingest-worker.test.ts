@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { meteringSubjectForOrg } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { InMemoryEventBus } from "../events/in-memory-event-bus.js";
 import {
   MeteringIngestWorker,

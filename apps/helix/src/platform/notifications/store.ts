@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import type postgres from "postgres";
 import type { ListNotificationsInput, NotificationInsert, NotificationRecord } from "./types.js";
 
 interface NotificationRow {

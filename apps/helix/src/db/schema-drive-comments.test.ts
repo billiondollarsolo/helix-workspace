@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
 import { getTableConfig } from "drizzle-orm/pg-core";
-import { driveComments } from "./schema.js";
+import { describe, expect, it } from "vitest";
+import { driveComments } from "./schema/index.js";
 
 describe("driveComments schema (parity with migration 0047)", () => {
   it("exposes the drive_comments table with the migration's columns", () => {

@@ -1,16 +1,16 @@
-import nodemailer, { type Transporter } from "nodemailer";
-import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import type {
   JsonObject,
   OutboundMailDelivery,
   OutboundMailMessage,
   OutboundMailProvider,
 } from "@helix/sdk-types";
-import type { MailOutboundDeliveryResult, MailOutboundEnvelope } from "./types.js";
-import type { DkimOptionsResolver, OutboundMailTransport } from "./outbound.js";
-import { MailDeliveryError } from "./errors.js";
-import { outboundFetch } from "../outbound-http.js";
+import nodemailer, { type Transporter } from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
 import { z } from "zod";
+import { outboundFetch } from "../outbound-http.js";
+import { MailDeliveryError } from "./errors.js";
+import type { DkimOptionsResolver, OutboundMailTransport } from "./outbound.js";
+import type { MailOutboundDeliveryResult, MailOutboundEnvelope } from "./types.js";
 
 /**
  * Pluggable outbound mail providers.

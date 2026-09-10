@@ -7,7 +7,7 @@ export interface AICostBudget {
   readonly warningThresholdRatio: number;
 }
 
-export interface AICostScope {
+interface AICostScope {
   readonly orgId: string;
   readonly actorId: string;
   readonly feature: string;
@@ -48,12 +48,12 @@ export interface AICostUsage {
   readonly featureDaily: AICostUsageWindow;
 }
 
-export interface AICostLimitAllowed {
+interface AICostLimitAllowed {
   readonly allowed: true;
   readonly usage: AICostUsage;
 }
 
-export interface AICostLimitDenied {
+interface AICostLimitDenied {
   readonly allowed: false;
   readonly reason: AICostLimitReason;
   readonly retryAfterSeconds: number;

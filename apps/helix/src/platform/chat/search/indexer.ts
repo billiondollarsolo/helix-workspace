@@ -1,10 +1,10 @@
-import type { JsonObject } from "@helix/sdk-types";
 import type {
   IndexDocument,
   SearchEventIndexer,
   SearchIndexer,
   SearchIndexerEvent,
 } from "../../search/index.js";
+import { compactJsonObject } from "../../util/json.js";
 import type {
   ChatActivityPayload,
   ChatParticipant,
@@ -13,8 +13,8 @@ import type {
   ChatSearchRecord,
 } from "../types.js";
 
-export const chatSearchIndexerId = "chat";
-export const chatSearchSubjects = ["activity.chat.>", "com.helix.core.chat.>"] as const;
+const chatSearchIndexerId = "chat";
+const chatSearchSubjects = ["activity.chat.>", "com.helix.core.chat.>"] as const;
 
 export function createChatSearchIndexer(
   store: ChatSearchProjectionStore,
@@ -94,7 +94,7 @@ export function chatRecordToIndexDocument(record: ChatSearchRecord): IndexDocume
   };
 }
 
-export function chatDocumentId(messageId: string): string {
+function chatDocumentId(messageId: string): string {
   return `chat:${messageId}`;
 }
 
@@ -120,14 +120,4 @@ function participantSearchText(participant: ChatParticipant): string {
 
 function reactionSearchText(reaction: ChatSearchReactionRecord): string {
   return `${reaction.emoji} ${reaction.actorId}`;
-}
-
-function compactJsonObject(input: Record<string, unknown>): JsonObject {
-  const output: Record<string, JsonObject[keyof JsonObject]> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (value !== undefined) {
-      output[key] = value as JsonObject[keyof JsonObject];
-    }
-  }
-  return output;
 }

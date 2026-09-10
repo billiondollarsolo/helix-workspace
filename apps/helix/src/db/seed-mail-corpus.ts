@@ -13,11 +13,11 @@
  * realistic mailbox.
  */
 
+import { simpleParser, type ParsedMail } from "mailparser";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { simpleParser, type ParsedMail } from "mailparser";
 import { createSqlClient } from "./client.js";
 import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 

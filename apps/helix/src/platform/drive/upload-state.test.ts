@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  DRIVE_UPLOAD_STATES,
-  driveUploadStateFromMetadata,
   assertDriveUploadStateTransition,
   canTransitionDriveUploadState,
+  DRIVE_UPLOAD_STATES,
+  driveUploadStateFromMetadata,
   isDriveFileAvailable,
   userFacingDriveUploadState,
 } from "./upload-state.js";

@@ -57,9 +57,7 @@ describe("RedisAgentRateCostLimiter", () => {
         requestsPerDay: { limit: 3, used: 2, remaining: 1 },
       },
     });
-    expect(redis.keysSeen).toContain(
-      "test:limits:{org%2Fredis:agent%7Bredis%7D}:requests:minute",
-    );
+    expect(redis.keysSeen).toContain("test:limits:{org%2Fredis:agent%7Bredis%7D}:requests:minute");
   });
 
   it("records daily cost and blocks estimated cost overages without incrementing usage", async () => {

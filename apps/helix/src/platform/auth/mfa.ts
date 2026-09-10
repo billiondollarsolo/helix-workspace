@@ -1,9 +1,8 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-import type { FastifyRequest } from "fastify";
-import type postgres from "postgres";
-import { createHash, randomBytes } from "node:crypto";
-import { symmetricDecrypt, symmetricEncrypt, type SecretConfig } from "better-auth/crypto";
 import type { Actor, SecurityTier } from "@helix/sdk-types";
+import { symmetricDecrypt, symmetricEncrypt, type SecretConfig } from "better-auth/crypto";
+import type { FastifyRequest } from "fastify";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type postgres from "postgres";
 import type { BetterAuthSessionVerifier } from "./better-auth.js";
 
 /**
@@ -19,7 +18,7 @@ import type { BetterAuthSessionVerifier } from "./better-auth.js";
  */
 
 export const MFA_ASSERTION_HEADER = "x-helix-mfa-assertion";
-export const MAX_MFA_ASSERTION_LIFETIME_SECONDS = 300;
+const MAX_MFA_ASSERTION_LIFETIME_SECONDS = 300;
 const MAX_MFA_ASSERTION_BYTES = 4096;
 const HMAC_SHA256_BYTES = 32;
 const MIN_MFA_ASSERTION_SECRET_BYTES = 32;
@@ -75,7 +74,7 @@ export interface MfaAssuranceMarker {
   markVerifiedSession(sessionToken: string, verifiedAt?: Date): Promise<boolean>;
 }
 
-export interface RecoveryCodeBroker {
+interface RecoveryCodeBroker {
   replace(userId: string, bridgeCodes: readonly string[]): Promise<readonly string[]>;
   consume(code: string): Promise<string | null>;
   clear(userId: string): Promise<void>;

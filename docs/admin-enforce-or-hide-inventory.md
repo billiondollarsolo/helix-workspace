@@ -1,10 +1,15 @@
 # Admin console — enforce-or-hide inventory (E7.1)
 
-**Audience:** Operators, release reviewers, implementers  
-**Normative plan:** [`docs/superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md`](./superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md) task E7.1  
-**Nav source of truth:** [`apps/web/src/features/admin/admin-console-data.ts`](../apps/web/src/features/admin/admin-console-data.ts)  
-**Backend control inventory:** [`apps/helix/src/platform/admin/control-inventory.ts`](../apps/helix/src/platform/admin/control-inventory.ts)  
-**Policy runtime modes:** [`apps/helix/src/platform/admin/security-policy-runtime.ts`](../apps/helix/src/platform/admin/security-policy-runtime.ts)  
+**Audience:** Operators, release reviewers, implementers
+
+**Normative plan:** [`docs/archive/plans/2026-08-03-elite-mvp-enterprise-production.md`](archive/plans/2026-08-03-elite-mvp-enterprise-production.md) task E7.1
+
+**Nav source of truth:** [`apps/web/src/features/admin/admin-console-data.ts`](../apps/web/src/features/admin/admin-console-data.ts)
+
+**Backend control inventory:** [`apps/helix/src/platform/admin/control-inventory.ts`](../apps/helix/src/platform/admin/control-inventory.ts)
+
+**Policy runtime modes:** [`apps/helix/src/platform/admin/security-policy-runtime.ts`](../apps/helix/src/platform/admin/security-policy-runtime.ts)
+
 **Date:** 2026-08-03
 
 ## Status legend
@@ -34,7 +39,7 @@ Sections and ids match `ADMIN_NAV_ROOT` + `ADMIN_NAV_GROUPS` in `admin-console-d
 | `groups`             | Groups & org units       | People              | UI+API               | `sections/groups.tsx`, `groups-api.ts` → `/api/admin/groups`, `/api/admin/org-units`                                                      | CRUD + membership mutations live and org-scoped.                                                                                                                                                                            |
 | `policies`           | Policies                 | Security            | mixed → see subtable | `sections/policies.tsx`, `security-policies-api.ts`, `security-policy-runtime.ts`                                                         | UI refuses Required for recorded-only types; chips prefer `runtimeStatus`.                                                                                                                                                  |
 | `identity`           | Identity & SSO           | Security            | **runtime_pending**  | `identity-management.tsx`, `identity-api.ts` → `/api/admin/identity/idp-configs`; test-login → `runtime_pending`                          | IdP configs + SP metadata are live; ACS/OIDC login enforcement incomplete. Test login never implies SSO is production-ready. SCIM: read/config partial; mutations 501 until complete (`control-inventory` `identity.scim`). |
-| `tier-readiness`     | Tier readiness           | Security            | UI+API               | `security-tier-readiness.tsx`, `tier-readiness/*`                                                                                         | Platform config + plugin catalogue; gates are advisory to operators, not a substitute for production assert boot.                                                                                                           |
+| `tier-readiness`     | Tier readiness           | Security            | UI+API               | `security-tier-readiness.tsx`, `tier-readiness/*`                                                                                         | Platform configuration; gates are advisory to operators, not a substitute for production assert boot.                                                                                                                       |
 | `audit`              | Audit log                | Security            | enforced             | `audit-log.tsx` → `/api/admin/audit-log`; append path via `auditAdminAction`                                                              | Immutable hash chain store; admin mutations audited.                                                                                                                                                                        |
 | `workspace-apps`     | Workspace apps           | Apps & integrations | UI+API               | `core-apps-management.tsx` → `/api/admin/core-apps`                                                                                       | Org enablement toggles + packaging allowlist. Production MVP still fail-closes on `HELIX_APPS` / profile assertions.                                                                                                        |
 | `mail`               | Mail                     | Apps & integrations | UI+API               | `mail-admin.tsx`, `mail-admin-api.ts` → `/api/admin/mail/*`                                                                               | Providers, sending/receiving domains, routing, spam config. Delivery reputation is external (managed provider).                                                                                                             |

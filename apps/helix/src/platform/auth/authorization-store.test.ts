@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import {
   InMemoryOAuthAuthorizationStore,
   PostgresOAuthAuthorizationStore,
@@ -57,21 +57,15 @@ describe("OAuth authorization state", () => {
     expect(recording.calls[3]).toContain("on conflict (org_id, actor_id, client_id)");
   });
 });
-
-function recordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly string[];
-} {
-  const calls: string[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray) => {
-    calls.push(strings.join("$"));
-    return Promise.resolve(queue.shift() ?? []);
-  };
+function recordingSql(responses: readonly unknown[]) {
+  const recording = sharedRecordingSql(responses, "$");
   return {
-    sql: Object.assign(tag, {
-      array: <T extends readonly unknown[]>(value: T) => value,
-    }) as unknown as postgres.Sql,
-    calls,
+    sql: recording.sql,
+    get calls() {
+      return recording.queries;
+    },
+    get values() {
+      return recording.values;
+    },
   };
 }

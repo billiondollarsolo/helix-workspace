@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import {
   initialOwnerActorScopes,
   initialOwnerActorStepName,
@@ -58,19 +58,8 @@ describe("PostgresTenantOwnerActorStore", () => {
     expect(recording.calls[0]?.values).toContain("Owner Name");
   });
 });
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
-function createRecordingSql(): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
+function createRecordingSql() {
+  const recording = sharedRecordingSql(({ values }) => {
     return Promise.resolve([
       {
         id: actorId,
@@ -85,12 +74,14 @@ function createRecordingSql(): {
         },
       },
     ]);
-  };
+  }, "?");
   return {
-    sql: Object.assign(tag, {
-      array: (value: unknown) => value,
-      json: (value: unknown) => value,
-    }) as unknown as postgres.Sql,
-    calls,
+    ...recording,
+    get transactions() {
+      return recording.beginCalls;
+    },
+    get beginCalls() {
+      return recording.beginCalls;
+    },
   };
 }

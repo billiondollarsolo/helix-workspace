@@ -19,9 +19,6 @@
  * the same ceiling once the shell's two are counted, with no retry at all. The
  * mitigation belongs where every section can reach it. */
 
-import { useEffect, useState } from "react";
-import { useQueuer } from "@tanstack/react-pacer";
-
 /* ------------------------------------------------------------------ */
 /* The budget                                                          */
 /* ------------------------------------------------------------------ */
@@ -113,7 +110,7 @@ export const ADMIN_STALE_TIME = {
 /** TanStack's default is 5 minutes, which means a section revisited after a
  *  coffee is fully cold and re-fires its whole burst against the same ceiling.
  *  An admin console is a place operators leave open and come back to. */
-export const ADMIN_GC_TIME = 15 * 60_000;
+const ADMIN_GC_TIME = 15 * 60_000;
 
 /* ------------------------------------------------------------------ */
 /* Shared query defaults                                               */
@@ -155,50 +152,4 @@ export function releaseIntervalMs(count: number): number {
      with a small margin so rounding cannot put one extra request in the window. */
   const seconds = Math.ceil(count / SECTION_REQUEST_BUDGET);
   return Math.ceil((seconds * 1_000) / count) + 50;
-}
-
-/** Releases queries one at a time and reports how many may start.
- *
- *  Callers gate each query on `enabled: order < released`. A disabled query
- *  still serves whatever is already in the cache, which is what makes a warm
- *  section render instantly and never wait its turn — only a genuinely cold
- *  console pays for the pacing.
- *
- *  Moved here from `sections/overview.tsx` intact. Two details are load-bearing
- *  and must not be "simplified":
- *   - `Math.max(current, order + 1)` — React remounts effects in development,
- *     so the same release can be enqueued twice and must not skip a query or
- *     count one twice.
- *   - `queue.start()` inside the effect — the unmount half of that development
- *     remount stops the queue, so a re-entered effect has to start it again or
- *     the remaining queries never leave.
- *
- *  The queue owns its timer and stops on unmount, so navigating away mid-release
- *  cannot leave requests firing at a page nobody is on (house rule
- *  `helix/pacer-discipline`: scheduled work goes through Pacer, never a bare
- *  `setTimeout`). */
-export function useReleaseSchedule(count: number): number {
-  const [released, setReleased] = useState(0);
-  const queue = useQueuer<number>(
-    (order) => {
-      setReleased((current) => Math.max(current, order + 1));
-    },
-    { wait: releaseIntervalMs(count) },
-  );
-
-  useEffect(() => {
-    queue.start();
-    for (let order = 0; order < count; order += 1) {
-      queue.addItem(order);
-    }
-  }, [count, queue]);
-
-  return released;
-}
-
-/** What a paced check adds on top of its section's own `queryOptions`: its
- *  place in the release order. The 429 retry already comes from
- *  `ADMIN_QUERY_DEFAULTS`. */
-export function pacedQueryOptions(released: number, order: number) {
-  return { enabled: order < released };
 }

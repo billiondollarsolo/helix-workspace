@@ -122,7 +122,7 @@ export function evaluateWebSocketOrigin(
 }
 
 /** Credentials a browser WebSocket constructor cannot attach itself. */
-export function hasNonBrowserUpgradeCredential(request: FastifyRequest): boolean {
+function hasNonBrowserUpgradeCredential(request: FastifyRequest): boolean {
   return [
     request.headers.authorization,
     request.headers["x-api-key"],

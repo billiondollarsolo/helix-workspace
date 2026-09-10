@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import { MailDeliveryError } from "./errors.js";
 import {
   MailSendService,
   NodemailerMailTransport,
   OutboundMailDispatcher,
   OutboundMailWorker,
-  type OutboundMailTransport,
   resolveOutboundAttachments,
+  type OutboundMailTransport,
 } from "./outbound.js";
 import type { ClaimedOutboundMail, MailStore, OutboundMailQueueStore } from "./store.js";
 import type { MailOutboundEnvelope, MailOutboundRecord } from "./types.js";
-import { MailDeliveryError } from "./errors.js";
 
 const now = new Date("2026-05-20T12:00:00.000Z");
 

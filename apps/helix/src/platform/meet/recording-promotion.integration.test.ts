@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { PostgresDriveStore } from "../drive/index.js";
 import { PostgresMeetStore } from "./store.js";
 
@@ -122,6 +123,19 @@ describe("Meet recording promotion", { skip: process.env.DATABASE_URL === undefi
     ).resolves.toBe(false);
     await expect(
       drive.delete({ orgId: ORG, actorId: HOST, objectId: attachment.objectId }),
+    ).rejects.toThrow("Move the Drive object to trash");
+    // The recovery window has elapsed; the recording hold must still prevent purge.
+    await sql`update objects set deleted_at = now() - interval '40 days'
+      where org_id = ${ORG} and id = ${attachment.objectId}`;
+    await expect(
+      drive.delete({ orgId: ORG, actorId: HOST, objectId: attachment.objectId }),
+    ).rejects.toThrow("protected by retention policy");
+    // Age the projected retention too. The independent Meet hold still applies.
+    await sql`update objects set created_at = now() - interval '50 days',
+      retain_until = now() - interval '1 day'
+      where org_id = ${ORG} and id = ${attachment.objectId}`;
+    await expect(
+      drive.delete({ orgId: ORG, actorId: HOST, objectId: attachment.objectId }),
     ).rejects.toThrow("protected by retention or legal hold");
     const governance = await sql<
       {
@@ -146,15 +160,5 @@ describe("Meet recording promotion", { skip: process.env.DATABASE_URL === undefi
 });
 
 async function cleanup(sql: postgres.Sql): Promise<void> {
-  await sql`delete from notifications where org_id = ${ORG}`;
-  await sql`delete from activity where org_id = ${ORG}`;
-  await sql`delete from permissions where org_id = ${ORG}`;
-  await sql`delete from message_attachments where org_id = ${ORG}`;
-  await sql`delete from messages where org_id = ${ORG}`;
-  await sql`delete from meet_recording_uploads where org_id = ${ORG}`;
-  await sql`delete from meet_rooms where org_id = ${ORG}`;
-  await sql`delete from threads where org_id = ${ORG}`;
-  await sql`delete from objects where org_id = ${ORG}`;
-  await sql`delete from actors where org_id = ${ORG}`;
-  await sql`delete from orgs where id = ${ORG}`;
+  await cleanupTestTenants(sql, [ORG]);
 }

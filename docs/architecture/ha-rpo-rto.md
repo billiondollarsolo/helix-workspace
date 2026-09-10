@@ -1,7 +1,9 @@
 # High availability posture and RPO/RTO (Ops O / O-D.13 / O-K.16)
 
-**Status:** Operator contract for Full Workspace v1 dual-target ops  
-**Related:** [ADR-0006](./adr-0006-business-pilot-recovery-targets.md), [backup-restore.md](../backup-restore.md), [compose-helm-parity.md](./compose-helm-parity.md)  
+**Status:** Operator contract for Full Workspace v1 dual-target ops
+
+**Related:** [ADR-0006](../adr/adr-0006-business-pilot-recovery-targets.md), [backup-restore.md](../backup-restore.md), [compose-helm-parity.md](compose-helm-parity.md)
+
 **Date:** 2026-08-02
 
 ## What this is (and is not)
@@ -78,7 +80,7 @@ Helm/CNPG path: enterprise `ScheduledBackup` + recovery cluster; O-K.16 evidence
 | Migrate-before-app        | `helix-migrate` + `depends_on: service_completed_successfully`   | Parity with Helm pre-upgrade Job            |
 | Private data plane        | published ports only Caddy 80/443 + SMTP                         | See O-D.2                                   |
 | Backup / restore          | `backup.sh` / `restore.sh` / `restore-drill.sh`                  | Business+ fail closed without encryption    |
-| ClamAV / SpamAssassin     | production overlay enabled for Mail/Drive                        | Meet/editors remain disabled                |
+| ClamAV / SpamAssassin     | production overlay enabled for Mail/Drive                        | Calendar/Meet remain disabled               |
 | Meet / Calendar / Editors | modules `enabled: false`; `HELIX_APPS=mail,drive,chat,assistant` | PKG flip only after evidence                |
 
 ### Kubernetes / Helm (O-K8S)
@@ -97,61 +99,13 @@ Helm/CNPG path: enterprise `ScheduledBackup` + recovery cluster; O-K.16 evidence
 
 Production must stay fail-closed on MVP until packaging tasks **PKG.1–PKG.4** and domain evidence
 (CAL/MT/ED, O-D.7–10, O-K.9–10) are green. Design matrix:
-[v1-packaging-matrix.md](./v1-packaging-matrix.md).
+[v1-packaging-matrix.md](v1-packaging-matrix.md).
 
-### Required before any claim of Full Workspace production
+### Release scope
 
-1. Domain gates: Calendar, Meet (Jitsi), Editors pin + migrations policy, ClamAV Business.
-2. Dual-target deploy: Compose O-D.V and Helm O-K.V (or owner waivers with expiry).
-3. RPO/RTO live drills within targets on **both** targets (O-D.13, O-K.16) + O-X parity notes.
-4. Negative boot tests: Meet without Jitsi refused; editors without pin/migrations refused.
-5. Explicit packaging profile flip (below) + `AGENTS.md` boundary update in the same release train.
-
-### PKG flip procedure (operators — do not run until evidence is bound)
-
-This is the **documented** enablement procedure. Defaults in this repository remain MVP.
-
-**Compose**
-
-1. Confirm evidence pack SHAs under `artifacts/release-readiness/<date>/<sha>/` for CAL/MT/ED/O-D/O-K/V.
-2. Rebuild web with `VITE_HELIX_MVP_ONLY=false` only in the promoted image build; pin digests.
-3. In the production overlay (or env override file **not** committed with secrets), set:
-   - `HELIX_WORKSPACE_PROFILE=full` (when server packaging profile is accepted)
-   - `HELIX_APPS=mail,drive,chat,assistant,calendar,meet,docs,sheets,slides`
-   - `HELIX_EDITORS_MIGRATIONS_ENABLED=true` **only** with helix-editors pin process
-   - `HELIX_CONFIG_JSON` modules: enable only apps that passed gates; leave others `enabled: false`
-   - Meet: real `MEET_JITSI_*` secrets + domain; never dev secrets
-4. Run migrate Job/service, then app; confirm production assertions pass (illegal combos refuse boot).
-5. Smoke Full Workspace matrix; attach digests to release readiness manifest.
-6. Update `AGENTS.md` production MVP boundary in the same PR train as PKG.2.
-
-**Helm**
-
-1. Same evidence prerequisites as Compose.
-2. Override values (do not change default `values.yaml` MVP fail-closed without PKG):
-
-```yaml
-workspace:
-  profile: full
-  apps: "mail,drive,chat,assistant,calendar,meet,docs,sheets,slides"
-  editorsMigrationsEnabled: true
-  modules:
-    docs: { enabled: true }
-    calendar: { enabled: true }
-    meet: { enabled: true }
-    editors: { enabled: true }
-# Plus Meet/Jitsi external config, ClamAV, editors pin env as required by gates
-```
-
-3. `helm upgrade` with migrate hook; confirm Job success before traffic.
-4. Record O-K evidence + O-X parity checklist row for the flip.
-
-**Forbidden until PKG**
-
-- Shipping `VITE_HELIX_MVP_ONLY=false` without server allowlist + migrations policy alignment.
-- Enabling Meet in `HELIX_APPS` without Jitsi domain + strong JWT secret.
-- Setting `HELIX_EDITORS_MIGRATIONS_ENABLED=true` without editors pin and ED.11 evidence.
-- Claiming multi-region HA or contractual RPO/RTO tighter than ADR-0006 without a new ADR.
+The [1.0 scope](../release/1.0-scope.md) keeps Calendar and Meet dormant. Expanding that scope
+requires separately approved domain, deployment, recovery, and security evidence. Do not enable
+additional production surfaces by copying historical configuration examples.
 
 ## Alert → runbook linkage (minimum)
 
@@ -169,4 +123,4 @@ workspace:
 - [x] Scripted RPO/RTO gate: `infra/scripts/rpo-rto-check.mjs`
 - [x] Existing backup/restore/drill toolchain retained and linked
 - [ ] Live disposable drill evidence attached per environment (site-specific; not in-repo secrets)
-- [ ] Dual-target parity checklist maintained: [compose-helm-parity.md](./compose-helm-parity.md)
+- [ ] Dual-target parity checklist maintained: [compose-helm-parity.md](compose-helm-parity.md)

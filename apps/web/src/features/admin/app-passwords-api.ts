@@ -51,7 +51,7 @@ const jsonHeaders = {
   "content-type": "application/json",
 } as const;
 
-export const appPasswordsQueryKeys = {
+const appPasswordsQueryKeys = {
   list: (includeRevoked: boolean) => ["admin", "app-passwords", includeRevoked] as const,
 };
 
@@ -64,7 +64,7 @@ export function appPasswordsQueryOptions(includeRevoked = false) {
   });
 }
 
-export async function listAppPasswords(
+async function listAppPasswords(
   input: { readonly includeRevoked?: boolean } = {},
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly AppPassword[]> {

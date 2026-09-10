@@ -1,11 +1,27 @@
+import {
+  ChevronDown as ChevronDownIcon,
+  ChevronRight as ChevronRightIcon,
+  Copy as CopyIcon,
+  Download as DownloadIcon,
+  Plus as PlusIcon,
+  Upload as UploadIcon,
+} from "lucide-react";
 /* Admin › People › Users — the workspace directory. */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useDebouncedCallback } from "@tanstack/react-pacer";
-import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { Icons } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  adminScopesOf,
+  roleForActor,
+  USER_ROLES,
+  type DirectoryUser,
+  type UserRole,
+  type UserStatus,
+} from "@/features/admin/admin-console-data";
+import {
+  resolveClosedSearchParam,
+  useAdminSectionSearch,
+} from "@/features/admin/admin-section-search";
 import {
   adminUsersInfiniteQueryOptions,
   adminUsersQueryKeys,
@@ -13,9 +29,11 @@ import {
   type AdminUsersQueryInput,
 } from "@/features/admin/admin-users";
 import {
-  resolveClosedSearchParam,
-  useAdminSectionSearch,
-} from "@/features/admin/admin-section-search";
+  AdminBulkBar,
+  AdminInput,
+  AdminSelect,
+  AdminToolbar,
+} from "@/features/admin/console/controls";
 import {
   EmptyRow,
   PageHeading,
@@ -25,21 +43,10 @@ import {
   StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
-import {
-  AdminBulkBar,
-  AdminInput,
-  AdminSelect,
-  AdminToolbar,
-} from "@/features/admin/console/controls";
 import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
-import {
-  adminScopesOf,
-  roleForActor,
-  USER_ROLES,
-  type DirectoryUser,
-  type UserRole,
-  type UserStatus,
-} from "@/features/admin/admin-console-data";
+import { useDebouncedCallback } from "@tanstack/react-pacer";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 /* ------------------------------------------------------------------ */
 /* Users                                                              */
@@ -108,14 +115,10 @@ export async function prefetchAdminDirectoryQuery(queryClient: AdminDirectoryRou
     .catch(() => undefined);
 }
 
-/* Every write path this page could offer is absent from the backend:
-   `registerAdminUsersRoutes` exposes GET /api/admin/users and nothing else,
-   and the only invite route in the tree (POST /api/signup/onboarding-invites)
-   is a SaaS signup-funnel endpoint that answers 501 in this build. So the
-   controls stay, disabled, naming the reason — rather than looking live and
-   doing nothing when clicked. */
+/* This directory uses the read-only admin users API. Provision accounts and
+   issue invitations through the deployment's provisioning flow. */
 const READ_ONLY_REASON =
-  "The admin users API is read-only in this build — it serves the directory but has no endpoint to create, invite, or modify an account.";
+  "The admin users API is read-only in this build — it serves the directory but does not create, invite, or modify accounts from this page.";
 
 const ROLE_FILTERS = ["all", ...USER_ROLES] as const satisfies readonly RoleFilter[];
 const STATUS_FILTERS = ["all", "active", "suspended"] as const satisfies readonly StatusFilter[];
@@ -200,7 +203,7 @@ function CopyButton({
   const active = state?.key === copyKey ? state : null;
   return (
     <Button type="button" size="xs" variant="outline" onClick={() => copy(copyKey, value)}>
-      <Icons.Copy /> {active === null ? label : active.ok ? "Copied" : "Copy failed"}
+      <CopyIcon size={16} /> {active === null ? label : active.ok ? "Copied" : "Copy failed"}
     </Button>
   );
 }
@@ -663,7 +666,7 @@ export function AdminUsers() {
             aria-controls={detailRowId(row.user.id)}
             onClick={() => setExpanded(isExpanded ? null : row.user.id)}
           >
-            {isExpanded ? <Icons.ChevronDown /> : <Icons.ChevronRight />}
+            {isExpanded ? <ChevronDownIcon size={16} /> : <ChevronRightIcon size={16} />}
           </button>
         );
       },
@@ -702,7 +705,7 @@ export function AdminUsers() {
                   : "Download the rows below as a CSV file."
             }
           >
-            <Icons.Download /> Export CSV
+            <DownloadIcon size={16} /> Export CSV
           </Button>
         }
       />
@@ -824,7 +827,7 @@ export function AdminUsers() {
                 : "Copy the selected email addresses to the clipboard."
             }
           >
-            <Icons.Copy />{" "}
+            <CopyIcon size={16} />{" "}
             {copyState?.key === "bulk-emails"
               ? copyState.ok
                 ? "Copied"
@@ -941,7 +944,7 @@ export function AdminUsers() {
             title={READ_ONLY_REASON}
             aria-describedby="users-add-reason"
           >
-            <Icons.Upload /> Import CSV
+            <UploadIcon size={16} /> Import CSV
           </Button>
           <Button
             type="button"
@@ -951,7 +954,7 @@ export function AdminUsers() {
             title={READ_ONLY_REASON}
             aria-describedby="users-add-reason"
           >
-            <Icons.Plus /> Invite users
+            <PlusIcon size={16} /> Invite users
           </Button>
           <span
             id="users-add-reason"

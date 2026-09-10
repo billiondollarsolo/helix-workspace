@@ -17,6 +17,7 @@ import { jsonSchemaToZod } from "./json-schema-zod.js";
 import type { PlatformMetrics } from "./metrics.js";
 import { projectToolListItem } from "./tool-projection.js";
 
+/** @public Named in the exported server bootstrap declaration. */
 export interface HelixTRPCContext {
   readonly request: RequestContext;
   readonly principal: ToolInvocationPrincipal;
@@ -198,8 +199,6 @@ export function createHelixTRPCRouter(input: {
     }),
   });
 }
-
-export type HelixTRPCRouter = ReturnType<typeof createHelixTRPCRouter>;
 
 function unwrapToolResult(result: ToolInvokeResult): unknown {
   if (result.ok) {

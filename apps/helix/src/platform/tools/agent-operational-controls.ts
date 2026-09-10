@@ -8,10 +8,7 @@ import type { Actor, ToolDefinition } from "@helix/sdk-types";
 import type {
   AgentOperationalControlDecision,
   AgentOperationalControlProvider,
-  AgentOperationalControlReason,
 } from "../tool-registry.js";
-
-export type { AgentOperationalControlReason };
 
 export interface AgentOperationalControlSnapshot {
   /** When true, all non-read tools are denied (emergency kill). */
@@ -31,7 +28,7 @@ export const EMPTY_OPERATIONAL_CONTROL_SNAPSHOT: AgentOperationalControlSnapshot
   disabledToolIds: [],
 };
 
-export function parseCsvIdList(value: string | undefined | null): readonly string[] {
+function parseCsvIdList(value: string | undefined | null): readonly string[] {
   if (value === undefined || value === null || value.trim().length === 0) {
     return [];
   }
@@ -66,7 +63,7 @@ function isEnvFlagFalse(value: string | undefined): boolean {
 }
 
 /** Tools that must remain callable while emergency kill is engaged (A10 self-unlock). */
-export const OPERATIONAL_CONTROL_BYPASS_TOOL_IDS: ReadonlySet<string> = new Set([
+const OPERATIONAL_CONTROL_BYPASS_TOOL_IDS: ReadonlySet<string> = new Set([
   "admin.agent_controls.get",
   "admin.agent_controls.set",
 ]);

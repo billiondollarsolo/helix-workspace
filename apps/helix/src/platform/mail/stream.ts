@@ -4,7 +4,7 @@ import { ForbiddenError, UnauthorizedError } from "../../api/api-error.js";
 
 const MAIL_ACTIVITY_SUBJECTS = ["activity.mail.received", "activity.mail.sent"] as const;
 
-export type MailStreamEventType = "mail.received" | "mail.sent";
+type MailStreamEventType = "mail.received" | "mail.sent";
 
 export interface MailStreamFrame {
   readonly type: MailStreamEventType;
@@ -12,7 +12,7 @@ export interface MailStreamFrame {
   readonly orgId: string;
 }
 
-export interface MailStreamActor {
+interface MailStreamActor {
   readonly id: string;
   readonly orgId: string;
 }

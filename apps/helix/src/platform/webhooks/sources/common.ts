@@ -1,8 +1,9 @@
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 import { getCryptoProvider } from "../../crypto/index.js";
 
 export type RawWebhookBody = Buffer | Uint8Array | string;
 export type WebhookHeaders = Readonly<Record<string, string | readonly string[] | undefined>>;
-export type JsonPrimitive = string | number | boolean | null;
+type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
 export type JsonObject = { readonly [key: string]: JsonValue };
 
@@ -136,30 +137,6 @@ export function nestedStringField(object: JsonObject, path: readonly string[]): 
   }
 
   return undefined;
-}
-
-export function isJsonObject(value: unknown): value is JsonObject {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.values(value).every(isJsonValue)
-  );
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return true;
-  }
-  if (Array.isArray(value)) {
-    return value.every(isJsonValue);
-  }
-  return isJsonObject(value);
 }
 
 function toBuffer(payload: RawWebhookBody): Buffer {

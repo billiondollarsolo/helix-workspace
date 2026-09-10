@@ -29,17 +29,17 @@
  * indistinguishable from that source being down.
  */
 
-import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Actor } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { adminConsoleReadScope, canReadAdminConsole, sendForbidden } from "./console-shared.js";
 
 /** One signal's reading. `unavailable` is a statement about the *request*, not
  *  about the workspace — the client must never render it as a zero. */
-export type AdminOverviewSignal<Data> =
+type AdminOverviewSignal<Data> =
   | { readonly status: "ok"; readonly data: Data }
   | { readonly status: "unavailable"; readonly reason: string };
 
-export interface AdminOverviewResponse {
+interface AdminOverviewResponse {
   readonly signals: {
     readonly domains: AdminOverviewSignal<unknown>;
     readonly policies: AdminOverviewSignal<unknown>;
@@ -52,7 +52,7 @@ export interface AdminOverviewResponse {
 /** Each reader returns exactly what its own endpoint returns, so the client
  *  parses one shape per signal rather than a second, aggregate-only shape that
  *  could drift away from the section pages. */
-export interface AdminOverviewReaders {
+interface AdminOverviewReaders {
   readDomains: (actor: Actor) => Promise<unknown>;
   readPolicies: (actor: Actor) => Promise<unknown>;
   readPlatformConfig: (actor: Actor) => Promise<unknown>;

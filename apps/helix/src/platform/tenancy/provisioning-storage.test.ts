@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import {
   defaultObjectStoreConfig,
   defaultObjectStorePrefix,
@@ -51,24 +51,11 @@ describe("PostgresTenantStorageNamespaceStore", () => {
     expect(recording.calls).toHaveLength(1);
   });
 });
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
 function createRecordingSql(input: {
   readonly hadStorage: boolean;
   readonly storage?: Record<string, unknown>;
-}): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-  readonly transactions: number;
-} {
-  const calls: RecordedQuery[] = [];
-  let transactions = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
+}) {
+  const recording = sharedRecordingSql(() => {
     return Promise.resolve([
       {
         id: orgId,
@@ -76,19 +63,14 @@ function createRecordingSql(input: {
         had_storage: input.hadStorage,
       },
     ]);
-  };
-  const sql = Object.assign(tag, {
-    json: (value: unknown) => value,
-    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) => {
-      transactions += 1;
-      return callback(sql as unknown as postgres.TransactionSql);
-    },
-  }) as unknown as postgres.Sql;
+  }, "?");
   return {
-    sql,
-    calls,
+    ...recording,
     get transactions() {
-      return transactions;
+      return recording.beginCalls;
+    },
+    get beginCalls() {
+      return recording.beginCalls;
     },
   };
 }

@@ -11,7 +11,7 @@ name: helix-production
 # ---------------------------------------------------------------------------
 # Production remains MVP fail-closed (AGENTS.md). This overlay MUST keep:
 #   HELIX_APPS=mail,drive,chat,assistant
-#   HELIX_CONFIG_JSON modules docs/calendar/meet/editors enabled:false
+#   HELIX_CONFIG_JSON modules calendar/meet enabled:false
 #   MEET_JITSI_ENABLED=false (no production Meet credentials)
 #   ClamAV + SpamAssassin ON for Mail/Drive Business scanning
 #   Immutable digest-only images; data-plane ports unpublished
@@ -535,6 +535,7 @@ services:
     environment:
       HELIX_DOMAIN: ${HELIX_DOMAIN:?HELIX_DOMAIN is required}
       HELIX_UPSTREAM: helix:3000
+      HELIX_JITSI_ORIGIN: ${MEET_JITSI_PUBLIC_URL:-https://meet.localhost}
     ports: !override
       - target: 80
         published: ${CADDY_HTTP_PORT:-80}

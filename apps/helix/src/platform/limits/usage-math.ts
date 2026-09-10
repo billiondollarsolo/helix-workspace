@@ -46,7 +46,7 @@ export function utcDayKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function nextUtcDay(date: Date): Date {
+function nextUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
 }
 

@@ -18,9 +18,9 @@ export interface VerifiableAuditRecord extends HashableAuditRecord {
   readonly thisHash?: string | null;
 }
 
-export type AuditHashChainFailureReason = "prev_hash_mismatch" | "this_hash_mismatch";
+type AuditHashChainFailureReason = "prev_hash_mismatch" | "this_hash_mismatch";
 
-export interface AuditHashChainFailure {
+interface AuditHashChainFailure {
   readonly index: number;
   readonly id?: string | undefined;
   readonly reason: AuditHashChainFailureReason;

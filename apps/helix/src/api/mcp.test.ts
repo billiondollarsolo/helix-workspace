@@ -1,5 +1,18 @@
-import { describe, expect, it } from "vitest";
 import type { Actor, ToolDefinition } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
+import { InMemoryAgentRateCostLimiter, type AgentLimitBudget } from "../platform/limits/index.js";
+import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
+import type {
+  IndexDocument,
+  SearchEngine,
+  SearchRequest,
+  SearchResponse,
+} from "../platform/search/types.js";
+import { createToolRegistry } from "../platform/tool-registry.js";
+import {
+  InMemoryConfirmationGate,
+  InMemoryPendingActionStore,
+} from "../platform/tools/registry.js";
 import { systemActor, unauthenticatedActor } from "./actor.js";
 import {
   createSearchMcpResourceProvider,
@@ -9,19 +22,6 @@ import {
   type McpStreamEvent,
 } from "./mcp.js";
 import { HELIX_SERVER_VERSION, MCP_PROTOCOL_VERSION } from "./version.js";
-import { InMemoryAgentRateCostLimiter, type AgentLimitBudget } from "../platform/limits/index.js";
-import { createToolRegistry } from "../platform/tool-registry.js";
-import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
-import {
-  InMemoryConfirmationGate,
-  InMemoryPendingActionStore,
-} from "../platform/tools/registry.js";
-import type {
-  IndexDocument,
-  SearchEngine,
-  SearchRequest,
-  SearchResponse,
-} from "../platform/search/types.js";
 
 describe("handleMcpJsonRpcRequest", () => {
   it("lists visible tools using MCP tool shape", async () => {
@@ -433,6 +433,28 @@ describe("handleMcpJsonRpcRequest", () => {
     });
   });
 
+  it.each(["docs", "sheets", "slides"])(
+    "rejects retired %s resource URIs before search",
+    async (type) => {
+      const engine = new FakeSearchEngine([]);
+      const resources = createSearchMcpResourceProvider(engine);
+      const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+      const uri = `helix://resources/${type}/old-1`;
+
+      await expect(
+        handleMcpJsonRpcRequest({
+          tools,
+          principal: { actor: systemActor },
+          resources,
+          body: { jsonrpc: "2.0", id: "retired", method: "resources/read", params: { uri } },
+        }),
+      ).resolves.toMatchObject({
+        error: { code: -32004, message: `Resource not found: ${uri}` },
+      });
+      expect(engine.searches).toEqual([]);
+    },
+  );
+
   it("maps resource read quota denials to MCP rate-limit errors", async () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const resources = {
@@ -453,7 +475,7 @@ describe("handleMcpJsonRpcRequest", () => {
           jsonrpc: "2.0",
           id: "quota",
           method: "resources/read",
-          params: { uri: "helix://docs/document/doc-1" },
+          params: { uri: "helix://drive/file/file-1" },
         },
       }),
     ).resolves.toMatchObject({

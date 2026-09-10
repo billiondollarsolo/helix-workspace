@@ -478,11 +478,10 @@ describe("admin console request budget", () => {
           ],
         },
         "tier-readiness": {
-          "requestCount": 2,
+          "requestCount": 1,
           "settled": true,
           "urls": [
             "/v1/api/admin/platform-config",
-            "/v1/api/tools/plugin.list",
           ],
         },
         "users": {

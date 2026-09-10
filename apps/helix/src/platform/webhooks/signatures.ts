@@ -1,6 +1,6 @@
 import { getCryptoProvider } from "../crypto/index.js";
 
-export const WEBHOOK_SIGNATURE_VERSION = "v1";
+const WEBHOOK_SIGNATURE_VERSION = "v1";
 
 export interface WebhookSignature {
   readonly timestamp: number;
@@ -65,7 +65,11 @@ export function parseWebhookSignatureHeader(
 
   const timestampValue = values.get("t");
   const signature = values.get(WEBHOOK_SIGNATURE_VERSION);
-  if (timestampValue === undefined || signature === undefined || !/^[a-f0-9]{64}$/u.test(signature)) {
+  if (
+    timestampValue === undefined ||
+    signature === undefined ||
+    !/^[a-f0-9]{64}$/u.test(signature)
+  ) {
     return undefined;
   }
 
@@ -77,7 +81,11 @@ export function parseWebhookSignatureHeader(
   return { timestamp, signature };
 }
 
-function computeSignature(secret: string, timestamp: number, payload: Buffer | Uint8Array | string): string {
+function computeSignature(
+  secret: string,
+  timestamp: number,
+  payload: Buffer | Uint8Array | string,
+): string {
   // HMAC-SHA-256 via the crypto adapter (PRD §14.4). The signed message is the
   // timestamp, a literal ".", then the payload — concatenated into one buffer
   // so the result is byte-identical to the previous streaming `.update()` form.

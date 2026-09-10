@@ -1,3 +1,5 @@
+import { fileSizeConfigs } from "./file-size.js";
+export { fileSizeConfigs } from "./file-size.js";
 import js from "@eslint/js";
 import process from "node:process";
 import reactHooks from "eslint-plugin-react-hooks";
@@ -323,13 +325,6 @@ const orgScopedDrizzleTableNames = new Set([
   "chatReactions",
   "chatReadReceipts",
   "chatRoomSettings",
-  "docsComments",
-  "docsDocuments",
-  "docsRevisions",
-  "docsStyles",
-  "docsSuggestions",
-  "docsThemes",
-  "docsUpdates",
   "driveFolders",
   "driveVersions",
   "inboundWebhooks",
@@ -355,11 +350,6 @@ const orgScopedDrizzleTableNames = new Set([
   "outbox",
   "pendingActions",
   "permissions",
-  "sheetCells",
-  "sheetTabs",
-  "sheets",
-  "slideDecks",
-  "slides",
   "threads",
   "vectorCollections",
   "vectorItems",
@@ -557,6 +547,7 @@ export const helixTestRules = {
 };
 
 export default tseslint.config(
+  ...fileSizeConfigs,
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {
@@ -599,6 +590,7 @@ export default tseslint.config(
       "**/*.spec.ts",
       "**/*.spec.tsx",
       "**/tests/**/*.ts",
+      "**/test-support/**/*.ts",
       "**/tests/**/*.tsx",
     ],
     rules: helixTestRules,

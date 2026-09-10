@@ -16,19 +16,6 @@ export type HelixCommand =
       readonly printExport?: boolean;
     }
   | { readonly kind: "logout" }
-  | { readonly kind: "install-list" }
-  | {
-      readonly kind: "install-plugin";
-      readonly pluginId: string;
-      readonly version?: string;
-      readonly json: JsonArgument;
-    }
-  | {
-      readonly kind: "plugin-lifecycle";
-      readonly action: PluginLifecycleAction;
-      readonly pluginId: string;
-      readonly json: JsonArgument;
-    }
   | {
       readonly kind: "admin-users-list";
       readonly query?: string;
@@ -68,13 +55,12 @@ export type HelixCommand =
   | { readonly kind: "completion"; readonly shell: CompletionShell }
   | { readonly kind: "help" };
 
-export type ToolListSource = "api" | "openapi" | "mcp";
-export type ToolCallTransport = "rest" | "mcp";
+type ToolListSource = "api" | "openapi" | "mcp";
+type ToolCallTransport = "rest" | "mcp";
 export type CompletionShell = "bash" | "zsh" | "fish";
-export type SearchType = "mail" | "chat" | "drive" | "calendar";
-export type AdminUserType = "user" | "agent" | "service_account" | "system";
-export type SecurityTier = "personal" | "business" | "enterprise" | "sovereign";
-export type PluginLifecycleAction = "enable" | "disable" | "uninstall";
+type SearchType = "mail" | "chat" | "drive" | "calendar";
+type AdminUserType = "user" | "agent" | "service_account" | "system";
+type SecurityTier = "personal" | "business" | "enterprise" | "sovereign";
 
 export type JsonArgument =
   | { readonly source: "empty" }
@@ -199,40 +185,6 @@ export function parseCliArgs(args: readonly string[]): HelixCommand {
     return { kind: "logout" };
   }
 
-  if (scope === "install" && action === "list" && subject === undefined) {
-    return { kind: "install-list" };
-  }
-
-  if (scope === "install" && isPluginLifecycleAction(action)) {
-    return parsePluginLifecycleCommand(action, subject, rest, `helix install ${action}`);
-  }
-
-  if (scope === "install" && action === "plugin") {
-    if (subject === undefined || subject.startsWith("-")) {
-      throw new CliUsageError("Usage: helix install plugin <id> [--json [JSON]]");
-    }
-    return {
-      ...parsePluginSpecifier(subject),
-      kind: "install-plugin",
-      json: parseJsonArgument(rest),
-    };
-  }
-
-  if (scope === "plugin" && isPluginLifecycleAction(action)) {
-    return parsePluginLifecycleCommand(action, subject, rest, `helix plugin ${action}`);
-  }
-
-  if (scope === "plugin" && action === "install") {
-    if (subject === undefined || subject.startsWith("-")) {
-      throw new CliUsageError("Usage: helix plugin install <id>[@<version>] [--json [JSON]]");
-    }
-    return {
-      ...parsePluginSpecifier(subject),
-      kind: "install-plugin",
-      json: parseJsonArgument(rest),
-    };
-  }
-
   if (scope === "openapi" && action === "get" && subject === undefined) {
     return { kind: "openapi-get" };
   }
@@ -257,27 +209,6 @@ export function parseCliArgs(args: readonly string[]): HelixCommand {
   }
 
   throw new CliUsageError(`Unknown command: ${args.join(" ")}`);
-}
-
-function parsePluginLifecycleCommand(
-  action: PluginLifecycleAction,
-  pluginId: string | undefined,
-  args: readonly string[],
-  usagePrefix: string,
-): HelixCommand {
-  if (pluginId === undefined || pluginId.startsWith("-")) {
-    throw new CliUsageError(`Usage: ${usagePrefix} <id> [--json [JSON]]`);
-  }
-  return {
-    kind: "plugin-lifecycle",
-    action,
-    pluginId,
-    json: parseJsonArgument(args),
-  };
-}
-
-function isPluginLifecycleAction(value: string | undefined): value is PluginLifecycleAction {
-  return value === "enable" || value === "disable" || value === "uninstall";
 }
 
 function parseToolListCommand(args: readonly string[]): HelixCommand {
@@ -358,20 +289,6 @@ function parseMcpCommand(
   throw new CliUsageError(
     "Usage: helix mcp serve | helix mcp resources list | helix mcp resources read <uri>",
   );
-}
-
-function parsePluginSpecifier(specifier: string): {
-  readonly pluginId: string;
-  readonly version?: string;
-} {
-  const versionSeparator = specifier.lastIndexOf("@");
-  if (versionSeparator > 0 && versionSeparator < specifier.length - 1) {
-    return {
-      pluginId: specifier.slice(0, versionSeparator),
-      version: specifier.slice(versionSeparator + 1),
-    };
-  }
-  return { pluginId: specifier };
 }
 
 function parseMailCommand(
@@ -2583,15 +2500,6 @@ export const usage = `Usage:
   helix login --client-id <id> --client-secret <secret> [--scope <scopes>]
   helix logout
   helix auth token --client-id <id> --client-secret <secret> [--scope <scopes>]
-  helix install list
-  helix install plugin <id> [--json [JSON]]
-  helix install enable <id> [--json [JSON]]
-  helix install disable <id> [--json [JSON]]
-  helix install uninstall <id> [--json [JSON]]
-  helix plugin install <id>[@<version>] [--json [JSON]]
-  helix plugin enable <id> [--json [JSON]]
-  helix plugin disable <id> [--json [JSON]]
-  helix plugin uninstall <id> [--json [JSON]]
   helix openapi get
   helix asyncapi get
   helix mcp serve

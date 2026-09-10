@@ -1,14 +1,14 @@
+import { versionedApiPath } from "../../api/version.js";
+import type { MailStore } from "../mail/index.js";
+import { MailSendService } from "../mail/outbound.js";
+import type { MailOutboundRecord } from "../mail/types.js";
+import { recurrenceExceptionDates, recurrenceOverrides } from "./recurrence.js";
+import { formatZonedIcsLocalDate } from "./timezone.js";
 import type {
   CalendarAttendeeRecord,
   CalendarEventRecord,
   CalendarResponseStatus,
 } from "./types.js";
-import { recurrenceExceptionDates, recurrenceOverrides } from "./recurrence.js";
-import { formatZonedIcsLocalDate } from "./timezone.js";
-import { MailSendService } from "../mail/outbound.js";
-import type { MailOutboundRecord } from "../mail/types.js";
-import type { MailStore } from "../mail/index.js";
-import { versionedApiPath } from "../../api/version.js";
 
 export interface CalendarInvitationSender {
   sendInvitation(input: {
@@ -41,6 +41,8 @@ export interface CreateMailCalendarInvitationSenderOptions {
 export function createMailCalendarInvitationSender(
   options: CreateMailCalendarInvitationSenderOptions,
 ): CalendarInvitationSender {
+  // Event threads have kind calendar; each delivery needs a mail thread. The
+  // ICS UID and durable delivery Message-ID retain the event/delivery identity.
   const service = new MailSendService({
     store: options.store,
     outboxSubject: "mail.send",
@@ -63,9 +65,6 @@ export function createMailCalendarInvitationSender(
           await service.queue({
             orgId: input.orgId,
             actorId: input.actorId,
-            ...(input.event.threadId === null || input.event.threadId === undefined
-              ? {}
-              : { threadId: input.event.threadId }),
             envelope: {
               from: organizer,
               to: [
@@ -107,9 +106,6 @@ export function createMailCalendarInvitationSender(
         await service.queue({
           orgId: input.orgId,
           actorId: input.actorId,
-          ...(input.event.threadId === null || input.event.threadId === undefined
-            ? {}
-            : { threadId: input.event.threadId }),
           envelope: {
             from: attendeeAddress(input.attendee),
             to: [organizerAddress(input.event, input.actorId, options.defaultFromDomain)],
@@ -241,10 +237,6 @@ export function createIcsCalendar(input: {
   return foldIcsLines(lines).join("\r\n") + "\r\n";
 }
 
-export function buildCalendarIcsInvitation(event: CalendarEventRecord): string {
-  return createIcsCalendar({ event, method: "REQUEST" });
-}
-
 export function createReplyIcs(
   event: CalendarEventRecord,
   attendee: CalendarAttendeeRecord,
@@ -252,11 +244,7 @@ export function createReplyIcs(
   return createIcsCalendar({ event, attendee, method: "REPLY" });
 }
 
-export function rsvpUrl(
-  baseUrl: string,
-  token: string,
-  responseStatus: CalendarResponseStatus,
-): string {
+function rsvpUrl(baseUrl: string, token: string, responseStatus: CalendarResponseStatus): string {
   const url = new URL(versionedApiPath(`/dav/cal/rsvp/${encodeURIComponent(token)}`), baseUrl);
   url.searchParams.set("response", responseStatus);
   return url.toString();

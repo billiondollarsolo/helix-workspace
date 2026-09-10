@@ -95,7 +95,7 @@ export async function withTenantIoSagaPostgresContext<T>(
   ) as Promise<T>;
 }
 
-export async function applyTenantPostgresContext(
+async function applyTenantPostgresContext(
   tx: postgres.TransactionSql,
   input: TenantPostgresContextInput,
 ): Promise<void> {

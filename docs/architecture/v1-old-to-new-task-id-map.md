@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-02  
 **Task:** G0.8  
-**New plan:** `docs/superpowers/plans/2026-08-02-helix-full-workspace-v1-release.md`
+**New plan:** `docs/archive/plans/2026-08-02-helix-full-workspace-v1-release.md`
 
 | Old source                      | Old ID                      | New ID                                              | Notes                             |
 | ------------------------------- | --------------------------- | --------------------------------------------------- | --------------------------------- |

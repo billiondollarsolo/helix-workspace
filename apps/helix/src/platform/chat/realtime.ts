@@ -223,13 +223,6 @@ export class EventBusChatRoomBus implements ChatRoomBus {
   }
 }
 
-export class ChatSlowConsumerError extends Error {
-  constructor() {
-    super("Chat realtime consumer exceeded its pending-event limit.");
-    this.name = "ChatSlowConsumerError";
-  }
-}
-
 interface OrderedDelivery {
   accept(event: ChatRoomEvent): void;
   drain(): Promise<void>;

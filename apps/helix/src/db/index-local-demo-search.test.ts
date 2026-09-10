@@ -2,8 +2,8 @@ import type postgres from "postgres";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   indexLocalDemoSearch,
-  localDemoSearchDocumentsForAnchor,
   LOCAL_DEMO_SEARCH_DOCUMENTS,
+  localDemoSearchDocumentsForAnchor,
 } from "./index-local-demo-search.js";
 import { LOCAL_DEMO_IDS } from "./seed-local-demo.js";
 import { DEFAULT_LOCAL_OAUTH_ACTOR_ID } from "./seed-local-oauth.js";

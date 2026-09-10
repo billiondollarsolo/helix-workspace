@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
 import type postgres from "postgres";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   advisoryLockKey,
   LeaderElection,

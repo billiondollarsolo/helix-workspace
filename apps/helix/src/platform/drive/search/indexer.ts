@@ -1,10 +1,10 @@
-import type { JsonObject } from "@helix/sdk-types";
 import type {
   IndexDocument,
   SearchEventIndexer,
   SearchIndexer,
   SearchIndexerEvent,
 } from "../../search/index.js";
+import { compactJsonObject } from "../../util/json.js";
 import type {
   DriveActivityPayload,
   DriveActor,
@@ -12,8 +12,8 @@ import type {
   DriveSearchRecord,
 } from "../types.js";
 
-export const driveSearchIndexerId = "drive";
-export const driveSearchSubjects = ["activity.drive.>", "com.helix.core.drive.>"] as const;
+const driveSearchIndexerId = "drive";
+const driveSearchSubjects = ["activity.drive.>", "com.helix.core.drive.>"] as const;
 
 export function createDriveSearchIndexer(
   store: DriveSearchProjectionStore,
@@ -92,7 +92,7 @@ export function driveRecordToIndexDocument(record: DriveSearchRecord): IndexDocu
   };
 }
 
-export function driveDocumentId(fileId: string): string {
+function driveDocumentId(fileId: string): string {
   return `drive:${fileId}`;
 }
 
@@ -113,14 +113,4 @@ function actorSearchText(actor: DriveActor | undefined): string | undefined {
     return `${actor.displayName} <${actor.email}>`;
   }
   return actor.displayName ?? actor.email ?? actor.id;
-}
-
-function compactJsonObject(input: Record<string, unknown>): JsonObject {
-  const output: Record<string, JsonObject[keyof JsonObject]> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (value !== undefined) {
-      output[key] = value as JsonObject[keyof JsonObject];
-    }
-  }
-  return output;
 }

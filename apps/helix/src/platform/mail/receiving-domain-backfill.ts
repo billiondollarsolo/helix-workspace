@@ -1,8 +1,8 @@
+import { normalizeMailDomain } from "./address-normalization.js";
 import {
   type MailReceivingDomainRecord,
   type ReceivingDomainStore,
 } from "./receiving-domains-store.js";
-import { normalizeMailDomain } from "./address-normalization.js";
 
 export interface SingleTenantReceivingDomainBackfillInput {
   readonly deploymentMode: string;

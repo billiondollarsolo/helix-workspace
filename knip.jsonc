@@ -1,5 +1,18 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreBinaries": ["openssl", "helm", "rclone"],
-  "ignoreDependencies": ["ws"],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "infra/k6/*.js",
+        "infra/k6/validate-quality-gates.mjs",
+        "infra/meet/custom-config.js",
+        "infra/scripts/*smoke.mjs",
+      ],
+    },
+    "apps/web": {
+      "entry": ["public/theme-bootstrap.js"],
+    },
+  },
+  "ignoreDependencies": ["k6"],
 }

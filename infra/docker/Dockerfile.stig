@@ -54,7 +54,7 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
 
 # Copy manifests first for a cacheable dependency layer.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpmfile.mjs ./
 COPY apps/helix/package.json apps/helix/
 COPY packages/ packages/
 

@@ -1,11 +1,18 @@
+import { cn } from "@/lib/utils";
+import {
+  Bell as BellIcon,
+  Calendar as CalendarIcon,
+  MessageCircle as ChatIcon,
+  MessageSquare as CommentIcon,
+  HardDrive as DriveIcon,
+  Shield as ShieldIcon,
+  X as XIcon,
+  type LucideIcon as IconComponent,
+} from "lucide-react";
 /* NotificationsPanel — cross-app notification feed.
    Wired to the notifications.* helix tools (replaces the prior static stub).
    Tabs (All / Unread); rows mark themselves read on click and navigate to
    the source app via the verb→route map below. */
-import { useNavigate } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { Icons, type IconComponent } from "@/components/icons";
 import { Avatar } from "@/components/ui/avatar";
 import {
   notificationsListQueryOptions,
@@ -14,6 +21,9 @@ import {
   useMarkRead,
   type NotificationItem,
 } from "@/features/notifications/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
 type NotificationKind =
   "mention" | "share" | "comment" | "calendar" | "dm" | "approval" | "recording" | "system";
 const NOTIF_ICONS: Record<
@@ -23,22 +33,22 @@ const NOTIF_ICONS: Record<
     bg: string;
   }
 > = {
-  mention: { Icon: Icons.Comment, bg: "#7c3aed" },
-  share: { Icon: Icons.Drive, bg: "#7c3aed" },
-  comment: { Icon: Icons.Comment, bg: "#0891b2" },
-  calendar: { Icon: Icons.Calendar, bg: "#ea580c" },
-  dm: { Icon: Icons.Chat, bg: "#db2777" },
-  approval: { Icon: Icons.Shield, bg: "#dc2626" },
-  recording: { Icon: Icons.Drive, bg: "#dc2626" },
-  system: { Icon: Icons.Bell, bg: "#475569" },
+  mention: { Icon: CommentIcon, bg: "#7c3aed" },
+  share: { Icon: DriveIcon, bg: "#7c3aed" },
+  comment: { Icon: CommentIcon, bg: "#0891b2" },
+  calendar: { Icon: CalendarIcon, bg: "#ea580c" },
+  dm: { Icon: ChatIcon, bg: "#db2777" },
+  approval: { Icon: ShieldIcon, bg: "#dc2626" },
+  recording: { Icon: DriveIcon, bg: "#dc2626" },
+  system: { Icon: BellIcon, bg: "#475569" },
 };
 /** Map server-side verbs to the icon kind and the in-app route to open. */
 function kindForVerb(verb: string): NotificationKind {
   if (verb.startsWith("meet.recording")) return "recording";
   if (verb.startsWith("meet.")) return "calendar";
   if (verb.startsWith("calendar.")) return "calendar";
-  if (verb.startsWith("docs.comment") || verb.startsWith("docs.suggestion")) return "comment";
-  if (verb.startsWith("docs.") || verb.startsWith("drive.")) return "share";
+  if (verb.startsWith("drive.comment")) return "comment";
+  if (verb.startsWith("drive.")) return "share";
   if (verb.startsWith("chat.")) return "dm";
   if (verb.startsWith("mail.")) return "mention";
   if (verb.includes("approval")) return "approval";
@@ -104,7 +114,7 @@ export function formatRelativeNotificationTime(
 function BellGlyph() {
   return (
     <span aria-hidden="true">
-      <Icons.Bell />
+      <BellIcon size={16} />
     </span>
   );
 }
@@ -164,34 +174,14 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
       onClick={(event) => event.stopPropagation()}
       role="dialog"
       aria-label="Notifications"
-      style={{
-        position: "fixed",
-        top: 8,
-        right: 56,
-        width: 380,
-        maxHeight: "80vh",
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-        boxShadow: "var(--shadow-lg)",
-        zIndex: 250,
-        display: "flex",
-        flexDirection: "column",
-      }}
+      className="fixed top-2 right-14 w-95 [max-height:80vh] bg-card [border:1px_solid_var(--border)] [border-radius:10px] [box-shadow:var(--shadow-lg)] [z-index:250] flex flex-col"
     >
-      <div
-        style={{
-          padding: "12px 14px",
-          display: "flex",
-          alignItems: "center",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <span style={{ fontSize: "var(--text-body)", fontWeight: 600 }}>Notifications</span>
+      <div className="[padding:12px_14px] flex items-center [border-bottom:1px_solid_var(--border)]">
+        <span className="[font-size:var(--text-body)] font-semibold">Notifications</span>
         <button
           type="button"
-          className="btn sm"
-          style={{ marginLeft: "auto", marginRight: 4 }}
+          className="btn sm ml-auto mr-1"
+
           disabled={unreadCount === 0 || markAllRead.isPending}
           onClick={() => markAllRead.mutate()}
         >
@@ -199,19 +189,14 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
         </button>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
           <span aria-hidden="true">
-            <Icons.X />
+            <XIcon size={16} />
           </span>
         </button>
       </div>
       <div
         role="tablist"
         aria-label="Notification filters"
-        style={{
-          display: "flex",
-          gap: 2,
-          padding: "0 12px",
-          borderBottom: "1px solid var(--border)",
-        }}
+        className="flex gap-0.5 [padding:0_12px] [border-bottom:1px_solid_var(--border)]"
       >
         {tabs.map((tab) => (
           <button
@@ -222,8 +207,10 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
             aria-selected={filter === tab.id}
             aria-controls="notifications-results"
             onClick={() => setFilter(tab.id)}
-            className={filter === tab.id ? "tab active" : "tab"}
-            style={{ height: 32, fontSize: "var(--text-meta)" }}
+            className={cn(
+              filter === tab.id ? "tab active" : "tab",
+              "h-8 [font-size:var(--text-meta)]",
+            )}
           >
             {tab.label}
           </button>
@@ -234,16 +221,16 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
         role="tabpanel"
         aria-labelledby={`notifications-tab-${filter}`}
         tabIndex={0}
-        style={{ overflowY: "auto", flex: 1 }}
+        className="overflow-y-auto flex-1"
       >
         {isLoading ? (
-          <div className="empty" role="status" aria-live="polite" style={{ padding: 32 }}>
+          <div className="empty p-8" role="status" aria-live="polite">
             <BellGlyph />
             <div>Loading…</div>
           </div>
         ) : null}
         {!isLoading && isError ? (
-          <div className="empty" role="alert" style={{ padding: 32, color: "var(--danger)" }}>
+          <div className="empty p-8 text-destructive" role="alert">
             <BellGlyph />
             <div>Could not load notifications. Check your connection and try again.</div>
             <button
@@ -278,71 +265,37 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
               }}
               className={`notification-row${notification.unread ? " unread" : ""}`}
             >
-              <div style={{ position: "relative", flexShrink: 0 }}>
+              <div className="relative shrink-0">
                 <Avatar name={notification.summary} size={32} />
                 <div
-                  style={{
-                    position: "absolute",
-                    right: -3,
-                    bottom: -3,
-                    width: 16,
-                    height: 16,
-                    borderRadius: 999,
-                    background: meta.bg,
-                    color: "white",
-                    display: "grid",
-                    placeItems: "center",
-                    border: "2px solid var(--surface)",
-                  }}
+                  className="absolute [right:-3px] [bottom:-3px] w-4 h-4 [border-radius:999px] [color:white] grid [place-items:center] [border:2px_solid_var(--surface)]"
+                  style={{ background: meta.bg }}
                 >
-                  <span aria-hidden="true" style={{ display: "block", transform: "scale(0.55)" }}>
+                  <span aria-hidden="true" className="block [transform:scale(0.55)]">
                     <Icon />
                   </span>
                 </div>
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: "var(--text-meta)", lineHeight: 1.45 }}>
-                  <span style={{ fontWeight: 600 }}>{notification.summary}</span>
+              <div className="flex-1 min-w-0">
+                <div className="[font-size:var(--text-meta)] [line-height:1.45]">
+                  <span className="font-semibold">{notification.summary}</span>
                 </div>
                 {notification.body ? (
-                  <div
-                    className="truncate"
-                    style={{
-                      fontSize: "var(--text-caption)",
-                      color: "var(--text-3)",
-                      marginTop: 4,
-                      padding: "4px 8px",
-                      background: "var(--surface-2)",
-                      borderRadius: 4,
-                      lineHeight: 1.4,
-                    }}
-                  >
+                  <div className="truncate [font-size:var(--text-caption)] text-muted-foreground mt-1 [padding:4px_8px] bg-muted rounded [line-height:1.4]">
                     {notification.body}
                   </div>
                 ) : null}
                 <time
                   dateTime={notification.createdAt}
                   title={timestamp.absolute}
-                  style={{
-                    display: "block",
-                    fontSize: "var(--text-caption)",
-                    color: "var(--text-3)",
-                    marginTop: 4,
-                  }}
+                  className="block [font-size:var(--text-caption)] text-muted-foreground mt-1"
                 >
                   {timestamp.relative}
                 </time>
               </div>
               {notification.unread ? (
                 <div
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 999,
-                    background: "var(--accent)",
-                    flexShrink: 0,
-                    alignSelf: "center",
-                  }}
+                  className="[width:7px] [height:7px] [border-radius:999px] [background:var(--accent)] shrink-0 [align-self:center]"
                   aria-hidden="true"
                 />
               ) : null}
@@ -350,7 +303,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
           );
         })}
         {!isLoading && !isError && items.length === 0 ? (
-          <div className="empty" style={{ padding: 32 }}>
+          <div className="empty p-8">
             <BellGlyph />
             <div>You&apos;re all caught up</div>
           </div>

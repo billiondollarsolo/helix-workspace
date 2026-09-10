@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { createHash, randomUUID } from "node:crypto";
+import type postgres from "postgres";
 import { z } from "zod";
 import { parseVCard } from "../dav/standards.js";
 import { InvalidVcardError, parseVcard } from "./store.js";

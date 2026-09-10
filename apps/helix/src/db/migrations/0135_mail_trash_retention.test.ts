@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -278,25 +279,6 @@ describe.skipIf(sql === null)("0135 live mail trash lifecycle", () => {
   }
 
   async function cleanup(): Promise<void> {
-    await database.begin(async (tx) => {
-      await tx.unsafe("set local session_replication_role = replica");
-      await tx`delete from drive_quarantine_deletions where org_id = ${orgId}`;
-      await tx`delete from mail_retention_holds where org_id = ${orgId}`;
-      await tx`delete from mail_suppressions where org_id = ${orgId}`;
-      await tx`delete from mail_delivery_events where org_id = ${orgId}`;
-      await tx`delete from mail_outbound_messages where org_id = ${orgId}`;
-      await tx`delete from mail_outbound_providers where org_id = ${orgId}`;
-      await tx`delete from mail_attachment_ingestions where org_id = ${orgId}`;
-      await tx`delete from mail_raw_sources where org_id = ${orgId}`;
-      await tx`delete from message_attachments where org_id = ${orgId}`;
-      await tx`delete from mail_message_deliveries where org_id = ${orgId}`;
-      await tx`delete from mail_thread_state where org_id = ${orgId}`;
-      await tx`delete from messages where org_id = ${orgId}`;
-      await tx`delete from objects where org_id = ${orgId}`;
-      await tx`delete from threads where org_id = ${orgId}`;
-      await tx`delete from organization_memberships where org_id = ${orgId}`;
-      await tx`delete from actors where org_id = ${orgId}`;
-      await tx`delete from orgs where id = ${orgId}`;
-    });
+    await cleanupTestTenants(database, [orgId]);
   }
 });

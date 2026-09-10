@@ -175,5 +175,3 @@ export const noCrossDomainImportRule = {
     };
   },
 };
-
-export default noCrossDomainImportRule;

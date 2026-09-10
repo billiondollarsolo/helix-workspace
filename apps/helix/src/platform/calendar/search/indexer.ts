@@ -1,5 +1,10 @@
-import type { JsonObject } from "@helix/sdk-types";
-import type { IndexDocument, SearchEventIndexer, SearchIndexer, SearchIndexerEvent } from "../../search/index.js";
+import type {
+  IndexDocument,
+  SearchEventIndexer,
+  SearchIndexer,
+  SearchIndexerEvent,
+} from "../../search/index.js";
+import { compactJsonObject } from "../../util/json.js";
 import type {
   CalendarActivityPayload,
   CalendarSearchAttendee,
@@ -7,10 +12,10 @@ import type {
   CalendarSearchRecord,
 } from "../types.js";
 
-export const calendarSearchIndexerId = "calendar";
-export const calendarSearchSubjects = ["activity.calendar.>", "com.helix.core.calendar.>"] as const;
+const calendarSearchIndexerId = "calendar";
+const calendarSearchSubjects = ["activity.calendar.>", "com.helix.core.calendar.>"] as const;
 
-export function createCalendarSearchIndexer(
+function createCalendarSearchIndexer(
   store: CalendarSearchProjectionStore,
 ): SearchIndexer<CalendarActivityPayload> {
   return {
@@ -36,16 +41,22 @@ export function createCalendarSearchIndexer(
   };
 }
 
-export function registerCalendarIndexer(indexer: SearchEventIndexer, store: CalendarSearchProjectionStore): void {
+export function registerCalendarIndexer(
+  indexer: SearchEventIndexer,
+  store: CalendarSearchProjectionStore,
+): void {
   indexer.register(createCalendarSearchIndexer(store));
 }
 
 export function calendarRecordToIndexDocument(record: CalendarSearchRecord): IndexDocument {
   const attendees = record.attendees ?? [];
   const attendeeText = attendees.map(attendeeSearchText).join(", ");
-  const organizer = record.organizer === undefined
-    ? undefined
-    : [record.organizer.displayName, record.organizer.email, record.organizer.id].filter(Boolean).join(" ");
+  const organizer =
+    record.organizer === undefined
+      ? undefined
+      : [record.organizer.displayName, record.organizer.email, record.organizer.id]
+          .filter(Boolean)
+          .join(" ");
   const body = [
     record.title,
     record.description,
@@ -55,7 +66,7 @@ export function calendarRecordToIndexDocument(record: CalendarSearchRecord): Ind
     record.startsAt,
     record.endsAt,
   ]
-    .map((part) => part instanceof Date ? part.toISOString() : part)
+    .map((part) => (part instanceof Date ? part.toISOString() : part))
     .filter((part): part is string => typeof part === "string" && part.length > 0)
     .join("\n");
 
@@ -74,7 +85,9 @@ export function calendarRecordToIndexDocument(record: CalendarSearchRecord): Ind
       location: record.location ?? undefined,
       organizerId: record.organizer?.id,
       organizerEmail: record.organizer?.email,
-      attendeeActorIds: attendees.map((attendee) => attendee.actorId).filter((actorId) => actorId !== undefined),
+      attendeeActorIds: attendees
+        .map((attendee) => attendee.actorId)
+        .filter((actorId) => actorId !== undefined),
       attendeeEmails: attendees.map((attendee) => attendee.email),
       status: record.status,
       visibility: record.visibility,
@@ -96,31 +109,25 @@ export function calendarRecordToIndexDocument(record: CalendarSearchRecord): Ind
   };
 }
 
-export function calendarDocumentId(eventId: string): string {
+function calendarDocumentId(eventId: string): string {
   return `calendar:${eventId}`;
 }
 
-function calendarEventIdFromEvent(event: SearchIndexerEvent<CalendarActivityPayload>): string | undefined {
+function calendarEventIdFromEvent(
+  event: SearchIndexerEvent<CalendarActivityPayload>,
+): string | undefined {
   const id = event.payload.eventId ?? event.payload.id;
   return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
 function isDeleteSubject(subject: string): boolean {
-  return subject.endsWith(".deleted") || subject.endsWith(".delete") || subject.endsWith(".cancelled");
+  return (
+    subject.endsWith(".deleted") || subject.endsWith(".delete") || subject.endsWith(".cancelled")
+  );
 }
 
 function attendeeSearchText(attendee: CalendarSearchAttendee): string {
   return [attendee.displayName, attendee.email, attendee.actorId].filter(Boolean).join(" ");
-}
-
-function compactJsonObject(input: Record<string, unknown>): JsonObject {
-  const output: Record<string, JsonObject[keyof JsonObject]> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (value !== undefined) {
-      output[key] = value as JsonObject[keyof JsonObject];
-    }
-  }
-  return output;
 }
 
 function timestampString(value: string | Date | null | undefined): string | undefined {

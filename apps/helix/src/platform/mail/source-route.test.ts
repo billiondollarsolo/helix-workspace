@@ -1,7 +1,7 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify, { type FastifyInstance } from "fastify";
 import { simpleParser } from "mailparser";
 import { describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
 import { ApiError } from "../../api/api-error.js";
 import { prepareMailRawSource } from "./raw-source.js";
 import { registerMailSourceRoutes } from "./source-route.js";

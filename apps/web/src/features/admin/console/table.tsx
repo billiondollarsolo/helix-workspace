@@ -40,7 +40,7 @@ import {
  *  `localeCompare` so accented names land where a reader expects; numbers and
  *  dates sort numerically. `null` sorts last in both directions — an absent
  *  value is not "before A", it is unknown. */
-export type AdminSortValue = string | number | null;
+type AdminSortValue = string | number | null;
 
 export interface AdminColumn<TRow> {
   /** Stable id — also the React key for the cell and the sort key. */

@@ -7,19 +7,19 @@ import { parseResponse } from "@/features/admin/api-response";
 /**
  * Core-app enablement client.
  *
- * Core apps (mail, chat, drive, docs, calendar, meet, assistant, editors) are
+ * Core apps (mail, chat, drive, calendar, meet, assistant) are
  * toggleable platform modules. This module talks to two backend surfaces:
  *  - `/api/core-apps` — readable by any authenticated user; drives the web
  *    shell's left-rail + route gating;
  *  - `/api/admin/core-apps` — admin-only view/toggle of org-wide enablement.
  */
 
-export const CORE_APP_IDS = ["mail", "chat", "drive", "calendar", "meet", "assistant"] as const;
+const CORE_APP_IDS = ["mail", "chat", "drive", "calendar", "meet", "assistant"] as const;
 
 export type CoreAppId = (typeof CORE_APP_IDS)[number];
 
 /** Shell-facing core-app projection (non-admin). */
-export interface CoreAppShellEntry {
+interface CoreAppShellEntry {
   readonly id: CoreAppId;
   readonly name: string;
   readonly enabled: boolean;
@@ -146,7 +146,7 @@ export async function fetchCoreAppsShellStatus(
   return parseResponse(response, "load core apps", coreAppShellStatusSchema, EMPTY_SHELL_STATUS);
 }
 
-export async function fetchCoreAppsAdminStatus(
+async function fetchCoreAppsAdminStatus(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<CoreAppsAdminStatus> {
   const response = await fetchImpl("/api/admin/core-apps", { method: "GET" });

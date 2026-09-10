@@ -42,7 +42,7 @@ import type {
 /** A gate the console can only *expect*. Deliberately has no `status` field:
  *  there is nothing to put in one, and an optional status would eventually be
  *  defaulted to something positive. */
-export interface TierExpectation {
+interface TierExpectation {
   readonly id: string;
   readonly title: string;
   readonly detail: string;

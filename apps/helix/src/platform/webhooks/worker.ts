@@ -200,7 +200,7 @@ export class OutboundWebhookWorker {
   }
 }
 
-export function webhookSubjectMatches(pattern: string, subject: string): boolean {
+function webhookSubjectMatches(pattern: string, subject: string): boolean {
   const patternParts = pattern.split(".");
   const subjectParts = subject.split(".");
 

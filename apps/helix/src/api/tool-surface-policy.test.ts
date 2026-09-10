@@ -1,16 +1,6 @@
+import type { Actor, ToolDefinition } from "@helix/sdk-types";
 import fastify, { type FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
-import type { Actor, ToolDefinition } from "@helix/sdk-types";
-import {
-  registerPendingActionMutationRoutes,
-  registerToolRestRoutes,
-  CredentialAuthError,
-} from "../server.js";
-import { handleMcpJsonRpcRequest } from "./mcp.js";
-import { createHelixTRPCRouter } from "./trpc.js";
-import { createPlatformMetrics } from "./metrics.js";
-import { createToolRegistry, type RuntimeToolRegistry } from "../platform/tool-registry.js";
-import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
 import {
   createApiKeyMaterial,
   EMPTY_CREDENTIAL_POLICY,
@@ -19,14 +9,24 @@ import {
   type AgentCredentialStore,
 } from "../platform/auth/credentials.js";
 import {
-  InMemoryConfirmationGate,
-  InMemoryPendingActionStore,
-} from "../platform/tools/registry.js";
-import { InMemoryAgentRateCostLimiter } from "../platform/limits/index.js";
-import {
   credentialToolInvocationPrincipal,
   type ToolInvocationPrincipal,
 } from "../platform/auth/tool-invocation-principal.js";
+import { InMemoryAgentRateCostLimiter } from "../platform/limits/index.js";
+import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
+import { createToolRegistry, type RuntimeToolRegistry } from "../platform/tool-registry.js";
+import {
+  InMemoryConfirmationGate,
+  InMemoryPendingActionStore,
+} from "../platform/tools/registry.js";
+import {
+  CredentialAuthError,
+  registerPendingActionMutationRoutes,
+  registerToolRestRoutes,
+} from "../server.js";
+import { handleMcpJsonRpcRequest } from "./mcp.js";
+import { createPlatformMetrics } from "./metrics.js";
+import { createHelixTRPCRouter } from "./trpc.js";
 
 const actor: Actor = {
   id: "00000000-0000-4000-8000-000000000014",

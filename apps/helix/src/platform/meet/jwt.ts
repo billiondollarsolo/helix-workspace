@@ -7,7 +7,7 @@ export const MAX_JITSI_JWT_TTL_SECONDS = 60 * 60;
 /** Minimum allowed TTL (30 seconds) so clock skew does not mint already-expired tokens. */
 export const MIN_JITSI_JWT_TTL_SECONDS = 30;
 
-export interface JitsiJwtUser {
+interface JitsiJwtUser {
   readonly id: string;
   readonly name?: string | undefined;
   readonly email?: string | undefined;

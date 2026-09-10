@@ -31,7 +31,7 @@ export interface AdminUsersQueryInput {
   readonly type?: string;
 }
 
-export const defaultAdminUsersInput = {
+const defaultAdminUsersInput = {
   includeDisabled: false,
   limit: 50,
   query: "",

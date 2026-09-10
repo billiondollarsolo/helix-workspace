@@ -14,19 +14,19 @@ describe("createWebPlatformHost", () => {
     const host = createHost();
     const firstCleanup = host.registerCommandPaletteItems([
       {
-        id: "docs.find",
-        pluginId: "com.helix.docs",
-        label: "Find in document",
-        group: "Docs",
+        id: "drive.find",
+        pluginId: "com.helix.drive",
+        label: "Find file",
+        group: "Drive",
         order: 20,
         run: () => undefined,
       },
       {
-        id: "docs.ask",
-        pluginId: "com.helix.docs",
-        label: "Ask this document",
-        group: "Docs",
-        disabledReason: "Document is still loading.",
+        id: "drive.ask",
+        pluginId: "com.helix.drive",
+        label: "Ask about this file",
+        group: "Drive",
+        disabledReason: "File is still loading.",
         order: 10,
         run: () => undefined,
       },
@@ -34,26 +34,24 @@ describe("createWebPlatformHost", () => {
 
     const secondCleanup = host.registerCommandPaletteItems([
       {
-        id: "docs.find",
-        pluginId: "com.helix.docs",
-        label: "Find in current document",
-        group: "Docs",
+        id: "drive.find",
+        pluginId: "com.helix.drive",
+        label: "Find current file",
+        group: "Drive",
         order: 5,
         run: () => undefined,
       },
     ]);
 
     expect(host.getCommandPaletteItems().map((item) => item.label)).toEqual([
-      "Find in current document",
-      "Ask this document",
+      "Find current file",
+      "Ask about this file",
     ]);
-    expect(host.getCommandPaletteItems()[1]?.disabledReason).toBe("Document is still loading.");
+    expect(host.getCommandPaletteItems()[1]?.disabledReason).toBe("File is still loading.");
 
     firstCleanup();
 
-    expect(host.getCommandPaletteItems().map((item) => item.label)).toEqual([
-      "Find in current document",
-    ]);
+    expect(host.getCommandPaletteItems().map((item) => item.label)).toEqual(["Find current file"]);
 
     secondCleanup();
 
@@ -64,9 +62,9 @@ describe("createWebPlatformHost", () => {
     const host = createHost();
 
     host.registerSuggestionSlot({
-      id: "docs.smart-write",
-      pluginId: "com.helix.docs",
-      label: "Smart write",
+      id: "drive.summarize-file",
+      pluginId: "com.helix.drive",
+      label: "Summarize file",
       order: 20,
     });
     host.registerSuggestionSlot({
@@ -78,7 +76,7 @@ describe("createWebPlatformHost", () => {
 
     expect(host.getSuggestionSlots().map((slot) => slot.id)).toEqual([
       "mail.compose-help",
-      "docs.smart-write",
+      "drive.summarize-file",
     ]);
     expect(host.getSuggestionSlot("mail.compose-help")?.label).toBe("Compose help");
   });
@@ -102,10 +100,10 @@ describe("createWebPlatformHost", () => {
       order: 10,
       render: () => "Summarize",
     });
-    host.registerSuggestionSlotProvider("docs.smart-write", {
+    host.registerSuggestionSlotProvider("drive.summarize-file", {
       id: "outline",
       pluginId: "com.helix.ai",
-      slotId: "docs.smart-write",
+      slotId: "drive.summarize-file",
       label: "Outline",
       render: () => "Outline",
     });
@@ -114,7 +112,7 @@ describe("createWebPlatformHost", () => {
       host.getSuggestionSlotProviders("mail.compose-help").map((provider) => provider.id),
     ).toEqual(["summarize", "draft-tone"]);
     expect(
-      host.getSuggestionSlotProviders("docs.smart-write").map((provider) => provider.id),
+      host.getSuggestionSlotProviders("drive.summarize-file").map((provider) => provider.id),
     ).toEqual(["outline"]);
   });
 });

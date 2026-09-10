@@ -69,7 +69,7 @@ const FOLDER_RESOLUTION_ORDER: readonly MailFolderId[] = [
   "inbox",
 ];
 
-export function resolveFolderForRow(row: ThreadProjectionSource, now: Date): MailFolderId {
+function resolveFolderForRow(row: ThreadProjectionSource, now: Date): MailFolderId {
   return FOLDER_RESOLUTION_ORDER.find((folder) => folderPredicate(folder, row, now)) ?? "inbox";
 }
 

@@ -19,11 +19,11 @@ import {
   type ChatRealtimeEvent,
 } from "./api";
 
-export type ChatConnectionState = "connecting" | "open" | "reconnecting" | "closed";
+type ChatConnectionState = "connecting" | "open" | "reconnecting" | "closed";
 
-export type PendingMessageStatus = "pending" | "failed";
+type PendingMessageStatus = "pending" | "failed";
 
-export interface PendingChatMessage {
+interface PendingChatMessage {
   readonly clientMessageId: string;
   readonly roomId: string;
   readonly body: string;
@@ -34,7 +34,7 @@ export interface PendingChatMessage {
   readonly createdAt: string;
 }
 
-export interface ChatRealtimeSendInput {
+interface ChatRealtimeSendInput {
   readonly body: string;
   readonly bodyFormat: "plain" | "markdown";
   readonly attachmentObjectIds: readonly string[];

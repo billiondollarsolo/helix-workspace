@@ -29,7 +29,7 @@ interface UnreadCountResponse {
 }
 
 export const notificationsQueryKey = ["notifications"] as const;
-export const unreadCountQueryKey = [...notificationsQueryKey, "unread-count"] as const;
+const unreadCountQueryKey = [...notificationsQueryKey, "unread-count"] as const;
 
 export function notificationsListQueryOptions(unreadOnly = false) {
   return queryOptions({

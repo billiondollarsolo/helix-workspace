@@ -113,15 +113,21 @@ export function deriveClassification(
   return candidates.reduce(maxDerivation);
 }
 
-export function maxClassification(left: DataClassification, right: DataClassification): DataClassification {
+export function maxClassification(
+  left: DataClassification,
+  right: DataClassification,
+): DataClassification {
   return classificationRank[left] >= classificationRank[right] ? left : right;
 }
 
-export function compareClassifications(left: DataClassification, right: DataClassification): number {
+function compareClassifications(left: DataClassification, right: DataClassification): number {
   return classificationRank[left] - classificationRank[right];
 }
 
-function maxDerivation(left: ClassificationDerivation, right: ClassificationDerivation): ClassificationDerivation {
+function maxDerivation(
+  left: ClassificationDerivation,
+  right: ClassificationDerivation,
+): ClassificationDerivation {
   return compareClassifications(left.classification, right.classification) >= 0 ? left : right;
 }
 

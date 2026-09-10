@@ -16,15 +16,12 @@ import { appendParam, parseResponse } from "@/features/admin/api-response";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
 
-export const OAUTH_APP_RISKS = ["low", "medium", "high"] as const;
+const OAUTH_APP_RISKS = ["low", "medium", "high"] as const;
 export type OAuthAppRisk = (typeof OAUTH_APP_RISKS)[number];
 
-export const OAUTH_APP_STATUSES = ["approved", "pending", "blocked", "revoked"] as const;
+const OAUTH_APP_STATUSES = ["approved", "pending", "blocked", "revoked"] as const;
 export type OAuthAppStatus = (typeof OAUTH_APP_STATUSES)[number];
-
-/** Statuses settable via PATCH …/status (revoked is terminal, via /revoke). */
-export const OAUTH_APP_SETTABLE_STATUSES = ["approved", "pending", "blocked"] as const;
-export type OAuthAppSettableStatus = (typeof OAUTH_APP_SETTABLE_STATUSES)[number];
+export type OAuthAppSettableStatus = Exclude<OAuthAppStatus, "revoked">;
 
 const oauthAppSchema = z.object({
   id: z.string(),
@@ -64,17 +61,6 @@ export interface OAuthAppsQueryInput {
   readonly query?: string;
 }
 
-export interface CreateOAuthAppInput {
-  readonly name: string;
-  readonly clientId?: string | null;
-  readonly publisher?: string;
-  readonly scopes?: readonly string[];
-  readonly scopeSummary?: string;
-  readonly risk?: OAuthAppRisk;
-  readonly status?: OAuthAppStatus;
-  readonly userCount?: number;
-}
-
 export const defaultOAuthAppsInput = { limit: 50 } as const satisfies OAuthAppsQueryInput;
 
 // ---------------------------------------------------------------------------
@@ -110,7 +96,7 @@ export function oauthAppsQueryOptions(
 // Fetchers + mutations
 // ---------------------------------------------------------------------------
 
-export async function fetchOAuthApps(
+async function fetchOAuthApps(
   input: OAuthAppsQueryInput = defaultOAuthAppsInput,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<OAuthAppsResponse> {
@@ -124,28 +110,6 @@ export async function fetchOAuthApps(
     method: "GET",
   });
   return parseResponse(response, "load OAuth apps", oauthAppsResponseSchema);
-}
-
-export async function fetchOAuthApp(
-  id: string,
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<OAuthApp> {
-  const response = await fetchImpl(`/api/admin/oauth-apps/${encodeURIComponent(id)}`, {
-    method: "GET",
-  });
-  return (await parseResponse(response, "load OAuth app", oauthAppResponseSchema)).app;
-}
-
-export async function createOAuthApp(
-  input: CreateOAuthAppInput,
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<OAuthApp> {
-  const response = await fetchImpl("/api/admin/oauth-apps", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(input),
-  });
-  return (await parseResponse(response, "register OAuth app", oauthAppResponseSchema)).app;
 }
 
 export async function setOAuthAppStatus(

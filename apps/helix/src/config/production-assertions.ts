@@ -381,9 +381,8 @@ function validateProductionMvpScope(
   issues: ProductionConfigurationIssue[],
 ): void {
   const profile = resolveWorkspacePackagingProfile(environment.HELIX_WORKSPACE_PROFILE);
-  // Deployment image pins always apply. Editors migrations: false in MVP; full
-  // profile may enable editors and is validated by dependency gates below.
-  // Image digests + profile-aware editors migrations flag.
+  // The full profile may enable Calendar and Meet after their dependency gates pass.
+  // Image digests and profile-aware app gates.
   validateProductionDeploymentConfiguration(environment, issues);
   for (const issue of validateWorkspaceAppsAllowlist({
     profile,
@@ -431,7 +430,7 @@ function validateProductionMvpScope(
     }
     return;
   }
-  // Full Workspace: refuse Meet without Jitsi, editors without pin/migrations, etc.
+  // Full Workspace: refuse Meet without configured Jitsi credentials.
   const scannerKind =
     normalized(environment.HELIX_DRIVE_SCANNER_KIND) ??
     (normalized(environment.DRIVE_CLAMAV_ENABLED)?.toLowerCase() === "true" ||

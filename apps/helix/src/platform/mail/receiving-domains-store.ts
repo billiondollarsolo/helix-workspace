@@ -1,15 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { ensureAdminDomain } from "../admin/domain-identity.js";
+import { isUniqueViolation } from "../util/sql.js";
 import { normalizeMailDomain, normalizeMailboxAddress } from "./address-normalization.js";
-
-export const MAIL_RECEIVING_DOMAIN_STATUSES = [
-  "pending",
-  "verified",
-  "active",
-  "disabled",
-] as const;
-export type MailReceivingDomainStatus = (typeof MAIL_RECEIVING_DOMAIN_STATUSES)[number];
+type MailReceivingDomainStatus = "pending" | "verified" | "active" | "disabled";
 
 export interface MailReceivingDomainRecord {
   readonly id: string;
@@ -76,7 +70,7 @@ export class ReceivingDomainCatchAllError extends Error {
   }
 }
 
-export class ReceivingDomainInvariantError extends Error {
+class ReceivingDomainInvariantError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ReceivingDomainInvariantError";
@@ -633,10 +627,6 @@ function resolution(
     actorId,
     match,
   };
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }
 
 function isCatchAllConstraintViolation(error: unknown): boolean {

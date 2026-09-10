@@ -1,9 +1,9 @@
+import type { Actor } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import { domainToASCII } from "node:url";
 import type postgres from "postgres";
-import type { Actor } from "@helix/sdk-types";
-import type { FastifyInstance, FastifyRequest } from "fastify";
 import { parse as parseDomain } from "tldts";
 import { z } from "zod";
 import {
@@ -34,8 +34,8 @@ import {
 
 export type DnsRecordType = "MX" | "SPF" | "DKIM" | "DMARC" | "TXT" | "CNAME" | "A";
 export type VerificationStatus = "verified" | "pending" | "failed";
-export type DomainStatus = "pending" | "verified" | "quarantined" | "released";
-export type DomainIdentityMode = "secondary" | "alias";
+type DomainStatus = "pending" | "verified" | "quarantined" | "released";
+type DomainIdentityMode = "secondary" | "alias";
 
 export interface DomainRecord {
   readonly id: string;

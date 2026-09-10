@@ -1,9 +1,9 @@
-import type { MailStore } from "./store.js";
+import { normalizeMailboxAddress } from "./address-normalization.js";
 import type {
   ReceivingDomainStore,
   ReceivingMailboxResolution,
 } from "./receiving-domains-store.js";
-import { normalizeMailboxAddress } from "./address-normalization.js";
+import type { MailStore } from "./store.js";
 
 export type SmtpResolvedRecipient = ReceivingMailboxResolution;
 

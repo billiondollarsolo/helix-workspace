@@ -1,6 +1,6 @@
 import type { Actor } from "@helix/sdk-types";
-import type postgres from "postgres";
 import fastify from "fastify";
+import type postgres from "postgres";
 import { describe, expect, it, vi } from "vitest";
 import { PostgresPeopleStore, registerPeopleRoutes, type PeopleStore } from "./people.js";
 import { parseVcard } from "./store.js";

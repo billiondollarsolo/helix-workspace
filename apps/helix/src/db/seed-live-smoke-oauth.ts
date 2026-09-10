@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { loadSeedEnv } from "../config/env.js";
 import { createSqlClient } from "./client.js";
 import {
   DEFAULT_LOCAL_OAUTH_ORG_ID,
@@ -13,20 +14,21 @@ export const DEFAULT_LIVE_SMOKE_AGENT_EMAIL = "helix-live-smoke-agent@helix.loca
 
 export async function seedLiveSmokeAgentOAuth(): Promise<SeedLocalOAuthResult> {
   const sql = createSqlClient();
+  const seedEnv = loadSeedEnv();
   try {
     return await seedLocalOAuth(sql, {
-      orgId: process.env.HELIX_SMOKE_AGENT_ORG_ID ?? DEFAULT_LOCAL_OAUTH_ORG_ID,
-      actorId: process.env.HELIX_SMOKE_AGENT_ACTOR_ID ?? DEFAULT_LIVE_SMOKE_AGENT_ACTOR_ID,
+      orgId: seedEnv.HELIX_SMOKE_AGENT_ORG_ID ?? DEFAULT_LOCAL_OAUTH_ORG_ID,
+      actorId: seedEnv.HELIX_SMOKE_AGENT_ACTOR_ID ?? DEFAULT_LIVE_SMOKE_AGENT_ACTOR_ID,
       actorType: smokeActorType(),
-      email: process.env.HELIX_SMOKE_AGENT_EMAIL ?? DEFAULT_LIVE_SMOKE_AGENT_EMAIL,
-      displayName: process.env.HELIX_SMOKE_AGENT_DISPLAY_NAME ?? "Live Smoke Agent",
-      clientId: process.env.HELIX_SMOKE_AGENT_CLIENT_ID ?? DEFAULT_LIVE_SMOKE_AGENT_CLIENT_ID,
+      email: seedEnv.HELIX_SMOKE_AGENT_EMAIL ?? DEFAULT_LIVE_SMOKE_AGENT_EMAIL,
+      displayName: seedEnv.HELIX_SMOKE_AGENT_DISPLAY_NAME ?? "Live Smoke Agent",
+      clientId: seedEnv.HELIX_SMOKE_AGENT_CLIENT_ID ?? DEFAULT_LIVE_SMOKE_AGENT_CLIENT_ID,
       clientSecret:
-        process.env.HELIX_SMOKE_AGENT_CLIENT_SECRET ?? DEFAULT_LIVE_SMOKE_AGENT_CLIENT_SECRET,
+        seedEnv.HELIX_SMOKE_AGENT_CLIENT_SECRET ?? DEFAULT_LIVE_SMOKE_AGENT_CLIENT_SECRET,
       scopes: smokeAgentScopes(),
-      ...(process.env.HELIX_API_BASE_URL === undefined
+      ...(seedEnv.HELIX_API_BASE_URL === undefined
         ? {}
-        : { apiBaseUrl: process.env.HELIX_API_BASE_URL }),
+        : { apiBaseUrl: seedEnv.HELIX_API_BASE_URL }),
     });
   } finally {
     await sql.end();
@@ -34,13 +36,13 @@ export async function seedLiveSmokeAgentOAuth(): Promise<SeedLocalOAuthResult> {
 }
 
 function smokeActorType(): "agent" | "service_account" {
-  return process.env.HELIX_SMOKE_AGENT_ACTOR_TYPE === "service_account"
+  return loadSeedEnv().HELIX_SMOKE_AGENT_ACTOR_TYPE === "service_account"
     ? "service_account"
     : "agent";
 }
 
 function smokeAgentScopes(): readonly string[] {
-  const value = process.env.HELIX_SMOKE_AGENT_SCOPES;
+  const value = loadSeedEnv().HELIX_SMOKE_AGENT_SCOPES;
   if (value === undefined || value.trim().length === 0) {
     return ["platform.read"];
   }

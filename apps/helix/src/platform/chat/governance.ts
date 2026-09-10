@@ -17,7 +17,7 @@ export interface ChatGovernance {
   readonly externalAccess: ChatExternalAccess;
 }
 
-export const defaultChatGovernance: ChatGovernance = {
+const defaultChatGovernance: ChatGovernance = {
   spaceType: "conversation",
   historyPolicy: "full",
   retentionDays: null,

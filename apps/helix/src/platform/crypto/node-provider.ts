@@ -16,23 +16,23 @@ import {
   createHmac,
   getFips,
   hkdfSync,
-  pbkdf2Sync,
   randomBytes as nodeRandomBytes,
-  randomUUID,
   timingSafeEqual as nodeTimingSafeEqual,
+  pbkdf2Sync,
+  randomUUID,
 } from "node:crypto";
 import type {
+  AesGcmEncrypted,
   BinaryInput,
   CryptoProvider,
   CryptoProviderStatus,
   DigestEncoding,
   HkdfOptions,
-  AesGcmEncrypted,
   Pbkdf2Options,
 } from "./provider.js";
 
 /** Convert {@link BinaryInput} to a value `crypto` `.update()` accepts. */
-export function toUpdatable(input: BinaryInput): Buffer | string {
+function toUpdatable(input: BinaryInput): Buffer | string {
   return typeof input === "string" ? input : Buffer.from(input);
 }
 

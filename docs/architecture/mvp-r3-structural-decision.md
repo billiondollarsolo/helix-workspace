@@ -1,9 +1,13 @@
 # MVP R3 structural decision (engineering gates)
 
-**Date:** 2026-08-03  
-**Audience:** Release owners, implementers, pilot sponsors  
-**Normative plan:** [`docs/superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md`](../superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md)  
-**Final claim path:** [`docs/final-release-readiness.md`](../final-release-readiness.md)  
+**Date:** 2026-08-03
+
+**Audience:** Release owners, implementers, pilot sponsors
+
+**Normative plan:** [`docs/archive/plans/2026-08-03-elite-mvp-enterprise-production.md`](../archive/plans/2026-08-03-elite-mvp-enterprise-production.md)
+
+**Final claim path:** [`docs/final-release-readiness.md`](../final-release-readiness.md)
+
 **Product claims:** [`docs/product-claims-mvp.md`](../product-claims-mvp.md)
 
 ## Decision

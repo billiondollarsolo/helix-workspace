@@ -1,5 +1,5 @@
-import { getCryptoProvider } from "../crypto/index.js";
 import type { ActorRoleBinding } from "@helix/sdk-types";
+import { getCryptoProvider } from "../crypto/index.js";
 
 /**
  * Expanded agent credential model (PRD §9.2).
@@ -12,7 +12,7 @@ import type { ActorRoleBinding } from "@helix/sdk-types";
  */
 
 export type AgentCredentialType = "oauth_client" | "api_key" | "mtls_cert";
-export type NonHumanPrincipalType = "agent" | "service_account";
+type NonHumanPrincipalType = "agent" | "service_account";
 
 /**
  * Per-credential override for the tier confirmation gate. `"always"` forces
@@ -200,11 +200,6 @@ export function normalizeCertFingerprint(fingerprint: string): string {
     .toLowerCase()
     .replace(/^sha-?256:/u, "")
     .replace(/[^0-9a-f]/gu, "");
-}
-
-/** Compute the SHA-256 fingerprint of a DER-encoded certificate. */
-export function certFingerprintFromDer(der: Uint8Array): string {
-  return getCryptoProvider().hash("sha256", der, "hex");
 }
 
 // --- request context for enforcement ---------------------------------------

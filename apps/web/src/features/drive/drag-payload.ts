@@ -87,10 +87,6 @@ export function parseHelixDriveItemDragData(
   };
 }
 
-export function helixDriveOpenHref(objectId: string): string {
-  return `/open/${encodeURIComponent(objectId)}`;
-}
-
 function absoluteHelixDragHref(href: string): string {
   if (typeof window === "undefined") {
     return href;

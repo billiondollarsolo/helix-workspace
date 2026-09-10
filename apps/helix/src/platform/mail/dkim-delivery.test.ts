@@ -1,7 +1,7 @@
-import nodemailer from "nodemailer";
 import { dkimVerify } from "mailauth";
+import nodemailer from "nodemailer";
 import { describe, expect, it } from "vitest";
-import { generateDkimKeyMaterial, dkimDnsRecord } from "./admin-store.js";
+import { dkimDnsRecord, generateDkimKeyMaterial } from "./admin-store.js";
 import { NodemailerMailTransport } from "./outbound.js";
 
 describe("KMS-backed outbound DKIM", () => {

@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
 import type { Actor } from "@helix/sdk";
 import fastify from "fastify";
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   crownJewelActionFor,
@@ -32,7 +32,7 @@ describe("crown-jewel gate", () => {
     expect(action("POST", "/api/admin/vault/holds/hold-id/release")).toBe("retention.hold.release");
     expect(action("POST", "/api/admin/security/break-glass/grants")).toBe("iam.break_glass.grant");
     expect(action("POST", "/api/admin/users/user-id/mfa/reset")).toBe("identity.mfa.reset");
-    expect(action("POST", "/api/admin/plugins/plugin.example/install")).toBe("plugin.trust");
+    expect(action("POST", "/api/admin/plugins/plugin.example/install")).toBeNull();
     expect(action("POST", "/api/tools/agent.credentials.create")).toBe("credential.issue");
     expect(action("POST", "/api/tools/agent.credentials.rotate")).toBe("key.rotate");
     expect(action("GET", "/api/admin/domains")).toBeNull();

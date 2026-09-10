@@ -20,7 +20,7 @@ const uuidSchema = z.string().uuid();
 export const DRIVE_PLATFORM_DEFAULT_TRASH_RETENTION_DAYS = 30;
 export const DRIVE_PLATFORM_DEFAULT_ORPHAN_GRACE_HOURS = 24;
 
-export const driveQuotaUsageSchema = z.object({
+const driveQuotaUsageSchema = z.object({
   orgId: uuidSchema,
   usedBytes: z.number().int().nonnegative(),
   limitBytes: z.number().int().nonnegative().nullable(),
@@ -29,7 +29,7 @@ export const driveQuotaUsageSchema = z.object({
 });
 export type DriveQuotaUsage = z.infer<typeof driveQuotaUsageSchema>;
 
-export const driveLifecyclePolicySchema = z.object({
+const driveLifecyclePolicySchema = z.object({
   orgId: uuidSchema,
   trashRetentionDays: z.number().int().min(1).max(3650),
   orphanGraceHours: z.number().int().min(1).max(720),
@@ -128,14 +128,14 @@ export function driveLifecycleQueryOptions(fetchImpl: AuthFetch = authenticatedF
   });
 }
 
-export async function getDriveQuotaUsage(
+async function getDriveQuotaUsage(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<DriveQuotaUsage> {
   const raw = await callTool<unknown>("drive.quota.usage", {}, { fetchImpl, autoApprove: false });
   return parseToolOutput(raw, driveQuotaUsageSchema, "read Drive storage quota usage");
 }
 
-export async function getDriveLifecyclePolicy(
+async function getDriveLifecyclePolicy(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<DriveLifecyclePolicy> {
   const raw = await callTool<unknown>("drive.lifecycle.get", {}, { fetchImpl, autoApprove: false });

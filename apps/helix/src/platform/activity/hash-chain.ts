@@ -4,13 +4,13 @@
  * middle is detectable: recomputing the chain from any earlier row no longer
  * reproduces the stored digests.
  *
- * Sheets, Slides, Docs and Calendar each built this link by CONCATENATING the
+ * Older writers built this link by concatenating the
  * previous value:
  *
  *     const thisHash = `${prevHash ?? "root"}:${verb}:${id}:${Date.now()}`;
  *
  * which is not a hash. Every row was strictly longer than the one before it —
- * `root:sheets.sheet.created:<uuid>:<ts>:slides.deck.created:<uuid>:<ts>:…` —
+ * `root:drive.file.created:<uuid>:<ts>:mail.message.sent:<uuid>:<ts>:…` —
  * so the column grew without bound. `activity_hash_idx` is a unique btree on
  * it, and once a value passed ~2704 bytes Postgres rejected the insert:
  *
@@ -18,7 +18,7 @@
  *
  * At that point every activity write in the organization failed, and with it
  * every operation that records one — creating a sheet, deck, document or
- * event. A workspace disabled its own editors purely by being used.
+ * event. A workspace disabled its own apps purely by being used.
  *
  * Hashing fixes both problems at once: the link becomes 64 characters
  * regardless of history depth, and it becomes a commitment rather than a

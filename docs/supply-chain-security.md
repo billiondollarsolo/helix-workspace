@@ -58,11 +58,10 @@ pushing those same bits by immutable commit tag. It never rebuilds an image. Onl
 web, PostgreSQL, NATS, Meilisearch, Cerbos, and SpamAssassin images are published; digest-pinned
 Redis, RustFS, and ClamAV remain pull-and-scan inventory. GitHub then creates Sigstore-backed
 provenance and SBOM attestations for each exact registry digest. The raw SBOMs and signed
-attestation bundles are retained together as workflow supply-chain evidence. Because the
-application and web builds consume the paired `helix-editors` checkout, their candidate artifacts
-also bind its resolved commit SHA. Their pushed digests receive an additional signed paired-source
-predicate containing the exact `helix-workspace` and `helix-editors` repository URLs and commit
-SHAs. CI wraps each raw paired-source Sigstore bundle in the exact
+attestation bundles are retained together as workflow supply-chain evidence. Application and web
+artifacts bind the exact workspace commit SHA. Their pushed digests receive an additional signed
+source-provenance predicate containing the workspace repository URL and commit SHA.
+CI wraps each raw source-provenance Sigstore bundle in the exact
 `helix.evidence.github-sigstore-image-provenance.v1` application/web evidence schema, using the
 bundle's transparency-log integrated time, registry subject, and pushed digest, and retains the
 wrapper with its SHA-256 checksum. Any failed scan, source-binding check, push, evidence wrapping,

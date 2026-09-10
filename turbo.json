@@ -17,7 +17,24 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^test"]
+      "dependsOn": ["^test"],
+      "cache": false,
+      "passThroughEnv": [
+        "DATABASE_URL",
+        "CARD_DAV_DATABASE_URL",
+        "HELIX_MIGRATION_DATABASE_URL",
+        "HELIX_RLS_*",
+        "HELIX_REQUIRE_LIVE_SUITES",
+        "HELIX_TEST_DATABASE_TEMPLATE",
+        "S3_CONTRACT_*",
+        "HELIX_REAL_SERVICES_INTEGRATION",
+        "REDIS_URL",
+        "NATS_URL",
+        "MEILI_*",
+        "CERBOS_HTTP_URL",
+        "MAIL_CLAMAV_*",
+        "MAIL_SPAMD_*"
+      ]
     }
   }
 }

@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
 import type { Actor, ToolDefinition } from "@helix/sdk-types";
-import { systemActor } from "./actor.js";
-import { createHelixTRPCRouter } from "./trpc.js";
-import { createPlatformMetrics } from "./metrics.js";
-import { createToolRegistry } from "../platform/tool-registry.js";
+import { describe, expect, it } from "vitest";
 import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
+import { createToolRegistry } from "../platform/tool-registry.js";
+import { systemActor } from "./actor.js";
+import { createPlatformMetrics } from "./metrics.js";
+import { createHelixTRPCRouter } from "./trpc.js";
 
 const requestContext = { requestId: "req-trpc" };
 

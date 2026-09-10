@@ -17,14 +17,21 @@ export const launchDocumentPaths = [
   "docs/security/threat-model.md",
 ];
 
+export const scopeDocumentPath = "docs/release/1.0-scope.md";
+export const scopeConsumerPaths = [
+  "README.md",
+  "docs/product-claims-mvp.md",
+  "docs/final-release-readiness.md",
+];
+
 export const adrPaths = [
-  "docs/architecture/adr-0001-single-organization-business-pilot.md",
-  "docs/architecture/adr-0002-managed-outbound-mail-provider.md",
-  "docs/architecture/adr-0003-web-and-api-mail-clients.md",
-  "docs/architecture/adr-0004-secure-server-readable-chat.md",
-  "docs/architecture/adr-0005-agent-write-confirmation-and-allowlists.md",
-  "docs/architecture/adr-0006-business-pilot-recovery-targets.md",
-  "docs/architecture/adr-0007-fail-closed-untrusted-uploads.md",
+  "docs/adr/adr-0001-single-organization-business-pilot.md",
+  "docs/adr/adr-0002-managed-outbound-mail-provider.md",
+  "docs/adr/adr-0003-web-and-api-mail-clients.md",
+  "docs/adr/adr-0004-secure-server-readable-chat.md",
+  "docs/adr/adr-0005-agent-write-confirmation-and-allowlists.md",
+  "docs/adr/adr-0006-business-pilot-recovery-targets.md",
+  "docs/adr/adr-0007-fail-closed-untrusted-uploads.md",
 ];
 
 export const requiredClaimPatterns = [
@@ -134,7 +141,16 @@ const requiredAdrSections = [
 export async function verifyLaunchDocumentation(workspaceRoot = defaultWorkspaceRoot) {
   const errors = [];
   const sources = new Map();
-  const documentPaths = [...launchDocumentPaths, "docs/architecture/README.md", ...adrPaths];
+  const documentPaths = [
+    ...new Set([
+      ...launchDocumentPaths,
+      scopeDocumentPath,
+      ...scopeConsumerPaths,
+      "docs/final-release-supporting-evidence.md",
+      "docs/adr/README.md",
+      ...adrPaths,
+    ]),
+  ];
 
   for (const documentPath of documentPaths) {
     try {
@@ -156,21 +172,64 @@ export async function verifyLaunchDocumentation(workspaceRoot = defaultWorkspace
     errors.push(...findClaimErrors(documentPath, source));
   }
 
-  const indexSource = sources.get("docs/architecture/README.md");
+  const scope = sources.get(scopeDocumentPath);
+  if (scope !== undefined) {
+    for (const documentPath of [scopeDocumentPath, ...scopeConsumerPaths]) {
+      const source = sources.get(documentPath);
+      if (source !== undefined) errors.push(...findScopeErrors(documentPath, source, scope));
+    }
+  }
+  for (const [documentPath, source] of sources) {
+    if (
+      /HELIX_RELEASE_\w*EDITORS|"editorsSha"|paired-source\/v1|editors\.(?:revision|changed)/u.test(
+        source,
+      )
+    ) {
+      errors.push(`${documentPath}: obsolete sibling release binding`);
+    }
+  }
+
+  const indexSource = sources.get("docs/adr/README.md");
   for (const [index, adrPath] of adrPaths.entries()) {
     const source = sources.get(adrPath);
     if (source !== undefined) {
       errors.push(...findAdrErrors(adrPath, source, index + 1));
     }
-    if (
-      indexSource !== undefined &&
-      !indexSource.includes(`(${relative("docs/architecture", adrPath)})`)
-    ) {
-      errors.push(`docs/architecture/README.md: missing link to ${adrPath}`);
+    if (indexSource !== undefined && !indexSource.includes(`(${relative("docs/adr", adrPath)})`)) {
+      errors.push(`docs/adr/README.md: missing link to ${adrPath}`);
     }
   }
 
   errors.push(...(await findBrokenLocalLinks(workspaceRoot, sources)));
+  return errors;
+}
+
+export function findScopeErrors(documentPath, source, scope) {
+  const errors = [];
+  const claims = [
+    ["shipped surfaces", /Mail, Drive, Chat, Assistant, and Admin/u],
+    ["invite-only access", /invite-only/iu],
+    [
+      "dormant Calendar and Meet",
+      /Calendar and Meet are dormant behind the `full` profile and are outside 1\.0/u,
+    ],
+    ["exact production apps", /`HELIX_APPS=mail,drive,chat,assistant`/u],
+    ["MVP web packaging", /`VITE_HELIX_MVP_ONLY=true`/u],
+  ];
+  for (const [id, pattern] of claims) {
+    if (!pattern.test(scope) || !pattern.test(source))
+      errors.push(`${documentPath}: scope mismatch: ${id}`);
+  }
+  if (documentPath !== scopeDocumentPath && !source.includes("1.0-scope.md)")) {
+    errors.push(`${documentPath}: missing canonical scope link`);
+  }
+  const appValues = [...source.matchAll(/HELIX_APPS=([^`\s]+)/gu)];
+  if (appValues.some((match) => match[1] !== "mail,drive,chat,assistant")) {
+    errors.push(`${documentPath}: production app list differs from canonical scope`);
+  }
+  if (/read-only previews|HELIX_RELEASE_\w*EDITORS|"editorsSha"/iu.test(source)) {
+    errors.push(`${documentPath}: removed capability or sibling release requirement`);
+  }
   return errors;
 }
 

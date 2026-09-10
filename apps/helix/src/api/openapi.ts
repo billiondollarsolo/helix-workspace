@@ -1,23 +1,23 @@
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { openApiScopeCatalog } from "../platform/permissions/scope-catalog.js";
+import { isRecord } from "../platform/util/json.js";
 import { HELIX_API_VERSION_PREFIX, HELIX_SERVER_VERSION } from "./version.js";
 
 type MutableOpenApiObject = Record<string, unknown>;
 
 /**
- * Human-friendly descriptions for the per-plugin/feature tag groups (P1-10).
- * Tools are grouped under `feature:<plugin>` derived from their tool-id prefix
+ * Human-friendly descriptions for the per-feature tag groups (P1-10).
+ * Tools are grouped under `feature:<area>` derived from their tool-id prefix
  * (`mail.send` -> `mail`) so the rendered docs are organised by product area
  * instead of a single flat `Tools` bucket.
  */
 const featureTagDescriptions: Record<string, string> = {
-  mail: "Mail plugin tools — compose, send, organise, and filter messages.",
-  chat: "Chat plugin tools — rooms, messages, presence, and receipts.",
-  drive: "Drive plugin tools — files, folders, and sharing.",
-  docs: "Docs plugin tools — collaborative documents and comments.",
-  calendar: "Calendar plugin tools — events, scheduling, and invitations.",
-  meet: "Meet plugin tools — video meeting lifecycle.",
-  assistant: "Assistant plugin tools — AI assistant conversations and actions.",
+  mail: "Mail tools — compose, send, organise, and filter messages.",
+  chat: "Chat tools — rooms, messages, presence, and receipts.",
+  drive: "Drive tools — files, folders, and sharing.",
+  calendar: "Calendar tools — events, scheduling, and invitations.",
+  meet: "Meet tools — video meeting lifecycle.",
+  assistant: "Assistant tools — AI assistant conversations and actions.",
   search: "Search tools — cross-feature global search.",
   platform: "Platform tools — health, configuration, and metadata.",
   agent: "Agent credential tools — OAuth client lifecycle.",
@@ -26,7 +26,6 @@ const featureTagDescriptions: Record<string, string> = {
   backup: "Backup and restore tools.",
   users: "User administration tools.",
   ai: "AI platform tools — provider routing and cost limits.",
-  plugin: "Plugin lifecycle and catalog tools.",
 };
 
 export function buildOpenApiDocument(
@@ -195,11 +194,11 @@ export function buildOpenApiDocument(
     name: "Actions",
     description: "Confirmation-gated tool action status.",
   });
-  // Per-plugin/feature tag groups (P1-10) — replaces the flat `Tools` listing.
+  // Per-feature tag groups (P1-10) — replaces the flat `Tools` listing.
   for (const feature of [...featureTags].sort((left, right) => left.localeCompare(right))) {
     document.tags = mergeTags(document.tags, {
       name: featureTagName(feature),
-      description: featureTagDescriptions[feature] ?? `${feature} plugin tools.`,
+      description: featureTagDescriptions[feature] ?? `${feature} tools.`,
     });
   }
   return document;
@@ -412,10 +411,6 @@ function asPathItem(value: unknown): MutableOpenApiObject {
 
 function asSecurityScheme(value: unknown): MutableOpenApiObject {
   return isRecord(value) ? value : {};
-}
-
-function isRecord(value: unknown): value is MutableOpenApiObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function operationIdSuffix(toolId: string): string {

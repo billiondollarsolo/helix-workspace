@@ -1,48 +1,50 @@
-import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import {
-  chatCreateRoomInputSchema,
   chatBodyFormatSchema,
+  chatCreateRoomInputSchema,
   chatDeleteInputSchema,
   chatEditInputSchema,
   chatExportInputSchema,
-  chatRoomExportInputSchema,
   chatImportInputSchema,
   chatImportResultSchema,
   chatInviteInputSchema,
   chatLegalHoldInputSchema,
   chatListMessagesInputSchema,
   chatMessageSchema,
-  chatRemoveMemberInputSchema,
   chatPinInputSchema,
   chatReactInputSchema,
   chatReactionSchema,
+  chatRemoveMemberInputSchema,
   chatReplyInThreadInputSchema,
   chatRetentionPolicyGetInputSchema,
   chatRetentionPolicyInputSchema,
-  chatRoomSchema,
+  chatRoomExportInputSchema,
   chatRoomExportSchema,
+  chatRoomSchema,
   chatSearchHitSchema,
   chatSearchInputSchema,
   chatSendInputSchema,
 } from "@helix/contracts";
+import type { ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { defineTool } from "../tools/define-tool.js";
+import { toJsonObject } from "../util/json.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { renderChatBodyHtml } from "./content-safety.js";
 import { ChatMessageNotFoundError, ChatRoomAccessError } from "./errors.js";
+import type { ChatRoomBus } from "./realtime.js";
 import {
   chatMessageCreatedEvent,
   chatMessageDeletedEvent,
   chatMessageUpdatedEvent,
   type ChatStore,
 } from "./store.js";
-import type { ChatRoomBus } from "./realtime.js";
 import type {
   ChatMessageRecord,
   ChatPinRecord,
-  ChatReadReceiptRecord,
   ChatReactionRecord,
+  ChatReadReceiptRecord,
   ChatRoomRecord,
   ChatSearchHit,
 } from "./types.js";
@@ -726,12 +728,6 @@ export function registerChatTools(
   }
 }
 
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
-}
-
 function serializeRoom(room: ChatRoomRecord) {
   return {
     id: room.id,
@@ -846,8 +842,4 @@ function serializeRetentionPolicyView(
     ...policy,
     updatedAt: policy.updatedAt?.toISOString() ?? null,
   };
-}
-
-function toJsonObject(value: Record<string, unknown>): JsonObject {
-  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }

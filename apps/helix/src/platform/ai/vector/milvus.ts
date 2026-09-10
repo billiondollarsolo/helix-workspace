@@ -48,7 +48,11 @@ export class MilvusVectorStore implements VectorStore {
     });
   }
 
-  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(
+    orgId: VectorOrgScope,
+    collection: string,
+    items: readonly VectorItem[],
+  ): Promise<void> {
     if (items.length === 0) {
       return;
     }
@@ -68,14 +72,24 @@ export class MilvusVectorStore implements VectorStore {
     vector: readonly number[],
     opts: VectorQueryOpts = {},
   ): Promise<readonly VectorMatch[]> {
-    const response = await requestJson(this.id, this.#config, "POST", "/v2/vectordb/entities/search", {
-      collectionName: scopedCollectionName(orgId, validateCollectionName(collection)),
-      data: [[...validateVector(vector)]],
-      limit: validateLimit(opts.limit),
-      outputFields: opts.includeVectors === true ? ["id", "metadata", "vector"] : ["id", "metadata"],
-      ...(opts.filter === undefined ? {} : { filter: milvusFilter(opts.filter) }),
-    });
-    const data = isJsonObject(response) && isJsonObject(response.data) && Array.isArray(response.data.data) ? response.data.data : [];
+    const response = await requestJson(
+      this.id,
+      this.#config,
+      "POST",
+      "/v2/vectordb/entities/search",
+      {
+        collectionName: scopedCollectionName(orgId, validateCollectionName(collection)),
+        data: [[...validateVector(vector)]],
+        limit: validateLimit(opts.limit),
+        outputFields:
+          opts.includeVectors === true ? ["id", "metadata", "vector"] : ["id", "metadata"],
+        ...(opts.filter === undefined ? {} : { filter: milvusFilter(opts.filter) }),
+      },
+    );
+    const data =
+      isJsonObject(response) && isJsonObject(response.data) && Array.isArray(response.data.data)
+        ? response.data.data
+        : [];
     return data.map(milvusMatch).filter((match): match is VectorMatch => match !== null);
   }
 

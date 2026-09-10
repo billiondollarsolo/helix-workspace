@@ -34,7 +34,7 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
 
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpmfile.mjs turbo.json ./
 COPY apps/helix/package.json apps/helix/
 COPY packages/ packages/
 
@@ -84,7 +84,7 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@11.18.0 --activate
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpmfile.mjs turbo.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/ packages/
 

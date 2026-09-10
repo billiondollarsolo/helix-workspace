@@ -1,15 +1,14 @@
-import type { CSSProperties } from "react";
+import { cn } from "@/lib/utils";
 
 interface FileNameTextProps {
   readonly name: string;
   readonly className?: string;
-  readonly style?: CSSProperties;
 }
 
 const EXTENSION_PATTERN = /^(.+?)(\.[A-Za-z0-9]{1,8})$/u;
 
 /** Renders a filename so the base can truncate while the extension stays visible. */
-export function FileNameText({ name, className, style }: FileNameTextProps) {
+export function FileNameText({ name, className }: FileNameTextProps) {
   const parsed = EXTENSION_PATTERN.exec(name.trim());
   const base = parsed?.[1] ?? name;
   const extension = parsed?.[2] ?? "";
@@ -17,16 +16,8 @@ export function FileNameText({ name, className, style }: FileNameTextProps) {
   if (extension.length === 0) {
     return (
       <span
-        className={className}
+        className={cn(className, "block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap")}
         title={name}
-        style={{
-          display: "block",
-          minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          ...style,
-        }}
       >
         {name}
       </span>
@@ -35,29 +26,14 @@ export function FileNameText({ name, className, style }: FileNameTextProps) {
 
   return (
     <span
-      className={className}
+      className={cn(
+        className,
+        "inline-flex [align-items:baseline] min-w-0 [max-width:100%] overflow-hidden whitespace-nowrap",
+      )}
       title={name}
-      style={{
-        display: "inline-flex",
-        alignItems: "baseline",
-        minWidth: 0,
-        maxWidth: "100%",
-        overflow: "hidden",
-        whiteSpace: "nowrap",
-        ...style,
-      }}
     >
-      <span
-        style={{
-          minWidth: 0,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {base}
-      </span>
-      <span style={{ flex: "0 0 auto" }}>{extension}</span>
+      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{base}</span>
+      <span className="[flex:0_0_auto]">{extension}</span>
     </span>
   );
 }

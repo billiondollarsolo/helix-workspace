@@ -17,7 +17,7 @@ export interface AwsCredentials {
  * is not applicable in the current environment. Providers are tried in
  * standard AWS SDK precedence order.
  */
-export type AwsCredentialProvider = () => Promise<AwsCredentials | null>;
+type AwsCredentialProvider = () => Promise<AwsCredentials | null>;
 
 export interface AwsCredentialResolverOptions {
   /** Static credentials supplied directly via configuration. */
@@ -70,9 +70,7 @@ export async function resolveAwsCredentials(
   );
 }
 
-export function staticCredentialProvider(
-  credentials: AwsCredentials | undefined,
-): AwsCredentials | null {
+function staticCredentialProvider(credentials: AwsCredentials | undefined): AwsCredentials | null {
   if (
     credentials === undefined ||
     credentials.accessKeyId.length === 0 ||
@@ -237,10 +235,7 @@ async function imdsRequest(
 }
 
 /** Parses a single section out of an AWS INI-format credentials file. */
-export function parseIniSection(
-  contents: string,
-  section: string,
-): Record<string, string> | null {
+export function parseIniSection(contents: string, section: string): Record<string, string> | null {
   const lines = contents.split(/\r?\n/u);
   const result: Record<string, string> = {};
   let inSection = false;

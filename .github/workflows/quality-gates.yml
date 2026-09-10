@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: helix-all/helix-workspace
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
@@ -64,8 +65,24 @@ jobs:
       - name: Lint workspace
         run: pnpm lint
 
+      - name: Validate environment and helper contracts
+        run: pnpm quality:environment && pnpm quality:duplicates
+
+      - name: Ratchet source file sizes
+        env:
+          QUALITY_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ -n "$QUALITY_BASE_SHA" && "$QUALITY_BASE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            pnpm quality:file-size --base "$QUALITY_BASE_SHA"
+          else
+            pnpm quality:file-size
+          fi
+
       - name: Build workspace
         run: pnpm build
+
+      - name: Verify generated routes are current
+        run: git diff --exit-code -- apps/web/src/routeTree.gen.ts
 
       - name: Validate Helm chart
         run: pnpm infra:helm:validate
@@ -74,7 +91,7 @@ jobs:
         run: pnpm quality:production-readiness-contract:test
 
       - name: Prove quality gates fail closed
-        run: pnpm quality:gates-contract:test
+        run: pnpm quality:gates-contract:test && node --test infra/scripts/check-test-skips.test.mjs
 
       - name: Prove final-release evidence gates fail closed
         run: pnpm quality:release-evidence-contract:test
@@ -91,7 +108,22 @@ jobs:
   platform-mode-matrix:
     name: test:${{ matrix.helix_mode }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
+    env:
+      COMPOSE_PROJECT_NAME: helix_tests_${{ matrix.helix_mode }}_${{ github.run_id }}
+      POSTGRES_DB: helix_ci
+      DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:28432/helix_ci
+      HELIX_MIGRATION_DATABASE_URL: postgres://helix:helix_dev_password@127.0.0.1:28432/helix_ci
+      HELIX_RLS_APP_DATABASE_URL: postgres://helix_app:helix_app_local@127.0.0.1:28432/helix_ci
+      HELIX_RLS_WORKER_DATABASE_URL: postgres://helix_worker:helix_worker_local@127.0.0.1:28432/helix_ci
+      HELIX_RLS_READONLY_DATABASE_URL: postgres://helix_readonly:helix_readonly_local@127.0.0.1:28432/helix_ci
+      HELIX_REQUIRE_LIVE_SUITES: "1"
+      HELIX_TEST_DATABASE_TEMPLATE: postgres://helix:helix_dev_password@127.0.0.1:28432/helix_ci
+      S3_CONTRACT_ENDPOINT: http://127.0.0.1:28437
+      S3_CONTRACT_ACCESS_KEY: helixrustfs
+      S3_CONTRACT_SECRET_KEY: helix_rustfs_dev_secret
+      S3_CONTRACT_BUCKET: helix-objects
+      RUSTFS_SERVER_DOMAINS: localhost,rustfs,127.0.0.1,127.0.0.1:28437
     defaults:
       run:
         working-directory: helix-all/helix-workspace
@@ -123,8 +155,52 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Start PostgreSQL and RustFS using reviewed image pins
+        run: docker compose up -d --build --wait postgres rustfs
+
+      - name: Apply all database migrations
+        run: pnpm --filter @helix/app db:migrate
+
+      - name: Prepare S3 contract bucket
+        run: >-
+          pnpm --filter @helix/app exec tsx --eval
+          'import { createS3CompatibleStorage } from "./src/platform/storage/index.ts";
+          void createS3CompatibleStorage({ endpoint: process.env.S3_CONTRACT_ENDPOINT,
+          region: "us-east-1", bucket: process.env.S3_CONTRACT_BUCKET,
+          credentials: { accessKeyId: process.env.S3_CONTRACT_ACCESS_KEY,
+          secretAccessKey: process.env.S3_CONTRACT_SECRET_KEY }, fetch }).ensureBucket();'
+
       - name: Run platform mode test suite
-        run: pnpm test:${{ matrix.helix_mode }}
+        run: >-
+          pnpm test:${{ matrix.helix_mode }} --
+          --no-file-parallelism --coverage --reporter=default --reporter=json
+          --outputFile.json=vitest-results.json
+
+      - name: Reject unexpected skipped tests
+        if: always()
+        run: node infra/scripts/check-test-skips.mjs
+
+      - name: Upload complete test reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: platform-tests-${{ matrix.helix_mode }}
+          path: helix-all/helix-workspace/**/vitest-results.json
+          if-no-files-found: error
+
+      - name: Upload measured coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ matrix.helix_mode }}
+          path: |
+            helix-all/helix-workspace/**/coverage/lcov.info
+            helix-all/helix-workspace/**/coverage/coverage-summary.json
+          if-no-files-found: error
+
+      - name: Stop isolated test services
+        if: always()
+        run: docker compose down -v --remove-orphans
 
   repo-boundaries:
     runs-on: ubuntu-latest

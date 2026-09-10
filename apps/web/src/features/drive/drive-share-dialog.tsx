@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState, type CSSProperties } from "react";
-import { Icons } from "@/components/icons";
+import { Link as LinkIcon, Users as UsersIcon, X as XIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 import {
   createDriveShareLink,
   drivePublicShareUrl,
@@ -10,13 +10,13 @@ import {
   type DriveAccessGrant,
   type DriveAccessRole,
 } from "./api";
+import { driveAccessQueryOptions, driveActorQueryOptions, driveQueryKeys } from "./queries";
 import {
   DRIVE_ACCESS_ROLE_OPTIONS,
   driveAccessRoleLabel,
   driveAccessRoleValue,
   driveShareTargetsFromInput,
 } from "./share-access";
-import { driveAccessQueryOptions, driveActorQueryOptions, driveQueryKeys } from "./queries";
 
 interface DriveShareDialogProps {
   readonly objectId: string;
@@ -158,12 +158,19 @@ export function DriveShareDialog({
     shareMutation.error ?? removeAccessMutation.error ?? updateAccessMutation.error ?? null;
 
   return (
-    <div style={overlayStyle}>
-      <div role="dialog" aria-modal="true" aria-label={`Share ${objectName}`} style={dialogStyle}>
-        <div style={headerStyle}>
-          <div style={{ minWidth: 0 }}>
-            <h2 style={titleStyle}>Share</h2>
-            <div style={subtitleStyle}>{objectName}</div>
+    <div className="fixed inset-0 [z-index:80] grid [place-items:center] p-6 [background:color-mix(in_srgb,_black_32%,_transparent)]">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Share ${objectName}`}
+        className="[width:min(560px,_calc(100vw_-_32px))] [max-height:calc(100vh_-_48px)] overflow-auto [border:1px_solid_var(--border)] rounded-lg bg-card text-foreground [box-shadow:0_24px_80px_rgba(15,_23,_42,_0.24)]"
+      >
+        <div className="flex items-start gap-3 [padding:16px_18px] [border-bottom:1px_solid_var(--border)]">
+          <div className="min-w-0">
+            <h2 className="m-0 [font-size:var(--text-lg)] [line-height:1.2]">Share</h2>
+            <div className="mt-1 text-muted-foreground [font-size:var(--text-body-sm)] [overflow-wrap:anywhere]">
+              {objectName}
+            </div>
           </div>
           <button
             type="button"
@@ -173,33 +180,34 @@ export function DriveShareDialog({
               onOpenChange(false);
             }}
           >
-            <Icons.X />
+            <XIcon size={16} />
           </button>
         </div>
 
-        <div style={sectionStyle}>
-          <label style={labelStyle} htmlFor={`share-targets-${objectId}`}>
+        <div className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]">
+          <label
+            className="[font-size:var(--text-caption)] font-bold [color:var(--text-2)]"
+            htmlFor={`share-targets-${objectId}`}
+          >
             Add people
           </label>
-          <div style={shareRowStyle}>
+          <div className="flex gap-2 items-center">
             <input
               id={`share-targets-${objectId}`}
-              className="input"
+              className="input flex-1 min-w-0"
               value={shareInput}
               onChange={(event) => {
                 setShareInput(event.currentTarget.value);
               }}
               placeholder="Email, name, or actor ID"
-              style={{ flex: 1, minWidth: 0 }}
             />
             <select
-              className="input"
+              className="input w-32"
               aria-label="Share role"
               value={shareRole}
               onChange={(event) => {
                 setShareRole(event.currentTarget.value as DriveAccessRole);
               }}
-              style={{ width: 128 }}
             >
               {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
                 <option key={option.role} value={option.role}>
@@ -214,12 +222,19 @@ export function DriveShareDialog({
             disabled={busy || shareInput.trim().length === 0}
             onClick={submitShare}
           >
-            <Icons.Users />
+            <UsersIcon size={16} />
             Share
           </button>
-          {shareMutation.isSuccess ? <div style={successStyle}>Access granted.</div> : null}
+          {shareMutation.isSuccess ? (
+            <div className="[color:var(--success,_var(--accent))] [font-size:var(--text-caption)]">
+              Access granted.
+            </div>
+          ) : null}
           {error !== null ? (
-            <div role="alert" style={errorStyle}>
+            <div
+              role="alert"
+              className="[color:var(--danger,_#dc2626)] [font-size:var(--text-caption)]"
+            >
               {error instanceof Error ? error.message : "Sharing failed."}
             </div>
           ) : null}
@@ -239,9 +254,11 @@ export function DriveShareDialog({
           }}
         />
 
-        <details style={sectionStyle}>
+        <details className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]">
           <summary>Public link settings</summary>
-          <p style={mutedStyle}>Public links are view-only and can be revoked at any time.</p>
+          <p className="text-muted-foreground [font-size:var(--text-caption)]">
+            Public links are view-only and can be revoked at any time.
+          </p>
           <input
             className="input"
             type="password"
@@ -291,7 +308,7 @@ export function DriveShareDialog({
             Allow download
           </label>
         </details>
-        <div style={footerStyle}>
+        <div className="flex items-center gap-2.5 [padding:12px_18px]">
           {shareUrl === undefined ? null : (
             <button
               type="button"
@@ -300,7 +317,7 @@ export function DriveShareDialog({
                 copyLink();
               }}
             >
-              <Icons.Link />
+              <LinkIcon size={16} />
               Copy link
             </button>
           )}
@@ -316,12 +333,19 @@ export function DriveShareDialog({
               copyLink(true);
             }}
           >
-            <Icons.Link />
+            <LinkIcon size={16} />
             Create public link
           </button>
-          {copied ? <span style={successStyle}>Link copied.</span> : null}
+          {copied ? (
+            <span className="[color:var(--success,_var(--accent))] [font-size:var(--text-caption)]">
+              Link copied.
+            </span>
+          ) : null}
           {publicLinkError === null ? null : (
-            <span role="alert" style={errorStyle}>
+            <span
+              role="alert"
+              className="[color:var(--danger,_#dc2626)] [font-size:var(--text-caption)]"
+            >
               {publicLinkError}
             </span>
           )}
@@ -352,34 +376,47 @@ function AccessList({
     ownerActorId === null || (currentActorId !== null && ownerActorId === currentActorId);
 
   if (loading) {
-    return <div style={mutedStyle}>Loading access...</div>;
+    return (
+      <div className="text-muted-foreground [font-size:var(--text-caption)]">Loading access...</div>
+    );
   }
 
   return (
-    <section style={sectionStyle} aria-label="People with access">
-      <div style={sectionHeaderStyle}>People with access</div>
+    <section
+      className="grid gap-2.5 [padding:14px_18px] [border-bottom:1px_solid_var(--border)]"
+      aria-label="People with access"
+    >
+      <div className="[font-size:var(--text-caption)] font-bold [color:var(--text-2)] uppercase [letter-spacing:0]">
+        People with access
+      </div>
       {grants.length === 0 ? (
-        <div style={mutedStyle}>Only the owner has access.</div>
+        <div className="text-muted-foreground [font-size:var(--text-caption)]">
+          Only the owner has access.
+        </div>
       ) : (
-        <div style={{ display: "grid", gap: 8 }}>
+        <div className="grid gap-2">
           {grants.map((grant) => {
             const label = grant.displayName ?? grant.email ?? grant.actorId;
             const canRemove =
               canManageAll || (currentActorId !== null && grant.actorId === currentActorId);
             return (
-              <div key={grant.actorId} style={grantRowStyle}>
+              <div
+                key={grant.actorId}
+                className="flex items-center gap-2 min-w-0 [font-size:var(--text-body-sm)]"
+              >
                 <Avatar name={label} />
-                <span style={grantLabelStyle}>{label}</span>
+                <span className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+                  {label}
+                </span>
                 {canManageAll ? (
                   <select
-                    className="input"
+                    className="input w-31 h-7.5 [font-size:var(--text-caption)]"
                     aria-label={`Access role for ${label}`}
                     value={driveAccessRoleValue(grant.role)}
                     disabled={busy}
                     onChange={(event) => {
                       onRoleChange(grant.actorId, event.currentTarget.value as DriveAccessRole);
                     }}
-                    style={{ width: 124, height: 30, fontSize: "var(--text-caption)" }}
                   >
                     {DRIVE_ACCESS_ROLE_OPTIONS.map((option) => (
                       <option key={option.role} value={option.role}>
@@ -388,7 +425,9 @@ function AccessList({
                     ))}
                   </select>
                 ) : (
-                  <span style={mutedStyle}>{driveAccessRoleLabel(grant.role)}</span>
+                  <span className="text-muted-foreground [font-size:var(--text-caption)]">
+                    {driveAccessRoleLabel(grant.role)}
+                  </span>
                 )}
                 {canRemove ? (
                   <button
@@ -400,7 +439,7 @@ function AccessList({
                       onRemove(grant.actorId);
                     }}
                   >
-                    <Icons.X />
+                    <XIcon size={16} />
                   </button>
                 ) : null}
               </div>
@@ -414,7 +453,10 @@ function AccessList({
 
 function Avatar({ name }: { readonly name: string }) {
   return (
-    <span aria-hidden="true" style={avatarStyle}>
+    <span
+      aria-hidden="true"
+      className="w-6 h-6 rounded-full [display:inline-grid] [place-items:center] shrink-0 [background:var(--accent-soft)] text-primary [font-size:var(--text-caption)] font-bold"
+    >
       {initials(name)}
     </span>
   );
@@ -428,121 +470,3 @@ function initials(name: string): string {
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
 }
-
-const overlayStyle = {
-  position: "fixed",
-  inset: 0,
-  zIndex: 80,
-  display: "grid",
-  placeItems: "center",
-  padding: 24,
-  background: "color-mix(in srgb, black 32%, transparent)",
-} satisfies CSSProperties;
-
-const dialogStyle = {
-  width: "min(560px, calc(100vw - 32px))",
-  maxHeight: "calc(100vh - 48px)",
-  overflow: "auto",
-  border: "1px solid var(--border)",
-  borderRadius: 8,
-  background: "var(--surface)",
-  color: "var(--text)",
-  boxShadow: "0 24px 80px rgba(15, 23, 42, 0.24)",
-} satisfies CSSProperties;
-
-const headerStyle = {
-  display: "flex",
-  alignItems: "flex-start",
-  gap: 12,
-  padding: "16px 18px",
-  borderBottom: "1px solid var(--border)",
-} satisfies CSSProperties;
-
-const titleStyle = {
-  margin: 0,
-  fontSize: "var(--text-lg)",
-  lineHeight: 1.2,
-} satisfies CSSProperties;
-
-const subtitleStyle = {
-  marginTop: 4,
-  color: "var(--text-3)",
-  fontSize: "var(--text-body-sm)",
-  overflowWrap: "anywhere",
-} satisfies CSSProperties;
-
-const sectionStyle = {
-  display: "grid",
-  gap: 10,
-  padding: "14px 18px",
-  borderBottom: "1px solid var(--border)",
-} satisfies CSSProperties;
-
-const labelStyle = {
-  fontSize: "var(--text-caption)",
-  fontWeight: 700,
-  color: "var(--text-2)",
-} satisfies CSSProperties;
-
-const sectionHeaderStyle = {
-  ...labelStyle,
-  textTransform: "uppercase",
-  letterSpacing: 0,
-} satisfies CSSProperties;
-
-const shareRowStyle = {
-  display: "flex",
-  gap: 8,
-  alignItems: "center",
-} satisfies CSSProperties;
-
-const grantRowStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  minWidth: 0,
-  fontSize: "var(--text-body-sm)",
-} satisfies CSSProperties;
-
-const grantLabelStyle = {
-  flex: 1,
-  minWidth: 0,
-  overflow: "hidden",
-  textOverflow: "ellipsis",
-  whiteSpace: "nowrap",
-} satisfies CSSProperties;
-
-const avatarStyle = {
-  width: 24,
-  height: 24,
-  borderRadius: "50%",
-  display: "inline-grid",
-  placeItems: "center",
-  flexShrink: 0,
-  background: "var(--accent-soft)",
-  color: "var(--accent)",
-  fontSize: "var(--text-caption)",
-  fontWeight: 700,
-} satisfies CSSProperties;
-
-const footerStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: 10,
-  padding: "12px 18px",
-} satisfies CSSProperties;
-
-const mutedStyle = {
-  color: "var(--text-3)",
-  fontSize: "var(--text-caption)",
-} satisfies CSSProperties;
-
-const successStyle = {
-  color: "var(--success, var(--accent))",
-  fontSize: "var(--text-caption)",
-} satisfies CSSProperties;
-
-const errorStyle = {
-  color: "var(--danger, #dc2626)",
-  fontSize: "var(--text-caption)",
-} satisfies CSSProperties;

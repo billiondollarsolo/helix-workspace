@@ -3,11 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { isHashApproved, isKdfApproved } from "./algorithms.js";
 import { resolveCryptoConfig } from "./config.js";
 import { FipsCryptoProvider } from "./fips-provider.js";
-import {
-  createCryptoProvider,
-  getCryptoProvider,
-  setCryptoProviderForTesting,
-} from "./index.js";
+import { createCryptoProvider, getCryptoProvider, setCryptoProviderForTesting } from "./index.js";
 import { NodeCryptoProvider } from "./node-provider.js";
 import { UnsupportedAlgorithmError } from "./provider.js";
 

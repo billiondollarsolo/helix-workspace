@@ -41,23 +41,42 @@ export class QdrantVectorStore implements VectorStore {
     metric: VectorMetric,
   ): Promise<void> {
     const collection = scopedCollectionName(orgId, validateCollectionName(name));
-    await requestJson(this.id, this.#config, "PUT", `/collections/${encodeURIComponent(collection)}`, {
-      vectors: { size: validateDimension(dim), distance: qdrantDistance(assertVectorMetric(metric)) },
-    });
+    await requestJson(
+      this.id,
+      this.#config,
+      "PUT",
+      `/collections/${encodeURIComponent(collection)}`,
+      {
+        vectors: {
+          size: validateDimension(dim),
+          distance: qdrantDistance(assertVectorMetric(metric)),
+        },
+      },
+    );
   }
 
-  async upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void> {
+  async upsert(
+    orgId: VectorOrgScope,
+    collection: string,
+    items: readonly VectorItem[],
+  ): Promise<void> {
     if (items.length === 0) {
       return;
     }
     const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
-    await requestJson(this.id, this.#config, "PUT", `/collections/${encodeURIComponent(scoped)}/points?wait=true`, {
-      points: items.map((item) => ({
-        id: item.id,
-        vector: [...validateVector(item.vector)],
-        payload: item.metadata ?? {},
-      })),
-    });
+    await requestJson(
+      this.id,
+      this.#config,
+      "PUT",
+      `/collections/${encodeURIComponent(scoped)}/points?wait=true`,
+      {
+        points: items.map((item) => ({
+          id: item.id,
+          vector: [...validateVector(item.vector)],
+          payload: item.metadata ?? {},
+        })),
+      },
+    );
   }
 
   async query(
@@ -67,13 +86,19 @@ export class QdrantVectorStore implements VectorStore {
     opts: VectorQueryOpts = {},
   ): Promise<readonly VectorMatch[]> {
     const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
-    const response = await requestJson(this.id, this.#config, "POST", `/collections/${encodeURIComponent(scoped)}/points/search`, {
-      vector: [...validateVector(vector)],
-      limit: validateLimit(opts.limit),
-      with_payload: true,
-      with_vector: opts.includeVectors === true,
-      ...(opts.filter === undefined ? {} : { filter: { must: metadataFilter(opts.filter) } }),
-    });
+    const response = await requestJson(
+      this.id,
+      this.#config,
+      "POST",
+      `/collections/${encodeURIComponent(scoped)}/points/search`,
+      {
+        vector: [...validateVector(vector)],
+        limit: validateLimit(opts.limit),
+        with_payload: true,
+        with_vector: opts.includeVectors === true,
+        ...(opts.filter === undefined ? {} : { filter: { must: metadataFilter(opts.filter) } }),
+      },
+    );
     const result = isJsonObject(response) && Array.isArray(response.result) ? response.result : [];
     return result.map(qdrantMatch).filter((match): match is VectorMatch => match !== null);
   }
@@ -83,9 +108,15 @@ export class QdrantVectorStore implements VectorStore {
       return;
     }
     const scoped = scopedCollectionName(orgId, validateCollectionName(collection));
-    await requestJson(this.id, this.#config, "POST", `/collections/${encodeURIComponent(scoped)}/points/delete?wait=true`, {
-      points: [...ids],
-    });
+    await requestJson(
+      this.id,
+      this.#config,
+      "POST",
+      `/collections/${encodeURIComponent(scoped)}/points/delete?wait=true`,
+      {
+        points: [...ids],
+      },
+    );
   }
 }
 
@@ -107,7 +138,8 @@ function qdrantMatch(value: unknown): VectorMatch | null {
   if (!isJsonObject(value)) {
     return null;
   }
-  const id = optionalString(value.id) ?? (typeof value.id === "number" ? String(value.id) : undefined);
+  const id =
+    optionalString(value.id) ?? (typeof value.id === "number" ? String(value.id) : undefined);
   const score = optionalNumber(value.score);
   if (id === undefined || score === undefined) {
     return null;

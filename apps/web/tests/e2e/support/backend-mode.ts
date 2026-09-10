@@ -22,24 +22,15 @@ import type { Page } from "@playwright/test";
  * PRD §13 "one source, three surfaces" proof.
  */
 
-export type BackendMode = "mocked" | "live";
+type BackendMode = "mocked" | "live";
 
 /** Resolve the backend mode from the environment. Defaults to `mocked`. */
-export function backendMode(): BackendMode {
+function backendMode(): BackendMode {
   return process.env.HELIX_E2E_BACKEND === "live" ? "live" : "mocked";
 }
 
 export function isLiveBackend(): boolean {
   return backendMode() === "live";
-}
-
-/**
- * Base URL of the real Helix API in live mode. The docker-compose stack
- * publishes the API on `HELIX_PORT` (default 28431); CI passes this through as
- * `HELIX_E2E_API_BASE_URL`.
- */
-export function liveApiBaseUrl(): string {
-  return process.env.HELIX_E2E_API_BASE_URL ?? "http://127.0.0.1:28431";
 }
 
 /** Establish the same cookie session used by the web login flow. */

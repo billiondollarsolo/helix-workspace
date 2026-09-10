@@ -1,9 +1,11 @@
+import type { JsonObject } from "@helix/sdk-types";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import type { JsonObject } from "@helix/sdk-types";
 import { sensitivityLabelFor, type DataClassification } from "../ai/classification/index.js";
 import { commitStorageUsage } from "../drive/index.js";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
+import { toSqlJson } from "../util/sql.js";
+import { hasControlCharacter } from "../util/strings.js";
 import type {
   MeetActorRef,
   MeetAttendanceRecord,
@@ -21,8 +23,8 @@ import type {
 } from "./types.js";
 
 export const MEET_RECORDING_NOTICE_VERSION = "2026-09-02";
-export const MEET_RECORDING_CONSENT_POLICY = "explicit-all-parties";
-export const MEET_RECORDING_JURISDICTION = "global";
+const MEET_RECORDING_CONSENT_POLICY = "explicit-all-parties";
+const MEET_RECORDING_JURISDICTION = "global";
 const RECORDING_AUTHORIZATION_TTL_MS = 30_000;
 
 export interface MeetRecordingAuthorization {
@@ -2686,14 +2688,6 @@ function requireParticipantSubject(value: string): string {
   return subject;
 }
 
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code < 32 || code === 127) return true;
-  }
-  return false;
-}
-
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
 }
@@ -3040,8 +3034,4 @@ function requireValue(value: string | undefined, label: string): string {
     throw new Error(`Expected ${label}.`);
   }
   return value;
-}
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }

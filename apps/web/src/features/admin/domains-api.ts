@@ -17,12 +17,11 @@ import { ensureOk, parseResponse } from "@/features/admin/api-response";
 
 const jsonHeaders = { "content-type": "application/json" } as const;
 
-export const DNS_RECORD_TYPES = ["MX", "SPF", "DKIM", "DMARC", "TXT", "CNAME", "A"] as const;
+const DNS_RECORD_TYPES = ["MX", "SPF", "DKIM", "DMARC", "TXT", "CNAME", "A"] as const;
 export type DnsRecordType = (typeof DNS_RECORD_TYPES)[number];
 
-export const DOMAIN_STATUSES = ["pending", "verified", "quarantined", "released"] as const;
-export type DomainStatus = (typeof DOMAIN_STATUSES)[number];
-export const VERIFICATION_STATUSES = ["verified", "pending", "failed"] as const;
+const DOMAIN_STATUSES = ["pending", "verified", "quarantined", "released"] as const;
+const VERIFICATION_STATUSES = ["verified", "pending", "failed"] as const;
 
 const domainSchema = z.object({
   id: z.string(),
@@ -78,7 +77,6 @@ export type DomainWithRecords = z.infer<typeof domainWithRecordsSchema>;
 
 const domainsResponseSchema = z.object({ domains: z.array(domainWithRecordsSchema) });
 const domainResponseSchema = z.object({ domain: domainSchema });
-const dnsRecordsResponseSchema = z.object({ dnsRecords: z.array(dnsRecordSchema) });
 const dnsRecordResponseSchema = z.object({ dnsRecord: dnsRecordSchema });
 
 export interface CreateDomainInput {
@@ -119,23 +117,11 @@ export function domainsQueryOptions(fetchImpl: AuthFetch = authenticatedFetch) {
   });
 }
 
-export function dnsRecordsQueryOptions(
-  domainId: string | null,
-  fetchImpl: AuthFetch = authenticatedFetch,
-) {
-  return queryOptions({
-    ...ADMIN_QUERY_DEFAULTS,
-    queryKey: domainsQueryKeys.dnsRecords(domainId ?? ""),
-    queryFn: () => fetchDnsRecords(domainId ?? "", fetchImpl),
-    enabled: domainId !== null,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Domains — fetchers + mutations
 // ---------------------------------------------------------------------------
 
-export async function fetchDomains(
+async function fetchDomains(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly DomainWithRecords[]> {
   const response = await fetchImpl("/api/admin/domains", { method: "GET" });
@@ -205,20 +191,6 @@ export async function updateDomainCapabilities(
     body: JSON.stringify(input),
   });
   return (await parseResponse(response, "update domain capabilities", domainResponseSchema)).domain;
-}
-
-// ---------------------------------------------------------------------------
-// DNS records — fetchers + mutations
-// ---------------------------------------------------------------------------
-
-export async function fetchDnsRecords(
-  domainId: string,
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<readonly DnsRecord[]> {
-  const response = await fetchImpl(`/api/admin/domains/${encodeURIComponent(domainId)}/dns`, {
-    method: "GET",
-  });
-  return (await parseResponse(response, "load DNS records", dnsRecordsResponseSchema)).dnsRecords;
 }
 
 export async function upsertDnsRecord(

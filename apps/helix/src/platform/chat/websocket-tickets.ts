@@ -4,9 +4,9 @@ import { randomBytes, sha256Hex } from "../crypto/index.js";
 
 export const CHAT_WEBSOCKET_AUDIENCE = "chat.websocket";
 export const CHAT_WEBSOCKET_PATH = "/ws/chat";
-export const CHAT_WEBSOCKET_PROTOCOL = "helix.chat.v1";
-export const CHAT_WEBSOCKET_TICKET_PROTOCOL_PREFIX = "helix.ticket.";
-export const CHAT_WEBSOCKET_TICKET_TTL_SECONDS = 30;
+const CHAT_WEBSOCKET_PROTOCOL = "helix.chat.v1";
+const CHAT_WEBSOCKET_TICKET_PROTOCOL_PREFIX = "helix.ticket.";
+const CHAT_WEBSOCKET_TICKET_TTL_SECONDS = 30;
 
 const TICKET_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
 

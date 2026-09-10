@@ -18,7 +18,7 @@ import type { MeetMediaCommand, MeetRecordingAuthorization, MeetTelemetryEvent }
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface JitsiParticipant {
+interface JitsiParticipant {
   readonly id: string;
   readonly displayName: string;
   readonly participantSubject: string;

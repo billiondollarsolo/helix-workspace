@@ -2,7 +2,7 @@ import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
 
 export type AssistantToolDecision = "confirm" | "cancel";
-export type AssistantToolDecisionStatus = "confirmed" | "cancelled";
+type AssistantToolDecisionStatus = "confirmed" | "cancelled";
 
 export interface AssistantToolDecisionInput {
   readonly conversationId: string;
@@ -327,15 +327,6 @@ export interface AssistantConversationRecord {
   readonly pinnedAt: string | null;
   readonly memoryOptIn: boolean;
   readonly updatedAt: string;
-  readonly createdAt: string;
-}
-
-/** A persisted assistant message, as returned in a turn's `messages` array. */
-export interface AssistantConversationMessage {
-  readonly id: string;
-  readonly conversationId: string;
-  readonly role: "system" | "user" | "assistant" | "tool";
-  readonly content: string;
   readonly createdAt: string;
 }
 

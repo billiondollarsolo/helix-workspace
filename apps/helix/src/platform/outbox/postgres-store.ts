@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import type { JsonValue, OutboxMessage } from "@helix/sdk-types";
+import type postgres from "postgres";
 import type { OutboxStore, StoredOutboxMessage } from "./outbox.js";
 
 interface OutboxRow {

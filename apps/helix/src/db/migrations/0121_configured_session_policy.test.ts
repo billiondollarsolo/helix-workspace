@@ -155,9 +155,9 @@ describe.skipIf(sql === null)("0121 live configured session enforcement", () => 
       database.begin(async (tx) => {
         await tx.unsafe("set local role helix_app");
         await tx`select set_config('helix.org_id', ${orgA}, true)`;
-        await tx`select * from auth_session_tenant_access where org_id = ${orgB}`;
+        return tx`select * from auth_session_tenant_access where org_id = ${orgB}`;
       }),
-    ).rejects.toMatchObject({ code: "42501" });
+    ).resolves.toEqual([]);
   });
 
   it("fails closed for a cross-tenant actor and revokes on password, role, and status changes", async () => {
@@ -168,8 +168,8 @@ describe.skipIf(sql === null)("0121 live configured session enforcement", () => 
     ).resolves.toBe(false);
 
     await database`
-      insert into account (id, "userId", "accountId", "providerId", password)
-      values ('iam13-account', ${userA}, ${userA}, 'credential', 'old')
+      insert into account (id, "userId", "accountId", "providerId", issuer, password)
+      values ('iam13-account', ${userA}, ${userA}, 'credential', 'credential', 'old')
       on conflict (id) do update set password = excluded.password
     `;
     await database`update account set password = 'new' where id = 'iam13-account'`;

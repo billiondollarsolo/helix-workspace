@@ -27,26 +27,7 @@ security:
       - worm
       - siem
     networkEgress: default-deny
-    pluginSignatureRequired: true
     localAiOnly: true
-
-# Provision this immutable Secret through the sovereign release process. Its
-# catalog keyring and publisher identities are the local trust boundary; the
-# embedded Sigstore proofs can be verified from a mirrored TUF root offline.
-env:
-  - name: HELIX_PLUGIN_TRUST_FILE
-    value: /run/helix/plugin-trust/trust.json
-extraVolumes:
-  - name: plugin-trust
-    secret:
-      secretName: helix-plugin-trust
-      items:
-        - key: trust.json
-          path: trust.json
-extraVolumeMounts:
-  - name: plugin-trust
-    mountPath: /run/helix/plugin-trust
-    readOnly: true
 
 # The default repository is overridden by the FIPS image below when
 # `fips.enabled` is true (see the `helix.image` helper). `digest` is left empty

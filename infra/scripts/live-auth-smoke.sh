@@ -52,7 +52,6 @@ Options:
   --carddav-smoke              Also validate live CardDAV app-password auth, vCard sync, and revoke
   --caldav-smoke               Also validate live CalDAV app-password auth, VEVENT sync, and revoke
   --webhook-smoke              Also validate webhook admin CLI flows plus signed inbound and loopback delivery
-  --plugin-lifecycle-smoke     Also validate plugin list/install/enable/disable/uninstall through live tools
   --backend-realism-smoke      Enable the backend-only realism bundle: seeded demo checks, live
                               workspace mutations/search, SMTP/Mailpit, events WS, DAV, and k6
   --k6-target-smoke            Also run target-mode k6 with the minted OAuth token
@@ -125,9 +124,6 @@ CALDAV_SMOKE=${HELIX_SMOKE_CALDAV_SMOKE:-false}
 APP_PASSWORD_ACTOR_ID=${HELIX_SMOKE_APP_PASSWORD_ACTOR_ID:-00000000-0000-4000-8000-000000000101}
 APP_PASSWORD_USERNAME=${HELIX_SMOKE_APP_PASSWORD_USERNAME:-local-admin@helix.local}
 WEBHOOK_SMOKE=${HELIX_SMOKE_WEBHOOK_SMOKE:-false}
-PLUGIN_LIFECYCLE_SMOKE=${HELIX_SMOKE_PLUGIN_LIFECYCLE_SMOKE:-false}
-PLUGIN_LIFECYCLE_ID=${HELIX_SMOKE_PLUGIN_ID:-com.helix.webhook-out-slack}
-PLUGIN_LIFECYCLE_VERSION=${HELIX_SMOKE_PLUGIN_VERSION:-1.0.0}
 K6_TARGET_SMOKE=${HELIX_SMOKE_K6_TARGET_SMOKE:-false}
 K6_WEB_BASE_URL=${HELIX_SMOKE_K6_WEB_BASE_URL:-${WEB_BASE_URL:-http://127.0.0.1:4173}}
 K6_API_BASE_URL=${HELIX_SMOKE_K6_API_BASE_URL:-}
@@ -184,7 +180,6 @@ while [[ $# -gt 0 ]]; do
     --carddav-smoke) CARDDAV_SMOKE=true; shift ;;
     --caldav-smoke) CALDAV_SMOKE=true; shift ;;
     --webhook-smoke) WEBHOOK_SMOKE=true; shift ;;
-    --plugin-lifecycle-smoke) PLUGIN_LIFECYCLE_SMOKE=true; shift ;;
     --backend-realism-smoke)
       SEEDED_DEMO=true
       DRIVE_CALENDAR_SMOKE=true
@@ -3963,175 +3958,6 @@ run_webhook_smoke() {
   rm -f "$outbound_file" "$inbound_file"
 }
 
-run_plugin_lifecycle_smoke() {
-  local plugin_id=${PLUGIN_LIFECYCLE_ID:?missing plugin id}
-  local plugin_version=${PLUGIN_LIFECYCLE_VERSION:?missing plugin version}
-  local install_file install_pending_id install_approve_file uninstall_file uninstall_pending_id uninstall_approve_file
-  local enable_file disable_file
-
-  request_contains POST /api/tools/plugin.list 200 \
-    '{"includeConfirmations":true}' \
-    "plugin list" \
-    "$plugin_id" \
-    "$plugin_version"
-
-  install_file=$(mktemp "${TMPDIR:-/tmp}/helix-plugin-install.XXXXXX")
-  request_capture POST /api/tools/plugin.install 202 \
-    "$(node -e '
-const [pluginId, version] = process.argv.slice(1);
-process.stdout.write(JSON.stringify({
-  pluginId,
-  version,
-  confirmations: [
-    "source.non_official",
-    "permissions.scopes.webhooks.write",
-    "permissions.outbound-network.hooks.slack.com",
-    "capabilities.provides.webhook.out.format.slack",
-    "capabilities.consumes.webhook.engine",
-    "artifact.untrusted",
-  ],
-}));
-' "$plugin_id" "$plugin_version")" \
-    "plugin.install pending" \
-    "$install_file"
-  install_pending_id=$(json_field_from_file "$install_file" "parsed.pending?.id") || {
-    log "response body from plugin.install:"
-    cat "$install_file" >&2
-    rm -f "$install_file"
-    die "plugin.install did not return pending.id"
-  }
-  rm -f "$install_file"
-
-  install_approve_file=$(mktemp "${TMPDIR:-/tmp}/helix-plugin-install-approve.XXXXXX")
-  request_capture POST "/api/tools/pending/$install_pending_id/approve" 200 \
-    '{}' \
-    "plugin.install approve" \
-    "$install_approve_file"
-  node -e '
-const fs = require("node:fs");
-const [file, pluginId, version] = process.argv.slice(1);
-const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-const output = parsed.output;
-if (
-  parsed.status !== "executed" ||
-  output?.status !== "installed" ||
-  output?.plugin?.id !== pluginId ||
-  output?.plugin?.version !== version ||
-  output?.lifecycle?.state !== "installed" ||
-  output?.lifecycle?.installed !== true ||
-  output?.source !== "sideload"
-) {
-  process.exit(2);
-}
-' "$install_approve_file" "$plugin_id" "$plugin_version" || {
-    log "response body from plugin.install approve:"
-    cat "$install_approve_file" >&2
-    rm -f "$install_approve_file"
-    die "plugin.install approval did not install the expected plugin"
-  }
-  rm -f "$install_approve_file"
-
-  enable_file=$(mktemp "${TMPDIR:-/tmp}/helix-plugin-enable.XXXXXX")
-  request_capture POST /api/tools/plugin.enable 200 \
-    "$(node -e 'process.stdout.write(JSON.stringify({ pluginId: process.argv[1] }))' "$plugin_id")" \
-    "plugin.enable" \
-    "$enable_file"
-  node -e '
-const fs = require("node:fs");
-const [file, pluginId] = process.argv.slice(1);
-const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-if (parsed.status !== "enabled" || parsed.plugin?.id !== pluginId || parsed.lifecycle?.state !== "enabled") {
-  process.exit(2);
-}
-' "$enable_file" "$plugin_id" || {
-    log "response body from plugin.enable:"
-    cat "$enable_file" >&2
-    rm -f "$enable_file"
-    die "plugin.enable did not return enabled lifecycle state"
-  }
-  rm -f "$enable_file"
-
-  disable_file=$(mktemp "${TMPDIR:-/tmp}/helix-plugin-disable.XXXXXX")
-  request_capture POST /api/tools/plugin.disable 200 \
-    "$(node -e 'process.stdout.write(JSON.stringify({ pluginId: process.argv[1] }))' "$plugin_id")" \
-    "plugin.disable" \
-    "$disable_file"
-  node -e '
-const fs = require("node:fs");
-const [file, pluginId] = process.argv.slice(1);
-const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-if (parsed.status !== "disabled" || parsed.plugin?.id !== pluginId || parsed.lifecycle?.state !== "disabled") {
-  process.exit(2);
-}
-' "$disable_file" "$plugin_id" || {
-    log "response body from plugin.disable:"
-    cat "$disable_file" >&2
-    rm -f "$disable_file"
-    die "plugin.disable did not return disabled lifecycle state"
-  }
-  rm -f "$disable_file"
-
-  uninstall_file=$(mktemp "${TMPDIR:-/tmp}/helix-plugin-uninstall.XXXXXX")
-  request_capture POST /api/tools/plugin.uninstall 202 \
-    "$(node -e '
-const pluginId = process.argv[1];
-process.stdout.write(JSON.stringify({ pluginId, confirmations: ["plugin.uninstall"] }));
-' "$plugin_id")" \
-    "plugin.uninstall pending" \
-    "$uninstall_file"
-  uninstall_pending_id=$(json_field_from_file "$uninstall_file" "parsed.pending?.id") || {
-    log "response body from plugin.uninstall:"
-    cat "$uninstall_file" >&2
-    rm -f "$uninstall_file"
-    die "plugin.uninstall did not return pending.id"
-  }
-  rm -f "$uninstall_file"
-
-  uninstall_approve_file=$(mktemp "${TMPDIR:-/tmp}/helix-plugin-uninstall-approve.XXXXXX")
-  request_capture POST "/api/tools/pending/$uninstall_pending_id/approve" 200 \
-    '{}' \
-    "plugin.uninstall approve" \
-    "$uninstall_approve_file"
-  node -e '
-const fs = require("node:fs");
-const [file, pluginId] = process.argv.slice(1);
-const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-const output = parsed.output;
-if (
-  parsed.status !== "executed" ||
-  output?.status !== "uninstalled" ||
-  output?.plugin?.id !== pluginId ||
-  output?.lifecycle?.state !== "uninstalled" ||
-  output?.lifecycle?.installed !== false
-) {
-  process.exit(2);
-}
-' "$uninstall_approve_file" "$plugin_id" || {
-    log "response body from plugin.uninstall approve:"
-    cat "$uninstall_approve_file" >&2
-    rm -f "$uninstall_approve_file"
-    die "plugin.uninstall approval did not uninstall the expected plugin"
-  }
-  rm -f "$uninstall_approve_file"
-
-  request_contains POST /api/tools/plugin.list 200 \
-    '{"includeConfirmations":true}' \
-    "plugin list after uninstall" \
-    "$plugin_id" \
-    '"state":"uninstalled"' \
-    '"installed":false'
-
-  request_contains_retry GET '/api/admin/audit-log?limit=50' 200 \
-    "" \
-    "plugin lifecycle audit rows" \
-    10 \
-    "plugin.install.validated" \
-    "plugin.enable.validated" \
-    "plugin.disable.validated" \
-    "plugin.uninstall.validated" \
-    "$plugin_id"
-}
-
 cleanup_webhook_smoke() {
   local outbound_id=${1:-}
   local inbound_id=${2:-}
@@ -4375,11 +4201,7 @@ else
   log "skipping webhook smoke; pass --webhook-smoke for webhook admin and loopback delivery checks"
 fi
 
-if bool_true "$PLUGIN_LIFECYCLE_SMOKE"; then
-  run_plugin_lifecycle_smoke
-else
-  log "skipping plugin lifecycle smoke; pass --plugin-lifecycle-smoke for live plugin tool checks"
-fi
+
 
 if bool_true "$K6_TARGET_SMOKE"; then
   run_k6_target_smoke

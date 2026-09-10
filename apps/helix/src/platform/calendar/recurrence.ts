@@ -5,7 +5,9 @@ import {
   localDateTimeToInstant,
 } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 import { RRule, RRuleSet } from "rrule";
+import { nonEmptyString as stringValue } from "../util/strings.js";
 import type { CalendarEventRecord } from "./types.js";
 
 const maxOccurrences = 10_000;
@@ -69,6 +71,14 @@ export function expandCalendarOccurrencePage(
   validateBounds(event, windowStartsAt, windowEndsAt);
   const durationMs = event.endsAt.getTime() - event.startsAt.getTime();
   const overrides = recurrenceOverrides(event.metadata);
+  const maximumDurationMs = overrides.reduce(
+    (maximum, override) =>
+      Math.max(
+        maximum,
+        new Date(override.endsAt).getTime() - new Date(override.startsAt).getTime(),
+      ),
+    durationMs,
+  );
   const maximumShiftMs = overrides.reduce(
     (maximum, override) =>
       Math.max(
@@ -90,23 +100,28 @@ export function expandCalendarOccurrencePage(
     );
   }
   const cursor = options.cursor === undefined ? null : validDate(options.cursor, "cursor");
-  const rangeStart = new Date(windowStartsAt.getTime() - durationMs - maximumShiftMs);
+  const rangeStart = new Date(windowStartsAt.getTime() - maximumDurationMs - maximumShiftMs);
   const rangeEnd = new Date(windowEndsAt.getTime() + maximumShiftMs);
   const recurrence = recurrenceSet(event);
   const queryStart = cursor !== null && cursor > rangeStart ? cursor : rangeStart;
-  const dates = recurrence.set
-    .between(
-      recurrenceQueryDate(queryStart, recurrence),
-      recurrenceQueryDate(rangeEnd, recurrence),
-      cursor === null,
-      (_date, index) => index <= limit,
-    )
-    .map((date) => recurrenceInstant(date, recurrence));
-  const visible = dates
-    .filter((startsAt) => cursor === null || startsAt > cursor)
-    .flatMap((startsAt) => {
+  // RRuleSet visits RDATEs before RRULEs, then sorts its result. Leave room
+  // for every RDATE so a far-future addition cannot truncate earlier rule dates.
+  const additionalDates = recurrence.set.rdates().length;
+  const visible: { startsAt: Date; endsAt: Date; recurrenceId: Date }[] = [];
+  recurrence.set.between(
+    recurrenceQueryDate(queryStart, recurrence),
+    recurrenceQueryDate(rangeEnd, recurrence),
+    cursor === null,
+    (date, index) => {
+      if (index > maxOccurrences + additionalDates) {
+        throw new CalendarRecurrenceError(
+          `Recurrence scan exceeds ${String(maxOccurrences)} candidates. Narrow the recurrence window.`,
+        );
+      }
+      const startsAt = recurrenceInstant(date, recurrence);
+      if (cursor !== null && startsAt <= cursor) return true;
       const override = applicableOverride(overrides, startsAt);
-      if (override?.status === "cancelled") return [];
+      if (override?.status === "cancelled") return true;
       const occurrenceStartsAt =
         override === undefined
           ? startsAt
@@ -123,10 +138,17 @@ export function expandCalendarOccurrencePage(
                 (validDate(override.endsAt, "override DTEND").getTime() -
                   validDate(override.startsAt, "override DTSTART").getTime()),
             );
-      return occurrenceEndsAt > windowStartsAt && occurrenceStartsAt < windowEndsAt
-        ? [{ startsAt: occurrenceStartsAt, endsAt: occurrenceEndsAt, recurrenceId: startsAt }]
-        : [];
-    });
+      if (occurrenceEndsAt > windowStartsAt && occurrenceStartsAt < windowEndsAt) {
+        visible.push({
+          startsAt: occurrenceStartsAt,
+          endsAt: occurrenceEndsAt,
+          recurrenceId: startsAt,
+        });
+      }
+      return visible.length <= limit + additionalDates;
+    },
+  );
+  visible.sort((left, right) => left.recurrenceId.getTime() - right.recurrenceId.getTime());
   const page = visible.slice(0, limit);
   return {
     occurrences: page.map(({ startsAt, endsAt, recurrenceId }) => ({
@@ -262,10 +284,6 @@ function applicableOverride(
     )[0];
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 interface RecurrenceSet {
   readonly set: RRuleSet;
   readonly timeSemantics: "zoned" | "floating" | "all_day";
@@ -329,11 +347,13 @@ function recurrenceDate(value: Date, intentZone: string): Date {
 }
 
 function recurrenceQueryDate(value: Date, recurrence: RecurrenceSet): Date {
-  return recurrence.timeSemantics === "zoned" ? recurrenceDate(value, recurrence.timezone) : value;
+  return recurrence.timeSemantics === "zoned" && recurrence.timezone !== "UTC"
+    ? recurrenceDate(value, recurrence.timezone)
+    : value;
 }
 
 function recurrenceInstant(value: Date, recurrence: RecurrenceSet): Date {
-  return recurrence.timeSemantics === "zoned"
+  return recurrence.timeSemantics === "zoned" && recurrence.timezone !== "UTC"
     ? localDateTimeToInstant(instantToLocalDateTime(value, "UTC"), recurrence.timezone)
     : value;
 }
@@ -384,8 +404,4 @@ function validDate(value: string, label: string): Date {
 
 function validInstant(value: Date): boolean {
   return !Number.isNaN(value.getTime());
-}
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

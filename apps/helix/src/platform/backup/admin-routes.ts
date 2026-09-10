@@ -1,8 +1,8 @@
+import type { Actor } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
-import type { Actor } from "@helix/sdk-types";
-import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { env } from "../../config/env.js";
 import {
@@ -13,7 +13,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const adminConfigWriteScope = "admin.config.write";
-export const backupRestoreScope = "admin.backups.restore";
+const backupRestoreScope = "admin.backups.restore";
 const backupIdSchema = z
   .string()
   .trim()
@@ -177,7 +177,7 @@ export async function registerBackupAdminRoutes(
   });
 }
 
-export function canOperateBackups(actor: Actor): boolean {
+function canOperateBackups(actor: Actor): boolean {
   const scopes = actor.scopes ?? [];
   return (
     scopes.includes(adminConfigWriteScope) ||
@@ -186,7 +186,7 @@ export function canOperateBackups(actor: Actor): boolean {
   );
 }
 
-export function canRestoreBackups(actor: Actor): boolean {
+function canRestoreBackups(actor: Actor): boolean {
   const scopes = actor.scopes ?? [];
   return scopes.includes(backupRestoreScope) || scopes.includes("admin.*");
 }

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { SECURITY_POLICY_TYPES } from "./security-policies.js";
+import type { SecurityPolicyType } from "./security-policy-runtime.js";
 import {
   SECURITY_POLICY_RUNTIME_CAPABILITIES,
   evaluateExternalEmailSharePolicy,
@@ -11,8 +13,6 @@ import {
   validateRecordedOnlyRequiredEnforcement,
   validateSsoEnforcementRequest,
 } from "./security-policy-runtime.js";
-import type { SecurityPolicyType } from "./security-policy-runtime.js";
-import { SECURITY_POLICY_TYPES } from "./security-policies.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 

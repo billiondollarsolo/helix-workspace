@@ -119,6 +119,97 @@ describe("bounded RFC 5545 recurrence", () => {
     expect([...first.occurrences, ...second.occurrences, ...third.occurrences]).toHaveLength(5);
   });
 
+  it("pages past cancelled instances without hiding later occurrences", () => {
+    const recurring = {
+      ...event("FREQ=DAILY;COUNT=5"),
+      metadata: {
+        caldav: {
+          overrides: ["2026-03-08T09:00:00.000Z", "2026-03-09T09:00:00.000Z"].map((date) => ({
+            ...override(date, date),
+            status: "cancelled",
+          })),
+        },
+      },
+    };
+    const start = new Date("2026-03-08T00:00:00.000Z");
+    const end = new Date("2026-03-14T00:00:00.000Z");
+    const first = expandCalendarOccurrencePage(recurring, start, end, { limit: 1 });
+    expect(first.occurrences.map(({ startsAt }) => startsAt.toISOString())).toEqual([
+      "2026-03-10T09:00:00.000Z",
+    ]);
+    expect(first.nextCursor).toBe("2026-03-10T09:00:00.000Z");
+    if (first.nextCursor === null) throw new Error("Expected another visible page.");
+    const second = expandCalendarOccurrencePage(recurring, start, end, {
+      limit: 2,
+      cursor: first.nextCursor,
+    });
+    expect(second.occurrences.map(({ startsAt }) => startsAt.toISOString())).toEqual([
+      "2026-03-11T09:00:00.000Z",
+      "2026-03-12T09:00:00.000Z",
+    ]);
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it("pages rule dates before a far-future RDATE", () => {
+    const first = expandCalendarOccurrencePage(
+      {
+        ...event("FREQ=DAILY;COUNT=5"),
+        metadata: { caldav: { rdate: ["2026-03-20T09:00:00.000Z"] } },
+      },
+      new Date("2026-03-08T00:00:00.000Z"),
+      new Date("2026-03-21T00:00:00.000Z"),
+      { limit: 1 },
+    );
+    expect(first.occurrences[0]?.startsAt.toISOString()).toBe("2026-03-08T09:00:00.000Z");
+    expect(first.nextCursor).toBe("2026-03-08T09:00:00.000Z");
+  });
+
+  it("includes an extended override overlapping the query window", () => {
+    const occurrences = expandCalendarEventOccurrences(
+      {
+        ...event("FREQ=DAILY;COUNT=1"),
+        metadata: {
+          caldav: {
+            overrides: [
+              {
+                ...override("2026-03-08T09:00:00.000Z", "2026-03-08T09:00:00.000Z"),
+                endsAt: "2026-03-10T09:00:00.000Z",
+              },
+            ],
+          },
+        },
+      },
+      new Date("2026-03-09T00:00:00.000Z"),
+      new Date("2026-03-10T00:00:00.000Z"),
+    );
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0]?.endsAt.toISOString()).toBe("2026-03-10T09:00:00.000Z");
+  });
+
+  it("bounds scans when all dense future occurrences are cancelled", () => {
+    expect(() =>
+      expandCalendarOccurrencePage(
+        {
+          ...event("FREQ=SECONDLY"),
+          metadata: {
+            caldav: {
+              overrides: [
+                {
+                  ...override("2026-03-08T09:00:00.000Z", "2026-03-08T09:00:00.000Z"),
+                  range: "this_and_future",
+                  status: "cancelled",
+                },
+              ],
+            },
+          },
+        },
+        new Date("2026-03-08T00:00:00.000Z"),
+        new Date("2026-03-09T00:00:00.000Z"),
+        { limit: 1 },
+      ),
+    ).toThrow("Recurrence scan exceeds");
+  });
+
   it.each([
     "FREQ=NOPE",
     "FREQ=DAILY;COUNT=10001",

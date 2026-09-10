@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { EventBus, EventEnvelope, JsonValue, Unsubscribe } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { EnrichmentHandlerRegistry, EnrichmentWorker } from "./index.js";
 import type { EnrichmentHandler, EnrichmentResult } from "./types.js";
 

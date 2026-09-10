@@ -24,6 +24,7 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - ".pnpmfile.mjs"
   push:
     branches:
       - main
@@ -49,6 +50,8 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - ".pnpmfile.mjs"
+  workflow_call:
   workflow_dispatch:
     inputs:
 permissions:

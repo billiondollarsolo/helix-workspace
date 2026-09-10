@@ -392,9 +392,7 @@ describe("assistant conversation list API", () => {
   });
 
   it("omits an empty search query and defaults the limit", async () => {
-    const fetchImpl = vi.fn(() =>
-      Promise.resolve(Response.json({ items: [], nextCursor: null })),
-    );
+    const fetchImpl = vi.fn(() => Promise.resolve(Response.json({ items: [], nextCursor: null })));
 
     await listAssistantConversations({ query: "   " }, fetchImpl);
 
@@ -415,22 +413,14 @@ describe("assistant conversation list API", () => {
       createdAt: "2026-05-20T09:00:00.000Z",
     };
     const pinFetch = vi.fn(() => Promise.resolve(Response.json(record)));
-    await setAssistantConversationPinned(
-      { conversationId: record.id, pinned: true },
-      pinFetch,
-    );
+    await setAssistantConversationPinned({ conversationId: record.id, pinned: true }, pinFetch);
     expect(pinFetch).toHaveBeenCalledWith(
       "/api/tools/assistant.conversation.pin",
       expect.objectContaining({ body: JSON.stringify({ conversationId: record.id }) }),
     );
 
-    const unpinFetch = vi.fn(() =>
-      Promise.resolve(Response.json({ ...record, pinnedAt: null })),
-    );
-    await setAssistantConversationPinned(
-      { conversationId: record.id, pinned: false },
-      unpinFetch,
-    );
+    const unpinFetch = vi.fn(() => Promise.resolve(Response.json({ ...record, pinnedAt: null })));
+    await setAssistantConversationPinned({ conversationId: record.id, pinned: false }, unpinFetch);
     expect(unpinFetch).toHaveBeenCalledWith(
       "/api/tools/assistant.conversation.unpin",
       expect.anything(),

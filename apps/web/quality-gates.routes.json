@@ -11,11 +11,6 @@
       "surface": "auth"
     },
     {
-      "name": "Signup",
-      "path": "/signup",
-      "surface": "auth"
-    },
-    {
       "name": "Mail",
       "path": "/mail",
       "surface": "shell"

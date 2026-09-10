@@ -1,3 +1,4 @@
+import type { JsonObject } from "@helix/sdk";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { SCIM_BODY_LIMIT_BYTES } from "../../api/request-body.js";
@@ -29,15 +30,15 @@ import {
 export interface ScimAuthAuditSink {
   append(record: {
     readonly orgId: string;
-    readonly actorId: string;
+    readonly actorId: string | null;
     readonly verb: string;
     readonly objectType: string;
     readonly objectId?: string;
-    readonly metadata?: Record<string, unknown>;
+    readonly metadata?: JsonObject;
   }): Promise<unknown>;
 }
 
-export interface ScimAuthMetrics {
+interface ScimAuthMetrics {
   recordScimAuthFailure(input: { readonly reason: ScimAuthFailureReason }): void;
 }
 
@@ -541,8 +542,6 @@ export type ScimAuthFailureReason =
   | "insufficient_scope"
   | "credential_changed";
 
-export const SCIM_SECURITY_ACTOR_ID = "00000000-0000-4000-8000-000000000016";
-
 /**
  * Authenticate a SCIM request. Returns `{ ok: true }` only when:
  *
@@ -701,19 +700,20 @@ async function recordScimAuthFailure(
   try {
     await options.auditSink.append({
       orgId: orgId ?? "00000000-0000-0000-0000-000000000000",
-      actorId: SCIM_SECURITY_ACTOR_ID,
+      // Authentication failed, so no tenant actor can be attributed.
+      actorId: null,
       verb: "scim.auth.failed",
       objectType: "scim_endpoint",
       metadata: {
         method: request.method,
-        path: request.routeOptions.url,
+        path: request.routeOptions.url ?? null,
         reason,
         sourceIp,
         ...(userAgent === null ? {} : { userAgent }),
       },
     });
-  } catch {
-    // Audit failures must not surface to the SCIM caller.
+  } catch (error) {
+    request.log.error({ error, reason }, "Failed to record SCIM authentication failure");
   }
 }
 

@@ -1,12 +1,12 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { auditDestinationKinds, createAuditDestinationShipper } from "./destinations.js";
-import { SiemAuditShipper } from "./siem-syslog.js";
 import { PostgresWormAuditShipper } from "./immutable-postgres.js";
 import {
   createHmacAuditAnchorAuthenticator,
   type ImmutableAuditStorageClient,
 } from "./immutable-s3.js";
+import { SiemAuditShipper } from "./siem-syslog.js";
 import type { AuditVerificationStore } from "./verifier.js";
 
 function fakeStorage(): ImmutableAuditStorageClient & {
@@ -23,14 +23,7 @@ function fakeStorage(): ImmutableAuditStorageClient & {
 
 const authenticator = createHmacAuditAnchorAuthenticator("audit-key-1", "a".repeat(32));
 const audit: AuditVerificationStore = { listVerificationRecords: async () => [] };
-
-function fakeSql(): postgres.Sql {
-  const tag = (): Promise<unknown> => Promise.resolve([]);
-  return Object.assign(tag, {
-    begin: async <T>(cb: (sql: typeof tag) => Promise<T>): Promise<T> => cb(tag),
-    json: (value: unknown) => value,
-  }) as unknown as postgres.Sql;
-}
+const fakeSql = () => sharedRecordingSql().sql;
 
 describe("createAuditDestinationShipper", () => {
   it("exposes all three production audit destinations", () => {

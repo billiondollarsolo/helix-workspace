@@ -1,5 +1,5 @@
-import { assertNoPendingStartupMigrations } from "./db/startup-migration-check.js";
 import { env } from "./config/env.js";
+import { assertNoPendingStartupMigrations } from "./db/startup-migration-check.js";
 import { createHelixServer } from "./server.js";
 import { initTelemetry } from "./telemetry.js";
 

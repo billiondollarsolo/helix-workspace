@@ -1,13 +1,17 @@
-import type { AICapability, JsonObject } from "@helix/sdk-types";
-import type { EnrichmentEvent, EnrichmentHandler, EnrichmentWorker } from "../../ai/enrichment/index.js";
+import type { AICapability } from "@helix/sdk-types";
+import type {
+  EnrichmentEvent,
+  EnrichmentHandler,
+  EnrichmentWorker,
+} from "../../ai/enrichment/index.js";
+import { parseJsonObject } from "../../util/json.js";
 import type {
   ChatActivityPayload,
   ChatEnrichmentProjectionStore,
   ChatEnrichmentRecord,
-  ChatEnrichmentWrite,
 } from "../types.js";
 
-export interface ChatActionItemsEnrichmentOptions {
+interface ChatActionItemsEnrichmentOptions {
   readonly store: ChatEnrichmentProjectionStore;
   readonly ai: AICapability;
 }
@@ -26,11 +30,13 @@ export function registerChatEnrichments(
     if (options.ai === undefined) {
       throw new TypeError("chat.action-items enrichment requires an AI capability");
     }
-    worker.register(createChatActionItemsEnrichmentHandler({ store: options.store, ai: options.ai }));
+    worker.register(
+      createChatActionItemsEnrichmentHandler({ store: options.store, ai: options.ai }),
+    );
   }
 }
 
-export function createChatActionItemsEnrichmentHandler(
+function createChatActionItemsEnrichmentHandler(
   options: ChatActionItemsEnrichmentOptions,
 ): EnrichmentHandler<ChatActivityPayload> {
   return {
@@ -133,17 +139,10 @@ function chatRecordText(message: ChatEnrichmentRecord): string {
     .join("\n");
 }
 
-function participantText(participant: { readonly id: string; readonly displayName?: string; readonly email?: string }): string {
+function participantText(participant: {
+  readonly id: string;
+  readonly displayName?: string;
+  readonly email?: string;
+}): string {
   return participant.displayName ?? participant.email ?? participant.id;
 }
-
-function parseJsonObject(text: string): JsonObject | undefined {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? (parsed as JsonObject) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export type { ChatEnrichmentWrite };

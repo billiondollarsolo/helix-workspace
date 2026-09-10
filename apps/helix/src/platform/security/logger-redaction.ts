@@ -7,7 +7,7 @@ import type { LoggerOptions } from "pino";
  * aliases: application code and dependencies do not all use the same wrapper
  * key. Message text must still never interpolate a secret.
  */
-export const HELIX_LOG_REDACT_PATHS = Object.freeze([
+const HELIX_LOG_REDACT_PATHS = Object.freeze([
   "req.headers.authorization",
   "req.headers.cookie",
   "req.headers['x-helix-mfa-assertion']",

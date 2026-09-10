@@ -1,3 +1,4 @@
+import { trimmedEnvFlag as envFlag } from "../util/env.js";
 /**
  * Optional beta AI + rules spam second-pass.
  *
@@ -15,9 +16,9 @@
 import type { JsonObject } from "@helix/sdk-types";
 import { resolveAiEnv } from "../ai/operator-settings.js";
 
-export type SpamLabel = "spam" | "ham" | "unsure";
+type SpamLabel = "spam" | "ham" | "unsure";
 
-export interface SpamRuleHit {
+interface SpamRuleHit {
   readonly id: string;
   readonly weight: number;
   readonly detail: string;
@@ -232,7 +233,7 @@ export function getMailSpamAiConfig(
 export type LlmFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 /** Call an OpenAI-compatible chat completions endpoint. Throws on transport errors. */
-export async function classifySpamWithLlm(
+async function classifySpamWithLlm(
   features: SpamMessageFeatures,
   config: MailSpamAiConfig,
   fetchImpl: LlmFetch = globalThis.fetch,
@@ -363,12 +364,6 @@ export async function runBetaSpamSecondPass(
     rules,
     llm,
   });
-}
-
-function envFlag(value: string | undefined): boolean {
-  if (value === undefined) return false;
-  const n = value.trim().toLowerCase();
-  return n === "1" || n === "true" || n === "yes";
 }
 
 function parsePositiveInt(value: string | undefined): number | undefined {

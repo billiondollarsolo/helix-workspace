@@ -95,6 +95,22 @@ describe("SettingsPage", () => {
     opener.remove();
   });
 
+  it.each(["ai", "shortcuts"] as const)("omits editor controls from %s settings", (section) => {
+    act(() =>
+      root.render(
+        <SettingsPage
+          open
+          section={section}
+          onSectionChange={() => undefined}
+          onClose={() => undefined}
+        />,
+      ),
+    );
+    expect(container.querySelector("main")?.textContent).not.toMatch(
+      /\bDocs\b|\bSheets\b|Go to Docs|Formula generation/,
+    );
+  });
+
   it("renders controlled deep-linked sections with labelled browser metadata", () => {
     act(() => {
       root.render(

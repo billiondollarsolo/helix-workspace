@@ -1,6 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
-import fastify, { type FastifyInstance } from "fastify";
 import type { Actor } from "@helix/sdk-types";
+import fastify, { type FastifyInstance } from "fastify";
+import { createHash, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { AuthorizationCodeService, InMemoryAuthorizationCodeStore } from "./authorization-code.js";
 import { InMemoryOAuthAuthorizationStore } from "./authorization-store.js";

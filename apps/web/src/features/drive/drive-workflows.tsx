@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import {
   createDriveWorkflow,
   transitionDriveWorkflow,
@@ -62,11 +62,9 @@ export function DriveWorkflows(props: {
   const error = create.error ?? transition.error ?? workflows.error;
 
   return (
-    <section aria-label="Drive workflows" style={{ marginTop: 16 }}>
-      <div className="section-label" style={{ padding: "0 0 6px" }}>
-        Workflows
-      </div>
-      <label style={labelStyle}>
+    <section aria-label="Drive workflows" className="mt-4">
+      <div className="section-label [padding:0_0_6px]">Workflows</div>
+      <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
         Action
         <select
           className="input"
@@ -91,7 +89,7 @@ export function DriveWorkflows(props: {
           <option value="investigation">Open investigation</option>
         </select>
       </label>
-      <label style={labelStyle}>
+      <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
         Due date (optional)
         <input
           className="input"
@@ -105,7 +103,7 @@ export function DriveWorkflows(props: {
       {relevant.some(
         (workflow) => workflow.kind === "file_request" && workflow.state === "open",
       ) ? (
-        <label style={labelStyle}>
+        <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
           Uploaded object ID (to complete a file request)
           <input
             className="input"
@@ -117,7 +115,7 @@ export function DriveWorkflows(props: {
           />
         </label>
       ) : null}
-      <label style={labelStyle}>
+      <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
         Assignee email or name (when required)
         <input
           className="input"
@@ -128,7 +126,7 @@ export function DriveWorkflows(props: {
           autoComplete="off"
         />
       </label>
-      <label style={labelStyle}>
+      <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
         {kind === "classification" ? "Classification" : "Name or reason"}
         {kind === "classification" ? (
           <select
@@ -165,8 +163,8 @@ export function DriveWorkflows(props: {
       </button>
       <button
         type="button"
-        className="btn sm"
-        style={{ marginLeft: 4 }}
+        className="btn sm ml-1"
+
         disabled={workflows.isFetching}
         onClick={() => {
           setLoaded(true);
@@ -175,32 +173,28 @@ export function DriveWorkflows(props: {
         {workflows.isFetching ? "Loading…" : "Load workflows"}
       </button>
       {error instanceof Error ? (
-        <p
-          role="alert"
-          style={{ color: "var(--danger, #dc2626)", fontSize: "var(--text-caption)" }}
-        >
+        <p role="alert" className="[color:var(--danger,_#dc2626)] [font-size:var(--text-caption)]">
           {error.message}
         </p>
       ) : null}
-      <ul aria-live="polite" style={{ listStyle: "none", padding: 0, margin: "10px 0 0" }}>
+      <ul aria-live="polite" className="[list-style:none] p-0 [margin:10px_0_0]">
         {relevant.map((workflow) => (
-          <li key={workflow.id} style={{ borderTop: "1px solid var(--border)", padding: "8px 0" }}>
-            <div style={{ fontSize: "var(--text-meta)" }}>
+          <li key={workflow.id} className="[border-top:1px_solid_var(--border)] [padding:8px_0]">
+            <div className="[font-size:var(--text-meta)]">
               {workflow.kind.replaceAll("_", " ")} · {workflow.state}
             </div>
             <a
-              className="btn sm"
+              className="btn sm inline-flex mt-1"
               href={
                 workflow.resourceType === "folder"
                   ? `/drive?folder=${encodeURIComponent(workflow.resourceId)}`
                   : `/drive?file=${encodeURIComponent(workflow.resourceId)}`
               }
-              style={{ display: "inline-flex", marginTop: 4 }}
             >
               Open target
             </a>
             {workflow.state === "open" ? (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+              <div className="flex flex-wrap gap-1 mt-1">
                 {workflowActions(workflow).map((state) => (
                   <button
                     key={state}
@@ -222,13 +216,6 @@ export function DriveWorkflows(props: {
     </section>
   );
 }
-
-const labelStyle = {
-  display: "grid",
-  gap: 4,
-  marginBottom: 6,
-  fontSize: "var(--text-caption)",
-} as const;
 
 function workflowActions(
   workflow: DriveWorkflow,

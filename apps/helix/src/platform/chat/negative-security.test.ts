@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { ChatRoomAccessError } from "./errors.js";
 import { PostgresChatStore } from "./store.js";
 
@@ -91,22 +91,15 @@ describe("Chat V2 negative-security boundary", () => {
     expect(sendSql.calls.some((query) => query.includes("insert into messages"))).toBe(false);
   });
 });
-
-function recordingSql(responses: readonly unknown[][]): {
-  readonly sql: postgres.Sql;
-  readonly calls: string[];
-} {
-  const calls: string[] = [];
-  let responseIndex = 0;
-  const tag = (async (strings: TemplateStringsArray, ..._values: unknown[]) => {
-    calls.push(strings.join("?"));
-    return responses[responseIndex++] ?? [];
-  }) as unknown as postgres.Sql;
-  Object.assign(tag, {
-    array: (values: readonly unknown[]) => values,
-    json: (value: unknown) => value,
-    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) =>
-      callback(tag as unknown as postgres.TransactionSql),
-  });
-  return { sql: tag, calls };
+function recordingSql(responses: readonly unknown[]) {
+  const recording = sharedRecordingSql(responses, "?");
+  return {
+    sql: recording.sql,
+    get calls() {
+      return recording.queries;
+    },
+    get values() {
+      return recording.values;
+    },
+  };
 }

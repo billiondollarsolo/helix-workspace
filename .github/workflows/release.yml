@@ -1,0 +1,168 @@
+name: Release candidate and final evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      evidence_run_id:
+        description: Run containing helix-release-evidence-<workspace SHA> (required for GA)
+        type: string
+      application_image_digest:
+        description: Deployed application sha256 digest (required for GA)
+        type: string
+      web_image_digest:
+        description: Deployed web sha256 digest (required for GA)
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  verify-tag:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require a release tag and verify the GA signature
+        env:
+          TAG_PUBLIC_KEY: ${{ vars.HELIX_RELEASE_TAG_PUBLIC_KEY }}
+          TAG_SIGNER_FINGERPRINT: ${{ vars.HELIX_RELEASE_TAG_SIGNER_FINGERPRINT }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$GITHUB_REF" =~ ^refs/tags/v1\.0\.0(-rc\.[1-9][0-9]*)?$ ]]
+          [[ "$(git rev-parse "$GITHUB_REF^{commit}")" == "$GITHUB_SHA" ]]
+          [[ "$(git cat-file -t "$GITHUB_REF")" == tag ]]
+          if [[ "$GITHUB_REF_NAME" == v1.0.0 ]]; then
+            [[ "$TAG_SIGNER_FINGERPRINT" =~ ^[A-F0-9]{40,64}$ ]]
+            export GNUPGHOME="$RUNNER_TEMP/release-gnupg"
+            mkdir -m 700 "$GNUPGHOME"
+            printf '%s\n' "$TAG_PUBLIC_KEY" | gpg --batch --import
+            git verify-tag --raw "$GITHUB_REF_NAME" 2> "$RUNNER_TEMP/tag-signature.txt"
+            grep -F "[GNUPG:] VALIDSIG $TAG_SIGNER_FINGERPRINT " "$RUNNER_TEMP/tag-signature.txt"
+          fi
+
+  build-images-and-sboms:
+    needs: verify-tag
+    uses: ./.github/workflows/production-image-security.yml
+
+  final-manifest:
+    needs: [verify-tag, build-images-and-sboms]
+    if: github.ref == 'refs/tags/v1.0.0'
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      HELIX_RELEASE_APPLICATION_IMAGE_DIGEST: ${{ inputs.application_image_digest }}
+      HELIX_RELEASE_WEB_IMAGE_DIGEST: ${{ inputs.web_image_digest }}
+      HELIX_RELEASE_WORKSPACE_SHA: ${{ github.sha }}
+      HELIX_RELEASE_WORKSPACE_TAG: ${{ github.ref_name }}
+      HELIX_RELEASE_REQUIRED_BRANCH: main
+      HELIX_RELEASE_TRUSTED_GITHUB_REPOSITORY: ${{ github.repository }}
+      HELIX_RELEASE_TRUSTED_GITHUB_WORKFLOW_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/production-image-security.yml@refs/heads/main
+      HELIX_RELEASE_TRUSTED_APPLICATION_SUBJECT: ghcr.io/${{ github.repository_owner }}/helix-workspace
+      HELIX_RELEASE_TRUSTED_WEB_SUBJECT: ghcr.io/${{ github.repository_owner }}/helix-workspace-web
+      HELIX_RELEASE_TRUSTED_DECISION_SIGNER_FINGERPRINT: ${{ vars.HELIX_RELEASE_TRUSTED_DECISION_SIGNER_FINGERPRINT }}
+      HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER_FINGERPRINT: ${{ vars.HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER_FINGERPRINT }}
+      HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER: ${{ vars.HELIX_RELEASE_TRUSTED_GIT_STATE_SIGNER }}
+      HELIX_RELEASE_TRUSTED_REKOR_LOG_ID: ${{ vars.HELIX_RELEASE_TRUSTED_REKOR_LOG_ID }}
+      HELIX_RELEASE_TRUSTED_REKOR_CHECKPOINT_ORIGIN: ${{ vars.HELIX_RELEASE_TRUSTED_REKOR_CHECKPOINT_ORIGIN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.18.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download the retained deployment evidence packet
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: helix-release-evidence-${{ github.sha }}
+          run-id: ${{ inputs.evidence_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/release-evidence
+      - name: Install protected verifier public keys
+        env:
+          DECISION_KEY: ${{ vars.HELIX_RELEASE_TRUSTED_DECISION_PUBLIC_KEY_PEM }}
+          GIT_STATE_KEY: ${{ vars.HELIX_RELEASE_TRUSTED_GIT_STATE_PUBLIC_KEY_PEM }}
+          FULCIO_CERTIFICATE: ${{ vars.HELIX_RELEASE_TRUSTED_FULCIO_ISSUER_CERTIFICATE_PEM }}
+          REKOR_KEY: ${{ vars.HELIX_RELEASE_TRUSTED_REKOR_PUBLIC_KEY_PEM }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s\n' "$DECISION_KEY" > "$RUNNER_TEMP/decision.pem"
+          printf '%s\n' "$GIT_STATE_KEY" > "$RUNNER_TEMP/git-state.pem"
+          printf '%s\n' "$FULCIO_CERTIFICATE" > "$RUNNER_TEMP/fulcio.pem"
+          printf '%s\n' "$REKOR_KEY" > "$RUNNER_TEMP/rekor.pem"
+          echo "HELIX_RELEASE_TRUSTED_DECISION_PUBLIC_KEY=$RUNNER_TEMP/decision.pem" >> "$GITHUB_ENV"
+          echo "HELIX_RELEASE_TRUSTED_GIT_STATE_PUBLIC_KEY=$RUNNER_TEMP/git-state.pem" >> "$GITHUB_ENV"
+          echo "HELIX_RELEASE_TRUSTED_FULCIO_ISSUER_CERTIFICATE=$RUNNER_TEMP/fulcio.pem" >> "$GITHUB_ENV"
+          echo "HELIX_RELEASE_TRUSTED_REKOR_PUBLIC_KEY=$RUNNER_TEMP/rekor.pem" >> "$GITHUB_ENV"
+      - name: Require the complete final release manifest
+        run: |
+          pnpm quality:release-readiness-manifest -- \
+            --final-release --evidence-dir "$RUNNER_TEMP/release-evidence" \
+            --mail-live-evidence mail-live-evidence.json \
+            --drive-live-evidence drive-live-evidence.json \
+            --chat-live-evidence chat-live-evidence.json \
+            --agent-live-evidence agent-live-evidence.json \
+            --data-plane-live-evidence data-plane-live-evidence.json \
+            --restore-drill-evidence restore-drill-evidence.json \
+            --failure-recovery-evidence failure-recovery-evidence.json \
+            --dast-evidence dast-evidence.json \
+            --full-gates-evidence full-gates-evidence.json \
+            --migration-status-evidence migration-status-evidence.json \
+            --production-config-evidence production-config-evidence.json \
+            --slo-soak-evidence slo-soak-evidence.json \
+            --security-review-evidence security-review-evidence.json \
+            --support-readiness-evidence support-readiness-evidence.json \
+            --business-readiness-evidence business-readiness-evidence.json \
+            --protected-repository-state-evidence protected-repository-state-evidence.json \
+            --production-decision-evidence production-decision-evidence.json \
+            --application-image-digest "$HELIX_RELEASE_APPLICATION_IMAGE_DIGEST" \
+            --web-image-digest "$HELIX_RELEASE_WEB_IMAGE_DIGEST" \
+            --output "$RUNNER_TEMP/release-readiness-manifest.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: helix-final-release-manifest-${{ github.sha }}
+          path: ${{ runner.temp }}/release-readiness-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+  draft-release:
+    needs: [verify-tag, build-images-and-sboms, final-manifest]
+    if: ${{ !cancelled() && needs.verify-tag.result == 'success' && needs.build-images-and-sboms.result == 'success' && (needs.final-manifest.result == 'success' || (contains(github.ref_name, '-rc.') && needs.final-manifest.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: helix-workspace-supply-chain-evidence-${{ github.sha }}
+          path: release-assets
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: github.ref == 'refs/tags/v1.0.0'
+        with:
+          name: helix-final-release-manifest-${{ github.sha }}
+          path: release-assets
+      - name: Attach SBOMs and validated evidence to a reviewable draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          options=()
+          if [[ "$GITHUB_REF_NAME" == *-rc.* ]]; then options+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --draft --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes-file CHANGELOG.md "${options[@]}"

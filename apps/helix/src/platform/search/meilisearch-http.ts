@@ -1,3 +1,4 @@
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 import type { JsonObject } from "@helix/sdk-types";
 import type { IndexDocument } from "./types.js";
 import type {
@@ -237,10 +238,6 @@ function isIndexDocumentLike(value: unknown): value is IndexDocument & {
   readonly _formatted?: unknown;
 } {
   return isObject(value) && typeof value.id === "string" && typeof value.type === "string";
-}
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return isObject(value) && !Array.isArray(value);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

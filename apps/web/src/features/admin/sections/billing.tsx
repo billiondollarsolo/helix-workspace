@@ -1,8 +1,6 @@
+import { CreditCard as CreditIcon, Download as DownloadIcon, Plus as PlusIcon } from "lucide-react";
 /* Admin › Organization › Billing & usage — plan, invoices, metered rollups. */
 
-import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import {
   billingAccountQueryOptions,
@@ -22,7 +20,6 @@ import {
   AdminStatTile,
   AdminToolbar,
 } from "@/features/admin/console/controls";
-import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   EmptyRow,
   PageHeading,
@@ -32,6 +29,9 @@ import {
   StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 
 /* ------------------------------------------------------------------ */
 /* Billing                                                            */
@@ -291,7 +291,7 @@ export function AdminBilling() {
                   </div>
                   <Button asChild size="sm" className="ml-auto">
                     <a href={buildPlanChangeMailto(view.account.planName, view.account.orgId)}>
-                      <Icons.Plus /> Upgrade plan
+                      <PlusIcon size={16} /> Upgrade plan
                     </a>
                   </Button>
                 </div>
@@ -322,7 +322,7 @@ export function AdminBilling() {
                         view.account.orgId,
                       )}
                     >
-                      <Icons.Credit /> Request payment method change
+                      <CreditIcon size={16} /> Request payment method change
                     </a>
                   </Button>
                   <Button asChild variant="outline" size="sm">
@@ -333,7 +333,7 @@ export function AdminBilling() {
                         view.account.orgId,
                       )}
                     >
-                      <Icons.Download /> Request invoice export
+                      <DownloadIcon size={16} /> Request invoice export
                     </a>
                   </Button>
                 </div>

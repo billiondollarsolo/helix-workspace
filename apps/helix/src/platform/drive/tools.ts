@@ -1,9 +1,18 @@
+import { defineTool } from "../tools/define-tool.js";
+import { toJsonObject } from "../util/json.js";
 // ponytail: tool surface registry >400 LOC; split by domain (upload/access/comments/links) when next feature lands.
-import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
+import type { ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
+import { BadRequestError, ForbiddenError, NotFoundError } from "../../api/api-error.js";
+import type { ResourceClassifier } from "../../api/classify-resource.js";
+import { actorHasScope } from "../../api/scopes.js";
+import {
+  evaluateExternalEmailSharePolicy,
+  evaluatePublicShareLinkPolicy,
+  type SecurityPolicyLike,
+} from "../admin/security-policy-runtime.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
-import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { DriveStore } from "./store.js";
 import {
   driveAccessListOutputSchema,
@@ -17,10 +26,10 @@ import {
   driveDocumentSurfaceViewOutputSchema,
   driveEntryOutputSchema,
   driveFinalizeOutputSchema,
-  driveListOutputSchema,
-  driveSearchOutputSchema,
   driveLifecyclePolicyOutputSchema,
+  driveListOutputSchema,
   driveQuotaUsageOutputSchema,
+  driveSearchOutputSchema,
   driveShareLinkListOutputSchema,
   driveShareLinkOutputSchema,
   driveShareLinkRevokeOutputSchema,
@@ -32,19 +41,12 @@ import {
   driveWorkflowListOutputSchema,
   driveWorkflowSchema,
 } from "./tool-output-schemas.js";
-import { BadRequestError, ForbiddenError, NotFoundError } from "../../api/api-error.js";
-import {
-  evaluateExternalEmailSharePolicy,
-  evaluatePublicShareLinkPolicy,
-  type SecurityPolicyLike,
-} from "../admin/security-policy-runtime.js";
-import { actorHasScope } from "../../api/scopes.js";
 import type {
   DriveAccessGrantRecord,
-  DriveEntryRecord,
   DriveCommentListItem,
   DriveCommentRecord,
   DriveCommentRevisionRecord,
+  DriveEntryRecord,
   DriveSearchHit,
   DriveUploadRecord,
   DriveUploadStatusRecord,
@@ -108,10 +110,7 @@ const listSchema = z.object({
   /** Filter by object kind. Defaults to 'file'. Pass 'recording' for the
    *  Recordings drive scope (meeting recording artifacts). */
   kind: z.enum(["file", "recording"]).optional(),
-  /** When true, return every visible file across all folders (folders
-   *  themselves are suppressed). The /docs, /sheets, /slides surfaces
-   *  use this to present a flat app-shaped list — file in a subfolder
-   *  is still a doc/sheet/slide the user should see in those tabs. */
+  /** Return all visible files across folders for a flat Drive listing. */
   acrossFolders: z.boolean().optional(),
 });
 const shareSchema = z
@@ -1232,11 +1231,7 @@ export function registerDriveTools(
     registry.register(tool);
   }
 }
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
-}
+
 function serializeWorkflow(workflow: DriveWorkflowRecord): z.output<typeof driveWorkflowSchema> {
   return {
     ...workflow,
@@ -1384,7 +1379,4 @@ function serializeLifecyclePolicy(policy: {
     updatedAt: policy.updatedAt?.toISOString() ?? null,
     configured: policy.configured,
   };
-}
-function toJsonObject(value: Record<string, unknown>): JsonObject {
-  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }

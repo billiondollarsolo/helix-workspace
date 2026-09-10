@@ -1,3 +1,4 @@
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import { describe, expect, it } from "vitest";
 import type postgres from "postgres";
 import {
@@ -429,23 +430,4 @@ function orgRow(overrides: Partial<OrgRecord> = {}) {
     soft_deleted_at: overrides.softDeletedAt ?? null,
     hard_deleted_at: overrides.hardDeletedAt ?? null,
   };
-}
-
-function createRecordingSql(resultSets: unknown[][]): {
-  readonly calls: { readonly text: string; readonly values: readonly unknown[] }[];
-  readonly sql: postgres.Sql;
-} {
-  const calls: { text: string; values: readonly unknown[] }[] = [];
-  const queue = [...resultSets];
-  const tag = (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
-    return Promise.resolve(queue.shift() ?? []);
-  };
-  const sql = Object.assign(tag, {
-    json: (value: unknown) => value,
-    array: (value: unknown) => value,
-    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) =>
-      callback(sql as unknown as postgres.TransactionSql),
-  }) as unknown as postgres.Sql;
-  return { calls, sql };
 }

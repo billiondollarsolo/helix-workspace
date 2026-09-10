@@ -1,7 +1,14 @@
+import type {
+  EventBus,
+  EventEnvelope,
+  JsonValue,
+  OutboxMessage,
+  TraceContext,
+  Unsubscribe,
+} from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
-import { OutboxWorker } from "./outbox.js";
-import type { EventBus, EventEnvelope, JsonValue, OutboxMessage, TraceContext, Unsubscribe } from "@helix/sdk-types";
 import type { OutboxStore, StoredOutboxMessage } from "./outbox.js";
+import { OutboxWorker } from "./outbox.js";
 
 describe("OutboxWorker", () => {
   it("publishes claimed messages and marks them delivered", async () => {
@@ -31,9 +38,7 @@ describe("OutboxWorker", () => {
   });
 
   it("marks failed messages without delivering them", async () => {
-    const store = new InMemoryOutboxStore([
-      storedMessage("msg-1", "helix.fail", { ok: false }),
-    ]);
+    const store = new InMemoryOutboxStore([storedMessage("msg-1", "helix.fail", { ok: false })]);
     const events = new RecordingEventBus(new Error("NATS unavailable"));
     const worker = new OutboxWorker({ store, events, batchSize: 10 });
 

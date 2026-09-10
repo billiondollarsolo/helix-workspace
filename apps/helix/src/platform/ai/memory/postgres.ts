@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import type { Actor, JsonObject } from "@helix/sdk-types";
+import type postgres from "postgres";
 import { validateVector, vectorToPgLiteral } from "../vector/types.js";
 import {
   validateMemoryText,

@@ -27,10 +27,6 @@ describe("helix/no-raw-process-env", () => {
         },
         {
           code: "const x = process.env.FOO;",
-          filename: "/repo/apps/helix/src/db/seed-local-demo.ts",
-        },
-        {
-          code: "const x = process.env.FOO;",
           filename: "/repo/apps/helix/src/db/migrate.ts",
         },
         // Whole-object injection is allowed (legacy adapters).
@@ -44,6 +40,11 @@ describe("helix/no-raw-process-env", () => {
         },
       ],
       invalid: [
+        {
+          code: "const x = process.env.FOO;",
+          filename: "/repo/apps/helix/src/db/seed-local-demo.ts",
+          errors: [{ messageId: "noRawProcessEnv" }],
+        },
         {
           code: "const x = process.env.FOO;",
           filename: "/repo/apps/helix/src/server.ts",

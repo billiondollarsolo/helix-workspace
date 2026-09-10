@@ -1,18 +1,18 @@
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
+import { createTemplateContext, renderTemplateString } from "./template.js";
 import type {
   JsonObject,
   JsonValue,
   OutboundWebhookEvent,
   RenderedWebhookRequest,
-  WebhookFormatAdapter,
 } from "./types.js";
-import { createTemplateContext, renderTemplateString } from "./template.js";
 
 export interface TeamsWebhookConfig {
   readonly titleTemplate?: string;
   readonly summaryTemplate?: string;
 }
 
-export interface TeamsWebhookPayload extends JsonObject {
+interface TeamsWebhookPayload extends JsonObject {
   readonly type: "message";
   readonly attachments: readonly [
     {
@@ -21,11 +21,6 @@ export interface TeamsWebhookPayload extends JsonObject {
     },
   ];
 }
-
-export const teamsWebhookFormat: WebhookFormatAdapter<TeamsWebhookConfig> = {
-  id: "teams",
-  render: renderTeamsWebhookPayload,
-};
 
 export function renderTeamsWebhookPayload(
   event: OutboundWebhookEvent,
@@ -91,8 +86,4 @@ function adaptiveFacts(payload: JsonValue): readonly JsonObject[] {
       return typeof value === "string" && value.length > 0 ? [{ title: key, value }] : [];
     })
     .slice(0, 6);
-}
-
-function isJsonObject(value: JsonValue): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

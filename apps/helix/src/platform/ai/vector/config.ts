@@ -1,11 +1,11 @@
-import type postgres from "postgres";
 import type { AiConfig, JsonObject } from "@helix/sdk-types";
+import type postgres from "postgres";
 import { ChromaVectorStore } from "./chroma.js";
 import { MilvusVectorStore } from "./milvus.js";
 import { PgVectorStore } from "./pgvector.js";
 import { QdrantVectorStore } from "./qdrant.js";
-import { WeaviateVectorStore } from "./weaviate.js";
 import type { VectorStore } from "./types.js";
+import { WeaviateVectorStore } from "./weaviate.js";
 
 export interface VectorStoreRuntimeOptions {
   readonly sql: postgres.Sql;

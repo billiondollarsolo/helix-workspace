@@ -1,9 +1,9 @@
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { env } from "../config/env.js";
-import { createSqlClient } from "./client.js";
 import { backfillSingleTenantReceivingDomain } from "../platform/mail/receiving-domain-backfill.js";
 import { PostgresReceivingDomainStore } from "../platform/mail/receiving-domains-store.js";
+import { createSqlClient } from "./client.js";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 

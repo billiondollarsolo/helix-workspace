@@ -2,9 +2,7 @@
  *
  * Source of truth is the platform's core-apps backend (`/api/core-apps`),
  * shared with the admin > Core apps panel that toggles them. The platform
- * tracks a subset (mail, chat, drive, docs, calendar, meet, assistant,
- * editors); rail items outside that set (sheets, slides, admin) are always
- * visible.
+ * tracks mail, chat, drive, calendar, meet, and assistant. Admin stays visible.
  *
  * Used by:
  *   - components/shell/rail.tsx
@@ -14,7 +12,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { coreAppsShellQueryOptions, type CoreAppId } from "@/features/admin/core-apps-api";
 
-export type AppId = string;
+type AppId = string;
 
 export interface EnabledApps {
   readonly isLoading: boolean;

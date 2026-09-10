@@ -56,7 +56,7 @@ const overviewSchema = z.object({
 export type AdminOverviewSignalName = keyof z.infer<typeof overviewSchema>["signals"];
 
 /** One signal's reading, already narrowed to the type its card expects. */
-export type AdminOverviewSignal<Data> =
+type AdminOverviewSignal<Data> =
   | { readonly status: "ok"; readonly data: Data }
   | { readonly status: "unavailable"; readonly reason: string };
 
@@ -87,7 +87,7 @@ export function adminOverviewQueryOptions(fetchImpl: AuthFetch = authenticatedFe
   });
 }
 
-export async function fetchAdminOverview(
+async function fetchAdminOverview(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<AdminOverview> {
   const response = await fetchImpl("/api/admin/overview");

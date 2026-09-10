@@ -1,13 +1,10 @@
-import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
-import { InMemoryAssistantStore } from "./store.js";
-import type {
-  AssistantConversation,
-  AssistantConversationListPage,
-} from "./types.js";
-import { createAssistantToolDefinitions, registerAssistantTools } from "./tools.js";
 import type { AssistantOrchestrator } from "./orchestrator.js";
+import { InMemoryAssistantStore } from "./store.js";
+import { createAssistantToolDefinitions, registerAssistantTools } from "./tools.js";
+import type { AssistantConversation, AssistantConversationListPage } from "./types.js";
 
 const orgId = "00000000-0000-4000-8000-000000000010";
 const actorId = "00000000-0000-4000-8000-000000000001";
@@ -161,9 +158,7 @@ describe("assistant conversation tools", () => {
       { pinnedOnly: true, limit: 10 },
       { actor },
     );
-    expect(listed.ok ? listed.output.items.map((item) => item.id) : []).toEqual([
-      conversation.id,
-    ]);
+    expect(listed.ok ? listed.output.items.map((item) => item.id) : []).toEqual([conversation.id]);
 
     const renamed = await registry.invoke<AssistantConversation>(
       "assistant.conversation.rename",

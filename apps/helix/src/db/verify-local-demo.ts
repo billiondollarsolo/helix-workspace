@@ -1,39 +1,42 @@
-import { pathToFileURL } from "node:url";
-import { createHash } from "node:crypto";
-import { verifyPassword } from "@better-auth/utils/password";
-import type postgres from "postgres";
+import { verifyPassword } from "better-auth/crypto";
 import type { StorageClient, StorageObject } from "@helix/sdk-types";
-import { createSqlClient } from "./client.js";
-import {
-  createLocalDemoSearchEngineFromEnv,
-  localDemoSearchDocumentsForAnchor,
-  LOCAL_DEMO_SEARCH_DOCUMENTS,
-  type LocalDemoSearchDocumentDescriptor,
-} from "./index-local-demo-search.js";
-import {
-  DEFAULT_LOCAL_OAUTH_ACTOR_ID,
-  DEFAULT_LOCAL_OAUTH_CLIENT_ID,
-  DEFAULT_LOCAL_OAUTH_EMAIL,
-  DEFAULT_LOCAL_OAUTH_ORG_ID,
-} from "./seed-local-oauth.js";
-import {
-  createDemoTimeline,
-  DEFAULT_LOCAL_DEMO_PASSWORD,
-  LOCAL_DEMO_IDS,
-} from "./seed-local-demo.js";
-import { LOCAL_DEMO_VOLUME_MAIL_MARKER, LOCAL_DEMO_VOLUME_SOURCE } from "./seed-local-demo.js";
+import { createHash } from "node:crypto";
+import { pathToFileURL } from "node:url";
+import type postgres from "postgres";
+import { loadSeedEnv } from "../config/env.js";
 import {
   createBetterAuthPlatformModule,
   createBetterAuthRuntime,
   createBetterAuthSessionActorResolver,
   PostgresBetterAuthActorStore,
 } from "../platform/auth/better-auth.js";
-import { createS3CompatibleStorage } from "../platform/storage/index.js";
 import { PostgresCalendarStore } from "../platform/calendar/index.js";
 import { PostgresChatStore } from "../platform/chat/index.js";
 import { PostgresDriveStore } from "../platform/drive/index.js";
 import { PostgresMailStore } from "../platform/mail/index.js";
 import type { SearchEngine } from "../platform/search/index.js";
+import { createS3CompatibleStorage } from "../platform/storage/index.js";
+import { isRecord } from "../platform/util/json.js";
+import { createSqlClient } from "./client.js";
+import {
+  createLocalDemoSearchEngineFromEnv,
+  LOCAL_DEMO_SEARCH_DOCUMENTS,
+  localDemoSearchDocumentsForAnchor,
+  type LocalDemoSearchDocumentDescriptor,
+} from "./index-local-demo-search.js";
+import {
+  createDemoTimeline,
+  DEFAULT_LOCAL_DEMO_PASSWORD,
+  LOCAL_DEMO_IDS,
+  LOCAL_DEMO_VOLUME_MAIL_MARKER,
+  LOCAL_DEMO_VOLUME_SOURCE,
+} from "./seed-local-demo.js";
+import {
+  DEFAULT_LOCAL_OAUTH_ACTOR_ID,
+  DEFAULT_LOCAL_OAUTH_CLIENT_ID,
+  DEFAULT_LOCAL_OAUTH_EMAIL,
+  DEFAULT_LOCAL_OAUTH_ORG_ID,
+} from "./seed-local-oauth.js";
 
 export interface VerifyLocalDemoOptions {
   readonly orgId?: string;
@@ -100,7 +103,7 @@ export async function verifyLocalDemo(
   const clientId = options.clientId ?? DEFAULT_LOCAL_OAUTH_CLIENT_ID;
   const email = options.email ?? DEFAULT_LOCAL_OAUTH_EMAIL;
   const password =
-    options.password ?? process.env.HELIX_LOCAL_DEMO_PASSWORD ?? DEFAULT_LOCAL_DEMO_PASSWORD;
+    options.password ?? loadSeedEnv().HELIX_LOCAL_DEMO_PASSWORD ?? DEFAULT_LOCAL_DEMO_PASSWORD;
   const timeline = createDemoTimeline(options.anchorDate);
   const storage = options.storage ?? createLocalDemoStorageFromEnv();
   const searchEngine = options.searchEngine ?? (await createLocalDemoSearchEngineFromEnv());
@@ -197,7 +200,7 @@ export async function verifyLocalDemo(
     betterAuthCredentialRows[0]?.password === null ||
     betterAuthCredentialRows[0]?.password === undefined
       ? false
-      : await verifyPassword(betterAuthCredentialRows[0].password, password);
+      : await verifyPassword({ hash: betterAuthCredentialRows[0].password, password });
   const betterAuthSignInVerified = await verifyBetterAuthSignIn(sql, {
     orgId,
     actorId,
@@ -541,10 +544,6 @@ function matchesSubset(actual: unknown, expected: unknown): boolean {
   return actual === expected;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function includesString(value: unknown, expected: string): boolean {
   return Array.isArray(value) && value.some((item) => item === expected);
 }
@@ -604,21 +603,21 @@ async function verifyBetterAuthSignIn(
   },
 ): Promise<boolean> {
   const databaseUrl =
-    process.env.BETTER_AUTH_DATABASE_URL ??
-    process.env.DATABASE_URL ??
+    loadSeedEnv().BETTER_AUTH_DATABASE_URL ??
+    loadSeedEnv().DATABASE_URL ??
     "postgres://helix:helix_dev_password@localhost:28432/helix";
   const baseUrl =
-    process.env.BETTER_AUTH_URL ??
-    process.env.HELIX_PUBLIC_URL ??
-    process.env.PUBLIC_BASE_URL ??
+    loadSeedEnv().BETTER_AUTH_URL ??
+    loadSeedEnv().HELIX_PUBLIC_URL ??
+    loadSeedEnv().PUBLIC_BASE_URL ??
     "http://localhost:3000";
   const origin = new URL(baseUrl).origin;
   const runtime = createBetterAuthRuntime({
     databaseUrl,
-    secret: process.env.BETTER_AUTH_SECRET ?? "helix_local_better_auth_secret_change_me_32_chars",
+    secret: loadSeedEnv().BETTER_AUTH_SECRET ?? "helix_local_better_auth_secret_change_me_32_chars",
     baseUrl,
     secureCookies: false,
-    trustedOrigins: parseCsv(process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? origin),
+    trustedOrigins: parseCsv(loadSeedEnv().BETTER_AUTH_TRUSTED_ORIGINS ?? origin),
   });
   try {
     const response = await runtime.auth.handler(
@@ -700,17 +699,17 @@ async function toUint8Array(body: StorageObject["body"]): Promise<Uint8Array> {
 }
 
 function createLocalDemoStorageFromEnv(): StorageClient | undefined {
-  const endpoint = process.env.RUSTFS_ENDPOINT;
+  const endpoint = loadSeedEnv().RUSTFS_ENDPOINT;
   if (endpoint === undefined || endpoint.length === 0) {
     return undefined;
   }
   return createS3CompatibleStorage({
     endpoint,
-    region: process.env.RUSTFS_REGION ?? "us-east-1",
-    bucket: process.env.RUSTFS_BUCKET ?? "helix-objects",
+    region: loadSeedEnv().RUSTFS_REGION ?? "us-east-1",
+    bucket: loadSeedEnv().RUSTFS_BUCKET ?? "helix-objects",
     credentials: {
-      accessKeyId: process.env.RUSTFS_ACCESS_KEY ?? "helixrustfs",
-      secretAccessKey: process.env.RUSTFS_SECRET_KEY ?? "helix_rustfs_dev_secret",
+      accessKeyId: loadSeedEnv().RUSTFS_ACCESS_KEY ?? "helixrustfs",
+      secretAccessKey: loadSeedEnv().RUSTFS_SECRET_KEY ?? "helix_rustfs_dev_secret",
     },
     forcePathStyle: true,
   });

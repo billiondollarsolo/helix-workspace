@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { ForbiddenError, UnauthorizedError } from "./api-error.js";
 import { actorHasScope, requireActorScope } from "./scopes.js";
 

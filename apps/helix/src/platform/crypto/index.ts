@@ -29,28 +29,10 @@
 import { resolveCryptoConfig, type CryptoConfig } from "./config.js";
 import { FipsCryptoProvider } from "./fips-provider.js";
 import { NodeCryptoProvider } from "./node-provider.js";
-import {
-  CryptoInitializationError,
-  type BinaryInput,
-  type CryptoProvider,
-  type DigestEncoding,
-} from "./provider.js";
+import { type BinaryInput, type CryptoProvider } from "./provider.js";
 
-export type {
-  BinaryInput,
-  AesGcmEncrypted,
-  CryptoProvider,
-  CryptoProviderStatus,
-  DigestEncoding,
-  HkdfOptions,
-  Pbkdf2Options,
-} from "./provider.js";
-export { CryptoInitializationError, UnsupportedAlgorithmError } from "./provider.js";
-export type { CryptoAdapterId, CryptoConfig, FipsMode } from "./config.js";
-export { resolveCryptoConfig } from "./config.js";
-export { NodeCryptoProvider } from "./node-provider.js";
-export { FipsCryptoProvider } from "./fips-provider.js";
-export { isHashApproved, isKdfApproved, normalizeAlgorithm } from "./algorithms.js";
+export type { CryptoConfig } from "./config.js";
+export type { BinaryInput, CryptoProvider } from "./provider.js";
 
 /**
  * Build a {@link CryptoProvider} for an explicit configuration. Exported for
@@ -84,14 +66,6 @@ export function getCryptoProvider(): CryptoProvider {
   return activeProvider;
 }
 
-/** The resolved crypto configuration backing the active provider. */
-export function getCryptoConfig(): CryptoConfig {
-  if (activeConfig === undefined) {
-    getCryptoProvider();
-  }
-  return activeConfig as CryptoConfig;
-}
-
 /**
  * Replace the active provider. Intended for tests only — production code
  * relies on import-time self-initialization. Pass `undefined` to reset to
@@ -111,21 +85,6 @@ export function sha256Hex(data: BinaryInput): string {
   return getCryptoProvider().hash("sha256", data, "hex");
 }
 
-/** One-shot digest in any encoding via the active provider. */
-export function hashHex(algorithm: string, data: BinaryInput): string {
-  return getCryptoProvider().hash(algorithm, data, "hex");
-}
-
-/** HMAC digest via the active provider. */
-export function hmac(
-  algorithm: string,
-  key: BinaryInput,
-  data: BinaryInput,
-  encoding: DigestEncoding = "hex",
-): string {
-  return getCryptoProvider().hmac(algorithm, key, data, encoding);
-}
-
 /** Cryptographically secure random bytes via the active provider. */
 export function randomBytes(size: number): Buffer {
   return getCryptoProvider().randomBytes(size);
@@ -134,21 +93,4 @@ export function randomBytes(size: number): Buffer {
 /** RFC 4122 v4 UUID via the active provider. */
 export function randomUuid(): string {
   return getCryptoProvider().randomUuid();
-}
-
-/** Constant-time comparison via the active provider. */
-export function timingSafeEqual(a: BinaryInput, b: BinaryInput): boolean {
-  return getCryptoProvider().timingSafeEqual(a, b);
-}
-
-/**
- * Assert the active provider initialized cleanly. Safe to call at startup as a
- * fail-closed gate; throws {@link CryptoInitializationError} on a broken FIPS
- * profile. A no-op for the default Node provider.
- */
-export function assertCryptoProviderReady(): void {
-  const status = getCryptoProvider().status();
-  if (!status.selfTestPassed) {
-    throw new CryptoInitializationError("Active crypto provider failed its self-test.");
-  }
 }

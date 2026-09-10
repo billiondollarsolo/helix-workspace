@@ -1,10 +1,10 @@
+import type { Actor } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import {
   AssistantSlashCommandHooks,
   parseAssistantSlashCommand,
   resolveDefaultAssistantSlashCommand,
 } from "./slash.js";
-import type { Actor } from "@helix/sdk-types";
 
 describe("assistant slash commands", () => {
   it("parses a slash command with quoted arguments", () => {

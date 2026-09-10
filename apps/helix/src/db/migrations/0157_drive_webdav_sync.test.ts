@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -31,15 +32,13 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("durable Drive WebDAV sy
   const orgId = "f1570000-0000-4000-8000-000000000001";
   const ownerId = "f1570000-0000-4000-8000-000000000011";
   const readerId = "f1570000-0000-4000-8000-000000000012";
+  const destinationReaderId = "f1570000-0000-4000-8000-000000000013";
+  const destinationFolderId = "f1570000-0000-4000-8000-000000000022";
   const folderId = "f1570000-0000-4000-8000-000000000021";
   const objectId = "f1570000-0000-4000-8000-000000000031";
 
   async function cleanup() {
-    await admin`delete from permissions where org_id = ${orgId}`;
-    await admin`delete from objects where org_id = ${orgId}`;
-    await admin`delete from drive_folders where org_id = ${orgId}`;
-    await admin`delete from actors where org_id = ${orgId}`;
-    await admin`delete from orgs where id = ${orgId}`;
+    await cleanupTestTenants(admin, [orgId]);
   }
 
   beforeAll(async () => {
@@ -56,12 +55,15 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("durable Drive WebDAV sy
     await admin`insert into orgs (id, slug, display_name)
       values (${orgId}, 'webdav-sync-test', 'WebDAV sync test')`;
     await admin`insert into actors (id, org_id, type, display_name)
-      values (${ownerId}, ${orgId}, 'user', 'Owner'), (${readerId}, ${orgId}, 'user', 'Reader')`;
+      values (${ownerId}, ${orgId}, 'user', 'Owner'), (${readerId}, ${orgId}, 'user', 'Reader'),
+        (${destinationReaderId}, ${orgId}, 'user', 'Destination reader')`;
     await admin`insert into drive_folders (id, org_id, owner_actor_id, name)
-      values (${folderId}, ${orgId}, ${ownerId}, 'Shared')`;
+      values (${folderId}, ${orgId}, ${ownerId}, 'Shared'),
+        (${destinationFolderId}, ${orgId}, ${ownerId}, 'Destination')`;
     await admin`insert into permissions (
       org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id
-    ) values (${orgId}, ${readerId}, 'drive_folder', ${folderId}, 'reader', ${ownerId})`;
+    ) values (${orgId}, ${readerId}, 'drive_folder', ${folderId}, 'reader', ${ownerId}),
+      (${orgId}, ${destinationReaderId}, 'drive_folder', ${destinationFolderId}, 'reader', ${ownerId})`;
   });
 
   afterAll(async () => {
@@ -108,17 +110,54 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("durable Drive WebDAV sy
       ).changes,
     ).toEqual([]);
 
-    await admin`update objects set deleted_at = statement_timestamp() where id = ${objectId}`;
-    const deleted = await store.listWebDavChanges({
+    await admin`update objects
+      set metadata = jsonb_set(metadata, '{folderId}', to_jsonb(${destinationFolderId}::text))
+      where id = ${objectId}`;
+    const moved = await store.listWebDavChanges({
       orgId,
       actorId: readerId,
       collectionPathKey: "/Shared",
       afterVersion: "1",
       limit: 250,
     });
-    expect(deleted).toMatchObject({
+    expect(moved).toMatchObject({
       version: "2",
       changes: [{ pathKey: "/Shared/note.txt", status: 404, version: "2" }],
+    });
+    expect(
+      await store.listWebDavChanges({
+        orgId,
+        actorId: destinationReaderId,
+        collectionPathKey: "/Destination",
+        afterVersion: "0",
+        limit: 250,
+      }),
+    ).toMatchObject({
+      changes: [{ pathKey: "/Destination/note.txt", status: 200, version: "1" }],
+    });
+    expect(
+      (
+        await store.listWebDavChanges({
+          orgId,
+          actorId: readerId,
+          collectionPathKey: "/Destination",
+          afterVersion: "0",
+          limit: 250,
+        })
+      ).changes,
+    ).toEqual([]);
+
+    await admin`update objects set deleted_at = statement_timestamp() where id = ${objectId}`;
+    const deleted = await store.listWebDavChanges({
+      orgId,
+      actorId: destinationReaderId,
+      collectionPathKey: "/Destination",
+      afterVersion: "1",
+      limit: 250,
+    });
+    expect(deleted).toMatchObject({
+      version: "2",
+      changes: [{ pathKey: "/Destination/note.txt", status: 404, version: "2" }],
     });
   });
 });

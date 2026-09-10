@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runCli, type FetchLike } from "./runner.js";
 
 class CaptureStream extends Writable {
@@ -175,12 +175,8 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("backup restore reindex action");
     expect(stdout.output).toContain("serve resources");
     expect(stdout.output).toContain("list read");
-    expect(stdout.output).toContain(
-      '[[ $scope == plugin ]] && COMPREPLY=( $(compgen -W "install enable disable uninstall"',
-    );
-    expect(stdout.output).toContain(
-      '[[ $scope == install ]] && COMPREPLY=( $(compgen -W "list plugin enable disable uninstall"',
-    );
+    expect(stdout.output).not.toContain("$scope == plugin");
+    expect(stdout.output).not.toContain("$scope == install");
     expect(stdout.output).toContain("--from");
     expect(stdout.output).toContain("--to --cc --bcc --from --subject --body --html --json");
     expect(stdout.output).toContain("--room-id --body --text --json");
@@ -225,7 +221,7 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("serve resources");
     expect(stdout.output).toContain("backup");
     expect(stdout.output).toContain("restore");
-    expect(stdout.output).toContain("install enable disable uninstall");
+    expect(stdout.output).not.toContain("install enable disable uninstall");
     expect(stdout.output).toContain("-l from -x");
     expect(stdout.output).toContain(
       "__fish_seen_subcommand_from chat; and __fish_seen_subcommand_from send",
@@ -1124,97 +1120,20 @@ describe("runCli tool discovery commands", () => {
   });
 });
 
-describe("runCli plugin install", () => {
-  it("installs a plugin version from the plugin install alias", async () => {
+describe("retired plugin commands", () => {
+  it("rejects plugin installation without contacting the API", async () => {
     const stdout = new CaptureStream();
     const stderr = new CaptureStream();
-    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-    const fetchImpl: FetchLike = async (url, init) => {
-      requests.push({ url, init });
-      return new Response(JSON.stringify({ installed: true }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    };
-
-    await expect(
-      runCli(
-        ["plugin", "install", "com.helix.core.mail@1.2.3"],
-        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
-        {
-          stdin: Readable.from([]),
-          stdout,
-          stderr,
-        },
-        fetchImpl,
-      ),
-    ).resolves.toBe(0);
-
-    expect(requests).toEqual([
-      {
-        url: "https://helix.example/v1/api/tools/plugin.install",
-        init: {
-          redirect: "error",
-          signal: expect.any(AbortSignal),
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            authorization: "Bearer token-1",
-            "content-type": "application/json",
-          },
-          body: '{"pluginId":"com.helix.core.mail","version":"1.2.3"}',
-        },
-      },
-    ]);
-    expect(stdout.output).toBe('{\n  "installed": true\n}\n');
-    expect(stderr.output).toBe("");
-  });
-});
-
-describe("runCli plugin lifecycle", () => {
-  it("posts resolved JSON to the selected plugin lifecycle tool", async () => {
-    const stdout = new CaptureStream();
-    const stderr = new CaptureStream();
-    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-    const fetchImpl: FetchLike = async (url, init) => {
-      requests.push({ url, init });
-      return new Response(JSON.stringify({ status: "disabled" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    };
-
-    await expect(
-      runCli(
-        ["plugin", "disable", "com.helix.core.mail", "--json", '{"reason":"maintenance"}'],
-        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
-        {
-          stdin: Readable.from([]),
-          stdout,
-          stderr,
-        },
-        fetchImpl,
-      ),
-    ).resolves.toBe(0);
-
-    expect(requests).toEqual([
-      {
-        url: "https://helix.example/v1/api/tools/plugin.disable",
-        init: {
-          redirect: "error",
-          signal: expect.any(AbortSignal),
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            authorization: "Bearer token-1",
-            "content-type": "application/json",
-          },
-          body: '{"reason":"maintenance","pluginId":"com.helix.core.mail"}',
-        },
-      },
-    ]);
-    expect(stdout.output).toBe('{\n  "status": "disabled"\n}\n');
-    expect(stderr.output).toBe("");
+    const fetchImpl = vi.fn<FetchLike>();
+    const code = await runCli(
+      ["plugin", "install", "com.example.plugin"],
+      {},
+      { stdin: Readable.from([]), stdout, stderr },
+      fetchImpl,
+    );
+    expect(code).not.toBe(0);
+    expect(stderr.output).toContain("Unknown command");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 

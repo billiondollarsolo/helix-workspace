@@ -1,7 +1,7 @@
 import fastify from "fastify";
-import type postgres from "postgres";
 import { describe, expect, it, vi } from "vitest";
 import { actorFromRequest } from "../../api/test-actor.js";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { createNoopVirusScanner } from "../drive/scanning.js";
 import {
   ChatAttachmentRejectedError,
@@ -212,13 +212,7 @@ describe("Chat attachment routes", () => {
     await app.close();
   });
 });
-
-function fakeSql(allowed = true): postgres.Sql {
-  const tx = ((strings: TemplateStringsArray) =>
-    Promise.resolve(
-      strings.join("").includes("helix_chat_attachment_room_access") ? [{ allowed }] : [],
-    )) as unknown as postgres.TransactionSql;
-  return Object.assign(tx, {
-    begin: <T>(callback: (transaction: postgres.TransactionSql) => Promise<T>) => callback(tx),
-  }) as unknown as postgres.Sql;
-}
+const fakeSql = (allowed = true) =>
+  sharedRecordingSql(({ text }) =>
+    text.includes("helix_chat_attachment_room_access") ? [{ allowed }] : [],
+  ).sql;

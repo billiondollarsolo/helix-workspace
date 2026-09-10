@@ -1,8 +1,7 @@
-import { describe, expect, it } from "vitest";
 import type {
+  Actor,
   AICallContext,
   AICapability,
-  Actor,
   ChatRequest,
   ChatResponse,
   EventBus,
@@ -11,6 +10,7 @@ import type {
   TraceContext,
   Unsubscribe,
 } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { EnrichmentWorker } from "../ai/enrichment/index.js";
 import { SearchEventIndexer } from "../search/event-indexer.js";
 import type {

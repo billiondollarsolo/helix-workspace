@@ -1,10 +1,10 @@
 import type { Actor } from "@helix/sdk-types";
 import fastify, { type InjectOptions } from "fastify";
 import { describe, expect, it } from "vitest";
+import type { CalendarInvitationSender } from "./ics.js";
 import { createIcsCalendar } from "./ics.js";
 import { expandCalendarEventOccurrences } from "./recurrence.js";
 import { registerCalendarRoutes } from "./routes.js";
-import type { CalendarInvitationSender } from "./ics.js";
 import type {
   CalendarAttendeeInput,
   CalendarStore,

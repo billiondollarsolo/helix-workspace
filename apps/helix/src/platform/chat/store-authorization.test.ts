@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { ChatMemberAccessError, ChatRoomAccessError } from "./errors.js";
 import { PostgresChatStore } from "./store.js";
 
@@ -104,22 +104,15 @@ function roomRow(role: "owner" | "moderator" | "member") {
     members: [{ actorId, role, displayName: "Actor", email: null }],
   };
 }
-
-function recordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: string[];
-} {
-  const calls: string[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray) => {
-    calls.push(strings.join("$"));
-    return Promise.resolve(queue.shift() ?? []);
+function recordingSql(responses: readonly unknown[]) {
+  const recording = sharedRecordingSql(responses, "$");
+  return {
+    sql: recording.sql,
+    get calls() {
+      return recording.queries;
+    },
+    get values() {
+      return recording.values;
+    },
   };
-  const sql = Object.assign(tag, {
-    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) =>
-      callback(sql as unknown as postgres.TransactionSql),
-    array: (value: unknown) => value,
-    json: (value: unknown) => value,
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
 }

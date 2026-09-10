@@ -1,5 +1,6 @@
 {
   "name": "helix-workspace",
+  "license": "Apache-2.0",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -40,10 +41,8 @@
     "quality:local-disconnected-live-smokes": "node scripts/local-disconnected-live-smokes.mjs",
     "quality:local-disconnected-live-smokes:test": "vitest run scripts/local-disconnected-live-smokes.test.mjs",
     "helix:drive-sync": "node scripts/helix-drive-sync-setup.mjs",
-    "quality:production-readiness-contract:test": "node infra/scripts/negative-security-matrix.mjs > /dev/null && vitest run infra/scripts/production-compose.test.mjs infra/scripts/production-image-workflow.test.mjs infra/scripts/production-dependency-images.test.mjs infra/scripts/supply-chain-workflow.test.mjs infra/scripts/production-dependency-audit.test.mjs infra/scripts/negative-security-matrix.test.mjs infra/scripts/backup-manifest.test.mjs infra/scripts/production-readiness-workflow.test.mjs infra/scripts/normalize-image-spdx.test.mjs",
-    "quality:alertmanager-signup-routing": "node infra/scripts/alertmanager-signup-routing-smoke.mjs",
-    "quality:synthetic-signup-probe": "node infra/scripts/synthetic-signup-probe.mjs",
-    "quality:gates-contract:test": "vitest run infra/scripts/quality-gates-contract.test.mjs",
+    "quality:production-readiness-contract:test": "node infra/scripts/negative-security-matrix.mjs > /dev/null && vitest run infra/scripts/production-compose.test.mjs infra/scripts/production-image-workflow.test.mjs infra/scripts/production-dependency-images.test.mjs infra/scripts/supply-chain-workflow.test.mjs infra/scripts/production-dependency-audit.test.mjs infra/scripts/negative-security-matrix.test.mjs infra/scripts/backup-manifest.test.mjs infra/scripts/production-readiness-workflow.test.mjs infra/scripts/normalize-image-spdx.test.mjs infra/scripts/release-workflow.test.mjs",
+    "quality:gates-contract:test": "vitest run infra/scripts/quality-gates-contract.test.mjs && node infra/scripts/verify-source-structure.mjs --self-test",
     "quality:launch-docs": "node infra/scripts/verify-launch-docs.mjs",
     "quality:launch-docs:test": "vitest run infra/scripts/verify-launch-docs.test.mjs",
     "infra:build": "docker compose build",
@@ -60,7 +59,7 @@
     "infra:restore:live-smoke": "bash infra/scripts/live-restore-drill-smoke.sh",
     "cerbos:compile": "docker run --rm -v \"$PWD/infra/cerbos/policies:/policies:ro\" ghcr.io/cerbos/cerbos:0.55.0@sha256:4b9d3b58c4f11c1b8953bc798d8d086e64f276882253ab169625fddc7f432515 compile /policies",
     "format": "prettier --write .",
-    "format:check": "node infra/scripts/check-format.mjs",
+    "format:check": "prettier --check .",
     "corpus:fetch": "tsx test-corpus/fetch.ts",
     "corpus:fetch:force": "tsx test-corpus/fetch.ts --force",
     "corpus:seed": "tsx test-corpus/seed.ts",
@@ -74,10 +73,14 @@
     "security:scan-history": "node infra/scripts/scan-git-history-secrets.mjs",
     "security:protect-main": "node infra/scripts/apply-branch-protection.mjs",
     "quality:contracts": "node infra/scripts/verify-unsafe-cast-budget.mjs",
-    "quality:dependencies": "knip --dependencies --no-progress && node infra/scripts/verify-dependency-policy.mjs && pnpm dedupe --check",
+    "quality:dependencies": "knip --no-progress && node infra/scripts/verify-dependency-policy.mjs && pnpm dedupe --check",
     "infra:compose:validate": "node infra/scripts/validate-compose-local-only.mjs",
     "infra:mail-edge:validate": "node infra/scripts/validate-mail-edge.mjs",
-    "infra:mail-edge:smoke": "node infra/scripts/mail-edge-smoke.mjs"
+    "infra:mail-edge:smoke": "node infra/scripts/mail-edge-smoke.mjs",
+    "quality:environment": "tsx infra/scripts/generate-environment-reference.ts",
+    "quality:environment:write": "tsx infra/scripts/generate-environment-reference.ts --write",
+    "quality:duplicates": "node infra/scripts/verify-source-structure.mjs",
+    "quality:file-size": "node infra/scripts/verify-source-structure.mjs --size"
   },
   "devDependencies": {
     "@helix/config": "workspace:*",
@@ -89,7 +92,7 @@
     "typescript": "5.9.3",
     "vitest": "4.1.11",
     "knip": "6.34.0",
-    "ws": "8.21.0"
+    "@vitest/coverage-v8": "4.1.11"
   },
   "dependencies": {}
 }

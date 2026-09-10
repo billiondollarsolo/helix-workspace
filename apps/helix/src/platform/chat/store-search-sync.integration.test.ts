@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { authorizeChatSearchHit } from "../search/authorized.js";
 import { createChatSearchIndexer } from "./search/indexer.js";
 import { PostgresChatStore } from "./store.js";
@@ -149,10 +150,5 @@ describe("Chat search synchronization", { skip: process.env.DATABASE_URL === und
 });
 
 async function cleanup(sql: postgres.Sql): Promise<void> {
-  await sql`delete from outbox where payload->>'orgId' = ${ORG_ID}`;
-  await sql`delete from permissions where org_id = ${ORG_ID}`;
-  await sql`delete from messages where org_id = ${ORG_ID}`;
-  await sql`delete from threads where org_id = ${ORG_ID}`;
-  await sql`delete from actors where org_id = ${ORG_ID}`;
-  await sql`delete from orgs where id = ${ORG_ID}`;
+  await cleanupTestTenants(sql, [ORG_ID]);
 }

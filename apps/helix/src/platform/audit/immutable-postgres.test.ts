@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import type { ImmutableAuditActivityRecord } from "./immutable-s3.js";
 import { PostgresWormAuditReader, PostgresWormAuditShipper } from "./immutable-postgres.js";
+import type { ImmutableAuditActivityRecord } from "./immutable-s3.js";
 
 function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");

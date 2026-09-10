@@ -114,11 +114,6 @@ export interface SuggestionSlotProvider {
   render: (context: SuggestionSlotProviderRenderContext) => ReactNode;
 }
 
-export interface PreviewRenderer {
-  pluginId: string;
-  render: (sourceUrl: string) => ReactNode;
-}
-
 export interface WebPlatformHost {
   useColorMode(): ColorModeApi;
   readonly trpc: TRPCClient;
@@ -130,7 +125,6 @@ export interface WebPlatformHost {
   registerSettingsPage(page: SettingsPage): void;
   registerSuggestionSlot(slot: SuggestionSlotDef): void;
   registerSuggestionSlotProvider(slotId: string, provider: SuggestionSlotProvider): void;
-  registerPreviewRenderer(mime: string, renderer: PreviewRenderer): void;
   getShellRoutes(): readonly ShellRoute[];
   getLeftRailItems(): readonly LeftRailItem[];
   getRightRailPanels(routePath: string): readonly PanelExtension[];
@@ -139,7 +133,6 @@ export interface WebPlatformHost {
   getSuggestionSlots(): readonly SuggestionSlotDef[];
   getSuggestionSlot(slotId: string): SuggestionSlotDef | undefined;
   getSuggestionSlotProviders(slotId: string): readonly SuggestionSlotProvider[];
-  getPreviewRenderer(mime: string): PreviewRenderer | undefined;
   getSnapshotVersion(): number;
   subscribe(listener: () => void): () => void;
   readonly tokens: PresetTokens;
@@ -180,7 +173,6 @@ export function createWebPlatformHost(options: CreateWebPlatformHostOptions): We
   const settingsPages = new Map<string, SettingsPage>();
   const suggestionSlots = new Map<string, SuggestionSlotDef>();
   const suggestionSlotProviders = new Map<string, SuggestionSlotProvider>();
-  const previewRenderers = new Map<string, PreviewRenderer>();
   let snapshotVersion = 0;
 
   function emit(): void {
@@ -242,10 +234,6 @@ export function createWebPlatformHost(options: CreateWebPlatformHostOptions): We
       suggestionSlotProviders.set(`${slotId}:${provider.id}`, { ...provider, slotId });
       emit();
     },
-    registerPreviewRenderer(mime, renderer) {
-      previewRenderers.set(mime, renderer);
-      emit();
-    },
     getShellRoutes() {
       return [...shellRoutes.values()].sort(byOrderThenLabel);
     },
@@ -273,9 +261,6 @@ export function createWebPlatformHost(options: CreateWebPlatformHostOptions): We
       return [...suggestionSlotProviders.values()]
         .filter((provider) => provider.slotId === slotId)
         .sort(byOrderThenLabel);
-    },
-    getPreviewRenderer(mime) {
-      return previewRenderers.get(mime);
     },
     getSnapshotVersion() {
       return snapshotVersion;

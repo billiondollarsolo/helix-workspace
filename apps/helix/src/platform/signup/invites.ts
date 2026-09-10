@@ -2,9 +2,9 @@ import type postgres from "postgres";
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import { randomBytes, sha256Hex } from "../crypto/index.js";
 
-export const signupOnboardingInviteTtlSeconds = 7 * 24 * 60 * 60;
+const signupOnboardingInviteTtlSeconds = 7 * 24 * 60 * 60;
 
-export interface SignupOnboardingInviteRecord {
+interface SignupOnboardingInviteRecord {
   readonly orgId: string;
   readonly invitedByActorId: string;
   readonly email: string;
@@ -167,7 +167,7 @@ export class PostgresSignupOnboardingInviteTokenStore implements SignupOnboardin
   }
 }
 
-export function generateSignupOnboardingInviteToken(): string {
+function generateSignupOnboardingInviteToken(): string {
   return `helix_invite_${randomBytes(32).toString("base64url")}`;
 }
 

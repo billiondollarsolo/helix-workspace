@@ -19,13 +19,13 @@
 
 import type { AssistantThread } from "./assistant-data";
 
-export interface ThreadSidebarHeader {
+interface ThreadSidebarHeader {
   readonly kind: "header";
   readonly id: string;
   readonly label: string;
 }
 
-export interface ThreadSidebarThread {
+interface ThreadSidebarThread {
   readonly kind: "thread";
   readonly thread: AssistantThread;
 }

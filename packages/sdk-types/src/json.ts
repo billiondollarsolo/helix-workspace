@@ -14,3 +14,15 @@ export function assertJsonObject(value: unknown, label: string): Record<string, 
 
   return value;
 }
+
+/** A JSON tree, excluding non-finite numbers and runtime-only values. */
+export function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return isJsonRecord(value);
+}
+
+export function isJsonRecord(value: unknown): value is JsonObject {
+  return isJsonObject(value) && Object.values(value).every(isJsonValue);
+}

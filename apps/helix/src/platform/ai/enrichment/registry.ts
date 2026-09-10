@@ -1,5 +1,5 @@
-import type { EnrichmentHandler } from "./types.js";
 import { subjectMatches } from "./subject.js";
+import type { EnrichmentHandler } from "./types.js";
 
 export class EnrichmentHandlerRegistry {
   readonly #handlers = new Map<string, EnrichmentHandler>();
@@ -17,6 +17,8 @@ export class EnrichmentHandlerRegistry {
   }
 
   matching(subject: string): readonly EnrichmentHandler[] {
-    return this.list().filter((handler) => handler.subjects.some((pattern) => subjectMatches(pattern, subject)));
+    return this.list().filter((handler) =>
+      handler.subjects.some((pattern) => subjectMatches(pattern, subject)),
+    );
   }
 }

@@ -1,16 +1,20 @@
-import { evaluateWebSocketOrigin } from "../security/origin-policy.js";
-import { randomUUID } from "node:crypto";
-import type { Actor } from "@helix/sdk-types";
 import {
   chatInboundFrameSchema,
   type ChatInboundFrame,
   type ChatPresenceStatus,
 } from "@helix/contracts";
+import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { ApiError, UnauthorizedError } from "../../api/api-error.js";
 import { unauthenticatedActor } from "../../api/actor.js";
+import { ApiError, UnauthorizedError } from "../../api/api-error.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
+import { dlpDecisionError, type DlpGuard } from "../dlp.js";
+import { evaluateWebSocketOrigin } from "../security/origin-policy.js";
+import type { WebsocketConnectionMetrics } from "../websocket-metrics.js";
+import { trackWebsocketConnection } from "../websocket-metrics.js";
+import { registerChatAttachmentRoutes, type ChatAttachmentStore } from "./attachments.js";
 import {
   consumeToken,
   createBucket,
@@ -18,7 +22,6 @@ import {
   type TokenBucketConfig,
 } from "./core/rate-limit.js";
 import { ChatRateLimitedError, ChatRoomAccessError } from "./errors.js";
-import { registerChatAttachmentRoutes, type ChatAttachmentStore } from "./attachments.js";
 import type { ChatPresenceStore, ChatRoomBus, ChatRoomEvent, PresenceEntry } from "./realtime.js";
 import { isDurableChatRoomEvent } from "./realtime.js";
 import { chatMessageCreatedEvent, chatReadEvent, type ChatStore } from "./store.js";
@@ -29,9 +32,6 @@ import {
   chatWebSocketTicketFromProtocols,
   type ChatWebSocketTicketStore,
 } from "./websocket-tickets.js";
-import type { WebsocketConnectionMetrics } from "../websocket-metrics.js";
-import { trackWebsocketConnection } from "../websocket-metrics.js";
-import { dlpDecisionError, type DlpGuard } from "../dlp.js";
 
 /** Route label for the chat WebSocket connection gauge. */
 const CHAT_WS_ROUTE = CHAT_WEBSOCKET_PATH;

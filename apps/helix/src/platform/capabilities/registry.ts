@@ -4,10 +4,7 @@ export interface PlatformCapability {
   readonly description?: string;
 }
 
-export interface CapabilityKey<
-  Kind extends string = string,
-  Name extends string = string,
-> {
+export interface CapabilityKey<Kind extends string = string, Name extends string = string> {
   readonly kind: Kind;
   readonly name: Name;
 }
@@ -16,7 +13,9 @@ export interface CapabilityAttribution {
   readonly pluginId?: string;
 }
 
-export interface CapabilityRegistration<Capability extends PlatformCapability = PlatformCapability> {
+export interface CapabilityRegistration<
+  Capability extends PlatformCapability = PlatformCapability,
+> {
   readonly capability: Capability;
   readonly key: CapabilityKey<Capability["kind"], Capability["name"]>;
   readonly pluginId?: string;
@@ -69,16 +68,20 @@ export class CapabilityRegistry<Capability extends PlatformCapability = Platform
   get<
     Kind extends Capability["kind"],
     Name extends Extract<Capability, { readonly kind: Kind }>["name"],
-  >(key: CapabilityKey<Kind, Name>): Extract<Capability, { readonly kind: Kind; readonly name: Name }> | undefined {
+  >(
+    key: CapabilityKey<Kind, Name>,
+  ): Extract<Capability, { readonly kind: Kind; readonly name: Name }> | undefined {
     return this.getRegistration(key)?.capability;
   }
 
   getRegistration<
     Kind extends Capability["kind"],
     Name extends Extract<Capability, { readonly kind: Kind }>["name"],
-  >(key: CapabilityKey<Kind, Name>): CapabilityRegistration<
-    Extract<Capability, { readonly kind: Kind; readonly name: Name }>
-  > | undefined {
+  >(
+    key: CapabilityKey<Kind, Name>,
+  ):
+    | CapabilityRegistration<Extract<Capability, { readonly kind: Kind; readonly name: Name }>>
+    | undefined {
     return this.#registrations.get(capabilityKeyToString(key)) as
       | CapabilityRegistration<Extract<Capability, { readonly kind: Kind; readonly name: Name }>>
       | undefined;
@@ -88,10 +91,14 @@ export class CapabilityRegistry<Capability extends PlatformCapability = Platform
     return this.listRegistrations(options).map((registration) => registration.capability);
   }
 
-  listRegistrations(options: CapabilityListOptions<Capability> = {}): readonly CapabilityRegistration<Capability>[] {
+  listRegistrations(
+    options: CapabilityListOptions<Capability> = {},
+  ): readonly CapabilityRegistration<Capability>[] {
     return [...this.#registrations.values()]
       .filter((registration) => matchesListOptions(registration, options))
-      .sort((left, right) => capabilityKeyToString(left.key).localeCompare(capabilityKeyToString(right.key)));
+      .sort((left, right) =>
+        capabilityKeyToString(left.key).localeCompare(capabilityKeyToString(right.key)),
+      );
   }
 }
 

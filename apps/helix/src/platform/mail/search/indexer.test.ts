@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMailSearchIndexer } from "./indexer.js";
 import type { MailSearchProjectionStore, MailSearchRecord } from "../types.js";
+import { createMailSearchIndexer } from "./indexer.js";
 
 const messageId = "message-1";
 const actorA = "actor-a";

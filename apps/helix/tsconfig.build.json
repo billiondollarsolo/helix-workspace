@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "dist/.build.tsbuildinfo"
+  },
+  "exclude": ["src/**/*.test.ts", "src/test-support/**"],
+  "references": [
+    {
+      "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/sdk-types"
+    },
+    {
+      "path": "../../packages/sdk"
+    }
+  ]
+}

@@ -15,14 +15,16 @@ export class ClassificationGateError extends Error {
   }
 }
 
-export function classificationGatingEnabled(tier: SecurityTier, override?: boolean): boolean {
+function classificationGatingEnabled(tier: SecurityTier, override?: boolean): boolean {
   if (override !== undefined) {
     return override;
   }
   return tier !== "personal";
 }
 
-export function evaluateClassificationGate(input: ClassificationGateInput): ClassificationGateDecision {
+export function evaluateClassificationGate(
+  input: ClassificationGateInput,
+): ClassificationGateDecision {
   if (!classificationGatingEnabled(input.tier, input.classificationGating)) {
     return allowed(input, "classification_gating_disabled");
   }
@@ -45,7 +47,9 @@ export function evaluateClassificationGate(input: ClassificationGateInput): Clas
   }
 }
 
-export function enforceClassificationGate(input: ClassificationGateInput): ClassificationGateDecision {
+export function enforceClassificationGate(
+  input: ClassificationGateInput,
+): ClassificationGateDecision {
   const decision = evaluateClassificationGate(input);
   if (!decision.allowed) {
     throw new ClassificationGateError(decision);
@@ -53,7 +57,10 @@ export function enforceClassificationGate(input: ClassificationGateInput): Class
   return decision;
 }
 
-function hasTag(provider: AIProviderClassificationProfile, tag: AIProviderClassificationTag): boolean {
+function hasTag(
+  provider: AIProviderClassificationProfile,
+  tag: AIProviderClassificationTag,
+): boolean {
   return provider.tags.includes(tag);
 }
 
@@ -64,7 +71,10 @@ function hasAnyTag(
   return tags.some((tag) => hasTag(provider, tag));
 }
 
-function allowed(input: ClassificationGateInput, reason: ClassificationGateReason): ClassificationGateDecision {
+function allowed(
+  input: ClassificationGateInput,
+  reason: ClassificationGateReason,
+): ClassificationGateDecision {
   return {
     allowed: true,
     classification: input.classification,
@@ -73,7 +83,10 @@ function allowed(input: ClassificationGateInput, reason: ClassificationGateReaso
   };
 }
 
-function denied(input: ClassificationGateInput, reason: ClassificationGateReason): ClassificationGateDecision {
+function denied(
+  input: ClassificationGateInput,
+  reason: ClassificationGateReason,
+): ClassificationGateDecision {
   return {
     allowed: false,
     classification: input.classification,

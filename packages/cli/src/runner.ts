@@ -85,11 +85,7 @@ export async function runCli(
     }
 
     const input =
-      command.kind === "tool-call" ||
-      command.kind === "install-plugin" ||
-      command.kind === "plugin-lifecycle"
-        ? await resolveToolInput(command.json, io.stdin)
-        : undefined;
+      command.kind === "tool-call" ? await resolveToolInput(command.json, io.stdin) : undefined;
     if (command.kind === "tool-call" && command.uploadPath !== undefined) {
       return await uploadLocalDriveFile(command.uploadPath, input, env, io, fetchImpl);
     }

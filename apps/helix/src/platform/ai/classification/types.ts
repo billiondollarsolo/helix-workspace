@@ -1,8 +1,6 @@
 import type { JsonObject, SecurityTier } from "@helix/sdk-types";
 import type { AIProviderClassificationTag } from "./provider-tags.js";
 
-export type { AIProviderClassificationTag } from "./provider-tags.js";
-
 export const dataClassifications = ["public", "standard", "confidential", "restricted"] as const;
 
 export type DataClassification = (typeof dataClassifications)[number];
@@ -60,14 +58,14 @@ export type ClassificationGateReason =
   | "provider_missing_confidential_tag"
   | "provider_missing_restricted_tag";
 
-export interface ClassificationGateAllowed {
+interface ClassificationGateAllowed {
   readonly allowed: true;
   readonly classification: DataClassification;
   readonly providerId: string;
   readonly reason: ClassificationGateReason;
 }
 
-export interface ClassificationGateDenied {
+interface ClassificationGateDenied {
   readonly allowed: false;
   readonly classification: DataClassification;
   readonly providerId: string;

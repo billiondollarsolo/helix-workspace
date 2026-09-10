@@ -1,6 +1,3 @@
-import { useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
@@ -12,6 +9,15 @@ import {
   StateBanner,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Pencil as EditPenIcon,
+  Key as KeyIcon,
+  Plus as PlusIcon,
+  Shield as ShieldIcon,
+  Trash2 as TrashIcon,
+} from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import {
   adminIdentityQueryKeys,
   adminIdentityQueryOptions,
@@ -234,7 +240,7 @@ export function IdentityManagement() {
               aria-hidden="true"
               className="grid size-8 shrink-0 place-items-center rounded-md bg-[var(--accent-soft)] text-[var(--accent)]"
             >
-              <Icons.Key />
+              <KeyIcon size={16} />
             </span>
             <div className="min-w-0 flex-1">
               <h2 id="identity-local-login" className="text-sm font-semibold">
@@ -256,7 +262,7 @@ export function IdentityManagement() {
 
         <section className="panel p-4" aria-labelledby="identity-tenant-idps">
           <div className="mb-3 flex items-center gap-2">
-            <Icons.Shield />
+            <ShieldIcon size={16} />
             <h2 id="identity-tenant-idps" className="text-sm font-semibold">
               Tenant IdPs
             </h2>
@@ -273,13 +279,13 @@ export function IdentityManagement() {
             <EmptyRow>Tenant IdPs could not be loaded.</EmptyRow>
           ) : sortedConfigs.length === 0 ? (
             <EmptyState
-              icon={<Icons.Shield />}
+              icon={<ShieldIcon size={16} />}
               title="No identity providers"
               /* Outline: the add form is already open below and owns the page's
                  one primary button. This jumps to it, it does not replace it. */
               action={
                 <Button type="button" variant="outline" onClick={startNewIdp}>
-                  <Icons.Plus />
+                  <PlusIcon size={16} />
                   Add your first IdP
                 </Button>
               }
@@ -327,7 +333,7 @@ export function IdentityManagement() {
 
         <section className="panel p-4" aria-labelledby="identity-idp-form">
           <div className="mb-3 flex items-center gap-2">
-            {editingConfigId === null ? <Icons.Plus /> : <Icons.EditPen />}
+            {editingConfigId === null ? <PlusIcon size={16} /> : <EditPenIcon size={16} />}
             <h2 id="identity-idp-form" className="text-sm font-semibold">
               {editingConfigId === null ? "Add IdP" : "Edit IdP"}
             </h2>
@@ -549,7 +555,7 @@ export function IdentityManagement() {
                 </Button>
               )}
               <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
-                {editingConfigId === null ? <Icons.Plus /> : <Icons.EditPen />}
+                {editingConfigId === null ? <PlusIcon size={16} /> : <EditPenIcon size={16} />}
                 {submitLabel}
               </Button>
             </div>
@@ -692,7 +698,7 @@ function IdpConfigRow({
           {config.enabled ? "Disable" : "Enable"}
         </Button>
         <Button type="button" size="sm" variant="outline" disabled={updatePending} onClick={onEdit}>
-          <Icons.EditPen />
+          <EditPenIcon size={16} />
           Edit
         </Button>
         <Button
@@ -703,7 +709,7 @@ function IdpConfigRow({
           disabled={deletePending}
           onClick={onDelete}
         >
-          <Icons.Trash />
+          <TrashIcon size={16} />
           Delete
         </Button>
       </div>

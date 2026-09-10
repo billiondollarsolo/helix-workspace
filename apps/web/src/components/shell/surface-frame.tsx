@@ -1,22 +1,22 @@
+import { Menu as MenuIcon } from "lucide-react";
 /* SurfaceFrame — the per-surface chrome wrapper.
    Renders `.workspace` (TopBar + `.workspace-body`) with the right side-panel
    rail, mirroring the prototype's per-app `.workspace` element.
 
    Surface agents wrap their surface body in this:
 
-     <SurfaceFrame title="Mail" icon={<Icons.Mail />}>
+     <SurfaceFrame title="Mail" icon={<MailIcon />}>
        <MailSidebar /> <ThreadList />
      </SurfaceFrame>
 
    The TopBar's search becomes a live input when `searchValue` +
    `onSearchChange` are passed; otherwise it opens the ⌘K palette. */
 
-import { useState, type ReactNode } from "react";
-import { Icons } from "@/components/icons";
-import { TopBar } from "@/components/shell/top-bar";
 import { SidePanel, SidePanelRail, type SideTool } from "@/components/shell/side-panel";
-import { useQuery } from "@tanstack/react-query";
+import { TopBar } from "@/components/shell/top-bar";
 import { unreadCountQueryOptions } from "@/features/notifications/api";
+import { useQuery } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
 
 export interface SurfaceFrameProps {
   /** Surface name shown in the TopBar. */
@@ -63,7 +63,7 @@ export function SurfaceFrame({
             aria-expanded={navigationOpen}
             onClick={() => setNavigationOpen((open) => !open)}
           >
-            <Icons.Menu />
+            <MenuIcon size={16} />
           </button>
         }
         title={title}

@@ -4,8 +4,7 @@ import { resolve } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-export const V2_PLAN_PATH =
-  "docs/superpowers/plans/2026-07-28-core-workspace-production-readiness.md";
+export const V2_PLAN_PATH = "docs/archive/plans/2026-07-28-core-workspace-production-readiness.md";
 
 export const V2_NEGATIVE_SECURITY_MATRIX = [
   boundary("Tenant", "Org A ID/token cannot read or mutate Org B", [
@@ -166,6 +165,14 @@ export const V2_NEGATIVE_SECURITY_MATRIX = [
     ),
   ]),
   boundary("Auth", "expired/revoked/wrong-IP credential; CSRF/cross-origin", [
+    testCase(
+      "auth.public_signup_absent",
+      "Invite-only startup never registers public account creation or SaaS onboarding routes.",
+      ref(
+        "apps/helix/src/platform/signup/routes.test.ts",
+        "returns 404 for public signup and removed SaaS onboarding endpoints",
+      ),
+    ),
     testCase(
       "auth.expired_credential",
       "An expired credential is rejected.",

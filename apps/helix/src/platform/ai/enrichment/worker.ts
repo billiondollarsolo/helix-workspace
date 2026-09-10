@@ -1,4 +1,5 @@
 import type { EventBus, EventEnvelope, JsonValue, Unsubscribe } from "@helix/sdk-types";
+import { errorMessage } from "../../util/errors.js";
 import { EnrichmentHandlerRegistry } from "./registry.js";
 import type {
   EnrichmentEvent,
@@ -11,13 +12,15 @@ import type {
 export interface EnrichmentWorkerOptions {
   readonly events: EventBus;
   readonly subject?: string | undefined;
-  readonly onResult?: ((result: EnrichmentResult, event: EventEnvelope) => Promise<void> | void) | undefined;
+  readonly onResult?:
+    ((result: EnrichmentResult, event: EventEnvelope) => Promise<void> | void) | undefined;
   readonly onError?: EnrichmentWorkerErrorHandler | undefined;
 }
 
 export class EnrichmentWorker {
   private readonly subject: string;
-  private readonly onResult: ((result: EnrichmentResult, event: EventEnvelope) => Promise<void> | void) | undefined;
+  private readonly onResult:
+    ((result: EnrichmentResult, event: EventEnvelope) => Promise<void> | void) | undefined;
   private readonly onError: EnrichmentWorkerErrorHandler | undefined;
   private unsubscribe: Unsubscribe | undefined;
 
@@ -88,7 +91,9 @@ export class EnrichmentWorker {
   }
 }
 
-function toEnrichmentEvent<Payload extends JsonValue>(event: EventEnvelope<Payload>): EnrichmentEvent<Payload> {
+function toEnrichmentEvent<Payload extends JsonValue>(
+  event: EventEnvelope<Payload>,
+): EnrichmentEvent<Payload> {
   return {
     subject: event.subject,
     payload: event.payload,
@@ -120,8 +125,4 @@ function summarize(results: readonly (EnrichmentResult | undefined)[]): Enrichme
     skipped,
     failed,
   };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

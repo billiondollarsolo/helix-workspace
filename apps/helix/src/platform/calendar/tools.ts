@@ -1,10 +1,12 @@
-import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { canonicalTimeZone } from "@helix/contracts";
+import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { findCalendarMeetingTimes } from "./freebusy.js";
 import type { CalendarInvitationSender } from "./ics.js";
+import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
 import type {
   CalendarAttendeeRecord,
   CalendarEventRecord,
@@ -12,7 +14,6 @@ import type {
   CalendarListEntry,
   CalendarMembershipRecord,
 } from "./types.js";
-import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.string(), z.unknown()).default({});
@@ -465,12 +466,6 @@ export function registerCalendarTools(
   for (const tool of createCalendarToolDefinitions(options)) {
     registry.register(tool);
   }
-}
-
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
 }
 
 function serializeCalendarEntry(entry: CalendarListEntry) {

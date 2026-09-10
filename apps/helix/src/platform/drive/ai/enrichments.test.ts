@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
 import type { AICallContext, AICapability, ChatRequest, ChatResponse } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
+import type { EnrichmentEvent } from "../../ai/enrichment/index.js";
 import type {
   DriveActivityPayload,
   DriveAutoTagWrite,
@@ -7,7 +8,6 @@ import type {
   DriveEnrichmentRecord,
   DriveEnrichmentWrite,
 } from "../types.js";
-import type { EnrichmentEvent } from "../../ai/enrichment/index.js";
 import { createDriveAutoTagEnrichmentHandler } from "./enrichments.js";
 
 const baseFile: DriveEnrichmentRecord = {

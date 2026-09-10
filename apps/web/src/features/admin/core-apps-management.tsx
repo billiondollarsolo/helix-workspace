@@ -41,15 +41,7 @@ const APP_ICON_BG: Readonly<Record<CoreAppId, string>> = {
   meet: "bg-cyan-500/15 text-cyan-400",
   assistant: "bg-fuchsia-500/15 text-fuchsia-400",
 };
-/* What each app's users lose the moment it goes off, org-wide.
- *
- * The console's destructive policy wants `blastRadius` to be a decision input,
- * not "this cannot be undone" — and one generic sentence would throw away what
- * this file already knows: turning Editors off is nothing like turning Drive
- * off (the Editors row states that difference in its own description). Every
- * line here is a loss of access that follows from the page's own promise that
- * a disabled app leaves the launcher, rail, and search for everyone; none of
- * them claims anything about what the backend keeps running or retains. */
+/* App-specific loss of access shown before disabling an app org-wide. */
 const DISABLE_CONSEQUENCE: Readonly<Record<CoreAppId, string>> = {
   mail: "Every user loses the inbox, composing, and mail results in search.",
   chat: "Every user loses channels and direct messages, including conversations already in progress.",

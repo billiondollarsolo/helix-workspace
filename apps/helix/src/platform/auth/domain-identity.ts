@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import type { FastifyInstance } from "fastify";
+import type postgres from "postgres";
 import { z } from "zod";
 
 export interface DomainIdentityDiscovery {

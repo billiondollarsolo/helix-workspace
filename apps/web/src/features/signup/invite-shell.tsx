@@ -173,7 +173,7 @@ function subtitleForState(state: InviteState): string {
 }
 
 function continuePathForState(state: InviteState): string {
-  return state.status === "accepted" ? state.result.workspace.welcomeUrl : "/login";
+  return state.status === "accepted" ? state.result.workspace.workspaceUrl : "/login";
 }
 
 function continueLabelForState(state: InviteState): string {

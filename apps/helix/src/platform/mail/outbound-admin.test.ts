@@ -1,6 +1,6 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
-import type { Actor } from "@helix/sdk-types";
 import { registerOutboundMailAdminRoutes } from "./outbound-admin.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";

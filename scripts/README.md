@@ -12,6 +12,7 @@ scripts/dev-up.sh --no-web    # backend only (CI smoke)
 ```
 
 What it does:
+
 1. Verifies docker infra (postgres, rustfs, meilisearch) is running.
 2. Stops any existing helix backend / web dev processes.
 3. Loads env from `.env` + `apps/helix/.env`.

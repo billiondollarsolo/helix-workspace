@@ -1,29 +1,9 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import { PostgresAgentCredentialStore, PostgresAuthorizationCodeStore } from "./postgres-store.js";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { hashApiKey } from "./credentials.js";
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
-    return Promise.resolve(queue.shift() ?? []);
-  };
-  const sql = Object.assign(tag, {
-    array: <T extends readonly unknown[]>(value: T) => value,
-    unsafe: (text: string) => text,
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}
+import { PostgresAgentCredentialStore, PostgresAuthorizationCodeStore } from "./postgres-store.js";
+const createRecordingSql = (responses: readonly unknown[] = []) =>
+  sharedRecordingSql(responses, "$");
 
 describe("PostgresAgentCredentialStore", () => {
   it("resolves an api_key credential with its policy fields", async () => {

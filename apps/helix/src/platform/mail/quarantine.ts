@@ -1,7 +1,8 @@
+import type { JsonObject, StorageObject } from "@helix/sdk-types";
 import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import type { JsonObject, StorageObject } from "@helix/sdk-types";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
+import { toSqlJson } from "../util/sql.js";
 import { MailQuarantineIntegrityError } from "./errors.js";
 import { MAIL_RAW_SOURCE_MAX_BYTES } from "./raw-source.js";
 
@@ -347,10 +348,6 @@ async function verifiedBody(
     throw new MailQuarantineIntegrityError();
   }
   return bytes;
-}
-
-function toSqlJson(value: JsonObject): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
 function requiredToken(value: string | null): string {

@@ -26,7 +26,7 @@ import type postgres from "postgres";
  *
  * `URL` does the IDNA conversion, which is why this is not a `toLowerCase()`.
  */
-export function canonicalDomain(domain: string): string {
+function canonicalDomain(domain: string): string {
   const trimmed = domain.trim().toLowerCase();
   try {
     const { hostname } = new URL(`http://${trimmed}`);
@@ -49,7 +49,7 @@ export interface EnsureAdminDomainInput {
  * Return the id of the org's `admin_domains` row for `domain`, creating a
  * pending one if it does not exist.
  *
- * The insert is `on conflict do nothing` against the canonical unique index
+ * The insert is `on conflict do nothing` against the globally exclusive active claim
  * rather than a read-then-write, so two capabilities being added concurrently
  * cannot produce a duplicate or a lost race.
  */
@@ -58,22 +58,30 @@ export async function ensureAdminDomain(
   input: EnsureAdminDomainInput,
 ): Promise<string> {
   const domain = canonicalDomain(input.domain);
+  const challenge = createDomainOwnershipChallenge(domain);
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
   const inserted = await sql<readonly { id: string }[]>`
-    insert into admin_domains (org_id, domain, verification_status, created_by)
-    values (${input.orgId}, ${domain}, 'pending', ${input.createdBy ?? null})
-    on conflict (org_id, (lower(domain))) do nothing
+    insert into admin_domains (
+      org_id, domain, status, created_by, verification_host, verification_value,
+      verification_expires_at
+    )
+    values (
+      ${input.orgId}, ${domain}, 'pending', ${input.createdBy ?? null},
+      ${challenge.dnsName}, ${challenge.dnsValue}, ${expiresAt}
+    )
+    on conflict do nothing
     returning id
   `;
   if (inserted[0] !== undefined) {
     return inserted[0].id;
   }
 
-  /* Conflict: the parent already existed. Matched on lower(domain) because
-     admin_domains predates canonicalisation and may hold mixed case. */
+  /* A conflict can belong to another tenant; reuse only this organization's
+     current claim. A released historical row cannot serve as the parent. */
   const existing = await sql<readonly { id: string }[]>`
     select id from admin_domains
-    where org_id = ${input.orgId} and lower(domain) = ${domain}
+    where org_id = ${input.orgId} and lower(domain) = ${domain} and status <> 'released'
     limit 1
   `;
   const found = existing[0];
@@ -88,8 +96,8 @@ export async function ensureAdminDomain(
 /* --------------------------------------------------------------------- */
 
 /* A TXT challenge on the domain itself, so it is proved once rather than once
-   per capability. Only the SHA-256 digest is persisted — a database dump can
-   neither be replayed nor reveal the token. */
+   per capability. The canonical domain row stores the publishable TXT value;
+   capability verifiers compare its token digest. */
 
 const TXT_PREFIX = "helix-domain-verification=";
 
@@ -111,7 +119,7 @@ export function createDomainOwnershipChallenge(domain: string): DomainOwnershipC
   };
 }
 
-export function hashOwnershipToken(token: string): string {
+function hashOwnershipToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }
 

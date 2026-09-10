@@ -80,26 +80,26 @@ describe("sandboxed Liquid webhook template renderer", () => {
   });
 
   it("throws on a malformed template", () => {
-    expect(() =>
-      renderTemplateString("{% if object.unread %}unterminated", context),
-    ).toThrow(/Custom webhook template failed to render/);
+    expect(() => renderTemplateString("{% if object.unread %}unterminated", context)).toThrow(
+      /Custom webhook template failed to render/,
+    );
   });
 
   it("throws when rendered output is not valid JSON", () => {
-    expect(() =>
-      renderCustomTemplate(event, { template: "{not json {{ id }}" }),
-    ).toThrow(/not valid JSON/);
+    expect(() => renderCustomTemplate(event, { template: "{not json {{ id }}" })).toThrow(
+      /not valid JSON/,
+    );
   });
 
   it("blocks the include tag to prevent file-system escape", () => {
-    expect(() =>
-      renderTemplateString('{% include "/etc/passwd" %}', context),
-    ).toThrow(/cannot use the "include" tag/);
+    expect(() => renderTemplateString('{% include "/etc/passwd" %}', context)).toThrow(
+      /cannot use the "include" tag/,
+    );
   });
 
   it("blocks the render tag to prevent file-system escape", () => {
-    expect(() =>
-      renderTemplateString('{% render "secrets" %}', context),
-    ).toThrow(/cannot use the "render" tag/);
+    expect(() => renderTemplateString('{% render "secrets" %}', context)).toThrow(
+      /cannot use the "render" tag/,
+    );
   });
 });

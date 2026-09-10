@@ -5,7 +5,7 @@ import {
 } from "@/lib/search-params";
 import type { CalendarListEventsInput } from "./api";
 
-export const calendarRouteViews = ["week", "month", "day", "agenda"] as const;
+const calendarRouteViews = ["week", "month", "day", "agenda"] as const;
 export type CalendarRouteView = (typeof calendarRouteViews)[number];
 
 export interface CalendarRouteSearch {

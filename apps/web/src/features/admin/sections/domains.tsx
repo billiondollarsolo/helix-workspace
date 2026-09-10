@@ -1,30 +1,14 @@
+import { Globe as GlobeIcon, Plus as PlusIcon, Trash2 as TrashIcon } from "lucide-react";
 /* Admin › Organization › Domains — workspace domains and their DNS records. */
 
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Icons } from "@/components/icons";
-import { DomainCapabilitiesPanel, domainSummary } from "./domain-capabilities";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import {
-  createDomain,
-  releaseDomain,
-  domainsQueryKeys,
-  domainsQueryOptions,
-  setPrimaryDomain,
-  upsertDnsRecord,
-  verifyDnsRecord,
-  type DnsRecord,
-  type DnsRecordType,
-  type DomainWithRecords,
-} from "@/features/admin/domains-api";
 import {
   AdminField,
   AdminInput,
   AdminSelect,
   AdminToolbar,
 } from "@/features/admin/console/controls";
-import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   EmptyRow,
   EmptyState,
@@ -36,6 +20,22 @@ import {
   StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
+import {
+  createDomain,
+  domainsQueryKeys,
+  domainsQueryOptions,
+  releaseDomain,
+  setPrimaryDomain,
+  upsertDnsRecord,
+  verifyDnsRecord,
+  type DnsRecord,
+  type DnsRecordType,
+  type DomainWithRecords,
+} from "@/features/admin/domains-api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { DomainCapabilitiesPanel, domainSummary } from "./domain-capabilities";
 
 /* Structural rather than importing `QueryClient`: the route loader only ever
    hands this helper an `ensureQueryData`, and typing it that way keeps the
@@ -278,7 +278,7 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
               primary action of this panel — the Verify buttons above it are
               outline so they do not compete with it. */}
           <Button type="submit" size="sm" className="self-end" disabled={upsertMutation.isPending}>
-            <Icons.Plus /> Record
+            <PlusIcon size={16} /> Record
           </Button>
         </AdminToolbar>
       </form>
@@ -377,7 +377,7 @@ export function AdminDomain() {
               />
             </AdminField>
             <Button type="submit" disabled={addMutation.isPending}>
-              <Icons.Plus /> Add domain
+              <PlusIcon size={16} /> Add domain
             </Button>
           </form>
 
@@ -385,7 +385,7 @@ export function AdminDomain() {
             /* The loading banner above already says it is loading; a second
                "Loading domains…" in the empty state read as two states. */
             domainsQuery.isPending ? null : (
-              <EmptyState icon={<Icons.Globe />} title="No domains yet">
+              <EmptyState icon={<GlobeIcon size={16} />} title="No domains yet">
                 Add a domain to send and receive mail from it, and to let people sign in with
                 addresses at that domain. Each one needs its DNS records verified before it goes
                 live.
@@ -396,7 +396,7 @@ export function AdminDomain() {
               <div key={entry.domain.id} className="admin-domain-entry">
                 <div className="panel admin-domain-row">
                   <span className="admin-domain-icon">
-                    <Icons.Globe />
+                    <GlobeIcon size={16} />
                   </span>
                   <div className="admin-domain-identity">
                     <div className="admin-domain-name">
@@ -435,7 +435,7 @@ export function AdminDomain() {
                     disabled={deleteMutation.isPending}
                     onClick={() => setDeleteTarget(entry)}
                   >
-                    <Icons.Trash /> Release
+                    <TrashIcon size={16} /> Release
                   </Button>
                 </div>
                 {/* Capabilities first, DNS records second: what the domain is

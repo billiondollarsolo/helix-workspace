@@ -62,11 +62,15 @@ describe("outbound webhook formats", () => {
     expect(JSON.stringify(discordBody)).toContain('"title":"mail.received"');
     expect(JSON.stringify(discordBody)).toContain('"description":"Review the launch checklist."');
 
-    const teamsBody = renderTeamsWebhookPayload(event, { titleTemplate: "Mail: {{object.subject}}" }).body;
+    const teamsBody = renderTeamsWebhookPayload(event, {
+      titleTemplate: "Mail: {{object.subject}}",
+    }).body;
     expect(teamsBody).toMatchObject({
       type: "message",
     });
-    expect(JSON.stringify(teamsBody)).toContain('"contentType":"application/vnd.microsoft.card.adaptive"');
+    expect(JSON.stringify(teamsBody)).toContain(
+      '"contentType":"application/vnd.microsoft.card.adaptive"',
+    );
     expect(JSON.stringify(teamsBody)).toContain('"type":"AdaptiveCard"');
     expect(JSON.stringify(teamsBody)).toContain('"version":"1.4"');
   });

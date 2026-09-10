@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import { TenantEnvelopeCipher } from "../secrets/envelope.js";
 import { OutboundWebhookQuotaExceededError, PostgresWebhookStore } from "./store.js";
 
@@ -99,31 +99,6 @@ describe("PostgresWebhookStore", () => {
     expect(recording.calls).toEqual([]);
   });
 });
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
-function createRecordingSql(responses: readonly unknown[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  let callIndex = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const text = strings.join("?");
-    calls.push({ text, values });
-    return Promise.resolve(responses[callIndex++] ?? []);
-  };
-  const sql = Object.assign(tag, {
-    json: (value: unknown) => value,
-    array: (value: unknown) => value,
-    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) =>
-      callback(sql as unknown as postgres.TransactionSql),
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}
 
 function createOutboundInput() {
   return {

@@ -2,7 +2,6 @@
 
 date=2026-08-02T16:49:31+00:00
 workspace_sha=c7af2961327cb0eab50600a0f81b453a3c2a3152
-editors_sha=e0e5bc3d21ff63c4b53db5ff72d80d5efb3b3b80
 
 ## Compose
 

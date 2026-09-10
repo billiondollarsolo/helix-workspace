@@ -1,7 +1,7 @@
 import type { HashableAuditRecord } from "./hash.js";
 import { computeAuditHash } from "./hash.js";
 
-export type AuditHashChainIssueCode = "prev_hash_mismatch" | "this_hash_mismatch";
+type AuditHashChainIssueCode = "prev_hash_mismatch" | "this_hash_mismatch";
 
 export interface VerifiableAuditRecord extends HashableAuditRecord {
   readonly thisHash: string;
@@ -12,7 +12,7 @@ export interface AuditVerificationRecord extends VerifiableAuditRecord {
   readonly createdAt: string;
 }
 
-export interface AuditHashChainIssue {
+interface AuditHashChainIssue {
   readonly code: AuditHashChainIssueCode;
   readonly index: number;
   readonly id?: string;

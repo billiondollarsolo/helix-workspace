@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 
 describe("0117 mail outbound leases", () => {
   const sql = readFileSync(new URL("./0117_mail_outbound_leases.sql", import.meta.url), "utf8");
-  const store = readFileSync(new URL("../../platform/mail/store.ts", import.meta.url), "utf8");
+  const store = readFileSync(
+    new URL("../../platform/mail/store-outbound.ts", import.meta.url),
+    "utf8",
+  );
   const worker = readFileSync(new URL("../../platform/mail/outbound.ts", import.meta.url), "utf8");
 
   it("adds stable handoff identity, leases, and only durable due indexes", () => {

@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import {
   requireActiveChatAttachments,
   requireChatActorInOrg,
@@ -111,22 +111,12 @@ describe("central Chat authorization", () => {
     expect(sql.calls[0]).toContain("p.org_id = t.org_id");
   });
 });
-
-function fakeSql(responses: readonly unknown[][]): {
-  readonly tag: postgres.Sql;
-  readonly calls: string[];
-} {
-  const calls: string[] = [];
-  let index = 0;
-  const tag = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push(
-      strings.reduce(
-        (text, part, partIndex) => `${text}${part}${partIndex < values.length ? "?" : ""}`,
-        "",
-      ),
-    );
-    return responses[index++] ?? [];
-  }) as unknown as postgres.Sql;
-  tag.array = ((values: readonly unknown[]) => values) as unknown as typeof tag.array;
-  return { tag, calls };
+function fakeSql(responses: readonly unknown[]) {
+  const recording = sharedRecordingSql(responses);
+  return {
+    tag: recording.sql,
+    get calls() {
+      return recording.queries;
+    },
+  };
 }

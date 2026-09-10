@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { InMemoryChatPresenceStore, RedisChatPresenceStore } from "./realtime.js";
 
 const actor: Actor = {

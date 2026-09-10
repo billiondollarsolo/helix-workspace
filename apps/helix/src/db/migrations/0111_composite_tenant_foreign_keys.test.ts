@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -87,15 +88,7 @@ describe.skipIf(sql === null)("0111 live tenant relationship enforcement", () =>
   });
 
   afterAll(async () => {
-    await database`delete from admin_group_members where group_id = ${groupA}`;
-    await database`delete from admin_groups where id = ${groupA}`;
-    await database`delete from admin_org_units where id in (${orgUnitA}, ${orgUnitB})`;
-    await database`delete from drive_folders where id in (${folderA}, ${folderB})`;
-    await database`delete from objects where id = ${objectB}`;
-    await database`delete from messages where id = ${messageB}`;
-    await database`delete from threads where id = ${threadB}`;
-    await database`delete from actors where id in (${actorA}, ${actorB})`;
-    await database`delete from orgs where id in (${orgA}, ${orgB})`;
+    await cleanupTestTenants(database, [orgA, orgB]);
     await database.end();
   });
 
@@ -150,7 +143,19 @@ describe.skipIf(sql === null)("0111 live tenant relationship enforcement", () =>
       order by relation.relname, column_row.attname
     `;
 
-    expect(actorReferencesWithoutForeignKeys).toEqual([]);
+    // The deletion workflow allocates this identity before its audit actor
+    // exists. Only the controlled proof function can write the table.
+    expect(actorReferencesWithoutForeignKeys).toEqual([
+      { table_name: "tenant_deletion_proofs", column_name: "system_actor_id" },
+    ]);
+    await expect(
+      database.begin(async (tx) => {
+        await tx.unsafe("set local role helix_app");
+        await tx`select set_config('helix.org_id', ${orgA}, true)`;
+        await tx`insert into tenant_deletion_proofs (org_id, system_actor_id)
+          values (${orgA}, ${actorB})`;
+      }),
+    ).rejects.toMatchObject({ code: "42501" });
   });
 
   it("rejects representative cross-tenant actor, object, message, folder, and grant links", async () => {
@@ -163,8 +168,8 @@ describe.skipIf(sql === null)("0111 live tenant relationship enforcement", () =>
            values (${orgA}, ${threadB}, 'system', 'forged')`,
     ).rejects.toMatchObject({ code: "23503" });
     await expect(
-      database`insert into message_attachments (org_id, message_id, object_id)
-           values (${orgA}, ${messageB}, ${objectB})`,
+      database`insert into message_attachments (org_id, message_id, object_id, snapshot)
+           values (${orgA}, ${messageB}, ${objectB}, '{}'::jsonb)`,
     ).rejects.toMatchObject({ code: "23503" });
     await expect(
       database`insert into drive_folders (org_id, name, parent_folder_id)
@@ -181,6 +186,19 @@ describe.skipIf(sql === null)("0111 live tenant relationship enforcement", () =>
     await expect(
       database`update admin_groups set org_unit_id = ${orgUnitB} where id = ${groupA}`,
     ).rejects.toMatchObject({ code: "23503" });
+  });
+
+  it("couples newly added revision actor references without losing same-tenant history", async () => {
+    await database`insert into cal_event_revisions (
+      org_id, event_id, revision, calendar_id, change_kind, changed_by_actor_id, snapshot
+    ) values (
+      ${orgA}, ${folderA}, 0, ${folderA}, 'created', ${actorA}, '{"event":{},"attendees":[]}'::jsonb
+    )`;
+    await expect(database`insert into cal_event_revisions (
+      org_id, event_id, revision, calendar_id, change_kind, changed_by_actor_id, snapshot
+    ) values (
+      ${orgA}, ${folderA}, 1, ${folderA}, 'updated', ${actorB}, '{"event":{},"attendees":[]}'::jsonb
+    )`).rejects.toMatchObject({ code: "23503" });
   });
 
   it("rejects direct folder hierarchy cycles", async () => {

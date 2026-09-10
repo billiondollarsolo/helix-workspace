@@ -1,7 +1,10 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import { parseRangeHeader } from "./range-response.js";
-import { sendBytesWithRangeSupport, sendStreamWithRangeSupport } from "./range-response.js";
+import {
+  parseRangeHeader,
+  sendBytesWithRangeSupport,
+  sendStreamWithRangeSupport,
+} from "./range-response.js";
 
 describe("parseRangeHeader", () => {
   it("parses bytes=0-99", () => {

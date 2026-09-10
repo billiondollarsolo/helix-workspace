@@ -19,4 +19,3 @@ describe("Postgres memory store helpers", () => {
     await expect(provider.embed(["abc"])).resolves.toEqual([[3, 1]]);
   });
 });
-

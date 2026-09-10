@@ -1,9 +1,18 @@
+import { cn } from "@/lib/utils";
+import { iconMap as Icons, type IconName } from "@/components/icon-map";
+import {
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
+  Grid2X2 as GridIcon,
+  Plus as PlusIcon,
+  Sparkles as SparklesIcon,
+  X as XIcon,
+} from "lucide-react";
 /* Right side panel — the 44px tool rail + 320px mini panels. */
-import { Icons, type IconName } from "@/components/icons";
 import { peopleDirectoryQueryOptions } from "@/features/people/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useDeferredValue, useState, type CSSProperties, type ReactNode } from "react";
+import { useDeferredValue, useState, type ReactNode } from "react";
 export type SideTool = "calendar" | "contacts" | "ai";
 interface SideToolDef {
   id: SideTool;
@@ -15,20 +24,6 @@ const SIDE_TOOLS: readonly SideToolDef[] = [
   { id: "contacts", label: "Contacts", icon: "Users" },
   { id: "ai", label: "Helix AI", icon: "Sparkles" },
 ];
-const sectionLabelStyle = {
-  fontSize: "var(--text-chip)",
-  color: "var(--text-3)",
-  fontWeight: 600,
-  textTransform: "uppercase" as const,
-  letterSpacing: ".06em",
-  marginBottom: 8,
-};
-/** Every mini panel fills the 320px column top-to-bottom. */
-const panelColumnStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  height: "100%",
-};
 /* ---------- Mini Calendar ---------- */
 function MiniCalendar() {
   const navigate = useNavigate();
@@ -52,11 +47,11 @@ function MiniCalendar() {
     month.getFullYear() === todayDate.getFullYear() && month.getMonth() === todayDate.getMonth();
   const days = ["S", "M", "T", "W", "T", "F", "S"];
   return (
-    <div style={panelColumnStyle}>
-      <div style={{ padding: "12px 14px 6px" }}>
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
-          <span style={{ fontSize: "var(--text-body-sm)", fontWeight: 600 }}>{monthLabel}</span>
-          <div style={{ marginLeft: "auto", display: "flex" }}>
+    <div className="flex flex-col h-full">
+      <div className="[padding:12px_14px_6px]">
+        <div className="flex items-center mb-2">
+          <span className="[font-size:var(--text-body-sm)] font-semibold">{monthLabel}</span>
+          <div className="ml-auto flex">
             <button
               type="button"
               className="icon-btn"
@@ -65,7 +60,7 @@ function MiniCalendar() {
                 setMonth((value) => new Date(value.getFullYear(), value.getMonth() - 1, 1));
               }}
             >
-              <Icons.ChevronLeft />
+              <ChevronLeftIcon size={16} />
             </button>
             <button
               type="button"
@@ -75,44 +70,20 @@ function MiniCalendar() {
                 setMonth((value) => new Date(value.getFullYear(), value.getMonth() + 1, 1));
               }}
             >
-              <Icons.ChevronRight />
+              <ChevronRightIcon size={16} />
             </button>
           </div>
         </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(7, 1fr)",
-            gap: 1,
-            fontSize: "var(--text-chip)",
-            textAlign: "center",
-            color: "var(--text-3)",
-            marginBottom: 4,
-          }}
-        >
+        <div className="grid [grid-template-columns:repeat(7,_1fr)] [gap:1px] [font-size:var(--text-chip)] text-center text-muted-foreground mb-1">
           {days.map((day, index) => (
             <div key={`${day}-${String(index)}`}>{day}</div>
           ))}
         </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(7, 1fr)",
-            gap: 1,
-            fontSize: "var(--text-caption)",
-            textAlign: "center",
-          }}
-        >
+        <div className="grid [grid-template-columns:repeat(7,_1fr)] [gap:1px] [font-size:var(--text-caption)] text-center">
           {Array.from({ length: 42 }).map((_, index) => {
             const day = index - leadingBlanks + 1;
             const valid = day >= 1 && day <= daysInMonth;
             const isToday = isCurrentMonth && valid && day === today;
-            let dayColor = "var(--text)";
-            if (!valid) {
-              dayColor = "var(--text-3)";
-            } else if (isToday) {
-              dayColor = "white";
-            }
             return (
               <button
                 type="button"
@@ -124,16 +95,13 @@ function MiniCalendar() {
                     : undefined
                 }
                 onClick={() => void navigate({ to: "/calendar" })}
-                style={{
-                  aspectRatio: "1",
-                  display: "grid",
-                  placeItems: "center",
-                  borderRadius: 999,
-                  color: dayColor,
-                  background: isToday ? "var(--accent)" : "transparent",
-                  fontWeight: isToday ? 600 : 400,
-                  cursor: valid ? "pointer" : "default",
-                }}
+                className={cn(
+                  "[aspect-ratio:1] grid [place-items:center] [border-radius:999px]",
+                  !valid ? "text-muted-foreground" : isToday ? "[color:white]" : "text-foreground",
+                  isToday ? "[background:var(--accent)]" : "bg-transparent",
+                  isToday ? "font-semibold" : "font-normal",
+                  valid ? "cursor-pointer" : "cursor-default",
+                )}
               >
                 {valid ? day : ""}
               </button>
@@ -141,16 +109,18 @@ function MiniCalendar() {
           })}
         </div>
       </div>
-      <div style={{ height: 1, background: "var(--border)", margin: "8px 0" }} />
-      <div style={{ padding: "0 14px 12px", flex: 1, overflowY: "auto" }}>
-        <div style={sectionLabelStyle}>Today · {todayLabel}</div>
+      <div className="[height:1px] [background:var(--border)] [margin:8px_0]" />
+      <div className="[padding:0_14px_12px] flex-1 overflow-y-auto">
+        <div className="[font-size:var(--text-chip)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em] mb-2">
+          Today · {todayLabel}
+        </div>
         <button
           type="button"
-          className="btn sm"
-          style={{ width: "100%", marginTop: 12 }}
+          className="btn sm w-full mt-3"
+
           onClick={() => void navigate({ to: "/calendar" })}
         >
-          <Icons.Plus /> New event
+          <PlusIcon size={16} /> New event
         </button>
       </div>
     </div>
@@ -163,15 +133,15 @@ function MiniContacts() {
   const deferredQuery = useDeferredValue(query.trim());
   const people = useQuery(peopleDirectoryQueryOptions({ query: deferredQuery, limit: 50 }));
   return (
-    <div style={{ padding: 12, overflowY: "auto", height: "100%" }}>
+    <div className="p-3 overflow-y-auto h-full">
       <input
-        className="input"
+        className="input mb-3"
         placeholder="Search contacts…"
         value={query}
         onChange={(event) => {
           setQuery(event.target.value);
         }}
-        style={{ marginBottom: 12 }}
+
         aria-label="Search contacts"
       />
       {people.isLoading ? <div role="status">Loading contacts…</div> : null}
@@ -192,7 +162,7 @@ function MiniContacts() {
           key={person.id}
           href={person.email === null ? undefined : `mailto:${person.email}`}
           aria-disabled={person.email === null}
-          style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 4px" }}
+          className="flex gap-2 items-center [padding:8px_4px]"
         >
           {person.avatarDataUrl === null ? null : (
             <img
@@ -200,17 +170,13 @@ function MiniContacts() {
               alt=""
               width={28}
               height={28}
-              style={{ borderRadius: "50%" }}
+              className="rounded-full"
             />
           )}
           <span>
             <strong>{person.favorite ? `★ ${person.displayName}` : person.displayName}</strong>
-            {person.email === null ? null : (
-              <span style={{ display: "block" }}>{person.email}</span>
-            )}
-            <span
-              style={{ display: "block", color: "var(--text-3)", fontSize: "var(--text-caption)" }}
-            >
+            {person.email === null ? null : <span className="block">{person.email}</span>}
+            <span className="block text-muted-foreground [font-size:var(--text-caption)]">
               {person.kind}
             </span>
           </span>
@@ -229,44 +195,26 @@ function MiniAI() {
     "Find time on my calendar this week",
   ];
   return (
-    <div style={panelColumnStyle}>
-      <div style={{ padding: 14, borderBottom: "1px solid var(--border)" }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            color: "var(--accent)",
-            fontWeight: 600,
-            fontSize: "var(--text-body-sm)",
-            marginBottom: 4,
-          }}
-        >
-          <Icons.Sparkles />
+    <div className="flex flex-col h-full">
+      <div className="p-3.5 [border-bottom:1px_solid_var(--border)]">
+        <div className="flex items-center gap-2 text-primary font-semibold [font-size:var(--text-body-sm)] mb-1">
+          <SparklesIcon size={16} />
           Helix AI
         </div>
-        <div style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
-          Your assistant for mail, docs, and the rest of the workspace.
+        <div className="[font-size:var(--text-caption)] text-muted-foreground">
+          Your assistant for mail, files, and the rest of the workspace.
         </div>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-        <div style={sectionLabelStyle}>Suggested</div>
+      <div className="flex-1 overflow-y-auto p-3">
+        <div className="[font-size:var(--text-chip)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em] mb-2">
+          Suggested
+        </div>
         {suggestions.map((suggestion) => (
           <button
             key={suggestion}
             type="button"
             onClick={() => void navigate({ to: "/assistant" })}
-            style={{
-              width: "100%",
-              textAlign: "left",
-              padding: "8px 10px",
-              marginBottom: 4,
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              fontSize: "var(--text-meta)",
-              color: "var(--text)",
-            }}
+            className="w-full text-left [padding:8px_10px] mb-1 bg-muted [border:1px_solid_var(--border)] rounded-md [font-size:var(--text-meta)] text-foreground"
           >
             {suggestion}
           </button>
@@ -298,19 +246,7 @@ export interface SidePanelRailProps {
 }
 export function SidePanelRail({ activeTool, onToggle }: SidePanelRailProps) {
   return (
-    <div
-      style={{
-        width: 44,
-        flexShrink: 0,
-        borderLeft: "1px solid var(--border)",
-        background: "var(--surface)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        padding: "8px 0",
-        gap: 2,
-      }}
-    >
+    <div className="w-11 shrink-0 [border-left:1px_solid_var(--border)] bg-card flex flex-col items-center [padding:8px_0] gap-0.5">
       {SIDE_TOOLS.map((tool) => {
         const Icon = Icons[tool.icon];
         const active = activeTool === tool.id;
@@ -324,16 +260,11 @@ export function SidePanelRail({ activeTool, onToggle }: SidePanelRailProps) {
             aria-label={tool.label}
             aria-pressed={active}
             title={tool.label}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 6,
-              display: "grid",
-              placeItems: "center",
-              background: active ? "var(--accent-soft)" : "transparent",
-              color: active ? "var(--accent)" : "var(--text-2)",
-              position: "relative",
-            }}
+            className={cn(
+              "w-8 h-8 rounded-md grid [place-items:center] relative",
+              active ? "[background:var(--accent-soft)]" : "bg-transparent",
+              active ? "text-primary" : "[color:var(--text-2)]",
+            )}
             onMouseEnter={(event) => {
               if (!active) {
                 event.currentTarget.style.background = "var(--hover)";
@@ -345,11 +276,11 @@ export function SidePanelRail({ activeTool, onToggle }: SidePanelRailProps) {
               }
             }}
           >
-            <Icon />
+            <Icon size={16} />
           </button>
         );
       })}
-      <div style={{ flex: 1 }} />
+      <div className="flex-1" />
     </div>
   );
 }
@@ -367,31 +298,11 @@ export function SidePanel({ activeTool, onClose }: SidePanelProps) {
   const Icon = Icons[view.icon];
   const { Component } = view;
   return (
-    <div
-      style={{
-        width: 320,
-        flexShrink: 0,
-        borderLeft: "1px solid var(--border)",
-        background: "var(--surface)",
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-      }}
-    >
-      <div
-        style={{
-          height: 40,
-          display: "flex",
-          alignItems: "center",
-          padding: "0 14px",
-          gap: 8,
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        <Icon />
-        <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>{view.title}</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 2 }}>
+    <div className="w-80 shrink-0 [border-left:1px_solid_var(--border)] bg-card flex flex-col min-h-0">
+      <div className="h-10 flex items-center [padding:0_14px] gap-2 [border-bottom:1px_solid_var(--border)] shrink-0">
+        <Icon size={16} />
+        <span className="font-semibold [font-size:var(--text-body-sm)]">{view.title}</span>
+        <div className="ml-auto flex gap-0.5">
           {fullRoute === undefined ? null : (
             <button
               type="button"
@@ -400,15 +311,15 @@ export function SidePanel({ activeTool, onClose }: SidePanelProps) {
               aria-label="Open full"
               onClick={() => void navigate({ to: fullRoute })}
             >
-              <Icons.Grid />
+              <GridIcon size={16} />
             </button>
           )}
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close panel">
-            <Icons.X />
+            <XIcon size={16} />
           </button>
         </div>
       </div>
-      <div style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
+      <div className="flex-1 overflow-hidden min-h-0">
         <Component />
       </div>
     </div>

@@ -1,4 +1,3 @@
-import { describe, expect, it } from "vitest";
 import type {
   AICallContext,
   AICapability,
@@ -13,6 +12,7 @@ import type {
   TraceContext,
   Unsubscribe,
 } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
 import { SearchEventIndexer } from "../search/event-indexer.js";
 import type {

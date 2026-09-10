@@ -1,6 +1,6 @@
-import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import type postgres from "postgres";
 import { z } from "zod";
 import { BadRequestError, ForbiddenError } from "../../api/api-error.js";
 import { type AdminConsoleAuditSink, auditAdminAction } from "../admin/console-shared.js";
@@ -59,7 +59,7 @@ const appealSchema = z
   .strict();
 const addEvidenceSchema = z.object({ evidence: evidenceSchema }).strict();
 
-export interface ChatModerationCase {
+interface ChatModerationCase {
   readonly id: string;
   readonly roomId: string;
   readonly reportedMessageId: string | null;
@@ -74,7 +74,7 @@ export interface ChatModerationCase {
   readonly evidence: readonly unknown[];
 }
 
-export interface ChatModerationSignal {
+interface ChatModerationSignal {
   readonly id: string;
   readonly actorId: string;
   readonly sourceMessageId: string | null;

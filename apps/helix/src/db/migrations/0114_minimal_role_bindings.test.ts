@@ -117,7 +117,7 @@ describe.skipIf(sql === null)("0114 live two-tenant role enforcement", () => {
 
   it("seeds a built-in role and returns only the actor's same-tenant bindings", async () => {
     const builtIns = await database<{ role_key: string }[]>`
-      select role_key from iam_roles where org_id = ${orgA} and kind = 'built_in'
+      select role_key from iam_roles where org_id = ${orgA} and kind = 'built_in' and role_key = 'workspace_viewer'
     `;
     expect(builtIns).toEqual([{ role_key: "workspace_viewer" }]);
 

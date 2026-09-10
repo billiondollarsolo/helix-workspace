@@ -51,4 +51,3 @@ export function validateRecallLimit(k: number): number {
   }
   return k;
 }
-

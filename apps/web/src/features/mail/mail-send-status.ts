@@ -8,7 +8,7 @@
  */
 
 /** Backend delivery states documented in mail-security-and-reliability.md. */
-export const MAIL_DELIVERY_STATUSES = [
+const MAIL_DELIVERY_STATUSES = [
   "queued",
   "sending",
   "sent",
@@ -66,9 +66,7 @@ const TERMINAL_PHASES: ReadonlySet<MailSendUiPhase> = new Set(["sent", "failed",
 
 const ACTIVE_POLL_PHASES: ReadonlySet<MailSendUiPhase> = new Set(["queued", "sending", "delayed"]);
 
-export function isMailDeliveryStatus(
-  value: string | null | undefined,
-): value is MailDeliveryStatus {
+function isMailDeliveryStatus(value: string | null | undefined): value is MailDeliveryStatus {
   return typeof value === "string" && (MAIL_DELIVERY_STATUSES as readonly string[]).includes(value);
 }
 
@@ -128,7 +126,7 @@ export function resolveMailSendUiStatus(input: MailSendStatusInput): MailSendUiS
   return delivery;
 }
 
-export function parseMailUndoUntilMs(undoUntil: string | null | undefined): number | null {
+function parseMailUndoUntilMs(undoUntil: string | null | undefined): number | null {
   if (typeof undoUntil !== "string" || undoUntil.length === 0) {
     return null;
   }
@@ -136,7 +134,7 @@ export function parseMailUndoUntilMs(undoUntil: string | null | undefined): numb
   return Number.isFinite(ms) ? ms : null;
 }
 
-export function resolveMailOutboundId(
+function resolveMailOutboundId(
   source: Pick<MailSendStatusSource, "id" | "outboundId">,
 ): string | null {
   if (typeof source.outboundId === "string" && source.outboundId.length > 0) {

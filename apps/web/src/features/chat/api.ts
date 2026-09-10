@@ -231,25 +231,6 @@ export async function listChatRooms(
   return output.rooms ?? [];
 }
 
-export async function discoverChatRooms(
-  input: { readonly query?: string; readonly limit?: number } = {},
-  fetchImpl: ChatApiFetch = authenticatedFetch,
-): Promise<readonly ChatRoomRecord[]> {
-  const output = await callChatTool<{ readonly rooms?: readonly ChatRoomRecord[] }>(
-    "chat.room.discover",
-    { query: input.query, limit: input.limit ?? 50 },
-    fetchImpl,
-  );
-  return output.rooms ?? [];
-}
-
-export function joinChatRoom(
-  roomId: string,
-  fetchImpl: ChatApiFetch = authenticatedFetch,
-): Promise<ChatRoomRecord> {
-  return callChatTool<ChatRoomRecord>("chat.room.join", { roomId }, fetchImpl);
-}
-
 export async function listChatMessages(
   input: {
     readonly roomId: string;
@@ -330,24 +311,6 @@ export async function inviteToRoom(
   return callChatTool("chat.invite", payload, fetchImpl);
 }
 
-export async function listThreadReplies(
-  input: {
-    readonly roomId: string;
-    readonly parentMessageId: string;
-    readonly before?: ChatMessagePageCursor;
-    readonly direction?: "older" | "newer";
-    readonly limit?: number;
-  },
-  fetchImpl: ChatApiFetch = authenticatedFetch,
-): Promise<readonly ChatMessageRecord[]> {
-  const output = await callChatTool<{ readonly messages?: readonly ChatMessageRecord[] }>(
-    "chat.thread.list",
-    input,
-    fetchImpl,
-  );
-  return output.messages ?? [];
-}
-
 export interface ChatMessagePageCursor {
   readonly sentAt: string;
   readonly id: string;
@@ -372,13 +335,6 @@ export async function pinChatMessage(
   fetchImpl: ChatApiFetch = authenticatedFetch,
 ): Promise<ChatPinRecord> {
   return callChatTool("chat.pin", input, fetchImpl);
-}
-
-export async function unpinChatMessage(
-  input: { readonly roomId: string; readonly messageId: string },
-  fetchImpl: ChatApiFetch = authenticatedFetch,
-): Promise<{ readonly ok: true }> {
-  return callChatTool("chat.unpin", input, fetchImpl);
 }
 
 export async function listChatPins(

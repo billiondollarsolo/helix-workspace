@@ -25,8 +25,6 @@ describe("drive errors", () => {
     const e = new DriveQuotaExceededError("org", 100, 150);
     expect(e.statusCode).toBe(409);
     expect(e.projectedBytes).toBe(150);
-    expect(new DriveStorageQuotaExceededError("org", 1, 2)).toBeInstanceOf(
-      DriveQuotaExceededError,
-    );
+    expect(new DriveStorageQuotaExceededError("org", 1, 2)).toBeInstanceOf(DriveQuotaExceededError);
   });
 });

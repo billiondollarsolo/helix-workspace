@@ -7,47 +7,14 @@ import type {
   SuggestionContext,
   SuggestionSlotProviderCapability,
 } from "@helix/sdk-types";
-import { mailPluginId } from "../types.js";
 
-export const mailSuggestionSlotIds = [
+const mailSuggestionSlotIds = [
   "mail.compose-help",
   "mail.summarize-thread",
   "mail.suggest-reply",
 ] as const;
 
-export type MailSuggestionSlotId = (typeof mailSuggestionSlotIds)[number];
-
-export interface MailSuggestionSlotDescriptor {
-  readonly id: MailSuggestionSlotId;
-  readonly pluginId: typeof mailPluginId;
-  readonly label: string;
-  readonly description: string;
-  readonly order: number;
-}
-
-export const mailSuggestionSlots: readonly MailSuggestionSlotDescriptor[] = [
-  {
-    id: "mail.compose-help",
-    pluginId: mailPluginId,
-    label: "Compose help",
-    description: "Suggest body content while composing",
-    order: 10,
-  },
-  {
-    id: "mail.summarize-thread",
-    pluginId: mailPluginId,
-    label: "Summarize thread",
-    description: "Summarize a long mail thread",
-    order: 20,
-  },
-  {
-    id: "mail.suggest-reply",
-    pluginId: mailPluginId,
-    label: "Suggest reply",
-    description: "Suggest a short reply to a thread",
-    order: 30,
-  },
-];
+type MailSuggestionSlotId = (typeof mailSuggestionSlotIds)[number];
 
 export interface MailSuggestionProviderOptions {
   readonly ai: AICapability;

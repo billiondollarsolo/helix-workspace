@@ -1,13 +1,13 @@
-import { describe, expect, it } from "vitest";
 import type { Actor, AuditRecord, RequestContext, ToolDefinition } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { tierDefaults } from "./config/tier.js";
-import { createToolRegistry, featureFlagForTool } from "./tool-registry.js";
-import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "./tools/registry.js";
 import {
   InMemoryAgentRateCostLimiter,
   usdToMicros,
   type AgentLimitBudget,
 } from "./limits/index.js";
+import { createToolRegistry, featureFlagForTool } from "./tool-registry.js";
+import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "./tools/registry.js";
 
 const schema = {
   parse: (value: unknown) => value,

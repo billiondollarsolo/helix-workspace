@@ -21,7 +21,7 @@
  *    the FIPS-approved list and, when the host Node was built/launched with a
  *    FIPS-validated OpenSSL, can drive `crypto.setFips(true)`.
  */
-export type CryptoAdapterId = "node" | "node-openssl-fips";
+type CryptoAdapterId = "node" | "node-openssl-fips";
 
 /**
  * FIPS enforcement mode.
@@ -35,7 +35,7 @@ export type CryptoAdapterId = "node" | "node-openssl-fips";
  *    enter OpenSSL FIPS mode. If the runtime cannot do so the provider fails
  *    closed (see {@link CryptoInitializationError}).
  */
-export type FipsMode = "off" | "permissive" | "required";
+type FipsMode = "off" | "permissive" | "required";
 
 export interface CryptoConfig {
   /** Resolved adapter id. */

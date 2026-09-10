@@ -112,6 +112,8 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("Chat Drive attachment p
       insert into resource_classifications (
         org_id, resource_type, resource_id, classification, source, reason, actor_id
       ) values (${org}, 'drive.file', ${restricted}, 'restricted', 'explicit', 'policy test', ${sender})
+      on conflict (org_id, resource_type, resource_id) do update set
+        classification = excluded.classification, source = excluded.source, reason = excluded.reason
     `;
   });
 
@@ -155,8 +157,10 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("Chat Drive attachment p
 
   it("rejects foreign, unclean, revoked, and externally prohibited objects", async () => {
     await expect(send(foreign, "chat-drive-foreign")).rejects.toThrow();
-    await expect(send(dirty, "chat-drive-dirty")).rejects.toThrow("not clean and ready");
-    await expect(send(revoked, "chat-drive-revoked")).rejects.toThrow("inaccessible");
+    await expect(send(dirty, "chat-drive-dirty")).rejects.toThrow("Chat attachment was not found.");
+    await expect(send(revoked, "chat-drive-revoked")).rejects.toThrow(
+      "Drive attachment is inaccessible",
+    );
     await expect(send(restricted, "chat-drive-restricted")).rejects.toThrow(
       "classified Drive attachment",
     );

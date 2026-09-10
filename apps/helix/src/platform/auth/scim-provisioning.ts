@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
-export type ScimFilterAttribute = "id" | "externalId" | "userName" | "displayName";
+import { isUniqueViolation } from "../util/sql.js";
+type ScimFilterAttribute = "id" | "externalId" | "userName" | "displayName";
 export interface ScimFilter {
   readonly attribute: ScimFilterAttribute;
   readonly value: string;
@@ -23,7 +24,7 @@ export interface ScimUserRecord {
   readonly updatedAt: Date;
   readonly version: number;
 }
-export interface ScimGroupMember {
+interface ScimGroupMember {
   readonly value: string;
   readonly display: string;
 }
@@ -714,7 +715,4 @@ function sameGroup(record: ScimGroupRecord, input: PutScimGroup): boolean {
 }
 function assertVersion(actual: number, expected: number | null): void {
   if (expected !== null && actual !== expected) throw new ScimPreconditionError();
-}
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === "object" && error !== null && Reflect.get(error, "code") === "23505";
 }

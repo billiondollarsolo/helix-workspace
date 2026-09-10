@@ -80,7 +80,11 @@ describe("webhook HMAC signatures", () => {
   });
 
   it("parses signature headers independently for route adapters", () => {
-    expect(parseWebhookSignatureHeader("t=1777777777,v1=c26d1741d8b72c6da2c6c1661f32ba08cf3b29bc328eb8bee4be177b1d85ded5")).toEqual({
+    expect(
+      parseWebhookSignatureHeader(
+        "t=1777777777,v1=c26d1741d8b72c6da2c6c1661f32ba08cf3b29bc328eb8bee4be177b1d85ded5",
+      ),
+    ).toEqual({
       timestamp: 1_777_777_777,
       signature: "c26d1741d8b72c6da2c6c1661f32ba08cf3b29bc328eb8bee4be177b1d85ded5",
     });

@@ -47,10 +47,7 @@ import type { AdminSectionId } from "@/features/admin/admin-console-data";
  *  the caller's tenant. A bare `*` would be rejected; a leading concrete token
  *  is required. */
 const SUBJECT_ROUTES: Readonly<Record<string, readonly QueryKey[]>> = {
-  "helix.config.changed": [
-    ["admin", "platform-config"],
-    ["admin", "plugins", "catalog"],
-  ],
+  "helix.config.changed": [["admin", "platform-config"]],
   "flags.changed.*": [
     ["admin", "tenant-config"],
     ["admin", "core-apps"],

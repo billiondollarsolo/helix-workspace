@@ -72,19 +72,6 @@ export function buildHelixRequest(
         client_secret: command.clientSecret,
         ...(command.scope === undefined ? {} : { scope: command.scope }),
       });
-    case "install-list":
-      return createRequest(env, "POST", "/api/tools/plugin.list", {});
-    case "install-plugin":
-      return createRequest(env, "POST", "/api/tools/plugin.install", {
-        ...(isRecord(input) ? input : {}),
-        pluginId: command.pluginId,
-        ...(command.version === undefined ? {} : { version: command.version }),
-      });
-    case "plugin-lifecycle":
-      return createRequest(env, "POST", `/api/tools/plugin.${command.action}`, {
-        ...(isRecord(input) ? input : {}),
-        pluginId: command.pluginId,
-      });
     case "admin-users-list":
       return createRequest(env, "GET", withQuery("/api/admin/users", command));
     case "admin-audit-list":
@@ -348,8 +335,4 @@ function queryStringValue(value: unknown): string {
     return String(value);
   }
   throw new Error("Query parameters must be primitive values.");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

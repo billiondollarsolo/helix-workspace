@@ -1,9 +1,10 @@
-import { hashPassword } from "@better-auth/utils/password";
+import { isJsonObject } from "@helix/sdk-types";
+import { hashPassword } from "better-auth/crypto";
 import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
 import { randomBytes, sha256Hex } from "../crypto/index.js";
 
-export const signupEmailVerificationTtlSeconds = 24 * 60 * 60;
+const signupEmailVerificationTtlSeconds = 24 * 60 * 60;
 
 export interface SignupEmailVerificationRecord {
   readonly orgId: string;
@@ -68,7 +69,7 @@ export interface SignupOwnerEmailRecord {
   readonly email: string;
 }
 
-export interface SignupOwnerEmailLookup {
+interface SignupOwnerEmailLookup {
   findOwnerByEmail(email: string): Promise<SignupOwnerEmailRecord | null>;
 }
 
@@ -334,7 +335,7 @@ export class PostgresSignupOwnerEmailLookup implements SignupOwnerEmailLookup {
   }
 }
 
-export function generateSignupEmailVerificationToken(): string {
+function generateSignupEmailVerificationToken(): string {
   return `helix_signup_${randomBytes(32).toString("base64url")}`;
 }
 
@@ -408,8 +409,4 @@ function nextResendMetadata(
       },
     },
   };
-}
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

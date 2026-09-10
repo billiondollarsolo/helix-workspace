@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../../test-support/recording-sql.js";
 import { createConfiguredVectorStore } from "./config.js";
 
 describe("vector store runtime config", () => {
@@ -108,7 +108,4 @@ describe("vector store runtime config", () => {
     ).toThrow("Unsupported vector store plugin");
   });
 });
-
-function fakeSql(): postgres.Sql {
-  return (() => Promise.resolve([])) as unknown as postgres.Sql;
-}
+const fakeSql = () => sharedRecordingSql().sql;

@@ -1,14 +1,14 @@
 import type { Actor } from "@helix/sdk-types";
-import type { McpResource, McpResourceContent, McpResourceProvider } from "./mcp.js";
 import type { CalendarEventRecord } from "../platform/calendar/types.js";
 import type { ChatMessageRecord, ChatRoomRecord } from "../platform/chat/types.js";
-import type { DriveEntryRecord, DriveSearchHit } from "../platform/drive/types.js";
 import type {
   DriveFileReadInput,
   DriveFileReadResult,
   DriveFileStreamResult,
 } from "../platform/drive/store.js";
+import type { DriveEntryRecord, DriveSearchHit } from "../platform/drive/types.js";
 import type { MailSearchHit, MailThreadDetail, MailThreadMessage } from "../platform/mail/types.js";
+import type { McpResource, McpResourceContent, McpResourceProvider } from "./mcp.js";
 export interface StoreBackedMcpResourceProviderOptions {
   readonly chat?: {
     listRooms(input: {

@@ -111,40 +111,6 @@ export class MailProviderConfigurationError extends Error {
   }
 }
 
-export class MailDraftNotFoundError extends NotFoundError {
-  constructor(draftId: string) {
-    super(`Unknown or inaccessible mail draft: ${draftId}`, {
-      details: { mailCode: "mail.draft_not_found", draftId },
-    });
-    this.name = "MailDraftNotFoundError";
-  }
-}
-
-export class MailAliasNotFoundError extends NotFoundError {
-  constructor(aliasId: string) {
-    super(`Unknown or inaccessible mail alias: ${aliasId}`, {
-      details: { mailCode: "mail.alias_not_found", aliasId },
-    });
-    this.name = "MailAliasNotFoundError";
-  }
-}
-
-export class MailDraftVersionConflictError extends ApiError {
-  constructor(
-    readonly draftId: string,
-    readonly currentVersion: number,
-  ) {
-    super("conflict", "The server draft is newer; reload or explicitly merge before saving.", {
-      details: {
-        mailCode: "mail.draft_version_conflict",
-        draftId,
-        currentVersion,
-      },
-    });
-    this.name = "MailDraftVersionConflictError";
-  }
-}
-
 export class MailSendIdempotencyRequiredError extends BadRequestError {
   constructor() {
     super("Agent and API mail sends require an idempotency key.", {

@@ -19,8 +19,6 @@ const topLevelCommands = [
   "login",
   "logout",
   "auth",
-  "install",
-  "plugin",
   "openapi",
   "asyncapi",
   "mcp",
@@ -103,16 +101,11 @@ export const commandActions: Record<string, readonly string[]> = {
   tier: ["set"],
   logout: [],
   auth: ["token"],
-  install: ["list", "plugin", "enable", "disable", "uninstall"],
-  plugin: ["install", "enable", "disable", "uninstall"],
   openapi: ["get"],
   asyncapi: ["get"],
   mcp: ["serve", "resources"],
   completion: ["bash", "zsh", "fish"],
 };
-
-// Scopes whose only completion is the generic `--json` flag.
-const jsonScopes = ["install", "plugin"] as const;
 
 const searchFlags = ["--query", "--type", "--limit", "--json"] as const;
 const securityTierValues = ["personal", "business", "enterprise", "sovereign"] as const;
@@ -536,7 +529,6 @@ function generateBashCompletion(): string {
     "    return",
     "  fi",
     "",
-    `  case "$scope" in ${jsonScopes.join("|")}) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;; esac`,
     "}",
     "",
     "complete -F _helix_completion helix",
@@ -674,9 +666,6 @@ function generateZshCompletion(): string {
     "    tier)",
     "      if [[ ${words[3]} == set ]]; then compadd -- $tier_values; fi",
     "      ;;",
-    `    ${jsonScopes.join("|")})`,
-    "      compadd -- $json_flag",
-    "      ;;",
     "  esac",
     "}",
     "",
@@ -728,7 +717,6 @@ function generateFishCompletion(): string {
     ...fishFamilyActionCompletions("admin", adminFamilyActions),
     ...fishFamilyFlagCompletions("admin", adminActionFlags, adminFlagValues),
     `complete -c helix -n "__fish_seen_subcommand_from tier; and __fish_seen_subcommand_from set" -a "${wordList(securityTierValues)}"`,
-    `complete -c helix -n "__fish_seen_subcommand_from ${jsonScopes.join(" ")}" -l json -x`,
     "",
   );
 

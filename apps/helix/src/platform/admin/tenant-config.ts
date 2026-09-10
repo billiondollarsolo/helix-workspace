@@ -1,6 +1,20 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Actor, EventBus, JsonObject } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { inboundAuthenticationPolicySchema } from "../mail/inbound-policy.js";
+import {
+  assertLiveMigrationStorageStates,
+  defaultTenantStoragePrefix,
+  testTenantStorageConnection,
+  type TenantStorageMigrationJobRecord,
+  type TenantStorageMigrationJobStore,
+  type TenantStorageMigrationStorageState,
+  type TenantStorageResolver,
+} from "../storage/index.js";
+import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
+import { buildEffectiveTenantConfig, type PlanRecord, type PlanStore } from "../tenancy/plans.js";
+import { toJsonObject } from "../util/json.js";
+import { hasControlCharacter } from "../util/strings.js";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -13,25 +27,13 @@ import {
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "./console-shared.js";
-import {
-  assertLiveMigrationStorageStates,
-  defaultTenantStoragePrefix,
-  testTenantStorageConnection,
-  type TenantStorageResolver,
-  type TenantStorageMigrationJobRecord,
-  type TenantStorageMigrationJobStore,
-  type TenantStorageMigrationStorageState,
-} from "../storage/index.js";
-import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
-import { buildEffectiveTenantConfig, type PlanRecord, type PlanStore } from "../tenancy/plans.js";
-import { inboundAuthenticationPolicySchema } from "../mail/inbound-policy.js";
 
 export interface TenantConfigAdminStore {
   findById(id: string): Promise<OrgRecord | null>;
   updateTenantConfig(input: UpdateTenantConfigInput): Promise<OrgRecord | null>;
 }
 
-export interface TenantConfigAdminView {
+interface TenantConfigAdminView {
   readonly orgId: string;
   readonly byo: JsonObject;
   readonly features: JsonObject;
@@ -641,10 +643,6 @@ function tenantConfigSections(input: z.infer<typeof tenantConfigUpdateBody>): re
   ];
 }
 
-function toJsonObject(value: Record<string, unknown>): JsonObject {
-  return JSON.parse(JSON.stringify(value)) as JsonObject;
-}
-
 function tenantStorageMigrationState(
   storage: z.infer<typeof byoStorageSchema> | undefined,
   fallback: "byo" | "helix-default",
@@ -752,14 +750,4 @@ function urlHasNoCredentials(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code < 32 || code === 127) {
-      return true;
-    }
-  }
-  return false;
 }

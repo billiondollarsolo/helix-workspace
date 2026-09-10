@@ -1,22 +1,15 @@
-import { z } from "zod";
-import { getCryptoProvider } from "../crypto/index.js";
-import type postgres from "postgres";
 import type { Actor, JsonObject, ToolDefinition } from "@helix/sdk-types";
-import type { RuntimeToolRegistry } from "../tool-registry.js";
-import { zodToolSchema } from "../webhooks/tool-schemas.js";
-import { hashSecret, parseScope, OAuthError, verifySecret } from "./oauth.js";
+import type postgres from "postgres";
+import { z } from "zod";
 import { actorHasScope } from "../../api/scopes.js";
+import { getCryptoProvider } from "../crypto/index.js";
 import { appPasswordScopeCatalog, validatedPermissions } from "../permissions/scope-catalog.js";
+import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { defineTool } from "../tools/define-tool.js";
+import { zodToolSchema } from "../webhooks/tool-schemas.js";
+import { hashSecret, OAuthError, parseScope, verifySecret } from "./oauth.js";
 
-export const appPasswordAdminScope = "admin.users";
-
-/**
- * Scope catalog for standards-client app passwords (DAV / SMTP clients).
- *
- * As of P1-6 this is re-exported from the single canonical scope-catalog module
- * (derived as the `app_password` surface) rather than hand-maintained here.
- */
-export { appPasswordScopeCatalog };
+const appPasswordAdminScope = "admin.users";
 
 export interface AppPasswordRecord {
   readonly id: string;
@@ -372,7 +365,7 @@ const revokeSchema = z.object({
   passwordId: uuidSchema,
 });
 
-export function createAppPasswordToolDefinitions(
+function createAppPasswordToolDefinitions(
   options: RegisterAppPasswordToolsOptions,
 ): readonly ToolDefinition[] {
   const manager = options.manager ?? new AppPasswordManager(options.store);
@@ -496,12 +489,6 @@ interface AppPasswordAuthRow {
   readonly password_id: string;
   readonly hash: string;
   readonly password_scopes: readonly string[];
-}
-
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
 }
 
 function normalizeScopes(scopes: readonly string[]): string[] {

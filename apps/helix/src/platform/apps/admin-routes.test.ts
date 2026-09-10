@@ -1,7 +1,7 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify from "fastify";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
 import { PlatformConfigAdminService, PostgresPlatformConfigStore } from "../config/admin.js";
 import { registerCoreAppsAdminRoutes, type CoreAppsAdminStatus } from "./admin-routes.js";
 import { CORE_APP_IDS, resolveRoleAppSet } from "./core-apps.js";

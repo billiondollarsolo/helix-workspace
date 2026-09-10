@@ -1,8 +1,8 @@
 import { resolveAICostBudget, validateNonNegativeInteger } from "./budget.js";
 import {
   costUsage,
-  limitExceeded as usageLimitExceeded,
   secondsUntilNextUtcDay,
+  limitExceeded as usageLimitExceeded,
   utcDayKey,
 } from "./daily-window.js";
 import type {
@@ -30,7 +30,7 @@ export interface RedisAICostClient {
 }
 
 /** The ioredis method name used to execute a Lua script. */
-export const IOREDIS_SCRIPT_METHOD = "ev" + "al";
+const IOREDIS_SCRIPT_METHOD = "ev" + "al";
 
 /**
  * Adapts an `ioredis`-style client into a {@link RedisAICostClient} so the

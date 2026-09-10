@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { PostgresCalendarStore } from "./store.js";
 
 describe("Postgres calendar time intent", () => {
@@ -53,22 +53,12 @@ function eventRow(timezone: string, startsAt: string) {
     updated_at: start,
   };
 }
-
-function recordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: { readonly query: string; readonly values: readonly unknown[] }[];
-} {
-  const calls: { query: string; values: readonly unknown[] }[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
-    calls.push({ query: strings.join("$"), values });
-    return Promise.resolve(queue.shift() ?? []);
+function recordingSql(responses: readonly unknown[]) {
+  const recording = sharedRecordingSql(responses, "$");
+  return {
+    sql: recording.sql,
+    get calls() {
+      return recording.calls.map(({ text, values }) => ({ query: text, values }));
+    },
   };
-  const sql = Object.assign(tag, {
-    array: (value: unknown) => value,
-    json: (value: unknown) => value,
-    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) =>
-      callback(sql as unknown as postgres.TransactionSql),
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
 }

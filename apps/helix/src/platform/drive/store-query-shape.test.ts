@@ -200,11 +200,11 @@ describe("PostgresDriveStore query shape", () => {
           org_id: orgId,
           owner_actor_id: actorId,
           kind: "file",
-          storage_key: "drive/test/roadmap.slide",
-          mime_type: "application/vnd.helix.slides",
+          storage_key: "drive/test/roadmap.pdf",
+          mime_type: "application/pdf",
           byte_size: 128,
           sha256: "a".repeat(64),
-          metadata: { app: "slides", title: "Roadmap deck" },
+          metadata: { app: "drive", title: "Roadmap deck" },
           deleted_at: null,
           created_at: now,
           updated_at: now,
@@ -217,8 +217,8 @@ describe("PostgresDriveStore query shape", () => {
           object_id: objectId,
           parent_comment_id: null,
           actor_id: actorId,
-          anchor: { kind: "slides-slide", slideId: "slide-1" },
-          body: "Can @maya review slide one?",
+          anchor: { kind: "file" },
+          body: "Can @maya review page one?",
           status: "open",
           metadata: { mentionsText: ["Maya Chen", "missing"] },
           resolved_at: null,
@@ -226,7 +226,6 @@ describe("PostgresDriveStore query shape", () => {
           updated_at: null,
         },
       ],
-      [],
       [],
       [],
       [
@@ -250,7 +249,7 @@ describe("PostgresDriveStore query shape", () => {
           object_type: "drive.object",
           object_id: objectId,
           summary: 'Owner Admin mentioned you in "Roadmap deck".',
-          body: "Can @maya review slide one?",
+          body: "Can @maya review page one?",
           payload: {},
           created_at: now,
           read_at: null,
@@ -262,8 +261,8 @@ describe("PostgresDriveStore query shape", () => {
       orgId,
       actorId,
       objectId,
-      body: "Can @maya review slide one?",
-      anchor: { kind: "slides-slide", slideId: "slide-1" },
+      body: "Can @maya review page one?",
+      anchor: { kind: "file" },
       metadata: { mentionsText: ["Maya Chen", "missing"] },
     });
     const actorLookup = recording.calls.find((call) => call.text.includes("from actors"));
@@ -280,16 +279,16 @@ describe("PostgresDriveStore query shape", () => {
         "drive.object",
         objectId,
         'Owner Admin mentioned you in "Roadmap deck".',
-        "Can @maya review slide one?",
+        "Can @maya review page one?",
       ]),
     );
     expect(notificationInsert?.values[7]).toMatchObject({
       objectId,
       commentId,
-      anchor: { kind: "slides-slide", slideId: "slide-1" },
+      anchor: { kind: "file" },
       mentionedByActorId: actorId,
       mentionsText: ["maya chen", "missing", "maya"],
-      app: "slides",
+      app: "drive",
     });
   });
   it("scopes folder access helper predicates to the request org", async () => {

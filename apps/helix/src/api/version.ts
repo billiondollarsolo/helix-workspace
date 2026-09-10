@@ -30,7 +30,7 @@ export const HELIX_SERVER_VERSION = resolvePackageVersion();
  * header value. Derived from the package version's major component; defaults
  * to `1` for pre-1.0 builds since the HTTP surface is already v1-shaped.
  */
-export const HELIX_API_MAJOR_VERSION = (() => {
+const HELIX_API_MAJOR_VERSION = (() => {
   const major = Number.parseInt(HELIX_SERVER_VERSION.split(".")[0] ?? "", 10);
   return Number.isFinite(major) && major > 0 ? major : 1;
 })();

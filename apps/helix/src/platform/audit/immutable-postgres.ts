@@ -1,6 +1,6 @@
+import type { JsonObject } from "@helix/sdk";
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
-import type { JsonObject } from "@helix/sdk";
 import type { ImmutableAuditActivityRecord, ImmutableAuditShipResult } from "./immutable-s3.js";
 import type { AuditBatchShipper } from "./shipping-worker.js";
 
@@ -36,13 +36,6 @@ import type { AuditBatchShipper } from "./shipping-worker.js";
  */
 
 const encoder = new TextEncoder();
-
-export interface WormAuditRow {
-  readonly worm_id: string;
-  readonly record_id: string;
-  readonly org_id: string;
-  readonly this_hash: string;
-}
 
 export class PostgresWormAuditShipper implements AuditBatchShipper {
   constructor(private readonly sql: postgres.Sql) {}

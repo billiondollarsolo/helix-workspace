@@ -70,13 +70,13 @@ export interface AdminMailConfigurationResponse {
   };
 }
 
-export interface AdminMailDomain {
+interface AdminMailDomain {
   readonly domain: string;
   readonly defaultFrom: boolean;
   readonly records: readonly AdminMailDNSRecord[];
 }
 
-export interface AdminMailDNSRecord {
+interface AdminMailDNSRecord {
   readonly type: DNSRecordType;
   readonly status: MailStatus;
   readonly expected?: string;
@@ -89,7 +89,7 @@ interface DNSRecordRow extends AdminMailDNSRecord {
   readonly defaultFrom: boolean;
 }
 
-export const adminMailConfigurationQueryKey = ["admin", "mail", "configuration"] as const;
+const adminMailConfigurationQueryKey = ["admin", "mail", "configuration"] as const;
 
 export function adminMailConfigurationQueryOptions() {
   return queryOptions({

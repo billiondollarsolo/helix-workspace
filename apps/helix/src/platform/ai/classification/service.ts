@@ -1,4 +1,4 @@
-import { deriveClassification, defaultClassificationPolicy } from "./policy.js";
+import { defaultClassificationPolicy, deriveClassification } from "./policy.js";
 import { canonicalClassificationResourceType, sensitivityLabelFor } from "./sensitivity-labels.js";
 import type {
   ClassificationDerivation,

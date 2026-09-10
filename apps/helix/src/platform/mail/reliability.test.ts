@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import type { MailDraftRecord } from "./types.js";
 import {
   MailAttachmentAccessRevokedError,
   createDispatchAuthorizedAttachmentResolver,
   mailOutboundDisplayStatus,
   reconcileLocalDraftRecovery,
 } from "./reliability.js";
+import type { MailDraftRecord } from "./types.js";
 
 const serverDraft: MailDraftRecord = {
   id: "draft-1",

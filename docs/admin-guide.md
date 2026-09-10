@@ -18,7 +18,7 @@ The first supported production profile is one organization with 5–50 trusted u
 `business` security tier. Tenant-aware internals and cross-organization tests remain mandatory, but
 public multi-tenant SaaS is not a supported pilot configuration. The accepted constraints and
 reversal triggers are indexed in the
-[architecture decision records](architecture/README.md).
+[architecture decision records](adr/README.md).
 
 Before enabling pilot users, operators must enforce and evidence all of the following:
 
@@ -76,7 +76,7 @@ Admins own release readiness for:
 - accessibility audit results
 - visual route review evidence
 - k6 smoke and load results for configured web and API targets
-- plugin documentation updates
+- integration documentation updates
 - troubleshooting notes for known operational failures
 
 ## Running Gates
@@ -111,7 +111,7 @@ Useful k6 overrides:
 
 - `WEB_ROUTES=/,/login,/mail`
 - `API_TARGETS=/healthz,/readyz,/metrics,/openapi.json`
-- `K6_SCENARIO_GROUPS=web_navigation,api_smoke,mail_api,inbound_mail,search,chat,docs,meet_jitsi,plugin_install,assistant_llm,mcp,otel_health`
+- `K6_SCENARIO_GROUPS=web_navigation,api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,assistant_llm,mcp,otel_health`
 - `AUTH_TOKEN=<token>`
 - `K6_TRACE_TOKEN=<stable-evidence-id>` or `HELIX_TRACE_TOKEN=<stable-evidence-id>`
 - `SKIP_PROTECTED_WITHOUT_AUTH=false`
@@ -129,8 +129,6 @@ Useful k6 overrides:
 - `INBOUND_MAIL_MARKER=release-k6-inbound-001`
 - `INBOUND_MAIL_SEARCHABLE_P95_MS=5000`
 - `ASSISTANT_BODY='{"message":"Route this request without side effects."}'`
-- `PLUGIN_INSTALL_BODY='{"pluginId":"com.helix.webhook-out-slack","version":"1.0.0"}'`
-- `PLUGIN_INSTALL_EXPECT=pending_confirmation`
 
 Protected PRD groups are skipped by default when `AUTH_TOKEN` is absent. Provide
 `AUTH_TOKEN` to exercise protected endpoints, or set `K6_SCENARIO_GROUPS` to a
@@ -451,18 +449,16 @@ For every target-mode release run, record the scenario group, whether it ran or
 was skipped, base URLs, auth mode, observed p95, threshold, blocker, owner, and
 next command for any skip or failure.
 
-| Scenario group   | Trend and threshold                                                  | Target-mode env overrides                                                                                                                                                                                                                      | Skip/blocker guidance                                                                                                                                                                                                                                                       |
-| ---------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mail_api`       | `helix_mail_api_ms`, `MAIL_API_P95_MS`                               | `MAIL_API_TOOL_ID`, `MAIL_API_BODY`, `MAIL_API_QUERY`, `MAIL_API_EXPECT`                                                                                                                                                                       | Protected; provide `AUTH_TOKEN` or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=mail_api pnpm quality:k6:target`.                                                                                                                    |
-| `inbound_mail`   | `helix_inbound_mail_searchable_ms`, `INBOUND_MAIL_SEARCHABLE_P95_MS` | `INBOUND_MAIL_ACCEPT_PATH`, `INBOUND_MAIL_BODY`, `INBOUND_MAIL_MARKER`, `INBOUND_MAIL_FROM`, `INBOUND_MAIL_TO`, `INBOUND_MAIL_SEARCH_TOOL_ID`, `INBOUND_MAIL_SEARCH_BODY`, `INBOUND_MAIL_SEARCH_TIMEOUT_MS`, `INBOUND_MAIL_SEARCH_INTERVAL_MS` | Protected; configure auth plus the local actor recipient or signed provider bridge, or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=inbound_mail pnpm quality:k6:target`.                                                            |
-| `search`         | `helix_search_query_ms`, `SEARCH_P95_MS`                             | `SEARCH_TOOL_IDS`, `SEARCH_BODY`, `SEARCH_QUERY`, `SEARCH_EXPECT`                                                                                                                                                                              | Protected; seed searchable data and auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=search pnpm quality:k6:target`.                                                                                                             |
-| `chat`           | `helix_chat_delivery_ms`, `CHAT_DELIVERY_P95_MS`                     | `CHAT_TOOL_ID`, `CHAT_BODY`, `CHAT_QUERY`, `CHAT_EXPECT`                                                                                                                                                                                       | Protected; seed chat data and auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=chat pnpm quality:k6:target`.                                                                                                                     |
-| `docs`           | `helix_docs_collaboration_ms`, `DOCS_COLLABORATION_P95_MS`           | `DOCS_CREATE_TOOL_ID`, `DOCS_CREATE_BODY`, `DOCS_EXPORT_TOOL_ID`, `DOCS_EXPORT_BODY`, `DOCS_DOC_ID`, `DOCS_EXPECT`                                                                                                                             | Protected; create/export a backend Docs document with auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=docs pnpm quality:k6:target`.                                                                                             |
-| `meet_jitsi`     | `helix_jitsi_join_ms`, `JITSI_JOIN_P95_MS`                           | `MEET_CREATE_TOOL_ID`, `MEET_CREATE_BODY`, `MEET_MINT_TOOL_ID`, `MEET_MINT_BODY`, `MEET_END_TOOL_ID`, `MEET_ROOM_ID`, `MEET_JITSI_DOMAIN`, `MEET_EXPECT`, `MEET_END_AFTER_MINT`                                                                | Protected; create a backend Meet room and mint a Jitsi join token with auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=meet_jitsi pnpm quality:k6:target`.                                                                      |
-| `plugin_install` | `helix_plugin_install_ms`, `PLUGIN_INSTALL_P95_MS`                   | `PLUGIN_INSTALL_TOOL_ID`, `PLUGIN_INSTALL_BODY`, `PLUGIN_INSTALL_EXPECT`, `PLUGIN_INSTALL_PLUGIN_ID`, `PLUGIN_INSTALL_VERSION`                                                                                                                 | Protected/admin; use release plugin metadata or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=plugin_install pnpm quality:k6:target`.                                                                                                 |
-| `assistant_llm`  | `helix_llm_routing_overhead_ms`, `LLM_ROUTING_P95_MS`                | `ASSISTANT_TOOL_ID`, `ASSISTANT_BODY`, `ASSISTANT_MESSAGE`                                                                                                                                                                                     | Protected; configure provider-safe prompt/body or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=assistant_llm pnpm quality:k6:target`. Pair release provider proof with `pnpm quality:live-auth-smoke -- --assistant-provider-smoke`. |
-| `mcp`            | `helix_mcp_catalog_ms`, `MCP_CATALOG_P95_MS`                         | `MCP_PATH`, `MCP_EXPECT`                                                                                                                                                                                                                       | Protected; expose the MCP catalog endpoint with auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=mcp pnpm quality:k6:target`.                                                                                                    |
-| `otel_health`    | `helix_otel_trace_ingestion_lag_ms`, `OTEL_INGESTION_LAG_P95_MS`     | `OTEL_HEALTH_PATH`                                                                                                                                                                                                                             | Health/metrics evidence can run without auth; if observability is not deployed, record the blocker, owner, and next command: `K6_SCENARIO_GROUPS=otel_health pnpm quality:k6:target`.                                                                                       |
+| Scenario group  | Trend and threshold                                                  | Target-mode env overrides                                                                                                                                                                                                                      | Skip/blocker guidance                                                                                                                                                                                                                                                       |
+| --------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mail_api`      | `helix_mail_api_ms`, `MAIL_API_P95_MS`                               | `MAIL_API_TOOL_ID`, `MAIL_API_BODY`, `MAIL_API_QUERY`, `MAIL_API_EXPECT`                                                                                                                                                                       | Protected; provide `AUTH_TOKEN` or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=mail_api pnpm quality:k6:target`.                                                                                                                    |
+| `inbound_mail`  | `helix_inbound_mail_searchable_ms`, `INBOUND_MAIL_SEARCHABLE_P95_MS` | `INBOUND_MAIL_ACCEPT_PATH`, `INBOUND_MAIL_BODY`, `INBOUND_MAIL_MARKER`, `INBOUND_MAIL_FROM`, `INBOUND_MAIL_TO`, `INBOUND_MAIL_SEARCH_TOOL_ID`, `INBOUND_MAIL_SEARCH_BODY`, `INBOUND_MAIL_SEARCH_TIMEOUT_MS`, `INBOUND_MAIL_SEARCH_INTERVAL_MS` | Protected; configure auth plus the local actor recipient or signed provider bridge, or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=inbound_mail pnpm quality:k6:target`.                                                            |
+| `search`        | `helix_search_query_ms`, `SEARCH_P95_MS`                             | `SEARCH_TOOL_IDS`, `SEARCH_BODY`, `SEARCH_QUERY`, `SEARCH_EXPECT`                                                                                                                                                                              | Protected; seed searchable data and auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=search pnpm quality:k6:target`.                                                                                                             |
+| `chat`          | `helix_chat_delivery_ms`, `CHAT_DELIVERY_P95_MS`                     | `CHAT_TOOL_ID`, `CHAT_BODY`, `CHAT_QUERY`, `CHAT_EXPECT`                                                                                                                                                                                       | Protected; seed chat data and auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=chat pnpm quality:k6:target`.                                                                                                                     |
+| `meet_jitsi`    | `helix_jitsi_join_ms`, `JITSI_JOIN_P95_MS`                           | `MEET_CREATE_TOOL_ID`, `MEET_CREATE_BODY`, `MEET_MINT_TOOL_ID`, `MEET_MINT_BODY`, `MEET_END_TOOL_ID`, `MEET_ROOM_ID`, `MEET_JITSI_DOMAIN`, `MEET_EXPECT`, `MEET_END_AFTER_MINT`                                                                | Protected; create a backend Meet room and mint a Jitsi join token with auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=meet_jitsi pnpm quality:k6:target`.                                                                      |
+| `assistant_llm` | `helix_llm_routing_overhead_ms`, `LLM_ROUTING_P95_MS`                | `ASSISTANT_TOOL_ID`, `ASSISTANT_BODY`, `ASSISTANT_MESSAGE`                                                                                                                                                                                     | Protected; configure provider-safe prompt/body or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=assistant_llm pnpm quality:k6:target`. Pair release provider proof with `pnpm quality:live-auth-smoke -- --assistant-provider-smoke`. |
+| `mcp`           | `helix_mcp_catalog_ms`, `MCP_CATALOG_P95_MS`                         | `MCP_PATH`, `MCP_EXPECT`                                                                                                                                                                                                                       | Protected; expose the MCP catalog endpoint with auth or record the blocker, owner, and next command: `AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=mcp pnpm quality:k6:target`.                                                                                                    |
+| `otel_health`   | `helix_otel_trace_ingestion_lag_ms`, `OTEL_INGESTION_LAG_P95_MS`     | `OTEL_HEALTH_PATH`                                                                                                                                                                                                                             | Health/metrics evidence can run without auth; if observability is not deployed, record the blocker, owner, and next command: `K6_SCENARIO_GROUPS=otel_health pnpm quality:k6:target`.                                                                                       |
 
 Outbound mail send-to-delivered remains live-provider evidence unless
 `pnpm quality:mail-deliverability-smoke` has passed against an approved external
@@ -470,36 +466,6 @@ SMTP/provider target and controlled recipient mailbox. Do not claim
 deliverability from Mailpit, static validation, or mocked k6 runs; record the
 SMTP/provider blocker, owner, next command, and required recipient/provider
 setup until real mailbox proof is attached.
-
-## Signup SLO Paging
-
-The local observability stack uses
-`infra/observability/alertmanager/alertmanager.yml` for Docker smoke evidence.
-Production deployments should use
-`infra/observability/alertmanager/alertmanager.production.yml`, which keeps the
-local signup SLO webhook receiver and fans the same
-`service="signup", slo="signup_activation"` alerts out to
-`helix-signup-slo-paging`.
-
-Mount the external paging webhook URL from your secret manager at:
-
-```text
-/etc/alertmanager/secrets/signup-slo-paging-webhook-url
-```
-
-The file should contain the PagerDuty/Opsgenie/BetterStack-compatible webhook
-bridge URL for the signup activation SLO escalation. Do not commit the URL or
-API token. Static proof that the route and secret-file contract are present:
-
-```sh
-pnpm quality:alertmanager-signup-routing -- --static
-```
-
-Local route delivery proof remains:
-
-```sh
-pnpm quality:alertmanager-signup-routing
-```
 
 ## Workspace incident operations
 
@@ -524,4 +490,10 @@ Hold release when:
 - reduced-motion review finds required motion
 - k6 reports server errors above threshold
 - k6 target-mode skips or failures lack a blocker, owner, and next command
-- plugin author or troubleshooting docs are stale for changed behavior
+- integration or troubleshooting docs are stale for changed behavior
+
+## Private AI endpoints
+
+AI provider requests deny private and loopback networks by default. For a self-hosted model such as Ollama on a private network, explicitly set `HELIX_AI_ALLOW_PRIVATE_NETWORK=true`. Production startup logs this exception. The provider hostname allowlist and redirect checks still apply. Leave the flag unset for public providers.
+
+For Helm, pass this opt-in through the existing `env` values list (`name: HELIX_AI_ALLOW_PRIVATE_NETWORK`, `value: "true"`). Compose forwards the environment variable to the application.

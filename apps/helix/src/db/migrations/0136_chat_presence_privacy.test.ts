@@ -46,9 +46,9 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("chat presence block pri
 
   it("hides a blocker from the blocked viewer despite owner-only block-table RLS", async () => {
     const hidden = await store.withActorContext({ orgId, actorId: blockedId }, (scoped) => {
-      const listBlocked = scoped.listPresenceBlockedActorIds;
-      if (listBlocked === undefined) throw new Error("Presence privacy query is required.");
-      return listBlocked({
+      if (scoped.listPresenceBlockedActorIds === undefined)
+        throw new Error("Presence privacy query is required.");
+      return scoped.listPresenceBlockedActorIds({
         orgId,
         actorId: blockedId,
         candidateActorIds: [blockerId],

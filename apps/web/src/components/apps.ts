@@ -1,9 +1,8 @@
+import { type IconName } from "@/components/icon-map";
 /* The Helix app registry — the 10 workspace surfaces.
    Ported from the design handoff (shell.jsx → APPS). Drives the left Rail,
    the AppLauncher, and the command palette. Each surface has a route under
    the `_shell` layout. */
-
-import type { IconName } from "@/components/icons";
 
 export interface HelixApp {
   /** Stable id, also the route segment (`/mail`, `/calendar`, …). */

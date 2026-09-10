@@ -1,8 +1,9 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { PostgresCardDavContactStore } from "./store.js";
 
-const databaseUrl = process.env.CARD_DAV_DATABASE_URL;
+const databaseUrl = process.env.CARD_DAV_DATABASE_URL ?? process.env.DATABASE_URL;
 const run = databaseUrl === undefined ? describe.skip : describe;
 
 run("CardDAV PostgreSQL scalability and ACL", () => {
@@ -127,16 +128,8 @@ run("CardDAV PostgreSQL scalability and ACL", () => {
   }, 30_000);
 
   async function cleanup(): Promise<void> {
-    await sql.begin(async (tx) => {
-      await context(tx, ownerId);
-      await tx`delete from outbox where payload->>'orgId' = ${orgId}`;
-      await tx`delete from activity where org_id = ${orgId}`;
-      await tx`delete from permissions where org_id = ${orgId}`;
-      await tx`delete from carddav_contacts where org_id = ${orgId}`;
-      await tx`delete from carddav_addressbooks where org_id = ${orgId}`;
-      await tx`delete from actors where org_id = ${orgId}`;
-      await tx`delete from orgs where id = ${orgId}`;
-    });
+    await sql`delete from outbox where payload->>'orgId' = ${orgId}`;
+    await cleanupTestTenants(sql, [orgId]);
   }
 
   async function context(tx: postgres.TransactionSql, actorId: string): Promise<void> {

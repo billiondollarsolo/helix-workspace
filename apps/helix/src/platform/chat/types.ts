@@ -1,13 +1,11 @@
-import type { AIClassification, JsonObject } from "@helix/sdk-types";
 import type { ChatBodyFormat } from "@helix/contracts";
-
-export const chatPluginId = "com.helix.core.chat";
+import type { AIClassification, JsonObject } from "@helix/sdk-types";
 
 export type ChatRoomKind = "chat_room" | "chat_dm";
 export type ChatRoomRole = "owner" | "moderator" | "member";
 export type ChatInvitableRole = Exclude<ChatRoomRole, "owner">;
 export type ChatPresenceStatus = "available" | "away" | "busy" | "dnd" | "invisible";
-export type ChatRoomPrivacy = "discoverable" | "restricted" | "private";
+type ChatRoomPrivacy = "discoverable" | "restricted" | "private";
 export type ChatReactionOperation = "add" | "remove";
 export type ChatSpaceType = "conversation" | "direct" | "announcement" | "project";
 export type ChatHistoryPolicy = "full" | "since_join" | "off";
@@ -20,7 +18,7 @@ export type ChatParticipant = JsonObject & {
   readonly email?: string;
 };
 
-export interface ChatRoomSettingsRecord {
+interface ChatRoomSettingsRecord {
   readonly threadId: string;
   readonly orgId: string;
   readonly name: string | null;
@@ -38,7 +36,7 @@ export interface ChatRoomSettingsRecord {
   readonly updatedAt: Date;
 }
 
-export interface ChatRoomMemberRecord {
+interface ChatRoomMemberRecord {
   readonly actorId: string;
   readonly role: ChatRoomRole;
   readonly displayName: string | null;
@@ -158,7 +156,7 @@ export interface ChatRetentionPolicyView {
   readonly configured: boolean;
 }
 
-export interface ChatExportMessageRecord {
+interface ChatExportMessageRecord {
   readonly id: string;
   readonly roomId: string;
   readonly actorId: string | null;

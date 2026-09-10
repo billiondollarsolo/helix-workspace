@@ -12,8 +12,8 @@ import {
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "../admin/console-shared.js";
-import type { MailJournalStore, OutboundMailQueueStore } from "./store.js";
 import type { MailDeliveryEventStore } from "./delivery-events.js";
+import type { MailJournalStore, OutboundMailQueueStore } from "./store.js";
 
 const idParams = z.object({ id: z.string().uuid() });
 const replayBody = z.object({ reason: z.string().trim().min(1).max(500) }).strict();

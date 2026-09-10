@@ -3,7 +3,7 @@
 **Task:** O-X.1 (cross-deploy)  
 **Date:** 2026-08-02  
 **Status:** Living checklist — production packaging remains **MVP fail-closed** until PKG  
-**Related:** [ha-rpo-rto.md](./ha-rpo-rto.md), [v1-packaging-matrix.md](./v1-packaging-matrix.md), `docker-compose.production.yml`, `infra/helm/helix/`
+**Related:** [ha-rpo-rto.md](ha-rpo-rto.md), [v1-packaging-matrix.md](v1-packaging-matrix.md), `docker-compose.production.yml`, `infra/helm/helix/`
 
 ## Purpose
 
@@ -15,14 +15,13 @@ Legend: **P** = parity present · **D** = documented intentional difference · *
 
 ## Packaging and fail-closed scope
 
-| Concern                                  | Compose production                           | Helm (`values.yaml` + overlays)                  | Status |
-| ---------------------------------------- | -------------------------------------------- | ------------------------------------------------ | ------ |
-| `HELIX_APPS` MVP allowlist               | `mail,drive,chat,assistant`                  | `workspace.apps` default same                    | P      |
-| Disabled modules in `HELIX_CONFIG_JSON`  | docs/calendar/meet/editors `enabled: false`  | `workspace.modules.*` rendered into config JSON  | P      |
-| `HELIX_EDITORS_MIGRATIONS_ENABLED=false` | migrate + app services                       | `workspace.editorsMigrationsEnabled: false`      | P      |
-| Meet production credentials stripped     | `MEET_JITSI_*=false` / secrets reset         | Meet not chart-installed; module disabled        | D\*    |
-| Full Workspace PKG flip procedure        | Documented in compose header + ha-rpo-rto.md | Documented in values comments + ha-rpo-rto.md    | P      |
-| Web `VITE_HELIX_MVP_ONLY=true`           | Built into promoted web image                | Same promoted image (chart does not rebuild SPA) | P      |
+| Concern                                 | Compose production                           | Helm (`values.yaml` + overlays)                  | Status |
+| --------------------------------------- | -------------------------------------------- | ------------------------------------------------ | ------ |
+| `HELIX_APPS` MVP allowlist              | `mail,drive,chat,assistant`                  | `workspace.apps` default same                    | P      |
+| Disabled modules in `HELIX_CONFIG_JSON` | calendar/meet `enabled: false`               | `workspace.modules.*` rendered into config JSON  | P      |
+| Meet production credentials stripped    | `MEET_JITSI_*=false` / secrets reset         | Meet not chart-installed; module disabled        | D\*    |
+| Full Workspace PKG flip procedure       | Documented in compose header + ha-rpo-rto.md | Documented in values comments + ha-rpo-rto.md    | P      |
+| Web `VITE_HELIX_MVP_ONLY=true`          | Built into promoted web image                | Same promoted image (chart does not rebuild SPA) | P      |
 
 \*Helm has **no in-chart Jitsi** (O-K.10 gap). Compose can host Jitsi under a non-production profile
 but production overlay forces Meet off. Enabling Meet on either target requires external/cluster
@@ -64,18 +63,18 @@ Jitsi + PKG gates — do not enable in defaults.
 
 ## Structural validation (CI-friendly)
 
-| Check                                 | Command / artifact                                                    |
-| ------------------------------------- | --------------------------------------------------------------------- |
-| Compose production contract           | `pnpm exec vitest run infra/scripts/production-compose.test.mjs`      |
-| Helm lint/template + PRD hardening    | `pnpm infra:helm:validate` (`infra/scripts/validate-helm.sh`)         |
-| Helm MVP packaging assertions         | same script: `HELIX_APPS`, modules disabled, editors migrations false |
-| RPO/RTO contract unit tests           | `pnpm exec vitest run infra/scripts/rpo-rto-check.test.mjs`           |
-| Backup age / evidence gate (operator) | `node infra/scripts/rpo-rto-check.mjs …`                              |
+| Check                                 | Command / artifact                                               |
+| ------------------------------------- | ---------------------------------------------------------------- |
+| Compose production contract           | `pnpm exec vitest run infra/scripts/production-compose.test.mjs` |
+| Helm lint/template + PRD hardening    | `pnpm infra:helm:validate` (`infra/scripts/validate-helm.sh`)    |
+| Helm MVP packaging assertions         | same script: `HELIX_APPS`, Calendar and Meet disabled            |
+| RPO/RTO contract unit tests           | `pnpm exec vitest run infra/scripts/rpo-rto-check.test.mjs`      |
+| Backup age / evidence gate (operator) | `node infra/scripts/rpo-rto-check.mjs …`                         |
 
 ## Known gaps blocking dual-target Full Workspace GA
 
 1. **O-K.9 / O-K.10** — ClamAV and Meet/Jitsi not first-class Helm chart resources; must be external or added with fail-closed values before Meet/Drive Business claims on K8s.
-2. **O-D.9 / O-D.10** — Compose production keeps Meet/editors disabled; GA profiles need evidence, not default enable.
+2. **O-D.9 / O-D.10** — Compose production keeps Calendar/Meet disabled; GA profiles need evidence, not default enable.
 3. **Live drills** — O-D.13 and O-K.16 evidence packs are environment-specific; repository provides scripts + gates only.
 4. **O-X.2–O-X.6** — SBOM/provenance and dual R3 binding remain process gates beyond this matrix.
 

@@ -23,27 +23,10 @@ route:
     - receiver: helix-product-slo-paging
       matchers:
         - slo=~"product_availability|availability|freshness|healthy_media"
-    - receiver: helix-signup-slo-webhook
-      matchers:
-        - service="signup"
-        - slo="signup_activation"
-      continue: true
-    - receiver: helix-signup-slo-paging
-      matchers:
-        - service="signup"
-        - slo="signup_activation"
 
 receivers:
   - name: helix-null
   - name: helix-product-slo-paging
     webhook_configs:
       - url_file: /etc/alertmanager/secrets/product-slo-paging-webhook-url
-        send_resolved: true
-  - name: helix-signup-slo-webhook
-    webhook_configs:
-      - url: http://host.docker.internal:28462/alertmanager/signup
-        send_resolved: true
-  - name: helix-signup-slo-paging
-    webhook_configs:
-      - url_file: /etc/alertmanager/secrets/signup-slo-paging-webhook-url
         send_resolved: true

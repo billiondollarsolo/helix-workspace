@@ -1,7 +1,7 @@
 import type { JsonObject, JsonValue } from "@helix/sdk-types";
 import { z } from "zod";
 
-export type InboundPolicyDisposition = "reject" | "quarantine" | "tag";
+type InboundPolicyDisposition = "reject" | "quarantine" | "tag";
 
 const disposition = z.enum(["reject", "quarantine", "tag"]);
 const domain = z

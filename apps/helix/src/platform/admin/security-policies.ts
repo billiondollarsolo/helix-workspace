@@ -1,9 +1,9 @@
-import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import type postgres from "postgres";
 import { z } from "zod";
-import { driveWorkflowKinds } from "../drive/workflows.js";
 import { dlpBoundaries } from "../dlp.js";
+import { driveWorkflowKinds } from "../drive/workflows.js";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -38,7 +38,7 @@ import {
 export type SecurityPolicyType =
   "mfa" | "sso" | "session" | "external_sharing" | "dlp" | "device_trust" | "drive_workflows";
 
-export type PolicyEnforcement = "disabled" | "optional" | "required";
+type PolicyEnforcement = "disabled" | "optional" | "required";
 
 export const SECURITY_POLICY_TYPES: readonly SecurityPolicyType[] = [
   "mfa",
@@ -71,13 +71,6 @@ function toPolicyView(policy: SecurityPolicyRecord): SecurityPolicyView {
     ...policy,
     runtimeStatus: policyRuntimeStatus(policy),
   };
-}
-
-export type SsoTestLoginStatus = "configuration_required" | "runtime_pending";
-
-export interface SsoTestLoginResult {
-  readonly status: SsoTestLoginStatus;
-  readonly message: string;
 }
 
 // --------------------------------------------------------------------------
@@ -145,8 +138,8 @@ const deviceTrustSettings = z
   .object({
     requireManagedDevice: z.boolean().default(false),
     protectedApps: z
-      .array(z.enum(["drive", "mail", "docs", "calendar"]))
-      .max(4)
+      .array(z.enum(["drive", "mail", "calendar"]))
+      .max(3)
       .default([]),
     allowUnenrolledGraceDays: z.number().int().min(0).max(30).default(0),
   })

@@ -103,37 +103,3 @@ export function openDenialMessage(state: DriveUploadState | null | undefined): s
       return "This file is available.";
   }
 }
-
-export function badgeStyleForTone(tone: DriveUploadStatusView["tone"]): {
-  readonly background: string;
-  readonly color: string;
-  readonly border: string;
-} {
-  switch (tone) {
-    case "danger":
-      return {
-        background: "var(--danger-soft, #fef2f2)",
-        color: "var(--danger, #dc2626)",
-        border: "1px solid var(--danger, #dc2626)",
-      };
-    case "progress":
-      return {
-        background: "var(--accent-soft, #eff6ff)",
-        color: "var(--accent, #2563eb)",
-        border: "1px solid var(--accent, #2563eb)",
-      };
-    case "success":
-      return {
-        background: "var(--surface-2, #f8fafc)",
-        color: "var(--text-2, #475569)",
-        border: "1px solid var(--border, #e2e8f0)",
-      };
-    case "neutral":
-    default:
-      return {
-        background: "var(--surface-2, #f8fafc)",
-        color: "var(--text-3, #64748b)",
-        border: "1px solid var(--border, #e2e8f0)",
-      };
-  }
-}

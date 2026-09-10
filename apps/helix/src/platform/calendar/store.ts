@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-import type postgres from "postgres";
 import {
   canonicalTimeZone,
   instantToLocalDateTime,
@@ -7,9 +5,15 @@ import {
   type CalendarTimeSemantics,
 } from "@helix/contracts";
 import type { Actor, JsonObject } from "@helix/sdk-types";
+import { randomUUID } from "node:crypto";
+import type postgres from "postgres";
+import { activityChainHash } from "../activity/hash-chain.js";
 import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
 import { restrictAppPasswordActor } from "../auth/app-passwords.js";
 import { verifySecret } from "../auth/oauth.js";
+import { toSqlJson } from "../util/sql.js";
+import { enqueueCalendarInvitationDeliveries } from "./invitation-outbox.js";
+import { expandCalendarEventOccurrences } from "./recurrence.js";
 import type {
   CalendarAttendeeRecord,
   CalendarAttendeeRole,
@@ -19,6 +23,8 @@ import type {
   CalendarEventRevisionRecord,
   CalendarEventStatus,
   CalendarFindTimeSlot,
+  CalendarFreeBusyEvent,
+  CalendarFreeBusyRequest,
   CalendarListEntry,
   CalendarMembershipRecord,
   CalendarMembershipRole,
@@ -26,12 +32,7 @@ import type {
   CalendarResponseStatus,
   CalendarSearchProjectionStore,
   CalendarSearchRecord,
-  CalendarFreeBusyEvent,
-  CalendarFreeBusyRequest,
 } from "./types.js";
-import { expandCalendarEventOccurrences } from "./recurrence.js";
-import { enqueueCalendarInvitationDeliveries } from "./invitation-outbox.js";
-import { activityChainHash } from "../activity/hash-chain.js";
 
 export interface CalendarAttendeeInput {
   readonly actorId?: string | null | undefined;
@@ -90,7 +91,7 @@ export interface UpdateCalendarEventInput {
   }>;
 }
 
-export interface CalendarSyncChange {
+interface CalendarSyncChange {
   readonly version: number;
   readonly eventId: string;
   readonly event: CalendarEventRecord | null;
@@ -1994,8 +1995,4 @@ function calendarClassification(value: unknown): CalendarSearchRecord["classific
     value === "restricted"
     ? value
     : undefined;
-}
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }

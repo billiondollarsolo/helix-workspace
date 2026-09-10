@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createTransport } from "nodemailer";
-import type postgres from "postgres";
 import { describe, expect, it, vi } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { MailInboundQuotaExceededError } from "./errors.js";
 import {
   ingestSmtpEnvelope,
@@ -564,16 +564,15 @@ function mailStore(messages: MailMessageInput[]): MailStore {
     getActiveVacation: vi.fn().mockResolvedValue(null),
   } as unknown as MailStore;
 }
-
-function recordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: string[];
-} {
-  const calls: string[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray) => {
-    calls.push(strings.join("$"));
-    return Promise.resolve(queue.shift() ?? []);
+function recordingSql(responses: readonly unknown[]) {
+  const recording = sharedRecordingSql(responses, "$");
+  return {
+    sql: recording.sql,
+    get calls() {
+      return recording.queries;
+    },
+    get values() {
+      return recording.values;
+    },
   };
-  return { sql: tag as unknown as postgres.Sql, calls };
 }

@@ -1,7 +1,4 @@
 {
   "files": [],
-  "references": [
-    { "path": "./packages/sdk-web" },
-    { "path": "./apps/web" }
-  ]
+  "references": [{ "path": "./packages/sdk-web" }, { "path": "./apps/web" }]
 }

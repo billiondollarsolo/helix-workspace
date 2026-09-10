@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useState,
-  type ReactNode
-} from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 export interface AlertDialogOptions {
   title: string;
@@ -39,7 +32,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       request.resolve(confirmed);
       setRequest(null);
     },
-    [request]
+    [request],
   );
 
   const api = useMemo<DialogApi>(
@@ -50,7 +43,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
             ...options,
             id: Date.now(),
             mode: "alert",
-            resolve: () => resolve()
+            resolve: () => resolve(),
           });
         });
       },
@@ -60,12 +53,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
             ...options,
             id: Date.now(),
             mode: "confirm",
-            resolve
+            resolve,
           });
         });
-      }
+      },
     }),
-    []
+    [],
   );
 
   return (
@@ -74,7 +67,9 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       {request ? (
         <div className="helix-dialog-backdrop" role="presentation">
           <section
-            aria-describedby={request.description ? `helix-dialog-description-${request.id}` : undefined}
+            aria-describedby={
+              request.description ? `helix-dialog-description-${request.id}` : undefined
+            }
             aria-labelledby={`helix-dialog-title-${request.id}`}
             aria-modal="true"
             className="helix-dialog"
@@ -86,12 +81,18 @@ export function DialogProvider({ children }: { children: ReactNode }) {
             ) : null}
             <div className="helix-dialog-actions">
               {request.mode === "confirm" ? (
-                <button className="helix-button helix-button-secondary" onClick={() => close(false)} type="button">
+                <button
+                  className="helix-button helix-button-secondary"
+                  onClick={() => close(false)}
+                  type="button"
+                >
                   {request.cancelLabel ?? "Cancel"}
                 </button>
               ) : null}
               <button
-                className={request.destructive ? "helix-button helix-button-destructive" : "helix-button"}
+                className={
+                  request.destructive ? "helix-button helix-button-destructive" : "helix-button"
+                }
                 onClick={() => close(true)}
                 type="button"
               >

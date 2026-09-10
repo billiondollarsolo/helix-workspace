@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { PostgresMeteringEventStore, PostgresMeteringRollupStore } from "./store.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
@@ -80,14 +81,8 @@ interface RecordedQuery {
   readonly text: string;
   readonly values: readonly unknown[];
 }
-
-function createRecordingSql(): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
+function createRecordingSql() {
+  const recording = sharedRecordingSql(({ values }) => {
     return Promise.resolve([
       {
         id: "event-1",
@@ -99,11 +94,16 @@ function createRecordingSql(): {
         rolled_up_at: null,
       },
     ]);
+  }, "?");
+  return {
+    ...recording,
+    get transactions() {
+      return recording.beginCalls;
+    },
+    get beginCalls() {
+      return recording.beginCalls;
+    },
   };
-  const sql = Object.assign(tag, {
-    json: (value: unknown) => value,
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
 }
 
 function createRecordingRollupSql(): {

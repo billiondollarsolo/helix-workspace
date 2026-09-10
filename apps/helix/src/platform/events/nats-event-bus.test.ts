@@ -1,10 +1,10 @@
+import type { NatsConnection, Payload, PublishOptions } from "@nats-io/transport-node";
 import { describe, expect, it } from "vitest";
 import {
   NatsEventBus,
   traceContextFromNatsHeaders,
   traceContextToNatsHeaders,
 } from "./nats-event-bus.js";
-import type { NatsConnection, Payload, PublishOptions } from "@nats-io/transport-node";
 
 describe("NatsEventBus", () => {
   it("publishes JSON payloads with subject prefix and W3C trace headers", async () => {

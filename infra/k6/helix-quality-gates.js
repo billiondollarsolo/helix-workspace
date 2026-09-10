@@ -19,7 +19,7 @@ const apiTargets = csv(__ENV.API_TARGETS || "/healthz,/readyz,/metrics,/openapi.
 const enabledGroups = new Set(
   csv(
     __ENV.K6_SCENARIO_GROUPS ||
-      "web_navigation,api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,plugin_install,assistant_llm,mcp,otel_health",
+      "web_navigation,api_smoke,mail_api,inbound_mail,search,chat,meet_jitsi,assistant_llm,mcp,otel_health",
   ),
 );
 
@@ -65,13 +65,6 @@ const prdTargets = [
     exec: "meetJitsi",
     metric: "helix_jitsi_join_ms",
     threshold: Number(__ENV.JITSI_JOIN_P95_MS || 4000),
-    protected: true,
-  },
-  {
-    group: "plugin_install",
-    exec: "pluginInstall",
-    metric: "helix_plugin_install_ms",
-    threshold: Number(__ENV.PLUGIN_INSTALL_P95_MS || 30000),
     protected: true,
   },
   {
@@ -131,7 +124,6 @@ const metrics = {
   search: new Trend("helix_search_query_ms", true),
   chat: new Trend("helix_chat_delivery_ms", true),
   meet_jitsi: new Trend("helix_jitsi_join_ms", true),
-  plugin_install: new Trend("helix_plugin_install_ms", true),
   assistant_llm: new Trend("helix_llm_routing_overhead_ms", true),
   mcp: new Trend("helix_mcp_catalog_ms", true),
   otel_health: new Trend("helix_otel_trace_ingestion_lag_ms", true),
@@ -317,17 +309,6 @@ export function meetJitsi() {
   });
 }
 
-export function pluginInstall() {
-  recordToolCall({
-    group: "plugin_install",
-    metric: metrics.plugin_install,
-    toolId: __ENV.PLUGIN_INSTALL_TOOL_ID || "plugin.install",
-    body: jsonEnv("PLUGIN_INSTALL_BODY", defaultPluginInstallBody()),
-    okStatuses: [200, 202, 404],
-    expect: __ENV.PLUGIN_INSTALL_EXPECT || "",
-  });
-}
-
 export function assistantLlm() {
   const response = toolCall(
     __ENV.ASSISTANT_TOOL_ID || "assistant.chat",
@@ -452,21 +433,6 @@ function jsonEnv(name, fallback) {
     return fallback;
   }
   return JSON.parse(value);
-}
-
-function defaultPluginInstallBody() {
-  return {
-    pluginId: __ENV.PLUGIN_INSTALL_PLUGIN_ID || "com.helix.webhook-out-slack",
-    version: __ENV.PLUGIN_INSTALL_VERSION || "1.0.0",
-    confirmations: [
-      "source.non_official",
-      "permissions.scopes.webhooks.write",
-      "permissions.outbound-network.hooks.slack.com",
-      "capabilities.provides.webhook.out.format.slack",
-      "capabilities.consumes.webhook.engine",
-      "artifact.untrusted",
-    ],
-  };
 }
 
 function defaultInboundMailBody(marker) {

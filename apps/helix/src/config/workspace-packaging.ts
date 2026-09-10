@@ -19,14 +19,14 @@ export function resolveWorkspacePackagingProfile(
   }
   return "mvp";
 }
-export function approvedAppsAllowlist(profile: WorkspacePackagingProfile): string {
+function approvedAppsAllowlist(profile: WorkspacePackagingProfile): string {
   return profile === "full" ? PRODUCTION_FULL_APPS_ALLOWLIST : PRODUCTION_MVP_APPS_ALLOWLIST;
 }
 /** Exact production allowlist match (no reordering, no extra whitespace). */
-export function allowlistsEqual(a: string | undefined | null, b: string): boolean {
+function allowlistsEqual(a: string | undefined | null, b: string): boolean {
   return (a ?? "") === b;
 }
-export function appsSet(raw: string | undefined | null): ReadonlySet<string> {
+function appsSet(raw: string | undefined | null): ReadonlySet<string> {
   if (raw === undefined || raw === null || raw.length === 0) {
     return new Set();
   }

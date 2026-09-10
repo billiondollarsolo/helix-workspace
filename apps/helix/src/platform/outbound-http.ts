@@ -185,14 +185,6 @@ export function isPublicOutboundAddress(address: string): boolean {
   return family === 6 && globalV6.check(normalized, "ipv6") && !blockedV6.check(normalized, "ipv6");
 }
 
-/** Synchronous URL-policy check for config validation; requests still resolve and pin DNS. */
-export function assertOutboundHttpUrl(value: string, options: OutboundHttpClientOptions = {}): URL {
-  const policy = normalizeOptions(options);
-  const url = parseUrl(value);
-  assertUrlAllowed(url, policy);
-  return url;
-}
-
 async function requestWithRedirects(input: {
   readonly url: URL;
   readonly method: string;

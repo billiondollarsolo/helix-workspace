@@ -2,12 +2,11 @@
 
 `--final-release` is a promotion gate, not a test-report collector. It refuses to create a final
 manifest unless the eight exact-build live reports and every artifact below are present, strictly
-valid, and bound to the same workspace revision, editor revision, application image, and web image.
-The local checkouts must be clean and resolve to those exact revisions, but local branches, tags,
+valid, and bound to the same workspace revision, application image, and web image.
+The local workspace checkout must be clean and resolve to that exact revision, but local branches, tags,
 or remotes are never accepted as proof of protected GitHub state. A separately trusted verifier
 must observe the protected remote branches and release tags, sign that observation, and place it in
-the packet. The protected previous-editor SHA independently determines whether editor gates are
-required. Preflight mode is unchanged.
+the packet. No sibling repository or source revision participates in release evidence. Preflight mode is unchanged.
 
 All artifacts are JSON objects. Unknown or missing fields fail validation. Every timestamp is
 canonical ISO-8601 UTC, such as `2026-07-28T20:00:00.000Z`. Every artifact digest is
@@ -54,9 +53,7 @@ This proves V6 and the engineering portions of R0. It contains:
 - one result for every workspace command listed in plan Task V6, including the five explicit
   release smoke commands;
 - for each result: the exact command, `status: "passed"`, an ordered time window, and the
-  path/hash/schema reference of its retained command report;
-- `editors.revision` equal to the bound editor SHA; if `editors.changed` is true, all five editor
-  gates are required, otherwise `commands` must be empty.
+  path/hash/schema reference of its retained command report.
 
 No command can be omitted, duplicated, renamed, or supplemented. A report saying “all tests passed”
 without the individual exact command records is insufficient.
@@ -83,9 +80,8 @@ environment, `status: "passed"`, `resolved: true`, `unresolvedCount: 0`,
 - single-tenant mode and the `business` security tier;
 - core apps exactly `mail`, `drive`, `chat`, and `assistant`;
 - web surfaces exactly Mail, Drive, Chat, Assistant, and Admin;
-- Calendar, Docs, Sheets, Slides, Meet, and Editors disabled;
-- MVP-only web packaging, disabled editor migrations/native editors/file editing, enabled Mail and
-  Drive file storage, server-readable secure Chat, and write confirmation by default for agents.
+- Calendar and Meet disabled;
+- enabled Mail and Drive file storage, server-readable secure Chat, and write confirmation by default for agents.
 - the exact ten-name active production image inventory, with immutable OCI digests for the
   application, web edge, PostgreSQL, Redis, NATS, Meilisearch, RustFS, Cerbos, SpamAssassin, and
   ClamAV. Application/web digests must equal the promoted release binding;
@@ -109,7 +105,7 @@ protected trust configuration. It requires:
   timestamp, body binding, RFC 6962 inclusion proof, and signed checkpoint;
 - one statement subject equal to the configured registry subject and promoted digest;
 - predicate type
-  `https://helix.billiondollarsolo.com/attestations/paired-source/v1` with exactly:
+  `https://helix.billiondollarsolo.com/attestations/source-provenance/v1` with exactly:
 
 ```json
 {
@@ -117,10 +113,6 @@ protected trust configuration. It requires:
   "workspace": {
     "repository": "https://github.com/<trusted-workspace-owner/repository>",
     "sha": "<promoted-workspace-sha>"
-  },
-  "editors": {
-    "repository": "https://github.com/<trusted-editors-owner/repository>",
-    "sha": "<promoted-editors-sha>"
   }
 }
 ```
@@ -164,7 +156,7 @@ Container scans and SBOMs are required for the exact default production image in
 `spamassassin`, and `clamav`. Application and web digests must equal the promoted release binding;
 every other image must use an immutable OCI digest, and each image’s scan and SBOM must cover the
 same digest declared by the resolved production-config artifact. This prevents scanning a clean
-substitute image while deploying another digest. Optional Drive preview, editor, observability,
+substitute image while deploying another digest. Optional observability,
 Jitsi, and Mailpit profiles are disabled for this MVP and are not part of this exact inventory.
 Enabling any profile requires a new policy revision and corresponding scan/SBOM entries before
 promotion.
@@ -208,8 +200,7 @@ Limits must exactly preserve the approved MVP boundary:
 - one organization and 5–50 users;
 - managed outbound provider and no direct MX;
 - no regulated-data representation;
-- agent writes confirmed by default;
-- native editors disabled.
+- agent writes confirmed by default.
 
 Every risk is `closed` or explicitly `accepted`. Accepted risks require an accountable owner,
 unexpired deadline, concise non-sensitive summary, and mitigation-artifact digest.
@@ -218,8 +209,8 @@ unexpired deadline, concise non-sensitive summary, and mitigation-artifact diges
 
 This is fresh, independently signed evidence of the remote protected Git state. It contains the
 exact trusted repository identity, protected branch name and observed branch SHA, configured
-release tag and observed tag SHA for both `workspace` and `editors`. All four observed SHAs must
-equal the promoted release binding. `observedAt` must be no more than one hour old and no later than
+release tag and observed tag SHA for `workspace`. Both observed SHAs must
+equal the promoted release binding workspace SHA. `observedAt` must be no more than one hour old and no later than
 `generatedAt`.
 
 The artifact is signed with Ed25519 over canonical JSON, omitting only `signature.value`. The
@@ -276,7 +267,7 @@ seven-day windows independently of report generation.
    verifier; do not mount them in ordinary evidence-producer jobs.
 2. Pin each lowercase SHA-256 DER-SPKI fingerprint and exact signer identity in separately
    protected verifier configuration.
-3. Pin the Fulcio issuing certificate, GitHub workspace/editor repository identities, exact
+3. Pin the Fulcio issuing certificate, GitHub workspace repository identity, exact
    workflow identity, registry subject names, protected branch, Rekor public key, Rekor SHA-256 log
    ID, and Rekor checkpoint origin in the same protected configuration. Do not read any trust
    value from the packet.
@@ -290,8 +281,8 @@ seven-day windows independently of report generation.
 
 ## Safe assembly order
 
-1. Resolve the clean repository SHAs and immutable image digests.
-2. Publish application/web images and retain their Sigstore bundles with the exact paired-source
+1. Resolve the clean workspace SHA and immutable image digests.
+2. Publish application/web images and retain their Sigstore bundles with the exact source-provenance
    predicate.
 3. Deploy those exact images and run the migration job.
 4. Produce the eight live reports, seven ordinary non-decision supporting reports, and every

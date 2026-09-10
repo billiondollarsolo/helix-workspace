@@ -8,11 +8,11 @@ describe("global search api", () => {
         Response.json({
           hits: [
             {
-              id: "docs:doc-1",
-              type: "docs",
+              id: "mail:thread-1",
+              type: "mail",
               title: "Launch plan",
               body: "Planning notes",
-              url: "/docs/doc-1",
+              url: "/mail?thread=thread-1",
               updatedAt: "2026-05-20T12:00:00.000Z",
             },
           ],
@@ -23,15 +23,15 @@ describe("global search api", () => {
     );
 
     await expect(
-      searchGlobal({ query: " launch ", types: ["docs", "drive"], limit: 8 }, fetchImpl),
+      searchGlobal({ query: " launch ", types: ["mail", "drive"], limit: 8 }, fetchImpl),
     ).resolves.toEqual({
       hits: [
         {
-          id: "docs:doc-1",
-          type: "docs",
+          id: "mail:thread-1",
+          type: "mail",
           title: "Launch plan",
           body: "Planning notes",
-          url: "/docs/doc-1",
+          url: "/mail?thread=thread-1",
           updatedAt: "2026-05-20T12:00:00.000Z",
         },
       ],
@@ -44,10 +44,34 @@ describe("global search api", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         query: "launch",
-        types: ["docs", "drive"],
+        types: ["mail", "drive"],
         limit: 8,
         offset: 0,
       }),
+    });
+  });
+
+  it("discards retired editor results returned by an old search index", async () => {
+    const file = { id: "drive:file-1", type: "drive", url: "/drive/file-1" };
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          hits: [
+            file,
+            ...["docs", "sheets", "slides"].map((type) => ({
+              id: `${type}:old-1`,
+              type,
+              url: `/${type}/old-1`,
+            })),
+          ],
+          query: "launch",
+        }),
+      ),
+    );
+
+    await expect(searchGlobal({ query: "launch" }, fetchImpl)).resolves.toEqual({
+      hits: [file],
+      query: "launch",
     });
   });
 

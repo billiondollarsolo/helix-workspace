@@ -14,4 +14,3 @@ describe("vector type helpers", () => {
     expect(() => validateLimit(0)).toThrow("positive");
   });
 });
-

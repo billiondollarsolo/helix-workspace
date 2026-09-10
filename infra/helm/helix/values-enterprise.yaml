@@ -9,25 +9,6 @@ security:
       - immutable-s3
       - siem
     networkEgress: required-allowlist
-    pluginSignatureRequired: true
-
-# Operator-managed catalog keyring, publisher allowlist, revocations, and
-# Sigstore bundles. Keep this integrity-critical policy separate from the app
-# ConfigMap and rotate it by replacing the immutable Secret.
-env:
-  - name: HELIX_PLUGIN_TRUST_FILE
-    value: /run/helix/plugin-trust/trust.json
-extraVolumes:
-  - name: plugin-trust
-    secret:
-      secretName: helix-plugin-trust
-      items:
-        - key: trust.json
-          path: trust.json
-extraVolumeMounts:
-  - name: plugin-trust
-    mountPath: /run/helix/plugin-trust
-    readOnly: true
 
 external:
   postgres:

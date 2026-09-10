@@ -64,7 +64,12 @@ export interface VectorStore {
    * collection to a single tenant so two tenants may reuse the same
    * collection name without colliding.
    */
-  createCollection(orgId: VectorOrgScope, name: string, dim: number, metric: VectorMetric): Promise<void>;
+  createCollection(
+    orgId: VectorOrgScope,
+    name: string,
+    dim: number,
+    metric: VectorMetric,
+  ): Promise<void>;
   upsert(orgId: VectorOrgScope, collection: string, items: readonly VectorItem[]): Promise<void>;
   query(
     orgId: VectorOrgScope,

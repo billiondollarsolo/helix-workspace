@@ -1,3 +1,4 @@
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
 import {
@@ -228,15 +229,8 @@ interface RecordedQuery {
   readonly text: string;
   readonly values: readonly unknown[];
 }
-
-function createRecordingSql(): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const text = strings.join("?");
-    calls.push({ text, values });
+function createRecordingSql() {
+  const recording = sharedRecordingSql(({ text }) => {
     if (text.includes("from actors")) {
       return Promise.resolve([{ id: actorId, display_name: "Owner Example" }]);
     }
@@ -269,17 +263,16 @@ function createRecordingSql(): {
         metadata: { source: "signup" },
       },
     ]);
+  }, "?");
+  return {
+    ...recording,
+    get transactions() {
+      return recording.beginCalls;
+    },
+    get beginCalls() {
+      return recording.beginCalls;
+    },
   };
-  const sql = Object.assign(tag, {
-    json: (value: unknown) => value,
-  });
-  Object.assign(sql, {
-    begin: async <T>(
-      options: string | ((tx: typeof sql) => Promise<T>),
-      callback?: (tx: typeof sql) => Promise<T>,
-    ) => (typeof options === "function" ? options(sql) : callback?.(sql)),
-  });
-  return { sql: sql as unknown as postgres.Sql, calls };
 }
 
 function createInviteAcceptanceRecordingSql(): {

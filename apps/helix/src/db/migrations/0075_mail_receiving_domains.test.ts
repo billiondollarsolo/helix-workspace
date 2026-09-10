@@ -1,7 +1,9 @@
+import { ensureAdminDomain } from "../../platform/admin/domain-identity.js";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
+import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 
 const migrationUrl = new URL("./0075_mail_receiving_domains.sql", import.meta.url);
 const rollbackUrl = new URL("./rollbacks/0075_mail_receiving_domains.sql", import.meta.url);
@@ -82,58 +84,41 @@ live("0075 mail receiving-domain PostgreSQL invariants", () => {
   });
 
   afterAll(async () => {
-    await sql`delete from mail_receiving_domains where org_id in (${orgOne}, ${orgTwo})`;
-    await sql`delete from actors where id in (${actorOne}, ${actorTwo})`;
-    /* admin_domains gained its FK to orgs in 0087, so this now cascades. Kept
-       explicit so the suite still cleans up if run against an older schema. */
-    await sql`delete from admin_domains where org_id in (${orgOne}, ${orgTwo})`;
-    await sql`delete from orgs where id in (${orgOne}, ${orgTwo})`;
+    await cleanupTestTenants(sql, [orgOne, orgTwo]);
     await sql.end();
   });
 
   /** The admin_domains identity a receiving domain now requires. */
   async function ensureParent(orgId: string, domain: string, actorId: string): Promise<string> {
-    const rows = await sql<{ readonly id: string }[]>`
-      insert into admin_domains (org_id, domain, verification_status, created_by)
-      values (${orgId}, ${domain}, 'verified', ${actorId})
-      on conflict (org_id, (lower(domain))) do update set updated_at = now()
-      returning id
-    `;
-    const row = rows[0];
-    if (row === undefined) {
-      throw new Error(`could not create a domain identity for ${domain}`);
-    }
-    return row.id;
+    const id = await ensureAdminDomain(sql, { orgId, domain, createdBy: actorId });
+    await sql`update admin_domains set status = 'verified', verified_at = now()
+      where id = ${id} and org_id = ${orgId}`;
+    return id;
   }
 
   it("lets exactly one concurrent organization activate a shared domain", async () => {
     await sql`delete from mail_receiving_domains where org_id in (${orgOne}, ${orgTwo})`;
-    /* Since 0086 a receiving domain hangs off an admin_domains identity. Two
-       orgs claiming the same name get two separate parents — which is the
-       point of this test: the race is decided per-domain across orgs, not by
-       the parent link. */
-    const [parentOne, parentTwo] = await Promise.all([
-      ensureParent(orgOne, "race.example", actorOne),
-      ensureParent(orgTwo, "race.example", actorTwo),
-    ]);
-    const records = await sql<{ readonly id: string; readonly org_id: string }[]>`
-      insert into mail_receiving_domains (
-        org_id, admin_domain_id, domain, status, verified_at, created_by
-      )
-      values
-        (${orgOne}, ${parentOne}, 'race.example', 'verified', now(), ${actorOne}),
-        (${orgTwo}, ${parentTwo}, 'race.example', 'verified', now(), ${actorTwo})
-      returning id, org_id
-    `;
+    // The canonical domain claim now serializes ownership before receiving
+    // activation. Race the complete flow so a loser cannot bypass that claim.
     const results = await Promise.allSettled(
-      records.map(
-        async (record) =>
-          await sql`
-            update mail_receiving_domains
-            set status = 'active', updated_at = now()
-            where id = ${record.id}
-          `,
-      ),
+      [
+        [orgOne, actorOne],
+        [orgTwo, actorTwo],
+      ].map(async ([orgId, actorId]) => {
+        if (orgId === undefined || actorId === undefined)
+          throw new Error("Missing fixture identity.");
+        const parentId = await ensureParent(orgId, "race.example", actorId);
+        const records = await sql<{ readonly id: string }[]>`
+          insert into mail_receiving_domains (
+            org_id, admin_domain_id, domain, status, verified_at, created_by
+          ) values (${orgId}, ${parentId}, 'race.example', 'verified', now(), ${actorId})
+          returning id
+        `;
+        const record = records[0];
+        if (record === undefined) throw new Error("Missing receiving domain.");
+        await sql`update mail_receiving_domains set status = 'active', updated_at = now()
+          where id = ${record.id}`;
+      }),
     );
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     const active = await sql<{ readonly count: string }[]>`

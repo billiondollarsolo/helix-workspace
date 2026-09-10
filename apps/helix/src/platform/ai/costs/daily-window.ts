@@ -13,7 +13,7 @@ import type { AICostBudget, AICostUsage, AICostUsageWindow } from "./types.js";
  * Intentionally not re-exported from `costs/index.ts` — internal helper.
  */
 
-export function usageWindow(
+function usageWindow(
   usedUsdMicros: number,
   limitUsdMicros: number | null,
   warningThresholdRatio: number,
@@ -68,7 +68,7 @@ export function utcDayKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function nextUtcDay(date: Date): Date {
+function nextUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
 }
 

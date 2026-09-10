@@ -115,15 +115,12 @@ const MIME_TO_LABEL: ReadonlyArray<readonly [RegExp, string]> = [
   [/svg/i, "SVG"],
   [/mp4|quicktime/i, "VIDEO"],
   [/text\/plain/i, "TXT"],
-  [/vnd\.helix\.document/i, "DOC"],
-  [/vnd\.helix\.spreadsheet/i, "SHEET"],
-  [/vnd\.helix\.presentation/i, "SLIDES"],
 ];
 /** Compute the per-row chip label (e.g. "DOCX") from the entry's metadata.
  *  Prefers `metadata.originalFormat` (the format the file was *imported* from)
  *  when present, falls back to the filename extension, then mime type, then
  *  the app key, then a generic "FILE". Always uppercase, max 6 chars. */
-export function formatLabelFromEntry(entry: DriveApiEntry): string {
+function formatLabelFromEntry(entry: DriveApiEntry): string {
   if (entry.type === "folder") {
     return "";
   }

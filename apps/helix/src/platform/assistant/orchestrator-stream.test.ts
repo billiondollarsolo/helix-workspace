@@ -1,12 +1,8 @@
+import type { Actor, ChatRequest, LLMProviderCapability } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
-import type {
-  Actor,
-  ChatRequest,
-  LLMProviderCapability,
-} from "@helix/sdk-types";
 import { AIRouter } from "../ai/routing.js";
-import { createToolRegistry } from "../tool-registry.js";
 import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
+import { createToolRegistry } from "../tool-registry.js";
 import { AssistantOrchestrator } from "./orchestrator.js";
 import { InMemoryAssistantStore } from "./store.js";
 import type { AssistantStreamEvent } from "./types.js";

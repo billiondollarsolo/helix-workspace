@@ -1,26 +1,23 @@
-import type { AICapability, AIClassification, JsonObject } from "@helix/sdk-types";
-import {
-  deriveClassification,
-  sensitivityClassificationFromMetadata,
-  type ClassificationPolicy,
-} from "../../ai/classification/index.js";
+import type { AICapability } from "@helix/sdk-types";
+import { deriveClassification, type ClassificationPolicy } from "../../ai/classification/index.js";
 import type {
   EnrichmentEvent,
   EnrichmentHandler,
   EnrichmentWorker,
 } from "../../ai/enrichment/index.js";
+import { parseJsonObject } from "../../util/json.js";
 import type {
   MailActivityPayload,
   MailEnrichmentProjectionStore,
   MailEnrichmentRecord,
 } from "../types.js";
 
-export interface MailEntityExtractEnrichmentOptions {
+interface MailEntityExtractEnrichmentOptions {
   readonly store: MailEnrichmentProjectionStore;
   readonly ai: AICapability;
 }
 
-export interface MailClassificationEnrichmentOptions {
+interface MailClassificationEnrichmentOptions {
   readonly store: MailEnrichmentProjectionStore;
   readonly policy?: ClassificationPolicy | undefined;
   readonly scanContent?: boolean | undefined;
@@ -59,7 +56,7 @@ export function registerMailEnrichments(
   }
 }
 
-export function createMailEntityExtractEnrichmentHandler(
+function createMailEntityExtractEnrichmentHandler(
   options: MailEntityExtractEnrichmentOptions,
 ): EnrichmentHandler<MailActivityPayload> {
   return {
@@ -119,7 +116,7 @@ export function createMailEntityExtractEnrichmentHandler(
   };
 }
 
-export function createMailClassificationEnrichmentHandler(
+function createMailClassificationEnrichmentHandler(
   options: MailClassificationEnrichmentOptions,
 ): EnrichmentHandler<MailActivityPayload> {
   return {
@@ -213,21 +210,4 @@ function addressEmail(address: {
   readonly email?: string | undefined;
 }): string {
   return address.email ?? address.address;
-}
-
-function parseJsonObject(text: string): JsonObject | undefined {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as JsonObject)
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export function mailClassificationFromMetadata(
-  metadata: JsonObject | undefined,
-): AIClassification | undefined {
-  return sensitivityClassificationFromMetadata(metadata);
 }

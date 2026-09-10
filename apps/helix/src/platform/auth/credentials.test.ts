@@ -3,6 +3,7 @@ import {
   authenticateApiKey,
   authenticateMtlsCertificate,
   createApiKeyMaterial,
+  EMPTY_CREDENTIAL_POLICY,
   enforceCredentialPolicy,
   hashApiKey,
   ipMatchesAllowlist,
@@ -13,7 +14,6 @@ import {
   type AgentCredentialPolicy,
   type AgentCredentialRecord,
   type AgentCredentialStore,
-  EMPTY_CREDENTIAL_POLICY,
 } from "./credentials.js";
 
 function credential(

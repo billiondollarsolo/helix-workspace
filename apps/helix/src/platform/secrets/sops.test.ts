@@ -27,7 +27,9 @@ describe("SopsFileSecretsAdapter", () => {
   it("decrypts SOPS-marked files through the configured decryptor before validation", async () => {
     const filePath = await tempSecretFile(
       "secrets.enc.yaml",
-      ["API_TOKEN: ENC[AES256_GCM,data:abc]", "sops:", "  mac: ENC[AES256_GCM,data:def]"].join("\n"),
+      ["API_TOKEN: ENC[AES256_GCM,data:abc]", "sops:", "  mac: ENC[AES256_GCM,data:def]"].join(
+        "\n",
+      ),
     );
     const decryptedPaths: string[] = [];
     const adapter = new SopsFileSecretsAdapter({
@@ -44,16 +46,24 @@ describe("SopsFileSecretsAdapter", () => {
   });
 
   it("supports nested secrets only when explicitly enabled", async () => {
-    const filePath = await tempSecretFile("secrets.yaml", ["database:", "  password: p@ss"].join("\n"));
-
-    await expect(new SopsFileSecretsAdapter({ filePath }).load()).rejects.toThrow("Secret database");
-    await expect(new SopsFileSecretsAdapter({ filePath, allowNested: true }).require("database.password")).resolves.toBe(
-      "p@ss",
+    const filePath = await tempSecretFile(
+      "secrets.yaml",
+      ["database:", "  password: p@ss"].join("\n"),
     );
+
+    await expect(new SopsFileSecretsAdapter({ filePath }).load()).rejects.toThrow(
+      "Secret database",
+    );
+    await expect(
+      new SopsFileSecretsAdapter({ filePath, allowNested: true }).require("database.password"),
+    ).resolves.toBe("p@ss");
   });
 
   it("rejects missing required keys and still-encrypted plaintext", async () => {
-    const filePath = await tempSecretFile("secrets.json", JSON.stringify({ API_TOKEN: "ENC[AES256_GCM,data:abc]" }));
+    const filePath = await tempSecretFile(
+      "secrets.json",
+      JSON.stringify({ API_TOKEN: "ENC[AES256_GCM,data:abc]" }),
+    );
     const adapter = new SopsFileSecretsAdapter({
       filePath,
       decrypt: async () => JSON.stringify({ API_TOKEN: "ENC[AES256_GCM,data:abc]" }),

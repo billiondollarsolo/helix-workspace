@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 import type postgres from "postgres";
 import { describe, expect, it, vi } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { resolveTenantOidcPrivateKey, resolveTenantOidcUser } from "./sso-runtime.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -81,12 +82,4 @@ function oidcInput() {
     },
   };
 }
-
-function fakeSql(rows: readonly Record<string, string>[]): postgres.Sql {
-  const tag = (() => Promise.resolve(rows)) as unknown as postgres.Sql;
-  Object.assign(tag, {
-    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) =>
-      callback(tag as never),
-  });
-  return tag;
-}
+const fakeSql = (rows: readonly Record<string, string>[]) => sharedRecordingSql(() => rows).sql;

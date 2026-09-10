@@ -1,14 +1,14 @@
-import type postgres from "postgres";
 import JSZip from "jszip";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { resetEnvCacheForTests } from "../../config/env.js";
-import * as environment from "../../config/env.js";
 import { createServer, type Server } from "node:net";
+import type postgres from "postgres";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as environment from "../../config/env.js";
+import { resetEnvCacheForTests } from "../../config/env.js";
 import {
-  createClamAvVirusScanner,
-  createNoopVirusScanner,
   assertArchiveWithinLimits,
   assertDriveMalwareScannerReady,
+  createClamAvVirusScanner,
+  createNoopVirusScanner,
   resolveEffectiveMime,
   sniffMimeType,
 } from "./scanning.js";

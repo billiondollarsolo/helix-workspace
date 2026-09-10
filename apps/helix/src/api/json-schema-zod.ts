@@ -1,5 +1,5 @@
-import { z, type ZodTypeAny } from "zod";
 import type { JsonObject } from "@helix/sdk-types";
+import { z, type ZodTypeAny } from "zod";
 
 /**
  * Converts the JSON Schema produced by a tool's {@link SchemaAdapter} into a

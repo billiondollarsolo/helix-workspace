@@ -2,7 +2,7 @@ import type { JsonObject, JsonValue, PendingActionPreview, ToolDefinition } from
 import type { AgentAutomationPolicy, AgentAutomationPolicyRule } from "../auth/credentials.js";
 import { getCryptoProvider } from "../crypto/index.js";
 
-export const pendingPolicySnapshotVersion = "1";
+const pendingPolicySnapshotVersion = "1";
 
 export type AutomationPolicyDecision =
   | {
@@ -31,7 +31,7 @@ type AutomationPolicyDenialReason = Extract<
   { readonly allowed: false }
 >["reason"];
 
-export interface ExtractedActionBounds {
+interface ExtractedActionBounds {
   readonly resourceIds: readonly string[];
   readonly recipients: readonly string[];
   readonly targets: readonly string[];
@@ -139,7 +139,7 @@ export function evaluateAutomationPolicy(input: {
   return { allowed: false, reason: closestReason };
 }
 
-export function extractActionBounds(input: unknown): ExtractedActionBounds {
+function extractActionBounds(input: unknown): ExtractedActionBounds {
   const resources = new Set<string>();
   const recipients = new Set<string>();
   const targets = new Set<string>();

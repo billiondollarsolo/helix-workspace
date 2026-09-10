@@ -1,13 +1,13 @@
-import { Socket } from "node:net";
-import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { SecurityScanResult } from "@helix/contracts";
 import type { JsonObject, SecurityTier } from "@helix/sdk-types";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { Socket } from "node:net";
 import {
   ClamdInstreamClient,
   parseClamdInstreamResponse,
   resolveTerminalSecurityScanPolicy,
-  type SecurityScanningMetrics,
   type SecurityScanDisposition,
+  type SecurityScanningMetrics,
 } from "../security/scanning/index.js";
 
 /**

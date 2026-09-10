@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { PostgresCalendarStore } from "./store.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -314,22 +314,15 @@ function attendeeRow(input: {
     updated_at: timestamp,
   };
 }
-
-function recordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: string[];
-} {
-  const calls: string[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray) => {
-    calls.push(strings.join("$"));
-    return Promise.resolve(queue.shift() ?? []);
+function recordingSql(responses: readonly unknown[]) {
+  const recording = sharedRecordingSql(responses, "$");
+  return {
+    sql: recording.sql,
+    get calls() {
+      return recording.queries;
+    },
+    get values() {
+      return recording.values;
+    },
   };
-  const sql = Object.assign(tag, {
-    array: (value: unknown) => value,
-    json: (value: unknown) => value,
-    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) =>
-      callback(sql as unknown as postgres.TransactionSql),
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
 }

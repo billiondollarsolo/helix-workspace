@@ -47,7 +47,7 @@ jobs:
           else
             while IFS= read -r path; do
               case "$path" in
-                package.json|pnpm-lock.yaml|apps/*/package.json|packages/*/package.json|security/dependency-audit-exceptions.json|security/license-policy.json|THIRD_PARTY_NOTICES.md)
+                package.json|pnpm-lock.yaml|pnpm-workspace.yaml|.pnpmfile.mjs|apps/*/package.json|packages/*/package.json|security/dependency-audit-exceptions.json|security/license-policy.json|THIRD_PARTY_NOTICES.md)
                   dependencies=true
                   scan=true
                   ;;

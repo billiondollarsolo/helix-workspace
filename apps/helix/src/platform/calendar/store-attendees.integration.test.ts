@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { PostgresCalendarStore } from "./store.js";
 
 const ORG = "ca700000-0000-4000-8000-000000000001";
@@ -134,13 +135,5 @@ async function attendeeEvidence(sql: postgres.Sql, eventId: string): Promise<Att
 
 async function cleanup(sql: postgres.Sql): Promise<void> {
   await sql`delete from outbox where payload->>'orgId' = ${ORG}`;
-  await sql`delete from activity where org_id = ${ORG}`;
-  await sql`delete from permissions where org_id = ${ORG}`;
-  await sql`delete from cal_events where org_id = ${ORG}`;
-  await sql`delete from cal_calendar_memberships where org_id = ${ORG}`;
-  await sql`delete from cal_calendars where org_id = ${ORG}`;
-  await sql`delete from threads where org_id = ${ORG}`;
-  await sql`delete from organization_memberships where org_id = ${ORG}`;
-  await sql`delete from actors where org_id = ${ORG}`;
-  await sql`delete from orgs where id = ${ORG}`;
+  await cleanupTestTenants(sql, [ORG]);
 }

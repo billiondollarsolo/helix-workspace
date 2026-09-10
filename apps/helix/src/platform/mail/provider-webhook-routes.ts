@@ -1,7 +1,7 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { Readable } from "node:stream";
-import { z } from "zod3";
+import { z } from "zod";
 import {
   adminConsoleWriteScope,
   canWriteAdminConsole,

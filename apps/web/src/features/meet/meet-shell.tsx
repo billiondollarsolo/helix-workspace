@@ -1,14 +1,14 @@
+import { Video as VideoIcon } from "lucide-react";
 /* MeetShell — the Meet surface root. Renders the Hub inside the standard
    <SurfaceFrame> chrome, or the dark-themed in-call view (full-bleed, no
    chrome) once a meeting is started or joined. The in-call view is wired to a
    real backend room: a room id + minted Jitsi token carried through here. */
 
-import { useState } from "react";
-import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
-import { MeetHub } from "./meet-hub";
-import { MeetCall } from "./meet-call";
+import { useState } from "react";
 import type { MeetControlState } from "./api";
+import { MeetCall } from "./meet-call";
+import { MeetHub } from "./meet-hub";
 
 /** An active call session — a real backend room plus its minted join token. */
 export interface MeetCallSession {
@@ -53,7 +53,7 @@ export function MeetShell() {
   return (
     <SurfaceFrame
       title="Meet"
-      icon={<Icons.Video />}
+      icon={<VideoIcon size={16} />}
       searchPlaceholder="Search meetings"
       searchValue={search}
       onSearchChange={setSearch}

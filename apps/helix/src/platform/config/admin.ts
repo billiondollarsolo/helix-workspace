@@ -1,6 +1,3 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
-import type postgres from "postgres";
-import { z } from "zod";
 import type {
   Actor,
   EventBus,
@@ -11,6 +8,11 @@ import type {
   TierSecurityDefaults,
 } from "@helix/sdk";
 import { isJsonObject } from "@helix/sdk";
+import { isJsonValue } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import type postgres from "postgres";
+import { z } from "zod";
+import { compactJsonObject } from "../util/json.js";
 import {
   EnvConfigSource,
   PostgresOverrideConfigSource,
@@ -257,7 +259,7 @@ const defaultDenyEgressReadinessSchema = checkedControlSchema.extend({
   enforced: z.boolean().optional(),
 });
 
-export const platformReadinessUpdateSchema = z
+const platformReadinessUpdateSchema = z
   .object({
     mfa: mfaReadinessSchema.optional(),
     encryptedBackups: encryptedBackupsReadinessSchema.optional(),
@@ -298,8 +300,8 @@ export const platformConfigUpdateSchema = z
   .strict();
 
 export type PlatformConfigUpdate = z.infer<typeof platformConfigUpdateSchema>;
-export type PlatformReadinessUpdate = z.infer<typeof platformReadinessUpdateSchema>;
-export type PlatformConfigAdminScope =
+type PlatformReadinessUpdate = z.infer<typeof platformReadinessUpdateSchema>;
+type PlatformConfigAdminScope =
   (typeof platformConfigAdminScopes)[keyof typeof platformConfigAdminScopes];
 
 export interface PlatformConfigStatus {
@@ -881,13 +883,6 @@ function normalizeAiConfig(value: unknown, label: string): NonNullable<PartialHe
   return jsonObjectFromDefined(parsed);
 }
 
-/** Known product AI slots for Admin routing UI (feature id → purpose). */
-export const AI_FEATURE_SLOTS = [
-  { feature: "assistant.chat", label: "Assistant chat (default)" },
-  { feature: "mail.spam-ai", label: "Mail spam AI (beta)" },
-  { feature: "mail.compose-help", label: "Mail compose assist" },
-] as const;
-
 /** Strip write-only API keys from admin GET responses; expose apiKeyConfigured. */
 export function redactAiSecretsForAdmin(config: HelixConfig): HelixConfig {
   const ai = config.ai;
@@ -1097,24 +1092,6 @@ function normalizeJsonObject(value: unknown, label: string): JsonObject {
     throw new TypeError(`${label} must be a JSON object`);
   }
   return value;
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return true;
-  }
-  if (Array.isArray(value)) {
-    return value.every(isJsonValue);
-  }
-  if (isJsonObject(value)) {
-    return Object.values(value).every(isJsonValue);
-  }
-  return false;
 }
 
 function jsonObjectFromDefined(value: unknown): JsonObject {
@@ -1503,12 +1480,6 @@ function mfaScopeRank(scope: "none" | "admins" | "org"): number {
     case "none":
       return 0;
   }
-}
-
-function compactJsonObject(value: Record<string, JsonValue | undefined>): JsonObject {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as JsonObject;
 }
 
 function missingFields(fields: readonly (readonly [string, boolean])[]): readonly string[] {

@@ -30,11 +30,7 @@ describe("folderPredicate", () => {
     expect(folderPredicate("archive", base({ archivedAt: now }), now)).toBe(true);
     expect(folderPredicate("starred", base({ starred: true }), now)).toBe(true);
     expect(
-      folderPredicate(
-        "snoozed",
-        base({ snoozedUntil: new Date("2026-07-01T00:00:00.000Z") }),
-        now,
-      ),
+      folderPredicate("snoozed", base({ snoozedUntil: new Date("2026-07-01T00:00:00.000Z") }), now),
     ).toBe(true);
     expect(folderPredicate("sent", base({ hasOutbound: true }), now)).toBe(true);
     expect(folderPredicate("drafts", base({ outboundStatus: "queued" }), now)).toBe(true);
@@ -109,9 +105,7 @@ describe("shouldSkipVacationResponse", () => {
         headers: { "auto-submitted": "auto-replied" },
       }),
     ).toBe(true);
-    expect(shouldSkipVacationResponse({ senderEmail: "a@b.com", isAutoReply: true })).toBe(
-      true,
-    );
+    expect(shouldSkipVacationResponse({ senderEmail: "a@b.com", isAutoReply: true })).toBe(true);
     expect(shouldSkipVacationResponse({ senderEmail: "friend@example.com" })).toBe(false);
   });
 });

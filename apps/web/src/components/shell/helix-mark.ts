@@ -45,7 +45,7 @@ export const HELIX_MARK_GRADIENT_OKLCH = {
  * which is why the light stop reads `#a491ff` rather than the `#a58dff` a clip
  * would give.
  */
-export const HELIX_MARK_GRADIENT_SRGB = {
+const HELIX_MARK_GRADIENT_SRGB = {
   from: "#a491ff",
   to: "#693ad4",
 } as const;

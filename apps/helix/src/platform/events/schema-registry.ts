@@ -21,7 +21,7 @@ export interface EventSchemaRegistry {
   list(): readonly EventSchemaDefinition[];
 }
 
-export class InMemoryEventSchemaRegistry implements EventSchemaRegistry {
+class InMemoryEventSchemaRegistry implements EventSchemaRegistry {
   readonly #events = new Map<string, EventSchemaDefinition>();
   readonly #subjects = new Map<string, string>();
 

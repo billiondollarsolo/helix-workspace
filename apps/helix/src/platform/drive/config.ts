@@ -1,5 +1,5 @@
 import { env, type Env } from "../../config/env.js";
-export interface DriveStorageConfig {
+interface DriveStorageConfig {
   readonly endpoint?: string;
   readonly region: string;
   readonly bucket: string;

@@ -1,11 +1,11 @@
+import type { EventBus, EventEnvelope, JsonValue, Unsubscribe } from "@helix/sdk-types";
+import type { FastifyRequest } from "fastify";
 import { describe, expect, it } from "vitest";
 import { actorFromRequestWithAccessToken } from "../../api/actor.js";
+import type { AccessTokenRecord } from "../auth/oauth.js";
 import { InMemoryOAuthClientStore } from "../auth/oauth.js";
 import { handleEventSocket } from "./routes.js";
 import { EventStreamLimiter } from "./stream-limit.js";
-import type { AccessTokenRecord } from "../auth/oauth.js";
-import type { EventBus, EventEnvelope, JsonValue, Unsubscribe } from "@helix/sdk-types";
-import type { FastifyRequest } from "fastify";
 
 const actorId = "11111111-1111-4111-8111-111111111111";
 const orgId = "22222222-2222-4222-8222-222222222222";

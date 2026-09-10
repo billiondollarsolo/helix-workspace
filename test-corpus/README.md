@@ -58,33 +58,33 @@ path is the two-phase `drive.upload` + `drive.finalize`.
 
 Total: **1272 files / ~86 MB** across 30+ extensions.
 
-| Ext | Count | Size |
-|---|---:|---:|
-| md   | 655 | 215 KB |
-| jpg  | 106 | 12.1 MB |
-| docx |  56 | 1.5 MB |
-| pdf  |  52 | 7.1 MB |
-| doc  |  42 | 4.5 MB |
-| rtf  |  40 | 2.1 MB |
-| xlsx |  33 | 12.7 MB |
-| xls  |  28 | 1.8 MB |
-| pptx |  27 | 2.1 MB |
-| html |  24 | 156 KB |
-| ppt  |  21 | 2.5 MB |
-| odt  |  15 | 3.9 MB |
-| chm, msg, one, xps, xlsb, xmp, bpg, mdb, … | rest | — |
+| Ext                                        | Count |    Size |
+| ------------------------------------------ | ----: | ------: |
+| md                                         |   655 |  215 KB |
+| jpg                                        |   106 | 12.1 MB |
+| docx                                       |    56 |  1.5 MB |
+| pdf                                        |    52 |  7.1 MB |
+| doc                                        |    42 |  4.5 MB |
+| rtf                                        |    40 |  2.1 MB |
+| xlsx                                       |    33 | 12.7 MB |
+| xls                                        |    28 |  1.8 MB |
+| pptx                                       |    27 |  2.1 MB |
+| html                                       |    24 |  156 KB |
+| ppt                                        |    21 |  2.5 MB |
+| odt                                        |    15 |  3.9 MB |
+| chm, msg, one, xps, xlsb, xmp, bpg, mdb, … |  rest |       — |
 
 ## Licenses
 
 All sources are explicitly trusted public-domain or permissive-license
 distributions. See `manifest.json` for per-source license + URL.
 
-| Source | License | Format coverage |
-|---|---|---|
-| Apache Tika test docs | Apache 2.0 | docx, xlsx, pptx, odt, ods, odp, pdf, rtf, txt, html, eml, png, jpg, gif, chm, msg, one |
-| LibreOffice samples (optional) | MPL 2.0 / LGPLv3 | docx, xlsx, pptx, odt, ods, odp |
-| CommonMark spec examples | CC0 | md |
-| Lorem Picsum | Unsplash license | jpg, png |
+| Source                         | License          | Format coverage                                                                         |
+| ------------------------------ | ---------------- | --------------------------------------------------------------------------------------- |
+| Apache Tika test docs          | Apache 2.0       | docx, xlsx, pptx, odt, ods, odp, pdf, rtf, txt, html, eml, png, jpg, gif, chm, msg, one |
+| LibreOffice samples (optional) | MPL 2.0 / LGPLv3 | docx, xlsx, pptx, odt, ods, odp                                                         |
+| CommonMark spec examples       | CC0              | md                                                                                      |
+| Lorem Picsum                   | Unsplash license | jpg, png                                                                                |
 
 ## Seed prerequisites
 

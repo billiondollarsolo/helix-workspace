@@ -121,7 +121,7 @@ const reindexScopes = [
   "admin.*",
 ] as const;
 
-export function canReindexSearch(actor: Actor): boolean {
+function canReindexSearch(actor: Actor): boolean {
   const scopes = actor.scopes ?? [];
   return reindexScopes.some((scope) => scopes.includes(scope));
 }

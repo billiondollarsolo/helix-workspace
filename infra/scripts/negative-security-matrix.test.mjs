@@ -26,7 +26,7 @@ describe("V2 negative-security requirement index", () => {
       "Audit",
       "Backup",
     ]);
-    expect(V2_NEGATIVE_SECURITY_MATRIX.flatMap((row) => row.cases)).toHaveLength(30);
+    expect(V2_NEGATIVE_SECURITY_MATRIX.flatMap((row) => row.cases)).toHaveLength(31);
   });
   it("keeps live Postgres coverage explicit instead of presenting a skipped fixture as default evidence", () => {
     expect(negativeSecurityCommands()).toEqual(

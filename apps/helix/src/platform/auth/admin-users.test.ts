@@ -1,7 +1,7 @@
 import fastify from "fastify";
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
 import { actorFromRequest } from "../../api/test-actor.js";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import {
   PostgresAdminUsersStore,
   canReadAdminUsers,
@@ -18,11 +18,6 @@ import {
   type OffboardAppPasswordRecord,
   type OffboardAppPasswordStore,
 } from "./admin-users.js";
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const actorId = "11111111-1111-4111-8111-111111111111";
@@ -275,21 +270,24 @@ describe("PostgresAdminUsersStore", () => {
     const updatedAt = new Date("2026-05-20T12:30:00.000Z");
     const cursorCreatedAt = new Date("2026-05-20T14:00:00.000Z");
     const cursorId = "77777777-7777-4777-8777-777777777777";
-    const recording = createRecordingSql([
+    const recording = createRecordingSql(
       [
-        {
-          id: actorId,
-          org_id: orgId,
-          type: "agent",
-          email: "agent@example.com",
-          display_name: "Agent One",
-          scopes: ["mail.read"],
-          disabled_at: disabledAt,
-          created_at: createdAt,
-          updated_at: updatedAt,
-        },
+        [
+          {
+            id: actorId,
+            org_id: orgId,
+            type: "agent",
+            email: "agent@example.com",
+            display_name: "Agent One",
+            scopes: ["mail.read"],
+            disabled_at: disabledAt,
+            created_at: createdAt,
+            updated_at: updatedAt,
+          },
+        ],
       ],
-    ]);
+      "$",
+    );
     const store = new PostgresAdminUsersStore(recording.sql);
 
     const users = await store.listUsers({
@@ -788,17 +786,4 @@ function userRecord(id: string, createdAt: string): AdminUserRecord {
     createdAt,
     updatedAt: createdAt,
   };
-}
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  let callIndex = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
-    return Promise.resolve(responses[callIndex++] ?? []);
-  };
-  return { sql: tag as unknown as postgres.Sql, calls };
 }

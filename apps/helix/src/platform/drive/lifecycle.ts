@@ -16,7 +16,7 @@ export function driveHardDeleteBlockers(state: DriveHardDeleteState, now: Date):
   return blockers;
 }
 
-export interface DriveOrphanCandidate {
+interface DriveOrphanCandidate {
   readonly id: string;
   readonly orgId: string;
   readonly storageKey: string;

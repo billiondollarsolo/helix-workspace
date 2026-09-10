@@ -1,6 +1,7 @@
 {
   "name": "@helix/web",
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -42,7 +43,6 @@
     "tailwind-merge": "3.6.0",
     "zod": "3.25.76",
     "@better-auth/passkey": "1.7.2",
-    "@better-auth/utils": "0.5.0",
     "better-auth": "1.7.2"
   },
   "devDependencies": {

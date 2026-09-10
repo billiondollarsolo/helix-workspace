@@ -7,7 +7,7 @@
  * `provider.tags`. This module is the one canonical source so the gate and
  * the router agree on what each tag means.
  */
-export const aiProviderClassificationTags = [
+const aiProviderClassificationTags = [
   /** Provider sends data to an external/third-party service. */
   "external",
   /** Admin has explicitly allowlisted the provider for standard data. */
@@ -37,9 +37,7 @@ export const confidentialProviderTags: readonly AIProviderClassificationTag[] = 
   "air-gapped",
 ];
 
-export function isAIProviderClassificationTag(
-  value: string,
-): value is AIProviderClassificationTag {
+export function isAIProviderClassificationTag(value: string): value is AIProviderClassificationTag {
   return (aiProviderClassificationTags as readonly string[]).includes(value);
 }
 

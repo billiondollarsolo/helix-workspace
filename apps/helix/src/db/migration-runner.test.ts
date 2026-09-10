@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "vitest";
 
 describe("platform foundation migration", () => {
   it("seeds the bootstrap organization in the regional migration cell", async () => {

@@ -1,5 +1,7 @@
 # Final release-readiness evidence
 
+The [canonical Helix 1.0 scope](release/1.0-scope.md) ships **Mail, Drive, Chat, Assistant, and Admin** through invite-only access. Calendar and Meet are dormant behind the `full` profile and are outside 1.0. Production requires `HELIX_APPS=mail,drive,chat,assistant` and `VITE_HELIX_MVP_ONLY=true`.
+
 The ordinary release-readiness manifest remains a developer and operator preflight: it validates
 only the evidence explicitly supplied. A production promotion must add `--final-release`. That
 mode is fail-closed and requires the eight live service gates plus the V6 and R0–R3 supporting
@@ -20,35 +22,36 @@ Static, `not_run`, running, failed, partially passed, or missing reports cannot 
 
 Final mode additionally requires:
 
-| Requirement                | Manifest option                         | Fail-closed proof                                                          |
-| -------------------------- | --------------------------------------- | -------------------------------------------------------------------------- |
-| V6/R0 engineering          | `--full-gates-evidence`                 | Exact revision and complete mandatory command set passed                   |
-| Deployed schema            | `--migration-status-evidence`           | Repository migration head deployed by one locked migrator                  |
-| Resolved production config | `--production-config-evidence`          | Digest-only, resolved production config with MVP mode enforced             |
-| SLO and soak               | `--slo-soak-evidence`                   | Objectives passed over a real window of at least 24 hours                  |
-| V5 security review         | `--security-review-evidence`            | Scans/SBOM/manual review passed; every finding safely dispositioned        |
-| R1/R2/support readiness    | `--support-readiness-evidence`          | Owners, runbooks, dogfood, pilot, and safe incident history                |
-| Cost, limits, risks        | `--business-readiness-evidence`         | Cost model, approved MVP limits, and owned/unexpired accepted risks        |
-| Protected remote Git state | `--protected-repository-state-evidence` | Trusted signed observation binds both protected branches/tags to both SHAs |
-| R3 decision                | `--production-decision-evidence`        | Signed exact-packet `go` or owned, unexpired `conditional_go` decision     |
-| Protected trust            | protected verifier configuration        | Decision/state keys and GitHub/Sigstore identities match pinned values     |
+| Requirement                | Manifest option                         | Fail-closed proof                                                              |
+| -------------------------- | --------------------------------------- | ------------------------------------------------------------------------------ |
+| V6/R0 engineering          | `--full-gates-evidence`                 | Exact revision and complete mandatory command set passed                       |
+| Deployed schema            | `--migration-status-evidence`           | Repository migration head deployed by one locked migrator                      |
+| Resolved production config | `--production-config-evidence`          | Digest-only, resolved production config with MVP mode enforced                 |
+| SLO and soak               | `--slo-soak-evidence`                   | Objectives passed over a real window of at least 24 hours                      |
+| V5 security review         | `--security-review-evidence`            | Scans/SBOM/manual review passed; every finding safely dispositioned            |
+| R1/R2/support readiness    | `--support-readiness-evidence`          | Owners, runbooks, dogfood, pilot, and safe incident history                    |
+| Cost, limits, risks        | `--business-readiness-evidence`         | Cost model, approved MVP limits, and owned/unexpired accepted risks            |
+| Protected remote Git state | `--protected-repository-state-evidence` | Trusted signed observation binds the protected workspace branch/tag to its SHA |
+| R3 decision                | `--production-decision-evidence`        | Signed exact-packet `go` or owned, unexpired `conditional_go` decision         |
+| Protected trust            | protected verifier configuration        | Decision/state keys and GitHub/Sigstore identities match pinned values         |
 
 See [Final release supporting artifacts](final-release-supporting-evidence.md) for exact schemas
 and the safe production procedure.
 
+Local engineering progress is tracked in [implementation status](release/implementation-status.md); it does not satisfy the live gates above.
+
 ## Bind every live run to the promoted build
 
-Before executing any evidence runner, resolve both exact clean repository revisions and immutable
+Before executing any evidence runner, resolve the exact clean workspace revision and immutable
 OCI digests of the application and web images that are deployed in the test environment:
 
 ```sh
 export HELIX_RELEASE_WORKSPACE_SHA="$(git rev-parse HEAD)"
-export HELIX_RELEASE_EDITORS_SHA="$(git -C ../helix-editors rev-parse HEAD)"
 export HELIX_RELEASE_APPLICATION_IMAGE_DIGEST="sha256:<64 lowercase hex characters>"
 export HELIX_RELEASE_WEB_IMAGE_DIGEST="sha256:<64 lowercase hex characters>"
 ```
 
-Set all four variables together. Supplying only part of the binding fails before evidence is
+Set all three variables together. Supplying only part of the binding fails before evidence is
 written. The Mail, Agent, Chat, data-plane, restore, failure/recovery, and DAST CLIs add this canonical
 object to generated reports:
 
@@ -57,7 +60,6 @@ object to generated reports:
   "releaseBinding": {
     "schema": "helix.release-evidence-binding.v1",
     "workspaceSha": "<40 lowercase hex characters>",
-    "editorsSha": "<40 lowercase hex characters>",
     "applicationImageDigest": "sha256:<64 lowercase hex characters>",
     "webImageDigest": "sha256:<64 lowercase hex characters>"
   }
@@ -65,11 +67,11 @@ object to generated reports:
 ```
 
 The Drive harness is deployment-specific. Have it emit the same object, or run its completed
-report through the Drive validator with the four environment variables set and redirect the
+report through the Drive validator with the three environment variables set and redirect the
 validated JSON to the release packet. Do not overwrite the source report until the redirected
 output passes validation.
 
-The binding contract has exactly five fields. Unknown, missing, malformed, or secret-like fields
+The binding contract has exactly four fields. Unknown, missing, malformed, or secret-like fields
 are rejected. If a report already contains a binding, a runner refuses to replace it with different
 values.
 
@@ -95,14 +97,11 @@ export HELIX_RELEASE_TRUSTED_REKOR_PUBLIC_KEY=/run/helix-release/rekor-public-ke
 export HELIX_RELEASE_TRUSTED_REKOR_LOG_ID=sha256:<trusted-rekor-spki-digest>
 export HELIX_RELEASE_TRUSTED_REKOR_CHECKPOINT_ORIGIN='rekor.sigstore.dev - <trusted-tree-id>'
 export HELIX_RELEASE_TRUSTED_GITHUB_REPOSITORY=billiondollarsolo/helix-workspace
-export HELIX_RELEASE_TRUSTED_EDITORS_REPOSITORY=billiondollarsolo/helix-editors
 export HELIX_RELEASE_TRUSTED_GITHUB_WORKFLOW_IDENTITY=https://github.com/billiondollarsolo/helix-workspace/.github/workflows/production-image-security.yml@refs/heads/main
 export HELIX_RELEASE_TRUSTED_APPLICATION_SUBJECT=ghcr.io/billiondollarsolo/helix-workspace
 export HELIX_RELEASE_TRUSTED_WEB_SUBJECT=ghcr.io/billiondollarsolo/helix-workspace-web
-export HELIX_RELEASE_PREVIOUS_EDITORS_SHA=<previous-release-editor-sha>
 export HELIX_RELEASE_REQUIRED_BRANCH=main
 export HELIX_RELEASE_WORKSPACE_TAG=<protected-workspace-release-tag>
-export HELIX_RELEASE_EDITORS_TAG=<protected-editor-release-tag>
 
 pnpm quality:release-readiness-manifest -- \
   --final-release \
@@ -134,12 +133,12 @@ timestamp CLI override. The promotion verifier supplies all trust anchors from p
 configuration and uses its own wall clock. Evidence producers must not be able to modify those
 settings. `--timestamp` remains available only to deterministic preflight automation.
 
-The command independently reads both clean repository Git SHAs and compares them and both supplied
+The command independently reads the clean workspace Git SHA and compares it and both supplied
 image digests with every report. Any mismatch blocks promotion. It also verifies the application
 and web DSSE signatures offline, validates their Fulcio/GitHub identities, cryptographically
 verifies the Rekor body, signed-entry timestamp, inclusion proof, and checkpoint under protected
-log trust, and requires the signed paired-source predicate to bind the exact workspace and editor
-revisions. Rekor's authenticated integration time controls provenance freshness and certificate
+log trust, and requires the signed source-provenance predicate to bind the exact workspace
+revision. Rekor's authenticated integration time controls provenance freshness and certificate
 validity; an evidence author cannot backdate the unsigned wrapper. The resulting schema-version 6
 manifest records `release.mode: "final"`, all required gate IDs, repository revisions, immutable
 image digests, evidence-file hashes, redacted timing/count summaries, signed protected-state
@@ -148,12 +147,11 @@ observation, and the verified R3 decision.
 Do not regenerate or edit a report to repair a mismatch. Deploy the intended images from the
 intended revision and rerun the affected live evidence.
 
-The final verifier requires a separately trusted Ed25519-signed observation that both SHAs are the
-exact authoritative tips of the configured protected release branch and the exact commits named by
-their protected release tags. The observation must name the exact pinned GitHub repositories and
+The final verifier requires a separately trusted Ed25519-signed observation that the workspace SHA is the
+exact authoritative tip of the configured protected release branch and the exact commit named by
+its protected release tag. The observation must name the exact pinned GitHub repository and
 be no more than one hour old. Local branch names, tags, and remotes do not satisfy this control.
-The previous editor release SHA determines whether editor gates are mandatory; an evidence author
-cannot skip them by setting `editors.changed: false`.
+No sibling repository or source revision participates in the release binding.
 
 The manifest output must be outside the source evidence directory and must not already exist.
 Creation follows filesystem aliases before enforcing that boundary and refuses symbolic-link or

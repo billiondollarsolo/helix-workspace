@@ -1,12 +1,7 @@
-import fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import {
-  registerTenantScimRoutes,
-  SCIM_SECURITY_ACTOR_ID,
-  type ScimAuthAuditSink,
-  type ScimAuthFailureReason,
-} from "./scim-routes.js";
+import type { OrgRecord, OrgStore } from "../tenancy/orgs.js";
 import {
   InMemoryTenantScimCredentialStore,
   SCIM_CREDENTIAL_SCOPES,
@@ -27,7 +22,11 @@ import {
   type ScimUserRecord,
   type ScimWriteResult,
 } from "./scim-provisioning.js";
-import type { OrgRecord, OrgStore } from "../tenancy/orgs.js";
+import {
+  registerTenantScimRoutes,
+  type ScimAuthAuditSink,
+  type ScimAuthFailureReason,
+} from "./scim-routes.js";
 
 const VALID_TOKEN =
   "helix_scim_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -100,7 +99,7 @@ describe("tenant SCIM auth gating", () => {
     });
     expect(audit.records).toContainEqual(
       expect.objectContaining({
-        actorId: SCIM_SECURITY_ACTOR_ID,
+        actorId: null,
         verb: "scim.auth.failed",
       }),
     );
@@ -924,7 +923,7 @@ function stale(version: number, expected: number | null): void {
 class RecordingAuditSink implements ScimAuthAuditSink {
   public readonly records: Array<{
     readonly orgId: string;
-    readonly actorId: string;
+    readonly actorId: string | null;
     readonly verb: string;
     readonly objectType: string;
     readonly objectId?: string;
@@ -933,7 +932,7 @@ class RecordingAuditSink implements ScimAuthAuditSink {
 
   async append(record: {
     readonly orgId: string;
-    readonly actorId: string;
+    readonly actorId: string | null;
     readonly verb: string;
     readonly objectType: string;
     readonly objectId?: string;

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
-import { registerDriveTools } from "./tools.js";
 import type {
-  DriveStore,
   DriveFolderCreateInput,
+  DriveStore,
   FinalizeDriveUploadInput,
   PrepareDriveUploadInput,
 } from "./store.js";
+import { registerDriveTools } from "./tools.js";
 import type {
   DriveAccessGrantRecord,
   DriveCommentRecord,

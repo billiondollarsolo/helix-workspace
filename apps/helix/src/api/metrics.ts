@@ -1,4 +1,3 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   Counter,
   Gauge,
@@ -6,13 +5,14 @@ import {
   Registry,
   collectDefaultMetrics,
   type LabelValues,
-} from "prom-client";
+} from "@prometheus-io/client";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { SecurityScanningMetrics } from "../platform/security/scanning/metrics.js";
 
-export type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
-export type OperationalMetricStatus = "success" | "error" | "retry" | "blocked" | "dry_run";
-export type OperationalCapability = "mail" | "drive" | "chat" | "search";
-export type OperationalOperation =
+type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
+type OperationalMetricStatus = "success" | "error" | "retry" | "blocked" | "dry_run";
+type OperationalCapability = "mail" | "drive" | "chat" | "search";
+type OperationalOperation =
   | "queue_wait"
   | "delivery"
   | "fanout"
@@ -22,7 +22,7 @@ export type OperationalOperation =
   | "virus_scan"
   | "quota"
   | "reconcile";
-export type OperationalMeasure =
+type OperationalMeasure =
   | "replayed_events"
   | "uploaded_bytes"
   | "downloaded_bytes"
@@ -712,7 +712,7 @@ export function installHttpMetrics(app: FastifyInstance, metrics: PlatformMetric
   });
 }
 
-export function durationSecondsSince(start: bigint): number {
+function durationSecondsSince(start: bigint): number {
   return Number(process.hrtime.bigint() - start) / 1_000_000_000;
 }
 

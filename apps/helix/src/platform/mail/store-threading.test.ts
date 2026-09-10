@@ -1,7 +1,7 @@
-import type postgres from "postgres";
+import type { StorageObject } from "@helix/sdk-types";
 import { simpleParser } from "mailparser";
 import { describe, expect, it } from "vitest";
-import type { StorageObject } from "@helix/sdk-types";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import type { TenantStorageClient } from "../storage/tenant-resolver.js";
 import { prepareMailRawSource } from "./raw-source.js";
 import { PostgresMailStore } from "./store.js";
@@ -13,11 +13,6 @@ const existingThreadId = "44444444-4444-4444-8444-444444444444";
 const existingMessageId = "55555555-5555-4555-8555-555555555555";
 const insertedMessageId = "66666666-6666-4666-8666-666666666666";
 const sourceObjectId = "77777777-7777-4777-8777-777777777777";
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 describe("PostgresMailStore RFC threading and idempotency", () => {
   it("joins the nearest actor-visible referenced thread deterministically", async () => {
@@ -214,22 +209,4 @@ class RecordingStorage implements TenantStorageClient {
 
   async delete(): Promise<void> {}
 }
-
-function recordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  let index = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
-    return Promise.resolve(responses[index++] ?? []);
-  };
-  const sql = Object.assign(tag, {
-    array: (value: unknown) => value,
-    json: (value: unknown) => value,
-    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) =>
-      callback(sql as unknown as postgres.TransactionSql),
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}
+const recordingSql = (responses: readonly unknown[] = []) => sharedRecordingSql(responses, "?");

@@ -5,7 +5,7 @@ missing. This guide covers the Docker Compose production overlay. It is not a su
 backup, restore, monitoring, or pilot gates in the production-readiness plan.
 
 Production promotion requires the revision-bound eight-gate manifest described in
-[`final-release-readiness.md`](./final-release-readiness.md). Ordinary manifests and CI contract
+[`final-release-readiness.md`](final-release-readiness.md). Ordinary manifests and CI contract
 tests are preflight evidence only.
 
 ## Public surface
@@ -29,30 +29,20 @@ Caddy edge containing the compiled web client. The production overlay deliberate
 local `build` sections and pulls only operator-supplied, digest-qualified promoted images. This
 prevents a deployment host from silently rebuilding or substituting unreviewed source. The web
 edge serves the SPA and proxies only explicit API, OAuth, MCP, realtime, WebDAV, and discovery
-paths to Helix. The production web shell advertises Mail, Drive, Chat, Assistant, and Admin; Docs,
-Sheets, Slides, Calendar, Meet, and native Editors are disabled for this MVP.
+paths to Helix. The production web shell advertises Mail, Drive, Chat, Assistant, and Admin.
+Calendar and Meet remain dormant behind the full profile. Drive provides file storage and download.
+The [1.0 scope](release/1.0-scope.md) defines the packaging contract.
 
-The storage-only web contract also guards direct URLs for Docs, Sheets, Slides, Calendar, Meet, and
-the native PDF surface. Opening a PDF from Drive uses the read-only raw preview endpoint; PDF form
-draft tools are not registered. The right-side mini-app rail, editor-specific settings, prompts,
-and notifications are removed or safely rerouted in this build. These controls are
-defense-in-depth around server-side module and tool registration, not the primary authorization
-boundary.
-
-The paired `../helix-editors` checkout is supplied as a BuildKit named context solely to build the
-repository's existing file-linked package boundary reproducibly. `HELIX_EDITORS_MIGRATIONS_ENABLED`
-is false, the Editors core app is disabled, and no native editor implementation is enabled. For
-a local review build that will later be scanned, signed, pushed, and selected by digest, use:
+Both images build from this repository without sibling contexts. For a local review build that
+will later be scanned, signed, pushed, and selected by digest, use:
 
 ```sh
 docker buildx build \
-  --build-context helix_editors=../helix-editors \
   -f infra/docker/Dockerfile \
   --target runtime \
   -t helix/workspace:production .
 
 docker buildx build \
-  --build-context helix_editors=../helix-editors \
   -f infra/docker/Dockerfile \
   --target web-runtime \
   -t helix/workspace-web:production .
@@ -79,8 +69,7 @@ migrations in a separate step. A release with neither will start and then fail
 on the first request touching a changed table, which is harder to diagnose than
 a failed migration.
 
-Both the application service and the one-shot `helix-migrate` job explicitly set
-`HELIX_EDITORS_MIGRATIONS_ENABLED=false`. The migrator resolves migration sources from its own
+The one-shot `helix-migrate` job resolves workspace migration sources from its own
 minimal operational environment; it does not require application provider, listener, or MFA
 configuration merely to apply the platform schema.
 

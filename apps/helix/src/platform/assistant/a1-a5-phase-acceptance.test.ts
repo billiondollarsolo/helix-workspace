@@ -23,6 +23,12 @@ import {
   credentialToolInvocationPrincipal,
   toolInvocationOptions,
 } from "../auth/tool-invocation-principal.js";
+import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
+import type { SearchEngine, SearchHit, SearchRequest } from "../search/index.js";
+import { createToolRegistry } from "../tool-registry.js";
+import { evaluateAutomationPolicy, hashToolInput } from "../tools/automation-policy.js";
+import { evaluateToolPolicyFirewall } from "../tools/policy-firewall.js";
+import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "../tools/registry.js";
 import {
   assistantContextLimits,
   classificationFromToolResult,
@@ -30,14 +36,8 @@ import {
   prepareSearchContext,
   sanitizeUntrustedText,
 } from "./context-policy.js";
-import { evaluateAutomationPolicy, hashToolInput } from "../tools/automation-policy.js";
-import { evaluateToolPolicyFirewall } from "../tools/policy-firewall.js";
-import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "../tools/registry.js";
-import { createToolRegistry } from "../tool-registry.js";
-import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
 import { AssistantOrchestrator } from "./orchestrator.js";
 import { InMemoryAssistantStore } from "./store.js";
-import type { SearchEngine, SearchHit, SearchRequest } from "../search/index.js";
 
 const orgId = "org-a1a5";
 const human: Actor = {

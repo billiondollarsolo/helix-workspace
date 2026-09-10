@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import type postgres from "postgres";
-import { describe, expect, it } from "vitest";
 import type { StorageObject } from "@helix/sdk-types";
+import { createHash } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import {
   createTenantStorageMigrationPairResolver,
   listTenantStorageMigrationObjects,
@@ -631,30 +631,6 @@ function sha256(value: string): string {
 function fixedClock(): () => Date {
   let tick = 0;
   return () => new Date(Date.UTC(2026, 4, 24, 10, 0, tick++));
-}
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  let callIndex = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
-    return Promise.resolve(responses[callIndex++] ?? []);
-  };
-  return {
-    sql: Object.assign(tag, {
-      json: (value: unknown) => value,
-      array: (value: unknown) => value,
-    }) as unknown as postgres.Sql,
-    calls,
-  };
 }
 
 function jobRow(

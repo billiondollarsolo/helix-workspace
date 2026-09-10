@@ -1,4 +1,3 @@
-import type postgres from "postgres";
 import {
   isMeteringRollupMetricKey,
   meteringRollupMetricKeys,
@@ -6,6 +5,7 @@ import {
   type MeteringRollupMetricKey,
 } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import type postgres from "postgres";
 import { z } from "zod";
 import {
   adminConsoleReadScope,
@@ -31,8 +31,8 @@ import {
  * (plan card with usage meters, next-invoice line, recent-invoices table).
  */
 
-export type BillingCycle = "monthly" | "annual";
-export type InvoiceStatus = "paid" | "open" | "void" | "uncollectible";
+type BillingCycle = "monthly" | "annual";
+type InvoiceStatus = "paid" | "open" | "void" | "uncollectible";
 
 export interface BillingAccountRecord {
   readonly orgId: string;
@@ -74,9 +74,9 @@ export interface UsageRollupRecord {
   readonly computedAt: string;
 }
 
-export type BillingUsageSummaryAggregation = "sum" | "average" | "max";
+type BillingUsageSummaryAggregation = "sum" | "average" | "max";
 
-export interface BillingUsageSummaryMetric {
+interface BillingUsageSummaryMetric {
   readonly metricKey: MeteringRollupMetricKey;
   readonly quantity: number;
   readonly aggregation: BillingUsageSummaryAggregation;
@@ -93,7 +93,7 @@ export interface BillingUsageSummary {
  * Derived usage meter (a 0..1 fill fraction) so the UI does not recompute
  * ratios. Returned alongside the raw counts in the account response.
  */
-export interface BillingUsageMeter {
+interface BillingUsageMeter {
   readonly id: "licenses" | "storage" | "ai_credits";
   readonly used: number;
   readonly limit: number;
@@ -105,7 +105,7 @@ export interface BillingAccountView {
   readonly meters: readonly BillingUsageMeter[];
 }
 
-export interface BillingUsageView {
+interface BillingUsageView {
   readonly rollups: readonly UsageRollupRecord[];
   readonly summary: BillingUsageSummary;
 }
@@ -127,7 +127,7 @@ export interface ListUsageRollupsInput {
   readonly metricKey?: MeteringRollupMetricKey | undefined;
 }
 
-export interface BillingStore {
+interface BillingStore {
   getAccount(orgId: string): Promise<BillingAccountRecord | null>;
   /** Returns up to `limit + 1` rows so the caller can detect a next page. */
   listInvoices(input: ListInvoicesInput): Promise<readonly InvoiceRecord[]>;

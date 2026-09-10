@@ -1,5 +1,5 @@
+import { iconMap as Icons } from "@/components/icon-map";
 import type { ReactNode } from "react";
-import { Icons } from "@/components/icons";
 
 export function FileTypeIcon({
   name,
@@ -18,16 +18,8 @@ export function FileTypeIcon({
   return (
     <div
       aria-label={`File type for ${name}`}
-      style={{
-        aspectRatio,
-        background: "var(--surface-2)",
-        display: "grid",
-        placeItems: "center",
-        color,
-        border: "1px solid var(--border)",
-        borderRadius: 6,
-        width: "100%",
-      }}
+      className="bg-muted grid [place-items:center] [border:1px_solid_var(--border)] rounded-md w-full"
+      style={{ aspectRatio, color }}
     >
       {fallback ?? <Icon size={36} />}
     </div>

@@ -1,4 +1,3 @@
-import type { JsonObject } from "@helix/sdk-types";
 import { normalizeMailDomain } from "./address-normalization.js";
 import type {
   CreateOutboundProviderInput,
@@ -9,6 +8,7 @@ import type {
   UpdateOutboundProviderInput,
 } from "./admin-store.js";
 import { MailProviderConfigurationError } from "./errors.js";
+import type { DkimOptionsResolver, OutboundMailTransport } from "./outbound.js";
 import {
   ProviderMailTransport,
   createOutboundMailProvider,
@@ -16,7 +16,6 @@ import {
   type OutboundMailProviderKind,
   type OutboundProviderConfig,
 } from "./providers.js";
-import type { DkimOptionsResolver, OutboundMailTransport } from "./outbound.js";
 
 export type OutboundProviderDecisionSource = "sending_domain" | "org_default" | "environment";
 
@@ -39,7 +38,7 @@ export interface MailSecretProvider {
   resolveSecret(ref: string, orgId: string): Promise<string | undefined>;
 }
 
-export interface ManagedEnvironmentMailProvider {
+interface ManagedEnvironmentMailProvider {
   readonly id: string;
   readonly kind: OutboundMailProviderKind;
   /** Must be an established API/SMTP relay. Direct-to-MX is never permitted. */
@@ -283,20 +282,5 @@ export function withOutboundRoutingInvalidation(
         return result;
       },
     },
-  };
-}
-
-/** Safe metadata stored with attempts; it intentionally excludes config and secrets. */
-export function providerDecisionMetadata(
-  decision: Pick<
-    ResolvedOutboundTransport,
-    "providerId" | "providerKind" | "source" | "fromDomain"
-  >,
-): JsonObject {
-  return {
-    providerId: decision.providerId,
-    providerKind: decision.providerKind,
-    providerDecisionSource: decision.source,
-    fromDomain: decision.fromDomain,
   };
 }

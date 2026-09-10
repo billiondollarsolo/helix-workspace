@@ -38,8 +38,6 @@ describe("error codes", () => {
   });
 
   it("rejects an envelope with an unknown code", () => {
-    expect(() =>
-      errorEnvelopeSchema.parse({ error: { code: "nope", message: "x" } }),
-    ).toThrow();
+    expect(() => errorEnvelopeSchema.parse({ error: { code: "nope", message: "x" } })).toThrow();
   });
 });

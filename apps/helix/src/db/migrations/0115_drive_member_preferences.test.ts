@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -80,13 +81,7 @@ describe.skipIf(sql === null)("0115 live two-member Drive preference isolation",
   });
 
   async function cleanup(): Promise<void> {
-    await database`delete from activity where org_id = ${orgId}`;
-    await database`delete from permissions where org_id = ${orgId}`;
-    await database`delete from objects where org_id = ${orgId}`;
-    await database`delete from organization_memberships where org_id = ${orgId}`;
-    await database`delete from actors where id in (${actorA}, ${actorB})`;
-    await database`delete from orgs where id = ${orgId}`;
-    await database`delete from identity_subjects where id in (${actorA}, ${actorB})`;
+    await cleanupTestTenants(database, [orgId]);
   }
 
   it("keeps the same readable object's star and layout isolated by membership", async () => {

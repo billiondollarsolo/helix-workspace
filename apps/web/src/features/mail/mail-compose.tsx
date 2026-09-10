@@ -1,4 +1,3 @@
-import { Icons } from "@/components/icons";
 import { Dialog } from "@/components/ui/helix-dialog";
 import { trashDriveObject, uploadDriveFile } from "@/features/drive/api";
 import { useUnsavedChangesWarning } from "@/lib/use-unsaved-changes-warning";
@@ -6,6 +5,13 @@ import { cn as cx } from "@/lib/utils";
 import type { MailDraft } from "@helix/contracts";
 import { useDebouncer } from "@tanstack/react-pacer/debouncer";
 import { useMutation } from "@tanstack/react-query";
+import {
+  ChevronDown as ChevronDownIcon,
+  Paperclip as PaperclipIcon,
+  Send as SendIcon,
+  Trash2 as TrashIcon,
+  X as XIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelOutboundMail,
@@ -505,7 +511,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
     >
       {isDragOver && (
         <div className="compose-drop-overlay" aria-label="Drop files to attach">
-          <Icons.Paperclip />
+          <PaperclipIcon size={16} />
           Drop files to attach
         </div>
       )}
@@ -515,14 +521,14 @@ export function Compose({ onClose, onSent }: ComposeProps) {
         type="file"
         multiple
         aria-label="Attach files"
-        style={{ display: "none" }}
+        className="hidden"
         onChange={handleFileInputChange}
       />
       <div className="compose-header">
         <span id="mail-compose-title" className="truncate">
           {subject.trim().length > 0 ? subject : "New message"}
         </span>
-        <div style={{ display: "flex", gap: 2 }}>
+        <div className="flex gap-0.5">
           <button
             type="button"
             className="icon-btn"
@@ -530,7 +536,10 @@ export function Compose({ onClose, onSent }: ComposeProps) {
             aria-expanded={!minimized}
             onClick={() => setMinimized((value) => !value)}
           >
-            <Icons.ChevronDown style={{ transform: minimized ? "rotate(180deg)" : undefined }} />
+            <ChevronDownIcon
+              size={16}
+              className={cx(minimized ? "[transform:rotate(180deg)]" : "")}
+            />
           </button>
           <button
             type="button"
@@ -538,7 +547,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
             aria-label="Close compose"
             onClick={requestClose}
           >
-            <Icons.X />
+            <XIcon size={16} />
           </button>
         </div>
       </div>
@@ -584,22 +593,13 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 aria-label="Dismiss recovery notice"
                 onClick={() => setShowRecoveryNotice(false)}
               >
-                <Icons.X />
+                <XIcon size={16} />
               </button>
             </div>
           ) : null}
-          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)" }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "4px 0",
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
-                To
-              </span>
+          <div className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)]">
+            <div className="flex items-center [padding:4px_0] [border-bottom:1px_solid_var(--border)]">
+              <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">To</span>
               <input
                 ref={toInputRef}
                 name="mail-compose-to"
@@ -616,13 +616,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 aria-describedby={
                   recipientError === null ? undefined : "mail-compose-recipient-error"
                 }
-                style={{
-                  flex: 1,
-                  border: "none",
-                  outline: "none",
-                  background: "transparent",
-                  fontSize: "var(--text-body-sm)",
-                }}
+                className="flex-1 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)]"
               />
               <button
                 type="button"
@@ -630,32 +624,25 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 onClick={() => {
                   setShowCc((value) => !value);
                 }}
-                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
+                className="[font-size:var(--text-caption)] text-muted-foreground"
               >
                 Cc
               </button>
-              <span style={{ margin: "0 6px", color: "var(--text-3)" }}>·</span>
+              <span className="[margin:0_6px] text-muted-foreground">·</span>
               <button
                 type="button"
                 aria-pressed={showBcc}
                 onClick={() => {
                   setShowBcc((value) => !value);
                 }}
-                style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
+                className="[font-size:var(--text-caption)] text-muted-foreground"
               >
                 Bcc
               </button>
             </div>
             {showCc && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "4px 0",
-                  borderBottom: "1px solid var(--border)",
-                }}
-              >
-                <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
+              <div className="flex items-center [padding:4px_0] [border-bottom:1px_solid_var(--border)]">
+                <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">
                   Cc
                 </span>
                 <input
@@ -674,26 +661,13 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                   aria-describedby={
                     recipientError === null ? undefined : "mail-compose-recipient-error"
                   }
-                  style={{
-                    flex: 1,
-                    border: "none",
-                    outline: "none",
-                    background: "transparent",
-                    fontSize: "var(--text-body-sm)",
-                  }}
+                  className="flex-1 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)]"
                 />
               </div>
             )}
             {showBcc && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "4px 0",
-                  borderBottom: "1px solid var(--border)",
-                }}
-              >
-                <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 50 }}>
+              <div className="flex items-center [padding:4px_0] [border-bottom:1px_solid_var(--border)]">
+                <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">
                   Bcc
                 </span>
                 <input
@@ -712,17 +686,11 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                   aria-describedby={
                     recipientError === null ? undefined : "mail-compose-recipient-error"
                   }
-                  style={{
-                    flex: 1,
-                    border: "none",
-                    outline: "none",
-                    background: "transparent",
-                    fontSize: "var(--text-body-sm)",
-                  }}
+                  className="flex-1 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)]"
                 />
               </div>
             )}
-            <div style={{ padding: "4px 0" }}>
+            <div className="[padding:4px_0]">
               <input
                 name="mail-compose-subject"
                 autoComplete="off"
@@ -733,18 +701,11 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 onBlur={saveDraft}
                 placeholder="Subject"
                 aria-label="Subject"
-                style={{
-                  width: "100%",
-                  border: "none",
-                  outline: "none",
-                  background: "transparent",
-                  fontSize: "var(--text-body-sm)",
-                  fontWeight: 500,
-                }}
+                className="w-full [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)] font-medium"
               />
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
-              <span style={{ fontSize: "var(--text-meta)", color: "var(--text-3)", width: 72 }}>
+            <label className="flex items-center gap-2 [padding:4px_0]">
+              <span className="[font-size:var(--text-meta)] text-muted-foreground w-18">
                 Send later
               </span>
               <input
@@ -765,18 +726,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
             onBlur={saveDraft}
             placeholder="Write your message…"
             aria-label="Message body"
-            style={{
-              width: "100%",
-              minHeight: 200,
-              padding: 14,
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              fontSize: "var(--text-body-sm)",
-              lineHeight: 1.55,
-              resize: "none",
-              fontFamily: "inherit",
-            }}
+            className="w-full min-h-50 p-3.5 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)] [line-height:1.55] [resize:none] [font-family:inherit]"
           />
           {recipientError === null ? null : (
             <p id="mail-compose-recipient-error" className="compose-inline-error" role="alert">
@@ -804,7 +754,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                   key={`${attachment.filename}-${String(index)}`}
                   className="compose-attachment-chip"
                 >
-                  <Icons.Paperclip />
+                  <PaperclipIcon size={16} />
                   <span title={attachment.filename}>{attachment.filename}</span>
                   <button
                     type="button"
@@ -813,7 +763,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                       removeAttachment(index);
                     }}
                   >
-                    <Icons.X size={10} />
+                    <XIcon size={10} />
                   </button>
                 </div>
               ))}
@@ -822,17 +772,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
           {undo !== null && Date.now() < undo.untilMs && (
             <div
               role="status"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                margin: "0 14px 8px",
-                padding: "8px 12px",
-                borderRadius: 8,
-                background: "var(--surface-2)",
-                fontSize: "var(--text-body-sm)",
-              }}
+              className="flex items-center justify-between gap-3 [margin:0_14px_8px] [padding:8px_12px] rounded-lg bg-muted [font-size:var(--text-body-sm)]"
             >
               <span>
                 {undo.scheduledAt === undefined
@@ -851,33 +791,19 @@ export function Compose({ onClose, onSent }: ComposeProps) {
             </div>
           )}
           {sendFailed && (
-            <div
-              style={{
-                margin: "0 14px 8px",
-                fontSize: "var(--text-caption)",
-                color: "var(--danger)",
-              }}
-            >
+            <div className="[margin:0_14px_8px] [font-size:var(--text-caption)] text-destructive">
               Could not send message. Try again.
             </div>
           )}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              padding: "8px 12px",
-              borderTop: "1px solid var(--border)",
-            }}
-          >
-            <div style={{ display: "flex" }}>
+          <div className="flex items-center gap-1 [padding:8px_12px] [border-top:1px_solid_var(--border)]">
+            <div className="flex">
               <button
                 type="button"
                 className="btn primary"
                 disabled={!canSend}
                 onClick={handleSend}
               >
-                <Icons.Send />{" "}
+                <SendIcon size={16} />{" "}
                 {sendMutation.isPending ? "Sending…" : sendAt === "" ? "Send" : "Schedule"}
               </button>
             </div>
@@ -890,16 +816,16 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 fileInputRef.current?.click();
               }}
             >
-              <Icons.Paperclip />
+              <PaperclipIcon size={16} />
             </button>
             <button
               type="button"
-              className="icon-btn"
+              className="icon-btn ml-auto"
               aria-label="Discard draft"
-              style={{ marginLeft: "auto" }}
+
               onClick={requestClose}
             >
-              <Icons.Trash />
+              <TrashIcon size={16} />
             </button>
           </div>
         </>

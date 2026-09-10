@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  InMemoryAICostLimiter,
-  aiUsdToMicros,
-  resolveAICostBudget,
-} from "./index.js";
+import { InMemoryAICostLimiter, aiUsdToMicros, resolveAICostBudget } from "./index.js";
 
 const scope = {
   orgId: "org-1",

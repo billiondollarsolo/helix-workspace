@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { AICapability, Actor, AuditRecord, ToolDefinition } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
 import type { SearchEngine, SearchHit, SearchRequest } from "../search/index.js";
 import { createToolRegistry } from "../tool-registry.js";

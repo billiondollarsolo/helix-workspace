@@ -4,7 +4,6 @@ import type {
   OutboundWebhookEvent,
   RenderedWebhookRequest,
   WebhookActor,
-  WebhookFormatAdapter,
 } from "./types.js";
 import { toIsoTimestamp } from "./types.js";
 
@@ -15,11 +14,6 @@ export interface GenericWebhookEnvelope extends JsonObject {
   readonly object: JsonValue;
   readonly actor?: WebhookActor;
 }
-
-export const genericWebhookFormat: WebhookFormatAdapter = {
-  id: "helix-json",
-  render: renderGenericEnvelope,
-};
 
 export function renderGenericEnvelope(
   event: OutboundWebhookEvent,

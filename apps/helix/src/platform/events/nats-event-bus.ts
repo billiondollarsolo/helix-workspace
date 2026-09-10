@@ -1,4 +1,3 @@
-import { connect, headers } from "@nats-io/transport-node";
 import type {
   EventBus,
   EventEnvelope,
@@ -6,12 +5,14 @@ import type {
   TraceContext,
   Unsubscribe,
 } from "@helix/sdk-types";
+import { isJsonValue } from "@helix/sdk-types";
 import type {
   MsgHdrs,
   NatsConnection,
   NodeConnectionOptions,
   Subscription,
 } from "@nats-io/transport-node";
+import { connect, headers } from "@nats-io/transport-node";
 
 export interface NatsEventBusOptions {
   readonly subjectPrefix?: string;
@@ -214,27 +215,6 @@ function normalizeSubjectPrefix(prefix: string | undefined): string {
     .split(".")
     .filter((part) => part.length > 0)
     .join(".");
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return true;
-  }
-
-  if (Array.isArray(value)) {
-    return value.every(isJsonValue);
-  }
-
-  if (typeof value === "object") {
-    return Object.values(value as Record<string, unknown>).every(isJsonValue);
-  }
-
-  return false;
 }
 
 function encodeJson(payload: JsonValue): Uint8Array {

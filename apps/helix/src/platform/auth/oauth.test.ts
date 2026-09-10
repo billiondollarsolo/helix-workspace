@@ -1,13 +1,13 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import {
+  hashSecret,
   InMemoryOAuthClientStore,
   OAuthError,
   OAuthTokenService,
-  type OAuthTokenResponse,
-  hashSecret,
   parseScope,
   verifySecret,
+  type OAuthTokenResponse,
 } from "./oauth.js";
 import { registerOAuthRoutes } from "./routes.js";
 

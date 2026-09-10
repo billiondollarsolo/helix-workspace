@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +38,19 @@ describe("MailHtmlBody", () => {
     expect(documentHtml).toContain("Show quoted text");
     expect(documentHtml).toContain("details[data-helix-quote]");
     expect(documentHtml).toContain("test-channel");
+    const script = /<script[^>]*>(.*?)<\/script>/su.exec(documentHtml)?.[1];
+    expect(script).toBeDefined();
+    const digest = createHash("sha256")
+      .update(script ?? "")
+      .digest("base64");
+    for (const edge of [
+      "Caddyfile.production",
+      "Caddyfile",
+      "examples/tier2-upstream-mtls.Caddyfile",
+    ]) {
+      const policy = readFileSync(`../../infra/caddy/${edge}`, "utf8");
+      expect(policy).toContain(`'sha256-${digest}'`);
+    }
   });
 
   it("keeps raw source inert and offers plain text without inserting either into the app DOM", () => {
@@ -60,6 +75,7 @@ describe("MailHtmlBody", () => {
     const iframe = container.querySelector("iframe");
     expect(iframe?.getAttribute("sandbox")).toBe("allow-scripts");
     expect(iframe?.getAttribute("sandbox")).not.toContain("allow-same-origin");
+    expect(iframe?.getAttribute("sandbox")).not.toContain("allow-top-navigation");
     expect(container.textContent).toContain("blocked to prevent sender tracking");
     expect(container.querySelector("script")).toBeNull();
 
@@ -87,7 +103,7 @@ describe("MailHtmlBody", () => {
       );
     });
     const iframe = container.querySelector("iframe");
-    const channel = /const channel="([^"]+)"/u.exec(iframe?.srcdoc ?? "")?.[1];
+    const channel = /data-channel="([^"]+)"/u.exec(iframe?.srcdoc ?? "")?.[1];
     expect(channel).toBeDefined();
 
     act(() => {

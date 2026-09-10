@@ -1,11 +1,11 @@
+import { iconMap as Icons } from "@/components/icon-map";
 /* AppLauncher — 3-column grid of app tiles. Ported from the design handoff
    (shell.jsx → AppLauncher). Anchored below the Rail logo. */
 
-import { Link } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
-import { Icons } from "@/components/icons";
 import { APPS } from "@/components/apps";
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
+import { Link } from "@tanstack/react-router";
+import { useEffect, useRef } from "react";
 
 export interface AppLauncherProps {
   open: boolean;
@@ -65,14 +65,7 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
     >
       <div
         id="app-launcher-title"
-        style={{
-          fontSize: "var(--text-caption)",
-          color: "var(--text-3)",
-          fontWeight: 600,
-          textTransform: "uppercase",
-          letterSpacing: ".06em",
-          padding: "4px 6px 8px",
-        }}
+        className="[font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [padding:4px_6px_8px]"
       >
         Helix apps
       </div>
@@ -89,7 +82,7 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
               onClick={onClose}
             >
               <span className="launcher-icon" style={{ background: app.color }}>
-                <Icon />
+                <Icon size={16} />
               </span>
               <span>{app.name}</span>
             </Link>

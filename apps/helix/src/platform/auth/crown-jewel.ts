@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
 import type { Actor, JsonValue } from "@helix/sdk";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 import { actorHasScope } from "../../api/scopes.js";
@@ -117,12 +117,6 @@ const policies: readonly {
     "iam.privileged_grant",
     "admin.security",
   ),
-  policy(
-    "POST",
-    /^\/api\/admin\/plugins\/[^/]+\/(?:install|enable)$/u,
-    "plugin.trust",
-    "admin.plugins",
-  ),
   policy("POST", /^\/api\/tools\/agent\.credentials\.create$/u, "credential.issue", "admin.agents"),
   policy("POST", /^\/api\/tools\/agent\.credentials\.rotate$/u, "key.rotate", "admin.agents"),
   policy("POST", /^\/api\/tools\/app\.passwords\.create$/u, "credential.issue", "admin.users"),
@@ -223,7 +217,7 @@ interface ApprovalRow {
   readonly actor_id: string;
   readonly tool_id: string;
   readonly input: { readonly fingerprint?: unknown; readonly permission?: unknown };
-  readonly status: CrownJewelApproval["status"];
+  readonly status: "pending_confirmation" | "approved" | "cancelled" | "expired";
   readonly approved_by_actor_id: string | null;
   readonly expires_at: Date;
   readonly consumed_at: Date | null;
@@ -241,11 +235,11 @@ export class PostgresCrownJewelApprovalStore implements CrownJewelApprovalStore 
       const rows = await tx<ApprovalRow[]>`
         insert into pending_actions (
           id, org_id, actor_id, tool_id, input, approval_kind, status,
-          expires_at, created_at, trace_id
+          expires_at, created_at, trace_id, execution_idempotency_key
         ) values (
           ${id}, ${input.orgId}, ${input.actorId}, ${`crown_jewel:${input.action.id}`},
           ${tx.json({ fingerprint: input.fingerprint, permission: input.action.permission })},
-          'distinct_actor', 'pending_confirmation', ${input.expiresAt}, now(), ${input.traceId ?? null}
+          'distinct_actor', 'pending_confirmation', ${input.expiresAt}, now(), ${input.traceId ?? null}, ${`pending-action:${id}`}
         )
         returning id, org_id, actor_id, tool_id, input, status, approved_by_actor_id, expires_at, consumed_at
       `;
@@ -266,13 +260,16 @@ export class PostgresCrownJewelApprovalStore implements CrownJewelApprovalStore 
   }
 
   async get(orgId: string, id: string): Promise<CrownJewelApproval | null> {
-    const rows = await this.sql<ApprovalRow[]>`
+    return this.sql.begin(async (tx) => {
+      await setOrg(tx, orgId);
+      const rows = await tx<ApprovalRow[]>`
       select id, org_id, actor_id, tool_id, input, status, approved_by_actor_id, expires_at, consumed_at
       from pending_actions
       where org_id = ${orgId} and id = ${id} and approval_kind = 'distinct_actor'
       limit 1
     `;
-    return rows[0] === undefined ? null : rowToApproval(rows[0]);
+      return rows[0] === undefined ? null : rowToApproval(rows[0]);
+    });
   }
 
   async approve(
@@ -300,7 +297,7 @@ export class PostgresCrownJewelApprovalStore implements CrownJewelApprovalStore 
       if (row.status !== "pending_confirmation") return { kind: "not_pending" };
       const updated = await tx<ApprovalRow[]>`
         update pending_actions
-        set status = 'confirmed', approved_by_actor_id = ${input.actorId},
+        set status = 'approved', approved_by_actor_id = ${input.actorId},
             approved_at = ${input.now}, decided_at = ${input.now}
         where id = ${row.id}
         returning id, org_id, actor_id, tool_id, input, status, approved_by_actor_id, expires_at, consumed_at
@@ -338,7 +335,7 @@ export class PostgresCrownJewelApprovalStore implements CrownJewelApprovalStore 
         return { kind: "expired" };
       }
       if (row.consumed_at !== null) return { kind: "already_consumed" };
-      if (row.status !== "confirmed" || row.approved_by_actor_id === null)
+      if (row.status !== "approved" || row.approved_by_actor_id === null)
         return { kind: "pending" };
       const updated = await tx<ApprovalRow[]>`
         update pending_actions set consumed_at = ${input.now}
@@ -545,7 +542,7 @@ function rowToApproval(row: ApprovalRow): CrownJewelApproval {
     actionId: actionId(row),
     permission,
     fingerprint,
-    status: row.status,
+    status: row.status === "approved" ? "confirmed" : row.status,
     approvedByActorId: row.approved_by_actor_id,
     expiresAt: row.expires_at,
     consumedAt: row.consumed_at,

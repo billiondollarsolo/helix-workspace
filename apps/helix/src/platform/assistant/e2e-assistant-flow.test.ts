@@ -1,4 +1,3 @@
-import { describe, expect, it } from "vitest";
 import type {
   AICallContext,
   AICapability,
@@ -9,6 +8,7 @@ import type {
   LLMProviderCapability,
   ToolDefinition,
 } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import {
   AICostLimitExceededError,
   InMemoryAICostLimiter,
@@ -17,7 +17,10 @@ import {
 } from "../ai/costs/index.js";
 import type { ForgetCriteria, MemoryInput, MemoryItem, MemoryStore } from "../ai/memory/index.js";
 import { AIRouter } from "../ai/routing.js";
+import { EMPTY_CREDENTIAL_POLICY } from "../auth/credentials.js";
+import { credentialToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 import type { ChatStore } from "../chat/index.js";
+import { registerChatTools } from "../chat/tools.js";
 import type {
   ChatMessageRecord,
   ChatPinRecord,
@@ -26,15 +29,14 @@ import type {
   ChatRoomRecord,
   ChatSearchHit,
 } from "../chat/types.js";
-import { registerChatTools } from "../chat/tools.js";
 import type { DriveStore } from "../drive/index.js";
+import { registerDriveTools } from "../drive/tools.js";
 import type {
   DriveEntryRecord,
   DriveSearchHit,
   DriveUploadRecord,
   DriveVersionRecord,
 } from "../drive/types.js";
-import { registerDriveTools } from "../drive/tools.js";
 import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
 import type {
   IndexDocument,
@@ -44,8 +46,6 @@ import type {
 } from "../search/index.js";
 import { createToolRegistry } from "../tool-registry.js";
 import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "../tools/registry.js";
-import { EMPTY_CREDENTIAL_POLICY } from "../auth/credentials.js";
-import { credentialToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 import { AssistantOrchestrator } from "./orchestrator.js";
 import { InMemoryAssistantStore } from "./store.js";
 import { registerAssistantTools } from "./tools.js";

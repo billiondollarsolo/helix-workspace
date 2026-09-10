@@ -90,12 +90,12 @@ try {
   const baseUrl = `http://127.0.0.1:${String(proxyPort)}`;
   await waitForProxy(`${baseUrl}/healthz`, proxy, () => proxyLogs);
 
-  await expectStatus(`${baseUrl}/api/tools/chat.send`, "POST", 900, 200, "standard-ok");
-  await expectStatus(`${baseUrl}/api/tools/chat.send`, "POST", 1_100, 413, "standard-over");
-  await expectStatus(`${baseUrl}/api/tools/docs.import-docx`, "POST", 1_900, 200, "bulk-ok");
-  await expectStatus(`${baseUrl}/api/tools/docs.import-docx`, "POST", 2_100, 413, "bulk-over");
-  await expectStatus(`${baseUrl}/dav/files/example.bin`, "PUT", 3_900, 200, "upload-ok");
-  await expectStatus(`${baseUrl}/dav/files/example.bin`, "PUT", 4_100, 413, "upload-over");
+  await expectStatus(`${baseUrl}/v1/api/tools/chat.send`, "POST", 900, 200, "standard-ok");
+  await expectStatus(`${baseUrl}/v1/api/tools/chat.send`, "POST", 1_100, 413, "standard-over");
+  await expectStatus(`${baseUrl}/v1/api/tools/drive.finalize`, "POST", 1_900, 200, "bulk-ok");
+  await expectStatus(`${baseUrl}/v1/api/tools/drive.finalize`, "POST", 2_100, 413, "bulk-over");
+  await expectStatus(`${baseUrl}/v1/dav/files/example.bin`, "PUT", 3_900, 200, "upload-ok");
+  await expectStatus(`${baseUrl}/v1/dav/files/example.bin`, "PUT", 4_100, 413, "upload-over");
 
   const headerResponse = await globalThis.fetch(`${baseUrl}/healthz`, {
     headers: { "x-oversized-header": "x".repeat(64_000) },
@@ -104,18 +104,18 @@ try {
 
   await expectPromptClose(
     proxyPort,
-    "POST /api/tools/chat.send HTTP/1.1\r\nHost: localhost\r\n",
+    "POST /v1/api/tools/chat.send HTTP/1.1\r\nHost: localhost\r\n",
     "incomplete headers",
   );
   await expectPromptClose(
     proxyPort,
-    "POST /api/tools/chat.send HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nx",
+    "POST /v1/api/tools/chat.send HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\nx",
     "incomplete body",
   );
 
   const flood = await Promise.all(
     Array.from({ length: 32 }, (_, index) =>
-      globalThis.fetch(`${baseUrl}/api/tools/chat.send`, {
+      globalThis.fetch(`${baseUrl}/v1/api/tools/chat.send`, {
         method: "POST",
         headers: { "x-test-case": `flood-${String(index)}` },
         body: Buffer.alloc(1_100),

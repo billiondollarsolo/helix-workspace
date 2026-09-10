@@ -74,11 +74,10 @@ export interface AdminErrorEnvelope {
   readonly issues?: unknown;
 }
 
-export type AdminErrorCode =
-  "forbidden" | "invalid_request" | "invalid_cursor" | "not_found" | "conflict";
+type AdminErrorCode = "forbidden" | "invalid_request" | "invalid_cursor" | "not_found" | "conflict";
 
 /** Build a `403` envelope naming the scope the actor was missing. */
-export function forbidden(requiredScope: string): AdminErrorEnvelope {
+function forbidden(requiredScope: string): AdminErrorEnvelope {
   return {
     error: "Admin console permission denied.",
     code: "forbidden",
@@ -224,9 +223,4 @@ export async function auditAdminAction(
   },
 ): Promise<void> {
   await sink.append(record);
-}
-
-/** Escape `%`, `_`, and `\` for safe use inside a SQL `LIKE` pattern. */
-export function escapeLikePattern(value: string): string {
-  return value.replace(/[\\%_]/gu, "\\$&");
 }

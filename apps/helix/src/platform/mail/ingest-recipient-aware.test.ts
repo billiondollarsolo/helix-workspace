@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { CapturingMailQuarantineStore } from "../../test-support/quarantine-store.js";
 import { ingestSmtpEnvelope } from "./ingest.js";
-import { CapturingMailQuarantineStore } from "./quarantine-test-store.js";
 import type { MailStore } from "./store.js";
 import type { MailMessageInput, StoredMailMessage } from "./types.js";
 

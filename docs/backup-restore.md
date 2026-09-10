@@ -5,7 +5,7 @@ Phase 9 TASK-A04/A05 artifacts live under `infra/scripts/` and are safe by defau
 **RPO/RTO contract (ADR-0006):** Business pilot targets are **RPO ≤ 24 hours** and
 **RTO ≤ 4 hours** (engineering objectives, not a contractual SLA). Operator
 measurement, dual-target HA notes, and the PKG flip procedure live in
-[`docs/architecture/ha-rpo-rto.md`](./architecture/ha-rpo-rto.md). Gate helpers:
+[`docs/architecture/ha-rpo-rto.md`](architecture/ha-rpo-rto.md). Gate helpers:
 
 ```sh
 node infra/scripts/rpo-rto-check.mjs --print-contract
@@ -449,7 +449,7 @@ Critical path verification commands:
 
 ```sh
 docker compose exec -T postgres psql -U helix -d helix_restore_drill -v ON_ERROR_STOP=1 -c "select count(*) from information_schema.tables where table_schema='public';"
-docker compose exec -T postgres psql -U helix -d helix_restore_drill -v ON_ERROR_STOP=1 -c "select 'public.actors'::regclass, 'public.activity'::regclass, 'public.installed_plugins'::regclass;"
+docker compose exec -T postgres psql -U helix -d helix_restore_drill -v ON_ERROR_STOP=1 -c "select 'public.actors'::regclass, 'public.activity'::regclass, 'public.objects'::regclass;"
 docker compose exec -T postgres psql -U helix -d helix_restore_drill -v ON_ERROR_STOP=1 -c "select count(*) as activity_rows, count(this_hash) as hashed_activity_rows from public.activity;"
 curl -fsS http://localhost:28431/readyz
 curl -fsS http://localhost:28431/openapi.json

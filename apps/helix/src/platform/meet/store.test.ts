@@ -1,11 +1,6 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { PostgresMeetStore } from "./store.js";
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 const now = new Date("2026-05-20T12:00:00.000Z");
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -238,16 +233,9 @@ function roomRow() {
     updated_at: now,
   };
 }
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
+function createRecordingSql(responses: readonly (readonly unknown[])[]) {
   const queue = [...responses];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const text = strings.join("$");
-    calls.push({ text, values });
+  const recording = sharedRecordingSql(({ text, values }) => {
     if (text.includes("helix_commit_storage_usage")) {
       return Promise.resolve([
         {
@@ -260,11 +248,14 @@ function createRecordingSql(responses: readonly (readonly unknown[])[]): {
       ]);
     }
     return Promise.resolve(queue.shift() ?? []);
+  }, "$");
+  return {
+    ...recording,
+    get transactions() {
+      return recording.beginCalls;
+    },
+    get beginCalls() {
+      return recording.beginCalls;
+    },
   };
-  const sql = Object.assign(tag, {
-    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) =>
-      callback(sql as unknown as postgres.TransactionSql),
-    json: (value: unknown) => value,
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
 }

@@ -1,5 +1,7 @@
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 import type { JsonObject } from "@helix/sdk-types";
 import type { VectorItem, VectorStore, VectorVisibility } from "../ai/vector/index.js";
+import { toJsonObject } from "../util/json.js";
 import type {
   IndexDocument,
   SearchEngine,
@@ -8,7 +10,7 @@ import type {
   SearchResponse,
 } from "./types.js";
 
-export interface SearchEmbeddingProvider {
+interface SearchEmbeddingProvider {
   embed(texts: readonly string[]): Promise<readonly (readonly number[])[]>;
 }
 
@@ -332,12 +334,4 @@ function isIndexDocument(value: unknown): value is IndexDocument {
   }
   const record = value as Record<string, unknown>;
   return typeof record.id === "string" && typeof record.type === "string";
-}
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function toJsonObject(value: IndexDocument): JsonObject {
-  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }

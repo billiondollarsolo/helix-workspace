@@ -1,7 +1,7 @@
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { readBoundedRequestBody } from "./request-body.js";
 import type { RequestBodyTooLargeError } from "./request-body.js";
+import { readBoundedRequestBody } from "./request-body.js";
 
 describe("readBoundedRequestBody", () => {
   it("returns a body at the exact aggregate limit", async () => {

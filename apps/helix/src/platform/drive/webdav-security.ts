@@ -1,4 +1,4 @@
-export interface WebDavRateLimitDecision {
+interface WebDavRateLimitDecision {
   readonly allowed: boolean;
   readonly retryAfterSeconds: number;
 }

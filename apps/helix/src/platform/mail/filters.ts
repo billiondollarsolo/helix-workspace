@@ -1,8 +1,8 @@
 import type { JsonObject } from "@helix/sdk-types";
-import type { MailMessageInput } from "./types.js";
+import { matchesFilterCriteria, shouldSkipVacationResponse } from "./core/thread-projection.js";
 import type { MailStore } from "./store.js";
 import { prepareOutboundEnvelope } from "./threading.js";
-import { matchesFilterCriteria, shouldSkipVacationResponse } from "./core/thread-projection.js";
+import type { MailMessageInput } from "./types.js";
 
 export interface MailFilterEvaluationResult {
   readonly matchedFilterIds: readonly string[];

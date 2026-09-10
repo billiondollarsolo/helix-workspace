@@ -1,5 +1,5 @@
-import type { JsonObject } from "@helix/sdk-types";
 import type { DriveUploadState } from "@helix/contracts";
+import type { JsonObject } from "@helix/sdk-types";
 import type {
   DriveAccessGrantRecord,
   DriveEntryRecord,
@@ -44,16 +44,6 @@ export interface MapObjectEntryInput {
   readonly shared_count?: string | number | null;
   readonly starred?: boolean;
   readonly upload_state?: DriveUploadState | null;
-}
-
-/** Owner-visible non-active states that may appear in list (never treated as available). */
-export function isOwnerVisibleProcessingState(state: DriveUploadState): boolean {
-  return (
-    state === "uploaded" ||
-    state === "scanning" ||
-    state === "quarantined" ||
-    state === "scan_failed"
-  );
 }
 
 export function mapObjectEntry(row: MapObjectEntryInput): DriveEntryRecord {

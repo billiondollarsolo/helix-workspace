@@ -13,12 +13,12 @@ import type { GlobalSearchHit } from "./api";
 const backendHits = [
   {
     body: "Planning notes for the launch",
-    id: "docs:launch-plan",
+    id: "mail:launch-plan",
     score: 0.91,
     title: "Launch plan",
-    type: "docs",
+    type: "mail",
     updatedAt: "2026-05-20T12:00:00.000Z",
-    url: "/docs/launch-plan",
+    url: "/mail?thread=launch-plan",
   },
   {
     body: "Drive result body",
@@ -100,6 +100,13 @@ describe("SearchResultsShell", () => {
     const searchInput = container.querySelector<HTMLInputElement>('input[type="search"]');
     expect(searchInput?.name).toBe("workspace-search");
     expect(searchInput?.autocomplete).toBe("off");
+
+    expect(
+      Array.from(
+        container.querySelectorAll(".search-type-filters button"),
+        (button) => button.textContent,
+      ),
+    ).toEqual(["Mail", "Chat", "Drive", "Calendar"]);
 
     expect(JSON.parse(requestBodyAt(0))).toEqual({
       limit: 100,

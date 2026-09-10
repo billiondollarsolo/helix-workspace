@@ -1,5 +1,6 @@
 import type { JsonObject, JsonValue } from "@helix/sdk-types";
 import type { EventDirection, EventSchemaDefinition } from "../platform/events/schema-registry.js";
+import { isRecord } from "../platform/util/json.js";
 import { HELIX_API_VERSION_PREFIX, HELIX_SERVER_VERSION } from "./version.js";
 
 type MutableAsyncApiObject = Record<string, unknown>;
@@ -178,10 +179,6 @@ function asVariables(value: unknown): MutableAsyncApiObject {
 
 function asSecurityScheme(value: unknown): MutableAsyncApiObject {
   return isRecord(value) ? value : {};
-}
-
-function isRecord(value: unknown): value is MutableAsyncApiObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function channelKeyForSubject(subject: string): string {

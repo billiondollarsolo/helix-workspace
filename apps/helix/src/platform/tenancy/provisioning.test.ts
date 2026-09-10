@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { PostgresTenantProvisioningStore } from "./provisioning.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
@@ -88,19 +88,8 @@ describe("PostgresTenantProvisioningStore", () => {
     expect(recording.calls[0]?.values).toContain(true);
   });
 });
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
-function createRecordingSql(): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
+function createRecordingSql() {
+  const recording = sharedRecordingSql(() => {
     return Promise.resolve([
       {
         org_id: orgId,
@@ -116,12 +105,14 @@ function createRecordingSql(): {
         completed_at: null,
       },
     ]);
-  };
+  }, "?");
   return {
-    sql: Object.assign(tag, {
-      array: (value: unknown) => value,
-      json: (value: unknown) => value,
-    }) as unknown as postgres.Sql,
-    calls,
+    ...recording,
+    get transactions() {
+      return recording.beginCalls;
+    },
+    get beginCalls() {
+      return recording.beginCalls;
+    },
   };
 }

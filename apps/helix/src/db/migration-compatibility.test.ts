@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import type postgres from "postgres";
+import { describe, expect, it, vi } from "vitest";
 import { listUnknownAppliedMigrations } from "./migration-runner.js";
 
 describe("migration compatibility range", () => {

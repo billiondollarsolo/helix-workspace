@@ -36,7 +36,7 @@ function adminSearch(search?: Record<string, string | undefined>): Record<string
   return next;
 }
 
-export function AdminRelatedNav({
+function AdminRelatedNav({
   ariaLabel,
   items,
 }: {

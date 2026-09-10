@@ -3,7 +3,6 @@ import type {
   DriveAccessGrant,
   DriveEntry,
   DriveEntryPage,
-  DriveItemKind,
   DriveRenameInput,
   DriveRole,
   DriveSearchHit,
@@ -13,7 +12,6 @@ import type {
   DriveVersion,
 } from "@helix/contracts";
 export type DriveApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-export type DriveApiEntryType = DriveItemKind;
 /** Wire DTO for a Drive list/detail entry — sourced from @helix/contracts. */
 export type DriveApiEntry = DriveEntry;
 export type DriveApiSearchHit = DriveSearchHit;

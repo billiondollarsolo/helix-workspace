@@ -45,10 +45,6 @@ export function formatValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function formatList(values: readonly string[]): string {
-  return values.length === 0 ? "None" : values.join(", ");
-}
-
 export function formatUsdLimit(value: number | undefined): string {
   if (value === undefined) {
     return "Unlimited";
@@ -60,7 +56,7 @@ export function formatUsdLimit(value: number | undefined): string {
   }).format(value);
 }
 
-export function formatToken(value: string): string {
+function formatToken(value: string): string {
   if (/^\d{4}-\d{2}-\d{2}T/u.test(value) || value.includes("://")) {
     return value;
   }

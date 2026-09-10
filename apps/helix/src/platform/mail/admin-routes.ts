@@ -18,17 +18,17 @@ import {
   MailAdminConflictError,
   type MailDkimKeyRecord,
   type MailDkimKeyStore,
-  type MailDmarcReportStore,
   type MailDmarcReportRecord,
+  type MailDmarcReportStore,
   type MailRoutingRuleStore,
   type OutboundProviderStore,
 } from "./admin-store.js";
+import { DmarcReportParseError, parseDmarcAggregateReport } from "./dmarc.js";
 import {
   OUTBOUND_MAIL_PROVIDER_KINDS,
   parseOutboundProviderPublicConfig,
   type OutboundProviderConfig,
 } from "./providers.js";
-import { parseDmarcAggregateReport, DmarcReportParseError } from "./dmarc.js";
 
 /**
  * Mail delivery admin routes.
@@ -281,7 +281,7 @@ function serializeDkimKey(key: MailDkimKeyRecord): Record<string, unknown> {
 // Routes
 // ---------------------------------------------------------------------------
 
-export function summarizeDmarcReports(reports: readonly MailDmarcReportRecord[]): {
+function summarizeDmarcReports(reports: readonly MailDmarcReportRecord[]): {
   readonly dmarcPassRate: number;
   readonly messagesEvaluated: number;
   readonly windowDays: number;

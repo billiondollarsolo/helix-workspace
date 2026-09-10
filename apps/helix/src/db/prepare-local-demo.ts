@@ -4,12 +4,12 @@ import type postgres from "postgres";
 import { createSqlClient } from "./client.js";
 import { runMigrations, type MigrationRunResult } from "./migration-runner.js";
 import { reindexSearch, type ReindexSearchResult } from "./reindex-search.js";
-import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 import {
   DEFAULT_LOCAL_DEMO_VOLUME_MAIL_COUNT,
   seedLocalDemo,
   type SeedLocalDemoResult,
 } from "./seed-local-demo.js";
+import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 import { verifyLocalDemo, type LocalDemoVerificationResult } from "./verify-local-demo.js";
 
 export interface PrepareLocalDemoOptions {

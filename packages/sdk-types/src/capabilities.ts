@@ -64,10 +64,7 @@ export interface VectorStoreCapability {
 export type VectorMetric = "cosine" | "dot" | "l2";
 
 export type AIProviderProtocol =
-  | "openai-compatible"
-  | "anthropic-compatible"
-  | "bedrock"
-  | "vertex";
+  "openai-compatible" | "anthropic-compatible" | "bedrock" | "vertex";
 
 export type AIClassification = "public" | "standard" | "confidential" | "restricted";
 
@@ -158,10 +155,7 @@ export interface ImageProviderCapability {
   readonly id: string;
   readonly protocol: AIProviderProtocol;
   readonly tags?: readonly string[];
-  generateImage(
-    req: ImageGenerationRequest,
-    ctx: AICallContext,
-  ): Promise<ImageGenerationResponse>;
+  generateImage(req: ImageGenerationRequest, ctx: AICallContext): Promise<ImageGenerationResponse>;
   models(): Promise<readonly ModelInfo[]>;
 }
 

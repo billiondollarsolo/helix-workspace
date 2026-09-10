@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import type { CalendarInvitationSender } from "./ics.js";
 import {
   CalendarInvitationDeliveryWorker,
   type ClaimedCalendarInvitationDelivery,
   type PostgresCalendarInvitationDeliveryStore,
 } from "./invitation-outbox.js";
-import type { CalendarInvitationSender } from "./ics.js";
 
 describe("CalendarInvitationDeliveryWorker", () => {
   it("does not queue a second mail after crashing between queue and completion", async () => {

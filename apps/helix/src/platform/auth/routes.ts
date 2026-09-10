@@ -1,18 +1,19 @@
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Actor, JsonObject } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { OAUTH_BODY_LIMIT_BYTES } from "../../api/request-body.js";
 import { actorHasScope } from "../../api/scopes.js";
 import { HELIX_API_VERSION_PREFIX } from "../../api/version.js";
 import { getCryptoProvider, sha256Hex } from "../crypto/index.js";
-import {
-  OAuthError,
-  type OAuthTokenService,
-  type OAuthClientRecord,
-  type OAuthClientStore,
-} from "./oauth.js";
+import { parseBasicAuthorization } from "../util/http-auth.js";
 import { type AuthorizationCodeService, isValidCodeChallenge } from "./authorization-code.js";
 import type { OAuthAuthorizationStore } from "./authorization-store.js";
+import {
+  type OAuthClientRecord,
+  type OAuthClientStore,
+  OAuthError,
+  type OAuthTokenService,
+} from "./oauth.js";
 
 const tokenRequestBodySchema = z.object({
   grant_type: z.string(),
@@ -63,7 +64,7 @@ export interface OAuthAuthorizeActorResolver {
  * (CRITICAL-3). Implementations should be best-effort — a failure here MUST
  * NOT propagate, since the security decision has already been made.
  */
-export interface OAuthAuthorizeAuditSink {
+interface OAuthAuthorizeAuditSink {
   recordRejection(input: {
     readonly orgId: string | null;
     readonly actorId: string | null;
@@ -74,7 +75,7 @@ export interface OAuthAuthorizeAuditSink {
   }): Promise<void>;
 }
 
-export type OAuthAuthorizeRejectionReason =
+type OAuthAuthorizeRejectionReason =
   | "access_denied"
   | "client_expired"
   | "client_revoked"
@@ -534,7 +535,7 @@ async function handleAuthorizationCodeGrant(
   }
   // The client_id may be authenticated via Basic auth (confidential client)
   // or supplied in the body (public client). Either form is accepted.
-  const basic = parseBasicAuthorization(request.headers.authorization);
+  const basic = parseOAuthBasicAuthorization(request.headers.authorization);
   const clientId = basic?.clientId ?? body.client_id;
   if (clientId === undefined || clientId.length === 0) {
     return sendOAuthError(reply, new OAuthError("invalid_request", "Missing client_id.", 400));
@@ -570,7 +571,7 @@ async function handleRefreshTokenGrant(
   if (body.refresh_token === undefined || body.refresh_token.length === 0) {
     return sendOAuthError(reply, new OAuthError("invalid_request", "Missing refresh_token.", 400));
   }
-  const basic = parseBasicAuthorization(request.headers.authorization);
+  const basic = parseOAuthBasicAuthorization(request.headers.authorization);
   const clientId = basic?.clientId ?? body.client_id;
   if (clientId === undefined || clientId.length === 0) {
     return sendOAuthError(reply, new OAuthError("invalid_request", "Missing client_id.", 400));
@@ -1146,7 +1147,7 @@ function parseClientAuthentication(
   request: FastifyRequest,
   body: { readonly client_id?: string | undefined; readonly client_secret?: string | undefined },
 ): { readonly clientId: string; readonly clientSecret: string } | OAuthError {
-  const basic = parseBasicAuthorization(request.headers.authorization);
+  const basic = parseOAuthBasicAuthorization(request.headers.authorization);
   const bodyCredentials =
     body.client_id === undefined || body.client_secret === undefined
       ? null
@@ -1175,7 +1176,7 @@ function parseTokenManagementClient(
   request: FastifyRequest,
   body: { readonly client_id?: string | undefined; readonly client_secret?: string | undefined },
 ): { readonly clientId: string; readonly clientSecret?: string } | OAuthError {
-  const basic = parseBasicAuthorization(request.headers.authorization);
+  const basic = parseOAuthBasicAuthorization(request.headers.authorization);
   if (basic !== null && (body.client_id !== undefined || body.client_secret !== undefined)) {
     return new OAuthError(
       "invalid_request",
@@ -1194,26 +1195,11 @@ function parseTokenManagementClient(
   };
 }
 
-function parseBasicAuthorization(
+function parseOAuthBasicAuthorization(
   authorization: string | undefined,
 ): { readonly clientId: string; readonly clientSecret: string } | null {
-  if (authorization === undefined) {
-    return null;
-  }
-  const [scheme, value] = authorization.split(" ");
-  if (scheme?.toLowerCase() !== "basic" || value === undefined) {
-    return null;
-  }
-
-  const decoded = Buffer.from(value, "base64").toString("utf8");
-  const separator = decoded.indexOf(":");
-  if (separator < 0) {
-    return null;
-  }
-  return {
-    clientId: decoded.slice(0, separator),
-    clientSecret: decoded.slice(separator + 1),
-  };
+  const basic = parseBasicAuthorization(authorization);
+  return basic === null ? null : { clientId: basic.username, clientSecret: basic.password };
 }
 
 function sendOAuthError(reply: FastifyReply, error: OAuthError): FastifyReply {

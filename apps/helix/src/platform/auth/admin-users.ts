@@ -1,6 +1,6 @@
-import type postgres from "postgres";
 import type { Actor, ActorType } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import type postgres from "postgres";
 import { z } from "zod";
 import { actorHasScope } from "../../api/scopes.js";
 
@@ -74,7 +74,7 @@ export interface RegisterAdminUsersRoutesOptions {
   readonly offboardStores?: OffboardUserStores;
 }
 
-export interface PeopleDirectoryRecord {
+interface PeopleDirectoryRecord {
   readonly id: string;
   readonly email: string | null;
   readonly displayName: string;

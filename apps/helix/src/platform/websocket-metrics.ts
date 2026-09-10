@@ -62,7 +62,7 @@ export function trackWebsocketConnection(
  *
  * The HTTP upgrade request carries `traceparent` / `tracestate` headers. This
  * builds an OpenTelemetry {@link Context} from them so spans created for the
- * lifetime of the socket (e.g. `yjs.sync`) are children of the originating
+ * lifetime of the socket (e.g. `chat.message`) are children of the originating
  * client trace — trace context rides the socket, not just the event envelope.
  * Returns {@link ROOT_CONTEXT} when no valid `traceparent` is present.
  */

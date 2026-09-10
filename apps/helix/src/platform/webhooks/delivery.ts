@@ -1,6 +1,7 @@
 import type { TraceContext } from "@helix/sdk-types";
 import { getCryptoProvider } from "../crypto/index.js";
 import { outboundFetch } from "../outbound-http.js";
+import { isRecord } from "../util/json.js";
 import { signWebhookPayload, verifyWebhookSignature } from "./signatures.js";
 import {
   resolveWebhookSecret,
@@ -11,7 +12,7 @@ import {
   type WebhookSecretResolver,
 } from "./store.js";
 
-export interface WebhookEvent {
+interface WebhookEvent {
   readonly subject: string;
   readonly payload: unknown;
   readonly occurredAt?: Date;
@@ -51,7 +52,7 @@ export function createWebhookHttpClient(
   };
 }
 
-export const fetchWebhookHttpClient = createWebhookHttpClient();
+const fetchWebhookHttpClient = createWebhookHttpClient();
 
 export interface WebhookRetryPolicy {
   readonly maxAttempts: number;
@@ -94,7 +95,7 @@ export interface DeliverOutboundWebhookOptions {
   readonly retryPolicy?: WebhookRetryPolicy;
 }
 
-export class WebhookDeliveryBlockedError extends Error {
+class WebhookDeliveryBlockedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "WebhookDeliveryBlockedError";
@@ -277,7 +278,7 @@ export async function replayOutboundWebhook(
   });
 }
 
-export function assertOutboundWebhookDeliverable(input: {
+function assertOutboundWebhookDeliverable(input: {
   readonly webhook: OutboundWebhookRecord;
   readonly payload: unknown;
 }): void {
@@ -287,7 +288,7 @@ export function assertOutboundWebhookDeliverable(input: {
   }
 }
 
-export function outboundWebhookBlockReason(input: {
+function outboundWebhookBlockReason(input: {
   readonly webhook: OutboundWebhookRecord;
   readonly payload: unknown;
 }): string | null {
@@ -571,8 +572,4 @@ function extractOccurredAt(payload: unknown): Date | undefined {
   }
   const occurredAt = new Date(payload.occurredAt);
   return Number.isNaN(occurredAt.getTime()) ? undefined : occurredAt;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

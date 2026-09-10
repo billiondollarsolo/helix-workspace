@@ -1,6 +1,3 @@
-import { QueryClientProvider } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
 import { CalendarShell } from "@/features/calendar/calendar-shell";
 import {
@@ -9,6 +6,9 @@ import {
   validateCalendarRouteSearch,
   type CalendarRouteSearch,
 } from "@/features/calendar/route-state";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { Calendar as CalendarIcon } from "lucide-react";
 
 export const Route = createFileRoute("/_shell/calendar/")({
   validateSearch: (search): CalendarRouteSearch => validateCalendarRouteSearch(search),
@@ -22,7 +22,11 @@ function CalendarRoute() {
   const routeState = calendarRouteStateFromSearch(search);
 
   return (
-    <SurfaceFrame title="Calendar" icon={<Icons.Calendar />} searchPlaceholder="Search events">
+    <SurfaceFrame
+      title="Calendar"
+      icon={<CalendarIcon size={16} />}
+      searchPlaceholder="Search events"
+    >
       {/* The router always carries a QueryClient in context; re-providing it
           here keeps the surface self-contained and rendering in isolation. */}
       <QueryClientProvider client={queryClient}>

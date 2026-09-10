@@ -89,10 +89,10 @@ describe("AdminServicesOverview admin UI", () => {
     expect(container.textContent).toContain("mail.read, mail.send");
     expect(container.textContent).toContain("mail.classification");
 
-    await clickButton("Docs");
-    await waitForText("/sync/docs/:docId");
-    expect(container.textContent).toContain("docs.smart-write");
-    expect(container.textContent).toContain("GET /v1/api/admin/services/docs/routes");
+    await clickButton("Drive");
+    await waitForText("/v1/api/tools/drive.list");
+    expect(container.textContent).toContain("drive.classification");
+    expect(container.textContent).toContain("GET /v1/api/admin/services/drive/routes");
     expect(alertMock).not.toHaveBeenCalled();
     expect(confirmMock).not.toHaveBeenCalled();
     expect(promptMock).not.toHaveBeenCalled();
@@ -417,7 +417,7 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
 function adminServicesResponse(): AdminServicesResponse {
   return {
     generatedAt: "2026-05-21T14:00:00.000Z",
-    services: [mailService(), docsService()],
+    services: [mailService(), driveService()],
   };
 }
 
@@ -486,38 +486,38 @@ function mailService(): AdminServiceSurface {
   };
 }
 
-function docsService(): AdminServiceSurface {
+function driveService(): AdminServiceSurface {
   return {
     adminActions: [
       {
         destructive: false,
-        id: "docs-routes",
-        label: "Docs routes",
+        id: "drive-routes",
+        label: "Drive routes",
         method: "GET",
-        path: "/v1/api/admin/services/docs/routes",
+        path: "/v1/api/admin/services/drive/routes",
         requiredScope: "admin.services.read",
       },
     ],
-    adminScopes: ["docs.admin", "admin.config.read"],
-    aiSlots: ["docs.smart-write"],
-    apiRoutes: ["/v1/api/tools/docs.create"],
-    capabilities: ["collaborative-editing"],
+    adminScopes: ["drive.admin", "admin.config.read"],
+    aiSlots: ["drive.classification"],
+    apiRoutes: ["/v1/api/tools/drive.list"],
+    capabilities: ["file-storage"],
     category: "workspace",
     configuration: [],
     consumes: ["ai"],
-    dataStores: ["docs_documents", "docs_updates"],
+    dataStores: ["objects", "drive_versions"],
     dependencies: [],
     enabled: true,
-    enrichments: ["docs.outline"],
-    evidence: "Docs service is ready.",
-    id: "docs",
-    label: "Docs",
-    metrics: ["docs.sync.active"],
-    realtimeRoutes: ["/sync/docs/:docId"],
-    scopes: ["docs.read", "docs.write"],
+    enrichments: ["drive.classification"],
+    evidence: "Drive service is ready.",
+    id: "drive",
+    label: "Drive",
+    metrics: ["helix_operational_events_total"],
+    realtimeRoutes: [],
+    scopes: ["drive.read", "drive.write"],
     status: "ready",
-    summary: "Documents and collaboration.",
-    tools: ["docs.create"],
-    uiRoutes: ["/docs"],
+    summary: "Files and sharing.",
+    tools: ["drive.list"],
+    uiRoutes: ["/drive"],
   };
 }

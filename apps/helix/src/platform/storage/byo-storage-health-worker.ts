@@ -6,7 +6,7 @@ import {
 } from "./health.js";
 import type { TenantStorageResolver } from "./tenant-resolver.js";
 
-export interface UpdateByoStorageHealthInput {
+interface UpdateByoStorageHealthInput {
   readonly orgId: string;
   readonly health: PersistedTenantStorageHealth;
   readonly reason?: string | undefined;

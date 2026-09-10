@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
-import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
-import { Icons } from "@/components/icons";
 import { Tooltip } from "@/components/ui/tooltip";
 import { listDrive, type DriveApiEntry } from "@/features/drive/api";
+import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
+import {
+  Code as CodeIcon,
+  HardDrive as DriveIcon,
+  Image as ImageIcon,
+  Send as SendIcon,
+  X as XIcon,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { chatAttachmentContentUrl, uploadChatAttachment, type ChatAttachmentRecord } from "./api";
 import { applyCodeMarkup } from "./message-content";
 
@@ -188,7 +194,7 @@ export function ChatComposer({
               wrapSelection("inline");
             }}
           >
-            <Icons.Code size={16} />
+            <CodeIcon size={16} />
           </ToolbarButton>
           <ToolbarButton
             label="Code block"
@@ -208,7 +214,7 @@ export function ChatComposer({
                 {attachment.source === "chat" ? (
                   <img src={chatAttachmentContentUrl(attachment.objectId)} alt="" />
                 ) : (
-                  <Icons.Drive size={18} aria-hidden="true" />
+                  <DriveIcon size={18} aria-hidden="true" />
                 )}
                 <span>{attachment.filename}</span>
                 <button
@@ -220,7 +226,7 @@ export function ChatComposer({
                     );
                   }}
                 >
-                  <Icons.X size={12} />
+                  <XIcon size={12} />
                 </button>
               </div>
             ))}
@@ -270,7 +276,7 @@ export function ChatComposer({
                   attachDriveFile(file);
                 }}
               >
-                <Icons.Drive size={15} />
+                <DriveIcon size={15} />
                 <span>{file.name}</span>
               </button>
             ))}
@@ -293,10 +299,10 @@ export function ChatComposer({
             disabled={disabled || uploading > 0}
             onClick={() => fileInputRef.current?.click()}
           >
-            <Icons.Image size={16} />
+            <ImageIcon size={16} />
           </ToolbarButton>
           <ToolbarButton label="Attach from Drive" disabled={disabled} onClick={toggleDrive}>
-            <Icons.Drive size={16} />
+            <DriveIcon size={16} />
           </ToolbarButton>
           {uploading > 0 ? <span className="chat-composer-status">Scanning…</span> : null}
           <div className="chat-composer-spacer" />
@@ -308,7 +314,7 @@ export function ChatComposer({
             }
             onClick={submit}
           >
-            <Icons.Send size={14} />
+            <SendIcon size={14} />
             Send
           </button>
         </div>

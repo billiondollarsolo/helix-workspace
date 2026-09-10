@@ -47,25 +47,25 @@ describe("CommandPalette", () => {
     });
     host.registerCommandPaletteItems([
       {
-        id: "docs.ask-current",
-        pluginId: "com.helix.docs",
-        label: "Ask this document",
-        group: "Document",
-        keywords: ["question", "current doc"],
-        shortcut: "Docs",
+        id: "drive.inspect-current",
+        pluginId: "com.helix.drive",
+        label: "Inspect this file",
+        group: "Drive",
+        keywords: ["question", "current file"],
+        shortcut: "Drive",
         run,
       },
     ]);
 
     render(host, close);
 
-    expect(container.textContent ?? "").toContain("Ask this document");
+    expect(container.textContent ?? "").toContain("Inspect this file");
     setSearchQuery("question");
-    expect(container.textContent ?? "").toContain("Ask this document");
-    expect(container.textContent ?? "").toContain("Docs");
+    expect(container.textContent ?? "").toContain("Inspect this file");
+    expect(container.textContent ?? "").toContain("Drive");
 
     act(() => {
-      buttonWithText("Ask this document").click();
+      buttonWithText("Inspect this file").click();
     });
 
     expect(run).toHaveBeenCalledTimes(1);
@@ -81,22 +81,24 @@ describe("CommandPalette", () => {
     });
     host.registerCommandPaletteItems([
       {
-        id: "slides.export-pdf",
-        pluginId: "com.helix.slides",
-        label: "Export deck as PDF",
-        group: "Presentation",
-        keywords: ["export"],
-        disabledReason: "Resolve 2 media export blockers before export.",
+        id: "drive.download",
+        pluginId: "com.helix.drive",
+        label: "Download file",
+        group: "Drive",
+        keywords: ["download"],
+        disabledReason: "Wait for the file scan to finish before downloading.",
         run,
       },
     ]);
 
     render(host, close);
 
-    const button = buttonWithText("Export deck as PDF");
+    const button = buttonWithText("Download file");
     expect(button.disabled).toBe(true);
-    expect(button.title).toBe("Resolve 2 media export blockers before export.");
-    expect(container.textContent ?? "").toContain("Resolve 2 media export blockers before export.");
+    expect(button.title).toBe("Wait for the file scan to finish before downloading.");
+    expect(container.textContent ?? "").toContain(
+      "Wait for the file scan to finish before downloading.",
+    );
 
     act(() => {
       button.click();
@@ -197,7 +199,7 @@ describe("CommandPalette", () => {
 
   function setSearchQuery(value: string): void {
     const input = container.querySelector<HTMLInputElement>(
-      'input[aria-label="Search apps, docs, people, actions"]',
+      'input[aria-label="Search apps, files, people, actions"]',
     );
     if (input === null) {
       throw new Error("Missing command palette search input.");

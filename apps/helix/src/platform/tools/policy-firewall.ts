@@ -7,7 +7,7 @@ import type {
 } from "@helix/sdk-types";
 import type { AutomationPolicyDecision } from "./automation-policy.js";
 
-export const toolPolicyRequestChannels = [
+const toolPolicyRequestChannels = [
   "rest",
   "mcp",
   "trpc",
@@ -51,7 +51,7 @@ export type ToolPolicyDecision =
         | "untrusted_context_high_risk_blocked";
     };
 
-export interface ToolPolicyProvenance {
+interface ToolPolicyProvenance {
   readonly sourceIds: readonly string[];
   readonly containsUntrustedContext: boolean;
 }

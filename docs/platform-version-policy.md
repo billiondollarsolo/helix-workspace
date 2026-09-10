@@ -43,11 +43,10 @@ unless their profile or evidence command is explicitly enabled.
 
 ## JavaScript compatibility exceptions
 
-- `@helix/contracts` and the `zod3` alias use Zod 3.25.76. Tool-schema composition currently
+- `@helix/contracts` and shared tool schemas use Zod 3.25.76. Tool-schema composition currently
   combines shared contract schemas with local Zod 3 schemas, so moving this boundary to Zod 4
   requires a coordinated schema-adapter migration. Application-only Zod consumers may use 4.4.3.
-- React 18.3.1 remains in `@helix/editors-ui` because Ladle's current inspector dependency does not
-  support React 19. The shipped Workspace web app uses React 19.2.8.
+- The shipped Workspace web app uses React 19.2.8.
 - TypeScript stays on 5.9.3 as described above. `@types/node` stays on the Node 24 line even though
   Node 26 types exist.
 - RustFS is the only prerelease service exception and is tracked separately above.

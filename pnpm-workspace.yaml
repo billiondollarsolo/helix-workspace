@@ -20,6 +20,8 @@ minimumReleaseAgeStrict: true
 nodeVersion: 24.18.0
 
 overrides:
+  # 1.2.1 restored emnapi v1 compatibility; 1.2.2 retains that upstream fix.
+  "@napi-rs/wasm-runtime@1.2.0": "1.2.2"
   "@xmldom/xmldom@0.8": "0.8.15"
   "nanoid@3": "3.3.18"
   "@esbuild-kit/core-utils>esbuild": "0.28.1"
@@ -36,11 +38,6 @@ overrides:
   "tmp": "0.2.7"
   "undici": "7.29.0"
   "ws": "8.21.1"
-
-peerDependencyRules:
-  allowedVersions:
-    "@napi-rs/wasm-runtime@1.2.0>@emnapi/core": "1.11.1"
-    "@napi-rs/wasm-runtime@1.2.0>@emnapi/runtime": "1.11.1"
 
 strictDepBuilds: true
 trustLockfile: false

@@ -9,7 +9,7 @@ export interface TenantHardDeleteWorkerStore {
   markTenantHardDeleted(input: { readonly orgId: string }): Promise<OrgRecord | null>;
 }
 
-export interface TenantHardDeleteStep {
+interface TenantHardDeleteStep {
   readonly name: string;
   run(org: OrgRecord): Promise<void>;
 }

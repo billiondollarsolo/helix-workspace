@@ -1,6 +1,7 @@
-import type postgres from "postgres";
 import { canonicalTimeZone } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
+import type postgres from "postgres";
+import { toSqlJson } from "../util/sql.js";
 import { findAvailableSlots, freeBusyEventsToBusyBlocks } from "./freebusy.js";
 import { expandCalendarEventOccurrences } from "./recurrence.js";
 import type { CalendarStore } from "./store.js";
@@ -573,8 +574,4 @@ function throwResourceConflict(error: unknown): never {
     throw new CalendarResourceConflictError("Resource is already booked for that interval.");
   }
   throw error;
-}
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }

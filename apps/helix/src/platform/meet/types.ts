@@ -1,12 +1,10 @@
 import type { JsonObject } from "@helix/sdk-types";
 
-export const meetPluginId = "com.helix.core.meet-jitsi";
-
 export type MeetRoomStatus = "scheduled" | "active" | "ended";
 export type MeetGuestPolicy = "disabled" | "invite" | "domain";
 export type MeetAudiencePolicy = "everyone" | "hosts" | "disabled";
-export type MeetPresenterPolicy = "everyone" | "hosts" | "selected";
-export type MeetMutePolicy = "open" | "moderated";
+type MeetPresenterPolicy = "everyone" | "hosts" | "selected";
+type MeetMutePolicy = "open" | "moderated";
 
 export interface MeetControlState {
   readonly roomId: string;
@@ -30,7 +28,7 @@ export interface MeetAttendanceRecord {
   readonly durationSeconds: number | null;
 }
 
-export type MeetMediaCommand =
+type MeetMediaCommand =
   | { readonly command: "toggleLobby"; readonly enabled: boolean }
   | {
       readonly command: "answerKnockingParticipant";
@@ -174,15 +172,6 @@ export interface MeetSummaryRef {
   readonly body: string;
   readonly createdAt: Date;
   readonly metadata: JsonObject;
-}
-
-export interface MeetTokenRecord {
-  readonly roomId: string;
-  readonly roomName: string;
-  readonly jitsiDomain: string;
-  readonly token: string;
-  readonly joinUrl: string;
-  readonly expiresAt: Date;
 }
 
 export interface MeetRecordingAttachmentRecord {

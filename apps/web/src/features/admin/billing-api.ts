@@ -19,11 +19,9 @@ export type { MeteringRollupMetricKey } from "@helix/sdk-types";
  * Backend responses are validated at the trust boundary with Zod.
  */
 
-export const BILLING_CYCLES = ["monthly", "annual"] as const;
-export type BillingCycle = (typeof BILLING_CYCLES)[number];
+const BILLING_CYCLES = ["monthly", "annual"] as const;
 
-export const INVOICE_STATUSES = ["paid", "open", "void", "uncollectible"] as const;
-export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+const INVOICE_STATUSES = ["paid", "open", "void", "uncollectible"] as const;
 
 const billingAccountSchema = z.object({
   orgId: z.string(),
@@ -42,8 +40,6 @@ const billingAccountSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 });
-
-export type BillingAccount = z.infer<typeof billingAccountSchema>;
 
 const billingUsageMeterSchema = z.object({
   id: z.enum(["licenses", "storage", "ai_credits"]),
@@ -92,7 +88,7 @@ const usageRollupSchema = z.object({
   computedAt: z.string(),
 });
 
-export type UsageRollup = z.infer<typeof usageRollupSchema>;
+type UsageRollup = z.infer<typeof usageRollupSchema>;
 
 const usageSummaryMetricSchema = z.object({
   metricKey: z.enum(meteringRollupMetricKeys),
@@ -101,15 +97,13 @@ const usageSummaryMetricSchema = z.object({
   sampleCount: z.number(),
 });
 
-export type UsageSummaryMetric = z.infer<typeof usageSummaryMetricSchema>;
-
 const usageSummarySchema = z.object({
   periodStart: z.string().nullable(),
   periodEnd: z.string().nullable(),
   metrics: z.array(usageSummaryMetricSchema),
 });
 
-export type UsageSummary = z.infer<typeof usageSummarySchema>;
+type UsageSummary = z.infer<typeof usageSummarySchema>;
 
 const usageRollupsResponseSchema = z.object({
   rollups: z.array(usageRollupSchema),
@@ -138,7 +132,7 @@ export interface UsageRollupsQueryInput {
   readonly metricKey?: MeteringRollupMetricKey;
 }
 
-export const defaultInvoicesInput = { limit: 25 } as const satisfies InvoicesQueryInput;
+const defaultInvoicesInput = { limit: 25 } as const satisfies InvoicesQueryInput;
 
 // ---------------------------------------------------------------------------
 // Query keys + options
@@ -192,14 +186,14 @@ export function usageRollupsQueryOptions(
 // Fetchers
 // ---------------------------------------------------------------------------
 
-export async function fetchBillingAccount(
+async function fetchBillingAccount(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<BillingAccountView> {
   const response = await fetchImpl("/api/admin/billing/account", { method: "GET" });
   return parseResponse(response, "load billing account", billingAccountViewSchema);
 }
 
-export async function fetchInvoices(
+async function fetchInvoices(
   input: InvoicesQueryInput = defaultInvoicesInput,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<InvoicesResponse> {

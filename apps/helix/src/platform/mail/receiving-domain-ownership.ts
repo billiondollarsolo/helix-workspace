@@ -14,7 +14,7 @@ import {
 } from "../admin/domain-identity.js";
 import type { MailReceivingDomainRecord } from "./receiving-domains-store.js";
 
-export interface ReceivingDomainOwnershipVerifier {
+interface ReceivingDomainOwnershipVerifier {
   verify(record: MailReceivingDomainRecord): Promise<boolean>;
 }
 

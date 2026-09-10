@@ -45,7 +45,7 @@ export async function ensureOk(response: Response, action: string): Promise<void
   throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
 }
 
-export function errorMessage(payload: unknown): string | undefined {
+function errorMessage(payload: unknown): string | undefined {
   if (
     typeof payload === "object" &&
     payload !== null &&

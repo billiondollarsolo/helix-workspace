@@ -22,8 +22,8 @@ export interface CardDavContactRecord {
   readonly updatedAt: Date;
 }
 
-export type CardDavFilterProperty = "FN" | "EMAIL" | "UID";
-export type CardDavMatchType = "contains" | "equals" | "starts-with" | "ends-with";
+type CardDavFilterProperty = "FN" | "EMAIL" | "UID";
+type CardDavMatchType = "contains" | "equals" | "starts-with" | "ends-with";
 
 export interface CardDavContactFilter {
   readonly property: CardDavFilterProperty;

@@ -31,10 +31,7 @@ describe("bucketThreadsByDate", () => {
   });
 
   it("separates Today from Yesterday using local midnight", () => {
-    const items = bucketThreadsByDate(
-      [thread("today", 0), thread("yest", 1)],
-      NOW,
-    );
+    const items = bucketThreadsByDate([thread("today", 0), thread("yest", 1)], NOW);
     const labels = items
       .filter((item) => item.kind === "header")
       .map((item) => (item as { label: string }).label);
@@ -53,10 +50,7 @@ describe("bucketThreadsByDate", () => {
 
   it("groups older threads into per-month buckets, most recent first", () => {
     // ~45 days ago → April 2026; ~90 days ago → late February 2026.
-    const items = bucketThreadsByDate(
-      [thread("apr", 45), thread("feb", 90)],
-      NOW,
-    );
+    const items = bucketThreadsByDate([thread("apr", 45), thread("feb", 90)], NOW);
     const headers = items
       .filter((item) => item.kind === "header")
       .map((item) => (item as { label: string }).label);
@@ -76,10 +70,7 @@ describe("bucketThreadsByDate", () => {
   });
 
   it("preserves caller's order within a bucket", () => {
-    const items = bucketThreadsByDate(
-      [thread("a", 0), thread("b", 0), thread("c", 0)],
-      NOW,
-    );
+    const items = bucketThreadsByDate([thread("a", 0), thread("b", 0), thread("c", 0)], NOW);
     const ids = items
       .filter((item) => item.kind === "thread")
       .map((item) => (item as { thread: AssistantThread }).thread.id);

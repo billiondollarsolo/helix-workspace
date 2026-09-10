@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const migration = readFileSync(new URL("./0165_drive_inherited_acl.sql", import.meta.url), "utf8");
-const store = readFileSync(new URL("../../platform/drive/store.ts", import.meta.url), "utf8");
+const authorization = readFileSync(
+  new URL("../../platform/drive/store/authz.ts", import.meta.url),
+  "utf8",
+);
+const projections = readFileSync(
+  new URL("../../platform/drive/store/projections.ts", import.meta.url),
+  "utf8",
+);
 
 describe("0165 inherited Drive ACL", () => {
   it("uses one evaluator for every principal and organization-owned shared Drives", () => {
@@ -22,7 +29,7 @@ describe("0165 inherited Drive ACL", () => {
     expect(migration).toContain("helix_drive_move_folder");
     expect(migration).toContain("organization-owned shared Drive files cannot transfer ownership");
     expect(migration).toContain("force row level security");
-    expect(store).toContain("helix_drive_effective_role(");
-    expect(store).toContain("helix_drive_visible_actor_ids(");
+    expect(authorization).toContain("helix_drive_effective_role(");
+    expect(projections).toContain("helix_drive_visible_actor_ids(");
   });
 });

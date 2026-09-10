@@ -6,7 +6,7 @@ import {
 } from "../storage/migration.js";
 import type { OrgRecord } from "./orgs.js";
 
-export const tenantExportManifestVersion = 1;
+const tenantExportManifestVersion = 1;
 
 export interface TenantExportTableCount {
   readonly table: string;

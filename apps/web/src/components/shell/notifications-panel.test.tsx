@@ -44,7 +44,7 @@ describe("NotificationsPanel", () => {
         items: [
           {
             id: "notification-1",
-            verb: "docs.comment.created",
+            verb: "drive.comment.created",
             summary: "Morgan mentioned you",
             body: "Review the launch brief",
             createdAt: "2026-07-28T12:00:00.000Z",

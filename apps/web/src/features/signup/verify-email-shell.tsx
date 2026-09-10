@@ -218,7 +218,7 @@ function canResendVerification(error: unknown): boolean {
 
 function continuePathForState(state: VerifyState): string {
   return state.status === "verified" && state.result.session.created
-    ? state.result.workspace.onboardingUrl
+    ? state.result.workspace.workspaceUrl
     : "/login";
 }
 

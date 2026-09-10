@@ -1,12 +1,12 @@
 import type postgres from "postgres";
 import type { AdminServiceStatus } from "./services.js";
-export interface AdminServiceRuntimeCounter {
+interface AdminServiceRuntimeCounter {
   readonly key: string;
   readonly label: string;
   readonly value: number;
   readonly unit?: string | undefined;
 }
-export interface AdminServiceRuntimeCheck {
+interface AdminServiceRuntimeCheck {
   readonly key: string;
   readonly label: string;
   readonly status: AdminServiceStatus;

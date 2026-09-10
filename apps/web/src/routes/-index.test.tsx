@@ -49,13 +49,13 @@ describe("root landing route", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows signup and local-login entry points to anonymous visitors", () => {
+  it("shows the login entry point without public signup", () => {
     act(() => {
       root.render(<LandingPage />);
     });
 
     expect(container.textContent).toContain("Helix");
-    expect(linkNamed("Get started free")?.getAttribute("href")).toBe("/signup");
+    expect(container.querySelector('a[href="/signup"]')).toBeNull();
     expect(linkNamed("Sign in")?.getAttribute("href")).toBe("/login");
   });
 

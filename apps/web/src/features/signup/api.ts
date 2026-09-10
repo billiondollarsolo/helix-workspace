@@ -27,42 +27,12 @@ export class SignupApiError extends Error {
   }
 }
 
-export interface SignupRequest {
-  readonly email: string;
-  readonly password: string;
-  readonly orgName: string;
-  readonly orgSlug: string;
-  readonly country: string;
-  readonly phone?: string;
-  readonly marketingOptIn: boolean;
-  readonly termsAccepted: boolean;
-  readonly privacyAccepted: boolean;
-  readonly recaptchaToken?: string;
-}
-
-export interface SignupOrg {
+interface SignupOrg {
   readonly id: string;
   readonly slug: string;
   readonly displayName: string;
   readonly status: string;
   readonly region: string;
-}
-
-export interface SignupResponse {
-  readonly status: "provisioning";
-  readonly org: SignupOrg;
-  readonly verification: {
-    readonly required: true;
-    readonly status: "pending";
-    readonly expiresAt?: string;
-  };
-}
-
-export interface SignupSlugAvailability {
-  readonly slug: string;
-  readonly valid: boolean;
-  readonly available: boolean;
-  readonly reason?: "invalid_format" | "reserved" | "taken";
 }
 
 export interface SignupVerifyEmailResponse {
@@ -76,30 +46,11 @@ export interface SignupVerifyEmailResponse {
     readonly status: string;
   };
   readonly workspace: {
-    readonly onboardingUrl: string;
-    readonly welcomeUrl: string;
+    readonly workspaceUrl: string;
   };
 }
 
 export interface SignupResendVerificationResponse {
-  readonly status: "accepted";
-}
-
-export interface SignupFormViewedAttribution {
-  readonly utmSource?: string;
-  readonly utmMedium?: string;
-  readonly utmCampaign?: string;
-  readonly utmTerm?: string;
-  readonly utmContent?: string;
-  readonly referrerOrigin?: string;
-}
-
-export interface SignupFormViewedInput {
-  readonly page: "signup";
-  readonly attribution?: SignupFormViewedAttribution;
-}
-
-export interface SignupFormViewedResponse {
   readonly status: "accepted";
 }
 
@@ -108,8 +59,7 @@ export interface SignupOnboardingInviteAcceptResponse {
   readonly org: SignupOrg;
   readonly actorId: string;
   readonly workspace: {
-    readonly onboardingUrl: string;
-    readonly welcomeUrl: string;
+    readonly workspaceUrl: string;
   };
 }
 
@@ -119,23 +69,6 @@ const signupOrgSchema = z.object({
   displayName: z.string(),
   status: z.string(),
   region: z.string(),
-});
-
-const signupResponseSchema = z.object({
-  status: z.literal("provisioning"),
-  org: signupOrgSchema,
-  verification: z.object({
-    required: z.literal(true),
-    status: z.literal("pending"),
-    expiresAt: z.string().optional(),
-  }),
-});
-
-const signupSlugAvailabilitySchema = z.object({
-  slug: z.string(),
-  valid: z.boolean(),
-  available: z.boolean(),
-  reason: z.enum(["invalid_format", "reserved", "taken"]).optional(),
 });
 
 const signupVerifyEmailResponseSchema = z.object({
@@ -149,16 +82,11 @@ const signupVerifyEmailResponseSchema = z.object({
     status: z.string(),
   }),
   workspace: z.object({
-    onboardingUrl: z.string(),
-    welcomeUrl: z.string(),
+    workspaceUrl: z.string(),
   }),
 });
 
 const signupResendVerificationResponseSchema = z.object({
-  status: z.literal("accepted"),
-});
-
-const signupFormViewedResponseSchema = z.object({
   status: z.literal("accepted"),
 });
 
@@ -167,37 +95,9 @@ const signupOnboardingInviteAcceptResponseSchema = z.object({
   org: signupOrgSchema,
   actorId: z.string(),
   workspace: z.object({
-    onboardingUrl: z.string(),
-    welcomeUrl: z.string(),
+    workspaceUrl: z.string(),
   }),
 });
-
-export async function checkOrgSlugAvailability(
-  slug: string,
-  fetchImpl: SignupFetch = fetch,
-): Promise<SignupSlugAvailability> {
-  const response = await fetchImpl(
-    `/v1/api/signup/org-slug/${encodeURIComponent(slug)}/availability`,
-    {
-      method: "GET",
-      credentials: "include",
-    },
-  );
-  return parseResponse(response, "check workspace URL", signupSlugAvailabilitySchema);
-}
-
-export async function startSignup(
-  input: SignupRequest,
-  fetchImpl: SignupFetch = fetch,
-): Promise<SignupResponse> {
-  const response = await fetchImpl("/v1/api/signup", {
-    method: "POST",
-    credentials: "include",
-    headers: jsonHeaders,
-    body: JSON.stringify(input),
-  });
-  return parseResponse(response, "create workspace", signupResponseSchema);
-}
 
 export async function verifySignupEmail(
   token: string,
@@ -231,19 +131,6 @@ export async function resendSignupVerification(
   );
 }
 
-export async function recordSignupFormViewed(
-  input: SignupFormViewedInput,
-  fetchImpl: SignupFetch = fetch,
-): Promise<SignupFormViewedResponse> {
-  const response = await fetchImpl("/v1/api/signup/form-viewed", {
-    method: "POST",
-    credentials: "include",
-    headers: jsonHeaders,
-    body: JSON.stringify(input),
-  });
-  return parseResponse(response, "record signup form view", signupFormViewedResponseSchema);
-}
-
 export async function acceptSignupOnboardingInvite(
   token: string,
   fetchImpl: SignupFetch = fetch,
@@ -261,26 +148,6 @@ export async function acceptSignupOnboardingInvite(
     "accept onboarding invite",
     signupOnboardingInviteAcceptResponseSchema,
   );
-}
-
-export function signupFormViewedInputFromBrowser(input: {
-  readonly search: string;
-  readonly referrer: string;
-}): SignupFormViewedInput {
-  const attribution: Record<string, string> = {};
-  const params = new URLSearchParams(input.search);
-  addAttribution(attribution, "utmSource", params.get("utm_source"));
-  addAttribution(attribution, "utmMedium", params.get("utm_medium"));
-  addAttribution(attribution, "utmCampaign", params.get("utm_campaign"));
-  addAttribution(attribution, "utmTerm", params.get("utm_term"));
-  addAttribution(attribution, "utmContent", params.get("utm_content"));
-  const referrerOrigin = referrerOriginFrom(input.referrer);
-  if (referrerOrigin !== undefined) {
-    attribution.referrerOrigin = referrerOrigin;
-  }
-  return Object.keys(attribution).length === 0
-    ? { page: "signup" }
-    : { page: "signup", attribution };
 }
 
 async function parseResponse<T>(
@@ -350,47 +217,4 @@ function retryAfterSeconds(value: string | null): number | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function addAttribution(output: Record<string, string>, key: string, value: string | null): void {
-  const sanitized = sanitizeAttributionValue(value);
-  if (sanitized !== undefined) {
-    output[key] = sanitized;
-  }
-}
-
-function sanitizeAttributionValue(value: string | null): string | undefined {
-  const trimmed = value?.trim();
-  if (
-    trimmed === undefined ||
-    trimmed.length === 0 ||
-    trimmed.length > 128 ||
-    trimmed.includes("@") ||
-    /^https?:\/\//iu.test(trimmed) ||
-    hasControlCharacters(trimmed)
-  ) {
-    return undefined;
-  }
-  return trimmed;
-}
-
-function referrerOriginFrom(value: string): string | undefined {
-  if (value.trim().length === 0) {
-    return undefined;
-  }
-  try {
-    return new URL(value).origin;
-  } catch {
-    return undefined;
-  }
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 31 || code === 127) {
-      return true;
-    }
-  }
-  return false;
 }

@@ -109,19 +109,6 @@ export function formatUntrustedSources(sources: readonly AssistantSource[]): str
     .join("\n");
 }
 
-export function formatUntrustedMemory(items: readonly MemoryItem[]): string {
-  return items
-    .map((item) =>
-      JSON.stringify({
-        id: sanitizeIdentifier(item.id),
-        source: sanitizeIdentifier(item.source),
-        content: item.content,
-        classification: classificationAttribute(item.metadata),
-      }),
-    )
-    .join("\n");
-}
-
 export function formatUntrustedToolResult(input: {
   readonly toolId: string;
   readonly output: JsonValue | undefined;

@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
 import type { RedisOptions } from "ioredis";
+import { readFileSync } from "node:fs";
 import { readTlsPem, tlsPathValue, type TlsFileReader } from "./tls-files.js";
 
 const TLS_SUBJECT = "Redis";

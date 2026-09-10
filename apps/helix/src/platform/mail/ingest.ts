@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue, SecurityTier } from "@helix/sdk-types";
+import type { JsonObject, SecurityTier } from "@helix/sdk-types";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { authenticate, type AuthenticateResult, type AuthStatus } from "mailauth";
 import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
@@ -7,6 +7,7 @@ import { mkdtemp, open as openFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SMTPServer, type SMTPServerDataStream, type SMTPServerSession } from "smtp-server";
+import { compactJsonObject } from "../util/json.js";
 import { MailAddressNormalizationError, normalizeMailboxAddress } from "./address-normalization.js";
 import type { AntivirusScanner, AntivirusScanResult } from "./antivirus.js";
 import {
@@ -120,7 +121,7 @@ export interface IngestRawMailResult {
 
 export type InboundScanFailurePolicy = "deliver" | "defer";
 
-export interface InboundScannerUnavailableEvent {
+interface InboundScannerUnavailableEvent {
   readonly scanner: "spam" | "antivirus";
   readonly policy: InboundScanFailurePolicy;
   readonly error: unknown;
@@ -908,7 +909,7 @@ export async function ingestRawMail(input: {
     );
 }
 
-export class MailInboundQuarantinedError extends Error {
+class MailInboundQuarantinedError extends Error {
   constructor(readonly quarantineId: string) {
     super("Inbound mail accepted into quarantine.");
     this.name = "MailInboundQuarantinedError";
@@ -1318,12 +1319,6 @@ function authPolicyEvidence(status: AuthStatus): JsonObject | undefined {
   return status.policy === undefined ? undefined : compactJsonObject(status.policy);
 }
 
-function compactJsonObject(values: Record<string, JsonValue | undefined>): JsonObject {
-  return Object.fromEntries(
-    Object.entries(values).filter((entry): entry is [string, JsonValue] => entry[1] !== undefined),
-  );
-}
-
 export function addressObjectToList(
   value: AddressObject | AddressObject[] | undefined,
 ): MailAddress[] {
@@ -1387,8 +1382,7 @@ function rejectedRecipient(address: string): Error {
 
 export type { SMTPServerSession };
 
-export type SpamCatcher =
-  "spamd" | "ai" | "rules" | "virus" | "scanner-policy" | "auth-failure" | null;
+type SpamCatcher = "spamd" | "ai" | "rules" | "virus" | "scanner-policy" | "auth-failure" | null;
 
 export interface SmtpReceiverLimits {
   readonly maxMessageBytes: number;
@@ -1461,7 +1455,7 @@ function quarantineReason(virusRouted: boolean, scannerUnavailable: boolean): st
   return scannerUnavailable ? "scanner_unavailable" : "scanner_policy";
 }
 
-export function extractSpamFeaturesFromRaw(
+function extractSpamFeaturesFromRaw(
   raw: Buffer | string,
   spam: SpamScanResult | null,
 ): {
@@ -1484,7 +1478,7 @@ export function extractSpamFeaturesFromRaw(
   };
 }
 
-export function applyInboundSecurityPolicy(
+function applyInboundSecurityPolicy(
   scan: InboundScanResult,
   auth: MailAuthenticationSummary,
   parsed: ParsedMail,

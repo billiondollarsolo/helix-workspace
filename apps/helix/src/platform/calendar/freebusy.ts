@@ -167,7 +167,7 @@ function overlaps(leftStart: Date, leftEnd: Date, rightStart: Date, rightEnd: Da
   return leftStart < rightEnd && rightStart < leftEnd;
 }
 
-export function calendarSlotWithinWorkingHours(
+function calendarSlotWithinWorkingHours(
   startsAt: Date,
   endsAt: Date,
   workingHours: CalendarWorkingHours | undefined,

@@ -1,3 +1,17 @@
+import { cn } from "@/lib/utils";
+import {
+  VideoOff as CamOffIcon,
+  MessageCircle as ChatIcon,
+  Hand as HandIcon,
+  Mic as MicIcon,
+  MicOff as MicOffIcon,
+  Phone as PhoneIcon,
+  Monitor as ScreenIcon,
+  Settings as SettingsIcon,
+  Users as UsersIcon,
+  Video as VideoIcon,
+  X as XIcon,
+} from "lucide-react";
 /* MeetCall — the in-call view. Dark theme regardless of the user's theme
    (`#0a0a0b` background). Top bar with title / live REC pill / meeting code /
    elapsed timer; a Jitsi External API embed (the real room, when a token was
@@ -9,17 +23,15 @@
    loads through JitsiMeetExternalAPI from the configured Jitsi domain, and
    Leave disconnects only the local participant. */
 
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Icons } from "@/components/icons";
 import { sessionUserQueryOptions } from "@/lib/auth";
-import { meetCallElapsedQueryOptions } from "./queries";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   applyMeetHostControl,
   authorizeMeetRecordingStart,
   recordMeetTelemetry,
-  type MeetTelemetryEvent,
   type MeetHostControl,
+  type MeetTelemetryEvent,
 } from "./api";
 import {
   useJitsiCall,
@@ -29,10 +41,9 @@ import {
   type JitsiChatMessage,
 } from "./jitsi-external-api";
 import type { MeetCallSession } from "./meet-shell";
+import { meetCallElapsedQueryOptions } from "./queries";
 
 const DARK_BORDER = "#27272d";
-const DARK_BG = "#0a0a0b";
-const DARK_PANEL = "#131316";
 
 /** Format an elapsed-second count as `M:SS` or `H:MM:SS`. */
 export function formatElapsed(totalSeconds: number): string {
@@ -130,58 +141,24 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        background: DARK_BG,
-        color: "#ededee",
-      }}
-    >
+    <div className="flex flex-col [height:100vh] [background:#0a0a0b] [color:#ededee]">
       {/* Top bar */}
-      <div
-        style={{
-          height: 44,
-          display: "flex",
-          alignItems: "center",
-          padding: "0 16px",
-          gap: 12,
-          borderBottom: `1px solid ${DARK_BORDER}`,
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Icons.Video />
-          <span style={{ fontWeight: 600 }}>{session.subject}</span>
+      <div className="h-11 flex items-center [padding:0_16px] gap-3 shrink-0 [border-bottom:1px_solid_#27272d]">
+        <div className="flex items-center gap-2">
+          <VideoIcon size={16} />
+          <span className="font-semibold">{session.subject}</span>
         </div>
         {call.recordingActive ? (
-          <span
-            className="chip"
-            style={{
-              background: "rgba(220,38,38,0.15)",
-              color: "#f87171",
-              borderColor: "transparent",
-            }}
-          >
+          <span className="chip [background:rgba(220,38,38,0.15)] [color:#f87171] [border-color:transparent]">
             <span className="chip-dot" />
             REC
           </span>
         ) : null}
-        <span style={{ fontSize: "var(--text-meta)", color: "#a1a1aa" }}>
+        <span className="[font-size:var(--text-meta)] [color:#a1a1aa]">
           helix.meet/{session.code}
         </span>
-        <div
-          style={{
-            marginLeft: "auto",
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            color: "#a1a1aa",
-            fontSize: "var(--text-meta)",
-          }}
-        >
-          <span style={{ fontVariantNumeric: "tabular-nums" }} aria-label="Elapsed time">
+        <div className="ml-auto flex items-center gap-2 [color:#a1a1aa] [font-size:var(--text-meta)]">
+          <span className="[font-variant-numeric:tabular-nums]" aria-label="Elapsed time">
             {formatElapsed(elapsed)}
           </span>
           <button
@@ -193,39 +170,21 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
               setHostControlsOpen((value) => !value);
             }}
           >
-            <Icons.Settings />
+            <SettingsIcon size={16} />
           </button>
         </div>
       </div>
 
       <RecordingNotice active={call.recordingActive} />
 
-      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+      <div className="flex-1 flex min-h-0">
         {/* Main stage — Jitsi External API mounts its iframe inside the host
             ref. We always render the host so the ref stays attached. */}
-        <div
-          style={{
-            flex: 1,
-            padding: 16,
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-            minWidth: 0,
-          }}
-        >
-          <div
-            style={{
-              flex: 1,
-              position: "relative",
-              borderRadius: 8,
-              overflow: "hidden",
-              background: "#000",
-              minHeight: 0,
-            }}
-          >
+        <div className="flex-1 p-4 flex flex-col gap-3 min-w-0">
+          <div className="flex-1 relative rounded-lg overflow-hidden [background:#000] min-h-0">
             <div
               ref={jitsiHostRef}
-              style={{ position: "absolute", inset: 0 }}
+              className="absolute inset-0"
               aria-label={`Jitsi meeting: ${session.subject}`}
             />
             {jitsiOptions === null ? (
@@ -247,9 +206,9 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             onClose={() => {
               setParticipantsOpen(false);
             }}
-            icon={<Icons.Users />}
+            icon={<UsersIcon size={16} />}
           >
-            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            <ul className="m-0 p-0 [list-style:none]">
               {call.isJoined ? (
                 <ParticipantRow
                   name={`${sessionQuery.data?.name ?? "You"} (you)`}
@@ -259,7 +218,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
               {call.participants.map((p) => (
                 <ParticipantRow key={p.id} name={p.displayName}>
                   {session.canModerate ? (
-                    <span style={{ display: "flex", gap: 4 }}>
+                    <span className="flex gap-1">
                       <MiniAction
                         label="Mute"
                         onClick={() => {
@@ -336,13 +295,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                 </ParticipantRow>
               ))}
               {call.participants.length === 0 && call.isJoined ? (
-                <li
-                  style={{
-                    padding: "12px 16px",
-                    color: "#71717a",
-                    fontSize: "var(--text-meta)",
-                  }}
-                >
+                <li className="[padding:12px_16px] [color:#71717a] [font-size:var(--text-meta)]">
                   No one else has joined yet.
                 </li>
               ) : null}
@@ -356,9 +309,9 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             onClose={() => {
               setHostControlsOpen(false);
             }}
-            icon={<Icons.Settings />}
+            icon={<SettingsIcon size={16} />}
           >
-            <div style={{ padding: 12, display: "grid", gap: 8 }}>
+            <div className="p-3 grid gap-2">
               <PolicyButton
                 label={`Lobby: ${controls.lobbyEnabled ? "on" : "off"}`}
                 onClick={() => {
@@ -420,7 +373,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
                   }}
                 />
               ))}
-              <small style={{ color: "#a1a1aa" }}>Policy version {controls.version}</small>
+              <small className="[color:#a1a1aa]">Policy version {controls.version}</small>
             </div>
           </SidePanel>
         ) : null}
@@ -451,26 +404,14 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
       </div>
 
       {/* Bottom control bar */}
-      <div
-        style={{
-          position: "relative",
-          height: 76,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 8,
-          borderTop: `1px solid ${DARK_BORDER}`,
-          padding: "0 16px",
-          flexShrink: 0,
-        }}
-      >
+      <div className="relative h-19 flex items-center justify-center gap-2 [padding:0_16px] shrink-0 [border-top:1px_solid_#27272d]">
         <CallControl
           label={call.audioMuted ? "Unmute microphone" : "Mute microphone"}
           danger={call.audioMuted}
           disabled={!call.isJoined}
           onClick={commands.toggleAudio}
         >
-          {call.audioMuted ? <Icons.MicOff /> : <Icons.Mic />}
+          {call.audioMuted ? <MicOffIcon size={16} /> : <MicIcon size={16} />}
         </CallControl>
         <CallControl
           label={call.videoMuted ? "Turn on camera" : "Turn off camera"}
@@ -478,7 +419,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           disabled={!call.isJoined}
           onClick={commands.toggleVideo}
         >
-          {call.videoMuted ? <Icons.CamOff /> : <Icons.Video />}
+          {call.videoMuted ? <CamOffIcon size={16} /> : <VideoIcon size={16} />}
         </CallControl>
         <CallControl
           label={call.screenSharing ? "Stop sharing screen" : "Share screen"}
@@ -486,7 +427,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           disabled={!call.isJoined}
           onClick={commands.toggleShareScreen}
         >
-          <Icons.Screen />
+          <ScreenIcon size={16} />
         </CallControl>
         <CallControl
           label={call.handRaised ? "Lower hand" : "Raise hand"}
@@ -494,7 +435,7 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
           disabled={!call.isJoined}
           onClick={commands.toggleRaiseHand}
         >
-          <Icons.Hand />
+          <HandIcon size={16} />
         </CallControl>
         {session.canStartRecording ? (
           <CallControl
@@ -529,10 +470,10 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             });
           }}
         >
-          <Icons.Chat />
+          <ChatIcon size={16} />
         </CallControl>
 
-        <div style={{ width: 1, height: 28, background: DARK_BORDER, margin: "0 4px" }} />
+        <div className="[width:1px] h-7 [background:#27272d] [margin:0_4px]" />
 
         <button
           type="button"
@@ -540,76 +481,54 @@ export function MeetCall({ session, onLeave }: MeetCallProps) {
             commands.hangup();
             leave();
           }}
-          style={{
-            height: 44,
-            padding: "0 18px",
-            borderRadius: 999,
-            background: "#dc2626",
-            color: "white",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontWeight: 500,
-            border: "none",
-            cursor: "pointer",
-          }}
+          className="h-11 [padding:0_18px] [border-radius:999px] [background:#dc2626] [color:white] flex items-center gap-1.5 font-medium [border:none] cursor-pointer"
         >
-          <Icons.Phone /> Leave
+          <PhoneIcon size={16} /> Leave
         </button>
 
-        <div
-          style={{
-            position: "absolute",
-            right: 16,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
+        <div className="absolute right-4 flex items-center gap-2">
           <button
-            className="btn sm"
+            className={cn(
+              "btn sm",
+              "[border-color:#27272d] [color:#ededee]",
+              participantsOpen ? "[background:var(--accent)]" : "bg-transparent",
+            )}
             type="button"
             aria-label={participantsOpen ? "Hide participants" : "Show participants"}
             onClick={() => {
               setParticipantsOpen((v) => !v);
             }}
-            style={{
-              background: participantsOpen ? "var(--accent)" : "transparent",
-              borderColor: DARK_BORDER,
-              color: "#ededee",
-            }}
           >
-            <Icons.Users />
+            <UsersIcon size={16} />
           </button>
           {Object.values(call.capabilities).some(Boolean) ? (
             <button
-              className="btn sm"
+              className={cn(
+                "btn sm",
+                "[border-color:#27272d] [color:#ededee]",
+                callOptionsOpen ? "[background:var(--accent)]" : "bg-transparent",
+              )}
               type="button"
               aria-label={callOptionsOpen ? "Hide call options" : "Show call options"}
               disabled={!call.isJoined}
               onClick={() => {
                 setCallOptionsOpen((value) => !value);
               }}
-              style={{
-                background: callOptionsOpen ? "var(--accent)" : "transparent",
-                borderColor: DARK_BORDER,
-                color: "#ededee",
-              }}
             >
-              <Icons.Settings />
+              <SettingsIcon size={16} />
             </button>
           ) : null}
         </div>
       </div>
       {recordingAuthorization.isError ? (
-        <div role="alert" style={{ padding: "8px 16px", color: "#fecaca" }}>
+        <div role="alert" className="[padding:8px_16px] [color:#fecaca]">
           {recordingAuthorization.error instanceof Error
             ? recordingAuthorization.error.message
             : "Recording could not be authorized."}
         </div>
       ) : null}
       {hostControl.isError ? (
-        <div role="alert" style={{ padding: "8px 16px", color: "#fecaca" }}>
+        <div role="alert" className="[padding:8px_16px] [color:#fecaca]">
           {hostControl.error instanceof Error
             ? hostControl.error.message
             : "Host control was rejected."}
@@ -632,8 +551,8 @@ function CallOptionsPanel({
 }) {
   const breakoutRooms = call.breakoutRooms.filter((room) => !room.isMainRoom);
   return (
-    <SidePanel title="Call options" icon={<Icons.Settings />} onClose={onClose}>
-      <div style={{ padding: 12, display: "grid", gap: 8 }}>
+    <SidePanel title="Call options" icon={<SettingsIcon size={16} />} onClose={onClose}>
+      <div className="p-3 grid gap-2">
         {call.capabilities.tileView ? (
           <PolicyButton
             label={call.tileView === true ? "Use speaker layout" : "Use tile layout"}
@@ -661,8 +580,8 @@ function CallOptionsPanel({
           />
         ) : null}
         {call.capabilities.breakoutRooms && canModerate ? (
-          <section aria-label="Breakout rooms" style={{ display: "grid", gap: 8, marginTop: 8 }}>
-            <strong style={{ fontSize: "var(--text-body-sm)" }}>Breakout rooms</strong>
+          <section aria-label="Breakout rooms" className="grid gap-2 mt-2">
+            <strong className="[font-size:var(--text-body-sm)]">Breakout rooms</strong>
             <PolicyButton label="Add breakout room" onClick={commands.addBreakoutRoom} />
             <PolicyButton
               label="Auto-assign participants"
@@ -677,14 +596,11 @@ function CallOptionsPanel({
               />
             ) : null}
             {breakoutRooms.map((room) => (
-              <div
-                key={room.id}
-                style={{ display: "grid", gap: 6, padding: 8, border: `1px solid ${DARK_BORDER}` }}
-              >
-                <span style={{ fontSize: "var(--text-meta)" }}>
+              <div key={room.id} className="grid gap-1.5 p-2 [border:1px_solid_#27272d]">
+                <span className="[font-size:var(--text-meta)]">
                   {room.name} ({String(room.participantCount)})
                 </span>
-                <div style={{ display: "flex", gap: 6 }}>
+                <div className="flex gap-1.5">
                   <MiniAction
                     label={`Join ${room.name}`}
                     onClick={() => {
@@ -713,13 +629,7 @@ export function RecordingNotice({ active }: { readonly active: boolean }) {
     <div
       role="alert"
       aria-live="assertive"
-      style={{
-        padding: "10px 16px",
-        background: "#991b1b",
-        color: "white",
-        fontWeight: 700,
-        textAlign: "center",
-      }}
+      className="[padding:10px_16px] [background:#991b1b] [color:white] font-bold text-center"
     >
       Recording in progress — audio, video, and shared content are being captured.
     </div>
@@ -736,16 +646,11 @@ function Overlay({
   return (
     <div
       role="status"
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "grid",
-        placeItems: "center",
-        background: tone === "error" ? "rgba(127,29,29,0.4)" : "rgba(0,0,0,0.65)",
-        color: tone === "error" ? "#fecaca" : "#a1a1aa",
-        fontSize: "var(--text-body-sm)",
-        pointerEvents: "none",
-      }}
+      className={cn(
+        "absolute inset-0 grid [place-items:center] [font-size:var(--text-body-sm)] pointer-events-none",
+        tone === "error" ? "[background:rgba(127,29,29,0.4)]" : "[background:rgba(0,0,0,0.65)]",
+        tone === "error" ? "[color:#fecaca]" : "[color:#a1a1aa]",
+      )}
     >
       {message}
     </div>
@@ -768,36 +673,22 @@ function SidePanel({
   return (
     <div
       aria-label={ariaLabel ?? title}
-      style={{
-        width: 320,
-        borderLeft: `1px solid ${DARK_BORDER}`,
-        display: "flex",
-        flexDirection: "column",
-        background: DARK_PANEL,
-      }}
+      className="w-80 flex flex-col [background:#131316] [border-left:1px_solid_#27272d]"
     >
-      <div
-        style={{
-          padding: "12px 16px",
-          borderBottom: `1px solid ${DARK_BORDER}`,
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-        }}
-      >
+      <div className="[padding:12px_16px] flex items-center gap-2 [border-bottom:1px_solid_#27272d]">
         {icon}
-        <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>{title}</span>
+        <span className="font-semibold [font-size:var(--text-body-sm)]">{title}</span>
         <button
-          className="icon-btn"
-          style={{ marginLeft: "auto" }}
+          className="icon-btn ml-auto"
+
           type="button"
           aria-label={`Close ${title}`}
           onClick={onClose}
         >
-          <Icons.X />
+          <XIcon size={16} />
         </button>
       </div>
-      <div style={{ flex: 1, overflowY: "auto" }}>{children}</div>
+      <div className="flex-1 overflow-y-auto">{children}</div>
     </div>
   );
 }
@@ -812,40 +703,16 @@ function ParticipantRow({
   readonly children?: React.ReactNode;
 }) {
   return (
-    <li
-      style={{
-        padding: "10px 16px",
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        borderBottom: `1px solid ${DARK_BORDER}`,
-      }}
-    >
+    <li className="[padding:10px_16px] flex items-center gap-2.5 [border-bottom:1px_solid_#27272d]">
       <span
         aria-hidden="true"
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 999,
-          background: "#3f3f46",
-          display: "grid",
-          placeItems: "center",
-          color: "#ededee",
-          fontSize: 12,
-        }}
+        className="w-7 h-7 [border-radius:999px] [background:#3f3f46] grid [place-items:center] [color:#ededee] [font-size:12px]"
       >
         {initials(name)}
       </span>
-      <span style={{ flex: 1, fontSize: "var(--text-body-sm)" }}>{name}</span>
+      <span className="flex-1 [font-size:var(--text-body-sm)]">{name}</span>
       {badge !== undefined && badge !== null ? (
-        <span
-          style={{
-            fontSize: "var(--text-caption)",
-            color: "#f87171",
-          }}
-        >
-          {badge}
-        </span>
+        <span className="[font-size:var(--text-caption)] [color:#f87171]">{badge}</span>
       ) : null}
       {children}
     </li>
@@ -895,58 +762,34 @@ function ChatPanel({
 }) {
   const [draft, setDraft] = useState("");
   return (
-    <SidePanel title="In-call messages" icon={<Icons.Chat />} onClose={onClose}>
-      <div
-        style={{
-          padding: 12,
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
+    <SidePanel title="In-call messages" icon={<ChatIcon size={16} />} onClose={onClose}>
+      <div className="p-3 flex flex-col gap-2">
         {messages.length === 0 ? (
-          <p
-            style={{
-              margin: 0,
-              color: "#71717a",
-              fontSize: "var(--text-meta)",
-              textAlign: "center",
-              padding: "24px 0",
-            }}
-          >
+          <p className="m-0 [color:#71717a] [font-size:var(--text-meta)] text-center [padding:24px_0]">
             No messages yet. Say hi.
           </p>
         ) : (
           messages.map((m) => (
             <div
               key={m.id}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 2,
-                alignSelf: m.isLocal ? "flex-end" : "flex-start",
-                maxWidth: "85%",
-              }}
+              className={cn(
+                "flex flex-col gap-0.5 [max-width:85%]",
+                m.isLocal ? "[align-self:flex-end]" : "[align-self:flex-start]",
+              )}
             >
               <span
-                style={{
-                  fontSize: "var(--text-caption)",
-                  color: "#71717a",
-                  textAlign: m.isLocal ? "right" : "left",
-                }}
+                className={cn(
+                  "[font-size:var(--text-caption)] [color:#71717a]",
+                  m.isLocal ? "text-right" : "text-left",
+                )}
               >
                 {m.nick}
               </span>
               <span
-                style={{
-                  background: m.isLocal ? "var(--accent)" : "#27272d",
-                  color: "white",
-                  padding: "6px 10px",
-                  borderRadius: 10,
-                  fontSize: "var(--text-body-sm)",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                }}
+                className={cn(
+                  "[color:white] [padding:6px_10px] [border-radius:10px] [font-size:var(--text-body-sm)] whitespace-pre-wrap [word-break:break-word]",
+                  m.isLocal ? "[background:var(--accent)]" : "[background:#27272d]",
+                )}
               >
                 {m.message}
               </span>
@@ -955,12 +798,7 @@ function ChatPanel({
         )}
       </div>
       <form
-        style={{
-          padding: 10,
-          borderTop: `1px solid ${DARK_BORDER}`,
-          display: "flex",
-          gap: 6,
-        }}
+        className="p-2.5 flex gap-1.5 [border-top:1px_solid_#27272d]"
         onSubmit={(event) => {
           event.preventDefault();
           if (draft.trim().length === 0) return;
@@ -975,32 +813,16 @@ function ChatPanel({
           onChange={(event) => {
             setDraft(event.target.value);
           }}
-          style={{
-            flex: 1,
-            height: 30,
-            padding: "0 10px",
-            borderRadius: 6,
-            border: `1px solid ${DARK_BORDER}`,
-            background: DARK_BG,
-            color: "#ededee",
-            outline: "none",
-            fontSize: "var(--text-meta)",
-          }}
+          className="flex-1 h-7.5 [padding:0_10px] rounded-md [background:#0a0a0b] [color:#ededee] outline-none [font-size:var(--text-meta)] [border:1px_solid_#27272d]"
         />
         <button
           type="submit"
           aria-label="Send message"
           disabled={draft.trim().length === 0}
-          style={{
-            height: 30,
-            padding: "0 10px",
-            borderRadius: 6,
-            border: "none",
-            background: "var(--accent)",
-            color: "white",
-            cursor: "pointer",
-            opacity: draft.trim().length === 0 ? 0.5 : 1,
-          }}
+          className={cn(
+            "h-7.5 [padding:0_10px] rounded-md [border:none] [background:var(--accent)] [color:white] cursor-pointer",
+            draft.trim().length === 0 ? "[opacity:0.5]" : "[opacity:1]",
+          )}
         >
           Send
         </button>
@@ -1035,19 +857,6 @@ function CallControl({
   readonly badge?: number | null;
 }) {
   const background = danger ? "#dc2626" : active ? "var(--accent)" : DARK_BORDER;
-  const style: CSSProperties = {
-    position: "relative",
-    width: 44,
-    height: 44,
-    borderRadius: 999,
-    background,
-    color: "white",
-    display: "grid",
-    placeItems: "center",
-    border: "none",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.5 : 1,
-  };
   return (
     <button
       type="button"
@@ -1055,27 +864,18 @@ function CallControl({
       aria-label={label}
       aria-pressed={active}
       disabled={disabled}
-      style={style}
+      className={cn(
+        "relative w-11 h-11 [border-radius:999px] [color:white] grid [place-items:center] [border:none]",
+        disabled ? "cursor-not-allowed" : "cursor-pointer",
+        disabled ? "[opacity:0.5]" : "[opacity:1]",
+      )}
+      style={{ background }}
     >
       {children}
       {badge !== undefined && badge !== null && badge > 0 ? (
         <span
           aria-hidden="true"
-          style={{
-            position: "absolute",
-            top: -2,
-            right: -2,
-            minWidth: 16,
-            height: 16,
-            padding: "0 4px",
-            borderRadius: 999,
-            background: "#dc2626",
-            color: "white",
-            fontSize: 10,
-            fontWeight: 600,
-            display: "grid",
-            placeItems: "center",
-          }}
+          className="absolute [top:-2px] [right:-2px] min-w-4 h-4 [padding:0_4px] [border-radius:999px] [background:#dc2626] [color:white] [font-size:10px] font-semibold grid [place-items:center]"
         >
           {badge > 99 ? "99+" : badge}
         </span>

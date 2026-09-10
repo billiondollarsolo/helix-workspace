@@ -1,7 +1,7 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import { PostgresMailStore } from "./store.js";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import type { StagedMailAttachment } from "./attachment-ingestion.js";
+import { PostgresMailStore } from "./store.js";
 import type { MailAttachmentInput } from "./types.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
@@ -15,11 +15,6 @@ const mailboxActorIds = [
   "88888888-8888-4888-8888-888888888888",
   "99999999-9999-4999-8999-999999999999",
 ] as const;
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 describe("PostgresMailStore attachment storage", () => {
   it("rejects ownerless mail before creating content", async () => {
@@ -295,33 +290,13 @@ describe("PostgresMailStore mailbox visibility", () => {
     expect(mailboxReadQueries).toHaveLength(5);
     for (const query of mailboxReadQueries) {
       expect(query.text).toContain("visible_message.actor_id = ?");
-      expect(query.text).toContain("join mail_inbound_deliveries visible_delivery");
-      expect(query.text).toContain("join mail_inbound_recipients visible_recipient");
-      expect(query.text).toContain("visible_recipient.actor_id = ?");
+      expect(query.text).toContain("join mail_message_deliveries visible_delivery");
+      expect(query.text).toContain("visible_delivery.actor_id = ?");
       expect(query.values).toContain(actorId);
       expect(query.values).toContain(orgId);
     }
   });
 });
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  let callIndex = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
-    return Promise.resolve(responses[callIndex++] ?? []);
-  };
-  const sql = Object.assign(tag, {
-    json: (value: unknown) => value,
-    array: (value: unknown) => value,
-    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) =>
-      callback(sql as unknown as postgres.TransactionSql),
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}
 
 function outboundRow(): Record<string, unknown> {
   return {

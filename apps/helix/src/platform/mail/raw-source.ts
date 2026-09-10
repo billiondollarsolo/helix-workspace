@@ -1,12 +1,12 @@
-import { createHash } from "node:crypto";
-import { simpleParser, type ParsedMail } from "mailparser";
 import type { JsonObject, JsonValue } from "@helix/sdk-types";
+import { simpleParser, type ParsedMail } from "mailparser";
+import { createHash } from "node:crypto";
 import { MailRawSourceIntegrityError } from "./errors.js";
 import type { MailRawSourceInput } from "./types.js";
 
 /** Keep this in lockstep with the pinned mailparser dependency. */
 export const MAIL_RAW_PARSER = "mailparser@3.9.20";
-export const MAIL_RAW_PROJECTION_VERSION = 1;
+const MAIL_RAW_PROJECTION_VERSION = 1;
 export const MAIL_RAW_SOURCE_MAX_BYTES = 50 * 1024 * 1024;
 
 /** Copy and describe the exact input bytes; parsed content is only a disposable projection. */

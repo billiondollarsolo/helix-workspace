@@ -1,29 +1,36 @@
-import { nanoid } from "nanoid";
-import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
 import type { FeatureFlagProvider } from "@helix/sdk";
 import type {
-  AuditRecord,
   Actor,
   AIClassification,
+  AuditRecord,
   JsonObject,
   JsonValue,
   PendingToolInvocation,
   RequestContext,
   ResourceRef,
+  TierSecurityDefaults,
   ToolContext,
   ToolDefinition,
 } from "@helix/sdk-types";
+import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
+import { nanoid } from "nanoid";
+import { operationalControlEnv } from "../config/env.js";
+import type { AgentAutomationPolicy, AgentCredentialPolicy } from "./auth/credentials.js";
+import { confirmationRequiredForSideEffect, tierDefaults } from "./config/tier.js";
+import { dlpDecisionError, dlpToolInvocation, type DlpGuard } from "./dlp.js";
 import {
-  ScopeToolAccessPolicy,
+  resolveAgentLimitBudget,
+  type AgentLimitBudget,
+  type AgentLimitExceeded,
+  type AgentRateCostLimiter,
+} from "./limits/index.js";
+import {
   checkScopeComposition,
   filterToolsForActor,
+  ScopeToolAccessPolicy,
   toolResource,
   type ToolAccessPolicy,
 } from "./permissions/tool-access.js";
-import { confirmationRequiredForSideEffect, tierDefaults } from "./config/tier.js";
-import type { ConfirmationGate } from "./tools/registry.js";
-import type { PendingActionRecord } from "./tools/registry.js";
-import type { AgentAutomationPolicy, AgentCredentialPolicy } from "./auth/credentials.js";
 import {
   evaluateAutomationPolicy,
   hashToolInput,
@@ -34,15 +41,7 @@ import {
   type ToolPolicyDecision,
   type ToolPolicyRequestChannel,
 } from "./tools/policy-firewall.js";
-import type { TierSecurityDefaults } from "@helix/sdk-types";
-import {
-  resolveAgentLimitBudget,
-  type AgentLimitBudget,
-  type AgentLimitExceeded,
-  type AgentRateCostLimiter,
-} from "./limits/index.js";
-import { dlpDecisionError, dlpToolInvocation, type DlpGuard } from "./dlp.js";
-import { operationalControlEnv } from "../config/env.js";
+import type { ConfirmationGate, PendingActionRecord } from "./tools/registry.js";
 
 export type ToolInvokeResult<Output = unknown> =
   | { readonly ok: true; readonly status?: "executed"; readonly output: Output }
@@ -123,7 +122,7 @@ export interface ToolInvokeOptions {
   readonly credentialPolicy?: CredentialPolicyOverrides;
 }
 
-export interface ToolInvocationPolicyContext {
+interface ToolInvocationPolicyContext {
   readonly effectiveClassification: AIClassification;
   readonly sourceIds: readonly string[];
   readonly containsUntrustedContext: boolean;
@@ -132,6 +131,7 @@ export interface ToolInvocationPolicyContext {
   readonly blockHighRiskWhenUntrusted?: boolean;
 }
 
+/** @public Named in the exported server bootstrap declaration. */
 export interface ToolPolicyExplanation {
   readonly toolId: string;
   readonly effectiveClassification: AIClassification;
@@ -160,7 +160,7 @@ export interface ToolAuditSink {
   append(record: AuditRecord & { readonly orgId: string }): Promise<unknown>;
 }
 
-export type ToolInvocationAuditVerb =
+type ToolInvocationAuditVerb =
   | "tool.invocation.denied"
   | "tool.invocation.pending"
   | "tool.invocation.executed"
@@ -169,7 +169,7 @@ export type ToolInvocationAuditVerb =
 
 export type ToolInvocationAuditStatus = "denied" | "pending" | "executed" | "failed" | "cancelled";
 
-export interface PendingToolActionOptions {
+interface PendingToolActionOptions {
   readonly actor: Actor;
   readonly request?: RequestContext;
   readonly credentialId?: string;
@@ -177,16 +177,16 @@ export interface PendingToolActionOptions {
   readonly idempotencyFingerprint?: string;
 }
 
-export interface PendingExecutionPrincipal {
+interface PendingExecutionPrincipal {
   readonly actor: Actor;
   readonly credentialId?: string;
   readonly credentialOwnerActorId?: string;
   readonly credentialPolicy?: AgentCredentialPolicy;
 }
 
-export type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
+type ToolMetricStatus = "executed" | "pending_confirmation" | "error";
 
-export interface ToolInvocationMetrics {
+interface ToolInvocationMetrics {
   recordToolInvocation(input: {
     readonly toolId: string;
     readonly status: ToolMetricStatus;
@@ -211,9 +211,9 @@ export interface ToolInvocationMetrics {
   }): void;
 }
 
-export type ToolFeatureFlagResolver = (tool: ToolDefinition) => string | undefined;
+type ToolFeatureFlagResolver = (tool: ToolDefinition) => string | undefined;
 
-export type AgentOperationalControlReason =
+type AgentOperationalControlReason =
   "global_read_only" | "org_agent_writes_disabled" | "tool_disabled";
 
 export type AgentOperationalControlDecision =

@@ -5,9 +5,9 @@ import type {
   ChatResponse,
   ChatUsage,
   JsonObject,
-  JsonValue,
   ModelInfo,
 } from "@helix/sdk-types";
+import { isJsonValue, isJsonObject as isRecord } from "@helix/sdk-types";
 import { outboundFetch } from "../../outbound-http.js";
 
 export interface FetchProviderConfig {
@@ -23,7 +23,7 @@ export interface ProviderRequestConfig {
   readonly headers?: Record<string, string>;
 }
 
-export class AIProviderRequestError extends Error {
+class AIProviderRequestError extends Error {
   constructor(
     message: string,
     readonly status: number,
@@ -59,7 +59,7 @@ export function joinUrl(baseUrl: string, path: string): URL {
   return new URL(path.replace(/^\//u, ""), base);
 }
 
-export function bearerHeaders(apiKey: string | undefined): Record<string, string> {
+function bearerHeaders(apiKey: string | undefined): Record<string, string> {
   if (apiKey === undefined || apiKey.length === 0) {
     return {};
   }
@@ -107,16 +107,12 @@ export function assertRecord(value: unknown, label: string): Record<string, unkn
   return value;
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export function stringField(record: Record<string, unknown>, field: string): string | undefined {
   const value = record[field];
   return typeof value === "string" ? value : undefined;
 }
 
-export function numberField(record: Record<string, unknown>, field: string): number | undefined {
+function numberField(record: Record<string, unknown>, field: string): number | undefined {
   const value = record[field];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -156,7 +152,7 @@ export function usageFromAnthropic(value: unknown): ChatUsage | undefined {
   return compactUsage({ inputTokens, outputTokens, totalTokens });
 }
 
-export function compactUsage(usage: {
+function compactUsage(usage: {
   readonly inputTokens: number | undefined;
   readonly outputTokens: number | undefined;
   readonly totalTokens: number | undefined;
@@ -183,9 +179,7 @@ export function openAIMessage(message: AIMessage): Record<string, string> {
   };
 }
 
-export function anthropicMessages(
-  messages: readonly AIMessage[],
-): readonly Record<string, string>[] {
+function anthropicMessages(messages: readonly AIMessage[]): readonly Record<string, string>[] {
   return messages
     .filter((message) => message.role !== "system")
     .map((message) => ({
@@ -194,7 +188,7 @@ export function anthropicMessages(
     }));
 }
 
-export function systemPrompt(messages: readonly AIMessage[]): string | undefined {
+function systemPrompt(messages: readonly AIMessage[]): string | undefined {
   const systemMessages = messages
     .filter((message) => message.role === "system")
     .map((message) => message.content);
@@ -286,7 +280,7 @@ export function chatResponse(params: {
   };
 }
 
-export function parseJsonObject(text: string | undefined): JsonObject | undefined {
+function parseJsonObject(text: string | undefined): JsonObject | undefined {
   if (text === undefined || text.length === 0) {
     return undefined;
   }
@@ -697,27 +691,9 @@ function toolCallsFromMetadata(metadata: JsonObject): readonly AIToolChoice[] | 
   return toolCalls.length === 0 ? undefined : toolCalls;
 }
 
-export function toJsonObject(value: unknown): JsonObject | undefined {
+function toJsonObject(value: unknown): JsonObject | undefined {
   if (!isJsonValue(value) || !isRecord(value)) {
     return undefined;
   }
   return value;
-}
-
-export function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return typeof value !== "number" || Number.isFinite(value);
-  }
-  if (Array.isArray(value)) {
-    return value.every((item) => isJsonValue(item));
-  }
-  if (isRecord(value)) {
-    return Object.values(value).every((item) => isJsonValue(item));
-  }
-  return false;
 }

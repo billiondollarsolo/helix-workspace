@@ -41,16 +41,10 @@ is deferred.
 - The pilot objectives are 99.5% monthly availability, an RPO of no more than 24 hours, and an RTO
   of no more than 4 hours. They are engineering targets, not a contractual SLA.
 
-The production image sets `VITE_HELIX_MVP_ONLY=true`, disables Docs, Calendar, Meet, and Editors in
-the runtime configuration, and disables editor migrations. The sibling `helix-editors` checkout is
-used only as a reviewed build-time package-contract input. Existing editor source and routes in the
-development repository do not make native editing part of the Business MVP.
-
-Direct Docs, Sheets, Slides, Calendar, Meet, and native-PDF routes redirect to Drive in the
-storage-only build. PDFs open through the read-only Drive preview endpoint, and the backend omits
-PDF form-state mutation tools unless Editors are explicitly enabled. Assistant retrieval is
-restricted to server-enabled application indexes so stale Docs or Calendar scopes cannot bring
-disabled-module content back into an MVP prompt.
+The production image sets `VITE_HELIX_MVP_ONLY=true` and disables Calendar and Meet.
+The workspace alone supplies source, packages, and migrations. Native document editing, viewers,
+and converters are outside the product. Assistant retrieval is restricted to server-enabled
+application indexes so stale scopes cannot bring disabled-module content into an MVP prompt.
 
 ### Evidence vocabulary
 
@@ -328,8 +322,8 @@ publishing anything. On `main`, publication loads and verifies checksummed archi
 scan jobs instead of rebuilding, publishes only commit-addressed Helix-built images, and attaches
 signed GitHub build-provenance and SBOM attestations to the exact pushed digests. Digest-pinned
 Redis, RustFS, and ClamAV images remain pull-and-scan inputs and are not republished. Application
-and web artifacts additionally bind the exact paired `helix-editors` commit and attach a signed
-paired-source predicate containing both repository URLs and commit SHAs. This describes workflow
+and web artifacts bind the workspace commit and attach a signed
+source-provenance predicate containing its repository URL and commit SHA. This describes workflow
 enforcement, not a claim that the current revision's images passed remotely. The final release
 packet must retain the reviewed main-run digests, scans, SBOMs, and attestation bundles. Production
 dependency-advisory and full-history secret-scan gates remain pending validation and must not be

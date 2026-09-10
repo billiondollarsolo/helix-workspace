@@ -1,6 +1,6 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
 import {
   MailAdminStatusService,
   canReadMailAdminStatus,

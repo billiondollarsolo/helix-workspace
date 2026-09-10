@@ -76,13 +76,7 @@ test.describe("/admin dashboard", () => {
     await expect(page.getByText("Live platform config connected").first()).toBeVisible();
     await expect(page.getByRole("heading", { name: "Business platform state" })).toBeVisible();
     await expect(page.getByText("Audit destinations").first()).toBeVisible();
-    /* The plugin catalog moved behind a tab in the tier-readiness restructure;
-       this spec predates it. */
-    await page.getByRole("tab", { name: "Plugins" }).click();
-    await expect(page.getByRole("heading", { name: "Catalog and install" })).toBeVisible();
-    await expect(page.getByRole("table", { name: "Plugin catalog" })).toContainText(
-      "Evidence Plugin",
-    );
+    await expect(page.getByRole("tab", { name: "Plugins" })).toHaveCount(0);
 
     await adminNav(page).getByRole("link", { name: "Observability", exact: true }).click();
     await expect(
@@ -105,7 +99,6 @@ test.describe("/admin dashboard", () => {
         expect.objectContaining({ method: "GET", pathname: "/v1/api/admin/users" }),
         expect.objectContaining({ method: "GET", pathname: "/v1/api/admin/platform-config" }),
         expect.objectContaining({ method: "GET", pathname: "/v1/api/admin/services" }),
-        expect.objectContaining({ method: "POST", pathname: "/v1/api/tools/plugin.list" }),
         expect.objectContaining({
           body: { includeRevoked: false },
           method: "POST",
@@ -174,10 +167,6 @@ async function mockAdminDashboardBackend(page: Page, backendCalls: BackendCall[]
     }
     if (call.method === "GET" && call.pathname === "/v1/api/admin/mail/config") {
       await fulfillJson(route, mailConfigResponse());
-      return;
-    }
-    if (call.method === "POST" && call.pathname === "/v1/api/tools/plugin.list") {
-      await fulfillJson(route, pluginListResponse());
       return;
     }
     if (call.method === "POST" && call.pathname === "/v1/api/tools/webhook.outbound.list") {
@@ -327,7 +316,6 @@ function adminServicesResponse() {
     services: [
       {
         id: "mail",
-        pluginId: "com.helix.core.mail",
         label: "Mail",
         summary: "Inbound and outbound mail",
         category: "communication",
@@ -431,42 +419,6 @@ function mailConfigResponse() {
       lastFailureAt: null,
       lastError: null,
     },
-  };
-}
-
-function pluginListResponse() {
-  return {
-    plugins: [
-      {
-        id: "com.helix.evidence-plugin",
-        name: "Evidence Plugin",
-        version: "1.2.3",
-        description: "E2E plugin catalog evidence",
-        kind: "connector",
-        capabilities: {
-          provides: ["admin.evidence"],
-          consumes: ["audit.read"],
-        },
-        permissions: {
-          scopes: ["admin.audit"],
-          "outbound-network": ["https://evidence.example.test"],
-          filesystem: [],
-          envVars: [],
-        },
-        lifecycle: {
-          state: "enabled",
-          installed: true,
-          source: "official",
-          updatedAt: "2026-05-20T14:00:00.000Z",
-        },
-        install: {
-          confirmationRequired: false,
-          confirmations: [],
-          source: "official",
-        },
-        tierRequirements: null,
-      },
-    ],
   };
 }
 

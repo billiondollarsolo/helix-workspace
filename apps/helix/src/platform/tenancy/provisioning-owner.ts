@@ -21,7 +21,7 @@ export interface InitialOwnerActorRecord {
   readonly metadata: JsonObject;
 }
 
-export interface TenantOwnerActorStore {
+interface TenantOwnerActorStore {
   ensureInitialOwnerActor(input: InitialOwnerActorInput): Promise<InitialOwnerActorRecord>;
 }
 

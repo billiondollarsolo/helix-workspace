@@ -46,24 +46,12 @@ export interface CreateOrgUnitInput {
   readonly parentId?: string | null;
 }
 
-export interface UpdateOrgUnitInput {
-  readonly name?: string;
-  readonly description?: string;
-  readonly parentId?: string | null;
-}
-
 // ---------------------------------------------------------------------------
 // Groups
 // ---------------------------------------------------------------------------
 
-export const GROUP_KINDS = ["group", "security", "mailing_list"] as const;
-export type GroupKind = (typeof GROUP_KINDS)[number];
-
-export const groupKindLabels: Record<GroupKind, string> = {
-  group: "Group",
-  security: "Security group",
-  mailing_list: "Mailing list",
-};
+const GROUP_KINDS = ["group", "security", "mailing_list"] as const;
+type GroupKind = (typeof GROUP_KINDS)[number];
 
 const groupSchema = z.object({
   id: z.string(),
@@ -91,20 +79,12 @@ export interface CreateGroupInput {
   readonly orgUnitId?: string | null;
 }
 
-export interface UpdateGroupInput {
-  readonly name?: string;
-  readonly email?: string | null;
-  readonly kind?: GroupKind;
-  readonly description?: string;
-  readonly orgUnitId?: string | null;
-}
-
 // ---------------------------------------------------------------------------
 // Group members
 // ---------------------------------------------------------------------------
 
-export const GROUP_MEMBER_ROLES = ["member", "manager", "owner"] as const;
-export type GroupMemberRole = (typeof GROUP_MEMBER_ROLES)[number];
+const GROUP_MEMBER_ROLES = ["member", "manager", "owner"] as const;
+type GroupMemberRole = (typeof GROUP_MEMBER_ROLES)[number];
 
 const groupMemberSchema = z.object({
   id: z.string(),
@@ -167,7 +147,7 @@ export function groupMembersQueryOptions(
 // Org units — fetchers + mutations
 // ---------------------------------------------------------------------------
 
-export async function fetchOrgUnits(
+async function fetchOrgUnits(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly OrgUnit[]> {
   const response = await fetchImpl("/api/admin/org-units", { method: "GET" });
@@ -186,19 +166,6 @@ export async function createOrgUnit(
   return (await parseResponse(response, "create org unit", orgUnitResponseSchema)).orgUnit;
 }
 
-export async function updateOrgUnit(
-  id: string,
-  input: UpdateOrgUnitInput,
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<OrgUnit> {
-  const response = await fetchImpl(`/api/admin/org-units/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: jsonHeaders,
-    body: JSON.stringify(input),
-  });
-  return (await parseResponse(response, "update org unit", orgUnitResponseSchema)).orgUnit;
-}
-
 export async function deleteOrgUnit(
   id: string,
   fetchImpl: AuthFetch = authenticatedFetch,
@@ -213,9 +180,7 @@ export async function deleteOrgUnit(
 // Groups — fetchers + mutations
 // ---------------------------------------------------------------------------
 
-export async function fetchGroups(
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<readonly Group[]> {
+async function fetchGroups(fetchImpl: AuthFetch = authenticatedFetch): Promise<readonly Group[]> {
   const response = await fetchImpl("/api/admin/groups", { method: "GET" });
   return (await parseResponse(response, "load groups", groupsResponseSchema)).groups;
 }
@@ -232,19 +197,6 @@ export async function createGroup(
   return (await parseResponse(response, "create group", groupResponseSchema)).group;
 }
 
-export async function updateGroup(
-  id: string,
-  input: UpdateGroupInput,
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<Group> {
-  const response = await fetchImpl(`/api/admin/groups/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: jsonHeaders,
-    body: JSON.stringify(input),
-  });
-  return (await parseResponse(response, "update group", groupResponseSchema)).group;
-}
-
 export async function deleteGroup(
   id: string,
   fetchImpl: AuthFetch = authenticatedFetch,
@@ -259,7 +211,7 @@ export async function deleteGroup(
 // Group members — fetchers + mutations
 // ---------------------------------------------------------------------------
 
-export async function fetchGroupMembers(
+async function fetchGroupMembers(
   groupId: string,
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly GroupMember[]> {

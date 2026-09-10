@@ -75,7 +75,7 @@ The webhook engine is loaded by the `helix` app service, not a separate containe
 
 - Inbound path: `POST /webhooks/<slug>`
 - Tool registry includes outbound, inbound, and delivery webhook tools.
-- `HELIX_CONFIG_JSON` enables the Phase 0 webhook engine and bundled source/format plugin ids for compose deployments.
+- `HELIX_CONFIG_JSON` enables the Phase 0 webhook engine and built-in webhook source and format identifiers for compose deployments.
 - Caddy proxies webhook traffic to `helix:3000` through the same edge as the rest of the API.
 
 ## Observability Profile
@@ -141,22 +141,6 @@ Do not run broad repo validation for TASK-121 unless a later task asks for it.
 The current compose slice can only prove wiring readiness. Runtime acceptance still needs a live
 authenticated stack.
 
-- Backend plugin tool surface: `apps/helix/src/platform/plugins/tools.ts` exposes `plugin.list`
-  and `plugin.install` as protected `admin.plugins` tools. The unit evidence in
-  `apps/helix/src/platform/plugins/tools.test.ts` covers registration of both tools, list output
-  with permission and confirmation metadata, blocked non-official installs until explicit
-  confirmations are supplied, and official installs without non-official prompts. Validate with
-  `pnpm --filter @helix/app exec vitest run src/platform/plugins/tools.test.ts`.
-- Plugin install prompt readiness: run the plugin install k6 group against the target stack:
-  `WEB_BASE_URL=<web-url> API_BASE_URL=<api-url> AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=plugin_install pnpm quality:k6:target`.
-  Capture the selected `PLUGIN_INSTALL_TOOL_ID` and `PLUGIN_INSTALL_BODY`, HTTP status, and
-  `helix_plugin_install_ms` result. The default smoke tool is `plugin.install` with a
-  bundled official plugin body intended to return `202 pending_confirmation` when the install
-  prompt path is wired. Override `PLUGIN_INSTALL_PLUGIN_ID`, `PLUGIN_INSTALL_VERSION`,
-  `PLUGIN_INSTALL_SOURCE`, `PLUGIN_INSTALL_REGISTRY_URL`, or `PLUGIN_INSTALL_BODY` to match the
-  target plugin fixture. Use `pnpm quality:live-auth-smoke -- --plugin-lifecycle-smoke` for the
-  fuller live backend lifecycle proof: list, install approval, enable, disable, uninstall approval,
-  and audit rows.
 - Admin config readiness: prove `GET /api/admin/platform-config` and
   `PATCH /api/admin/platform-config` with an admin token, then attach browser evidence that
   `/settings/admin` reflects success/error states without restart.

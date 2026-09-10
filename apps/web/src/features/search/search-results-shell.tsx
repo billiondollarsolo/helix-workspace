@@ -1,12 +1,4 @@
-import {
-  CalendarDays,
-  FileText,
-  Folder,
-  Inbox,
-  MessageSquare,
-  Search,
-  type LucideIcon,
-} from "lucide-react";
+import { CalendarDays, Folder, Inbox, MessageSquare, Search, type LucideIcon } from "lucide-react";
 import {
   flexRender,
   getCoreRowModel,
@@ -29,7 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { globalSearchQueryOptions, invalidateGlobalSearch } from "./queries";
-import type { GlobalSearchHit, GlobalSearchType } from "./api";
+import { globalSearchTypes, type GlobalSearchHit, type GlobalSearchType } from "./api";
 
 export interface SearchRouteSearchState {
   readonly q?: string;
@@ -55,7 +47,6 @@ interface SearchResultRow {
 
 const searchDebounceMs = 300;
 const searchResultEstimate = 64;
-const searchResultTypes = ["mail", "chat", "docs", "drive", "calendar"] as const;
 const emptySearchTypes: readonly GlobalSearchType[] = [];
 
 export function SearchResultsShell({
@@ -166,7 +157,7 @@ export function SearchResultsShell({
       <header className="search-page-header">
         <div>
           <h1 id="search-title">Search</h1>
-          <p>Find mail, chat messages, docs, Drive files, and calendar events.</p>
+          <p>Find mail, chat messages, Drive files, and calendar events.</p>
         </div>
       </header>
 
@@ -186,7 +177,7 @@ export function SearchResultsShell({
           />
         </label>
         <div className="search-type-filters" aria-label="Result types">
-          {searchResultTypes.map((type) => (
+          {globalSearchTypes.map((type) => (
             <Button
               aria-pressed={selectedTypeSet.has(type)}
               key={type}
@@ -500,8 +491,6 @@ function iconForSearchType(type: GlobalSearchType): LucideIcon {
       return Inbox;
     case "chat":
       return MessageSquare;
-    case "docs":
-      return FileText;
     case "drive":
       return Folder;
     case "calendar":
@@ -515,8 +504,6 @@ function labelForSearchType(type: GlobalSearchType): string {
       return "Mail";
     case "chat":
       return "Chat";
-    case "docs":
-      return "Docs";
     case "drive":
       return "Drive";
     case "calendar":

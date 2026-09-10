@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { createPlatformMetrics } from "../../api/metrics.js";
 import { createToolRegistry } from "../tool-registry.js";
-import { registerMeetTools } from "./tools.js";
 import { InMemoryMeetStore } from "./store.js";
+import { registerMeetTools } from "./tools.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const actorId = "11111111-1111-4111-8111-111111111111";

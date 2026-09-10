@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { ChatRoomAccessError } from "./errors.js";
 import { PostgresChatStore } from "./store.js";
 
@@ -107,8 +108,5 @@ describe("Chat room privacy", { skip: process.env.DATABASE_URL === undefined }, 
 });
 
 async function cleanup(sql: postgres.Sql): Promise<void> {
-  await sql`delete from permissions where org_id = ${ORG_ID}`;
-  await sql`delete from threads where org_id = ${ORG_ID}`;
-  await sql`delete from actors where org_id = ${ORG_ID}`;
-  await sql`delete from orgs where id = ${ORG_ID}`;
+  await cleanupTestTenants(sql, [ORG_ID]);
 }

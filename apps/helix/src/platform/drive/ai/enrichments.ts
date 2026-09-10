@@ -1,5 +1,10 @@
-import type { AICapability, AIClassification, JsonObject } from "@helix/sdk-types";
-import type { EnrichmentEvent, EnrichmentHandler, EnrichmentWorker } from "../../ai/enrichment/index.js";
+import type { AICapability, AIClassification } from "@helix/sdk-types";
+import type {
+  EnrichmentEvent,
+  EnrichmentHandler,
+  EnrichmentWorker,
+} from "../../ai/enrichment/index.js";
+import { parseJsonObject } from "../../util/json.js";
 import type {
   DriveActivityPayload,
   DriveEnrichmentProjectionStore,
@@ -21,15 +26,6 @@ const defaultMaxTags = 8;
 /**
  * Registers Drive enrichment handlers on the shared {@link EnrichmentWorker}.
  *
- * NOTE: The platform startup wiring in `apps/helix/src/server.ts` registers mail/chat/docs
- * enrichments but does not yet call `registerDriveEnrichments`. Add the following next to the
- * `registerDocsEnrichments(...)` call to activate the `drive.auto-tag` handler:
- *
- *   registerDriveEnrichments(enrichmentWorker, {
- *     store: driveStore,
- *     ai: assistantAi,
- *     autoTag: envFlag("DRIVE_AUTO_TAG_ENRICHMENT", true),
- *   });
  */
 export function registerDriveEnrichments(
   worker: EnrichmentWorker,
@@ -213,11 +209,7 @@ function mimeTypeKind(mimeType: string): string | undefined {
   if (mimeType.startsWith("text/")) {
     return "text";
   }
-  if (
-    mimeType.includes("spreadsheet") ||
-    mimeType.includes("excel") ||
-    mimeType === "text/csv"
-  ) {
+  if (mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType === "text/csv") {
     return "spreadsheet";
   }
   if (mimeType.includes("presentation") || mimeType.includes("powerpoint")) {
@@ -239,7 +231,10 @@ function fileExtension(name: string): string | undefined {
 }
 
 function normalizeClassification(value: string | undefined): AIClassification {
-  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
+  return value === "public" ||
+    value === "standard" ||
+    value === "confidential" ||
+    value === "restricted"
     ? value
     : "standard";
 }
@@ -254,15 +249,4 @@ function skipped(feature: string, event: EnrichmentEvent<DriveActivityPayload>, 
       reason,
     },
   };
-}
-
-function parseJsonObject(text: string): JsonObject | undefined {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as JsonObject)
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }

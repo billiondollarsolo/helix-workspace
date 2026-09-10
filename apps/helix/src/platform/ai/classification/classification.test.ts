@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql } from "../../../test-support/recording-sql.js";
 import {
   ClassificationGateError,
   InMemoryResourceClassificationStore,
@@ -243,21 +243,24 @@ describe("ResourceClassificationService", () => {
 
 describe("PostgresResourceClassificationStore", () => {
   it("upserts and reads classification rows", async () => {
-    const recording = createRecordingSql([
-      [],
+    const recording = createRecordingSql(
       [
-        {
-          org_id: "org-1",
-          resource_type: "mail.message",
-          resource_id: "msg-1",
-          classification: "confidential",
-          source: "label",
-          reason: "label:HR",
-          actor_id: null,
-          updated_at: new Date("2026-05-21T00:00:00.000Z"),
-        },
+        [],
+        [
+          {
+            org_id: "org-1",
+            resource_type: "mail.message",
+            resource_id: "msg-1",
+            classification: "confidential",
+            source: "label",
+            reason: "label:HR",
+            actor_id: null,
+            updated_at: new Date("2026-05-21T00:00:00.000Z"),
+          },
+        ],
       ],
-    ]);
+      "$",
+    );
     const store = new PostgresResourceClassificationStore(recording.sql);
 
     await store.set({
@@ -281,24 +284,3 @@ describe("PostgresResourceClassificationStore", () => {
     expect(recording.calls[1]?.text).toContain("from resource_classifications");
   });
 });
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
-    return Promise.resolve(queue.shift() ?? []);
-  };
-  const sql = Object.assign(tag, {
-    json: (value: unknown) => value,
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}

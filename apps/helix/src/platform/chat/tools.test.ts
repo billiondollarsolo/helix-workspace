@@ -1,8 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
 import type { ToolContext } from "@helix/sdk-types";
+import { describe, expect, it, vi } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
-import { createChatToolDefinitions, registerChatTools } from "./tools.js";
 import type { ChatStore } from "./store.js";
+import { createChatToolDefinitions, registerChatTools } from "./tools.js";
 import type {
   ChatMessageRecord,
   ChatPinRecord,

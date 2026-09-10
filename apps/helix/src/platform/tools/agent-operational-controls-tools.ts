@@ -1,8 +1,9 @@
+import { defineTool } from "./define-tool.js";
 /**
  * Admin tools for A10 emergency kill / org agent-write disable.
  */
 import type { ToolDefinition } from "@helix/sdk-types";
-import { z } from "zod3";
+import { z } from "zod";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { RuntimeAgentOperationalControlStore } from "./agent-operational-controls.js";
 
@@ -68,10 +69,4 @@ export function createAgentOperationalControlTools(
       },
     }),
   ];
-}
-
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
 }

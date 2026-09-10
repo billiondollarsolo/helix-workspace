@@ -1,7 +1,7 @@
+import { canonicalTimeZone } from "@helix/contracts";
 import type { Actor, JsonObject } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { canonicalTimeZone } from "@helix/contracts";
 import { CalendarResourceConflictError, type CalendarSchedulingStore } from "./scheduling.js";
 
 const uuid = z.string().uuid();

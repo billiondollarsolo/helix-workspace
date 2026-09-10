@@ -1,12 +1,12 @@
-import type { SecureContextOptions } from "node:tls";
+import type { Actor } from "@helix/sdk-types";
 import { simpleParser } from "mailparser";
+import type { SecureContextOptions } from "node:tls";
 import {
   SMTPServer,
   type SMTPServerAuthentication,
   type SMTPServerDataStream,
   type SMTPServerSession,
 } from "smtp-server";
-import type { Actor } from "@helix/sdk-types";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
 import { addressObjectToList, assertParsedMailBounds, spoolStream } from "./ingest.js";
 import { MailSendService } from "./outbound.js";

@@ -11,7 +11,7 @@ export interface TenantBootstrapSeedRecord {
   readonly activitySeeded: boolean;
 }
 
-export interface TenantBootstrapSeedStore {
+interface TenantBootstrapSeedStore {
   ensureTenantBootstrapSeed(input: {
     readonly orgId: string;
     readonly ownerEmail: string;

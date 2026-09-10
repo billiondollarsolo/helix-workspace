@@ -1,6 +1,5 @@
 import { pathToFileURL } from "node:url";
 import type postgres from "postgres";
-import { createSqlClient } from "./client.js";
 import {
   createMeilisearchSearchEngineFromEnv,
   createPostgresSearchReindexSources,
@@ -10,6 +9,7 @@ import {
   type SearchReindexResult,
   type SearchReindexType,
 } from "../platform/search/index.js";
+import { createSqlClient } from "./client.js";
 
 export interface ReindexSearchCommandOptions extends SearchReindexRequest {
   readonly requireAll?: boolean | undefined;
@@ -99,7 +99,7 @@ export async function reindexSearch(
   return { searchConfigured: true, ...result };
 }
 
-const usage = `Usage: pnpm --filter @helix/app db:reindex:search -- --all [--type <mail,chat,docs,drive,calendar>] [--org-id <uuid>] [--batch-size <n>] [--no-prune-stale]`;
+const usage = `Usage: pnpm --filter @helix/app db:reindex:search -- --all [--type <mail,chat,drive,calendar>] [--org-id <uuid>] [--batch-size <n>] [--no-prune-stale]`;
 
 /**
  * Read the value that follows a flag. A missing value, or the next flag, is

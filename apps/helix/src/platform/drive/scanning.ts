@@ -8,9 +8,9 @@ import type { SecurityTier } from "@helix/sdk-types";
 import {
   ClamdInstreamClient,
   resolveTerminalSecurityScanPolicy,
-  type SecurityScanningMetrics,
   type SecurityScanDisposition,
   type SecurityScanInput,
+  type SecurityScanningMetrics,
 } from "../security/scanning/index.js";
 
 export interface VirusScanResult {
@@ -45,7 +45,7 @@ const DEFAULT_ARCHIVE_LIMITS: ArchiveScanLimits = {
 };
 const DEFAULT_DRIVE_MAX_SCAN_BYTES = 128 * 1024 * 1024;
 
-export class UnsafeArchiveError extends Error {
+class UnsafeArchiveError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "UnsafeArchiveError";

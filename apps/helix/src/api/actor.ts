@@ -1,10 +1,7 @@
+import type { Actor } from "@helix/sdk-types";
+import type { FastifyRequest } from "fastify";
 import { createHash } from "node:crypto";
 import { TLSSocket } from "node:tls";
-import type { FastifyRequest } from "fastify";
-import type { Actor } from "@helix/sdk-types";
-import type { AccessTokenStore } from "../platform/auth/oauth.js";
-import { validatedPermissions } from "../platform/permissions/scope-catalog.js";
-import { limitRoleBindings } from "../platform/permissions/roles.js";
 import {
   authenticateApiKey,
   authenticateMtlsCertificate,
@@ -14,11 +11,14 @@ import {
   type AgentCredentialStore,
   type CredentialRequestContext,
 } from "../platform/auth/credentials.js";
+import type { AccessTokenStore } from "../platform/auth/oauth.js";
 import {
   actorToolInvocationPrincipal,
   credentialToolInvocationPrincipal,
   type ToolInvocationPrincipal,
 } from "../platform/auth/tool-invocation-principal.js";
+import { limitRoleBindings } from "../platform/permissions/roles.js";
+import { validatedPermissions } from "../platform/permissions/scope-catalog.js";
 
 export interface SessionActorResolver {
   resolve(request: FastifyRequest): Promise<Actor | null>;

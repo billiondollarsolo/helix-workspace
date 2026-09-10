@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import {
   PostgresTenantBootstrapSeedStore,
   tenantBootstrapSeedStepName,
@@ -81,27 +81,13 @@ describe("PostgresTenantBootstrapSeedStore", () => {
     ).rejects.toThrow("tenant bootstrap seed requires an existing owner actor");
   });
 });
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
 function createRecordingSql(input: {
   readonly ownerExists?: boolean;
   readonly permissionExists?: boolean;
   readonly activityExists?: boolean;
   readonly previousHash?: string | null;
-}): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-  readonly transactions: number;
-} {
-  const calls: RecordedQuery[] = [];
-  let transactions = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const text = strings.join("?");
-    calls.push({ text, values });
+}) {
+  const recording = sharedRecordingSql(({ text }) => {
     if (text.includes("from actors")) {
       return Promise.resolve(input.ownerExists === false ? [] : [{ id: ownerActorId }]);
     }
@@ -119,19 +105,14 @@ function createRecordingSql(input: {
       );
     }
     return Promise.resolve([]);
-  };
-  const sql = Object.assign(tag, {
-    json: (value: unknown) => value,
-    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) => {
-      transactions += 1;
-      return callback(sql as unknown as postgres.TransactionSql);
-    },
-  }) as unknown as postgres.Sql;
+  }, "?");
   return {
-    sql,
-    calls,
+    ...recording,
     get transactions() {
-      return transactions;
+      return recording.beginCalls;
+    },
+    get beginCalls() {
+      return recording.beginCalls;
     },
   };
 }

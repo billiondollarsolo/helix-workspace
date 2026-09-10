@@ -1,7 +1,6 @@
-import { createHash, createHmac } from "node:crypto";
 import type { ChatRequest, ChatResponse, LLMProviderCapability, ModelInfo } from "@helix/sdk-types";
+import { createHash, createHmac } from "node:crypto";
 import { anthropicChatResponse } from "./anthropic-compatible.js";
-import { joinPaths } from "./url-path.js";
 import {
   resolveAwsCredentials,
   type AwsCredentialResolverOptions,
@@ -14,6 +13,7 @@ import {
   modelForRequest,
   normalizeFetchConfig,
 } from "./shared.js";
+import { joinPaths } from "./url-path.js";
 
 /** Resolved SigV4 credentials used to sign a single Bedrock request. */
 export interface BedrockCredentials {

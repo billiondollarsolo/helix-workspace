@@ -1,6 +1,7 @@
 {
   "name": "@helix/sdk-web",
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -33,7 +34,7 @@
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",
-    "lucide-react": "1.27.0",
+    "lucide-react": "1.28.0",
     "react": "^19.0.0"
   }
 }

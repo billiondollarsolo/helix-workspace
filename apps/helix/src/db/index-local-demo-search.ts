@@ -1,8 +1,5 @@
 import { pathToFileURL } from "node:url";
 import type postgres from "postgres";
-import { createSqlClient } from "./client.js";
-import { DEFAULT_LOCAL_OAUTH_ACTOR_ID, DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
-import { createDemoTimeline, LOCAL_DEMO_IDS } from "./seed-local-demo.js";
 import { calendarRecordToIndexDocument } from "../platform/calendar/search/indexer.js";
 import { PostgresCalendarStore } from "../platform/calendar/store.js";
 import { chatRecordToIndexDocument } from "../platform/chat/search/indexer.js";
@@ -16,6 +13,9 @@ import {
   type IndexDocument,
   type SearchEngine,
 } from "../platform/search/index.js";
+import { createSqlClient } from "./client.js";
+import { createDemoTimeline, LOCAL_DEMO_IDS } from "./seed-local-demo.js";
+import { DEFAULT_LOCAL_OAUTH_ACTOR_ID, DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 
 export interface IndexLocalDemoSearchOptions {
   readonly orgId?: string;
@@ -29,7 +29,7 @@ export interface IndexLocalDemoSearchResult {
   readonly documentIds: readonly string[];
 }
 
-export type LocalDemoSearchDocumentType = "mail" | "drive" | "calendar" | "chat";
+type LocalDemoSearchDocumentType = "mail" | "drive" | "calendar" | "chat";
 
 export interface LocalDemoSearchDocumentDescriptor {
   readonly type: LocalDemoSearchDocumentType;

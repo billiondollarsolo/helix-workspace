@@ -12,7 +12,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile, access } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -67,9 +67,7 @@ interface FetchResult {
   readonly extension: string;
 }
 
-/** Fetch a Wikipedia article via the REST API. Returns clean plain-text
- *  extract (no wikitext markup) which is what we want to feed into the docs
- *  editor's Yjs state via the existing markdown→Yjs converter. */
+/** Fetch a clean plain-text Wikipedia extract for the search corpus. */
 async function fetchWikipedia(article: string): Promise<FetchResult> {
   const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(article)}`;
   const response = await fetch(url, {
@@ -137,7 +135,9 @@ async function fetchItem(item: ManifestItemWithFormat): Promise<FetchResult> {
       },
     });
     if (!response.ok) {
-      throw new Error(`${item.manifestId} → HTTP ${String(response.status)} from ${item.source.url}`);
+      throw new Error(
+        `${item.manifestId} → HTTP ${String(response.status)} from ${item.source.url}`,
+      );
     }
     const contentType = response.headers.get("content-type") ?? "application/octet-stream";
     const body = Buffer.from(await response.arrayBuffer());
@@ -224,10 +224,14 @@ async function main(): Promise<void> {
       const result = await ensureCached(item);
       if (result.skipped) {
         stats.skipped += 1;
-        process.stdout.write(`  ${item.manifestId.padEnd(50)} (cached, sha256 ${result.hash.slice(0, 12)}…)\n`);
+        process.stdout.write(
+          `  ${item.manifestId.padEnd(50)} (cached, sha256 ${result.hash.slice(0, 12)}…)\n`,
+        );
       } else {
         stats.fetched += 1;
-        process.stdout.write(`✓ ${item.manifestId.padEnd(50)} fetched (sha256 ${result.hash.slice(0, 12)}…)\n`);
+        process.stdout.write(
+          `✓ ${item.manifestId.padEnd(50)} fetched (sha256 ${result.hash.slice(0, 12)}…)\n`,
+        );
       }
     } catch (error) {
       stats.failed += 1;

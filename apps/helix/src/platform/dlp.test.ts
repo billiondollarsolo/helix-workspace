@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
 import type { ToolDefinition } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import type { SecurityPolicyRecord } from "./admin/security-policies.js";
+import { TenantDlpGuard, dlpBoundaries, dlpToolInvocation, type DlpAction } from "./dlp.js";
 import { createToolRegistry } from "./tool-registry.js";
 import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "./tools/registry.js";
-import { TenantDlpGuard, dlpBoundaries, dlpToolInvocation, type DlpAction } from "./dlp.js";
 
 const orgId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";
@@ -56,7 +56,7 @@ describe("TenantDlpGuard", () => {
         orgId,
         actorId,
         boundary: "copy_export",
-        resources: [{ resourceType: "docs.document", resourceId: "doc-1" }],
+        resources: [{ resourceType: "drive.file", resourceId: "doc-1" }],
       }),
     ).resolves.toMatchObject({
       action: "block",
@@ -132,20 +132,20 @@ describe("dlpToolInvocation", () => {
     ["drive.link.create", { objectId: "file-1" }, "external_guest"],
     ["chat.send", { body: "secret", attachmentObjectIds: [] }, "chat_message"],
     ["chat.send", { body: "secret", attachmentObjectIds: ["file-1"] }, "chat_attachment"],
-    ["docs.copy", { docId: "doc-1" }, "copy_export"],
-    ["sheets.export", { sheetId: "sheet-1" }, "copy_export"],
+    ["drive.copy", { objectId: "file-1" }, "copy_export"],
+    ["drive.export", { objectId: "file-1" }, "copy_export"],
   ] as const)("maps %s to %s enforcement", (toolId, input, expected) => {
     expect(dlpToolInvocation(toolId, input, user)?.boundary).toBe(expected);
   });
 
-  it("canonicalizes every editor export to its backing Drive object", () => {
-    expect(dlpToolInvocation("docs.export", { docId: "file-1" }, user)?.resources).toEqual([
+  it("preserves object authorization for Drive copy and export", () => {
+    expect(dlpToolInvocation("drive.export", { objectId: "file-1" }, user)?.resources).toEqual([
       { resourceType: "drive.file", resourceId: "file-1" },
     ]);
-    expect(dlpToolInvocation("sheets.copy", { sheetId: "file-2" }, user)?.resources).toEqual([
+    expect(dlpToolInvocation("drive.copy", { objectId: "file-2" }, user)?.resources).toEqual([
       { resourceType: "drive.file", resourceId: "file-2" },
     ]);
-    expect(dlpToolInvocation("slides.export", { deckId: "file-3" }, user)?.resources).toEqual([
+    expect(dlpToolInvocation("drive.export", { objectId: "file-3" }, user)?.resources).toEqual([
       { resourceType: "drive.file", resourceId: "file-3" },
     ]);
   });

@@ -1,7 +1,8 @@
+import type { JsonObject, StorageObject } from "@helix/sdk-types";
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
-import type { JsonObject, StorageObject } from "@helix/sdk-types";
 import { withJobSpan } from "../observability/job-span.js";
+import { toSqlJson } from "../util/sql.js";
 import type {
   ResolvedTenantStorage,
   TenantStorageClient,
@@ -17,7 +18,7 @@ export interface TenantStorageMigrationObject {
   readonly sha256?: string | undefined;
 }
 
-export interface TenantStorageMigrationFailure {
+interface TenantStorageMigrationFailure {
   readonly storageKey: string;
   readonly reason: string;
 }
@@ -44,7 +45,7 @@ export interface RunTenantStorageMigrationInput {
   readonly now?: (() => Date) | undefined;
 }
 
-export type TenantStorageMigrationJobStatus =
+type TenantStorageMigrationJobStatus =
   "queued" | "running" | "succeeded" | "succeeded_with_errors" | "failed" | "dry_run";
 
 export interface TenantStorageMigrationStorageState {
@@ -425,10 +426,6 @@ export class PostgresTenantStorageMigrationJobStore implements TenantStorageMigr
   }
 }
 
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
-}
-
 const defaultMigrationWorkerIntervalMs = 15_000;
 const defaultMigrationWorkerBatchSize = 2;
 
@@ -498,7 +495,7 @@ export class TenantStorageMigrationWorker {
             }
           });
         } catch (error) {
-          await this.options.store.markFailed({ id: job.id, error: errorMessage(error) });
+          await this.options.store.markFailed({ id: job.id, error: nonEmptyErrorMessage(error) });
           failed += 1;
         }
       }
@@ -545,7 +542,7 @@ export class TenantStorageMigrationWorker {
   }
 }
 
-export function assertLiveMigrationSnapshots(job: TenantStorageMigrationJobRecord): void {
+function assertLiveMigrationSnapshots(job: TenantStorageMigrationJobRecord): void {
   assertLiveMigrationStorageStates({
     target: job.target,
     sourceStorage: job.sourceStorage,
@@ -838,6 +835,6 @@ function mapTenantStorageMigrationJobRow(
   };
 }
 
-function errorMessage(error: unknown): string {
+function nonEmptyErrorMessage(error: unknown): string {
   return error instanceof Error && error.message.length > 0 ? error.message : String(error);
 }

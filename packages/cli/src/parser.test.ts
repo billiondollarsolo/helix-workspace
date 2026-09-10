@@ -592,29 +592,6 @@ describe("parseCliArgs", () => {
     });
   });
 
-  it("parses global search as a tool call", () => {
-    expect(parseCliArgs(["search", "project zenith"])).toEqual({
-      kind: "tool-call",
-      toolId: "search.query",
-      json: { source: "inline", value: '{"query":"project zenith"}' },
-    });
-    expect(
-      parseCliArgs(["search", "--query", "project zenith", "--type", "mail,drive", "--limit", "5"]),
-    ).toEqual({
-      kind: "tool-call",
-      toolId: "search.query",
-      json: {
-        source: "inline",
-        value: '{"query":"project zenith","limit":5,"types":["mail","drive"]}',
-      },
-    });
-    expect(parseCliArgs(["search", "--json", '{"query":"project zenith"}'])).toEqual({
-      kind: "tool-call",
-      toolId: "search.query",
-      json: { source: "inline", value: '{"query":"project zenith"}' },
-    });
-  });
-
   it("parses admin agent credential aliases as tool calls", () => {
     expect(
       parseCliArgs([
@@ -958,7 +935,7 @@ describe("parseCliArgs", () => {
     );
   });
 
-  it("parses auth token and install commands", () => {
+  it("parses auth token commands", () => {
     expect(
       parseCliArgs([
         "login",
@@ -993,53 +970,17 @@ describe("parseCliArgs", () => {
       clientSecret: "secret",
       scope: "tools:read",
     });
-    expect(parseCliArgs(["install", "list"])).toEqual({ kind: "install-list" });
-    expect(
-      parseCliArgs(["install", "plugin", "com.helix.core.mail", "--json", '{"enabled":true}']),
-    ).toEqual({
-      kind: "install-plugin",
-      pluginId: "com.helix.core.mail",
-      json: { source: "inline", value: '{"enabled":true}' },
-    });
-    expect(parseCliArgs(["plugin", "install", "com.helix.core.mail@1.2.3"])).toEqual({
-      kind: "install-plugin",
-      pluginId: "com.helix.core.mail",
-      version: "1.2.3",
-      json: { source: "empty" },
-    });
-    expect(parseCliArgs(["plugin", "enable", "com.helix.core.mail"])).toEqual({
-      kind: "plugin-lifecycle",
-      action: "enable",
-      pluginId: "com.helix.core.mail",
-      json: { source: "empty" },
-    });
-    expect(parseCliArgs(["install", "enable", "com.helix.core.mail"])).toEqual({
-      kind: "plugin-lifecycle",
-      action: "enable",
-      pluginId: "com.helix.core.mail",
-      json: { source: "empty" },
-    });
-    expect(
-      parseCliArgs([
-        "plugin",
-        "disable",
-        "com.helix.core.mail",
-        "--json",
-        '{"reason":"maintenance"}',
-      ]),
-    ).toEqual({
-      kind: "plugin-lifecycle",
-      action: "disable",
-      pluginId: "com.helix.core.mail",
-      json: { source: "inline", value: '{"reason":"maintenance"}' },
-    });
-    expect(parseCliArgs(["install", "uninstall", "com.helix.core.mail", "--json"])).toEqual({
-      kind: "plugin-lifecycle",
-      action: "uninstall",
-      pluginId: "com.helix.core.mail",
-      json: { source: "stdin" },
-    });
-    expect(() => parseCliArgs(["plugin", "enable"])).toThrow(CliUsageError);
+  });
+
+  it.each([
+    ["install", "list"],
+    ["install", "plugin", "com.example.plugin"],
+    ["plugin", "install", "com.example.plugin"],
+    ["plugin", "enable", "com.example.plugin"],
+    ["plugin", "disable", "com.example.plugin"],
+    ["plugin", "uninstall", "com.example.plugin"],
+  ])("rejects retired plugin command %j", (...args) => {
+    expect(() => parseCliArgs(args)).toThrow(CliUsageError);
   });
 
   it("parses MCP commands", () => {

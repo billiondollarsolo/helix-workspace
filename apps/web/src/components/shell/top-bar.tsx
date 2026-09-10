@@ -1,3 +1,11 @@
+import {
+  Bell as BellIcon,
+  Moon as MoonIcon,
+  Search as SearchIcon,
+  Settings as SettingsIcon,
+  Sun as SunIcon,
+  X as XIcon,
+} from "lucide-react";
 /* TopBar — surface title, search slot, action slot, theme toggle, bell,
    settings cog, profile avatar. Ported from the design handoff
    (shell.jsx → TopBar). 44px compact / 56px roomy via CSS.
@@ -6,14 +14,13 @@
    (e.g. Mail's operator search); otherwise it is a button that opens the
    ⌘K command palette. */
 
-import { useRef, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Icons } from "@/components/icons";
-import { Avatar } from "@/components/ui/avatar";
-import { sessionUserQueryOptions } from "@/lib/auth";
+import { toggleTheme, useAppearance } from "@/components/settings-store";
 import { useShellOverlays } from "@/components/shell/overlay-context";
 import { ProfileMenu } from "@/components/shell/profile-menu";
-import { toggleTheme, useAppearance } from "@/components/settings-store";
+import { Avatar } from "@/components/ui/avatar";
+import { sessionUserQueryOptions } from "@/lib/auth";
+import { useQuery } from "@tanstack/react-query";
+import { useRef, useState, type ReactNode } from "react";
 
 export interface TopBarProps {
   /** Surface name shown left of search. */
@@ -54,16 +61,16 @@ export function TopBar({
   const hasLiveSearch = typeof onSearchChange === "function";
 
   return (
-    <header className="topbar" style={{ position: "relative" }}>
+    <header className="topbar relative">
       {navigationToggle}
       <div className="topbar-title">
         {icon}
         <span>{title}</span>
       </div>
-      <div style={{ width: 16 }} />
+      <div className="w-4" />
       {hasLiveSearch ? (
         <div className="search">
-          <Icons.Search />
+          <SearchIcon size={16} />
           <input
             name={`${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-search`}
             value={searchValue ?? ""}
@@ -74,12 +81,12 @@ export function TopBar({
           {searchValue ? (
             <button
               type="button"
-              className="icon-btn"
-              style={{ width: 22, height: 22 }}
+              className="icon-btn w-5.5 h-5.5"
+
               onClick={() => onSearchChange("")}
               aria-label="Clear search"
             >
-              <Icons.X />
+              <XIcon size={16} />
             </button>
           ) : (
             <span className="kbd">⌘K</span>
@@ -89,18 +96,18 @@ export function TopBar({
         <button
           type="button"
           onClick={overlays.openPalette}
-          className="search"
-          style={{ cursor: "pointer", textAlign: "left" }}
+          className="search cursor-pointer text-left"
+
           aria-label="Open command palette"
         >
-          <Icons.Search />
-          <span style={{ flex: 1, color: "var(--text-3)", fontSize: "var(--text-body-sm)" }}>
+          <SearchIcon size={16} />
+          <span className="flex-1 text-muted-foreground [font-size:var(--text-body-sm)]">
             {searchPlaceholder}
           </span>
           <span className="kbd">⌘K</span>
         </button>
       )}
-      <div className="topbar-actions row gap-2" style={{ marginLeft: "auto" }}>
+      <div className="topbar-actions row gap-2 ml-auto">
         {actions}
         <button
           type="button"
@@ -109,36 +116,18 @@ export function TopBar({
           title="Toggle theme"
           aria-label="Toggle theme"
         >
-          {theme === "dark" ? <Icons.Sun /> : <Icons.Moon />}
+          {theme === "dark" ? <SunIcon size={16} /> : <MoonIcon size={16} />}
         </button>
         <button
           type="button"
-          className="icon-btn"
+          className="icon-btn relative"
           onClick={overlays.openNotifications}
           title="Notifications"
           aria-label="Notifications"
-          style={{ position: "relative" }}
         >
-          <Icons.Bell />
+          <BellIcon size={16} />
           {notifUnread > 0 ? (
-            <span
-              style={{
-                position: "absolute",
-                top: 4,
-                right: 4,
-                minWidth: 14,
-                height: 14,
-                padding: "0 3px",
-                background: "var(--danger)",
-                color: "white",
-                fontSize: "var(--text-overline)",
-                fontWeight: 700,
-                borderRadius: 999,
-                display: "grid",
-                placeItems: "center",
-                border: "2px solid var(--surface)",
-              }}
-            >
+            <span className="absolute top-1 right-1 min-w-3.5 h-3.5 [padding:0_3px] [background:var(--danger)] [color:white] [font-size:var(--text-overline)] font-bold [border-radius:999px] grid [place-items:center] [border:2px_solid_var(--surface)]">
               {notifUnread}
             </span>
           ) : null}
@@ -150,19 +139,13 @@ export function TopBar({
           title="Settings"
           aria-label="Settings"
         >
-          <Icons.Settings />
+          <SettingsIcon size={16} />
         </button>
         <button
           ref={profileButtonRef}
           type="button"
           onClick={() => setMenuOpen((open) => !open)}
-          style={{
-            borderRadius: 999,
-            padding: 0,
-            border: "none",
-            background: "none",
-            cursor: "pointer",
-          }}
+          className="[border-radius:999px] p-0 [border:none] [background:none] cursor-pointer"
           aria-label="Profile"
           aria-haspopup="menu"
           aria-expanded={menuOpen}

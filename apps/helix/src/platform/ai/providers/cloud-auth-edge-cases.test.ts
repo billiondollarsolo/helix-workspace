@@ -1,4 +1,3 @@
-import { createVerify, generateKeyPairSync } from "node:crypto";
 import type {
   AICallContext,
   ChatRequest,
@@ -6,6 +5,7 @@ import type {
   LLMProviderCapability,
   ModelInfo,
 } from "@helix/sdk-types";
+import { createVerify, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   envCredentialProvider,
@@ -82,7 +82,9 @@ describe("Bedrock SigV4 signing edge cases", () => {
     const second = signedBedrockHeaders({ ...signingInput, credentials });
     expect(first.authorization).toBe(second.authorization);
     expect(first.authorization).toContain("AWS4-HMAC-SHA256");
-    expect(first.authorization).toContain("Credential=AKIA/20260521/us-east-1/bedrock/aws4_request");
+    expect(first.authorization).toContain(
+      "Credential=AKIA/20260521/us-east-1/bedrock/aws4_request",
+    );
   });
 
   it("changes the signature when the secret key changes", () => {
@@ -323,9 +325,7 @@ describe("Vertex JWT signing and token exchange", () => {
 
     const verifier = createVerify("RSA-SHA256");
     verifier.update(`${header as string}.${payload as string}`);
-    expect(
-      verifier.verify(publicKey, Buffer.from(signature as string, "base64url")),
-    ).toBe(true);
+    expect(verifier.verify(publicKey, Buffer.from(signature as string, "base64url"))).toBe(true);
   });
 
   it("exchanges the JWT assertion at the token endpoint, not using it as a bearer", async () => {
@@ -365,7 +365,9 @@ describe("Vertex JWT signing and token exchange", () => {
     expect(exchanged).toBe(true);
     expect(response.message).toBe("ok");
     const exchangeBody = requestBodies[0] ?? "";
-    expect(exchangeBody).toContain("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer");
+    expect(exchangeBody).toContain(
+      "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer",
+    );
     expect(exchangeBody).toContain("assertion=");
   });
 

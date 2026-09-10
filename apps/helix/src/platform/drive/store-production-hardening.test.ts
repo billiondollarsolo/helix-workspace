@@ -1,13 +1,19 @@
 import { readFile } from "node:fs/promises";
 import type postgres from "postgres";
-import { PostgresDriveStore } from "./store.js";
 import { describe, expect, it, vi } from "vitest";
+import { PostgresDriveStore } from "./store.js";
 
-const storeUrl = new URL("./store.ts", import.meta.url);
+async function readAggregates(...names: string[]): Promise<string> {
+  return (
+    await Promise.all(
+      names.map((name) => readFile(new URL(`./store/${name}.ts`, import.meta.url), "utf8")),
+    )
+  ).join("\n");
+}
 
 describe("Drive production store invariants", () => {
   it("scopes recipients to the organization and never queries a raw share token", async () => {
-    const source = await readFile(storeUrl, "utf8");
+    const source = await readAggregates("shares", "share-links", "share-policy");
     const integrity = await readFile(
       new URL("../../db/migrations/0094_chat_permission_validity.sql", import.meta.url),
       "utf8",
@@ -22,10 +28,10 @@ describe("Drive production store invariants", () => {
   });
 
   it("atomically enforces link expiry, download count, rate, and revocation", async () => {
-    const source = await readFile(storeUrl, "utf8");
+    const source = await readAggregates("share-links", "share-policy");
     const resolver = source.slice(
-      source.indexOf("async resolveShareLink"),
-      source.indexOf("async readFileByShareToken"),
+      source.indexOf("async function resolveShareLink"),
+      source.indexOf("async function openFileByShareToken"),
     );
     expect(source).toContain("download_count = link.download_count + 1");
     expect(source).toContain("link.download_count < link.max_downloads");
@@ -37,7 +43,7 @@ describe("Drive production store invariants", () => {
   });
 
   it("blocks hard delete for holds, shares, jobs, and retention", async () => {
-    const source = await readFile(storeUrl, "utf8");
+    const source = await readAggregates("lifecycle");
     expect(source).toContain("await assertDriveObjectPurgeAllowed(tx, object)");
     expect(source).toContain("from drive_scan_jobs");
     expect(source).toContain("from drive_share_links");
@@ -82,26 +88,29 @@ describe("Drive production store invariants", () => {
   });
 
   it("claims bounded orphan batches with skip-locked semantics", async () => {
-    const source = await readFile(storeUrl, "utf8");
+    const source = await readAggregates(
+      "scan-jobs",
+      "multipart",
+      "upload-expiry",
+      "quarantine",
+      "blobs",
+    );
     expect(source).toContain("for update skip locked");
     expect(source).toContain("abortMultipartUpload");
     expect(source).toContain("claimExpiredPreparedUploads(tx,");
     expect(source).toContain("claimExpiredDriveMultipartSessions(tx,");
     expect(source).toContain("blob.refcount = 0");
-    const reconcile = source.slice(
-      source.indexOf("async function reconcileDriveBlobReferences"),
-      source.indexOf("async function requireReadyDriveCommentObject"),
-    );
+    const reconcile = await readAggregates("blobs");
     expect(reconcile).toContain("where drive_quarantine_deletions.status = 'completed'");
     expect(source).toContain("reservation.expires_at > now()");
     expect(source).toContain("storage.delete(orphan.storage_key)");
   });
 
   it("reserves pending declared bytes in tenant quota accounting", async () => {
-    const source = await readFile(storeUrl, "utf8");
+    const source = await readAggregates("uploads", "quotas");
     const prepare = source.slice(
-      source.indexOf("async prepareUpload("),
-      source.indexOf("async completeMultipartUpload("),
+      source.indexOf("async function prepareUpload("),
+      source.indexOf("async function finalizeUpload("),
     );
     expect(prepare).toContain("await reserveDriveStorageQuota(");
     expect(source).toContain("select * from helix_reserve_drive_storage(");

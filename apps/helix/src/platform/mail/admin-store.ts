@@ -1,9 +1,9 @@
+import { toSqlJson } from "../util/sql.js";
 // ponytail: admin-store.ts bundles providers/domains/dkim/dmarc/routing (~1290 LOC).
 // Split into admin/*-store.ts when next touching a single domain store (G9).
-import { generateKeyPairSync, randomBytes } from "node:crypto";
-import type postgres from "postgres";
-import { ensureAdminDomain } from "../admin/domain-identity.js";
 import type { JsonObject } from "@helix/sdk-types";
+import { generateKeyPairSync } from "node:crypto";
+import type postgres from "postgres";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import type { KmsDkimPrivateKeyProtector } from "./dkim-kms.js";
 import {
@@ -28,8 +28,8 @@ import {
 // Records
 // ===========================================================================
 
-export type MailDkimKeyStatus = "pending" | "active" | "retiring" | "retired";
-export type MailRoutingActionKind = "forward" | "alias" | "drop" | "tag" | "mailbox";
+type MailDkimKeyStatus = "pending" | "active" | "retiring" | "retired";
+type MailRoutingActionKind = "forward" | "alias" | "drop" | "tag" | "mailbox";
 
 export interface MailSendingDomainRecord {
   readonly id: string;
@@ -236,7 +236,7 @@ export interface MailDkimKeyStore {
   retireKey(orgId: string, id: string): Promise<MailDkimKeyRecord | null>;
 }
 
-export interface MailDkimSigningKeyResolver {
+interface MailDkimSigningKeyResolver {
   resolveSigningKey(
     orgId: string,
     fromAddress: string,
@@ -332,10 +332,6 @@ export function dkimDnsRecord(dnsPublicKey: string): string {
 // ===========================================================================
 // Postgres stores
 // ===========================================================================
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
-}
 
 interface OutboundProviderRow {
   readonly id: string;
@@ -467,202 +463,6 @@ export class PostgresOutboundProviderStore implements OutboundProviderStore {
   async deleteProvider(orgId: string, id: string): Promise<boolean> {
     const rows = await this.sql<{ readonly id: string }[]>`
       delete from mail_outbound_providers where org_id = ${orgId} and id = ${id} returning id
-    `;
-    return rows.length > 0;
-  }
-}
-
-interface SendingDomainRow {
-  readonly id: string;
-  readonly org_id: string;
-  readonly domain: string;
-  readonly is_default: boolean;
-  readonly verified_at: Date | null;
-  readonly provider_id: string | null;
-  readonly created_at: Date;
-  readonly updated_at: Date;
-}
-
-function mapDomainRow(row: SendingDomainRow): MailSendingDomainRecord {
-  return {
-    id: row.id,
-    orgId: row.org_id,
-    domain: row.domain,
-    isDefault: row.is_default,
-    verifiedAt: row.verified_at?.toISOString() ?? null,
-    providerId: row.provider_id,
-    createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
-  };
-}
-
-export class PostgresSendingDomainStore implements SendingDomainStore {
-  constructor(private readonly sql: postgres.Sql) {}
-
-  async listDomains(orgId: string): Promise<readonly MailSendingDomainRecord[]> {
-    const rows = await this.sql<readonly SendingDomainRow[]>`
-      select * from mail_sending_domains
-      where org_id = ${orgId}
-      order by is_default desc, domain asc
-    `;
-    return rows.map(mapDomainRow);
-  }
-
-  /* SPF/DKIM/DMARC live in `admin_dns_records`, keyed to the domain identity
-     this sending domain hangs off. Before migration 0086 there was no link, so
-     the console asked for three fields the server had no way to produce and the
-     view failed to parse the moment one domain existed.
-
-     A record type with no row reads `pending`: nothing has verified, which is
-     true. It does not distinguish "not published yet" from "Helix never said
-     what to publish" — that belongs on the DNS panel, which lists the expected
-     records themselves. */
-  async listDomainsForConsole(orgId: string): Promise<readonly MailSendingDomainConsoleRecord[]> {
-    const rows = await this.sql<
-      readonly (SendingDomainRow & {
-        readonly spf_status: DnsVerificationState;
-        readonly dkim_status: DnsVerificationState;
-        readonly dmarc_status: DnsVerificationState;
-        readonly dkim_keys: readonly {
-          readonly id: string;
-          readonly selector: string;
-          readonly status: MailDkimKeyStatus;
-        }[];
-      })[]
-    >`
-      select
-        d.*,
-        coalesce(
-          (select r.status from admin_dns_records r
-           where r.domain_id = d.admin_domain_id and r.record_type = 'SPF' limit 1),
-          'pending'
-        ) as spf_status,
-        coalesce(
-          (select r.status from admin_dns_records r
-           where r.domain_id = d.admin_domain_id and r.record_type = 'DKIM' limit 1),
-          'pending'
-        ) as dkim_status,
-        coalesce(
-          (select r.status from admin_dns_records r
-           where r.domain_id = d.admin_domain_id and r.record_type = 'DMARC' limit 1),
-          'pending'
-        ) as dmarc_status,
-        coalesce(
-          (select json_agg(json_build_object('id', k.id, 'selector', k.selector,
-                                             'status', k.status)
-                           order by k.created_at)
-           from mail_dkim_keys k where k.domain_id = d.id),
-          '[]'::json
-        ) as dkim_keys
-      from mail_sending_domains d
-      where d.org_id = ${orgId}
-      order by d.is_default desc, d.domain asc
-    `;
-    return rows.map((row) => ({
-      ...mapDomainRow(row),
-      spf: row.spf_status,
-      dkim: row.dkim_status,
-      dmarc: row.dmarc_status,
-      dkimKeys: row.dkim_keys,
-    }));
-  }
-
-  async getDomain(orgId: string, id: string): Promise<MailSendingDomainRecord | null> {
-    const rows = await this.sql<readonly SendingDomainRow[]>`
-      select * from mail_sending_domains where org_id = ${orgId} and id = ${id}
-    `;
-    return rows[0] === undefined ? null : mapDomainRow(rows[0]);
-  }
-
-  async createDomain(input: CreateSendingDomainInput): Promise<MailSendingDomainRecord> {
-    return this.sql.begin(async (tx) => {
-      if (input.isDefault) {
-        await tx`
-          update mail_sending_domains set is_default = false, updated_at = now()
-          where org_id = ${input.orgId}
-        `;
-      }
-      /* Inside the transaction: a capability must never outlive a rollback
-         that removed the identity it points at. */
-      const adminDomainId = await ensureAdminDomain(tx, {
-        orgId: input.orgId,
-        domain: input.domain,
-        createdBy: input.createdBy,
-      });
-      const rows = await tx<readonly SendingDomainRow[]>`
-        insert into mail_sending_domains
-          (org_id, admin_domain_id, domain, is_default, provider_id, created_by)
-        values (
-          ${input.orgId}, ${adminDomainId}, ${input.domain}, ${input.isDefault},
-          ${input.providerId}, ${input.createdBy}
-        )
-        on conflict do nothing
-        returning *
-      `;
-      if (rows[0] === undefined) {
-        throw new MailAdminConflictError(
-          `The sending domain "${input.domain}" is already registered.`,
-        );
-      }
-      return mapDomainRow(rows[0]);
-    });
-  }
-
-  /* SPF authorises the envelope, DKIM signs the message. Mail leaving a domain
-     with only one of them in place fails at a meaningful share of receivers,
-     so both must verify before Helix treats the domain as its own. */
-  async refreshDomainVerification(
-    orgId: string,
-    id: string,
-  ): Promise<DomainVerificationResult | null> {
-    const rows = await this.sql<
-      readonly (SendingDomainRow & {
-        readonly spf: DnsVerificationState;
-        readonly dkim: DnsVerificationState;
-      })[]
-    >`
-      with posture as (
-        select
-          d.id,
-          coalesce(
-            (select r.status from admin_dns_records r
-             where r.domain_id = d.admin_domain_id and r.record_type = 'SPF' limit 1),
-            'pending'
-          ) as spf,
-          coalesce(
-            (select r.status from admin_dns_records r
-             where r.domain_id = d.admin_domain_id and r.record_type = 'DKIM' limit 1),
-            'pending'
-          ) as dkim
-        from mail_sending_domains d
-        where d.org_id = ${orgId} and d.id = ${id}
-      )
-      update mail_sending_domains d
-      set verified_at = case
-            when posture.spf = 'verified' and posture.dkim = 'verified'
-              then coalesce(d.verified_at, now())
-            else null
-          end,
-          updated_at = now()
-      from posture
-      where d.id = posture.id
-      returning d.*, posture.spf, posture.dkim
-    `;
-    const row = rows[0];
-    if (row === undefined) {
-      return null;
-    }
-    return {
-      domain: mapDomainRow(row),
-      spf: row.spf,
-      dkim: row.dkim,
-      verified: row.verified_at !== null,
-    };
-  }
-
-  async deleteDomain(orgId: string, id: string): Promise<boolean> {
-    const rows = await this.sql<readonly { readonly id: string }[]>`
-      delete from mail_sending_domains where org_id = ${orgId} and id = ${id} returning id
     `;
     return rows.length > 0;
   }
@@ -1600,9 +1400,4 @@ export class InMemoryMailRoutingRuleStore implements MailRoutingRuleStore {
     this.#rules.delete(id);
     return true;
   }
-}
-
-/** Random token used to seed a `secret_ref` env-var name placeholder in tests. */
-export function randomSecretRef(prefix = "MAIL_PROVIDER_SECRET"): string {
-  return `${prefix}_${randomBytes(6).toString("hex").toUpperCase()}`;
 }

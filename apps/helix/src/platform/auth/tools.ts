@@ -1,8 +1,9 @@
-import { z } from "zod";
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
+import { z } from "zod";
 import { getCryptoProvider } from "../crypto/index.js";
 import { agentCredentialScopeCatalog } from "../permissions/scope-catalog.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import {
   generateApiKey,
@@ -14,7 +15,7 @@ import {
 } from "./credentials.js";
 import { hashSecret, OAuthError, parseScope } from "./oauth.js";
 
-export const agentCredentialAdminScope = "admin.agents";
+const agentCredentialAdminScope = "admin.agents";
 export { agentCredentialScopeCatalog };
 
 const genericObjectJsonSchema = { type: "object", additionalProperties: true } as const;
@@ -39,7 +40,7 @@ export interface RegisterAgentCredentialToolsOptions {
   readonly tokenEndpoint?: string;
 }
 
-export function createAgentCredentialToolDefinitions(
+function createAgentCredentialToolDefinitions(
   options: RegisterAgentCredentialToolsOptions,
 ): readonly ToolDefinition[] {
   const scopeCatalog = new Set(options.scopeCatalog ?? agentCredentialScopeCatalog);
@@ -294,12 +295,6 @@ function serializeCredential(credential: AgentCredentialInventoryRecord): JsonOb
     rotatedAt: dateToJson(credential.rotatedAt),
     lastUsedAt: dateToJson(credential.lastUsedAt),
   };
-}
-
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
 }
 
 function normalizeScopes(scopes: readonly string[]): string[] {

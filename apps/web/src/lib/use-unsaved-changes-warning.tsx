@@ -2,7 +2,7 @@ import { useCallback, type ReactNode } from "react";
 import { useBlocker } from "@tanstack/react-router";
 import { Dialog } from "@/components/ui/helix-dialog";
 
-export const UNSAVED_CHANGES_WARNING =
+const UNSAVED_CHANGES_WARNING =
   "Your changes are safe on this device, but leaving now will discard the local draft.";
 
 interface UnsavedChangesWarningOptions {

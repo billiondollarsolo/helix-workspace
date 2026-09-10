@@ -66,49 +66,32 @@ export function PendingApprovalsPanel({
     <section
       aria-label="Pending tool approvals"
       data-testid="pending-approvals-panel"
-      style={{
-        margin: "12px 0",
-        padding: 12,
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        background: "var(--surface-2, var(--bg-elevated, #f8fafc))",
-      }}
+      className="[margin:12px_0] p-3 [border:1px_solid_var(--border)] rounded-lg [background:var(--surface-2,_var(--bg-elevated,_#f8fafc))]"
     >
-      <h3 style={{ margin: "0 0 8px", fontSize: "var(--text-body-sm)", fontWeight: 600 }}>
+      <h3 className="[margin:0_0_8px] [font-size:var(--text-body-sm)] font-semibold">
         Pending approvals
       </h3>
-      <p
-        style={{ margin: "0 0 12px", fontSize: "var(--text-meta)", color: "var(--text-secondary)" }}
-      >
+      <p className="[margin:0_0_12px] [font-size:var(--text-meta)] [color:var(--text-secondary)]">
         Review each tool before it runs. Deny cancels the pending action.
       </p>
-      <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
+      <ul className="[list-style:none] m-0 p-0 grid gap-2">
         {visible.map((item) => {
           const running = item.status === "running" || busy;
           return (
             <li
               key={item.id}
               data-pending-id={item.id}
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                alignItems: "center",
-                gap: 8,
-                justifyContent: "space-between",
-              }}
+              className="flex flex-wrap items-center gap-2 justify-between"
             >
               <div>
-                <div style={{ fontWeight: 600, fontSize: "var(--text-meta)" }}>{item.toolId}</div>
+                <div className="font-semibold [font-size:var(--text-meta)]">{item.toolId}</div>
                 {item.error !== undefined && item.error.length > 0 ? (
-                  <div
-                    role="alert"
-                    style={{ color: "var(--danger)", fontSize: "var(--text-meta)" }}
-                  >
+                  <div role="alert" className="text-destructive [font-size:var(--text-meta)]">
                     {item.error}
                   </div>
                 ) : null}
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div className="flex gap-2">
                 <button
                   type="button"
                   className="btn sm"

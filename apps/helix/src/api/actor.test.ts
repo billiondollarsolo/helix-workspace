@@ -1,23 +1,23 @@
+import type { FastifyRequest } from "fastify";
 import { createHash } from "node:crypto";
 import { Socket } from "node:net";
 import { TLSSocket } from "node:tls";
-import type { FastifyRequest } from "fastify";
 import { describe, expect, it, vi } from "vitest";
+import {
+  createApiKeyMaterial,
+  EMPTY_CREDENTIAL_POLICY,
+  type AgentCredentialRecord,
+  type AgentCredentialStore,
+} from "../platform/auth/credentials.js";
 import {
   actorFromRequestWithAccessTokenAndSession,
   bearerTokenFromRequest,
   credentialPolicyOf,
   resolveCredentialAuthenticatedActor,
-  untrustedIdentityHeader,
   resolveCredentialAuthenticatedPrincipal,
   toolInvocationPrincipalFromRequest,
+  untrustedIdentityHeader,
 } from "./actor.js";
-import {
-  createApiKeyMaterial,
-  type AgentCredentialRecord,
-  type AgentCredentialStore,
-  EMPTY_CREDENTIAL_POLICY,
-} from "../platform/auth/credentials.js";
 
 describe("bearerTokenFromRequest", () => {
   it("reads bearer tokens from Authorization headers", () => {

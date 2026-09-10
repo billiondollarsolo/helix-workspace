@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { validateOptionalReleaseEvidenceBinding } from "./release-evidence-binding.mjs";
 
-export const FAILURE_RECOVERY_REPORT_SCHEMA = "helix.failure-recovery-evidence.v1";
+const FAILURE_RECOVERY_REPORT_SCHEMA = "helix.failure-recovery-evidence.v1";
 export const FAILURE_RECOVERY_OBSERVATION_SCHEMA = "helix.failure-recovery-observation.v1";
 
 export const FAILURE_RECOVERY_SCENARIOS = [
@@ -312,7 +312,7 @@ export function assertFailureRecoveryEvidenceContainsNoSecrets(report) {
   visit(report, "$");
 }
 
-export function hashIdentifier(value) {
+function hashIdentifier(value) {
   return createHash("sha256").update(String(value)).digest("hex").slice(0, 24);
 }
 

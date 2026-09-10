@@ -1,14 +1,14 @@
+import type { Actor } from "@helix/sdk-types";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import nodemailer from "nodemailer";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import type { Actor } from "@helix/sdk-types";
 import { AppPasswordManager, InMemoryAppPasswordStore } from "../auth/app-passwords.js";
 import type { CreateOutboundMailInput, MailStore } from "./store.js";
-import type { MailOutboundRecord } from "./types.js";
 import { SmtpSubmissionServer } from "./submission.js";
+import type { MailOutboundRecord } from "./types.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const actorId = "11111111-1111-4111-8111-111111111111";

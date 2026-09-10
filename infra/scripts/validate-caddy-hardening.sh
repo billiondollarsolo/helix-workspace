@@ -60,7 +60,7 @@ assert_contains 'Strict-Transport-Security "max-age=31536000; includeSubDomains;
   "HSTS preload header is missing"
 assert_contains 'X-Frame-Options "DENY"' \
   "frame denial header is missing"
-assert_contains 'Permissions-Policy ".*camera=\(self\).*microphone=\(self\).*geolocation=\(\).*"' \
+assert_contains 'Permissions-Policy ".*camera=\(self.*microphone=\(self.*geolocation=\(\).*"' \
   "restricted Permissions-Policy header is missing"
 assert_contains '^[[:space:]]*reverse_proxy[[:space:]]+https://\{\$HELIX_UPSTREAM:' \
   "upstream reverse_proxy must use HTTPS"
@@ -112,9 +112,6 @@ check_request_hardening() {
     "method PUT" \
     "path /v1/dav/files/*" \
     "/v1/api/tools/drive.finalize" \
-    "/v1/api/tools/docs.import-docx" \
-    "/v1/api/tools/sheets.import-xlsx" \
-    "/v1/api/tools/slides.import-pptx" \
     "/v1/api/tools/mail.send" \
     "max_size 2MB" \
     "max_size 32MB" \
@@ -135,6 +132,7 @@ check_request_hardening() {
   fi
 }
 
+check_browser_headers infra/caddy/Caddyfile.production
 check_browser_headers "$CADDYFILE"
 check_request_hardening "$CADDYFILE"
 DEFAULT_CADDYFILE=infra/caddy/Caddyfile

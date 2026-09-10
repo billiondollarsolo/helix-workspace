@@ -1,3 +1,4 @@
+import { Video as VideoIcon, X as XIcon } from "lucide-react";
 /* Recording playback drawer for the Meet hub.
  *
  * The Meet backend attaches Jibri uploads as Drive objects on the meeting
@@ -11,7 +12,6 @@
  * an "Open in Drive" link.
  */
 
-import { Icons } from "@/components/icons";
 import { useEffect, useId, useRef } from "react";
 import type { MeetMeetingRecord, MeetRecordingArtifactRecord } from "./api";
 import { formatElapsed } from "./meet-call";
@@ -76,15 +76,7 @@ export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
         aria-hidden="true"
         tabIndex={-1}
         onClick={onClose}
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(0,0,0,0.4)",
-          border: "none",
-          padding: 0,
-          cursor: "default",
-          zIndex: 40,
-        }}
+        className="fixed inset-0 [background:rgba(0,0,0,0.4)] [border:none] p-0 cursor-default [z-index:40]"
       />
       <aside
         ref={drawerRef}
@@ -92,54 +84,18 @@ export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        style={{
-          position: "fixed",
-          top: 0,
-          right: 0,
-          bottom: 0,
-          width: "min(520px, 90vw)",
-          background: "var(--surface)",
-          borderLeft: "1px solid var(--border)",
-          display: "flex",
-          flexDirection: "column",
-          zIndex: 41,
-          boxShadow: "-12px 0 30px rgba(0,0,0,0.25)",
-        }}
+        className="fixed top-0 right-0 bottom-0 [width:min(520px,_90vw)] bg-card [border-left:1px_solid_var(--border)] flex flex-col [z-index:41] [box-shadow:-12px_0_30px_rgba(0,0,0,0.25)]"
       >
-        <header
-          style={{
-            padding: "14px 18px",
-            borderBottom: "1px solid var(--border)",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <Icons.Video />
-          <div style={{ flex: 1, minWidth: 0 }}>
+        <header className="[padding:14px_18px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2.5">
+          <VideoIcon size={16} />
+          <div className="flex-1 min-w-0">
             <h2
               id={titleId}
-              style={{
-                margin: 0,
-                fontWeight: 600,
-                fontSize: "var(--text-body-sm)",
-                color: "var(--text)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
+              className="m-0 font-semibold [font-size:var(--text-body-sm)] text-foreground overflow-hidden text-ellipsis whitespace-nowrap"
             >
               Recordings
             </h2>
-            <div
-              style={{
-                fontSize: "var(--text-meta)",
-                color: "var(--text-3)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
+            <div className="[font-size:var(--text-meta)] text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap">
               {meeting.title || meeting.subject}
             </div>
           </div>
@@ -150,15 +106,15 @@ export function RecordingDrawer({ meeting, onClose }: RecordingDrawerProps) {
             aria-label="Close"
             onClick={onClose}
           >
-            <Icons.X />
+            <XIcon size={16} />
           </button>
         </header>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+        <div className="flex-1 overflow-y-auto p-4">
           {artifacts.length === 0 ? (
             <EmptyState recorded={meeting.recorded} />
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="flex flex-col gap-4">
               {artifacts.map((artifact, idx) => (
                 <RecordingCard
                   key={artifact.objectId}
@@ -179,12 +135,7 @@ function EmptyState({ recorded }: { readonly recorded: boolean }) {
   return (
     <div
       role="status"
-      style={{
-        padding: "48px 16px",
-        textAlign: "center",
-        color: "var(--text-3)",
-        fontSize: "var(--text-meta)",
-      }}
+      className="[padding:48px_16px] text-center text-muted-foreground [font-size:var(--text-meta)]"
     >
       {recorded
         ? "This meeting was recorded, but the upload hasn't been received yet. Recordings appear here after Jibri finishes uploading."
@@ -207,80 +158,52 @@ function RecordingCard({
   const captured = artifact.startedAt ?? artifact.createdAt;
   const duration = formatDurationFromRange(artifact.startedAt, artifact.endedAt);
   return (
-    <article
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-        background: "var(--surface-2)",
-        overflow: "hidden",
-      }}
-    >
-      <div style={{ background: "#000" }}>
+    <article className="[border:1px_solid_var(--border)] [border-radius:10px] bg-muted overflow-hidden">
+      <div className="[background:#000]">
         <video
           aria-label={`Recording ${String(index + 1)} of ${String(total)}`}
           controls
           preload="metadata"
           src={src}
-          style={{ width: "100%", display: "block", maxHeight: 320, background: "#000" }}
+          className="w-full block max-h-80 [background:#000]"
         />
       </div>
-      <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            justifyContent: "space-between",
-            gap: 8,
-          }}
-        >
-          <span style={{ fontWeight: 600, fontSize: "var(--text-body-sm)" }}>
+      <div className="[padding:12px_14px] flex flex-col gap-1.5">
+        <div className="flex [align-items:baseline] justify-between gap-2">
+          <span className="font-semibold [font-size:var(--text-body-sm)]">
             {total > 1 ? `Recording ${String(index + 1)} of ${String(total)}` : "Recording"}
           </span>
-          <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+          <span className="[font-size:var(--text-caption)] text-muted-foreground">
             {formatBytes(artifact.byteSize)}
           </span>
         </div>
-        <dl
-          style={{
-            margin: 0,
-            display: "grid",
-            gridTemplateColumns: "auto 1fr",
-            gap: "2px 12px",
-            fontSize: "var(--text-meta)",
-            color: "var(--text-2)",
-          }}
-        >
-          <dt style={{ color: "var(--text-3)" }}>Captured</dt>
-          <dd style={{ margin: 0 }}>{formatTimestamp(captured)}</dd>
+        <dl className="m-0 grid [grid-template-columns:auto_1fr] [gap:2px_12px] [font-size:var(--text-meta)] [color:var(--text-2)]">
+          <dt className="text-muted-foreground">Captured</dt>
+          <dd className="m-0">{formatTimestamp(captured)}</dd>
           {duration !== null ? (
             <>
-              <dt style={{ color: "var(--text-3)" }}>Duration</dt>
-              <dd style={{ margin: 0 }}>{duration}</dd>
+              <dt className="text-muted-foreground">Duration</dt>
+              <dd className="m-0">{duration}</dd>
             </>
           ) : null}
-          <dt style={{ color: "var(--text-3)" }}>Format</dt>
-          <dd style={{ margin: 0 }}>{prettyMime(artifact.mimeType)}</dd>
+          <dt className="text-muted-foreground">Format</dt>
+          <dd className="m-0">{prettyMime(artifact.mimeType)}</dd>
         </dl>
-        <div style={{ display: "flex", gap: 8, paddingTop: 4 }}>
+        <div className="flex gap-2 pt-1">
           {artifact.exportAllowed !== false ? (
             <a
-              className="btn sm"
+              className="btn sm inline-flex items-center gap-1.5"
               href={`${src}?download=1`}
               download
-              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
               Download
             </a>
           ) : (
-            <span style={{ color: "var(--text-3)", fontSize: "var(--text-meta)" }}>
+            <span className="text-muted-foreground [font-size:var(--text-meta)]">
               Download disabled
             </span>
           )}
-          <a
-            className="btn sm"
-            href={driveHref}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-          >
+          <a className="btn sm inline-flex items-center gap-1.5" href={driveHref}>
             Open in Drive
           </a>
         </div>

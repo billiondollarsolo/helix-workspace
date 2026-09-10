@@ -87,6 +87,8 @@ describe("CapabilityRegistry", () => {
 
   it("formats capability keys", () => {
     expect(capabilityKey(objectStore)).toEqual({ kind: "storage", name: "object-store" });
-    expect(capabilityKeyToString({ kind: "storage", name: "object-store" })).toBe("storage:object-store");
+    expect(capabilityKeyToString({ kind: "storage", name: "object-store" })).toBe(
+      "storage:object-store",
+    );
   });
 });

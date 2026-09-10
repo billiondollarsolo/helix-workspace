@@ -9,14 +9,9 @@ import {
   type DriveApiEntry,
   type DriveApiSearchHit,
 } from "./api";
-import {
-  DRIVE_SCOPE_IDS,
-  validateDriveRouteSearch,
-  type DriveRouteSearch,
-  type DriveScope,
-} from "./route-search";
+import { validateDriveRouteSearch, type DriveRouteSearch, type DriveScope } from "./route-search";
 
-export { DRIVE_SCOPE_IDS, validateDriveRouteSearch };
+export { validateDriveRouteSearch };
 export type { DriveRouteSearch, DriveScope };
 
 export interface DriveSuggestions {
@@ -39,17 +34,6 @@ export function deriveDriveSuggestions(entries: readonly DriveApiEntry[]): Drive
   return { folders, files };
 }
 
-export function driveSuggestionsQueryOptions() {
-  return queryOptions({
-    queryKey: ["drive", "suggestions"],
-    queryFn: async (): Promise<DriveSuggestions> => {
-      const { entries } = await listDrive({ folderId: null, limit: 100 });
-      return deriveDriveSuggestions(entries);
-    },
-    throwOnError: false,
-  });
-}
-
 export interface DriveItemsQueryInput {
   readonly folderId?: string | null;
   readonly includeTrashed?: boolean;
@@ -68,7 +52,7 @@ export type DriveItemsQueryResult =
       readonly hits: readonly DriveApiSearchHit[];
     };
 
-export const defaultDriveItemsInput = {
+const defaultDriveItemsInput = {
   folderId: null,
   includeTrashed: false,
   query: "",

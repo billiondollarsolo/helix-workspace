@@ -1,11 +1,19 @@
-import type { Actor, JsonObject, ToolDefinition } from "@helix/sdk-types";
+import type { Actor, ToolDefinition } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { PlatformMetrics } from "../../api/metrics.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { defineTool } from "../tools/define-tool.js";
+import { toJsonObject } from "../util/json.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
-import { mintJitsiJwt } from "./jwt.js";
 import { meetGuestInviteTokenHash, mintMeetGuestInviteToken } from "./guest-invites.js";
+import { mintJitsiJwt } from "./jwt.js";
+import {
+  InMemoryMeetRateLimiter,
+  meetRateLimitError,
+  type MeetRateLimitBudget,
+  type MeetRateLimiter,
+} from "./rate-limit.js";
 import { MEET_RECORDING_NOTICE_VERSION, type MeetStore } from "./store.js";
 import type {
   MeetAudiencePolicy,
@@ -15,12 +23,6 @@ import type {
   MeetRecordingArtifactRecord,
   MeetRoomRecord,
 } from "./types.js";
-import {
-  InMemoryMeetRateLimiter,
-  meetRateLimitError,
-  type MeetRateLimitBudget,
-  type MeetRateLimiter,
-} from "./rate-limit.js";
 
 const uuidSchema = z.string().uuid();
 const metadataSchema = z.record(z.string(), z.unknown()).default({});
@@ -252,7 +254,7 @@ export interface CreateMeetToolDefinitionsOptions {
   readonly rateLimitBudget?: Partial<MeetRateLimitBudget> | undefined;
 }
 
-export function createMeetToolDefinitions(
+function createMeetToolDefinitions(
   options: CreateMeetToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
   const jitsiOrigin = deploymentJitsiOrigin(options);
@@ -724,12 +726,6 @@ function millisecondsToSeconds(value: number | undefined): number | undefined {
   return value === undefined ? undefined : value / 1_000;
 }
 
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
-}
-
 function serializeRoom(room: MeetRoomRecord) {
   return {
     ...room,
@@ -790,8 +786,4 @@ function serializeGuestInvite(invite: MeetGuestInviteRecord) {
     revokedAt: invite.revokedAt?.toISOString() ?? null,
     createdAt: invite.createdAt.toISOString(),
   };
-}
-
-function toJsonObject(value: Record<string, unknown>): JsonObject {
-  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }

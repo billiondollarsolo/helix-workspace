@@ -8,36 +8,11 @@ import type {
   SuggestionContext,
   SuggestionSlotProviderCapability,
 } from "@helix/sdk-types";
-import { chatPluginId } from "../types.js";
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 
-export const chatSuggestionSlotIds = ["chat.suggest-reply", "chat.summarize-room"] as const;
+const chatSuggestionSlotIds = ["chat.suggest-reply", "chat.summarize-room"] as const;
 
-export type ChatSuggestionSlotId = (typeof chatSuggestionSlotIds)[number];
-
-export interface ChatSuggestionSlotDescriptor {
-  readonly id: ChatSuggestionSlotId;
-  readonly pluginId: typeof chatPluginId;
-  readonly label: string;
-  readonly description: string;
-  readonly order: number;
-}
-
-export const chatSuggestionSlots: readonly ChatSuggestionSlotDescriptor[] = [
-  {
-    id: "chat.suggest-reply",
-    pluginId: chatPluginId,
-    label: "Suggest reply",
-    description: "Suggest a short reply for the current room",
-    order: 10,
-  },
-  {
-    id: "chat.summarize-room",
-    pluginId: chatPluginId,
-    label: "Summarize room",
-    description: "Summarize recent room activity",
-    order: 20,
-  },
-];
+type ChatSuggestionSlotId = (typeof chatSuggestionSlotIds)[number];
 
 export interface ChatSuggestionProviderOptions {
   readonly ai: AICapability;
@@ -58,7 +33,8 @@ function createProvider(
     slotId,
     available: async (ctx) => ctx.feature === slotId || ctx.feature.length === 0,
     generate: async function* generate(ctx): AsyncIterable<SuggestionChunk> {
-      const classification = classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
+      const classification =
+        classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
       const response = await options.ai.chat(toChatRequest(slotId, ctx, classification), {
         actor: ctx.actor,
         feature: slotId,
@@ -104,7 +80,9 @@ function toChatRequest(
               type: ctx.resource.type,
               ...(ctx.resource.id === undefined ? {} : { id: ctx.resource.id }),
               ...(ctx.resource.orgId === undefined ? {} : { orgId: ctx.resource.orgId }),
-              ...(ctx.resource.attributes === undefined ? {} : { attributes: ctx.resource.attributes }),
+              ...(ctx.resource.attributes === undefined
+                ? {}
+                : { attributes: ctx.resource.attributes }),
             },
           }),
     },
@@ -123,7 +101,10 @@ function suggestionInputText(ctx: SuggestionContext): string {
   const roomName = stringInput(input, "roomName");
   const draft = stringInput(input, "draft");
   const lastMessage = stringInput(input, "lastMessage");
-  const participants = arrayInput(input, "participants").map(formatJsonValue).filter(hasText).join(", ");
+  const participants = arrayInput(input, "participants")
+    .map(formatJsonValue)
+    .filter(hasText)
+    .join(", ");
   const messages = arrayInput(input, "messages").map(formatMessage).filter(hasText).join("\n");
 
   return [
@@ -145,8 +126,13 @@ function formatMessage(value: JsonValue): string {
     return "";
   }
 
-  const author = stringInput(value, "author") ?? stringInput(value, "authorName") ?? stringInput(value, "sender") ?? "Unknown";
-  const body = stringInput(value, "body") ?? stringInput(value, "text") ?? stringInput(value, "message");
+  const author =
+    stringInput(value, "author") ??
+    stringInput(value, "authorName") ??
+    stringInput(value, "sender") ??
+    "Unknown";
+  const body =
+    stringInput(value, "body") ?? stringInput(value, "text") ?? stringInput(value, "message");
   const createdAt = stringInput(value, "createdAt");
   if (body === undefined) {
     return "";
@@ -159,14 +145,22 @@ function formatJsonValue(value: JsonValue): string {
     return value;
   }
   if (isJsonObject(value)) {
-    return stringInput(value, "displayName") ?? stringInput(value, "name") ?? stringInput(value, "email") ?? "";
+    return (
+      stringInput(value, "displayName") ??
+      stringInput(value, "name") ??
+      stringInput(value, "email") ??
+      ""
+    );
   }
   return "";
 }
 
 function classificationFromInput(input: JsonObject | undefined): AIClassification | undefined {
   const value = input?.classification;
-  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
+  return value === "public" ||
+    value === "standard" ||
+    value === "confidential" ||
+    value === "restricted"
     ? value
     : undefined;
 }
@@ -179,10 +173,6 @@ function stringInput(input: JsonObject, key: string): string | undefined {
 function arrayInput(input: JsonObject, key: string): readonly JsonValue[] {
   const value = input[key];
   return isJsonArray(value) ? value : [];
-}
-
-function isJsonObject(value: JsonValue): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isJsonArray(value: JsonValue | undefined): value is readonly JsonValue[] {

@@ -1,6 +1,8 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
+import { MailThreadNotFoundError } from "./errors.js";
 import { PostgresMailStore } from "./store.js";
 
 const adminUrl = process.env.HELIX_MIGRATION_DATABASE_URL;
@@ -86,17 +88,27 @@ describe("mailbox actor RLS", { skip: !enabled }, () => {
     `;
     await admin`
       insert into objects (
-        id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256
+        id, org_id, owner_actor_id, kind, storage_key, mime_type, byte_size, sha256, metadata
       )
       values
-        (${aliceObjectId}, ${orgId}, null, 'mail_attachment', 'mail/alice', 'text/plain', 5, ${"a".repeat(64)}),
-        (${bobObjectId}, ${orgId}, null, 'mail_attachment', 'mail/bob', 'text/plain', 3, ${"b".repeat(64)})
+        (${aliceObjectId}, ${orgId}, null, 'mail_attachment', 'mail/alice', 'text/plain', 5, ${"a".repeat(64)}, '{"status":"ready","scanStatus":"clean","dlpVerdict":"clean"}'),
+        (${bobObjectId}, ${orgId}, null, 'mail_attachment', 'mail/bob', 'text/plain', 3, ${"b".repeat(64)}, '{"status":"ready","scanStatus":"clean","dlpVerdict":"clean"}')
     `;
     await admin`
-      insert into message_attachments (org_id, message_id, object_id, disposition)
+      insert into mail_attachment_ingestions (
+        org_id, owner_actor_id, object_id, status, storage_key, declared_mime_type,
+        expected_byte_size, actual_byte_size, expected_sha256, actual_sha256, scan_evidence, expires_at
+      ) values
+        (${orgId}, ${aliceId}, ${aliceObjectId}, 'clean', 'mail/alice', 'text/plain',
+          5, 5, ${"a".repeat(64)}, ${"a".repeat(64)}, '{"scanned":true}', now() + interval '1 hour'),
+        (${orgId}, ${bobId}, ${bobObjectId}, 'clean', 'mail/bob', 'text/plain',
+          3, 3, ${"b".repeat(64)}, ${"b".repeat(64)}, '{"scanned":true}', now() + interval '1 hour')
+    `;
+    await admin`
+      insert into message_attachments (org_id, message_id, object_id, disposition, snapshot)
       values
-        (${orgId}, ${aliceMessageId}, ${aliceObjectId}, 'attachment'),
-        (${orgId}, ${bobMessageId}, ${bobObjectId}, 'attachment')
+        (${orgId}, ${aliceMessageId}, ${aliceObjectId}, 'attachment', '{}'::jsonb),
+        (${orgId}, ${bobMessageId}, ${bobObjectId}, 'attachment', '{}'::jsonb)
     `;
     await admin`
       insert into mail_message_identities (message_id, org_id, normalized_message_id)
@@ -172,6 +184,31 @@ describe("mailbox actor RLS", { skip: !enabled }, () => {
     ).rejects.toThrow("canonical mail content is immutable");
   });
 
+  it("rejects a reply to another owner's known thread before creating mail", async () => {
+    await expect(
+      withTenantPostgresContext(app, { orgId, actorId: aliceId }, () =>
+        store.createOutbound({
+          orgId,
+          actorId: aliceId,
+          threadId: bobThreadId,
+          envelope: {
+            from: { address: "alice@mailbox.test" },
+            to: [{ address: "recipient@example.test" }],
+            cc: [],
+            bcc: [],
+            attachments: [],
+            subject: "Unauthorized reply",
+            text: "Body",
+          },
+          undoUntil: new Date(),
+          outboxSubject: "mail.send",
+        }),
+      ),
+    ).rejects.toBeInstanceOf(MailThreadNotFoundError);
+    const rows = await admin`select id from messages where thread_id = ${bobThreadId}`;
+    expect(rows.map((row) => row.id)).toEqual([bobMessageId]);
+  });
+
   it("lets an owner grant and revoke complete manager access for a delegate", async () => {
     await withTenantPostgresContext(app, { orgId, actorId: bobId }, async () => {
       const grant = await store.grantMailboxDelegate({
@@ -231,11 +268,6 @@ describe("mailbox actor RLS", { skip: !enabled }, () => {
   });
 
   async function cleanup(): Promise<void> {
-    await admin`delete from permissions where org_id = ${orgId}`;
-    await admin`delete from messages where org_id = ${orgId}`;
-    await admin`delete from threads where org_id = ${orgId}`;
-    await admin`delete from objects where org_id = ${orgId}`;
-    await admin`delete from actors where org_id = ${orgId}`;
-    await admin`delete from orgs where id = ${orgId}`;
+    await cleanupTestTenants(admin, [orgId]);
   }
 });

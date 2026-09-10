@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import fastify from "fastify";
+import { describe, expect, it, vi } from "vitest";
 import { ReadinessMonitor, registerHealthRoutes } from "./readiness.js";
 
 const requiredProbeIds = [

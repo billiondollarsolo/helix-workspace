@@ -12,7 +12,7 @@ import {
 } from "../admin/console-shared.js";
 import type { RetryDeadLetteredVirusScanInput } from "./store.js";
 
-export interface DriveScanAdminStore {
+interface DriveScanAdminStore {
   retryDeadLetteredVirusScan(input: RetryDeadLetteredVirusScanInput): Promise<boolean>;
 }
 

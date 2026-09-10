@@ -1,6 +1,14 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Actor, JsonObject } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import {
+  parseTenantIdpAttributeMapping,
+  parseTenantIdpPublicConfig,
+  type CreateTenantIdpConfigInput,
+  type TenantIdpConfigRecord,
+  type TenantIdpConfigStore,
+  type UpdateTenantIdpConfigInput,
+} from "../auth/tenant-idp-configs.js";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,
@@ -13,14 +21,6 @@ import {
   sendForbidden,
   type AdminConsoleAuditSink,
 } from "./console-shared.js";
-import {
-  parseTenantIdpAttributeMapping,
-  parseTenantIdpPublicConfig,
-  type CreateTenantIdpConfigInput,
-  type TenantIdpConfigRecord,
-  type TenantIdpConfigStore,
-  type UpdateTenantIdpConfigInput,
-} from "../auth/tenant-idp-configs.js";
 
 export interface RegisterAdminIdentityRoutesOptions {
   readonly idpConfigs: Pick<
@@ -31,9 +31,9 @@ export interface RegisterAdminIdentityRoutesOptions {
   readonly auditSink: AdminConsoleAuditSink;
 }
 
-export type AdminIdentityIdpConfigView = TenantIdpConfigRecord;
+type AdminIdentityIdpConfigView = TenantIdpConfigRecord;
 
-export interface AdminIdentityView {
+interface AdminIdentityView {
   readonly idpConfigs: readonly AdminIdentityIdpConfigView[];
   readonly localLoginRecovery: {
     readonly enabled: true;
@@ -41,7 +41,7 @@ export interface AdminIdentityView {
   };
 }
 
-export type AdminIdentityTestLoginStatus = "configuration_required" | "ready";
+type AdminIdentityTestLoginStatus = "configuration_required" | "ready";
 
 export interface AdminIdentityTestLoginResult {
   readonly status: AdminIdentityTestLoginStatus;

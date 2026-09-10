@@ -1,18 +1,13 @@
-import { Readable } from "node:stream";
 import type { FastifyInstance } from "fastify";
+import { Readable } from "node:stream";
+import { z } from "zod";
 import {
   INBOUND_WEBHOOK_BODY_LIMIT_BYTES,
   readBoundedRequestBody,
 } from "../../api/request-body.js";
-import { verifyInboundWebhookPayload } from "./delivery.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
-import {
-  resolveWebhookSecret,
-  webhookHeaderNameIsSafe,
-  type InboundWebhookRecord,
-  type PostgresWebhookStore,
-  type WebhookSecretResolver,
-} from "./store.js";
+import { isRecord } from "../util/json.js";
+import { verifyInboundWebhookPayload } from "./delivery.js";
 import {
   githubWebhookSource,
   gitlabWebhookSource,
@@ -25,7 +20,13 @@ import {
   type ParseSourceWebhookOptions,
   type WebhookHeaders,
 } from "./sources/index.js";
-import { z } from "zod";
+import {
+  resolveWebhookSecret,
+  webhookHeaderNameIsSafe,
+  type InboundWebhookRecord,
+  type PostgresWebhookStore,
+  type WebhookSecretResolver,
+} from "./store.js";
 
 const paramsSchema = z.object({
   slug: z.string().min(1),
@@ -272,10 +273,6 @@ function safeParseJson(payload: Buffer): unknown {
   } catch {
     return payload.toString("utf8");
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function firstHeader(value: string | readonly string[] | undefined): string | undefined {

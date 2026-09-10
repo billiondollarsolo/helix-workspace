@@ -1,6 +1,7 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { ipMatchesCidr } from "../auth/credentials.js";
 import {
   SCIM_CREDENTIAL_SCOPES,
   ScimCredentialConflictError,
@@ -9,7 +10,6 @@ import {
   type TenantScimCredentialRecord,
   type TenantScimCredentialStore,
 } from "../auth/scim-credentials.js";
-import { ipMatchesCidr } from "../auth/credentials.js";
 import {
   adminConsoleReadScope,
   adminConsoleWriteScope,

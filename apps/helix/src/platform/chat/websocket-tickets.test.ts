@@ -1,6 +1,6 @@
 import type { Actor } from "@helix/sdk-types";
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { sha256Hex } from "../crypto/index.js";
 import {
   CHAT_WEBSOCKET_AUDIENCE,
@@ -91,20 +91,4 @@ describe("chat websocket ticket protocol", () => {
     expect(chatWebSocketTicketFromProtocols("helix-bearer, access-token")).toBeNull();
   });
 });
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
-function recordingSql(rows: readonly unknown[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
-    return Promise.resolve(rows);
-  };
-  return { sql: tag as unknown as postgres.Sql, calls };
-}
+const recordingSql = (rows: readonly unknown[]) => sharedRecordingSql(() => rows);

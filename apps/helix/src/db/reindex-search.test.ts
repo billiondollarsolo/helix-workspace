@@ -28,6 +28,12 @@ describe("parseReindexSearchArgs", () => {
     expect(() => parseReindexSearchArgs([])).toThrow("Specify --all or --types");
   });
 
+  it.each(["docs", "sheets", "slides"])("rejects the retired %s index source", (type) => {
+    expect(() => parseReindexSearchArgs(["--types", type])).toThrow(
+      `Unsupported search reindex type: ${type}`,
+    );
+  });
+
   it("rejects unsupported search types", () => {
     expect(() => parseReindexSearchArgs(["--types", "mail,unknown"])).toThrow(
       "Unsupported search reindex type: unknown",

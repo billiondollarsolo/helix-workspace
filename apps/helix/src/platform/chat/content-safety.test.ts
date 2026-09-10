@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
 import { CHAT_BODY_MAX_BYTES, CHAT_METADATA_MAX_BYTES } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { isSafeChatLink, normalizeChatContent, renderChatBodyHtml } from "./content-safety.js";
 
 describe("Chat content safety", () => {

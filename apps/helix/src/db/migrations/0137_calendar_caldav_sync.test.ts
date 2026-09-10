@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -63,7 +64,7 @@ describe.skipIf(sql === null)("0137 live CalDAV sync", () => {
     await database`
       insert into cal_events (
         id, org_id, calendar_id, uid, title, starts_at, ends_at,
-        organizer_actor_id, organizer_email
+        organizer_actor_id, organizer_email, starts_local, ends_local
       )
       select
         ('20000000-0000-4000-8000-' || lpad(value::text, 12, '0'))::uuid,
@@ -71,7 +72,9 @@ describe.skipIf(sql === null)("0137 live CalDAV sync", () => {
         'Sync ' || value::text,
         '2026-10-01T12:00:00Z'::timestamptz + value * interval '1 minute',
         '2026-10-01T13:00:00Z'::timestamptz + value * interval '1 minute',
-        ${ownerA}, 'owner@col09-a.test'
+        ${ownerA}, 'owner@col09-a.test',
+        to_char('2026-10-01T12:00:00'::timestamp + value * interval '1 minute', 'YYYY-MM-DD"T"HH24:MI:SS'),
+        to_char('2026-10-01T13:00:00'::timestamp + value * interval '1 minute', 'YYYY-MM-DD"T"HH24:MI:SS')
       from generate_series(1, 303) value
     `;
   });
@@ -142,11 +145,11 @@ describe.skipIf(sql === null)("0137 live CalDAV sync", () => {
     await database`
       insert into cal_events (
         id, org_id, calendar_id, uid, title, starts_at, ends_at,
-        organizer_actor_id, organizer_email
+        organizer_actor_id, organizer_email, starts_local, ends_local
       ) values (
         ${createdId}, ${orgA}, ${calendarA}, 'sync-304@col09.test', 'Created offline',
         '2026-10-03T12:00:00Z', '2026-10-03T13:00:00Z',
-        ${ownerA}, 'owner@col09-a.test'
+        ${ownerA}, 'owner@col09-a.test', '2026-10-03T12:00:00', '2026-10-03T13:00:00'
       )
     `;
 
@@ -185,11 +188,11 @@ describe.skipIf(sql === null)("0137 live CalDAV sync", () => {
       await tx`
         insert into cal_events (
           id, org_id, calendar_id, uid, title, starts_at, ends_at,
-          organizer_actor_id, organizer_email
+          organizer_actor_id, organizer_email, starts_local, ends_local
         ) values (
           ${runtimeId}, ${orgA}, ${calendarA}, 'sync-305@col09.test', 'Runtime write',
           '2026-10-04T12:00:00Z', '2026-10-04T13:00:00Z',
-          ${ownerA}, 'owner@col09-a.test'
+          ${ownerA}, 'owner@col09-a.test', '2026-10-04T12:00:00', '2026-10-04T13:00:00'
         )
       `;
     });
@@ -219,14 +222,6 @@ describe.skipIf(sql === null)("0137 live CalDAV sync", () => {
   }
 
   async function cleanup(): Promise<void> {
-    await database`delete from cal_events where org_id in (${orgA}, ${orgB})`;
-    await database`delete from cal_calendar_memberships where org_id in (${orgA}, ${orgB})`;
-    await database`delete from cal_calendars where org_id in (${orgA}, ${orgB})`;
-    await database`delete from activity where org_id in (${orgA}, ${orgB})`;
-    await database`delete from permissions where org_id in (${orgA}, ${orgB})`;
-    await database`delete from threads where org_id in (${orgA}, ${orgB})`;
-    await database`delete from organization_memberships where org_id in (${orgA}, ${orgB})`;
-    await database`delete from actors where org_id in (${orgA}, ${orgB})`;
-    await database`delete from orgs where id in (${orgA}, ${orgB})`;
+    await cleanupTestTenants(database, [orgA, orgB]);
   }
 });

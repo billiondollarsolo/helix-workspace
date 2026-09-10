@@ -1,6 +1,6 @@
-import { AsyncResource } from "node:async_hooks";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyRequest } from "fastify";
+import { AsyncResource } from "node:async_hooks";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { InMemoryEventBus } from "../events/in-memory-event-bus.js";

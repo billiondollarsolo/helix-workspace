@@ -1,6 +1,6 @@
 import type { SecurityTier } from "@helix/sdk";
 
-export const USD_MICROS = 1_000_000;
+const USD_MICROS = 1_000_000;
 
 export type AgentLimitReason = "requests_per_minute" | "requests_per_day" | "cost_per_day";
 
@@ -11,7 +11,7 @@ export interface AgentLimitBudget {
   readonly costWarningThresholdRatio: number;
 }
 
-export interface AgentLimitScope {
+interface AgentLimitScope {
   readonly orgId: string;
   readonly actorId: string;
   readonly tier: SecurityTier;
@@ -64,7 +64,7 @@ export interface AgentLimitExceeded {
   readonly usage: AgentLimitUsage;
 }
 
-export interface AgentLimitAllowed {
+interface AgentLimitAllowed {
   readonly allowed: true;
   readonly usage: AgentLimitUsage;
 }
@@ -83,7 +83,7 @@ export interface AgentRateCostLimiter {
   getUsage(input: AgentLimitUsageInput): Promise<AgentLimitUsage>;
 }
 
-export const tierAgentLimitBudgets: Record<SecurityTier, AgentLimitBudget> = {
+const tierAgentLimitBudgets: Record<SecurityTier, AgentLimitBudget> = {
   personal: {
     requestsPerMinute: null,
     requestsPerDay: null,
@@ -119,7 +119,8 @@ export function resolveAgentLimitBudget(
     requestsPerMinute: override?.requestsPerMinute ?? base.requestsPerMinute,
     requestsPerDay: override?.requestsPerDay ?? base.requestsPerDay,
     costPerDayUsdMicros: override?.costPerDayUsdMicros ?? base.costPerDayUsdMicros,
-    costWarningThresholdRatio: override?.costWarningThresholdRatio ?? base.costWarningThresholdRatio,
+    costWarningThresholdRatio:
+      override?.costWarningThresholdRatio ?? base.costWarningThresholdRatio,
   };
 }
 

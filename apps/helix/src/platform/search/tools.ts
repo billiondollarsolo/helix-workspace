@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { createScopedSearchRequest, globalSearchTypes } from "./scope.js";
 import type { SearchEngine } from "./types.js";
@@ -36,14 +37,14 @@ export interface CreateSearchToolDefinitionsOptions {
   readonly engine: SearchEngine;
 }
 
-export function createSearchToolDefinitions(
+function createSearchToolDefinitions(
   options: CreateSearchToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
   return [
     defineTool<z.output<typeof querySchema>, unknown>({
       id: "search.query",
       description:
-        "Search across indexed mail, chat, docs, drive, and calendar records visible to the current actor.",
+        "Search across indexed mail, chat, drive, and calendar records visible to the current actor.",
       permission: "platform.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(querySchema, genericObjectJsonSchema),
@@ -66,10 +67,4 @@ export function registerSearchTools(
   for (const tool of createSearchToolDefinitions(options)) {
     registry.register(tool);
   }
-}
-
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
 }

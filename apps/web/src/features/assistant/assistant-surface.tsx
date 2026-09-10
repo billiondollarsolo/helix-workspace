@@ -1,3 +1,18 @@
+import { cn } from "@/lib/utils";
+import { iconMap as Icons } from "@/components/icon-map";
+import {
+  FileText as DocIcon,
+  Pencil as EditPenIcon,
+  History as HistoryIcon,
+  Ellipsis as MoreIcon,
+  EllipsisVertical as MoreVIcon,
+  Pin as PinIcon,
+  Plus as PlusIcon,
+  Search as SearchIcon,
+  Send as SendIcon,
+  Sparkles as SparklesIcon,
+  Trash2 as TrashIcon,
+} from "lucide-react";
 /* Helix AI assistant surface.
    Recreated from the design handoff prototype (`app-assistant.jsx`) as
    production TSX: a 240px thread list, an empty/new hero state, a streaming
@@ -8,23 +23,9 @@
    pin/unpin/rename/delete and memory-forget all hitting `POST /api/tools/...`.
    Live replies stream from `streamAssistantChat`; selecting a past thread
    reopens it and continues the same backend conversation. */
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent,
-} from "react";
-import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { bucketThreadsByDate, type ThreadSidebarItem } from "./date-buckets";
-import { Icons } from "@/components/icons";
+import { SurfaceFrame } from "@/components/shell";
 import { Avatar } from "@/components/ui/avatar";
 import { Dialog } from "@/components/ui/helix-dialog";
-import { SurfaceFrame } from "@/components/shell";
 import {
   deleteAssistantConversation,
   forgetAssistantMemory,
@@ -34,10 +35,6 @@ import {
   type AssistantConversationListItem,
   type AssistantTurnResponseWithPendingConfirmations,
 } from "@/features/assistant/api";
-import {
-  ASSISTANT_QUERY_ROOT,
-  assistantConversationsQueryOptions,
-} from "@/features/assistant/queries";
 import {
   ASSISTANT_ERROR_FALLBACK,
   ASSISTANT_QUICK_PROMPTS,
@@ -50,7 +47,16 @@ import {
   PendingApprovalsPanel,
   type PendingApprovalItem,
 } from "@/features/assistant/pending-approvals";
+import {
+  ASSISTANT_QUERY_ROOT,
+  assistantConversationsQueryOptions,
+} from "@/features/assistant/queries";
 import { applyAssistantToolDecision } from "@/features/assistant/tool-decisions";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { bucketThreadsByDate, type ThreadSidebarItem } from "./date-buckets";
 const USER_NAME = "You";
 /** Maps a backend conversation list item to the seed thread shape. */
 function toThread(item: AssistantConversationListItem): AssistantThread {
@@ -395,7 +401,11 @@ export function AssistantSurface() {
     [pinMutation],
   );
   return (
-    <SurfaceFrame title="Helix AI" icon={<Icons.Sparkles />} searchPlaceholder="Search chats">
+    <SurfaceFrame
+      title="Helix AI"
+      icon={<SparklesIcon size={16} />}
+      searchPlaceholder="Search chats"
+    >
       <AssistantThreadList
         threadId={threadId}
         threads={threads}
@@ -413,9 +423,12 @@ export function AssistantSurface() {
         }}
         forgetPending={forgetMutation.isPending}
       />
-      <div style={mainPaneStyle}>
+      <div className="flex-1 flex flex-col min-w-0 bg-background">
         {notice !== null && (
-          <div role="status" style={noticeStyle}>
+          <div
+            role="status"
+            className="flex items-center justify-between gap-3 [padding:8px_32px] [font-size:var(--text-meta)] [color:var(--text-2)] bg-muted [border-bottom:1px_solid_var(--border)]"
+          >
             <span>{notice}</span>
             <button
               type="button"
@@ -425,7 +438,7 @@ export function AssistantSurface() {
                 setNotice(null);
               }}
             >
-              <Icons.More />
+              <MoreIcon size={16} />
             </button>
           </div>
         )}
@@ -501,24 +514,6 @@ function hydrateConversation(
         : assistantNowTime(new Date(message.createdAt)),
   }));
 }
-const mainPaneStyle: CSSProperties = {
-  flex: 1,
-  display: "flex",
-  flexDirection: "column",
-  minWidth: 0,
-  background: "var(--bg)",
-};
-const noticeStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 12,
-  padding: "8px 32px",
-  fontSize: "var(--text-meta)",
-  color: "var(--text-2)",
-  background: "var(--surface-2)",
-  borderBottom: "1px solid var(--border)",
-};
 /* ----------------------------------------------------------- thread list -- */
 interface AssistantThreadListProps {
   readonly threadId: string | null;
@@ -553,20 +548,20 @@ function AssistantThreadList({
   const pinned = threads.filter((thread) => thread.pinned === true);
   const recent = threads.filter((thread) => thread.pinned !== true);
   return (
-    <aside className="assistant-thread-sidebar" style={threadListStyle}>
-      <div style={{ padding: "12px 12px 8px" }}>
+    <aside className="assistant-thread-sidebar w-60 shrink-0 [border-right:1px_solid_var(--border)] bg-card flex flex-col">
+      <div className="[padding:12px_12px_8px]">
         <button
           type="button"
-          className="btn primary lg"
-          style={{ width: "100%" }}
+          className="btn primary lg w-full"
+
           onClick={onNewChat}
         >
-          <Icons.Plus /> New chat
+          <PlusIcon size={16} /> New chat
         </button>
       </div>
-      <div style={{ padding: "0 12px 8px" }}>
-        <div className="search" style={{ height: 28 }}>
-          <Icons.Search />
+      <div className="[padding:0_12px_8px]">
+        <div className="search h-7">
+          <SearchIcon size={16} />
           <input
             placeholder="Search chats"
             aria-label="Search chats"
@@ -589,43 +584,20 @@ function AssistantThreadList({
         onRename={onRename}
         onDelete={onDelete}
       />
-      <div style={threadFooterStyle}>
+      <div className="[padding:8px_12px] [border-top:1px_solid_var(--border)]">
         <button
           type="button"
-          className="btn sm"
-          style={{ width: "100%" }}
+          className="btn sm w-full"
+
           disabled={forgetPending}
           onClick={onForget}
         >
-          <Icons.History /> {forgetPending ? "Forgetting…" : "Forget memory"}
+          <HistoryIcon size={16} /> {forgetPending ? "Forgetting…" : "Forget memory"}
         </button>
       </div>
     </aside>
   );
 }
-const threadListStyle: CSSProperties = {
-  width: 240,
-  flexShrink: 0,
-  borderRight: "1px solid var(--border)",
-  background: "var(--surface)",
-  display: "flex",
-  flexDirection: "column",
-};
-const threadScrollStyle: CSSProperties = {
-  flex: 1,
-  overflowY: "auto",
-  padding: "4px 8px",
-};
-const threadFooterStyle: CSSProperties = {
-  padding: "8px 12px",
-  borderTop: "1px solid var(--border)",
-};
-const sectionLabelStyle: CSSProperties = { padding: "8px 4px 6px" };
-const threadEmptyStyle: CSSProperties = {
-  padding: "12px 6px",
-  fontSize: "var(--text-meta)",
-  color: "var(--text-3)",
-};
 interface VirtualizedThreadListProps {
   readonly loading: boolean;
   readonly errored: boolean;
@@ -682,22 +654,26 @@ function VirtualizedThreadList({
   });
   if (loading && pinned.length === 0 && recent.length === 0) {
     return (
-      <div style={threadScrollStyle} data-testid="assistant-thread-list">
-        <div style={threadEmptyStyle}>Loading chats…</div>
+      <div className="flex-1 overflow-y-auto [padding:4px_8px]" data-testid="assistant-thread-list">
+        <div className="[padding:12px_6px] [font-size:var(--text-meta)] text-muted-foreground">
+          Loading chats…
+        </div>
       </div>
     );
   }
   if (errored && pinned.length === 0 && recent.length === 0) {
     return (
-      <div style={threadScrollStyle} data-testid="assistant-thread-list">
-        <div style={threadEmptyStyle}>Chats unavailable — try again later.</div>
+      <div className="flex-1 overflow-y-auto [padding:4px_8px]" data-testid="assistant-thread-list">
+        <div className="[padding:12px_6px] [font-size:var(--text-meta)] text-muted-foreground">
+          Chats unavailable — try again later.
+        </div>
       </div>
     );
   }
   if (!loading && pinned.length === 0 && recent.length === 0) {
     return (
-      <div style={threadScrollStyle} data-testid="assistant-thread-list">
-        <div style={threadEmptyStyle}>
+      <div className="flex-1 overflow-y-auto [padding:4px_8px]" data-testid="assistant-thread-list">
+        <div className="[padding:12px_6px] [font-size:var(--text-meta)] text-muted-foreground">
           {search.trim().length > 0
             ? `No chats match “${search.trim()}”.`
             : "No chats yet — start a new one."}
@@ -706,12 +682,14 @@ function VirtualizedThreadList({
     );
   }
   return (
-    <div ref={scrollRef} style={threadScrollStyle} data-testid="assistant-thread-list">
+    <div
+      ref={scrollRef}
+      className="flex-1 overflow-y-auto [padding:4px_8px]"
+      data-testid="assistant-thread-list"
+    >
       {pinned.length > 0 && (
         <>
-          <div className="section-label" style={sectionLabelStyle}>
-            Pinned
-          </div>
+          <div className="section-label [padding:8px_4px_6px]">Pinned</div>
           {pinned.map((thread) => (
             <ThreadItem
               key={thread.id}
@@ -727,13 +705,7 @@ function VirtualizedThreadList({
       )}
 
       {sidebarItems.length > 0 && (
-        <div
-          style={{
-            position: "relative",
-            height: virtualizer.getTotalSize(),
-            width: "100%",
-          }}
-        >
+        <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
           {virtualizer.getVirtualItems().map((virtual) => {
             const item = sidebarItems[virtual.index];
             if (item === undefined) return null;
@@ -742,18 +714,11 @@ function VirtualizedThreadList({
                 key={virtual.key}
                 ref={virtualizer.measureElement}
                 data-index={virtual.index}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${String(virtual.start)}px)`,
-                }}
+                className="absolute top-0 left-0 w-full"
+                style={{ transform: `translateY(${String(virtual.start)}px)` }}
               >
                 {item.kind === "header" ? (
-                  <div className="section-label" style={sectionLabelStyle}>
-                    {item.label}
-                  </div>
+                  <div className="section-label [padding:8px_4px_6px]">{item.label}</div>
                 ) : (
                   <ThreadItem
                     thread={item.thread}
@@ -802,24 +767,18 @@ function ThreadItem({
     };
   }, [menuOpen]);
   return (
-    <div style={{ position: "relative" }}>
+    <div className="relative">
       <button
         type="button"
         onClick={() => {
           onSelect(thread.id);
         }}
         aria-current={active ? "true" : undefined}
-        style={{
-          width: "100%",
-          display: "flex",
-          flexDirection: "column",
-          gap: 2,
-          padding: "8px 32px 8px 10px",
-          borderRadius: 6,
-          textAlign: "left",
-          background: active ? "var(--accent-soft)" : "transparent",
-          color: active ? "var(--accent)" : "var(--text)",
-        }}
+        className={cn(
+          "w-full flex flex-col gap-0.5 [padding:8px_32px_8px_10px] rounded-md text-left",
+          active ? "[background:var(--accent-soft)]" : "bg-transparent",
+          active ? "text-primary" : "text-foreground",
+        )}
         onMouseEnter={(event) => {
           if (!active) {
             event.currentTarget.style.background = "var(--hover)";
@@ -832,108 +791,80 @@ function ThreadItem({
         }}
       >
         <span
-          className="truncate"
-          style={{ fontSize: "var(--text-meta)", fontWeight: active ? 600 : 500 }}
+          className={cn(
+            "truncate",
+            "[font-size:var(--text-meta)]",
+            active ? "font-semibold" : "font-medium",
+          )}
         >
           {thread.pinned === true ? "📌 " : ""}
           {thread.title}
         </span>
-        <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
-          {thread.time}
-        </span>
+        <span className="[font-size:var(--text-caption)] text-muted-foreground">{thread.time}</span>
       </button>
       <button
         type="button"
-        className="icon-btn"
+        className="icon-btn absolute top-1.5 right-1 w-5.5 h-5.5"
         aria-label={`Chat options for ${thread.title}`}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
-        style={threadMenuButtonStyle}
+
         onClick={(event) => {
           event.stopPropagation();
           setMenuOpen((open) => !open);
         }}
       >
-        <Icons.MoreV />
+        <MoreVIcon size={16} />
       </button>
       {menuOpen && (
-        <div role="menu" style={threadMenuStyle}>
+        <div
+          role="menu"
+          className="absolute top-7 right-1 [z-index:20] min-w-35 bg-card [border:1px_solid_var(--border)] rounded-lg [box-shadow:var(--shadow-md)] p-1 flex flex-col"
+        >
           <button
             type="button"
             role="menuitem"
-            className="menu-item"
-            style={threadMenuItemStyle}
+            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md [font-size:var(--text-meta)] text-left bg-transparent"
+
             onClick={(event) => {
               event.stopPropagation();
               setMenuOpen(false);
               onTogglePin(thread);
             }}
           >
-            <Icons.Pin /> {thread.pinned === true ? "Unpin" : "Pin"}
+            <PinIcon size={16} /> {thread.pinned === true ? "Unpin" : "Pin"}
           </button>
           <button
             type="button"
             role="menuitem"
-            className="menu-item"
-            style={threadMenuItemStyle}
+            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md [font-size:var(--text-meta)] text-left bg-transparent"
+
             onClick={(event) => {
               event.stopPropagation();
               setMenuOpen(false);
               onRename(thread);
             }}
           >
-            <Icons.EditPen /> Rename
+            <EditPenIcon size={16} /> Rename
           </button>
           <button
             type="button"
             role="menuitem"
-            className="menu-item"
-            style={{ ...threadMenuItemStyle, color: "var(--danger, #dc2626)" }}
+            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md [font-size:var(--text-meta)] text-left bg-transparent [color:var(--danger,_#dc2626)]"
+
             onClick={(event) => {
               event.stopPropagation();
               setMenuOpen(false);
               onDelete(thread);
             }}
           >
-            <Icons.Trash /> Archive
+            <TrashIcon size={16} /> Archive
           </button>
         </div>
       )}
     </div>
   );
 }
-const threadMenuButtonStyle: CSSProperties = {
-  position: "absolute",
-  top: 6,
-  right: 4,
-  width: 22,
-  height: 22,
-};
-const threadMenuStyle: CSSProperties = {
-  position: "absolute",
-  top: 28,
-  right: 4,
-  zIndex: 20,
-  minWidth: 140,
-  background: "var(--surface)",
-  border: "1px solid var(--border)",
-  borderRadius: 8,
-  boxShadow: "var(--shadow-md)",
-  padding: 4,
-  display: "flex",
-  flexDirection: "column",
-};
-const threadMenuItemStyle: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  width: "100%",
-  padding: "6px 8px",
-  borderRadius: 6,
-  fontSize: "var(--text-meta)",
-  textAlign: "left",
-  background: "transparent",
-};
 /* ------------------------------------------------------- rename / delete -- */
 interface RenameDialogProps {
   readonly thread: AssistantThread;
@@ -969,15 +900,13 @@ function RenameDialog({ thread, pending, onCancel, onSubmit }: RenameDialogProps
         </>
       }
     >
-      <label style={{ display: "block", fontSize: "var(--text-meta)", marginBottom: 6 }}>
-        Chat title
-      </label>
+      <label className="block [font-size:var(--text-meta)] mb-1.5">Chat title</label>
       <input
-        className="input"
+        className="input w-full"
         aria-label="Chat title"
         value={value}
         autoFocus
-        style={{ width: "100%" }}
+
         onChange={(event) => {
           setValue(event.target.value);
         }}
@@ -1013,7 +942,7 @@ function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProp
         </>
       }
     >
-      <p style={{ fontSize: "var(--text-body-sm)", margin: 0 }}>
+      <p className="[font-size:var(--text-body-sm)] m-0">
         Archive <strong>{thread.title}</strong>? It will disappear from your thread list. The
         conversation history is retained server-side.
       </p>
@@ -1026,18 +955,18 @@ interface AssistantHeroProps {
 }
 function AssistantHero({ onPrompt }: AssistantHeroProps) {
   return (
-    <div style={heroScrollStyle}>
-      <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        <div style={heroIconStyle}>
-          <Icons.Sparkles size={28} />
+    <div className="flex-1 overflow-y-auto [padding:48px_32px]">
+      <div className="max-w-180 [margin:0_auto]">
+        <div className="w-14 h-14 [border-radius:14px] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] grid [place-items:center] [color:white] mb-5 [box-shadow:var(--shadow-md)]">
+          <SparklesIcon size={28} />
         </div>
-        <h1 style={heroTitleStyle}>
-          What can I help you with, <span style={{ color: "var(--accent)" }}>Alex</span>?
+        <h1 className="[font-size:var(--text-display)] font-bold [letter-spacing:-0.02em] [margin:0_0_8px] [line-height:1.1]">
+          What can I help you with, <span className="text-primary">Alex</span>?
         </h1>
-        <p style={heroSubheadStyle}>
+        <p className="[font-size:var(--text-body-lg)] [color:var(--text-2)] [margin:0_0_32px]">
           {"Connected to Mail, Drive, and Chat. Ask about your workspace or pick a prompt below."}
         </p>
-        <div style={heroGridStyle}>
+        <div className="grid [grid-template-columns:repeat(2,_1fr)] gap-2.5">
           {ASSISTANT_QUICK_PROMPTS.map((prompt) => {
             const PromptIcon = Icons[prompt.icon];
             return (
@@ -1047,7 +976,7 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
                 onClick={() => {
                   onPrompt(prompt.title);
                 }}
-                style={quickPromptStyle}
+                className="bg-card [border:1px_solid_var(--border)] [border-radius:10px] p-3.5 flex items-center gap-3 text-left [transition:border-color_0.15s]"
                 onMouseEnter={(event) => {
                   event.currentTarget.style.borderColor = "var(--accent-soft-border)";
                 }}
@@ -1056,28 +985,16 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
                 }}
               >
                 <span
-                  style={{
-                    ...quickPromptTileStyle,
-                    background: `${prompt.color}1f`,
-                    color: prompt.color,
-                  }}
+                  className="w-9 h-9 rounded-lg grid [place-items:center] shrink-0"
+                  style={{ background: `${prompt.color}1f`, color: prompt.color }}
                 >
-                  <PromptIcon />
+                  <PromptIcon size={16} />
                 </span>
                 <span>
-                  <span
-                    style={{ display: "block", fontSize: "var(--text-body-sm)", fontWeight: 600 }}
-                  >
+                  <span className="block [font-size:var(--text-body-sm)] font-semibold">
                     {prompt.title}
                   </span>
-                  <span
-                    style={{
-                      display: "block",
-                      fontSize: "var(--text-caption)",
-                      color: "var(--text-3)",
-                      marginTop: 2,
-                    }}
-                  >
+                  <span className="block [font-size:var(--text-caption)] text-muted-foreground mt-0.5">
                     {prompt.sub}
                   </span>
                 </span>
@@ -1089,58 +1006,6 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
     </div>
   );
 }
-const heroScrollStyle: CSSProperties = {
-  flex: 1,
-  overflowY: "auto",
-  padding: "48px 32px",
-};
-const heroIconStyle: CSSProperties = {
-  width: 56,
-  height: 56,
-  borderRadius: 14,
-  background: "linear-gradient(135deg, var(--accent), var(--accent-2))",
-  display: "grid",
-  placeItems: "center",
-  color: "white",
-  marginBottom: 20,
-  boxShadow: "var(--shadow-md)",
-};
-const heroTitleStyle: CSSProperties = {
-  fontSize: "var(--text-display)",
-  fontWeight: 700,
-  letterSpacing: "-0.02em",
-  margin: "0 0 8px",
-  lineHeight: 1.1,
-};
-const heroSubheadStyle: CSSProperties = {
-  fontSize: "var(--text-body-lg)",
-  color: "var(--text-2)",
-  margin: "0 0 32px",
-};
-const heroGridStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(2, 1fr)",
-  gap: 10,
-};
-const quickPromptStyle: CSSProperties = {
-  background: "var(--surface)",
-  border: "1px solid var(--border)",
-  borderRadius: 10,
-  padding: 14,
-  display: "flex",
-  alignItems: "center",
-  gap: 12,
-  textAlign: "left",
-  transition: "border-color 0.15s",
-};
-const quickPromptTileStyle: CSSProperties = {
-  width: 36,
-  height: 36,
-  borderRadius: 8,
-  display: "grid",
-  placeItems: "center",
-  flexShrink: 0,
-};
 /* ---------------------------------------------------------- conversation -- */
 interface AssistantConversationProps {
   readonly conversation: readonly AssistantChatMessage[];
@@ -1177,15 +1042,14 @@ function AssistantConversation({ conversation, pending, onNavigate }: AssistantC
     // delta nudges us back to the bottom even mid-stream.
   }, [virtualizer, totalRows, pending, streamingText]);
   return (
-    <div ref={scrollRef} style={conversationScrollStyle} data-testid="assistant-conversation">
+    <div
+      ref={scrollRef}
+      className="flex-1 overflow-y-auto [padding:24px_32px]"
+      data-testid="assistant-conversation"
+    >
       <div
-        style={{
-          position: "relative",
-          maxWidth: 800,
-          margin: "0 auto",
-          height: virtualizer.getTotalSize(),
-          width: "100%",
-        }}
+        className="relative max-w-200 [margin:0_auto] w-full"
+        style={{ height: virtualizer.getTotalSize() }}
       >
         {virtualizer.getVirtualItems().map((virtual) => {
           const isFooter = virtual.index === conversation.length;
@@ -1196,19 +1060,14 @@ function AssistantConversation({ conversation, pending, onNavigate }: AssistantC
               key={virtual.key}
               ref={virtualizer.measureElement}
               data-index={virtual.index}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                transform: `translateY(${String(virtual.start)}px)`,
-              }}
+              className="absolute top-0 left-0 w-full"
+              style={{ transform: `translateY(${String(virtual.start)}px)` }}
             >
               {isFooter ? (
-                <div style={disclaimerRowStyle}>
-                  <span style={disclaimerStyle}>
-                    <Icons.Sparkles /> Helix AI may produce inaccurate information. Verify important
-                    details.
+                <div className="flex justify-center [padding:16px_0]">
+                  <span className="[font-size:var(--text-caption)] text-muted-foreground flex items-center gap-2">
+                    <SparklesIcon size={16} /> Helix AI may produce inaccurate information. Verify
+                    important details.
                   </span>
                 </div>
               ) : (
@@ -1221,33 +1080,6 @@ function AssistantConversation({ conversation, pending, onNavigate }: AssistantC
     </div>
   );
 }
-const conversationScrollStyle: CSSProperties = {
-  flex: 1,
-  overflowY: "auto",
-  padding: "24px 32px",
-};
-const disclaimerRowStyle: CSSProperties = {
-  display: "flex",
-  justifyContent: "center",
-  padding: "16px 0",
-};
-const disclaimerStyle: CSSProperties = {
-  fontSize: "var(--text-caption)",
-  color: "var(--text-3)",
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-};
-const sparkleTileStyle: CSSProperties = {
-  width: 28,
-  height: 28,
-  borderRadius: 8,
-  flexShrink: 0,
-  background: "linear-gradient(135deg, var(--accent), var(--accent-2))",
-  color: "white",
-  display: "grid",
-  placeItems: "center",
-};
 interface ChatMessageProps {
   readonly message: AssistantChatMessage;
   readonly onNavigate: (target: string) => void;
@@ -1255,24 +1087,30 @@ interface ChatMessageProps {
 function ChatMessage({ message, onNavigate }: ChatMessageProps) {
   if (message.role === "user") {
     return (
-      <div style={userRowStyle}>
-        <div style={userBubbleStyle}>{message.text}</div>
+      <div className="flex gap-3 mb-5 justify-end">
+        <div className="[background:var(--accent-soft)] text-foreground [padding:10px_14px] [border-radius:12px] max-w-130 [font-size:var(--text-body-sm)] [line-height:1.55] [border:1px_solid_var(--accent-soft-border)] whitespace-pre-wrap">
+          {message.text}
+        </div>
         <Avatar name={USER_NAME} size={28} />
       </div>
     );
   }
   const isPending = message.streaming === true && message.text.length === 0;
   return (
-    <div style={assistantRowStyle}>
-      <div style={sparkleTileStyle}>
-        <Icons.Sparkles size={14} />
+    <div className="flex gap-3 mb-6">
+      <div className="w-7 h-7 rounded-lg shrink-0 [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [color:white] grid [place-items:center]">
+        <SparklesIcon size={14} />
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="flex-1 min-w-0">
         {isPending ? (
           <PendingDots />
         ) : (
           <>
-            {message.text.length > 0 && <div style={assistantTextStyle}>{message.text}</div>}
+            {message.text.length > 0 && (
+              <div className="[font-size:var(--text-body-sm)] [line-height:1.6] mb-3 whitespace-pre-wrap">
+                {message.text}
+              </div>
+            )}
             {message.blocks?.map((block, index) => (
               <MessageBlock
                 key={`${message.id}-block-${String(index)}`}
@@ -1281,7 +1119,7 @@ function ChatMessage({ message, onNavigate }: ChatMessageProps) {
               />
             ))}
             {message.streaming !== true && (
-              <div style={{ display: "flex", gap: 4, marginTop: 12 }}>
+              <div className="flex gap-1 mt-3">
                 <button
                   type="button"
                   className="icon-btn"
@@ -1290,7 +1128,7 @@ function ChatMessage({ message, onNavigate }: ChatMessageProps) {
                     void navigator.clipboard?.writeText(message.text);
                   }}
                 >
-                  <Icons.Doc />
+                  <DocIcon size={16} />
                 </button>
               </div>
             )}
@@ -1300,51 +1138,18 @@ function ChatMessage({ message, onNavigate }: ChatMessageProps) {
     </div>
   );
 }
-const userRowStyle: CSSProperties = {
-  display: "flex",
-  gap: 12,
-  marginBottom: 20,
-  justifyContent: "flex-end",
-};
-const userBubbleStyle: CSSProperties = {
-  background: "var(--accent-soft)",
-  color: "var(--text)",
-  padding: "10px 14px",
-  borderRadius: 12,
-  maxWidth: 520,
-  fontSize: "var(--text-body-sm)",
-  lineHeight: 1.55,
-  border: "1px solid var(--accent-soft-border)",
-  whiteSpace: "pre-wrap",
-};
-const assistantRowStyle: CSSProperties = {
-  display: "flex",
-  gap: 12,
-  marginBottom: 24,
-};
-const assistantTextStyle: CSSProperties = {
-  fontSize: "var(--text-body-sm)",
-  lineHeight: 1.6,
-  marginBottom: 12,
-  whiteSpace: "pre-wrap",
-};
 function PendingDots() {
   return (
     <div
-      style={{ display: "inline-flex", gap: 4, alignItems: "center", padding: "10px 0" }}
+      className="inline-flex gap-1 items-center [padding:10px_0]"
       role="status"
       aria-label="Helix AI is thinking"
     >
       {[0, 1, 2].map((index) => (
         <span
           key={index}
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: 999,
-            background: "var(--text-3)",
-            animation: `helix-pending 1.2s ${String(index * 0.15)}s infinite`,
-          }}
+          className="w-1.5 h-1.5 [border-radius:999px] [background:var(--text-3)]"
+          style={{ animation: `helix-pending 1.2s ${String(index * 0.15)}s infinite` }}
         />
       ))}
     </div>
@@ -1358,13 +1163,11 @@ interface MessageBlockProps {
 function MessageBlock({ block, onNavigate }: MessageBlockProps) {
   if (block.kind === "list") {
     return (
-      <div style={listPanelStyle}>
-        <div style={{ fontWeight: 600, fontSize: "var(--text-body-sm)", marginBottom: 8 }}>
-          {block.title}
-        </div>
-        <ul style={{ margin: 0, paddingLeft: 18, fontSize: "var(--text-meta)", lineHeight: 1.6 }}>
+      <div className="bg-card [border:1px_solid_var(--border)] rounded-lg [padding:12px_14px] mb-2">
+        <div className="font-semibold [font-size:var(--text-body-sm)] mb-2">{block.title}</div>
+        <ul className="m-0 pl-4.5 [font-size:var(--text-meta)] [line-height:1.6]">
           {block.items.map((item, index) => (
-            <li key={index} style={{ marginBottom: 4 }}>
+            <li key={index} className="mb-1">
               {item}
             </li>
           ))}
@@ -1374,20 +1177,20 @@ function MessageBlock({ block, onNavigate }: MessageBlockProps) {
   }
   if (block.kind === "draft") {
     return (
-      <div style={draftPanelStyle}>
-        <div style={draftToolbarStyle}>
-          <Icons.EditPen />
-          <span style={{ fontWeight: 600 }}>{block.title}</span>
-          <span className="chip accent" style={{ marginLeft: "auto" }}>
-            Draft
-          </span>
+      <div className="bg-card [border:1px_solid_var(--border)] rounded-lg mb-2 overflow-hidden">
+        <div className="bg-muted [padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-1.5 [font-size:var(--text-meta)]">
+          <EditPenIcon size={16} />
+          <span className="font-semibold">{block.title}</span>
+          <span className="chip accent ml-auto">Draft</span>
         </div>
-        <div style={draftBodyStyle}>{block.body}</div>
+        <div className="[padding:12px_14px] whitespace-pre-wrap [font-size:var(--text-meta)] [line-height:1.6]">
+          {block.body}
+        </div>
       </div>
     );
   }
   return (
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+    <div className="flex gap-1.5 flex-wrap">
       {block.items.map((action, index) => {
         const ActionIcon = Icons[action.icon];
         return (
@@ -1401,42 +1204,13 @@ function MessageBlock({ block, onNavigate }: MessageBlockProps) {
               }
             }}
           >
-            <ActionIcon /> {action.label}
+            <ActionIcon size={16} /> {action.label}
           </button>
         );
       })}
     </div>
   );
 }
-const listPanelStyle: CSSProperties = {
-  background: "var(--surface)",
-  border: "1px solid var(--border)",
-  borderRadius: 8,
-  padding: "12px 14px",
-  marginBottom: 8,
-};
-const draftPanelStyle: CSSProperties = {
-  background: "var(--surface)",
-  border: "1px solid var(--border)",
-  borderRadius: 8,
-  marginBottom: 8,
-  overflow: "hidden",
-};
-const draftToolbarStyle: CSSProperties = {
-  background: "var(--surface-2)",
-  padding: "8px 14px",
-  borderBottom: "1px solid var(--border)",
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  fontSize: "var(--text-meta)",
-};
-const draftBodyStyle: CSSProperties = {
-  padding: "12px 14px",
-  whiteSpace: "pre-wrap",
-  fontSize: "var(--text-meta)",
-  lineHeight: 1.6,
-};
 /* -------------------------------------------------------------- composer -- */
 interface AssistantComposerProps {
   readonly onSend: (text: string) => void;
@@ -1461,9 +1235,9 @@ function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
     [submit],
   );
   return (
-    <div style={{ padding: "12px 32px 20px", flexShrink: 0 }}>
-      <div style={{ maxWidth: 800, margin: "0 auto" }}>
-        <div style={composerCardStyle}>
+    <div className="[padding:12px_32px_20px] shrink-0">
+      <div className="max-w-200 [margin:0_auto]">
+        <div className="[border:1px_solid_var(--border)] [border-radius:14px] bg-card p-1 [box-shadow:var(--shadow-sm)]">
           <textarea
             value={text}
             onChange={(event) => {
@@ -1472,22 +1246,21 @@ function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
             onKeyDown={handleKeyDown}
             placeholder="Ask anything…"
             aria-label="Message Helix AI"
-            style={composerTextareaStyle}
+            className="w-full [padding:12px_14px] [border:none] outline-none bg-transparent [font-size:var(--text-body)] [line-height:1.5] [resize:none] min-h-15 [font-family:inherit] text-foreground"
           />
-          <div style={composerToolbarStyle}>
-            <div style={{ flex: 1 }} />
-            <span style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}>
+          <div className="flex [padding:4px_8px_6px] gap-1 items-center">
+            <div className="flex-1" />
+            <span className="[font-size:var(--text-caption)] text-muted-foreground">
               <span className="kbd">↵</span> send · <span className="kbd">⇧↵</span> newline
             </span>
             <button
               type="button"
-              className="btn primary sm"
+              className={cn("btn primary sm", pending ? "[opacity:0.5]" : "[opacity:1]")}
               disabled={pending}
               onClick={submit}
               aria-label="Send message"
-              style={{ opacity: pending ? 0.5 : 1 }}
             >
-              <Icons.Send />
+              <SendIcon size={16} />
             </button>
           </div>
         </div>
@@ -1495,29 +1268,3 @@ function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
     </div>
   );
 }
-const composerCardStyle: CSSProperties = {
-  border: "1px solid var(--border)",
-  borderRadius: 14,
-  background: "var(--surface)",
-  padding: 4,
-  boxShadow: "var(--shadow-sm)",
-};
-const composerTextareaStyle: CSSProperties = {
-  width: "100%",
-  padding: "12px 14px",
-  border: "none",
-  outline: "none",
-  background: "transparent",
-  fontSize: "var(--text-body)",
-  lineHeight: 1.5,
-  resize: "none",
-  minHeight: 60,
-  fontFamily: "inherit",
-  color: "var(--text)",
-};
-const composerToolbarStyle: CSSProperties = {
-  display: "flex",
-  padding: "4px 8px 6px",
-  gap: 4,
-  alignItems: "center",
-};

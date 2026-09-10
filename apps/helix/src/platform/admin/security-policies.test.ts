@@ -53,6 +53,13 @@ describe("security policy settings validation", () => {
     expect(bad.ok).toBe(false);
   });
 
+  it("does not accept removed editor apps in device trust policies", () => {
+    expect(
+      parsePolicySettings("device_trust", { protectedApps: ["drive", "mail", "calendar"] }).ok,
+    ).toBe(true);
+    expect(parsePolicySettings("device_trust", { protectedApps: ["docs"] }).ok).toBe(false);
+  });
+
   it("stores bounded idle, absolute, reauthentication, and concurrent session limits", () => {
     expect(defaultPolicy("session").settings).toEqual({
       inactivityTimeoutDays: 14,

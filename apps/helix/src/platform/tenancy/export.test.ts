@@ -1,5 +1,3 @@
-import fastify from "fastify";
-import type postgres from "postgres";
 import type {
   Actor,
   MeteringClient,
@@ -7,9 +5,10 @@ import type {
   MeteringEvent,
   TraceContext,
 } from "@helix/sdk-types";
+import fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import { InMemoryTenantHourlyQuotaLimiter } from "../limits/index.js";
-import type { CreateOrgInput, DefaultOrgInput, OrgRecord, OrgStore } from "./orgs.js";
 import { TenantResolutionError, resolveTenantContext } from "./context.js";
 import {
   buildTenantExportArchive,
@@ -23,6 +22,7 @@ import {
   type TenantLifecycleStore,
 } from "./lifecycle-routes.js";
 import { installTenantContextHook } from "./middleware.js";
+import type { CreateOrgInput, DefaultOrgInput, OrgRecord, OrgStore } from "./orgs.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const otherOrgId = "33333333-3333-4333-8333-333333333333";
@@ -638,30 +638,6 @@ describe("registerTenantLifecycleRoutes", () => {
     await invalid.close();
   });
 });
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  let callIndex = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
-    return Promise.resolve(responses[callIndex++] ?? []);
-  };
-  return {
-    sql: Object.assign(tag, {
-      json: (value: unknown) => value,
-      array: (value: unknown) => value,
-    }) as unknown as postgres.Sql,
-    calls,
-  };
-}
 
 function orgRecord(overrides: Partial<OrgRecord> = {}): OrgRecord {
   return {

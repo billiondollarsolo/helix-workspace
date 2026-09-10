@@ -11,7 +11,7 @@ import { dataClassifications, type DataClassification } from "./types.js";
  */
 export const missingContextClassification: DataClassification = "restricted";
 
-export type ClassificationContextKind =
+type ClassificationContextKind =
   "conversation" | "history" | "memory" | "retrieved_source" | "tool_result";
 
 export interface ClassificationContext {
@@ -31,7 +31,7 @@ export interface EffectiveClassificationInput {
   readonly contexts?: readonly ClassificationContext[];
 }
 
-export interface ClassificationContributor {
+interface ClassificationContributor {
   readonly id: string;
   readonly kind: ClassificationContextKind | "baseline" | "client_hint" | "user_input";
   readonly classification: DataClassification;

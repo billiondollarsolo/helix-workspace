@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -41,10 +42,7 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("atomic Drive storage qu
   );
 
   async function cleanup() {
-    await admin`delete from outbox where subject = ${`metering.events.${orgId}`}`;
-    await admin`delete from objects where org_id = ${orgId}`;
-    await admin`delete from actors where org_id = ${orgId}`;
-    await admin`delete from orgs where id = ${orgId}`;
+    await cleanupTestTenants(admin, [orgId]);
   }
 
   async function asTenant<T>(callback: (tx: postgres.TransactionSql) => Promise<T>): Promise<T> {

@@ -30,6 +30,7 @@ describe("group membership tenant integrity", { skip: !process.env.DATABASE_URL 
         "utf8",
       ),
     );
+    await sql`insert into orgs (id, slug, display_name) values (${ORG_A}, 'group-integrity-a', 'Tenant A'), (${ORG_B}, 'group-integrity-b', 'Tenant B') on conflict (id) do nothing`;
     await withTenantPostgresContext(sql, { orgId: ORG_A }, async (tx) => {
       await tx`
           insert into actors (id, org_id, type, display_name, disabled_at)

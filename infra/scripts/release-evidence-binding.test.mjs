@@ -41,6 +41,9 @@ describe("release evidence binding", () => {
       validateReleaseEvidenceBinding(binding, { ...expected, workspaceSha: "d".repeat(40) }),
     ).toThrow("does not match");
     expect(() =>
+      validateReleaseEvidenceBinding({ ...binding, editorsSha: "e".repeat(40) }),
+    ).toThrow("unexpected, missing, or secret-like");
+    expect(() =>
       validateReleaseEvidenceBinding({ ...binding, signingSecret: "must-not-persist" }),
     ).toThrow("unexpected, missing, or secret-like");
     expect(() =>

@@ -39,9 +39,7 @@ export async function callTool<Output = unknown>(
   const output: unknown = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(
-      errorMessage(output) ?? `${toolId} failed with ${String(response.status)}`,
-    );
+    throw new Error(errorMessage(output) ?? `${toolId} failed with ${String(response.status)}`);
   }
 
   if (autoApprove && isPendingConfirmation(output)) {
@@ -51,12 +49,12 @@ export async function callTool<Output = unknown>(
   return output as Output;
 }
 
-export interface PendingConfirmationEnvelope {
+interface PendingConfirmationEnvelope {
   readonly status: "pending_confirmation";
   readonly pending: { readonly id: string };
 }
 
-export function isPendingConfirmation(value: unknown): value is PendingConfirmationEnvelope {
+function isPendingConfirmation(value: unknown): value is PendingConfirmationEnvelope {
   return (
     isRecord(value) &&
     value.status === "pending_confirmation" &&
@@ -65,18 +63,12 @@ export function isPendingConfirmation(value: unknown): value is PendingConfirmat
   );
 }
 
-async function approvePending<Output>(
-  pendingId: string,
-  fetchImpl: ToolFetch,
-): Promise<Output> {
-  const response = await fetchImpl(
-    `/api/tools/pending/${encodeURIComponent(pendingId)}/approve`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    },
-  );
+async function approvePending<Output>(pendingId: string, fetchImpl: ToolFetch): Promise<Output> {
+  const response = await fetchImpl(`/api/tools/pending/${encodeURIComponent(pendingId)}/approve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(

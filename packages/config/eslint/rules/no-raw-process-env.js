@@ -26,16 +26,7 @@ function isAllowlisted(filename) {
     return true;
   }
 
-  if (/(?:^|\/)tests?\//u.test(path)) {
-    return true;
-  }
-
-  // Seed / demo / smoke scripts intentionally read raw env for operator CLIs.
-  if (
-    /\/db\/(?:seed[^/]*|verify-local-demo|prepare-local-demo|index-local-demo|reseed|fetch-corpus|generate-corpus)\./u.test(
-      path,
-    )
-  ) {
+  if (/(?:^|\/)(?:tests?|test-support)\//u.test(path)) {
     return true;
   }
 
@@ -72,7 +63,7 @@ export const noRawProcessEnvRule = {
     },
     messages: {
       noRawProcessEnv:
-        "Use env() from config/env.ts instead of process.env.{{key}}. Tests, seeds, and migrate scripts are exempt.",
+        "Use env() from config/env.ts instead of process.env.{{key}}. Tests and migrate scripts are exempt.",
     },
     schema: [],
   },
@@ -107,5 +98,3 @@ export const noRawProcessEnvRule = {
     };
   },
 };
-
-export default noRawProcessEnvRule;

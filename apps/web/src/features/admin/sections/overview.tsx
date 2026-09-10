@@ -1,3 +1,12 @@
+import {
+  Briefcase as BriefcaseIcon,
+  Check as CheckIcon,
+  Globe as GlobeIcon,
+  Lock as LockIcon,
+  RefreshCw as RefreshIcon,
+  Shield as ShieldIcon,
+  Users as UsersIcon,
+} from "lucide-react";
 /* Admin › Overview — the console's landing section.
  *
  * Overview answers one question: is anything wrong in this workspace? It adds
@@ -35,10 +44,6 @@
  * every load and in every state, because the way a status page does real
  * damage is an operator reading a quiet one as a checked workspace. */
 
-import type { ReactNode } from "react";
-import { Link } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import {
   ADMIN_NAV_GROUPS,
@@ -46,14 +51,14 @@ import {
   ADMIN_SECTION_IDS,
   type AdminSectionId,
 } from "@/features/admin/admin-console-data";
-import { type AdminUsersListResponse } from "@/features/admin/admin-users";
-import { type CoreAppsAdminStatus } from "@/features/admin/core-apps-api";
-import { type DomainWithRecords } from "@/features/admin/domains-api";
-import { securityPolicyLabels, type SecurityPolicy } from "@/features/admin/security-policies-api";
-import { titleForTier } from "@/features/admin/tier-readiness/format";
-import type { PlatformConfigStatus } from "@/features/admin/tier-readiness/types";
 import {
-  HEADER_CELL,
+  adminOverviewQueryKey,
+  adminOverviewQueryOptions,
+  type AdminOverviewSignalData,
+  type AdminOverviewSignalName,
+} from "@/features/admin/admin-overview-api";
+import { type AdminUsersListResponse } from "@/features/admin/admin-users";
+import {
   PageHeading,
   PageScroll,
   QueryFailureBanner,
@@ -61,12 +66,14 @@ import {
   useQueryFailure,
   type QueryFailure,
 } from "@/features/admin/console/primitives";
-import {
-  adminOverviewQueryKey,
-  adminOverviewQueryOptions,
-  type AdminOverviewSignalData,
-  type AdminOverviewSignalName,
-} from "@/features/admin/admin-overview-api";
+import { type CoreAppsAdminStatus } from "@/features/admin/core-apps-api";
+import { type DomainWithRecords } from "@/features/admin/domains-api";
+import { securityPolicyLabels, type SecurityPolicy } from "@/features/admin/security-policies-api";
+import { titleForTier } from "@/features/admin/tier-readiness/format";
+import type { PlatformConfigStatus } from "@/features/admin/tier-readiness/types";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 
 /* Re-exported so the console's section registry (`console/section-loaders.ts`)
    and this section's tests keep finding it on the module that owns the page. */
@@ -498,7 +505,7 @@ export function AdminOverview() {
       {
         id: "domains",
         title: "Domains",
-        icon: <Icons.Globe />,
+        icon: <GlobeIcon size={16} />,
         section: "domains",
         linkLabel: "Open Domains",
         subject: "domains",
@@ -511,7 +518,7 @@ export function AdminOverview() {
       {
         id: "policies",
         title: "Security policies",
-        icon: <Icons.Lock />,
+        icon: <LockIcon size={16} />,
         section: "policies",
         linkLabel: "Open Policies",
         subject: "security policies",
@@ -524,7 +531,7 @@ export function AdminOverview() {
       {
         id: "platform",
         title: "Tier readiness",
-        icon: <Icons.Shield />,
+        icon: <ShieldIcon size={16} />,
         section: "tier-readiness",
         linkLabel: "Open Tier readiness",
         subject: "platform configuration",
@@ -537,7 +544,7 @@ export function AdminOverview() {
       {
         id: "directory",
         title: "Directory",
-        icon: <Icons.Users />,
+        icon: <UsersIcon size={16} />,
         section: "users",
         linkLabel: "Open Users",
         subject: "the directory",
@@ -550,7 +557,7 @@ export function AdminOverview() {
       {
         id: "apps",
         title: "Workspace apps",
-        icon: <Icons.Briefcase />,
+        icon: <BriefcaseIcon size={16} />,
         section: "workspace-apps",
         linkLabel: "Open Workspace apps",
         subject: "workspace apps",
@@ -599,7 +606,7 @@ export function AdminOverview() {
             disabled={isRefreshing}
             onClick={refreshAll}
           >
-            <Icons.Refresh /> {isRefreshing ? "Refreshing…" : "Refresh"}
+            <RefreshIcon size={16} /> {isRefreshing ? "Refreshing…" : "Refresh"}
           </Button>
         }
       />
@@ -626,7 +633,7 @@ export function AdminOverview() {
       ))}
 
       {/* A real h2 rather than a jump from the page h1 to the card h3s. */}
-      <h2 className="mt-4 mb-2" style={HEADER_CELL}>
+      <h2 className="mt-4 mb-2 [font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
         Checks
       </h2>
       {/* 200px lands five cards on one row at the console's 1280px cap, so the
@@ -639,7 +646,7 @@ export function AdminOverview() {
 
       {/* Enterprise detail bands reuse the same five query payloads — no extra
           rps. Partial / failed queries stay labeled unavailable, never green. */}
-      <h2 className="mt-6 mb-2" style={HEADER_CELL}>
+      <h2 className="mt-6 mb-2 [font-size:var(--text-caption)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
         Operational detail
       </h2>
       <div className="grid gap-3 lg:grid-cols-2">
@@ -702,18 +709,9 @@ export function AdminOverview() {
 
       {/* Rare detail: an operator acting on a figure needs the figure, not its
           provenance. An operator who distrusts a figure needs exactly this. */}
-      <details className="admin-disclosure" style={{ marginTop: 16 }}>
+      <details className="admin-disclosure mt-4">
         <summary>Where these five figures come from, and what they do not cover</summary>
-        <ul
-          style={{
-            margin: "8px 0 0",
-            paddingInlineStart: 20,
-            fontSize: "var(--text-meta)",
-            color: "var(--text-2)",
-            display: "grid",
-            gap: 4,
-          }}
-        >
+        <ul className="[margin:8px_0_0] [padding-inline-start:20px] [font-size:var(--text-meta)] [color:var(--text-2)] grid gap-1">
           <li>
             Domains counts verification status per registered domain. It does not check individual
             DNS records — open Domains for the MX/SPF/DKIM/DMARC detail.
@@ -773,14 +771,13 @@ function AttentionBand({ signals }: { readonly signals: readonly Signal[] }) {
     return (
       <section
         aria-labelledby="admin-overview-attention"
-        className="panel p-4"
-        style={{ background: "var(--warning-soft)", borderColor: "transparent" }}
+        className="panel p-4 [background:var(--warning-soft)] [border-color:transparent]"
       >
         <h2
           id="admin-overview-attention"
           className="m-0 text-base font-semibold flex items-center gap-2"
         >
-          <Icons.Shield />
+          <ShieldIcon size={16} />
           {flagged.length} {plural(flagged.length, "thing needs", "things need")} attention
         </h2>
         <ul className="mt-3 grid gap-2 list-none p-0 m-0">
@@ -839,11 +836,10 @@ function AttentionBand({ signals }: { readonly signals: readonly Signal[] }) {
   return (
     <section
       aria-labelledby="admin-overview-clear"
-      className="panel p-4"
-      style={{ background: "var(--success-soft)", borderColor: "transparent" }}
+      className="panel p-4 [background:var(--success-soft)] [border-color:transparent]"
     >
       <h2 id="admin-overview-clear" className="m-0 text-base font-semibold flex items-center gap-2">
-        <Icons.Check />
+        <CheckIcon size={16} />
         Nothing needs attention
       </h2>
       <p className="mt-2 mb-0 text-sm">

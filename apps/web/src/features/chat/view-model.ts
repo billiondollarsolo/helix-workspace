@@ -18,7 +18,7 @@ import type {
 } from "./api";
 
 /** Presence state for a sidebar entry — derived from the realtime roster. */
-export type ChatPresenceState = "active" | "offline";
+type ChatPresenceState = "active" | "offline";
 
 /** A reaction pill — emoji glyph plus a running count and whether *you* reacted. */
 export interface ChatReactionView {
@@ -103,7 +103,7 @@ export function formatChatTime(iso: string): string {
   return Number.isNaN(parsed.getTime()) ? iso : ISO_TIME.format(parsed);
 }
 
-export function formatChatDate(iso: string): string {
+function formatChatDate(iso: string): string {
   const parsed = new Date(iso);
   return Number.isNaN(parsed.getTime()) ? iso : ISO_DATE.format(parsed);
 }
@@ -121,7 +121,7 @@ export function roomDisplayName(room: ChatRoomRecord, selfActorId: string | null
   return room.kind === "chat_dm" ? "Direct message" : "Untitled space";
 }
 
-export function memberDisplayName(member: ChatRoomMemberRecord): string {
+function memberDisplayName(member: ChatRoomMemberRecord): string {
   if (member.displayName !== null && member.displayName.trim().length > 0) {
     return member.displayName;
   }

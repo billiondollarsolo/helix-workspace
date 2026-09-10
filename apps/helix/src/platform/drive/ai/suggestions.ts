@@ -8,36 +8,11 @@ import type {
   SuggestionContext,
   SuggestionSlotProviderCapability,
 } from "@helix/sdk-types";
-import { drivePluginId } from "../types.js";
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 
-export const driveSuggestionSlotIds = ["drive.describe-image", "drive.summarize-file"] as const;
+const driveSuggestionSlotIds = ["drive.describe-image", "drive.summarize-file"] as const;
 
-export type DriveSuggestionSlotId = (typeof driveSuggestionSlotIds)[number];
-
-export interface DriveSuggestionSlotDescriptor {
-  readonly id: DriveSuggestionSlotId;
-  readonly pluginId: typeof drivePluginId;
-  readonly label: string;
-  readonly description: string;
-  readonly order: number;
-}
-
-export const driveSuggestionSlots: readonly DriveSuggestionSlotDescriptor[] = [
-  {
-    id: "drive.describe-image",
-    pluginId: drivePluginId,
-    label: "Describe image",
-    description: "Describe image content from available file context",
-    order: 10,
-  },
-  {
-    id: "drive.summarize-file",
-    pluginId: drivePluginId,
-    label: "Summarize file",
-    description: "Summarize a drive file",
-    order: 20,
-  },
-];
+type DriveSuggestionSlotId = (typeof driveSuggestionSlotIds)[number];
 
 export interface DriveSuggestionProviderOptions {
   readonly ai: AICapability;
@@ -58,7 +33,8 @@ function createProvider(
     slotId,
     available: async (ctx) => ctx.feature === slotId || ctx.feature.length === 0,
     generate: async function* generate(ctx): AsyncIterable<SuggestionChunk> {
-      const classification = classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
+      const classification =
+        classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
       const response = await options.ai.chat(toChatRequest(slotId, ctx, classification), {
         actor: ctx.actor,
         feature: slotId,
@@ -104,7 +80,9 @@ function toChatRequest(
               type: ctx.resource.type,
               ...(ctx.resource.id === undefined ? {} : { id: ctx.resource.id }),
               ...(ctx.resource.orgId === undefined ? {} : { orgId: ctx.resource.orgId }),
-              ...(ctx.resource.attributes === undefined ? {} : { attributes: ctx.resource.attributes }),
+              ...(ctx.resource.attributes === undefined
+                ? {}
+                : { attributes: ctx.resource.attributes }),
             },
           }),
     },
@@ -125,7 +103,10 @@ function suggestionInputText(slotId: DriveSuggestionSlotId, ctx: SuggestionConte
   const path = arrayInput(input, "path").map(formatJsonValue).filter(hasText).join(" / ");
   const tags = arrayInput(input, "tags").map(formatJsonValue).filter(hasText).join(", ");
   const imageUrl = stringInput(input, "imageUrl") ?? stringInput(input, "url");
-  const previewText = stringInput(input, "previewText") ?? stringInput(input, "text") ?? stringInput(input, "content");
+  const previewText =
+    stringInput(input, "previewText") ??
+    stringInput(input, "text") ??
+    stringInput(input, "content");
   const ocrText = stringInput(input, "ocrText");
   const priorSummary = stringInput(input, "summary");
   const prompt = stringInput(input, "prompt");
@@ -148,7 +129,10 @@ function suggestionInputText(slotId: DriveSuggestionSlotId, ctx: SuggestionConte
 
 function classificationFromInput(input: JsonObject | undefined): AIClassification | undefined {
   const value = input?.classification;
-  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
+  return value === "public" ||
+    value === "standard" ||
+    value === "confidential" ||
+    value === "restricted"
     ? value
     : undefined;
 }
@@ -171,13 +155,11 @@ function formatJsonValue(value: JsonValue): string {
     return String(value);
   }
   if (isJsonObject(value)) {
-    return stringInput(value, "name") ?? stringInput(value, "label") ?? stringInput(value, "id") ?? "";
+    return (
+      stringInput(value, "name") ?? stringInput(value, "label") ?? stringInput(value, "id") ?? ""
+    );
   }
   return "";
-}
-
-function isJsonObject(value: JsonValue): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isJsonArray(value: JsonValue | undefined): value is readonly JsonValue[] {

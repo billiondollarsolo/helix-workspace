@@ -1,20 +1,20 @@
-import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
-import { createStoreBackedMcpResourceProvider } from "./mcp-resources.js";
-import { handleMcpJsonRpcRequest } from "./mcp.js";
-import { systemActor } from "./actor.js";
-import { createToolRegistry } from "../platform/tool-registry.js";
-import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
+import { describe, expect, it } from "vitest";
 import type { CalendarEventRecord } from "../platform/calendar/types.js";
 import type { ChatMessageRecord, ChatRoomRecord } from "../platform/chat/types.js";
-import type { DriveEntryRecord, DriveSearchHit } from "../platform/drive/types.js";
 import type { DriveFileReadInput, DriveFileReadResult } from "../platform/drive/store.js";
+import type { DriveEntryRecord, DriveSearchHit } from "../platform/drive/types.js";
 import type {
   MailSearchHit,
+  MailSearchRequest,
   MailThreadDetail,
   MailThreadGetRequest,
-  MailSearchRequest,
 } from "../platform/mail/types.js";
+import { AllowAllToolAccessPolicy } from "../platform/permissions/tool-access.js";
+import { createToolRegistry } from "../platform/tool-registry.js";
+import { systemActor } from "./actor.js";
+import { createStoreBackedMcpResourceProvider } from "./mcp-resources.js";
+import { handleMcpJsonRpcRequest } from "./mcp.js";
 describe("createStoreBackedMcpResourceProvider", () => {
   it("lists only resources allowed by actor scopes and store access", async () => {
     const mail = new FakeMailStore();
@@ -30,7 +30,7 @@ describe("createStoreBackedMcpResourceProvider", () => {
     });
     const listed = await resources.list({
       ...agentActor,
-      scopes: ["mail.read", "docs.read"],
+      scopes: ["mail.read"],
     });
     expect(listed).toMatchObject([
       {
@@ -231,7 +231,7 @@ const agentActor: Actor = {
   id: "agent-mcp",
   orgId: "org-mcp",
   type: "agent",
-  scopes: ["chat.read", "calendar.read", "mail.read", "drive.read", "docs.read"],
+  scopes: ["chat.read", "calendar.read", "mail.read", "drive.read"],
 };
 class FakeChatStore {
   readonly lists: Parameters<

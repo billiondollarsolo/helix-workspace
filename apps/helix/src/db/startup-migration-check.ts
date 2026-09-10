@@ -1,6 +1,5 @@
 import type postgres from "postgres";
 import { createSqlClient, resolveDatabaseUrl } from "./client.js";
-import { resolvePlatformMigrationSources } from "./migration-sources.js";
 import {
   listPendingMigrations,
   listUnknownAppliedMigrations,
@@ -8,8 +7,9 @@ import {
   type PendingMigration,
   type UnknownAppliedMigration,
 } from "./migration-runner.js";
+import { resolvePlatformMigrationSources } from "./migration-sources.js";
 
-export class PendingStartupMigrationsError extends Error {
+class PendingStartupMigrationsError extends Error {
   constructor(readonly pending: readonly PendingMigration[]) {
     super(startupMigrationErrorMessage(pending));
     this.name = "PendingStartupMigrationsError";

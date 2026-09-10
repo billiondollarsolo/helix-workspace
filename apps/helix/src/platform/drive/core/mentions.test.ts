@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   mentionedActorIds,
-  parseMentions,
   mentionTokensForComment,
   normalizeMentionToken,
+  parseMentions,
 } from "./mentions.js";
 
 describe("parseMentions", () => {
@@ -18,9 +18,9 @@ describe("parseMentions", () => {
 
 describe("mentionTokensForComment", () => {
   it("unions metadata mentionsText with body tokens", () => {
-    expect(
-      mentionTokensForComment({ mentionsText: ["@Avery"] }, "cc @maya"),
-    ).toEqual(expect.arrayContaining(["avery", "maya"]));
+    expect(mentionTokensForComment({ mentionsText: ["@Avery"] }, "cc @maya")).toEqual(
+      expect.arrayContaining(["avery", "maya"]),
+    );
   });
 });
 

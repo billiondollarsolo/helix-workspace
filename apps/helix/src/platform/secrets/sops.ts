@@ -11,7 +11,7 @@ export interface SecretSnapshot {
   readonly values: ReadonlyMap<string, string>;
 }
 
-export interface SecretsAdapter {
+interface SecretsAdapter {
   load(): Promise<SecretSnapshot>;
   get(name: string): Promise<string | undefined>;
   require(name: string): Promise<string>;
@@ -27,7 +27,7 @@ export interface SopsSecretsAdapterOptions {
 
 export type SopsDecryptor = (filePath: string) => Promise<string>;
 
-export class SopsSecretsValidationError extends Error {
+class SopsSecretsValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SopsSecretsValidationError";
@@ -59,7 +59,9 @@ export class SopsFileSecretsAdapter implements SecretsAdapter {
 
   async load(): Promise<SecretSnapshot> {
     const raw = await readFile(this.#options.filePath, "utf8");
-    const plaintext = looksEncryptedSops(raw) ? await this.#options.decrypt(this.#options.filePath) : raw;
+    const plaintext = looksEncryptedSops(raw)
+      ? await this.#options.decrypt(this.#options.filePath)
+      : raw;
     const parsed = parseSecretDocument(plaintext, this.#options.filePath, this.#options.format);
     const values = normalizeSecrets(parsed, {
       label: this.#options.filePath,
@@ -87,10 +89,6 @@ export class SopsFileSecretsAdapter implements SecretsAdapter {
   }
 }
 
-export function createSopsSecretsAdapter(options: SopsSecretsAdapterOptions): SecretsAdapter {
-  return new SopsFileSecretsAdapter(options);
-}
-
 async function decryptWithSopsCli(filePath: string): Promise<string> {
   try {
     const { stdout } = await execFileAsync("sops", ["--decrypt", filePath], {
@@ -101,11 +99,17 @@ async function decryptWithSopsCli(filePath: string): Promise<string> {
     return stdout;
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
-    throw new SopsSecretsValidationError(`Failed to decrypt SOPS secrets file ${filePath}: ${message}`);
+    throw new SopsSecretsValidationError(
+      `Failed to decrypt SOPS secrets file ${filePath}: ${message}`,
+    );
   }
 }
 
-function parseSecretDocument(text: string, label: string, format: "json" | "yaml" | undefined): unknown {
+function parseSecretDocument(
+  text: string,
+  label: string,
+  format: "json" | "yaml" | undefined,
+): unknown {
   try {
     if ((format ?? inferFormat(label)) === "json") {
       return JSON.parse(text);
@@ -140,7 +144,9 @@ function normalizeSecrets(
   for (const key of options.requiredKeys) {
     validateSecretName(key);
     if (!secrets.has(key)) {
-      throw new SopsSecretsValidationError(`Required secret ${key} is missing from ${options.label}`);
+      throw new SopsSecretsValidationError(
+        `Required secret ${key} is missing from ${options.label}`,
+      );
     }
   }
 
@@ -166,7 +172,9 @@ function collectSecrets(
 
     if (typeof value === "string") {
       if (looksEncryptedValue(value)) {
-        throw new SopsSecretsValidationError(`Secret ${name} in ${options.label} is still encrypted`);
+        throw new SopsSecretsValidationError(
+          `Secret ${name} in ${options.label} is still encrypted`,
+        );
       }
       output.set(name, value);
       continue;

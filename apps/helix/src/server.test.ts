@@ -1,15 +1,17 @@
-import { buildOutboundConfig } from "./platform/mail/config.js";
-import { loadEnv } from "./config/env.js";
+import { SYSTEM_TENANT_CONFIG, type ToolDefinition } from "@helix/sdk-types";
 import fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SYSTEM_TENANT_CONFIG, type ToolDefinition } from "@helix/sdk-types";
+import { InMemoryIdempotencyStore } from "./api/idempotency.js";
 import { createPlatformMetrics } from "./api/metrics.js";
+import { loadEnv } from "./config/env.js";
+import type { AssistantStreamEvent } from "./platform/assistant/index.js";
 import { InMemoryOAuthClientStore, type AccessTokenRecord } from "./platform/auth/oauth.js";
 import {
   InMemoryAgentRateCostLimiter,
   InMemoryTenantApiRpsLimiter,
   type AgentLimitBudget,
 } from "./platform/limits/index.js";
+import { buildOutboundConfig } from "./platform/mail/config.js";
 import { registerSearchTools } from "./platform/search/index.js";
 import type {
   IndexDocument,
@@ -17,30 +19,28 @@ import type {
   SearchRequest,
   SearchResponse,
 } from "./platform/search/types.js";
+import { installTenantContextHook, TenantActorMismatchError } from "./platform/tenancy/index.js";
 import { createToolRegistry } from "./platform/tool-registry.js";
 import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "./platform/tools/registry.js";
-import { InMemoryIdempotencyStore } from "./api/idempotency.js";
-import { TenantActorMismatchError, installTenantContextHook } from "./platform/tenancy/index.js";
 import {
   aiRoutingPolicyFromConfig,
   createAssistantEmbeddingProvider,
   createAssistantProviders,
   formatAssistantSseEvent,
   getAuditDestinationConfigs,
-  getSmtpMailReceiverConfig,
   getBetterAuthRuntimeConfig,
   getImmutableAuditShippingConfig,
+  getSmtpMailReceiverConfig,
   HELIX_LOG_REDACT_PATHS,
+  installTenantApiRpsLimitHook,
+  isAdminMfaProtectedPath,
   registerActionStatusRoutes,
   registerAssistantStreamRoute,
-  installTenantApiRpsLimitHook,
   registerCanonicalApi,
-  isAdminMfaProtectedPath,
   registerToolRestRoutes,
   verifyDefaultOrgAtBoot,
   type AssistantStreamOrchestrator,
 } from "./server.js";
-import type { AssistantStreamEvent } from "./platform/assistant/index.js";
 
 const now = new Date();
 const later = new Date(now.getTime() + 60 * 60 * 1000);

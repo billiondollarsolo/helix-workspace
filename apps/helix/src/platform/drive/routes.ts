@@ -1,7 +1,8 @@
+import { parseBasicAuthorization } from "../util/http-auth.js";
 // ponytail: WebDAV bodies stay plain-text per RFC 4918; not the JSON error envelope. File still >400 LOC with PROPFIND XML.
-import { createHash, createHmac } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { createHash, createHmac } from "node:crypto";
 import { ApiError, NotFoundError, UnauthorizedError } from "../../api/api-error.js";
 import { versionedApiPath } from "../../api/version.js";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
@@ -12,6 +13,9 @@ import {
   decodePathSegment,
   parseDavXml,
 } from "../dav/standards.js";
+import { dlpDecisionError, type DlpGuard } from "../dlp.js";
+import { safeDriveContentHeaders } from "./content-security.js";
+import { sendBytesWithRangeSupport, sendStreamWithRangeSupport } from "./range-response.js";
 import type {
   DriveFileReadInput,
   DriveFileReadResult,
@@ -24,9 +28,6 @@ import type {
   DriveWebDavChangePage,
   DriveWebDavLock,
 } from "./types.js";
-import { safeDriveContentHeaders } from "./content-security.js";
-import { sendBytesWithRangeSupport, sendStreamWithRangeSupport } from "./range-response.js";
-import { dlpDecisionError, type DlpGuard } from "../dlp.js";
 import {
   createWebDavRateLimiter,
   isSecureWebDavRequest,
@@ -1177,24 +1178,6 @@ function bodyToBuffer(body: unknown): Buffer {
 
 function bodyToString(body: unknown): string {
   return bodyToBuffer(body).toString("utf8");
-}
-
-function parseBasicAuthorization(
-  authorization: string | undefined,
-): { readonly username: string; readonly password: string } | null {
-  if (authorization === undefined) {
-    return null;
-  }
-  const [scheme, value] = authorization.split(" ");
-  if (scheme?.toLowerCase() !== "basic" || value === undefined) {
-    return null;
-  }
-  const decoded = Buffer.from(value, "base64").toString("utf8");
-  const separator = decoded.indexOf(":");
-  if (separator < 0) {
-    return null;
-  }
-  return { username: decoded.slice(0, separator), password: decoded.slice(separator + 1) };
 }
 
 function propfindDepth(value: string | undefined): 0 | 1 {

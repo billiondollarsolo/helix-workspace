@@ -11,7 +11,7 @@
 import type { Page, Route } from "@playwright/test";
 
 /** A well-formed `CoreAppShellStatus` body for `GET /api/core-apps`. */
-export function coreAppShellStatusFixture() {
+function coreAppShellStatusFixture() {
   const apps = [
     { id: "mail", name: "Mail" },
     { id: "chat", name: "Chat" },
@@ -32,7 +32,7 @@ export function coreAppShellStatusFixture() {
 }
 
 /** A well-formed `CoreAppsAdminStatus` body for `GET /api/admin/core-apps`. */
-export function coreAppsAdminStatusFixture() {
+function coreAppsAdminStatusFixture() {
   const base = coreAppShellStatusFixture();
   return {
     role: base.role,
@@ -45,14 +45,6 @@ export function coreAppsAdminStatusFixture() {
       registered: true,
     })),
   };
-}
-
-/**
- * True for the shell core-app routes that every mocked spec must answer with a
- * valid fixture regardless of the feature under test.
- */
-export function isCoreAppsPath(pathname: string): boolean {
-  return pathname === "/v1/api/core-apps" || pathname === "/v1/api/admin/core-apps";
 }
 
 /**

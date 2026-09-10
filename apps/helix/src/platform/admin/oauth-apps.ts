@@ -1,6 +1,6 @@
-import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import type postgres from "postgres";
 import { z } from "zod";
 import {
   adminConsoleReadScope,
@@ -34,8 +34,8 @@ import {
  * the lead can drive the credential revocation from the registered hook.
  */
 
-export type OAuthAppRisk = "low" | "medium" | "high";
-export type OAuthAppStatus = "approved" | "pending" | "blocked" | "revoked";
+type OAuthAppRisk = "low" | "medium" | "high";
+type OAuthAppStatus = "approved" | "pending" | "blocked" | "revoked";
 
 export interface OAuthAppRecord {
   readonly id: string;
@@ -88,7 +88,7 @@ export interface SetOAuthAppStatusInput {
   readonly reviewedBy: string;
 }
 
-export interface OAuthAppsStore {
+interface OAuthAppsStore {
   /** Returns up to `limit + 1` rows so the caller can detect a next page. */
   list(input: ListOAuthAppsInput): Promise<readonly OAuthAppRecord[]>;
   get(orgId: string, id: string): Promise<OAuthAppRecord | null>;

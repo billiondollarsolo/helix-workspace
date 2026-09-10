@@ -1,3 +1,9 @@
+/**
+ * Mail is hostile input: remove active markup and remote content before it reaches
+ * the browser. The opaque-origin iframe permits only its trusted sizing/link bridge;
+ * never grant allow-same-origin or top navigation. CSP is a second boundary, and
+ * link clicks require the parent interstitial before leaving Helix.
+ */
 import { sanitizeHtmlForExport } from "../security/sanitize-html.js";
 
 const ACTIVE_DOCUMENT_TAGS = /<\/?(?:html|head|body|meta|title)\b[^>]*>/giu;

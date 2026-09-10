@@ -1,16 +1,6 @@
 import { mailDraftSchema, type MailDraft } from "@helix/contracts";
 import type { MailComposeDraftFields, MailComposeRecovery } from "./mail-compose-recovery";
 
-/** Join address lists for compose text fields (comma-separated). */
-export function mailAddressesToField(
-  addresses: readonly { readonly address: string }[] | undefined,
-): string {
-  if (addresses === undefined || addresses.length === 0) {
-    return "";
-  }
-  return addresses.map((entry) => entry.address).join(", ");
-}
-
 /** Map a server MailDraft into compose recovery/compare fields. */
 export function serverDraftToComposeFields(
   draft: Pick<
@@ -44,10 +34,6 @@ export function pickLatestMailDraft(drafts: readonly MailDraft[]): MailDraft | n
     }
   }
   return best;
-}
-
-export function isMailDraftRecord(value: unknown): value is MailDraft {
-  return mailDraftSchema.safeParse(value).success;
 }
 
 export function filterMailDraftRecords(values: readonly unknown[]): readonly MailDraft[] {

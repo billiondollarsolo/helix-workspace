@@ -1,20 +1,15 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import {
-  sessionCookiePolicyForBaseUrl,
   createBetterAuthPlatformModule,
   createBetterAuthRuntime,
   createBetterAuthSessionActorResolver,
   PostgresBetterAuthActorStore,
   PostgresBetterAuthSessionIssuer,
   PostgresBetterAuthSessionPolicyAuthorizer,
+  sessionCookiePolicyForBaseUrl,
   type BetterAuthSessionVerifier,
 } from "./better-auth.js";
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 describe("PostgresBetterAuthActorStore", () => {
   it("activates one provider link and tenant membership in a serializable transaction", async () => {
@@ -323,34 +318,8 @@ describe("PostgresBetterAuthActorStore", () => {
     expect(actorStore.resolutions).toHaveLength(1);
   });
 });
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-  readonly beginOptions: readonly string[];
-} {
-  const calls: RecordedQuery[] = [];
-  const beginOptions: string[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
-    return Promise.resolve(queue.shift() ?? []);
-  };
-  const sql = Object.assign(tag, {
-    array: <T extends readonly unknown[]>(value: T) => value,
-    json: (value: unknown) => value,
-    begin: async <T>(
-      options: string | ((tx: postgres.TransactionSql) => T | Promise<T>),
-      callback?: (tx: postgres.TransactionSql) => T | Promise<T>,
-    ) => {
-      if (typeof options === "string") beginOptions.push(options);
-      const execute = typeof options === "function" ? options : callback;
-      if (execute === undefined) throw new Error("Missing transaction callback.");
-      return execute(sql as unknown as postgres.TransactionSql);
-    },
-  }) as unknown as postgres.Sql;
-  return { sql, calls, beginOptions };
-}
+const createRecordingSql = (responses: readonly unknown[] = []) =>
+  sharedRecordingSql(responses, "$");
 
 class InMemoryBetterAuthActorStore {
   readonly resolutions: Array<{

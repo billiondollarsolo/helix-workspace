@@ -1,4 +1,3 @@
-import { describe, expect, it } from "vitest";
 import type {
   AICallContext,
   AICapability,
@@ -12,10 +11,20 @@ import type {
   TraceContext,
   Unsubscribe,
 } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
 import { EnrichmentWorker } from "../ai/enrichment/index.js";
 import { SearchEventIndexer } from "../search/event-indexer.js";
-import type { IndexDocument, SearchEngine, SearchRequest, SearchResponse } from "../search/types.js";
-import { createChatSuggestionSlotProviders, registerChatEnrichments, registerChatIndexer } from "./index.js";
+import type {
+  IndexDocument,
+  SearchEngine,
+  SearchRequest,
+  SearchResponse,
+} from "../search/types.js";
+import {
+  createChatSuggestionSlotProviders,
+  registerChatEnrichments,
+  registerChatIndexer,
+} from "./index.js";
 import type {
   ChatEnrichmentProjectionStore,
   ChatEnrichmentRecord,
@@ -152,9 +161,11 @@ describe("chat AI/search flow", () => {
       expect.arrayContaining(["chat.action-items", "chat.summarize-room", "chat.suggest-reply"]),
     );
     expect(enrichmentResults).toContain("chat.action-items:applied");
-    expect(chat.enrichments.some((entry) => entry.feature === "chat.action-items" && entry.messageId === second.id)).toBe(
-      true,
-    );
+    expect(
+      chat.enrichments.some(
+        (entry) => entry.feature === "chat.action-items" && entry.messageId === second.id,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -232,7 +243,10 @@ class FakeChatService implements ChatSearchProjectionStore, ChatEnrichmentProjec
     };
     this.#nextRoom += 1;
     this.#rooms.set(room.id, room);
-    await this.events.publish("activity.chat.room.created", { roomId: room.id, actorId: input.actor.id });
+    await this.events.publish("activity.chat.room.created", {
+      roomId: room.id,
+      actorId: input.actor.id,
+    });
     return room;
   }
 
@@ -281,7 +295,10 @@ class FakeChatService implements ChatSearchProjectionStore, ChatEnrichmentProjec
     ];
     const updated = { ...existing, reactions, updatedAt: "2026-05-20T00:00:01.000Z" };
     this.#messages.set(input.messageId, updated);
-    await this.events.publish("activity.chat.message.updated", { roomId: existing.roomId, messageId: input.messageId });
+    await this.events.publish("activity.chat.message.updated", {
+      roomId: existing.roomId,
+      messageId: input.messageId,
+    });
     return updated;
   }
 
@@ -295,7 +312,10 @@ class FakeChatService implements ChatSearchProjectionStore, ChatEnrichmentProjec
       updatedAt: "2026-05-20T00:00:02.000Z",
     };
     this.#messages.set(input.messageId, updated);
-    await this.events.publish("activity.chat.message.updated", { roomId: existing.roomId, messageId: input.messageId });
+    await this.events.publish("activity.chat.message.updated", {
+      roomId: existing.roomId,
+      messageId: input.messageId,
+    });
     return updated;
   }
 
@@ -307,7 +327,10 @@ class FakeChatService implements ChatSearchProjectionStore, ChatEnrichmentProjec
       deletedAt: "2026-05-20T00:00:03.000Z",
       updatedAt: "2026-05-20T00:00:03.000Z",
     });
-    await this.events.publish("activity.chat.message.deleted", { roomId: existing.roomId, messageId: input.messageId });
+    await this.events.publish("activity.chat.message.deleted", {
+      roomId: existing.roomId,
+      messageId: input.messageId,
+    });
   }
 
   async setTyping(input: TypingInput): Promise<void> {
@@ -318,10 +341,13 @@ class FakeChatService implements ChatSearchProjectionStore, ChatEnrichmentProjec
     } else {
       this.#typing.delete(key);
     }
-    await this.events.publish(input.typing ? "activity.chat.typing.started" : "activity.chat.typing.stopped", {
-      roomId: input.roomId,
-      actorId: input.actor.id,
-    });
+    await this.events.publish(
+      input.typing ? "activity.chat.typing.started" : "activity.chat.typing.stopped",
+      {
+        roomId: input.roomId,
+        actorId: input.actor.id,
+      },
+    );
   }
 
   async markRead(input: ReadInput): Promise<void> {
@@ -356,7 +382,9 @@ class FakeChatService implements ChatSearchProjectionStore, ChatEnrichmentProjec
   }
 
   visibleMessages(roomId: string): readonly ChatSearchRecord[] {
-    return [...this.#messages.values()].filter((message) => message.roomId === roomId && message.deletedAt === undefined);
+    return [...this.#messages.values()].filter(
+      (message) => message.roomId === roomId && message.deletedAt === undefined,
+    );
   }
 
   async getChatSearchRecord(messageId: string): Promise<ChatSearchRecord | null> {
@@ -413,7 +441,9 @@ function roomActorKey(roomId: string, actorId: string): string {
   return `${roomId}:${actorId}`;
 }
 
-async function collectSuggestion(chunks: AsyncIterable<{ readonly text: string }>): Promise<string> {
+async function collectSuggestion(
+  chunks: AsyncIterable<{ readonly text: string }>,
+): Promise<string> {
   const text: string[] = [];
   for await (const chunk of chunks) {
     text.push(chunk.text);
@@ -473,7 +503,11 @@ class FakeAI implements AICapability {
     this.calls.push(request);
     if (request.feature === "chat.action-items") {
       return {
-        message: JSON.stringify({ actionItems: ["cover rollout follow-up"], owners: ["Bruno"], dueDates: ["Friday"] }),
+        message: JSON.stringify({
+          actionItems: ["cover rollout follow-up"],
+          owners: ["Bruno"],
+          dueDates: ["Friday"],
+        }),
         model: "fake-model",
         providerId: "fake-ai",
       };

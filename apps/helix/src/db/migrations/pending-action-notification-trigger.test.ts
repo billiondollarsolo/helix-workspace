@@ -19,7 +19,7 @@
 
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
+import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 
 const live = describe.skipIf(skipUnlessLiveDatabase("pending-action notification trigger"));
 

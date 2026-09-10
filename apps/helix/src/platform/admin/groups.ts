@@ -1,6 +1,6 @@
-import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import type postgres from "postgres";
 import { z } from "zod";
 import {
   adminConsoleReadScope,
@@ -30,8 +30,8 @@ import {
 // Records
 // --------------------------------------------------------------------------
 
-export type GroupKind = "group" | "security" | "mailing_list";
-export type GroupMemberRole = "member" | "manager" | "owner";
+type GroupKind = "group" | "security" | "mailing_list";
+type GroupMemberRole = "member" | "manager" | "owner";
 
 export interface OrgUnitRecord {
   readonly id: string;
@@ -120,7 +120,7 @@ export interface AddGroupMemberInput {
  * Persistence contract. Implemented by {@link PostgresGroupsStore} (production)
  * and {@link InMemoryGroupsStore} (tests / offline).
  */
-export interface GroupsStore {
+interface GroupsStore {
   listOrgUnits(orgId: string): Promise<readonly OrgUnitRecord[]>;
   getOrgUnit(orgId: string, id: string): Promise<OrgUnitRecord | null>;
   createOrgUnit(input: CreateOrgUnitInput): Promise<OrgUnitRecord>;
@@ -140,7 +140,7 @@ export interface GroupsStore {
 }
 
 /** Thrown by stores when a uniqueness or referential rule is violated. */
-export class GroupsConflictError extends Error {
+class GroupsConflictError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "GroupsConflictError";

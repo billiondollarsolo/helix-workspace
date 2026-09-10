@@ -1,11 +1,10 @@
-import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { describe, expect, it } from "vitest";
 import { unauthenticatedActor } from "../../api/actor.js";
 import { UnauthorizedError } from "../../api/api-error.js";
 import { InMemoryEventBus } from "../events/in-memory-event-bus.js";
 import { ChatRoomAccessError } from "./errors.js";
-import { handleChatSocket, registerChatRoutes } from "./routes.js";
 import {
   EventBusChatRoomBus,
   InMemoryChatPresenceStore,
@@ -13,21 +12,22 @@ import {
   InMemoryChatRoomEventLog,
   roomSubject,
 } from "./realtime.js";
+import { handleChatSocket, registerChatRoutes } from "./routes.js";
 import type { ChatStore } from "./store.js";
+import type {
+  ChatMessageRecord,
+  ChatPinRecord,
+  ChatReactionMutationRecord,
+  ChatReadReceiptRecord,
+  ChatRoomRecord,
+  ChatSearchHit,
+} from "./types.js";
 import {
   CHAT_WEBSOCKET_AUDIENCE,
   CHAT_WEBSOCKET_PATH,
   chatWebSocketTicketFromProtocols,
   type ChatWebSocketTicketStore,
 } from "./websocket-tickets.js";
-import type {
-  ChatMessageRecord,
-  ChatPinRecord,
-  ChatReadReceiptRecord,
-  ChatReactionMutationRecord,
-  ChatRoomRecord,
-  ChatSearchHit,
-} from "./types.js";
 
 const now = new Date("2026-05-20T12:00:00.000Z");
 const actor: Actor = {

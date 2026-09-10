@@ -1,17 +1,17 @@
 import {
+  isJsonObject as isRecord,
   meteringEventTypes,
   type EventBus,
   type EventEnvelope,
-  type JsonObject,
   type JsonValue,
-  type MeteringEventType,
   type MeteringEventPayload,
+  type MeteringEventType,
   type Unsubscribe,
 } from "@helix/sdk-types";
 import type { MeteringEventStore, StoredMeteringEvent } from "./store.js";
 import { meteringEventInsertFromPayload } from "./store.js";
 
-export const meteringEventsSubject = "metering.events.*";
+const meteringEventsSubject = "metering.events.*";
 
 const meteringEventTypeSet = new Set<string>(meteringEventTypes);
 
@@ -109,8 +109,4 @@ function validateMeteringSubjectOrg(subject: string, orgId: string): void {
   if (subject.startsWith(prefix) && subject.slice(prefix.length) !== orgId) {
     throw new Error("Metering subject orgId does not match payload orgId.");
   }
-}
-
-function isRecord(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

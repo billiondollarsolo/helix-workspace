@@ -7,7 +7,7 @@ export interface EnrichmentEvent<Payload extends JsonValue = JsonValue> {
   readonly traceId?: string | undefined;
 }
 
-export type EnrichmentStatus = "applied" | "skipped" | "failed";
+type EnrichmentStatus = "applied" | "skipped" | "failed";
 
 export interface EnrichmentResult {
   readonly handlerId: string;
@@ -32,4 +32,8 @@ export interface EnrichmentWorkerSummary {
   readonly failed: number;
 }
 
-export type EnrichmentWorkerErrorHandler = (error: unknown, event: EventEnvelope, handler: EnrichmentHandler) => void;
+export type EnrichmentWorkerErrorHandler = (
+  error: unknown,
+  event: EventEnvelope,
+  handler: EnrichmentHandler,
+) => void;

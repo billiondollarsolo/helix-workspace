@@ -1,6 +1,8 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { skipUnlessLiveDatabase } from "../test/live-suite.js";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
+import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
+import { ensureAdminDomain } from "../admin/domain-identity.js";
 import {
   PostgresReceivingDomainStore,
   ReceivingDomainCatchAllError,
@@ -42,10 +44,7 @@ live("PostgresReceivingDomainStore", () => {
   });
 
   afterAll(async () => {
-    await sql`delete from mail_receiving_domains where org_id in (${orgOne}, ${orgTwo})`;
-    await sql`delete from mail_aliases where id = ${aliasId}`;
-    await sql`delete from actors where id in (${actorOne}, ${actorTwo})`;
-    await sql`delete from orgs where id in (${orgOne}, ${orgTwo})`;
+    await cleanupTestTenants(sql, [orgOne, orgTwo]);
     await sql.end();
   });
 
@@ -57,6 +56,29 @@ live("PostgresReceivingDomainStore", () => {
       createdBy: actorOne,
     });
     expect(domain).toMatchObject({ domain: "store.example", status: "pending" });
+    const [identity] = await sql<
+      {
+        status: string;
+        verification_host: string;
+        verification_value: string;
+        verification_expires_at: Date;
+      }[]
+    >`
+      select status, verification_host, verification_value, verification_expires_at
+      from admin_domains where org_id = ${orgOne} and id = ${domain.adminDomainId}
+    `;
+    expect(identity).toMatchObject({
+      status: "pending",
+      verification_host: "_helix-verification.store.example",
+    });
+    expect(identity?.verification_value).toMatch(/^helix-domain-verification=.+$/u);
+    expect(identity?.verification_expires_at.getTime()).toBeGreaterThan(Date.now());
+    await expect(ensureAdminDomain(sql, { orgId: orgOne, domain: "STORE.example" })).resolves.toBe(
+      domain.adminDomainId,
+    );
+    await expect(
+      ensureAdminDomain(sql, { orgId: orgTwo, domain: "store.example" }),
+    ).rejects.toThrow("Could not resolve a domain identity");
     await expect(store.resolveReceivingDomain("store.example")).resolves.toBeNull();
 
     await store.markVerified(orgOne, domain.id);

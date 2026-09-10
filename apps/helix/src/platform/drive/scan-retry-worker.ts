@@ -1,6 +1,6 @@
 import type { DriveVirusScanRetryBatchResult } from "./store.js";
 
-export interface DriveVirusScanRetryStore {
+interface DriveVirusScanRetryStore {
   runVirusScanRetryBatch(input: {
     readonly limit: number;
     readonly leaseMs: number;

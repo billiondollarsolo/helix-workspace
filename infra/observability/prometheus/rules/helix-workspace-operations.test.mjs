@@ -14,7 +14,6 @@ const dashboardPath = join(
 );
 const provisionedRulePaths = [
   join(repoRoot, "infra/observability/prometheus/rules/helix-agent-safety.yml"),
-  join(repoRoot, "infra/observability/prometheus/rules/helix-signup-slo.yml"),
   rulesPath,
 ];
 const forbiddenTelemetryField =
@@ -228,7 +227,7 @@ describe("Workspace operations observability assets", () => {
     );
     const alertBlocks = ruleSources.flatMap((source) => source.split(/\n\s+- alert: /u).slice(1));
 
-    expect(alertBlocks).toHaveLength(47);
+    expect(alertBlocks).toHaveLength(44);
     await Promise.all(
       alertBlocks.map(async (block) => {
         const expression = block.match(/^\s+expr:\s+(.+)$/mu)?.[1] ?? "";

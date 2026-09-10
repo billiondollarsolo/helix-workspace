@@ -1,11 +1,12 @@
+import type { JsonObject } from "@helix/sdk-types";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { createHash, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
-import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { JsonObject } from "@helix/sdk-types";
 import { z } from "zod";
 import type { PlatformMetrics } from "../../api/metrics.js";
 import { MEET_WEBHOOK_BODY_LIMIT_BYTES, readBoundedRequestBody } from "../../api/request-body.js";
 import type { TenantStorageClient, TenantStorageResolver } from "../storage/tenant-resolver.js";
+import { toJsonObject } from "../util/json.js";
 import { verifyWebhookSignature } from "../webhooks/signatures.js";
 import { meetGuestInviteTokenHash, verifyMeetGuestInviteToken } from "./guest-invites.js";
 import { mintJitsiJwt } from "./jwt.js";
@@ -609,10 +610,6 @@ function normalizeLifecycleEvent(event: string): MeetMediaEventType | null {
     normalized === "recording.ended"
     ? normalized
     : null;
-}
-
-function toJsonObject(value: Record<string, unknown>): JsonObject {
-  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
 function storageKeySegment(value: string): string {

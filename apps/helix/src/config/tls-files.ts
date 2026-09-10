@@ -10,7 +10,7 @@ import type { Buffer } from "node:buffer";
  */
 
 /** Upper bound on a PEM file, so a mistyped path cannot read a huge blob into memory. */
-export const MAX_TLS_FILE_BYTES = 1024 * 1024;
+const MAX_TLS_FILE_BYTES = 1024 * 1024;
 
 export type TlsFileReader = (path: string) => Buffer;
 

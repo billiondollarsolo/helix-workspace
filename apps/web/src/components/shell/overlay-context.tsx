@@ -4,7 +4,7 @@
 
 import { createContext, useContext } from "react";
 
-export const SETTINGS_SECTION_IDS = [
+const SETTINGS_SECTION_IDS = [
   "profile",
   "appearance",
   "language",

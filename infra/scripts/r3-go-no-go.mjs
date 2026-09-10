@@ -13,7 +13,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "../..");
 
 export const R3_REQUIRED_STRUCTURAL = [
-  "docs/superpowers/plans/2026-08-02-helix-full-workspace-v1-release.md",
+  "docs/archive/plans/2026-08-02-helix-full-workspace-v1-release.md",
   "docs/architecture/v1-packaging-matrix.md",
   "docs/architecture/ha-rpo-rto.md",
   "docs/architecture/v1-rollout-runbook.md",
@@ -25,7 +25,7 @@ export const R3_REQUIRED_STRUCTURAL = [
   "docker-compose.production.yml",
 ];
 
-export const R3_OPTIONAL_LIVE = [
+const R3_OPTIONAL_LIVE = [
   "artifacts/release-readiness/mail-live-evidence.json",
   "artifacts/release-readiness/drive-live-evidence.json",
   "artifacts/release-readiness/chat-live-evidence.json",
@@ -111,7 +111,7 @@ export function evaluatePackagingFailClosed({
   return { ok: reasons.length === 0, reasons };
 }
 
-export function writeR3Decision(path, evaluation) {
+function writeR3Decision(path, evaluation) {
   mkdirSync(dirname(path), { recursive: true });
   const payload = {
     ...evaluation,

@@ -1,17 +1,17 @@
-import { createHmac } from "node:crypto";
-import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyRequest } from "fastify";
-import type postgres from "postgres";
+import { createHmac } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import {
   actorHasAdminScope,
+  authResponseSessionToken,
   createMfaAssertionVerificationResolver,
   evaluateAdminMfa,
-  PostgresSessionMfaAssurance,
-  authResponseSessionToken,
-  newRecoveryCode,
-  recoveryCodeDigest,
   MFA_ASSERTION_HEADER,
+  newRecoveryCode,
+  PostgresSessionMfaAssurance,
+  recoveryCodeDigest,
   tierRequiresAdminMfa,
   unverifiedMfaResolver,
   verifiedMfaSessionToken,
@@ -131,7 +131,7 @@ describe("unverifiedMfaResolver", () => {
 
 describe("server-side MFA assurance", () => {
   it("marks and accepts only a fresh session bound to the configured audience", async () => {
-    const recording = createRecordingSql([[{ id: "session-1" }], [{ ok: 1 }]]);
+    const recording = createRecordingSql([[{ id: "session-1" }], [{ ok: 1 }]], "$");
     const assurance = new PostgresSessionMfaAssurance(
       recording.sql,
       {
@@ -162,7 +162,7 @@ describe("server-side MFA assurance", () => {
   });
 
   it("cannot elevate from a forged header without a verified server session", async () => {
-    const recording = createRecordingSql([]);
+    const recording = createRecordingSql([], "$");
     const assurance = new PostgresSessionMfaAssurance(
       recording.sql,
       {
@@ -406,21 +406,3 @@ describe("evaluateAdminMfa", () => {
     ).toBe(true);
   });
 });
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const queue = [...responses];
-  const sql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
-    return Promise.resolve(queue.shift() ?? []);
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}

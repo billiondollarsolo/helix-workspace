@@ -19,9 +19,9 @@ const serviceParamsSchema = z.object({
   serviceId: serviceIdSchema,
 });
 export type AdminServiceStatus = "ready" | "configured" | "missing" | "degraded" | "disabled";
-export type AdminServiceCategory =
+type AdminServiceCategory =
   "workspace" | "communication" | "platform" | "security" | "integrations" | "ai";
-export type AdminDependencyType =
+type AdminDependencyType =
   | "database"
   | "object-storage"
   | "event-bus"
@@ -30,7 +30,7 @@ export type AdminDependencyType =
   | "external-service"
   | "secret"
   | "runtime";
-export interface AdminServiceDependency {
+interface AdminServiceDependency {
   readonly id: string;
   readonly label: string;
   readonly type: AdminDependencyType;
@@ -39,7 +39,7 @@ export interface AdminServiceDependency {
   readonly envKeys: readonly string[];
   readonly evidence: string;
 }
-export interface AdminServiceConfigItem {
+interface AdminServiceConfigItem {
   readonly key: string;
   readonly label: string;
   readonly envKeys: readonly string[];
@@ -48,7 +48,7 @@ export interface AdminServiceConfigItem {
   readonly status: AdminServiceStatus;
   readonly evidence: string;
 }
-export interface AdminServiceAction {
+interface AdminServiceAction {
   readonly id: string;
   readonly label: string;
   readonly method: "GET" | "POST" | "PATCH" | "DELETE";
@@ -1349,7 +1349,7 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
   {
     id: "search",
     label: "Search",
-    summary: "Unified keyword and semantic search across mail, chat, drive, docs, and calendar.",
+    summary: "Unified keyword and semantic search across mail, chat, drive, and calendar.",
     category: "platform",
     scopes: ["search.read", "platform.read"],
     adminScopes: ["admin.search.write", adminConfigReadScope, adminConfigWriteScope],
@@ -1379,7 +1379,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       "mail",
       "chat",
       "drive",
-      "docs",
       "calendar",
     ],
     dataStores: [
@@ -1494,38 +1493,28 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       "Provider routing, cost limits, embeddings, vector stores, provenance, and enrichment workers.",
     category: "ai",
     scopes: ["ai.invoke", "assistant.chat"],
-    adminScopes: ["admin.config.read", "admin.config.write", "ai.admin", "admin.plugins"],
+    adminScopes: ["admin.config.read", "admin.config.write", "ai.admin"],
     uiRoutes: ["/assistant", "/admin#ai"],
     apiRoutes: [
       "/api/admin/platform-config",
-      "/api/admin/plugins",
-      "/api/admin/plugins/:pluginId",
       "/api/tools",
       "/api/tools/:toolId",
       "/api/tools/assistant.*",
-      "/api/tools/plugin.*",
       "/openapi.json",
       "/mcp",
     ],
     realtimeRoutes: [],
-    tools: ["plugin.list", "plugin.install", "plugin.enable", "plugin.disable", "plugin.uninstall"],
+    tools: [],
     capabilities: [
       "llm-router",
       "embedding-provider",
       "vector-store",
       "cost-guard",
       "provenance",
-      "plugin-provider-management",
       "enrichment-worker",
     ],
-    consumes: ["secrets", "event-bus", "plugin-runtime"],
-    dataStores: [
-      "ai_artifacts",
-      "memory_items",
-      "vector_collections",
-      "vector_items",
-      "installed_plugins",
-    ],
+    consumes: ["secrets", "event-bus"],
+    dataStores: ["ai_artifacts", "memory_items", "vector_collections", "vector_items"],
     dependencies: [
       postgresDependency,
       natsDependency,
@@ -1576,12 +1565,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         envAnyOf: ["OPENAI_BASE_URL", "OPENAI_MODEL"],
         required: false,
       }),
-      config({
-        key: "pluginDirectory",
-        label: "Plugin directory",
-        envAnyOf: ["HELIX_PLUGINS_DIR"],
-        required: false,
-      }),
     ],
     aiSlots: ["assistant.chat", "mail.compose-help", "calendar.suggest-meeting-time"],
     enrichments: ["mail.entity-extract", "mail.classification", "chat.action-items"],
@@ -1594,38 +1577,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         requiredScope: adminConfigReadScope,
         destructive: false,
       }),
-      action({
-        id: "plugin.list",
-        label: "List installable plugins",
-        method: "GET",
-        path: "/api/admin/plugins",
-        requiredScope: "admin.plugins",
-        destructive: false,
-      }),
-      action({
-        id: "plugin.install",
-        label: "Install plugin",
-        method: "POST",
-        path: "/api/admin/plugins/:pluginId/install",
-        requiredScope: "admin.plugins",
-        destructive: false,
-      }),
-      action({
-        id: "plugin.disable",
-        label: "Disable plugin",
-        method: "POST",
-        path: "/api/admin/plugins/:pluginId/disable",
-        requiredScope: "admin.plugins",
-        destructive: false,
-      }),
-      action({
-        id: "plugin.uninstall",
-        label: "Uninstall plugin",
-        method: "POST",
-        path: "/api/admin/plugins/:pluginId/uninstall",
-        requiredScope: "admin.plugins",
-        destructive: true,
-      }),
     ],
     metrics: [
       "helix_llm_calls_total",
@@ -1633,7 +1584,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
       "helix_llm_errors_total",
       "helix_llm_latency_seconds",
       "helix_llm_routing_fallback_total",
-      'helix_tool_invocations_total{tool_id="plugin.*"}',
     ],
   },
   {

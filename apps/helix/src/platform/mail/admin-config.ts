@@ -8,17 +8,17 @@ const adminConfigReadScope = "admin.config.read";
 const adminConfigWriteScope = "admin.config.write";
 const mailAdminScope = "mail.admin";
 
-export type MailAdminReadinessStatus = "ready" | "configured" | "missing" | "unknown";
-export type MailDnsRecordType = "MX" | "SPF" | "DKIM" | "DMARC";
+type MailAdminReadinessStatus = "ready" | "configured" | "missing" | "unknown";
+type MailDnsRecordType = "MX" | "SPF" | "DKIM" | "DMARC";
 
-export interface MailAdminDnsRecord {
+interface MailAdminDnsRecord {
   readonly type: MailDnsRecordType;
   readonly status: MailAdminReadinessStatus;
   readonly expected?: string | undefined;
   readonly evidence: string;
 }
 
-export interface MailAdminDomainStatus {
+interface MailAdminDomainStatus {
   readonly domain: string;
   readonly defaultFrom: boolean;
   readonly records: readonly MailAdminDnsRecord[];

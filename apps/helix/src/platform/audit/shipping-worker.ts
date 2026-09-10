@@ -1,3 +1,4 @@
+import { errorMessage } from "../util/errors.js";
 import type { ImmutableAuditActivityRecord, ImmutableAuditShipResult } from "./immutable-s3.js";
 
 export interface AuditShippingCheckpoint {
@@ -264,8 +265,4 @@ function positiveInteger(value: number, label: string): number {
     throw new TypeError(`${label} must be a positive integer`);
   }
   return value;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

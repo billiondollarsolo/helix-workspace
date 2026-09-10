@@ -14,4 +14,3 @@
 | tenant   | unauthenticated                   | request tenant      | HELIX_DEFAULT_ORG_ID only | RequestTenantIdentityError                   |
 | calendar | user@org-b                        | calendar.event.get  | event in org-a            | deny (fill CAL.*)                            |
 | meet     | user@org-b                        | meet.join           | room in org-a             | deny (fill MT.*)                             |
-| editors  | user@org-b                        | docs.open           | file in org-a             | deny (fill ED.*)                             |

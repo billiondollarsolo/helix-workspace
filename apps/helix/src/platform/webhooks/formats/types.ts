@@ -1,7 +1,7 @@
-export type JsonPrimitive = string | number | boolean | null;
+type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonArray;
 export type JsonObject = { readonly [key: string]: JsonValue | undefined };
-export type JsonArray = readonly JsonValue[];
+type JsonArray = readonly JsonValue[];
 
 export interface WebhookActor extends JsonObject {
   readonly id: string;
@@ -21,11 +21,6 @@ export interface OutboundWebhookEvent {
 export interface RenderedWebhookRequest {
   readonly contentType: "application/json";
   readonly body: JsonValue;
-}
-
-export interface WebhookFormatAdapter<TConfig = undefined> {
-  readonly id: string;
-  readonly render: (event: OutboundWebhookEvent, config?: TConfig) => RenderedWebhookRequest;
 }
 
 export function toIsoTimestamp(value: Date | string): string {

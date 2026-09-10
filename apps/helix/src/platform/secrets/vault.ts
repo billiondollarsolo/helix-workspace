@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { TenantStorageSecretReader } from "../storage/tenant-resolver.js";
+import { hasControlCharacter } from "../util/strings.js";
 
 export interface VaultSecretReaderOptions {
   readonly address: string;
@@ -348,14 +349,4 @@ function firstNonEmpty(...values: readonly (string | undefined)[]): string | und
     }
   }
   return undefined;
-}
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code < 32 || code === 127) {
-      return true;
-    }
-  }
-  return false;
 }

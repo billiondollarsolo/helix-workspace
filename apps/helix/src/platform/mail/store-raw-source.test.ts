@@ -1,11 +1,11 @@
-import type postgres from "postgres";
+import type { StorageObject } from "@helix/sdk-types";
 import { simpleParser } from "mailparser";
 import { describe, expect, it } from "vitest";
-import type { StorageObject } from "@helix/sdk-types";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
+import type { TenantStorageClient } from "../storage/tenant-resolver.js";
 import { MailRawSourceIntegrityError } from "./errors.js";
 import { prepareMailRawSource } from "./raw-source.js";
 import { PostgresMailStore } from "./store.js";
-import type { TenantStorageClient } from "../storage/tenant-resolver.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";
@@ -15,11 +15,6 @@ const objectId = "55555555-5555-4555-8555-555555555555";
 const raw = Buffer.from(
   "From: ada@example.net\r\nTo: alice@example.com\r\nSubject: Exact\r\n\r\nBody\r\n",
 );
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 describe("PostgresMailStore raw source", () => {
   it("stores one canonical content-addressed RFC822 object", async () => {
@@ -169,23 +164,4 @@ class RecordingStorage implements TenantStorageClient {
   async delete(key: string): Promise<void> {
     this.objects.delete(key);
   }
-}
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  let callIndex = 0;
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("?"), values });
-    return Promise.resolve(responses[callIndex++] ?? []);
-  };
-  const sql = Object.assign(tag, {
-    json: (value: unknown) => value,
-    array: (value: unknown) => value,
-    begin: async (callback: (tx: postgres.TransactionSql) => Promise<unknown>) =>
-      callback(sql as unknown as postgres.TransactionSql),
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
 }

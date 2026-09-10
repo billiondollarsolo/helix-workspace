@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-import type postgres from "postgres";
 import type { Actor } from "@helix/sdk-types";
+import type postgres from "postgres";
+import { toSqlJson } from "../util/sql.js";
 
 export interface AIArtifactRecord {
   readonly id: string;
@@ -88,14 +88,6 @@ export class PostgresAIProvenanceStore {
           createdAt: row.created_at,
         };
   }
-}
-
-export function hashAIArtifactContent(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
 function isUuid(value: string): boolean {

@@ -16,7 +16,7 @@ import {
 export const ASSISTANT_QUERY_ROOT = "assistant" as const;
 
 /** Stable query key for a conversation-list request. */
-export function assistantConversationsKey(input: AssistantConversationListInput) {
+function assistantConversationsKey(input: AssistantConversationListInput) {
   return [
     ASSISTANT_QUERY_ROOT,
     "conversations",

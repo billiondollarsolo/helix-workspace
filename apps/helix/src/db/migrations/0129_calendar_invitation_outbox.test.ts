@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -319,6 +320,13 @@ describe.skipIf(sql === null)("0129 live calendar invitation outbox", () => {
         and envelope ->> 'messageId' = ${`<calendar-delivery-${deliveryId}@helix.local>`}
     `;
     expect(outbound[0]?.count).toBe(1);
+    const mailThread = await database<{ id: string; kind: string }[]>`
+      select thread.id, thread.kind from mail_outbound_messages outbound
+      join threads thread on thread.id = outbound.thread_id
+      where outbound.id = ${delivery[0]?.mail_outbound_id ?? ""}
+    `;
+    expect(mailThread[0]?.kind).toBe("mail");
+    expect(mailThread[0]?.id).not.toBe(event.threadId);
   });
 
   interface DeliveryRow {
@@ -329,19 +337,6 @@ describe.skipIf(sql === null)("0129 live calendar invitation outbox", () => {
   }
 
   async function cleanup() {
-    await database`delete from cal_events where org_id in (${orgA}, ${orgB})`;
-    await database`delete from mail_outbound_messages where org_id in (${orgA}, ${orgB})`;
-    await database`delete from messages where org_id in (${orgA}, ${orgB})`;
-    await database`delete from objects where org_id in (${orgA}, ${orgB})`;
-    await database`delete from outbox where payload->>'orgId' in (${orgA}, ${orgB})`;
-    await database`delete from activity where org_id in (${orgA}, ${orgB})`;
-    await database`delete from permissions where org_id in (${orgA}, ${orgB})`;
-    await database`delete from cal_calendar_memberships where org_id in (${orgA}, ${orgB})`;
-    await database`delete from cal_calendars where org_id in (${orgA}, ${orgB})`;
-    await database`delete from threads where org_id in (${orgA}, ${orgB})`;
-    await database`delete from organization_memberships where org_id in (${orgA}, ${orgB})`;
-    await database`delete from actors where org_id in (${orgA}, ${orgB})`;
-    await database`delete from admin_domains where org_id in (${orgA}, ${orgB})`;
-    await database`delete from orgs where id in (${orgA}, ${orgB})`;
+    await cleanupTestTenants(database, [orgA, orgB]);
   }
 });

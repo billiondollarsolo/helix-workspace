@@ -3,7 +3,7 @@ import type { AICostBudget } from "./types.js";
 
 export const AI_USD_MICROS = 1_000_000;
 
-export const tierAICostBudgets: Record<SecurityTier, AICostBudget> = {
+const tierAICostBudgets: Record<SecurityTier, AICostBudget> = {
   personal: {
     actorDailyUsdMicros: null,
     featureDailyUsdMicros: null,
@@ -26,7 +26,10 @@ export const tierAICostBudgets: Record<SecurityTier, AICostBudget> = {
   },
 };
 
-export function resolveAICostBudget(tier: SecurityTier, override?: Partial<AICostBudget>): AICostBudget {
+export function resolveAICostBudget(
+  tier: SecurityTier,
+  override?: Partial<AICostBudget>,
+): AICostBudget {
   const base = tierAICostBudgets[tier];
   return validateAICostBudget({
     actorDailyUsdMicros: override?.actorDailyUsdMicros ?? base.actorDailyUsdMicros,
@@ -42,7 +45,7 @@ export function aiUsdToMicros(usd: number): number {
   return Math.round(usd * AI_USD_MICROS);
 }
 
-export function validateAICostBudget(budget: AICostBudget): AICostBudget {
+function validateAICostBudget(budget: AICostBudget): AICostBudget {
   validateNullableInteger("actorDailyUsdMicros", budget.actorDailyUsdMicros);
   validateNullableInteger("featureDailyUsdMicros", budget.featureDailyUsdMicros);
   if (

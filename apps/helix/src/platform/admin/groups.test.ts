@@ -1,9 +1,9 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
 import { actorFromRequest } from "../../api/test-actor.js";
-import { InMemoryGroupsStore, registerAdminGroupsRoutes } from "./groups.js";
 import type { AdminConsoleAuditSink } from "./console-shared.js";
+import { InMemoryGroupsStore, registerAdminGroupsRoutes } from "./groups.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const foreignOrgId = "99999999-9999-4999-8999-999999999999";

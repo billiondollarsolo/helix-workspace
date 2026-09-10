@@ -74,7 +74,6 @@ for (const file of files.filter((file) => basename(file.pathname).startsWith("Do
 
 for (const path of [
   "package.json",
-  "infra/scripts/alertmanager-signup-routing-smoke.mjs",
   "infra/scripts/alertmanager-tenant-storage-routing-smoke.mjs",
   "infra/scripts/validate-k6.sh",
 ]) {

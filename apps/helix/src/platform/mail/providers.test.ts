@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import type { OutboundMailMessage } from "@helix/sdk-types";
+import { describe, expect, it, vi } from "vitest";
 import {
   MailgunMailProvider,
   PostmarkMailProvider,

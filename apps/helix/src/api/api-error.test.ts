@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   ApiError,
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
   NotFoundError,
   RateLimitedError,
   UnauthorizedError,
-  ForbiddenError,
-  BadRequestError,
-  ConflictError,
 } from "./api-error.js";
 
 describe("ApiError", () => {

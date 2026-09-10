@@ -10,7 +10,7 @@
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
+import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 
 const migrationUrl = new URL("./0088_activity_hash_shape.sql", import.meta.url);
 const live = describe.skipIf(skipUnlessLiveDatabase("migration 0088 activity hash shape"));

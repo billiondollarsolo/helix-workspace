@@ -320,7 +320,7 @@ describe("buildOpenApiDocument", () => {
       { name: "Actions", description: "Confirmation-gated tool action status." },
       {
         name: "feature:mail",
-        description: "Mail plugin tools — compose, send, organise, and filter messages.",
+        description: "Mail tools — compose, send, organise, and filter messages.",
       },
       {
         name: "feature:platform",

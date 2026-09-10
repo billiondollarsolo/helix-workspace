@@ -1,4 +1,3 @@
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type {
   AuditRecord,
   JsonObject,
@@ -7,11 +6,12 @@ import type {
   StorageClient,
   StorageObject,
 } from "@helix/sdk";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { canonicalJson } from "./hash.js";
 
 export type ImmutableAuditObjectLockMode = "COMPLIANCE" | "GOVERNANCE";
 
-export interface ImmutableAuditObjectLock {
+interface ImmutableAuditObjectLock {
   readonly mode: ImmutableAuditObjectLockMode;
   readonly retainUntil: string;
 }

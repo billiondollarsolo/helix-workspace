@@ -6,7 +6,7 @@ export function normalizeMentionToken(value: string): string {
 }
 
 /** Extract @mention tokens from free text (unicode letters/numbers). */
-export function mentionTokensFromText(value: string): readonly string[] {
+function mentionTokensFromText(value: string): readonly string[] {
   const tokens = new Set<string>();
   for (const match of value.matchAll(/(^|\s)@([\p{L}\p{N}](?:[\p{L}\p{N}._-]*[\p{L}\p{N}])?)/gu)) {
     const token = normalizeMentionToken(match[2] ?? "");
@@ -18,7 +18,7 @@ export function mentionTokensFromText(value: string): readonly string[] {
 }
 
 /** Extract mention tokens from comment metadata.mentionsText array. */
-export function mentionTokensFromMetadata(metadata: JsonObject): readonly string[] {
+function mentionTokensFromMetadata(metadata: JsonObject): readonly string[] {
   const mentionsText = metadata.mentionsText;
   if (!Array.isArray(mentionsText)) {
     return [];
@@ -40,7 +40,7 @@ export function parseMentions(body: string): readonly string[] {
   return mentionTokensFromText(body);
 }
 
-export function actorMentionAliases(actor: {
+function actorMentionAliases(actor: {
   readonly display_name: string;
   readonly email: string | null;
 }): ReadonlySet<string> {

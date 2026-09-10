@@ -17,10 +17,10 @@ this runbook — the STIG image, the sovereign overlay, and the FIPS config flag
 
 ## Roles and prerequisites
 
-| Environment | Purpose | Tools required |
-| ----------- | ------- | -------------- |
-| Build host (connected) | Assemble and sign the transfer bundle | `helm` ≥ 3.12, `docker`/`buildx`, `cosign`, an SBOM tool (`syft`), a scanner (`grype`/`trivy`), `shasum` |
-| Disconnected cluster | Run Helix | Kubernetes ≥ 1.27, an internal OCI registry, a CNI supporting NetworkPolicy, an enforcing admission controller (Kyverno or Gatekeeper) |
+| Environment            | Purpose                               | Tools required                                                                                                                         |
+| ---------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Build host (connected) | Assemble and sign the transfer bundle | `helm` ≥ 3.12, `docker`/`buildx`, `cosign`, an SBOM tool (`syft`), a scanner (`grype`/`trivy`), `shasum`                               |
+| Disconnected cluster   | Run Helix                             | Kubernetes ≥ 1.27, an internal OCI registry, a CNI supporting NetworkPolicy, an enforcing admission controller (Kyverno or Gatekeeper) |
 
 You also need, inside the disconnected environment: an approved private
 registry, FIPS-labeled worker nodes, and provisioned Postgres, Redis, NATS,
@@ -150,16 +150,16 @@ Provision and document each private endpoint, then create the Kubernetes
 Secrets the chart references (see `airgap-manifest.yaml`
 `externalServices.requiredSecretRefs`):
 
-| Service | Secret | Notes |
-| ------- | ------ | ----- |
-| Postgres / CloudNativePG | `helix-postgres-url` | Connection URL |
-| Redis | `helix-redis-url` | If auth required |
-| NATS | `helix-nats-url` | If auth required |
-| Meilisearch | `helix-meili-key` | Master key |
-| S3-compatible WORM | `helix-s3-access` / `helix-s3-secret` | Object-lock / retention enabled |
-| KMS | `helix-kms` | Endpoint + key ID |
-| Vault | (Kubernetes auth role) | CSI provider policy |
-| SIEM | `helix-siem` | Ingestion token |
+| Service                  | Secret                                | Notes                           |
+| ------------------------ | ------------------------------------- | ------------------------------- |
+| Postgres / CloudNativePG | `helix-postgres-url`                  | Connection URL                  |
+| Redis                    | `helix-redis-url`                     | If auth required                |
+| NATS                     | `helix-nats-url`                      | If auth required                |
+| Meilisearch              | `helix-meili-key`                     | Master key                      |
+| S3-compatible WORM       | `helix-s3-access` / `helix-s3-secret` | Object-lock / retention enabled |
+| KMS                      | `helix-kms`                           | Endpoint + key ID               |
+| Vault                    | (Kubernetes auth role)                | CSI provider policy             |
+| SIEM                     | `helix-siem`                          | Ingestion token                 |
 
 ```sh
 kubectl create namespace helix
@@ -215,21 +215,21 @@ The rendered Deployment will:
 
 Run every check; record output as evidence (Stage 7).
 
-| Check | Pass condition |
-| ----- | -------------- |
-| `helm lint infra/helm/helix -f values-sovereign.yaml` | No failures |
-| `helm template ... -f values-sovereign.yaml` | FIPS image referenced **by digest** |
-| Kubernetes schema validation of rendered manifests | Valid |
-| Admission policy scan | No privileged pods, host namespaces, hostPath, or mutable tags |
-| Placeholder-digest / unsigned-image check | Rejected by policy |
-| `kubectl -n helix get pods -o wide` | All pods on FIPS-labeled nodes |
-| `kubectl -n helix get configmap helix-config -o yaml` | `HELIX_FIPS_MODE=required`, FIPS adapter, approved cipher list |
-| Crypto adapter self-test | `FipsCryptoProvider` status `selfTestPassed=true`, `opensslFipsActive=true` |
-| Vault CSI mount | Secret material present and rotating |
-| SPIRE | Workload SVIDs issued for Helix pods |
-| SIEM | Signed audit test event received with trace correlation fields |
-| WORM retention | Deletion of an audit object is blocked |
-| DR restore | Restore test completes from approved backups |
+| Check                                                 | Pass condition                                                              |
+| ----------------------------------------------------- | --------------------------------------------------------------------------- |
+| `helm lint infra/helm/helix -f values-sovereign.yaml` | No failures                                                                 |
+| `helm template ... -f values-sovereign.yaml`          | FIPS image referenced **by digest**                                         |
+| Kubernetes schema validation of rendered manifests    | Valid                                                                       |
+| Admission policy scan                                 | No privileged pods, host namespaces, hostPath, or mutable tags              |
+| Placeholder-digest / unsigned-image check             | Rejected by policy                                                          |
+| `kubectl -n helix get pods -o wide`                   | All pods on FIPS-labeled nodes                                              |
+| `kubectl -n helix get configmap helix-config -o yaml` | `HELIX_FIPS_MODE=required`, FIPS adapter, approved cipher list              |
+| Crypto adapter self-test                              | `FipsCryptoProvider` status `selfTestPassed=true`, `opensslFipsActive=true` |
+| Vault CSI mount                                       | Secret material present and rotating                                        |
+| SPIRE                                                 | Workload SVIDs issued for Helix pods                                        |
+| SIEM                                                  | Signed audit test event received with trace correlation fields              |
+| WORM retention                                        | Deletion of an audit object is blocked                                      |
+| DR restore                                            | Restore test completes from approved backups                                |
 
 If FIPS mode cannot be satisfied the pod fails closed at first crypto use with
 `HELIX_CRYPTO_FIPS_INIT_FAILED` — this is expected behavior on a non-FIPS

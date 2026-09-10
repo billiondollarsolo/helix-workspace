@@ -1,6 +1,6 @@
+import type { JsonObject } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import type { JsonObject } from "@helix/sdk-types";
 import { BadRequestError } from "../../api/api-error.js";
 import { withTenantIoSagaPostgresContext as withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { DriveForbiddenError, DriveNotFoundError } from "./errors.js";
@@ -15,8 +15,8 @@ export const driveWorkflowKinds = [
   "hold",
   "investigation",
 ] as const;
-export type DriveWorkflowKind = (typeof driveWorkflowKinds)[number];
-export type DriveWorkflowState = "open" | "approved" | "rejected" | "cancelled" | "completed";
+type DriveWorkflowKind = (typeof driveWorkflowKinds)[number];
+type DriveWorkflowState = "open" | "approved" | "rejected" | "cancelled" | "completed";
 
 export interface DriveWorkflowRecord {
   readonly id: string;

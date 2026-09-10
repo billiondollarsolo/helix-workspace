@@ -1,12 +1,12 @@
 # Helix Workspace
 
-Helix is a productivity platform being productionized as a self-hostable workspace for web email,
-shared file storage, authenticated organization chat, calendar, video meetings, and approval-gated AI/agent workflows. The
-initial production target is one organization with 5–50 trusted users on the `business` security
-tier. Until the production-readiness gates below pass, these are target boundaries rather than a
-production-readiness claim.
+Helix 1.0 is an invite-only, self-hostable workspace for **Mail, Drive, Chat, Assistant, and Admin**.
+The initial production target is one organization with 5–50 trusted users on the `business` security
+tier. Calendar and Meet are dormant behind the `full` profile and are outside 1.0.
 
-See [integration validation](docs/merge-validation-2026-09-09.md) for the tested v1 code scope.
+The [canonical 1.0 scope](docs/release/1.0-scope.md) defines the shipped surfaces and non-claims.
+Production uses `HELIX_APPS=mail,drive,chat,assistant` and `VITE_HELIX_MVP_ONLY=true`.
+Package versions alone do not establish production readiness.
 
 ## Business pilot boundaries
 
@@ -27,14 +27,15 @@ See [integration validation](docs/merge-validation-2026-09-09.md) for the tested
 - Pilot objectives are 99.5% monthly availability, an RPO of no more than 24 hours, and an RTO of
   no more than 4 hours. These are engineering objectives, not a contractual SLA.
 
-The runtime retains tenant-aware interfaces and test modes, but public multi-tenant SaaS is not an
-approved launch claim. See:
+The runtime retains tenant-aware interfaces, but public multi-tenant SaaS is not an approved launch claim.
 
-- [MVP product claims and non-claims](docs/product-claims-mvp.md)
-- [Elite MVP enterprise production plan](docs/superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md)
-  (active execution track)
-- [Architecture decision records](docs/architecture/README.md)
-- Historical: [2026-07-28 production-readiness plan](docs/superpowers/plans/2026-07-28-core-workspace-production-readiness.md)
+- [Production deployment](docs/deployment-production.md)
+- [Admin guide](docs/admin-guide.md)
+- [Operations runbook](docs/RUNBOOK.md)
+- [Security threat model](docs/security/threat-model.md)
+- [Architecture decisions](docs/adr/README.md)
+
+Licensed under [Apache-2.0](LICENSE); see [NOTICE](NOTICE) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Development
 
@@ -56,20 +57,6 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm dev
-```
-
-Synthetic signup SLO evidence for SaaS-mode stacks is available with:
-
-```sh
-pnpm quality:synthetic-signup-probe
-```
-
-The probe creates a unique public signup, reads the verification link from
-Mailpit, verifies the email, and fails if activation takes longer than 60s.
-Bundled Alertmanager routing for those alerts can be proven locally with:
-
-```sh
-pnpm quality:alertmanager-signup-routing
 ```
 
 Local infrastructure is defined in `docker-compose.yml`. Exposed ports default to a

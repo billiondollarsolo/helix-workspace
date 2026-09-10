@@ -1,14 +1,16 @@
+import { cn } from "@/lib/utils";
+import { iconMap as Icons, type IconName } from "@/components/icon-map";
+import { ChevronRight as ChevronRightIcon, Search as SearchIcon } from "lucide-react";
 /* CommandPalette — ⌘K global launcher.
    Ported from the design handoff (overlays.jsx → CommandPalette).
    Categorized results (Apps / Actions / Settings / People / Documents);
    arrow-key navigation; Enter selects; Escape closes. */
 
-import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { usePlatformSnapshot, type CommandItem, type WebPlatformHost } from "@helix/sdk-web";
-import { Icons, type IconName } from "@/components/icons";
 import { APPS } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
+import { usePlatformSnapshot, type CommandItem, type WebPlatformHost } from "@helix/sdk-web";
+import { useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 interface PaletteItem {
   id: string;
@@ -27,9 +29,6 @@ interface PaletteItem {
    the surfaces open their own composer from there. */
 const ACTION_COMMANDS: readonly { id: string; title: string; icon: IconName; route: string }[] = [
   { id: "new-email", title: "New email", icon: "EditPen", route: "/mail" },
-  { id: "new-doc", title: "New doc", icon: "Doc", route: "/docs" },
-  { id: "new-sheet", title: "New sheet", icon: "Sheet", route: "/sheets" },
-  { id: "new-slide-deck", title: "New slide deck", icon: "Image", route: "/slides" },
   { id: "schedule-meeting", title: "Schedule meeting", icon: "Calendar", route: "/calendar" },
   { id: "start-meet-call", title: "Start a Helix Meet call", icon: "Video", route: "/meet" },
 ];
@@ -151,17 +150,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
   return (
     <div
       data-testid="command-palette-backdrop"
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "flex-start",
-        paddingTop: "12vh",
-        zIndex: 1000,
-        backdropFilter: "blur(4px)",
-      }}
+      className="fixed inset-0 [background:rgba(0,0,0,0.4)] flex justify-center items-start [padding-top:12vh] [z-index:1000] [backdrop-filter:blur(4px)]"
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
@@ -206,32 +195,13 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
             onClose();
           }
         }}
-        style={{
-          width: 600,
-          maxWidth: "90vw",
-          maxHeight: "70vh",
-          background: "var(--surface)",
-          border: "1px solid var(--border)",
-          borderRadius: 12,
-          boxShadow: "var(--shadow-lg)",
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
+        className="w-150 [max-width:90vw] [max-height:70vh] bg-card [border:1px_solid_var(--border)] [border-radius:12px] [box-shadow:var(--shadow-lg)] flex flex-col overflow-hidden"
       >
         <h2 id="command-palette-title" className="sr-only">
           Command palette
         </h2>
-        <div
-          style={{
-            padding: "12px 16px",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          <Icons.Search />
+        <div className="[padding:12px_16px] flex items-center gap-2.5 [border-bottom:1px_solid_var(--border)]">
+          <SearchIcon size={16} />
           <input
             ref={searchInputRef}
             role="combobox"
@@ -241,15 +211,9 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
             aria-activedescendant={activeOptionId}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search apps, docs, people, actions…"
-            aria-label="Search apps, docs, people, actions"
-            style={{
-              flex: 1,
-              border: "none",
-              outline: "none",
-              background: "transparent",
-              fontSize: "var(--text-body)",
-            }}
+            placeholder="Search apps, files, people, actions…"
+            aria-label="Search apps, files, people, actions"
+            className="flex-1 [border:none] outline-none bg-transparent [font-size:var(--text-body)]"
           />
           <span className="kbd">esc</span>
         </div>
@@ -257,7 +221,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
           id="command-palette-results"
           role="listbox"
           aria-label="Commands"
-          style={{ overflowY: "auto", flex: 1, padding: 6 }}
+          className="overflow-y-auto flex-1 p-1.5"
         >
           {Array.from(groups.entries()).map(([group, groupItems]) => {
             const groupLabelId = `command-palette-group-${group.toLowerCase().replaceAll(" ", "-")}`;
@@ -265,14 +229,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
               <div key={group} role="group" aria-labelledby={groupLabelId}>
                 <div
                   id={groupLabelId}
-                  style={{
-                    fontSize: "var(--text-chip)",
-                    color: "var(--text-3)",
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    letterSpacing: ".06em",
-                    padding: "8px 12px 4px",
-                  }}
+                  className="[font-size:var(--text-chip)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [padding:8px_12px_4px]"
                 >
                   {group}
                 </div>
@@ -307,47 +264,30 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
                         onClose();
                       }}
                       onMouseEnter={() => setIndex(myIndex)}
-                      style={{
-                        width: "100%",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "8px 12px",
-                        borderRadius: 6,
-                        fontSize: "var(--text-body-sm)",
-                        textAlign: "left",
-                        background: active && !disabled ? "var(--accent-soft)" : "transparent",
-                        color: paletteItemColor(disabled, active),
-                        opacity: disabled ? 0.72 : 1,
-                        cursor: disabled ? "not-allowed" : "pointer",
-                      }}
+                      className={cn(
+                        "w-full flex items-center gap-2.5 [padding:8px_12px] rounded-md [font-size:var(--text-body-sm)] text-left",
+                        active && !disabled ? "[background:var(--accent-soft)]" : "bg-transparent",
+                        disabled ? "[opacity:0.72]" : "[opacity:1]",
+                        disabled
+                          ? "cursor-not-allowed text-muted-foreground"
+                          : active
+                            ? "cursor-pointer text-primary"
+                            : "cursor-pointer text-foreground",
+                      )}
                     >
-                      <span
-                        style={{
-                          width: 24,
-                          height: 24,
-                          borderRadius: 4,
-                          background: "var(--surface-2)",
-                          display: "grid",
-                          placeItems: "center",
-                          flexShrink: 0,
-                        }}
-                      >
+                      <span className="w-6 h-6 rounded bg-muted grid [place-items:center] shrink-0">
                         {glyph}
                       </span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="flex-1 min-w-0">
                         <div className="truncate">{item.title}</div>
                         {item.sub || item.disabledReason ? (
-                          <div
-                            className="truncate"
-                            style={{ fontSize: "var(--text-caption)", color: "var(--text-3)" }}
-                          >
+                          <div className="truncate [font-size:var(--text-caption)] text-muted-foreground">
                             {item.disabledReason ?? item.sub}
                           </div>
                         ) : null}
                       </div>
                       {item.shortcut ? <span className="kbd">{item.shortcut}</span> : null}
-                      {active ? <Icons.ChevronRight /> : null}
+                      {active ? <ChevronRightIcon size={16} /> : null}
                     </button>
                   );
                 })}
@@ -355,22 +295,13 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
             );
           })}
           {items.length === 0 ? (
-            <div className="empty" role="status" aria-live="polite" style={{ padding: 32 }}>
-              <Icons.Search />
+            <div className="empty p-8" role="status" aria-live="polite">
+              <SearchIcon size={16} />
               <div>No results for &quot;{query}&quot;</div>
             </div>
           ) : null}
         </div>
-        <div
-          style={{
-            borderTop: "1px solid var(--border)",
-            padding: "8px 14px",
-            display: "flex",
-            gap: 16,
-            fontSize: "var(--text-caption)",
-            color: "var(--text-3)",
-          }}
-        >
+        <div className="[border-top:1px_solid_var(--border)] [padding:8px_14px] flex gap-4 [font-size:var(--text-caption)] text-muted-foreground">
           <span className="row gap-2">
             <span className="kbd">↑↓</span>navigate
           </span>
@@ -384,13 +315,6 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
       </div>
     </div>
   );
-}
-
-function paletteItemColor(disabled: boolean, active: boolean): string {
-  if (disabled) {
-    return "var(--text-3)";
-  }
-  return active ? "var(--accent)" : "var(--text)";
 }
 
 function firstEnabledIndex(items: readonly PaletteItem[]): number {

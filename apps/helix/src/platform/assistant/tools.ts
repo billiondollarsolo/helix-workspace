@@ -1,7 +1,9 @@
-import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
+import type { ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
 import { actorToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { defineTool } from "../tools/define-tool.js";
+import { toJsonObject } from "../util/json.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { AssistantOrchestrator } from "./orchestrator.js";
 import type { AssistantConversation, AssistantStore } from "./types.js";
@@ -280,14 +282,4 @@ function requireConversation(
     throw new Error(`Unknown assistant conversation: ${conversationId}`);
   }
   return conversation;
-}
-
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
-}
-
-function toJsonObject(value: Record<string, unknown>): JsonObject {
-  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }

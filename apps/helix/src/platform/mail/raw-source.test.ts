@@ -1,10 +1,10 @@
-import { readFile } from "node:fs/promises";
 import { simpleParser } from "mailparser";
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { MailRawSourceIntegrityError } from "./errors.js";
 import {
-  MAIL_RAW_SOURCE_MAX_BYTES,
   MAIL_RAW_PARSER,
+  MAIL_RAW_SOURCE_MAX_BYTES,
   prepareMailRawSource,
   projectParsedMail,
   verifyMailRawSource,

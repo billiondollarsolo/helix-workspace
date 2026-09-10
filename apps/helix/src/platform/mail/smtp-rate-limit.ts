@@ -1,3 +1,4 @@
+import { positiveInteger } from "../util/numbers.js";
 export type SmtpRateLimitScope = "connection" | "message";
 
 export interface SmtpRateLimitStore {
@@ -71,11 +72,4 @@ export class InMemorySmtpRateLimitStore implements SmtpRateLimitStore {
       this.#records.delete(oldestKey);
     }
   }
-}
-
-function positiveInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new TypeError(`${name} must be a positive safe integer.`);
-  }
-  return value;
 }

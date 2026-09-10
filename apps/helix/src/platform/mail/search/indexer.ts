@@ -1,6 +1,6 @@
-import type { JsonObject } from "@helix/sdk-types";
-import type { IndexDocument, SearchIndexer, SearchIndexerEvent } from "../../search/types.js";
 import type { SearchEventIndexer } from "../../search/event-indexer.js";
+import type { IndexDocument, SearchIndexer, SearchIndexerEvent } from "../../search/types.js";
+import { compactJsonObject } from "../../util/json.js";
 import type {
   MailActivityPayload,
   MailAddress,
@@ -8,8 +8,8 @@ import type {
   MailSearchRecord,
 } from "../types.js";
 
-export const mailSearchIndexerId = "mail";
-export const mailSearchSubjects = ["activity.mail.>", "com.helix.core.mail.>"] as const;
+const mailSearchIndexerId = "mail";
+const mailSearchSubjects = ["activity.mail.>", "com.helix.core.mail.>"] as const;
 
 export function createMailSearchIndexer(
   store: MailSearchProjectionStore,
@@ -101,7 +101,7 @@ export function mailRecordToIndexDocument(record: MailSearchRecord): IndexDocume
   };
 }
 
-export function mailDocumentId(messageId: string, actorId: string): string {
+function mailDocumentId(messageId: string, actorId: string): string {
   return `mail:${actorId}:${messageId}`;
 }
 
@@ -127,10 +127,4 @@ function addressSearchText(address: MailAddress): string {
 
 function addressEmail(address: MailAddress): string {
   return address.email ?? address.address;
-}
-
-function compactJsonObject(input: Record<string, unknown>): JsonObject {
-  return Object.fromEntries(
-    Object.entries(input).filter((entry) => entry[1] !== undefined),
-  ) as JsonObject;
 }

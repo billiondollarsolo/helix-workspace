@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const CSRF_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/u;
-export const csrfCookieNames = ["__Host-helix_csrf", "helix_csrf"] as const;
+const csrfCookieNames = ["__Host-helix_csrf", "helix_csrf"] as const;
 
 export function browserSecurityHeaders(input: {
   readonly production: boolean;

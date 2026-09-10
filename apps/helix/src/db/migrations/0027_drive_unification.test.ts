@@ -1,3 +1,4 @@
+import { createLegacyTestDatabase } from "../../test-support/legacy-database.js";
 /**
  * Integration test for migration 0027_drive_unification_backfill.sql.
  *
@@ -14,9 +15,9 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import postgres from "postgres";
+import type postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
+import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const MIGRATION_FILE = join(currentDir, "0027_drive_unification_backfill.sql");
@@ -29,12 +30,6 @@ const TEST_SHEET_ID = "f0000000-0000-4000-8000-000000000010";
 const TEST_DECK_ID = "f0000000-0000-4000-8000-000000000020";
 const TEST_DOC_ID = "f0000000-0000-4000-8000-000000000030";
 
-function createSql(): postgres.Sql {
-  const url =
-    process.env.DATABASE_URL ?? "postgres://helix:helix_dev_password@localhost:28432/helix";
-  return postgres(url, { max: 2, prepare: false });
-}
-
 describe(
   "migration 0027_drive_unification_backfill",
   {
@@ -43,10 +38,20 @@ describe(
   },
   () => {
     let sql: postgres.Sql;
+    let fixtureDatabase: Awaited<ReturnType<typeof createLegacyTestDatabase>>;
     let migrationSql: string;
 
     beforeAll(async () => {
-      sql = createSql();
+      fixtureDatabase = await createLegacyTestDatabase();
+      sql = fixtureDatabase.sql;
+      await sql.unsafe(`
+        create table actors (id uuid primary key, org_id uuid, type text, display_name text, scopes text[]);
+        create table objects (id uuid primary key, org_id uuid, owner_actor_id uuid, kind text,
+          storage_key text, mime_type text, byte_size bigint, sha256 text, metadata jsonb, deleted_at timestamptz);
+        create table sheets (id uuid primary key, org_id uuid, owner_actor_id uuid, title text, deleted_at timestamptz);
+        create table slide_decks (like sheets including all);
+        create table docs_documents (like sheets including all);
+      `);
       migrationSql = await readFile(MIGRATION_FILE, "utf8");
 
       // Seed an actor and org so FK constraints are satisfied.
@@ -85,13 +90,7 @@ describe(
     });
 
     afterAll(async () => {
-      // Remove test data in dependency order.
-      await sql`delete from objects where id in (${TEST_SHEET_ID}, ${TEST_DECK_ID}, ${TEST_DOC_ID})`;
-      await sql`delete from sheets where id = ${TEST_SHEET_ID}`;
-      await sql`delete from slide_decks where id = ${TEST_DECK_ID}`;
-      await sql`delete from docs_documents where id = ${TEST_DOC_ID}`;
-      await sql`delete from actors where id = ${TEST_ACTOR_ID}`;
-      await sql.end();
+      await fixtureDatabase.close();
     });
 
     it("creates an objects row for the test sheet with kind='file' and app='sheets'", async () => {

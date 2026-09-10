@@ -77,7 +77,7 @@ export async function runFailureRecoveryEvidence(options, dependencies = {}) {
   return finalizeFailureRecoveryEvidence(report, now());
 }
 
-export async function executeHarness(input) {
+async function executeHarness(input) {
   const harnessArguments = [
     "--scenario",
     input.contract.id,

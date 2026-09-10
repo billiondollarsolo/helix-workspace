@@ -12,7 +12,7 @@ export interface PeopleDirectoryPerson {
   readonly relationship: Readonly<Record<string, string>>;
 }
 
-export interface PeopleDirectoryListResponse {
+interface PeopleDirectoryListResponse {
   readonly people: readonly PeopleDirectoryPerson[];
 }
 

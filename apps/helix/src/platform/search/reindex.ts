@@ -91,7 +91,7 @@ export interface SearchReindexCursor {
   readonly updatedAt: string;
   readonly id: string;
 }
-export interface SearchReindexPage {
+interface SearchReindexPage {
   readonly documents: readonly IndexDocument[];
   readonly cursor?: SearchReindexCursor | undefined;
   readonly done: boolean;

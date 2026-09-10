@@ -1,6 +1,7 @@
+import { isJsonValue } from "@helix/sdk-types";
 import { Liquid } from "liquidjs";
-import type { JsonValue, OutboundWebhookEvent, RenderedWebhookRequest } from "./types.js";
 import { renderGenericEnvelope } from "./generic.js";
+import type { JsonValue, OutboundWebhookEvent, RenderedWebhookRequest } from "./types.js";
 
 export interface TemplateContext {
   readonly id: string;
@@ -155,26 +156,4 @@ function parseJsonObjectTemplate(text: string): JsonValue {
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return true;
-  }
-  if (Array.isArray(value)) {
-    return value.every(isJsonValue);
-  }
-  if (isRecord(value)) {
-    return Object.values(value).every(isJsonValue);
-  }
-  return false;
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

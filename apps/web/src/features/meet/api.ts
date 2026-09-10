@@ -40,7 +40,7 @@ export interface MeetRecordingArtifactRecord {
 }
 
 /** A lightweight actor identity for hosts and attendees. */
-export interface MeetActorRef {
+interface MeetActorRef {
   readonly actorId: string;
   readonly displayName: string | null;
   readonly email: string | null;
@@ -48,7 +48,7 @@ export interface MeetActorRef {
 }
 
 /** A reference to a meeting summary message on the call thread. */
-export interface MeetSummaryRef {
+interface MeetSummaryRef {
   readonly messageId: string;
   readonly body: string;
   readonly createdAt: string;
@@ -112,7 +112,7 @@ export interface MeetTokenRecord {
   readonly code?: string;
 }
 
-export type MeetAudiencePolicy = "everyone" | "hosts" | "disabled";
+type MeetAudiencePolicy = "everyone" | "hosts" | "disabled";
 export interface MeetControlState {
   readonly roomId: string;
   readonly hostActorId: string | null;

@@ -1,9 +1,13 @@
 # Pilot install runbook — zero to mail (and beyond)
 
-**Audience:** Skilled operator bringing up a single-organization Business pilot  
-**Timebox:** about one working day when DNS, provider account, and host access are ready  
-**Normative plan:** [`docs/superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md`](../superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md) (task E10.5)  
-**Product claims:** [`docs/product-claims-mvp.md`](../product-claims-mvp.md)  
+**Audience:** Skilled operator bringing up a single-organization Business pilot
+
+**Timebox:** about one working day when DNS, provider account, and host access are ready
+
+**Normative plan:** [`docs/archive/plans/2026-08-03-elite-mvp-enterprise-production.md`](../archive/plans/2026-08-03-elite-mvp-enterprise-production.md) (task E10.5)
+
+**Product claims:** [`docs/product-claims-mvp.md`](../product-claims-mvp.md)
+
 **Deep deploy reference:** [`docs/deployment-production.md`](../deployment-production.md)
 
 This runbook is the short path from an empty host to: production-ish Compose up,
@@ -42,9 +46,8 @@ gate package says otherwise:
 
 - `HELIX_WORKSPACE_PROFILE=mvp` (or unset)
 - `HELIX_APPS=mail,drive,chat,assistant` (exact)
-- `HELIX_EDITORS_MIGRATIONS_ENABLED=false`
 - Web build: `VITE_HELIX_MVP_ONLY=true`
-- Calendar, Meet, Docs, Sheets, Slides **not** production-enabled
+- Calendar and Meet **not** production-enabled
 
 See [`docs/architecture/v1-packaging-matrix.md`](../architecture/v1-packaging-matrix.md).
 
@@ -125,13 +128,10 @@ encryption attestation env flags before continuing.
 Production does **not** use the local seed accounts from `scripts/dev-up.sh`
 (`admin@helix.local` is for development evidence only).
 
-Typical pilot paths (use the one your packaging enables):
-
-1. **Hosted-style signup / onboarding** — complete owner email verification and
-   organization provisioning when those routes are enabled for the deployment.
-2. **Operator-provisioned actor** — create the first organization owner through your
-   controlled bootstrap process (out-of-band SQL/tools are not recommended without a
-   written change ticket; prefer supported provisioning APIs).
+The 1.0 pilot uses an operator-provisioned first organization owner. Complete the
+controlled bootstrap procedure, then use Admin invitations for additional users.
+Recipients accept their invitation and complete email verification. Public
+self-service signup and onboarding routes are absent.
 
 Then:
 
@@ -228,7 +228,7 @@ A message that stays `queued` with _none_ of the above in the log means the
 worker is not running — confirm `outbound-mail-worker` acquired singleton
 leadership at boot, and that this node has `mail` in `HELIX_APPS`.
 
-If delivery fails, follow [`runbooks/mail-provider-outage.md`](./mail-provider-outage.md)
+If delivery fails, follow [`runbooks/mail-provider-outage.md`](mail-provider-outage.md)
 and the provider’s own DNS verification UI before changing Helix code.
 
 ---
@@ -252,10 +252,10 @@ use real tools with confirmation gates — exercise later if needed for the pilo
 3. On Business tier, the object stays unavailable until integrity + **real ClamAV**
    return clean. A no-op scanner is forbidden in production Business boots
    (`assertDriveMalwareScannerReady`).
-4. After clean: open the read-only preview (MVP: no native office collaborative edit).
+4. After clean: download the file and verify its bytes in an appropriate local application.
 5. Optional: create a share to another org member and confirm access.
 
-Scanner trouble: [`runbooks/drive-scanner-outage.md`](./drive-scanner-outage.md).
+Scanner trouble: [`runbooks/drive-scanner-outage.md`](drive-scanner-outage.md).
 
 ---
 
@@ -269,7 +269,7 @@ Scanner trouble: [`runbooks/drive-scanner-outage.md`](./drive-scanner-outage.md)
 5. Optional smoke: use the credential against a read-only tool/MCP path and confirm
    the audit log distinguishes agent from human.
 
-Agent security incident path: [`runbooks/agent-security-incident.md`](./agent-security-incident.md).
+Agent security incident path: [`runbooks/agent-security-incident.md`](agent-security-incident.md).
 
 ---
 
@@ -319,14 +319,14 @@ Org-scoped disable is available on the same page for a single organization UUID.
 ## Related docs
 
 - Product claims: [`docs/product-claims-mvp.md`](../product-claims-mvp.md)
-- Elite plan: [`docs/superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md`](../superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md)
+- Elite plan: [`docs/archive/plans/2026-08-03-elite-mvp-enterprise-production.md`](../archive/plans/2026-08-03-elite-mvp-enterprise-production.md)
 - Production deploy: [`docs/deployment-production.md`](../deployment-production.md)
 - Admin guide: [`docs/admin-guide.md`](../admin-guide.md)
 - Incident index: [`docs/RUNBOOK.md`](../RUNBOOK.md)
 - Packaging: [`docs/architecture/v1-packaging-matrix.md`](../architecture/v1-packaging-matrix.md)
 - Admin enforce-or-hide inventory: [`docs/admin-enforce-or-hide-inventory.md`](../admin-enforce-or-hide-inventory.md)
 - Local disconnected multi-surface smokes (Mailpit/RustFS, multi-user RBAC):
-  [`docs/runbooks/local-disconnected-live-smokes.md`](./local-disconnected-live-smokes.md)
+  [`docs/runbooks/local-disconnected-live-smokes.md`](local-disconnected-live-smokes.md)
 
 ## Safety
 

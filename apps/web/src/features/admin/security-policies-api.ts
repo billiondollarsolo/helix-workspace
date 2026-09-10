@@ -48,7 +48,7 @@ export const securityPolicyGroup: Record<SecurityPolicyType, "Authentication" | 
   drive_workflows: "Access & data",
 };
 
-export const POLICY_ENFORCEMENTS = ["disabled", "optional", "required"] as const;
+const POLICY_ENFORCEMENTS = ["disabled", "optional", "required"] as const;
 export type PolicyEnforcement = (typeof POLICY_ENFORCEMENTS)[number];
 
 const policyRuntimeStatusSchema = z.object({
@@ -74,7 +74,6 @@ const securityPolicySchema = z.object({
 });
 
 export type SecurityPolicy = z.infer<typeof securityPolicySchema>;
-export type PolicyRuntimeStatus = z.infer<typeof policyRuntimeStatusSchema>;
 
 const policiesResponseSchema = z.object({ policies: z.array(securityPolicySchema) });
 const policyResponseSchema = z.object({ policy: securityPolicySchema });
@@ -104,22 +103,11 @@ export function securityPoliciesQueryOptions(fetchImpl: AuthFetch = authenticate
 // Fetchers + mutations
 // ---------------------------------------------------------------------------
 
-export async function fetchSecurityPolicies(
+async function fetchSecurityPolicies(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly SecurityPolicy[]> {
   const response = await fetchImpl("/api/admin/security-policies", { method: "GET" });
   return (await parseResponse(response, "load security policies", policiesResponseSchema)).policies;
-}
-
-export async function fetchSecurityPolicy(
-  policyType: SecurityPolicyType,
-  fetchImpl: AuthFetch = authenticatedFetch,
-): Promise<SecurityPolicy> {
-  const response = await fetchImpl(
-    `/api/admin/security-policies/${encodeURIComponent(policyType)}`,
-    { method: "GET" },
-  );
-  return (await parseResponse(response, "load security policy", policyResponseSchema)).policy;
 }
 
 export async function updateSecurityPolicy(

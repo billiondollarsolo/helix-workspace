@@ -45,11 +45,7 @@ export function MailHtmlBody({ html, source, plainBody, remoteContentBlocked }: 
 
   return (
     <div>
-      <div
-        role="group"
-        aria-label="Message body view"
-        style={{ display: "flex", gap: 4, marginBottom: 8 }}
-      >
+      <div role="group" aria-label="Message body view" className="mb-2 flex gap-1">
         {(["html", "plain", "source"] as const).map((mode) => (
           <button
             key={mode}
@@ -65,7 +61,7 @@ export function MailHtmlBody({ html, source, plainBody, remoteContentBlocked }: 
         ))}
       </div>
       {remoteContentBlocked && view === "html" && (
-        <p role="note" style={{ color: "var(--text-3)", fontSize: "var(--text-caption)" }}>
+        <p role="note" className="text-[length:var(--text-caption)] text-[var(--text-3)]">
           External images are blocked to prevent sender tracking.
         </p>
       )}
@@ -76,20 +72,21 @@ export function MailHtmlBody({ html, source, plainBody, remoteContentBlocked }: 
           sandbox="allow-scripts"
           referrerPolicy="no-referrer"
           srcDoc={documentHtml}
-          style={{ width: "100%", height, border: 0, background: "white" }}
+          className="w-full border-0 bg-white"
+          style={{ height }}
         />
       ) : (
         <pre
           aria-label={view === "plain" ? "Plain-text email" : "Email HTML source"}
-          style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere", font: "inherit" }}
+          className="m-0 whitespace-pre-wrap [overflow-wrap:anywhere] [font:inherit]"
         >
           {view === "plain" ? plain : source}
         </pre>
       )}
       {pendingLink !== null && (
-        <div role="alert" style={{ marginTop: 8, fontSize: "var(--text-caption)" }}>
+        <div role="alert" className="mt-2 text-[length:var(--text-caption)]">
           This link opens outside Helix. Verify the sender before continuing: {pendingLink}
-          <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+          <div className="mt-1 flex gap-1">
             <a
               href={pendingLink}
               target="_blank"
@@ -120,9 +117,9 @@ export function MailHtmlBody({ html, source, plainBody, remoteContentBlocked }: 
 export function buildMailHtmlDocument(html: string, channel: string): string {
   const nonce = crypto.randomUUID();
   const css = `:root{color-scheme:light}body{margin:0;color:#202124;background:#fff;font:14px/1.6 system-ui,sans-serif;overflow-wrap:anywhere}img{display:none}table{max-width:100%;border-collapse:collapse}td,th{padding:.25rem;text-align:left}pre{white-space:pre-wrap}a{color:#1558d6;text-decoration:underline;cursor:pointer}summary{cursor:pointer;color:#5f6368;margin:.5rem 0}`;
-  const script = `const channel=${JSON.stringify(channel)};const send=(kind,value)=>parent.postMessage({type:${JSON.stringify(MESSAGE_TYPE)},channel,kind,value},'*');for(const quote of document.querySelectorAll('blockquote,.gmail_quote')){if(quote.closest('details[data-helix-quote]'))continue;const details=document.createElement('details');details.dataset.helixQuote='';const summary=document.createElement('summary');summary.textContent='Show quoted text';quote.before(details);details.append(summary,quote)}const resize=()=>send('height',document.documentElement.scrollHeight);document.addEventListener('click',event=>{const link=event.target instanceof Element?event.target.closest('a[data-helix-href]'):null;if(!link)return;event.preventDefault();send('link',link.getAttribute('data-helix-href'))});document.addEventListener('toggle',resize,true);resize();`;
+  const script = `const channel=decodeURIComponent(document.currentScript.dataset.channel);const send=(kind,value)=>parent.postMessage({type:${JSON.stringify(MESSAGE_TYPE)},channel,kind,value},'*');for(const quote of document.querySelectorAll('blockquote,.gmail_quote')){if(quote.closest('details[data-helix-quote]'))continue;const details=document.createElement('details');details.dataset.helixQuote='';const summary=document.createElement('summary');summary.textContent='Show quoted text';quote.before(details);details.append(summary,quote)}const resize=()=>send('height',document.documentElement.scrollHeight);document.addEventListener('click',event=>{const link=event.target instanceof Element?event.target.closest('a[data-helix-href]'):null;if(!link)return;event.preventDefault();send('link',link.getAttribute('data-helix-href'))});document.addEventListener('toggle',resize,true);resize();`;
   const csp = `default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; frame-src 'none'; img-src 'none'; media-src 'none'; object-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'`;
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"><style nonce="${nonce}">${css}</style></head><body>${html}<script nonce="${nonce}">${script}</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"><style nonce="${nonce}">${css}</style></head><body>${html}<script nonce="${nonce}" data-channel="${encodeURIComponent(channel)}">${script}</script></body></html>`;
 }
 
 function textFromMailHtml(html: string): string {

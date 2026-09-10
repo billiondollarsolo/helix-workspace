@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
 import type { JsonObject } from "@helix/sdk-types";
+import { describe, expect, it, vi } from "vitest";
 import { createToolRegistry } from "../tool-registry.js";
+import { classifyMailCategory } from "./category.js";
 import { ingestRawMail, summarizeAuthentication, type MailAuthenticator } from "./ingest.js";
 import {
   NodemailerMailTransport,
@@ -8,16 +9,16 @@ import {
   OutboundMailWorker,
   type OutboundMailTransport,
 } from "./outbound.js";
-import { registerMailTools } from "./tools.js";
 import type {
+  ClaimedOutboundMail,
   CreateMailFilterInput,
   CreateOutboundMailInput,
-  ClaimedOutboundMail,
   MailboxDelegateRecord,
   MailStore,
   SetMailVacationInput,
   UpdateMailFilterInput,
 } from "./store.js";
+import { registerMailTools } from "./tools.js";
 import type {
   MailFilterRecord,
   MailFolderSummary,
@@ -37,7 +38,6 @@ import type {
   MailVacationRecord,
   StoredMailMessage,
 } from "./types.js";
-import { classifyMailCategory } from "./category.js";
 
 const orgId = "00000000-0000-4000-8000-000000000001";
 const actorId = "00000000-0000-4000-8000-000000000002";

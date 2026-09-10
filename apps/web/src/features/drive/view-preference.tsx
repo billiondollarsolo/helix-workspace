@@ -1,6 +1,6 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Grid2X2 as GridIcon, List as ListIcon } from "lucide-react";
 import { useCallback, useState } from "react";
-import { Icons } from "@/components/icons";
 import {
   getDriveDocumentSurfaceView,
   setDriveDocumentSurfaceView,
@@ -72,7 +72,7 @@ export function DocumentSurfaceViewToggle({
         className={`btn sm ${view === "grid" ? "primary" : ""}`}
         onClick={() => onViewChange("grid")}
       >
-        <Icons.Grid />
+        <GridIcon size={16} />
       </button>
       <button
         type="button"
@@ -81,7 +81,7 @@ export function DocumentSurfaceViewToggle({
         className={`btn sm ${view === "list" ? "primary" : ""}`}
         onClick={() => onViewChange("list")}
       >
-        <Icons.List />
+        <ListIcon size={16} />
       </button>
     </>
   );

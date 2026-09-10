@@ -7,7 +7,7 @@ Evidence captured for the compose/readiness slice only.
 ### Acceptance Notes
 
 - `docker-compose.yml` includes the Helix app service and Tier 1 dependencies: Postgres, Redis, NATS JetStream, Meilisearch, RustFS, Cerbos, and Caddy.
-- The Helix service enables the Phase 0 webhook engine, outbound webhook format plugin ids, inbound webhook source plugin ids, and observability OTel plugin config through `HELIX_CONFIG_JSON`.
+- The Helix service enables the Phase 0 webhook engine, built-in outbound webhook formats, inbound webhook sources, and observability OTel configuration through `HELIX_CONFIG_JSON`.
 - The webhook engine is in-process with the app and exposed through the Caddy edge path, including `POST /webhooks/<slug>`.
 - The optional `observability` profile includes OTel Collector, Prometheus, Tempo, Loki, and Grafana.
 - The optional `drive-preview` profile includes the `drive-preview-libreoffice` Office-to-PDF

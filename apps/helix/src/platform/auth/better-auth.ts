@@ -1,16 +1,17 @@
-import { betterAuth } from "better-auth";
 import { passkey } from "@better-auth/passkey";
 import { sso, type SSOUserResolutionInput } from "@better-auth/sso";
+import type { Actor, JsonObject } from "@helix/sdk";
+import { betterAuth } from "better-auth";
 import { makeSignature } from "better-auth/crypto";
 import { fromNodeHeaders } from "better-auth/node";
 import { twoFactor } from "better-auth/plugins";
-import type postgres from "postgres";
-import { Pool } from "pg";
 import { randomBytes } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
-import type { Actor, JsonObject } from "@helix/sdk";
-import { validatedPermissions } from "../permissions/scope-catalog.js";
+import { Pool } from "pg";
+import type postgres from "postgres";
 import { parseActorRoleBindings } from "../permissions/roles.js";
+import { validatedPermissions } from "../permissions/scope-catalog.js";
+import { isRecord } from "../util/json.js";
 
 export interface BetterAuthInstance {
   readonly api: {
@@ -40,7 +41,7 @@ export interface ActorUserRecord {
   readonly metadata: JsonObject;
 }
 
-export interface BetterAuthActorStore {
+interface BetterAuthActorStore {
   resolveVerifiedUser(input: {
     readonly authUserId: string;
     readonly orgId: string;
@@ -59,7 +60,7 @@ export interface BetterAuthActorResolution {
   readonly user: BetterAuthUser;
 }
 
-export class BetterAuthVerifiedEmailRequiredError extends Error {
+class BetterAuthVerifiedEmailRequiredError extends Error {
   constructor() {
     super("A verified email is required to link this sign-in to an existing user.");
     this.name = "BetterAuthVerifiedEmailRequiredError";
@@ -265,7 +266,7 @@ export interface BetterAuthSessionActorResolverOptions {
   readonly policyAuthorizer?: BetterAuthSessionPolicyAuthorizer;
 }
 
-export interface BetterAuthSessionPolicyAuthorizer {
+interface BetterAuthSessionPolicyAuthorizer {
   authorize(input: {
     readonly token: string;
     readonly authUserId: string;
@@ -298,7 +299,7 @@ export class PostgresBetterAuthSessionPolicyAuthorizer implements BetterAuthSess
   }
 }
 
-export class BetterAuthApiSessionVerifier implements BetterAuthSessionVerifier {
+class BetterAuthApiSessionVerifier implements BetterAuthSessionVerifier {
   constructor(private readonly auth: Pick<BetterAuthInstance, "api">) {}
 
   async getSessionUser(request: {
@@ -674,10 +675,6 @@ function betterAuthUserFromSession(session: unknown): BetterAuthUser | null {
       ? { updatedAt: session.user.updatedAt }
       : {}),
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function postgresErrorCode(error: unknown): string | null {

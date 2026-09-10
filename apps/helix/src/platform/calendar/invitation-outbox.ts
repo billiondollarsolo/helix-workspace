@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
+import { isUniqueViolation, toSqlJson } from "../util/sql.js";
 import { calendarDeliveryMessageId, type CalendarInvitationSender } from "./ics.js";
 import type { CalendarAttendeeRecord, CalendarEventRecord } from "./types.js";
 
@@ -76,10 +77,6 @@ export async function enqueueCalendarInvitationDeliveries(
     queued += rows.length;
   }
   return queued;
-}
-
-function toSqlJson(value: object): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
 export interface ClaimedCalendarInvitationDelivery {
@@ -383,8 +380,4 @@ function deserializeEvent(event: SerializedEvent): CalendarEventRecord {
       };
     }),
   };
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }

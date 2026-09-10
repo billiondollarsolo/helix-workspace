@@ -1,6 +1,6 @@
-import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
 import { computeAuditHash } from "../audit/hash.js";
+import { toSqlJson } from "../util/sql.js";
 import type { ChatSql } from "./authorization.js";
 
 const FORBIDDEN_AUDIT_KEYS = /(?:body|content|html|markdown|text)/iu;
@@ -70,8 +70,4 @@ function visitAuditValue(value: unknown): void {
     }
     visitAuditValue(child);
   }
-}
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }

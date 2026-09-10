@@ -5,10 +5,10 @@ import { callTool } from "@/lib/tool-call";
 export type CalendarApiFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type CalendarApiResponseStatus = "needs_action" | "accepted" | "declined" | "tentative";
-export type CalendarApiAttendeeRole = "required" | "optional" | "resource";
-export type CalendarApiEventStatus = "confirmed" | "tentative" | "cancelled";
+type CalendarApiAttendeeRole = "required" | "optional" | "resource";
+type CalendarApiEventStatus = "confirmed" | "tentative" | "cancelled";
 
-export interface CalendarApiAttendeeInput {
+interface CalendarApiAttendeeInput {
   readonly actorId?: string | null;
   readonly email: string;
   readonly displayName?: string | null;
@@ -17,7 +17,7 @@ export interface CalendarApiAttendeeInput {
   readonly metadata?: Record<string, unknown>;
 }
 
-export interface CalendarApiAttendee {
+interface CalendarApiAttendee {
   readonly id?: string | null;
   readonly actorId?: string | null;
   readonly email: string;
@@ -71,7 +71,7 @@ export interface CalendarCreateEventInput {
   readonly sendInvitations?: boolean;
 }
 
-export type CalendarUpdateEventPatch = Partial<Omit<CalendarCreateEventInput, "sendInvitations">>;
+type CalendarUpdateEventPatch = Partial<Omit<CalendarCreateEventInput, "sendInvitations">>;
 
 export interface CalendarUpdateEventInput {
   readonly eventId: string;
@@ -125,7 +125,7 @@ export interface CalendarFindTimeSlot {
   }[];
 }
 
-export type CalendarApiMembershipRole = "owner" | "writer" | "reader";
+type CalendarApiMembershipRole = "owner" | "writer" | "reader";
 
 /** A calendar as returned by `calendar.calendars.list` for the sidebar. */
 export interface CalendarApiCalendar {
@@ -143,12 +143,6 @@ export interface CalendarApiCalendar {
   readonly writable?: boolean;
   readonly sortOrder?: number;
   readonly eventCount?: number;
-}
-
-export interface CalendarListCalendarsOutput {
-  readonly calendars: readonly CalendarApiCalendar[];
-  readonly mine: readonly CalendarApiCalendar[];
-  readonly team: readonly CalendarApiCalendar[];
 }
 
 export async function createCalendarEvent(

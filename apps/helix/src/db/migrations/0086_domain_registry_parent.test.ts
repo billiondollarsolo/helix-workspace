@@ -1,3 +1,4 @@
+import { createLegacyTestDatabase } from "../../test-support/legacy-database.js";
 /* Executes 0086's backfill against a live database.
  *
  * The neighbouring migration tests read their own .sql and assert it contains
@@ -11,9 +12,9 @@
  * Gated on DATABASE_URL, matching the other live-Postgres suites in this repo. */
 
 import { readFile } from "node:fs/promises";
-import postgres from "postgres";
+import type postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { skipUnlessLiveDatabase } from "../../platform/test/live-suite.js";
+import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 
 const migrationUrl = new URL("./0086_domain_registry_parent.sql", import.meta.url);
 const rollbackUrl = new URL("./rollbacks/0086_domain_registry_parent.sql", import.meta.url);
@@ -22,10 +23,11 @@ const live = describe.skipIf(skipUnlessLiveDatabase("migration 0086 domain regis
 live("0086 domain registry parent — backfill", () => {
   /* A dedicated schema per run: the migration alters shared tables, so it is
      replayed against copies rather than the real ones. */
-  const schema = "helix_0086_backfill_test";
+  const schema = "public";
   const orgA = "86000000-0000-4000-8000-0000000000a0";
   const orgB = "86000000-0000-4000-8000-0000000000b0";
   let sql: postgres.Sql;
+  let fixtureDatabase: Awaited<ReturnType<typeof createLegacyTestDatabase>>;
 
   /** The capability tables and their parent, reduced to what 0086 touches. */
   async function buildFixture(): Promise<void> {
@@ -91,13 +93,14 @@ live("0086 domain registry parent — backfill", () => {
   }
 
   beforeAll(async () => {
-    sql = postgres(process.env.DATABASE_URL ?? "", { max: 1, onnotice: () => undefined });
+    fixtureDatabase = await createLegacyTestDatabase();
+    sql = fixtureDatabase.sql;
     await buildFixture();
   });
 
   afterAll(async () => {
     await sql.unsafe(`drop schema if exists ${schema} cascade`);
-    await sql.end();
+    await fixtureDatabase.close();
   });
 
   it("creates a parent for a capability that has none", async () => {

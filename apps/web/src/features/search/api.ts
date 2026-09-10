@@ -1,6 +1,7 @@
 import { authenticatedFetch } from "@/lib/auth";
 
-export type GlobalSearchType = "mail" | "chat" | "docs" | "drive" | "calendar";
+export const globalSearchTypes = ["mail", "chat", "drive", "calendar"] as const;
+export type GlobalSearchType = (typeof globalSearchTypes)[number];
 
 export interface GlobalSearchHit {
   readonly id: string;
@@ -107,13 +108,7 @@ function isGlobalSearchHit(value: unknown): value is GlobalSearchHit {
 }
 
 function isGlobalSearchType(value: unknown): value is GlobalSearchType {
-  return (
-    value === "mail" ||
-    value === "chat" ||
-    value === "docs" ||
-    value === "drive" ||
-    value === "calendar"
-  );
+  return globalSearchTypes.some((type) => type === value);
 }
 
 function optionalString(value: unknown): boolean {

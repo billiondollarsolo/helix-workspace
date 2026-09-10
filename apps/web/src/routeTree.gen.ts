@@ -12,7 +12,6 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ShellRouteImport } from './routes/_shell'
 import { Route as LoginRouteImport } from './routes/login'
-import { Route as SignupRouteImport } from './routes/signup'
 import { Route as OauthConsentRouteImport } from './routes/oauth.consent'
 import { Route as SignupInviteRouteImport } from './routes/signup_.invite'
 import { Route as SignupVerifyEmailRouteImport } from './routes/signup_.verify-email'
@@ -24,8 +23,6 @@ import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
 import { Route as ShellDriveIndexRouteImport } from './routes/_shell/drive/index'
 import { Route as ShellMailIndexRouteImport } from './routes/_shell/mail/index'
 import { Route as ShellMeetIndexRouteImport } from './routes/_shell/meet/index'
-import { Route as ShellOnboardingIndexRouteImport } from './routes/_shell/onboarding/index'
-import { Route as ShellWelcomeIndexRouteImport } from './routes/_shell/welcome/index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -39,11 +36,6 @@ const ShellRoute = ShellRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OauthConsentRoute = OauthConsentRouteImport.update({
@@ -101,21 +93,10 @@ const ShellMeetIndexRoute = ShellMeetIndexRouteImport.update({
   path: '/meet/',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellOnboardingIndexRoute = ShellOnboardingIndexRouteImport.update({
-  id: '/onboarding/',
-  path: '/onboarding/',
-  getParentRoute: () => ShellRoute,
-} as any)
-const ShellWelcomeIndexRoute = ShellWelcomeIndexRouteImport.update({
-  id: '/welcome/',
-  path: '/welcome/',
-  getParentRoute: () => ShellRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
-  '/signup': typeof SignupRoute
   '/oauth/consent': typeof OauthConsentRoute
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
@@ -127,13 +108,10 @@ export interface FileRoutesByFullPath {
   '/drive/': typeof ShellDriveIndexRoute
   '/mail/': typeof ShellMailIndexRoute
   '/meet/': typeof ShellMeetIndexRoute
-  '/onboarding/': typeof ShellOnboardingIndexRoute
-  '/welcome/': typeof ShellWelcomeIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
-  '/signup': typeof SignupRoute
   '/oauth/consent': typeof OauthConsentRoute
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
@@ -145,15 +123,12 @@ export interface FileRoutesByTo {
   '/drive': typeof ShellDriveIndexRoute
   '/mail': typeof ShellMailIndexRoute
   '/meet': typeof ShellMeetIndexRoute
-  '/onboarding': typeof ShellOnboardingIndexRoute
-  '/welcome': typeof ShellWelcomeIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_shell': typeof ShellRouteWithChildren
   '/login': typeof LoginRoute
-  '/signup': typeof SignupRoute
   '/oauth/consent': typeof OauthConsentRoute
   '/signup_/invite': typeof SignupInviteRoute
   '/signup_/verify-email': typeof SignupVerifyEmailRoute
@@ -165,15 +140,12 @@ export interface FileRoutesById {
   '/_shell/drive/': typeof ShellDriveIndexRoute
   '/_shell/mail/': typeof ShellMailIndexRoute
   '/_shell/meet/': typeof ShellMeetIndexRoute
-  '/_shell/onboarding/': typeof ShellOnboardingIndexRoute
-  '/_shell/welcome/': typeof ShellWelcomeIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/login'
-    | '/signup'
     | '/oauth/consent'
     | '/signup/invite'
     | '/signup/verify-email'
@@ -185,13 +157,10 @@ export interface FileRouteTypes {
     | '/drive/'
     | '/mail/'
     | '/meet/'
-    | '/onboarding/'
-    | '/welcome/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
-    | '/signup'
     | '/oauth/consent'
     | '/signup/invite'
     | '/signup/verify-email'
@@ -203,14 +172,11 @@ export interface FileRouteTypes {
     | '/drive'
     | '/mail'
     | '/meet'
-    | '/onboarding'
-    | '/welcome'
   id:
     | '__root__'
     | '/'
     | '/_shell'
     | '/login'
-    | '/signup'
     | '/oauth/consent'
     | '/signup_/invite'
     | '/signup_/verify-email'
@@ -222,15 +188,12 @@ export interface FileRouteTypes {
     | '/_shell/drive/'
     | '/_shell/mail/'
     | '/_shell/meet/'
-    | '/_shell/onboarding/'
-    | '/_shell/welcome/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ShellRoute: typeof ShellRouteWithChildren
   LoginRoute: typeof LoginRoute
-  SignupRoute: typeof SignupRoute
   OauthConsentRoute: typeof OauthConsentRoute
   SignupInviteRoute: typeof SignupInviteRoute
   SignupVerifyEmailRoute: typeof SignupVerifyEmailRoute
@@ -257,13 +220,6 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/oauth/consent': {
@@ -343,20 +299,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellMeetIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/onboarding/': {
-      id: '/_shell/onboarding/'
-      path: '/onboarding'
-      fullPath: '/onboarding/'
-      preLoaderRoute: typeof ShellOnboardingIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
-    '/_shell/welcome/': {
-      id: '/_shell/welcome/'
-      path: '/welcome'
-      fullPath: '/welcome/'
-      preLoaderRoute: typeof ShellWelcomeIndexRouteImport
-      parentRoute: typeof ShellRoute
-    }
   }
 }
 
@@ -369,8 +311,6 @@ interface ShellRouteChildren {
   ShellDriveIndexRoute: typeof ShellDriveIndexRoute
   ShellMailIndexRoute: typeof ShellMailIndexRoute
   ShellMeetIndexRoute: typeof ShellMeetIndexRoute
-  ShellOnboardingIndexRoute: typeof ShellOnboardingIndexRoute
-  ShellWelcomeIndexRoute: typeof ShellWelcomeIndexRoute
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
@@ -382,8 +322,6 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellDriveIndexRoute: ShellDriveIndexRoute,
   ShellMailIndexRoute: ShellMailIndexRoute,
   ShellMeetIndexRoute: ShellMeetIndexRoute,
-  ShellOnboardingIndexRoute: ShellOnboardingIndexRoute,
-  ShellWelcomeIndexRoute: ShellWelcomeIndexRoute,
 }
 
 const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)
@@ -392,7 +330,6 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ShellRoute: ShellRouteWithChildren,
   LoginRoute: LoginRoute,
-  SignupRoute: SignupRoute,
   OauthConsentRoute: OauthConsentRoute,
   SignupInviteRoute: SignupInviteRoute,
   SignupVerifyEmailRoute: SignupVerifyEmailRoute,

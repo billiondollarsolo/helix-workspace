@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import type { Redis } from "ioredis";
+import { randomUUID } from "node:crypto";
 import { sha256Hex } from "../platform/crypto/index.js";
 import type { ToolInvokeResult } from "../platform/tool-registry.js";
 

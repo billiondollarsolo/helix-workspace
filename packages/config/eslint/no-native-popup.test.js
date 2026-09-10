@@ -205,7 +205,7 @@ describe("helix/direct-drizzle-tenant-query", () => {
       {
         valid: [
           "tenantScoped(objects, orgId).select({ id: objects.id });",
-          "tenantScoped(docsDocuments, orgId).update({ title });",
+          "tenantScoped(driveFolders, orgId).update({ title });",
           "db.select().from(plans);",
           "db.select().from(platformConfig);",
           "query.from(dynamicTable);",
@@ -217,7 +217,7 @@ describe("helix/direct-drizzle-tenant-query", () => {
             errors: [{ messageId: "directDrizzleTenantQuery" }],
           },
           {
-            code: "db.insert(docsDocuments).values(input);",
+            code: "db.insert(driveFolders).values(input);",
             errors: [{ messageId: "directDrizzleTenantQuery" }],
           },
           {

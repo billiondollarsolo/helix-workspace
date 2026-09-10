@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -100,16 +101,7 @@ describe.skipIf(sql === null)("0120 live Drive comment permission and evidence m
   });
 
   async function cleanup(): Promise<void> {
-    await database`delete from notifications where org_id = ${orgId}`;
-    await database`delete from outbox where payload->>'orgId' = ${orgId}`;
-    await database`delete from activity where org_id = ${orgId}`;
-    await database`delete from permissions where org_id = ${orgId}`;
-    await database`delete from objects where org_id = ${orgId}`;
-    await database`delete from drive_folders where org_id = ${orgId}`;
-    await database`delete from organization_memberships where org_id = ${orgId}`;
-    await database`delete from actors where org_id = ${orgId}`;
-    await database`delete from orgs where id = ${orgId}`;
-    await database`delete from identity_subjects where id in ${database(Object.values(actors))}`;
+    await cleanupTestTenants(database, [orgId]);
   }
 
   async function setObjectRole(actorId: string, role: string): Promise<void> {

@@ -7,10 +7,9 @@
 
 1. **Base all new work on current `main`.** Do not merge `agent/top-10-greenfield-improvements` wholesale.
 2. **One plan Task ID per PR** (or a tightly coupled pair named in Depends on).
-3. **Same branch name** in `helix-workspace` and `helix-editors` when both change.
-4. **No force-push to `main`.** Prefer GitHub PR merge.
-5. **Failing tests first** for behavior changes; capture evidence under `artifacts/release-readiness/` (gitignored) when required.
-6. **Packaging flags** (`HELIX_APPS`, `VITE_HELIX_MVP_ONLY`, Meet/Editors enables) only change under PKG.* / domain enablement tasks after evidence.
+3. **No force-push to `main`.** Prefer GitHub PR merge.
+4. **Failing tests first** for behavior changes; capture evidence under `artifacts/release-readiness/` (gitignored) when required.
+5. **Packaging flags** (`HELIX_APPS`, `VITE_HELIX_MVP_ONLY`, Meet/Editors enables) only change under PKG.* / domain enablement tasks after evidence.
 
 ## In-flight branch dispositions (as of 2026-08-02)
 
@@ -37,5 +36,4 @@
 ## Forbidden
 
 - Enabling Meet/Calendar/Editors to “make the demo look complete” without PKG/domain gates.
-- Copying `helix-editors` source into this repo.
 - Committing secrets, production credentials, or raw customer data.

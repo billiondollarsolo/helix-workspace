@@ -213,12 +213,6 @@ const scopeCatalog = [
     surfaces: ["agent"],
   },
 
-  // Docs.
-
-  // Sheets.
-
-  // Slides.
-
   // Meet.
   { scope: "meet.read", description: "Read meeting rooms and join tokens.", surfaces: ["agent"] },
   { scope: "meet.write", description: "Create and end meeting rooms.", surfaces: ["agent"] },

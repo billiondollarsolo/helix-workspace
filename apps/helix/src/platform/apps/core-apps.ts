@@ -1,11 +1,11 @@
 /**
  * Core-app registry — the confirmed Helix architecture model.
  *
- * Core apps (mail, chat, drive, docs, calendar, meet, assistant, editors) are
+ * Core apps (mail, chat, drive, calendar, meet, assistant) are
  * **toggleable modules of the Helix platform** — not plugins, not per-user
  * containers. They ship in a single deployable, are multi-tenant, and scale by
  * horizontal replicas. The plugin SDK / loader is reserved for *external
- * connectors* only (see {@link ../plugins/loader.ts} and the connector model).
+ * integrations* provided by the workspace.
  *
  * Two orthogonal switches gate whether a core app's module is registered:
  *
@@ -91,17 +91,17 @@ export interface CoreAppStatus {
  * here (rather than scattered across Helm) means a future per-app image build
  * is a trivial `HELIX_APPS=<single-app>` boot.
  */
-export const HELIX_ROLES: Record<string, readonly CoreAppId[]> = {
+const HELIX_ROLES: Record<string, readonly CoreAppId[]> = {
   /** Default: every core app. */
   all: CORE_APP_IDS,
-  /** WebSocket-heavy realtime apps — chat presence + Yjs + Meet signalling. */
+  /** WebSocket-heavy realtime apps — chat presence and Meet signalling. */
   realtime: ["chat", "meet"],
   /** Async/worker-heavy apps — mail SMTP + indexing/enrichment. */
   workers: ["mail"],
   /** Web/API surface without realtime fan-out. */
   web: ["mail", "drive", "calendar", "assistant"],
 };
-export const DEFAULT_HELIX_ROLE = "all";
+const DEFAULT_HELIX_ROLE = "all";
 export class CoreAppRoleError extends Error {
   constructor(message: string) {
     super(message);

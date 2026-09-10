@@ -1,12 +1,16 @@
-import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { Actor, RequestContext } from "@helix/sdk-types";
-import type { RuntimeToolRegistry } from "../platform/tool-registry.js";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 import {
   toolInvocationOptions,
   type ToolInvocationPrincipal,
 } from "../platform/auth/tool-invocation-principal.js";
-import { createScopedSearchRequest, type GlobalSearchType } from "../platform/search/scope.js";
+import {
+  createScopedSearchRequest,
+  globalSearchTypes,
+  type GlobalSearchType,
+} from "../platform/search/scope.js";
 import type { SearchEngine, SearchHit } from "../platform/search/types.js";
+import type { RuntimeToolRegistry } from "../platform/tool-registry.js";
 import {
   DEFAULT_IDEMPOTENCY_TTL_MS,
   InMemoryIdempotencyStore,
@@ -40,10 +44,10 @@ type JsonRpcResponse =
     };
 type JsonRpcErrorResponse = Extract<JsonRpcResponse, { readonly error: unknown }>;
 
-export const MCP_DEFAULT_MAX_BODY_BYTES = 256 * 1024;
-export const MCP_DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-export const MCP_MAX_IDENTIFIER_LENGTH = 256;
-export const MCP_MAX_RESOURCE_URI_LENGTH = 2_048;
+const MCP_DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+const MCP_DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MCP_MAX_IDENTIFIER_LENGTH = 256;
+const MCP_MAX_RESOURCE_URI_LENGTH = 2_048;
 
 export interface McpRequestLimits {
   readonly maxBodyBytes?: number;
@@ -72,7 +76,7 @@ const inFlightMutations = new Map<
 /**
  * MCP prompt descriptor surfaced via `prompts/list` (P1-4).
  */
-export interface McpPrompt {
+interface McpPrompt {
   readonly name: string;
   readonly description?: string;
   readonly arguments?: readonly {
@@ -82,12 +86,12 @@ export interface McpPrompt {
   }[];
 }
 
-export interface McpPromptMessage {
+interface McpPromptMessage {
   readonly role: "user" | "assistant";
   readonly content: { readonly type: "text"; readonly text: string };
 }
 
-export interface McpPromptResult {
+interface McpPromptResult {
   readonly description?: string;
   readonly messages: readonly McpPromptMessage[];
 }
@@ -335,7 +339,7 @@ async function dispatchMcpJsonRpcRequest(
  * tool is surfaced as a "run this tool" prompt so MCP clients without a bespoke
  * prompt catalog still get a discoverable, schema-aware prompt surface.
  */
-export function createToolPromptProvider(tools: RuntimeToolRegistry): McpPromptProvider {
+function createToolPromptProvider(tools: RuntimeToolRegistry): McpPromptProvider {
   return {
     async list(actor) {
       return (await tools.listVisible(actor)).map((tool) => ({
@@ -775,11 +779,5 @@ function parseResourceUri(
 }
 
 function isGlobalSearchType(value: string | undefined): value is GlobalSearchType {
-  return (
-    value === "mail" ||
-    value === "chat" ||
-    value === "docs" ||
-    value === "drive" ||
-    value === "calendar"
-  );
+  return globalSearchTypes.some((type) => type === value);
 }

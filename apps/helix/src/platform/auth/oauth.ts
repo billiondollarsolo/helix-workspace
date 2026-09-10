@@ -1,13 +1,11 @@
-import { hash as argon2Hash, verify as argon2Verify } from "@node-rs/argon2";
 import type { ActorRoleBinding } from "@helix/sdk-types";
+import { hash as argon2Hash, verify as argon2Verify } from "@node-rs/argon2";
 import { getCryptoProvider } from "../crypto/index.js";
 
 const DEFAULT_TOKEN_TTL_SECONDS = 3600;
 const DEFAULT_REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 const SCOPE_TOKEN_PATTERN = /^[\x21\x23-\x5b\x5d-\x7e]+$/u;
-
-export type OAuthGrantType = "client_credentials" | "authorization_code" | "refresh_token";
-export type OAuthTokenType = "Bearer";
+type OAuthTokenType = "Bearer";
 
 export interface OAuthClientRecord {
   readonly clientId: string;
@@ -50,11 +48,6 @@ export interface OAuthClientListInput {
   readonly orgId: string;
   readonly actorId?: string;
   readonly includeRevoked?: boolean;
-}
-
-export interface OAuthClientRegistration {
-  readonly client: OAuthClientRecord;
-  readonly clientSecret: string;
 }
 
 export interface OAuthClientStore {
@@ -185,7 +178,7 @@ export class OAuthError extends Error {
   }
 }
 
-export interface OAuthAuthorizationCodeRedeemer {
+interface OAuthAuthorizationCodeRedeemer {
   redeemCode(input: {
     readonly code: string;
     readonly clientId: string;
@@ -534,58 +527,6 @@ function introspectionForToken(
   };
 }
 
-export interface OAuthClientManagerOptions {
-  readonly clientStore: OAuthClientStore;
-}
-
-export class OAuthClientManager {
-  constructor(private readonly options: OAuthClientManagerOptions) {}
-
-  async createClient(input: OAuthClientCreateInput): Promise<OAuthClientRegistration> {
-    const clientSecret = `helix_cs_${randomToken(32)}`;
-    const client = await this.options.clientStore.createClient({
-      ...input,
-      clientId: `helix_client_${randomToken(18)}`,
-      clientSecretHash: await hashSecret(clientSecret),
-    });
-    return { client, clientSecret };
-  }
-
-  /**
-   * Replace a client's registered redirect-URI allowlist (CRITICAL-3).
-   * Returns `null` when the client does not exist or the underlying store does
-   * not support redirect-URI management.
-   */
-  async setRedirectUris(
-    clientId: string,
-    redirectUris: readonly string[],
-  ): Promise<OAuthClientRecord | null> {
-    const store = this.options.clientStore;
-    if (store.setRedirectUris === undefined) {
-      return null;
-    }
-    return store.setRedirectUris(clientId, redirectUris, new Date());
-  }
-
-  async revokeClient(clientId: string, revokedAt = new Date()): Promise<OAuthClientRecord | null> {
-    return this.options.clientStore.revokeClient(clientId, revokedAt);
-  }
-
-  async listClients(input: OAuthClientListInput): Promise<readonly OAuthClientRecord[]> {
-    return this.options.clientStore.listClients(input);
-  }
-
-  async rotateClientSecret(clientId: string): Promise<OAuthClientRegistration | null> {
-    const clientSecret = `helix_cs_${randomToken(32)}`;
-    const client = await this.options.clientStore.rotateClientSecret(
-      clientId,
-      await hashSecret(clientSecret),
-      new Date(),
-    );
-    return client === null ? null : { client, clientSecret };
-  }
-}
-
 export class InMemoryOAuthClientStore implements OAuthClientStore, OAuthTokenStore {
   readonly #clients = new Map<string, OAuthClientRecord>();
   readonly #tokens = new Map<string, StoredAccessTokenRecord>();
@@ -857,14 +798,6 @@ export class InMemoryOAuthClientStore implements OAuthClientStore, OAuthTokenSto
       }
     }
   }
-}
-
-export function createOAuthTokenService(options: OAuthTokenServiceOptions): OAuthTokenService {
-  return new OAuthTokenService(options);
-}
-
-export function createOAuthClientManager(options: OAuthClientManagerOptions): OAuthClientManager {
-  return new OAuthClientManager(options);
 }
 
 export function parseScope(scope: string | undefined): string[] {

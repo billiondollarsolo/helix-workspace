@@ -1,8 +1,8 @@
+import type { StorageObject, StorageObjectHead } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import type { StorageObject, StorageObjectHead } from "@helix/sdk-types";
-import { PostgresMailAttachmentIngestor } from "./attachment-ingestion.js";
 import type { TenantStorageClient } from "../storage/tenant-resolver.js";
+import { PostgresMailAttachmentIngestor } from "./attachment-ingestion.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";
 const actorId = "22222222-2222-4222-8222-222222222222";

@@ -1,4 +1,10 @@
-import type { EventBus, EventEnvelope, JsonValue, TraceContext, Unsubscribe } from "@helix/sdk-types";
+import type {
+  EventBus,
+  EventEnvelope,
+  JsonValue,
+  TraceContext,
+  Unsubscribe,
+} from "@helix/sdk-types";
 
 export interface InMemoryEventBusOptions {
   readonly onError?: ((error: unknown) => void) | undefined;

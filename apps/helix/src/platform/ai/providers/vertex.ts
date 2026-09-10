@@ -1,7 +1,6 @@
-import { createSign } from "node:crypto";
 import type { ChatRequest, ChatResponse, LLMProviderCapability, ModelInfo } from "@helix/sdk-types";
+import { createSign } from "node:crypto";
 import { anthropicChatResponse } from "./anthropic-compatible.js";
-import { joinPaths } from "./url-path.js";
 import {
   anthropicRequestBody,
   approximateTokenCount,
@@ -9,6 +8,7 @@ import {
   modelForRequest,
   normalizeFetchConfig,
 } from "./shared.js";
+import { joinPaths } from "./url-path.js";
 
 /**
  * Vertex AI service-account credentials.
@@ -201,14 +201,14 @@ class VertexProvider implements LLMProviderCapability {
   }
 }
 
-export interface VertexRawPredictUrlInput {
+interface VertexRawPredictUrlInput {
   readonly endpoint: string;
   readonly project: string;
   readonly location: string;
   readonly model: string;
 }
 
-export function vertexRawPredictUrl(input: VertexRawPredictUrlInput): URL {
+function vertexRawPredictUrl(input: VertexRawPredictUrlInput): URL {
   const url = new URL(input.endpoint);
   url.pathname = joinPaths(
     url.pathname,

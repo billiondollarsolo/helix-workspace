@@ -1,6 +1,6 @@
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
-import { driveBlobs } from "./schema.js";
+import { driveBlobs } from "./schema/index.js";
 
 describe("drive_blobs drizzle schema", () => {
   it("exposes drive_blobs with migration columns", () => {

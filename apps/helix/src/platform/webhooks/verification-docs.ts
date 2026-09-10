@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 
-export const WEBHOOK_VERIFICATION_DOCS_PATH = "/docs/webhooks/verify";
+const WEBHOOK_VERIFICATION_DOCS_PATH = "/docs/webhooks/verify";
 
 export const WEBHOOK_VERIFICATION_DOCS_MARKDOWN = [
   "# Verify Helix Webhook Signatures",

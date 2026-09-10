@@ -13,7 +13,6 @@ prompts, tokens, or personal data into an incident channel or ticket.
 
 - [Platform or dependency outage](runbooks/platform-dependency-outage.md)
 - [Node filesystem low space](runbooks/node-filesystem-low-space.md)
-- [Signup activation SLO breach](specs/05-operations/runbooks/signup-activation-slo-breach.md)
 - [Outbox or worker backlog](runbooks/outbox-worker-backlog.md)
 - [Mail provider outage or backlog](runbooks/mail-provider-outage.md)
 - [Mail bounce, complaint, or sender compromise](runbooks/mail-bounce-complaint-spike.md)

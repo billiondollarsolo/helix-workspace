@@ -17,7 +17,7 @@ export interface SensitivityLabel {
 }
 
 /** One product-independent label vocabulary and its mandatory policy floor. */
-export const sensitivityLabels = {
+const sensitivityLabels = {
   public: {
     key: "public",
     rank: 0,

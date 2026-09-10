@@ -1,12 +1,10 @@
 import type { CalendarTimeSemantics } from "@helix/contracts";
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
 
-export const calendarPluginId = "com.helix.core.calendar";
-
 export type CalendarEventStatus = "confirmed" | "tentative" | "cancelled";
 export type CalendarAttendeeRole = "required" | "optional" | "resource";
 export type CalendarResponseStatus = "needs_action" | "accepted" | "declined" | "tentative";
-export type CalendarVisibility = "default" | "public" | "private" | "confidential";
+type CalendarVisibility = "default" | "public" | "private" | "confidential";
 
 export interface CalendarRecord {
   readonly id: string;
@@ -201,7 +199,7 @@ export interface CalendarFreeBusyStore {
   ): Promise<readonly CalendarFreeBusyEvent[]>;
 }
 
-export interface CalendarActor {
+interface CalendarActor {
   readonly id: string;
   readonly displayName?: string | undefined;
   readonly email?: string | undefined;

@@ -1,3 +1,4 @@
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresDriveWorkflowStore } from "../../platform/drive/workflows.js";
@@ -20,13 +21,7 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("tenant-isolated Drive w
   const objectId = "f1600000-0000-4000-8000-000000000021";
 
   async function cleanup() {
-    await admin`delete from drive_workflows where org_id in (${orgId}, ${otherOrgId})`;
-    await admin`delete from outbox where payload->>'orgId' in (${orgId}, ${otherOrgId})`;
-    await admin`delete from activity where org_id in (${orgId}, ${otherOrgId})`;
-    await admin`delete from permissions where org_id in (${orgId}, ${otherOrgId})`;
-    await admin`delete from objects where org_id in (${orgId}, ${otherOrgId})`;
-    await admin`delete from actors where org_id in (${orgId}, ${otherOrgId})`;
-    await admin`delete from orgs where id in (${orgId}, ${otherOrgId})`;
+    await cleanupTestTenants(admin, [orgId, otherOrgId]);
   }
 
   beforeAll(async () => {

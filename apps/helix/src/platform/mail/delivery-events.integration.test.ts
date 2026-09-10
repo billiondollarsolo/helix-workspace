@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
-import { PostgresMailStore } from "./store.js";
 import { PostgresMailDeliveryEventStore } from "./delivery-events.js";
+import { PostgresMailStore } from "./store.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 describe.skipIf(databaseUrl === undefined)("mail feedback during a leased dispatch", () => {

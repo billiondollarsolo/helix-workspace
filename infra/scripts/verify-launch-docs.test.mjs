@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { URL } from "node:url";
@@ -7,12 +7,31 @@ import {
   findAdrErrors,
   findBrokenLocalLinks,
   findClaimErrors,
+  findScopeErrors,
   verifyLaunchDocumentation,
 } from "./verify-launch-docs.mjs";
 const workspaceRoot = new URL("../..", import.meta.url).pathname;
 describe("verify-launch-docs", () => {
   it("keeps the checked-in launch documents, ADR inventory, and links consistent", async () => {
     await expect(verifyLaunchDocumentation(workspaceRoot)).resolves.toEqual([]);
+  });
+  it("rejects a launch scope that enables dormant apps or changes the exact app list", async () => {
+    const scope = await readFile(join(workspaceRoot, "docs/release/1.0-scope.md"), "utf8");
+    expect(findScopeErrors("docs/release/1.0-scope.md", scope, scope)).toEqual([]);
+    const changed = scope
+      .replace(
+        "HELIX_APPS=mail,drive,chat,assistant",
+        "HELIX_APPS=mail,drive,chat,calendar,assistant",
+      )
+      .replace("Calendar and Meet are dormant", "Calendar and Meet are shipped");
+    expect(findScopeErrors("README.md", changed, scope)).toEqual(
+      expect.arrayContaining([
+        "README.md: scope mismatch: exact production apps",
+        "README.md: scope mismatch: dormant Calendar and Meet",
+        "README.md: production app list differs from canonical scope",
+        "README.md: missing canonical scope link",
+      ]),
+    );
   });
   it("reports missing and prohibited launch claims", () => {
     const errors = findClaimErrors(

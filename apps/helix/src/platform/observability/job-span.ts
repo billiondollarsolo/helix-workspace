@@ -21,10 +21,9 @@ export async function withJobSpan<T>(
   run: () => Promise<T>,
   options: JobSpanOptions = {},
 ): Promise<T> {
-  return trace.getTracer("helix.jobs").startActiveSpan(
-    `job.${jobId}`,
-    { attributes: { "helix.job.id": jobId } },
-    async (span) => {
+  return trace
+    .getTracer("helix.jobs")
+    .startActiveSpan(`job.${jobId}`, { attributes: { "helix.job.id": jobId } }, async (span) => {
       if (options.tenant !== undefined) {
         setSpanTenantAttributes(span, options.tenant);
       }
@@ -37,6 +36,5 @@ export async function withJobSpan<T>(
       } finally {
         span.end();
       }
-    },
-  );
+    });
 }

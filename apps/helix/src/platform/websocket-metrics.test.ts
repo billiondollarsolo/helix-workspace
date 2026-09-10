@@ -1,9 +1,9 @@
-import { trace, ROOT_CONTEXT } from "@opentelemetry/api";
+import { ROOT_CONTEXT, trace } from "@opentelemetry/api";
 import type { FastifyRequest } from "fastify";
 import { describe, expect, it } from "vitest";
 import {
-  trackWebsocketConnection,
   traceContextFromUpgradeRequest,
+  trackWebsocketConnection,
   type WebsocketConnectionMetrics,
 } from "./websocket-metrics.js";
 

@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
+import { unauthenticatedActor } from "../../api/actor.js";
 import {
   ApiError,
   BadRequestError,
@@ -10,7 +11,7 @@ import {
   UnauthorizedError,
   UnprocessableError,
 } from "../../api/api-error.js";
-import { unauthenticatedActor } from "../../api/actor.js";
+import { dlpDecisionError, type DlpGuard } from "../dlp.js";
 import {
   commitStorageUsage,
   isActiveBrowserContent,
@@ -23,17 +24,12 @@ import {
 } from "../drive/index.js";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
+import { safeErrorMessage as errorMessage } from "../util/errors.js";
 import type { ChatAttachmentRecord } from "./types.js";
-import { dlpDecisionError, type DlpGuard } from "../dlp.js";
 
-export const CHAT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
-export const CHAT_ATTACHMENT_STAGE_TTL_MS = 60 * 60 * 1000;
-export const CHAT_ATTACHMENT_MIME_TYPES = [
-  "image/png",
-  "image/jpeg",
-  "image/gif",
-  "image/webp",
-] as const;
+const CHAT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const CHAT_ATTACHMENT_STAGE_TTL_MS = 60 * 60 * 1000;
+const CHAT_ATTACHMENT_MIME_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 
 const acceptedMimeTypes = new Set<string>(CHAT_ATTACHMENT_MIME_TYPES);
 const attachmentParamsSchema = z.object({ objectId: z.string().uuid() }).strict();
@@ -84,7 +80,7 @@ export class ChatAttachmentRejectedError extends UnprocessableError {
   }
 }
 
-export class ChatAttachmentNotFoundError extends NotFoundError {
+class ChatAttachmentNotFoundError extends NotFoundError {
   constructor() {
     super("Chat attachment not found.");
     this.name = "ChatAttachmentNotFoundError";
@@ -539,12 +535,6 @@ function databaseBytes(value: number | string): number {
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
-}
-
-function errorMessage(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
-    .replaceAll(/[\r\n\t]+/gu, " ")
-    .slice(0, 500);
 }
 
 function headerValue(value: string | readonly string[] | undefined): string {

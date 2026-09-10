@@ -1,6 +1,6 @@
 import type { Actor, JsonObject } from "@helix/sdk-types";
 
-export type AssistantSlashCommandName = string;
+type AssistantSlashCommandName = string;
 
 export interface AssistantSlashCommand {
   readonly name: AssistantSlashCommandName;

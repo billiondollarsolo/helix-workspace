@@ -1,9 +1,9 @@
-import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { CalendarResourceConflictError, PostgresCalendarSchedulingStore } from "./scheduling.js";
 import type { CalendarStore } from "./store.js";
 import type { CalendarEventRecord, CalendarFreeBusyStore } from "./types.js";
-import { CalendarResourceConflictError, PostgresCalendarSchedulingStore } from "./scheduling.js";
 
 describe("calendar scheduling operations", () => {
   it("combines per-person time zones, focus time, and a holiday calendar", async () => {

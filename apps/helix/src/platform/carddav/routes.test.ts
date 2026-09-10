@@ -1,6 +1,6 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify, { type InjectOptions } from "fastify";
 import { describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
 import { registerCardDavRoutes } from "./routes.js";
 import { InMemoryCardDavContactStore } from "./store.js";

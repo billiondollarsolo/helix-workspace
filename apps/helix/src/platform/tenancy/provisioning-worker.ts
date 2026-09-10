@@ -1,4 +1,5 @@
 import { withJobSpan } from "../observability/job-span.js";
+import { errorMessage } from "../util/errors.js";
 import type { TenantProvisioningRecord, TenantProvisioningStore } from "./provisioning.js";
 
 export type TenantProvisioningWorkerStore = Pick<
@@ -129,8 +130,4 @@ export class TenantProvisioningWorker {
     this.activeRun = activeRun;
     return activeRun;
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

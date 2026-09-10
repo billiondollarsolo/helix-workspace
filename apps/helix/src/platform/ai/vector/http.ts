@@ -1,6 +1,8 @@
 import type { JsonObject } from "@helix/sdk-types";
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 import { outboundFetch } from "../../outbound-http.js";
 import type { VectorMatch } from "./types.js";
+export { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 
 export interface HttpVectorAdapterConfig {
   readonly baseUrl: string;
@@ -14,7 +16,7 @@ export interface NormalizedHttpVectorConfig {
   readonly fetch: typeof fetch;
 }
 
-export class VectorHttpError extends Error {
+class VectorHttpError extends Error {
   constructor(
     readonly adapterId: string,
     readonly status: number,
@@ -63,10 +65,6 @@ export async function requestJson(
     return null;
   }
   return JSON.parse(text) as unknown;
-}
-
-export function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function optionalJsonObject(value: unknown): JsonObject | undefined {

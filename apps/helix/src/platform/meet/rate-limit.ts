@@ -1,3 +1,4 @@
+import { positiveInteger } from "../util/numbers.js";
 /**
  * Meet abuse rate limits (MT.6) for room create and join (JWT mint).
  *
@@ -23,7 +24,7 @@ export interface MeetRateLimitConsumeInput {
   readonly budget?: Partial<MeetRateLimitBudget> | undefined;
 }
 
-export interface MeetRateLimitAllowed {
+interface MeetRateLimitAllowed {
   readonly allowed: true;
   readonly limit: number;
   readonly used: number;
@@ -49,7 +50,7 @@ export interface MeetRateLimiter {
   consume(input: MeetRateLimitConsumeInput): Promise<MeetRateLimitDecision>;
 }
 
-export const defaultMeetRateLimitBudget: MeetRateLimitBudget = {
+const defaultMeetRateLimitBudget: MeetRateLimitBudget = {
   createRoomLimit: 10,
   joinRoomLimit: 30,
   windowMs: 60 * 60 * 1000,
@@ -191,11 +192,4 @@ function resolveBudget(partial?: Partial<MeetRateLimitBudget>): MeetRateLimitBud
     ),
     windowMs: positiveInteger(partial?.windowMs ?? defaultMeetRateLimitBudget.windowMs, "windowMs"),
   };
-}
-
-function positiveInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new TypeError(`${name} must be a positive safe integer.`);
-  }
-  return value;
 }

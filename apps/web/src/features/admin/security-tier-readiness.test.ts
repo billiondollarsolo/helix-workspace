@@ -7,7 +7,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   adminPlatformConfigQueryKey,
-  adminPluginCatalogQueryKey,
   backendStatusToCheckStatus,
   formatRequirementFields,
   prefetchAdminReadinessQueries,
@@ -103,9 +102,6 @@ describe("SecurityTierReadiness admin UI", () => {
 
   it("PATCHes the selected security tier shape and reflects success state without native dialogs", async () => {
     fetchMock.mockImplementation((input, init) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
       if (input === "/v1/api/admin/platform-config" && init?.method === "PATCH") {
         return Promise.resolve(Response.json(platformStatus("enterprise", true)));
       }
@@ -136,9 +132,6 @@ describe("SecurityTierReadiness admin UI", () => {
 
   it("shows the mutation error state without browser-native alert, confirm, or prompt", async () => {
     fetchMock.mockImplementation((input, init) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
       if (input === "/v1/api/admin/platform-config" && init?.method === "PATCH") {
         return Promise.resolve(Response.json({ error: "denied" }, { status: 403 }));
       }
@@ -166,9 +159,6 @@ describe("SecurityTierReadiness admin UI", () => {
   it("optimistically updates the tier cache and rolls back when the patch fails", async () => {
     const patchResponse = deferred<Response>();
     fetchMock.mockImplementation((input, init) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
       if (input === "/v1/api/admin/platform-config" && init?.method === "PATCH") {
         return patchResponse.promise;
       }
@@ -201,16 +191,8 @@ describe("SecurityTierReadiness admin UI", () => {
    * gate closes is legitimate — but it confirms, and the confirmation has to
    * name the gates that are actually blocking rather than warn in general. */
   it("confirms an apply that runs against blocking gates, naming the tier and the gates", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/v1/api/tools/plugin.list"
-            ? pluginCatalog()
-            : // Blockers the PLATFORM reported for the tier it is running —
-              // the only kind that may be counted.
-              enterpriseStatusWithBlockingGates(),
-        ),
-      ),
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json(enterpriseStatusWithBlockingGates())),
     );
 
     renderAdminUI();
@@ -244,10 +226,7 @@ describe("SecurityTierReadiness admin UI", () => {
    * action only while the platform can actually meet the selected tier. */
   it("de-emphasises the apply control while the tier is blocked, and keeps it enabled", async () => {
     let blocked = false;
-    fetchMock.mockImplementation((input) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
+    fetchMock.mockImplementation(() => {
       return Promise.resolve(
         Response.json(
           blocked ? enterpriseStatusWithBlockingGates() : platformStatus("business", true),
@@ -289,10 +268,7 @@ describe("SecurityTierReadiness admin UI", () => {
    * so it must confirm — and say that nothing verified the platform. */
   it("confirms an unscoreable apply instead of treating unknown readiness as no blockers", async () => {
     let configFails = false;
-    fetchMock.mockImplementation((input) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
+    fetchMock.mockImplementation(() => {
       return Promise.resolve(
         configFails
           ? Response.json({ error: "forbidden" }, { status: 403 })
@@ -335,14 +311,8 @@ describe("SecurityTierReadiness admin UI", () => {
    * rendered identically to measured gates, with green "Ready" chips, a
    * percentage and a blocking count for a platform nobody had evaluated. */
   it("shows a target tier's gates as unevaluated expectations, never as measured statuses", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/v1/api/tools/plugin.list"
-            ? pluginCatalog()
-            : platformStatus("business", true),
-        ),
-      ),
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json(platformStatus("business", true))),
     );
 
     renderAdminUI();
@@ -384,14 +354,8 @@ describe("SecurityTierReadiness admin UI", () => {
 
   /* A fabricated "0 blocking" would have made this a one-click apply. */
   it("confirms an apply to a tier the platform has not evaluated", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/v1/api/tools/plugin.list"
-            ? pluginCatalog()
-            : platformStatus("business", true),
-        ),
-      ),
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json(platformStatus("business", true))),
     );
 
     renderAdminUI();
@@ -426,9 +390,6 @@ describe("SecurityTierReadiness admin UI", () => {
    * click. Confirming everything is how operators learn to click through. */
   it("applies a tier with no blocking gates in one click", async () => {
     fetchMock.mockImplementation((input, init) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
       if (input === "/v1/api/admin/platform-config" && init?.method === "PATCH") {
         return Promise.resolve(Response.json(platformStatus("business", true)));
       }
@@ -450,10 +411,7 @@ describe("SecurityTierReadiness admin UI", () => {
    * same arithmetic — zero over zero — and only the second one is 100%. */
   it("refuses to score a live tier with no reported gates, but scores one whose gates are all not required", async () => {
     let gateReported = false;
-    fetchMock.mockImplementation((input) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
+    fetchMock.mockImplementation(() => {
       return Promise.resolve(
         Response.json(
           gateReported ? personalStatusWithNotRequiredGate() : personalStatusWithNoGates(),
@@ -498,12 +456,8 @@ describe("SecurityTierReadiness admin UI", () => {
   });
 
   it("displays backend Vault and CloudNativePG evidence without placeholder readiness copy", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/v1/api/tools/plugin.list" ? pluginCatalog() : enterpriseStatusWithEvidence(),
-        ),
-      ),
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json(enterpriseStatusWithEvidence())),
     );
 
     renderAdminUI();
@@ -528,12 +482,8 @@ describe("SecurityTierReadiness admin UI", () => {
    * and the old score divided zero ready gates by zero actionable gates to
    * print "100%" and "0 blocking" — the most dangerous possible reading. */
   it("reports readiness as unknown, not 100%, when the config API is unavailable", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        input === "/v1/api/tools/plugin.list"
-          ? Response.json(pluginCatalog())
-          : Response.json({ error: "forbidden" }, { status: 403 }),
-      ),
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json({ error: "forbidden" }, { status: 403 })),
     );
 
     renderAdminUI();
@@ -551,14 +501,8 @@ describe("SecurityTierReadiness admin UI", () => {
   });
 
   it("marks services with no live requirement as not verified rather than online", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/v1/api/tools/plugin.list"
-            ? pluginCatalog()
-            : platformStatus("business", true),
-        ),
-      ),
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json(platformStatus("business", true))),
     );
 
     renderAdminUI();
@@ -577,14 +521,8 @@ describe("SecurityTierReadiness admin UI", () => {
   });
 
   it("renders the config-API connection state as status text, not a dead button", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/v1/api/tools/plugin.list"
-            ? pluginCatalog()
-            : platformStatus("business", true),
-        ),
-      ),
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(Response.json(platformStatus("business", true))),
     );
 
     renderAdminUI();
@@ -604,19 +542,17 @@ describe("SecurityTierReadiness admin UI", () => {
   });
 
   it("keeps fake control-reference edits and AI cost cards off this page", async () => {
-    fetchMock.mockImplementation((input) =>
+    fetchMock.mockImplementation(() =>
       Promise.resolve(
         Response.json(
-          input === "/v1/api/tools/plugin.list"
-            ? pluginCatalog()
-            : platformStatus("business", true, {
-                costLimits: { perUserPerDayUSD: 5, perOrgPerDayUSD: 500 },
-                audit: { logRequests: "metadata-only", retainDays: 90 },
-                privacy: {
-                  classificationGating: true,
-                  blockExternalForClassifications: ["confidential", "restricted"],
-                },
-              }),
+          platformStatus("business", true, {
+            costLimits: { perUserPerDayUSD: 5, perOrgPerDayUSD: 500 },
+            audit: { logRequests: "metadata-only", retainDays: 90 },
+            privacy: {
+              classificationGating: true,
+              blockExternalForClassifications: ["confidential", "restricted"],
+            },
+          }),
         ),
       ),
     );
@@ -633,313 +569,8 @@ describe("SecurityTierReadiness admin UI", () => {
     expect(container.textContent).not.toContain("User daily AI cost");
     expect(container.querySelector('[role="table"][aria-label="Security controls"]')).toBeNull();
     expect(container.querySelector('[aria-label="Related security admin pages"]')).not.toBeNull();
-    // Plugins are a tab, not dumped under readiness.
-    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
-      "Readiness",
-    );
+    expect(container.querySelector('[role="tablist"]')).toBeNull();
     expect(container.querySelector('[aria-label="Plugin catalog"]')).toBeNull();
-  });
-
-  it("reaches the Plugins tab with arrow keys, which roving tabindex otherwise makes unreachable", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/v1/api/tools/plugin.list"
-            ? pluginCatalog()
-            : platformStatus("business", true),
-        ),
-      ),
-    );
-
-    renderAdminUI();
-    await waitForText("Tier readiness");
-
-    const tabs = Array.from(container.querySelectorAll<HTMLElement>('[role="tab"]'));
-    expect(tabs.map((tab) => tab.textContent?.trim())).toEqual(["Readiness", "Plugins"]);
-    // Roving tabindex: only the selected tab is a tab stop, so arrow keys are
-    // the only route to the other one.
-    expect(tabs.filter((tab) => tab.getAttribute("tabindex") === "0")).toHaveLength(1);
-    for (const tab of tabs) {
-      const panelId = tab.getAttribute("aria-controls") ?? "";
-      expect(panelId).toBe(`tier-panel-${tab.textContent?.trim().toLowerCase() ?? ""}`);
-    }
-    expect(selectedTab()?.textContent?.trim()).toBe("Readiness");
-
-    // Selection moves and focus follows it, so the key press lands the user on
-    // the tab they just selected rather than leaving focus behind.
-    expect(await pressKeyOnSelectedTab("ArrowRight")).toBe("tier-tab-plugins");
-    expect(selectedTab()?.textContent?.trim()).toBe("Plugins");
-    expect(selectedTab()?.getAttribute("tabindex")).toBe("0");
-
-    const panel = container.querySelector<HTMLElement>('[role="tabpanel"]');
-    expect(panel?.id).toBe("tier-panel-plugins");
-    expect(panel?.getAttribute("aria-labelledby")).toBe(selectedTab()?.id);
-
-    // Right from the last tab wraps back to the first.
-    await pressKeyOnSelectedTab("ArrowRight");
-    expect(selectedTab()?.textContent?.trim()).toBe("Readiness");
-
-    // Left from the first tab wraps to the last.
-    await pressKeyOnSelectedTab("ArrowLeft");
-    expect(selectedTab()?.textContent?.trim()).toBe("Plugins");
-
-    await pressKeyOnSelectedTab("Home");
-    expect(selectedTab()?.textContent?.trim()).toBe("Readiness");
-
-    await pressKeyOnSelectedTab("End");
-    expect(selectedTab()?.textContent?.trim()).toBe("Plugins");
-
-    // Keys the tabs pattern does not own must not steal selection.
-    await pressKeyOnSelectedTab("ArrowDown");
-    expect(selectedTab()?.textContent?.trim()).toBe("Plugins");
-  });
-
-  it("renders plugin catalog headers and rows with TanStack table semantics", async () => {
-    fetchMock.mockImplementation((input) =>
-      Promise.resolve(
-        Response.json(
-          input === "/v1/api/tools/plugin.list"
-            ? pluginCatalog()
-            : platformStatus("business", true),
-        ),
-      ),
-    );
-
-    renderAdminUI();
-    await openPluginsTab();
-    await waitForText("Community importer");
-
-    const pluginTable = tableByLabel("Plugin catalog");
-    const headers = Array.from(pluginTable.querySelectorAll('[role="columnheader"]')).map(
-      (header) => header.textContent,
-    );
-    expect(headers).toEqual(["Plugin", "Kind", "Version", "Permissions", "Lifecycle", "Action"]);
-    expect(pluginTable.textContent).toContain("Community importer");
-    expect(pluginTable.textContent).toContain("com.example.community");
-    expect(pluginTable.textContent).toContain("Mail auditor");
-    expect(pluginTable.textContent).toContain("com.example.mail-auditor");
-    expect(pluginTable.querySelectorAll('[role="row"]')).toHaveLength(3);
-
-    await clickButton("Review");
-    expect(container.textContent).toContain("mail.audit");
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(confirmMock).not.toHaveBeenCalled();
-    expect(promptMock).not.toHaveBeenCalled();
-  });
-
-  it("blocks non-official plugin install until every permission is confirmed", async () => {
-    fetchMock.mockImplementation((input, init) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
-      if (input === "/v1/api/tools/plugin.install" && init?.method === "POST") {
-        return Promise.resolve(
-          Response.json({
-            status: "installed",
-            source: "sideload",
-            plugin: pluginCatalog().plugins[0],
-            confirmations: [],
-          }),
-        );
-      }
-      return Promise.resolve(Response.json(platformStatus("business", true)));
-    });
-
-    renderAdminUI();
-    await openPluginsTab();
-    await waitForText("Community importer");
-    expect(tableByLabel("Plugin catalog").textContent).toContain("Community importer");
-    await waitForText("Install from a non-official source");
-    expect(buttonByText("Install plugin").disabled).toBe(true);
-
-    await clickAllPluginConfirmations();
-    expect(buttonByText("Install plugin").disabled).toBe(false);
-    await clickButton("Install plugin");
-
-    await waitForText("Install validated for Community importer.");
-    const installCall = fetchMock.mock.calls.find(
-      (call) => call[0] === "/v1/api/tools/plugin.install",
-    );
-    expect(requestBodyForCall(installCall)).toMatchObject({
-      pluginId: "com.example.community",
-      version: "1.2.3",
-      confirmations: [
-        "source.non_official",
-        "permissions.scopes.drive.write",
-        "permissions.outbound-network.api.example.com",
-        "capabilities.provides.example.importer",
-        "artifact.untrusted",
-      ],
-    });
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(confirmMock).not.toHaveBeenCalled();
-    expect(promptMock).not.toHaveBeenCalled();
-  });
-
-  it("calls plugin lifecycle tools from the admin plugin table", async () => {
-    fetchMock.mockImplementation((input, init) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
-      if (input === "/v1/api/tools/plugin.enable" && init?.method === "POST") {
-        return Promise.resolve(
-          Response.json({
-            status: "enabled",
-            plugin: pluginCatalog().plugins[0],
-            lifecycle: { state: "enabled", installed: true },
-          }),
-        );
-      }
-      if (input === "/v1/api/tools/plugin.disable" && init?.method === "POST") {
-        return Promise.resolve(
-          Response.json({
-            status: "disabled",
-            plugin: pluginCatalog().plugins[1],
-            lifecycle: { state: "disabled", installed: true },
-          }),
-        );
-      }
-      return Promise.resolve(Response.json(platformStatus("business", true)));
-    });
-
-    renderAdminUI();
-    await openPluginsTab();
-    await waitForText("Community importer");
-    await waitForText("Disabled");
-
-    await clickPluginAction("com.example.community", "Enable");
-    await waitFor(() => expect(pluginLifecycleCall("enable")).toBeDefined());
-    expect(requestBodyForCall(pluginLifecycleCall("enable"))).toEqual({
-      pluginId: "com.example.community",
-    });
-
-    await clickPluginAction("com.example.mail-auditor", "Disable");
-    await waitFor(() => expect(pluginLifecycleCall("disable")).toBeDefined());
-    expect(requestBodyForCall(pluginLifecycleCall("disable"))).toEqual({
-      pluginId: "com.example.mail-auditor",
-    });
-
-    // Neither reversible action drags a confirmation id along.
-    const bodies = fetchMock.mock.calls.map(([, init]) =>
-      typeof init?.body === "string" ? init.body : "",
-    );
-    expect(bodies).not.toContainEqual(expect.stringContaining("plugin.uninstall"));
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(confirmMock).not.toHaveBeenCalled();
-    expect(promptMock).not.toHaveBeenCalled();
-  });
-
-  /* The backend answers `plugin.uninstall` with the `ConfirmationRequirement`s
-   * it wants acknowledged and refuses until their ids come back. This client
-   * used to post `confirmations: ["plugin.uninstall"]` unconditionally —
-   * answering a server-side safety gate on behalf of an operator who was never
-   * asked. The id may now only reach the wire after a human ticks it. */
-  it("asks the backend for its uninstall requirements instead of forging their ids", async () => {
-    mockPluginUninstallBackend();
-
-    renderAdminUI();
-    await openPluginsTab();
-    await waitForText("Community importer");
-    await clickPluginAction("com.example.mail-auditor", "Uninstall");
-
-    // Opening the row action must not have called the tool at all.
-    expect(pluginLifecycleCalls("uninstall")).toHaveLength(0);
-    expect(confirmDialog().textContent).toContain("Uninstall Mail auditor");
-    // A real consequence from the manifest, not "this cannot be undone".
-    expect(blastRadiusText()).toContain("active runtime hooks");
-    expect(blastRadiusText()).toContain("mail.audit");
-    expect(blastRadiusText()).not.toContain("cannot be undone");
-
-    await clickDialogButton("Uninstall Mail auditor");
-
-    // First request carries no confirmations: the backend states them.
-    await waitFor(() => expect(pluginLifecycleCalls("uninstall")).toHaveLength(1));
-    expect(requestBodyForCall(pluginLifecycleCalls("uninstall")[0])).toEqual({
-      pluginId: "com.example.mail-auditor",
-      confirmations: [],
-    });
-
-    // The refusal is surfaced with the backend's own label and detail.
-    await waitForText("Uninstall com.example.mail-auditor and remove its active runtime hooks.");
-    const acknowledgement = uninstallAcknowledgementCard();
-    expect(acknowledgement.textContent).toContain("Uninstall plugin");
-    const uninstallCta = buttonByText("Uninstall Mail auditor");
-    expect(uninstallCta.disabled).toBe(true);
-    expect(uninstallCta.getAttribute("aria-describedby")).toBe("uninstall-acknowledgement-note");
-    expect(container.querySelector("#uninstall-acknowledgement-note")?.textContent).toContain(
-      "Tick every requirement the platform listed",
-    );
-
-    await tickUninstallAcknowledgements();
-    expect(buttonByText("Uninstall Mail auditor").disabled).toBe(false);
-
-    await clickButton("Uninstall Mail auditor");
-    expect(blastRadiusText()).toContain("Uninstall plugin");
-    await clickDialogButton("Uninstall Mail auditor");
-
-    await waitFor(() => expect(pluginLifecycleCalls("uninstall")).toHaveLength(2));
-    // Only now, and only because a human ticked it.
-    expect(requestBodyForCall(pluginLifecycleCalls("uninstall")[1])).toEqual({
-      pluginId: "com.example.mail-auditor",
-      confirmations: ["plugin.uninstall"],
-    });
-    await waitForText("Uninstalled Mail auditor.");
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(confirmMock).not.toHaveBeenCalled();
-    expect(promptMock).not.toHaveBeenCalled();
-  });
-
-  /* Dismissing the confirmation must leave the platform untouched — and the
-   * unacknowledged requirement must not be sent by the retry either. */
-  it("sends nothing when the uninstall confirmation is cancelled", async () => {
-    mockPluginUninstallBackend();
-
-    renderAdminUI();
-    await openPluginsTab();
-    await waitForText("Community importer");
-    await clickPluginAction("com.example.mail-auditor", "Uninstall");
-    await clickDialogButton("Cancel");
-
-    await waitFor(() => expect(document.querySelector('[role="alertdialog"]')).toBeNull());
-    expect(pluginLifecycleCalls("uninstall")).toHaveLength(0);
-    expect(document.body.style.pointerEvents).not.toBe("none");
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(confirmMock).not.toHaveBeenCalled();
-    expect(promptMock).not.toHaveBeenCalled();
-  });
-
-  it("optimistically marks plugin install cache and rolls back when validation fails", async () => {
-    const installResponse = deferred<Response>();
-    fetchMock.mockImplementation((input, init) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
-      if (input === "/v1/api/tools/plugin.install" && init?.method === "POST") {
-        return installResponse.promise;
-      }
-      return Promise.resolve(Response.json(platformStatus("business", true)));
-    });
-
-    renderAdminUI();
-    await openPluginsTab();
-    await waitForText("Community importer");
-    await clickAllPluginConfirmations();
-    await clickButton("Install plugin");
-
-    await waitFor(() => {
-      expect(pluginInstallCall()).toBeDefined();
-      expect(communityPluginCache()?.install).toMatchObject({
-        optimisticStatus: "installing",
-      });
-    });
-
-    installResponse.resolve(Response.json({ error: "denied" }, { status: 403 }));
-
-    await waitForText("Could not validate the plugin install request.");
-    expect(pluginCatalogCache()).toEqual(pluginCatalog());
-    expect(alertMock).not.toHaveBeenCalled();
-    expect(confirmMock).not.toHaveBeenCalled();
-    expect(promptMock).not.toHaveBeenCalled();
   });
 
   function renderAdminUI() {
@@ -952,55 +583,6 @@ describe("SecurityTierReadiness admin UI", () => {
         ),
       );
     });
-  }
-
-  async function openPluginsTab() {
-    await waitForText("Plugins");
-    const tab = Array.from(container.querySelectorAll('[role="tab"]')).find(
-      (candidate) => candidate.textContent?.trim() === "Plugins",
-    );
-    if (!(tab instanceof HTMLButtonElement)) {
-      throw new Error("Plugins tab not found.");
-    }
-    act(() => {
-      tab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
-
-  function selectedTab(): HTMLElement | null {
-    return container.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
-  }
-
-  /* Sends a key to the selected tab and reports the id of the element the
-     handler moved focus to. `document.activeElement` cannot be read afterwards:
-     tab selection lives in the URL, and this file's navigate mock re-renders a
-     brand new router tree, so the focused node is detached before the assertion
-     runs. Recording the focus call keeps the assertion about the component. */
-  async function pressKeyOnSelectedTab(key: string): Promise<string | undefined> {
-    const tab = selectedTab();
-    if (tab === null) {
-      throw new Error("No selected tab to send a key to.");
-    }
-    let focusedId: string | undefined;
-    const focusSpy = vi
-      .spyOn(HTMLElement.prototype, "focus")
-      .mockImplementation(function focusRecorder(this: HTMLElement) {
-        focusedId = this.id;
-      });
-    try {
-      act(() => {
-        tab.dispatchEvent(new window.KeyboardEvent("keydown", { key, bubbles: true }));
-      });
-    } finally {
-      focusSpy.mockRestore();
-    }
-    await act(async () => {
-      await Promise.resolve();
-    });
-    return focusedId;
   }
 
   async function clickButton(name: string) {
@@ -1051,116 +633,6 @@ describe("SecurityTierReadiness admin UI", () => {
     });
   }
 
-  function tableByLabel(label: string): HTMLElement {
-    const table = container.querySelector(`[role="table"][aria-label="${label}"]`);
-    if (!(table instanceof HTMLElement)) {
-      throw new Error(`Table not found: ${label}`);
-    }
-    return table;
-  }
-
-  async function clickPluginAction(pluginId: string, action: string) {
-    const row = Array.from(tableByLabel("Plugin catalog").querySelectorAll('[role="row"]')).find(
-      (candidate) => candidate.textContent?.includes(pluginId),
-    );
-    const button = Array.from(row?.querySelectorAll("button") ?? []).find((candidate) =>
-      candidate.textContent?.includes(action),
-    );
-    if (!(button instanceof HTMLButtonElement)) {
-      throw new Error(`Plugin action not found: ${pluginId} ${action}`);
-    }
-    act(() => {
-      button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
-
-  /* Mirrors apps/helix/src/platform/plugins/tools.ts: `plugin.uninstall`
-     refuses with its `ConfirmationRequirement`s until their ids come back. */
-  function mockPluginUninstallBackend() {
-    fetchMock.mockImplementation((input, init) => {
-      if (input === "/v1/api/tools/plugin.list") {
-        return Promise.resolve(Response.json(pluginCatalog()));
-      }
-      if (input === "/v1/api/tools/plugin.uninstall" && init?.method === "POST") {
-        const body = JSON.parse(typeof init.body === "string" ? init.body : "{}") as {
-          readonly confirmations?: string[];
-        };
-        if (!(body.confirmations ?? []).includes("plugin.uninstall")) {
-          return Promise.resolve(
-            Response.json({
-              status: "blocked_confirmation_required",
-              plugin: pluginCatalog().plugins[1],
-              confirmations: [
-                {
-                  id: "plugin.uninstall",
-                  label: "Uninstall plugin",
-                  category: "capability",
-                  detail: "Uninstall com.example.mail-auditor and remove its active runtime hooks.",
-                },
-              ],
-            }),
-          );
-        }
-        return Promise.resolve(
-          Response.json({
-            status: "uninstalled",
-            plugin: pluginCatalog().plugins[1],
-            lifecycle: { state: "uninstalled", installed: false },
-          }),
-        );
-      }
-      return Promise.resolve(Response.json(platformStatus("business", true)));
-    });
-  }
-
-  function uninstallAcknowledgementCard(): HTMLElement {
-    const card = container.querySelector('.admin-plugin-card[data-status="warning"]');
-    if (!(card instanceof HTMLElement)) {
-      throw new Error("Uninstall acknowledgement card not found.");
-    }
-    return card;
-  }
-
-  async function tickUninstallAcknowledgements() {
-    const checkboxes = [
-      ...uninstallAcknowledgementCard().querySelectorAll("input[type='checkbox']"),
-    ];
-    if (checkboxes.length === 0) {
-      throw new Error("Uninstall acknowledgement checkboxes not found.");
-    }
-    for (const checkbox of checkboxes) {
-      act(() => {
-        checkbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-      await act(async () => {
-        await Promise.resolve();
-      });
-    }
-  }
-
-  async function clickAllPluginConfirmations() {
-    const checkboxes = Array.from(
-      container.querySelectorAll(".admin-plugin-confirmations input[type='checkbox']"),
-    );
-    if (checkboxes.length === 0) {
-      throw new Error("Plugin confirmation checkboxes not found.");
-    }
-    for (const checkbox of checkboxes) {
-      if (!(checkbox instanceof HTMLInputElement)) {
-        continue;
-      }
-      act(() => {
-        checkbox.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-      await act(async () => {
-        await Promise.resolve();
-      });
-    }
-  }
-
   async function waitForText(text: string) {
     await waitFor(() => expect(container.textContent).toContain(text));
   }
@@ -1187,29 +659,19 @@ describe("SecurityTierReadiness admin UI", () => {
   function platformConfigCache() {
     return queryClient.getQueryData<ReturnType<typeof platformStatus>>(adminPlatformConfigQueryKey);
   }
-
-  function pluginCatalogCache() {
-    return queryClient.getQueryData<ReturnType<typeof pluginCatalog>>(adminPluginCatalogQueryKey);
-  }
-
-  function communityPluginCache() {
-    return pluginCatalogCache()?.plugins.find((plugin) => plugin.id === "com.example.community");
-  }
 });
 
 describe("admin security tier readiness helpers", () => {
-  it("prefetches route data for platform config and plugin catalog with contained errors", async () => {
+  it("prefetches route data for platform config with contained errors", async () => {
     const ensureQueryData = vi
       .fn<(options: { readonly queryKey: readonly unknown[] }) => Promise<unknown>>()
-      .mockRejectedValueOnce(new Error("platform config unavailable"))
-      .mockResolvedValueOnce({ plugins: [] });
+      .mockRejectedValueOnce(new Error("platform config unavailable"));
 
     await expect(prefetchAdminReadinessQueries({ ensureQueryData })).resolves.toBeUndefined();
 
-    expect(ensureQueryData).toHaveBeenCalledTimes(2);
+    expect(ensureQueryData).toHaveBeenCalledTimes(1);
     expect(ensureQueryData.mock.calls.map(([options]) => options.queryKey)).toEqual([
       adminPlatformConfigQueryKey,
-      adminPluginCatalogQueryKey,
     ]);
   });
 
@@ -1366,29 +828,6 @@ function requestBodyForCall<T = unknown>(call: Parameters<typeof fetch> | undefi
 function platformPatchCall(): Parameters<typeof fetch> | undefined {
   return (globalThis.fetch as unknown as ReturnType<typeof vi.fn<typeof fetch>>).mock.calls.find(
     (call) => call[0] === "/v1/api/admin/platform-config" && call[1]?.method === "PATCH",
-  );
-}
-
-function pluginInstallCall(): Parameters<typeof fetch> | undefined {
-  return (globalThis.fetch as unknown as ReturnType<typeof vi.fn<typeof fetch>>).mock.calls.find(
-    (call) => call[0] === "/v1/api/tools/plugin.install" && call[1]?.method === "POST",
-  );
-}
-
-function pluginLifecycleCall(
-  action: "enable" | "disable" | "uninstall",
-): Parameters<typeof fetch> | undefined {
-  return pluginLifecycleCalls(action)[0];
-}
-
-/** Every call to one lifecycle tool, in order: uninstall is now a conversation
- *  (ask, get refused with requirements, resend what was acknowledged), so the
- *  first request and the last one have to be inspected separately. */
-function pluginLifecycleCalls(
-  action: "enable" | "disable" | "uninstall",
-): Parameters<typeof fetch>[] {
-  return (globalThis.fetch as unknown as ReturnType<typeof vi.fn<typeof fetch>>).mock.calls.filter(
-    (call) => call[0] === `/v1/api/tools/plugin.${action}` && call[1]?.method === "POST",
   );
 }
 
@@ -1566,90 +1005,5 @@ function enterpriseStatusWithEvidence() {
         },
       ],
     },
-  };
-}
-
-function pluginCatalog() {
-  return {
-    plugins: [
-      {
-        id: "com.example.community",
-        name: "Community importer",
-        version: "1.2.3",
-        kind: "in-process",
-        capabilities: {
-          provides: ["example.importer"],
-          consumes: [],
-        },
-        permissions: {
-          scopes: ["drive.write"],
-          "outbound-network": ["api.example.com"],
-          filesystem: [],
-          envVars: [],
-        },
-        install: {
-          confirmationRequired: true,
-          confirmations: [
-            {
-              id: "source.non_official",
-              label: "Install from a non-official source",
-              category: "source",
-              detail: "No signed catalog entry authenticates this artifact.",
-            },
-            {
-              id: "permissions.scopes.drive.write",
-              label: "Scope",
-              category: "scope",
-              detail: "drive.write",
-            },
-            {
-              id: "permissions.outbound-network.api.example.com",
-              label: "Outbound network",
-              category: "outbound-network",
-              detail: "api.example.com",
-            },
-            {
-              id: "capabilities.provides.example.importer",
-              label: "Provided capability",
-              category: "capability",
-              detail: "example.importer",
-            },
-            {
-              id: "artifact.untrusted",
-              label: "Untrusted plugin artifact",
-              category: "signature",
-              detail: "No valid signed catalog entry authenticates this exact plugin artifact.",
-            },
-          ],
-        },
-        lifecycle: {
-          state: "disabled",
-          installed: true,
-        },
-        tierRequirements: null,
-      },
-      {
-        id: "com.example.mail-auditor",
-        name: "Mail auditor",
-        version: "0.9.0",
-        kind: "in-process",
-        capabilities: {
-          provides: ["mail.audit"],
-          consumes: ["mail.message"],
-        },
-        permissions: {
-          scopes: ["mail.read"],
-          "outbound-network": [],
-          filesystem: [],
-          envVars: [],
-        },
-        install: null,
-        lifecycle: {
-          state: "enabled",
-          installed: true,
-        },
-        tierRequirements: null,
-      },
-    ],
   };
 }

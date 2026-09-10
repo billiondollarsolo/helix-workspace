@@ -1,10 +1,12 @@
-import { randomUUID } from "node:crypto";
 import type { AuditRecord } from "@helix/sdk";
 import type { Actor } from "@helix/sdk-types";
+import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
+import { errorMessage } from "../util/errors.js";
+import { toSqlJson } from "../util/sql.js";
 import type { BackupOperationResult, RestoreExecutor } from "./admin-routes.js";
 
-export type RestoreJobStatus =
+type RestoreJobStatus =
   "pending_approval" | "queued" | "processing" | "completed" | "cancelled" | "failed";
 
 export interface RestoreJobRequest {
@@ -173,10 +175,6 @@ export class PostgresRestoreJobStore implements RestoreJobStore {
   }
 }
 
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
-}
-
 export interface RestoreAuditSink {
   append(record: AuditRecord & { readonly orgId: string }): Promise<unknown>;
 }
@@ -319,8 +317,4 @@ function mapJob(row: RestoreJobRow): RestoreJob {
     ...(row.last_error === null ? {} : { lastError: row.last_error }),
     ...(row.result === null ? {} : { result: row.result }),
   };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

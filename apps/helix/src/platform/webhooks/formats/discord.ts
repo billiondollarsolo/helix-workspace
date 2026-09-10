@@ -1,11 +1,11 @@
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
+import { createTemplateContext, renderTemplateString } from "./template.js";
 import type {
   JsonObject,
   JsonValue,
   OutboundWebhookEvent,
   RenderedWebhookRequest,
-  WebhookFormatAdapter,
 } from "./types.js";
-import { createTemplateContext, renderTemplateString } from "./template.js";
 
 export interface DiscordWebhookConfig {
   readonly contentTemplate?: string;
@@ -13,30 +13,25 @@ export interface DiscordWebhookConfig {
   readonly avatarUrl?: string;
 }
 
-export interface DiscordEmbedField extends JsonObject {
+interface DiscordEmbedField extends JsonObject {
   readonly name: string;
   readonly value: string;
   readonly inline?: boolean;
 }
 
-export interface DiscordEmbed extends JsonObject {
+interface DiscordEmbed extends JsonObject {
   readonly title: string;
   readonly description?: string;
   readonly timestamp: string;
   readonly fields?: readonly DiscordEmbedField[];
 }
 
-export interface DiscordWebhookPayload extends JsonObject {
+interface DiscordWebhookPayload extends JsonObject {
   readonly content: string;
   readonly embeds: readonly DiscordEmbed[];
   readonly username?: string;
   readonly avatar_url?: string;
 }
-
-export const discordWebhookFormat: WebhookFormatAdapter<DiscordWebhookConfig> = {
-  id: "discord",
-  render: renderDiscordWebhookPayload,
-};
 
 export function renderDiscordWebhookPayload(
   event: OutboundWebhookEvent,
@@ -90,8 +85,4 @@ function fieldsFor(payload: JsonValue): Pick<DiscordEmbed, "fields"> {
 function stringField(payload: JsonObject, key: string): string | undefined {
   const value = payload[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function isJsonObject(value: JsonValue): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

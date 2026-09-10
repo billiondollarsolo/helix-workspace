@@ -2,7 +2,7 @@ export const DEFAULT_MULTIPART_PART_SIZE = 8 * 1024 * 1024; // 8 MiB
 export const DEFAULT_MULTIPART_THRESHOLD = 8 * 1024 * 1024;
 export const MAX_MULTIPART_PARTS = 1_000;
 
-export interface MultipartPartPlan {
+interface MultipartPartPlan {
   readonly partNumber: number;
   readonly start: number;
   readonly end: number;

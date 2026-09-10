@@ -1,8 +1,8 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
-import { ingestSmtpEnvelope } from "./ingest.js";
 import { parseInboundAuthenticationPolicy } from "./inbound-policy.js";
+import { ingestSmtpEnvelope } from "./ingest.js";
 import { registerMailQuarantineAdminRoutes } from "./quarantine-admin.js";
 import type {
   MailQuarantinePayload,

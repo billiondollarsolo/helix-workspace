@@ -1,6 +1,7 @@
+import type { Actor, JsonObject } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import type { Actor, JsonObject } from "@helix/sdk-types";
+import { toSqlJson } from "../util/sql.js";
 import type {
   AssistantAppendMessageInput,
   AssistantConversation,
@@ -656,8 +657,4 @@ function sortConversationListItems(
     return (right.pinnedAt ?? "").localeCompare(left.pinnedAt ?? "");
   }
   return right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id);
-}
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }

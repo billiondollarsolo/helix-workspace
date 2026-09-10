@@ -11,7 +11,7 @@ import type {
 import type { ForgetCriteria, MemoryItem } from "../ai/memory/index.js";
 import type { ToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
 
-export type AssistantMessageRole = "system" | "user" | "assistant" | "tool";
+type AssistantMessageRole = "system" | "user" | "assistant" | "tool";
 
 export interface AssistantConversation {
   readonly id: string;
@@ -168,7 +168,7 @@ export interface AssistantSource {
   readonly score?: number;
 }
 
-export type AssistantToolCallStatus = "executed" | "pending_confirmation" | "failed" | "skipped";
+type AssistantToolCallStatus = "executed" | "pending_confirmation" | "failed" | "skipped";
 
 export interface AssistantToolCallResult {
   readonly toolCallId: string;

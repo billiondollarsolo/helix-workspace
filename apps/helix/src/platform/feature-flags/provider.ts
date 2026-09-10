@@ -1,7 +1,7 @@
 import type { FeatureFlagEvaluationContext, FeatureFlagProvider } from "@helix/sdk";
 import type { TenantConfig } from "@helix/sdk-types";
 
-export type TenantConfigLoader = (input: {
+type TenantConfigLoader = (input: {
   readonly orgId: string;
   readonly context: FeatureFlagEvaluationContext;
 }) => Promise<TenantConfig | null>;

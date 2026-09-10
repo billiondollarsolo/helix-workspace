@@ -1,14 +1,7 @@
-import { generateKeyPairSync } from "node:crypto";
 import type { AICallContext, ChatChunk, ChatResponse } from "@helix/sdk-types";
+import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createAnthropicCompatibleProvider } from "./anthropic-compatible.js";
-import {
-  anthropicChatChunks,
-  collectChatChunks,
-  openAIChatChunks,
-  parseSseStream,
-  type SseEvent,
-} from "./shared.js";
 import {
   envCredentialProvider,
   instanceMetadataCredentialProvider,
@@ -19,6 +12,13 @@ import {
 } from "./aws-credentials.js";
 import { createBedrockCredentialProvider, createBedrockProvider } from "./bedrock.js";
 import { createOpenAICompatibleProvider } from "./openai-compatible.js";
+import {
+  anthropicChatChunks,
+  collectChatChunks,
+  openAIChatChunks,
+  parseSseStream,
+  type SseEvent,
+} from "./shared.js";
 import { createVertexProvider, parseTokenResponse, signServiceAccountJwt } from "./vertex.js";
 
 interface FetchStub {
@@ -27,7 +27,10 @@ interface FetchStub {
 }
 
 type FetchCall = readonly [Parameters<typeof fetch>[0], Parameters<typeof fetch>[1]];
-type FetchResponseFactory = (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => Promise<Response> | Response;
+type FetchResponseFactory = (
+  input: Parameters<typeof fetch>[0],
+  init: Parameters<typeof fetch>[1],
+) => Promise<Response> | Response;
 
 const ctx = {
   actor: { id: "user-1", type: "user", orgId: "org-1" },
@@ -57,7 +60,11 @@ function firstCall(stub: FetchStub): readonly [URL, RequestInit] {
 }
 
 function headers(init: RequestInit): Record<string, string> {
-  if (init.headers === undefined || init.headers instanceof Headers || Array.isArray(init.headers)) {
+  if (
+    init.headers === undefined ||
+    init.headers instanceof Headers ||
+    Array.isArray(init.headers)
+  ) {
     throw new Error("Expected plain headers");
   }
   const result: Record<string, string> = {};
@@ -135,7 +142,7 @@ describe("AI provider adapters", () => {
                       id: "call-1",
                       function: {
                         name: "calendar.create",
-                        arguments: "{\"title\":\"Demo\"}",
+                        arguments: '{"title":"Demo"}',
                       },
                     },
                   ],
@@ -155,7 +162,10 @@ describe("AI provider adapters", () => {
     });
 
     const response = expectChatResponse(
-      await provider.chat({ feature: "test.chat", messages: [{ role: "user", content: "ping" }] }, ctx),
+      await provider.chat(
+        { feature: "test.chat", messages: [{ role: "user", content: "ping" }] },
+        ctx,
+      ),
     );
 
     const [url, init] = firstCall(stub);
@@ -259,7 +269,10 @@ describe("AI provider adapters", () => {
     });
 
     const response = expectChatResponse(
-      await provider.chat({ feature: "test.chat", messages: [{ role: "user", content: "hi" }] }, ctx),
+      await provider.chat(
+        { feature: "test.chat", messages: [{ role: "user", content: "hi" }] },
+        ctx,
+      ),
     );
 
     const [url, init] = firstCall(stub);
@@ -269,8 +282,12 @@ describe("AI provider adapters", () => {
       "x-amz-date": "20260520T123456Z",
       "x-amz-security-token": "test-token",
     });
-    expect(headers(init).authorization).toContain("Credential=test-access/20260520/us-east-1/bedrock/aws4_request");
-    expect(headers(init).authorization).toContain("SignedHeaders=accept;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token");
+    expect(headers(init).authorization).toContain(
+      "Credential=test-access/20260520/us-east-1/bedrock/aws4_request",
+    );
+    expect(headers(init).authorization).toContain(
+      "SignedHeaders=accept;content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token",
+    );
     expect(jsonBody(init)).toMatchObject({
       anthropic_version: "bedrock-2023-05-31",
       messages: [{ role: "user", content: "hi" }],
@@ -300,7 +317,10 @@ describe("AI provider adapters", () => {
     });
 
     const response = expectChatResponse(
-      await provider.chat({ feature: "test.chat", messages: [{ role: "user", content: "hi" }] }, ctx),
+      await provider.chat(
+        { feature: "test.chat", messages: [{ role: "user", content: "hi" }] },
+        ctx,
+      ),
     );
 
     const [url, init] = firstCall(stub);
@@ -328,15 +348,13 @@ describe("Vertex service-account token exchange", () => {
     const stub = createFetchStub((input) => {
       const url = new URL(requestUrl(input));
       if (url.toString() === "https://oauth2.googleapis.com/token") {
-        return new Response(
-          JSON.stringify({ access_token: "exchanged-token", expires_in: 3600 }),
-          { status: 200 },
-        );
+        return new Response(JSON.stringify({ access_token: "exchanged-token", expires_in: 3600 }), {
+          status: 200,
+        });
       }
-      return new Response(
-        JSON.stringify({ content: [{ type: "text", text: "vertex sa ok" }] }),
-        { status: 200 },
-      );
+      return new Response(JSON.stringify({ content: [{ type: "text", text: "vertex sa ok" }] }), {
+        status: 200,
+      });
     });
     const provider = createVertexProvider({
       id: "vertex-sa",
@@ -349,7 +367,10 @@ describe("Vertex service-account token exchange", () => {
     });
 
     const response = expectChatResponse(
-      await provider.chat({ feature: "test.chat", messages: [{ role: "user", content: "hi" }] }, ctx),
+      await provider.chat(
+        { feature: "test.chat", messages: [{ role: "user", content: "hi" }] },
+        ctx,
+      ),
     );
 
     expect(response.message).toBe("vertex sa ok");
@@ -358,14 +379,10 @@ describe("Vertex service-account token exchange", () => {
       throw new Error("Expected the token exchange call");
     }
     const [tokenInput, tokenInit] = tokenCall;
-    expect(requestUrl(tokenInput)).toBe(
-      "https://oauth2.googleapis.com/token",
-    );
+    expect(requestUrl(tokenInput)).toBe("https://oauth2.googleapis.com/token");
     expect(tokenInit?.method).toBe("POST");
     const bodyParams = new URLSearchParams(requestBody(tokenInit));
-    expect(bodyParams.get("grant_type")).toBe(
-      "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    );
+    expect(bodyParams.get("grant_type")).toBe("urn:ietf:params:oauth:grant-type:jwt-bearer");
     const assertion = bodyParams.get("assertion");
     expect(assertion).not.toBeNull();
     expect((assertion ?? "").split(".")).toHaveLength(3);
@@ -544,10 +561,9 @@ describe("Bedrock AWS credential resolution", () => {
     });
     const stub = createFetchStub(
       () =>
-        new Response(
-          JSON.stringify({ content: [{ type: "text", text: "role ok" }] }),
-          { status: 200 },
-        ),
+        new Response(JSON.stringify({ content: [{ type: "text", text: "role ok" }] }), {
+          status: 200,
+        }),
     );
     const provider = createBedrockProvider({
       id: "bedrock-role",
@@ -559,7 +575,10 @@ describe("Bedrock AWS credential resolution", () => {
     });
 
     const response = expectChatResponse(
-      await provider.chat({ feature: "test.chat", messages: [{ role: "user", content: "hi" }] }, ctx),
+      await provider.chat(
+        { feature: "test.chat", messages: [{ role: "user", content: "hi" }] },
+        ctx,
+      ),
     );
     expect(response.message).toBe("role ok");
     const [, init] = firstCall(stub);
@@ -636,7 +655,9 @@ describe("SSE stream parsing", () => {
 
   it("coalesces multi-line data fields and ignores comments", async () => {
     const events = await collectEvents(
-      parseSseStream(byteStream([": keep-alive\nevent: message\ndata: line one\ndata: line two\n\n"])),
+      parseSseStream(
+        byteStream([": keep-alive\nevent: message\ndata: line one\ndata: line two\n\n"]),
+      ),
     );
     expect(events).toEqual([{ event: "message", data: "line one\nline two" }]);
   });
@@ -739,7 +760,10 @@ describe("provider chatStream methods", () => {
       throw new Error("Expected the OpenAI provider to expose chatStream");
     }
     const response = await collectChatChunks(
-      provider.chatStream({ feature: "test.chat", messages: [{ role: "user", content: "ping" }] }, ctx),
+      provider.chatStream(
+        { feature: "test.chat", messages: [{ role: "user", content: "ping" }] },
+        ctx,
+      ),
       provider.id,
       "gpt-4.1-mini",
     );
@@ -760,7 +784,10 @@ describe("provider chatStream methods", () => {
       throw new Error("Expected the Anthropic provider to expose chatStream");
     }
     const response = await collectChatChunks(
-      provider.chatStream({ feature: "test.chat", messages: [{ role: "user", content: "ping" }] }, ctx),
+      provider.chatStream(
+        { feature: "test.chat", messages: [{ role: "user", content: "ping" }] },
+        ctx,
+      ),
       provider.id,
       "claude-3-5-sonnet",
     );

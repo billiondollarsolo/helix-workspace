@@ -8,7 +8,7 @@ export const DEFAULT_ORG_SLUG = "default";
 export const DEFAULT_ORG_DISPLAY_NAME = "Default Organization";
 export const DEFAULT_ORG_REGION = "default";
 
-export type OrgStatus = "provisioning" | "active" | "suspended" | "soft_deleted" | "hard_deleted";
+type OrgStatus = "provisioning" | "active" | "suspended" | "soft_deleted" | "hard_deleted";
 
 export interface OrgRecord {
   readonly id: string;
@@ -58,7 +58,7 @@ export interface UpdateTenantConfigInput {
   readonly reason?: string | undefined;
 }
 
-export interface TenantByoStorageHealth {
+interface TenantByoStorageHealth {
   readonly status: "healthy" | "degraded";
   readonly checked_at: string;
   readonly message: string;

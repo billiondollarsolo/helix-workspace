@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import type { JsonObject, MeteringEventPayload } from "@helix/sdk-types";
+import type postgres from "postgres";
 
 export interface StoredMeteringEvent {
   readonly id: string;

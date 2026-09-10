@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { hasControlCharacter } from "../util/strings.js";
 import type { MailOutboundEnvelope } from "./types.js";
 
 const MAX_MESSAGE_ID_HEADER_LENGTH = 998;
@@ -123,16 +124,6 @@ function hasInvalidMessageIdCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (code <= 32 || code === 60 || code === 62 || code === 127) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code < 32 || code === 127) {
       return true;
     }
   }

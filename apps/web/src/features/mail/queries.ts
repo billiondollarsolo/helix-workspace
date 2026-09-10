@@ -7,12 +7,9 @@ import {
 import {
   getMailThread,
   getMailUserSettings,
-  getMailVacation,
-  listMailFilters,
   listMailFolders,
   listMailLabels,
   listMailThreads,
-  searchMail,
   type MailThreadsListInput,
 } from "./api";
 
@@ -22,11 +19,11 @@ export interface MailSearchQueryInput {
   readonly limit?: number;
 }
 
-export const mailRouteMailboxes = ["inbox", "starred", "sent", "drafts", "archive"] as const;
-export type MailRouteMailbox = (typeof mailRouteMailboxes)[number];
+const mailRouteMailboxes = ["inbox", "starred", "sent", "drafts", "archive"] as const;
+type MailRouteMailbox = (typeof mailRouteMailboxes)[number];
 
-export const mailRouteLabels = ["planning", "finance", "support", "team"] as const;
-export type MailRouteLabel = (typeof mailRouteLabels)[number];
+const mailRouteLabels = ["planning", "finance", "support", "team"] as const;
+type MailRouteLabel = (typeof mailRouteLabels)[number];
 
 export interface MailRouteSearch {
   readonly thread?: string;
@@ -48,13 +45,13 @@ export interface MailSearchState {
   readonly attachmentsOnly: boolean;
 }
 
-export const defaultMailSearchInput = {
+const defaultMailSearchInput = {
   query: "",
   labels: [],
   limit: 50,
 } as const satisfies MailSearchQueryInput;
 
-export const defaultMailSearchState = {
+const defaultMailSearchState = {
   query: "",
   label: "all",
   mailbox: "inbox",
@@ -63,7 +60,7 @@ export const defaultMailSearchState = {
   attachmentsOnly: false,
 } as const satisfies MailSearchState;
 
-export const mailQueryKeys = {
+const mailQueryKeys = {
   search: (input: MailSearchQueryInput = defaultMailSearchInput) =>
     [
       "mail",
@@ -115,14 +112,6 @@ export function mailLabelsQueryOptions() {
   });
 }
 
-export function mailSearchQueryOptions(input: MailSearchQueryInput = defaultMailSearchInput) {
-  return queryOptions({
-    queryKey: mailQueryKeys.search(input),
-    queryFn: () => searchMail(input),
-    throwOnError: false,
-  });
-}
-
 export function validateMailRouteSearch(search: Record<string, unknown>): MailRouteSearch {
   return {
     thread: optionalStringSearchParam(search.thread),
@@ -163,7 +152,7 @@ export function mailRouteSearchFromState(
   };
 }
 
-export function mailSearchInputFromState(state: MailSearchState): MailSearchQueryInput {
+function mailSearchInputFromState(state: MailSearchState): MailSearchQueryInput {
   return {
     query: state.query,
     labels: state.label === "all" ? [] : [state.label],
@@ -179,22 +168,6 @@ export function mailThreadQueryOptions(threadId: string) {
   return queryOptions({
     queryKey: mailQueryKeys.thread(threadId),
     queryFn: () => getMailThread(threadId),
-    throwOnError: false,
-  });
-}
-
-export function mailVacationQueryOptions() {
-  return queryOptions({
-    queryKey: mailQueryKeys.vacation(),
-    queryFn: () => getMailVacation(),
-    throwOnError: false,
-  });
-}
-
-export function mailFiltersQueryOptions() {
-  return queryOptions({
-    queryKey: mailQueryKeys.filters(),
-    queryFn: () => listMailFilters(),
     throwOnError: false,
   });
 }

@@ -1,3 +1,4 @@
+import { Circle as CircleIcon, RefreshCw as RefreshIcon } from "lucide-react";
 /* Shared building blocks for the admin console's page bodies.
  *
  * Every section used to reimplement its own header, scroll container, and
@@ -7,19 +8,8 @@
  * and without a cap a hostname field stretches to 1350px and a toggle ends up
  * 1400px from the label it controls. */
 
-import { useRef, type ReactNode } from "react";
-import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
-
-export const INPUT_STYLE: React.CSSProperties = {
-  height: 30,
-  borderRadius: 6,
-  border: "1px solid var(--border)",
-  background: "var(--surface)",
-  color: "var(--text)",
-  padding: "0 8px",
-  fontSize: "var(--text-meta)",
-};
+import { useRef, type ReactNode } from "react";
 
 export function StateBanner({
   kind,
@@ -88,7 +78,7 @@ export function EmptyState({
   return (
     <div className="admin-empty">
       <span className="admin-empty-icon" aria-hidden="true">
-        {icon ?? <Icons.Circle />}
+        {icon ?? <CircleIcon size={16} />}
       </span>
       <p className="admin-empty-title">{title}</p>
       {children ? <p className="admin-empty-body">{children}</p> : null}
@@ -171,14 +161,6 @@ export function PageHeading({
   );
 }
 
-export const HEADER_CELL: React.CSSProperties = {
-  fontSize: "var(--text-caption)",
-  color: "var(--text-3)",
-  fontWeight: 600,
-  textTransform: "uppercase",
-  letterSpacing: ".06em",
-};
-
 /* ------------------------------------------------------------------ */
 /* Recoverable failures                                                */
 /* ------------------------------------------------------------------ */
@@ -235,7 +217,7 @@ function failureStatus(error: Error): number | null {
 
 /** Best honest reading of why a request failed. `subject` names the surface in
  *  the operator's words — "billing", "the directory", "mail routing". */
-export function describeFailure(error: Error, subject: string): string {
+function describeFailure(error: Error, subject: string): string {
   const status = failureStatus(error);
   if (status === 401 || status === 403) {
     return `Your account may not have permission to read ${subject} — ask a workspace owner for access.`;
@@ -292,33 +274,9 @@ export function QueryFailureBanner({
           disabled={isRetrying}
           onClick={onRetry}
         >
-          <Icons.Refresh /> {isRetrying ? "Retrying…" : "Retry"}
+          <RefreshIcon size={16} /> {isRetrying ? "Retrying…" : "Retry"}
         </Button>
       </div>
     </StateBanner>
-  );
-}
-
-/* A sub-view's heading inside a section that already has a `PageHeading`.
-   One step down in the hierarchy: same shape, smaller type, no page chrome. */
-export function SubviewHeading({
-  title,
-  subtitle,
-  actions,
-}: {
-  readonly title: string;
-  readonly subtitle: string;
-  readonly actions?: ReactNode;
-}) {
-  return (
-    <div className="mb-4 flex items-start gap-3">
-      <div className="min-w-0">
-        <h2 className="m-0 font-semibold [font-size:var(--text-body-lg)]">{title}</h2>
-        <p className="mt-1 mb-0 max-w-[76ch] text-[var(--text-3)] [font-size:var(--text-body-sm)]">
-          {subtitle}
-        </p>
-      </div>
-      {actions ? <div className="ml-auto flex shrink-0 gap-2">{actions}</div> : null}
-    </div>
   );
 }

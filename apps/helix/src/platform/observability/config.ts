@@ -1,4 +1,6 @@
-export interface ObservabilitySamplingConfig {
+import { isRecord } from "../util/json.js";
+import { nonEmptyString as stringValue } from "../util/strings.js";
+interface ObservabilitySamplingConfig {
   readonly traces: number;
   readonly llmCalls: number;
   readonly toolCalls: number;
@@ -25,7 +27,7 @@ const defaultSampling: ObservabilitySamplingConfig = {
   permissionChecks: 0.05,
 };
 
-export const defaultObservabilityConfig: ObservabilityConfig = {
+const defaultObservabilityConfig: ObservabilityConfig = {
   enabled: false,
   serviceName: "helix-app",
   sampling: defaultSampling,
@@ -90,7 +92,7 @@ function assertProductionTelemetryTransport(
   }
 }
 
-export function mergeObservabilityConfig(
+function mergeObservabilityConfig(
   base: PartialObservabilityConfig,
   override: PartialObservabilityConfig,
 ): ObservabilityConfig {
@@ -307,14 +309,6 @@ function parseHeadersObject(value: unknown): Record<string, string> | undefined 
   return Object.keys(headers).length === 0 ? undefined : headers;
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -146,7 +146,7 @@ export interface ConfirmationGate {
 }
 
 export const defaultConfirmationTimeoutMs = 10 * 60 * 1000;
-export const defaultExecutionLeaseMs = 60 * 1000;
+const defaultExecutionLeaseMs = 60 * 1000;
 
 export interface ConfirmationGateOptions {
   readonly onPendingActionCreated?: (record: PendingActionRecord) => Promise<void>;

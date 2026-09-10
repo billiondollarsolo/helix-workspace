@@ -1,7 +1,7 @@
 import type { JsonValue } from "@helix/sdk-types";
 import type { SearchEventIndexer, SearchIndexer, SearchIndexerEvent } from "../search/index.js";
 
-export const cardDavSearchIndexerId = "contacts";
+const cardDavSearchIndexerId = "contacts";
 
 export function createCardDavSearchIndexer(): SearchIndexer {
   return {

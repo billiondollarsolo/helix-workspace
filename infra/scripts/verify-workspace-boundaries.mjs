@@ -24,7 +24,8 @@ async function collectTierViolations() {
   return [
     ...(await collectImportViolations(
       "apps",
-      (_file, specifier) => specifier.startsWith("@helix/editors-") || specifier === "xlsx",
+      (_file, specifier) =>
+        /(?:^@helix\/editors|^@tiptap\/|^yjs$|onlyoffice|documentserver|^xlsx$)/iu.test(specifier),
       "editors and spreadsheet conversion are outside the storage product",
     )),
     ...(await collectImportViolations(
@@ -34,6 +35,12 @@ async function collectTierViolations() {
         specifier.startsWith("@helix/app/") ||
         (specifier.startsWith(".") && resolvesInto(file, specifier, "apps/helix")),
       "web must not import API app",
+    )),
+    ...(await collectImportViolations(
+      "packages",
+      (_file, specifier) =>
+        /(?:^@helix\/editors|^@tiptap\/|^yjs$|onlyoffice|documentserver|^xlsx$)/iu.test(specifier),
+      "native editor integrations are outside the product",
     )),
     ...(await collectImportViolations(
       "packages",

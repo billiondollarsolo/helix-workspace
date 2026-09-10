@@ -9,8 +9,6 @@ import ICAL from "ical.js";
 import { z } from "zod";
 import { DAV_BODY_LIMIT_BYTES } from "../../api/request-body.js";
 import { internalApiUrl, versionedApiPath } from "../../api/version.js";
-import { createIcsCalendar, type CalendarInvitationSender } from "./ics.js";
-import { expandCalendarEventOccurrences, type CalendarRecurrenceOverride } from "./recurrence.js";
 import {
   DavStandardsParseError,
   davElements,
@@ -18,6 +16,10 @@ import {
   parseDavXml,
   parseICalendar,
 } from "../dav/standards.js";
+import { parseBasicAuthorization } from "../util/http-auth.js";
+import { isUniqueViolation } from "../util/sql.js";
+import { createIcsCalendar, type CalendarInvitationSender } from "./ics.js";
+import { expandCalendarEventOccurrences, type CalendarRecurrenceOverride } from "./recurrence.js";
 import type { CalendarAttendeeInput, CalendarStore, CalendarSyncPage } from "./store.js";
 import type {
   CalendarAttendeeRecord,
@@ -476,24 +478,6 @@ function requiredDavScope(method: string): "calendar.read" | "calendar.write" {
   return method === "PUT" || method === "DELETE" ? "calendar.write" : "calendar.read";
 }
 
-function parseBasicAuthorization(
-  authorization: string | undefined,
-): { readonly username: string; readonly password: string } | null {
-  if (authorization === undefined) {
-    return null;
-  }
-  const [scheme, value] = authorization.split(" ");
-  if (scheme?.toLowerCase() !== "basic" || value === undefined) {
-    return null;
-  }
-  const decoded = Buffer.from(value, "base64").toString("utf8");
-  const separator = decoded.indexOf(":");
-  if (separator < 0) {
-    return null;
-  }
-  return { username: decoded.slice(0, separator), password: decoded.slice(separator + 1) };
-}
-
 function propfindDepth(value: string | undefined): 0 | 1 {
   return value?.trim() === "0" ? 0 : 1;
 }
@@ -550,10 +534,6 @@ function expectedIcsSequence(
     return { expectedIcsSequence: existing.icsSequence };
   }
   return {};
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }
 
 function eventEtag(event: CalendarEventRecord): string {

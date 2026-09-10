@@ -36,11 +36,19 @@ describe("SCIM authentication failure audit", { skip: DATABASE_URL === undefined
     await Promise.all([sql.end(), adminSql.end()]);
   });
 
-  it("persists and lists failures under a valid system security principal", async () => {
+  it("persists unattributed failures without a cross-tenant security principal", async () => {
     const audit = new PostgresAuditStore(sql);
+    await expect(
+      audit.append({
+        orgId: ORG_ID,
+        actorId: SECURITY_ACTOR_ID,
+        verb: "scim.auth.failed",
+        objectType: "scim_endpoint",
+      }),
+    ).rejects.toMatchObject({ code: "23503" });
     await audit.append({
       orgId: ORG_ID,
-      actorId: SECURITY_ACTOR_ID,
+      actorId: null,
       verb: "scim.auth.failed",
       objectType: "scim_endpoint",
       metadata: { reason: "invalid_bearer", path: "/api/scim/v2/:tenantSlug/Users" },
@@ -49,7 +57,7 @@ describe("SCIM authentication failure audit", { skip: DATABASE_URL === undefined
       audit.listRecords({ orgId: ORG_ID, verb: "scim.auth.failed", limit: 10 }),
     ).resolves.toEqual([
       expect.objectContaining({
-        actorId: SECURITY_ACTOR_ID,
+        actorId: null,
         payload: expect.objectContaining({ reason: "invalid_bearer" }),
       }),
     ]);

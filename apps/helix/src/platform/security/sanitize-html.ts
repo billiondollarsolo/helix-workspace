@@ -1,20 +1,9 @@
 /**
- * Server-side HTML sanitizer for the PDF export pipeline.
- *
- * The PDF exporter sends document HTML to the isolated, no-egress content
- * converter. Sanitization strips executable and network-capable markup before
- * it crosses that boundary; the worker's network policy is the second layer.
- *
- * The implementation is deliberately self-contained — no jsdom/DOMPurify/
- * sanitize-html dependency. It uses an allowlist tokenizer over the HTML
- * string and rebuilds output from scratch. Anything not on the allowlist is
- * dropped entirely (tags and their attributes).
+ * Server-side HTML sanitizer for mail rendering. Removes executable and
+ * network-capable markup before the isolated mail frame receives HTML.
+ * The allowlist tokenizer preserves supported formatting and strips other tags.
  */
 
-/** Block-level and inline tags we emit from renderHtmlForPdf plus the
- * common formatting tags a native Helix document can contain. Anything not
- * on this list is stripped (tag removed, but inner text is preserved unless
- * it is in DROP_CONTENT_TAGS). */
 const ALLOWED_TAGS: ReadonlySet<string> = new Set([
   "a",
   "abbr",
@@ -143,14 +132,7 @@ const COMMENT_AND_DECL_PATTERN =
 const TAG_PATTERN = /<\s*(\/?)([a-zA-Z][a-zA-Z0-9:-]*)([^>]*)>/gu;
 const ATTR_PATTERN = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))/gu;
 
-/**
- * Returns a sanitized copy of html safe to send to the converter. Drops every
- * element / attribute not on the allowlist and removes all on* handlers
- * and dangerous URL schemes.
- *
- * IMPORTANT: this is one layer of defense. The converter deployment also has
- * no network egress, so a parser bypass cannot reach internal or public URLs.
- */
+/** Strip unsupported elements, event handlers, and dangerous URL schemes. */
 export function sanitizeHtmlForExport(html: string): string {
   // 1. Strip comments, CDATA, doctypes, and processing instructions outright.
   //    We re-emit <!doctype html> below so the structural decl is preserved.

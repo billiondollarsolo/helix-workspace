@@ -1,3 +1,4 @@
+import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 /**
  * Calendar reminders (CAL.9).
  *
@@ -17,8 +18,8 @@ import type { NotificationStore } from "../notifications/index.js";
 import type { NotificationInsert } from "../notifications/types.js";
 import type { CalendarEventRecord } from "./types.js";
 
-export const CALENDAR_REMINDER_VERB = "calendar.reminder";
-export const CALENDAR_REMINDER_OBJECT_TYPE = "calendar_event";
+const CALENDAR_REMINDER_VERB = "calendar.reminder";
+const CALENDAR_REMINDER_OBJECT_TYPE = "calendar_event";
 /** Default pre-event lead time (minutes) when metadata omits reminders. */
 export const DEFAULT_REMINDER_MINUTES_BEFORE = 10;
 
@@ -284,8 +285,4 @@ function normalizeMinutes(value: number): readonly CalendarReminderSpec[] {
     return [];
   }
   return [{ minutesBefore: Math.floor(value) }];
-}
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

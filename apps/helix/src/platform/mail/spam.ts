@@ -1,6 +1,6 @@
-import { Socket } from "node:net";
-import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { JsonObject } from "@helix/sdk-types";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { Socket } from "node:net";
 
 /**
  * SpamAssassin `spamd` integration.

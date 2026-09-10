@@ -1,9 +1,13 @@
 # MVP tool channel inventory (agents)
 
-**Date:** 2026-08-03  
-**Tasks:** E3.6 (mail), E4.6 (drive), E5.6 (chat), E9.1 (tool surface inventory)  
-**Plan:** `docs/superpowers/plans/2026-08-03-elite-mvp-enterprise-production.md`  
-**ADR:** `docs/architecture/adr-0005-agent-write-confirmation-and-allowlists.md`  
+**Date:** 2026-08-03
+
+**Tasks:** E3.6 (mail), E4.6 (drive), E5.6 (chat), E9.1 (tool surface inventory)
+
+**Plan:** `docs/archive/plans/2026-08-03-elite-mvp-enterprise-production.md`
+
+**ADR:** `docs/adr/adr-0005-agent-write-confirmation-and-allowlists.md`
+
 **Executable matrix:** `apps/helix/src/platform/tools/mvp-tool-surface-matrix.test.ts`
 
 ## Policy summary (agents)

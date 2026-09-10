@@ -139,10 +139,10 @@ describe("calendar ICS mail invitations", () => {
 
     expect(queued).toHaveLength(2);
     expect(mail.created).toHaveLength(2);
+    expect(mail.created.every((input) => input.threadId === undefined)).toBe(true);
     expect(mail.created[0]).toMatchObject({
       orgId: "org-1",
       actorId: "actor-ada",
-      threadId: "thread-event-1",
       outboxSubject: "mail.send",
     });
     expect(mail.created.map((input) => input.envelope.to[0]?.address)).toEqual([
@@ -206,6 +206,7 @@ describe("calendar ICS mail invitations", () => {
     expect(ics).toContain('ATTENDEE;CN="Bruno"');
     expect(ics).not.toContain('ATTENDEE;CN="Casey"');
     expect(queued).toHaveLength(1);
+    expect(mail.created[0]?.threadId).toBeUndefined();
     expect(mail.created[0]?.envelope).toMatchObject({
       from: { address: "bruno@example.com", name: "Bruno" },
       to: [{ address: "ada@example.com" }],

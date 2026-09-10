@@ -1,9 +1,9 @@
 import { createServer, type Server } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { SpamdScanner, parseSpamdResponse } from "./spam.js";
+import { CapturingMailQuarantineStore } from "../../test-support/quarantine-store.js";
 import { ClamavScanner, parseClamavResponse, parseClamavVersion } from "./antivirus.js";
 import { ingestRawMail, scanInboundMail } from "./ingest.js";
-import { CapturingMailQuarantineStore } from "./quarantine-test-store.js";
+import { SpamdScanner, parseSpamdResponse } from "./spam.js";
 import type { MailMessageInput, MailThreadStatePatch, StoredMailMessage } from "./types.js";
 
 /**

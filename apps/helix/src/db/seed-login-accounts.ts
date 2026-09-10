@@ -1,6 +1,7 @@
+import { hashPassword } from "better-auth/crypto";
 import { pathToFileURL } from "node:url";
-import { hashPassword } from "@better-auth/utils/password";
 import type postgres from "postgres";
+import { loadSeedEnv } from "../config/env.js";
 import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
 import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
@@ -262,7 +263,7 @@ async function upsertCredentialAccount(
 async function main(): Promise<void> {
   const sql = createSqlClient();
   try {
-    const orgId = process.env.HELIX_DEFAULT_ORG_ID ?? DEFAULT_LOCAL_OAUTH_ORG_ID;
+    const orgId = loadSeedEnv().HELIX_DEFAULT_ORG_ID ?? DEFAULT_LOCAL_OAUTH_ORG_ID;
     const result = await seedLoginAccounts(sql, { orgId });
     console.log(JSON.stringify(result, null, 2));
   } finally {

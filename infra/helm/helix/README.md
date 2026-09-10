@@ -123,45 +123,20 @@ removes both that copy and its upload-stage source. Deny public/presigned GET ac
 configure a short object-store lifecycle expiration as a final orphan-cleanup backstop; the lifecycle
 must exceed the longest expected incident/retry window.
 
-## Signup SLO Alerts
+## Product SLO Alerts
 
-The chart can render Prometheus Operator alert rules for the signup activation SLO. These
-alerts mirror the bundled local Prometheus rules for:
+Enable `monitoring.prometheusRule.enabled` when Prometheus Operator CRDs are installed.
+The chart renders product availability, operational health, mail delivery, and search
+reconciliation alerts. Their runbooks live in `docs/runbooks/`.
 
-- `HelixSignupActivationP95High`
-- `HelixSignupActivationSloMissRateHigh`
-- `HelixSignupActivationSamplesMissing`
-
-The rules are disabled by default because clusters without Prometheus Operator CRDs reject
-`monitoring.coreos.com/v1` resources. Enable them when the operator is installed:
-
-```yaml
-monitoring:
-  prometheusRule:
-    enabled: true
-    namespace: monitoring
-    labels:
-      prometheus: platform
-    runbookUrl: https://runbooks.example.com/helix/signup-activation-slo
-```
-
-The default `runbookUrl` points at
-`docs/specs/05-operations/runbooks/signup-activation-slo-breach.md`. Override it with the URL your
-Alertmanager/PagerDuty integration exposes to on-call engineers.
-
-Alertmanager routing is outside this app chart. For production signup paging,
-use `infra/observability/alertmanager/alertmanager.production.yml` or an
-equivalent AlertmanagerConfig that sends
-`service="signup", slo="signup_activation"` alerts to the local evidence
-webhook and to the `helix-signup-slo-paging` receiver. Mount the external
-paging webhook URL as a secret file at
-`/etc/alertmanager/secrets/signup-slo-paging-webhook-url`.
+For production paging, use `infra/observability/alertmanager/alertmanager.production.yml`
+and mount the external webhook URL as `/etc/alertmanager/secrets/product-slo-paging-webhook-url`.
+Public signup is retired and has no alert rules or paging receiver.
 
 ## WebSocket Autoscaling (PRD 16.1)
 
 The HorizontalPodAutoscaler scales on **CPU + memory + active WebSocket
-connections**. The WebSocket signal covers Yjs document sync and chat realtime
-sessions, which CPU alone does not track well (idle-but-connected sockets pin
+connections**. The WebSocket signal covers chat realtime sessions, which CPU alone does not track well (idle-but-connected sockets pin
 memory and event-loop fan-out without burning CPU).
 
 The app publishes a Prometheus gauge `helix_websocket_connections_active` on

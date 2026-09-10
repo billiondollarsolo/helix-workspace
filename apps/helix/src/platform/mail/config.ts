@@ -1,12 +1,14 @@
-import type { Env } from "../../config/env.js";
-import { isIP } from "node:net";
 import type { SecurityTier } from "@helix/sdk-types";
-import type { OutboundMailConfig } from "./outbound.js";
-import type { SpamdScannerOptions } from "./spam.js";
+import { isIP } from "node:net";
+import type { Env } from "../../config/env.js";
+import { trimmedEnvFlag as envFlag } from "../util/env.js";
 import type { ClamavScannerOptions } from "./antivirus.js";
 import type { SmtpReceiverLimits } from "./ingest.js";
+import type { OutboundMailConfig } from "./outbound.js";
 import type { SmtpTransportSecurity } from "./smtp-transport-security.js";
+import type { SpamdScannerOptions } from "./spam.js";
 
+/** @public Named in the exported bootstrap declaration. */
 export interface MailReceiverConfig {
   readonly port: number;
   readonly host?: string;
@@ -19,7 +21,7 @@ export interface MailReceiverConfig {
   readonly limits: Partial<SmtpReceiverLimits>;
 }
 
-export interface MailSignupFrom {
+interface MailSignupFrom {
   readonly address: string;
   readonly name: string;
 }
@@ -33,14 +35,6 @@ export interface MailConfig {
   readonly spamd: SpamdScannerOptions | undefined;
   readonly clamav: ClamavScannerOptions | undefined;
   readonly signupFrom: MailSignupFrom;
-}
-
-function envFlag(value: string | undefined, defaultValue = false): boolean {
-  if (value === undefined || value.trim().length === 0) {
-    return defaultValue;
-  }
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
 function parsePositiveInt(value: string | undefined): number | undefined {
@@ -59,6 +53,7 @@ function parseFloatConfig(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+/** @public Named in the exported bootstrap declaration. */
 export interface MailSubmissionConfig extends Omit<
   MailReceiverConfig,
   "transportSecurity" | "limits"
@@ -88,7 +83,7 @@ export function buildOutboundConfig(env: Env): OutboundMailConfig | undefined {
 }
 
 /** Build inbound SMTP receiver config from validated env. */
-export function buildReceiverConfig(env: Env): MailReceiverConfig | undefined {
+function buildReceiverConfig(env: Env): MailReceiverConfig | undefined {
   if (!envFlag(env.MAIL_SMTP_RECEIVER_ENABLED ?? env.MAIL_RECEIVER_ENABLED)) {
     return undefined;
   }
@@ -205,7 +200,7 @@ function compactReceiverLimits(input: {
 }
 
 /** Build spamd scanner options from validated env. */
-export function buildSpamdConfig(env: Env): SpamdScannerOptions | undefined {
+function buildSpamdConfig(env: Env): SpamdScannerOptions | undefined {
   if (!envFlag(env.MAIL_SPAMD_ENABLED)) {
     return undefined;
   }
@@ -222,7 +217,7 @@ export function buildSpamdConfig(env: Env): SpamdScannerOptions | undefined {
 }
 
 /** Build ClamAV scanner options from validated env. */
-export function buildClamavConfig(
+function buildClamavConfig(
   env: Env,
   tier: SecurityTier = "personal",
 ): ClamavScannerOptions | undefined {
@@ -262,7 +257,7 @@ export function mailConfig(env: Env, securityTier: SecurityTier = "personal"): M
 }
 
 /** Build the implicit-TLS authenticated submission listener (RFC 6409/8314). */
-export function buildSubmissionConfig(env: Env): MailSubmissionConfig | undefined {
+function buildSubmissionConfig(env: Env): MailSubmissionConfig | undefined {
   if (!envFlag(env.MAIL_SMTP_SUBMISSION_ENABLED)) return undefined;
   const tlsKeyFile = env.MAIL_SMTP_SUBMISSION_TLS_KEY_FILE;
   const tlsCertFile = env.MAIL_SMTP_SUBMISSION_TLS_CERT_FILE;

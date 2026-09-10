@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { RedisLimitClient } from "./redis-limiter.js";
 import { validateNonNegativeInteger } from "./types.js";
 import { pruneWindow } from "./usage-math.js";
-import type { RedisLimitClient } from "./redis-limiter.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -42,7 +42,7 @@ export interface TenantHourlyQuotaInput {
   readonly at?: Date;
 }
 
-export interface TenantHourlyQuotaAllowed {
+interface TenantHourlyQuotaAllowed {
   readonly allowed: true;
   readonly quota: string;
   readonly limit: number | null;

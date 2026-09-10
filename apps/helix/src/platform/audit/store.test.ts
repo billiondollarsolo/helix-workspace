@@ -1,15 +1,13 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import { PostgresAuditStore } from "./store.js";
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 describe("PostgresAuditStore", () => {
   it("returns the database-enforced audit hash", async () => {
-    const recording = createRecordingSql([[], [{ id: "record-1", this_hash: "database-hash" }]]);
+    const recording = createRecordingSql(
+      [[], [{ id: "record-1", this_hash: "database-hash" }]],
+      "$",
+    );
     const store = new PostgresAuditStore(recording.sql);
 
     const result = await store.append({
@@ -32,26 +30,29 @@ describe("PostgresAuditStore", () => {
   });
 
   it("loads verification records in hash-chain order", async () => {
-    const recording = createRecordingSql([
-      [],
+    const recording = createRecordingSql(
       [
-        {
-          id: "record-1",
-          org_id: "22222222-2222-4222-8222-222222222222",
-          actor_id: "11111111-1111-4111-8111-111111111111",
-          verb: "object.created",
-          object_type: "object",
-          object_id: null,
-          trace_id: "trace-1",
-          payload: { source: "test" },
-          prev_hash: null,
-          this_hash: "this-hash",
-          created_at: new Date("2026-05-20T00:00:00.000Z"),
-          schema_version: 1,
-          sequence: "1",
-        },
+        [],
+        [
+          {
+            id: "record-1",
+            org_id: "22222222-2222-4222-8222-222222222222",
+            actor_id: "11111111-1111-4111-8111-111111111111",
+            verb: "object.created",
+            object_type: "object",
+            object_id: null,
+            trace_id: "trace-1",
+            payload: { source: "test" },
+            prev_hash: null,
+            this_hash: "this-hash",
+            created_at: new Date("2026-05-20T00:00:00.000Z"),
+            schema_version: 1,
+            sequence: "1",
+          },
+        ],
       ],
-    ]);
+      "$",
+    );
     const store = new PostgresAuditStore(recording.sql);
 
     const records = await store.listVerificationRecords({
@@ -79,7 +80,7 @@ describe("PostgresAuditStore", () => {
   });
 
   it("lists orgs with audit activity for verification", async () => {
-    const recording = createRecordingSql([[{ org_id: "org-a" }, { org_id: "org-b" }]]);
+    const recording = createRecordingSql([[{ org_id: "org-a" }, { org_id: "org-b" }]], "$");
     const store = new PostgresAuditStore(recording.sql);
 
     await expect(store.listVerificationOrgIds()).resolves.toEqual(["org-a", "org-b"]);
@@ -91,26 +92,29 @@ describe("PostgresAuditStore", () => {
       id: "00000000-0000-4000-8000-000000000001",
       createdAt: "2026-05-20T00:00:00.000Z",
     };
-    const recording = createRecordingSql([
-      [{ value: checkpoint }],
+    const recording = createRecordingSql(
       [
-        {
-          id: "00000000-0000-4000-8000-000000000002",
-          org_id: "22222222-2222-4222-8222-222222222222",
-          actor_id: "11111111-1111-4111-8111-111111111111",
-          verb: "object.created",
-          object_type: "object",
-          object_id: null,
-          trace_id: "trace-1",
-          payload: { source: "test" },
-          prev_hash: null,
-          this_hash: "this-hash",
-          created_at: new Date("2026-05-20T00:01:00.000Z"),
-        },
+        [{ value: checkpoint }],
+        [
+          {
+            id: "00000000-0000-4000-8000-000000000002",
+            org_id: "22222222-2222-4222-8222-222222222222",
+            actor_id: "11111111-1111-4111-8111-111111111111",
+            verb: "object.created",
+            object_type: "object",
+            object_id: null,
+            trace_id: "trace-1",
+            payload: { source: "test" },
+            prev_hash: null,
+            this_hash: "this-hash",
+            created_at: new Date("2026-05-20T00:01:00.000Z"),
+          },
+        ],
+        [],
+        [{ record_count: 7, oldest_created_at: new Date("2026-05-20T00:02:00.000Z") }],
       ],
-      [],
-      [{ record_count: 7, oldest_created_at: new Date("2026-05-20T00:02:00.000Z") }],
-    ]);
+      "$",
+    );
     const store = new PostgresAuditStore(recording.sql);
 
     await expect(store.loadAuditShippingCheckpoint("immutable-s3")).resolves.toEqual(checkpoint);
@@ -146,20 +150,3 @@ describe("PostgresAuditStore", () => {
     expect(recording.calls[3]?.text).toContain("helix_get_audit_shipping_backlog");
   });
 });
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
-    return Promise.resolve(queue.shift() ?? []);
-  };
-  const sql = Object.assign(tag, {
-    begin: async <T>(callback: (sql: typeof tag) => Promise<T>) => callback(tag),
-    json: (value: unknown) => value,
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}

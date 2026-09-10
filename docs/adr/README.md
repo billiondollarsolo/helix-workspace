@@ -1,0 +1,35 @@
+# Architecture decisions
+
+The [canonical 1.0 scope](../release/1.0-scope.md) governs product enablement. ADR numbers are unique in this directory; earlier cross-product proposals were renumbered after the workspace decisions. Proposed and historical records do not authorize release claims.
+
+- [ADR-0001: Single-organization Business pilot](adr-0001-single-organization-business-pilot.md)
+- [ADR-0002: Managed outbound mail provider](adr-0002-managed-outbound-mail-provider.md)
+- [ADR-0003: Web and API mail clients](adr-0003-web-and-api-mail-clients.md)
+- [ADR-0004: Secure server-readable organization chat](adr-0004-secure-server-readable-chat.md)
+- [ADR-0005: Agent write confirmation and bounded automation](adr-0005-agent-write-confirmation-and-allowlists.md)
+- [ADR-0006: Business-pilot availability and recovery targets](adr-0006-business-pilot-recovery-targets.md)
+- [ADR-0007: Fail-closed untrusted uploads](adr-0007-fail-closed-untrusted-uploads.md)
+- [ADR-0008: Full Workspace Meet via Jitsi](adr-0008-meet-via-jitsi.md)
+- [ADR-0009: Full Workspace Calendar](adr-0009-full-workspace-calendar.md)
+- [ADR-0010: Helix 1.0 release scope](adr-0010-release-1.0-scope.md)
+- [ADR-0011: Multi-org self-host ordering](adr-0011-multi-org-self-host-ordering.md)
+- [ADR-0012: Public SaaS deferred after self-host v1 GA](adr-0012-public-saas-deferred-after-v1-ga.md)
+- [ADR-0013: Mobile web required; native apps out of v1](adr-0013-mobile-web-required-native-out.md)
+- [ADR-0014: Initial Monorepo Foundation](adr-0014-initial-monorepo-foundation.md)
+- [ADR-0015: HELIX_MODE Runtime Configuration for Single-Tenant vs Multi-Tenant SaaS](adr-0015-helix-mode-runtime-config.md)
+- [ADR-0016: Row-Level Multi-Tenancy with Cerbos + Per-Tenant Postgres Roles](adr-0016-row-level-multi-tenancy.md)
+- [ADR-0017: BYO-Everything as Per-Tenant Policy](adr-0017-byo-everything-per-tenant.md)
+- [ADR-0018: Cross-Tenant Sharing via `cross_tenant_grants` Table](adr-0018-cross-tenant-grants-table.md)
+- [ADR-0019: NATS as Cross-Replica Collab Fanout + Event Bus](adr-0019-nats-as-collab-fanout.md)
+- [ADR-0020: License-Key Gating for Paid Self-Host Features](adr-0020-license-key-paid-features.md)
+- [ADR-0021: Apache 2.0 OSS Core + Commercial License Premium Features](adr-0021-apache-2-plus-commercial.md)
+- [ADR-0022: CloudNativePG Async Replica for Multi-Region DR](adr-0022-cloudnativepg-async-replica-dr.md)
+- [ADR-0023: Single Helm Chart + Optional Sub-Charts for Workers / Roles](adr-0023-single-helm-chart-with-sub-chart.md)
+- [ADR-0024: Stripe + Metering Events for Billing](adr-0024-stripe-plus-metering.md)
+- [ADR-0025: OpenFeature + In-DB Backend for Feature Flags](adr-0025-openfeature-in-db-flags.md)
+- [ADR-0026: Ed25519 for License Key Signing](adr-0026-ed25519-license-keys.md)
+- [ADR-0027: Browser-Direct AI for Short Completions; Server-Mediated for Streaming/RAG](adr-0027-browser-direct-ai-short-completions.md)
+- [ADR-0028: Per-Tenant `tenant_config` as JSONB on `orgs` Table](adr-0028-tenant-config-jsonb.md)
+- [ADR-0029: Immutable Audit Log via `audit-immutable-s3` Plugin; 7-Year Retention](adr-0029-immutable-audit-log.md)
+
+New decisions use the next available number and state Context, Decision, Alternatives considered, Consequences, and Reversal triggers. Supersede an earlier record explicitly when changing an accepted decision.

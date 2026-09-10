@@ -186,7 +186,7 @@ export function policyRuntimeStatus(
 // External sharing (ADM.6)
 // --------------------------------------------------------------------------
 
-export type ExternalSharingMode = "blocked" | "allowlist" | "anyone";
+type ExternalSharingMode = "blocked" | "allowlist" | "anyone";
 
 export interface ExternalSharingPolicyView {
   readonly enabled: boolean;
@@ -338,14 +338,14 @@ function normalizeDomain(value: string): string {
 // MFA (ADM.2) — org policy + tier
 // --------------------------------------------------------------------------
 
-export interface OrgMfaPolicyView {
+interface OrgMfaPolicyView {
   readonly enabled: boolean;
   readonly enforcement: PolicyEnforcement;
   readonly allowedMethods: readonly string[];
   readonly rememberDeviceDays: number;
 }
 
-export function parseOrgMfaPolicy(
+function parseOrgMfaPolicy(
   policy: Pick<SecurityPolicyLike, "enabled" | "enforcement" | "settings"> | null | undefined,
 ): OrgMfaPolicyView {
   if (policy === null || policy === undefined) {
@@ -416,7 +416,7 @@ const DEFAULT_SESSION_EXPIRES_IN_SECONDS = 7 * SECONDS_PER_DAY;
 const MIN_SESSION_EXPIRES_IN_SECONDS = SECONDS_PER_DAY;
 const MAX_SESSION_EXPIRES_IN_SECONDS = 90 * SECONDS_PER_DAY;
 
-export function parseSessionPolicy(
+function parseSessionPolicy(
   policy: Pick<SecurityPolicyLike, "enabled" | "enforcement" | "settings"> | null | undefined,
 ): {
   readonly enabled: boolean;

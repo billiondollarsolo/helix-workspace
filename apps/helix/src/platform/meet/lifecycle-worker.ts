@@ -1,4 +1,4 @@
-export interface MeetLifecycleWorkerStore {
+interface MeetLifecycleWorkerStore {
   expireEmptyRooms(input: { readonly emptyBefore: Date; readonly limit: number }): Promise<number>;
 }
 

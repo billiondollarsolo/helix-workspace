@@ -43,7 +43,10 @@ class OpenAICompatibleEmbeddingProvider implements EmbeddingProviderCapability {
     if (!Number.isInteger(config.defaultDimensions) || config.defaultDimensions < 1) {
       throw new TypeError("Embedding provider defaultDimensions must be a positive integer");
     }
-    if (config.maxBatchSize !== undefined && (!Number.isInteger(config.maxBatchSize) || config.maxBatchSize < 1)) {
+    if (
+      config.maxBatchSize !== undefined &&
+      (!Number.isInteger(config.maxBatchSize) || config.maxBatchSize < 1)
+    ) {
       throw new TypeError("Embedding provider maxBatchSize must be a positive integer");
     }
 
@@ -59,7 +62,10 @@ class OpenAICompatibleEmbeddingProvider implements EmbeddingProviderCapability {
     this.#headers = config.headers;
   }
 
-  async embed(texts: readonly string[], opts: EmbedOptions = {}): Promise<readonly (readonly number[])[]> {
+  async embed(
+    texts: readonly string[],
+    opts: EmbedOptions = {},
+  ): Promise<readonly (readonly number[])[]> {
     if (texts.length === 0) {
       return [];
     }
@@ -89,7 +95,10 @@ class OpenAICompatibleEmbeddingProvider implements EmbeddingProviderCapability {
   }
 }
 
-function parseEmbeddingResponse(payload: unknown, expectedCount: number): readonly (readonly number[])[] {
+function parseEmbeddingResponse(
+  payload: unknown,
+  expectedCount: number,
+): readonly (readonly number[])[] {
   const record = assertRecord(payload, "OpenAI-compatible embedding response");
   const rows = arrayField(record, "data").flatMap((row, position) => {
     if (!isEmbeddingRow(row)) {
@@ -100,7 +109,9 @@ function parseEmbeddingResponse(payload: unknown, expectedCount: number): readon
 
   const sorted = [...rows].sort((left, right) => left.index - right.index);
   if (sorted.length !== expectedCount) {
-    throw new TypeError(`Embedding response returned ${String(sorted.length)} vectors for ${String(expectedCount)} inputs`);
+    throw new TypeError(
+      `Embedding response returned ${String(sorted.length)} vectors for ${String(expectedCount)} inputs`,
+    );
   }
   return sorted.map((row) => row.embedding);
 }

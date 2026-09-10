@@ -76,7 +76,6 @@ const storageMigrationCutoverResponseSchema = z.object({
 export type TenantConfigAdminView = z.infer<typeof tenantConfigSchema>;
 export type TenantStorageHealthResult = z.infer<typeof storageHealthSchema>;
 export type TenantStorageMigrationTarget = z.infer<typeof storageMigrationTargetSchema>;
-export type TenantStorageMigrationStorageState = z.infer<typeof storageMigrationStorageStateSchema>;
 export type TenantStorageMigrationJob = z.infer<typeof storageMigrationJobSchema>;
 
 export interface UpdateTenantConfigInput {

@@ -15,9 +15,9 @@ import { SANDBOXED_CONTENT_CSP } from "./content-security.js";
  * the response framing.
  */
 
+import type { FastifyReply, FastifyRequest } from "fastify";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import type { FastifyReply, FastifyRequest } from "fastify";
 
 export interface SendBytesWithRangeOptions {
   readonly reply: FastifyReply;

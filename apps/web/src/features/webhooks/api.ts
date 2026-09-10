@@ -5,7 +5,6 @@ import type {
   InboundWebhook,
   OutboundWebhook,
   WebhookDelivery,
-  WebhookDirection,
   WebhookDeliveryStatus,
 } from "./types";
 
@@ -41,7 +40,7 @@ export const webhookQueryKeys = {
  *  ask for the same window. */
 export const DEFAULT_DELIVERY_LIMIT = 100;
 
-export const defaultWebhookDeliveriesInput = {
+const defaultWebhookDeliveriesInput = {
   limit: DEFAULT_DELIVERY_LIMIT,
 } as const satisfies WebhookDeliveryListInput;
 
@@ -72,22 +71,6 @@ export function webhookOverviewQueryOptions(deliveryLimit: number = DEFAULT_DELI
   });
 }
 
-export function outboundWebhooksQueryOptions() {
-  return queryOptions({
-    queryKey: webhookQueryKeys.outbound,
-    queryFn: listOutboundWebhooks,
-    throwOnError: false,
-  });
-}
-
-export function inboundWebhooksQueryOptions() {
-  return queryOptions({
-    queryKey: webhookQueryKeys.inbound,
-    queryFn: listInboundWebhooks,
-    throwOnError: false,
-  });
-}
-
 export function webhookDeliveriesQueryOptions(
   input: WebhookDeliveryListInput = defaultWebhookDeliveriesInput,
 ) {
@@ -98,7 +81,7 @@ export function webhookDeliveriesQueryOptions(
   });
 }
 
-export async function fetchWebhookOverview(
+async function fetchWebhookOverview(
   deliveryLimit: number = DEFAULT_DELIVERY_LIMIT,
 ): Promise<WebhookOverview> {
   const output = await callTool<{
@@ -178,14 +161,6 @@ export async function testOutboundWebhook(
       sentAt: new Date().toISOString(),
     },
   });
-}
-
-export async function listInboundWebhooks(): Promise<readonly InboundWebhook[]> {
-  const output = await callTool<{ readonly webhooks: readonly InboundWebhook[] }>(
-    "webhook.inbound.list",
-    {},
-  );
-  return output.webhooks;
 }
 
 export async function createInboundWebhook(input: {
@@ -431,8 +406,6 @@ function base64Url(bytes: Uint8Array): string {
   }
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
-
-export const webhookDirections: readonly WebhookDirection[] = ["outbound", "inbound"];
 
 export const webhookDeliveryStatuses: readonly WebhookDeliveryStatus[] = [
   "pending",

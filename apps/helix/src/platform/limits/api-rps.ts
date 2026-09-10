@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { RedisLimitClient } from "./redis-limiter.js";
 import { validateNonNegativeInteger } from "./types.js";
 import { pruneWindow } from "./usage-math.js";
-import type { RedisLimitClient } from "./redis-limiter.js";
 
 const SECOND_MS = 1_000;
 
@@ -37,7 +37,7 @@ export interface TenantApiRpsLimitInput {
   readonly at?: Date;
 }
 
-export interface TenantApiRpsLimitAllowed {
+interface TenantApiRpsLimitAllowed {
   readonly allowed: true;
   readonly limit: number | null;
   readonly used: number;
@@ -45,7 +45,7 @@ export interface TenantApiRpsLimitAllowed {
   readonly resetsAt: string | null;
 }
 
-export interface TenantApiRpsLimitExceeded {
+interface TenantApiRpsLimitExceeded {
   readonly allowed: false;
   readonly limit: number;
   readonly used: number;

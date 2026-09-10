@@ -1,25 +1,21 @@
 import { chatBodyFormatSchema, chatMetadataSchema } from "@helix/contracts";
+import type { JsonObject } from "@helix/sdk-types";
+import { createHash } from "node:crypto";
+import type postgres from "postgres";
 import { ConflictError } from "../../api/api-error.js";
+import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
+import { insertNotification } from "../notifications/index.js";
+import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
+import { toSqlJson } from "../util/sql.js";
 import { appendChatAudit } from "./audit.js";
-import { requireChatActorInOrg, requireActiveChatAttachments } from "./authorization.js";
-import { normalizeChatContent, renderChatBodyHtml } from "./content-safety.js";
+import { requireActiveChatAttachments, requireChatActorInOrg } from "./authorization.js";
 import {
   CHAT_PLATFORM_DEFAULT_DELETE_WINDOW_SECONDS,
   CHAT_PLATFORM_DEFAULT_EDIT_WINDOW_SECONDS,
   CHAT_PLATFORM_DEFAULT_RETENTION_DAYS,
   chatMutationAllowed,
 } from "./compliance-policy.js";
-import type {
-  ChatOrganizationExportRecord,
-  ChatRetentionPolicyRecord,
-  ChatRetentionPolicyView,
-} from "./types.js";
-import { createHash } from "node:crypto";
-import type postgres from "postgres";
-import type { JsonObject } from "@helix/sdk-types";
-import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
-import { insertNotification } from "../notifications/index.js";
-import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
+import { normalizeChatContent, renderChatBodyHtml } from "./content-safety.js";
 import { memberHandleResolver, parseMentions } from "./core/mentions.js";
 import { ChatMemberAccessError, ChatMessageNotFoundError, ChatRoomAccessError } from "./errors.js";
 import {
@@ -36,23 +32,26 @@ import type {
   ChatEnrichmentWrite,
   ChatExternalAccess,
   ChatHistoryPolicy,
+  ChatInvitableRole,
   ChatMessageRecord,
   ChatNotificationPolicy,
+  ChatOrganizationExportRecord,
   ChatPinRecord,
-  ChatReactionOperation,
   ChatReactionMutationRecord,
+  ChatReactionOperation,
   ChatReactionRecord,
   ChatReadReceiptRecord,
-  ChatInvitableRole,
-  ChatRoomKind,
-  ChatRoomRole,
-  ChatRoomRecord,
+  ChatRetentionPolicyRecord,
+  ChatRetentionPolicyView,
   ChatRoomExportRecord,
+  ChatRoomKind,
+  ChatRoomRecord,
+  ChatRoomRole,
   ChatSearchHit,
   ChatSearchProjectionStore,
-  ChatSearchRequest,
   ChatSearchReactionRecord,
   ChatSearchRecord,
+  ChatSearchRequest,
   ChatSpaceType,
 } from "./types.js";
 
@@ -2752,10 +2751,6 @@ function chatClassification(value: unknown): ChatSearchRecord["classification"] 
     value === "restricted"
     ? value
     : undefined;
-}
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
 function safeChatEventCursor(value: number | string | undefined): number {

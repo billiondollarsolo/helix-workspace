@@ -52,7 +52,7 @@ export function helmTemplateArgs(profile) {
   return args;
 }
 
-export function runHelmTemplate(profile, { exec = spawnSync } = {}) {
+function runHelmTemplate(profile, { exec = spawnSync } = {}) {
   const args = helmTemplateArgs(profile);
   const result = exec("helm", args, {
     encoding: "utf8",
@@ -95,7 +95,7 @@ export function buildEvidence(input) {
   };
 }
 
-export function writeEvidence(path, evidence) {
+function writeEvidence(path, evidence) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
 }

@@ -61,3 +61,6 @@ Thumbs.db
 .idea
 .vscode/*
 !.vscode/extensions.json
+
+# Generated Vitest CI reports are uploaded as artifacts.
+**/vitest-results.json

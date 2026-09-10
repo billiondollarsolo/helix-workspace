@@ -1,6 +1,6 @@
 import type { Actor, SecurityTier } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import { z } from "zod3";
+import { z } from "zod";
 import { AI_USD_MICROS, resolveAICostBudget } from "./budget.js";
 import type { AICostLimitOverride, AICostLimitStore } from "./limit-store.js";
 
@@ -115,7 +115,7 @@ export function registerAICostLimitAdminRoutes(
   });
 }
 
-export function canManageAICosts(actor: Actor): boolean {
+function canManageAICosts(actor: Actor): boolean {
   const scopes = actor.scopes ?? [];
   return scopes.includes(adminAIScope) || scopes.includes("admin.*");
 }

@@ -1,11 +1,8 @@
-import { createHash } from "node:crypto";
-import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
-import { confidentialProviderTags, localOnlyProviderTags } from "./classification/provider-tags.js";
 import type {
   Actor,
   AICallContext,
-  AIClassification,
   AICapability,
+  AIClassification,
   AiProviderModelRef,
   ChatChunk,
   ChatRequest,
@@ -13,14 +10,18 @@ import type {
   ImageGenerationRequest,
   ImageGenerationResponse,
   ImageProviderCapability,
-  LLMProviderCapability,
   JsonObject,
+  LLMProviderCapability,
   MeteringClient,
   SecurityTier,
   TraceContext,
 } from "@helix/sdk-types";
+import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
+import { createHash } from "node:crypto";
+import { errorMessage } from "../util/errors.js";
+import { confidentialProviderTags, localOnlyProviderTags } from "./classification/provider-tags.js";
 
-export interface AIRoutingFeatureRoute {
+interface AIRoutingFeatureRoute {
   readonly primary: AiProviderModelRef;
   readonly fallback?: AiProviderModelRef;
 }
@@ -980,7 +981,7 @@ export function providerAllowedForClassification(
   );
 }
 
-export function assertClassificationAllowed(
+function assertClassificationAllowed(
   provider: ProviderForPolicy,
   classification: AIClassification,
   policy: AIRoutingPolicy = {},
@@ -992,7 +993,7 @@ export function assertClassificationAllowed(
   }
 }
 
-export function hashJson(value: unknown): string {
+function hashJson(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
@@ -1179,8 +1180,4 @@ function shouldTryFallback(error: unknown): boolean {
 
 function errorName(error: unknown): string {
   return error instanceof Error ? error.name : "Error";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { NotificationStore } from "./store.js";
 import type { NotificationRecord } from "./types.js";
@@ -23,7 +24,7 @@ export interface CreateNotificationToolsOptions {
   readonly store: NotificationStore;
 }
 
-export function createNotificationToolDefinitions(
+function createNotificationToolDefinitions(
   options: CreateNotificationToolsOptions,
 ): readonly ToolDefinition[] {
   return [
@@ -88,12 +89,6 @@ export function registerNotificationTools(
   for (const tool of createNotificationToolDefinitions(options)) {
     registry.register(tool);
   }
-}
-
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
 }
 
 function serialize(record: NotificationRecord) {

@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
 import type { JsonValue } from "@helix/sdk-types";
+import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { sha256Hex } from "../crypto/index.js";
 import type { TenantEnvelopeCipher } from "../secrets/envelope.js";
+import { toSqlJson } from "../util/sql.js";
 import type { WebhookDeliveryStatus, WebhookDirection } from "./types.js";
 
 export interface OutboundWebhookRecord {
@@ -563,7 +564,7 @@ export class TenantEnvelopeWebhookSecretResolver implements WebhookSecretResolve
   }
 }
 
-export function sha256Json(value: unknown): string {
+function sha256Json(value: unknown): string {
   // Routed through the crypto adapter (PRD §14.4) — webhook payload digest.
   return sha256Hex(JSON.stringify(value));
 }
@@ -593,10 +594,6 @@ export function containsPlaintextSecretField(value: unknown): boolean {
   return Object.entries(value).some(
     ([key, child]) => isSecretFieldName(key) || containsPlaintextSecretField(child),
   );
-}
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
 function redactWebhookHeaders(headers: Record<string, string>): Record<string, string> {

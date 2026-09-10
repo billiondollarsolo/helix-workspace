@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import type { AntivirusScanner } from "./antivirus.js";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
+import { safeErrorMessage as errorMessage } from "../util/errors.js";
+import type { AntivirusScanner } from "./antivirus.js";
 import type { MailAttachmentInput } from "./types.js";
 
 const STAGE_TTL_MS = 60 * 60 * 1000;
@@ -17,7 +18,7 @@ export interface StagedMailAttachment {
   readonly attachment: MailAttachmentInput;
 }
 
-export class MailAttachmentRejectedError extends Error {
+class MailAttachmentRejectedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "MailAttachmentRejectedError";
@@ -341,12 +342,6 @@ async function* asIterable(body: Uint8Array | AsyncIterable<Uint8Array>) {
 
 function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
-}
-
-function errorMessage(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error))
-    .replaceAll(/[\r\n\t]+/gu, " ")
-    .slice(0, 500);
 }
 
 function withoutContent(attachment: MailAttachmentInput, objectId: string): MailAttachmentInput {

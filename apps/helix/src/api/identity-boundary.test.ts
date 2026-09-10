@@ -3,10 +3,10 @@ import { initTRPC } from "@trpc/server";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
-import { createToolRegistry } from "../platform/tool-registry.js";
 import { InMemoryOAuthClientStore } from "../platform/auth/oauth.js";
-import { createPlatformMetrics } from "./metrics.js";
+import { createToolRegistry } from "../platform/tool-registry.js";
 import { installUntrustedIdentityHeaderGuard, registerToolRestRoutes } from "../server.js";
+import { createPlatformMetrics } from "./metrics.js";
 
 const forgedIdentityHeaders = {
   "x-helix-actor-id": "forged-admin",

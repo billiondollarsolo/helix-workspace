@@ -1,8 +1,14 @@
 import js from "@eslint/js";
-import { helixBrowserPlugin, helixBrowserRules, helixTestRules } from "@helix/config/eslint";
+import {
+  fileSizeConfigs,
+  helixBrowserPlugin,
+  helixBrowserRules,
+  helixTestRules,
+} from "@helix/config/eslint";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
+  ...fileSizeConfigs,
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
@@ -20,6 +26,23 @@ export default tseslint.config(
     },
     rules: {
       ...helixBrowserRules,
+      // Measured geometry, transforms, and values from user data stay inline.
+      // Static declarations belong in the token-backed stylesheet or utilities.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "JSXAttribute[name.name='style'] > JSXExpressionContainer > ObjectExpression > Property[value.type='Literal']",
+          message:
+            "Use CSS tokens or utility classes for static styles; reserve style for dynamic values.",
+        },
+        {
+          selector:
+            "JSXAttribute[name.name='style'] > JSXExpressionContainer > ObjectExpression > Property[value.type='TemplateLiteral'][value.expressions.length=0]",
+          message:
+            "Use CSS tokens or utility classes for static styles; reserve style for dynamic values.",
+        },
+      ],
     },
   },
   {

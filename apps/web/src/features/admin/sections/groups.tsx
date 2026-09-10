@@ -1,10 +1,25 @@
+import {
+  Building as BuildingIcon,
+  Plus as PlusIcon,
+  Trash2 as TrashIcon,
+  Users as UsersIcon,
+} from "lucide-react";
 /* Admin › People › Groups & org units. */
 
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
+import { AdminField, AdminInput, AdminToolbar } from "@/features/admin/console/controls";
+import {
+  EmptyRow,
+  EmptyState,
+  MutationError,
+  PageHeading,
+  PageScroll,
+  QueryFailureBanner,
+  StateBanner,
+  useQueryFailure,
+} from "@/features/admin/console/primitives";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   addGroupMember,
   createGroup,
@@ -20,18 +35,8 @@ import {
   type GroupMember,
   type OrgUnit,
 } from "@/features/admin/groups-api";
-import { AdminField, AdminInput, AdminToolbar } from "@/features/admin/console/controls";
-import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
-import {
-  EmptyRow,
-  EmptyState,
-  MutationError,
-  PageHeading,
-  PageScroll,
-  QueryFailureBanner,
-  StateBanner,
-  useQueryFailure,
-} from "@/features/admin/console/primitives";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 
 /* ------------------------------------------------------------------ */
 /* Groups & OUs                                                       */
@@ -261,7 +266,7 @@ function GroupMembershipPanel({ group }: { group: Group }) {
           disabled={removeMutation.isPending}
           onClick={() => setRemoveTarget(member)}
         >
-          <Icons.Trash />
+          <TrashIcon size={16} />
         </Button>
       ),
     },
@@ -307,7 +312,7 @@ function GroupMembershipPanel({ group }: { group: Group }) {
             />
           </AdminField>
           <Button type="submit" size="sm" className="self-end" disabled={addMutation.isPending}>
-            <Icons.Plus /> Add member
+            <PlusIcon size={16} /> Add member
           </Button>
         </AdminToolbar>
       </form>
@@ -459,7 +464,7 @@ export function AdminGroups() {
       width: "100%",
       cell: (row) => (
         <div className={`row gap-2 ${indentClass(row.indent)}`}>
-          {row.type === "OU" ? <Icons.Building /> : <Icons.Users />}
+          {row.type === "OU" ? <BuildingIcon size={16} /> : <UsersIcon size={16} />}
           <span className="font-medium">{row.name}</span>
         </div>
       ),
@@ -512,7 +517,7 @@ export function AdminGroups() {
                 disabled={deleteOuMutation.isPending || deleteGroupMutation.isPending}
                 onClick={() => setDeleteTarget({ row, id: rowId })}
               >
-                <Icons.Trash /> Delete
+                <TrashIcon size={16} /> Delete
               </Button>
             ) : null}
           </div>
@@ -537,7 +542,7 @@ export function AdminGroups() {
               disabled={createGroupDisabled}
               onClick={() => setShowGroupForm((open) => !open)}
             >
-              <Icons.Plus /> New group
+              <PlusIcon size={16} /> New group
             </Button>
             <Button
               type="button"
@@ -545,7 +550,7 @@ export function AdminGroups() {
               disabled={createOuDisabled}
               onClick={() => setShowOuForm((open) => !open)}
             >
-              <Icons.Plus /> New OU
+              <PlusIcon size={16} /> New OU
             </Button>
           </>
         }
@@ -633,7 +638,7 @@ export function AdminGroups() {
         /* "None yet" is only true once both halves actually loaded — claiming
            it while a query is failing or in flight invents an empty directory. */
         orgUnitsQuery.isSuccess && groupsQuery.isSuccess ? (
-          <EmptyState icon={<Icons.Building />} title="No org units or groups yet">
+          <EmptyState icon={<BuildingIcon size={16} />} title="No org units or groups yet">
             Org units mirror your reporting structure and scope policies to a slice of the
             directory. Groups are membership lists you can grant access with. Create either to start
             assigning them.

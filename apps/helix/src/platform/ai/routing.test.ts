@@ -1,18 +1,3 @@
-import { describe, expect, it } from "vitest";
-import {
-  AIClassificationBlockedError,
-  AIProviderUnavailableError,
-  AIRouter,
-  providerAllowedForClassification,
-  type LLMChatMetrics,
-  type LLMMetricStatus,
-} from "./routing.js";
-import {
-  AICostLimitExceededError,
-  InMemoryAICostLimiter,
-  aiCentsToUsdMicros,
-  createAICostGuard,
-} from "./costs/index.js";
 import type {
   Actor,
   ChatRequest,
@@ -25,6 +10,21 @@ import type {
   MeteringEvent,
   TraceContext,
 } from "@helix/sdk-types";
+import { describe, expect, it } from "vitest";
+import {
+  AICostLimitExceededError,
+  InMemoryAICostLimiter,
+  aiCentsToUsdMicros,
+  createAICostGuard,
+} from "./costs/index.js";
+import {
+  AIClassificationBlockedError,
+  AIProviderUnavailableError,
+  AIRouter,
+  providerAllowedForClassification,
+  type LLMChatMetrics,
+  type LLMMetricStatus,
+} from "./routing.js";
 
 const actor: Actor = {
   id: "actor-1",

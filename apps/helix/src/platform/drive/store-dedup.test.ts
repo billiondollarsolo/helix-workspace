@@ -3,8 +3,8 @@
  * Drives the real PostgresDriveStore.finalizeUpload / delete paths with a
  * recording SQL + in-memory storage client — no live Postgres required.
  */
-import type postgres from "postgres";
 import { createHash } from "node:crypto";
+import type postgres from "postgres";
 import { describe, expect, it, vi } from "vitest";
 import { driveBlobKey, driveQuarantineStorageKey } from "./core/storage-key.js";
 import { PostgresDriveStore, type DriveStorageClient } from "./store.js";

@@ -1,7 +1,9 @@
-import type { EventBus, JsonValue, OutboxMessage, TraceContext } from "@helix/sdk-types";
+import type { EventBus, JsonValue, OutboxMessage } from "@helix/sdk-types";
 import { withJobSpan } from "../observability/job-span.js";
 
-export interface StoredOutboxMessage<Payload extends JsonValue = JsonValue> extends OutboxMessage<Payload> {
+export interface StoredOutboxMessage<
+  Payload extends JsonValue = JsonValue,
+> extends OutboxMessage<Payload> {
   readonly id: string;
   readonly attempts: number;
   readonly createdAt: string;
@@ -27,21 +29,6 @@ export interface OutboxWorkerOptions {
   readonly batchSize?: number;
   readonly intervalMs?: number;
   readonly onError?: (error: unknown) => void;
-}
-
-export class OutboxHelper {
-  constructor(
-    private readonly store: OutboxStore,
-    private readonly events: EventBus,
-  ) {}
-
-  enqueue(subject: string, payload: JsonValue, trace?: TraceContext): Promise<string> {
-    return this.store.insert({ subject, payload, ...(trace === undefined ? {} : { trace }) });
-  }
-
-  drain(limit = 100): Promise<OutboxDrainResult> {
-    return drainOutbox(this.store, this.events, limit);
-  }
 }
 
 export class OutboxWorker {
@@ -87,9 +74,7 @@ export class OutboxWorker {
 
   drainOnce(): Promise<OutboxDrainResult> {
     // P2-6: synthesize a `job.outbox-drain` span for each drain cycle.
-    return withJobSpan("outbox-drain", () =>
-      drainOutbox(this.store, this.events, this.batchSize),
-    );
+    return withJobSpan("outbox-drain", () => drainOutbox(this.store, this.events, this.batchSize));
   }
 
   private runScheduledDrain(): Promise<OutboxDrainResult> {

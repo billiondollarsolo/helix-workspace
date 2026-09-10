@@ -1,8 +1,9 @@
 import { pathToFileURL } from "node:url";
 import type postgres from "postgres";
+import { loadSeedEnv } from "../config/env.js";
+import { hashSecret } from "../platform/auth/oauth.js";
 import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
-import { hashSecret } from "../platform/auth/oauth.js";
 
 export const DEFAULT_LOCAL_OAUTH_ORG_ID = "00000000-0000-4000-8000-000000000100";
 export const DEFAULT_LOCAL_OAUTH_ACTOR_ID = "00000000-0000-4000-8000-000000000101";
@@ -78,11 +79,11 @@ export async function seedLocalOAuth(
   const clientId = options.clientId ?? DEFAULT_LOCAL_OAUTH_CLIENT_ID;
   const clientSecret =
     options.clientSecret ??
-    process.env.HELIX_SEED_CLIENT_SECRET ??
+    loadSeedEnv().HELIX_SEED_CLIENT_SECRET ??
     DEFAULT_LOCAL_OAUTH_CLIENT_SECRET;
   const scopes = uniqueScopes(options.scopes ?? DEFAULT_LOCAL_OAUTH_SCOPES);
   const apiBaseUrl =
-    options.apiBaseUrl ?? process.env.HELIX_API_BASE_URL ?? "http://127.0.0.1:3000";
+    options.apiBaseUrl ?? loadSeedEnv().HELIX_API_BASE_URL ?? "http://127.0.0.1:3000";
   const secretHash = await hashSecret(clientSecret);
 
   await withTenantPostgresContext(sql, { orgId }, async (tx) => {

@@ -58,7 +58,7 @@ is itself alertable; silence is not treated as health.
 - Prometheus rules:
   `infra/observability/prometheus/rules/helix-workspace-operations.yml`
 - Incident index: [Helix Runbook](RUNBOOK.md#workspace-incident-runbooks)
-- Focused procedures: [`docs/runbooks/`](runbooks/)
+- Focused procedures: [`docs/runbooks/`](runbooks)
 
 Start the local stack with:
 

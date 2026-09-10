@@ -104,6 +104,14 @@ describe.skipIf(sql === null)("0124 live chat moderation playbooks", () => {
     `;
     expect(removed[0]?.deleted_at).toBeInstanceOf(Date);
 
+    // The guest accepted this file before a later scanner verdict. Current
+    // Drive policy requires explicit external sharing and an expiring guest grant.
+    await database`
+      insert into admin_security_policies (org_id, policy_type, settings, enabled, enforcement)
+      values (${orgA}, 'external_sharing', '{"mode":"anyone"}'::jsonb, true, 'required')
+      on conflict (org_id, policy_type) do update
+        set settings = excluded.settings, enabled = true, enforcement = 'required'
+    `;
     const maliciousMessage = await send(guest, room, "download this payload");
     const objectRows = await database<{ id: string }[]>`
       insert into objects (org_id, owner_actor_id, kind, storage_key, mime_type, byte_size)
@@ -111,6 +119,10 @@ describe.skipIf(sql === null)("0124 live chat moderation playbooks", () => {
       returning id
     `;
     const objectId = objectRows[0]?.id ?? "";
+    await database`insert into permissions (
+      org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id, expires_at
+    ) values (${orgA}, ${guest}, 'object', ${objectId}, 'reader', ${owner}, now() + interval '1 day')`;
+
     await database.begin(async (tx) => {
       await tx`select set_config('helix.org_id', ${orgA}, true)`;
       await tx`select set_config('helix.actor_id', ${guest}, true)`;

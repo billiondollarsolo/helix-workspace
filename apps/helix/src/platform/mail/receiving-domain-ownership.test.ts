@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createDomainOwnershipChallenge } from "../admin/domain-identity.js";
-import { InMemoryReceivingDomainStore } from "./receiving-domains-store.js";
 import {
   DnsTxtReceivingDomainOwnershipVerifier,
   type DomainOwnershipTokenSource,
 } from "./receiving-domain-ownership.js";
+import { InMemoryReceivingDomainStore } from "./receiving-domains-store.js";
 
 const orgId = "10000000-0000-4000-8000-000000000001";
 

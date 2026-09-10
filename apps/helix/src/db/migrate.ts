@@ -1,7 +1,7 @@
 import { loadMigrationEnv } from "../config/env.js";
 import { createMigrationSqlClient } from "./client.js";
-import { resolvePlatformMigrationSources } from "./migration-sources.js";
 import { runMigrations } from "./migration-runner.js";
+import { resolvePlatformMigrationSources } from "./migration-sources.js";
 
 // This one-shot process parses only the operational schema. It receives the
 // elevated migration credential but none of the provider secrets or listener

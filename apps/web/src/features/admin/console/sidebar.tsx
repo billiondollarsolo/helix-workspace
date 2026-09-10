@@ -1,14 +1,15 @@
+import { iconMap as Icons } from "@/components/icon-map";
+import { ChevronDown as ChevronDownIcon, Search as SearchIcon } from "lucide-react";
 /* The admin console's grouped section navigation. */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { Icons } from "@/components/icons";
 import {
   ADMIN_NAV_GROUPS_FOR_BUILD,
   ADMIN_NAV_ROOT,
   type AdminSectionId,
 } from "@/features/admin/admin-console-data";
 import { useAdminRealtimeState } from "@/features/admin/use-admin-realtime";
+import { Link } from "@tanstack/react-router";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /* ------------------------------------------------------------------ */
 /* Collapse preference                                                 */
@@ -115,7 +116,7 @@ function AdminNavLink({
       onPointerEnter={preload}
       onFocus={preload}
     >
-      <Icon />
+      <Icon size={16} />
       <span>{item.label}</span>
     </Link>
   );
@@ -266,7 +267,7 @@ export function AdminSidebar({
         <label className="sr-only" htmlFor="admin-nav-filter-input">
           Filter admin sections
         </label>
-        <Icons.Search size={13} aria-hidden="true" />
+        <SearchIcon size={13} aria-hidden="true" />
         <input
           id="admin-nav-filter-input"
           type="search"
@@ -337,7 +338,7 @@ export function AdminSidebar({
                       {group.items.length}
                     </span>
                   )}
-                  <Icons.ChevronDown className="admin-nav-group-chevron" size={14} />
+                  <ChevronDownIcon className="admin-nav-group-chevron" size={14} />
                 </button>
               )}
             </h2>

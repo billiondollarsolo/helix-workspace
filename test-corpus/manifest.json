@@ -126,9 +126,7 @@
       "targetDir": "generated/video",
       "expectedFileCountMin": 0,
       "optional": true,
-      "urls": [
-        "https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4"
-      ]
+      "urls": ["https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4"]
     }
   ]
 }

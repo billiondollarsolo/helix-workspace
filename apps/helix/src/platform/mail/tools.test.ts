@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
 import { mailSpamResultSchema } from "@helix/contracts";
-import { createMailToolDefinitions } from "./tools.js";
-import type { MailStore } from "./store.js";
-import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
+import { describe, expect, it, vi } from "vitest";
 import { ForbiddenError } from "../../api/api-error.js";
+import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
+import type { MailStore } from "./store.js";
+import { createMailToolDefinitions } from "./tools.js";
 
 function toolById(id: string, storeOverrides: Partial<MailStore> = {}) {
   const updateThreadState = vi.fn<MailStore["updateThreadState"]>().mockResolvedValue(undefined);

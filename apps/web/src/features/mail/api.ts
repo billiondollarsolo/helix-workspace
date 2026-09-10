@@ -16,12 +16,12 @@ import {
   MAIL_ATTACHMENT_MAX_TOTAL_BYTES,
 } from "@helix/contracts";
 
-export type MailApiAddress = MailAddress;
+type MailApiAddress = MailAddress;
 
 export type MailFolderKey =
   "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
 
-export type MailCategoryTab = "primary" | "updates" | "promotions" | "social";
+type MailCategoryTab = "primary" | "updates" | "promotions" | "social";
 
 export type MailThreadRow = MailThreadRowContract & {
   readonly category: MailCategoryTab;
@@ -72,7 +72,7 @@ export interface MailSearchHit {
   readonly starred?: boolean;
 }
 
-export interface MailThreadMessage {
+interface MailThreadMessage {
   readonly id: string;
   readonly from?: MailApiAddress;
   readonly to: readonly MailApiAddress[];
@@ -161,7 +161,7 @@ export interface MailSendResult {
 
 export type { MailDraftSaveInput } from "@helix/contracts";
 
-export interface MailFilterCriteria {
+interface MailFilterCriteria {
   readonly fromContains?: string;
   readonly toContains?: string;
   readonly subjectContains?: string;
@@ -169,7 +169,7 @@ export interface MailFilterCriteria {
   readonly hasAttachment?: boolean;
 }
 
-export interface MailFilterActions {
+interface MailFilterActions {
   readonly applyLabels?: readonly string[];
   readonly archive?: boolean;
   readonly delete?: boolean;

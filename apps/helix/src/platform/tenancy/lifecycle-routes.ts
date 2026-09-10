@@ -13,11 +13,9 @@ import type { TenantHourlyQuotaExceeded, TenantHourlyQuotaLimiter } from "../lim
 import { emitTenantQuotaExceededEvent } from "../limits/quota-events.js";
 import { buildTenantExportArchive, type TenantExportManifestPlanner } from "./export.js";
 import type { OrgRecord, OrgStore, TenantLifecycleAction } from "./orgs.js";
-
-export const adminTenantsReadScope = "admin.tenants.read";
-export const adminTenantsExportScope = "admin.tenants.export";
-export const adminTenantsWriteScope = "admin.tenants.write";
-export const adminTenantsDeleteScope = "admin.tenants.delete";
+const adminTenantsExportScope = "admin.tenants.export";
+const adminTenantsWriteScope = "admin.tenants.write";
+const adminTenantsDeleteScope = "admin.tenants.delete";
 
 export interface TenantLifecycleStore extends Pick<OrgStore, "findBySlug"> {
   applyTenantLifecycleAction(input: {

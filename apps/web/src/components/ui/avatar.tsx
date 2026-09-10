@@ -19,7 +19,7 @@ const AVATAR_COLORS: ReadonlyArray<readonly [string, string]> = [
 ];
 
 /** Deterministic, stable hash → index in [0, mod). Shared utility. */
-export function hashIdx(value: string, mod: number): number {
+function hashIdx(value: string, mod: number): number {
   let h = 0;
   const s = value || "";
   for (let i = 0; i < s.length; i += 1) {

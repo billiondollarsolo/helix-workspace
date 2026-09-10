@@ -1,14 +1,14 @@
 import { queryOptions } from "@tanstack/react-query";
-import { listMeetMeetings, listMeetRooms, type MeetRoomStatus } from "./api";
+import { listMeetMeetings, type MeetRoomStatus } from "./api";
 
-export type MeetRoomsStatusFilter = MeetRoomStatus;
+type MeetRoomsStatusFilter = MeetRoomStatus;
 
 export interface MeetRoomsQueryInput {
   readonly status?: MeetRoomsStatusFilter;
   readonly limit?: number;
 }
 
-export const defaultMeetRoomsInput = {
+const defaultMeetRoomsInput = {
   limit: 50,
 } as const satisfies MeetRoomsQueryInput;
 
@@ -20,15 +20,6 @@ export const meetQueryKeys = {
   meetings: (input: MeetRoomsQueryInput = defaultMeetRoomsInput) =>
     ["meet", "meetings", input.status ?? "all", input.limit ?? 50] as const,
 };
-
-/** Raw room list — supporting data via the `meet.room.list` tool. */
-export function meetRoomsQueryOptions(input: MeetRoomsQueryInput = defaultMeetRoomsInput) {
-  return queryOptions({
-    queryKey: meetQueryKeys.rooms(input),
-    queryFn: () => listMeetRooms(input),
-    throwOnError: false,
-  });
-}
 
 /**
  * Hub meetings — the `meet.meetings.list` tool, projected for the hub's

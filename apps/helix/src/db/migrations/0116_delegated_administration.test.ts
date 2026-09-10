@@ -117,14 +117,14 @@ describe.skipIf(sql === null)("0116 live delegated administration boundaries", (
         select helix_grant_delegated_iam_binding(
           ${orgA}, ${root}, ${rootDomainBinding}, ${domainRole}, 'membership',
           (select id from organization_memberships where actor_id = ${delegate}),
-          null, 'resource', null, null, 'domain', ${domainA}, true
+          null, null, 'resource', null, null, 'domain', ${domainA}, true
         ) as id
       `;
       const peerGrant = await tx<{ id: string }[]>`
         select helix_grant_delegated_iam_binding(
           ${orgA}, ${root}, ${rootDomainBinding}, ${domainRole}, 'membership',
           (select id from organization_memberships where actor_id = ${peer}),
-          null, 'resource', null, null, 'domain', ${domainA}, false
+          null, null, 'resource', null, null, 'domain', ${domainA}, false
         ) as id
       `;
       return [rootGrant, peerGrant] as const;
@@ -168,7 +168,7 @@ describe.skipIf(sql === null)("0116 live delegated administration boundaries", (
         select helix_grant_delegated_iam_binding(
           ${orgA}, ${delegate}, ${delegateBinding}, ${domainRole}, 'membership',
           (select id from organization_memberships where actor_id = ${target}),
-          null, 'resource', null, null, 'domain', ${domainA}, false
+          null, null, 'resource', null, null, 'domain', ${domainA}, false
         ) as id
       `;
     });
@@ -202,7 +202,7 @@ describe.skipIf(sql === null)("0116 live delegated administration boundaries", (
           select helix_grant_delegated_iam_binding(
             ${orgA}, ${delegate}, ${delegateBinding}, ${attack.role}, 'membership',
             (select id from organization_memberships where actor_id = ${target}),
-            null, ${attack.scopeType}, null, null, ${attack.resourceType},
+            null, null, ${attack.scopeType}, null, null, ${attack.resourceType},
             ${attack.resourceId}, false
           )
         `;
@@ -218,7 +218,7 @@ describe.skipIf(sql === null)("0116 live delegated administration boundaries", (
           select helix_grant_delegated_iam_binding(
             ${orgA}, ${delegate}, ${delegateBinding}, ${domainRole}, 'membership',
             (select id from organization_memberships where actor_id = ${outsider}),
-            null, 'resource', null, null, 'domain', ${domainA}, false
+            null, null, 'resource', null, null, 'domain', ${domainA}, false
           )
         `;
       }),
@@ -233,7 +233,7 @@ describe.skipIf(sql === null)("0116 live delegated administration boundaries", (
           select helix_grant_delegated_iam_binding(
             ${orgA}, ${root}, ${rootDomainBinding}, ${domainRole}, 'membership',
             (select id from organization_memberships where actor_id = ${target}),
-            null, 'resource', null, null, 'domain', ${domainA}, false
+            null, null, 'resource', null, null, 'domain', ${domainA}, false
           )
         `;
       }),
@@ -297,7 +297,7 @@ describe.skipIf(sql === null)("0116 live delegated administration boundaries", (
           select helix_grant_delegated_iam_binding(
             ${orgA}, ${delegate}, ${delegateBinding}, ${domainRole}, 'membership',
             (select id from organization_memberships where actor_id = ${target}),
-            null, 'resource', null, null, 'domain', ${domainA}, false
+            null, null, 'resource', null, null, 'domain', ${domainA}, false
           )
         `;
       }),

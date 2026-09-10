@@ -68,20 +68,6 @@ const requiredCoverage = [
     ],
   },
   {
-    label: "plugin install to operational",
-    group: "plugin_install",
-    metric: "helix_plugin_install_ms",
-    thresholdEnv: "PLUGIN_INSTALL_P95_MS",
-    defaultThreshold: 30000,
-    envOverrides: [
-      "PLUGIN_INSTALL_TOOL_ID",
-      "PLUGIN_INSTALL_BODY",
-      "PLUGIN_INSTALL_EXPECT",
-      "PLUGIN_INSTALL_PLUGIN_ID",
-      "PLUGIN_INSTALL_VERSION",
-    ],
-  },
-  {
     label: "LLM routing decision overhead",
     group: "assistant_llm",
     metric: "helix_llm_routing_overhead_ms",

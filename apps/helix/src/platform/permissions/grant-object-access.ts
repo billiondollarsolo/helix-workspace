@@ -6,8 +6,7 @@ type SqlLike = postgres.Sql | postgres.TransactionSql;
 /**
  * Grant an actor a role on a Drive {@link objects} row.
  *
- * Shared by the Docs, Drive, and Sheets stores so every app that owns a
- * shared-primary-key `objects` row records its owner permission identically.
+ * Drive object owners use one permission representation.
  * The insert is idempotent (`on conflict do nothing`).
  */
 export async function grantObjectAccess(

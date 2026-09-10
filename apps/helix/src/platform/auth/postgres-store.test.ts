@@ -1,15 +1,10 @@
-import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import {
   PostgresAccessTokenStore,
   PostgresOAuthClientStore,
   hashAccessToken,
 } from "./postgres-store.js";
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 const testIssuer = "https://helix.example.test";
 
@@ -490,23 +485,5 @@ describe("Postgres OAuth stores", () => {
     expect(crossClientRecording.calls).toHaveLength(1);
   });
 });
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
-    return Promise.resolve(queue.shift() ?? []);
-  };
-  const transaction = Object.assign(tag, {
-    array: <T extends readonly unknown[]>(value: T) => value,
-  }) as unknown as postgres.TransactionSql;
-  const sql = Object.assign(tag, {
-    array: <T extends readonly unknown[]>(value: T) => value,
-    begin: <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) => callback(transaction),
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}
+const createRecordingSql = (responses: readonly unknown[] = []) =>
+  sharedRecordingSql(responses, "$");

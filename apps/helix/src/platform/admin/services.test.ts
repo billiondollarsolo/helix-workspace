@@ -1,6 +1,11 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
+import type {
+  AdminServiceRuntimeStatus,
+  AdminServiceRuntimeStatusInput,
+  AdminServiceRuntimeStatusStore,
+} from "./service-status.js";
 import {
   AdminServicesCatalog,
   canReadAdminServices,
@@ -21,11 +26,6 @@ import {
   type AdminServiceSurface,
   type AdminServicesStatusResponse,
 } from "./services.js";
-import type {
-  AdminServiceRuntimeStatus,
-  AdminServiceRuntimeStatusInput,
-  AdminServiceRuntimeStatusStore,
-} from "./service-status.js";
 
 const actor: Actor = {
   id: "11111111-1111-4111-8111-111111111111",

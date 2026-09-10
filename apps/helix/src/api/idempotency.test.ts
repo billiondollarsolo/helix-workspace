@@ -1,4 +1,6 @@
+import type { Redis } from "ioredis";
 import { describe, expect, it } from "vitest";
+import type { ToolInvokeResult } from "../platform/tool-registry.js";
 import {
   InMemoryIdempotencyStore,
   RedisIdempotencyStore,
@@ -6,8 +8,6 @@ import {
   idempotencyStorageKey,
   resolveIdempotency,
 } from "./idempotency.js";
-import type { ToolInvokeResult } from "../platform/tool-registry.js";
-import type { Redis } from "ioredis";
 
 const okResult: ToolInvokeResult = { ok: true, status: "executed", output: { sent: true } };
 

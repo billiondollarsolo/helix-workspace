@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
+import { Key as KeyIcon, Lock as LockIcon } from "lucide-react";
 /* Admin › Security › Policies — authentication, access, and data protection. */
 
-import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { useAdminSectionSearch } from "@/features/admin/admin-section-search";
 import { AdminField, AdminSelect } from "@/features/admin/console/controls";
@@ -331,7 +331,7 @@ export function AdminSecurity() {
               </h2>
               {label === "Authentication" ? <LocalLoginSecurityCard /> : null}
               {policiesQuery.isSuccess && grouped[label].length === 0 ? (
-                <EmptyState icon={<Icons.Lock />} title={POLICY_GROUP_EMPTY[label].title}>
+                <EmptyState icon={<LockIcon size={16} />} title={POLICY_GROUP_EMPTY[label].title}>
                   {POLICY_GROUP_EMPTY[label].body}
                 </EmptyState>
               ) : null}
@@ -356,7 +356,7 @@ export function AdminSecurity() {
                             setting to describe. */}
                         {settingsSummary.length === 0 ? null : (
                           <div className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
-                            <Icons.Key /> {settingsSummary}
+                            <KeyIcon size={16} /> {settingsSummary}
                           </div>
                         )}
                       </div>
@@ -432,7 +432,7 @@ function LocalLoginSecurityCard() {
             <StatusChip tone="success" label="Enabled" />
           </div>
           <div className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
-            <Icons.Lock /> Owner/admin recovery path; SSO is additive.
+            <LockIcon size={16} /> Owner/admin recovery path; SSO is additive.
           </div>
         </div>
         <Button

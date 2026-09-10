@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import fastify, { type FastifyInstance, type InjectOptions } from "fastify";
-import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
+import fastify, { type FastifyInstance, type InjectOptions } from "fastify";
+import { createHash, randomUUID } from "node:crypto";
+import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/api-error.js";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
 import {
@@ -10,19 +10,6 @@ import {
   type RegisterDriveRoutesOptions,
   type WebDavDriveStore,
 } from "./routes.js";
-
-/** Minimal envelope handler so isolated route tests match production G4 rendering. */
-function withApiErrorHandler(app: FastifyInstance): FastifyInstance {
-  app.setErrorHandler((error, _request, reply) => {
-    if (error instanceof ApiError) {
-      return reply.code(error.statusCode).send({
-        error: { code: error.code, message: error.message },
-      });
-    }
-    throw error;
-  });
-  return app;
-}
 import type {
   DriveFileReadInput,
   DriveFileReadResult,
@@ -38,6 +25,19 @@ import type {
   DriveWebDavChange,
   DriveWebDavLock,
 } from "./types.js";
+
+/** Minimal envelope handler so isolated route tests match production G4 rendering. */
+function withApiErrorHandler(app: FastifyInstance): FastifyInstance {
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ApiError) {
+      return reply.code(error.statusCode).send({
+        error: { code: error.code, message: error.message },
+      });
+    }
+    throw error;
+  });
+  return app;
+}
 
 function registerDriveRoutes(
   app: FastifyInstance,

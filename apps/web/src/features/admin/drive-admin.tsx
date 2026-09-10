@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils";
 /* Helix Admin — Drive quota usage + lifecycle policy (D11).
  *
  * Wired to real Drive admin tools (`drive.quota.usage`, `drive.lifecycle.*`).
@@ -248,20 +249,16 @@ function QuotaPanel({
       {!usage.unlimited && usage.limitBytes !== null ? (
         <div
           aria-hidden="true"
-          style={{
-            height: 8,
-            borderRadius: 999,
-            background: "var(--surface-2)",
-            border: "1px solid var(--border)",
-            overflow: "hidden",
-          }}
+          className="h-2 [border-radius:999px] bg-muted [border:1px_solid_var(--border)] overflow-hidden"
         >
           <div
-            style={{
-              width: `${String(barWidth)}%`,
-              height: "100%",
-              background: pct >= 90 ? "var(--danger, #dc2626)" : "var(--accent, #2563eb)",
-            }}
+            className={cn(
+              "h-full",
+              pct >= 90
+                ? "[background:var(--danger,_#dc2626)]"
+                : "[background:var(--accent,_#2563eb)]",
+            )}
+            style={{ width: `${String(barWidth)}%` }}
           />
         </div>
       ) : null}

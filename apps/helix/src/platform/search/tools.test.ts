@@ -104,6 +104,17 @@ describe("search tools", () => {
     },
   );
 
+  it.each(["docs", "sheets", "slides"])("rejects the retired %s search type", async (type) => {
+    const engine = new FakeSearchEngine();
+    const registry = createToolRegistry();
+    registerSearchTools(registry, { engine });
+
+    await expect(
+      registry.invoke("search.query", { query: "launch", types: [type] }, { actor }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(engine.searches).toEqual([]);
+  });
+
   it("returns an empty result without calling the engine when no requested type is readable", async () => {
     const engine = new FakeSearchEngine();
     const registry = createToolRegistry();
@@ -120,6 +131,12 @@ describe("search tools", () => {
 });
 
 describe("createScopedSearchRequest", () => {
+  it("limits system discovery to the supported application domains", () => {
+    expect(
+      createScopedSearchRequest({ ...actor, type: "system" }, { query: "launch" })?.types,
+    ).toEqual(["mail", "chat", "drive", "calendar"]);
+  });
+
   it("preserves extra filters as an AND with the required org filter", () => {
     expect(
       createScopedSearchRequest(actor, {

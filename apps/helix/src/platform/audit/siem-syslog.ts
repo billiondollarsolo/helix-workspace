@@ -1,7 +1,7 @@
-import { connect as netConnect, type Socket } from "node:net";
-import { connect as tlsConnect, type ConnectionOptions as TlsConnectionOptions } from "node:tls";
 import { createSocket, type Socket as DgramSocket } from "node:dgram";
+import { connect as netConnect, type Socket } from "node:net";
 import { hostname } from "node:os";
+import { connect as tlsConnect, type ConnectionOptions as TlsConnectionOptions } from "node:tls";
 import type { ImmutableAuditActivityRecord, ImmutableAuditShipResult } from "./immutable-s3.js";
 import type { AuditBatchShipper } from "./shipping-worker.js";
 import { formatAuditRecord, type SiemAuditFormat } from "./siem-format.js";
@@ -366,14 +366,21 @@ class UdpSyslogTransport implements SiemSyslogTransportClient {
 
 function integerInRange(value: number, min: number, max: number, label: string): number {
   if (!Number.isInteger(value) || value < min || value > max) {
-    throw new TypeError(`SIEM audit shipper ${label} must be an integer in [${String(min)}, ${String(max)}]`);
+    throw new TypeError(
+      `SIEM audit shipper ${label} must be an integer in [${String(min)}, ${String(max)}]`,
+    );
   }
   return value;
 }
 
 /** Strip SP and control chars from RFC 5424 header fields (NILVALUE if empty). */
 function sanitizeHeaderField(value: string): string {
-  const cleaned = Array.from(value).filter((c) => { const code = c.codePointAt(0) ?? 0; return code > 0x20 && code !== 0x7f; }).join("");
+  const cleaned = Array.from(value)
+    .filter((c) => {
+      const code = c.codePointAt(0) ?? 0;
+      return code > 0x20 && code !== 0x7f;
+    })
+    .join("");
   return cleaned.length === 0 ? "-" : cleaned;
 }
 

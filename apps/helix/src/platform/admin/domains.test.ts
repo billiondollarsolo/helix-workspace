@@ -1,6 +1,6 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
 import { actorFromRequest } from "../../api/test-actor.js";
 import {
   InMemoryDomainsStore,

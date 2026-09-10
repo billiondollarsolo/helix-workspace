@@ -26,7 +26,10 @@ export interface AICostLimitUpsertInput {
  * `ai_cost_limits` table; the admin API reads and writes through this store.
  */
 export interface AICostLimitStore {
-  get(input: { readonly orgId: string; readonly actorId: string }): Promise<AICostLimitOverride | null>;
+  get(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<AICostLimitOverride | null>;
   list(input: { readonly orgId: string }): Promise<readonly AICostLimitOverride[]>;
   upsert(input: AICostLimitUpsertInput): Promise<AICostLimitOverride>;
   remove(input: { readonly orgId: string; readonly actorId: string }): Promise<boolean>;
@@ -100,10 +103,7 @@ export class PostgresAICostLimitStore implements AICostLimitStore {
     return toOverride(row);
   }
 
-  async remove(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-  }): Promise<boolean> {
+  async remove(input: { readonly orgId: string; readonly actorId: string }): Promise<boolean> {
     const rows = (await this.sql`
       delete from ai_cost_limits
       where org_id = ${input.orgId} and actor_id = ${input.actorId}
@@ -146,10 +146,7 @@ export class InMemoryAICostLimitStore implements AICostLimitStore {
     return record;
   }
 
-  async remove(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-  }): Promise<boolean> {
+  async remove(input: { readonly orgId: string; readonly actorId: string }): Promise<boolean> {
     return this.#records.delete(key(input.orgId, input.actorId));
   }
 }

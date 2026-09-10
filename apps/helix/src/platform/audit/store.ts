@@ -1,26 +1,33 @@
-import type postgres from "postgres";
 import type { AuditRecord, JsonObject } from "@helix/sdk";
+import type postgres from "postgres";
+import { toSqlJson } from "../util/sql.js";
+import type { ImmutableAuditActivityRecord } from "./immutable-s3.js";
 import type { AuditLogRecord, AuditLogStore, ListAuditLogInput } from "./routes.js";
-import type {
-  AuditVerificationRecord,
-  AuditVerificationStore,
-  ListAuditVerificationRecordsInput,
-} from "./verifier.js";
 import type {
   AuditShippingBacklog,
   AuditShippingCheckpoint,
   AuditShippingStore,
   ListAuditShippingRecordsInput,
 } from "./shipping-worker.js";
-import type { ImmutableAuditActivityRecord } from "./immutable-s3.js";
+import type {
+  AuditVerificationRecord,
+  AuditVerificationStore,
+  ListAuditVerificationRecordsInput,
+} from "./verifier.js";
 
 export interface AuditAppendResult {
   readonly id: string;
   readonly thisHash: string;
 }
 
+type AuditAppendInput = Omit<AuditRecord, "actorId" | "metadata"> & {
+  readonly orgId: string;
+  readonly actorId: string | null;
+  readonly metadata?: Record<string, unknown>;
+};
+
 export interface PostgresAuditStoreOptions {
-  readonly onAppend?: (record: AuditRecord & { readonly orgId: string }) => void;
+  readonly onAppend?: (record: AuditAppendInput) => void;
 }
 
 export class PostgresAuditStore
@@ -31,7 +38,7 @@ export class PostgresAuditStore
     private readonly options: PostgresAuditStoreOptions = {},
   ) {}
 
-  async append(record: AuditRecord & { readonly orgId: string }): Promise<AuditAppendResult> {
+  async append(record: AuditAppendInput): Promise<AuditAppendResult> {
     return this.sql.begin(async (tx) => {
       await tx`select set_config('helix.org_id', ${record.orgId}, true)`;
       const rows = await tx<{ readonly id: string; readonly this_hash: string }[]>`
@@ -54,7 +61,7 @@ export class PostgresAuditStore
           ${record.objectType},
           ${record.objectId ?? null},
           ${record.trace?.traceId ?? null},
-          ${tx.json(record.metadata ?? ({} satisfies JsonObject))},
+          ${tx.json(toSqlJson(record.metadata ?? {}))},
           null,
           '',
           ${new Date()}

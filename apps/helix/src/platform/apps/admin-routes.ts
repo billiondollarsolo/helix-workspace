@@ -1,6 +1,6 @@
+import type { Actor } from "@helix/sdk";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import type { Actor } from "@helix/sdk";
 import {
   canReadPlatformConfig,
   canWritePlatformConfig,
@@ -49,7 +49,7 @@ const coreAppToggleSchema = z
   })
   .strict();
 
-export interface CoreAppAdminView {
+interface CoreAppAdminView {
   readonly id: CoreAppId;
   readonly name: string;
   readonly description: string;

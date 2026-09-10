@@ -5,7 +5,6 @@ import YAML from "yaml";
 
 const repoRoot = process.cwd().replace(/\/apps\/helix$/u, "");
 const alertmanagerRoot = join(repoRoot, "infra/observability/alertmanager");
-const prometheusRoot = join(repoRoot, "infra/observability/prometheus");
 const grafanaRoot = join(repoRoot, "infra/observability/grafana/dashboards");
 const observabilityRoot = join(repoRoot, "infra/observability");
 const rootComposePath = join(repoRoot, "docker-compose.yml");
@@ -24,8 +23,11 @@ describe("observability infrastructure assets", () => {
       [
         "apps/helix/src/platform/mail/outbound.ts",
         "apps/helix/src/platform/chat/realtime.ts",
-        "apps/helix/src/platform/drive/store.ts",
-        "apps/helix/src/server.ts",
+        "apps/helix/src/platform/drive/store/quotas.ts",
+        "apps/helix/src/platform/drive/store/storage.ts",
+        "apps/helix/src/platform/drive/store/uploads.ts",
+        "apps/helix/src/bootstrap/storage.ts",
+        "apps/helix/src/bootstrap/search-runtime.ts",
       ].map((file) => readFile(join(repoRoot, file), "utf8")),
     ).then((files) => files.join("\n"));
     const alerts = await readFile(
@@ -74,82 +76,7 @@ describe("observability infrastructure assets", () => {
     );
   });
 
-  it("ships signup activation SLO alert rules with low-cardinality labels", async () => {
-    const prometheusConfig = YAML.parse(
-      await readFile(join(prometheusRoot, "prometheus.yml"), "utf8"),
-    ) as {
-      readonly rule_files?: readonly unknown[];
-      readonly alerting?: {
-        readonly alertmanagers?: readonly {
-          readonly static_configs?: readonly {
-            readonly targets?: readonly unknown[];
-          }[];
-        }[];
-      };
-    };
-    const ruleFile = await readFile(join(prometheusRoot, "rules/helix-signup-slo.yml"), "utf8");
-    const rules = YAML.parse(ruleFile) as {
-      readonly groups?: readonly {
-        readonly rules?: readonly {
-          readonly alert?: unknown;
-          readonly expr?: unknown;
-          readonly labels?: Record<string, unknown>;
-        }[];
-      }[];
-    };
-    const rootCompose = await readFile(rootComposePath, "utf8");
-
-    expect(prometheusConfig.rule_files).toContain("/etc/prometheus/rules/*.yml");
-    expect(
-      prometheusConfig.alerting?.alertmanagers?.flatMap(
-        (manager) => manager.static_configs?.flatMap((config) => config.targets ?? []) ?? [],
-      ),
-    ).toContain("alertmanager:9093");
-    expect(rootCompose).toContain(
-      "./infra/observability/prometheus/rules:/etc/prometheus/rules:ro",
-    );
-
-    const alertRules = rules.groups?.flatMap((group) => group.rules ?? []) ?? [];
-    expect(alertRules).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ alert: "HelixSignupActivationP95High" }),
-        expect.objectContaining({ alert: "HelixSignupActivationSloMissRateHigh" }),
-        expect.objectContaining({ alert: "HelixSignupActivationSamplesMissing" }),
-      ]),
-    );
-
-    const ruleText = JSON.stringify(alertRules);
-    for (const expected of [
-      "helix_signup_funnel_events_total",
-      "helix_signup_activation_duration_seconds_bucket",
-      "helix_signup_activation_duration_seconds_count",
-      "tier",
-      "plan_id",
-      "region",
-      "within_target",
-      "priority",
-      "p2",
-      "signup_activation",
-      "runbook_url",
-      "docs/specs/05-operations/runbooks/signup-activation-slo-breach.md",
-    ]) {
-      expect(ruleText).toContain(expected);
-    }
-    for (const forbidden of [
-      "org_id",
-      "org_slug",
-      "actor_id",
-      "email",
-      "token",
-      "$labels.ip",
-      'ip="',
-      "user_agent",
-    ]) {
-      expect(ruleText).not.toContain(forbidden);
-    }
-  });
-
-  it("ships bundled Alertmanager routing proof for signup activation SLO alerts", async () => {
+  it("routes production product SLO alerts to the configured paging secret", async () => {
     const alertmanager = YAML.parse(
       await readFile(join(alertmanagerRoot, "alertmanager.yml"), "utf8"),
     ) as {
@@ -206,38 +133,17 @@ describe("observability infrastructure assets", () => {
         "region",
       ]),
     );
-    const signupRoute = alertmanager.route?.routes?.find(
-      (route) => route.receiver === "helix-signup-slo-webhook",
-    );
-    expect(signupRoute?.matchers).toEqual(
-      expect.arrayContaining(['service="signup"', 'slo="signup_activation"']),
-    );
-    const signupReceiver = alertmanager.receivers?.find(
-      (receiver) => receiver.name === "helix-signup-slo-webhook",
-    );
-    expect(signupReceiver?.webhook_configs).toContainEqual({
-      url: "http://host.docker.internal:28462/alertmanager/signup",
-      send_resolved: true,
-    });
-    expect(JSON.stringify(alertmanager)).not.toContain("helix-signup-slo-paging");
-    const productionSignupRoute = productionAlertmanager.route?.routes?.find(
-      (route) => route.receiver === "helix-signup-slo-webhook",
-    );
-    expect(productionSignupRoute?.matchers).toEqual(
-      expect.arrayContaining(['service="signup"', 'slo="signup_activation"']),
-    );
-    expect(productionSignupRoute?.continue).toBe(true);
     const productionPagingRoute = productionAlertmanager.route?.routes?.find(
-      (route) => route.receiver === "helix-signup-slo-paging",
+      (route) => route.receiver === "helix-product-slo-paging",
     );
     expect(productionPagingRoute?.matchers).toEqual(
-      expect.arrayContaining(['service="signup"', 'slo="signup_activation"']),
+      expect.arrayContaining(['slo=~"product_availability|availability|freshness|healthy_media"']),
     );
     const productionPagingReceiver = productionAlertmanager.receivers?.find(
-      (receiver) => receiver.name === "helix-signup-slo-paging",
+      (receiver) => receiver.name === "helix-product-slo-paging",
     );
     expect(productionPagingReceiver?.webhook_configs).toContainEqual({
-      url_file: "/etc/alertmanager/secrets/signup-slo-paging-webhook-url",
+      url_file: "/etc/alertmanager/secrets/product-slo-paging-webhook-url",
       send_resolved: true,
     });
 

@@ -102,4 +102,4 @@ the external system was honest. Release operators must retain the referenced Ale
 database/queue checks, logs, and restore hashes with the release bundle.
 
 This program covers the storage-only Workspace MVP. Native document/spreadsheet/presentation
-editing and `helix-editors` changes are outside its scope.
+editing is outside its scope.

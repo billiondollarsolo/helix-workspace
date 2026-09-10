@@ -1,9 +1,9 @@
-import { randomUUID } from "node:crypto";
 import type { JsonObject } from "@helix/sdk-types";
-import { normalizeMailboxAddress } from "./address-normalization.js";
+import { randomUUID } from "node:crypto";
 import type { AdminConsoleAuditSink } from "../admin/console-shared.js";
 import { auditAdminAction } from "../admin/console-shared.js";
 import { verifyWebhookSignature } from "../webhooks/signatures.js";
+import { normalizeMailboxAddress } from "./address-normalization.js";
 
 export const MAIL_DELIVERY_EVENT_TYPES = [
   "delivered",

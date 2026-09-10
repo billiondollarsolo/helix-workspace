@@ -1,7 +1,9 @@
-import { randomUUID } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
+import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
+import { errorMessage } from "../util/errors.js";
+import { toSqlJson } from "../util/sql.js";
 import type {
   SearchReindexCursor,
   SearchReindexRequest,
@@ -36,8 +38,7 @@ export interface ClaimedSearchMutation {
   readonly leaseToken: string;
 }
 
-export type SearchReindexJobStatus =
-  "queued" | "processing" | "completed" | "cancelled" | "dead_lettered";
+type SearchReindexJobStatus = "queued" | "processing" | "completed" | "cancelled" | "dead_lettered";
 
 export interface SearchReindexJob {
   readonly id: string;
@@ -270,10 +271,6 @@ export class PostgresSearchDurabilityStore implements SearchMutationQueue {
       return callback();
     }) as Promise<T>;
   }
-}
-
-function toSqlJson(value: unknown): postgres.JSONValue {
-  return JSON.parse(JSON.stringify(value)) as postgres.JSONValue;
 }
 
 export interface SearchReindexJobService {
@@ -528,8 +525,4 @@ function normalizeBatchSize(value: number | undefined): number {
   return value === undefined || !Number.isFinite(value) || value < 1
     ? 100
     : Math.min(Math.floor(value), 1000);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

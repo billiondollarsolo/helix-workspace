@@ -50,7 +50,7 @@ const jsonHeaders = {
   "content-type": "application/json",
 } as const;
 
-export const agentCredentialsQueryKeys = {
+const agentCredentialsQueryKeys = {
   list: (includeRevoked: boolean) => ["admin", "agent-credentials", includeRevoked] as const,
 };
 
@@ -63,7 +63,7 @@ export function agentCredentialsQueryOptions(includeRevoked = false) {
   });
 }
 
-export async function listAgentCredentials(
+async function listAgentCredentials(
   input: { readonly includeRevoked?: boolean } = {},
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<readonly AgentCredential[]> {

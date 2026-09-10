@@ -9,7 +9,7 @@ import { OAuthError } from "./oauth.js";
  * read cannot recover a live code.
  */
 
-export const DEFAULT_AUTHORIZATION_CODE_TTL_SECONDS = 60;
+const DEFAULT_AUTHORIZATION_CODE_TTL_SECONDS = 60;
 
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/u;
 const CODE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/u;
@@ -158,12 +158,6 @@ export class InMemoryAuthorizationCodeStore implements AuthorizationCodeStore {
     this.#codes.set(codeHash, consumed);
     return consumed;
   }
-}
-
-export function createAuthorizationCodeService(
-  options: AuthorizationCodeServiceOptions,
-): AuthorizationCodeService {
-  return new AuthorizationCodeService(options);
 }
 
 export function hashAuthorizationCode(code: string): string {

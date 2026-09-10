@@ -46,7 +46,7 @@ logLevel: info
 trustedProxies: []
 
 # Production workspace packaging (AGENTS.md + docs/architecture/v1-packaging-matrix.md).
-# Defaults are MVP fail-closed. Do NOT set profile=full or enable Meet/Calendar/Editors
+# Defaults are MVP fail-closed. Do NOT set profile=full or enable Meet/Calendar
 # modules until PKG.* domain evidence, O-D/O-K deps, and dual-target RPO/RTO drills pass.
 # PKG flip procedure: docs/architecture/ha-rpo-rto.md
 workspace:
@@ -168,7 +168,6 @@ monitoring:
     namespace: ""
     labels: {}
     annotations: {}
-    runbookUrl: docs/specs/05-operations/runbooks/signup-activation-slo-breach.md
     searchRunbookUrl: docs/runbooks/search-projection-lag.md
 
 # Confirmed Helix architecture: core apps are toggleable platform modules that

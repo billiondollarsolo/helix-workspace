@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { parse as parseYaml } from "yaml";
 import type {
   EventBus,
   HelixConfig,
@@ -8,7 +6,9 @@ import type {
   JsonValue,
   SecurityTier,
 } from "@helix/sdk-types";
-import { isJsonObject } from "@helix/sdk-types";
+import { isJsonObject, isJsonValue } from "@helix/sdk-types";
+import { readFile } from "node:fs/promises";
+import { parse as parseYaml } from "yaml";
 
 type ModuleConfig = NonNullable<HelixConfig["modules"]>[string];
 type AiConfig = NonNullable<HelixConfig["ai"]>;
@@ -150,7 +150,7 @@ export function mergeConfig(
   };
 }
 
-export function loadConfigFromEnvironment(env: NodeJS.ProcessEnv): PartialHelixConfig {
+function loadConfigFromEnvironment(env: NodeJS.ProcessEnv): PartialHelixConfig {
   const configJson = env.HELIX_CONFIG_JSON;
   const parsedJson =
     configJson === undefined || configJson.length === 0
@@ -357,27 +357,6 @@ function mergeJsonObjects(left: JsonObject | undefined, right: JsonObject | unde
       isJsonObject(existing) && isJsonObject(value) ? mergeJsonObjects(existing, value) : value;
   }
   return result;
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    return true;
-  }
-
-  if (Array.isArray(value)) {
-    return value.every(isJsonValue);
-  }
-
-  if (isJsonObject(value)) {
-    return Object.values(value).every(isJsonValue);
-  }
-
-  return false;
 }
 
 function setNestedValue(path: readonly string[], value: JsonValue): PartialHelixConfig {

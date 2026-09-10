@@ -1,3 +1,4 @@
+import { Shield as ShieldIcon } from "lucide-react";
 /* Helix Admin console — the surface shell.
  *
  * This file owns three things and nothing else: the chrome, the sidebar, and
@@ -16,18 +17,17 @@
  * Sections render live platform data only. When an endpoint is unavailable
  * they surface a loading / error / empty state rather than seed values. */
 
-import { lazy, Suspense, type ComponentType } from "react";
-import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
-import { AdminSidebar } from "@/features/admin/console/sidebar";
+import { adminSectionLabel, type AdminSectionId } from "@/features/admin/admin-console-data";
 import { PageScroll, SectionSkeleton } from "@/features/admin/console/primitives";
 import {
   ADMIN_SECTION_LOADERS,
   preloadAdminSection,
   type AdminSectionLoader,
 } from "@/features/admin/console/section-loaders";
+import { AdminSidebar } from "@/features/admin/console/sidebar";
 import { useAdminRealtime } from "@/features/admin/use-admin-realtime";
-import { adminSectionLabel, type AdminSectionId } from "@/features/admin/admin-console-data";
+import { lazy, Suspense, type ComponentType } from "react";
 
 /** Turn one loader entry into a lazy component.
  *
@@ -79,7 +79,7 @@ export function AdminConsole({ section: id }: { readonly section: AdminSectionId
        boundary below — so it repaints on the click itself rather than after the
        chunk lands. During a cold navigation it is the only thing on screen that
        names where you are going. */
-    <SurfaceFrame title={`Admin · ${adminSectionLabel(id)}`} icon={<Icons.Shield />}>
+    <SurfaceFrame title={`Admin · ${adminSectionLabel(id)}`} icon={<ShieldIcon size={16} />}>
       <AdminSidebar section={id} onPreloadSection={preloadAdminSection} />
       {/* Keyed on the section so React tears down the previous section's tree
           instead of holding it while the next chunk loads. The fallback is

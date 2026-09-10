@@ -399,12 +399,12 @@ Use this shape in release evidence:
 
 ```text
 k6 target-mode blocker:
-  skipped K6_SCENARIO_GROUPS: inbound_mail,plugin_install
-  blocker: inbound webhook secret and signed plugin bundle unavailable
+  skipped K6_SCENARIO_GROUPS: inbound_mail
+  blocker: inbound webhook secret unavailable
   owner: platform-oncall
-  next command: AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=inbound_mail,plugin_install pnpm quality:k6:target
+  next command: AUTH_TOKEN=<token> K6_SCENARIO_GROUPS=inbound_mail pnpm quality:k6:target
   observed p95: not measured
-  threshold: INBOUND_MAIL_SEARCHABLE_P95_MS=5000, PLUGIN_INSTALL_P95_MS=30000
+  threshold: INBOUND_MAIL_SEARCHABLE_P95_MS=5000
 ```
 
 If the deployment intentionally omits a surface, keep the reduced

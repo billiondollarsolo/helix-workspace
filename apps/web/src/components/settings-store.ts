@@ -12,7 +12,7 @@ export type Density = "compact" | "comfortable";
 export type FontScale = "small" | "default" | "large" | "xl";
 
 /** Eight curated accent options. Hex → OKLCH hue. */
-export const ACCENT_HUE: Readonly<Record<string, number>> = {
+const ACCENT_HUE: Readonly<Record<string, number>> = {
   "#7c3aed": 290, // violet (default)
   "#2563eb": 250, // blue
   "#0891b2": 220, // cyan
@@ -85,7 +85,7 @@ function readStorage(): AppearanceSettings {
   }
 }
 
-export const appearanceStore = new Store<AppearanceSettings>(readStorage());
+const appearanceStore = new Store<AppearanceSettings>(readStorage());
 
 /** Write the current settings to the document root. */
 export function applyAppearance(settings: AppearanceSettings): void {

@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import { withJobSpan } from "../observability/job-span.js";
 
-export interface ChatRetentionStore {
+interface ChatRetentionStore {
   applyRetention(input: {
     readonly orgId: string;
     readonly actorId: "system";
@@ -10,7 +10,7 @@ export interface ChatRetentionStore {
   }): Promise<{ readonly tombstonedMessageIds: readonly string[] }>;
 }
 
-export interface ChatRetentionOrganizationSource {
+interface ChatRetentionOrganizationSource {
   listOrganizationIds(limit: number): Promise<readonly string[]>;
 }
 

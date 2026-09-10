@@ -1,12 +1,13 @@
-import type { S3CompatibleObjectEvidence } from "./s3-compatible.js";
-import { createHash } from "node:crypto";
 import type { JsonObject, StorageClient, StorageObject } from "@helix/sdk-types";
+import { createHash } from "node:crypto";
+import { assertStorageRegion } from "../tenancy/residency.js";
+import { hasControlCharacter } from "../util/strings.js";
+import type { S3CompatibleObjectEvidence } from "./s3-compatible.js";
 import {
   createS3CompatibleStorage,
   type S3CompatibleCredentials,
   type S3CompatibleStorageConfig,
 } from "./s3-compatible.js";
-import { assertStorageRegion } from "../tenancy/residency.js";
 
 export interface TenantStorageClient extends StorageClient {
   headObject?(key: string): Promise<S3CompatibleObjectEvidence | null>;
@@ -701,16 +702,6 @@ function readRequiredString(value: unknown, message: string): string {
     throw new Error(message);
   }
   return value.trim();
-}
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code < 32 || code === 127) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function storageResolutionCacheKey(

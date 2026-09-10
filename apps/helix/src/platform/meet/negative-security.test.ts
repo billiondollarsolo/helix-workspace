@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
-import type postgres from "postgres";
-import { describe, expect, it } from "vitest";
 import type { Actor } from "@helix/sdk-types";
+import { randomUUID } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { createRecordingSql as sharedRecordingSql } from "../../test-support/recording-sql.js";
 import { createToolRegistry } from "../tool-registry.js";
 import { InMemoryMeetRateLimiter } from "./rate-limit.js";
-import { InMemoryMeetStore, PostgresMeetStore, MEET_RECORDING_NOTICE_VERSION } from "./store.js";
+import { InMemoryMeetStore, MEET_RECORDING_NOTICE_VERSION, PostgresMeetStore } from "./store.js";
 import { registerMeetTools } from "./tools.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -197,25 +197,15 @@ describe("Meet negative-security / tenant isolation (MT.5 / MT.6)", () => {
     expect(blocked.retryAfterSeconds).toBeGreaterThan(0);
   });
 });
-
-function recordingSql(responses: readonly unknown[][]): {
-  readonly sql: postgres.Sql;
-  readonly calls: string[];
-  readonly values: unknown[][];
-} {
-  const calls: string[] = [];
-  const values: unknown[][] = [];
-  let responseIndex = 0;
-  const tag = (async (strings: TemplateStringsArray, ...params: unknown[]) => {
-    calls.push(strings.join("?"));
-    values.push(params);
-    return responses[responseIndex++] ?? [];
-  }) as unknown as postgres.Sql;
-  Object.assign(tag, {
-    array: (items: readonly unknown[]) => items,
-    json: (value: unknown) => value,
-    begin: async <T>(callback: (tx: postgres.TransactionSql) => Promise<T>) =>
-      callback(tag as unknown as postgres.TransactionSql),
-  });
-  return { sql: tag, calls, values };
+function recordingSql(responses: readonly unknown[]) {
+  const recording = sharedRecordingSql(responses, "?");
+  return {
+    sql: recording.sql,
+    get calls() {
+      return recording.queries;
+    },
+    get values() {
+      return recording.values;
+    },
+  };
 }

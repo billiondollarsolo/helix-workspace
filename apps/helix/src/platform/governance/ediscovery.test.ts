@@ -1,6 +1,6 @@
+import type { StorageObject } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { describe, expect, it } from "vitest";
-import type { StorageObject } from "@helix/sdk-types";
 import { PostgresGovernanceStore } from "./ediscovery.js";
 
 const orgId = "11111111-1111-4111-8111-111111111111";

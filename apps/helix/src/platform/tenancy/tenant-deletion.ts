@@ -1,3 +1,4 @@
+import { stringArray } from "../util/strings.js";
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import type { Redis } from "ioredis";
@@ -39,7 +40,7 @@ export interface TenantDeletionStore {
   find(orgId: string): Promise<TenantDeletionProofRecord | null>;
 }
 
-export interface TenantDeletionSecretPurger {
+interface TenantDeletionSecretPurger {
   deleteTenantSecrets(input: { readonly orgId: string }): Promise<number>;
 }
 
@@ -291,12 +292,6 @@ function mapProof(row: Record<string, unknown> | undefined): TenantDeletionProof
     proofObjectKey: nullableString(row.proof_object_key),
     completedAt: row.completed_at instanceof Date ? row.completed_at : null,
   };
-}
-
-function stringArray(value: unknown): readonly string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
 }
 
 function objectArray(value: unknown): readonly JsonObject[] {

@@ -3,9 +3,7 @@ import { shouldSkipVacationResponse } from "./core/thread-projection.js";
 
 describe("vacation loop-prevention", () => {
   it("does not auto-reply to mailer-daemon", () => {
-    expect(shouldSkipVacationResponse({ senderEmail: "mailer-daemon@mx.example.com" })).toBe(
-      true,
-    );
+    expect(shouldSkipVacationResponse({ senderEmail: "mailer-daemon@mx.example.com" })).toBe(true);
   });
 
   it("does not auto-reply to no-reply senders", () => {

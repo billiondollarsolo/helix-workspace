@@ -1,24 +1,24 @@
+import type { JsonObject } from "@helix/sdk-types";
+import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { randomUUID } from "node:crypto";
 import nodemailer, { type Transporter } from "nodemailer";
-import { SpanStatusCode, trace } from "@opentelemetry/api";
-import type { JsonObject } from "@helix/sdk-types";
 import type SMTPTransport from "nodemailer/lib/smtp-transport/index.js";
+import { normalizeMailboxAddress } from "./address-normalization.js";
+import {
+  MailAttachmentSizeError,
+  MailDeliveryError,
+  MailProviderConfigurationError,
+  MailProviderError,
+  MailSendIdempotencyRequiredError,
+} from "./errors.js";
+import type { ClaimedOutboundMail, MailStore, OutboundMailQueueStore } from "./store.js";
+import { prepareOutboundEnvelope } from "./threading.js";
 import type {
   MailAttachmentInput,
   MailOutboundDeliveryResult,
   MailOutboundEnvelope,
   MailOutboundRecord,
 } from "./types.js";
-import type { ClaimedOutboundMail, MailStore, OutboundMailQueueStore } from "./store.js";
-import {
-  MailDeliveryError,
-  MailProviderError,
-  MailAttachmentSizeError,
-  MailProviderConfigurationError,
-  MailSendIdempotencyRequiredError,
-} from "./errors.js";
-import { prepareOutboundEnvelope } from "./threading.js";
-import { normalizeMailboxAddress } from "./address-normalization.js";
 
 export interface OutboundMailConfig {
   readonly host: string;

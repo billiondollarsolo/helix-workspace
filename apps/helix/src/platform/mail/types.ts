@@ -1,8 +1,6 @@
 import type { AIClassification, JsonObject } from "@helix/sdk-types";
 import type { MailCategoryTab } from "./category.js";
 
-export const mailPluginId = "com.helix.core.mail";
-
 /**
  * Logical mail folders surfaced in the UI's left rail. These are *views* over
  * the per-actor thread state rather than physical containers — e.g. `starred`
@@ -103,7 +101,7 @@ export interface MailThreadListResult {
   readonly offset: number;
 }
 
-export type MailDirection = "inbound" | "outbound";
+type MailDirection = "inbound" | "outbound";
 
 export type MailAddress = JsonObject & {
   readonly address: string;
@@ -139,7 +137,7 @@ export interface MailInboundAddressResolution {
   readonly rules: readonly MailInboundRoutingRule[];
 }
 
-export type MailEnvelopeAddress = MailAddress;
+type MailEnvelopeAddress = MailAddress;
 
 export interface MailAttachmentInput {
   readonly filename?: string | undefined;
@@ -458,7 +456,7 @@ export interface MailEnrichmentProjectionStore {
   setMailClassification?(input: MailClassificationWrite): Promise<void>;
 }
 
-export interface MailProjectionRequest {
+interface MailProjectionRequest {
   readonly orgId: string;
   readonly actorId: string;
   readonly messageId: string;

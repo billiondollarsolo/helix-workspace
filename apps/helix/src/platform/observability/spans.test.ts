@@ -17,18 +17,14 @@ describe("custom OTel span coverage (P2-6)", () => {
 
   describe("withJobSpan", () => {
     it("emits a job.<id> span around a background-worker run", async () => {
-      const result = await withJobSpan(
-        "outbox-drain",
-        async () => 42,
-        {
-          tenant: {
-            orgId: "11111111-1111-4111-8111-111111111111",
-            orgSlug: "acme",
-            orgTier: "business",
-            orgRegion: "us-east-1",
-          },
+      const result = await withJobSpan("outbox-drain", async () => 42, {
+        tenant: {
+          orgId: "11111111-1111-4111-8111-111111111111",
+          orgSlug: "acme",
+          orgTier: "business",
+          orgRegion: "us-east-1",
         },
-      );
+      });
       expect(result).toBe(42);
       const span = harness.spans().find((candidate) => candidate.name === "job.outbox-drain");
       expect(span).toBeDefined();

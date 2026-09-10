@@ -1,8 +1,8 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Icons } from "@/components/icons";
 import { SurfaceFrame } from "@/components/shell";
 import { DriveShell } from "@/features/drive/drive-shell";
 import { validateDriveRouteSearch, type DriveRouteSearch } from "@/features/drive/route-search";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { HardDrive as DriveIcon } from "lucide-react";
 
 // Search params that survive `/drive` URL navigation. Folder drill-down
 // + scope (my/shared/recent/...) + query keyword + selected file id all
@@ -53,7 +53,7 @@ function DriveRoute() {
   return (
     <SurfaceFrame
       title="Drive"
-      icon={<Icons.Drive />}
+      icon={<DriveIcon size={16} />}
       searchPlaceholder="Search Drive"
       searchValue={searchValue}
       onSearchChange={onSearchChange}

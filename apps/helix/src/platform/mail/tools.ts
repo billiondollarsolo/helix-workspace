@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import {
   mailAliasCreateInputSchema,
   mailAliasDeleteInputSchema,
@@ -21,16 +19,22 @@ import {
   mailSpamResultSchema,
   mailThreadsListResultSchema,
 } from "@helix/contracts";
+import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { RuntimeToolRegistry } from "../tool-registry.js";
-import { zodToolSchema } from "../webhooks/tool-schemas.js";
-import type { ResourceClassifier } from "../../api/classify-resource.js";
 import { BadRequestError, ConflictError, ForbiddenError } from "../../api/api-error.js";
-import { MailDraftConflictError, type MailStore } from "./store.js";
+import type { ResourceClassifier } from "../../api/classify-resource.js";
+import type { RuntimeToolRegistry } from "../tool-registry.js";
+import { defineTool } from "../tools/define-tool.js";
+import { zodToolSchema } from "../webhooks/tool-schemas.js";
+import { MAIL_CATEGORY_TABS } from "./category.js";
 import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
+import { sanitizeMailHtml } from "./html-rendering.js";
 import { ingestRawMail, MailauthAuthenticator, type MailAuthenticator } from "./ingest.js";
 import { MailSendService } from "./outbound.js";
-import { MAIL_CATEGORY_TABS } from "./category.js";
+import { mailOutboundDisplayStatus } from "./reliability.js";
+import { MailDraftConflictError, type MailStore } from "./store.js";
+import { normalizeProviderDeliveryId } from "./threading.js";
 import type {
   MailFilterActions,
   MailFilterCriteria,
@@ -43,9 +47,6 @@ import type {
   MailUserSettings,
 } from "./types.js";
 import { MAIL_FOLDER_IDS } from "./types.js";
-import { normalizeProviderDeliveryId } from "./threading.js";
-import { sanitizeMailHtml } from "./html-rendering.js";
-import { mailOutboundDisplayStatus } from "./reliability.js";
 
 // ponytail: tools.ts is the mail tool surface (~1100 LOC). Split draft/alias
 // tool groups into tools-drafts.ts / tools-aliases.ts when next expanding (G9).
@@ -1273,12 +1274,6 @@ function threadStateTool(
     outputSchema: zodToolSchema(mailOkThreadSchema, genericObjectJsonSchema),
     handler,
   };
-}
-
-function defineTool<Input, Output>(
-  tool: ToolDefinition<Input, Output>,
-): ToolDefinition<Input, Output> {
-  return tool;
 }
 
 function serializeMailboxDelegate(delegate: {

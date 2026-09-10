@@ -77,7 +77,7 @@ describe("Full Workspace v1 phase artifact gate (O/V/PKG/R)", () => {
     expect(budgets).toMatch(/EDITOR_PERF_BUDGETS|evaluateEditorOpenBudget/);
   });
   it("ships SaaS deferral ADR for S+ after R3", () => {
-    const adr = read("docs/architecture/adr-0012-public-saas-deferred-after-v1-ga.md");
+    const adr = read("docs/adr/adr-0012-public-saas-deferred-after-v1-ga.md");
     expect(adr.toLowerCase()).toMatch(/saas|defer/);
   });
 });

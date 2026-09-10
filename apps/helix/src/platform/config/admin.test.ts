@@ -1,6 +1,3 @@
-import fastify, { type FastifyRequest } from "fastify";
-import { describe, expect, it, vi } from "vitest";
-import type postgres from "postgres";
 import type {
   Actor,
   EventBus,
@@ -9,18 +6,22 @@ import type {
   JsonValue,
   Unsubscribe,
 } from "@helix/sdk";
+import fastify, { type FastifyRequest } from "fastify";
+import type postgres from "postgres";
+import { describe, expect, it, vi } from "vitest";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import {
-  applyObservedPlatformReadiness,
   PlatformConfigAdminService,
   PlatformTierReadinessError,
   PostgresPlatformConfigStore,
+  applyObservedPlatformReadiness,
   buildPlatformReadinessReport,
   canReadPlatformConfig,
   canWritePlatformConfig,
   mergeAiProvidersPreservingSecrets,
   operatorAiEnvFromConfig,
-  platformConfigChangedSubject,
   platformConfigAdminScopes,
+  platformConfigChangedSubject,
   platformConfigUpdateSchema,
   redactAiSecretsForAdmin,
   registerPlatformConfigAdminRoutes,
@@ -34,11 +35,6 @@ import {
   subscribeToConfigHotReload,
 } from "./loader.js";
 import { resolveTierDefaults } from "./tier.js";
-
-interface RecordedQuery {
-  readonly text: string;
-  readonly values: readonly unknown[];
-}
 
 describe("platform config admin readiness", () => {
   it("reports missing enterprise requirements from typed readiness state", () => {
@@ -415,7 +411,7 @@ describe("platform config admin schema", () => {
 
 describe("platform config tier upgrade guards", () => {
   it("refuses upgrades until required target readiness gates pass", async () => {
-    const recording = createRecordingSql([[]]);
+    const recording = createRecordingSql([[]], "$");
     const service = new PlatformConfigAdminService(
       new PostgresPlatformConfigStore(recording.sql),
       {},
@@ -583,14 +579,17 @@ describe("PostgresPlatformConfigStore", () => {
       orgId: "00000000-0000-0000-0000-000000000000",
       type: "user",
     };
-    const recording = createRecordingSql([
+    const recording = createRecordingSql(
       [
-        { key: "security", value: { tier: "business" } },
-        { key: "platform", value: { readiness: { mfa: { enabled: true, scope: "admins" } } } },
+        [
+          { key: "security", value: { tier: "business" } },
+          { key: "platform", value: { readiness: { mfa: { enabled: true, scope: "admins" } } } },
+        ],
+        [],
+        [],
       ],
-      [],
-      [],
-    ]);
+      "$",
+    );
     const store = new PostgresPlatformConfigStore(recording.sql);
 
     await store.update(
@@ -620,24 +619,27 @@ describe("PostgresPlatformConfigStore", () => {
 
   it("replaces updated readiness controls so stale status fields do not survive", async () => {
     const actor = actorWithScopes([platformConfigAdminScopes.write]);
-    const recording = createRecordingSql([
+    const recording = createRecordingSql(
       [
-        {
-          key: "platform",
-          value: {
-            readiness: {
-              vault: {
-                enabled: true,
-                status: "ready",
-                evidence: "Healthy before maintenance.",
+        [
+          {
+            key: "platform",
+            value: {
+              readiness: {
+                vault: {
+                  enabled: true,
+                  status: "ready",
+                  evidence: "Healthy before maintenance.",
+                },
+                spire: { enabled: true, status: "ready" },
               },
-              spire: { enabled: true, status: "ready" },
             },
           },
-        },
+        ],
+        [],
       ],
-      [],
-    ]);
+      "$",
+    );
     const store = new PostgresPlatformConfigStore(recording.sql);
 
     await store.update({ platform: { readiness: { vault: { status: "missing" } } } }, actor);
@@ -653,51 +655,54 @@ describe("PostgresPlatformConfigStore", () => {
 
   it("merges typed module, AI, and observability config rows before upserting updated keys", async () => {
     const actor = actorWithScopes([platformConfigAdminScopes.write]);
-    const recording = createRecordingSql([
+    const recording = createRecordingSql(
       [
-        {
-          key: "modules",
-          value: {
-            mail: {
-              enabled: true,
-              plugin: "com.helix.core.mail@^1.0.0",
-              config: { undoSendSeconds: 30 },
+        [
+          {
+            key: "modules",
+            value: {
+              mail: {
+                enabled: true,
+                plugin: "com.helix.core.mail@^1.0.0",
+                config: { undoSendSeconds: 30 },
+              },
             },
           },
-        },
-        {
-          key: "ai",
-          value: {
-            enabled: true,
-            providers: [
-              {
-                id: "ollama-local",
-                plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
-                config: { baseUrl: "http://ollama:11434/v1", models: ["llama3.1:70b"] },
-              },
-            ],
-            routing: {
-              rules: [
+          {
+            key: "ai",
+            value: {
+              enabled: true,
+              providers: [
                 {
-                  feature: "assistant.chat",
-                  primary: { providerId: "ollama-local", model: "llama3.1:70b" },
+                  id: "ollama-local",
+                  plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
+                  config: { baseUrl: "http://ollama:11434/v1", models: ["llama3.1:70b"] },
                 },
               ],
+              routing: {
+                rules: [
+                  {
+                    feature: "assistant.chat",
+                    primary: { providerId: "ollama-local", model: "llama3.1:70b" },
+                  },
+                ],
+              },
             },
           },
-        },
-        {
-          key: "observability",
-          value: {
-            enabled: true,
-            config: { otlpEndpoint: "http://tempo:4317" },
+          {
+            key: "observability",
+            value: {
+              enabled: true,
+              config: { otlpEndpoint: "http://tempo:4317" },
+            },
           },
-        },
+        ],
+        [],
+        [],
+        [],
       ],
-      [],
-      [],
-      [],
-    ]);
+      "$",
+    );
     const store = new PostgresPlatformConfigStore(recording.sql);
 
     await store.update(
@@ -774,11 +779,10 @@ describe("PlatformConfigAdminService hot apply", () => {
     const reload = vi.fn(async (): Promise<HelixConfig> => ({ security: { tier: "business" } }));
     const onReload = vi.fn();
     const unsubscribe = await subscribeToConfigHotReload({ events, reload, onReload });
-    const recording = createRecordingSql([
-      [],
-      [],
-      [{ key: "security", value: { tier: "business" } }],
-    ]);
+    const recording = createRecordingSql(
+      [[], [], [{ key: "security", value: { tier: "business" } }]],
+      "$",
+    );
     const service = new PlatformConfigAdminService(
       new PostgresPlatformConfigStore(recording.sql),
       { HELIX_SECURITY_TIER: "business" },
@@ -870,23 +874,6 @@ describe("PlatformConfigAdminService hot apply", () => {
     await app.close();
   });
 });
-
-function createRecordingSql(responses: readonly (readonly unknown[])[]): {
-  readonly sql: postgres.Sql;
-  readonly calls: readonly RecordedQuery[];
-} {
-  const calls: RecordedQuery[] = [];
-  const queue = [...responses];
-  const tag = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    calls.push({ text: strings.join("$"), values });
-    return Promise.resolve(queue.shift() ?? []);
-  };
-  const sql = Object.assign(tag, {
-    array: <T extends readonly unknown[]>(value: T) => value,
-    json: (value: unknown) => value,
-  }) as unknown as postgres.Sql;
-  return { sql, calls };
-}
 
 class InMemoryEventBus implements EventBus {
   readonly published: { subject: string; payload: JsonValue }[] = [];

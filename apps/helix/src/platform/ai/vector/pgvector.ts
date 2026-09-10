@@ -1,5 +1,5 @@
-import type postgres from "postgres";
 import type { JsonObject } from "@helix/sdk-types";
+import type postgres from "postgres";
 import {
   assertVectorMetric,
   validateCollectionName,

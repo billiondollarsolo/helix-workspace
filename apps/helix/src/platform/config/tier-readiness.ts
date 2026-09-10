@@ -16,9 +16,9 @@ import { tierDefaults } from "./tier.js";
  *    startup warning naming the control rather than silently passing.
  */
 
-export type TierControlStatus = "satisfied" | "unsatisfied" | "unverifiable";
+type TierControlStatus = "satisfied" | "unsatisfied" | "unverifiable";
 
-export interface TierControlResult {
+interface TierControlResult {
   readonly control: string;
   readonly status: TierControlStatus;
   readonly detail: string;

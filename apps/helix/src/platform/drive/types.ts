@@ -1,14 +1,12 @@
-import type { AIClassification, JsonObject } from "@helix/sdk-types";
 import type {
   DriveItemKind as ContractDriveItemKind,
-  DriveRole,
   DriveUploadState as ContractDriveUploadState,
+  DriveRole,
 } from "@helix/contracts";
-export const drivePluginId = "com.helix.core.drive";
-export type DriveItemKind = ContractDriveItemKind;
+import type { AIClassification, JsonObject } from "@helix/sdk-types";
+type DriveItemKind = ContractDriveItemKind;
 export type DriveShareRole = DriveRole;
 type DriveUploadState = ContractDriveUploadState;
-export type { DriveRole };
 export type DriveActor = JsonObject & {
   readonly id: string;
   readonly displayName?: string;
@@ -63,7 +61,7 @@ export type DriveActivityPayload = JsonObject & {
   readonly objectId?: string | undefined;
   readonly fileId?: string | undefined;
 };
-export interface DriveMultipartUploadInfo {
+interface DriveMultipartUploadInfo {
   readonly uploadId: string;
   readonly partSize: number;
   readonly partCount: number;
@@ -109,18 +107,6 @@ export interface DriveVersionRecord {
   readonly metadata: JsonObject;
   readonly createdByActorId: string | null;
   readonly createdAt: Date;
-}
-export interface DriveFolderRecord {
-  readonly id: string;
-  readonly orgId: string;
-  readonly name: string;
-  readonly parentFolderId: string | null;
-  readonly ownerActorId: string | null;
-  readonly createdByActorId: string | null;
-  readonly metadata: JsonObject;
-  readonly deletedAt: Date | null;
-  readonly createdAt: Date;
-  readonly updatedAt: Date;
 }
 export interface DriveEntryRecord {
   readonly id: string;

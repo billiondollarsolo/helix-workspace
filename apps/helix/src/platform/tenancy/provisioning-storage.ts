@@ -8,7 +8,7 @@ export interface TenantStorageNamespaceRecord {
   readonly storage: JsonObject;
 }
 
-export interface TenantStorageNamespaceStore {
+interface TenantStorageNamespaceStore {
   ensureDefaultObjectStorePrefix(input: {
     readonly orgId: string;
   }): Promise<TenantStorageNamespaceRecord>;

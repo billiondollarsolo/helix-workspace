@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { AuditRecord } from "@helix/sdk";
+import { describe, expect, it } from "vitest";
 import { reconcileAuditAnchors, type AuditAnchorArchive } from "./anchor-reconciler.js";
 import { computeAuditHash } from "./hash.js";
 import {

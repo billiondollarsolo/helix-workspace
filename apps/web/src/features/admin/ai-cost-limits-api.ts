@@ -45,7 +45,7 @@ export function aiCostLimitsQueryOptions() {
   });
 }
 
-export async function listAICostLimits(
+async function listAICostLimits(
   fetchImpl: AuthFetch = authenticatedFetch,
 ): Promise<AICostLimitListResponse> {
   const response = await fetchImpl("/api/admin/ai/cost-limits", { method: "GET" });

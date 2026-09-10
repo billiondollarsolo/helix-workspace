@@ -1,23 +1,9 @@
+import { Grid2X2 as GridIcon, Search as SearchIcon } from "lucide-react";
 /* Admin › Apps & integrations › OAuth apps — third-party grants on workspace data. */
 
-import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Icons } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import {
-  defaultOAuthAppsInput,
-  oauthAppsQueryKeys,
-  oauthAppsQueryOptions,
-  revokeOAuthApp,
-  setOAuthAppStatus,
-  type OAuthApp,
-  type OAuthAppRisk,
-  type OAuthAppsQueryInput,
-  type OAuthAppStatus,
-} from "@/features/admin/oauth-apps-api";
 import { AdminSelect, AdminToolbar } from "@/features/admin/console/controls";
-import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   EmptyRow,
   EmptyState,
@@ -29,6 +15,20 @@ import {
   StatusChip,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
+import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
+import {
+  defaultOAuthAppsInput,
+  oauthAppsQueryKeys,
+  oauthAppsQueryOptions,
+  revokeOAuthApp,
+  setOAuthAppStatus,
+  type OAuthApp,
+  type OAuthAppRisk,
+  type OAuthAppsQueryInput,
+  type OAuthAppStatus,
+} from "@/features/admin/oauth-apps-api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 
 /* ------------------------------------------------------------------ */
 /* Apps                                                               */
@@ -272,7 +272,7 @@ export function AdminApps() {
           className="search h-[30px] max-w-[280px] data-disabled:cursor-not-allowed data-disabled:opacity-55"
           data-disabled={filtersDisabled ? "" : undefined}
         >
-          <Icons.Search />
+          <SearchIcon size={16} />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -344,7 +344,7 @@ export function AdminApps() {
           row when one turns up. A filtered-to-nothing table keeps its header and
           the inline row instead: there the frame is the context. */}
       {appsFailure === null && noGrants ? (
-        <EmptyState icon={<Icons.Grid />} title="No app has been granted OAuth access">
+        <EmptyState icon={<GridIcon size={16} />} title="No app has been granted OAuth access">
           An OAuth grant is a standing authorization: a workspace user consents once, and the app
           keeps its own token for workspace data until an admin revokes it. This is where apps
           someone connected on their own become visible to you. Each row that appears carries the

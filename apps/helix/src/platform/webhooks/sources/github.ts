@@ -10,7 +10,6 @@ import {
   getHeader,
   hmacSha256Hex,
   nestedStringField,
-  objectField,
   parseJsonPayload,
   safeEqualHex,
   stringField,
@@ -83,8 +82,4 @@ export function summarizeGitHubWebhook(parsed: ParsedGitHubWebhook): string {
     return `GitHub ${parsed.event}.${parsed.action} on ${repository}`;
   }
   return `GitHub ${parsed.event} on ${repository}`;
-}
-
-export function githubRepository(payload: JsonObject): JsonObject | undefined {
-  return objectField(payload, "repository");
 }

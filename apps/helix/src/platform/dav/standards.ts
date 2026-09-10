@@ -1,6 +1,6 @@
-import { performance } from "node:perf_hooks";
 import { XMLParser } from "fast-xml-parser";
 import ICAL from "ical.js";
+import { performance } from "node:perf_hooks";
 import { DAV_BODY_LIMIT_BYTES } from "../../api/request-body.js";
 
 const MAX_PARSE_MS = 250;

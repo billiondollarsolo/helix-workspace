@@ -83,7 +83,7 @@ describe("live org-unit hierarchy integrity", { skip: databaseUrl === undefined 
       sql`update admin_org_units set parent_id = ${foreignRoot} where id = ${child}`,
     ).rejects.toMatchObject({ code: "23503", constraint_name: "admin_org_units_parent_org_fk" });
     await expect(sql`delete from admin_org_units where id = ${root}`).rejects.toMatchObject({
-      code: "23503",
+      code: "23001",
       constraint_name: "admin_org_units_parent_org_fk",
     });
 

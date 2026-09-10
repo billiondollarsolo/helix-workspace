@@ -1,6 +1,6 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify, { type FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Actor } from "@helix/sdk-types";
 import { InMemoryDomainsStore } from "../admin/domains.js";
 import { registerMailDeliveryAdminRoutes } from "./admin-routes.js";
 import {
@@ -9,7 +9,7 @@ import {
   InMemoryMailRoutingRuleStore,
   InMemoryOutboundProviderStore,
 } from "./admin-store.js";
-import { parseDmarcAggregateReport, DmarcReportParseError } from "./dmarc.js";
+import { DmarcReportParseError, parseDmarcAggregateReport } from "./dmarc.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 

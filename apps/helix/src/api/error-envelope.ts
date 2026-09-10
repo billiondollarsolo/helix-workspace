@@ -1,17 +1,13 @@
+import {
+  errorCodeForStatus as contractErrorCodeForStatus,
+  type ErrorCode,
+  type ErrorEnvelope,
+} from "@helix/contracts";
 import type {
   ToolInvokeErrorResult,
   ToolQuotaLimitMetadata,
   ToolRateLimitMetadata,
 } from "../platform/tool-registry.js";
-import {
-  ERROR_CODES,
-  errorCodeForStatus as contractErrorCodeForStatus,
-  statusForErrorCode,
-  type ErrorCode,
-  type ErrorEnvelope,
-} from "@helix/contracts";
-
-export { ERROR_CODES, statusForErrorCode, type ErrorCode };
 export type HelixErrorEnvelope = ErrorEnvelope & {
   readonly error: ErrorEnvelope["error"] & {
     readonly traceId: string;

@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import fastify, { type FastifyInstance } from "fastify";
-import { describe, expect, it } from "vitest";
 import type { JsonObject, StorageObject } from "@helix/sdk-types";
+import fastify, { type FastifyInstance } from "fastify";
+import { createHash } from "node:crypto";
+import { describe, expect, it } from "vitest";
 import { createPlatformMetrics, type PlatformMetrics } from "../../api/metrics.js";
 import { MEET_WEBHOOK_BODY_LIMIT_BYTES } from "../../api/request-body.js";
 import type { TenantStorageClient } from "../storage/tenant-resolver.js";
@@ -17,9 +17,9 @@ import type {
   MeetStore,
 } from "./store.js";
 import type {
-  MeetMeetingRecord,
-  MeetGuestInviteRecord,
   MeetControlState,
+  MeetGuestInviteRecord,
+  MeetMeetingRecord,
   MeetRecordingAttachmentRecord,
   MeetRoomRecord,
   MeetSummaryRef,

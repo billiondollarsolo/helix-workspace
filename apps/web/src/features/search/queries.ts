@@ -1,7 +1,7 @@
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { searchGlobal, type GlobalSearchInput } from "./api";
 
-export const globalSearchQueryKeys = {
+const globalSearchQueryKeys = {
   query: (input: GlobalSearchInput) =>
     [
       "global-search",

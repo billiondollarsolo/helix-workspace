@@ -8,36 +8,14 @@ import type {
   SuggestionContext,
   SuggestionSlotProviderCapability,
 } from "@helix/sdk-types";
-import { calendarPluginId } from "../types.js";
+import { isJsonRecord as isJsonObject, isJsonValue } from "@helix/sdk-types";
 
-export const calendarSuggestionSlotIds = ["calendar.suggest-meeting-time", "calendar.draft-agenda"] as const;
+const calendarSuggestionSlotIds = [
+  "calendar.suggest-meeting-time",
+  "calendar.draft-agenda",
+] as const;
 
-export type CalendarSuggestionSlotId = (typeof calendarSuggestionSlotIds)[number];
-
-export interface CalendarSuggestionSlotDescriptor {
-  readonly id: CalendarSuggestionSlotId;
-  readonly pluginId: typeof calendarPluginId;
-  readonly label: string;
-  readonly description: string;
-  readonly order: number;
-}
-
-export const calendarSuggestionSlots: readonly CalendarSuggestionSlotDescriptor[] = [
-  {
-    id: "calendar.suggest-meeting-time",
-    pluginId: calendarPluginId,
-    label: "Suggest meeting time",
-    description: "Suggest meeting times from attendee availability",
-    order: 10,
-  },
-  {
-    id: "calendar.draft-agenda",
-    pluginId: calendarPluginId,
-    label: "Draft agenda",
-    description: "Draft an agenda for a calendar event",
-    order: 20,
-  },
-];
+type CalendarSuggestionSlotId = (typeof calendarSuggestionSlotIds)[number];
 
 export interface CalendarSuggestionProviderOptions {
   readonly ai: AICapability;
@@ -58,7 +36,8 @@ function createProvider(
     slotId,
     available: async (ctx) => ctx.feature === slotId || ctx.feature.length === 0,
     generate: async function* generate(ctx): AsyncIterable<SuggestionChunk> {
-      const classification = classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
+      const classification =
+        classificationFromInput(ctx.input) ?? options.defaultClassification ?? "standard";
       const response = await options.ai.chat(toChatRequest(slotId, ctx, classification), {
         actor: ctx.actor,
         feature: slotId,
@@ -104,7 +83,9 @@ function toChatRequest(
               type: ctx.resource.type,
               ...(ctx.resource.id === undefined ? {} : { id: ctx.resource.id }),
               ...(ctx.resource.orgId === undefined ? {} : { orgId: ctx.resource.orgId }),
-              ...(ctx.resource.attributes === undefined ? {} : { attributes: ctx.resource.attributes }),
+              ...(ctx.resource.attributes === undefined
+                ? {}
+                : { attributes: ctx.resource.attributes }),
             },
           }),
     },
@@ -164,14 +145,22 @@ function formatJsonValue(value: JsonValue): string {
     return value;
   }
   if (isJsonObject(value)) {
-    return stringInput(value, "displayName") ?? stringInput(value, "name") ?? stringInput(value, "email") ?? "";
+    return (
+      stringInput(value, "displayName") ??
+      stringInput(value, "name") ??
+      stringInput(value, "email") ??
+      ""
+    );
   }
   return "";
 }
 
 function classificationFromInput(input: JsonObject | undefined): AIClassification | undefined {
   const value = input?.classification;
-  return value === "public" || value === "standard" || value === "confidential" || value === "restricted"
+  return value === "public" ||
+    value === "standard" ||
+    value === "confidential" ||
+    value === "restricted"
     ? value
     : undefined;
 }
@@ -189,18 +178,6 @@ function numberInput(input: JsonObject, key: string): number | undefined {
 function arrayInput(input: JsonObject, key: string): readonly JsonValue[] {
   const value = input[key];
   return Array.isArray(value) ? value.filter(isJsonValue) : [];
-}
-
-function isJsonObject(value: JsonValue): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isJsonValue(value: unknown): value is JsonValue {
-  return value === null ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    typeof value === "object";
 }
 
 function hasText(value: string): boolean {

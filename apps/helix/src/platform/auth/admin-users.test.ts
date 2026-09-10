@@ -6,18 +6,21 @@ import {
   PostgresAdminUsersStore,
   canReadAdminUsers,
   decodeAdminUsersCursor,
+  disableActorForOffboard,
   encodeAdminUsersCursor,
   offboardUser,
   registerAdminUsersRoutes,
   registerPeopleDirectoryRoutes,
   type AdminUserRecord,
   type AdminUsersStore,
+  type CreateAdminUserInput,
   type ListAdminUsersInput,
   type OffboardAgentCredentialRecord,
   type OffboardAgentCredentialStore,
   type OffboardAppPasswordRecord,
   type OffboardAppPasswordStore,
 } from "./admin-users.js";
+import { buildAdminOrgInviteUrl, uniqueEmails } from "./admin-user-provisioning.js";
 
 interface RecordedQuery {
   readonly text: string;
@@ -192,6 +195,516 @@ describe("admin users routes", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({ error: "Invalid admin users cursor." });
     expect(store.calls).toEqual([]);
+  });
+});
+
+const adminHeaders = {
+  "x-helix-actor-id": actorId,
+  "x-helix-org-id": orgId,
+  "x-helix-scopes": "admin.users",
+} as const;
+
+const wildcardAdminHeaders = {
+  "x-helix-actor-id": actorId,
+  "x-helix-org-id": orgId,
+  "x-helix-scopes": "admin.*",
+} as const;
+
+const memberHeaders = {
+  "x-helix-actor-id": actorId,
+  "x-helix-org-id": orgId,
+  "x-helix-scopes": "mail.read",
+} as const;
+
+describe("admin user create", () => {
+  it("creates a member with Better Auth-backed fields for an admin.users actor", async () => {
+    const store = new FakeAdminUsersStore([]);
+    const app = fastify();
+    await registerAdminUsersRoutes(app, { store, actorFromRequest });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/users",
+      headers: adminHeaders,
+      payload: {
+        email: "Mina@Example.com",
+        password: "correct-horse-battery-staple",
+        displayName: "Mina Park",
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toEqual({
+      user: expect.objectContaining({
+        orgId,
+        type: "user",
+        email: "mina@example.com",
+        displayName: "Mina Park",
+        disabledAt: null,
+      }),
+    });
+    expect(store.creates).toEqual([
+      {
+        orgId,
+        email: "mina@example.com",
+        displayName: "Mina Park",
+        password: "correct-horse-battery-staple",
+        role: "member",
+        performedByActorId: actorId,
+      },
+    ]);
+    await app.close();
+  });
+
+  it("denies create to non-admin actors", async () => {
+    const store = new FakeAdminUsersStore([]);
+    const app = fastify();
+    await registerAdminUsersRoutes(app, { store, actorFromRequest });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/users",
+      headers: memberHeaders,
+      payload: {
+        email: "mina@example.com",
+        password: "correct-horse-battery-staple",
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      error: "Admin users permission denied.",
+      requiredScope: "admin.users",
+    });
+    expect(store.creates).toEqual([]);
+    await app.close();
+  });
+
+  it("refuses to create an admin unless the caller holds admin.*", async () => {
+    const store = new FakeAdminUsersStore([]);
+    const app = fastify();
+    await registerAdminUsersRoutes(app, { store, actorFromRequest });
+
+    const denied = await app.inject({
+      method: "POST",
+      url: "/api/admin/users",
+      headers: adminHeaders,
+      payload: {
+        email: "admin@example.com",
+        password: "correct-horse-battery-staple",
+        role: "admin",
+      },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(store.creates).toEqual([]);
+
+    const allowed = await app.inject({
+      method: "POST",
+      url: "/api/admin/users",
+      headers: wildcardAdminHeaders,
+      payload: {
+        email: "admin@example.com",
+        password: "correct-horse-battery-staple",
+        role: "admin",
+      },
+    });
+    expect(allowed.statusCode).toBe(201);
+    expect(store.creates[0]?.role).toBe("admin");
+    await app.close();
+  });
+});
+
+describe("admin user invite", () => {
+  it("issues org-scoped invites and enqueues outbox email without SaaS signup", async () => {
+    const store = new FakeAdminUsersStore([]);
+    const issued: unknown[] = [];
+    const outbox: unknown[] = [];
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store,
+      actorFromRequest,
+      invites: {
+        invites: {
+          async issue(input) {
+            issued.push(input);
+            return {
+              orgId: input.orgId,
+              invitedByActorId: input.invitedByActorId,
+              email: input.email,
+              token: `invite-token-${input.email}`,
+              expiresAt: new Date("2026-09-17T00:00:00.000Z"),
+              acceptedAt: null,
+              acceptedByActorId: null,
+              metadata: input.metadata ?? {},
+            };
+          },
+          async accept() {
+            return { status: "not_found" };
+          },
+        },
+        outbox: {
+          async insert(message) {
+            outbox.push(message);
+            return "outbox-1";
+          },
+        },
+        findOrgById: async () => ({ slug: "acme" }),
+        publicBaseUrl: "https://helix.example",
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/users/invites",
+      headers: adminHeaders,
+      payload: { emails: [" Ada@Example.com ", "ada@example.com", "grace@example.com"] },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ status: "accepted", inviteCount: 2, skippedCount: 0 });
+    expect(issued).toEqual([
+      {
+        orgId,
+        invitedByActorId: actorId,
+        email: "ada@example.com",
+        metadata: { source: "admin", role: "member" },
+      },
+      {
+        orgId,
+        invitedByActorId: actorId,
+        email: "grace@example.com",
+        metadata: { source: "admin", role: "member" },
+      },
+    ]);
+    expect(outbox).toEqual([
+      {
+        subject: "signup.onboarding_invite_email.send",
+        payload: {
+          orgId,
+          orgSlug: "acme",
+          actorId,
+          email: "ada@example.com",
+          inviteUrl: "https://helix.example/signup/invite?token=invite-token-ada%40example.com",
+          source: "admin",
+        },
+      },
+      {
+        subject: "signup.onboarding_invite_email.send",
+        payload: {
+          orgId,
+          orgSlug: "acme",
+          actorId,
+          email: "grace@example.com",
+          inviteUrl: "https://helix.example/signup/invite?token=invite-token-grace%40example.com",
+          source: "admin",
+        },
+      },
+    ]);
+    expect(JSON.stringify(response.json())).not.toContain("invite-token");
+    await app.close();
+  });
+
+  it("denies invite to non-admin actors and does not write the outbox", async () => {
+    const outbox: unknown[] = [];
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store: new FakeAdminUsersStore([]),
+      actorFromRequest,
+      invites: {
+        invites: {
+          async issue() {
+            throw new Error("invite should not issue");
+          },
+          async accept() {
+            return { status: "not_found" };
+          },
+        },
+        outbox: {
+          async insert(message) {
+            outbox.push(message);
+            return "outbox-1";
+          },
+        },
+        findOrgById: async () => ({ slug: "acme" }),
+        publicBaseUrl: "https://helix.example",
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/users/invites",
+      headers: memberHeaders,
+      payload: { emails: ["ada@example.com"] },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(outbox).toEqual([]);
+    await app.close();
+  });
+
+  it("skips emails that already have an actor in the org", async () => {
+    const existing = userRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z");
+    const store = new FakeAdminUsersStore([{ ...existing, email: "ada@example.com" }]);
+    const issued: string[] = [];
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store,
+      actorFromRequest,
+      invites: {
+        invites: {
+          async issue(input) {
+            issued.push(input.email);
+            return {
+              orgId: input.orgId,
+              invitedByActorId: input.invitedByActorId,
+              email: input.email,
+              token: "token",
+              expiresAt: new Date("2026-09-17T00:00:00.000Z"),
+              acceptedAt: null,
+              acceptedByActorId: null,
+              metadata: {},
+            };
+          },
+          async accept() {
+            return { status: "not_found" };
+          },
+        },
+        outbox: {
+          async insert() {
+            return "outbox-1";
+          },
+        },
+        findOrgById: async () => ({ slug: "acme" }),
+        publicBaseUrl: "https://helix.example",
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/admin/users/invites",
+      headers: adminHeaders,
+      payload: { emails: ["ada@example.com", "new@example.com"] },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toEqual({ status: "accepted", inviteCount: 1, skippedCount: 1 });
+    expect(issued).toEqual(["new@example.com"]);
+    await app.close();
+  });
+
+  it("accepts an invite with a password without requiring SaaS signup", async () => {
+    const store = new FakeAdminUsersStore([]);
+    const accepted: unknown[] = [];
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store,
+      actorFromRequest,
+      invites: {
+        invites: {
+          async issue() {
+            throw new Error("accept should not issue");
+          },
+          async accept() {
+            return { status: "not_found" };
+          },
+          async findActive() {
+            return {
+              orgId,
+              invitedByActorId: actorId,
+              email: "ada@example.com",
+              expiresAt: new Date("2026-09-17T00:00:00.000Z"),
+              acceptedAt: null,
+              acceptedByActorId: null,
+              metadata: { source: "admin", role: "member" },
+            };
+          },
+          async markAccepted(input) {
+            accepted.push(input);
+            return {
+              orgId,
+              invitedByActorId: actorId,
+              email: "ada@example.com",
+              expiresAt: new Date("2026-09-17T00:00:00.000Z"),
+              acceptedAt: new Date("2026-09-10T00:00:00.000Z"),
+              acceptedByActorId: input.acceptedByActorId,
+              metadata: { source: "admin" },
+            };
+          },
+        },
+        outbox: {
+          async insert() {
+            return "outbox-1";
+          },
+        },
+        findOrgById: async () => ({ slug: "acme" }),
+        publicBaseUrl: "https://helix.example",
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/invites/accept",
+      payload: {
+        token: "invite-token",
+        password: "correct-horse-battery-staple",
+        displayName: "Ada Lovelace",
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({
+      status: "accepted",
+      user: {
+        email: "ada@example.com",
+        displayName: "Ada Lovelace",
+        orgId,
+      },
+      org: { slug: "acme" },
+    });
+    expect(store.creates).toHaveLength(1);
+    expect(store.creates[0]).toMatchObject({
+      orgId,
+      email: "ada@example.com",
+      password: "correct-horse-battery-staple",
+      role: "member",
+      performedByActorId: actorId,
+    });
+    expect(accepted).toEqual([
+      { token: "invite-token", acceptedByActorId: response.json().user.id },
+    ]);
+    await app.close();
+  });
+});
+
+describe("admin user suspend", () => {
+  it("POST /api/admin/users/:actorId/suspend reuses the offboard cascade", async () => {
+    const targetActorId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const appPasswords = new RecordingAppPasswordStore([
+      { id: "apw-route", orgId, actorId: targetActorId, revokedAt: null },
+    ]);
+    const credentials = new RecordingAgentCredentialStore([
+      { clientId: "client-route", orgId, actorId: targetActorId, revokedAt: null },
+    ]);
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store: new FakeAdminUsersStore([]),
+      actorFromRequest,
+      offboardStores: {
+        resolveTargetInOrg: async () => true,
+        disableActor: async () => true,
+        revokeSessionsForActor: async () => 2,
+        appPasswords,
+        agentCredentials: credentials,
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${targetActorId}/suspend`,
+      headers: adminHeaders,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      suspend: {
+        actorId: targetActorId,
+        orgId,
+        disabled: true,
+        sessionsRevoked: 2,
+        appPasswordsRevoked: 1,
+        agentCredentialsRevoked: 1,
+      },
+    });
+    await app.close();
+  });
+
+  it("denies suspend to non-admin actors", async () => {
+    const targetActorId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    let disableCalled = 0;
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store: new FakeAdminUsersStore([]),
+      actorFromRequest,
+      offboardStores: {
+        resolveTargetInOrg: async () => true,
+        disableActor: async () => {
+          disableCalled += 1;
+          return true;
+        },
+        revokeSessionsForActor: async () => 0,
+        appPasswords: new RecordingAppPasswordStore([]),
+        agentCredentials: new RecordingAgentCredentialStore([]),
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${targetActorId}/suspend`,
+      headers: memberHeaders,
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(disableCalled).toBe(0);
+    await app.close();
+  });
+
+  it("refuses self-suspend", async () => {
+    const app = fastify();
+    await registerAdminUsersRoutes(app, {
+      store: new FakeAdminUsersStore([]),
+      actorFromRequest,
+      offboardStores: {
+        resolveTargetInOrg: async () => true,
+        revokeSessionsForActor: async () => 0,
+        appPasswords: new RecordingAppPasswordStore([]),
+        agentCredentials: new RecordingAgentCredentialStore([]),
+      },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${actorId}/suspend`,
+      headers: adminHeaders,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: "Administrators cannot suspend themselves.",
+    });
+    await app.close();
+  });
+});
+
+describe("admin user provisioning helpers", () => {
+  it("builds a single-tenant invite URL without a SaaS tenant subdomain", () => {
+    expect(buildAdminOrgInviteUrl("https://helix.example/base", "token+1")).toBe(
+      "https://helix.example/signup/invite?token=token%2B1",
+    );
+  });
+
+  it("deduplicates invite emails", () => {
+    expect(uniqueEmails([" Ada@Example.com ", "ada@example.com", "grace@example.com"])).toEqual([
+      "ada@example.com",
+      "grace@example.com",
+    ]);
+  });
+
+  it("disableActorForOffboard suspends the membership as SCIM active=false does", async () => {
+    const disabledAt = new Date("2026-09-10T12:00:00.000Z");
+    const recording = createRecordingSql([[{ id: actorId }], []]);
+    const disabled = await disableActorForOffboard(recording.sql, {
+      orgId,
+      actorId,
+      disabledAt,
+    });
+    expect(disabled).toBe(true);
+    expect(recording.calls[0]?.text).toContain("update actors");
+    expect(recording.calls[0]?.text).toContain("disabled_at");
+    expect(recording.calls[1]?.text).toContain("update organization_memberships");
+    expect(recording.calls[1]?.text).toContain("status = ");
+    expect(recording.calls[1]?.values).toContain(orgId);
+    expect(recording.calls[1]?.values).toContain(actorId);
+    expect(recording.calls[1]?.values).toContain(disabledAt);
   });
 });
 
@@ -666,11 +1179,13 @@ describe("offboardUser revoke cascade (E7.2)", () => {
 
 class FakeAdminUsersStore implements AdminUsersStore {
   readonly calls: ListAdminUsersInput[] = [];
+  readonly creates: CreateAdminUserInput[] = [];
   readonly resets: {
     readonly orgId: string;
     readonly targetActorId: string;
     readonly performedByActorId: string;
   }[] = [];
+  private nextCreateId = 0;
 
   constructor(
     private readonly users: readonly AdminUserRecord[],
@@ -680,6 +1195,34 @@ class FakeAdminUsersStore implements AdminUsersStore {
   async listUsers(input: ListAdminUsersInput): Promise<readonly AdminUserRecord[]> {
     this.calls.push(input);
     return this.users;
+  }
+
+  async findUserByEmail(input: {
+    readonly orgId: string;
+    readonly email: string;
+  }): Promise<AdminUserRecord | null> {
+    return (
+      this.users.find(
+        (user) => user.orgId === input.orgId && user.email?.toLowerCase() === input.email,
+      ) ?? null
+    );
+  }
+
+  async createUser(input: CreateAdminUserInput): Promise<AdminUserRecord> {
+    this.creates.push(input);
+    this.nextCreateId += 1;
+    const now = "2026-09-10T00:00:00.000Z";
+    return {
+      id: `00000000-0000-4000-8000-${String(this.nextCreateId).padStart(12, "0")}`,
+      orgId: input.orgId,
+      type: "user",
+      email: input.email,
+      displayName: input.displayName,
+      scopes: input.role === "admin" ? ["admin.*"] : ["mail.read"],
+      disabledAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
   }
 
   async resetMfa(input: {

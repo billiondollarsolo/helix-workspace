@@ -244,6 +244,45 @@ export async function recordSignupFormViewed(
   return parseResponse(response, "record signup form view", signupFormViewedResponseSchema);
 }
 
+export interface WorkspaceInviteAcceptResponse {
+  readonly status: "accepted";
+  readonly user: {
+    readonly id: string;
+    readonly email: string | null;
+    readonly displayName: string;
+  };
+  readonly org: { readonly slug: string } | null;
+}
+
+const workspaceInviteAcceptResponseSchema = z.object({
+  status: z.literal("accepted"),
+  user: z.object({
+    id: z.string(),
+    email: z.string().nullable(),
+    displayName: z.string(),
+  }),
+  org: z.object({ slug: z.string() }).nullable(),
+});
+
+export async function acceptWorkspaceInvite(
+  input: {
+    readonly token: string;
+    readonly password: string;
+    readonly displayName?: string;
+  },
+  fetchImpl: SignupFetch = fetch,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<WorkspaceInviteAcceptResponse> {
+  const response = await fetchImpl("/v1/api/invites/accept", {
+    method: "POST",
+    credentials: "include",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
+  return parseResponse(response, "accept workspace invite", workspaceInviteAcceptResponseSchema);
+}
+
 export async function acceptSignupOnboardingInvite(
   token: string,
   fetchImpl: SignupFetch = fetch,

@@ -3421,6 +3421,16 @@ export async function createHelixServer(): Promise<FastifyInstance> {
         appPasswords: appPasswordStore,
         agentCredentials: oauthStore,
       },
+      invites: {
+        invites: signupOnboardingInviteTokenStore,
+        outbox: outboxStore,
+        findOrgById: (orgId) => orgStore.findById(orgId),
+        publicBaseUrl:
+          bootEnv.BETTER_AUTH_URL ??
+          bootEnv.HELIX_PUBLIC_URL ??
+          bootEnv.PUBLIC_BASE_URL ??
+          "http://localhost:3000",
+      },
     });
     await registerPeopleRoutes(app, {
       store: new PostgresPeopleStore(sql),

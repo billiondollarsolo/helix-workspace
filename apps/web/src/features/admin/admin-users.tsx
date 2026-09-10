@@ -107,6 +107,64 @@ export async function prefetchAdminUsersQuery(queryClient: AdminUsersRouteQueryC
   await queryClient.ensureQueryData(adminUsersQueryOptions()).catch(() => undefined);
 }
 
+export async function createAdminUser(input: {
+  readonly email: string;
+  readonly password: string;
+  readonly displayName?: string;
+  readonly role?: "member" | "admin";
+}): Promise<AdminUser> {
+  const response = await authenticatedFetch("/api/admin/users", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const output: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(errorMessageFromOutput(output) ?? `Create user failed with ${response.status}`);
+  }
+  if (!isRecord(output) || !isAdminUser(output.user)) {
+    throw new Error("Create user response was missing required fields.");
+  }
+  return output.user;
+}
+
+export async function inviteAdminUsers(input: {
+  readonly emails: readonly string[];
+  readonly role?: "member" | "admin";
+}): Promise<{ readonly inviteCount: number; readonly skippedCount: number }> {
+  const response = await authenticatedFetch("/api/admin/users/invites", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const output: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(
+      errorMessageFromOutput(output) ?? `Invite users failed with ${response.status}`,
+    );
+  }
+  if (
+    !isRecord(output) ||
+    typeof output.inviteCount !== "number" ||
+    typeof output.skippedCount !== "number"
+  ) {
+    throw new Error("Invite users response was missing required fields.");
+  }
+  return { inviteCount: output.inviteCount, skippedCount: output.skippedCount };
+}
+
+export async function suspendAdminUser(actorId: string): Promise<void> {
+  const response = await authenticatedFetch(`/api/admin/users/${actorId}/suspend`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    const output: unknown = await response.json().catch(() => ({}));
+    throw new Error(
+      errorMessageFromOutput(output) ?? `Suspend user failed with ${response.status}`,
+    );
+  }
+}
+
 export async function listAdminUsers(
   input: AdminUsersQueryInput = defaultAdminUsersInput,
 ): Promise<AdminUsersListResponse> {

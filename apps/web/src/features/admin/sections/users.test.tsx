@@ -577,19 +577,11 @@ describe("AdminUsers", () => {
     await click(button("Copy 2 emails"));
     expect(clipboardWrite).toHaveBeenCalledWith("one@helix.local, two@helix.local");
 
-    // Present, but honest about why they cannot run.
     const changeRole = button("Change role");
     const suspend = button("Suspend");
     expect(changeRole.disabled).toBe(true);
-    expect(suspend.disabled).toBe(true);
-    for (const control of [changeRole, suspend]) {
-      expect(control.getAttribute("title")).toContain("read-only");
-      const describedBy = control.getAttribute("aria-describedby");
-      expect(describedBy).not.toBeNull();
-      expect(container.querySelector(`#${String(describedBy)}`)?.textContent).toContain(
-        "read-only",
-      );
-    }
+    expect(changeRole.getAttribute("title")).toContain("Changing roles is not available");
+    expect(suspend.disabled).toBe(false);
 
     await click(button("Clear selection"));
     expect(text()).not.toContain("2 selected");
@@ -627,18 +619,69 @@ describe("AdminUsers", () => {
     expect(checkbox("Select all users").getAttribute("title")).toContain("not yet loaded");
   });
 
-  it("disables Import CSV and Invite users with a stated reason", async () => {
+  it("disables Import CSV and keeps Invite users live", async () => {
     await renderWith([apiUser({ id: "u-1" })]);
 
-    for (const label of ["Import CSV", "Invite users"]) {
-      const control = button(label);
-      expect(control.disabled).toBe(true);
-      expect(control.getAttribute("title")).toContain("read-only");
-      const describedBy = control.getAttribute("aria-describedby");
-      expect(container.querySelector(`#${String(describedBy)}`)?.textContent).toContain(
-        "read-only",
+    const importCsv = button("Import CSV");
+    expect(importCsv.disabled).toBe(true);
+    expect(importCsv.getAttribute("title")).toContain("CSV import is not available");
+
+    const invite = button("Invite users");
+    expect(invite.disabled).toBe(false);
+  });
+
+  it("posts invites and suspends through the admin users write routes", async () => {
+    const posts: { readonly url: string; readonly body: unknown }[] = [];
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const href =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = new URL(href, "http://localhost");
+      if ((init?.method ?? "GET") === "POST") {
+        posts.push({
+          url: url.pathname,
+          body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+        });
+        if (url.pathname.endsWith("/invites")) {
+          return Promise.resolve(
+            Response.json({ status: "accepted", inviteCount: 1, skippedCount: 0 }),
+          );
+        }
+        if (url.pathname.endsWith("/suspend")) {
+          return Promise.resolve(Response.json({ suspend: { disabled: true } }));
+        }
+        return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
+      }
+      requests.push(url);
+      return Promise.resolve(Response.json({ users: [apiUser({ id: "u-1" })], nextCursor: null }));
+    });
+
+    await render();
+    await waitFor(() => {
+      expect(visibleUsers()).toEqual(["User u-1"]);
+    });
+
+    const inviteInput = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Emails to invite"]',
+    );
+    expect(inviteInput).not.toBeNull();
+    await act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
+        inviteInput,
+        "ada@example.com",
       );
-    }
+      inviteInput?.dispatchEvent(new Event("input", { bubbles: true }));
+      return Promise.resolve();
+    });
+    await click(button("Invite users"));
+    await waitFor(() => {
+      expect(posts.some((post) => post.url.endsWith("/api/admin/users/invites"))).toBe(true);
+    });
+
+    await click(checkbox("Select all users"));
+    await click(button("Suspend"));
+    await waitFor(() => {
+      expect(posts.some((post) => post.url.endsWith("/api/admin/users/u-1/suspend"))).toBe(true);
+    });
   });
 
   it("exports the rows currently filtered, not the whole page", async () => {

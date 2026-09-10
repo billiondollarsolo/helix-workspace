@@ -39,6 +39,15 @@ export interface SignupOnboardingInviteTokenStore {
     readonly actor: Pick<Actor, "id" | "orgId" | "email">;
     readonly now?: Date | undefined;
   }): Promise<SignupOnboardingInviteAcceptResult>;
+  findActive?(input: {
+    readonly token: string;
+    readonly now?: Date | undefined;
+  }): Promise<SignupOnboardingInviteRecord | null>;
+  markAccepted?(input: {
+    readonly token: string;
+    readonly acceptedByActorId: string;
+    readonly now?: Date | undefined;
+  }): Promise<SignupOnboardingInviteRecord | null>;
 }
 
 interface SignupOnboardingInviteRow {
@@ -164,6 +173,51 @@ export class PostgresSignupOnboardingInviteTokenStore implements SignupOnboardin
       )
     `;
     return { status: "accepted", invite: mapSignupOnboardingInviteRow(accepted) };
+  }
+
+  async findActive(input: {
+    readonly token: string;
+    readonly now?: Date | undefined;
+  }): Promise<SignupOnboardingInviteRecord | null> {
+    const now = input.now ?? new Date();
+    const rows = await this.sql<SignupOnboardingInviteRow[]>`
+      select org_id, invited_by_actor_id, email, expires_at, accepted_at, accepted_by_actor_id, metadata
+      from signup_onboarding_invites
+      where token_hash = ${hashSignupOnboardingInviteToken(input.token)}
+        and accepted_at is null
+        and expires_at > ${now}
+      limit 1
+    `;
+    const row = rows[0];
+    return row === undefined ? null : mapSignupOnboardingInviteRow(row);
+  }
+
+  async markAccepted(input: {
+    readonly token: string;
+    readonly acceptedByActorId: string;
+    readonly now?: Date | undefined;
+  }): Promise<SignupOnboardingInviteRecord | null> {
+    const now = input.now ?? new Date();
+    const tokenHash = hashSignupOnboardingInviteToken(input.token);
+    const rows = await this.sql<SignupOnboardingInviteRow[]>`
+      update signup_onboarding_invites
+      set
+        accepted_at = ${now},
+        accepted_by_actor_id = ${input.acceptedByActorId},
+        metadata = metadata || ${this.sql.json({
+          acceptedBy: {
+            actorId: input.acceptedByActorId,
+            source: "admin",
+          },
+        })},
+        updated_at = now()
+      where token_hash = ${tokenHash}
+        and accepted_at is null
+        and expires_at > ${now}
+      returning org_id, invited_by_actor_id, email, expires_at, accepted_at, accepted_by_actor_id, metadata
+    `;
+    const row = rows[0];
+    return row === undefined ? null : mapSignupOnboardingInviteRow(row);
   }
 }
 

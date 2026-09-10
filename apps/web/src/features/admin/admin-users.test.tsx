@@ -5,8 +5,11 @@ import {
   adminUsersInfiniteQueryOptions,
   adminUsersQueryKeys,
   adminUsersQueryOptions,
+  createAdminUser,
+  inviteAdminUsers,
   listAdminUsers,
   prefetchAdminUsersQuery,
+  suspendAdminUser,
   type AdminUsersListResponse,
 } from "./admin-users";
 
@@ -35,6 +38,48 @@ describe("admin users API helpers", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "/v1/api/admin/users?query=Mina&type=user&includeDisabled=true&limit=25&cursor=cursor-3",
     );
+  });
+
+  it("posts create, invite, and suspend to the admin users write routes", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url === "/v1/api/admin/users") {
+        return Response.json({ user: adminUser() }, { status: 201 });
+      }
+      if (url === "/v1/api/admin/users/invites") {
+        return Response.json({ status: "accepted", inviteCount: 1, skippedCount: 0 });
+      }
+      if (url.includes("/suspend")) {
+        return Response.json({ suspend: { disabled: true } });
+      }
+      return Response.json({}, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: { getItem: vi.fn(() => null) },
+    });
+
+    await expect(
+      createAdminUser({
+        email: "mina@example.com",
+        password: "correct-horse-battery-staple",
+        displayName: "Mina Park",
+      }),
+    ).resolves.toMatchObject({ email: "mina@example.com" });
+    await expect(inviteAdminUsers({ emails: ["ada@example.com"] })).resolves.toEqual({
+      inviteCount: 1,
+      skippedCount: 0,
+    });
+    await expect(suspendAdminUser("55555555-5555-4555-8555-555555555555")).resolves.toBeUndefined();
+
+    const urls = fetchMock.mock.calls.map((call) => call[0]);
+    expect(urls).toEqual([
+      "/v1/api/admin/users",
+      "/v1/api/admin/users/invites",
+      "/v1/api/admin/users/55555555-5555-4555-8555-555555555555/suspend",
+    ]);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
   });
 
   /* `sections/users.tsx` asks for `includeDisabled: true` while the app-password

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   acceptSignupOnboardingInvite,
+  acceptWorkspaceInvite,
   checkOrgSlugAvailability,
   recordSignupFormViewed,
   resendSignupVerification,
@@ -194,6 +195,42 @@ describe("signup api", () => {
       credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token: "invite-token" }),
+    });
+  });
+
+  it("accepts a single-tenant workspace invite with a password", async () => {
+    const fetchImpl = vi.fn<SignupFetch>().mockResolvedValue(
+      Response.json({
+        status: "accepted",
+        user: {
+          id: "22222222-2222-4222-8222-222222222222",
+          email: "ada@example.com",
+          displayName: "Ada Lovelace",
+        },
+        org: { slug: "acme" },
+      }),
+    );
+
+    const result = await acceptWorkspaceInvite(
+      {
+        token: "invite-token",
+        password: "correct-horse-battery-staple",
+        displayName: "Ada Lovelace",
+      },
+      fetchImpl,
+    );
+
+    expect(result.status).toBe("accepted");
+    expect(result.org?.slug).toBe("acme");
+    expect(fetchImpl).toHaveBeenCalledWith("/v1/api/invites/accept", {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        token: "invite-token",
+        password: "correct-horse-battery-staple",
+        displayName: "Ada Lovelace",
+      }),
     });
   });
 

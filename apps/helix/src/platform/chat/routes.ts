@@ -33,7 +33,6 @@ import {
   type ChatWebSocketTicketStore,
 } from "./websocket-tickets.js";
 
-/** Route label for the chat WebSocket connection gauge. */
 const CHAT_WS_ROUTE = CHAT_WEBSOCKET_PATH;
 
 const chatWebSocketTicketRequestSchema = z.object({ roomId: z.string().uuid() }).strict();
@@ -263,9 +262,10 @@ export async function handleChatSocket(
   };
   const ticket = chatWebSocketTicketFromProtocols(request.headers["sec-websocket-protocol"]);
   const redeemed =
-    ticket === null
+    ticket === null || request.tenant == null
       ? null
       : await options.tickets.consume({
+          orgId: request.tenant.orgId,
           ticket,
           audience: CHAT_WEBSOCKET_AUDIENCE,
           path: CHAT_WS_ROUTE,

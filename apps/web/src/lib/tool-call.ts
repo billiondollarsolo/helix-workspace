@@ -39,7 +39,7 @@ export async function callTool<Output = unknown>(
   const output: unknown = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(errorMessage(output) ?? `${toolId} failed with ${String(response.status)}`);
+    throw responseError(response, output, toolId);
   }
 
   if (autoApprove && isPendingConfirmation(output)) {
@@ -71,14 +71,28 @@ async function approvePending<Output>(pendingId: string, fetchImpl: ToolFetch): 
   });
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(
-      errorMessage(output) ?? `pending action failed with ${String(response.status)}`,
-    );
+    throw responseError(response, output, "pending action");
   }
   if (isRecord(output) && output.status === "executed") {
     return output.output as Output;
   }
   return output as Output;
+}
+
+function responseError(response: Response, output: unknown, action: string): Error {
+  return Object.assign(
+    new Error(errorMessage(output) ?? `${action} failed with ${String(response.status)}`),
+    { status: response.status, retryAfterMs: retryAfterMilliseconds(response.headers) },
+  );
+}
+
+function retryAfterMilliseconds(headers: Headers): number | undefined {
+  const value = headers.get("Retry-After");
+  if (value === null) return undefined;
+  const seconds = Number(value);
+  const delay =
+    Number.isFinite(seconds) && seconds >= 0 ? seconds * 1_000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(0, delay) : undefined;
 }
 
 function errorMessage(output: unknown): string | undefined {

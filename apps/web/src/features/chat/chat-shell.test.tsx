@@ -356,10 +356,12 @@ describe("ChatShell", () => {
     const socket = FakeWebSocket.instances[0];
     expect(socket).toBeDefined();
     await flush();
-    await readyConnection(socket!);
+    act(() => socket!.open());
+    expect(socket!.sent).toEqual([]);
+    act(() => socket!.receive({ type: "ready", actorId: SELF_ACTOR }));
     await flush();
 
-    // The active room is subscribed once the socket opens.
+    // Subscribe only after the server finishes authorization and sends ready.
     expect(socket!.sent.map((p) => JSON.parse(p) as { type: string })).toContainEqual(
       expect.objectContaining({ type: "subscribe", roomId: ROOM_ID }),
     );
@@ -573,6 +575,17 @@ describe("ChatShell", () => {
     // No fabricated rows — just the offline indicator.
     expect(sidebar?.textContent).toContain("Offline");
     expect(sidebar?.textContent).toContain("chat rooms unavailable");
+  });
+
+  it("does not report a disconnected socket when the account has no rooms", async () => {
+    fetchMock = makeFetch({ "chat.room.list": { rooms: [] } });
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    await flush();
+
+    expect(container.textContent).toContain("No spaces yet.");
+    expect(container.textContent).not.toContain("Realtime disconnected");
+    expect(container.textContent).not.toContain("Reconnecting");
+    expect(FakeWebSocket.instances).toHaveLength(0);
   });
 
   it("shows an empty state when a room has no messages", async () => {

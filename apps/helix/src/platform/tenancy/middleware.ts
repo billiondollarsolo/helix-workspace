@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Actor, TenantConfig } from "@helix/sdk-types";
 import type postgres from "postgres";
+import { internalApiUrl } from "../../api/version.js";
 import { enrichActiveSpanWithTenant } from "../observability/tenant-span.js";
 import type { TenantContext } from "./context.js";
 import { withTenantPostgresContext } from "./postgres-roles.js";
@@ -65,7 +66,7 @@ export function installTenantPostgresContextHook(app: FastifyInstance, sql: post
   const active = new WeakMap<FastifyRequest, TenantRequestTransaction>();
 
   app.addHook("preHandler", (request, _reply, done) => {
-    if (request.tenant === null) {
+    if (request.tenant === null || isLongLivedTenantRequest(request)) {
       done();
       return;
     }
@@ -133,6 +134,14 @@ export function installTenantPostgresContextHook(app: FastifyInstance, sql: post
   app.addHook("onRequestAbort", rollback);
   app.addHook("onTimeout", rollback);
   app.addHook("onResponse", rollback);
+}
+
+/** These transports never finish an HTTP response; their DB operations use short RLS scopes. */
+export function isLongLivedTenantRequest(request: FastifyRequest): boolean {
+  return (
+    request.ws ||
+    (request.method === "GET" && internalApiUrl(request.url).split("?")[0] === "/sse/mail")
+  );
 }
 
 export function shouldResolveTenantForRequest(request: FastifyRequest): boolean {

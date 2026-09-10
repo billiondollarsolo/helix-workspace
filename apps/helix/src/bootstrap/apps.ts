@@ -51,8 +51,10 @@ import {
   assertRegionalDatabase,
   installTenantContextHook,
   installTenantPostgresContextHook,
+  isLongLivedTenantRequest,
   resolveTenantContext,
   setTenantPostgresActorId,
+  withTenantPostgresContext,
 } from "../platform/tenancy/index.js";
 import type { installAuth } from "./auth.js";
 import { verifyDefaultOrgAtBoot } from "./default-org.js";
@@ -205,7 +207,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
   // surface. A presented-but-rejected credential raises `CredentialAuthError`,
   // which the error handler maps to the appropriate 401/403 response. When no
   // credential is presented, falls back to bearer access tokens and sessions.
-  const principalFromAuthenticatedRequest = async (request: FastifyRequest) => {
+  const resolvePrincipalFromAuthenticatedRequest = async (request: FastifyRequest) => {
     const resolution = await toolInvocationPrincipalFromRequest(
       request,
       oauthStore,
@@ -220,6 +222,13 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
       await setTenantPostgresActorId(resolution.principal.actor.id);
     return resolution.principal;
   };
+
+  const principalFromAuthenticatedRequest = (request: FastifyRequest) =>
+    request.tenant !== null && isLongLivedTenantRequest(request)
+      ? withTenantPostgresContext(sql, { orgId: request.tenant.orgId }, () =>
+          resolvePrincipalFromAuthenticatedRequest(request),
+        )
+      : resolvePrincipalFromAuthenticatedRequest(request);
 
   const actorFromAuthenticatedRequest = async (request: FastifyRequest) =>
     (await principalFromAuthenticatedRequest(request)).actor;

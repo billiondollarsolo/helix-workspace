@@ -49,11 +49,11 @@ const emptyWebSocketRequest = ticketRequest("t");
 
 function ticketRequest(character: string): FastifyRequest {
   return {
+    tenant: { orgId: actor.orgId },
     headers: {
       origin: trustedOrigins[0],
       "sec-websocket-protocol": `helix.chat.v1, helix.ticket.${character.repeat(43)}`,
     },
-    query: {},
   } as unknown as FastifyRequest;
 }
 

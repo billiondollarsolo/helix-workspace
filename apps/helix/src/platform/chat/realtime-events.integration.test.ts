@@ -505,6 +505,7 @@ class IntegrationSocket {
 
 function ticketRequest(): FastifyRequest {
   return {
+    tenant: { orgId: ORG },
     headers: {
       "sec-websocket-protocol": `helix.chat.v1, helix.ticket.${"t".repeat(43)}`,
     },

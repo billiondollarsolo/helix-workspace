@@ -19,7 +19,7 @@ import {
   type ChatRealtimeEvent,
 } from "./api";
 
-type ChatConnectionState = "connecting" | "open" | "reconnecting" | "closed";
+type ChatConnectionState = "idle" | "connecting" | "open" | "reconnecting" | "closed";
 
 type PendingMessageStatus = "pending" | "failed";
 
@@ -86,7 +86,9 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
   const pendingTimeoutMs = options.pendingTimeoutMs ?? DEFAULT_PENDING_TIMEOUT_MS;
   const now = options.now ?? Date.now;
 
-  const [connection, setConnection] = useState<ChatConnectionState>("connecting");
+  const [connection, setConnection] = useState<ChatConnectionState>(
+    roomId === undefined ? "idle" : "connecting",
+  );
   const [selfActorId, setSelfActorId] = useState<string | null>(null);
   const [liveMessages, setLiveMessages] = useState<readonly ChatMessageRecord[]>([]);
   const [deletedMessageIds, setDeletedMessageIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -149,7 +151,7 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
     const connect = async (): Promise<void> => {
       if (connectionGenerationRef.current !== generation || roomId === undefined) {
         if (roomId === undefined) {
-          setConnection("closed");
+          setConnection("idle");
         }
         return;
       }
@@ -193,9 +195,6 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
             client.close();
             return;
           }
-          attemptRef.current = 0;
-          setConnection("open");
-          client.subscribe(roomId, cursorRef.current);
         },
         onClose: (event) => {
           clientRef.current = null;
@@ -215,6 +214,12 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
         onEvent: (event) => {
           if (connectionGenerationRef.current !== generation) {
             return;
+          }
+          if (event.type === "ready") {
+            // The server installs frame handlers only after authorizing the ticket.
+            attemptRef.current = 0;
+            setConnection("open");
+            client.subscribe(roomId, cursorRef.current);
           }
           if (event.type === "resync.required") {
             cursorRef.current = 0;

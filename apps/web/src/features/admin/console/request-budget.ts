@@ -1,3 +1,5 @@
+import { QUERY_RETRY_DEFAULTS } from "@/lib/query-retry";
+
 /* The admin console's shared request policy.
  *
  * Every request outside `/api/auth` is metered against the tenant's
@@ -51,47 +53,6 @@ export const SHELL_BASELINE_REQUESTS = 3;
 export const SECTION_REQUEST_BUDGET = TENANT_API_RPS_LIMIT - SHELL_BASELINE_REQUESTS;
 
 /* ------------------------------------------------------------------ */
-/* Rate-limit retry                                                    */
-/* ------------------------------------------------------------------ */
-
-/* 429 is the one status where retrying is the correct client behaviour: it
-   means "ask again later", and the limiter's window is a single second, so a
-   request that waits it out gets a real answer. Every other status is reported
-   to the operator instead — auto-retrying a 403 or a 500 only hides a real
-   fault behind a spinner. */
-const RATE_LIMIT_RETRIES = 3;
-const RATE_LIMIT_BACKOFF_MS = 1_100;
-const RATE_LIMIT_JITTER_MS = 400;
-
-/* These clients throw plain `Error`s, so an HTTP status only survives in the
-   message tail — `… (429).` from the schema-validating clients, `… with 429`
-   from the hand-rolled ones. A backend `error` string ("Permission denied.")
-   carries no trailing number and correctly does not match, which is why this
-   only ever *adds* a retry and can never suppress a reported failure.
-
-   Anchored on the left as well as the right. Unanchored, any message ending in
-   a number whose last three digits happen to be 429 matched — "Failed to load
-   audit page 1429" would have been read as a rate limit and silently retried
-   three times instead of being reported. */
-const TRAILING_STATUS = /(?:\((\d{3})\)|(?:^|\s)(\d{3}))\.?\s*$/u;
-
-export function isRateLimited(error: Error): boolean {
-  const match = TRAILING_STATUS.exec(error.message);
-  return (match?.[1] ?? match?.[2]) === "429";
-}
-
-/** Jittered, because requests refused in the same second must not come back in
- *  the same second either — that synchronised burst is what earned the refusal
- *  in the first place. */
-export function rateLimitBackoff(failureCount: number): number {
-  return RATE_LIMIT_BACKOFF_MS * 2 ** failureCount + Math.random() * RATE_LIMIT_JITTER_MS;
-}
-
-function retryOnlyRateLimits(failureCount: number, error: Error): boolean {
-  return failureCount < RATE_LIMIT_RETRIES && isRateLimited(error);
-}
-
-/* ------------------------------------------------------------------ */
 /* Freshness tiers                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -131,8 +92,7 @@ export const ADMIN_QUERY_DEFAULTS = {
   throwOnError: false,
   gcTime: ADMIN_GC_TIME,
   staleTime: ADMIN_STALE_TIME.normal,
-  retry: retryOnlyRateLimits,
-  retryDelay: rateLimitBackoff,
+  ...QUERY_RETRY_DEFAULTS,
 } as const;
 
 /* ------------------------------------------------------------------ */

@@ -56,6 +56,7 @@ class FakeWebSocket {
     queueMicrotask(() => {
       this.readyState = FakeWebSocket.OPEN;
       this.emit("open", {});
+      this.receive({ type: "ready", actorId: "self" });
     });
   }
 
@@ -125,6 +126,39 @@ describe("useChatRealtime reconnect", () => {
     });
     container.remove();
     vi.useRealTimers();
+  });
+
+  it("stays idle without a room and connects only while a room is selected", async () => {
+    const renderRoom = async (roomId: string | undefined) => {
+      await act(async () => {
+        root.render(
+          <Harness
+            roomId={roomId}
+            onState={(state) => {
+              latest = state;
+            }}
+          />,
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await renderRoom(undefined);
+    expect(latest?.connection).toBe("idle");
+    expect(ticketFetch).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances).toHaveLength(0);
+
+    await renderRoom(ROOM);
+    expect(latest?.connection).toBe("open");
+    expect(ticketFetch).toHaveBeenCalledTimes(1);
+
+    await renderRoom(undefined);
+    expect(latest?.connection).toBe("idle");
+    expect(FakeWebSocket.instances[0]?.readyState).toBe(FakeWebSocket.CLOSED);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(ticketFetch).toHaveBeenCalledTimes(1);
   });
 
   it("reconnects after unexpected close and re-subscribes", async () => {

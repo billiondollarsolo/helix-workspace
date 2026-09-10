@@ -1,6 +1,7 @@
 import type { Actor } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { randomBytes, sha256Hex } from "../crypto/index.js";
+import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 
 export const CHAT_WEBSOCKET_AUDIENCE = "chat.websocket";
 export const CHAT_WEBSOCKET_PATH = "/ws/chat";
@@ -19,6 +20,7 @@ export interface ChatWebSocketTicketStore {
     readonly now?: Date;
   }): Promise<{ readonly ticket: string; readonly expiresAt: Date }>;
   consume(input: {
+    readonly orgId: string;
     readonly ticket: string;
     readonly audience: string;
     readonly path: string;
@@ -67,17 +69,22 @@ export class PostgresChatWebSocketTicketStore implements ChatWebSocketTicketStor
   }
 
   async consume(input: {
+    readonly orgId: string;
     readonly ticket: string;
     readonly audience: string;
     readonly path: string;
     readonly now?: Date;
   }): Promise<{ readonly actor: Actor; readonly roomId: string } | null> {
     const now = input.now ?? new Date();
-    const rows = await this.sql<ConsumedTicketRow[]>`
+    const rows = await withTenantPostgresContext(
+      this.sql,
+      { orgId: input.orgId },
+      (tx) => tx<ConsumedTicketRow[]>`
       with consumed as (
         update chat_websocket_tickets
         set consumed_at = ${now}
         where token_hash = ${sha256Hex(input.ticket)}
+          and org_id = ${input.orgId}
           and audience = ${input.audience}
           and path = ${input.path}
           and consumed_at is null
@@ -97,7 +104,8 @@ export class PostgresChatWebSocketTicketStore implements ChatWebSocketTicketStor
         on actor.org_id = consumed.org_id
        and actor.id = consumed.actor_id
        and actor.disabled_at is null
-    `;
+    `,
+    );
     const row = rows[0];
     if (row === undefined) {
       return null;

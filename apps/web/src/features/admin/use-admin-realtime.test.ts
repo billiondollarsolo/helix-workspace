@@ -165,6 +165,10 @@ describe("admin realtime hub", () => {
     mount("tier-readiness");
 
     expect(sockets).toHaveLength(2);
+    expect(sockets.map((socket) => new URL(socket.url).pathname)).toEqual([
+      "/v1/events/ws",
+      "/v1/events/ws",
+    ]);
     expect(sockets.map((socket) => socket.subject).sort()).toEqual([
       "flags.changed.*",
       "helix.config.changed",

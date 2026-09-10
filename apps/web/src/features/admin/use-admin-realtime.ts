@@ -30,6 +30,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import { Debouncer } from "@tanstack/pacer/debouncer";
 import type { AdminSectionId } from "@/features/admin/admin-console-data";
+import { apiPath } from "@/lib/auth";
 
 /* ------------------------------------------------------------------ */
 /* Subject routing                                                     */
@@ -172,10 +173,10 @@ function reconnectDelay(attempt: number): number {
   return exponential * (1 + (Math.random() * 2 - 1) * RECONNECT_JITTER);
 }
 
-/** `/events/ws?subject=…` as an absolute ws(s) URL. No token in the query
+/** `/v1/events/ws?subject=…` as an absolute ws(s) URL. No token in the query
  *  string — the same-origin session cookie rides the upgrade. */
 function eventsUrl(subject: string): string {
-  const url = new URL("/events/ws", window.location.href);
+  const url = new URL(apiPath("/events/ws"), window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("subject", subject);
   return url.toString();

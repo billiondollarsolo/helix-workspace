@@ -56,6 +56,7 @@ describe("PostgresChatWebSocketTicketStore", () => {
 
     await expect(
       store.consume({
+        orgId: actor.orgId,
         ticket: "t".repeat(43),
         audience: CHAT_WEBSOCKET_AUDIENCE,
         path: CHAT_WEBSOCKET_PATH,
@@ -63,7 +64,9 @@ describe("PostgresChatWebSocketTicketStore", () => {
       }),
     ).resolves.toEqual({ actor, roomId });
 
-    const query = recording.calls[0];
+    const query = recording.calls.find((call) =>
+      call.text.includes("update chat_websocket_tickets"),
+    );
     expect(query?.text).toContain("update chat_websocket_tickets");
     expect(query?.text).toContain("consumed_at is null");
     expect(query?.text).toContain("expires_at >");

@@ -312,6 +312,7 @@ async function realtimeClose(
   await handleChatSocket(
     socket,
     {
+      tenant: { orgId: actor.orgId },
       headers: { "sec-websocket-protocol": `helix.chat.v1, helix.ticket.${"t".repeat(43)}` },
     } as unknown as FastifyRequest,
     {

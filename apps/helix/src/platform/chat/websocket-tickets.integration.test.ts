@@ -56,6 +56,7 @@ describe("PostgresChatWebSocketTicketStore", { skip: !process.env.DATABASE_URL }
     });
     await expect(
       store.consume({
+        orgId: actor.orgId,
         ticket: issued.ticket,
         audience: CHAT_WEBSOCKET_AUDIENCE,
         path: "/ws/other",
@@ -63,6 +64,7 @@ describe("PostgresChatWebSocketTicketStore", { skip: !process.env.DATABASE_URL }
     ).resolves.toBeNull();
     await expect(
       store.consume({
+        orgId: actor.orgId,
         ticket: issued.ticket,
         audience: "other.websocket",
         path: CHAT_WEBSOCKET_PATH,
@@ -71,11 +73,13 @@ describe("PostgresChatWebSocketTicketStore", { skip: !process.env.DATABASE_URL }
 
     const results = await Promise.all([
       store.consume({
+        orgId: actor.orgId,
         ticket: issued.ticket,
         audience: CHAT_WEBSOCKET_AUDIENCE,
         path: CHAT_WEBSOCKET_PATH,
       }),
       store.consume({
+        orgId: actor.orgId,
         ticket: issued.ticket,
         audience: CHAT_WEBSOCKET_AUDIENCE,
         path: CHAT_WEBSOCKET_PATH,
@@ -100,6 +104,7 @@ describe("PostgresChatWebSocketTicketStore", { skip: !process.env.DATABASE_URL }
     });
     await expect(
       store.consume({
+        orgId: actor.orgId,
         ticket: issued.ticket,
         audience: CHAT_WEBSOCKET_AUDIENCE,
         path: CHAT_WEBSOCKET_PATH,

@@ -10,6 +10,7 @@ import {
   useColorMode,
 } from "@helix/sdk-web";
 import { Toaster } from "sonner";
+import { QUERY_RETRY_DEFAULTS } from "@/lib/query-retry";
 import { routeTree } from "./routeTree.gen";
 import "./styles.css";
 // Side-effect import: hydrates the appearance store (theme/density/accent)
@@ -19,10 +20,11 @@ import "@/components/settings-store";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: false,
+      ...QUERY_RETRY_DEFAULTS,
       staleTime: 30_000,
       throwOnError: true,
     },
+    mutations: { retry: false },
   },
 });
 

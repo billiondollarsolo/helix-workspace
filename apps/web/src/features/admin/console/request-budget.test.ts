@@ -10,13 +10,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ADMIN_QUERY_DEFAULTS,
-  isRateLimited,
-  rateLimitBackoff,
   releaseIntervalMs,
   SECTION_REQUEST_BUDGET,
   SHELL_BASELINE_REQUESTS,
   TENANT_API_RPS_LIMIT,
 } from "./request-budget";
+import { isRateLimited, rateLimitBackoff } from "@/lib/query-retry";
 
 afterEach(() => {
   vi.restoreAllMocks();

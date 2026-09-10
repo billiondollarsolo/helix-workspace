@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { sessionQueryKeys } from "@/lib/auth";
 import { type DriveApiEntry, type DriveApiSearchHit } from "./api";
-import { applyDriveScope, deriveDriveSuggestions, entryFromSearchHit } from "./queries";
+import {
+  applyDriveScope,
+  deriveDriveSuggestions,
+  driveActorQueryOptions,
+  entryFromSearchHit,
+} from "./queries";
 
 function makeEntry(
   overrides: Partial<DriveApiEntry> & Pick<DriveApiEntry, "id" | "type" | "updatedAt">,
@@ -244,5 +251,25 @@ describe("entryFromSearchHit", () => {
       folderId: "folder-1",
       deletedAt: null,
     });
+  });
+});
+
+describe("Drive session identity", () => {
+  it("selects actor identity from the shared session and follows profile updates", () => {
+    const client = new QueryClient();
+    const user = { id: "user-1", actorId: "actor-1", name: "Rae Gomez", email: "rae@example.test" };
+    client.setQueryData(sessionQueryKeys.current, user);
+    const observer = new QueryObserver(client, driveActorQueryOptions());
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      expect(observer.getCurrentResult().data).toEqual({ actorId: "actor-1", name: "Rae Gomez" });
+      client.setQueryData(sessionQueryKeys.current, { ...user, name: "Nora Singh" });
+      expect(observer.getCurrentResult().data).toEqual({ actorId: "actor-1", name: "Nora Singh" });
+      client.setQueryData(sessionQueryKeys.current, null);
+      expect(observer.getCurrentResult().data).toEqual({ actorId: null, name: "You" });
+    } finally {
+      unsubscribe();
+      client.clear();
+    }
   });
 });

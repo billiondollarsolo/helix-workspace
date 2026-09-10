@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useQuery } from "@tanstack/react-query";
 import { SettingsPage } from "./settings-page";
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
   useQuery: vi.fn(),
+  useQueryClient: () => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }),
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -22,7 +24,15 @@ describe("SettingsPage", () => {
     document.body.append(container);
     root = createRoot(container);
     vi.mocked(useQuery).mockReturnValue({
-      data: { name: "Morgan Lee", email: "morgan@example.com" },
+      data: {
+        actorId: "actor-1",
+        orgId: "org-1",
+        displayName: "Morgan Lee",
+        email: "morgan@example.com",
+        pronouns: "",
+        jobTitle: "",
+        about: "",
+      },
     } as never);
   });
 
@@ -33,7 +43,7 @@ describe("SettingsPage", () => {
     vi.clearAllMocks();
   });
 
-  it("labels real controls, exposes unavailable actions honestly, and manages focus", async () => {
+  it("labels editable profile controls and manages focus", async () => {
     const onClose = vi.fn();
     const onSectionChange = vi.fn();
     const opener = document.createElement("button");
@@ -48,24 +58,23 @@ describe("SettingsPage", () => {
     await act(async () => Promise.resolve());
 
     const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
-    const displayName = container.querySelector<HTMLInputElement>("#settings-display-name");
+    const displayName = container.querySelector<HTMLInputElement>('input[name="displayName"]');
     expect(dialog?.getAttribute("aria-labelledby")).toBe("settings-title");
     expect(document.body.style.overflow).toBe("hidden");
     expect(document.activeElement).toBe(
       container.querySelector<HTMLButtonElement>('button[aria-label="Back"]'),
     );
-    expect(container.querySelector('label[for="settings-display-name"]')?.textContent).toBe(
-      "Display name",
-    );
+    expect(displayName?.labels?.[0]?.textContent).toBe("Display name");
     expect(displayName?.name).toBe("displayName");
     expect(displayName?.autocomplete).toBe("name");
-    expect(displayName?.disabled).toBe(true);
+    expect(displayName?.disabled).toBe(false);
+    expect(displayName?.value).toBe("Morgan Lee");
 
     const upload = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
       (button) => button.textContent === "Upload",
     );
-    expect(upload?.disabled).toBe(true);
-    expect(upload?.title).toContain("not available");
+    expect(upload).toBeUndefined();
+    expect(container.querySelector('button[type="submit"]')?.textContent).toBe("Save profile");
 
     const shortcuts = Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find(
       (button) => button.textContent?.includes("Keyboard shortcuts"),
@@ -106,7 +115,7 @@ describe("SettingsPage", () => {
         />,
       ),
     );
-    expect(container.querySelector("main")?.textContent).not.toMatch(
+    expect(container.querySelector("section[aria-label]")?.textContent).not.toMatch(
       /\bDocs\b|\bSheets\b|Go to Docs|Formula generation/,
     );
   });
@@ -127,7 +136,7 @@ describe("SettingsPage", () => {
     expect(container.querySelector('label[for="settings-language"]')?.textContent).toBe("Language");
     expect(language?.name).toBe("language");
     expect(language?.disabled).toBe(true);
-    expect(container.querySelector("main")?.getAttribute("aria-label")).toBe(
+    expect(container.querySelector("section[aria-label]")?.getAttribute("aria-label")).toBe(
       "Language & region settings",
     );
   });

@@ -79,7 +79,7 @@ async function approvePending<Output>(pendingId: string, fetchImpl: ToolFetch): 
   return output as Output;
 }
 
-function responseError(response: Response, output: unknown, action: string): Error {
+export function responseError(response: Response, output: unknown, action: string): Error {
   return Object.assign(
     new Error(errorMessage(output) ?? `${action} failed with ${String(response.status)}`),
     { status: response.status, retryAfterMs: retryAfterMilliseconds(response.headers) },

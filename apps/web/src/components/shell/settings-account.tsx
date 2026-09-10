@@ -1,88 +1,69 @@
+import { ProfileForm } from "@/components/profile-form";
 import { Avatar } from "@/components/ui/avatar";
 import { setMailUserSettings } from "@/features/mail/api";
 import { mailUserSettingsQueryOptions } from "@/features/mail/queries";
-import { sessionUserQueryOptions } from "@/lib/auth";
+import { sessionQueryKeys, type SessionUser } from "@/lib/auth";
+import { profileQueryKeys, profileQueryOptions, updateProfile } from "@/lib/profile";
 import { cn } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import {
-  SettingsField,
-  ToggleRow,
-  UNAVAILABLE_CONTROL_PROPS,
-  UnavailableSettingsButton,
-} from "./settings-controls";
+import { SettingsField, ToggleRow, UNAVAILABLE_CONTROL_PROPS } from "./settings-controls";
 
 /* ---------- Profile ---------- */
 
 export function ProfileSection() {
-  const sessionQuery = useQuery(sessionUserQueryOptions());
-  const displayName = sessionQuery.data?.name ?? "";
+  const queryClient = useQueryClient();
+  const profileQuery = useQuery(profileQueryOptions());
+  const profile = profileQuery.data;
   return (
     <>
       <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_4px]">Profile</h1>
-      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-2">
+      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-4">
         How you appear across the workspace
       </div>
-      <SettingsField label="Photo" hint="PNG or JPG, max 5 MB">
-        <div className="flex items-center gap-3">
-          <Avatar name={displayName || "You"} size={64} />
-          <div>
-            <UnavailableSettingsButton>Upload</UnavailableSettingsButton>
-            <UnavailableSettingsButton className="btn sm ghost ml-1">
-              Remove
-            </UnavailableSettingsButton>
+      {profile ? (
+        <>
+          <div className="mb-4 flex items-center gap-3">
+            <Avatar name={profile.displayName} size={64} />
+            <span className="text-muted-foreground">{profile.email}</span>
           </div>
+          <ProfileForm
+            key={profile.actorId}
+            profile={profile}
+            onSave={(input) => updateProfile(input)}
+            onSaved={(updated) => {
+              queryClient.setQueryData(profileQueryKeys.current, updated);
+              queryClient.setQueryData<SessionUser | null>(sessionQueryKeys.current, (current) =>
+                current
+                  ? { ...current, name: updated.displayName, actorId: updated.actorId }
+                  : current,
+              );
+              void queryClient.invalidateQueries({ queryKey: sessionQueryKeys.current });
+              void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+              void queryClient.invalidateQueries({ queryKey: ["people", "directory"] });
+              void queryClient.invalidateQueries({
+                queryKey: profileQueryKeys.byActor(updated.actorId),
+              });
+            }}
+          />
+        </>
+      ) : profileQuery.isError ? (
+        <div role="alert">
+          <p>{profileQuery.error.message}</p>
+          <button
+            className="btn"
+            type="button"
+            disabled={profileQuery.isFetching}
+            onClick={() => {
+              void queryClient.invalidateQueries({ queryKey: profileQueryKeys.current });
+            }}
+          >
+            Retry loading profile
+          </button>
         </div>
-      </SettingsField>
-      <SettingsField label="Display name" controlId="settings-display-name">
-        <input
-          id="settings-display-name"
-          name="displayName"
-          autoComplete="name"
-          className="input"
-          defaultValue={displayName}
-          key={displayName}
-          {...UNAVAILABLE_CONTROL_PROPS}
-        />
-      </SettingsField>
-      <SettingsField label="Pronouns" controlId="settings-pronouns">
-        <input
-          id="settings-pronouns"
-          name="pronouns"
-          autoComplete="off"
-          className="input"
-          defaultValue=""
-          placeholder="For example, they/them…"
-          {...UNAVAILABLE_CONTROL_PROPS}
-        />
-      </SettingsField>
-      <SettingsField label="Job title" controlId="settings-job-title">
-        <input
-          id="settings-job-title"
-          name="jobTitle"
-          autoComplete="organization-title"
-          className="input"
-          defaultValue=""
-          placeholder="For example, Product Designer…"
-          {...UNAVAILABLE_CONTROL_PROPS}
-        />
-      </SettingsField>
-      <SettingsField
-        label="About"
-        hint="A short bio shown on your contact card"
-        controlId="settings-about"
-      >
-        <textarea
-          id="settings-about"
-          name="about"
-          autoComplete="off"
-          className="input [height:auto] p-2.5 [resize:vertical] [font-family:inherit] [line-height:1.5]"
-          defaultValue=""
-          placeholder="For example, Building the next Helix release…"
-          rows={3}
-          {...UNAVAILABLE_CONTROL_PROPS}
-        />
-      </SettingsField>
+      ) : (
+        <p role="status">Loading profile…</p>
+      )}
     </>
   );
 }

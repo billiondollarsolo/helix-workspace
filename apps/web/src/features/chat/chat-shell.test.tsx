@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
+import { sessionQueryKeys } from "@/lib/auth";
 
 const ROOM_ID = "33333333-3333-4333-8333-333333333333";
 const DM_ID = "55555555-5555-4555-8555-555555555555";
@@ -252,6 +253,27 @@ describe("ChatShell", () => {
       "/api/tools/chat.room.list",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("renders the current user's avatar from the shared session and follows profile edits", async () => {
+    const user = {
+      id: "user-1",
+      actorId: SELF_ACTOR,
+      name: "Rae Gomez",
+      email: "rae@example.test",
+    };
+    queryClient.setQueryData(sessionQueryKeys.current, user);
+    fetchMock = makeFetch({
+      "chat.message.list": { messages: [{ ...message, actorId: SELF_ACTOR }] },
+    });
+    await renderShell(FakeWebSocket as unknown as typeof WebSocket);
+    const pane = container.querySelector(".chat-messages");
+    expect(pane?.querySelector('[role="img"][aria-label="Rae Gomez"]')?.textContent).toBe("RG");
+    act(() => {
+      queryClient.setQueryData(sessionQueryKeys.current, { ...user, name: "Nora Singh" });
+    });
+    await flush();
+    expect(pane?.querySelector('[role="img"][aria-label="Nora Singh"]')?.textContent).toBe("NS");
   });
 
   it("offers announcement and project spaces without inert header controls", async () => {

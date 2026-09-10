@@ -59,6 +59,7 @@ import {
 import { registerDomainIdentityDiscoveryRoute } from "../platform/auth/domain-identity.js";
 import { OAuthTokenService } from "../platform/auth/oauth.js";
 import { registerOAuthRoutes } from "../platform/auth/routes.js";
+import { PostgresProfileStore, registerProfileRoutes } from "../platform/auth/profile.js";
 import { registerTenantScimRoutes } from "../platform/auth/scim-routes.js";
 import {
   registerBackupAdminRoutes,
@@ -292,6 +293,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     domainIdentityStore,
     recoveryCodes,
     betterAuthRuntime?.sessionVerifier,
+    sessionActorResolver,
   );
 
   await app.register(websocket, { options: { maxPayload: WEBSOCKET_MAX_PAYLOAD_BYTES } });
@@ -530,6 +532,13 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
       appPasswords: appPasswordStore,
       agentCredentials: oauthStore,
     },
+  });
+
+  registerProfileRoutes(app, {
+    store: new PostgresProfileStore(sql),
+    sessionActorResolver,
+    actorFromRequest: actorFromAuthenticatedRequest,
+    auditSink: auditStore,
   });
 
   await registerPeopleRoutes(app, {

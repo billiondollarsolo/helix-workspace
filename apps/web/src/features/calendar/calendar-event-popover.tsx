@@ -1,4 +1,6 @@
 import { Avatar } from "@/components/ui/avatar";
+import { useQuery } from "@tanstack/react-query";
+import { sessionUserQueryOptions } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import {
   Pencil as EditPenIcon,
@@ -44,6 +46,7 @@ export function CalendarEventPopover({
   readonly deletePending: boolean;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
+  const sessionUser = useQuery(sessionUserQueryOptions()).data;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
@@ -81,7 +84,14 @@ export function CalendarEventPopover({
     setPosition(computePopoverPosition(anchorRect));
   }, [anchorRect]);
 
-  const apiAttendees = event.apiEvent?.attendees ?? [];
+  const apiAttendees = (event.apiEvent?.attendees ?? []).map((attendee) => {
+    const isSelf = attendee.actorId
+      ? attendee.actorId === sessionUser?.actorId
+      : attendee.email.toLowerCase() === sessionUser?.email.toLowerCase();
+    return isSelf && sessionUser?.name.trim()
+      ? { ...attendee, displayName: sessionUser.name.trim() }
+      : attendee;
+  });
   const conferenceUrl = safeHttpUrl(event.location);
   const attendeeMailUrl = mailtoUrl(apiAttendees.map((attendee) => attendee.email));
   /** RSVP only makes sense for backend events the popover can act on. */
@@ -169,13 +179,7 @@ export function CalendarEventPopover({
       <div className="[height:1px] [background:var(--border)]" />
       <div className="[padding:10px_14px]">
         <div className="section-label [padding:0_0_6px]">
-          {event.attendees.length + 1} attendees
-        </div>
-        {/* The signed-in user is always an attendee; backend events list the
-            other invitees, seed events fall back to display names only. */}
-        <div className="flex items-center gap-2 [padding:4px_0] [font-size:var(--text-meta)]">
-          <Avatar name="You" size={22} />
-          <span>You</span>
+          {event.apiEvent ? apiAttendees.length : event.attendees.length} attendees
         </div>
         {apiAttendees.length > 0
           ? apiAttendees.map((attendee) => (

@@ -13,16 +13,8 @@ import {
   Sparkles as SparklesIcon,
   Trash2 as TrashIcon,
 } from "lucide-react";
-/* Helix AI assistant surface.
-   Recreated from the design handoff prototype (`app-assistant.jsx`) as
-   production TSX: a 240px thread list, an empty/new hero state, a streaming
-   conversation view with rich blocks, and an inline-model composer.
-
-   The thread list (Pinned + Recent sections, "Search chats" input) is wired to
-   the real `assistant.conversations.list` tool via TanStack Query, with
-   pin/unpin/rename/delete and memory-forget all hitting `POST /api/tools/...`.
-   Live replies stream from `streamAssistantChat`; selecting a past thread
-   reopens it and continues the same backend conversation. */
+/* Assistant conversations and actions use the backend tools. Replies stream
+   through streamAssistantChat; selecting a thread continues that conversation. */
 import { SurfaceFrame } from "@/components/shell";
 import { Avatar } from "@/components/ui/avatar";
 import { Dialog } from "@/components/ui/helix-dialog";
@@ -57,8 +49,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { bucketThreadsByDate, type ThreadSidebarItem } from "./date-buckets";
-const USER_NAME = "You";
-/** Maps a backend conversation list item to the seed thread shape. */
+import { sessionUserQueryOptions } from "@/lib/auth";
 function toThread(item: AssistantConversationListItem): AssistantThread {
   const updatedAtMs = Date.parse(item.updatedAt);
   return {
@@ -97,6 +88,7 @@ export function AssistantSurface() {
     readonly conversation?: string;
   } = useSearch({ strict: false });
   const queryClient = useQueryClient();
+  const userName = useQuery(sessionUserQueryOptions()).data?.name.trim() ?? "";
   const [threadId, setThreadId] = useState<string | null>(urlSearch.conversation ?? null);
   const [conversation, setConversation] = useState<readonly AssistantChatMessage[]>([]);
   const [hasMessages, setHasMessages] = useState(() => urlSearch.conversation !== undefined);
@@ -445,11 +437,12 @@ export function AssistantSurface() {
         {hasMessages ? (
           <AssistantConversation
             conversation={conversation}
+            userName={userName}
             pending={pending}
             onNavigate={navigateToSurface}
           />
         ) : (
-          <AssistantHero onPrompt={send} />
+          <AssistantHero onPrompt={send} userName={userName} />
         )}
         <PendingApprovalsPanel
           items={pendingApprovals}
@@ -610,18 +603,8 @@ interface VirtualizedThreadListProps {
   readonly onRename: (thread: AssistantThread) => void;
   readonly onDelete: (thread: AssistantThread) => void;
 }
-/**
- * ChatGPT-style virtualized thread list.
- *
- * The Pinned section is rendered eagerly (small, sticky-feeling). The Recent
- * section is grouped into date buckets (Today / Yesterday / Previous 7 Days /
- * Previous 30 Days / Month YYYY) and windowed via `useVirtualizer` so a
- * 10k-conversation history doesn't put 10k DOM rows on the page.
- *
- * Headers and rows share one virtualized index; the virtualizer measures each
- * element after mount so variable row heights (long titles wrap) lay out
- * correctly without us pre-computing sizes.
- */
+/** Pinned threads render eagerly; recent threads and date headers share a
+ * measured virtual list so long histories and wrapped titles stay bounded. */
 function VirtualizedThreadList({
   loading,
   errored,
@@ -951,9 +934,10 @@ function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProp
 }
 /* ------------------------------------------------------------------ hero -- */
 interface AssistantHeroProps {
+  readonly userName: string;
   readonly onPrompt: (prompt: string) => void;
 }
-function AssistantHero({ onPrompt }: AssistantHeroProps) {
+function AssistantHero({ onPrompt, userName }: AssistantHeroProps) {
   return (
     <div className="flex-1 overflow-y-auto [padding:48px_32px]">
       <div className="max-w-180 [margin:0_auto]">
@@ -961,7 +945,13 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
           <SparklesIcon size={28} />
         </div>
         <h1 className="[font-size:var(--text-display)] font-bold [letter-spacing:-0.02em] [margin:0_0_8px] [line-height:1.1]">
-          What can I help you with, <span className="text-primary">Alex</span>?
+          What can I help you with
+          {userName && (
+            <>
+              , <span className="text-primary">{userName}</span>
+            </>
+          )}
+          ?
         </h1>
         <p className="[font-size:var(--text-body-lg)] [color:var(--text-2)] [margin:0_0_32px]">
           {"Connected to Mail, Drive, and Chat. Ask about your workspace or pick a prompt below."}
@@ -1008,17 +998,22 @@ function AssistantHero({ onPrompt }: AssistantHeroProps) {
 }
 /* ---------------------------------------------------------- conversation -- */
 interface AssistantConversationProps {
+  readonly userName: string;
   readonly conversation: readonly AssistantChatMessage[];
   readonly pending: boolean;
   readonly onNavigate: (target: string) => void;
 }
-function AssistantConversation({ conversation, pending, onNavigate }: AssistantConversationProps) {
+function AssistantConversation({
+  conversation,
+  pending,
+  onNavigate,
+  userName,
+}: AssistantConversationProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingText = conversation
     .filter((message) => message.streaming === true)
     .map((message) => message.text)
     .join("");
-  // Total virtualized count = N messages + 1 disclaimer footer row.
   const totalRows = conversation.length + 1;
   const virtualizer = useVirtualizer({
     count: totalRows,
@@ -1071,7 +1066,11 @@ function AssistantConversation({ conversation, pending, onNavigate }: AssistantC
                   </span>
                 </div>
               ) : (
-                <ChatMessage message={message as AssistantChatMessage} onNavigate={onNavigate} />
+                <ChatMessage
+                  message={message as AssistantChatMessage}
+                  onNavigate={onNavigate}
+                  userName={userName}
+                />
               )}
             </div>
           );
@@ -1081,17 +1080,18 @@ function AssistantConversation({ conversation, pending, onNavigate }: AssistantC
   );
 }
 interface ChatMessageProps {
+  readonly userName: string;
   readonly message: AssistantChatMessage;
   readonly onNavigate: (target: string) => void;
 }
-function ChatMessage({ message, onNavigate }: ChatMessageProps) {
+function ChatMessage({ message, onNavigate, userName }: ChatMessageProps) {
   if (message.role === "user") {
     return (
       <div className="flex gap-3 mb-5 justify-end">
         <div className="[background:var(--accent-soft)] text-foreground [padding:10px_14px] [border-radius:12px] max-w-130 [font-size:var(--text-body-sm)] [line-height:1.55] [border:1px_solid_var(--accent-soft-border)] whitespace-pre-wrap">
           {message.text}
         </div>
-        <Avatar name={USER_NAME} size={28} />
+        <Avatar name={userName} size={28} />
       </div>
     );
   }

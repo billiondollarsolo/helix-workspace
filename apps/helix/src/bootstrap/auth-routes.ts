@@ -1,5 +1,7 @@
 import { fromNodeHeaders } from "better-auth/node";
 import { type FastifyInstance, type FastifyRequest } from "fastify";
+import type { SessionActorResolver } from "../api/actor.js";
+import { isRecord } from "../platform/util/json.js";
 import {
   type BetterAuthInstance,
   type BetterAuthSessionVerifier,
@@ -19,6 +21,7 @@ export function registerBetterAuthRoutes(
   domainIdentity?: Pick<PostgresDomainIdentityStore, "canonicalize">,
   recoveryCodes?: PostgresRecoveryCodeBroker,
   sessionVerifier?: BetterAuthSessionVerifier,
+  sessionActorResolver?: SessionActorResolver,
 ): void {
   if (auth === undefined) {
     return;
@@ -71,6 +74,23 @@ export function registerBetterAuthRoutes(
       }
       const response = await auth.handler(createBetterAuthRequest(request, requestBody));
       let body = response.body === null ? null : await response.text();
+      if (response.ok && path === "/api/auth/get-session" && request.tenant != null) {
+        const payload = jsonRecord(body);
+        if (isRecord(payload?.user)) {
+          const actor = await sessionActorResolver?.resolve(request);
+          if (actor?.type === "user" && actor.orgId === request.tenant.orgId) {
+            body = JSON.stringify({
+              ...payload,
+              user: {
+                ...payload.user,
+                name: actor.displayName,
+                actorId: actor.id,
+                orgId: actor.orgId,
+              },
+            });
+          }
+        }
+      }
       if (
         response.ok &&
         recoveryCodes !== undefined &&

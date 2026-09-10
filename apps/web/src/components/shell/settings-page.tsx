@@ -152,12 +152,12 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
             );
           })}
         </nav>
-        <main
+        <section
           aria-label={`${activeSection?.label ?? "Settings"} settings`}
           className="flex-1 overflow-y-auto [padding:24px_32px] max-w-180 min-w-0"
         >
           {ActiveSectionBody ? <ActiveSectionBody /> : null}
-        </main>
+        </section>
       </div>
     </div>
   );

@@ -9,6 +9,8 @@ import {
 /* Admin › People › Users — the workspace directory. */
 
 import { Avatar } from "@/components/ui/avatar";
+import { detailRowId, UserDetail } from "./user-detail";
+import { AdminUserProfileDialog } from "./user-profile-dialog";
 import { Button } from "@/components/ui/button";
 import {
   adminScopesOf,
@@ -115,10 +117,8 @@ export async function prefetchAdminDirectoryQuery(queryClient: AdminDirectoryRou
     .catch(() => undefined);
 }
 
-/* This directory uses the read-only admin users API. Provision accounts and
-   issue invitations through the deployment's provisioning flow. */
-const READ_ONLY_REASON =
-  "The admin users API is read-only in this build — it serves the directory but does not create, invite, or modify accounts from this page.";
+const ACCOUNT_ACTIONS_REASON =
+  "You can edit people’s profiles here. Adding accounts, inviting users, changing roles, and suspending accounts are unavailable on this page.";
 
 const ROLE_FILTERS = ["all", ...USER_ROLES] as const satisfies readonly RoleFilter[];
 const STATUS_FILTERS = ["all", "active", "suspended"] as const satisfies readonly StatusFilter[];
@@ -145,14 +145,6 @@ function actorTypeLabel(type: string): string {
   }
   const spaced = type.replace(/_/gu, " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
 }
 
 /** Copy-to-clipboard with a short "Copied" acknowledgement.
@@ -187,27 +179,6 @@ function useCopy() {
   return { copy, state };
 }
 
-function CopyButton({
-  label,
-  value,
-  copyKey,
-  copy,
-  state,
-}: {
-  label: string;
-  value: string;
-  copyKey: string;
-  copy: (key: string, value: string) => void;
-  state: { key: string; ok: boolean } | null;
-}) {
-  const active = state?.key === copyKey ? state : null;
-  return (
-    <Button type="button" size="xs" variant="outline" onClick={() => copy(copyKey, value)}>
-      <CopyIcon size={16} /> {active === null ? label : active.ok ? "Copied" : "Copy failed"}
-    </Button>
-  );
-}
-
 /* The expander opens a second row rather than a floating panel, so the detail
    stays inside the table it belongs to. `AdminTable` renders one `TableRow` per
    entry in `rows`, so the disclosure is modelled as its own row here. It has no
@@ -218,68 +189,6 @@ function CopyButton({
 type DirectoryRow =
   | { readonly kind: "user"; readonly user: DirectoryUser }
   | { readonly kind: "detail"; readonly user: DirectoryUser };
-
-function detailRowId(userId: string): string {
-  return `user-detail-${userId}`;
-}
-
-function UserDetail({
-  user,
-  copy,
-  copyState,
-}: {
-  readonly user: DirectoryUser;
-  readonly copy: (key: string, value: string) => void;
-  readonly copyState: { key: string; ok: boolean } | null;
-}) {
-  return (
-    <div
-      id={detailRowId(user.id)}
-      className="grid gap-2 py-2 pl-7 whitespace-normal [font-size:var(--text-meta)]"
-    >
-      <div className="row flex-wrap items-center gap-2">
-        <span className="text-[var(--text-3)]">Actor ID</span>
-        <code className="mono">{user.id}</code>
-        <CopyButton
-          label="Copy ID"
-          value={user.id}
-          copyKey={`id-${user.id}`}
-          copy={copy}
-          state={copyState}
-        />
-        {user.email === null ? null : (
-          <CopyButton
-            label="Copy email"
-            value={user.email}
-            copyKey={`email-${user.id}`}
-            copy={copy}
-            state={copyState}
-          />
-        )}
-      </div>
-      <div>
-        <span className="text-[var(--text-3)]">Admin scopes </span>
-        {user.adminScopes.length === 0 ? (
-          <span className="text-[var(--text-2)]">
-            None — this account reaches no admin surface.
-          </span>
-        ) : (
-          <span className="row mt-1 flex-wrap gap-1">
-            {user.adminScopes.map((scope) => (
-              <span key={scope} className="chip mono">
-                {scope}
-              </span>
-            ))}
-          </span>
-        )}
-      </div>
-      <div className="text-[var(--text-2)]">
-        Added {formatDate(user.createdAt)}
-        {user.disabledAt === null ? "" : ` · Suspended ${formatDate(user.disabledAt)}`}
-      </div>
-    </div>
-  );
-}
 
 /** CSV of what is on screen. Pure client-side over rows already fetched — the
  *  one export this page can honestly offer, and the counterpart to the Import
@@ -356,6 +265,8 @@ export function AdminUsers() {
   const statusFilter = resolveClosedSearchParam(search.status, STATUS_FILTERS, "all");
   const expanded = search.user ?? null;
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [editingUser, setEditingUser] = useState<DirectoryUser | null>(null);
+  const closeProfile = useCallback(() => setEditingUser(null), []);
   const { copy, state: copyState } = useCopy();
 
   /* The text box is now a server request, so every keystroke would be a round
@@ -645,6 +556,23 @@ export function AdminUsers() {
         ),
     },
     {
+      id: "profile",
+      header: "Profile",
+      width: "110px",
+      cell: (row) =>
+        row.kind === "user" && row.user.actorType === "user" ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            aria-label={`Edit profile for ${row.user.name}`}
+            onClick={() => setEditingUser(row.user)}
+          >
+            Edit profile
+          </Button>
+        ) : null,
+    },
+    {
       id: "expander",
       header: "Details",
       headerHidden: true,
@@ -675,6 +603,14 @@ export function AdminUsers() {
 
   return (
     <PageScroll>
+      {editingUser ? (
+        <AdminUserProfileDialog
+          key={editingUser.id}
+          actorId={editingUser.id}
+          name={editingUser.name}
+          onClose={closeProfile}
+        />
+      ) : null}
       <PageHeading
         title="Users"
         subtitle="Every actor in this workspace — people, agents, and service identities."
@@ -849,7 +785,7 @@ export function AdminUsers() {
                 size="sm"
                 variant="outline"
                 disabled
-                title={READ_ONLY_REASON}
+                title={ACCOUNT_ACTIONS_REASON}
                 aria-describedby="users-read-only-reason"
               >
                 Change role
@@ -859,7 +795,7 @@ export function AdminUsers() {
                 size="sm"
                 variant="destructive"
                 disabled
-                title={READ_ONLY_REASON}
+                title={ACCOUNT_ACTIONS_REASON}
                 aria-describedby="users-read-only-reason"
               >
                 Suspend
@@ -868,7 +804,7 @@ export function AdminUsers() {
                 id="users-read-only-reason"
                 className="text-[var(--text-3)] [font-size:var(--text-caption)]"
               >
-                {READ_ONLY_REASON}
+                {ACCOUNT_ACTIONS_REASON}
               </span>
             </div>
           </details>
@@ -941,7 +877,7 @@ export function AdminUsers() {
             size="sm"
             variant="outline"
             disabled
-            title={READ_ONLY_REASON}
+            title={ACCOUNT_ACTIONS_REASON}
             aria-describedby="users-add-reason"
           >
             <UploadIcon size={16} /> Import CSV
@@ -951,7 +887,7 @@ export function AdminUsers() {
             size="sm"
             variant="outline"
             disabled
-            title={READ_ONLY_REASON}
+            title={ACCOUNT_ACTIONS_REASON}
             aria-describedby="users-add-reason"
           >
             <PlusIcon size={16} /> Invite users
@@ -960,7 +896,7 @@ export function AdminUsers() {
             id="users-add-reason"
             className="text-[var(--text-3)] [font-size:var(--text-caption)]"
           >
-            {READ_ONLY_REASON}
+            {ACCOUNT_ACTIONS_REASON}
           </span>
         </div>
       </details>

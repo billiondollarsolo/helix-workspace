@@ -1,5 +1,5 @@
 import { queryOptions } from "@tanstack/react-query";
-import { getSessionUser } from "@/lib/auth";
+import { sessionUserQueryOptions } from "@/lib/auth";
 import {
   listDrive,
   listDriveAccess,
@@ -192,13 +192,8 @@ export function applyDriveScope(
 /** Query for the current session actor id — used for scope filtering + owner labels. */
 export function driveActorQueryOptions() {
   return queryOptions({
-    queryKey: ["drive", "actor"],
-    queryFn: async (): Promise<{ readonly actorId: string | null; readonly name: string }> => {
-      const user = await getSessionUser();
-      return { actorId: user?.actorId ?? null, name: user?.name ?? "You" };
-    },
-    staleTime: 5 * 60_000,
-    throwOnError: false,
+    ...sessionUserQueryOptions(),
+    select: (user) => ({ actorId: user?.actorId ?? null, name: user?.name.trim() || "You" }),
   });
 }
 

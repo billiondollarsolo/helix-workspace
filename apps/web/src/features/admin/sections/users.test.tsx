@@ -1,16 +1,8 @@
 // @vitest-environment jsdom
 
-/* Admin › People › Users — directory projection and controls.
- *
- * The console-wide suite in `admin-console.test.tsx` covers the section's
- * place in the shell. These cover the section's own contract: the role
- * derivation (which the platform authorizes per dotted scope, not by an exact
- * `admin` match), selection identity, and the honesty of the controls.
- *
- * The fetch double below answers `query`, `type`, `includeDisabled` and the
- * cursor the way the route does, because search is now the server's job: a test
- * whose double ignored those params would pass while the directory searched one
- * page and told a 10k-actor workspace that nobody matched. */
+/* Users directory contracts: dotted-scope roles, selection, and controls.
+ * The fetch double honors query, type, includeDisabled, and cursor so server
+ * search is exercised across the full directory, not just the loaded page. */
 
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -364,6 +356,7 @@ describe("AdminUsers", () => {
       "Role",
       "Type",
       "Status",
+      "Profile",
       "Details",
     ]);
     expect(tableRows()).toHaveLength(2);
@@ -583,11 +576,11 @@ describe("AdminUsers", () => {
     expect(changeRole.disabled).toBe(true);
     expect(suspend.disabled).toBe(true);
     for (const control of [changeRole, suspend]) {
-      expect(control.getAttribute("title")).toContain("read-only");
+      expect(control.getAttribute("title")).toContain("unavailable on this page");
       const describedBy = control.getAttribute("aria-describedby");
       expect(describedBy).not.toBeNull();
       expect(container.querySelector(`#${String(describedBy)}`)?.textContent).toContain(
-        "read-only",
+        "unavailable on this page",
       );
     }
 
@@ -633,10 +626,10 @@ describe("AdminUsers", () => {
     for (const label of ["Import CSV", "Invite users"]) {
       const control = button(label);
       expect(control.disabled).toBe(true);
-      expect(control.getAttribute("title")).toContain("read-only");
+      expect(control.getAttribute("title")).toContain("unavailable on this page");
       const describedBy = control.getAttribute("aria-describedby");
       expect(container.querySelector(`#${String(describedBy)}`)?.textContent).toContain(
-        "read-only",
+        "unavailable on this page",
       );
     }
   });

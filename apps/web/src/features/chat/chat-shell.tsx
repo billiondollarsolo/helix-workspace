@@ -1,4 +1,5 @@
 import { SurfaceFrame } from "@/components/shell";
+import { sessionUserQueryOptions } from "@/lib/auth";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { MessageCircle as ChatIcon } from "lucide-react";
@@ -44,6 +45,7 @@ import {
 
 export function ChatShell() {
   const queryClient = useQueryClient();
+  const sessionUser = useQuery(sessionUserQueryOptions()).data;
   const navigate = useNavigate();
   const urlSearch: Partial<{ room: string; thread: string; tab: InfoTab }> = useSearch({
     strict: false,
@@ -108,8 +110,8 @@ export function ChatShell() {
       if (actorId === null) {
         return "System";
       }
-      if (actorId === selfActorId) {
-        return "You";
+      if (actorId === sessionUser?.actorId && sessionUser.name.trim()) {
+        return sessionUser.name.trim();
       }
       const member = (activeRoom?.members ?? []).find((m) => m.actorId === actorId);
       if (member?.displayName != null && member.displayName.length > 0) {
@@ -119,9 +121,9 @@ export function ChatShell() {
       if (present?.displayName != null && present.displayName.length > 0) {
         return present.displayName;
       }
-      return `User ${actorId.slice(0, 6)}`;
+      return actorId === selfActorId ? "You" : `User ${actorId.slice(0, 6)}`;
     },
-    [activeRoom, selfActorId, realtime.presence],
+    [activeRoom, selfActorId, realtime.presence, sessionUser],
   );
 
   // History (infinite pages, each newest-first) + live (WS) + pending, oldest-first.

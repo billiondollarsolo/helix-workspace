@@ -12,6 +12,14 @@ import type {
   AssistantTurnResponseWithPendingConfirmations,
 } from "./api";
 
+import { sessionQueryKeys, type SessionUser } from "@/lib/auth";
+
+const SESSION_USER: SessionUser = {
+  id: "user-1",
+  actorId: "actor-1",
+  name: "Léa Nguyen",
+  email: "lea@example.test",
+};
 const navigateMock = vi.fn();
 
 const streamAssistantChatMock =
@@ -147,6 +155,7 @@ describe("AssistantSurface", () => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 0 } },
     });
+    queryClient.setQueryData(sessionQueryKeys.current, SESSION_USER);
   });
 
   afterEach(() => {
@@ -154,6 +163,7 @@ describe("AssistantSurface", () => {
       root.unmount();
     });
     container.remove();
+    queryClient.clear();
     vi.useRealTimers();
     vi.clearAllMocks();
   });
@@ -213,6 +223,31 @@ describe("AssistantSurface", () => {
     );
   }
 
+  it("greets the current user and follows updates to the shared session", async () => {
+    render();
+    await flush();
+    expect(container.querySelector("h1")?.textContent).toBe(
+      "What can I help you with, Léa Nguyen?",
+    );
+    act(() => {
+      queryClient.setQueryData(sessionQueryKeys.current, { ...SESSION_USER, name: "Priya Shah" });
+    });
+    await flush();
+    expect(container.querySelector("h1")?.textContent).toBe(
+      "What can I help you with, Priya Shah?",
+    );
+  });
+
+  it.each([null, { ...SESSION_USER, name: "   " }])(
+    "uses a generic greeting without a name",
+    async (user) => {
+      queryClient.setQueryData(sessionQueryKeys.current, user);
+      render();
+      await flush();
+      expect(container.querySelector("h1")?.textContent).toBe("What can I help you with?");
+    },
+  );
+
   it("renders pinned and recent threads from assistant.conversations.list", async () => {
     render();
     await flush();
@@ -262,10 +297,10 @@ describe("AssistantSurface", () => {
   it("streams an assistant reply and hydrates persisted history from the turn", async () => {
     streamAssistantChatMock.mockImplementation((_input, callbacks) => {
       callbacks.onDelta("Hello ");
-      callbacks.onDelta("Alex.");
+      callbacks.onDelta("there.");
       return Promise.resolve({
         conversation: { id: "33333333-3333-4333-8333-333333333333" },
-        response: { content: "Hello Alex." },
+        response: { content: "Hello there." },
         messages: [
           {
             id: "m1",
@@ -275,7 +310,7 @@ describe("AssistantSurface", () => {
           {
             id: "m2",
             role: "assistant",
-            content: "Hello Alex.",
+            content: "Hello there.",
           },
         ],
       });
@@ -298,7 +333,17 @@ describe("AssistantSurface", () => {
     );
     const text = container.textContent ?? "";
     expect(text).toContain("hi there");
-    expect(text).toContain("Hello Alex.");
+    expect(text).toContain("Hello there.");
+    expect(container.querySelector('[role="img"][aria-label="Léa Nguyen"]')?.textContent).toBe(
+      "LN",
+    );
+    act(() => {
+      queryClient.setQueryData(sessionQueryKeys.current, { ...SESSION_USER, name: "Priya Shah" });
+    });
+    await flush();
+    expect(container.querySelector('[role="img"][aria-label="Priya Shah"]')?.textContent).toBe(
+      "PS",
+    );
   });
 
   it("reopens a past conversation and continues it on the next turn", async () => {

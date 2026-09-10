@@ -66,7 +66,27 @@ function coreAppsAdmin() {
  *  renders as an empty or unavailable state rather than crashing. */
 const FIXTURES = new Map([
   ["/v1/api/auth/csrf-token", { csrfToken: "a11y-csrf-token" }],
-  ["/v1/api/auth/get-session", { user: AUDIT_ACTOR, session: { id: "a11y-session" } }],
+  [
+    "/v1/api/auth/get-session",
+    {
+      user: { ...AUDIT_ACTOR, actorId: AUDIT_ACTOR.id, name: AUDIT_ACTOR.displayName },
+      session: { id: "a11y-session" },
+    },
+  ],
+  [
+    "/v1/api/profile",
+    {
+      profile: {
+        actorId: AUDIT_ACTOR.id,
+        orgId: AUDIT_ACTOR.orgId,
+        email: AUDIT_ACTOR.email,
+        displayName: AUDIT_ACTOR.displayName,
+        pronouns: "they/them",
+        jobTitle: "Workspace administrator",
+        about: "Keeping the workspace accessible.",
+      },
+    },
+  ],
   ["/v1/api/core-apps", coreAppsShell()],
   ["/v1/api/admin/core-apps", coreAppsAdmin()],
   ["/v1/api/admin/users", { users: [AUDIT_ACTOR], nextCursor: null }],

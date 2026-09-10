@@ -7,6 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CalendarShell } from "./calendar-shell";
 import { defaultCalendarRouteState, type CalendarRouteState } from "./queries";
 import type { CalendarApiEvent } from "./api";
+import { sessionQueryKeys } from "@/lib/auth";
+const SESSION_USER = {
+  id: "user-1",
+  actorId: "actor-1",
+  name: "Rae Gomez",
+  email: "rae@example.test",
+};
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -50,6 +57,7 @@ describe("CalendarShell", () => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: 0 } },
     });
+    queryClient.setQueryData(sessionQueryKeys.current, SESSION_USER);
   });
 
   afterEach(() => {
@@ -57,6 +65,7 @@ describe("CalendarShell", () => {
       root.unmount();
     });
     container.remove();
+    queryClient.clear();
     vi.unstubAllGlobals();
   });
 
@@ -178,13 +187,44 @@ describe("CalendarShell", () => {
     await flush();
     const popover = document.querySelector("[data-calendar-popover]");
     expect(popover).not.toBeNull();
-    expect(popover?.textContent).toContain("attendees");
+    expect(popover?.textContent).toContain("1 attendees");
+    expect(popover?.querySelector('[aria-label="Rae Gomez"]')).toBeNull();
+    expect(popover?.querySelector('[aria-label="You"]')).toBeNull();
     expect(
       popover?.querySelector<HTMLAnchorElement>('a[href="https://meet.helix.test/standup"]'),
     ).toMatchObject({ target: "_blank", rel: "noopener noreferrer" });
     expect(popover?.querySelector<HTMLAnchorElement>('a[aria-label="Email attendees"]')?.href).toBe(
       "mailto:sam%40helix.test",
     );
+  });
+
+  it("uses the shared session name for an actual attendee and follows profile updates", async () => {
+    const event = backendEvent("Planning");
+    mockEvents([
+      {
+        ...event,
+        attendees: [
+          {
+            ...event.attendees[0],
+            actorId: SESSION_USER.actorId,
+            email: SESSION_USER.email,
+            displayName: "Old name",
+            responseStatus: "accepted",
+          },
+        ],
+      },
+    ]);
+    render({ ...defaultCalendarRouteState, eventId: event.id });
+    await flush();
+    const popover = document.querySelector("[data-calendar-popover]");
+    expect(popover?.querySelector('[role="img"][aria-label="Rae Gomez"]')?.textContent).toBe("RG");
+    expect(popover?.textContent).toContain("1 attendees");
+    act(() => {
+      queryClient.setQueryData(sessionQueryKeys.current, { ...SESSION_USER, name: "Nora Singh" });
+    });
+    await flush();
+    expect(popover?.querySelector('[role="img"][aria-label="Nora Singh"]')?.textContent).toBe("NS");
+    expect(popover?.textContent).not.toContain("Old name");
   });
 
   it("closes the popover when Escape is pressed", async () => {

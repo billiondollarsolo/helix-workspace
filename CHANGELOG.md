@@ -6,6 +6,13 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Local startup supports rrule's CommonJS export and existing Meilisearch indexes;
+  mail retention uses the database clock for its default cutoff.
+- Fresh demo setup supplies current identity, Calendar, Chat, and Mail delivery
+  fields, creates the tenant before its users, and verifies the actual login handler.
+
 ## [1.0.0-rc.1] - 2026-09-10
 
 ### Added

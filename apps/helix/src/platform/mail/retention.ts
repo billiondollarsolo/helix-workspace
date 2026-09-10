@@ -10,7 +10,8 @@ export interface MailTrashPurgeResult {
 export class PostgresMailTrashPurger {
   constructor(private readonly sql: postgres.Sql) {}
 
-  async runBatch(limit = 100, dueBefore = new Date()): Promise<MailTrashPurgeResult> {
+  async runBatch(limit = 100, dueBefore?: Date): Promise<MailTrashPurgeResult> {
+    // Use the database clock by default; the journal rejects future cutoffs.
     const rows = await this.sql<
       {
         readonly purged_mailboxes: number;
@@ -18,11 +19,13 @@ export class PostgresMailTrashPurger {
         readonly queued_objects: number;
       }[]
     >`select * from helix_purge_expired_mail_trash(
-      ${Math.min(Math.max(Math.trunc(limit), 1), 500)}, ${dueBefore}
+      ${Math.min(Math.max(Math.trunc(limit), 1), 500)},
+      coalesce(${dueBefore ?? null}::timestamptz, statement_timestamp())
     )`;
     const journal = await this.sql<{ readonly purged: number }[]>`
       select helix_purge_expired_mail_journal(
-        ${Math.min(Math.max(Math.trunc(limit), 1), 500)}, ${dueBefore}
+        ${Math.min(Math.max(Math.trunc(limit), 1), 500)},
+        coalesce(${dueBefore ?? null}::timestamptz, statement_timestamp())
       ) as purged
     `;
     const row = rows[0];

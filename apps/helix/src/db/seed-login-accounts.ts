@@ -241,13 +241,14 @@ async function upsertCredentialAccount(
 ): Promise<void> {
   await sql`
     insert into account (
-      id, "userId", "accountId", "providerId", password, "createdAt", "updatedAt"
+      id, "userId", "accountId", "providerId", issuer, password, "createdAt", "updatedAt"
     )
     values (
       ${`${userId}-credential`},
       ${userId},
       ${userId},
       'credential',
+      'local:credential',
       ${passwordHash},
       now(),
       now()

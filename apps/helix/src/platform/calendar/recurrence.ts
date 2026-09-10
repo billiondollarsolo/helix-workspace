@@ -6,7 +6,7 @@ import {
 } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
 import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
-import { RRule, RRuleSet } from "rrule";
+import rrule, { type RRuleSet } from "rrule";
 import { nonEmptyString as stringValue } from "../util/strings.js";
 import type { CalendarEventRecord } from "./types.js";
 
@@ -291,7 +291,7 @@ interface RecurrenceSet {
 }
 
 function recurrenceSet(event: RecurringEvent): RecurrenceSet {
-  const set = new RRuleSet(true);
+  const set = new rrule.RRuleSet(true);
   const timeSemantics = event.allDay ? "all_day" : (event.timeSemantics ?? "zoned");
   const timezone = canonicalTimeZone(event.timezone ?? "UTC");
   const intentZone = timeSemantics === "zoned" ? timezone : "UTC";
@@ -306,13 +306,13 @@ function recurrenceSet(event: RecurringEvent): RecurrenceSet {
       throw new CalendarRecurrenceError("recurrenceRule must contain one RRULE value.");
     }
     try {
-      const parsed = RRule.parseString(event.recurrenceRule);
+      const parsed = rrule.RRule.parseString(event.recurrenceRule);
       if (parsed.freq === undefined) throw new Error("FREQ is required");
       if ((parsed.count ?? 0) > maxOccurrences || (parsed.interval ?? 1) > maxOccurrences) {
         throw new Error("COUNT or INTERVAL exceeds the supported bound");
       }
       set.rrule(
-        new RRule(
+        new rrule.RRule(
           {
             ...parsed,
             dtstart: recurrenceStart,

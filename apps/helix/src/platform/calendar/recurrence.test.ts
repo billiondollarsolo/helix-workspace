@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import {
   CalendarRecurrenceError,
   expandCalendarEventOccurrences,
@@ -6,6 +7,21 @@ import {
 } from "./recurrence.js";
 
 describe("bounded RFC 5545 recurrence", () => {
+  it("loads through native Node ESM without the test runner's CommonJS interop", () => {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        `await import(${JSON.stringify(new URL("./recurrence.ts", import.meta.url).href)})`,
+      ],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("supports yearly ordinal weekdays and preserves event duration", () => {
     const occurrences = expandCalendarEventOccurrences(
       event("FREQ=YEARLY;BYMONTH=3;BYDAY=2SU;COUNT=3"),

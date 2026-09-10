@@ -621,7 +621,7 @@ async function verifyBetterAuthSignIn(
   });
   try {
     const response = await runtime.auth.handler(
-      new Request(`${baseUrl}/v1/api/auth/sign-in/email`, {
+      new Request(`${baseUrl}/api/auth/sign-in/email`, {
         method: "POST",
         headers: {
           "content-type": "application/json",

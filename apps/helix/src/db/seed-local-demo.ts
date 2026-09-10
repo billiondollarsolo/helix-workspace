@@ -1,4 +1,5 @@
 import { hashPassword } from "better-auth/crypto";
+import { instantToLocalDateTime } from "@helix/contracts";
 import type { StorageClient } from "@helix/sdk-types";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
@@ -173,12 +174,12 @@ export async function seedLocalDemo(
   const timeline = createDemoTimeline(options.anchorDate);
   const storage = options.storage ?? createLocalDemoStorageFromEnv();
   const volumeMailMessages = normalizeVolumeMailCount(options.volumeSearch?.mailMessages);
+  await withTenantPostgresContext(sql, { orgId }, (tx) => seedOrg(tx, orgId));
   const oauth = await seedLocalOAuth(sql, { orgId, actorId, email, displayName });
   const passwordHash = await hashPassword(password);
   await storage?.ensureBucket?.();
 
   await withTenantPostgresContext(sql, { orgId }, async (tx) => {
-    await seedOrg(tx, orgId);
     await seedActors(tx, orgId, actorId, email, displayName);
     await clearDemoContent(tx, orgId);
     await seedBetterAuthUser(tx, orgId, actorId, email, displayName, passwordHash);
@@ -188,6 +189,13 @@ export async function seedLocalDemo(
     if (volumeMailMessages > 0) {
       await seedVolumeMail(tx, orgId, actorId, email, volumeMailMessages, timeline);
     }
+    await tx`
+      insert into mail_message_deliveries (org_id, message_id, actor_id)
+      select org_id, id, ${actorId} from messages
+      where org_id = ${orgId} and kind = 'mail'
+        and metadata->>'source' in (${LOCAL_DEMO_SOURCE}, ${LOCAL_DEMO_VOLUME_SOURCE})
+      on conflict (message_id, actor_id) do nothing
+    `;
     await seedChat(tx, orgId, actorId, timeline);
   });
 
@@ -210,14 +218,8 @@ async function seedOrg(sql: SeedSql, orgId: string): Promise<void> {
   await sql`
     insert into orgs (id, slug, display_name, status, tier, region, feature_flags, metadata)
     values (
-      ${orgId},
-      'local-demo',
-      'Local Demo Workspace',
-      'active',
-      'personal',
-      'local',
-      ${json(sql, { b2b_sharing: true })},
-      ${json(sql, { source: LOCAL_DEMO_SOURCE })}
+      ${orgId}, 'local-demo', 'Local Demo Workspace', 'active', 'personal', 'local',
+      ${json(sql, { b2b_sharing: true })}, ${json(sql, { source: LOCAL_DEMO_SOURCE })}
     )
     on conflict (id) do update
     set
@@ -314,6 +316,7 @@ async function clearDemoContent(sql: SeedSql, orgId: string): Promise<void> {
       )
   `;
   await sql`delete from message_attachments where message_id = any(${sql.array([...demoMessages])}::uuid[])`;
+  await sql`delete from mail_attachment_ingestions where org_id = ${orgId} and object_id = any(${sql.array([...demoObjects])}::uuid[])`;
   await sql`delete from mail_thread_state where thread_id = any(${sql.array([...demoThreads])}::uuid[])`;
   await sql`delete from chat_read_receipts where thread_id = ${demoIds.chatRoomLaunch}`;
   await sql`delete from messages where id = any(${sql.array([...demoMessages])}::uuid[])`;
@@ -382,22 +385,11 @@ async function seedBetterAuthUser(
   const userId = rows[0]?.id ?? defaultUserId;
   await sql`
     insert into account (
-      id,
-      "userId",
-      "accountId",
-      "providerId",
-      password,
-      "createdAt",
-      "updatedAt"
+      id, "userId", "accountId", "providerId", issuer, password, "createdAt", "updatedAt"
     )
     values (
-      ${`${userId}-credential`},
-      ${userId},
-      ${userId},
-      'credential',
-      ${passwordHash},
-      now(),
-      now()
+      ${`${userId}-credential`}, ${userId}, ${userId},
+      'credential', 'local:credential', ${passwordHash}, now(), now()
     )
     on conflict ("providerId", "accountId") do update
     set
@@ -604,24 +596,15 @@ async function seedCalendarEvent(
   await sql`
     insert into cal_events (
       id, org_id, calendar_id, thread_id, uid, title, description, location, starts_at, ends_at,
-      timezone, all_day, status, organizer_actor_id, organizer_email, metadata
+      timezone, starts_local, ends_local, all_day, status, organizer_actor_id, organizer_email, metadata
     )
     values (
-      ${input.eventId},
-      ${input.orgId},
-      ${demoIds.calendarPrimary},
-      ${input.threadId},
-      ${input.uid},
-      ${input.title},
-      ${input.description},
-      ${input.location},
-      ${input.startsAt},
-      ${input.endsAt},
-      'America/New_York',
-      false,
-      'confirmed',
-      ${input.actorId},
-      ${input.actorEmail},
+      ${input.eventId}, ${input.orgId}, ${demoIds.calendarPrimary}, ${input.threadId},
+      ${input.uid}, ${input.title}, ${input.description}, ${input.location},
+      ${input.startsAt}, ${input.endsAt}, 'America/New_York',
+      ${instantToLocalDateTime(input.startsAt, "America/New_York")},
+      ${instantToLocalDateTime(input.endsAt, "America/New_York")},
+      false, 'confirmed', ${input.actorId}, ${input.actorEmail},
       ${json(sql, { source: LOCAL_DEMO_SOURCE, visibility: "default", classification: "standard" })}
     )
   `;
@@ -805,6 +788,21 @@ async function seedMail(
       ${json(sql, { source: LOCAL_DEMO_SOURCE, filename: "order-summary.txt", contentId: null })}
     )
   `;
+  // Synthetic fixture state for this generated text, never live scanner evidence.
+  await sql`
+    insert into mail_attachment_ingestions (
+      org_id, owner_actor_id, object_id, status, storage_key, filename,
+      declared_mime_type, authoritative_mime_type, expected_byte_size, actual_byte_size,
+      expected_sha256, actual_sha256, scan_evidence, expires_at
+    )
+    values (
+      ${orgId}, ${actorId}, ${demoIds.mailAttachmentAmazon}, 'clean',
+      ${attachmentStorageKey}, 'order-summary.txt', 'text/plain', 'text/plain',
+      ${Buffer.byteLength(attachmentBody, "utf8")}, ${Buffer.byteLength(attachmentBody, "utf8")},
+      ${sha(attachmentBody)}, ${sha(attachmentBody)},
+      ${json(sql, { scanned: true, source: LOCAL_DEMO_SOURCE, synthetic: true })}, 'infinity'
+    )
+  `;
   await sql`
     insert into message_attachments (org_id, message_id, object_id, disposition)
     values (${orgId}, ${demoIds.mailAmazonMessage}, ${demoIds.mailAttachmentAmazon}, 'attachment')
@@ -979,22 +977,18 @@ async function seedChat(
   await sql`
     insert into threads (id, org_id, kind, subject, created_by_actor_id, metadata)
     values (
-      ${demoIds.chatRoomLaunch},
-      ${orgId},
-      'chat_room',
-      'Helix launch room',
-      ${actorId},
+      ${demoIds.chatRoomLaunch}, ${orgId}, 'chat_room', 'Helix launch room', ${actorId},
       ${json(sql, { source: LOCAL_DEMO_SOURCE })}
     )
   `;
   await sql`
-    insert into chat_room_settings (thread_id, org_id, name, topic, is_private, metadata)
+    insert into chat_room_settings (thread_id, org_id, name, topic, privacy, metadata)
     values (
       ${demoIds.chatRoomLaunch},
       ${orgId},
       'Helix launch room',
       'Coordinate Mail, Drive and Calendar launch testing.',
-      false,
+      'restricted',
       ${json(sql, { source: LOCAL_DEMO_SOURCE, color: "blue" })}
     )
   `;

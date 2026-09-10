@@ -282,13 +282,14 @@ export class PostgresSignupVerifiedIdentityStore implements SignupVerifiedIdenti
     `;
       await sql`
       insert into account (
-        id, "userId", "accountId", "providerId", password, "createdAt", "updatedAt"
+        id, "userId", "accountId", "providerId", issuer, password, "createdAt", "updatedAt"
       )
       values (
         ${`${betterAuthUserId}-credential`},
         ${betterAuthUserId},
         ${betterAuthUserId},
         'credential',
+        'local:credential',
         ${input.passwordHash},
         now(),
         now()

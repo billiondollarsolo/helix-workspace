@@ -40,15 +40,17 @@ describe("seedLocalDemo", () => {
       },
     });
     expect(result.oauth.sampleTokenCommand).toContain("/v1/oauth/token");
-    expect(recording.beginCalls).toBe(2);
+    expect(recording.beginCalls).toBe(3);
 
     const sqlText = recording.calls.map((call) => call.text).join("\n");
     expect(sqlText).toContain("insert into orgs");
+    expect(sqlText.indexOf("insert into orgs")).toBeLessThan(sqlText.indexOf("insert into actors"));
     expect(recording.calls.some((call) => call.values.includes(DEFAULT_LOCAL_OAUTH_ORG_ID))).toBe(
       true,
     );
     expect(sqlText).toContain('insert into "user"');
     expect(sqlText).toContain("insert into account");
+    expect(sqlText).toContain("'local:credential'");
     expect(sqlText).toContain("credential");
     expect(sqlText).toContain("insert into messages");
     expect(sqlText).toContain("insert into drive_folders");

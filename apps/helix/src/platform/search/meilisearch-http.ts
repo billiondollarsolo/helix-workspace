@@ -1,6 +1,7 @@
 import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 import type { JsonObject } from "@helix/sdk-types";
 import type { IndexDocument } from "./types.js";
+import { MeilisearchTaskError } from "./meilisearch.js";
 import type {
   MeilisearchClientLike,
   MeilisearchIndexLike,
@@ -84,7 +85,12 @@ class MeilisearchHttpClient implements MeilisearchClientLike {
       const status = taskStatus(task);
       if (status === "succeeded") return;
       if (status === "failed" || status === "canceled") {
-        throw new Error(`Meilisearch task ${String(uid)} ${status}`);
+        const error = isObject(task) && isObject(task.error) ? task.error : undefined;
+        throw new MeilisearchTaskError(
+          uid,
+          status,
+          typeof error?.code === "string" ? error.code : undefined,
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, this.#taskPollIntervalMs));
     }

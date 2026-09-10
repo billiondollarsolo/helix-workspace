@@ -20,6 +20,17 @@ export interface MeilisearchClientLike {
   swapIndexes?: (indexes: readonly [string, string]) => Promise<unknown>;
 }
 
+export class MeilisearchTaskError extends Error {
+  constructor(
+    readonly uid: number,
+    readonly status: "failed" | "canceled",
+    readonly code: string | undefined,
+  ) {
+    super(`Meilisearch task ${String(uid)} ${status}`);
+    this.name = "MeilisearchTaskError";
+  }
+}
+
 export interface MeilisearchIndexLike {
   addDocuments(
     documents: readonly IndexDocument[],
@@ -73,9 +84,19 @@ export class MeilisearchSearchEngine implements SearchEngine {
   }
 
   async ensureIndex(): Promise<void> {
-    await this.wait(
-      await this.client.createIndex?.(this.indexUid, { primaryKey: this.primaryKey }),
-    );
+    try {
+      await this.wait(
+        await this.client.createIndex?.(this.indexUid, { primaryKey: this.primaryKey }),
+      );
+    } catch (error) {
+      if (
+        !(error instanceof MeilisearchTaskError) ||
+        error.status !== "failed" ||
+        error.code !== "index_already_exists"
+      ) {
+        throw error;
+      }
+    }
     await this.wait(
       await this.indexHandle.updateSettings?.({
         filterableAttributes: ["type", "attributes.orgId", "attributes.allowedActorIds"],

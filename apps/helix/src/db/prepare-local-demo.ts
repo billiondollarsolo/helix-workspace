@@ -136,7 +136,7 @@ export async function prepareLocalDemo(
     ...(options.anchorDate === undefined ? {} : { anchorDate: options.anchorDate }),
     volumeSearch: options.volumeSearch ? { mailMessages: options.volumeMailMessages } : undefined,
   });
-  if (options.requireStorage && seed.storageObjects < 5) {
+  if (options.requireStorage && seed.storageObjects < 3) {
     throw new Error(
       "Local demo preparation requires storage, but no RustFS/S3 configuration was found",
     );

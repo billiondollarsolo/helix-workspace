@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { MailTrashPurgeWorker } from "./retention.js";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
+import { MailTrashPurgeWorker, PostgresMailTrashPurger } from "./retention.js";
 
 describe("MailTrashPurgeWorker", () => {
   it("coalesces overlapping ticks into one bounded singleton run", async () => {
@@ -39,5 +40,25 @@ describe("MailTrashPurgeWorker", () => {
       queuedObjects: 2,
       purgedJournalEntries: 3,
     });
+  });
+});
+
+describe("PostgresMailTrashPurger", () => {
+  it("uses the database clock by default and preserves explicit cutoffs for database validation", async () => {
+    const recording = createRecordingSql();
+    const purger = new PostgresMailTrashPurger(recording.sql);
+    await purger.runBatch();
+    expect(recording.calls).toHaveLength(2);
+    for (const query of recording.calls) {
+      expect(query.text).toContain("coalesce(?::timestamptz, statement_timestamp())");
+      expect(query.values).toEqual([100, null]);
+    }
+
+    const explicitCutoff = new Date("2099-01-01T00:00:00Z");
+    await purger.runBatch(600, explicitCutoff);
+    expect(recording.calls).toHaveLength(4);
+    for (const query of recording.calls.slice(2)) {
+      expect(query.values).toEqual([500, explicitCutoff]);
+    }
   });
 });

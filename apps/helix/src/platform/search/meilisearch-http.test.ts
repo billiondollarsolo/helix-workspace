@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createMeilisearchHttpClient, MeilisearchHttpError } from "./meilisearch-http.js";
+import { MeilisearchSearchEngine, MeilisearchTaskError } from "./meilisearch.js";
 
 describe("Meilisearch HTTP client", () => {
   it("maps client operations to Meilisearch HTTP endpoints", async () => {
@@ -139,6 +140,55 @@ describe("Meilisearch HTTP client", () => {
       "http://127.0.0.1:7799/tasks/7",
       "http://127.0.0.1:7799/tasks/8",
     ]);
+  });
+
+  it("configures an existing index after an asynchronous creation conflict", async () => {
+    const fetch = new FakeFetch([
+      response({ taskUid: 1 }),
+      response({ status: "failed", error: { code: "index_already_exists" } }),
+      response({ taskUid: 2 }),
+      response({ status: "succeeded" }),
+    ]);
+    const engine = new MeilisearchSearchEngine(
+      createMeilisearchHttpClient({ baseUrl: "http://127.0.0.1:7799", fetch: fetch.fetch }),
+      { indexUid: "helix_search" },
+    );
+
+    await expect(engine.ensureIndex()).resolves.toBeUndefined();
+    expect(fetch.calls[2]).toMatchObject({
+      method: "PATCH",
+      url: "http://127.0.0.1:7799/indexes/helix_search/settings",
+      body: {
+        filterableAttributes: ["type", "attributes.orgId", "attributes.allowedActorIds"],
+        searchableAttributes: ["title", "body"],
+      },
+    });
+    expect(fetch.calls[3]?.url).toBe("http://127.0.0.1:7799/tasks/2");
+  });
+
+  it.each([
+    { stage: "creation", status: "failed", code: "invalid_index_uid" },
+    { stage: "creation", status: "canceled", code: "index_already_exists" },
+    { stage: "settings", status: "failed", code: "index_already_exists" },
+  ])("preserves $stage task failures ($status, $code)", async ({ stage, status, code }) => {
+    const fetch = new FakeFetch([
+      response({ taskUid: 1 }),
+      ...(stage === "settings"
+        ? [response({ status: "succeeded" }), response({ taskUid: 2 })]
+        : []),
+      response({ status, error: { code } }),
+    ]);
+    const engine = new MeilisearchSearchEngine(
+      createMeilisearchHttpClient({ baseUrl: "http://127.0.0.1:7799", fetch: fetch.fetch }),
+      { indexUid: "helix_search" },
+    );
+
+    await expect(engine.ensureIndex()).rejects.toMatchObject({
+      name: MeilisearchTaskError.name,
+      uid: stage === "settings" ? 2 : 1,
+      status,
+      code,
+    });
   });
 });
 

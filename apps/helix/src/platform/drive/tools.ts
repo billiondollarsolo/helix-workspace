@@ -110,8 +110,9 @@ const listSchema = z.object({
   /** Filter by object kind. Defaults to 'file'. Pass 'recording' for the
    *  Recordings drive scope (meeting recording artifacts). */
   kind: z.enum(["file", "recording"]).optional(),
-  /** Return all visible files across folders for a flat Drive listing. */
+  /** Flat listing, or My Drive (`owned`) / Shared with me (`shared`) roots. */
   acrossFolders: z.boolean().optional(),
+  view: z.enum(["owned", "shared"]).optional(),
 });
 const shareSchema = z
   .object({
@@ -436,14 +437,13 @@ export function createDriveToolDefinitions(
           folderId: input.folderId ?? null,
           includeTrashed: input.includeTrashed,
           limit: input.limit,
-          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-          ...(input.kind === undefined ? {} : { kind: input.kind }),
-          ...(input.acrossFolders === undefined ? {} : { acrossFolders: input.acrossFolders }),
+          cursor: input.cursor,
+          kind: input.kind,
+          acrossFolders: input.acrossFolders,
+          view: input.view,
         });
         const serialized = page.entries.map(serializeEntry);
-        // Decorate each entry with the owner's display name so the UI
-        // can render "Owned by Avery Park" instead of a raw UUID. Single
-        // batched lookup per `drive.list` call.
+        // Owner display names: one batched lookup per list call.
         if (options.resolveActorNames === undefined) {
           return { entries: serialized, nextCursor: page.nextCursor };
         }

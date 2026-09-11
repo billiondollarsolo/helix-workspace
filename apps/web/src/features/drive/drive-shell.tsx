@@ -253,10 +253,10 @@ export function DriveShell() {
       return [];
     }
     if (data.mode === "list") {
-      return applyDriveScope(data.entries, scope, actorId);
+      return applyDriveScope(data.entries, scope, actorId, folderId);
     }
     return data.hits.map((hit) => entryFromSearchHit(hit));
-  }, [itemsQuery.data, scope, actorId]);
+  }, [itemsQuery.data, scope, actorId, folderId]);
   const hasMoreEntries =
     liveEntriesRaw.length > effectiveListLimit && effectiveListLimit < maxListLimit;
   const liveEntries = useMemo(

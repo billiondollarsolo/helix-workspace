@@ -25,6 +25,7 @@ function driveListFilterKey(input: {
   readonly includeTrashed: boolean;
   readonly kind: string;
   readonly acrossFolders: boolean;
+  readonly view: "owned" | "shared" | null;
 }): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("base64url").slice(0, 16);
 }
@@ -89,6 +90,10 @@ export async function list(
      *  it lives in. Folder
      *  rows are suppressed in this mode — the result is a flat file list. */
     readonly acrossFolders?: boolean;
+    /** Root-only Google Drive views. Ignored when listing a folder's children
+     *  or when `acrossFolders` is set. `owned` is My Drive; `shared` is
+     *  Shared with me (share-roots only, not nested contents). */
+    readonly view?: "owned" | "shared" | null;
   },
 ): Promise<DriveEntryPage> {
   // When filtering for non-file kinds (e.g. 'recording'), the folder
@@ -97,14 +102,19 @@ export async function list(
   // folderId metadata match.
   const kind = input.kind ?? "file";
   const acrossFolders = input.acrossFolders === true || kind !== "file";
+  const folderId = input.folderId ?? null;
+  const view = acrossFolders || folderId !== null ? null : (input.view ?? null);
+  const ownedRoot = view === "owned";
+  const sharedRoot = view === "shared";
   const limit = Math.min(250, Math.max(1, Math.trunc(input.limit ?? 100)));
   const filter = driveListFilterKey({
     orgId: input.orgId,
     actorId: input.actorId,
-    folderId: input.folderId ?? null,
+    folderId,
     includeTrashed: input.includeTrashed ?? false,
     kind,
     acrossFolders,
+    view,
   });
   const cursor = decodeDriveListCursor(input.cursor, filter);
   if (input.folderId !== undefined && input.folderId !== null && !acrossFolders) {
@@ -150,6 +160,22 @@ export async function list(
               and (${input.includeTrashed ?? false} or drive_folders.deleted_at is null or drive_folders.deleted_at > page.snapshot_at)
               and drive_folders.created_at <= page.snapshot_at
               and ${canReadFolderSql(tx, input.orgId, input.actorId)}
+              and (
+                not ${ownedRoot}
+                or drive_folders.owner_actor_id = ${input.actorId}
+              )
+              and (
+                not ${sharedRoot}
+                or (
+                  drive_folders.owner_actor_id is distinct from ${input.actorId}
+                  and (
+                    drive_folders.parent_folder_id is null
+                    or helix_drive_effective_role(
+                      ${input.orgId}, ${input.actorId}, 'drive_folder', drive_folders.parent_folder_id
+                    ) is null
+                  )
+                )
+              )
 
             union all
 
@@ -199,6 +225,23 @@ export async function list(
               and helix_drive_effective_role(
                 ${input.orgId}, ${input.actorId}, 'object', o.id
               ) is not null
+              and (
+                not ${ownedRoot}
+                or o.owner_actor_id = ${input.actorId}
+              )
+              and (
+                not ${sharedRoot}
+                or (
+                  o.owner_actor_id is distinct from ${input.actorId}
+                  and (
+                    coalesce(o.metadata->>'folderId', '') = ''
+                    or helix_drive_effective_role(
+                      ${input.orgId}, ${input.actorId}, 'drive_folder',
+                      nullif(o.metadata->>'folderId', '')::uuid
+                    ) is null
+                  )
+                )
+              )
           )
           select *
           from visible_entries

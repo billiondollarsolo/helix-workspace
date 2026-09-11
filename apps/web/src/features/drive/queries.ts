@@ -112,7 +112,7 @@ export function driveItemsInputFromRouteSearch(search: DriveRouteSearch): DriveI
   const scope: DriveScope =
     search.includeTrashed === true || search.scope === "trash" ? "trash" : (search.scope ?? "my");
   return {
-    folderId: scope === "my" ? (search.folder ?? null) : null,
+    folderId: scope === "my" || scope === "shared" ? (search.folder ?? null) : null,
     includeTrashed: scope === "trash",
     query,
     limit: query.length > 0 ? 50 : 100,
@@ -139,27 +139,28 @@ export function entryFromSearchHit(hit: DriveApiSearchHit): DriveApiEntry {
 }
 
 /**
- * Apply scope-specific client-side filtering to a Drive entry list.
+ * Apply Google Drive-style scope filters.
  *
- *  - `my`      — entries in the active folder (already folder-scoped upstream).
- *  - `shared`  — entries owned by someone other than the current actor.
- *  - `recent`  — every entry, sorted by most-recent activity (cap 50).
- *  - `starred` — entries flagged via `metadata.starred`.
- *  - `trash`   — trashed entries.
+ * My Drive is items you own. Shared with me is items others shared with you.
+ * Opening a folder (owned or shared) shows every child you can access — the
+ * same as Google: folder contents are not re-filtered by owner.
  */
 export function applyDriveScope(
   entries: readonly DriveApiEntry[],
   scope: DriveScope,
   currentActorId: string | null,
+  folderId?: string | null,
 ): readonly DriveApiEntry[] {
   if (scope === "trash") {
     return entries.filter((entry) => entry.deletedAt !== null);
   }
 
   const live = entries.filter((entry) => entry.deletedAt === null);
+  const insideFolder = folderId !== undefined && folderId !== null && folderId.length > 0;
 
   switch (scope) {
     case "shared":
+      if (insideFolder) return live;
       return live.filter(
         (entry) =>
           currentActorId !== null &&
@@ -173,13 +174,9 @@ export function applyDriveScope(
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
         .slice(0, 50);
     case "my":
-      // "My Drive" should mean files I own — not "everything I have any
-      // visibility on". Files I only have a viewer/editor grant on
-      // belong under "Shared with me". Folders are always included
-      // since they're the navigation scaffolding for the current view.
+      if (insideFolder) return live;
       return live.filter(
         (entry) =>
-          entry.type === "folder" ||
           currentActorId === null ||
           entry.ownerActorId === null ||
           entry.ownerActorId === currentActorId,
@@ -208,25 +205,27 @@ export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriv
           mode: "search",
           hits: await searchDrive({
             query: normalizedQuery,
-            folderId: scope === "my" ? (input.folderId ?? null) : null,
+            folderId: scope === "my" || scope === "shared" ? (input.folderId ?? null) : null,
             limit: input.limit ?? 50,
           }),
         };
       }
 
-      // `my` + `trash` are folder-scoped views — `drive.list` returns the
-      // folders and files of the active folder. The other scopes (Recent /
-      // Shared / Starred) are cross-folder file views, so they ride
-      // `drive.list` with `acrossFolders` and keep full owner/app/metadata for
-      // client-side scope filtering.
-      if (scope === "my" || scope === "trash") {
+      // My Drive and Shared with me are folder trees. At the root they ask
+      // for owned items vs share-roots; inside a folder they list children.
+      // Recent / Starred stay flat cross-folder file views.
+      if (scope === "my" || scope === "shared" || scope === "trash") {
+        const folderId = input.folderId ?? null;
         return {
           mode: "list",
           entries: (
             await listDrive({
-              folderId: input.folderId ?? null,
+              folderId,
               includeTrashed: scope === "trash",
               limit: input.limit ?? 100,
+              ...(scope === "trash" || folderId !== null
+                ? {}
+                : { view: scope === "my" ? "owned" : "shared" }),
             })
           ).entries,
         };

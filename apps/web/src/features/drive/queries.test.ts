@@ -210,6 +210,42 @@ describe("applyDriveScope", () => {
     expect(result.map((e) => e.id)).toEqual(["theirs"]);
   });
 
+  it("keeps other people's files when browsing inside a shared or owned folder", () => {
+    const result = applyDriveScope(entries, "my", "actor-self", "folder-1");
+    expect(result.map((e) => e.id).sort()).toEqual(["mine", "starred", "theirs"]);
+    expect(applyDriveScope(entries, "shared", "actor-self", "folder-1").map((e) => e.id)).toEqual(
+      applyDriveScope(entries, "my", "actor-self", "folder-1").map((e) => e.id),
+    );
+  });
+
+  it("hides folders the actor does not own from My Drive root", () => {
+    const withFolder = [
+      ...entries,
+      makeEntry({
+        id: "shared-folder",
+        type: "folder",
+        ownerActorId: "actor-other",
+        updatedAt: "2026-05-20T10:00:00.000Z",
+      }),
+      makeEntry({
+        id: "my-folder",
+        type: "folder",
+        ownerActorId: "actor-self",
+        updatedAt: "2026-05-20T10:00:00.000Z",
+      }),
+    ];
+    expect(
+      applyDriveScope(withFolder, "my", "actor-self")
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual(["mine", "my-folder", "starred"]);
+    expect(
+      applyDriveScope(withFolder, "shared", "actor-self")
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual(["shared-folder", "theirs"]);
+  });
+
   it("returns only metadata-starred entries for the starred scope", () => {
     const result = applyDriveScope(entries, "starred", "actor-self");
     expect(result.map((e) => e.id)).toEqual(["starred"]);

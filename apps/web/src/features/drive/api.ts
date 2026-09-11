@@ -396,6 +396,8 @@ export async function listDrive(
     /** When true, return every visible file across all folders. Folder
      *  rows are suppressed (the result is a flat file list). */
     readonly acrossFolders?: boolean;
+    /** Root views: My Drive (`owned`) or Shared with me (`shared`). */
+    readonly view?: "owned" | "shared";
   } = {},
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<DriveEntryPage> {
@@ -408,6 +410,7 @@ export async function listDrive(
       ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
       ...(input.kind === undefined ? {} : { kind: input.kind }),
       ...(input.acrossFolders === undefined ? {} : { acrossFolders: input.acrossFolders }),
+      ...(input.view === undefined ? {} : { view: input.view }),
     },
     fetchImpl,
   );

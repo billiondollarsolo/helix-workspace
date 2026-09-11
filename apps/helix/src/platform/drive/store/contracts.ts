@@ -137,6 +137,7 @@ export interface DriveStore {
      *  unchanged; pass 'recording' for the Recordings drive surface. */
     readonly kind?: string | null;
     readonly acrossFolders?: boolean;
+    readonly view?: "owned" | "shared" | null;
   }): Promise<DriveEntryPage>;
   share(input: {
     readonly orgId: string;

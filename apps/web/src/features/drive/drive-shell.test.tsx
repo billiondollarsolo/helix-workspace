@@ -640,9 +640,9 @@ describe("DriveShell", () => {
           call.url === "/v1/api/tools/drive.list" &&
           (
             call.body as {
-              acrossFolders?: boolean;
+              view?: string;
             }
-          ).acrossFolders === true,
+          ).view === "shared",
       ),
     ).toBe(true);
   });

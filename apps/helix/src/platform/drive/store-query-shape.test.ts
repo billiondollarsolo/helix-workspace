@@ -133,6 +133,17 @@ describe("PostgresDriveStore query shape", () => {
     expect(fileQuery?.text).toContain("helix_drive_visible_actor_ids");
     expect(fileQuery?.values).toEqual(expect.arrayContaining([orgId, actorId]));
   });
+  it("scopes My Drive and Shared with me root lists by ownership and share-roots", async () => {
+    const recording = createRecordingSql();
+    const store = new PostgresDriveStore(recording.sql);
+    await store.list({ orgId, actorId, view: "owned" });
+    await store.list({ orgId, actorId, view: "shared" });
+    const owned = recording.calls.find((call) => call.text.includes("from drive_folders"));
+    expect(owned?.text).toContain("drive_folders.owner_actor_id = ?");
+    const shared = recording.calls.filter((call) => call.text.includes("from drive_folders")).at(1);
+    expect(shared?.text).toContain("is distinct from");
+    expect(shared?.text).toContain("parent_folder_id");
+  });
   it("scopes Drive search permission predicates to the request org", async () => {
     const recording = createRecordingSql();
     const store = new PostgresDriveStore(recording.sql);

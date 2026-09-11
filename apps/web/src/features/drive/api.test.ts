@@ -917,6 +917,20 @@ describe("drive route search", () => {
     });
   });
 
+  it("keeps folder navigation inside Shared with me", () => {
+    const search = validateDriveRouteSearch({
+      folder: "44444444-4444-4444-8444-444444444444",
+      scope: "shared",
+    });
+    expect(driveItemsInputFromRouteSearch(search)).toEqual({
+      folderId: "44444444-4444-4444-8444-444444444444",
+      includeTrashed: false,
+      query: "",
+      limit: 100,
+      scope: "shared",
+    });
+  });
+
   it("ignores folder filters when route state is scoped to trash", () => {
     expect(
       driveItemsInputFromRouteSearch({

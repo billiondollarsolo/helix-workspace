@@ -2,41 +2,54 @@
 
 Keep a folder (or virtual drive) on your computer in sync with Helix Drive.
 
-You do **not** need to learn rclone. Run the setup script and answer a few prompts.
+You do **not** need Node, pnpm, or rclone knowledge. The installer downloads a local rclone binary and the `helix-sync` command.
 
-## Setup (easy path)
+## Setup
 
-### 1. Install Node.js and rclone once
+### 1. Create an app password in Helix
 
-- **Node.js 20+**: https://nodejs.org/
-- **rclone** (open source):
+**Settings → Security → App passwords** (or Admin → Apps & integrations).  
+Give it **WebDAV / Drive** access. Use this password in setup — not your login password.
 
-| OS      | One-liner                                         |
-| ------- | ------------------------------------------------- |
-| macOS   | `brew install rclone`                             |
-| Windows | `winget install Rclone.Rclone`                    |
-| Linux   | `curl https://rclone.org/install.sh \| sudo bash` |
+### 2. Install Helix Sync on this computer
 
-### 2. Create an App password in Helix
+From the Drive sidebar (**Desktop sync**), copy the command for your OS. It is served by _your_ Helix server:
 
-In Helix: **Admin → Apps & integrations → App passwords**  
-Create a password with **WebDAV / Drive** access. Use this password in setup—not your login password.
+**macOS / Linux**
+
+```sh
+curl -fsSL https://YOUR-HELIX/v1/drive/sync/install.sh | bash
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://YOUR-HELIX/v1/drive/sync/install.ps1 | iex
+```
+
+Or download the installer from that dialog (macOS/Linux `.sh`, Windows `.ps1`).
+
+From GitHub instead of a running Helix server:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/billiondollarsolo/helix-workspace/main/scripts/helix-sync/install.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/billiondollarsolo/helix-workspace/main/scripts/helix-sync/install.ps1 | iex
+```
+
+The installer puts binaries in `~/.helix/drive-sync/bin` (Windows: `%LOCALAPPDATA%\Helix\drive-sync\bin`) and adds `helix-sync` to your PATH when it can. No sudo.
 
 ### 3. Run setup
 
-From a machine that can reach your Helix server:
-
 ```sh
-# From the Helix workspace repo:
-pnpm helix:drive-sync
-
-# Or:
-node scripts/helix-drive-sync-setup.mjs
+helix-sync
 ```
 
-The script asks for:
+It asks for:
 
-1. **Server URL** — e.g. `https://helix.company.com`
+1. **Server URL** — e.g. `https://helix.company.com` (pre-filled when you installed from that server)
 2. **Email** — your Helix account
 3. **App password**
 4. **Mode**
@@ -44,21 +57,18 @@ The script asks for:
    - **2) Virtual drive** — mount like a network drive
 5. **Local path** — default `~/HelixDrive` or `~/HelixMount` (Windows mount default `X:`)
 
-It then configures the connection, tests it, and runs the first sync (mirror) or tells you how to start the mount.
-
 ### 4. Day-to-day
 
-Helpers are written to `~/.helix/drive-sync/` (Windows: `%USERPROFILE%\.helix\drive-sync\`):
+Helpers land next to the install:
 
 | Mode   | Command                                                         |
 | ------ | --------------------------------------------------------------- |
 | Mirror | `~/.helix/drive-sync/sync-now.sh` (or `sync-now.cmd`)           |
 | Mount  | `~/.helix/drive-sync/mount.sh` (or `mount.cmd`) — leave running |
-| Status | `~/.helix/drive-sync/status.sh`                                 |
 
 Schedule **sync-now** every few minutes (Task Scheduler / cron / launchd) if you want continuous mirror updates.
 
-## Modes (what to pick)
+## Modes
 
 |                | Mirror folder               | Virtual drive                            |
 | -------------- | --------------------------- | ---------------------------------------- |
@@ -69,22 +79,22 @@ Schedule **sync-now** every few minutes (Task Scheduler / cron / launchd) if you
 
 ## Security
 
-- App passwords only; revoke anytime in Admin
+- App passwords only; revoke anytime in Helix
 - Prefer **HTTPS** for the server URL
-- Password is stored in rclone’s local config (machine-local), not in git
+- rclone stores the password in its machine-local config, not in git
 
 ## Troubleshooting
 
-| Symptom                    | Fix                                                                 |
-| -------------------------- | ------------------------------------------------------------------- |
-| `rclone is required`       | Install rclone (table above), re-run setup                          |
-| Connection test fails      | Check URL, email, app password scopes, TLS                          |
-| Mount fails on Mac/Windows | Install FUSE / WinFsp, then run the mount helper                    |
-| Mirror conflicts           | rclone keeps both copies; check the folder for conflict-named files |
+| Symptom                         | Fix                                                                                |
+| ------------------------------- | ---------------------------------------------------------------------------------- |
+| `helix-sync: command not found` | `export PATH="$HOME/.local/bin:$PATH"` or run `~/.helix/drive-sync/bin/helix-sync` |
+| Connection test fails           | Check URL, email, app password scopes, TLS                                         |
+| Mount fails on Mac/Windows      | Install FUSE / WinFsp, then run the mount helper                                   |
+| Mirror conflicts                | rclone keeps both copies; look for conflict-named files                            |
 
-Re-run `pnpm helix:drive-sync` anytime to reconfigure.
+Re-run `helix-sync` anytime to reconfigure.
 
-## Automation (optional)
+## Automation
 
 ```sh
 HELIX_SYNC_URL=https://helix.example.com \
@@ -92,15 +102,13 @@ HELIX_SYNC_USER=you@example.com \
 HELIX_SYNC_PASSWORD='app-password-here' \
 HELIX_SYNC_MODE=mirror \
 HELIX_SYNC_PATH=$HOME/HelixDrive \
-HELIX_SYNC_YES=1 \
-node scripts/helix-drive-sync-setup.mjs
+helix-sync
 ```
+
+## Developers (this repo)
+
+From a Helix checkout you can still run `pnpm helix:drive-sync`, which is the same setup script. End users should use the curl/irm installers above.
 
 ## Advanced
 
-Power users can use raw rclone against the same WebDAV endpoint (`/dav/files/`).  
-The setup script is the supported path for everyone else.
-
-## Phase B (later)
-
-A small tray app will wrap the same flow (endpoint, app password, mirror vs mount) without a terminal.
+Power users can point raw rclone at `/dav/files/` with an app password. The `helix-sync` command is the supported path for everyone else.

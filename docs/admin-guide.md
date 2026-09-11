@@ -47,10 +47,11 @@ also disabled. Any later commands in this guide that exercise Docs, Calendar, Me
 workflows are development/full-workspace evidence only and are not pilot acceptance steps for the
 storage-only production profile.
 
-Desktop file sync: users run **`pnpm helix:drive-sync`** (or
-`node scripts/helix-drive-sync-setup.mjs`), enter server URL + app password, and pick **mirror
-folder** or **virtual drive**. No manual rclone config required. See
-[Drive desktop sync](drive-desktop-sync.md).
+Desktop file sync: users install **Helix Sync** from Drive → Desktop sync (macOS/Linux
+`curl | bash`, Windows `irm | iex`), or the same scripts from GitHub. No Node or pnpm.
+Then they enter an app password and pick **mirror folder** or **virtual drive**. See
+[Drive desktop sync](drive-desktop-sync.md). Repo developers can still run
+`pnpm helix:drive-sync`.
 
 ## AI providers (Admin)
 

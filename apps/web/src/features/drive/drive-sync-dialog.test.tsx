@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DriveSyncControl } from "./drive-sync-dialog";
+import { DriveSyncControl, helixSyncInstallCommands, helixSyncPlatform } from "./drive-sync-dialog";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -28,7 +28,7 @@ describe("DriveSyncControl", () => {
     container.remove();
   });
 
-  it("shows the Helix Sync setup command", () => {
+  it("shows a curl|bash install from this Helix origin, not pnpm", () => {
     act(() => {
       root.render(<DriveSyncControl />);
     });
@@ -37,7 +37,25 @@ describe("DriveSyncControl", () => {
         .find((button) => button.textContent?.includes("Desktop sync"))
         ?.click();
     });
-    expect(container.textContent ?? "").toContain("pnpm helix:drive-sync");
-    expect(container.textContent ?? "").toContain("app password");
+    const text = container.textContent ?? "";
+    expect(text).toContain("curl -fsSL");
+    expect(text).toContain("/v1/drive/sync/install.sh | bash");
+    expect(text).toContain("irm");
+    expect(text).toContain("install.ps1 | iex");
+    expect(text).not.toContain("pnpm helix:drive-sync");
+    expect(text).toContain("app password");
+    expect(text).toContain("raw.githubusercontent.com");
+  });
+
+  it("builds origin-specific commands", () => {
+    expect(helixSyncInstallCommands("https://helix.example")).toEqual({
+      unix: "curl -fsSL https://helix.example/v1/drive/sync/install.sh | bash",
+      windows: "irm https://helix.example/v1/drive/sync/install.ps1 | iex",
+      unixDownload: "https://helix.example/v1/drive/sync/install.sh",
+      windowsDownload: "https://helix.example/v1/drive/sync/install.ps1",
+    });
+    expect(helixSyncPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)")).toBe("mac");
+    expect(helixSyncPlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe("windows");
+    expect(helixSyncPlatform("Mozilla/5.0 (X11; Linux x86_64)")).toBe("linux");
   });
 });

@@ -4,6 +4,7 @@ import { dlpDecisionError } from "../platform/dlp.js";
 import {
   registerDriveRoutes,
   registerDriveShareLinkRoute,
+  registerDriveSyncInstallRoutes,
   safeDriveContentHeaders,
   sendStreamWithRangeSupport,
 } from "../platform/drive/index.js";
@@ -27,6 +28,7 @@ export async function installDriveRoutes(context: Awaited<ReturnType<typeof inst
       bodyLimitBytes: driveConfig.antivirus.maxFileBytes,
       dlp,
     });
+    await registerDriveSyncInstallRoutes(app);
     await registerDriveShareLinkRoute(app, {
       store: driveStore,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),

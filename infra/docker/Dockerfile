@@ -42,13 +42,16 @@ RUN --mount=type=cache,id=helix-pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --filter @helix/app...
 
 COPY apps/helix/ apps/helix/
+COPY scripts/helix-sync/ scripts/helix-sync/
 COPY infra/scripts/prune-production-deploy.mjs infra/scripts/prune-production-deploy.mjs
 
 RUN pnpm --filter @helix/app... run build \
     && mkdir -p apps/helix/dist/db/migrations \
     && cp apps/helix/src/db/migrations/*.sql apps/helix/dist/db/migrations/ \
     && pnpm --filter @helix/app deploy --prod /app/deploy \
-    && node infra/scripts/prune-production-deploy.mjs /app/deploy
+    && node infra/scripts/prune-production-deploy.mjs /app/deploy \
+    && mkdir -p /app/deploy/scripts/helix-sync \
+    && cp scripts/helix-sync/*.sh scripts/helix-sync/*.ps1 /app/deploy/scripts/helix-sync/
 
 FROM ${RUNTIME_BASE} AS runtime
 

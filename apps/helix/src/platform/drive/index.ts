@@ -15,6 +15,13 @@ export { createMailDriveShareSender, type DriveShareMailer } from "./share-mail.
 export * from "./share-link-security.js";
 export * from "./storage-policy.js";
 export * from "./store.js";
+export {
+  helixSyncScriptDir,
+  registerDriveSyncInstallRoutes,
+  requestOrigin,
+  sanitizeOrigin,
+  withHelixOrigin,
+} from "./sync-install-routes.js";
 export * from "./tools.js";
 export * from "./types.js";
 export * from "./upload-state.js";

@@ -7,7 +7,11 @@
  *   - mirror folder (two-way sync), or
  *   - virtual drive mount
  *
- * Usage:
+ * Repo-dev path. End users install with:
+ *   curl -fsSL https://YOUR-HELIX/v1/drive/sync/install.sh | bash
+ *   irm https://YOUR-HELIX/v1/drive/sync/install.ps1 | iex
+ *
+ * Usage (this checkout):
  *   node scripts/helix-drive-sync-setup.mjs
  *   pnpm helix:drive-sync
  *

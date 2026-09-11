@@ -142,6 +142,7 @@ describe("DriveShareDialog", () => {
       actorRefs: ["maya@helix.local", "Maya"],
       role: "commenter",
       expiresAt: null,
+      notify: true,
     });
     expect(container.textContent).toContain("People with access");
     expect(container.textContent).toContain("Maya Chen");
@@ -299,6 +300,7 @@ describe("DriveShareDialog", () => {
       actorRefs: ["daniel@helix.local"],
       role: "commenter",
       expiresAt: null,
+      notify: true,
     });
     expect(container.textContent ?? "").toContain("Access granted.");
     expect(container.textContent ?? "").toContain("Daniel Cho");
@@ -314,6 +316,22 @@ describe("DriveShareDialog", () => {
     });
     expect(container.textContent ?? "").not.toContain("Maya Chen");
     expect(container.textContent ?? "").toContain("Daniel Cho");
+  });
+
+  it("can share without notifying people", async () => {
+    render();
+    await settle();
+    const notify = container.querySelector<HTMLInputElement>('input[aria-label="Notify people"]');
+    expect(notify).not.toBeNull();
+    act(() => {
+      notify?.click();
+    });
+    setInput("Email, name, or actor ID", "maya@helix.local");
+    clickButton("Share");
+    await settle();
+    expect(toolCalls.find((call) => call.url === "/v1/api/tools/drive.share")?.body).toMatchObject({
+      notify: false,
+    });
   });
 
   function render(open = true) {

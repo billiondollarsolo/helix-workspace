@@ -11,6 +11,7 @@ import {
 import { type DriveStoreContext } from "./context.js";
 import { mapDriveAccessGrant } from "./mappers.js";
 import { type DriveAccessGrantRow } from "./rows.js";
+import { notifyDriveShare } from "./share-notifications.js";
 export async function share(
   context: DriveStoreContext,
   input: {
@@ -20,6 +21,7 @@ export async function share(
     readonly targetActorIds: readonly string[];
     readonly role: string;
     readonly expiresAt?: Date | null;
+    readonly notify?: boolean;
   },
 ): Promise<{
   readonly objectId: string;
@@ -59,6 +61,16 @@ export async function share(
       objectId: input.objectId,
       payload: { sharedWithActorIds, role },
     });
+    if (input.notify !== false) {
+      await notifyDriveShare(tx, {
+        orgId: input.orgId,
+        actorId: input.actorId,
+        objectId: input.objectId,
+        resourceType,
+        targetActorIds: sharedWithActorIds,
+        role,
+      });
+    }
     return { objectId: input.objectId, sharedWithActorIds, role };
   });
 }

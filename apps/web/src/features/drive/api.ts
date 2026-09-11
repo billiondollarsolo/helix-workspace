@@ -49,6 +49,7 @@ export interface DriveShareInput {
   readonly actorRefs?: readonly string[];
   readonly role?: DriveRole;
   readonly expiresAt?: string | null;
+  readonly notify?: boolean;
 }
 export type DriveAccessRole = Exclude<DriveRole, "owner">;
 export interface DriveUploadInput {
@@ -448,6 +449,7 @@ export async function shareDrive(
       actorRefs: input.actorRefs ?? [],
       role: input.role ?? "reader",
       expiresAt: input.expiresAt ?? null,
+      ...(input.notify === undefined ? {} : { notify: input.notify }),
     },
     fetchImpl,
   );
@@ -490,14 +492,6 @@ export async function transitionDriveWorkflow(
     { workflowId: workflow.id, expectedVersion: workflow.version, state, payload },
     fetchImpl,
   );
-}
-export async function getDriveQuotaUsage(fetchImpl: DriveApiFetch = authenticatedFetch): Promise<{
-  readonly usedBytes: number;
-  readonly limitBytes: number | null;
-  readonly unlimited: boolean;
-  readonly percentUsed: number | null;
-}> {
-  return callDriveTool("drive.quota.usage", {}, fetchImpl);
 }
 export async function listDriveAccess(
   objectId: string,
@@ -704,7 +698,7 @@ export function drivePublicShareUrl(
   const base = origin.replace(/\/$/u, "");
   return `${base}/v1/api/drive/share/${encodeURIComponent(token)}`;
 }
-async function callDriveTool<Output = unknown>(
+export async function callDriveTool<Output = unknown>(
   toolId: string,
   input: unknown,
   fetchImpl: DriveApiFetch,

@@ -15,6 +15,14 @@ import {
   type DriveApiEntry,
   type DriveCreateKind,
 } from "./api";
+import { DriveAccessRequests } from "./drive-access-requests";
+import {
+  copyDriveObject,
+  hideDriveShare,
+  moveDriveFolder,
+  requestDriveAccess,
+} from "./drive-collaboration-api";
+import { type DriveItemAction } from "./drive-item-menu";
 import {
   fileItemFromEntry,
   folderItemFromEntry,
@@ -22,6 +30,7 @@ import {
   type DriveFolderItem,
 } from "./drive-data";
 import { DriveDetailsPanel } from "./drive-details-panel";
+import { DriveMoveDialog } from "./drive-move-dialog";
 import { DriveShareDialog } from "./drive-share-dialog";
 import { DriveMain } from "./drive-file-list";
 import "./drive-shell.css";
@@ -97,6 +106,7 @@ export function DriveShell() {
   const [selectedFileId, setSelectedFileId] = useState<string | null>(driveSearch.file ?? null);
   const [processingUpload, setProcessingUpload] = useState<ProcessingDriveUpload | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderId =
     trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : (driveSearch.folder ?? null);
@@ -198,6 +208,28 @@ export function DriveShell() {
       void invalidateDrive();
     },
   });
+  const copyMutation = useMutation({
+    mutationFn: (objectId: string) => copyDriveObject(objectId),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      void invalidateDrive();
+    },
+  });
+  const hideMutation = useMutation({
+    mutationFn: (objectId: string) => hideDriveShare(objectId, true),
+    onMutate: () => undefined,
+    onError: () => undefined,
+    onSuccess: () => {
+      setSelectedFileId(null);
+      void invalidateDrive();
+    },
+  });
+  const requestAccessMutation = useMutation({
+    mutationFn: (objectId: string) => requestDriveAccess(objectId),
+    onMutate: () => undefined,
+    onError: () => undefined,
+  });
   const deleteMutation = useMutation({
     mutationFn: (objectId: string) => deleteDriveObject(objectId),
     onMutate: () => undefined,
@@ -208,8 +240,14 @@ export function DriveShell() {
     },
   });
   const moveMutation = useMutation({
-    mutationFn: (vars: { readonly objectId: string; readonly folderId: string | null }) =>
-      moveDriveObject(vars.objectId, vars.folderId),
+    mutationFn: (vars: {
+      readonly objectId: string;
+      readonly folderId: string | null;
+      readonly isFolder?: boolean;
+    }) =>
+      vars.isFolder === true
+        ? moveDriveFolder(vars.objectId, vars.folderId)
+        : moveDriveObject(vars.objectId, vars.folderId),
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => {
@@ -319,6 +357,35 @@ export function DriveShell() {
     event.target.value = "";
   };
   const isTrashScope = scope === "trash";
+  const dialogTarget =
+    selectedFile ??
+    (selectedEntry !== null ? { id: selectedEntry.id, name: selectedEntry.name } : null);
+  const onItemAction = (id: string, action: DriveItemAction) => {
+    if (action === "share") {
+      setSelectedFileId(id);
+      setShareOpen(true);
+      return;
+    }
+    if (action === "copy") {
+      copyMutation.mutate(id);
+      return;
+    }
+    if (action === "move") {
+      setSelectedFileId(id);
+      setMoveOpen(true);
+      return;
+    }
+    if (action === "star") {
+      const starred = files.find((file) => file.id === id)?.starred === true;
+      starMutation.mutate({ objectId: id, starred: !starred });
+      return;
+    }
+    if (action === "trash") {
+      trashMutation.mutate(id);
+      return;
+    }
+    hideMutation.mutate(id);
+  };
   return (
     <>
       <input
@@ -365,6 +432,22 @@ export function DriveShell() {
         </div>
       ) : null}
 
+      {itemsQuery.isError && typeof driveSearch.file === "string" ? (
+        <div className="fixed bottom-5 right-5 [z-index:40] bg-card [border:1px_solid_var(--border)] rounded-lg p-3 [box-shadow:var(--shadow-lg)]">
+          <div className="[font-size:var(--text-body-sm)] font-semibold mb-1">You need access</div>
+          <div className="[font-size:var(--text-caption)] text-muted-foreground mb-2">
+            Ask the owner to share this file with you.
+          </div>
+          <button
+            type="button"
+            className="btn sm primary"
+            disabled={requestAccessMutation.isPending}
+            onClick={() => requestAccessMutation.mutate(driveSearch.file as string)}
+          >
+            {requestAccessMutation.isSuccess ? "Request sent" : "Request access"}
+          </button>
+        </div>
+      ) : null}
       <DriveSidebar
         activeScope={scope}
         onScopeChange={onScopeChange}
@@ -373,42 +456,47 @@ export function DriveShell() {
         uploading={uploadMutation.isPending}
         creating={createMutation.isPending}
       />
-      <DriveMain
-        view={view}
-        onViewChange={setView}
-        scope={scope}
-        trail={trail}
-        onNavigateCrumb={navigateToCrumb}
-        folders={folders}
-        files={files}
-        selectedFileId={selectedFileId}
-        onSelectFile={onSelectFile}
-        onOpenFolder={openFolder}
-        onSetStarred={(id, starred) => starMutation.mutate({ objectId: id, starred })}
-        onUpload={onPickFile}
-        onDropFiles={(droppedFiles) => {
-          for (const file of droppedFiles) {
-            uploadMutation.mutate({ file });
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <DriveAccessRequests />
+        <DriveMain
+          view={view}
+          onViewChange={setView}
+          scope={scope}
+          trail={trail}
+          onNavigateCrumb={navigateToCrumb}
+          folders={folders}
+          files={files}
+          selectedFileId={selectedFileId}
+          onSelectFile={onSelectFile}
+          onOpenFolder={openFolder}
+          onSetStarred={(id, starred) => starMutation.mutate({ objectId: id, starred })}
+          onUpload={onPickFile}
+          onDropFiles={(droppedFiles) => {
+            for (const file of droppedFiles) {
+              uploadMutation.mutate({ file });
+            }
+          }}
+          onNewItem={onNewItem}
+          loading={itemsQuery.isLoading}
+          error={itemsQuery.isError ? itemsQuery.error : null}
+          hasMore={hasMoreEntries}
+          onShowMore={() =>
+            setListLimit((current) =>
+              Math.min(
+                current +
+                  (driveQuery.length > 0 ? DRIVE_SEARCH_LIST_LIMIT : DRIVE_DEFAULT_LIST_LIMIT),
+                maxListLimit,
+              ),
+            )
           }
-        }}
-        onNewItem={onNewItem}
-        loading={itemsQuery.isLoading}
-        error={itemsQuery.isError ? itemsQuery.error : null}
-        hasMore={hasMoreEntries}
-        onShowMore={() =>
-          setListLimit((current) =>
-            Math.min(
-              current +
-                (driveQuery.length > 0 ? DRIVE_SEARCH_LIST_LIMIT : DRIVE_DEFAULT_LIST_LIMIT),
-              maxListLimit,
-            ),
-          )
-        }
-        uploadError={uploadMutation.isError ? uploadMutation.error : null}
-        onRetry={() => void invalidateDrive()}
-        uploading={uploadMutation.isPending}
-        creating={createMutation.isPending}
-      />
+          uploadError={uploadMutation.isError ? uploadMutation.error : null}
+          onRetry={() => void invalidateDrive()}
+          uploading={uploadMutation.isPending}
+          creating={createMutation.isPending}
+          canHideShared={scope === "shared"}
+          onItemAction={onItemAction}
+        />
+      </div>
       {selectedFile !== null ? (
         <DriveDetailsPanel
           file={selectedFile}
@@ -423,7 +511,9 @@ export function DriveShell() {
             deleteMutation.isPending ||
             moveMutation.isPending ||
             shareMutation.isPending ||
-            starMutation.isPending
+            starMutation.isPending ||
+            copyMutation.isPending ||
+            hideMutation.isPending
           }
           actionError={
             trashMutation.error ??
@@ -432,6 +522,8 @@ export function DriveShell() {
             moveMutation.error ??
             starMutation.error ??
             shareMutation.error ??
+            copyMutation.error ??
+            hideMutation.error ??
             null
           }
           onClose={() => setSelectedFileId(null)}
@@ -450,15 +542,37 @@ export function DriveShell() {
           }
           shareDone={shareMutation.isSuccess}
           onOpenShare={() => setShareOpen(true)}
+          onCopy={() => copyMutation.mutate(selectedFile.id)}
+          onMove={() => setMoveOpen(true)}
+          onHideShared={
+            scope === "shared" && selectedEntry?.ownerActorId !== actorId
+              ? () => hideMutation.mutate(selectedFile.id)
+              : undefined
+          }
         />
       ) : null}
-      {selectedFile !== null ? (
+      {dialogTarget !== null ? (
         <DriveShareDialog
-          objectId={selectedFile.id}
-          objectName={selectedFile.name}
+          objectId={dialogTarget.id}
+          objectName={dialogTarget.name}
           ownerActorId={selectedEntry?.ownerActorId ?? null}
           open={shareOpen}
           onOpenChange={setShareOpen}
+        />
+      ) : null}
+      {dialogTarget !== null ? (
+        <DriveMoveDialog
+          open={moveOpen}
+          fileName={dialogTarget.name}
+          onClose={() => setMoveOpen(false)}
+          onMove={(folderId) => {
+            moveMutation.mutate({
+              objectId: dialogTarget.id,
+              folderId,
+              isFolder: selectedEntry?.type === "folder",
+            });
+            setMoveOpen(false);
+          }}
         />
       ) : null}
     </>

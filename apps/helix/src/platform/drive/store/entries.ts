@@ -180,6 +180,13 @@ export async function list(
                       ${input.orgId}, ${input.actorId}, 'drive_folder', drive_folders.parent_folder_id
                     ) is null
                   )
+                  and not exists (
+                    select 1 from drive_hidden_shares hidden
+                    where hidden.org_id = drive_folders.org_id
+                      and hidden.actor_id = ${input.actorId}
+                      and hidden.resource_type = 'drive_folder'
+                      and hidden.resource_id = drive_folders.id
+                  )
                 )
               )
 
@@ -245,6 +252,13 @@ export async function list(
                       ${input.orgId}, ${input.actorId}, 'drive_folder',
                       nullif(o.metadata->>'folderId', '')::uuid
                     ) is null
+                  )
+                  and not exists (
+                    select 1 from drive_hidden_shares hidden
+                    where hidden.org_id = o.org_id
+                      and hidden.actor_id = ${input.actorId}
+                      and hidden.resource_type = 'object'
+                      and hidden.resource_id = o.id
                   )
                 )
               )

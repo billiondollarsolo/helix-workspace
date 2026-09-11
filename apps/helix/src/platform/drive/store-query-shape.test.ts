@@ -302,6 +302,37 @@ describe("PostgresDriveStore query shape", () => {
       app: "drive",
     });
   });
+  it("notifies share recipients when notify is left on", async () => {
+    const recipientId = "66666666-6666-4666-8666-666666666666";
+    const recording = createRecordingSql([
+      [
+        { id: actorId, display_name: "Ada Park" },
+        { id: recipientId, display_name: "Maya Chen" },
+      ],
+      [{ name: "Specs.pdf" }],
+      [],
+    ]);
+    const { notifyDriveShare } = await import("./store/share-notifications.js");
+    await notifyDriveShare(recording.sql, {
+      orgId,
+      actorId,
+      objectId,
+      resourceType: "object",
+      targetActorIds: [recipientId],
+      role: "reader",
+    });
+    const insert = recording.calls.find((call) => call.text.includes("insert into notifications"));
+    expect(insert?.text).toContain("'drive.object.shared'");
+    expect(insert?.values).toEqual(
+      expect.arrayContaining([
+        orgId,
+        recipientId,
+        "object",
+        objectId,
+        'Ada Park shared "Specs.pdf" with you',
+      ]),
+    );
+  });
   it("scopes folder access helper predicates to the request org", async () => {
     const recording = createRecordingSql();
     const store = new PostgresDriveStore(recording.sql);

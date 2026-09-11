@@ -40,11 +40,13 @@ export function DriveFileCard({
   selected,
   onSelect,
   onSetStarred,
+  onOpenMenu,
 }: {
   readonly file: DriveFileItem;
   readonly selected: boolean;
   readonly onSelect: () => void;
   readonly onSetStarred: (starred: boolean) => void;
+  readonly onOpenMenu: (event: MouseEvent<HTMLElement>) => void;
 }) {
   const meta = DRIVE_FILE_META[file.type];
   const openable = canOpenDriveObject({
@@ -61,13 +63,29 @@ export function DriveFileCard({
           : "[box-shadow:none] [border:1px_solid_var(--border)]",
         openable ? "[opacity:1]" : "[opacity:0.92]",
       )}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onOpenMenu(event);
+      }}
     >
       <DriveStarToggle
         name={file.name}
         starred={file.starred}
         onSetStarred={onSetStarred}
-        className="absolute top-2 right-2 [z-index:1]"
+        className="absolute top-2 right-10 [z-index:1]"
       />
+      <button
+        type="button"
+        className="icon-btn absolute top-2 right-2 [z-index:1] bg-card"
+        aria-label={`Actions for ${file.name}`}
+        aria-haspopup="menu"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenMenu(event);
+        }}
+      >
+        <MoreVIcon size={16} />
+      </button>
       <button
         type="button"
         aria-pressed={selected}
@@ -114,11 +132,13 @@ export function DriveFileRow({
   selected,
   onSelect,
   onSetStarred,
+  onOpenMenu,
 }: {
   readonly file: DriveFileItem;
   readonly selected: boolean;
   readonly onSelect: () => void;
   readonly onSetStarred: (starred: boolean) => void;
+  readonly onOpenMenu: (event: MouseEvent<HTMLElement>) => void;
 }) {
   const meta = DRIVE_FILE_META[file.type];
   const FileIcon = Icons[meta.icon];
@@ -128,13 +148,14 @@ export function DriveFileRow({
     available: file.available,
   });
   return (
-    <button
+    <div
       className={cn(
         "drive-file-row render-contained-list-item",
         "grid [grid-template-columns:1fr_160px_120px_90px_32px] [padding:0_16px] h-9 items-center [font-size:var(--text-meta)] w-full text-left [border-bottom:1px_solid_var(--border)]",
         selected ? "[background:var(--accent-soft)]" : "bg-transparent",
       )}
-      type="button"
+      role="button"
+      tabIndex={0}
       aria-pressed={selected}
       aria-disabled={!openable}
       draggable={openable}
@@ -151,6 +172,16 @@ export function DriveFileRow({
         });
       }}
       onClick={onSelect}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onOpenMenu(event);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
     >
       <div className="row gap-2 min-w-0">
         <DriveStarToggle
@@ -171,10 +202,19 @@ export function DriveFileRow({
       </div>
       <span className="[color:var(--text-2)]">{file.modified}</span>
       <span className="[color:var(--text-2)]">{file.size}</span>
-      <span className="icon-btn inline-flex" role="presentation" aria-hidden="true">
+      <button
+        type="button"
+        className="icon-btn inline-flex"
+        aria-label={`Actions for ${file.name}`}
+        aria-haspopup="menu"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenMenu(event);
+        }}
+      >
         <MoreVIcon size={16} />
-      </span>
-    </button>
+      </button>
+    </div>
   );
 }
 

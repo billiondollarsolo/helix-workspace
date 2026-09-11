@@ -59,7 +59,11 @@ function createAuthzSql(options: { grants: Readonly<Record<string, string>>; own
     // requireObjectAccess
     if (text.includes("from objects") && text.includes("kind in")) {
       const actor = resolveActor(values);
-      if (actor === undefined) return Promise.resolve([]);
+      if (actor === undefined) {
+        return Promise.resolve(
+          text.includes("helix_drive_effective_role") ? [] : [objectRow({ owner })],
+        );
+      }
       if (actor === owner || options.grants[actor] !== undefined) {
         return Promise.resolve([objectRow({ owner })]);
       }

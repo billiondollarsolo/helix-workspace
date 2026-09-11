@@ -139,6 +139,46 @@ export interface DriveStore {
     readonly acrossFolders?: boolean;
     readonly view?: "owned" | "shared" | null;
   }): Promise<DriveEntryPage>;
+  setHiddenShare?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly hidden: boolean;
+  }): Promise<{ readonly objectId: string; readonly hidden: boolean }>;
+  requestAccess?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly message?: string;
+  }): Promise<{ readonly requestId: string }>;
+  decideAccessRequest?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly requestId: string;
+    readonly approve: boolean;
+  }): Promise<{ readonly requestId: string; readonly approved: boolean }>;
+  listAccessRequests?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId?: string;
+  }): Promise<
+    readonly {
+      readonly id: string;
+      readonly objectId: string;
+      readonly requesterActorId: string;
+      readonly requesterDisplayName: string | null;
+      readonly requesterEmail: string | null;
+      readonly objectName: string;
+      readonly message: string | null;
+      readonly createdAt: Date;
+    }[]
+  >;
+  copyObject?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly folderId?: string | null;
+  }): Promise<DriveEntryRecord>;
   share(input: {
     readonly orgId: string;
     readonly actorId: string;
@@ -146,6 +186,7 @@ export interface DriveStore {
     readonly targetActorIds: readonly string[];
     readonly role: string;
     readonly expiresAt?: Date | null;
+    readonly notify?: boolean;
   }): Promise<{
     readonly objectId: string;
     readonly sharedWithActorIds: readonly string[];

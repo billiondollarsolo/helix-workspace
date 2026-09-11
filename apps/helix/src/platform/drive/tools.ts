@@ -1,8 +1,7 @@
-import { defineTool } from "../tools/define-tool.js";
-import { toJsonObject } from "../util/json.js";
-// ponytail: tool surface registry >400 LOC; split by domain (upload/access/comments/links) when next feature lands.
 import type { ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
+import { defineTool } from "../tools/define-tool.js";
+import { toJsonObject } from "../util/json.js";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../../api/api-error.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import { actorHasScope } from "../../api/scopes.js";
@@ -14,6 +13,7 @@ import {
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { DriveStore } from "./store.js";
+import { createDriveCollaborationTools } from "./tools-collaboration.js";
 import {
   driveAccessListOutputSchema,
   driveAccessRemoveOutputSchema,
@@ -121,6 +121,7 @@ const shareSchema = z
     actorRefs: z.array(z.string().trim().min(1)).default([]),
     role: z.enum(["reader", "commenter", "editor", "owner"]).default("reader"),
     expiresAt: z.string().datetime().nullable().optional(),
+    notify: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.actorIds.length === 0 && value.actorRefs.length === 0) {
@@ -254,12 +255,7 @@ const genericObjectJsonSchema = {
 } as const;
 export interface CreateDriveToolDefinitionsOptions {
   readonly store: DriveStore;
-  /**
-   * Auto-classifies newly uploaded Drive files (PRD §8.4). When provided, the
-   * `drive.upload` handler classifies the prepared file from its name (used as
-   * the folder-derivation path). Best-effort: classification never fails the
-   * upload.
-   */
+  /** Optional upload classifier; never fails the upload. */
   readonly classifyResource?: ResourceClassifier;
   /**
    * Resolves a batch of actor ids to display names. When provided, the
@@ -508,6 +504,7 @@ export function createDriveToolDefinitions(
           targetActorIds: actorIds,
           role: input.role,
           expiresAt: toNullableDate(input.expiresAt),
+          notify: input.notify !== false,
         });
       },
     }),
@@ -1221,6 +1218,7 @@ export function createDriveToolDefinitions(
         );
       },
     }),
+    ...createDriveCollaborationTools(options),
   ];
 }
 export function registerDriveTools(

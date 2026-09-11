@@ -11,6 +11,12 @@ import { type DragEvent, useMemo, useRef, useState } from "react";
 import { type DriveCreateKind } from "./api";
 import { type DriveFileItem, type DriveFolderItem } from "./drive-data";
 import { DriveFileCard, DriveFileRow } from "./drive-file-card";
+import {
+  DriveItemMenu,
+  menuPointFromEvent,
+  type DriveItemAction,
+  type DriveItemMenuTarget,
+} from "./drive-item-menu";
 import { DriveNewMenuItems } from "./drive-sidebar";
 import { type DriveCrumb, SCOPE_TITLE } from "./drive-view-types";
 import { type DriveScope } from "./queries";
@@ -85,6 +91,8 @@ export function DriveMain({
   onRetry,
   uploading,
   creating,
+  canHideShared,
+  onItemAction,
 }: {
   readonly view: DocumentSurfaceView;
   readonly onViewChange: (view: DocumentSurfaceView) => void;
@@ -108,6 +116,8 @@ export function DriveMain({
   readonly onRetry: () => void;
   readonly uploading: boolean;
   readonly creating: boolean;
+  readonly canHideShared: boolean;
+  readonly onItemAction: (id: string, action: DriveItemAction) => void;
 }) {
   const gridFiles = useMemo(() => files.filter((file) => file.type !== "folder"), [files]);
   const isEmpty = !loading && error === null && folders.length === 0 && files.length === 0;
@@ -148,7 +158,19 @@ export function DriveMain({
     trail.length > 0 ? (trail[trail.length - 1]?.name ?? "My Drive") : "My Drive";
   // FAB menu state
   const [fabMenuOpen, setFabMenuOpen] = useState(false);
+  const [menuTarget, setMenuTarget] = useState<DriveItemMenuTarget | null>(null);
   const busy = uploading || creating;
+  const openItemMenu = (
+    item: {
+      readonly id: string;
+      readonly name: string;
+      readonly kind: "file" | "folder";
+      readonly starred: boolean;
+    },
+    event: { readonly clientX: number; readonly clientY: number },
+  ) => {
+    setMenuTarget({ ...item, ...menuPointFromEvent(event) });
+  };
   const handleFabMenuItem = (action: () => void) => {
     setFabMenuOpen(false);
     action();
@@ -207,6 +229,13 @@ export function DriveMain({
                     key={folder.id}
                     type="button"
                     onClick={() => onOpenFolder(folder)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      openItemMenu(
+                        { id: folder.id, name: folder.name, kind: "folder", starred: false },
+                        event,
+                      );
+                    }}
                     className="bg-card [border:1px_solid_var(--border)] rounded-md [padding:10px_12px] flex items-center gap-2.5 text-left cursor-pointer"
                   >
                     <FolderIcon size={16} />
@@ -238,6 +267,12 @@ export function DriveMain({
                   selected={file.id === selectedFileId}
                   onSelect={() => onSelectFile(file.id)}
                   onSetStarred={(starred) => onSetStarred(file.id, starred)}
+                  onOpenMenu={(event) =>
+                    openItemMenu(
+                      { id: file.id, name: file.name, kind: "file", starred: file.starred },
+                      event,
+                    )
+                  }
                 />
               ))}
             </div>
@@ -257,6 +292,12 @@ export function DriveMain({
                   selected={file.id === selectedFileId}
                   onSelect={() => onSelectFile(file.id)}
                   onSetStarred={(starred) => onSetStarred(file.id, starred)}
+                  onOpenMenu={(event) =>
+                    openItemMenu(
+                      { id: file.id, name: file.name, kind: "file", starred: file.starred },
+                      event,
+                    )
+                  }
                 />
               ))}
             </div>
@@ -313,6 +354,12 @@ export function DriveMain({
           <PlusIcon size={24} />
         </button>
       </div>
+      <DriveItemMenu
+        target={menuTarget}
+        canHide={canHideShared}
+        onClose={() => setMenuTarget(null)}
+        onAction={onItemAction}
+      />
     </div>
   );
 }

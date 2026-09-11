@@ -1,7 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import { sessionUserQueryOptions } from "@/lib/auth";
 import {
-  getDriveQuotaUsage,
   listDrive,
   listDriveAccess,
   listDriveVersions,
@@ -11,6 +10,7 @@ import {
   type DriveApiEntry,
   type DriveApiSearchHit,
 } from "./api";
+import { getDriveQuotaUsage, listDriveAccessRequests } from "./drive-collaboration-api";
 import { validateDriveRouteSearch, type DriveRouteSearch, type DriveScope } from "./route-search";
 
 export { validateDriveRouteSearch };
@@ -196,6 +196,27 @@ export function driveVersionsQueryOptions(objectId: string, enabled: boolean) {
     queryKey: ["drive", "versions", objectId] as const,
     queryFn: () => listDriveVersions(objectId),
     enabled,
+  });
+}
+
+export function driveMoveFoldersQueryOptions(folderId: string | null, enabled: boolean) {
+  return queryOptions({
+    queryKey: ["drive", "move-folders", folderId] as const,
+    queryFn: () =>
+      listDrive({
+        folderId,
+        ...(folderId === null ? { view: "owned" as const } : {}),
+        limit: 100,
+      }),
+    enabled,
+  });
+}
+
+export function driveAccessRequestsQueryOptions() {
+  return queryOptions({
+    queryKey: ["drive", "access-requests"] as const,
+    queryFn: () => listDriveAccessRequests(),
+    throwOnError: false,
   });
 }
 

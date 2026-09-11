@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { env } from "../../config/env.js";
 import { createNoopVirusScanner, isNoopVirusScanner } from "./scanning.js";
+import * as collaboration from "./store/collaboration.js";
 import * as comments from "./store/comments.js";
 import type { DriveStoreContext } from "./store/context.js";
 import type {
@@ -114,6 +115,21 @@ export class PostgresDriveStore
   }
   share(input: Parameters<typeof shares.share>[1]) {
     return shares.share(this.context, input);
+  }
+  setHiddenShare(input: Parameters<typeof collaboration.setHiddenShare>[1]) {
+    return collaboration.setHiddenShare(this.context, input);
+  }
+  requestAccess(input: Parameters<typeof collaboration.requestAccess>[1]) {
+    return collaboration.requestAccess(this.context, input);
+  }
+  decideAccessRequest(input: Parameters<typeof collaboration.decideAccessRequest>[1]) {
+    return collaboration.decideAccessRequest(this.context, input);
+  }
+  listAccessRequests(input: Parameters<typeof collaboration.listAccessRequests>[1]) {
+    return collaboration.listAccessRequests(this.context, input);
+  }
+  copyObject(input: Parameters<typeof collaboration.copyObject>[1]) {
+    return collaboration.copyObject(this.context, input);
   }
   listAccess(input: Parameters<typeof shares.listAccess>[1]) {
     return shares.listAccess(this.context, input);

@@ -51,6 +51,9 @@ export function DriveDetailsPanel({
   onShare,
   shareDone,
   onOpenShare,
+  onCopy,
+  onMove,
+  onHideShared,
 }: {
   readonly file: DriveFileItem;
   readonly entry: DriveApiEntry | null;
@@ -70,6 +73,9 @@ export function DriveDetailsPanel({
   readonly onShare: (id: string, targets: readonly string[], role: DriveAccessRole) => void;
   readonly shareDone: boolean;
   readonly onOpenShare: () => void;
+  readonly onCopy: () => void;
+  readonly onMove: () => void;
+  readonly onHideShared?: () => void;
 }) {
   const meta = DRIVE_FILE_META[file.type];
   const FileIcon = Icons[meta.icon];
@@ -323,6 +329,21 @@ export function DriveDetailsPanel({
               </button>
             </div>
           )}
+          {!isTrash ? (
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              <button type="button" className="btn sm" disabled={busy} onClick={onCopy}>
+                Make a copy
+              </button>
+              <button type="button" className="btn sm" disabled={busy} onClick={onMove}>
+                Move to…
+              </button>
+              {onHideShared !== undefined ? (
+                <button type="button" className="btn sm" disabled={busy} onClick={onHideShared}>
+                  Remove from Shared with me
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="section-label [padding:8px_0_4px]">Owner</div>
           <div className="flex items-center gap-2 [font-size:var(--text-meta)] mb-3">

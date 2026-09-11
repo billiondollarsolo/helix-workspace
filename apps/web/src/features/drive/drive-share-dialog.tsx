@@ -46,6 +46,7 @@ export function DriveShareDialog({
   const [publicDomains, setPublicDomains] = useState("");
   const [oneTime, setOneTime] = useState(false);
   const [allowDownload, setAllowDownload] = useState(true);
+  const [notifyPeople, setNotifyPeople] = useState(true);
   const [creatingPublicLink, setCreatingPublicLink] = useState(false);
   const [publicLinkError, setPublicLinkError] = useState<string | null>(null);
   const accessQueryKey = driveQueryKeys.access(objectId);
@@ -73,6 +74,7 @@ export function DriveShareDialog({
     mutationFn: (input: {
       readonly targets: readonly string[];
       readonly role: DriveAccessRole;
+      readonly notify: boolean;
     }) => {
       const targets = driveShareTargetsFromInput(input.targets);
       return shareDrive({
@@ -81,6 +83,7 @@ export function DriveShareDialog({
         actorRefs: targets.actorRefs,
         role: input.role,
         expiresAt: null,
+        notify: input.notify,
       });
     },
     onSuccess: async () => {
@@ -116,7 +119,7 @@ export function DriveShareDialog({
     if (targets.length === 0) {
       return;
     }
-    shareMutation.mutate({ targets, role: shareRole });
+    shareMutation.mutate({ targets, role: shareRole, notify: notifyPeople });
   };
 
   const copyLink = (publicLink = false) => {
@@ -216,6 +219,17 @@ export function DriveShareDialog({
               ))}
             </select>
           </div>
+          <label className="[font-size:var(--text-caption)]">
+            <input
+              type="checkbox"
+              aria-label="Notify people"
+              checked={notifyPeople}
+              onChange={(event) => {
+                setNotifyPeople(event.currentTarget.checked);
+              }}
+            />{" "}
+            Notify people
+          </label>
           <button
             type="button"
             className="btn sm primary"

@@ -37,8 +37,13 @@ describe("drive tools", () => {
     ).toEqual(
       [
         "drive.access.list",
+        "drive.access.decide",
         "drive.access.remove",
+        "drive.access.request",
+        "drive.access.requests",
         "drive.access.update",
+        "drive.copy",
+        "drive.hide.set",
         "drive.comment.create",
         "drive.comment.delete",
         "drive.comment.evidence.list",

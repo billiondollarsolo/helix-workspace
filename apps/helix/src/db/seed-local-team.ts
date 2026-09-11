@@ -82,6 +82,16 @@ export async function seedLocalTeam(sql: postgres.Sql, options: TeamSeedOptions 
       }
       const owner = LOCAL_TEAM_PEOPLE[0];
       if (owner) await seedLocalTeamDomain(tx, orgId, owner.actorId);
+      for (const person of LOCAL_TEAM_PEOPLE) {
+        for (const alias of person.aliases) {
+          await tx`insert into mail_aliases (org_id, actor_id, email, display_name, is_primary, receive_enabled, send_as_enabled)
+            select ${orgId}, ${person.actorId}, ${alias}, ${person.displayName}, false, true, true
+            where not exists (
+              select 1 from mail_aliases
+              where org_id = ${orgId} and email = ${alias} and disabled_at is null
+            )`;
+        }
+      }
       await tx`update orgs set byo_config = jsonb_set(byo_config, '{storage}', '{"kind":"helix-default","prefix":""}'::jsonb)
         where id = ${orgId} and not (byo_config ? 'storage')`;
     });

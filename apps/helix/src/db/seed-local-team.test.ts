@@ -18,6 +18,7 @@ import { verifyLocalTeam } from "./verify-local-team.js";
 it("reserves unique fixture identities, useful files, and local-only targets", () => {
   expect(new Set(LOCAL_TEAM_PEOPLE.map((person) => person.actorId)).size).toBe(10);
   expect(new Set(LOCAL_TEAM_PEOPLE.map((person) => person.email)).size).toBe(10);
+  expect(LOCAL_TEAM_PEOPLE.flatMap((person) => person.aliases).length).toBeGreaterThan(10);
   expect(teamFileFixtures()).toHaveLength(34);
   expect(() => {
     assertLocalTeamTarget("postgres://localhost/demo");
@@ -53,6 +54,12 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
     const mailboxes =
       await sql`select actor_id from helix_resolve_inbound_mailboxes('demo.theo@helix.local', 'helix.local', 100)`;
     expect(mailboxes).toEqual([{ actor_id: teamPerson(1).actorId }]);
+    const harbor =
+      await sql`select status, mail_enabled from admin_domains where org_id = ${orgId} and domain = 'harbor.local'`;
+    expect(harbor).toEqual([{ status: "verified", mail_enabled: true }]);
+    const aliasMailbox =
+      await sql`select actor_id from helix_resolve_inbound_mailboxes(${teamPerson(0).aliases[0]}, 'harbor.local', 100)`;
+    expect(aliasMailbox).toEqual([{ actor_id: teamPerson(0).actorId }]);
     const person = teamPerson(0);
     const accounts = await sql<
       { password: string }[]

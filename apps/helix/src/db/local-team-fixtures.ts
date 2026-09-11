@@ -3,6 +3,7 @@ import type { Permission } from "../platform/permissions/scope-catalog.js";
 
 export const LOCAL_TEAM_SOURCE = "local-team-demo-v1";
 export const LOCAL_TEAM_PASSWORD = "helix-team-demo-password";
+export const LOCAL_TEAM_DOMAINS = ["helix.local", "harbor.local"] as const;
 
 /** Reserved fixture namespace; the seed never replaces an existing row. */
 export function teamId(category: number, index: number): string {
@@ -116,20 +117,29 @@ const people = [
 ] as const;
 
 export const LOCAL_TEAM_PEOPLE = people.map(
-  ([key, displayName, pronouns, jobTitle, focus, documentTitle], index) => ({
-    index,
-    actorId: teamId(0, index + 1),
-    email: `demo.${key}@helix.local`,
-    firstName: displayName.split(" ")[0] ?? displayName,
-    displayName,
-    pronouns,
-    jobTitle,
-    focus,
-    documentTitle,
-    about: `I work on ${focus}. For the Harbor pilot I am preparing ${documentTitle.toLowerCase()}. Happy to review a draft or pair on a difficult problem.`,
-    folderId: teamId(1, index + 1),
-    calendarId: teamId(5, index + 1),
-  }),
+  ([key, displayName, pronouns, jobTitle, focus, documentTitle], index) => {
+    const firstName = displayName.split(" ")[0] ?? displayName;
+    const lastName = displayName.split(" ").at(-1)?.toLowerCase() ?? key;
+    return {
+      index,
+      actorId: teamId(0, index + 1),
+      email: `demo.${key}@helix.local`,
+      aliases: [
+        `${key}@harbor.local`,
+        `${firstName.toLowerCase()}.${lastName}@harbor.local`,
+        ...(index % 3 === 0 ? [`${firstName.toLowerCase()}.${lastName}@helix.local`] : []),
+      ],
+      firstName,
+      displayName,
+      pronouns,
+      jobTitle,
+      focus,
+      documentTitle,
+      about: `I work on ${focus}. For the Harbor pilot I am preparing ${documentTitle.toLowerCase()}. Happy to review a draft or pair on a difficult problem.`,
+      folderId: teamId(1, index + 1),
+      calendarId: teamId(5, index + 1),
+    };
+  },
 );
 export type TeamPerson = (typeof LOCAL_TEAM_PEOPLE)[number];
 

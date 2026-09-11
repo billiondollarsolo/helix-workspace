@@ -1,7 +1,13 @@
-import type { Actor } from "@helix/sdk-types";
+import type { Actor, SecurityTier } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type postgres from "postgres";
 import { z } from "zod";
+import {
+  resolveAdminSecurityControls,
+  type AdminSecurityControls,
+} from "../auth/admin-security-policy.js";
+import type { MfaVerificationResolver } from "../auth/mfa.js";
+import { parseActorRoleBindings } from "../permissions/roles.js";
 import { dlpBoundaries } from "../dlp.js";
 import { driveWorkflowKinds } from "../drive/workflows.js";
 import {
@@ -30,9 +36,8 @@ import {
  *
  * `settings` is a typed JSON blob whose shape is validated per policy type.
  * Tier-config enforcement (audit shipping, Vault/SIEM) lives elsewhere and is
- * unaffected; these records hold the org-author-editable policy state and are
- * advisory to that enforcement. The store seeds a default record for each type
- * the first time an org's policies are listed so the UI always has every card.
+ * unaffected. Runtime consumers read each tenant policy; list/get synthesize
+ * defaults without writing or converting inherited controls to explicit choices.
  */
 
 export type SecurityPolicyType =
@@ -64,12 +69,32 @@ export interface SecurityPolicyRecord {
 
 export type SecurityPolicyView = SecurityPolicyRecord & {
   readonly runtimeStatus: PolicyRuntimeStatusView;
+  readonly effectiveControls?: AdminSecurityControls;
 };
 
-function toPolicyView(policy: SecurityPolicyRecord): SecurityPolicyView {
+function toPolicyView(
+  policy: SecurityPolicyRecord,
+  tier: SecurityTier = "personal",
+): SecurityPolicyView {
+  const effectiveControls =
+    policy.policyType === "mfa" ? resolveAdminSecurityControls(tier, policy) : undefined;
+  const active =
+    effectiveControls !== undefined &&
+    (effectiveControls.adminMfaRequired ||
+      effectiveControls.sensitiveActionMfaRequired ||
+      effectiveControls.secondAdminApprovalRequired);
   return {
     ...policy,
-    runtimeStatus: policyRuntimeStatus(policy),
+    runtimeStatus: {
+      ...policyRuntimeStatus(policy),
+      ...(effectiveControls === undefined
+        ? {}
+        : {
+            displayLevel: active ? ("active" as const) : ("off" as const),
+            displayLevelOn: active,
+          }),
+    },
+    ...(effectiveControls === undefined ? {} : { effectiveControls }),
   };
 }
 
@@ -79,6 +104,10 @@ function toPolicyView(policy: SecurityPolicyRecord): SecurityPolicyView {
 
 const mfaSettings = z
   .object({
+    // Absence means inherited; do not materialize defaults as explicit operator choices.
+    adminMfa: z.enum(["tier_default", "optional", "required"]).optional(),
+    sensitiveActionMfaRequired: z.boolean().optional(),
+    secondAdminApprovalRequired: z.boolean().optional(),
     allowedMethods: z
       .array(z.enum(["hardware_key", "totp", "sms"]))
       .max(3)
@@ -203,9 +232,13 @@ export interface UpsertSecurityPolicyInput {
 }
 
 export interface SecurityPoliciesStore {
-  /** List all six policy records, materializing defaults for any missing. */
+  /** List each policy, synthesizing defaults for any missing. */
   list(orgId: string): Promise<readonly SecurityPolicyRecord[]>;
-  get(orgId: string, policyType: SecurityPolicyType): Promise<SecurityPolicyRecord | null>;
+  get(
+    orgId: string,
+    policyType: SecurityPolicyType,
+    lockForUpdate?: boolean,
+  ): Promise<SecurityPolicyRecord | null>;
   upsert(input: UpsertSecurityPolicyInput): Promise<SecurityPolicyRecord>;
 }
 
@@ -239,6 +272,9 @@ export interface RegisterAdminSecurityPoliciesRoutesOptions {
   readonly store: SecurityPoliciesStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly auditSink: AdminConsoleAuditSink;
+  readonly mfa?: MfaVerificationResolver;
+  readonly securityTier?: () => SecurityTier;
+  readonly hasOtherAdministrator?: (actor: Actor) => Promise<boolean>;
 }
 
 /**
@@ -253,9 +289,10 @@ export interface RegisterAdminSecurityPoliciesRoutesOptions {
 export async function readSecurityPolicies(
   store: SecurityPoliciesStore,
   orgId: string,
+  tier: SecurityTier = "personal",
 ): Promise<{ readonly policies: readonly SecurityPolicyView[] }> {
   const policies = await store.list(orgId);
-  return { policies: policies.map(toPolicyView) };
+  return { policies: policies.map((policy) => toPolicyView(policy, tier)) };
 }
 
 export async function registerAdminSecurityPoliciesRoutes(
@@ -263,13 +300,14 @@ export async function registerAdminSecurityPoliciesRoutes(
   options: RegisterAdminSecurityPoliciesRoutesOptions,
 ): Promise<void> {
   const { store, actorFromRequest, auditSink } = options;
+  const tier = options.securityTier ?? (() => "personal" as const);
 
   app.get("/api/admin/security-policies", async (request, reply) => {
     const actor = await actorFromRequest(request);
     if (!canReadAdminConsole(actor, "admin.security")) {
       return sendForbidden(reply, adminConsoleReadScope);
     }
-    return readSecurityPolicies(store, actor.orgId);
+    return readSecurityPolicies(store, actor.orgId, tier());
   });
 
   app.get("/api/admin/security-policies/:policyType", async (request, reply) => {
@@ -286,20 +324,23 @@ export async function registerAdminSecurityPoliciesRoutes(
       // Materialize the same defaults list/get consumers already see.
       const fallback = defaultPolicy(params.data.policyType);
       return {
-        policy: toPolicyView({
-          id: `default:${params.data.policyType}`,
-          orgId: actor.orgId,
-          policyType: params.data.policyType,
-          enabled: fallback.enabled,
-          enforcement: fallback.enforcement,
-          settings: fallback.settings,
-          updatedBy: null,
-          createdAt: "",
-          updatedAt: "",
-        }),
+        policy: toPolicyView(
+          {
+            id: `default:${params.data.policyType}`,
+            orgId: actor.orgId,
+            policyType: params.data.policyType,
+            enabled: fallback.enabled,
+            enforcement: fallback.enforcement,
+            settings: fallback.settings,
+            updatedBy: null,
+            createdAt: "",
+            updatedAt: "",
+          },
+          tier(),
+        ),
       };
     }
-    return { policy: toPolicyView(policy) };
+    return { policy: toPolicyView(policy, tier()) };
   });
 
   app.put("/api/admin/security-policies/:policyType", async (request, reply) => {
@@ -319,7 +360,7 @@ export async function registerAdminSecurityPoliciesRoutes(
     }
 
     const policyType = params.data.policyType;
-    const current = (await store.get(actor.orgId, policyType)) ?? {
+    const current = (await store.get(actor.orgId, policyType, true)) ?? {
       ...defaultPolicy(policyType),
       id: "",
       orgId: actor.orgId,
@@ -334,12 +375,58 @@ export async function registerAdminSecurityPoliciesRoutes(
       return reply.code(400).send(invalidRequest(enforcementGate.message));
     }
 
-    const settingsInput = body.data.settings ?? current.settings;
+    const settingsInput = { ...current.settings, ...body.data.settings };
     const parsedSettings = parsePolicySettings(policyType, settingsInput);
     if (!parsedSettings.ok) {
       return reply
         .code(400)
         .send(invalidRequest("Invalid security policy settings.", parsedSettings.issues));
+    }
+
+    if (policyType === "mfa" || policyType === "session") {
+      if (
+        actor.type !== "user" ||
+        !(await options.mfa?.isRecentlyAuthenticated?.(request, actor))
+      ) {
+        return reply.code(403).send({
+          code: "security_policy_reauthentication_required",
+          error:
+            "Sign in again before changing authentication or approval policies (within 10 minutes).",
+        });
+      }
+      const next = {
+        enabled: body.data.enabled ?? current.enabled,
+        enforcement: nextEnforcement,
+        settings: parsedSettings.settings,
+      };
+      if (
+        policyType === "mfa" &&
+        body.data.settings?.secondAdminApprovalRequired === true &&
+        current.settings.secondAdminApprovalRequired !== true &&
+        !(await options.hasOtherAdministrator?.(actor))
+      ) {
+        return reply.code(409).send({
+          code: "security_policy_second_admin_required",
+          error:
+            "Add another active human security administrator before requiring second-admin approval.",
+        });
+      }
+      const requiresNewMfa =
+        policyType === "mfa" &&
+        (body.data.settings?.adminMfa === "required" ||
+          body.data.settings?.sensitiveActionMfaRequired === true ||
+          (next.settings.adminMfa === undefined &&
+            next.enabled &&
+            next.enforcement === "required" &&
+            !(current.enabled && current.enforcement === "required")) ||
+          (!resolveAdminSecurityControls(tier(), current).adminMfaRequired &&
+            resolveAdminSecurityControls(tier(), next).adminMfaRequired));
+      if (requiresNewMfa && !(await options.mfa?.isMfaVerified(request, actor))) {
+        return reply.code(403).send({
+          code: "security_policy_mfa_required",
+          error: "Enroll and verify an MFA factor before requiring it, so you retain access.",
+        });
+      }
     }
 
     const policy = await store.upsert({
@@ -363,9 +450,16 @@ export async function registerAdminSecurityPoliciesRoutes(
         enforcement: policy.enforcement,
         fields: Object.keys(body.data),
         runtimeMode: policyRuntimeStatus(policy).mode,
+        ...(policyType === "mfa"
+          ? {
+              previousControls: resolveAdminSecurityControls(tier(), current),
+              controls: resolveAdminSecurityControls(tier(), policy),
+              changedSettings: Object.keys(body.data.settings ?? {}),
+            }
+          : {}),
       },
     });
-    return { policy: toPolicyView(policy) };
+    return { policy: toPolicyView(policy, tier()) };
   });
 }
 
@@ -387,6 +481,26 @@ interface SecurityPolicyRow {
 
 export class PostgresSecurityPoliciesStore implements SecurityPoliciesStore {
   constructor(private readonly sql: postgres.Sql) {}
+
+  async hasOtherAdministrator(actor: Actor): Promise<boolean> {
+    const rows = await this.sql<{ id: string; scopes: string[]; role_bindings: unknown }[]>`
+      select candidate.id, candidate.scopes, helix_actor_role_bindings(candidate.org_id, candidate.id) role_bindings
+      from actors candidate where candidate.org_id = ${actor.orgId} and candidate.id <> ${actor.id}
+        and candidate.type = 'user' and helix_credential_principal_is_active(candidate.id, candidate.org_id)
+    `;
+    return rows.some((candidate) =>
+      canWriteAdminConsole(
+        {
+          id: candidate.id,
+          orgId: actor.orgId,
+          type: "user",
+          scopes: candidate.scopes,
+          roleBindings: parseActorRoleBindings(candidate.role_bindings),
+        },
+        "admin.security",
+      ),
+    );
+  }
 
   async list(orgId: string): Promise<readonly SecurityPolicyRecord[]> {
     const rows = await this.sql<SecurityPolicyRow[]>`
@@ -416,7 +530,15 @@ export class PostgresSecurityPoliciesStore implements SecurityPoliciesStore {
     });
   }
 
-  async get(orgId: string, policyType: SecurityPolicyType): Promise<SecurityPolicyRecord | null> {
+  async get(
+    orgId: string,
+    policyType: SecurityPolicyType,
+    lockForUpdate = false,
+  ): Promise<SecurityPolicyRecord | null> {
+    // The request transaction holds this through validation, approval consumption, write and audit.
+    if (lockForUpdate)
+      await this.sql`select pg_advisory_xact_lock(hashtextextended(${orgId}::text, 195))`;
+
     const rows = await this.sql<SecurityPolicyRow[]>`
       select id, org_id, policy_type, enabled, enforcement, settings,
              updated_by, created_at, updated_at

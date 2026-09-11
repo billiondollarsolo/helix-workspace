@@ -8,6 +8,7 @@ import type {
 } from "@helix/sdk-types";
 import { isJsonObject, isJsonValue } from "@helix/sdk-types";
 import { readFile } from "node:fs/promises";
+import { AsyncResource } from "node:async_hooks";
 import { parse as parseYaml } from "yaml";
 
 type ModuleConfig = NonNullable<HelixConfig["modules"]>[string];
@@ -114,10 +115,15 @@ export async function loadHelixConfig(sources: readonly ConfigSource[]): Promise
 export async function subscribeToConfigHotReload(
   options: ConfigHotReloadOptions,
 ): Promise<() => Promise<void> | void> {
-  return options.events.subscribe(options.subject ?? "helix.config.changed", async () => {
-    const config = await options.reload();
-    await options.onReload(config);
-  });
+  // In-memory publishers may run inside a now-committed request transaction.
+  // Capture the subscriber's startup context so reload always uses fresh SQL.
+  return options.events.subscribe(
+    options.subject ?? "helix.config.changed",
+    AsyncResource.bind(async () => {
+      const config = await options.reload();
+      await options.onReload(config);
+    }),
+  );
 }
 
 export function mergeConfig(

@@ -1,4 +1,4 @@
-import type { JsonObject, JsonValue } from "@helix/sdk-types";
+import type { Actor, JsonObject, JsonValue } from "@helix/sdk-types";
 import { isJsonObject } from "@helix/sdk-types";
 import {
   isDataClassification,
@@ -6,7 +6,8 @@ import {
   type DataClassification,
 } from "../ai/classification/index.js";
 import type { MemoryItem } from "../ai/memory/index.js";
-import type { SearchHit } from "../search/index.js";
+import type { SearchEngine, SearchHit } from "../search/index.js";
+import { createScopedSearchRequest, type GlobalSearchType } from "../search/scope.js";
 import type { AssistantSource } from "./types.js";
 
 export const assistantContextLimits = {
@@ -21,6 +22,21 @@ export const assistantContextLimits = {
 export interface PreparedSearchContext {
   readonly sources: readonly AssistantSource[];
   readonly rejectedSourceIds: readonly string[];
+}
+
+export async function collectSearchContext(
+  search: SearchEngine | undefined,
+  actor: Actor,
+  query: string,
+  classification: DataClassification,
+  limit: number,
+  types: readonly GlobalSearchType[] | undefined,
+): Promise<readonly AssistantSource[]> {
+  if (search === undefined || query.trim().length === 0) return [];
+  const request = createScopedSearchRequest(actor, { query: query.trim(), limit, types });
+  if (request === undefined) return [];
+  const response = await search.search({ ...request, classification });
+  return prepareSearchContext(response.hits, actor.orgId).sources;
 }
 
 export function prepareSearchContext(
@@ -61,6 +77,10 @@ export function prepareSearchContext(
         orgId,
       },
       ...(title === undefined || title.length === 0 ? {} : { title }),
+      ...(hit.url !== undefined &&
+      /^\/(?:mail|drive|chat|calendar)\/[a-zA-Z0-9/?=&._-]+$/u.test(hit.url)
+        ? { url: hit.url }
+        : {}),
       ...(body.length === 0 ? {} : { body }),
       ...(hit.score === undefined ? {} : { score: hit.score }),
     });
@@ -117,11 +137,31 @@ export function formatUntrustedToolResult(input: {
     toolId: sanitizeIdentifier(input.toolId),
     output: input.output ?? null,
   });
-  return [
-    "BEGIN_UNTRUSTED_TOOL_RESULT",
-    sanitizeUntrustedText(serialized, assistantContextLimits.toolResultCharacters),
-    "END_UNTRUSTED_TOOL_RESULT",
-  ].join("\n");
+  // A bounded page chunk includes up to 4,000 characters plus its exact URL and pagination.
+  const limit = input.toolId === "web.fetch" ? 12_000 : assistantContextLimits.toolResultCharacters;
+  let preview = sanitizeUntrustedText(serialized, limit + 1);
+  if (preview.length > limit) {
+    // Preserve returned counts: a clipped JSON list must not look like a complete result.
+    const arrays = Array.isArray(input.output)
+      ? [["output", input.output] as const]
+      : isJsonObject(input.output)
+        ? Object.entries(input.output).filter((entry) => Array.isArray(entry[1]))
+        : [];
+    const header = `${JSON.stringify({
+      toolId: sanitizeIdentifier(input.toolId),
+      truncated: true,
+      returnedArrayCounts: Object.fromEntries(
+        arrays
+          .slice(0, 10)
+          .map(([key, value]) => [
+            sanitizeIdentifier(key).slice(0, 64),
+            Array.isArray(value) ? value.length : 0,
+          ]),
+      ),
+    })}\nTruncated output preview:\n`;
+    preview = header + preview.slice(0, Math.max(0, limit - header.length));
+  }
+  return ["BEGIN_UNTRUSTED_TOOL_RESULT", preview, "END_UNTRUSTED_TOOL_RESULT"].join("\n");
 }
 
 export function classificationFromToolResult(output: JsonValue | undefined): DataClassification {

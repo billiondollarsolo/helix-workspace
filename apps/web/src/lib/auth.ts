@@ -70,15 +70,26 @@ export async function authenticatedFetch(
       output.error.code === "session_reauthentication_required" &&
       !redirectingForSession
     ) {
-      redirectingForSession = true;
-      const search = new URLSearchParams({
-        reauthenticate: "true",
-        returnTo: window.location.pathname + window.location.search + window.location.hash,
-      });
-      window.location.replace(`/login?${search.toString()}`);
+      redirectToLogin(true);
     }
   }
   return response;
+}
+
+/** A full navigation drops actor-scoped UI/cache after confirmed session loss. */
+export function redirectToLogin(reauthenticate = false): void {
+  if (
+    typeof window === "undefined" ||
+    window.location.pathname === "/login" ||
+    redirectingForSession
+  )
+    return;
+  redirectingForSession = true;
+  const search = new URLSearchParams({
+    ...(reauthenticate ? { reauthenticate: "true" } : {}),
+    returnTo: window.location.pathname + window.location.search + window.location.hash,
+  });
+  window.location.replace(`/login?${search.toString()}`);
 }
 
 /** Signs in with email + password via Better-Auth. Sets the session cookie. */
@@ -271,14 +282,24 @@ export async function getSessionUser(
     credentials: "include",
     headers: { "content-type": "application/json" },
   });
-  if (!response.ok) {
-    return null;
+  if (response.status === 401) return null;
+  const output: unknown = response.ok ? await response.json().catch(() => undefined) : undefined;
+  // BetterAuth explicitly returns JSON null when no session exists.
+  if (output === null) return null;
+  const user =
+    isRecord(output) &&
+    isRecord(output.user) &&
+    typeof output.user.email === "string" &&
+    typeof output.user.name === "string"
+      ? sessionUserFromOutput(output)
+      : null;
+  if (user === null || user.id.trim().length === 0) {
+    throw Object.assign(
+      new Error("Unable to check your session. The server may be restarting. Try again shortly."),
+      { status: response.status },
+    );
   }
-  const output: unknown = await response.json().catch(() => null);
-  if (output === null || (typeof output === "object" && Object.keys(output).length === 0)) {
-    return null;
-  }
-  return sessionUserFromOutput(output);
+  return user;
 }
 
 /** Signs the current session out via Better-Auth. */

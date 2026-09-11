@@ -270,6 +270,8 @@ const seedEnvSchema = envSchema
     RUSTFS_BUCKET: true,
     RUSTFS_ACCESS_KEY: true,
     RUSTFS_SECRET_KEY: true,
+    RUSTFS_SERVER_SIDE_ENCRYPTION: true,
+    RUSTFS_SSE_KMS_KEY_ID: true,
     HELIX_SMOKE_AGENT_ORG_ID: true,
     HELIX_SMOKE_AGENT_ACTOR_ID: true,
     HELIX_SMOKE_AGENT_EMAIL: true,

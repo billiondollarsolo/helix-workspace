@@ -29,6 +29,38 @@ describe("vector store runtime config", () => {
     expect(store?.id).toBe("pgvector");
   });
 
+  it("honors disabled retrieval and explicitly cleared inherited credentials", async () => {
+    expect(
+      createConfiguredVectorStore(
+        { vectorStore: { plugin: "pgvector", config: { enabled: false } } },
+        { sql: fakeSql() },
+      ),
+    ).toBeUndefined();
+    let headers: HeadersInit | undefined;
+    const store = createConfiguredVectorStore(
+      {
+        vectorStore: {
+          plugin: "qdrant",
+          config: {
+            baseUrl: "https://vectors.example.test",
+            apiKey: "",
+            apiKeyEnv: "OLD_KEY",
+          },
+        },
+      },
+      {
+        sql: fakeSql(),
+        env: { OLD_KEY: "must-not-return" },
+        fetch: async (_input, init) => {
+          headers = init?.headers;
+          return Response.json({ result: [] });
+        },
+      },
+    );
+    await store?.query("org", "docs", [1, 0]);
+    expect(new Headers(headers).has("api-key")).toBe(false);
+  });
+
   it("creates HTTP vector adapters and resolves apiKeyEnv", async () => {
     const calls: { readonly input: URL; readonly init: RequestInit | undefined }[] = [];
     const fetchImpl: typeof fetch = async (input, init) => {
@@ -37,7 +69,7 @@ describe("vector store runtime config", () => {
       }
       calls.push({ input, init });
       return new Response(JSON.stringify({ result: true }), {
-        status: 200,
+        status: init?.method === "GET" ? 404 : 200,
         headers: { "content-type": "application/json" },
       });
     };
@@ -62,7 +94,7 @@ describe("vector store runtime config", () => {
       `http://qdrant.local/collections/${encodeURIComponent(`org_${orgId}__docs`)}`,
     );
     expect(calls[0]?.init?.headers).toMatchObject({
-      authorization: "Bearer qdrant-secret",
+      "api-key": "qdrant-secret",
     });
   });
 

@@ -100,8 +100,11 @@ export class AIProviderUnavailableError extends Error {
 }
 
 export class AIClassificationBlockedError extends Error {
+  readonly statusCode = 422;
   constructor(message: string) {
-    super(message);
+    super(
+      `${message} Choose a provider approved for this data classification or start a chat without that workspace data.`,
+    );
     this.name = "AIClassificationBlockedError";
   }
 }
@@ -229,7 +232,7 @@ export class AIRouter implements AICapability {
           const response = isChatChunkStream(responseOrStream)
             ? await collectChatStream(responseOrStream, provider.id, model)
             : responseOrStream;
-          yield* this.#emitNonStreamingFallback(response, model);
+          yield* this.#emitNonStreamingFallback({ ...response, providerId: provider.id }, model);
           await this.#finalizeStream({
             request,
             context,
@@ -260,7 +263,10 @@ export class AIRouter implements AICapability {
               resolvedModel = metadataModel;
             }
           }
-          yield chunk;
+          yield {
+            ...chunk,
+            metadata: { ...chunk.metadata, providerId: provider.id, model: resolvedModel },
+          };
         }
         await this.#finalizeStream({
           request,
@@ -359,12 +365,14 @@ export class AIRouter implements AICapability {
       yield { delta: response.message };
     }
     const metadata: JsonObject = {
+      providerId: response.providerId,
       model: response.model || model,
       ...(response.toolCalls === undefined || response.toolCalls.length === 0
         ? {}
         : {
             toolCalls: response.toolCalls.map((toolCall) => ({
               id: toolCall.id,
+              ...(toolCall.callId === undefined ? {} : { callId: toolCall.callId }),
               ...(toolCall.input === undefined ? {} : { input: toolCall.input }),
             })),
           }),
@@ -893,11 +901,7 @@ export class AIRouter implements AICapability {
   }
 }
 
-/**
- * Runs `body` inside a new active `helix.ai` span, marking the span OK on
- * success and recording the exception plus an ERROR status on failure. The
- * span is always ended, and the original error is always rethrown.
- */
+/** Runs a traced operation, recording errors and ending the span on every exit. */
 async function inActiveSpan<T>(name: string, body: (span: Span) => Promise<T>): Promise<T> {
   return trace.getTracer("helix.ai").startActiveSpan(name, async (span) => {
     try {
@@ -1153,11 +1157,7 @@ function durationSecondsSince(start: bigint): number {
   return Number(process.hrtime.bigint() - start) / 1_000_000_000;
 }
 
-/**
- * Drops repeat (provider, model) pairs while preserving order, so a feature
- * route whose fallback names the same provider+model as its primary does not
- * cause the router to retry an attempt that has already failed.
- */
+/** Preserves provider/model order without retrying duplicate attempts. */
 function dedupeAttempts<T extends AIProviderAttempt | ImageProviderAttempt>(
   attempts: readonly T[],
 ): readonly T[] {

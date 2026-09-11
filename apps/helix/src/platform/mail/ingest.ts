@@ -15,7 +15,7 @@ import {
   sanitizeMailHeaderDisplayValue,
   sanitizeMailHtml,
 } from "./content-safety.js";
-import { MailMalwareRejectedError } from "./errors.js";
+import { MailAddressDeliveryError, MailMalwareRejectedError } from "./errors.js";
 import { evaluateInboundMail, type MailFilterEvaluationResult } from "./filters.js";
 import {
   evaluateInboundAuthenticationPolicy,
@@ -43,7 +43,6 @@ import type {
   MailMessageInput,
   StoredMailMessage,
 } from "./types.js";
-
 export interface MailAuthenticationSummary {
   readonly spf: string;
   readonly dkim: string;
@@ -349,7 +348,8 @@ export class SmtpMailReceiver {
         this.options.resolveRecipient(normalized),
         this.limits.recipientResolutionTimeoutMs,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof MailAddressDeliveryError) throw error;
       throw smtpError(451, "Recipient lookup temporarily unavailable.");
     }
     if (!acceptsInboundRecipient(recipient)) {

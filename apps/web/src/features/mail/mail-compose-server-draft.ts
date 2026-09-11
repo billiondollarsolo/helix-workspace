@@ -5,10 +5,11 @@ import type { MailComposeDraftFields, MailComposeRecovery } from "./mail-compose
 export function serverDraftToComposeFields(
   draft: Pick<
     MailDraft,
-    "to" | "cc" | "bcc" | "subject" | "bodyText" | "attachments" | "updatedAt"
+    "from" | "to" | "cc" | "bcc" | "subject" | "bodyText" | "attachments" | "updatedAt"
   >,
 ): MailComposeDraftFields & { readonly updatedAt: string } {
   return {
+    ...(draft.from === undefined ? {} : { from: draft.from }),
     to: draft.to,
     cc: draft.cc,
     bcc: draft.bcc,
@@ -74,6 +75,7 @@ export function hydrationFromReconcile(input: {
       return {
         kind: "fields",
         fields: {
+          ...(decision.local.from === undefined ? {} : { from: decision.local.from }),
           to: decision.local.to,
           cc: decision.local.cc,
           bcc: decision.local.bcc,
@@ -95,6 +97,7 @@ export function hydrationFromReconcile(input: {
       return {
         kind: "fields",
         fields: {
+          ...(fields.from === undefined ? {} : { from: fields.from }),
           to: fields.to,
           cc: fields.cc,
           bcc: fields.bcc,

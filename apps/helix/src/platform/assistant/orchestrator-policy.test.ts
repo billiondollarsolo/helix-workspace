@@ -1,5 +1,6 @@
 import type { AICapability, Actor, AuditRecord, ToolDefinition } from "@helix/sdk-types";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { MemoryStore } from "../ai/memory/index.js";
 import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
 import type { SearchEngine, SearchHit, SearchRequest } from "../search/index.js";
 import { createToolRegistry } from "../tool-registry.js";
@@ -15,6 +16,64 @@ const actor: Actor = {
 };
 
 describe("Assistant A1-A3 policy integration", () => {
+  it.each([false, true])(
+    "propagates context restrictions before retrieval (memory: %s)",
+    async (withMemory) => {
+      const requests: SearchRequest[] = [];
+      const memoryItem = {
+        id: "memory-1",
+        actorId: actor.id,
+        orgId: actor.orgId,
+        source: "test",
+        content: "Earlier context",
+        metadata: { classification: "restricted" },
+        createdAt: new Date().toISOString(),
+      };
+      const recall = vi.fn<MemoryStore["recall"]>().mockResolvedValue([memoryItem]);
+      const storeMemory = vi.fn<MemoryStore["store"]>().mockResolvedValue(memoryItem);
+      const assistant = new AssistantOrchestrator({
+        store: new InMemoryAssistantStore(),
+        memory: { id: "recording-memory", recall, store: storeMemory, forget: async () => 0 },
+        search: {
+          ...searchEngine([]),
+          async search(request) {
+            requests.push(request);
+            return { query: request.query, hits: [] };
+          },
+        },
+        tools: createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() }),
+        ai: {
+          async chat() {
+            return { message: "Done", model: "test", providerId: "test" };
+          },
+        },
+      });
+      const first = await assistant.sendMessage({
+        actor,
+        content: "Continue the discussion",
+        memoryOptIn: withMemory,
+        classification: withMemory ? "standard" : "restricted",
+      });
+      await assistant.sendMessage({
+        actor,
+        conversationId: first.conversation.id,
+        content: "Explain more",
+        classification: "public",
+      });
+      expect(requests.map((request) => request.classification)).toEqual([
+        "restricted",
+        "restricted",
+      ]);
+      if (withMemory) {
+        expect(recall.mock.calls.map((call) => call[3])).toEqual(["standard", "restricted"]);
+        expect(storeMemory.mock.calls.map((call) => call[1].metadata?.classification)).toEqual([
+          "restricted",
+          "restricted",
+        ]);
+      } else expect(recall).not.toHaveBeenCalled();
+    },
+  );
+
   it("limits retrieval to server-enabled application types", async () => {
     let observedRequest: SearchRequest | undefined;
     const scopedActor: Actor = {
@@ -288,6 +347,7 @@ describe("Assistant A1-A3 policy integration", () => {
       store: new InMemoryAssistantStore(),
       tools,
       blockHighRiskToolsWhenUntrusted: true,
+      maxToolRounds: 3,
       search: searchEngine([
         {
           id: "mail-injection",
@@ -297,12 +357,12 @@ describe("Assistant A1-A3 policy integration", () => {
         },
       ]),
       ai: {
-        async chat() {
+        async chat(request) {
           return {
-            message: "Trying",
+            message: request.tools?.length ? "Trying" : "The action was blocked.",
             model: "test",
             providerId: "test",
-            toolCalls: [{ id: "demo.external", input: {} }],
+            ...(request.tools?.length ? { toolCalls: [{ id: "demo.external", input: {} }] } : {}),
           };
         },
       },

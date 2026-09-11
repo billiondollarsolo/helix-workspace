@@ -43,12 +43,16 @@ export function tierRequiresAdminMfa(tier: SecurityTier): boolean {
  * counts. Non-admin actors are never subject to admin-MFA enforcement.
  */
 export function actorHasAdminScope(actor: Actor): boolean {
-  return (actor.scopes ?? []).some((scope) => scope === "admin.*" || scope.startsWith("admin."));
+  return [
+    ...(actor.scopes ?? []),
+    ...(actor.roleBindings ?? []).flatMap((binding) => binding.allow),
+  ].some((scope) => scope === "*" || scope.startsWith("admin."));
 }
 
 /** Resolves whether the authenticated server session has recent MFA assurance. */
 export interface MfaVerificationResolver {
   isMfaVerified(request: FastifyRequest, actor: Actor): boolean | Promise<boolean>;
+  isRecentlyAuthenticated?(request: FastifyRequest, actor: Actor): boolean | Promise<boolean>;
 }
 
 export interface MfaAssertionVerificationConfig {
@@ -195,7 +199,7 @@ export class PostgresSessionMfaAssurance implements MfaVerificationResolver, Mfa
     return rows.length === 1;
   }
 
-  async isMfaVerified(request: FastifyRequest): Promise<boolean> {
+  async isMfaVerified(request: Pick<FastifyRequest, "headers">): Promise<boolean> {
     const sessionToken = await this.verifier.getSessionToken?.({ headers: request.headers });
     if (sessionToken === undefined || sessionToken === null) {
       return false;
@@ -216,6 +220,19 @@ export class PostgresSessionMfaAssurance implements MfaVerificationResolver, Mfa
           or exists (select 1 from passkey p where p."userId" = u.id)
         )
       limit 1
+    `;
+    return rows.length === 1;
+  }
+
+  async isRecentlyAuthenticated(request: Pick<FastifyRequest, "headers">): Promise<boolean> {
+    const token = await this.verifier.getSessionToken?.({ headers: request.headers });
+    if (!token) return false;
+    const now = new Date();
+    const rows = await this.sql`
+      select 1 from "session"
+      where token = ${token} and "expiresAt" > ${now}
+        and greatest("createdAt", coalesce(mfa_verified_at, '-infinity')) > ${new Date(now.getTime() - this.#maxAgeMs)}
+        and greatest("createdAt", coalesce(mfa_verified_at, '-infinity')) <= ${now}
     `;
     return rows.length === 1;
   }

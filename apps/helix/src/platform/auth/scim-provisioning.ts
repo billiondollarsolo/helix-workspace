@@ -221,6 +221,7 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
     transferToActorId: string | null,
   ): Promise<boolean> {
     return withTenantPostgresContext(this.sql, { orgId }, async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtextextended('actor-offboarding:' || ${orgId}::text, 0))`;
       const current = await selectUser(tx, orgId, id, true);
       if (current === null) return false;
       assertVersion(current.version, expectedVersion);
@@ -231,7 +232,7 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
             metadata = jsonb_set(
               metadata, '{scim}',
               coalesce(metadata->'scim', '{}'::jsonb) ||
-                jsonb_build_object('dataTransferTargetId', ${transferToActorId}),
+                jsonb_build_object('dataTransferTargetId', ${transferToActorId}::uuid),
               true
             )
         where org_id = ${orgId} and id = ${id}
@@ -368,6 +369,8 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
     input: PutScimUser,
     expectedVersion: number | null,
   ): Promise<ScimUserRecord | null> {
+    if (!input.active)
+      await tx`select pg_advisory_xact_lock(hashtextextended('actor-offboarding:' || ${orgId}::text, 0))`;
     const current = await selectUser(tx, orgId, id, true);
     if (current === null) return null;
     assertVersion(current.version, expectedVersion);
@@ -389,25 +392,7 @@ export class PostgresScimProvisioningStore implements ScimProvisioningStore {
                   metadata #>> '{scim,dataTransferTargetId}' as transfer_target_id,
                   created_at, updated_at, scim_version as version
       `;
-      await tx`
-        update "user" as auth_user
-        set email = ${input.userName}, name = ${input.displayName}, "updatedAt" = now()
-        from identity_provider_subjects provider_subject
-        join organization_memberships membership
-          on membership.subject_id = provider_subject.subject_id
-        where provider_subject.provider = 'better-auth'
-          and provider_subject.provider_subject = auth_user.id
-          and membership.org_id = ${orgId}
-          and membership.actor_id = ${id}
-      `;
-      await tx`
-        update identity_subjects subject
-        set canonical_email = lower(btrim(${input.userName})), updated_at = now()
-        from organization_memberships membership
-        where membership.subject_id = subject.id
-          and membership.org_id = ${orgId}
-          and membership.actor_id = ${id}
-      `;
+      // SCIM governs this tenant membership, not the user's shared global login.
       await tx`
         update organization_memberships
         set status = ${input.active ? "active" : "deprovisioned"},
@@ -574,73 +559,19 @@ async function deprovisionUser(
   actorId: string,
   transferToActorId: string | null,
 ): Promise<void> {
-  if (transferToActorId === actorId) {
-    throw new ScimConflictError("Data cannot be transferred to the deprovisioned user.");
-  }
-  if (transferToActorId !== null) {
-    const target = await tx<
-      {
-        readonly id: string;
-      }[]
-    >`
-      select id from actors
-      where org_id = ${orgId} and id = ${transferToActorId}
-        and type = 'user' and disabled_at is null
-      for update
-    `;
-    if (target[0] === undefined) {
-      throw new ScimConflictError(
-        "The data-transfer target must be an active user in the same tenant.",
-      );
+  try {
+    // Legacy SCIM without a successor archives ownership; Admin requires a reviewed handoff.
+    await tx`select helix_offboard_actor(${orgId}, ${actorId}, ${transferToActorId}, false, null, true)`;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      ["23514", "42501", "40001"].includes(String(error.code))
+    ) {
+      throw new ScimConflictError(error.message);
     }
-    await tx`
-      insert into cal_calendar_memberships (
-        org_id, calendar_id, actor_id, role, visible, sort_order
-      )
-      select org_id, id, ${transferToActorId}, 'owner', true, 0
-      from cal_calendars
-      where org_id = ${orgId} and owner_actor_id = ${actorId}
-      on conflict (actor_id, calendar_id) do update
-        set role = 'owner', updated_at = now()
-    `;
-    await tx`update objects set owner_actor_id = ${transferToActorId}, updated_at = now()
-             where org_id = ${orgId} and owner_actor_id = ${actorId}
-               and kind <> 'mail_source'`;
-    await tx`update drive_folders set owner_actor_id = ${transferToActorId}, updated_at = now()
-             where org_id = ${orgId} and owner_actor_id = ${actorId}`;
-    await tx`update cal_calendars set owner_actor_id = ${transferToActorId}, updated_at = now()
-             where org_id = ${orgId} and owner_actor_id = ${actorId}`;
-    await tx`update vector_items set owner_actor_id = ${transferToActorId}, updated_at = now()
-             where org_id = ${orgId} and owner_actor_id = ${actorId}`;
-    await tx`update carddav_contacts set owner_actor_id = ${transferToActorId}, updated_at = now()
-             where org_id = ${orgId} and owner_actor_id = ${actorId}`;
+    throw error;
   }
-  await tx`delete from admin_group_members where org_id = ${orgId} and actor_id = ${actorId}`;
-  await tx`delete from permissions where org_id = ${orgId} and actor_id = ${actorId}`;
-  await tx`delete from cal_calendar_memberships where org_id = ${orgId} and actor_id = ${actorId}`;
-  await tx`
-    update pending_actions
-    set status = 'cancelled', decided_at = now(), error = 'Actor deprovisioned by SCIM'
-    where org_id = ${orgId} and actor_id = ${actorId} and status = 'pending_confirmation'
-  `;
-  await tx`
-    update organization_memberships
-    set status = 'deprovisioned', suspended_at = null,
-        ended_at = coalesce(ended_at, now()), updated_at = now()
-    where org_id = ${orgId} and actor_id = ${actorId}
-  `;
-  await tx`update app_passwords set revoked_at = coalesce(revoked_at, now())
-           where actor_id = ${actorId}`;
-  await tx`update agent_credentials set revoked_at = coalesce(revoked_at, now()),
-             revocation_epoch = revocation_epoch + 1 where actor_id = ${actorId}`;
-  await tx`update oauth_access_tokens set revoked_at = coalesce(revoked_at, now())
-           where org_id = ${orgId} and actor_id = ${actorId}`;
-  await tx`update oauth_refresh_tokens set revoked_at = coalesce(revoked_at, now())
-           where org_id = ${orgId} and actor_id = ${actorId}`;
-  await tx`update oauth_grants set revoked_at = coalesce(revoked_at, now()), updated_at = now()
-           where org_id = ${orgId} and actor_id = ${actorId}`;
-  await tx`delete from oauth_authorization_codes where org_id = ${orgId} and actor_id = ${actorId}`;
-  await tx`delete from oauth_consent_nonces where org_id = ${orgId} and actor_id = ${actorId}`;
 }
 function scimMetadata(input: PutScimUser): Record<string, unknown> {
   return {

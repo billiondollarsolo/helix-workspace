@@ -14,6 +14,7 @@ import { internalApiUrl } from "../../api/version.js";
 import { parseActorRoleBindings } from "../permissions/roles.js";
 import { validatedPermissions } from "../permissions/scope-catalog.js";
 import { isRecord } from "../util/json.js";
+import { isSecurityPolicyRecoveryRequest } from "./admin-security-policy.js";
 
 export interface BetterAuthInstance {
   readonly api: {
@@ -626,6 +627,7 @@ function isAdminSessionRequest(request: {
   readonly method?: string;
   readonly url?: string;
 }): boolean {
+  if (isSecurityPolicyRecoveryRequest(request.method, request.url ?? "")) return false;
   const path = internalApiUrl(request.url ?? "").split("?", 1)[0] ?? "";
   return (
     path === "/api/admin" ||

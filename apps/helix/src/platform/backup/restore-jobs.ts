@@ -15,6 +15,8 @@ export interface RestoreJobRequest {
   readonly targetDatabase: string;
   readonly targetObjectBucket: string;
   readonly idempotencyKey: string;
+  /** Server-owned policy snapshot; never accepted from a restore HTTP request. */
+  readonly requiredApprovals?: 0 | 1 | 2;
 }
 
 export interface RestoreJob {
@@ -27,6 +29,7 @@ export interface RestoreJob {
   readonly targetObjectBucket: string;
   readonly status: RestoreJobStatus;
   readonly approvalCount: number;
+  readonly requiredApprovals: number;
   readonly attemptCount: number;
   readonly leaseToken?: string | undefined;
   readonly cancellationRequested: boolean;
@@ -60,6 +63,7 @@ interface RestoreJobRow {
   readonly target_object_bucket: string;
   readonly status: RestoreJobStatus;
   readonly approval_count: string;
+  readonly required_approvals: number;
   readonly attempt_count: number;
   readonly lease_token: string | null;
   readonly cancel_requested_at: Date | null;
@@ -76,10 +80,13 @@ export class PostgresRestoreJobStore implements RestoreJobStore {
     await this.sql`
       insert into backup_restore_jobs (
         id, org_id, requested_by_actor_id, idempotency_key, backup_id, encrypted,
-        target_database, target_object_bucket
+        target_database, target_object_bucket, required_approvals, status, next_attempt_at
       ) values (
         ${id}, ${actor.orgId}, ${actor.id}, ${input.idempotencyKey}, ${input.backupId},
-        ${input.encrypted}, ${input.targetDatabase}, ${input.targetObjectBucket}
+        ${input.encrypted}, ${input.targetDatabase}, ${input.targetObjectBucket},
+        ${input.requiredApprovals ?? 2},
+        ${input.requiredApprovals === 0 ? "queued" : "pending_approval"},
+        ${input.requiredApprovals === 0 ? new Date() : null}
       ) on conflict (org_id, requested_by_actor_id, idempotency_key) do nothing
     `;
     const job = await this.getByIdempotencyKey(actor.orgId, actor.id, input.idempotencyKey);
@@ -311,6 +318,7 @@ function mapJob(row: RestoreJobRow): RestoreJob {
     targetObjectBucket: row.target_object_bucket,
     status: row.status,
     approvalCount: Number(row.approval_count),
+    requiredApprovals: row.required_approvals,
     attemptCount: row.attempt_count,
     ...(row.lease_token === null ? {} : { leaseToken: row.lease_token }),
     cancellationRequested: row.cancel_requested_at !== null,

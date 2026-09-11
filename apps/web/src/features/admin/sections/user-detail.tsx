@@ -1,4 +1,6 @@
+import { UserOffboardingButton } from "./user-offboarding-dialog";
 import { Copy as CopyIcon } from "lucide-react";
+import { AdminUserAddressesButton } from "./user-addresses-dialog";
 import { Button } from "@/components/ui/button";
 import type { DirectoryUser } from "@/features/admin/admin-console-data";
 
@@ -69,6 +71,16 @@ export function UserDetail({
           />
         )}
       </div>
+      {user.actorType === "user" ? (
+        <div>
+          <AdminUserAddressesButton actorId={user.id} name={user.name} />
+        </div>
+      ) : null}
+      {user.actorType === "user" || user.actorType === "agent" ? (
+        <div>
+          <UserOffboardingButton actorId={user.id} name={user.name} />
+        </div>
+      ) : null}
       <div>
         <span className="text-[var(--text-3)]">Admin scopes </span>
         {user.adminScopes.length === 0 ? (

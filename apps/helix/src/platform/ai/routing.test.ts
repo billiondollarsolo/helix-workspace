@@ -1,5 +1,6 @@
 import type {
   Actor,
+  ChatChunk,
   ChatRequest,
   ChatResponse,
   ImageGenerationResponse,
@@ -693,7 +694,7 @@ describe("AIRouter streaming", () => {
     });
 
     const deltas: string[] = [];
-    let final: ChatChunkLike | undefined;
+    let final: ChatChunk | undefined;
     for await (const chunk of router.chatStream(request(), { actor })) {
       if (chunk.delta.length > 0) {
         deltas.push(chunk.delta);
@@ -704,7 +705,7 @@ describe("AIRouter streaming", () => {
     }
 
     expect(deltas).toEqual(["Hel", "lo"]);
-    expect(final?.done).toBe(true);
+    expect(final?.metadata).toMatchObject({ providerId: "local", model: "local-model" });
     expect(metricCalls).toEqual(["success"]);
     expect(costRecords).toHaveLength(1);
     expect(provenanceInputs).toEqual([{ providerId: "local", streamed: true }]);
@@ -779,11 +780,6 @@ describe("AIRouter streaming", () => {
     expect(deltas).toEqual(["hello"]);
   });
 });
-
-interface ChatChunkLike {
-  readonly delta: string;
-  readonly done?: boolean;
-}
 
 function request(): ChatRequest {
   return {

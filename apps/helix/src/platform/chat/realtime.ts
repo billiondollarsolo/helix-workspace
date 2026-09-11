@@ -148,6 +148,9 @@ export class EventBusChatRoomBus implements ChatRoomBus {
   async publish(orgId: string, roomId: string, event: ChatRoomEvent): Promise<void> {
     const startedAt = Date.now();
     assertRoomEvent(orgId, roomId, event);
+    // Stored cursors already have a transactional outbox entry. Publishing here
+    // could beat the HTTP commit and make subscribers replay an invisible event.
+    if (isDurableChatRoomEvent(event) && isSequencedChatRoomEvent(event)) return;
     const published =
       isDurableChatRoomEvent(event) && !isSequencedChatRoomEvent(event)
         ? await this.#events.append(event)

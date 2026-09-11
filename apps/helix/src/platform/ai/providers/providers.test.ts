@@ -702,7 +702,9 @@ describe("OpenAI streaming chunk assembly", () => {
       "openai-test",
       "fallback",
     );
-    expect(response.toolCalls).toEqual([{ id: "calendar.create", input: { title: "Demo" } }]);
+    expect(response.toolCalls).toEqual([
+      { id: "calendar.create", callId: "call-1", input: { title: "Demo" } },
+    ]);
   });
 });
 

@@ -4,6 +4,14 @@ import fastify, { type FastifyRequest } from "fastify";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { registerCanonicalApi } from "../../bootstrap/route-scope.js";
+import { registerAssistantStreamRoute } from "../../bootstrap/assistant-routes.js";
+import {
+  AssistantOrchestrator,
+  PostgresAssistantStore,
+  registerAssistantTools,
+} from "../assistant/index.js";
+import { InMemoryOAuthClientStore } from "../auth/oauth.js";
+import { createToolRegistry } from "../tool-registry.js";
 import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { InMemoryChatPresenceStore, InMemoryChatRoomBus } from "../chat/realtime.js";
 import { registerChatRoutes } from "../chat/routes.js";
@@ -32,7 +40,7 @@ const actor: Actor = {
   orgId,
   type: "user",
   displayName: "Stream member",
-  scopes: ["chat.read"],
+  scopes: ["chat.read", "assistant.read", "assistant.write"],
 };
 const tenant: TenantContext = {
   orgId,
@@ -72,6 +80,7 @@ describe(
     let sql: postgres.Sql;
     let baseUrl: string;
     let resolvedActors = 0;
+    let generationCancelled = false;
 
     async function resolveActor(request: FastifyRequest): Promise<Actor> {
       const resolve = async () => {
@@ -122,6 +131,43 @@ describe(
         });
         await registerEventRoutes(api, { bus: events, actorFromRequest: resolveActor });
         registerMailStreamRoutes(api, { events, resolveActor });
+        const tools = createToolRegistry();
+        const store = new PostgresAssistantStore(sql);
+        const orchestrator = new AssistantOrchestrator({
+          store,
+          tools,
+          ai: {
+            async chat() {
+              throw new Error("Expected streaming provider");
+            },
+            async *chatStream(input) {
+              yield { delta: "Saved reply" };
+              if (input.messages.some((message) => message.content === "cancel-stream")) {
+                await new Promise<void>((resolve) =>
+                  input.signal?.addEventListener(
+                    "abort",
+                    () => {
+                      generationCancelled = true;
+                      resolve();
+                    },
+                    { once: true },
+                  ),
+                );
+                input.signal?.throwIfAborted();
+              }
+              if (input.messages.some((message) => message.content === "fail-stream"))
+                throw new Error("provider failed");
+              yield { delta: "", done: true };
+            },
+          },
+        });
+        registerAssistantTools(tools, { store, orchestrator });
+        registerAssistantStreamRoute(api, {
+          orchestrator,
+          tools,
+          tokenStore: new InMemoryOAuthClientStore(),
+          sessionResolver: { resolve: resolveActor },
+        });
         api.get("/api/probe", async (request) => {
           await resolveActor(request);
           return sql<{ id: string }[]>`select id from actors order by id`;
@@ -165,6 +211,52 @@ describe(
       const rows = await admin`select display_name from actors where id = ${actor.id}`;
       expect(rows[0]?.display_name).toBe(actor.displayName);
       await assertReleased();
+    });
+
+    it("persists a streamed Assistant turn before final and rolls back failed turns", async () => {
+      const send = (message: string) =>
+        fetch(`${baseUrl}/v1/api/tools/assistant.chat`, {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "text/event-stream" },
+          body: JSON.stringify({ message }),
+        });
+      const response = await send("save-stream");
+      expect(response.status).toBe(200);
+      const frames = await response.text();
+      expect(frames).toContain("event: delta");
+      expect(frames).toContain("event: final");
+      const saved =
+        await admin`select role, content from assistant_messages where org_id = ${orgId} order by created_at`;
+      expect(saved).toEqual([
+        { role: "user", content: "save-stream" },
+        { role: "assistant", content: "Saved reply" },
+      ]);
+      const failed = await (await send("fail-stream")).text();
+      expect(failed).toContain("event: error");
+      expect(failed).not.toContain("event: final");
+      const afterFailure =
+        await admin`select role, content from assistant_messages where org_id = ${orgId} order by created_at`;
+      expect(afterFailure).toEqual(saved);
+      await assertReleased();
+    });
+
+    it("cancels upstream generation and rolls back when the streaming client disconnects", async () => {
+      const controller = new AbortController();
+      const response = await fetch(`${baseUrl}/v1/api/tools/assistant.chat`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "content-type": "application/json", accept: "text/event-stream" },
+        body: JSON.stringify({ message: "cancel-stream" }),
+      });
+      if (response.body === null) throw new Error("Expected a streaming response");
+      const reader = response.body.getReader();
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: delta");
+      controller.abort();
+      await expect.poll(() => generationCancelled).toBe(true);
+      await assertReleased();
+      expect(
+        await admin`select id from assistant_messages where org_id = ${orgId} and content = 'cancel-stream'`,
+      ).toHaveLength(0);
     });
 
     it("commits ticket redemption before socket expiry, pruning and later scoped frames", async () => {

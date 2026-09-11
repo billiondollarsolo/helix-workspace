@@ -58,7 +58,11 @@ import {
 } from "../platform/tenancy/index.js";
 import type { installAuth } from "./auth.js";
 import { verifyDefaultOrgAtBoot } from "./default-org.js";
-import { CredentialAuthError, installTenantApiRpsLimitHook } from "./request-principal.js";
+import {
+  cacheSessionActorResolver,
+  CredentialAuthError,
+  installTenantApiRpsLimitHook,
+} from "./request-principal.js";
 
 export async function installApps(context: Awaited<ReturnType<typeof installAuth>>) {
   const {
@@ -86,7 +90,12 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
   } = context;
   const platformConfigStore = new PostgresPlatformConfigStore(sql);
 
-  const platformConfig = new PlatformConfigAdminService(platformConfigStore, process.env, eventBus);
+  const platformConfig = new PlatformConfigAdminService(
+    platformConfigStore,
+    process.env,
+    eventBus,
+    securityPoliciesStore,
+  );
 
   // P2-4: the same config source list backs both the initial load and the
   // runtime hot-reload, so a NATS-published change re-merges env + Postgres
@@ -172,18 +181,10 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
 
   installTenantPostgresContextHook(app, sql);
 
-  installTenantApiRpsLimitHook(app, {
-    limiter: tenantApiRpsLimiter,
-    events: eventBus,
-    onQuotaEventError: (error: unknown) => {
-      app.log.error({ error }, "Tenant API RPS quota event emission failed");
-    },
-  });
-
   const sessionActorResolver: SessionActorResolver | undefined =
     betterAuthRuntime === undefined
       ? undefined
-      : {
+      : cacheSessionActorResolver({
           resolve: createBetterAuthSessionActorResolver(
             betterAuthPlatform,
             betterAuthRuntime.sessionVerifier,
@@ -199,7 +200,16 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
               policyAuthorizer: sessionPolicyAuthorizer,
             },
           ),
-        };
+        });
+
+  installTenantApiRpsLimitHook(app, {
+    limiter: tenantApiRpsLimiter,
+    sessionResolver: sessionActorResolver,
+    events: eventBus,
+    onQuotaEventError: (error: unknown) => {
+      app.log.error({ error }, "Tenant API RPS quota event emission failed");
+    },
+  });
 
   // PRD §9.2: resolve the request actor, trying API-key / mTLS credential
   // authentication first so the per-credential policy (IP allowlist,
@@ -292,7 +302,14 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
   const dlp = new TenantDlpGuard(securityPoliciesStore, resourceClassificationService, auditStore);
 
   const assistantMemory = new PostgresMemoryStore(sql, {
-    embeddingProvider: createAssistantEmbeddingProvider(runtimeConfiguration.current.ai),
+    get embeddingProvider() {
+      return createAssistantEmbeddingProvider(
+        runtimeConfiguration.current.ai,
+        process.env,
+        undefined,
+        runtimeConfiguration.current.security,
+      );
+    },
     defaultSource: "assistant.conversation",
   });
 
@@ -357,6 +374,7 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
   const aiCostLimitStore: AICostLimitStore = new PostgresAICostLimitStore(sql);
 
   const assistantAi = createAssistantAIRouter(aiProvenance, {
+    getAiConfig: () => runtimeConfiguration.current.ai,
     costLimiter: aiCostLimiter,
     metering: meteringClient,
     metrics,

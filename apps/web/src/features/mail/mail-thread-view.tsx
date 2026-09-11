@@ -1,3 +1,4 @@
+import { MailSenderSelect, useMailSender } from "./mail-sender-select";
 import { Avatar } from "@/components/ui/avatar";
 import { useMutation } from "@tanstack/react-query";
 import {
@@ -71,6 +72,7 @@ export function ThreadView({
   actionError,
 }: ThreadViewProps) {
   const [replyMode, setReplyMode] = useState<ReplyMode | null>(null);
+  const sender = useMailSender(undefined, replyMode !== null);
   const [replyText, setReplyText] = useState("");
   const [replyTo, setReplyTo] = useState("");
   const [replyFailed, setReplyFailed] = useState(false);
@@ -112,15 +114,26 @@ export function ThreadView({
         : fallbackAddress.trim() === ""
           ? []
           : [{ address: fallbackAddress }];
-    if (recipients.length === 0 || replyText.trim() === "") {
+    if (!sender.authorized || recipients.length === 0 || replyText.trim() === "") {
       return;
     }
     replyMutation.mutate({
+      from: { address: sender.from },
       to: recipients,
       subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
       bodyText: replyText,
     });
-  }, [detail, replyMode, replyMutation, replyText, replyTo, row.fromEmail, subject]);
+  }, [
+    detail,
+    replyMode,
+    replyMutation,
+    replyText,
+    replyTo,
+    row.fromEmail,
+    sender.authorized,
+    sender.from,
+    subject,
+  ]);
 
   return (
     <div className="flex-1 flex flex-col bg-card">
@@ -401,6 +414,9 @@ export function ThreadView({
                   <XIcon size={16} />
                 </button>
               </div>
+              <div className="px-3.5">
+                <MailSenderSelect sender={sender} disabled={replyMutation.isPending} />
+              </div>
               {replyMode === "forward" && (
                 <div className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2">
                   <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">
@@ -435,7 +451,9 @@ export function ThreadView({
                 <button
                   type="button"
                   className="btn primary"
-                  disabled={replyMutation.isPending || replyText.trim() === ""}
+                  disabled={
+                    replyMutation.isPending || replyText.trim() === "" || !sender.authorized
+                  }
                   onClick={handleReplySend}
                 >
                   <SendIcon size={16} /> {replyMutation.isPending ? "Sending…" : "Send"}

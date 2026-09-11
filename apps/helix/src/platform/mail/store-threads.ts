@@ -123,7 +123,7 @@ export class MailThreadStore {
         m.id as message_id,
         m.body,
         m.body_format,
-        m.metadata,
+        case when helix_mailbox_sent_message(m.org_id, m.id, ${input.actorId}) then m.metadata else (m.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
         m.sent_at,
         exists(select 1 from message_attachments ma where ma.message_id = m.id) as has_attachment,
         coalesce(
@@ -177,6 +177,11 @@ export class MailThreadStore {
           )
         )
         and m.kind = 'mail'
+          and (m.actor_id = ${input.actorId} or exists (
+            select 1 from mail_message_deliveries mailbox_delivery
+            where mailbox_delivery.org_id = ${input.orgId}
+              and mailbox_delivery.message_id = m.id and mailbox_delivery.actor_id = ${input.actorId}
+          ))
         and m.deleted_at is null
       order by m.sent_at asc
     `;
@@ -228,7 +233,7 @@ export class MailThreadStore {
           m.id as message_id,
           m.body,
           m.body_format,
-          m.metadata,
+          case when helix_mailbox_sent_message(m.org_id, m.id, ${input.actorId}) then m.metadata else (m.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
           m.sent_at,
           t.subject,
           t.archived_at as thread_archived_at,
@@ -242,22 +247,40 @@ export class MailThreadStore {
           mts.category,
           (
             select count(*)::int from messages mm
-            where mm.thread_id = m.thread_id and mm.kind = 'mail' and mm.deleted_at is null
+            where mm.thread_id = m.thread_id
+              and (mm.actor_id = ${input.actorId} or exists (
+                select 1 from mail_message_deliveries counted
+                where counted.org_id = ${input.orgId} and counted.message_id = mm.id
+                  and counted.actor_id = ${input.actorId}
+              )) and mm.kind = 'mail' and mm.deleted_at is null
           ) as message_count,
           exists(
             select 1 from message_attachments ma
             join messages mm on mm.id = ma.message_id
             where mm.thread_id = m.thread_id
+              and (mm.actor_id = ${input.actorId} or exists (
+                select 1 from mail_message_deliveries counted
+                where counted.org_id = ${input.orgId} and counted.message_id = mm.id
+                  and counted.actor_id = ${input.actorId}
+              ))
           ) as has_attachment,
           (
             select max((mo.metadata->>'direction'))
             from messages mo
             where mo.thread_id = m.thread_id and mo.kind = 'mail' and mo.deleted_at is null
+              and helix_mailbox_sent_message(mo.org_id, mo.id, ${input.actorId})
               and mo.metadata->>'direction' = 'outbound'
           ) as has_outbound,
+          exists (
+            select 1 from mail_message_deliveries received
+            join messages incoming on incoming.id = received.message_id and incoming.org_id = received.org_id
+            where received.org_id = ${input.orgId} and received.actor_id = ${input.actorId}
+              and received.received_at is not null and incoming.thread_id = m.thread_id
+              and incoming.deleted_at is null
+          ) as has_received,
           (
             select ob.status from mail_outbound_messages ob
-            where ob.thread_id = m.thread_id
+            where ob.thread_id = m.thread_id and ob.actor_id = ${input.actorId}
             order by ob.created_at desc
             limit 1
           ) as outbound_status
@@ -269,6 +292,11 @@ export class MailThreadStore {
          and mts.org_id = ${input.orgId}
         where m.org_id = ${input.orgId}
           and m.kind = 'mail'
+          and (m.actor_id = ${input.actorId} or exists (
+            select 1 from mail_message_deliveries mailbox_delivery
+            where mailbox_delivery.org_id = ${input.orgId}
+              and mailbox_delivery.message_id = m.id and mailbox_delivery.actor_id = ${input.actorId}
+          ))
           and m.deleted_at is null
           and t.kind = 'mail'
           and (
@@ -310,7 +338,7 @@ export class MailThreadStore {
               and spam_at is null
               and coalesce(archived_at, thread_archived_at) is null
               and (snoozed_until is null or snoozed_until <= ${now})
-              and (has_outbound is null or has_outbound <> 'outbound')
+              and has_received
           end
           and (${tab}::text is null or coalesce(category, 'primary') = ${tab})
           and (
@@ -345,7 +373,7 @@ export class MailThreadStore {
       with latest as (
         select distinct on (m.thread_id)
           m.thread_id,
-          m.metadata,
+          case when helix_mailbox_sent_message(m.org_id, m.id, ${input.actorId}) then m.metadata else (m.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
           m.sent_at,
           t.archived_at as thread_archived_at,
           mts.labels,
@@ -362,16 +390,29 @@ export class MailThreadStore {
             select 1 from message_attachments ma
             join messages mm on mm.id = ma.message_id
             where mm.thread_id = m.thread_id
+              and (mm.actor_id = ${input.actorId} or exists (
+                select 1 from mail_message_deliveries counted
+                where counted.org_id = ${input.orgId} and counted.message_id = mm.id
+                  and counted.actor_id = ${input.actorId}
+              ))
           ) as has_attachment,
           (
             select max((mo.metadata->>'direction'))
             from messages mo
             where mo.thread_id = m.thread_id and mo.kind = 'mail' and mo.deleted_at is null
+              and helix_mailbox_sent_message(mo.org_id, mo.id, ${input.actorId})
               and mo.metadata->>'direction' = 'outbound'
           ) as has_outbound,
+          exists (
+            select 1 from mail_message_deliveries received
+            join messages incoming on incoming.id = received.message_id and incoming.org_id = received.org_id
+            where received.org_id = ${input.orgId} and received.actor_id = ${input.actorId}
+              and received.received_at is not null and incoming.thread_id = m.thread_id
+              and incoming.deleted_at is null
+          ) as has_received,
           (
             select ob.status from mail_outbound_messages ob
-            where ob.thread_id = m.thread_id
+            where ob.thread_id = m.thread_id and ob.actor_id = ${input.actorId}
             order by ob.created_at desc
             limit 1
           ) as outbound_status
@@ -383,6 +424,11 @@ export class MailThreadStore {
          and mts.org_id = ${input.orgId}
         where m.org_id = ${input.orgId}
           and m.kind = 'mail'
+          and (m.actor_id = ${input.actorId} or exists (
+            select 1 from mail_message_deliveries mailbox_delivery
+            where mailbox_delivery.org_id = ${input.orgId}
+              and mailbox_delivery.message_id = m.id and mailbox_delivery.actor_id = ${input.actorId}
+          ))
           and m.deleted_at is null
           and t.kind = 'mail'
           and (
@@ -423,7 +469,7 @@ export class MailThreadStore {
             and spam_at is null
             and coalesce(archived_at, thread_archived_at) is null
             and (snoozed_until is null or snoozed_until <= ${now})
-            and (has_outbound is null or has_outbound <> 'outbound')
+            and has_received
         end
         and (${tab}::text is null or coalesce(category, 'primary') = ${tab})
         and (

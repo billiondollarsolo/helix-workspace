@@ -1093,14 +1093,14 @@ describe("operator AI platform config", () => {
           {
             id: "p1",
             plugin: "com.helix.ai-provider-openai-compat@^1.0.0",
-            config: { baseUrl: "https://b.example/v1", defaultModel: "m2" },
+            config: { baseUrl: "https://a.example/v1", defaultModel: "m2" },
           },
         ],
       },
     );
     expect(merged?.providers?.[0]?.config).toMatchObject({
       apiKey: "sk-keep",
-      baseUrl: "https://b.example/v1",
+      baseUrl: "https://a.example/v1",
       defaultModel: "m2",
     });
   });

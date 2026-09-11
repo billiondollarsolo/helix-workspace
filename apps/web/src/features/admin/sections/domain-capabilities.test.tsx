@@ -14,7 +14,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DomainWithRecords } from "../domains-api";
+import { updateDomainCapabilities, type DomainWithRecords } from "../domains-api";
 import { DomainCapabilitiesPanel, domainSummary } from "./domain-capabilities";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -80,6 +80,7 @@ describe("DomainCapabilitiesPanel", () => {
 
   async function render(value: DomainWithRecords): Promise<void> {
     await act(async () => {
+      await Promise.resolve();
       root.render(wrap(createElement(DomainCapabilitiesPanel, { entry: value })));
       await Promise.resolve();
     });
@@ -154,6 +155,50 @@ describe("DomainCapabilitiesPanel", () => {
     );
   });
 
+  it("offers only verified secondary identity targets and preserves the server gate when selecting automatic aliases", async () => {
+    const value = entry({ domain: { ...entry().domain, mailEnabled: true, aliasesEnabled: true } });
+    const target = entry({
+      domain: { ...entry().domain, id: "target", domain: "target.test", identityEnabled: true },
+    });
+    const others = [
+      value,
+      target,
+      entry({ domain: { ...target.domain, id: "pending", status: "pending" } }),
+      entry({ domain: { ...target.domain, id: "alias", identityMode: "alias" } }),
+    ];
+    await act(async () => {
+      await Promise.resolve();
+      root.render(wrap(createElement(DomainCapabilitiesPanel, { entry: value, domains: others })));
+    });
+    const selects = () => [...container.querySelectorAll("select")];
+    await act(async () => {
+      await Promise.resolve();
+      const mode = selects()[0]!;
+      mode.value = "alias";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const targetSelect = selects()[1]!;
+    expect([...targetSelect.options].map((option) => option.value)).toEqual(["", "target"]);
+    await act(async () => {
+      await Promise.resolve();
+      targetSelect.value = "target";
+      targetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      container
+        .querySelector("form")
+        ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "/v1/api/admin/domains/d-1/capabilities",
+      expect.objectContaining({
+        body: JSON.stringify({ identityMode: "alias", aliasTargetDomainId: "target" }),
+      }),
+    );
+    await render(entry({ domain: { ...entry().domain, isPrimary: true } }));
+    expect(selects()[0]?.disabled).toBe(true);
+  });
   it("explains lost delivery before disabling mail and retains stored keys", async () => {
     await render(entry({ domain: { ...entry().domain, mailEnabled: true } }));
     const mail = [...container.querySelectorAll("label")]
@@ -167,4 +212,27 @@ describe("DomainCapabilitiesPanel", () => {
     expect(document.body.textContent).toContain("keys are retained");
     expect(fetch).not.toHaveBeenCalled();
   });
+});
+
+it("keeps crown-jewel MFA and approval requirements actionable without claiming a successful change", async () => {
+  const mfa = () =>
+    Promise.resolve(
+      Response.json(
+        { code: "crown_jewel_step_up_required", error: "Recent MFA verification is required." },
+        { status: 403 },
+      ),
+    );
+  const approval = () =>
+    Promise.resolve(
+      Response.json(
+        { code: "crown_jewel_approval_required", approval: { id: "approval-1" } },
+        { status: 202 },
+      ),
+    );
+  await expect(updateDomainCapabilities("d-1", { aliasesEnabled: true }, mfa)).rejects.toThrow(
+    "Recent MFA verification is required.",
+  );
+  await expect(updateDomainCapabilities("d-1", { aliasesEnabled: true }, approval)).rejects.toThrow(
+    "A second administrator must approve this change (request approval-1). The requested change has not been applied.",
+  );
 });

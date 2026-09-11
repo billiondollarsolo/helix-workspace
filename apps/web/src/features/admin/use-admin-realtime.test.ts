@@ -15,7 +15,7 @@
  * against a 5 rps ceiling), and a 1008 that stops for good (retrying an auth
  * rejection is a login loop). */
 
-import { act, createElement } from "react";
+import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -100,7 +100,7 @@ describe("admin realtime hub", () => {
   });
 
   /** Mounts one subscriber for `section` and returns its unmount. */
-  function mount(section: Parameters<typeof useAdminRealtime>[0]): () => void {
+  function mount(section: Parameters<typeof useAdminRealtime>[0], strict = false): () => void {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -113,9 +113,15 @@ describe("admin realtime hub", () => {
     }
 
     act(() => {
-      root.render(
-        createElement(QueryClientProvider, { client: queryClient }, createElement(Probe)),
+      const tree = createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(Probe),
       );
+      root.render(strict ? createElement(StrictMode, null, tree) : tree);
+    });
+    act(() => {
+      vi.advanceTimersByTime(0);
     });
 
     let unmounted = false;
@@ -249,6 +255,14 @@ describe("admin realtime hub", () => {
       vi.advanceTimersByTime(2_500);
     });
     expect(sockets).toHaveLength(3);
+  });
+
+  it("does not open a discarded StrictMode mount's WebSocket handshake", () => {
+    const release = mount("overview", true);
+    expect(sockets).toHaveLength(2);
+    expect(sockets.every((socket) => !socket.closed)).toBe(true);
+    release();
+    expect(sockets.every((socket) => socket.closed)).toBe(true);
   });
 
   it("closes the shared socket only when the last listener releases it", () => {

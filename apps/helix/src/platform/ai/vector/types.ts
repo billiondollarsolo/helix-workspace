@@ -78,6 +78,12 @@ export interface VectorStore {
     opts?: VectorQueryOpts,
   ): Promise<readonly VectorMatch[]>;
   delete(orgId: VectorOrgScope, collection: string, ids: readonly string[]): Promise<void>;
+  /** Remove all passages of source documents, including passages left after a source shrinks. */
+  deleteByDocumentIds?(
+    orgId: VectorOrgScope,
+    collection: string,
+    ids: readonly string[],
+  ): Promise<void>;
 }
 
 export function validateCollectionName(name: string): string {

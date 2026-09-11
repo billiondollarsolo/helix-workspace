@@ -59,7 +59,7 @@ export class MailFolderStore {
       with latest as (
         select distinct on (m.thread_id)
           m.thread_id,
-          m.metadata,
+          case when helix_mailbox_sent_message(m.org_id, m.id, ${input.actorId}) then m.metadata else m.metadata - 'bcc' end as metadata,
           m.sent_at,
           t.archived_at as thread_archived_at,
           mts.archived_at,
@@ -72,10 +72,18 @@ export class MailFolderStore {
             select bool_or(mo.metadata->>'direction' = 'outbound')
             from messages mo
             where mo.thread_id = m.thread_id and mo.kind = 'mail' and mo.deleted_at is null
+              and helix_mailbox_sent_message(mo.org_id, mo.id, ${input.actorId})
           ) as has_outbound,
+          exists (
+            select 1 from mail_message_deliveries received
+            join messages incoming on incoming.id = received.message_id and incoming.org_id = received.org_id
+            where received.org_id = ${input.orgId} and received.actor_id = ${input.actorId}
+              and received.received_at is not null and incoming.thread_id = m.thread_id
+              and incoming.deleted_at is null
+          ) as has_received,
           (
             select ob.status from mail_outbound_messages ob
-            where ob.thread_id = m.thread_id
+            where ob.thread_id = m.thread_id and ob.actor_id = ${input.actorId}
             order by ob.created_at desc
             limit 1
           ) as outbound_status
@@ -87,6 +95,11 @@ export class MailFolderStore {
          and mts.org_id = ${input.orgId}
         where m.org_id = ${input.orgId}
           and m.kind = 'mail'
+          and (m.actor_id = ${input.actorId} or exists (
+            select 1 from mail_message_deliveries mailbox_delivery
+            where mailbox_delivery.org_id = ${input.orgId}
+              and mailbox_delivery.message_id = m.id and mailbox_delivery.actor_id = ${input.actorId}
+          ))
           and m.deleted_at is null
           and t.kind = 'mail'
           and (
@@ -122,7 +135,7 @@ export class MailFolderStore {
               and spam_at is null
               and coalesce(archived_at, thread_archived_at) is null
               and (snoozed_until is null or snoozed_until <= ${now})
-              and (has_outbound is not true) then 'inbox' end,
+              and has_received then 'inbox' end,
             case when deleted_at is null and starred is true then 'starred' end,
             case when deleted_at is null and snoozed_until is not null
               and snoozed_until > ${now} then 'snoozed' end,

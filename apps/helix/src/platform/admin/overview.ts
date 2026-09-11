@@ -32,6 +32,7 @@
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { adminConsoleReadScope, canReadAdminConsole, sendForbidden } from "./console-shared.js";
+import type { DomainWithRecords } from "./domains.js";
 
 /** One signal's reading. `unavailable` is a statement about the *request*, not
  *  about the workspace — the client must never render it as a zero. */
@@ -53,7 +54,7 @@ interface AdminOverviewResponse {
  *  parses one shape per signal rather than a second, aggregate-only shape that
  *  could drift away from the section pages. */
 interface AdminOverviewReaders {
-  readDomains: (actor: Actor) => Promise<unknown>;
+  readDomains: (actor: Actor) => Promise<{ readonly domains: readonly DomainWithRecords[] }>;
   readPolicies: (actor: Actor) => Promise<unknown>;
   readPlatformConfig: (actor: Actor) => Promise<unknown>;
   readDirectory: (actor: Actor) => Promise<unknown>;

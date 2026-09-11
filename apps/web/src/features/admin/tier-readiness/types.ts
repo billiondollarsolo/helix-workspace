@@ -11,6 +11,10 @@ export interface PlatformConfigPatch {
     readonly tier: TierId;
   };
   readonly ai?: {
+    readonly vectorStore?: AIVectorStoreConfig;
+    readonly embeddingProvider?: AIEmbeddingProviderConfig;
+    readonly webSearch?: AIWebSearchConfig;
+    readonly assistant?: { readonly maxToolRounds?: number };
     readonly operatorLlm?: {
       readonly baseUrl?: string;
       readonly model?: string;
@@ -25,6 +29,38 @@ export interface PlatformConfigPatch {
       readonly rules?: readonly AIRoutingRule[];
     };
   };
+}
+
+export interface AIVectorStoreConfig {
+  readonly plugin: "pgvector" | "qdrant";
+  readonly config: {
+    readonly enabled?: boolean;
+    readonly baseUrl?: string;
+    readonly apiKey?: string | null;
+    readonly apiKeyConfigured?: boolean;
+  };
+}
+
+export interface AIEmbeddingProviderConfig {
+  readonly plugin: "openai-compat";
+  readonly config: {
+    readonly baseUrl?: string;
+    readonly defaultModel?: string;
+    readonly dimensions?: number;
+    readonly maxInputChars?: number;
+    readonly chunkOverlapChars?: number;
+    readonly apiKey?: string | null;
+    readonly apiKeyConfigured?: boolean;
+  };
+}
+
+export interface AIWebSearchConfig {
+  readonly enabled?: boolean;
+  readonly provider?: "brave" | "searxng";
+  readonly baseUrl?: string;
+  readonly apiKey?: string | null;
+  readonly apiKeyConfigured?: boolean;
+  readonly maxResults?: number;
 }
 
 export interface AIProviderConfig {
@@ -102,6 +138,10 @@ interface AIMailSpamStatus {
 }
 
 export interface AIConfigStatus {
+  readonly assistant?: { readonly maxToolRounds?: number };
+  readonly vectorStore?: AIVectorStoreConfig;
+  readonly embeddingProvider?: AIEmbeddingProviderConfig;
+  readonly webSearch?: AIWebSearchConfig;
   readonly costLimits?: {
     readonly perUserPerDayUSD?: number;
     readonly perOrgPerDayUSD?: number;

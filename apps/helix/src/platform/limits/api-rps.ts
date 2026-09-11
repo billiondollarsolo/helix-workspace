@@ -35,6 +35,9 @@ export interface TenantApiRpsLimitInput {
   readonly orgId: string;
   readonly limit: number | null;
   readonly at?: Date;
+  /** Server-selected partition; omitted for the shared integration API quota. */
+  readonly bucket?: string;
+  readonly windowMs?: number;
 }
 
 interface TenantApiRpsLimitAllowed {
@@ -66,8 +69,11 @@ export class InMemoryTenantApiRpsLimiter implements TenantApiRpsLimiter {
   async consume(input: TenantApiRpsLimitInput): Promise<TenantApiRpsLimitDecision> {
     const at = input.at ?? new Date();
     const limit = normalizeApiRpsLimit(input.limit);
-    const state = this.#stateFor(input.orgId);
-    pruneWindow(state, at.getTime() - SECOND_MS);
+    const windowMs = requestWindowMs(input.windowMs);
+    const state = this.#stateFor(
+      input.bucket === undefined ? input.orgId : `${input.orgId}:${input.bucket}`,
+    );
+    pruneWindow(state, at.getTime() - windowMs);
 
     if (limit !== null && state.length + 1 > limit) {
       const oldest = state[0] ?? at.getTime();
@@ -76,8 +82,8 @@ export class InMemoryTenantApiRpsLimiter implements TenantApiRpsLimiter {
         limit,
         used: state.length,
         remaining: 0,
-        retryAfterSeconds: retryAfterSeconds(oldest, at),
-        resetsAt: new Date(oldest + SECOND_MS).toISOString(),
+        retryAfterSeconds: retryAfterSeconds(oldest, at, windowMs),
+        resetsAt: new Date(oldest + windowMs).toISOString(),
       };
     }
 
@@ -88,12 +94,13 @@ export class InMemoryTenantApiRpsLimiter implements TenantApiRpsLimiter {
       limit,
       used: state.length,
       remaining: limit === null ? null : Math.max(limit - state.length, 0),
-      resetsAt: oldest === undefined ? null : new Date(oldest + SECOND_MS).toISOString(),
+      resetsAt: oldest === undefined ? null : new Date(oldest + windowMs).toISOString(),
     };
   }
 
   reset(orgId: string): void {
-    this.#states.delete(orgId);
+    for (const key of this.#states.keys())
+      if (key === orgId || key.startsWith(`${orgId}:`)) this.#states.delete(key);
   }
 
   #stateFor(orgId: string): number[] {
@@ -124,17 +131,20 @@ export class RedisTenantApiRpsLimiter implements TenantApiRpsLimiter {
   async consume(input: TenantApiRpsLimitInput): Promise<TenantApiRpsLimitDecision> {
     const at = input.at ?? new Date();
     const limit = normalizeApiRpsLimit(input.limit);
+    const windowMs = requestWindowMs(input.windowMs);
     const raw = await this.redis.eval(
       CONSUME_SCRIPT,
       1,
-      `${this.#keyPrefix}:{${keyPart(input.orgId)}}`,
+      `${this.#keyPrefix}:{${keyPart(input.orgId)}}${input.bucket === undefined ? "" : `:${encodeURIComponent(input.bucket)}`}`,
       at.getTime(),
-      SECOND_MS,
+      windowMs,
       limit ?? -1,
       `${String(at.getTime())}:${randomUUID()}`,
     );
     const response = redisConsumeResponse(raw);
-    const oldestResetsAt = new Date(at.getTime() + SECOND_MS).toISOString();
+    const oldestResetsAt = new Date(
+      at.getTime() + (response.allowed ? windowMs : response.retryAfterSeconds * SECOND_MS),
+    ).toISOString();
     if (!response.allowed && limit !== null) {
       return {
         allowed: false,
@@ -162,8 +172,14 @@ export function normalizeApiRpsLimit(value: number | null): number | null {
   return validateNonNegativeInteger("api_rps_limit", value);
 }
 
-function retryAfterSeconds(oldestTimestamp: number, at: Date): number {
-  return Math.max(1, Math.ceil((oldestTimestamp + SECOND_MS - at.getTime()) / 1000));
+function retryAfterSeconds(oldestTimestamp: number, at: Date, windowMs: number): number {
+  return Math.max(1, Math.ceil((oldestTimestamp + windowMs - at.getTime()) / SECOND_MS));
+}
+
+function requestWindowMs(value = SECOND_MS): number {
+  if (!Number.isSafeInteger(value) || value <= 0)
+    throw new RangeError("Rate limit windowMs must be a positive integer.");
+  return value;
 }
 
 function redisConsumeResponse(raw: unknown): {

@@ -10,6 +10,7 @@ import {
   assertActorMatchesRequestTenant,
   installTenantContextHook,
   installTenantPostgresContextHook,
+  finishTenantRequestTransaction,
   shouldResolveTenantForRequest,
 } from "./middleware.js";
 import { setTenantPostgresActorId, tenantAwarePostgresSql } from "./postgres-roles.js";
@@ -144,6 +145,33 @@ describe("tenant Fastify hook", () => {
     expect((await app.inject({ method: "GET", url: "/api/fail" })).statusCode).toBe(500);
     expect(database.calls.at(-1)).toBe("rollback");
   });
+
+  it.each([true, false])(
+    "finishes finite raw streams before sending their terminal event (commit=%s)",
+    async (commit) => {
+      const app = fastify();
+      const database = requestSql();
+      const sql = tenantAwarePostgresSql(database.sql);
+      installTenantContextHook(app, { resolveTenantContext: async () => tenant });
+      installTenantPostgresContextHook(app, sql);
+      app.post("/api/stream", async (request, reply) => {
+        await sql`insert into messages (body) values ('streamed reply')`;
+        reply.raw.writeHead(200, { "content-type": "text/event-stream" });
+        await finishTenantRequestTransaction(request, commit);
+        expect(database.calls.at(-1)).toBe(commit ? "commit" : "rollback");
+        reply.raw.end(`event: ${commit ? "final" : "error"}\n\n`);
+        return reply;
+      });
+      try {
+        expect((await app.inject({ method: "POST", url: "/api/stream" })).statusCode).toBe(200);
+        expect(database.calls.filter((call) => call === "commit" || call === "rollback")).toEqual([
+          commit ? "commit" : "rollback",
+        ]);
+      } finally {
+        await app.close();
+      }
+    },
+  );
 
   it("rolls a privileged mutation back when its durable audit write fails", async () => {
     const app = fastify();

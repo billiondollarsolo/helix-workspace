@@ -1,18 +1,7 @@
 // @vitest-environment jsdom
 
-/* Admin console request budget — the measurement, not the opinion.
- *
- * The ceiling is real and enforced: `api_rps_limit: 5`
- * (packages/contracts/src/tenant-config.ts) is applied by
- * apps/helix/src/platform/limits/api-rps.ts over a hard 1000ms sliding window
- * (`state.length + 1 > limit`, so the 6th request inside one second is
- * refused with 429). Only /api/auth* is exempt. A cold admin load is exactly
- * the burst that trips it, and a refused query renders as a panel that cannot
- * state a figure — which is the failure this file keeps visible.
- *
- * So: mount every section cold, record what it actually asks the API for, and
- * pin it in an inline snapshot. The snapshot diff IS the report.
- */
+/* Mount every admin section cold and record its actual API requests. The
+ * snapshot also guards accidental duplicate requests within the browser burst. */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
@@ -29,7 +18,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { AdminConsole } from "./admin-console";
 import { ADMIN_SECTION_IDS, isAdminSectionId, type AdminSectionId } from "./admin-console-data";
-import { SHELL_BASELINE_REQUESTS } from "@/features/admin/console/request-budget";
+import {
+  SHELL_BASELINE_REQUESTS,
+  CLIENT_STARTUP_REQUEST_BUDGET,
+} from "@/features/admin/console/request-budget";
 
 /** TopBar calls `sessionUserQueryOptions()` → fetch("/v1/api/auth/get-session").
  * /api/auth* is the one path exempt from the RPS limiter, so it belongs in no
@@ -51,9 +43,6 @@ vi.mock("@/lib/auth", async () => {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-/** Requests allowed inside one 1000ms window, per session. */
-const API_RPS_LIMIT = 5;
-
 /** What the app SHELL spends before any section has rendered a thing:
  *  1. the notifications unread count behind the topbar bell
  *     (src/components/shell/surface-frame.tsx — `unreadCountQueryOptions()`)
@@ -62,14 +51,12 @@ const API_RPS_LIMIT = 5;
  *  Neither is conditional, so a section never gets the whole 5 — it gets what
  *  is left. */
 /* Re-exported from the shared module rather than restated, so this harness and
-   the pacing that reads the same number can never disagree about it. The value
-   is 3, measured against a running workspace: /api/core-apps,
-   notifications.unread-count and notifications.list all land inside 20 ms of
-   each other on a cold load. */
+   the pacing that reads the same number can never disagree about it. Only
+   core-apps and unread-count load while the notification feed is closed. */
 export { SHELL_BASELINE_REQUESTS };
 
 /** What one section's own cold load may cost before the burst is refused. */
-const SECTION_REQUEST_BUDGET = API_RPS_LIMIT - SHELL_BASELINE_REQUESTS;
+const SECTION_REQUEST_BUDGET = CLIENT_STARTUP_REQUEST_BUDGET - SHELL_BASELINE_REQUESTS;
 
 /** URL prefixes owned by the shell rather than by any section, subtracted from
  *  each section's count because `SHELL_BASELINE_REQUESTS` already charges for
@@ -389,6 +376,14 @@ describe("admin console request budget", () => {
             "/v1/api/admin/platform-config",
           ],
         },
+        "ai-retrieval": {
+          "requestCount": 2,
+          "settled": true,
+          "urls": [
+            "/v1/api/admin/ai-retrieval/status",
+            "/v1/api/admin/platform-config",
+          ],
+        },
         "app-passwords": {
           "requestCount": 2,
           "settled": true,
@@ -516,7 +511,7 @@ describe("admin console request budget", () => {
     `);
   }, 180_000);
 
-  it("keeps every admin section inside the per-session request budget", async () => {
+  it("keeps every admin section inside the client cold-load request budget", async () => {
     const measured = await measureAllSections();
     const overBudget: Record<string, number> = {};
 

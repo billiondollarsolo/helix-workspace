@@ -1,8 +1,9 @@
 import type {
+  AICallContext,
   AiConfig,
   AiProviderConfig,
   ChatRequest,
-  ChatResponse,
+  HelixConfig,
   JsonObject,
   LLMProviderCapability,
   MeteringClient,
@@ -29,10 +30,83 @@ import {
   type PostgresAIProvenanceStore,
   type VertexCredentials,
 } from "../index.js";
+import { providerAllowedForClassification } from "../routing.js";
 import { resolveAiEnv } from "../operator-settings.js";
+import { protectMemoryEmbeddings } from "../memory/privacy.js";
 
+/** Refresh the runtime only when the saved configuration changes. */
 export function createAssistantAIRouter(
-  provenance: PostgresAIProvenanceStore,
+  provenance: Pick<PostgresAIProvenanceStore, "record">,
+  options: Parameters<typeof buildAssistantAIRouter>[1] & {
+    readonly getAiConfig?: () => AiConfig | undefined;
+  },
+) {
+  let currentConfig = options.getAiConfig?.() ?? options.aiConfig;
+  let router = buildAssistantAIRouter(provenance, { ...options, aiConfig: currentConfig });
+  function current() {
+    const nextConfig = options.getAiConfig === undefined ? options.aiConfig : options.getAiConfig();
+    if (nextConfig !== currentConfig) {
+      const nextRouter = buildAssistantAIRouter(provenance, { ...options, aiConfig: nextConfig });
+      currentConfig = nextConfig;
+      router = nextRouter;
+    }
+    return router;
+  }
+  return {
+    chat: (request: ChatRequest, context?: Partial<AICallContext>) =>
+      current().chat(request, context),
+    chatStream: (request: ChatRequest, context?: Partial<AICallContext>) =>
+      current().chatStream(request, context),
+    async listModels() {
+      const active = current();
+      const configured = currentConfig?.providers ?? [];
+      const rows = await Promise.all(
+        active
+          .listProviders()
+          .filter((provider) => {
+            const definition = configured.find((entry) => entry.id === provider.id);
+            return (
+              provider.id !== "assistant.local" &&
+              (definition === undefined ||
+                !definition.tags?.length ||
+                definition.tags.includes("assistant")) &&
+              providerAllowedForClassification(provider, "standard", {
+                tier: options.securityTier,
+                localAiOnly: tierDefaults[options.securityTier].localAiOnly,
+                ...(currentConfig?.privacy?.classificationGating === undefined
+                  ? {}
+                  : { classificationEnabled: currentConfig.privacy.classificationGating }),
+              })
+            );
+          })
+          .map(async (provider) => {
+            const definition = configured.find((entry) => entry.id === provider.id);
+            const label = definition?.config?.displayName;
+            return (await provider.models()).map((model) => ({
+              id: `${provider.id}/${model.id}`,
+              label: `${typeof label === "string" ? label : provider.id} · ${model.displayName ?? model.id}`,
+              providerId: provider.id,
+              model: model.id,
+            }));
+          }),
+      );
+      const models = rows.flat();
+      const route = currentConfig?.routing?.rules?.find(
+        (entry) => entry.feature === "assistant.chat",
+      )?.primary;
+      const preferred = models.find(
+        (entry) =>
+          entry.providerId === route?.providerId &&
+          (route.model === undefined || entry.model === route.model),
+      );
+      const defaultModelId = preferred?.id ?? models[0]?.id;
+      return { models, ...(defaultModelId === undefined ? {} : { defaultModelId }) };
+    },
+  };
+}
+
+function buildAssistantAIRouter(
+  provenance: Pick<PostgresAIProvenanceStore, "record">,
   options: {
     readonly costLimiter: AICostLimiter;
     readonly metering?: MeteringClient;
@@ -40,7 +114,7 @@ export function createAssistantAIRouter(
     readonly metrics: PlatformMetrics;
     readonly securityTier: SecurityTier;
     readonly onCostWarning?: (event: AICostWarningEvent) => void;
-    readonly aiConfig?: AiConfig;
+    readonly aiConfig?: AiConfig | undefined;
   },
 ): AIRouter {
   const defaultProviderId = env().ASSISTANT_AI_PROVIDER_ID ?? env().AI_DEFAULT_PROVIDER_ID;
@@ -79,7 +153,6 @@ export function createAssistantAIRouter(
         ? {}
         : { defaultProviderId: defaultProviderId ?? configuredRouting.defaultProviderId }),
       featureProviders: {
-        "assistant.chat": "assistant.local",
         ...(configuredRouting.featureProviders ?? {}),
         ...(defaultProviderId === undefined ? {} : { "assistant.chat": defaultProviderId }),
       },
@@ -92,12 +165,15 @@ export function createAssistantEmbeddingProvider(
   aiConfig: AiConfig | undefined,
   env: NodeJS.ProcessEnv = process.env,
   fetch?: typeof globalThis.fetch,
+  security?: HelixConfig["security"],
 ): MemoryEmbeddingProvider {
   if (aiConfig?.enabled === false) {
     return createDeterministicEmbeddingProvider();
   }
-  const configured = createConfiguredAssistantEmbeddingProvider(aiConfig, env, fetch);
-  return configured ?? createDeterministicEmbeddingProvider();
+  const configured = createConfiguredEmbeddingProvider(aiConfig, env, fetch, true);
+  return configured === undefined
+    ? createDeterministicEmbeddingProvider()
+    : protectMemoryEmbeddings(configured, aiConfig, security);
 }
 
 export function createSemanticSearchEmbeddingProvider(
@@ -108,13 +184,14 @@ export function createSemanticSearchEmbeddingProvider(
   if (aiConfig?.enabled === false || aiConfig?.embeddingProvider === undefined) {
     return undefined;
   }
-  return createConfiguredAssistantEmbeddingProvider(aiConfig, env, fetch);
+  return createConfiguredEmbeddingProvider(aiConfig, env, fetch, false);
 }
 
-function createConfiguredAssistantEmbeddingProvider(
+function createConfiguredEmbeddingProvider(
   aiConfig: AiConfig | undefined,
   env: NodeJS.ProcessEnv,
-  fetch?: typeof globalThis.fetch,
+  fetch: typeof globalThis.fetch | undefined,
+  forMemory: boolean,
 ): MemoryEmbeddingProvider | undefined {
   const embeddingProvider = aiConfig?.embeddingProvider;
   if (embeddingProvider === undefined) {
@@ -131,8 +208,8 @@ function createConfiguredAssistantEmbeddingProvider(
   if (defaultDimensions === undefined) {
     return undefined;
   }
-  if (defaultDimensions !== 768) {
-    throw new TypeError("Assistant memory embedding provider must use 768 dimensions");
+  if (forMemory && defaultDimensions !== 768) {
+    return undefined;
   }
   const defaultModel = stringConfig(config, "defaultModel") ?? stringConfig(config, "model");
   const models = modelListFromConfig(config);
@@ -145,7 +222,7 @@ function createConfiguredAssistantEmbeddingProvider(
   const headers = headersConfig(config);
   const maxBatchSize = positiveIntegerConfig(config, "maxBatchSize");
   const modelDimensions = modelDimensionsConfig(config);
-  return createOpenAICompatibleEmbeddingProvider({
+  const provider = createOpenAICompatibleEmbeddingProvider({
     id: providerId,
     models,
     defaultDimensions,
@@ -157,6 +234,7 @@ function createConfiguredAssistantEmbeddingProvider(
     ...(maxBatchSize === undefined ? {} : { maxBatchSize }),
     ...(modelDimensions === undefined ? {} : { modelDimensions }),
   });
+  return { embed: (texts) => provider.embed(texts) };
 }
 
 function createConfiguredAssistantProvider(
@@ -430,9 +508,8 @@ function modelListFromConfig(config: JsonObject): readonly ModelInfo[] {
 }
 
 function secretConfig(config: JsonObject, env: NodeJS.ProcessEnv): string | undefined {
-  const apiKey = stringConfig(config, "apiKey");
-  if (apiKey !== undefined) {
-    return apiKey;
+  if (typeof config.apiKey === "string") {
+    return config.apiKey.trim() || undefined;
   }
   const apiKeyEnv = stringConfig(config, "apiKeyEnv");
   return apiKeyEnv === undefined ? undefined : env[apiKeyEnv];
@@ -486,64 +563,6 @@ function isJsonObjectValue(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function createLocalAssistantProvider(): LLMProviderCapability {
-  return {
-    id: "assistant.local",
-    protocol: "openai-compatible",
-    tags: ["local-only"],
-    async chat(request: ChatRequest): Promise<ChatResponse> {
-      const latestUser =
-        [...request.messages].reverse().find((message) => message.role === "user")?.content ?? "";
-      return {
-        providerId: "assistant.local",
-        model: "deterministic-assistant",
-        message: localAssistantReply(latestUser),
-        usage: {
-          inputTokens: countApproximateTokens(
-            request.messages.map((message) => message.content).join("\n"),
-          ),
-          outputTokens: countApproximateTokens(latestUser),
-        },
-        metadata: {
-          mode: "deterministic-fallback",
-          note: "Configure OLLAMA_BASE_URL or OPENAI_API_KEY for model-backed assistant replies.",
-        },
-      };
-    },
-    async models() {
-      return [
-        {
-          id: "deterministic-assistant",
-          displayName: "Deterministic Assistant Fallback",
-          supportsTools: false,
-        },
-      ];
-    },
-    async countTokens(text: string) {
-      return countApproximateTokens(text);
-    },
-  };
-}
-
-function localAssistantReply(message: string): string {
-  const trimmed = message.trim();
-  if (trimmed.startsWith("/draft")) {
-    return "Draft ready. I used the current conversation and available workspace context to shape the response.";
-  }
-  if (trimmed.startsWith("/summarize")) {
-    return "Summary ready. I checked the visible context supplied to this assistant turn.";
-  }
-  if (trimmed.startsWith("/find")) {
-    return "I found the most relevant visible workspace context and included it in this reply.";
-  }
-  if (trimmed.startsWith("/schedule")) {
-    return "I can help schedule this by using Calendar tools when a model-backed provider requests them.";
-  }
-  return trimmed.length === 0
-    ? "How can I help with this workspace?"
-    : `I captured your request and prepared an assistant response using the visible tools, search context, and opt-in memory available to your actor.`;
-}
-
 function createDeterministicEmbeddingProvider() {
   return {
     async embed(texts: readonly string[]): Promise<readonly (readonly number[])[]> {
@@ -562,10 +581,6 @@ function deterministicEmbedding(text: string): readonly number[] {
   return vector.map((value) => Number((value / magnitude).toFixed(6)));
 }
 
-function countApproximateTokens(text: string): number {
-  return Math.max(1, Math.ceil(text.length / 4));
-}
-
 export function createAssistantProviders(
   aiConfig: AiConfig | undefined,
 ): readonly LLMProviderCapability[] {
@@ -582,7 +597,7 @@ export function createAssistantProviders(
       providers.push(configured);
     }
   }
-  if (aiEnv.OLLAMA_BASE_URL !== undefined) {
+  if (!aiConfig?.providers?.length && aiEnv.OLLAMA_BASE_URL !== undefined) {
     pushProvider(
       providers,
       createOpenAICompatibleProvider({
@@ -600,7 +615,7 @@ export function createAssistantProviders(
       }),
     );
   }
-  if (aiEnv.OPENAI_API_KEY !== undefined) {
+  if (!aiConfig?.providers?.length && aiEnv.OPENAI_API_KEY !== undefined) {
     pushProvider(
       providers,
       createOpenAICompatibleProvider({
@@ -621,6 +636,5 @@ export function createAssistantProviders(
       }),
     );
   }
-  pushProvider(providers, createLocalAssistantProvider());
   return providers;
 }

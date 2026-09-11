@@ -37,6 +37,7 @@ describe("mail compose server draft helpers (UX.10)", () => {
       id: "22222222-2222-4222-8222-222222222222",
       updatedAt: "2026-06-01T00:00:00.000Z",
       subject: "Newer",
+      from: { address: "alias@example.com" },
       to: [{ address: "b@example.com" }],
       bodyText: "Latest body",
     });
@@ -47,6 +48,7 @@ describe("mail compose server draft helpers (UX.10)", () => {
       bcc: [],
       attachments: [],
       subject: "Newer",
+      from: { address: "alias@example.com" },
       bodyText: "Latest body",
       updatedAt: "2026-06-01T00:00:00.000Z",
     });

@@ -494,6 +494,37 @@ services:
     networks: !override
       - data-plane
 
+  # Optional private search service; only it joins the outbound search network.
+  searxng:
+    profiles: !override
+      - web-search
+    environment:
+      SEARXNG_SECRET: !reset "null"
+    entrypoint:
+      - /bin/sh
+      - -euc
+      - |
+        export SEARXNG_SECRET="$$(cat /run/secrets/searxng_secret)"
+        if [ "$${#SEARXNG_SECRET}" -lt 32 ]; then
+          echo "searxng_secret must contain at least 32 random characters." >&2
+          exit 1
+        fi
+        exec /usr/local/searxng/entrypoint.sh
+    secrets:
+      - searxng_secret
+    ports: !override []
+    networks: !override
+      - data-plane
+      - web-search-egress
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+          pids: 256
+
   spamd:
     image: ${HELIX_SPAMD_IMAGE:?immutable HELIX_SPAMD_IMAGE registry reference with
       digest is required}
@@ -640,8 +671,12 @@ networks:
   data-plane:
     name: ${HELIX_COMPOSE_PROJECT_NAME:-helix-production}-data-plane
     internal: true
+  web-search-egress:
+    name: ${HELIX_COMPOSE_PROJECT_NAME:-helix-production}-web-search-egress
 
 secrets:
+  searxng_secret:
+    file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/searxng_secret
   database_url:
     file: ${HELIX_PRODUCTION_SECRETS_DIR:-./secrets}/database_url
   migration_database_url:

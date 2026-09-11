@@ -69,7 +69,7 @@ describe("PostgresMailStore attachment storage", () => {
       }),
     ).resolves.toEqual({
       threadId,
-      messageId,
+      messageId: expect.any(String),
       attachmentObjectIds: [objectId],
       created: true,
       deliveredActorIds: [mailboxActorIds[0]],
@@ -176,7 +176,8 @@ describe("PostgresMailStore attachment storage", () => {
       [],
       [{ id: objectId, byte_size: 9, mime_type: "application/pdf" }],
       [{ id: threadId }],
-      [{ id: messageId }],
+      [],
+      [], // canonical identity is inserted after the message
       [],
       [],
       [],

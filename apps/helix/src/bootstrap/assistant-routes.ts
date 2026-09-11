@@ -1,26 +1,21 @@
 import { type FastifyInstance } from "fastify";
-import { z } from "zod";
 import { type SessionActorResolver } from "../api/actor.js";
 import { buildErrorEnvelope } from "../api/error-envelope.js";
 import { createRequestContext } from "../api/trace.js";
 import { HELIX_API_VERSION_HEADER_VALUE } from "../api/version.js";
 import {
+  assistantChatBodySchema,
   type AssistantSendMessageInput,
   type AssistantStreamEvent,
 } from "../platform/assistant/index.js";
+import { toJsonObject } from "../platform/util/json.js";
 import { type AgentCredentialStore } from "../platform/auth/credentials.js";
 import type { AccessTokenStore } from "../platform/auth/oauth.js";
 import { type RuntimeToolRegistry } from "../platform/tool-registry.js";
+import { finishTenantRequestTransaction } from "../platform/tenancy/index.js";
 import { resolveRequestPrincipal, traceIdForRequest } from "./request-principal.js";
 import { acceptsEventStream } from "./route-scope.js";
 import { invokeTool, sendToolInvokeError } from "./tool-routes.js";
-
-const assistantChatStreamBodySchema = z.object({
-  message: z.string().min(1).max(100000),
-  conversationId: z.string().uuid().optional(),
-  title: z.string().min(1).max(200).optional(),
-  memoryOptIn: z.boolean().optional(),
-});
 
 /** Minimal orchestrator surface needed by the assistant SSE route. */
 export interface AssistantStreamOrchestrator {
@@ -81,7 +76,7 @@ export function registerAssistantStreamRoute(
     // On invalid input every other tool route returns the canonical HelixError
     // envelope (`{error:{code,message,traceId}}`); align this route to it
     // instead of leaking Fastify's raw `{statusCode,error,message}` 500.
-    const parsedBody = assistantChatStreamBodySchema.safeParse(request.body);
+    const parsedBody = assistantChatBodySchema.safeParse(request.body);
     if (!parsedBody.success) {
       const traceId = traceIdForRequest(request);
       return reply.code(400).send(
@@ -100,35 +95,98 @@ export function registerAssistantStreamRoute(
       options.sessionResolver,
       options.credentialStore,
     );
-    reply.raw.writeHead(200, {
-      "content-type": "text/event-stream",
-      "cache-control": "no-cache, no-transform",
-      connection: "keep-alive",
-      "api-version": HELIX_API_VERSION_HEADER_VALUE,
-    });
-    try {
-      const stream = options.orchestrator.sendMessageStream({
-        actor: principal.actor,
-        principal,
-        content: body.message,
-        request: createRequestContext(request),
-        ...(body.conversationId === undefined ? {} : { conversationId: body.conversationId }),
-        ...(body.title === undefined ? {} : { title: body.title }),
-        ...(body.memoryOptIn === undefined ? {} : { memoryOptIn: body.memoryOptIn }),
+    const abort = new AbortController();
+    const startStream = () => {
+      if (reply.raw.headersSent) return;
+      reply.raw.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache, no-transform",
+        connection: "keep-alive",
+        "api-version": HELIX_API_VERSION_HEADER_VALUE,
       });
-      for await (const event of stream) {
-        reply.raw.write(formatAssistantSseEvent(event));
+    };
+    const onClose = () => {
+      if (!reply.raw.writableFinished) abort.abort();
+    };
+    reply.raw.on("close", onClose);
+    try {
+      const result = await invokeTool(
+        options.tools,
+        principal,
+        "assistant.chat",
+        body,
+        request,
+        async () => {
+          if (principal.actor.type === "user") startStream();
+          const stream = options.orchestrator.sendMessageStream({
+            actor: principal.actor,
+            principal,
+            content: body.message,
+            ...(body.webSearch === undefined ? {} : { webSearch: body.webSearch }),
+            ...(body.toolGroups === undefined ? {} : { toolGroups: body.toolGroups }),
+            request: createRequestContext(request),
+            signal: abort.signal,
+            metadata: toJsonObject(body.metadata),
+            ...(body.conversationId === undefined ? {} : { conversationId: body.conversationId }),
+            ...(body.editMessageId === undefined ? {} : { editMessageId: body.editMessageId }),
+            ...(body.title === undefined ? {} : { title: body.title }),
+            ...(body.memoryOptIn === undefined ? {} : { memoryOptIn: body.memoryOptIn }),
+            ...(body.modelId === undefined ? {} : { modelId: body.modelId }),
+            ...(body.attachmentObjectIds === undefined
+              ? {}
+              : { attachmentObjectIds: body.attachmentObjectIds }),
+          });
+          let final: Extract<AssistantStreamEvent, { type: "final" }> | undefined;
+          try {
+            for await (const event of stream) {
+              abort.signal.throwIfAborted();
+              if (event.type === "final") final = event;
+              // Agent outputs require the registry's output DLP check before disclosure.
+              else if (principal.actor.type === "user")
+                reply.raw.write(formatAssistantSseEvent(event));
+            }
+          } catch (error) {
+            if (!abort.signal.aborted) options.onError?.(error);
+            throw error;
+          }
+          abort.signal.throwIfAborted();
+          if (final === undefined) throw new Error("The assistant stream ended without a result.");
+          return final.turn;
+        },
+      );
+      if (!result.ok) {
+        await finishTenantRequestTransaction(request, false);
+        if (!reply.raw.headersSent)
+          return await sendToolInvokeError(reply, result, traceIdForRequest(request));
+        if (!abort.signal.aborted)
+          reply.raw.write(formatAssistantSseEvent({ type: "error", message: result.error }));
+      } else if (result.status === "pending_confirmation") {
+        return await reply.code(202).send({ status: result.status, pending: result.pending });
+      } else {
+        abort.signal.throwIfAborted();
+        await finishTenantRequestTransaction(request, true);
+        startStream();
+        reply.raw.write(
+          formatAssistantSseEvent({
+            type: "final",
+            turn: result.output as Extract<AssistantStreamEvent, { type: "final" }>["turn"],
+          }),
+        );
       }
     } catch (error) {
+      await finishTenantRequestTransaction(request, false);
       options.onError?.(error);
-      reply.raw.write(
-        formatAssistantSseEvent({
-          type: "error",
-          message: "The assistant stream failed.",
-        }),
-      );
+      if (!reply.raw.headersSent) throw error;
+      if (!abort.signal.aborted)
+        reply.raw.write(
+          formatAssistantSseEvent({
+            type: "error",
+            message: "The assistant stream failed.",
+          }),
+        );
     } finally {
-      reply.raw.end();
+      reply.raw.off("close", onClose);
+      if (reply.raw.headersSent && !reply.raw.writableEnded) reply.raw.end();
     }
     return reply;
   });

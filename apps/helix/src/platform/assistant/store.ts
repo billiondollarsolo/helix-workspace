@@ -1,4 +1,5 @@
 import type { Actor, JsonObject } from "@helix/sdk-types";
+import { isJsonObject } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { toSqlJson } from "../util/sql.js";
@@ -12,6 +13,8 @@ import type {
   AssistantMemoryPreference,
   AssistantMessage,
   AssistantStore,
+  AssistantPendingTurnContext,
+  AssistantPendingTurnQuery,
 } from "./types.js";
 
 /** Maximum characters retained for a thread-list message preview. */
@@ -213,6 +216,47 @@ export class InMemoryAssistantStore implements AssistantStore {
     return input.limit === undefined
       ? filtered
       : filtered.slice(Math.max(0, filtered.length - input.limit));
+  }
+
+  async getPendingTurnContext(
+    input: AssistantPendingTurnQuery,
+  ): Promise<AssistantPendingTurnContext | null> {
+    if ((await this.getConversation(input)) === null) return null;
+    const messages = await this.listMessages({
+      orgId: input.orgId,
+      conversationId: input.conversationId,
+    });
+    const pending = messages
+      .filter((message) => {
+        const call = message.metadata.toolCall;
+        return (
+          message.role === "tool" &&
+          isJsonObject(call) &&
+          isJsonObject(call.pending) &&
+          call.pending.id === input.pendingId
+        );
+      })
+      .at(-1);
+    if (pending === undefined) return null;
+    const before = messages.slice(0, messages.indexOf(pending));
+    const saved = isJsonObject(pending.metadata.assistantTurn)
+      ? pending.metadata.assistantTurn
+      : {};
+    const origin =
+      typeof saved.originMessageId === "string"
+        ? messages.find(
+            (message) => message.id === saved.originMessageId && message.role === "user",
+          )
+        : before.filter((message) => message.role === "user").at(-1);
+    const assistant = before.filter((message) => message.role === "assistant").at(-1);
+    if (!origin || !assistant) return null;
+    const history = messages.filter(
+      (message, index) =>
+        index <= messages.indexOf(origin) ||
+        (isJsonObject(message.metadata.assistantTurn) &&
+          message.metadata.assistantTurn.originMessageId === origin.id),
+    );
+    return { pending, origin, assistant, history: history.slice(-input.limit) };
   }
 
   async appendMessage(input: AssistantAppendMessageInput): Promise<AssistantMessage> {
@@ -455,6 +499,59 @@ export class PostgresAssistantStore implements AssistantStore {
       order by created_at asc, id asc
     `;
     return rows.map(rowToMessage);
+  }
+
+  async getPendingTurnContext(
+    input: AssistantPendingTurnQuery,
+  ): Promise<AssistantPendingTurnContext | null> {
+    const rows = await this.sql<(AssistantMessageRow & { context_kind: string })[]>`
+      with pending as (
+        select m.* from assistant_messages m join assistant_conversations c
+          on c.id=m.conversation_id and c.org_id=m.org_id
+        where m.org_id=${input.orgId} and m.conversation_id=${input.conversationId}
+          and c.actor_id=${input.actorId} and c.archived_at is null and m.role='tool'
+          and m.metadata #>> '{toolCall,pending,id}' = ${input.pendingId}
+        order by m.created_at desc,m.id desc limit 1
+      ), origin as (
+        select m.* from assistant_messages m,pending p
+        where m.org_id=p.org_id and m.conversation_id=p.conversation_id and m.role='user'
+          and (m.id::text=p.metadata #>> '{assistantTurn,originMessageId}' or
+            (p.metadata #>> '{assistantTurn,originMessageId}' is null and
+              (m.created_at,m.id)<(p.created_at,p.id)))
+        order by m.created_at desc,m.id desc limit 1
+      ), assistant as (
+        select m.* from assistant_messages m,pending p
+        where m.org_id=p.org_id and m.conversation_id=p.conversation_id and m.role='assistant'
+          and m.metadata->'toolCalls' @> jsonb_build_array(jsonb_build_object('callId',p.tool_call_id))
+        order by m.created_at desc,m.id desc limit 1
+      ), history as (
+        select m.* from assistant_messages m,origin o
+        where m.org_id=o.org_id and m.conversation_id=o.conversation_id and
+          ((m.created_at,m.id)<=(o.created_at,o.id) or m.metadata #>> '{assistantTurn,originMessageId}'=o.id::text)
+        order by m.created_at desc,m.id desc limit ${input.limit}
+      )
+      select 'pending' as context_kind,pending.* from pending
+      union all select 'origin',origin.* from origin
+      union all select 'assistant',assistant.* from assistant
+      union all select 'history',history.* from history
+    `;
+    const get = (kind: string) => {
+      const row = rows.find((entry) => entry.context_kind === kind);
+      return row ? rowToMessage(row) : undefined;
+    };
+    const pending = get("pending"),
+      origin = get("origin"),
+      assistant = get("assistant");
+    if (!pending || !origin || !assistant) return null;
+    return {
+      pending,
+      origin,
+      assistant,
+      history: rows
+        .filter((row) => row.context_kind === "history")
+        .map(rowToMessage)
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)),
+    };
   }
 
   async appendMessage(input: AssistantAppendMessageInput): Promise<AssistantMessage> {

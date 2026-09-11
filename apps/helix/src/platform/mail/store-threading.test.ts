@@ -11,7 +11,6 @@ const actorId = "22222222-2222-4222-8222-222222222222";
 const secondActorId = "33333333-3333-4333-8333-333333333333";
 const existingThreadId = "44444444-4444-4444-8444-444444444444";
 const existingMessageId = "55555555-5555-4555-8555-555555555555";
-const insertedMessageId = "66666666-6666-4666-8666-666666666666";
 const sourceObjectId = "77777777-7777-4777-8777-777777777777";
 
 describe("PostgresMailStore RFC threading and idempotency", () => {
@@ -23,7 +22,8 @@ describe("PostgresMailStore RFC threading and idempotency", () => {
       [],
       [{ thread_id: existingThreadId }],
       [{ id: existingThreadId }],
-      [{ id: insertedMessageId }],
+      [],
+      [], // canonical identity
       [{ id: sourceObjectId }],
       [],
       [{ actor_id: actorId }],
@@ -50,7 +50,7 @@ describe("PostgresMailStore RFC threading and idempotency", () => {
 
     expect(result).toMatchObject({
       threadId: existingThreadId,
-      messageId: insertedMessageId,
+      messageId: expect.any(String),
       created: true,
       deliveredActorIds: [actorId],
     });

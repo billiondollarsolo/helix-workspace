@@ -82,7 +82,7 @@ export function createScopedSearchRequest(
     ...(filter === undefined ? {} : { filter }),
     // Server-set RAG identity. System actors retrieve only org-shared items;
     // user actors also retrieve their own `visibility = "private"` items.
-    ...(actor.type === "system" ? {} : { forActorId: actor.id }),
+    ...(actor.type === "system" ? {} : { forActorId: actor.id, forOrgId: actor.orgId }),
   };
 }
 

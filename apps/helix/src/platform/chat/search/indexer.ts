@@ -82,6 +82,7 @@ export function chatRecordToIndexDocument(record: ChatSearchRecord): IndexDocume
       authorEmail: record.author.email,
       mentions: mentions.map((mention) => mention.id),
       reactions: reactions.map((reaction) => reaction.emoji),
+      reactionActorIds: reactions.map((reaction) => reaction.actorId),
       classification: record.classification,
       createdAt: record.createdAt,
       editedAt: record.editedAt,

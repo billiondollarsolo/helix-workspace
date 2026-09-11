@@ -2,6 +2,7 @@ import { isJsonRecord as isJsonObject } from "@helix/sdk-types";
 import type { JsonObject } from "@helix/sdk-types";
 import type { VectorItem, VectorStore, VectorVisibility } from "../ai/vector/index.js";
 import { toJsonObject } from "../util/json.js";
+import { chunkDocument, documentText } from "./chunks.js";
 import type {
   IndexDocument,
   SearchEngine,
@@ -20,6 +21,11 @@ export interface SemanticSearchEngineOptions {
   readonly vectorStore: VectorStore;
   readonly collection?: string;
   readonly vectorLimit?: number;
+  readonly allowDocument?: (document: IndexDocument) => boolean | Promise<boolean>;
+  readonly allowQuery?: (request: SearchRequest) => boolean | Promise<boolean>;
+  readonly embeddingText?: (text: string) => string;
+  readonly chunking?: { readonly size: number; readonly overlap: number };
+  readonly onChunkedDocument?: () => void;
 }
 
 interface SemanticMetadata extends JsonObject {
@@ -37,6 +43,8 @@ export class SemanticSearchEngine implements SearchEngine {
     this.id = `${options.keyword.id}+semantic`;
     this.#collection = options.collection ?? "helix_search";
     this.#vectorLimit = options.vectorLimit ?? 50;
+    if (options.chunking !== undefined && options.vectorStore.deleteByDocumentIds === undefined)
+      throw new TypeError("Chunk retrieval requires source-document deletion support.");
   }
 
   async index(document: IndexDocument): Promise<void> {
@@ -45,7 +53,22 @@ export class SemanticSearchEngine implements SearchEngine {
 
   async upsert(documents: readonly IndexDocument[]): Promise<void> {
     await this.options.keyword.upsert(documents);
-    const byOrg = await this.vectorItemsByOrg(documents);
+    const allowed: IndexDocument[] = [];
+    for (const document of documents) {
+      if ((await this.options.allowDocument?.(document)) ?? true) allowed.push(document);
+      else {
+        const orgId = stringAttribute(document.attributes, "orgId");
+        if (orgId !== undefined) await this.deleteVectors(orgId, [document.id]);
+      }
+    }
+    const byOrg = await this.vectorItemsByOrg(allowed);
+    // All embeddings must succeed before replacing any old passages. Failed writes remain
+    // retryable in the durable index queue; authoritative hydration rejects stale versions.
+    for (const document of allowed) {
+      const orgId = stringAttribute(document.attributes, "orgId");
+      if (orgId !== undefined && this.options.chunking !== undefined)
+        await this.deleteVectors(orgId, [document.id]);
+    }
     for (const [orgId, items] of byOrg) {
       const firstVector = items[0]?.vector;
       if (firstVector === undefined) {
@@ -68,8 +91,15 @@ export class SemanticSearchEngine implements SearchEngine {
   async delete(ids: readonly string[], orgId?: string): Promise<void> {
     await this.options.keyword.delete(ids, orgId);
     if (orgId !== undefined && ids.length > 0) {
-      await this.options.vectorStore.delete(orgId, this.#collection, ids);
+      await this.deleteVectors(orgId, ids);
     }
+  }
+
+  private deleteVectors(orgId: string, ids: readonly string[]) {
+    const store = this.options.vectorStore;
+    return store.deleteByDocumentIds === undefined
+      ? store.delete(orgId, this.#collection, ids)
+      : store.deleteByDocumentIds(orgId, this.#collection, ids);
   }
 
   async search(request: SearchRequest): Promise<SearchResponse> {
@@ -86,7 +116,7 @@ export class SemanticSearchEngine implements SearchEngine {
         ? keywordResponse
         : { ...keywordResponse, hits: keywordHits, estimatedTotalHits: keywordHits.length };
     const query = request.query.trim();
-    if (query.length === 0) {
+    if (query.length === 0 || !((await this.options.allowQuery?.(request)) ?? true)) {
       return {
         ...filteredKeywordResponse,
         hits: keywordHits.slice(offset, offset + limit),
@@ -96,7 +126,7 @@ export class SemanticSearchEngine implements SearchEngine {
     // Without a tenant scope on the inbound request we MUST NOT issue a
     // vector query — that would let any caller match across every tenant's
     // embeddings. Fall back to keyword-only results.
-    const requestedOrgId = orgIdFromFilter(request.filter);
+    const requestedOrgId = request.forOrgId ?? orgIdFromFilter(request.filter);
     if (requestedOrgId === undefined) {
       return {
         ...filteredKeywordResponse,
@@ -135,17 +165,28 @@ export class SemanticSearchEngine implements SearchEngine {
     documents: readonly IndexDocument[],
   ): Promise<ReadonlyMap<string, readonly VectorItem[]>> {
     const searchable = documents.flatMap((document) => {
-      const text = documentText(document);
+      const text = this.options.embeddingText?.(documentText(document)) ?? documentText(document);
       const orgId = stringAttribute(document.attributes, "orgId");
       // Documents without an orgId are dropped: indexing them across the
       // shared collection would re-introduce the cross-tenant hole this
       // store is designed to prevent.
-      return text.length === 0 || orgId === undefined ? [] : [{ document, text, orgId }];
+      if (text.length === 0 || orgId === undefined) return [];
+      if (this.options.chunking === undefined) return [{ id: document.id, document, text, orgId }];
+      const chunks = chunkDocument(document, this.options.chunking);
+      if (chunks.length > 1) this.options.onChunkedDocument?.();
+      return chunks.map((chunk) => ({ ...chunk, orgId }));
     });
     if (searchable.length === 0) {
       return new Map();
     }
-    const vectors = await this.options.embeddings.embed(searchable.map((item) => item.text));
+    const vectors: (readonly number[])[] = [];
+    for (let offset = 0; offset < searchable.length; offset += 32) {
+      const batch = searchable.slice(offset, offset + 32);
+      const result = await this.options.embeddings.embed(batch.map((item) => item.text));
+      if (result.length !== batch.length)
+        throw new TypeError("Embedding response count does not match inputs.");
+      vectors.push(...result);
+    }
     const grouped = new Map<string, VectorItem[]>();
     searchable.forEach((item, index) => {
       const vector = vectors[index];
@@ -165,7 +206,7 @@ export class SemanticSearchEngine implements SearchEngine {
       }
       const list = grouped.get(item.orgId) ?? [];
       list.push({
-        id: item.document.id,
+        id: item.id,
         vector,
         metadata: semanticMetadata(item.document),
         visibility,
@@ -175,13 +216,6 @@ export class SemanticSearchEngine implements SearchEngine {
     });
     return grouped;
   }
-}
-
-function documentText(document: IndexDocument): string {
-  return [document.title, document.body]
-    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    .join("\n")
-    .trim();
 }
 
 function semanticMetadata(document: IndexDocument): SemanticMetadata {
@@ -198,12 +232,13 @@ function semanticRankMap(
   request: SearchRequest,
 ): Map<string, { readonly hit: SearchHit; readonly score: number }> {
   const ranks = new Map<string, { readonly hit: SearchHit; readonly score: number }>();
-  matches.forEach((match, index) => {
+  matches.forEach((match) => {
     const hit = semanticHit(match.metadata);
     if (hit === null || !hitMatchesRequest(hit, request)) {
       return;
     }
-    ranks.set(hit.id, { hit, score: 1 / (60 + index + 1) });
+    // Many matching passages must not drown out other documents or lower the best match.
+    if (!ranks.has(hit.id)) ranks.set(hit.id, { hit, score: 1 / (60 + ranks.size + 1) });
   });
   return ranks;
 }
@@ -237,7 +272,10 @@ function reciprocalRankFuse(
   for (const [id, semantic] of semanticHits) {
     const existing = byId.get(id);
     byId.set(id, {
-      hit: existing?.hit ?? semantic.hit,
+      hit:
+        semantic.hit.attributes?.chunkIndex === undefined
+          ? (existing?.hit ?? semantic.hit)
+          : semantic.hit,
       score: (existing?.score ?? 0) + semantic.score,
       keyword: existing?.keyword ?? false,
       semantic: true,
@@ -286,7 +324,7 @@ function hitMatchesRequest(hit: SearchHit, request: SearchRequest): boolean {
       return false;
     }
   }
-  const requestedOrgId = orgIdFromFilter(request.filter);
+  const requestedOrgId = request.forOrgId ?? orgIdFromFilter(request.filter);
   if (requestedOrgId === undefined) {
     return true;
   }

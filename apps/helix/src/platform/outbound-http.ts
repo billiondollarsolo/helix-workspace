@@ -59,6 +59,8 @@ export interface OutboundHttpClientOptions {
   readonly maxRequestBytes?: number;
   readonly maxResponseBytes?: number;
   readonly maxRedirects?: number;
+  /** Additional caller policy, checked before DNS/transport on every redirect hop. */
+  readonly validateUrl?: (url: URL) => void;
   readonly proxyUrl?: string;
   readonly resolve?: (hostname: string) => Promise<readonly ResolvedOutboundAddress[]>;
   readonly transport?: (input: OutboundHttpTransportInput) => Promise<Response>;
@@ -72,6 +74,7 @@ interface NormalizedOptions {
   readonly maxRequestBytes: number;
   readonly maxResponseBytes: number;
   readonly maxRedirects: number;
+  readonly validateUrl?: (url: URL) => void;
   readonly proxyUrl?: URL;
   readonly resolve: NonNullable<OutboundHttpClientOptions["resolve"]>;
   readonly transport?: NonNullable<OutboundHttpClientOptions["transport"]>;
@@ -235,6 +238,7 @@ async function requestWithRedirects(input: {
       location === null ||
       (input.method !== "GET" && input.method !== "HEAD")
     ) {
+      Object.defineProperty(response, "url", { value: url.href, configurable: true });
       return response;
     }
     await response.body?.cancel().catch(() => undefined);
@@ -556,6 +560,7 @@ function assertUrlAllowed(url: URL, policy: NormalizedOptions): void {
   ) {
     throw new OutboundHttpError("blocked_destination", url);
   }
+  policy.validateUrl?.(url);
 }
 
 function normalizeOptions(options: OutboundHttpClientOptions): NormalizedOptions {
@@ -575,6 +580,7 @@ function normalizeOptions(options: OutboundHttpClientOptions): NormalizedOptions
     maxRequestBytes: positiveInteger(options.maxRequestBytes, 128 * MiB, "maxRequestBytes"),
     maxResponseBytes: positiveInteger(options.maxResponseBytes, 128 * MiB, "maxResponseBytes"),
     maxRedirects: nonNegativeInteger(options.maxRedirects, 3, "maxRedirects"),
+    ...(options.validateUrl === undefined ? {} : { validateUrl: options.validateUrl }),
     ...(options.proxyUrl === undefined && config.HELIX_OUTBOUND_HTTP_PROXY_URL === undefined
       ? {}
       : {

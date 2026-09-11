@@ -1,0 +1,11 @@
+# Local-only API configuration; upstream engine defaults come from the pinned image.
+# https://docs.searxng.org/dev/search_api.html
+use_default_settings: true
+server:
+  limiter: false
+  public_instance: false
+  image_proxy: false
+search:
+  formats:
+    - html
+    - json

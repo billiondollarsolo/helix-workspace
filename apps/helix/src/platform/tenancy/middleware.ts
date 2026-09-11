@@ -28,6 +28,18 @@ interface TenantRequestTransaction {
 }
 
 const tenantRequestRollback = new Error("Tenant request rolled back");
+const activeTransactions = new WeakMap<FastifyRequest, TenantRequestTransaction>();
+
+/** Finite raw streams must finish their writes before announcing a successful result. */
+export async function finishTenantRequestTransaction(
+  request: FastifyRequest,
+  commit: boolean,
+): Promise<void> {
+  const transaction = activeTransactions.get(request);
+  if (transaction === undefined) return;
+  activeTransactions.delete(request);
+  await transaction.finish(commit && !transaction.rollbackOnly);
+}
 
 export class TenantActorMismatchError extends Error {
   readonly statusCode = 403;
@@ -63,8 +75,6 @@ export function installTenantContextHook(
 
 /** Keep all store queries for one tenant request in one transaction-local RLS context. */
 export function installTenantPostgresContextHook(app: FastifyInstance, sql: postgres.Sql): void {
-  const active = new WeakMap<FastifyRequest, TenantRequestTransaction>();
-
   app.addHook("preHandler", (request, _reply, done) => {
     if (request.tenant === null || isLongLivedTenantRequest(request)) {
       done();
@@ -81,7 +91,7 @@ export function installTenantPostgresContextHook(app: FastifyInstance, sql: post
         started = true;
         const commit = await new Promise<boolean>((resolve) => {
           release = resolve;
-          active.set(request, {
+          activeTransactions.set(request, {
             rollbackOnly: false,
             async finish(shouldCommit) {
               if (!finished) {
@@ -112,24 +122,18 @@ export function installTenantPostgresContextHook(app: FastifyInstance, sql: post
   });
 
   app.addHook("onError", (request, _reply, _error, done) => {
-    const transaction = active.get(request);
+    const transaction = activeTransactions.get(request);
     if (transaction !== undefined) transaction.rollbackOnly = true;
     done();
   });
 
   app.addHook("onSend", async (request, _reply, payload) => {
-    const transaction = active.get(request);
-    if (transaction === undefined) return payload;
-    active.delete(request);
-    await transaction.finish(!transaction.rollbackOnly);
+    await finishTenantRequestTransaction(request, true);
     return payload;
   });
 
   const rollback = async (request: FastifyRequest): Promise<void> => {
-    const transaction = active.get(request);
-    if (transaction === undefined) return;
-    active.delete(request);
-    await transaction.finish(false);
+    await finishTenantRequestTransaction(request, false);
   };
   app.addHook("onRequestAbort", rollback);
   app.addHook("onTimeout", rollback);

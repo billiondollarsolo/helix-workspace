@@ -30,4 +30,18 @@ describe("assistant tool decision state", () => {
       ["tool-calendar", "confirmed"],
     ]);
   });
+  it("retains a failed execution as terminal and exposes its error", async () => {
+    const setToolStatus = vi.fn();
+    const setToolError = vi.fn();
+    await applyAssistantToolDecision({
+      conversationId: "planning",
+      toolCallId: "call",
+      decision: "confirm",
+      decideToolCall: () => Promise.resolve({ status: "failed", error: "Access revoked" }),
+      setToolStatus,
+      setToolError,
+    });
+    expect(setToolStatus).toHaveBeenLastCalledWith("call", "failed");
+    expect(setToolError).toHaveBeenLastCalledWith("call", "Access revoked");
+  });
 });

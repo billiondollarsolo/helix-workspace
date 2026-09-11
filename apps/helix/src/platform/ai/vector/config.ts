@@ -1,5 +1,6 @@
 import type { AiConfig, JsonObject } from "@helix/sdk-types";
 import type postgres from "postgres";
+import { configuredProviderFetch } from "../providers/factory.js";
 import { ChromaVectorStore } from "./chroma.js";
 import { MilvusVectorStore } from "./milvus.js";
 import { PgVectorStore } from "./pgvector.js";
@@ -17,7 +18,11 @@ export function createConfiguredVectorStore(
   aiConfig: AiConfig | undefined,
   options: VectorStoreRuntimeOptions,
 ): VectorStore | undefined {
-  if (aiConfig?.enabled === false || aiConfig?.vectorStore === undefined) {
+  if (
+    aiConfig?.enabled === false ||
+    aiConfig?.vectorStore === undefined ||
+    aiConfig.vectorStore.config?.enabled === false
+  ) {
     return undefined;
   }
 
@@ -56,14 +61,13 @@ function httpVectorConfig(
   return {
     baseUrl,
     ...(apiKey === undefined ? {} : { apiKey }),
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    fetch: options.fetch ?? configuredProviderFetch(baseUrl, options.env),
   };
 }
 
 function secretConfig(config: JsonObject, env: NodeJS.ProcessEnv): string | undefined {
-  const apiKey = stringConfig(config, "apiKey");
-  if (apiKey !== undefined) {
-    return apiKey;
+  if (typeof config.apiKey === "string") {
+    return config.apiKey.trim() || undefined;
   }
   const apiKeyEnv = stringConfig(config, "apiKeyEnv");
   return apiKeyEnv === undefined ? undefined : env[apiKeyEnv];

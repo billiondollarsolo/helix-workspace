@@ -118,7 +118,7 @@ export async function prefetchAdminDirectoryQuery(queryClient: AdminDirectoryRou
 }
 
 const ACCOUNT_ACTIONS_REASON =
-  "You can edit people’s profiles here. Adding accounts, inviting users, changing roles, and suspending accounts are unavailable on this page.";
+  "Use account details to edit profiles, manage mail addresses, or offboard users and agents with ownership handoff. Adding accounts, inviting users, changing roles, and suspending accounts are unavailable on this page.";
 
 const ROLE_FILTERS = ["all", ...USER_ROLES] as const satisfies readonly RoleFilter[];
 const STATUS_FILTERS = ["all", "active", "suspended"] as const satisfies readonly StatusFilter[];

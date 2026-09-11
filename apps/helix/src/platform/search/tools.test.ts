@@ -61,6 +61,7 @@ describe("search tools", () => {
         filter: [`attributes.orgId = ${JSON.stringify(orgId)}`, driveAclFilter],
         // Server-set RAG actor identity (see createScopedSearchRequest).
         forActorId: actor.id,
+        forOrgId: actor.orgId,
       },
     ]);
   });
@@ -99,6 +100,7 @@ describe("search tools", () => {
             ? [`attributes.orgId = ${JSON.stringify(orgId)}`, driveAclFilter]
             : `attributes.orgId = ${JSON.stringify(orgId)}`,
           forActorId: actor.id,
+          forOrgId: actor.orgId,
         },
       ]);
     },
@@ -175,6 +177,7 @@ describe("createScopedSearchRequest", () => {
         `attributes.allowedActorIds = ${JSON.stringify(actor.id)}`,
       ],
       forActorId: actor.id,
+      forOrgId: actor.orgId,
     });
   });
 });

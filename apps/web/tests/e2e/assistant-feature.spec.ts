@@ -53,6 +53,14 @@ async function mockAssistantBackend(page: Page, accessToken: string) {
       return;
     }
 
+    if (pathname === "/v1/api/tools/assistant.models.list") {
+      await fulfillJson(route, {
+        models: [{ id: "test/model", label: "Test model", providerId: "test", model: "model" }],
+        defaultModelId: "test/model",
+      });
+      return;
+    }
+
     if (pathname === "/v1/api/tools/assistant.chat") {
       await fulfillJson(route, {
         conversation: { id: "00000000-0000-4000-8000-000000000123" },

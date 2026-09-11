@@ -1,5 +1,7 @@
+import { loadAssistantAttachments } from "./assistant-attachments.js";
 import type { Actor } from "@helix/sdk-types";
 import { createResourceClassifier } from "../api/classify-resource.js";
+import { createAssistantToolResultClassifier } from "./assistant-tool-classification.js";
 import { createHelixTRPCRouter } from "../api/trpc.js";
 import { agentLimitBudgetOverrideFromEnv, resolveConfirmationTimeoutMs } from "../bootstrap/env.js";
 import { deriveClassification } from "../platform/ai/index.js";
@@ -47,6 +49,8 @@ import {
   ScopeToolAccessPolicy,
 } from "../platform/permissions/tool-access.js";
 import { registerSearchTools } from "../platform/search/index.js";
+import { registerWebSearchTool } from "../platform/search/web-tools.js";
+import { getWebSearchEnabled } from "../platform/search/web.js";
 import type { GlobalSearchType } from "../platform/search/scope.js";
 import { signupEventSchemas } from "../platform/signup/event-schemas.js";
 import { buildEffectiveTenantConfig } from "../platform/tenancy/index.js";
@@ -69,6 +73,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     redis,
     agentCredentialStore,
     mailCfg,
+    domainsStore,
     tenantStorageSecretReader,
     orgStore,
     securityPoliciesStore,
@@ -407,6 +412,10 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     registerMailTools(tools, {
       store: mailStore,
       defaultFromDomain: mailCfg.fromDomain,
+      resolveInternalDomains: async (orgId) =>
+        (await domainsStore.listDomains(orgId))
+          .filter((domain) => domain.status === "verified" && domain.mailEnabled)
+          .map((domain) => domain.domain),
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
     });
     await registerCanonicalApi(app, async (api) => {
@@ -576,6 +585,15 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     registerSearchTools(tools, { engine: runtimeSearchEngine });
   }
 
+  const webSearchAllowed = () => {
+    const security = context.runtimeConfiguration.current.security;
+    return (
+      security.tier !== "sovereign" &&
+      !(security.overrides?.localAiOnly ?? tierDefaults[security.tier].localAiOnly)
+    );
+  };
+  registerWebSearchTool(tools, () => context.runtimeConfiguration.current.ai, webSearchAllowed);
+
   const assistantSlashCommands = new AssistantSlashCommandHooks();
 
   if (!coreApps.shouldRegister("calendar")) {
@@ -597,6 +615,21 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
   const assistantOrchestrator = new AssistantOrchestrator({
     store: assistantStore,
     ai: assistantAi,
+    listModels: () => assistantAi.listModels(),
+    getMaxToolRounds: () =>
+      context.runtimeConfiguration.current.ai?.assistant?.maxToolRounds ?? 128,
+    webSearchEnabled: (classification) =>
+      webSearchAllowed() &&
+      getWebSearchEnabled(context.runtimeConfiguration.current.ai) &&
+      (classification === undefined ||
+        !context.runtimeConfiguration.current.ai?.privacy?.blockExternalForClassifications?.includes(
+          classification,
+        )),
+    loadAttachments: (input) =>
+      loadAssistantAttachments(
+        { driveStore, classifications: resourceClassificationService, dlp },
+        input,
+      ),
     tools,
     memory: assistantMemory,
     ...(runtimeSearchEngine === undefined ? {} : { search: runtimeSearchEngine }),
@@ -605,6 +638,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     slashCommands: assistantSlashCommands,
     classifyUserInput: async ({ content }) =>
       deriveClassification({ content, scanContent: true }).classification,
+    classifyToolResult: createAssistantToolResultClassifier(resourceClassificationService),
     blockHighRiskToolsWhenUntrusted: securityTier !== "personal",
   });
 

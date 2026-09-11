@@ -74,6 +74,9 @@ describe("PgVectorStore", () => {
     await expect(store.createCollection(ORG_A, "docs", 0, "cosine")).rejects.toThrow(
       "positive safe integer",
     );
+    await expect(store.createCollection(ORG_A, "docs", 16_001, "cosine")).rejects.toThrow(
+      "at most 16000 dimensions",
+    );
   });
 
   it("rejects an unsupported metric on createCollection", async () => {
@@ -85,7 +88,7 @@ describe("PgVectorStore", () => {
   });
 
   it("includes org_id in createCollection upsert SQL", async () => {
-    const { sql, queries } = createFakeSql();
+    const { sql, queries } = createFakeSql({ results: [[], [{ dim: 3, metric: "cosine" }]] });
     const store = new PgVectorStore(sql);
     await store.createCollection(ORG_A, "docs", 3, "cosine");
     const insert = queries.find((query) => query.text.startsWith("insert into vector_collections"));

@@ -1,0 +1,58 @@
+@layer components {
+  .message-code-block {
+    max-width: 720px;
+    margin: 6px 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--surface-2);
+  }
+
+  .message-code-block header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 9px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-3);
+    font-size: var(--text-caption);
+    text-transform: uppercase;
+  }
+
+  .message-code-block header button {
+    border: 0;
+    padding: 0;
+    color: var(--accent);
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .message-code-block pre {
+    max-height: 420px;
+    margin: 0;
+    padding: 10px;
+    overflow: auto;
+    color: var(--text);
+    font:
+      12px/1.55 ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Consolas,
+      monospace;
+    tab-size: 2;
+  }
+
+  .message-code-comment {
+    color: var(--text-3);
+  }
+  .message-code-string {
+    color: var(--success-text, var(--text));
+  }
+  .message-code-number {
+    color: var(--accent);
+  }
+  .message-code-keyword {
+    color: var(--accent);
+  }
+}

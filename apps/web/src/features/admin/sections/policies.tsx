@@ -154,12 +154,27 @@ interface PolicyEditFormProps {
   readonly policy: SecurityPolicy;
   readonly pending: boolean;
   readonly onCancel: () => void;
-  readonly onSubmit: (input: { enabled: boolean; enforcement: PolicyEnforcement }) => void;
+  readonly onSubmit: (input: {
+    enabled: boolean;
+    enforcement: PolicyEnforcement;
+    settings?: Record<string, unknown>;
+  }) => void;
 }
 
 function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormProps) {
   const [enabled, setEnabled] = useState(policy.enabled);
   const [enforcement, setEnforcement] = useState<PolicyEnforcement>(policy.enforcement);
+  const [adminMfa, setAdminMfa] = useState(
+    policy.settings.adminMfa === "optional" || policy.settings.adminMfa === "required"
+      ? policy.settings.adminMfa
+      : "tier_default",
+  );
+  const [sensitiveMfa, setSensitiveMfa] = useState(
+    policy.settings.sensitiveActionMfaRequired !== false,
+  );
+  const [secondAdmin, setSecondAdmin] = useState(
+    policy.settings.secondAdminApprovalRequired !== false,
+  );
   const requiredUnavailable =
     policy.runtimeStatus?.mode === "recorded_only" ||
     policy.policyType === "sso" ||
@@ -171,7 +186,19 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
       className="mt-3 grid gap-2.5"
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit({ enabled, enforcement });
+        onSubmit({
+          enabled,
+          enforcement,
+          ...(policy.policyType === "mfa"
+            ? {
+                settings: {
+                  adminMfa,
+                  sensitiveActionMfaRequired: sensitiveMfa,
+                  secondAdminApprovalRequired: secondAdmin,
+                },
+              }
+            : {}),
+        });
       }}
     >
       <label className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
@@ -179,6 +206,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
           type="checkbox"
           className="accent-[var(--accent)]"
           aria-label={`Enable ${securityPolicyLabels[policy.policyType]}`}
+          disabled={pending}
           checked={enabled}
           onChange={(event) => setEnabled(event.target.checked)}
         />
@@ -189,6 +217,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
           between them would otherwise hear the same name six times. */}
       <AdminField label="Enforcement">
         <AdminSelect
+          disabled={pending}
           aria-label={`Enforcement for ${securityPolicyLabels[policy.policyType]}`}
           value={enforcement === "required" && requiredUnavailable ? "optional" : enforcement}
           onChange={(event) => setEnforcement(event.target.value as PolicyEnforcement)}
@@ -198,6 +227,49 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
           {requiredUnavailable ? null : <option value="required">Required</option>}
         </AdminSelect>
       </AdminField>
+      {policy.policyType === "mfa" ? (
+        <fieldset disabled={pending} className="mt-2 min-w-0 space-y-3 rounded-md border p-3">
+          <legend className="text-sm font-semibold">Administrator safeguards</legend>
+          <AdminField label="Administrator MFA">
+            <AdminSelect
+              className="min-w-0 w-full"
+              aria-label="Administrator MFA"
+              value={adminMfa}
+              onChange={(event) => setAdminMfa(event.target.value)}
+            >
+              <option value="tier_default">Use workspace tier</option>
+              <option value="optional">Optional</option>
+              <option value="required">Required</option>
+            </AdminSelect>
+          </AdminField>
+          <label className="flex min-h-8 items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={sensitiveMfa}
+              onChange={(event) => setSensitiveMfa(event.target.checked)}
+            />
+            Require recent MFA for sensitive actions
+          </label>
+          <label className="flex min-h-8 items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={secondAdmin}
+              onChange={(event) => setSecondAdmin(event.target.checked)}
+            />
+            Require a second administrator for sensitive actions
+          </label>
+          <p className="text-sm text-muted-foreground">
+            These choices apply independently of the general policy switch. A solo operator can make
+            administrator MFA optional and turn off second-admin approval. Requiring MFA needs a
+            verified factor; requiring a second administrator needs another administrator to approve
+            protected changes.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Recent sign-in is a separate session setting. Saving security policy changes still
+            requires a recent sign-in and any safeguards you explicitly enabled.
+          </p>
+        </fieldset>
+      ) : null}
       {requiredUnavailable ? (
         <p className="m-0 text-[var(--text-3)] [font-size:var(--text-meta)]">
           Required is unavailable until Helix enforces this control at runtime.
@@ -248,10 +320,12 @@ export function AdminSecurity() {
       policyType: SecurityPolicyType;
       enabled: boolean;
       enforcement: PolicyEnforcement;
+      settings?: Record<string, unknown>;
     }) =>
       updateSecurityPolicy(input.policyType, {
         enabled: input.enabled,
         enforcement: input.enforcement,
+        ...(input.settings ? { settings: input.settings } : {}),
       }),
     onMutate: () => undefined,
     onError: () => undefined,
@@ -297,10 +371,11 @@ export function AdminSecurity() {
           SSO/DLP/device trust remain recorded-only and cannot be set to Required.
           Partial controls (MFA, session) never claim full Required. */}
       <StateBanner kind="info">
-        Policy chips show runtime status, not intent alone. External sharing and org admin MFA are
-        enforced on live API paths. SSO, DLP, and device trust are recorded and audited only — Helix
-        will not let you set them to Required until enforcement ships. Prefer your identity provider
-        or gateway for those controls in the meantime.
+        Policy chips show runtime status, not intent alone. External sharing is enforced on live API
+        paths. Administrator MFA and sensitive-action safeguards follow your configured choices.
+        SSO, DLP, and device trust are recorded and audited only — Helix will not let you set them
+        to Required until enforcement ships. Prefer your identity provider or gateway for those
+        controls in the meantime.
       </StateBanner>
 
       {policiesFailure !== null ? (
@@ -389,6 +464,33 @@ export function AdminSecurity() {
                         </Link>
                       ) : null}
                     </div>
+                    {policy.policyType === "mfa" && policy.effectiveControls ? (
+                      <dl
+                        className="mt-3 grid grid-cols-2 gap-2 text-sm"
+                        aria-label="Effective administrator safeguards"
+                      >
+                        <dt>Administrator MFA</dt>
+                        <dd>
+                          {policy.effectiveControls.adminMfaRequired ? "Required" : "Optional"} (
+                          {policy.effectiveControls.adminMfaSource === "tier"
+                            ? "workspace tier"
+                            : "policy"}
+                          )
+                        </dd>
+                        <dt>Sensitive-action MFA</dt>
+                        <dd>
+                          {policy.effectiveControls.sensitiveActionMfaRequired
+                            ? "Required"
+                            : "Optional"}
+                        </dd>
+                        <dt>Second administrator</dt>
+                        <dd>
+                          {policy.effectiveControls.secondAdminApprovalRequired
+                            ? "Required"
+                            : "Not required"}
+                        </dd>
+                      </dl>
+                    ) : null}
                     {isEditing ? (
                       <PolicyEditForm
                         policy={policy}

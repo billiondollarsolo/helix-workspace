@@ -1,5 +1,6 @@
 import type {
   Actor,
+  AiConfig,
   EventBus,
   HelixConfig,
   JsonObject,
@@ -13,6 +14,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type postgres from "postgres";
 import { z } from "zod";
 import { compactJsonObject } from "../util/json.js";
+import { finishTenantRequestTransaction } from "../tenancy/middleware.js";
 import {
   EnvConfigSource,
   PostgresOverrideConfigSource,
@@ -22,6 +24,18 @@ import {
   type PostgresConfigOverrideStore,
 } from "./loader.js";
 import { resolveTierDefaults } from "./tier.js";
+import type { SecurityPoliciesStore } from "../admin/security-policies.js";
+import type { SecurityPolicyLike } from "../admin/security-policy-runtime.js";
+import { resolveAdminSecurityControls } from "../auth/admin-security-policy.js";
+
+import {
+  aiRetrievalConfigUpdateSchema,
+  aiWebSearchUpdateSchema,
+  mergeAiSettingsPreservingSecrets,
+  redactAiSecretsForAdmin,
+  validateAiSettings,
+} from "./ai-settings.js";
+export { mergeAiProvidersPreservingSecrets, redactAiSecretsForAdmin } from "./ai-settings.js";
 
 const platformConfigKeys = [
   "security",
@@ -118,7 +132,7 @@ const aiOperatorLlmUpdateSchema = z
     baseUrl: z.string().min(1).max(500).optional(),
     model: z.string().min(1).max(200).optional(),
     /** Write-only; never returned by GET after save. */
-    apiKey: z.string().min(1).max(4000).optional(),
+    apiKey: z.string().max(4000).nullable().optional(),
   })
   .strict();
 
@@ -133,8 +147,17 @@ const aiConfigUpdateSchema = z
     enabled: z.boolean().optional(),
     defaultPosture: z.enum(["disabled", "admin-controlled", "user-controlled"]).optional(),
     providers: z.array(aiProviderSchema).optional(),
-    vectorStore: aiPluginRefSchema.optional(),
-    embeddingProvider: aiPluginRefSchema.optional(),
+    vectorStore: aiPluginRefSchema
+      .extend({ config: aiRetrievalConfigUpdateSchema.optional() })
+      .optional(),
+    embeddingProvider: aiPluginRefSchema
+      .extend({ config: aiRetrievalConfigUpdateSchema.optional() })
+      .optional(),
+    webSearch: aiWebSearchUpdateSchema.optional(),
+    assistant: z
+      .object({ maxToolRounds: z.number().int().min(1).max(256).optional() })
+      .strict()
+      .optional(),
     routing: z
       .object({
         rules: z.array(aiRoutingRuleSchema).optional(),
@@ -377,7 +400,7 @@ export class PostgresPlatformConfigStore implements PostgresConfigOverrideStore 
     return merged;
   }
 
-  async update(update: PlatformConfigUpdate, actor: Actor): Promise<void> {
+  async update(update: PlatformConfigUpdate, actor: Actor, validatedAi?: AiConfig): Promise<void> {
     const current = await this.loadOverrides();
     const next = mergePlatformConfigUpdate(current, update);
     const updatedByActorId = uuidPattern.test(actor.id) ? actor.id : null;
@@ -389,7 +412,11 @@ export class PostgresPlatformConfigStore implements PostgresConfigOverrideStore 
       await this.upsert("modules", jsonObjectFromDefined(next.modules ?? {}), updatedByActorId);
     }
     if (update.ai !== undefined) {
-      await this.upsert("ai", jsonObjectFromDefined(next.ai ?? {}), updatedByActorId);
+      await this.upsert(
+        "ai",
+        jsonObjectFromDefined(validatedAi ?? next.ai ?? {}),
+        updatedByActorId,
+      );
     }
     if (update.observability !== undefined) {
       await this.upsert(
@@ -434,19 +461,37 @@ export class PlatformConfigAdminService {
     private readonly store: PostgresPlatformConfigStore,
     private readonly env: NodeJS.ProcessEnv = process.env,
     private readonly events?: EventBus,
+    private readonly securityPolicies?: Pick<SecurityPoliciesStore, "get">,
   ) {}
 
-  async getStatus(): Promise<PlatformConfigStatus> {
+  async getStatus(actor?: Actor): Promise<PlatformConfigStatus> {
     const config = await this.loadConfig();
-    return this.statusForConfig(config);
+    const policy =
+      actor === undefined ? undefined : await this.securityPolicies?.get(actor.orgId, "mfa");
+    return this.statusForConfig(config, policy);
   }
 
-  async update(update: PlatformConfigUpdate, actor: Actor): Promise<PlatformConfigStatus> {
+  async update(
+    update: PlatformConfigUpdate,
+    actor: Actor,
+    validateConfig?: (config: HelixConfig) => Promise<void> | void,
+    commit?: () => Promise<void>,
+  ): Promise<PlatformConfigStatus> {
     const currentConfig = await this.loadConfig();
-    this.assertTierUpgradeReady(currentConfig, update);
-    await this.store.update(update, actor);
+    const candidate = completeHelixConfig(mergePlatformConfigUpdate(currentConfig, update));
+    validateAiSettings(candidate.ai);
+    await validateConfig?.(candidate);
+    this.assertTierUpgradeReady(
+      currentConfig,
+      update,
+      await this.securityPolicies?.get(actor.orgId, "mfa"),
+    );
+    await this.store.update(update, actor, update.ai === undefined ? undefined : candidate.ai);
+    const status = await this.getStatus(actor);
+    // Subscribers use another connection and must never reload uncommitted settings.
+    await commit?.();
     await this.publishConfigChanged(update, actor);
-    return this.getStatus();
+    return status;
   }
 
   private async loadConfig(): Promise<HelixConfig> {
@@ -456,24 +501,31 @@ export class PlatformConfigAdminService {
     ]);
   }
 
-  private statusForConfig(config: HelixConfig): PlatformConfigStatus {
+  private statusForConfig(
+    config: HelixConfig,
+    mfaPolicy?: SecurityPolicyLike | null,
+  ): PlatformConfigStatus {
     const readinessConfig = applyObservedPlatformReadiness(config, this.env);
     const tierDefaults = resolveTierDefaults(readinessConfig);
     return {
       config: redactAiSecretsForAdmin(readinessConfig),
       tierDefaults,
-      readiness: buildPlatformReadinessReport(readinessConfig, tierDefaults),
+      readiness: buildPlatformReadinessReport(readinessConfig, tierDefaults, mfaPolicy),
     };
   }
 
-  private assertTierUpgradeReady(currentConfig: HelixConfig, update: PlatformConfigUpdate): void {
+  private assertTierUpgradeReady(
+    currentConfig: HelixConfig,
+    update: PlatformConfigUpdate,
+    mfaPolicy?: SecurityPolicyLike | null,
+  ): void {
     const targetTier = update.security?.tier;
     if (targetTier === undefined || tierRank(targetTier) <= tierRank(currentConfig.security.tier)) {
       return;
     }
 
     const candidateConfig = completeHelixConfig(mergePlatformConfigUpdate(currentConfig, update));
-    const readiness = this.statusForConfig(candidateConfig).readiness;
+    const readiness = this.statusForConfig(candidateConfig, mfaPolicy).readiness;
     const missingRequirements = readiness.requirements
       .filter((requirement) => requirement.required && requirement.status !== "ready")
       .map((requirement) => requirement.key);
@@ -663,6 +715,7 @@ function databaseEndpointSummary(databaseUrl: string | undefined): string | unde
 
 export interface RegisterPlatformConfigAdminRoutesOptions {
   readonly service: PlatformConfigAdminService;
+  readonly validateConfig?: (config: HelixConfig) => Promise<void> | void;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
 }
 
@@ -675,14 +728,14 @@ export async function registerPlatformConfigAdminRoutes(
     if (!canReadPlatformConfig(actor)) {
       return reply.code(403).send(permissionDeniedResponse(platformConfigAdminScopes.read));
     }
-    return options.service.getStatus();
+    return options.service.getStatus(actor);
   });
   app.get("/api/admin/platform-config/readiness", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReadPlatformConfig(actor)) {
       return reply.code(403).send(permissionDeniedResponse(platformConfigAdminScopes.read));
     }
-    return (await options.service.getStatus()).readiness;
+    return (await options.service.getStatus(actor)).readiness;
   });
   app.patch("/api/admin/platform-config", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
@@ -696,7 +749,9 @@ export async function registerPlatformConfigAdminRoutes(
         .send({ error: "Invalid platform config update.", issues: parsed.error.issues });
     }
     try {
-      return await options.service.update(parsed.data, actor);
+      return await options.service.update(parsed.data, actor, options.validateConfig, () =>
+        finishTenantRequestTransaction(request, true),
+      );
     } catch (error) {
       if (error instanceof PlatformTierReadinessError) {
         return reply.code(409).send({
@@ -725,10 +780,11 @@ export function canWritePlatformConfig(actor: Actor): boolean {
 export function buildPlatformReadinessReport(
   config: HelixConfig,
   defaults: TierSecurityDefaults = resolveTierDefaults(config),
+  mfaPolicy?: SecurityPolicyLike | null,
 ): PlatformReadinessReport {
   const state = readPlatformReadiness(config.platform);
   const requirements: PlatformReadinessRequirement[] = [
-    mfaRequirement(config.security.tier, state.mfa),
+    mfaRequirement(config.security.tier, state.mfa, mfaPolicy),
     encryptedBackupsRequirement(config.security.tier, state.encryptedBackups),
     auditDestinationsRequirement(defaults.auditDestinations, state.auditDestinations),
     serviceRequirement("vault", "Vault", defaults.secrets === "vault", state.vault),
@@ -828,12 +884,9 @@ function mergePlatformConfigUpdate(
   update: PlatformConfigUpdate,
 ): PartialHelixConfig {
   const next = mergeConfig(current, updateToPartialConfig(update));
-  // Providers are replaced as arrays; re-merge so omitted apiKeys keep stored secrets.
-  if (update.ai?.providers !== undefined) {
-    const mergedAi = mergeAiProvidersPreservingSecrets(current.ai, next.ai);
-    if (mergedAi !== undefined) {
-      Object.assign(next, { ai: mergedAi });
-    }
+  if (update.ai !== undefined) {
+    const ai = mergeAiSettingsPreservingSecrets(current.ai, next.ai, update.ai);
+    if (ai !== undefined) Object.assign(next, { ai });
   }
   const readinessUpdate = update.platform?.readiness;
   if (readinessUpdate === undefined) {
@@ -879,49 +932,13 @@ function normalizeModulesConfig(
 }
 
 function normalizeAiConfig(value: unknown, label: string): NonNullable<PartialHelixConfig["ai"]> {
-  const parsed = aiConfigUpdateSchema.parse(normalizeJsonObject(value, label));
+  const parsed = aiConfigUpdateSchema
+    .extend({
+      vectorStore: aiPluginRefSchema.optional(),
+      embeddingProvider: aiPluginRefSchema.optional(),
+    })
+    .parse(normalizeJsonObject(value, label));
   return jsonObjectFromDefined(parsed);
-}
-
-/** Strip write-only API keys from admin GET responses; expose apiKeyConfigured. */
-export function redactAiSecretsForAdmin(config: HelixConfig): HelixConfig {
-  const ai = config.ai;
-  if (ai === undefined) {
-    return config;
-  }
-  const operatorLlm = ai.operatorLlm;
-  const redactedOperator =
-    operatorLlm === undefined
-      ? undefined
-      : {
-          ...(operatorLlm.baseUrl === undefined ? {} : { baseUrl: operatorLlm.baseUrl }),
-          ...(operatorLlm.model === undefined ? {} : { model: operatorLlm.model }),
-          apiKeyConfigured:
-            typeof operatorLlm.apiKey === "string" && operatorLlm.apiKey.trim().length > 0,
-        };
-  const redactedProviders = ai.providers?.map((provider) => {
-    const cfg = provider.config ?? {};
-    const hasKey =
-      typeof cfg.apiKey === "string" && cfg.apiKey.trim().length > 0
-        ? true
-        : cfg.apiKeyConfigured === true;
-    const { apiKey: _apiKey, ...restConfig } = cfg as Record<string, unknown>;
-    return {
-      ...provider,
-      config: {
-        ...restConfig,
-        apiKeyConfigured: hasKey,
-      },
-    };
-  });
-  return {
-    ...config,
-    ai: {
-      ...ai,
-      ...(redactedOperator === undefined ? {} : { operatorLlm: redactedOperator }),
-      ...(redactedProviders === undefined ? {} : { providers: redactedProviders }),
-    },
-  };
 }
 
 function providerCredentialFields(provider: {
@@ -974,41 +991,6 @@ export function resolveFeatureProviderCredentials(
     ...(creds.baseUrl === undefined ? {} : { baseUrl: creds.baseUrl }),
     ...(model === undefined ? {} : { model }),
   };
-}
-
-/**
- * Preserve per-provider apiKey when Admin PATCHes a providers list without
- * re-sending secrets (empty/omitted apiKey keeps the stored value).
- */
-export function mergeAiProvidersPreservingSecrets(
-  current: HelixConfig["ai"] | undefined,
-  next: NonNullable<HelixConfig["ai"]> | undefined,
-): HelixConfig["ai"] | undefined {
-  if (next === undefined) {
-    return current;
-  }
-  if (next.providers === undefined) {
-    return next;
-  }
-  const priorById = new Map((current?.providers ?? []).map((provider) => [provider.id, provider]));
-  const providers = next.providers.map((provider) => {
-    const prior = priorById.get(provider.id);
-    const nextCfg = { ...(provider.config ?? {}) };
-    const nextKey = typeof nextCfg.apiKey === "string" ? nextCfg.apiKey.trim() : "";
-    if (nextKey.length === 0) {
-      delete nextCfg.apiKey;
-      const priorKey = prior?.config?.apiKey;
-      if (typeof priorKey === "string" && priorKey.trim().length > 0) {
-        nextCfg.apiKey = priorKey;
-      }
-    }
-    delete nextCfg.apiKeyConfigured;
-    return {
-      ...provider,
-      config: nextCfg,
-    };
-  });
-  return { ...next, providers };
 }
 
 /** Merge operator LLM + feature routing + mail spam AI into env-style overlay. */
@@ -1136,8 +1118,15 @@ function readPlatformReadiness(platform: JsonObject | undefined): PlatformReadin
 function mfaRequirement(
   tier: SecurityTier,
   state: PlatformReadinessUpdate["mfa"],
+  policy?: SecurityPolicyLike | null,
 ): PlatformReadinessRequirement {
-  const requiredScope = requiredMfaScope(tier);
+  const controls = resolveAdminSecurityControls(tier, policy);
+  const requiredScope =
+    controls.adminMfaSource === "policy"
+      ? controls.adminMfaRequired
+        ? "admins"
+        : "none"
+      : requiredMfaScope(tier);
   const required = requiredScope !== "none";
   const observedScope = state?.scope ?? "none";
   // When no scope is required the rank comparison is trivially satisfied
@@ -1149,7 +1138,7 @@ function mfaRequirement(
     label: "MFA",
     required,
     status: requirementStatus(required, ready, state?.status),
-    expected: { scope: requiredScope },
+    expected: { scope: requiredScope, source: controls.adminMfaSource },
     observed: compactJsonObject({
       enabled: state?.enabled ?? false,
       scope: observedScope,

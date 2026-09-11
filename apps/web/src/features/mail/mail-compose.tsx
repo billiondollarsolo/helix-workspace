@@ -1,3 +1,5 @@
+import { MailSenderSelect, useMailSender } from "./mail-sender-select";
+import { MailRecipientField } from "./mail-recipient-field";
 import { Dialog } from "@/components/ui/helix-dialog";
 import { trashDriveObject, uploadDriveFile } from "@/features/drive/api";
 import { useUnsavedChangesWarning } from "@/lib/use-unsaved-changes-warning";
@@ -38,14 +40,11 @@ import {
   serverDraftToComposeFields,
 } from "./mail-compose-server-draft";
 
-/* ------------------------------------------------------------------ compose */
-
 interface ComposeProps {
   readonly onClose: () => void;
   readonly onSent: () => void;
 }
 
-/** Parses a comma/semicolon-separated recipient string into addresses. */
 export function parseRecipients(raw: string): MailSendInput["to"] {
   return recipientTokens(raw).map((address) => ({ address }));
 }
@@ -56,6 +55,8 @@ function addressesText(addresses: readonly { readonly address: string }[] | unde
 
 export function Compose({ onClose, onSent }: ComposeProps) {
   const [recoveredDraft] = useState(readMailComposeRecovery);
+  const sender = useMailSender(recoveredDraft?.from?.address);
+  const { from, setFrom } = sender;
   const [to, setTo] = useState(addressesText(recoveredDraft?.to));
   const [cc, setCc] = useState(addressesText(recoveredDraft?.cc));
   const [bcc, setBcc] = useState(addressesText(recoveredDraft?.bcc));
@@ -104,6 +105,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
   const bccInputRef = useRef<HTMLInputElement>(null);
   const skipRecoveryFlushRef = useRef(false);
   const canonicalDraft = {
+    ...(from ? { from: { address: from } } : {}),
     to: parseRecipients(to),
     cc: parseRecipients(cc),
     bcc: parseRecipients(bcc),
@@ -114,20 +116,24 @@ export function Compose({ onClose, onSent }: ComposeProps) {
   const hasDraft = hasMailComposeContent(canonicalDraft);
   const currentDraftRef = useRef(canonicalDraft);
   currentDraftRef.current = canonicalDraft;
-  const applyServerDraft = useCallback((draft: MailDraft) => {
-    setTo(addressesText(draft.to));
-    setCc(addressesText(draft.cc));
-    setBcc(addressesText(draft.bcc));
-    setShowCc(draft.cc.length > 0);
-    setShowBcc(draft.bcc.length > 0);
-    setSubject(draft.subject);
-    setBody(draft.bodyText);
-    setAttachments(draft.attachments);
-    draftRef.current = { id: draft.id, revision: draft.revision };
-    pendingDraftSaveRef.current = null;
-    setServerDraftChoice(null);
-    setShowRecoveryNotice(false);
-  }, []);
+  const applyServerDraft = useCallback(
+    (draft: MailDraft) => {
+      setFrom(draft.from?.address ?? null);
+      setTo(addressesText(draft.to));
+      setCc(addressesText(draft.cc));
+      setBcc(addressesText(draft.bcc));
+      setShowCc(draft.cc.length > 0);
+      setShowBcc(draft.bcc.length > 0);
+      setSubject(draft.subject);
+      setBody(draft.bodyText);
+      setAttachments(draft.attachments);
+      draftRef.current = { id: draft.id, revision: draft.revision };
+      pendingDraftSaveRef.current = null;
+      setServerDraftChoice(null);
+      setShowRecoveryNotice(false);
+    },
+    [setFrom],
+  );
   useEffect(() => {
     let cancelled = false;
     void listMailDrafts()
@@ -190,7 +196,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
       recoveryDebouncer.cancel();
       clearMailComposeRecovery();
     }
-  }, [attachments, bcc, body, cc, hasDraft, recoveryDebouncer, subject, to]);
+  }, [attachments, bcc, body, cc, from, hasDraft, recoveryDebouncer, subject, to]);
 
   useEffect(() => () => attachmentUploadRef.current?.abort(), []);
 
@@ -300,12 +306,13 @@ export function Compose({ onClose, onSent }: ComposeProps) {
           setServerDraftChoice(latest);
         }
       });
-  }, [attachments, bcc, body, cc, hasDraft, persistDraft, serverDraftChoice, subject, to]);
+  }, [attachments, bcc, body, cc, from, hasDraft, persistDraft, serverDraftChoice, subject, to]);
 
   const recipients = parseRecipients(to);
-  const canSend = !sendMutation.isPending && !attaching;
+  const canSend = !sendMutation.isPending && !attaching && sender.authorized;
 
   const handleSend = useCallback(() => {
+    if (!sender.authorized) return;
     if (recipients.length === 0) {
       setRecipientError("Enter at least one recipient email address.");
       toInputRef.current?.focus();
@@ -328,6 +335,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
     }
     setRecipientError(null);
     sendMutation.mutate({
+      from: { address: from },
       to: recipients,
       cc: parseRecipients(cc),
       bcc: parseRecipients(bcc),
@@ -336,7 +344,19 @@ export function Compose({ onClose, onSent }: ComposeProps) {
       ...(sendAt === "" ? {} : { sendAt: new Date(sendAt).toISOString() }),
       attachments: attachments.length > 0 ? attachments : undefined,
     });
-  }, [attachments, bcc, body, cc, recipients, sendAt, sendMutation, subject, to]);
+  }, [
+    attachments,
+    bcc,
+    body,
+    cc,
+    from,
+    recipients,
+    sendAt,
+    sendMutation,
+    sender.authorized,
+    subject,
+    to,
+  ]);
 
   const requestClose = useCallback(() => {
     if (hasDraft) {
@@ -598,6 +618,11 @@ export function Compose({ onClose, onSent }: ComposeProps) {
             </div>
           ) : null}
           <div className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)]">
+            <MailSenderSelect
+              sender={sender}
+              disabled={sendMutation.isPending}
+              onBlur={saveDraft}
+            />
             <div className="flex items-center [padding:4px_0] [border-bottom:1px_solid_var(--border)]">
               <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">To</span>
               <input
@@ -624,7 +649,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 onClick={() => {
                   setShowCc((value) => !value);
                 }}
-                className="[font-size:var(--text-caption)] text-muted-foreground"
+                className="min-h-6 min-w-6 [font-size:var(--text-caption)] text-muted-foreground"
               >
                 Cc
               </button>
@@ -635,61 +660,35 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 onClick={() => {
                   setShowBcc((value) => !value);
                 }}
-                className="[font-size:var(--text-caption)] text-muted-foreground"
+                className="min-h-6 min-w-6 [font-size:var(--text-caption)] text-muted-foreground"
               >
                 Bcc
               </button>
             </div>
-            {showCc && (
-              <div className="flex items-center [padding:4px_0] [border-bottom:1px_solid_var(--border)]">
-                <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">
-                  Cc
-                </span>
-                <input
-                  ref={ccInputRef}
-                  name="mail-compose-cc"
-                  autoComplete="email"
-                  inputMode="email"
-                  spellCheck={false}
-                  value={cc}
-                  onChange={(event) => {
-                    setCc(event.target.value);
-                    setRecipientError(null);
-                  }}
-                  aria-label="Cc"
-                  aria-invalid={recipientError !== null}
-                  aria-describedby={
-                    recipientError === null ? undefined : "mail-compose-recipient-error"
-                  }
-                  className="flex-1 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)]"
-                />
-              </div>
-            )}
-            {showBcc && (
-              <div className="flex items-center [padding:4px_0] [border-bottom:1px_solid_var(--border)]">
-                <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">
-                  Bcc
-                </span>
-                <input
-                  ref={bccInputRef}
-                  name="mail-compose-bcc"
-                  autoComplete="email"
-                  inputMode="email"
-                  spellCheck={false}
-                  value={bcc}
-                  onChange={(event) => {
-                    setBcc(event.target.value);
-                    setRecipientError(null);
-                  }}
-                  aria-label="Bcc"
-                  aria-invalid={recipientError !== null}
-                  aria-describedby={
-                    recipientError === null ? undefined : "mail-compose-recipient-error"
-                  }
-                  className="flex-1 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)]"
-                />
-              </div>
-            )}
+            {showCc ? (
+              <MailRecipientField
+                label="Cc"
+                value={cc}
+                inputRef={ccInputRef}
+                error={recipientError}
+                onChange={(value) => {
+                  setCc(value);
+                  setRecipientError(null);
+                }}
+              />
+            ) : null}
+            {showBcc ? (
+              <MailRecipientField
+                label="Bcc"
+                value={bcc}
+                inputRef={bccInputRef}
+                error={recipientError}
+                onChange={(value) => {
+                  setBcc(value);
+                  setRecipientError(null);
+                }}
+              />
+            ) : null}
             <div className="[padding:4px_0]">
               <input
                 name="mail-compose-subject"

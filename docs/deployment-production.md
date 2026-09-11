@@ -242,12 +242,14 @@ line, CI artifact, or application log.
 
 ## Signed upstream MFA assertions
 
-Business and higher tiers reject every admin-scoped request unless the authenticated actor also
-presents a valid MFA assurance assertion. Helix does not currently run a native MFA enrollment or
-challenge flow. A trusted upstream authenticator is therefore a required deployment dependency for
-Business admin access; do not weaken or bypass the gate when that producer is unavailable.
+Business and higher tiers require admin MFA by default. Administrators can choose optional or
+required MFA and independently configure sensitive-action MFA and second-admin approval under
+**Admin → Security policies**. Helix supports native MFA enrollment and verification; a trusted
+upstream authenticator is an optional alternative. See
+[account handoff and admin safeguards](runbooks/account-offboarding-and-admin-safeguards.md)
+for the effective-policy rules and safeguards on changing them.
 
-Configure the exact producer identity and consumer identifier:
+When using upstream assertions, configure the exact producer identity and consumer identifier:
 
 ```dotenv
 HELIX_MFA_ASSERTION_ISSUER=https://auth.example.com

@@ -63,7 +63,34 @@ export interface AssistantConversationListPage {
   readonly nextCursor: string | null;
 }
 
+interface AssistantAttachment {
+  readonly objectId: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly byteSize: number;
+}
+
+export interface AssistantLoadedAttachment {
+  readonly attachment: AssistantAttachment;
+  readonly source: AssistantSource;
+}
+
+export interface AssistantModelCatalog {
+  readonly webSearchEnabled?: boolean;
+  readonly models: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly providerId: string;
+    readonly model: string;
+  }[];
+  readonly defaultModelId?: string;
+}
+
 export interface AssistantMessage {
+  readonly sources?: readonly AssistantSource[];
+  readonly toolActivity?: readonly AssistantToolActivity[];
+  readonly toolGroups?: readonly string[];
+  readonly webSearch?: boolean;
   readonly id: string;
   readonly orgId: string;
   readonly conversationId: string;
@@ -71,6 +98,7 @@ export interface AssistantMessage {
   readonly role: AssistantMessageRole;
   readonly content: string;
   readonly toolCallId: string | null;
+  readonly attachments?: readonly AssistantAttachment[];
   readonly metadata: JsonObject;
   readonly createdAt: string;
 }
@@ -101,7 +129,24 @@ export interface AssistantAppendMessageInput {
   readonly createdAt?: Date;
 }
 
+export interface AssistantPendingTurnContext {
+  readonly pending: AssistantMessage;
+  readonly origin: AssistantMessage;
+  readonly assistant: AssistantMessage;
+  readonly history: readonly AssistantMessage[];
+}
+export interface AssistantPendingTurnQuery {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly conversationId: string;
+  readonly pendingId: string;
+  readonly limit: number;
+}
+
 export interface AssistantStore {
+  getPendingTurnContext(
+    input: AssistantPendingTurnQuery,
+  ): Promise<AssistantPendingTurnContext | null>;
   createConversation(input: AssistantCreateConversationInput): Promise<AssistantConversation>;
   getConversation(input: {
     readonly orgId: string;
@@ -164,6 +209,7 @@ export interface AssistantSource {
     readonly orgId: string;
   };
   readonly title?: string;
+  readonly url?: string;
   readonly body?: string;
   readonly score?: number;
 }
@@ -176,11 +222,21 @@ export interface AssistantToolCallResult {
   readonly input: JsonObject;
   readonly status: AssistantToolCallStatus;
   readonly output?: JsonValue;
+  /** Classification computed by the server after executing this tool. */
+  readonly classification?: AIClassification;
   readonly pending?: PendingToolInvocation;
   readonly error?: string;
+  readonly statusCode?: number;
+  readonly retryAfterSeconds?: number;
   /** IDs only; source contents never enter generic tool audit/provenance. */
   readonly sourceIds?: readonly string[];
 }
+
+export type AssistantToolResultClassifier = (input: {
+  readonly actor: Actor;
+  readonly toolId: string;
+  readonly output: JsonValue | undefined;
+}) => Promise<AIClassification>;
 
 export interface AssistantTurnResponse {
   readonly conversation: AssistantConversation;
@@ -199,7 +255,15 @@ export interface AssistantTurnResponse {
  * runs. `delta` events carry partial assistant text; the terminal `final`
  * event carries the full {@link AssistantTurnResponse}.
  */
+export type AssistantToolActivity = {
+  readonly toolCallId: string;
+  readonly toolId: string;
+  readonly status: AssistantToolCallStatus | "running";
+  readonly error?: string;
+};
+
 export type AssistantStreamEvent =
+  | ({ readonly type: "tool" } & AssistantToolActivity)
   | {
       readonly type: "delta";
       readonly text: string;
@@ -211,12 +275,19 @@ export type AssistantStreamEvent =
     };
 
 export interface AssistantSendMessageInput {
+  readonly toolGroups?: readonly string[];
+  readonly webSearch?: boolean;
   readonly classification?: AIClassification;
+  readonly signal?: AbortSignal;
+  readonly modelId?: string;
+  readonly attachmentObjectIds?: readonly string[];
   readonly actor: Actor;
   /** Server-internal invocation policy; never persisted in conversation data. */
   readonly principal?: ToolInvocationPrincipal;
   readonly content: string;
   readonly conversationId?: string;
+  /** Branch this owned user message and regenerate using only its preceding history. */
+  readonly editMessageId?: string;
   readonly title?: string;
   readonly memoryOptIn?: boolean;
   readonly request?: RequestContext;

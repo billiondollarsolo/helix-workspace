@@ -59,4 +59,6 @@ if [[ "${MAIL_SMTP_RECEIVER_PORT:-}" == "2525" || -z "${MAIL_SMTP_RECEIVER_PORT:
   export MAIL_SMTP_RECEIVER_PORT="${smtp_receive_port}"
 fi
 
+# The RustFS server alone needs the storage master key.
+unset RUSTFS_SSE_S3_MASTER_KEY
 exec pnpm exec turbo run dev --env-mode=loose

@@ -5,6 +5,7 @@ import {
 } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
 import type postgres from "postgres";
+import { randomUUID } from "node:crypto";
 import type { TenantStorageClient } from "../storage/tenant-resolver.js";
 import { toSqlJson } from "../util/sql.js";
 import type { StagedMailAttachment } from "./attachment-ingestion.js";
@@ -33,10 +34,13 @@ export async function deliverInboundMessage(
     throw new Error("Mail requires at least one mailbox owner.");
   }
   const rows = await sql<{ readonly actor_id: string }[]>`
-    insert into mail_message_deliveries (org_id, message_id, actor_id)
-    select ${input.input.orgId}, ${input.messageId}, actor_id
+    insert into mail_message_deliveries (org_id, message_id, actor_id, received_at)
+    select ${input.input.orgId}, ${input.messageId}, actor_id,
+      case when ${input.input.metadata?.direction === "outbound"} then null else now() end
     from unnest(${sql.array([...actorIds])}::uuid[]) as actor_id
-    on conflict (message_id, actor_id) do nothing
+    on conflict (message_id, actor_id) do update
+    set received_at = excluded.received_at
+    where mail_message_deliveries.received_at is null and excluded.received_at is not null
     returning actor_id
   `;
   const deliveredActorIds = rows.map((row) => row.actor_id);
@@ -184,41 +188,25 @@ export async function insertMailMessage(
     ...(input.bodyHtml === undefined ? {} : { plainBody: input.bodyText }),
   } satisfies JsonObject;
 
-  const messageRows = await sql<{ readonly id: string }[]>`
-    with inserted_message as (
-      insert into messages (org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
-      values (
-        ${input.orgId},
-        ${threadId},
-        ${input.actorId ?? null},
-        'mail',
-        ${input.bodyHtml ?? input.bodyText},
-        ${input.bodyHtml === undefined ? "plain" : "html"},
-        ${sql.json(toSqlJson(metadata))},
-        ${input.receivedAt ?? new Date()}
-      )
-      returning id
-    ), inserted_identity as (
-      insert into mail_message_identities (
-        message_id, org_id, normalized_message_id, raw_sha256, provider_delivery_id
-      )
-      select
-        id,
-        ${input.orgId},
-        ${normalizedMessageId},
-        ${input.rawSource?.sha256 ?? null},
-        ${providerDeliveryId}
-      from inserted_message
-      where ${
-        normalizedMessageId !== null || input.rawSource !== undefined || providerDeliveryId !== null
-      }
-      returning message_id
+  // Separate statements let RLS identity checks see the newly persisted message.
+  const messageId = randomUUID();
+  await sql`
+    insert into messages (id, org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
+    values (
+      ${messageId}, ${input.orgId}, ${threadId}, ${input.actorId ?? null}, 'mail',
+      ${input.bodyHtml ?? input.bodyText}, ${input.bodyHtml === undefined ? "plain" : "html"},
+      ${sql.json(toSqlJson(metadata))}, ${input.receivedAt ?? new Date()}
     )
-    select id from inserted_message
   `;
-  const messageId = messageRows[0]?.id;
-  if (messageId === undefined) {
-    throw new Error("Unable to insert mail message.");
+  if (
+    normalizedMessageId !== null ||
+    input.rawSource !== undefined ||
+    providerDeliveryId !== null
+  ) {
+    await sql`
+      insert into mail_message_identities (message_id, org_id, normalized_message_id, raw_sha256, provider_delivery_id)
+      values (${messageId}, ${input.orgId}, ${normalizedMessageId}, ${input.rawSource?.sha256 ?? null}, ${providerDeliveryId})
+    `;
   }
 
   if (input.rawSource !== undefined) {
@@ -303,16 +291,9 @@ async function authorizeMailAttachments(
         ))
         or (objects.kind in ('file', 'recording')
           and coalesce(objects.metadata->>'status', 'ready') = 'ready'
-          and (
-            objects.owner_actor_id = ${input.actorId ?? null}
-            or exists (
-              select 1 from permissions p
-              where p.org_id = ${input.orgId}
-                and p.actor_id = ${input.actorId ?? null}
-                and p.resource_type = 'object' and p.resource_id = objects.id
-                and (p.expires_at is null or p.expires_at > now())
-            )
-          ))
+          and helix_drive_effective_role(${input.orgId}, ${input.actorId ?? null}, 'object', objects.id)
+            in ('owner', 'editor', 'reader')
+        )
       )
   `;
   const byId = new Map(rows.map((row) => [row.id, row]));

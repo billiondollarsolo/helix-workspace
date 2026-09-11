@@ -1,17 +1,24 @@
 # Backup Restore Jobs
 
-The Admin API never restores a backup in the request process. It records an isolated restore job,
-requires two approvals from administrators other than the requester, and lets the leader-elected
-restore worker execute the job under a database lease.
+The Admin API never restores a backup in the request process. It records an isolated restore job
+with the configured approval requirement and lets the leader-elected restore worker execute it
+under a database lease.
 
 ## Access and approval
 
 - Grant `admin.backups.restore` only to recovery operators. `admin.config.write` and
   `admin.config.*` cannot request, approve, inspect, or cancel restores.
-- Every mutating restore request requires a recently MFA-verified session (step-up authentication).
-- The requester cannot approve their own job. Two distinct recovery operators must approve it.
+- Mutating restore requests require recent MFA when the workspace's sensitive-action MFA setting
+  is enabled.
+- New jobs require one other recovery administrator's approval when second-admin approval is on,
+  or zero approvals when it is off. The requester cannot approve their own job.
+- Each job retains its creation-time `requiredApprovals` count. Older jobs requiring two distinct
+  approvers still require both; changing policy does not release an existing pending job.
 - Request, approval, cancellation, execution start, completion, and failure are appended directly to
   the hash-chained activity audit. If the execution-start audit cannot be written, restore does not run.
+
+Choose these controls in [Admin → Policies](account-offboarding-and-admin-safeguards.md#choose-administrator-safeguards).
+They do not remove restore permissions or isolated-target restrictions.
 
 ## Request a restore
 
@@ -33,7 +40,9 @@ that key with different backup or target parameters is rejected.
 
 ## Inspect, approve, or cancel
 
-Use a stepped-up recovery-admin session for mutations:
+Use a recovery-admin session with any currently required MFA step-up for mutations.
+Inspect `requiredApprovals` before submitting approvals. The second approval below is only
+needed for an existing job that requires two:
 
 ```sh
 curl -H "Authorization: Bearer $HELIX_RECOVERY_TOKEN" \

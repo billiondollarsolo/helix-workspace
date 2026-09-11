@@ -19,7 +19,7 @@ import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 
 export const LOGIN_SEED_SOURCE = "login-seed";
 
-const ADMIN_SCOPES = [
+export const ADMIN_SCOPES = [
   "platform.read",
   "mail.read",
   "mail.write",

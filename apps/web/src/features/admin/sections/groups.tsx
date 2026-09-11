@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 /* Admin › People › Groups & org units. */
 
+import { GroupMailForm } from "./group-mail-form";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { AdminField, AdminInput, AdminToolbar } from "@/features/admin/console/controls";
@@ -23,6 +24,7 @@ import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   addGroupMember,
   createGroup,
+  updateGroup,
   createOrgUnit,
   deleteGroup,
   deleteOrgUnit,
@@ -379,7 +381,6 @@ export function AdminGroups() {
   const [showOuForm, setShowOuForm] = useState(false);
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [ouName, setOuName] = useState("");
-  const [groupName, setGroupName] = useState("");
   const [managedGroupId, setManagedGroupId] = useState<string | null>(null);
   /* Snapshot of the row under the cursor, not just its id: the directory
      refetches on its own and the dialog has to keep describing what was
@@ -409,16 +410,6 @@ export function AdminGroups() {
     onMutate: () => undefined,
     onError: () => undefined,
     onSuccess: () => invalidateOrgUnits(),
-  });
-  const createGroupMutation = useMutation({
-    mutationFn: (name: string) => createGroup({ name }),
-    onMutate: () => undefined,
-    onError: () => undefined,
-    onSuccess: () => {
-      setGroupName("");
-      setShowGroupForm(false);
-      invalidateGroups();
-    },
   });
   const deleteGroupMutation = useMutation({
     mutationFn: (id: string) => deleteGroup(id),
@@ -603,7 +594,6 @@ export function AdminGroups() {
         </>
       )}
       <MutationError error={createOuMutation.error} />
-      <MutationError error={createGroupMutation.error} />
       <MutationError error={deleteOuMutation.error} />
       <MutationError error={deleteGroupMutation.error} />
 
@@ -620,19 +610,26 @@ export function AdminGroups() {
         />
       ) : null}
       {showGroupForm && !createGroupDisabled ? (
-        <CreateNameForm
-          toolbarLabel="New group"
-          fieldLabel="New group name"
-          placeholder="leads"
-          submitLabel="Create group"
-          value={groupName}
-          onChange={setGroupName}
-          pending={createGroupMutation.isPending}
-          onSubmit={(name) => createGroupMutation.mutate(name)}
+        <GroupMailForm
+          onSave={createGroup}
+          onSaved={() => {
+            setShowGroupForm(false);
+            invalidateGroups();
+          }}
         />
       ) : null}
 
-      {managedGroup !== null ? <GroupMembershipPanel group={managedGroup} /> : null}
+      {managedGroup !== null ? (
+        <>
+          <GroupMailForm
+            key={managedGroup.id}
+            group={managedGroup}
+            onSave={(input) => updateGroup(managedGroup.id, input)}
+            onSaved={invalidateGroups}
+          />
+          <GroupMembershipPanel group={managedGroup} />
+        </>
+      ) : null}
 
       {rows.length === 0 ? (
         /* "None yet" is only true once both halves actually loaded — claiming

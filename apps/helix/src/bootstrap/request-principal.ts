@@ -1,4 +1,5 @@
-import type { EventBus } from "@helix/sdk-types";
+import type { Actor, EventBus } from "@helix/sdk-types";
+import { TLSSocket } from "node:tls";
 import { type FastifyInstance, type FastifyRequest } from "fastify";
 import {
   toolInvocationPrincipalFromRequest,
@@ -68,8 +69,45 @@ export function traceIdForRequest(request: FastifyRequest): string {
 
 export interface TenantApiRpsLimitHookOptions {
   readonly limiter: TenantApiRpsLimiter;
+  readonly sessionResolver?: SessionActorResolver | undefined;
   readonly events?: Pick<EventBus, "publish"> | undefined;
   readonly onQuotaEventError?: ((error: unknown) => void) | undefined;
+}
+
+/** Share cryptographic verification and session policy checks only within one HTTP request. */
+export function cacheSessionActorResolver(resolver: SessionActorResolver): SessionActorResolver {
+  const requests = new WeakMap<FastifyRequest, Promise<Actor | null>>();
+  return {
+    resolve(request) {
+      let actor = requests.get(request);
+      if (actor === undefined) {
+        actor = resolver.resolve(request);
+        requests.set(request, actor);
+      }
+      return actor;
+    },
+  };
+}
+
+const BROWSER_REQUEST_LIMIT = 120;
+const BROWSER_REQUEST_WINDOW_MS = 10_000;
+
+async function verifiedBrowserActor(
+  request: FastifyRequest,
+  resolver: SessionActorResolver | undefined,
+) {
+  // Credentials retain their API quota even when the caller also sends a session cookie.
+  if (
+    !request.headers.cookie ||
+    request.headers.authorization !== undefined ||
+    request.headers["x-api-key"] !== undefined ||
+    (request.raw.socket instanceof TLSSocket && request.raw.socket.authorized)
+  )
+    return null;
+  const actor = await resolver?.resolve(request);
+  if (actor?.type !== "user") return null;
+  assertActorMatchesRequestTenant(request, actor);
+  return actor;
 }
 
 export function installUntrustedIdentityHeaderGuard(app: FastifyInstance): void {
@@ -132,38 +170,57 @@ export function installTenantApiRpsLimitHook(
       return;
     }
     const effectiveConfig = tenant.effectiveConfig;
+    const browser = await verifiedBrowserActor(request, options.sessionResolver);
+    const admin =
+      path === "/api/admin" ||
+      path.startsWith("/api/admin/") ||
+      path === "/trpc/admin" ||
+      path.startsWith("/trpc/admin.");
+    const quota = browser === null ? "api_rps_limit" : "browser_requests";
+    const headerPrefix = browser === null ? "x-helix-quota-api-rps" : "x-helix-browser-rate-limit";
+    const code = browser === null ? "quota.api_rps.exceeded" : "rate_limit.browser.exceeded";
+    const windowMs = browser === null ? 1_000 : BROWSER_REQUEST_WINDOW_MS;
     const decision = await options.limiter.consume({
       orgId: tenant.orgId,
-      limit: effectiveConfig.quotas.api_rps_limit,
+      limit: browser === null ? effectiveConfig.quotas.api_rps_limit : BROWSER_REQUEST_LIMIT,
+      ...(browser === null
+        ? {}
+        : { bucket: `browser:${browser.id}:${admin ? "admin" : "app"}`, windowMs }),
     });
+    reply.header(
+      "x-helix-rate-limit-policy",
+      browser === null ? "integration-api" : admin ? "browser-admin" : "browser",
+    );
+    reply.header("x-helix-rate-limit-window-ms", String(windowMs));
     if (decision.allowed) {
       reply.header(
-        "x-helix-quota-api-rps-limit",
+        `${headerPrefix}-limit`,
         decision.limit === null ? "unlimited" : String(decision.limit),
       );
       reply.header(
-        "x-helix-quota-api-rps-remaining",
+        `${headerPrefix}-remaining`,
         decision.remaining === null ? "unlimited" : String(decision.remaining),
       );
       if (decision.resetsAt !== null) {
-        reply.header("x-helix-quota-api-rps-reset", decision.resetsAt);
+        reply.header(`${headerPrefix}-reset`, decision.resetsAt);
       }
       return;
     }
     reply.header("retry-after", String(decision.retryAfterSeconds));
-    reply.header("x-helix-quota-api-rps-limit", String(decision.limit));
-    reply.header("x-helix-quota-api-rps-remaining", "0");
-    reply.header("x-helix-quota-api-rps-reset", decision.resetsAt);
+    reply.header(`${headerPrefix}-limit`, String(decision.limit));
+    reply.header(`${headerPrefix}-remaining`, "0");
+    reply.header(`${headerPrefix}-reset`, decision.resetsAt);
     void options.events
-      ?.publish("quota.api_rps.exceeded", {
+      ?.publish(code, {
         orgId: tenant.orgId,
-        quota: "api_rps_limit",
+        quota,
         surface: "http.request",
         limit: decision.limit,
         used: decision.used,
         remaining: decision.remaining,
         retryAfterSeconds: decision.retryAfterSeconds,
         resetsAt: decision.resetsAt,
+        windowMs,
         method: request.method,
         path,
       })
@@ -173,11 +230,15 @@ export function installTenantApiRpsLimitHook(
     return reply.code(429).send(
       buildErrorEnvelope({
         statusCode: 429,
-        code: "quota.api_rps.exceeded",
-        message: "Tenant API request rate limit exceeded.",
+        code,
+        message:
+          browser === null
+            ? "Tenant API request rate limit exceeded."
+            : "Browser request rate limit exceeded. Wait briefly and try again.",
         traceId: traceIdForRequest(request),
         details: {
-          quota: "api_rps_limit",
+          quota,
+          windowMs,
           limit: decision.limit,
           used: decision.used,
           remaining: decision.remaining,

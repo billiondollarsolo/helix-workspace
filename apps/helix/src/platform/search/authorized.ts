@@ -9,6 +9,7 @@ import type {
 export interface AuthorizingSearchEngineOptions {
   readonly engine: SearchEngine;
   readonly authorize: (request: SearchRequest, hit: SearchHit) => boolean | Promise<boolean>;
+  readonly hydrate?: (request: SearchRequest, hit: SearchHit) => Promise<SearchHit | null>;
 }
 
 export function authorizeChatSearchHit(
@@ -34,6 +35,19 @@ export function authorizeChatSearchHit(
 export function authorizeWorkspaceSearchHit(
   stores: {
     readonly chat: Parameters<typeof authorizeChatSearchHit>[0];
+    readonly mail: {
+      getMailSearchRecord(input: {
+        readonly orgId: string;
+        readonly actorId: string;
+        readonly messageId: string;
+      }): Promise<object | null>;
+    };
+    readonly drive: {
+      getDriveSearchRecord(fileId: string): Promise<{
+        readonly orgId: string;
+        readonly allowedActorIds?: readonly string[] | undefined;
+      } | null>;
+    };
     readonly contacts: {
       getContactByIdForActor(input: {
         readonly orgId: string;
@@ -45,13 +59,45 @@ export function authorizeWorkspaceSearchHit(
   request: SearchRequest,
   hit: SearchHit,
 ): boolean | Promise<boolean> {
-  if (hit.type !== "contact") return authorizeChatSearchHit(stores.chat, request, hit);
-  if (request.forActorId === undefined) return false;
   const orgId = hit.attributes?.orgId;
+  const actorId = request.forActorId;
+  if (request.forOrgId !== undefined && orgId !== request.forOrgId) return false;
+  if (
+    hit.attributes?.ragVisibility === "private" &&
+    (actorId === undefined || hit.attributes.ragOwnerActorId !== actorId)
+  )
+    return false;
+  if (hit.type === "mail") {
+    const messageId = hit.attributes?.messageId;
+    // Each mailbox has its own projection. A recipient must never receive
+    // the sender's projection, which legitimately includes Bcc addresses.
+    if (
+      actorId === undefined ||
+      hit.attributes?.ragOwnerActorId !== actorId ||
+      typeof orgId !== "string" ||
+      typeof messageId !== "string"
+    )
+      return false;
+    return stores.mail
+      .getMailSearchRecord({ orgId, actorId, messageId })
+      .then((record) => record !== null);
+  }
+  if (hit.type === "drive") {
+    const fileId = hit.attributes?.fileId;
+    if (actorId === undefined || typeof orgId !== "string" || typeof fileId !== "string")
+      return false;
+    return stores.drive
+      .getDriveSearchRecord(fileId)
+      .then(
+        (record) => record?.orgId === orgId && record.allowedActorIds?.includes(actorId) === true,
+      );
+  }
+  if (hit.type !== "contact") return authorizeChatSearchHit(stores.chat, request, hit);
+  if (actorId === undefined) return false;
   const contactId = hit.attributes?.contactId;
   if (typeof orgId !== "string" || typeof contactId !== "string") return false;
   return stores.contacts
-    .getContactByIdForActor({ orgId, actorId: request.forActorId, contactId })
+    .getContactByIdForActor({ orgId, actorId, contactId })
     .then((contact) => contact !== null);
 }
 
@@ -84,7 +130,10 @@ export class AuthorizingSearchEngine implements SearchEngine {
       offset: 0,
     });
     const decisions = await Promise.all(
-      response.hits.map(async (hit) => ((await this.options.authorize(request, hit)) ? hit : null)),
+      response.hits.map(async (hit) => {
+        if (!(await this.options.authorize(request, hit))) return null;
+        return this.options.hydrate === undefined ? hit : this.options.hydrate(request, hit);
+      }),
     );
     const authorized = decisions.filter((hit): hit is SearchHit => hit !== null);
     return {

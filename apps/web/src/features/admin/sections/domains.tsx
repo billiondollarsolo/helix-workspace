@@ -441,7 +441,11 @@ export function AdminDomain() {
                 {/* Capabilities first, DNS records second: what the domain is
                     used for is the question, and the records are how you get
                     there. */}
-                <DomainCapabilitiesPanel entry={entry} />
+                <DomainCapabilitiesPanel
+                  key={`${entry.domain.id}:${entry.domain.updatedAt}`}
+                  entry={entry}
+                  domains={domains}
+                />
                 <DomainDnsPanel entry={entry} />
               </div>
             ))

@@ -71,6 +71,14 @@ const securityPolicySchema = z.object({
   updatedAt: z.string(),
   /** Present on current API; optional so older fixtures still parse. */
   runtimeStatus: policyRuntimeStatusSchema.optional(),
+  effectiveControls: z
+    .object({
+      adminMfaRequired: z.boolean(),
+      sensitiveActionMfaRequired: z.boolean(),
+      secondAdminApprovalRequired: z.boolean(),
+      adminMfaSource: z.enum(["tier", "policy"]),
+    })
+    .optional(),
 });
 
 export type SecurityPolicy = z.infer<typeof securityPolicySchema>;

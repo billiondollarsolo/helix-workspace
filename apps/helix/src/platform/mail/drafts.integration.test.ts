@@ -45,6 +45,7 @@ describe.skipIf(sql === null)("durable mail drafts", () => {
       idempotencyKey: "d2200000-0000-4000-8000-000000000004",
       attachmentObjectIds: [objectId],
       envelope: {
+        from: { address: "alias@mail22.test", name: "Draft alias" },
         to: [{ address: "to@example.test" }],
         subject: "Draft",
         bodyText: "Body",
@@ -64,6 +65,7 @@ describe.skipIf(sql === null)("durable mail drafts", () => {
     });
     expect(updated).toMatchObject({ id: first.id, revision: 2 });
     expect(updated.envelope).toMatchObject({
+      from: firstInput.envelope.from,
       bodyText: "Recovered exactly",
       attachments: [{ objectId }],
     });
@@ -79,7 +81,10 @@ describe.skipIf(sql === null)("durable mail drafts", () => {
     expect(await store.discardDraft({ orgId, actorId, id: first.id, expectedRevision: 1 })).toBe(
       false,
     );
-    expect(await store.getDraft({ orgId, actorId, id: first.id })).toMatchObject({ revision: 2 });
+    expect(await store.getDraft({ orgId, actorId, id: first.id })).toMatchObject({
+      revision: 2,
+      envelope: { from: firstInput.envelope.from },
+    });
   });
 
   it("expires drafts only from an unscoped worker context", async () => {

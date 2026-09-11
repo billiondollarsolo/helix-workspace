@@ -8,6 +8,9 @@
 import { queryOptions } from "@tanstack/react-query";
 import {
   listAssistantConversations,
+  listAssistantModels,
+  listAssistantTools,
+  getAssistantConversation,
   type AssistantConversationListInput,
   type AssistantConversationListPage,
 } from "./api";
@@ -35,5 +38,34 @@ export function assistantConversationsQueryOptions(input: AssistantConversationL
     queryKey: assistantConversationsKey(input),
     queryFn: () => listAssistantConversations(input),
     staleTime: 15_000,
+    throwOnError: false,
+  });
+}
+
+export function assistantModelsQueryOptions() {
+  return queryOptions({
+    queryKey: [ASSISTANT_QUERY_ROOT, "models"],
+    queryFn: listAssistantModels,
+    staleTime: 30_000,
+    throwOnError: false,
+  });
+}
+
+export function assistantConversationQueryOptions(conversationId: string | null) {
+  return queryOptions({
+    queryKey: [ASSISTANT_QUERY_ROOT, "conversation", conversationId],
+    queryFn: () => getAssistantConversation(conversationId ?? ""),
+    enabled: conversationId !== null,
+    staleTime: 15_000,
+    throwOnError: false,
+  });
+}
+
+export function assistantToolsQueryOptions() {
+  return queryOptions({
+    queryKey: [ASSISTANT_QUERY_ROOT, "tools"],
+    queryFn: listAssistantTools,
+    staleTime: 30_000,
+    throwOnError: false,
   });
 }

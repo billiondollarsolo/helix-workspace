@@ -3,12 +3,7 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  ChatAttachmentGallery,
-  ChatMessageContent,
-  applyCodeMarkup,
-  parseFencedMarkdown,
-} from "./message-content";
+import { ChatAttachmentGallery, ChatMessageContent, parseFencedMarkdown } from "./message-content";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -52,20 +47,14 @@ describe("Chat Markdown and attachments", () => {
     expect(container.textContent).toContain('const value = "<script>";');
     expect(container.querySelector("script")).toBeNull();
     expect(container.querySelector("img")).toBeNull();
-    expect(container.querySelector(".chat-code-keyword")?.textContent).toBe("const");
+    expect(container.querySelector(".message-code-keyword")?.textContent).toBe("const");
     expect(container.querySelector('button[aria-label="Copy typescript code"]')).not.toBeNull();
   });
 
-  it("parses fenced code and wraps selected inline or block code", () => {
+  it("parses fenced code", () => {
     expect(parseFencedMarkdown("```sql\nselect 1;\n```")).toEqual([
       { kind: "code", value: "select 1;", language: "sql" },
     ]);
-    expect(applyCodeMarkup("hello", 0, 5, "inline")).toEqual({
-      value: "`hello`",
-      selectionStart: 1,
-      selectionEnd: 6,
-    });
-    expect(applyCodeMarkup("", 0, 0, "fenced").value).toBe("```\ncode\n```");
   });
 
   it("shows hidden Chat images inline with open, download, and Save to Drive actions", () => {

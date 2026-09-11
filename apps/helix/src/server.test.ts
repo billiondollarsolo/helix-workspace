@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryIdempotencyStore } from "./api/idempotency.js";
 import { createPlatformMetrics } from "./api/metrics.js";
 import { loadEnv } from "./config/env.js";
-import type { AssistantStreamEvent } from "./platform/assistant/index.js";
 import { InMemoryOAuthClientStore, type AccessTokenRecord } from "./platform/auth/oauth.js";
 import {
   InMemoryAgentRateCostLimiter,
@@ -26,7 +25,6 @@ import {
   aiRoutingPolicyFromConfig,
   createAssistantEmbeddingProvider,
   createAssistantProviders,
-  formatAssistantSseEvent,
   getAuditDestinationConfigs,
   getBetterAuthRuntimeConfig,
   getImmutableAuditShippingConfig,
@@ -35,11 +33,9 @@ import {
   installTenantApiRpsLimitHook,
   isAdminMfaProtectedPath,
   registerActionStatusRoutes,
-  registerAssistantStreamRoute,
   registerCanonicalApi,
   registerToolRestRoutes,
   verifyDefaultOrgAtBoot,
-  type AssistantStreamOrchestrator,
 } from "./server.js";
 
 const now = new Date();
@@ -604,21 +600,20 @@ describe("AI runtime config", () => {
     });
   });
 
-  it("rejects configured assistant memory embeddings with non-768 dimensions", () => {
-    expect(() =>
-      createAssistantEmbeddingProvider(
-        {
-          embeddingProvider: {
-            plugin: "com.helix.embedding-openai-compatible@^1.0.0",
-            config: {
-              defaultModel: "text-embedding-3-small",
-              defaultDimensions: 1536,
-            },
-          },
+  it("keeps deterministic 768-dimensional memory when workspace search uses another dimension", async () => {
+    const provider = createAssistantEmbeddingProvider(
+      {
+        embeddingProvider: {
+          plugin: "com.helix.embedding-openai-compatible@^1.0.0",
+          config: { defaultModel: "text-embedding-3-small", defaultDimensions: 1536 },
         },
-        {},
-      ),
-    ).toThrow("Assistant memory embedding provider must use 768 dimensions");
+      },
+      {},
+    );
+    expect((await provider.embed(["same"]))[0]).toHaveLength(768);
+    expect(await provider.embed(["same"])).toEqual(
+      await createAssistantEmbeddingProvider(undefined, {}).embed(["same"]),
+    );
   });
 
   it("falls back to deterministic embeddings when embedding config is missing", async () => {
@@ -673,6 +668,7 @@ describe("tool REST routes", () => {
           '(type != "drive" OR attributes.allowedActorIds = "actor-get")',
         ],
         forActorId: "actor-get",
+        forOrgId: "org-get",
       },
     ]);
     await app.close();
@@ -718,6 +714,7 @@ describe("tool REST routes", () => {
         offset: 0,
         filter: ['attributes.orgId = "org-post"', 'attributes.allowedActorIds = "actor-post"'],
         forActorId: "actor-post",
+        forOrgId: "org-post",
       },
     ]);
     await app.close();
@@ -862,155 +859,6 @@ describe("tool REST routes", () => {
     expect(response.statusCode).toBe(403);
     expect(response.json()).toEqual({ code: "tenant-actor-mismatch" });
     expect(engine.searches).toEqual([]);
-    await app.close();
-  });
-});
-
-describe("assistant SSE streaming endpoint (PRD §9.5)", () => {
-  function fakeStreamOrchestrator(
-    events: readonly AssistantStreamEvent[],
-    capture?: { input?: unknown },
-  ): AssistantStreamOrchestrator {
-    return {
-      async *sendMessageStream(input) {
-        if (capture !== undefined) {
-          capture.input = input;
-        }
-        for (const event of events) {
-          yield event;
-        }
-      },
-    };
-  }
-
-  const streamEvents: readonly AssistantStreamEvent[] = [
-    { type: "delta", text: "Hel", round: 0 },
-    { type: "delta", text: "lo", round: 0 },
-    {
-      type: "final",
-      turn: {
-        conversation: { id: "conv-1" },
-        messages: [],
-        response: { id: "msg-1", content: "Hello" },
-        ai: { message: "Hello" },
-        toolCalls: [],
-        sources: [],
-        memory: [],
-        pendingConfirmations: [],
-      } as unknown as Extract<AssistantStreamEvent, { type: "final" }>["turn"],
-    },
-  ];
-
-  it("emits delta and final SSE frames when the client accepts text/event-stream", async () => {
-    const tokenStore = new InMemoryOAuthClientStore();
-    await tokenStore.saveToken(
-      accessToken({
-        token: "sse-token",
-        actorId: "actor-sse",
-        orgId: "org-sse",
-        scopes: ["assistant.write"],
-      }),
-    );
-    const capture: { input?: unknown } = {};
-    const app = fastify();
-    registerAssistantStreamRoute(app, {
-      orchestrator: fakeStreamOrchestrator(streamEvents, capture),
-      tools: createToolRegistry(),
-      tokenStore,
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/tools/assistant.chat",
-      headers: { authorization: "Bearer sse-token", accept: "text/event-stream" },
-      payload: { message: "hi" },
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.headers["content-type"]).toContain("text/event-stream");
-    expect(response.body).toBe(
-      streamEvents.map((event) => formatAssistantSseEvent(event)).join(""),
-    );
-    expect(capture.input).toMatchObject({
-      actor: { id: "actor-sse", orgId: "org-sse" },
-      content: "hi",
-    });
-    await app.close();
-  });
-
-  it("returns the canonical HelixError envelope for an invalid streaming body", async () => {
-    const tokenStore = new InMemoryOAuthClientStore();
-    await tokenStore.saveToken(
-      accessToken({
-        token: "sse-bad-token",
-        actorId: "actor-sse-bad",
-        orgId: "org-sse-bad",
-        scopes: ["assistant.write"],
-      }),
-    );
-    const app = fastify();
-    registerAssistantStreamRoute(app, {
-      orchestrator: fakeStreamOrchestrator(streamEvents),
-      tools: createToolRegistry(),
-      tokenStore,
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/tools/assistant.chat",
-      headers: { authorization: "Bearer sse-bad-token", accept: "text/event-stream" },
-      // `message` is required by assistantChatStreamBodySchema.
-      payload: { conversationId: "conv-1" },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.headers["content-type"]).toContain("application/json");
-    const envelope: {
-      error?: { code?: string; message?: string; traceId?: string };
-    } = response.json();
-    expect(envelope.error?.code).toBe("bad_request");
-    expect(typeof envelope.error?.message).toBe("string");
-    expect(typeof envelope.error?.traceId).toBe("string");
-    expect(envelope.error?.traceId).not.toBe("");
-    await app.close();
-  });
-
-  it("falls through to the JSON tool path when the client does not accept SSE", async () => {
-    const tokenStore = new InMemoryOAuthClientStore();
-    await tokenStore.saveToken(
-      accessToken({
-        token: "json-token",
-        actorId: "actor-json",
-        orgId: "org-json",
-        scopes: ["assistant.write"],
-      }),
-    );
-    const tools = createToolRegistry();
-    tools.register(
-      tool({
-        id: "assistant.chat",
-        permission: "assistant.write",
-        sideEffects: "write",
-        handler: async () => ({ response: { content: "plain reply" } }),
-      }),
-    );
-    const app = fastify();
-    registerAssistantStreamRoute(app, {
-      orchestrator: fakeStreamOrchestrator(streamEvents),
-      tools,
-      tokenStore,
-    });
-
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/tools/assistant.chat",
-      headers: { authorization: "Bearer json-token" },
-      payload: { message: "hi" },
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.headers["content-type"]).toContain("application/json");
-    expect(response.json()).toEqual({ response: { content: "plain reply" } });
     await app.close();
   });
 });

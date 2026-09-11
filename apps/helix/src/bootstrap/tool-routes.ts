@@ -19,7 +19,11 @@ import {
   toolInvocationOptions,
   type ToolInvocationPrincipal,
 } from "../platform/auth/tool-invocation-principal.js";
-import { type RuntimeToolRegistry, type ToolInvokeErrorResult } from "../platform/tool-registry.js";
+import {
+  type RuntimeToolRegistry,
+  type ToolInvokeErrorResult,
+  type ToolInvokeOptions,
+} from "../platform/tool-registry.js";
 import { resolveRequestPrincipal, traceIdForRequest } from "./request-principal.js";
 
 const toolParamsSchema = z.object({
@@ -293,10 +297,12 @@ export async function invokeTool(
   toolId: string,
   input: unknown,
   request: FastifyRequest,
+  executeHandler?: ToolInvokeOptions["executeHandler"],
 ) {
   const result = await tools.invoke(toolId, input, {
     ...toolInvocationOptions(principal, createRequestContext(request)),
     enforceConfirmation: true,
+    ...(executeHandler === undefined ? {} : { executeHandler }),
     ...(requestHasCrownJewelApproval(request) ? { skipConfirmation: true } : {}),
   });
   return result;

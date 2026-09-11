@@ -1,3 +1,4 @@
+import { MessageCodeBlock } from "@/components/message-code-block";
 import { createElement, useState, type ReactNode } from "react";
 import {
   chatAttachmentContentUrl,
@@ -33,7 +34,7 @@ export function ChatMessageContent({
     <div className="chat-markdown">
       {parseFencedMarkdown(body).map((segment, index) =>
         segment.kind === "code" ? (
-          <ChatCodeBlock
+          <MessageCodeBlock
             key={`code:${String(index)}`}
             code={segment.value}
             language={segment.language}
@@ -56,7 +57,7 @@ function renderSafeMarkdownNode(node: Node, index: number): ReactNode {
   if (tag === "pre") {
     const code = node.querySelector("code");
     return (
-      <ChatCodeBlock
+      <MessageCodeBlock
         key={index}
         code={code?.textContent ?? node.textContent ?? ""}
         language={normalizedLanguage(code?.className.replace(/^language-/u, "") ?? "code")}
@@ -182,31 +183,6 @@ export function ChatAttachmentGallery({
   );
 }
 
-function ChatCodeBlock({ code, language }: { readonly code: string; readonly language: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <section className="chat-code-block">
-      <header>
-        <span>{language}</span>
-        <button
-          type="button"
-          aria-label={`Copy ${language} code`}
-          onClick={() => {
-            void navigator.clipboard.writeText(code).then(() => {
-              setCopied(true);
-            });
-          }}
-        >
-          {copied ? "Copied" : "Copy"}
-        </button>
-      </header>
-      <pre>
-        <code>{highlightCode(code, language)}</code>
-      </pre>
-    </section>
-  );
-}
-
 export function parseFencedMarkdown(body: string): readonly MarkdownSegment[] {
   const segments: MarkdownSegment[] = [];
   const fence = /^```([^\n`]*)\n([\s\S]*?)^```[ \t]*$/gmu;
@@ -226,22 +202,6 @@ export function parseFencedMarkdown(body: string): readonly MarkdownSegment[] {
   return segments.length === 0 ? [{ kind: "text", value: body }] : segments;
 }
 
-export function applyCodeMarkup(
-  value: string,
-  selectionStart: number,
-  selectionEnd: number,
-  kind: "inline" | "fenced",
-): { readonly value: string; readonly selectionStart: number; readonly selectionEnd: number } {
-  const selected = value.slice(selectionStart, selectionEnd) || "code";
-  const prefix = kind === "inline" ? "`" : "```\n";
-  const suffix = kind === "inline" ? "`" : "\n```";
-  return {
-    value: `${value.slice(0, selectionStart)}${prefix}${selected}${suffix}${value.slice(selectionEnd)}`,
-    selectionStart: selectionStart + prefix.length,
-    selectionEnd: selectionStart + prefix.length + selected.length,
-  };
-}
-
 function renderInlineCode(value: string): readonly ReactNode[] {
   return value
     .split(/(`[^`\n]+`)/gu)
@@ -257,37 +217,4 @@ function renderInlineCode(value: string): readonly ReactNode[] {
 function normalizedLanguage(value: string): string {
   const language = value.trim().toLowerCase();
   return /^[a-z0-9+#._-]{1,32}$/u.test(language) ? language : "code";
-}
-
-function highlightCode(code: string, language: string): readonly ReactNode[] {
-  if (
-    !/^(?:js|jsx|ts|tsx|javascript|typescript|json|css|html|sql|bash|sh|python|py)$/u.test(language)
-  ) {
-    return [code];
-  }
-  const token =
-    /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/[^\n]*|\/\*[\s\S]*?\*\/|\b(?:const|let|var|function|return|if|else|for|while|class|import|export|from|async|await|true|false|null|select|from|where|insert|update|delete|create|alter|table)\b|\b\d+(?:\.\d+)?\b)/giu;
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-  for (const match of code.matchAll(token)) {
-    const start = match.index;
-    if (start > cursor) nodes.push(code.slice(cursor, start));
-    const value = match[0];
-    const className =
-      value.startsWith("//") || value.startsWith("/*")
-        ? "comment"
-        : /^['"]/u.test(value)
-          ? "string"
-          : /^\d/u.test(value)
-            ? "number"
-            : "keyword";
-    nodes.push(
-      <span key={`${String(start)}:${value}`} className={`chat-code-${className}`}>
-        {value}
-      </span>,
-    );
-    cursor = start + value.length;
-  }
-  if (cursor < code.length) nodes.push(code.slice(cursor));
-  return nodes;
 }

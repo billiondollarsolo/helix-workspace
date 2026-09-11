@@ -126,7 +126,10 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
   const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [filter, setFilter] = useState<"all" | "unread">("all");
-  const { data, isLoading, isError, isFetching } = useQuery(notificationsListQueryOptions(false));
+  const { data, isLoading, isError, isFetching } = useQuery({
+    ...notificationsListQueryOptions(false),
+    enabled: open,
+  });
   const queryClient = useQueryClient();
   /* Invalidate the shared key rather than this observer's own `refetch`, so a
        recovery here also un-sticks the unread-count badge in the topbar, which

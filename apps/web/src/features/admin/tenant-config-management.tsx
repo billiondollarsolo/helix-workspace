@@ -87,7 +87,7 @@ const QUOTA_FIELDS = [
   ["ai_image_gen_monthly_limit", "AI images monthly"],
   ["actors_limit", "Actors"],
   ["outbound_webhooks_limit", "Outbound webhooks"],
-  ["api_rps_limit", "API RPS"],
+  ["api_rps_limit", "Integration API RPS"],
   ["export_jobs_per_hour", "Export jobs per hour"],
 ] as const;
 

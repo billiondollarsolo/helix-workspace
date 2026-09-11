@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
+import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authenticatedFetch,
   safeLoginReturnTo,
   getSessionUser,
+  sessionUserQueryOptions,
   signInWithEmail,
   signInWithOidc,
   signOut,
@@ -141,6 +143,52 @@ describe("web auth helpers", () => {
     expect(await getSessionUser(fetchMock)).toBeNull();
   });
 
+  it.each([429, 500, 502, 503, 504])(
+    "reports HTTP %s session lookup failures without treating them as sign-out",
+    async (status) => {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response("Backend unavailable", { status }));
+      await expect(getSessionUser(fetchMock)).rejects.toMatchObject({
+        status,
+        message: expect.stringContaining("check your session"),
+      });
+    },
+  );
+
+  it("treats a real unauthorized session as signed out", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 }));
+    await expect(getSessionUser(fetchMock)).resolves.toBeNull();
+  });
+
+  it.each([
+    "<html>Proxy response</html>",
+    "not JSON",
+    "{}",
+    "[]",
+    "true",
+    "42",
+    '"session"',
+    '{"user":null}',
+    '{"user":{}}',
+    '{"user":{"id":123,"name":"A","email":"a@example.test"}}',
+    '{"user":{"id":"","name":"A","email":"a@example.test"}}',
+    '{"user":{"id":"user-1"}}',
+    '{"id":"user-1","name":"A","email":"a@example.test"}',
+  ])("preserves authentication when HTTP200 contains malformed payload %s", async (body) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(body));
+    await expect(getSessionUser(fetchMock)).rejects.toMatchObject({
+      status: 200,
+      message: expect.stringContaining("Unable to check your session"),
+    });
+  });
+
+  it("does not mistake a network outage for a signed-out session", async () => {
+    await expect(
+      getSessionUser(vi.fn<typeof fetch>().mockRejectedValue(new TypeError("Failed to fetch"))),
+    ).rejects.toThrow("Failed to fetch");
+  });
+
   it("resolves the session user when authenticated", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       Response.json({
@@ -149,6 +197,33 @@ describe("web auth helpers", () => {
     );
     const user = await getSessionUser(fetchMock);
     expect(user?.actorId).toBe("ac");
+  });
+
+  it("keeps the shared verified session during failed stale revalidation and recovers", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = { id: "session-user", email: "member@example.test", name: "Samara" };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ user }))
+      .mockResolvedValueOnce(new Response("Restarting", { status: 502 }))
+      .mockResolvedValueOnce(Response.json({ user }));
+    const options = {
+      ...sessionUserQueryOptions(),
+      queryFn: () => getSessionUser(fetchMock),
+      staleTime: 0,
+    };
+    try {
+      await client.fetchQuery(options);
+      await expect(
+        client.ensureQueryData({ ...options, revalidateIfStale: true }),
+      ).resolves.toMatchObject(user);
+      await vi.waitFor(() => expect(client.getQueryState(options.queryKey)?.status).toBe("error"));
+      expect(client.getQueryData(options.queryKey)).toMatchObject(user);
+      await expect(client.fetchQuery(options)).resolves.toMatchObject(user);
+      expect(client.getQueryState(options.queryKey)?.status).toBe("success");
+    } finally {
+      client.clear();
+    }
   });
 
   it("posts to the Better-Auth sign-out endpoint", async () => {

@@ -15,7 +15,6 @@ import {
   modelForRequest,
   normalizeFetchConfig,
   openAIChatChunks,
-  openAIMessage,
   postJson,
   postSse,
   stringField,
@@ -23,6 +22,7 @@ import {
   usageFromOpenAI,
   type ProviderRequestConfig,
 } from "./shared.js";
+import { openAIRequest } from "./openai-tools.js";
 
 export interface OpenAICompatibleProviderConfig {
   readonly id: string;
@@ -64,37 +64,40 @@ class OpenAICompatibleProvider implements LLMProviderCapability {
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
     const model = modelForRequest(req.model, this.#defaultModel);
+    const request = openAIRequest(req);
     const payload = await postJson(
       joinUrl(this.#baseUrl, "chat/completions"),
       {
         model,
-        messages: req.messages.map((message) => openAIMessage(message)),
+        ...request.body,
         stream: false,
       },
-      this.#requestConfig(),
+      this.#requestConfig(req.signal),
     );
 
-    return openAIChatResponse(payload, this.id, model);
+    return openAIChatResponse(payload, this.id, model, request.toolIds);
   }
 
   async *chatStream(req: ChatRequest): AsyncGenerator<ChatChunk> {
     const model = modelForRequest(req.model, this.#defaultModel);
+    const request = openAIRequest(req);
     const events = await postSse(
       joinUrl(this.#baseUrl, "chat/completions"),
       {
         model,
-        messages: req.messages.map((message) => openAIMessage(message)),
+        ...request.body,
         stream: true,
         stream_options: { include_usage: true },
       },
-      this.#requestConfig(),
+      this.#requestConfig(req.signal),
     );
-    yield* openAIChatChunks(events, model);
+    yield* openAIChatChunks(events, model, request.toolIds);
   }
 
-  #requestConfig(): ProviderRequestConfig {
+  #requestConfig(signal?: AbortSignal): ProviderRequestConfig {
     return {
       fetch: this.#fetch,
+      ...(signal === undefined ? {} : { signal }),
       ...(this.#apiKey === undefined ? {} : { apiKey: this.#apiKey }),
       ...(this.#headers === undefined ? {} : { headers: this.#headers }),
     };
@@ -113,6 +116,7 @@ function openAIChatResponse(
   payload: unknown,
   providerId: string,
   fallbackModel: string,
+  toolIds: ReadonlyMap<string, string>,
 ): ChatResponse {
   const record = assertRecord(payload, "OpenAI-compatible chat response");
   const choice = firstRecord(arrayField(record, "choices"));
@@ -124,7 +128,7 @@ function openAIChatResponse(
     model,
     providerId,
     usage: usageFromOpenAI(record.usage),
-    toolCalls: message === undefined ? undefined : toolCallsFromOpenAIMessage(message),
+    toolCalls: message === undefined ? undefined : toolCallsFromOpenAIMessage(message, toolIds),
     responseId: stringField(record, "id"),
   });
 }

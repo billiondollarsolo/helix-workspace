@@ -31,6 +31,7 @@ import { MAIL_CATEGORY_TABS } from "./category.js";
 import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
 import { sanitizeMailHtml } from "./html-rendering.js";
 import { ingestRawMail, MailauthAuthenticator, type MailAuthenticator } from "./ingest.js";
+import { hasExternalRecipient, requireTenantMailRecipients } from "./recipient-authorization.js";
 import { MailSendService } from "./outbound.js";
 import { mailOutboundDisplayStatus } from "./reliability.js";
 import { MailDraftConflictError, type MailStore } from "./store.js";
@@ -337,6 +338,7 @@ export interface CreateMailToolDefinitionsOptions {
    * `defaultFromDomain` is used as the sole internal domain.
    */
   readonly internalDomains?: readonly string[];
+  readonly resolveInternalDomains?: (orgId: string) => Promise<readonly string[]>;
   /**
    * Auto-classifies newly sent mail messages (PRD §8.4). When provided, the
    * `mail.send` / `mail.reply` handlers classify the resulting message from
@@ -353,39 +355,6 @@ export interface CreateMailToolDefinitionsOptions {
    * message, but it is recorded so the From header is not trusted.
    */
   readonly inboundAuthenticator?: MailAuthenticator;
-}
-
-/** Lower-cased domain portion of an email address, or "" when unparseable. */
-function addressDomain(address: string): string {
-  const at = address.lastIndexOf("@");
-  return at === -1 ? "" : address.slice(at + 1).toLowerCase();
-}
-
-/**
- * True when any recipient of a send/reply call addresses a domain outside the
- * configured internal-domain set. Used to gate the `mail.external` scope.
- */
-function hasExternalRecipient(
-  input: { readonly to?: unknown; readonly cc?: unknown; readonly bcc?: unknown },
-  internalDomains: ReadonlySet<string>,
-): boolean {
-  const recipients = [input.to, input.cc, input.bcc]
-    .flatMap((group): unknown[] => (Array.isArray(group) ? (group as unknown[]) : []))
-    .map((entry) => {
-      if (typeof entry === "string") {
-        return entry;
-      }
-      if (entry !== null && typeof entry === "object" && "address" in entry) {
-        const address = (entry as { address?: unknown }).address;
-        return typeof address === "string" ? address : "";
-      }
-      return "";
-    })
-    .filter((address) => address.length > 0);
-  return recipients.some((address) => {
-    const domain = addressDomain(address);
-    return domain.length > 0 && !internalDomains.has(domain);
-  });
 }
 
 export function createMailToolDefinitions(
@@ -407,7 +376,7 @@ export function createMailToolDefinitions(
     reason:
       "Sending mail to a recipient outside the organization's domains requires the mail.external scope.",
     when: (input: { to?: unknown; cc?: unknown; bcc?: unknown }) =>
-      hasExternalRecipient(input, internalDomains),
+      options.resolveInternalDomains === undefined && hasExternalRecipient(input, internalDomains),
   };
 
   return [
@@ -422,6 +391,7 @@ export function createMailToolDefinitions(
       inputSchema: zodToolSchema(sendSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        await requireTenantMailRecipients(input, ctx, options.resolveInternalDomains);
         const from = await authorizedFrom(input.from, ctx.actor, options);
         const settings = await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id);
         const outbound = await new MailSendService({
@@ -455,9 +425,13 @@ export function createMailToolDefinitions(
       inputSchema: zodToolSchema(replySchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        await requireTenantMailRecipients(input, ctx, options.resolveInternalDomains);
         const from = await authorizedFrom(input.from, ctx.actor, options);
         const settings = await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id);
-        const outbound = await sendService.queue({
+        const outbound = await new MailSendService({
+          store: options.store,
+          undoWindowMs: input.undoWindowMs ?? options.undoWindowMs ?? 30_000,
+        }).queue({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           threadId: input.threadId,
@@ -1102,6 +1076,7 @@ export function createMailToolDefinitions(
             idempotencyKey: input.idempotencyKey,
             attachmentObjectIds: input.attachments.map(({ objectId }) => objectId),
             envelope: {
+              ...(input.from === undefined ? {} : { from: input.from }),
               to: input.to,
               cc: input.cc,
               bcc: input.bcc,
@@ -1642,6 +1617,7 @@ function serializeDraft(
   fallback?: z.output<typeof mailDraftSaveInputSchema>,
 ) {
   const env = draft.envelope;
+  const from = addressSchema.safeParse(env.from ?? fallback?.from);
   const to = Array.isArray(env.to) ? env.to : (fallback?.to ?? []);
   const cc = Array.isArray(env.cc) ? env.cc : (fallback?.cc ?? []);
   const bcc = Array.isArray(env.bcc) ? env.bcc : (fallback?.bcc ?? []);
@@ -1661,6 +1637,7 @@ function serializeDraft(
     orgId: draft.orgId,
     actorId: draft.actorId,
     threadId: draft.threadId,
+    ...(from.success ? { from: from.data } : {}),
     to: to as z.output<typeof mailDraftSchema>["to"],
     cc: cc as z.output<typeof mailDraftSchema>["cc"],
     bcc: bcc as z.output<typeof mailDraftSchema>["bcc"],

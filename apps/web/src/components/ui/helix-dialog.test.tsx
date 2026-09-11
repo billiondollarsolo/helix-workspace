@@ -72,4 +72,33 @@ describe("Dialog", () => {
     expect(document.activeElement).toBe(opener);
     opener.remove();
   });
+  it("preserves field focus across renders and calls the current close handler", async () => {
+    const close = vi.fn();
+    const blocked = vi.fn();
+    const render = (onClose: () => void) =>
+      root.render(
+        <Dialog title="Account handoff" onClose={onClose}>
+          <input aria-label="First field" />
+          <input aria-label="Successor search" />
+        </Dialog>,
+      );
+    await act(() => {
+      render(close);
+      return Promise.resolve();
+    });
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Successor search"]')!;
+    input.focus();
+    input.value = "Mira";
+    await act(() => {
+      render(blocked);
+      return Promise.resolve();
+    });
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("Mira");
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(blocked).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+  });
 });

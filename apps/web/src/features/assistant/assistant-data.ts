@@ -1,8 +1,5 @@
 import { type IconName } from "@/components/icon-map";
-/* Seed data + view types for the Helix AI assistant surface.
-   Ported from the design handoff prototype (`app-assistant.jsx`). The thread
-   list, quick prompts, and the opening conversation are local seeds; live
-   replies come from the real assistant endpoint via `streamAssistantChat`. */
+import type { AssistantAttachment, AssistantSource, AssistantToolActivity } from "./api";
 /** A conversation entry in the 240px thread list. */
 export interface AssistantThread {
   readonly id: string;
@@ -51,6 +48,12 @@ export interface AssistantChatMessage {
   readonly text: string;
   readonly time: string;
   readonly blocks?: readonly AssistantBlock[];
+  readonly attachments?: readonly AssistantAttachment[];
+  readonly sources?: readonly AssistantSource[];
+  readonly toolActivity?: readonly AssistantToolActivity[];
+  readonly toolGroups?: readonly string[];
+  readonly webSearch?: boolean;
+  readonly error?: string;
   /** True while the assistant reply is still streaming in. */
   readonly streaming?: boolean;
   /** True when the reply failed and shows the fallback message. */

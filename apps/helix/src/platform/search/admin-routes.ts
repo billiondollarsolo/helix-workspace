@@ -72,7 +72,7 @@ export async function registerSearchAdminRoutes(
           .code(400)
           .send({ error: "Invalid search reindex request.", issues: parsed.error.issues });
       }
-      return serializeJob(
+      return serializeSearchReindexJob(
         await jobs.create(actor, {
           ...(parsed.data.batchSize === undefined ? {} : { batchSize: parsed.data.batchSize }),
         }),
@@ -87,7 +87,7 @@ export async function registerSearchAdminRoutes(
         const job = await jobs.get(request.params.id, actor.orgId);
         return job === undefined
           ? reply.code(404).send({ error: "Search reindex job not found." })
-          : serializeJob(job);
+          : serializeSearchReindexJob(job);
       },
     );
 
@@ -104,7 +104,7 @@ export async function registerSearchAdminRoutes(
   }
 }
 
-function serializeJob(job: SearchReindexJob): Record<string, unknown> {
+export function serializeSearchReindexJob(job: SearchReindexJob): Record<string, unknown> {
   return {
     ...job,
     startMutationId: job.startMutationId.toString(),

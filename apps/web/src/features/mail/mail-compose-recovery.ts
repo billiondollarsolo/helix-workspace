@@ -6,6 +6,7 @@ const RECOVERY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 const EMAIL_ADDRESS_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 
 export interface MailComposeRecovery {
+  readonly from?: MailAddress;
   readonly id?: string;
   readonly threadId?: string;
   readonly expectedRevision?: number;
@@ -58,6 +59,7 @@ export function readMailComposeRecovery(
       return null;
     }
     return {
+      ...(candidate.from === undefined ? {} : { from: candidate.from }),
       ...(candidate.id === undefined ? {} : { id: candidate.id }),
       ...(candidate.threadId === undefined ? {} : { threadId: candidate.threadId }),
       ...(candidate.expectedRevision === undefined
@@ -105,7 +107,7 @@ export function clearMailComposeRecovery(
 /** Text fields comparable between local recovery and a server draft. */
 export type MailComposeDraftFields = Pick<
   MailComposeRecovery,
-  "to" | "cc" | "bcc" | "subject" | "bodyText" | "attachments"
+  "from" | "to" | "cc" | "bcc" | "subject" | "bodyText" | "attachments"
 >;
 
 export type MailComposeReconcileDecision =
@@ -120,6 +122,7 @@ export type MailComposeReconcileDecision =
 
 function draftFieldsEqual(a: MailComposeDraftFields, b: MailComposeDraftFields): boolean {
   return (
+    JSON.stringify(a.from) === JSON.stringify(b.from) &&
     JSON.stringify(a.to) === JSON.stringify(b.to) &&
     JSON.stringify(a.cc) === JSON.stringify(b.cc) &&
     JSON.stringify(a.bcc) === JSON.stringify(b.bcc) &&
@@ -182,6 +185,7 @@ function isRecoveryRecord(value: unknown): value is MailComposeRecovery {
     (candidate.id === undefined || typeof candidate.id === "string") &&
     (candidate.threadId === undefined || typeof candidate.threadId === "string") &&
     (candidate.expectedRevision === undefined || typeof candidate.expectedRevision === "number") &&
+    (candidate.from === undefined || isAddressArray([candidate.from])) &&
     isAddressArray(candidate.to) &&
     isAddressArray(candidate.cc) &&
     isAddressArray(candidate.bcc) &&

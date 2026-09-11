@@ -1,7 +1,10 @@
-import type { Actor, JsonObject } from "@helix/sdk-types";
+import type { Actor, DataClassification, JsonObject } from "@helix/sdk-types";
 
 export interface MemoryEmbeddingProvider {
-  embed(texts: readonly string[]): Promise<readonly (readonly number[])[]>;
+  embed(
+    texts: readonly string[],
+    classification?: DataClassification,
+  ): Promise<readonly (readonly number[])[]>;
 }
 
 export interface MemoryInput {
@@ -32,7 +35,12 @@ export interface ForgetCriteria {
 
 export interface MemoryStore {
   readonly id: string;
-  recall(actor: Actor, query: string, k: number): Promise<readonly MemoryItem[]>;
+  recall(
+    actor: Actor,
+    query: string,
+    k: number,
+    classification?: DataClassification,
+  ): Promise<readonly MemoryItem[]>;
   store(actor: Actor, item: MemoryInput): Promise<MemoryItem>;
   forget(actor: Actor, criteria: ForgetCriteria): Promise<number>;
 }

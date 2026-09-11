@@ -1,3 +1,4 @@
+import { detectDlp, type DlpDetector } from "../../dlp-detection.js";
 import type {
   ClassificationDerivation,
   ClassificationDerivationInput,
@@ -29,21 +30,43 @@ const defaultFolderMappings = new Map<string, DataClassification>([
   ["/restricted/", "restricted"],
 ]);
 
+const detectorPattern = (detector: DlpDetector): Pick<RegExp, "test"> => ({
+  test: (text) => detectDlp(text, new Set([detector])).length > 0,
+});
+
+function sensitivityMarking(label: string): RegExp {
+  // Recognize labels/headings and document markings, not ordinary prose about restricted places.
+  return new RegExp(
+    String.raw`(?:^[ \t#*\[(-]*(?:(?:classification|sensitivity|security classification)[ \t:=-]+)?${label}[ \t*\])!.:;-]*$|\b(?:classification|sensitivity|security classification)[ \t]*[:=-][ \t]*${label}\b|\b${label}[ \t]*:|\b${label}[ \t]+(?:data|documents?|materials?|information|content|files?|reports?|records?|roadmaps?|projects?)\b|\b(?:data|documents?|materials?|information|content|files?|reports?|records?|roadmaps?)[ \t]+(?:is|are)[ \t]+(?:classified[ \t]+as[ \t]+)?${label}\b)`,
+    "imu",
+  );
+}
+
 const defaultHeuristicRules: readonly ClassificationHeuristicRule[] = [
   {
     id: "us-ssn",
     classification: "confidential",
-    pattern: /\b\d{3}-\d{2}-\d{4}\b/,
+    pattern: detectorPattern("pii"),
   },
   {
     id: "payment-card",
     classification: "confidential",
-    pattern: /\b(?:\d[ -]*?){13,19}\b/,
+    pattern: detectorPattern("credit_card"),
+  },
+  {
+    id: "credentials",
+    classification: "restricted",
+    pattern: detectorPattern("credentials"),
+  },
+  {
+    id: "confidential-marker",
+    classification: "confidential",
+    pattern: sensitivityMarking("confidential"),
   },
   {
     id: "restricted-marker",
     classification: "restricted",
-    pattern: /\b(?:restricted|air[- ]?gapped|export controlled)\b/i,
+    pattern: sensitivityMarking("(?:restricted|air[- ]?gapped|export[- ]controlled)"),
   },
 ];
 

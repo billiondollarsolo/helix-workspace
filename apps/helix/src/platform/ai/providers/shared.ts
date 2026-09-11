@@ -10,6 +10,9 @@ import type {
 import { isJsonValue, isJsonObject as isRecord } from "@helix/sdk-types";
 import { outboundFetch } from "../../outbound-http.js";
 
+const INVALID_TOOL_ARGUMENTS =
+  "The model supplied invalid tool arguments. Return one valid JSON object and try again.";
+
 export interface FetchProviderConfig {
   readonly id: string;
   readonly models: readonly ModelInfo[];
@@ -21,15 +24,28 @@ export interface ProviderRequestConfig {
   readonly fetch: typeof fetch;
   readonly apiKey?: string;
   readonly headers?: Record<string, string>;
+  readonly signal?: AbortSignal;
 }
 
 class AIProviderRequestError extends Error {
+  readonly statusCode: number;
   constructor(
     message: string,
     readonly status: number,
   ) {
-    super(message);
+    super(
+      status === 404
+        ? "This model is unavailable for the configured provider account. Choose another model or ask an administrator to check model access."
+        : status === 401 || status === 403
+          ? "The AI provider rejected its credentials or access. Ask an administrator to check the provider settings."
+          : status === 429
+            ? "The AI provider is at its request limit (HTTP 429). Wait briefly or choose another provider."
+            : status === 400
+              ? "The AI provider could not accept this request. Try another model or ask an administrator to check compatibility."
+              : message,
+    );
     this.name = "AIProviderRequestError";
+    this.statusCode = status === 429 ? 429 : status >= 400 && status < 500 ? 422 : 503;
   }
 }
 
@@ -71,6 +87,7 @@ export async function postJson(
   body: unknown,
   config: ProviderRequestConfig,
 ): Promise<unknown> {
+  config.signal?.throwIfAborted();
   const response = await config.fetch(url, {
     method: "POST",
     headers: {
@@ -79,6 +96,7 @@ export async function postJson(
       ...(config.headers ?? {}),
     },
     body: JSON.stringify(body),
+    ...(config.signal === undefined ? {} : { signal: config.signal }),
   });
 
   if (!response.ok) {
@@ -89,7 +107,15 @@ export async function postJson(
     );
   }
 
-  return response.json();
+  try {
+    return await response.json();
+  } catch {
+    config.signal?.throwIfAborted();
+    throw new AIProviderRequestError(
+      "The AI provider returned invalid JSON. Try again or check provider compatibility.",
+      502,
+    );
+  }
 }
 
 export async function discardResponseBody(response: Response): Promise<void> {
@@ -128,10 +154,7 @@ export function firstRecord(values: readonly unknown[]): Record<string, unknown>
 }
 
 export function usageFromOpenAI(value: unknown): ChatUsage | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
+  if (!isRecord(value)) return undefined;
   const inputTokens = numberField(value, "prompt_tokens");
   const outputTokens = numberField(value, "completion_tokens");
   const totalTokens = numberField(value, "total_tokens");
@@ -139,10 +162,7 @@ export function usageFromOpenAI(value: unknown): ChatUsage | undefined {
 }
 
 export function usageFromAnthropic(value: unknown): ChatUsage | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
+  if (!isRecord(value)) return undefined;
   const inputTokens = numberField(value, "input_tokens");
   const outputTokens = numberField(value, "output_tokens");
   const totalTokens =
@@ -169,14 +189,6 @@ function compactUsage(usage: {
 
 export function approximateTokenCount(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4));
-}
-
-export function openAIMessage(message: AIMessage): Record<string, string> {
-  return {
-    role: message.role,
-    content: message.content,
-    ...(message.name === undefined ? {} : { name: message.name }),
-  };
 }
 
 function anthropicMessages(messages: readonly AIMessage[]): readonly Record<string, string>[] {
@@ -245,19 +257,26 @@ export function toolCallsFromAnthropicContent(
 
 export function toolCallsFromOpenAIMessage(
   message: Record<string, unknown>,
+  toolIds?: ReadonlyMap<string, string>,
 ): readonly AIToolChoice[] | undefined {
   const toolCalls = arrayField(message, "tool_calls").flatMap((toolCall) => {
     if (!isRecord(toolCall)) {
       return [];
     }
     const functionCall = isRecord(toolCall.function) ? toolCall.function : undefined;
-    const id =
-      functionCall === undefined ? stringField(toolCall, "id") : stringField(functionCall, "name");
+    const id = functionCall === undefined ? undefined : stringField(functionCall, "name");
     if (id === undefined) {
       return [];
     }
     const input = parseJsonObject(stringField(functionCall ?? toolCall, "arguments"));
-    return [{ id, ...(input === undefined ? {} : { input }) }];
+    const callId = stringField(toolCall, "id");
+    return [
+      {
+        id: toolIds?.get(id) ?? id,
+        ...(callId === undefined ? {} : { callId }),
+        ...(input === undefined ? { error: INVALID_TOOL_ARGUMENTS } : { input }),
+      },
+    ];
   });
   return toolCalls.length === 0 ? undefined : toolCalls;
 }
@@ -298,11 +317,7 @@ export interface SseEvent {
   readonly data: string;
 }
 
-/**
- * Parses a UTF-8 byte stream as Server-Sent Events. Buffers across chunk
- * boundaries so that events split mid-frame are reassembled correctly, and
- * coalesces multi-line `data:` fields per the SSE spec.
- */
+/** Decodes split UTF-8 SSE frames, coalescing multi-line data fields. */
 export async function* parseSseStream(
   body: AsyncIterable<Uint8Array> | ReadableStream<Uint8Array>,
 ): AsyncGenerator<SseEvent> {
@@ -392,15 +407,12 @@ async function* readableStreamToAsyncIterable(
   }
 }
 
-/**
- * Issues a streaming POST and returns the parsed SSE event stream. Mirrors
- * {@link postJson} error handling for non-2xx responses.
- */
 export async function postSse(
   url: URL,
   body: unknown,
   config: ProviderRequestConfig,
 ): Promise<AsyncGenerator<SseEvent>> {
+  config.signal?.throwIfAborted();
   const response = await config.fetch(url, {
     method: "POST",
     headers: {
@@ -410,6 +422,7 @@ export async function postSse(
       ...(config.headers ?? {}),
     },
     body: JSON.stringify(body),
+    ...(config.signal === undefined ? {} : { signal: config.signal }),
   });
 
   if (!response.ok) {
@@ -420,6 +433,14 @@ export async function postSse(
     );
   }
 
+  if (!response.headers.get("content-type")?.toLowerCase().startsWith("text/event-stream")) {
+    await discardResponseBody(response);
+    throw new AIProviderRequestError(
+      "The AI provider did not return an event stream. Check model streaming support.",
+      502,
+    );
+  }
+
   const responseBody = response.body;
   if (responseBody === null) {
     throw new AIProviderRequestError("AI provider stream response has no body", response.status);
@@ -427,35 +448,27 @@ export async function postSse(
   return parseSseStream(responseBody);
 }
 
-/**
- * Accumulates a streamed tool call keyed by its index in the provider's
- * content/tool-call array. Shared by both the OpenAI (`tool_calls` deltas) and
- * the Anthropic (`tool_use` + `input_json_delta`) stream translators.
- */
 interface StreamToolCallAccumulator {
   id: string | undefined;
   name: string | undefined;
   arguments: string;
+  invalidArguments?: boolean;
 }
 
-/**
- * Translates an OpenAI-compatible `chat/completions` SSE stream into
- * {@link ChatChunk} values. Emits incremental text deltas and assembles
- * fragmented `tool_calls` deltas into a final tool-call list on the closing
- * chunk.
- */
 export async function* openAIChatChunks(
   events: AsyncIterable<SseEvent>,
   fallbackModel: string,
+  toolIds: ReadonlyMap<string, string> = new Map(),
 ): AsyncGenerator<ChatChunk> {
   const toolCalls = new Map<number, StreamToolCallAccumulator>();
   let usage: ChatUsage | undefined;
   let model: string | undefined;
+  let hasText = false;
   for await (const event of events) {
     if (event.data === "[DONE]") {
       break;
     }
-    const record = parseSseData(event.data);
+    const record = parseSseData(event.data, event.event);
     if (record === undefined) {
       continue;
     }
@@ -472,10 +485,17 @@ export async function* openAIChatChunks(
     accumulateOpenAIToolCallDeltas(toolCalls, delta);
     const text = delta === undefined ? undefined : stringField(delta, "content");
     if (text !== undefined && text.length > 0) {
+      hasText = true;
       yield { delta: text };
     }
   }
-  yield finalStreamChunk(toolCalls, usage, model ?? fallbackModel);
+  const final = finalStreamChunk(toolCalls, usage, model ?? fallbackModel, toolIds);
+  if (!hasText && !Array.isArray(final.metadata?.toolCalls))
+    throw new AIProviderRequestError(
+      "The AI provider returned no answer or tool call. Try again or choose another model.",
+      502,
+    );
+  yield final;
 }
 
 function accumulateOpenAIToolCallDeltas(
@@ -490,7 +510,11 @@ function accumulateOpenAIToolCallDeltas(
       continue;
     }
     const index = numberField(entry, "index") ?? 0;
-    const accumulator = toolCalls.get(index) ?? { id: undefined, name: undefined, arguments: "" };
+    const accumulator: StreamToolCallAccumulator = toolCalls.get(index) ?? {
+      id: undefined,
+      name: undefined,
+      arguments: "",
+    };
     const functionCall = isRecord(entry.function) ? entry.function : undefined;
     const id = stringField(entry, "id");
     if (id !== undefined) {
@@ -498,8 +522,10 @@ function accumulateOpenAIToolCallDeltas(
     }
     const name = functionCall === undefined ? undefined : stringField(functionCall, "name");
     if (name !== undefined) {
-      accumulator.name = name;
+      accumulator.name = (accumulator.name ?? "") + name;
     }
+    if (functionCall?.arguments !== undefined && typeof functionCall.arguments !== "string")
+      accumulator.invalidArguments = true;
     const args = functionCall === undefined ? undefined : stringField(functionCall, "arguments");
     if (args !== undefined) {
       accumulator.arguments += args;
@@ -508,24 +534,35 @@ function accumulateOpenAIToolCallDeltas(
   }
 }
 
-/**
- * Builds the closing `done: true` chunk: assembles accumulated tool calls in
- * content-index order and attaches the resolved model plus any usage.
- */
 function finalStreamChunk(
   accumulators: ReadonlyMap<number, StreamToolCallAccumulator>,
   usage: ChatUsage | undefined,
   model: string,
+  toolIds?: ReadonlyMap<string, string>,
 ): ChatChunk {
   const assembled = [...accumulators.entries()]
     .sort((left, right) => left[0] - right[0])
     .flatMap(([, accumulator]) => {
-      const id = accumulator.name ?? accumulator.id;
+      const id = accumulator.name ?? (toolIds === undefined ? accumulator.id : undefined);
       if (id === undefined) {
         return [];
       }
-      const input = parseJsonObject(accumulator.arguments);
-      return [{ id, ...(input === undefined ? {} : { input }) }];
+      const input = accumulator.invalidArguments
+        ? undefined
+        : parseJsonObject(accumulator.arguments);
+      return [
+        {
+          id: toolIds?.get(id) ?? id,
+          ...(toolIds !== undefined && accumulator.id !== undefined
+            ? { callId: accumulator.id }
+            : {}),
+          ...(input === undefined
+            ? toolIds === undefined
+              ? {}
+              : { error: INVALID_TOOL_ARGUMENTS }
+            : { input }),
+        },
+      ];
     });
   const metadata = streamMetadata(model, assembled);
   return {
@@ -536,11 +573,7 @@ function finalStreamChunk(
   };
 }
 
-/**
- * Translates an Anthropic-compatible Messages SSE stream into
- * {@link ChatChunk} values. Handles `content_block_delta` text deltas,
- * `input_json_delta` tool-call assembly, and `message_delta` usage.
- */
+/** Translates Anthropic text/tool deltas and usage into chat chunks. */
 export async function* anthropicChatChunks(
   events: AsyncIterable<SseEvent>,
   fallbackModel: string,
@@ -549,7 +582,7 @@ export async function* anthropicChatChunks(
   let usage: ChatUsage | undefined;
   let model = fallbackModel;
   for await (const event of events) {
-    const record = parseSseData(event.data);
+    const record = parseSseData(event.data, event.event);
     if (record === undefined) {
       continue;
     }
@@ -616,29 +649,46 @@ function streamMetadata(model: string, toolCalls: readonly AIToolChoice[]): Json
       : {
           toolCalls: toolCalls.map((toolCall) => ({
             id: toolCall.id,
+            ...(toolCall.callId === undefined ? {} : { callId: toolCall.callId }),
             ...(toolCall.input === undefined ? {} : { input: toolCall.input }),
+            ...(toolCall.error === undefined ? {} : { error: toolCall.error }),
           })),
         }),
   };
 }
 
-function parseSseData(data: string): Record<string, unknown> | undefined {
-  if (data.length === 0 || data === "[DONE]") {
+function parseSseData(data: string, event?: string): Record<string, unknown> | undefined {
+  if ((data.length === 0 && event !== "error") || data === "[DONE]") {
     return undefined;
   }
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(data);
-    return isRecord(parsed) ? parsed : undefined;
+    parsed = JSON.parse(data);
   } catch {
-    return undefined;
+    throw new AIProviderRequestError(
+      "The AI provider returned an unreadable stream. Try again or check provider compatibility.",
+      502,
+    );
   }
+  if (!isRecord(parsed))
+    throw new AIProviderRequestError("The AI provider returned an invalid stream event.", 502);
+  if (event === "error" || parsed.type === "error" || parsed.error !== undefined) {
+    const error = isRecord(parsed.error) ? parsed.error : parsed;
+    const code = stringField(error, "code") ?? stringField(error, "type");
+    const status =
+      code === "rate_limit_exceeded" || code === "rate_limit_error"
+        ? 429
+        : code === "tool_use_failed" || code === "invalid_request_error"
+          ? 400
+          : 502;
+    throw new AIProviderRequestError(
+      "The AI provider reported a stream error. Try again or choose another model.",
+      status,
+    );
+  }
+  return parsed;
 }
 
-/**
- * Collects a {@link ChatChunk} stream into a single {@link ChatResponse},
- * concatenating text deltas and adopting the final chunk's usage and assembled
- * tool calls. Used by callers (and the router) that need a non-streaming view.
- */
 export async function collectChatChunks(
   chunks: AsyncIterable<ChatChunk>,
   providerId: string,
@@ -686,7 +736,16 @@ function toolCallsFromMetadata(metadata: JsonObject): readonly AIToolChoice[] | 
       return [];
     }
     const input = toJsonObject(entry.input);
-    return [{ id, ...(input === undefined ? {} : { input }) }];
+    const callId = stringField(entry, "callId");
+    const error = stringField(entry, "error");
+    return [
+      {
+        id,
+        ...(callId === undefined ? {} : { callId }),
+        ...(input === undefined ? {} : { input }),
+        ...(error === undefined ? {} : { error }),
+      },
+    ];
   });
   return toolCalls.length === 0 ? undefined : toolCalls;
 }

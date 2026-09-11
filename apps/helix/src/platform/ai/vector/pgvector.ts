@@ -39,6 +39,8 @@ export class PgVectorStore implements VectorStore {
     metric: VectorMetric,
   ): Promise<void> {
     const collection = validateCollectionName(name);
+    if (validateDimension(dim) > 16_000)
+      throw new TypeError("pgvector supports at most 16000 dimensions");
     // Collection rows are scoped per (org_id, name). A tenant cannot create or
     // mutate a collection that another tenant already owns under the same
     // name — the unique key includes org_id.
@@ -46,8 +48,12 @@ export class PgVectorStore implements VectorStore {
       insert into vector_collections (org_id, name, dim, metric)
       values (${orgId}, ${collection}, ${validateDimension(dim)}, ${assertVectorMetric(metric)})
       on conflict (org_id, name) do update
-      set dim = excluded.dim, metric = excluded.metric, updated_at = now()
+      set updated_at = now()
     `;
+    const existing = await this.collection(orgId, collection);
+    if (existing.dim !== dim || existing.metric !== metric) {
+      throw new TypeError(`Vector collection ${collection} dimensions or metric do not match`);
+    }
   }
 
   async upsert(
@@ -149,7 +155,29 @@ export class PgVectorStore implements VectorStore {
     `;
   }
 
+  async deleteByDocumentIds(
+    orgId: VectorOrgScope,
+    collection: string,
+    ids: readonly string[],
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    await this.sql`delete from vector_items
+      where org_id is not distinct from ${orgId} and collection_name = ${validateCollectionName(collection)}
+      and (id = any(${this.sql.array([...ids])}) or metadata->'document'->>'id' = any(${this.sql.array([...ids])}))`;
+  }
+
   private async collection(orgId: VectorOrgScope, name: string): Promise<VectorCollectionRow> {
+    const row = await this.getCollection(orgId, name);
+    if (row === undefined) {
+      throw new Error(`Vector collection does not exist: ${name}`);
+    }
+    return row;
+  }
+
+  async getCollection(
+    orgId: VectorOrgScope,
+    name: string,
+  ): Promise<VectorCollectionRow | undefined> {
     const rows = await this.sql<VectorCollectionRow[]>`
       select dim, metric
       from vector_collections
@@ -157,11 +185,7 @@ export class PgVectorStore implements VectorStore {
         and name = ${name}
       limit 1
     `;
-    const row = rows[0];
-    if (row === undefined) {
-      throw new Error(`Vector collection does not exist: ${name}`);
-    }
-    return row;
+    return rows[0];
   }
 
   /**

@@ -1,8 +1,10 @@
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
+import { createRecordingSql } from "../../test-support/recording-sql.js";
 import { actorFromRequest } from "../../api/test-actor.js";
 import {
   InMemorySecurityPoliciesStore,
+  PostgresSecurityPoliciesStore,
   SECURITY_POLICY_TYPES,
   defaultPolicy,
   parsePolicySettings,
@@ -32,7 +34,12 @@ function field(response: { json: () => unknown }, key: string): unknown {
 async function buildApp() {
   const store = new InMemorySecurityPoliciesStore();
   const app = fastify();
-  await registerAdminSecurityPoliciesRoutes(app, { store, actorFromRequest, auditSink });
+  await registerAdminSecurityPoliciesRoutes(app, {
+    store,
+    actorFromRequest,
+    auditSink,
+    mfa: { isMfaVerified: () => true, isRecentlyAuthenticated: () => true },
+  });
   return { app, store };
 }
 
@@ -261,4 +268,51 @@ describe("InMemorySecurityPoliciesStore", () => {
     expect(second.createdAt).toBe(first.createdAt);
     expect(second.updatedAt).not.toBe(first.updatedAt);
   });
+});
+
+describe("second security administrator eligibility", () => {
+  it.each([
+    { scopes: ["admin.console.read"], allow: [], deny: [], eligible: false },
+    { scopes: ["admin.users"], allow: [], deny: [], eligible: false },
+    { scopes: ["admin.security"], allow: [], deny: [], eligible: true },
+    { scopes: [], allow: ["admin.security"], deny: [], eligible: true },
+    { scopes: ["admin.*"], allow: [], deny: ["admin.security"], eligible: false },
+  ])(
+    "honors exact security permission and deny precedence ($eligible)",
+    async ({ scopes, allow, deny, eligible }) => {
+      const recording = createRecordingSql(
+        [
+          [
+            {
+              id: "33333333-3333-4333-8333-333333333333",
+              scopes,
+              role_bindings: [
+                {
+                  roleId: "44444444-4444-4444-8444-444444444444",
+                  allow,
+                  deny,
+                  scopeType: "org",
+                  scopeId: null,
+                  resourceType: null,
+                },
+              ],
+            },
+          ],
+        ],
+        "$",
+      );
+      const store = new PostgresSecurityPoliciesStore(recording.sql);
+      expect(
+        await store.hasOtherAdministrator({
+          id: actorId,
+          orgId,
+          type: "user",
+          scopes: ["admin.security"],
+        }),
+      ).toBe(eligible);
+      expect(recording.calls[0]?.text).toContain("candidate.type = 'user'");
+      expect(recording.calls[0]?.text).toContain("helix_credential_principal_is_active");
+      expect(recording.calls[0]?.values).toEqual([orgId, actorId]);
+    },
+  );
 });

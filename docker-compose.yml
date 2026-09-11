@@ -187,6 +187,7 @@ services:
       RUSTFS_CONSOLE_ENABLE: "true"
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-helixrustfs}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-helix_rustfs_dev_secret}
+      RUSTFS_SSE_S3_MASTER_KEY: ${RUSTFS_SSE_S3_MASTER_KEY:-}
       # Include the host:port forms — path-style requests from the host
       # (helix dev server on the host hits http://localhost:28437) carry
       # `Host: localhost:28437`, and without this RustFS tries to parse
@@ -227,6 +228,27 @@ services:
       interval: 10s
       timeout: 2s
       retries: 5
+    restart: unless-stopped
+
+  # Optional local search provider. Enable and connect it in Admin → AI retrieval.
+  searxng:
+    image: searxng/searxng:2026.9.10-931fd9787@sha256:2fb0fa85096fe6df5c3ab98ecb4d6e0ee2ef66b8fb96ce6fce0f75b51c4bd90a
+    profiles: ["web-search"]
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-helix_local_searxng_secret_change_me_32_chars}
+      # The checked-in settings are mounted read-only; do not chown the source tree.
+      FORCE_OWNERSHIP: "false"
+    ports:
+      - "127.0.0.1:${SEARXNG_PORT:-28461}:8080"
+    volumes:
+      - ./infra/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng-data:/var/cache/searxng
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   mailpit:
@@ -668,6 +690,7 @@ volumes:
   redis-data:
   nats-data:
   meili-data:
+  searxng-data:
   rustfs-data:
   caddy-data:
   caddy-config:

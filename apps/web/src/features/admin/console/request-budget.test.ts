@@ -13,7 +13,8 @@ import {
   releaseIntervalMs,
   SECTION_REQUEST_BUDGET,
   SHELL_BASELINE_REQUESTS,
-  TENANT_API_RPS_LIMIT,
+  CLIENT_STARTUP_REQUEST_BUDGET,
+  CLIENT_REQUEST_WINDOW_MS,
 } from "./request-budget";
 import { isRateLimited, rateLimitBackoff } from "@/lib/query-retry";
 
@@ -75,31 +76,31 @@ describe("rateLimitBackoff", () => {
 
 describe("releaseIntervalMs", () => {
   it("does not pace a section that already fits the budget", () => {
-    expect(SECTION_REQUEST_BUDGET).toBe(TENANT_API_RPS_LIMIT - SHELL_BASELINE_REQUESTS);
+    expect(SECTION_REQUEST_BUDGET).toBe(CLIENT_STARTUP_REQUEST_BUDGET - SHELL_BASELINE_REQUESTS);
 
     for (let count = 0; count <= SECTION_REQUEST_BUDGET; count += 1) {
       expect(releaseIntervalMs(count)).toBe(0);
     }
   });
 
-  it("spaces an over-budget section so no one-second window exceeds the ceiling", () => {
+  it("spaces an over-budget section so no browser window exceeds the ceiling", () => {
     /* The arithmetic, not a remembered constant: the old hardcoded 250 ms put
        2 shell + 4 checks inside one window and earned the fourth check a 429
        on every cold load. */
-    for (let count = SECTION_REQUEST_BUDGET + 1; count <= 12; count += 1) {
+    for (let count = SECTION_REQUEST_BUDGET + 1; count <= SECTION_REQUEST_BUDGET + 6; count += 1) {
       const interval = releaseIntervalMs(count);
       expect(interval).toBeGreaterThan(0);
-      expect(maxRequestsPerSecond(count, interval)).toBeLessThanOrEqual(SECTION_REQUEST_BUDGET);
-      expect(maxRequestsPerSecond(count, interval) + SHELL_BASELINE_REQUESTS).toBeLessThanOrEqual(
-        TENANT_API_RPS_LIMIT,
+      expect(maxRequestsPerWindow(count, interval)).toBeLessThanOrEqual(SECTION_REQUEST_BUDGET);
+      expect(maxRequestsPerWindow(count, interval) + SHELL_BASELINE_REQUESTS).toBeLessThanOrEqual(
+        CLIENT_STARTUP_REQUEST_BUDGET,
       );
     }
   });
 
-  it("would fail the ceiling at the interval the console used to hardcode", () => {
-    /* Guards the regression itself: 250 ms is still a plausible-looking number
-       for someone to reintroduce. */
-    expect(maxRequestsPerSecond(5, 250)).toBeGreaterThan(SECTION_REQUEST_BUDGET);
+  it("detects an unpaced batch exceeding the full browser allowance", () => {
+    expect(maxRequestsPerWindow(SECTION_REQUEST_BUDGET + 1, 0)).toBeGreaterThan(
+      SECTION_REQUEST_BUDGET,
+    );
   });
 });
 
@@ -124,10 +125,12 @@ describe("ADMIN_QUERY_DEFAULTS", () => {
 /** The most releases that land inside any one-second sliding window when
  *  `count` requests leave `interval` ms apart — the limiter's own accounting
  *  (`apps/helix/src/platform/limits/api-rps.ts`). */
-function maxRequestsPerSecond(count: number, interval: number): number {
+function maxRequestsPerWindow(count: number, interval: number): number {
   const releases = Array.from({ length: count }, (_, index) => index * interval);
   return releases.reduce((worst, start) => {
-    const inWindow = releases.filter((at) => at >= start && at < start + 1_000).length;
+    const inWindow = releases.filter(
+      (at) => at >= start && at < start + CLIENT_REQUEST_WINDOW_MS,
+    ).length;
     return Math.max(worst, inWindow);
   }, 0);
 }

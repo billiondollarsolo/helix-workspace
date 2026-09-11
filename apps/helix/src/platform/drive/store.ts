@@ -196,8 +196,11 @@ export class PostgresDriveStore
   deleteComment(input: Parameters<typeof comments.deleteComment>[1]) {
     return comments.deleteComment(this.context, input);
   }
-  getDriveSearchRecord(fileId: Parameters<typeof projections.getDriveSearchRecord>[1]) {
-    return projections.getDriveSearchRecord(this.context, fileId);
+  getDriveSearchRecord(
+    fileId: Parameters<typeof projections.getDriveSearchRecord>[1],
+    includeContent = false,
+  ) {
+    return projections.getDriveSearchRecord(this.context, fileId, includeContent);
   }
   getDriveEnrichmentRecord(fileId: Parameters<typeof projections.getDriveEnrichmentRecord>[1]) {
     return projections.getDriveEnrichmentRecord(this.context, fileId);

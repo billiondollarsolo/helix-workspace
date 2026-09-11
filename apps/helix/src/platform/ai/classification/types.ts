@@ -32,7 +32,7 @@ export interface ClassificationPolicy {
 export interface ClassificationHeuristicRule {
   readonly id: string;
   readonly classification: DataClassification;
-  readonly pattern: RegExp;
+  readonly pattern: Pick<RegExp, "test">;
 }
 
 export interface AIProviderClassificationProfile {

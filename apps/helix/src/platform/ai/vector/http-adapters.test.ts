@@ -76,16 +76,32 @@ describe("HTTP vector adapters", () => {
       .catch((error: unknown) => error);
     expect(String(failure)).not.toMatch(/remote-(?:body|status)-secret/u);
     expect(failure).toMatchObject({ status: 500 });
+    const malformed = new QdrantVectorStore({
+      baseUrl: "https://qdrant.example",
+      fetch: async () => new Response("remote-body-secret", { status: 200 }),
+    });
+    await expect(malformed.getCollection(ORG_A, "docs")).rejects.toThrow(
+      "qdrant vector service returned invalid JSON",
+    );
   });
 
   it("maps Qdrant collection, point, search, and delete requests", async () => {
     const stub = createFetchStub((call) => {
       if (call.url.pathname.endsWith("/points/search")) {
         return jsonResponse({
-          result: [{ id: "doc-1", score: 0.82, payload: { type: "doc" }, vector: [0.1, 0.2] }],
+          result: [
+            {
+              id: "11111111-1111-5111-8111-111111111111",
+              score: 0.82,
+              payload: { _helixId: "doc-1", metadata: { type: "doc" } },
+              vector: [0.1, 0.2],
+            },
+          ],
         });
       }
-      return jsonResponse({ result: true });
+      return call.init.method === "GET"
+        ? new Response("{}", { status: 404 })
+        : jsonResponse({ result: true });
     });
     const store = new QdrantVectorStore({
       baseUrl: "http://qdrant.local",
@@ -107,15 +123,16 @@ describe("HTTP vector adapters", () => {
     expect(
       stub.calls.map((call) => [call.init.method, call.url.pathname + call.url.search]),
     ).toEqual([
+      ["GET", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}`],
       ["PUT", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}`],
       ["PUT", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}/points?wait=true`],
       ["POST", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}/points/search`],
       ["POST", `/collections/${encodeURIComponent(QDRANT_DOCS_ORG_A)}/points/delete?wait=true`],
     ]);
-    expect(requestBody(stub.calls[0] ?? failCall())).toEqual({
+    expect(requestBody(stub.calls[1] ?? failCall())).toEqual({
       vectors: { size: 2, distance: "Cosine" },
     });
-    expect(requestBody(stub.calls[2] ?? failCall())).toMatchObject({
+    expect(requestBody(stub.calls[3] ?? failCall())).toMatchObject({
       limit: 3,
       with_payload: true,
       with_vector: true,
@@ -126,13 +143,19 @@ describe("HTTP vector adapters", () => {
   });
 
   it("isolates tenants by namespacing Qdrant collection names", async () => {
-    const stub = createFetchStub(() => jsonResponse({ result: true }));
+    const stub = createFetchStub((call) =>
+      call.init.method === "GET"
+        ? new Response("{}", { status: 404 })
+        : jsonResponse({ result: true }),
+    );
     const store = new QdrantVectorStore({ baseUrl: "http://qdrant.local", fetch: stub.fetch });
 
     await store.createCollection(ORG_A, "docs", 2, "cosine");
     await store.createCollection(ORG_B, "docs", 2, "cosine");
 
-    const paths = stub.calls.map((call) => call.url.pathname);
+    const paths = stub.calls
+      .filter((call) => call.init.method === "PUT")
+      .map((call) => call.url.pathname);
     expect(paths).toHaveLength(2);
     expect(paths[0]).not.toBe(paths[1]);
     expect(paths[0]).toContain(ORG_A);

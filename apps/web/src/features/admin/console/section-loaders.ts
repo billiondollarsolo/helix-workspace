@@ -146,6 +146,11 @@ export const ADMIN_SECTION_LOADERS: Record<AdminSectionId, AdminSectionLoader> =
     exportName: "AIProvidersManagement",
     scroll: true,
   },
+  "ai-retrieval": {
+    load: () => import("@/features/admin/ai-retrieval-management"),
+    exportName: "AIRetrievalManagement",
+    scroll: true,
+  },
   "ai-costs": {
     load: () => import("@/features/admin/ai-cost-limits-management"),
     exportName: "AICostLimitsManagement",

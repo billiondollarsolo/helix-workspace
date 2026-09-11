@@ -73,22 +73,24 @@ describe("ChatComposer", () => {
     });
   });
 
-  it("inserts triple-backtick and inline-code markup from functioning toolbar controls", () => {
-    const container = render(vi.fn());
+  it("sends typed inline and fenced code as Markdown", () => {
+    const onSend = vi.fn();
+    const container = render(onSend);
     const textarea = required(container.querySelector<HTMLTextAreaElement>("textarea"));
-    act(() => {
-      setInputValue(textarea, "const value = 1;");
-      textarea.setSelectionRange(0, textarea.value.length);
-      click(container, "Code block");
-    });
-    expect(textarea.value).toBe("```\nconst value = 1;\n```");
-
-    act(() => {
-      setInputValue(textarea, "value");
-      textarea.setSelectionRange(0, 5);
-      click(container, "Inline code");
-    });
-    expect(textarea.value).toBe("`value`");
+    for (const body of ["`value`", "```typescript\nconst value = 1;\n```"]) {
+      act(() => {
+        setInputValue(textarea, body);
+      });
+      act(() => {
+        click(container, "Send");
+      });
+      expect(onSend).toHaveBeenLastCalledWith({
+        body,
+        bodyFormat: "markdown",
+        attachmentObjectIds: [],
+        attachments: [],
+      });
+    }
   });
 });
 

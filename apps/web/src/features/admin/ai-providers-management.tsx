@@ -83,6 +83,7 @@ export interface FeatureRouteFormRow {
 }
 
 export interface AiProvidersEditorState {
+  readonly maxToolRounds: string;
   readonly providers: readonly ProviderFormRow[];
   readonly routes: readonly FeatureRouteFormRow[];
   readonly spamBetaMode: "env" | "on" | "off";
@@ -147,7 +148,12 @@ export function editorStateFromAiConfig(ai: AIConfigStatus | undefined): AiProvi
   const spamBetaMode: AiProvidersEditorState["spamBetaMode"] =
     betaEnabled === true ? "on" : betaEnabled === false ? "off" : "env";
 
-  return { providers, routes, spamBetaMode };
+  return {
+    providers,
+    routes,
+    spamBetaMode,
+    maxToolRounds: String(ai?.assistant?.maxToolRounds ?? 128),
+  };
 }
 
 function providerToFormRow(provider: AIProviderConfig, index: number): ProviderFormRow {
@@ -183,6 +189,9 @@ export function buildMultiProviderAiPatch(
   state: AiProvidersEditorState,
   baseline: AiProvidersEditorState,
 ): NonNullable<PlatformConfigPatch["ai"]> | string {
+  const maxToolRounds = Number(state.maxToolRounds);
+  if (!Number.isInteger(maxToolRounds) || maxToolRounds < 1 || maxToolRounds > 256)
+    return "Assistant tool steps must be a whole number from 1 to 256.";
   if (state.providers.length === 0) {
     return "Add at least one provider, or clear routing assignments first.";
   }
@@ -276,6 +285,7 @@ export function buildMultiProviderAiPatch(
   return {
     providers,
     routing: { rules },
+    ...(state.maxToolRounds === baseline.maxToolRounds ? {} : { assistant: { maxToolRounds } }),
     ...(mailSpamAi === undefined ? {} : { mailSpamAi }),
     ...(operatorLlm === undefined ? {} : { operatorLlm }),
   };
@@ -311,9 +321,8 @@ export function AIProvidersManagement() {
     onSuccess: async (status) => {
       queryClient.setQueryData(adminPlatformConfigQueryKey, status);
       await queryClient.invalidateQueries({ queryKey: adminPlatformConfigQueryKey });
-      setSavedNotice(
-        "Saved. Feature routing and provider credentials hot-reload for spam AI. Assistant provider list is built at API process start — restart Helix after adding a brand-new provider if chat does not list it yet.",
-      );
+      await queryClient.invalidateQueries({ queryKey: ["assistant", "models"] });
+      setSavedNotice("Saved. AI settings now apply to new requests.");
     },
     onError: (error) => {
       setFormError(error instanceof Error ? error.message : "Failed to save AI settings.");
@@ -640,6 +649,35 @@ export function AIProvidersManagement() {
             <option value="off">Disabled in Admin</option>
           </select>
         </label>
+      </section>
+
+      <section
+        aria-labelledby="assistant-tool-settings-heading"
+        className="grid gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
+      >
+        <h2 id="assistant-tool-settings-heading" className="m-0 text-sm font-semibold">
+          Assistant tool use
+        </h2>
+        <label className="grid max-w-xs gap-1 text-xs">
+          <span className="font-medium">Maximum tool steps per reply</span>
+          <Input
+            type="number"
+            min={1}
+            max={256}
+            step={1}
+            value={editor.maxToolRounds}
+            onChange={(event) => {
+              const maxToolRounds = event.target.value;
+              setEditor((current) => ({ ...current, maxToolRounds }));
+            }}
+            aria-describedby="assistant-tool-steps-help"
+          />
+        </label>
+        <p id="assistant-tool-steps-help" className="m-0 text-xs text-muted-foreground">
+          Default 128. A step lets the model call tools and inspect their results before continuing.
+          Higher limits allow longer research and use more time and model tokens. At the limit,
+          Assistant summarizes what it found. Changes apply to new replies after saving.
+        </p>
       </section>
 
       <div className="flex flex-wrap items-center gap-2">

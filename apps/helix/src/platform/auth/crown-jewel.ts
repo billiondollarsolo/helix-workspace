@@ -19,6 +19,13 @@ const policies: readonly {
   readonly action: CrownJewelAction;
 }[] = [
   policy(
+    "PUT",
+    /^\/api\/admin\/security-policies\/(?:mfa|session)$/u,
+    "security.policy.update",
+    "admin.security",
+    true,
+  ),
+  policy(
     "POST",
     /^\/api\/admin\/tenants\/[^/]+\/delete$/u,
     "tenant.delete",
@@ -137,7 +144,7 @@ function policy(
 }
 
 export function crownJewelActionFor(method: string, requestUrl: string): CrownJewelAction | null {
-  const path = requestUrl.split("?")[0] ?? requestUrl;
+  const path = decodeURIComponent(requestUrl.split("?")[0] ?? requestUrl);
   return (
     policies.find((candidate) => candidate.method === method && candidate.path.test(path))
       ?.action ?? null
@@ -382,6 +389,13 @@ export interface CrownJewelGateOptions {
   readonly store: CrownJewelApprovalStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly mfa: MfaVerificationResolver;
+  readonly requirements?: (
+    request: FastifyRequest,
+    actor: Actor,
+  ) => Promise<{
+    readonly mfaRequired: boolean;
+    readonly approvalRequired: boolean;
+  }>;
   readonly approvalTtlMs?: number;
   readonly now?: () => Date;
   readonly traceId?: (request: FastifyRequest) => string | undefined;
@@ -397,7 +411,11 @@ export function installCrownJewelGate(app: FastifyInstance, options: CrownJewelG
     if (action === null) return;
     const actor = await options.actorFromRequest(request);
     if (!canAuthorize(action, actor)) return;
-    if (!(await options.mfa.isMfaVerified(request, actor))) {
+    const requirements = (await options.requirements?.(request, actor)) ?? {
+      mfaRequired: true,
+      approvalRequired: true,
+    };
+    if (requirements.mfaRequired && !(await options.mfa.isMfaVerified(request, actor))) {
       await options.store.reject({
         orgId: actor.orgId,
         actorId: actor.id,
@@ -410,6 +428,7 @@ export function installCrownJewelGate(app: FastifyInstance, options: CrownJewelG
         error: "Recent MFA verification is required.",
       });
     }
+    if (!requirements.approvalRequired) return;
     const approvalId = approvalIdHeader(request);
     const fingerprint = crownJewelRequestFingerprint(request);
     if (approvalId === null) {
@@ -456,7 +475,11 @@ export function installCrownJewelGate(app: FastifyInstance, options: CrownJewelG
     if (!params.success)
       return reply.code(400).send({ code: "invalid_approval_id", error: "Invalid approval id." });
     const actor = await options.actorFromRequest(request);
-    if (!(await options.mfa.isMfaVerified(request, actor))) {
+    const requirements = (await options.requirements?.(request, actor)) ?? {
+      mfaRequired: true,
+      approvalRequired: true,
+    };
+    if (requirements.mfaRequired && !(await options.mfa.isMfaVerified(request, actor))) {
       await options.store.reject({
         orgId: actor.orgId,
         actorId: actor.id,

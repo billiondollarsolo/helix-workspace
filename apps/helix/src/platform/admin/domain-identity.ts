@@ -180,3 +180,16 @@ function isAbsentDnsAnswer(error: unknown): boolean {
   const code = (error as { readonly code?: unknown }).code;
   return code === "ENODATA" || code === "ENOTFOUND";
 }
+
+/** Address assignment metadata; exposes no mailbox contents or DNS verification material. */
+export async function eligibleMailAddressDomains(
+  sql: postgres.Sql,
+  orgId: string,
+): Promise<{ domain: string; primary: boolean; aliases: boolean }[]> {
+  const rows = await sql<{ domain: string; primary: boolean; aliases: boolean }[]>`
+    select domain, identity_enabled and identity_mode = 'secondary' as primary, aliases_enabled as aliases
+    from admin_domains where org_id = ${orgId} and status = 'verified' and mail_enabled
+      and (identity_enabled or aliases_enabled) order by domain
+  `;
+  return [...rows];
+}

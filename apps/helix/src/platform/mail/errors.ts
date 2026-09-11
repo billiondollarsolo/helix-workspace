@@ -128,3 +128,32 @@ export class MailAttachmentSizeError extends Error {
     this.name = "MailAttachmentSizeError";
   }
 }
+
+export class MailAddressDeliveryError extends MailDeliveryError {
+  readonly responseCode = 550;
+  constructor(message: string) {
+    super(message, false);
+    this.name = "MailAddressDeliveryError";
+  }
+}
+
+/** Preserve terminal group policy failures across PostgreSQL transaction boundaries. */
+export function rejectAddressDelivery(error: unknown): never {
+  if (error instanceof Error) {
+    if (error.message === "mail_group_posting_denied")
+      throw new MailAddressDeliveryError(
+        "This group accepts authenticated workspace senders only.",
+      );
+    if (error.message === "mail_group_no_recipients")
+      throw new MailAddressDeliveryError("This group has no active member mailboxes.");
+    if (error.message === "mail_account_offboarded")
+      throw new MailAddressDeliveryError(
+        "This account has been offboarded and no longer accepts mail.",
+      );
+    if (error.message === "mail_group_unavailable")
+      throw new MailAddressDeliveryError(
+        "This group address is unavailable while its workspace or domain is disabled.",
+      );
+  }
+  throw error;
+}

@@ -16,7 +16,7 @@ export interface NormalizedHttpVectorConfig {
   readonly fetch: typeof fetch;
 }
 
-class VectorHttpError extends Error {
+export class VectorHttpError extends Error {
   constructor(
     readonly adapterId: string,
     readonly status: number,
@@ -49,7 +49,11 @@ export async function requestJson(
   const headers: Record<string, string> = {
     accept: "application/json",
     ...(body === undefined ? {} : { "content-type": "application/json" }),
-    ...(config.apiKey === undefined ? {} : { authorization: `Bearer ${config.apiKey}` }),
+    ...(config.apiKey === undefined
+      ? {}
+      : adapterId === "qdrant"
+        ? { "api-key": config.apiKey }
+        : { authorization: `Bearer ${config.apiKey}` }),
   };
   const response = await config.fetch(url, {
     method,
@@ -64,7 +68,11 @@ export async function requestJson(
   if (text.length === 0) {
     return null;
   }
-  return JSON.parse(text) as unknown;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new TypeError(`${adapterId} vector service returned invalid JSON`);
+  }
 }
 
 export function optionalJsonObject(value: unknown): JsonObject | undefined {

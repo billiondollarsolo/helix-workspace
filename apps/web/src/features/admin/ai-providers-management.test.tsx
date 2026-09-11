@@ -30,9 +30,26 @@ const baselineEmpty: AiProvidersEditorState = {
     { feature: "mail.compose-help", providerId: "", model: "" },
   ],
   spamBetaMode: "env",
+  maxToolRounds: "16",
 };
 
 describe("buildMultiProviderAiPatch", () => {
+  it("loads, validates and updates the Assistant step limit without changing secrets", () => {
+    const baseline = editorStateFromAiConfig({
+      assistant: { maxToolRounds: 32 },
+      providers: [{ id: "chat", plugin: "openai-compat", config: { apiKeyConfigured: true } }],
+    });
+    expect(baseline.maxToolRounds).toBe("32");
+    for (const maxToolRounds of ["", "0", "-1", "257", "1.5", "invalid"])
+      expect(buildMultiProviderAiPatch({ ...baseline, maxToolRounds }, baseline)).toMatch(
+        /whole number from 1 to 256/u,
+      );
+    expect(editorStateFromAiConfig(undefined).maxToolRounds).toBe("128");
+    const patch = buildMultiProviderAiPatch({ ...baseline, maxToolRounds: "16" }, baseline);
+    expect(patch).toMatchObject({ assistant: { maxToolRounds: 16 } });
+    expect(typeof patch !== "string" && patch.providers?.[0]?.config?.apiKey).toBeUndefined();
+  });
+
   it("builds providers and per-feature routing", () => {
     const state: AiProvidersEditorState = {
       providers: [
@@ -59,6 +76,7 @@ describe("buildMultiProviderAiPatch", () => {
         { feature: "mail.compose-help", providerId: "chat", model: "gpt-4o-mini" },
       ],
       spamBetaMode: "on",
+      maxToolRounds: "16",
     };
     const patch = buildMultiProviderAiPatch(state, baselineEmpty);
     expect(typeof patch).not.toBe("string");
@@ -95,6 +113,7 @@ describe("buildMultiProviderAiPatch", () => {
         { feature: "mail.compose-help", providerId: "", model: "" },
       ],
       spamBetaMode: "env",
+      maxToolRounds: "16",
     };
     const patch = buildMultiProviderAiPatch(state, state);
     expect(typeof patch).not.toBe("string");
@@ -113,6 +132,7 @@ describe("buildMultiProviderAiPatch", () => {
       ],
       routes: baselineEmpty.routes,
       spamBetaMode: "env",
+      maxToolRounds: "16",
     };
     expect(buildMultiProviderAiPatch(state, baselineEmpty)).toMatch(/Duplicate provider id/u);
   });
@@ -244,7 +264,7 @@ describe("AIProvidersManagement", () => {
     });
   }
 
-  it("loads multi-provider catalog and saves routing without echoing secrets", async () => {
+  it("loads the catalog and saves routing and tool limits without echoing secrets", async () => {
     let stored = {
       security: { tier: "business" as const },
       ai: {
@@ -271,6 +291,7 @@ describe("AIProvidersManagement", () => {
           ],
         },
         mailSpamAi: { betaEnabled: false },
+        assistant: { maxToolRounds: 16 },
       },
     };
 
@@ -303,6 +324,7 @@ describe("AIProvidersManagement", () => {
               }[];
             };
             mailSpamAi?: { betaEnabled?: boolean };
+            assistant?: { maxToolRounds: number };
           };
         };
         expect(body.ai?.providers?.[0]?.config?.apiKey).toBeUndefined();
@@ -311,6 +333,7 @@ describe("AIProvidersManagement", () => {
           security: { tier: "business" },
           ai: {
             ...stored.ai,
+            ...(body.ai?.assistant ? { assistant: body.ai.assistant } : {}),
             ...(body.ai?.mailSpamAi === undefined
               ? {}
               : {
@@ -355,6 +378,17 @@ describe("AIProvidersManagement", () => {
       await Promise.resolve();
     });
 
+    const steps = container.querySelector<HTMLInputElement>(
+      'input[type="number"][aria-describedby="assistant-tool-steps-help"]',
+    );
+    expect(steps?.value).toBe("16");
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(steps, "32");
+      steps?.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
     const save = [...container.querySelectorAll("button")].find((button) =>
       button.textContent?.includes("Save AI settings"),
     );
@@ -365,6 +399,8 @@ describe("AIProvidersManagement", () => {
 
     await waitFor(() => {
       expect(container.textContent).toContain("Saved.");
+      expect(stored.ai.assistant.maxToolRounds).toBe(32);
+      expect(steps?.value).toBe("32");
     });
   });
 });

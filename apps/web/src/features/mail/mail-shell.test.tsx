@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { MAIL_COMPOSE_RECOVERY_KEY, writeMailComposeRecovery } from "./mail-compose-recovery";
 import { MailShell } from "./mail-shell";
+import { FOLDERS, LABELS, threadRow, UPDATES_ROW, THREAD_DETAIL } from "./mail-shell.test-fixtures";
 
 const navigateMock = vi.fn();
 const uploadDriveFileMock = vi.fn();
@@ -41,90 +42,6 @@ const overlayApi = {
   openNotifications: vi.fn(),
   openPalette: vi.fn(),
   openSettings: vi.fn(),
-};
-
-/* ---------------------------------------------------------- backend fixtures */
-
-const FOLDERS = [
-  { id: "inbox", label: "Inbox", total: 12, unread: 3 },
-  { id: "starred", label: "Starred", total: 2, unread: 0 },
-  { id: "snoozed", label: "Snoozed", total: 0, unread: 0 },
-  { id: "sent", label: "Sent", total: 0, unread: 0 },
-  { id: "drafts", label: "Drafts", total: 0, unread: 0 },
-  { id: "archive", label: "Archive", total: 0, unread: 0 },
-  { id: "spam", label: "Spam", total: 1, unread: 1 },
-  { id: "trash", label: "Trash", total: 0, unread: 0 },
-];
-
-const LABELS = [
-  {
-    id: "l1",
-    slug: "team",
-    name: "Team",
-    color: "#7c3aed",
-    sortOrder: 0,
-    threadCount: 4,
-    shared: true,
-  },
-];
-
-function threadRow(overrides: Record<string, unknown> = {}) {
-  return {
-    threadId: "thread-1",
-    messageId: "message-1",
-    subject: "Q3 roadmap sign-off",
-    from: "Mira Okafor",
-    fromEmail: "mira@helix.io",
-    preview: "Final roadmap attached",
-    time: "2026-05-21T10:42:00.000Z",
-    unread: true,
-    starred: false,
-    hasAttachment: true,
-    messageCount: 1,
-    labels: ["team"],
-    category: "primary",
-    folder: "inbox",
-    snoozedUntil: null,
-    ...overrides,
-  };
-}
-
-const UPDATES_ROW = threadRow({
-  threadId: "thread-2",
-  messageId: "message-2",
-  subject: "PR #4521 was merged",
-  from: "GitHub",
-  fromEmail: "noreply@github.com",
-  category: "updates",
-  labels: [],
-});
-
-const THREAD_DETAIL = {
-  id: "thread-1",
-  subject: "Q3 roadmap sign-off",
-  preview: "Final roadmap attached",
-  participants: [{ address: "mira@helix.io", name: "Mira Okafor" }],
-  messages: [
-    {
-      id: "message-1",
-      from: { address: "mira@helix.io", name: "Mira Okafor" },
-      to: [{ address: "alex@helix.io", name: "Alex" }],
-      cc: [],
-      bcc: [],
-      sentAt: "2026-05-21T10:42:00.000Z",
-      body: "Here is the consolidated roadmap for review.",
-      bodyFormat: "plain",
-      hasAttachment: true,
-    },
-  ],
-  labels: ["team"],
-  archivedAt: null,
-  deletedAt: null,
-  snoozedUntil: null,
-  lastActivity: "2026-05-21T10:42:00.000Z",
-  unread: true,
-  starred: false,
-  direction: "inbound",
 };
 
 describe("MailShell", () => {
@@ -178,6 +95,25 @@ describe("MailShell", () => {
     if (url.endsWith("/mail.thread.get")) {
       return Promise.resolve(Response.json({ thread: THREAD_DETAIL }));
     }
+    if (url.endsWith("/mail/addresses"))
+      return Promise.resolve(
+        Response.json({
+          actorId: "actor-1",
+          primaryEmail: "alex@helix.io",
+          eligibleDomains: [],
+          addresses: [
+            {
+              id: null,
+              address: "alex@helix.io",
+              displayName: "Alex",
+              isPrimary: true,
+              receiveEnabled: true,
+              sendAsEnabled: true,
+              source: "primary",
+            },
+          ],
+        }),
+      );
     if (url.endsWith("/mail.draft.list")) {
       return Promise.resolve(Response.json({ drafts: [] }));
     }
@@ -435,6 +371,7 @@ describe("MailShell", () => {
     render();
     await flush();
     clickButtonText("Compose");
+    await flush();
     expect(container.textContent).toContain("New message");
 
     const sendButton = Array.from(container.querySelectorAll("button")).find(
@@ -480,6 +417,7 @@ describe("MailShell", () => {
     render();
     await flush();
     clickButtonText("Compose");
+    await flush();
     const toInput = container.querySelector('input[aria-label="To"]');
     const scheduleInput = container.querySelector('input[aria-label="Send later"]');
     if (!(toInput instanceof HTMLInputElement) || !(scheduleInput instanceof HTMLInputElement)) {
@@ -504,6 +442,7 @@ describe("MailShell", () => {
     render();
     await flush();
     clickButtonText("Compose");
+    await flush();
 
     clickButtonText("Send");
     expect(container.textContent).toContain("Enter at least one recipient email address.");
@@ -543,6 +482,7 @@ describe("MailShell", () => {
     render();
     await flush();
     clickButtonText("Compose");
+    await flush();
 
     expect(container.textContent).toContain("Recovered your unsent message from this device.");
     expect(container.querySelector<HTMLInputElement>('input[aria-label="To"]')?.value).toBe(
@@ -574,6 +514,7 @@ describe("MailShell", () => {
     render();
     await flush();
     clickButtonText("Compose");
+    await flush();
     const subject = container.querySelector('input[aria-label="Subject"]');
     if (!(subject instanceof HTMLInputElement)) throw new Error("Subject input not found");
     setInputValue(subject, "Keep this");
@@ -977,6 +918,7 @@ describe("MailShell", () => {
     render();
     await flush();
     clickButtonText("Compose");
+    await flush();
     expect(container.textContent).toContain("New message");
 
     const compose = container.querySelector(".compose-drop-root");
@@ -1005,6 +947,7 @@ describe("MailShell", () => {
     render();
     await flush();
     clickButtonText("Compose");
+    await flush();
 
     const compose = container.querySelector(".compose-drop-root");
     if (!(compose instanceof HTMLElement)) {
@@ -1072,6 +1015,7 @@ describe("MailShell", () => {
     render();
     await flush();
     clickButtonText("Compose");
+    await flush();
     const compose = container.querySelector(".compose-drop-root");
     if (!(compose instanceof HTMLElement)) throw new Error("Compose root not found");
 
@@ -1106,6 +1050,7 @@ describe("MailShell", () => {
     render();
     await flush();
     clickButtonText("Compose");
+    await flush();
 
     const compose = container.querySelector(".compose-drop-root");
     if (!(compose instanceof HTMLElement)) {

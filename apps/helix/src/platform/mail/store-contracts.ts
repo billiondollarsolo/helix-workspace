@@ -64,6 +64,7 @@ export interface MailboxDelegateRecord {
 
 export interface CreateOutboundMailInput {
   readonly draft?: { readonly id: string; readonly revision: number };
+  readonly senderAuthenticated?: boolean;
   readonly orgId: string;
   readonly actorId: string;
   readonly threadId?: string;
@@ -106,6 +107,7 @@ export interface MailJournalStore {
 }
 
 export interface OutboundMailQueueStore {
+  resolveAuthorizedSender?(orgId: string, actorId: string, address: string): Promise<string | null>;
   claimDueOutbound(input: {
     readonly owner: string;
     readonly leaseMs: number;

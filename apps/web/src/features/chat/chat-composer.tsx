@@ -2,7 +2,6 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { listDrive, type DriveApiEntry } from "@/features/drive/api";
 import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
 import {
-  Code as CodeIcon,
   HardDrive as DriveIcon,
   Image as ImageIcon,
   Send as SendIcon,
@@ -10,7 +9,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { chatAttachmentContentUrl, uploadChatAttachment, type ChatAttachmentRecord } from "./api";
-import { applyCodeMarkup } from "./message-content";
 
 const MAX_ATTACHMENTS = 10;
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
@@ -45,7 +43,6 @@ export function ChatComposer({
   const [driveOpen, setDriveOpen] = useState(false);
   const [driveFiles, setDriveFiles] = useState<readonly DriveApiEntry[]>([]);
   const [driveLoading, setDriveLoading] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const typingRef = useRef(false);
 
@@ -147,17 +144,6 @@ export function ChatComposer({
     setDriveOpen(false);
   };
 
-  const wrapSelection = (kind: "inline" | "fenced") => {
-    const textarea = textareaRef.current;
-    if (textarea === null) return;
-    const result = applyCodeMarkup(draft, textarea.selectionStart, textarea.selectionEnd, kind);
-    handleChange(result.value);
-    requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(result.selectionStart, result.selectionEnd);
-    });
-  };
-
   const submit = () => {
     const body = draft.trim();
     if ((body.length === 0 && attachments.length === 0) || uploading > 0) return;
@@ -186,27 +172,6 @@ export function ChatComposer({
       }}
     >
       <div className="chat-composer">
-        <div className="chat-composer-toolbar chat-composer-toolbar-top">
-          <ToolbarButton
-            label="Inline code"
-            disabled={disabled}
-            onClick={() => {
-              wrapSelection("inline");
-            }}
-          >
-            <CodeIcon size={16} />
-          </ToolbarButton>
-          <ToolbarButton
-            label="Code block"
-            disabled={disabled}
-            onClick={() => {
-              wrapSelection("fenced");
-            }}
-          >
-            <span aria-hidden="true">```</span>
-          </ToolbarButton>
-          <span className="chat-composer-hint">Markdown code supported</span>
-        </div>
         {attachments.length > 0 ? (
           <div className="chat-composer-attachments" aria-label="Pending attachments">
             {attachments.map((attachment) => (
@@ -233,7 +198,6 @@ export function ChatComposer({
           </div>
         ) : null}
         <textarea
-          ref={textareaRef}
           className="chat-composer-input"
           rows={compact ? 2 : 4}
           placeholder={placeholder}

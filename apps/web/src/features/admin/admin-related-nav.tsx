@@ -86,6 +86,7 @@ export function AdminAiRelatedNav({ current }: { readonly current: AdminSectionI
       items={[
         ...siblings(current, [
           ["ai-providers", "AI providers"],
+          ["ai-retrieval", "AI retrieval"],
           ["ai-costs", "Cost limits"],
           ["ai-observability", "Observability"],
           ["agent-controls", "Agent emergency controls"],

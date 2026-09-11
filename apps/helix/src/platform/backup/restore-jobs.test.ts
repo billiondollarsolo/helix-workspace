@@ -13,6 +13,7 @@ const job: RestoreJob = {
   targetObjectBucket: "helix-restore-incident-42",
   status: "processing",
   approvalCount: 2,
+  requiredApprovals: 2,
   attemptCount: 1,
   leaseToken: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   cancellationRequested: false,

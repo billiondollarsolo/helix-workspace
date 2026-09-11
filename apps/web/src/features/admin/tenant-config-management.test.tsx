@@ -193,7 +193,7 @@ describe("TenantConfigManagement", () => {
       expect(container.textContent).toContain("Workspace settings");
       expect(container.textContent).toContain("AI smart compose");
       expect(container.textContent).toContain("Business plan defaults");
-      expect(container.textContent).toContain("API RPS");
+      expect(container.textContent).toContain("Integration API RPS");
       expect(container.textContent).toContain("Override");
     });
     // The flag list is grouped rather than one flat column of 19 checkboxes.
@@ -253,13 +253,15 @@ describe("TenantConfigManagement", () => {
 
     await waitFor(() => {
       expect(container.textContent).toContain("Business plan defaults");
-      expect(container.textContent).toContain("API RPS");
+      expect(container.textContent).toContain("Integration API RPS");
       expect(container.textContent).toContain("25");
       expect(container.textContent).toContain("10");
       expect(container.textContent).toContain("Actors");
       expect(container.textContent).toContain("500");
     });
-    expect(() => inputByLabel("API RPS")).toThrow('Field "API RPS" not found.');
+    expect(() => inputByLabel("Integration API RPS")).toThrow(
+      'Field "Integration API RPS" not found.',
+    );
     expect(() => buttonByLabel("Save quotas")).toThrow('Button "Save quotas" not found.');
     expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
   });
@@ -808,7 +810,7 @@ describe("TenantConfigManagement", () => {
     expect(quotas.querySelector("summary")?.textContent).toContain("Read-only");
     // Two quota keys carry a tenant override, so the panel must not start shut.
     expect(quotas.open).toBe(true);
-    expect(quotas.textContent).toContain("API RPS");
+    expect(quotas.textContent).toContain("Integration API RPS");
   });
 
   it("reads an unreported quota as unknown rather than unlimited", async () => {
@@ -820,8 +822,6 @@ describe("TenantConfigManagement", () => {
       expect(container.textContent).toContain("Business plan defaults");
     });
     const quotas = detailsBySummary("Effective limits");
-    // The payload reports no `storage_bytes_limit` anywhere; claiming
-    // "unlimited" would tell an operator the cap was lifted.
     expect(rowByLabel(quotas, "Storage bytes").textContent).toContain("Not reported");
     // `actors_limit` is an explicit null override — that one really is uncapped.
     expect(rowByLabel(quotas, "Actors").textContent).toContain("Unlimited");

@@ -3,6 +3,8 @@ import type { FastifyRequest } from "fastify";
 import { AsyncResource } from "node:async_hooks";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { OutboxWorker } from "../outbox/outbox.js";
+import { PostgresOutboxStore } from "../outbox/postgres-store.js";
 import { InMemoryEventBus } from "../events/in-memory-event-bus.js";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { createToolRegistry } from "../tool-registry.js";
@@ -275,6 +277,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
   });
 
   it("fans REST sends and reactions to two clients without appending duplicate events", async () => {
+    await sql`delete from outbox where subject = ${roomSubject(ORG, ROOM)}`;
     const transport = new InMemoryEventBus();
     const eventLog = new PostgresChatRoomEventLog(sql);
     const publisher = new EventBusChatRoomBus(transport, { events: eventLog });
@@ -307,18 +310,24 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
     );
 
     expect(await currentCursor(sql)).toBe(before + 2);
+    expect(receivedA).toEqual([]);
+    expect(receivedB).toEqual([]);
+    await new OutboxWorker({ store: new PostgresOutboxStore(sql), events: transport }).drainOnce();
     for (const received of [receivedA, receivedB]) {
-      expect(received).toEqual([
-        expect.objectContaining({ type: "message.created", cursor: before + 1 }),
-        expect.objectContaining({
-          type: "message.updated",
-          cursor: before + 2,
-          message: expect.objectContaining({
-            id: sentMessageId,
-            reactions: [expect.objectContaining({ actorId: OWNER, emoji: "👍" })],
+      expect(received).toHaveLength(2);
+      expect(received).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "message.created", cursor: before + 1 }),
+          expect.objectContaining({
+            type: "message.updated",
+            cursor: before + 2,
+            message: expect.objectContaining({
+              id: sentMessageId,
+              reactions: [expect.objectContaining({ actorId: OWNER, emoji: "👍" })],
+            }),
           }),
-        }),
-      ]);
+        ]),
+      );
     }
   });
 
@@ -356,6 +365,8 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
         clientMessageId: "chat-0708-post-upgrade",
       });
     });
+    await expect.poll(() => currentCursor(sql)).toBeGreaterThan(subscribeAt);
+    await new OutboxWorker({ store: new PostgresOutboxStore(sql), events: transport }).drainOnce();
     await expect
       .poll(() => socket.messages, { timeout: 2_000 })
       .toContainEqual(

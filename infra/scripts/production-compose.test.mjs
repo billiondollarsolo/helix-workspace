@@ -164,6 +164,27 @@ describe("production Compose overlay", () => {
     expect(resolvedCompose.services.helix.depends_on).toHaveProperty("spamd");
     expect(resolvedCompose.services.helix.depends_on).toHaveProperty("clamav");
   });
+  it("keeps SearXNG optional, private, secret-backed, and able to reach search engines", () => {
+    expect(resolvedCompose.services.searxng).toBeUndefined();
+    expect(resolvedCompose.services.helix.depends_on).not.toHaveProperty("searxng");
+    const service = resolvedAllProfilesCompose.services.searxng;
+    expect(service.profiles).toEqual(["web-search"]);
+    expect(service.ports).toBeUndefined();
+    expect(service.networks).toEqual({ "data-plane": null, "web-search-egress": null });
+    expect(resolvedAllProfilesCompose.networks["web-search-egress"].internal).not.toBe(true);
+    expect(service.environment).not.toHaveProperty("SEARXNG_SECRET");
+    expect(service.secrets).toEqual([
+      { source: "searxng_secret", target: "/run/secrets/searxng_secret" },
+    ]);
+    expect(service.entrypoint.join("\n")).toContain("cat /run/secrets/searxng_secret");
+    expect(service.entrypoint.join("\n")).toContain('"$${#SEARXNG_SECRET}" -lt 32');
+    expect(service.security_opt).toContain("no-new-privileges:true");
+    expect(service.deploy.resources.limits).toMatchObject({
+      cpus: 1,
+      memory: "536870912",
+      pids: 256,
+    });
+  });
   it("uses the exact reviewed production dependency image inventory and waits for readiness", () => {
     expect(
       Object.fromEntries(

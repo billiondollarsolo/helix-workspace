@@ -50,6 +50,7 @@ describe("Chat NATS production security", () => {
       servers: ["tls://nats-a:4222", "tls://nats-b:4222"],
       user: "chat",
       pass: "secret",
+      noEcho: false,
       tls: {
         rejectUnauthorized: true,
         caFile: "/run/secrets/nats-ca.pem",

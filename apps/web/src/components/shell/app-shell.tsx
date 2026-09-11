@@ -6,6 +6,8 @@
    inside the Outlet — mirroring the prototype where every app owns a
    `.workspace` element. Ported from the design handoff (app.jsx + shell.jsx). */
 
+import { useQuery } from "@tanstack/react-query";
+import { redirectToLogin, sessionUserQueryOptions } from "@/lib/auth";
 import { Outlet, useLocation, useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Rail } from "@/components/shell/rail";
@@ -23,6 +25,10 @@ import {
 
 export function AppShell() {
   const location = useLocation();
+  const session = useQuery(sessionUserQueryOptions());
+  useEffect(() => {
+    if (session.data === null) redirectToLogin();
+  }, [session.data]);
   const navigate = useNavigate();
   const shellSearch: Partial<{ settings: SettingsSectionId }> = useSearch({ strict: false });
   const settingsSection = isSettingsSectionId(shellSearch.settings) ? shellSearch.settings : null;
@@ -87,6 +93,8 @@ export function AppShell() {
   }, [location.pathname]);
 
   const closeLauncher = useCallback(() => setLauncherOpen(false), []);
+
+  if (session.data === null) return null;
 
   return (
     <ShellOverlayContext.Provider value={overlays}>

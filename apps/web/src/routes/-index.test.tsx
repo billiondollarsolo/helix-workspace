@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LandingPage, redirectSignedInRoot } from "./index";
+import { LandingPage, redirectSignedInRoot } from "./-landing-page";
 
 vi.mock("@tanstack/react-router", async () => {
   const actual =

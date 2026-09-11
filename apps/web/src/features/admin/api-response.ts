@@ -9,6 +9,7 @@
  */
 
 import { z } from "zod";
+import { responseError } from "@/lib/tool-call";
 
 /**
  * Parse and validate a backend response against a Zod schema.
@@ -20,12 +21,29 @@ import { z } from "zod";
 export async function parseResponse<T>(
   response: Response,
   action: string,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   fallback?: T,
 ): Promise<T> {
   const payload: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
+    throw responseError(
+      response,
+      payload,
+      action,
+      `Failed to ${action} (${String(response.status)}).`,
+    );
+  }
+  if (response.status === 202) {
+    const approval = z
+      .object({
+        code: z.literal("crown_jewel_approval_required"),
+        approval: z.object({ id: z.string() }),
+      })
+      .safeParse(payload);
+    if (approval.success)
+      throw new Error(
+        `A second administrator must approve this change (request ${approval.data.approval.id}). The requested change has not been applied.`,
+      );
   }
   const parsed = schema.safeParse(payload);
   if (parsed.success) {
@@ -42,19 +60,12 @@ export async function ensureOk(response: Response, action: string): Promise<void
     return;
   }
   const payload: unknown = await response.json().catch(() => ({}));
-  throw new Error(errorMessage(payload) ?? `Failed to ${action} (${String(response.status)}).`);
-}
-
-function errorMessage(payload: unknown): string | undefined {
-  if (
-    typeof payload === "object" &&
-    payload !== null &&
-    "error" in payload &&
-    typeof payload.error === "string"
-  ) {
-    return payload.error;
-  }
-  return undefined;
+  throw responseError(
+    response,
+    payload,
+    action,
+    `Failed to ${action} (${String(response.status)}).`,
+  );
 }
 
 export function appendParam(params: URLSearchParams, key: string, value: string | undefined): void {

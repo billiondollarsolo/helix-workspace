@@ -1,4 +1,6 @@
 import { Link } from "@tanstack/react-router";
+import { AdminField, AdminSelect } from "../console/controls";
+import { mailAddressQueryKeys } from "@/lib/mail-addresses";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { MutationError, StatusChip } from "@/features/admin/console/primitives";
@@ -27,10 +29,26 @@ export function domainSummary({ domain }: DomainWithRecords): string {
     : `Ownership is proved. Enabled for ${uses.join(", ")}.`;
 }
 
-export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithRecords }) {
+export function DomainCapabilitiesPanel({
+  entry,
+  domains = [],
+}: {
+  readonly entry: DomainWithRecords;
+  readonly domains?: readonly DomainWithRecords[];
+}) {
   const { domain } = entry;
   const queryClient = useQueryClient();
   const [disableMail, setDisableMail] = useState(false);
+  const [identityMode, setIdentityMode] = useState(domain.identityMode);
+  const [aliasTarget, setAliasTarget] = useState(domain.aliasTargetDomainId ?? "");
+  const targets = domains.filter(
+    ({ domain: candidate }) =>
+      candidate.id !== domain.id &&
+      candidate.status === "verified" &&
+      candidate.identityMode === "secondary" &&
+      candidate.identityEnabled,
+  );
+
   const invalidate = () =>
     void queryClient.invalidateQueries({ queryKey: domainsQueryKeys.domains() });
   const verify = useMutation({
@@ -52,6 +70,7 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
       updateDomainCapabilities(domain.id, input),
     onSuccess: () => {
       setDisableMail(false);
+      void queryClient.invalidateQueries({ queryKey: mailAddressQueryKeys.current });
       invalidate();
     },
   });
@@ -61,13 +80,13 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
     <div className="admin-domain-capabilities">
       <MutationError error={verify.error ?? rotate.error ?? update.error} />
       <section className="admin-domain-block">
-        <h4>
+        <h2 className="text-sm font-semibold">
           Ownership{" "}
           <StatusChip
             tone={proved ? "success" : "warning"}
             label={proved ? "Proved" : "Not proved"}
           />
-        </h4>
+        </h2>
         <p>{domainSummary(entry)}</p>
         {!proved && domain.status === "pending" ? (
           <>
@@ -97,7 +116,61 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
       </section>
       {proved ? (
         <section className="admin-domain-block">
-          <h4>Capabilities</h4>
+          <h2 className="text-sm font-semibold">Capabilities</h2>
+          <form
+            className="my-3 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              update.mutate({
+                identityMode,
+                aliasTargetDomainId: identityMode === "alias" ? aliasTarget : null,
+              });
+            }}
+          >
+            <AdminField label="Domain identity mode">
+              <AdminSelect
+                value={identityMode}
+                disabled={pending || domain.isPrimary}
+                onChange={(event) => setIdentityMode(event.target.value as "secondary" | "alias")}
+              >
+                <option value="secondary">Secondary domain — individual user addresses</option>
+                <option value="alias">Automatic alias domain — same names as another domain</option>
+              </AdminSelect>
+            </AdminField>
+            {identityMode === "alias" ? (
+              <AdminField label="Alias target domain">
+                <AdminSelect
+                  value={aliasTarget}
+                  required
+                  disabled={pending}
+                  onChange={(event) => setAliasTarget(event.target.value)}
+                >
+                  <option value="">Select a verified identity domain</option>
+                  {targets.map(({ domain: target }) => (
+                    <option key={target.id} value={target.id}>
+                      {target.domain}
+                    </option>
+                  ))}
+                </AdminSelect>
+              </AdminField>
+            ) : null}
+            <p className="text-sm text-muted-foreground">
+              {domain.isPrimary
+                ? "The primary domain must use individual user addresses."
+                : "Secondary domains let administrators assign individual addresses. An automatic alias domain gives existing users the same address name at this domain."}
+            </p>
+            <Button
+              type="submit"
+              disabled={
+                pending ||
+                domain.isPrimary ||
+                (identityMode === domain.identityMode &&
+                  (identityMode !== "alias" || aliasTarget === domain.aliasTargetDomainId))
+              }
+            >
+              Save domain identity
+            </Button>
+          </form>
           {(
             [
               ["identityEnabled", "Identity"],
@@ -107,7 +180,7 @@ export function DomainCapabilitiesPanel({ entry }: { readonly entry: DomainWithR
               ["federationEnabled", "Federation"],
             ] as const
           ).map(([key, label]) => (
-            <label key={key} className="flex items-center gap-2">
+            <label key={key} className="flex min-h-8 items-center gap-2">
               <input
                 type="checkbox"
                 checked={domain[key]}

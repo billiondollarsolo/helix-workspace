@@ -8,6 +8,7 @@ import { loadSeedEnv } from "../config/env.js";
 import { createS3CompatibleStorage } from "../platform/storage/index.js";
 import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
+import { ADMIN_SCOPES } from "./seed-login-accounts.js";
 import {
   DEFAULT_LOCAL_OAUTH_ACTOR_ID,
   DEFAULT_LOCAL_OAUTH_DISPLAY_NAME,
@@ -246,21 +247,7 @@ async function seedActors(
       id: actorId,
       email,
       displayName,
-      scopes: [
-        "platform.read",
-        "mail.read",
-        "mail.write",
-        "mail.send",
-        "drive.read",
-        "drive.write",
-        "calendar.read",
-        "calendar.write",
-        "chat.read",
-        "chat.post",
-        "chat.create",
-        "assistant.write",
-        "assistant.memory",
-      ],
+      scopes: [...ADMIN_SCOPES],
     },
     {
       id: demoIds.colleagueActor,

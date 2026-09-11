@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type postgres from "postgres";
@@ -15,21 +16,9 @@ import {
   type AdminConsoleAuditSink,
 } from "./console-shared.js";
 
-/**
- * Admin Console — Groups & Organizational Units.
- *
- *  - Org units form a tree (`parentId` -> another unit, NULL at the root).
- *  - Groups are flat membership collections (mailing lists / security groups).
- *  - Membership is the (group, actor) join with a per-member role.
- *
- * Routes are mounted under `/api/admin/groups` and `/api/admin/org-units`,
- * gated by `admin.console.read` / `admin.console.write`, and audited.
- */
+import { eligibleMailAddressDomains } from "./domain-identity.js";
 
-// --------------------------------------------------------------------------
-// Records
-// --------------------------------------------------------------------------
-
+type GroupPostingPolicy = "organization" | "anyone";
 type GroupKind = "group" | "security" | "mailing_list";
 type GroupMemberRole = "member" | "manager" | "owner";
 
@@ -52,6 +41,7 @@ export interface GroupRecord {
   readonly name: string;
   readonly email: string | null;
   readonly kind: GroupKind;
+  readonly postingPolicy: GroupPostingPolicy;
   readonly description: string;
   readonly orgUnitId: string | null;
   readonly memberCount: number;
@@ -67,10 +57,6 @@ export interface GroupMemberRecord {
   readonly role: GroupMemberRole;
   readonly createdAt: string;
 }
-
-// --------------------------------------------------------------------------
-// Store inputs
-// --------------------------------------------------------------------------
 
 export interface CreateOrgUnitInput {
   readonly orgId: string;
@@ -93,6 +79,7 @@ export interface CreateGroupInput {
   readonly name: string;
   readonly email: string | null;
   readonly kind: GroupKind;
+  readonly postingPolicy?: GroupPostingPolicy;
   readonly description: string;
   readonly orgUnitId: string | null;
   readonly createdBy: string;
@@ -104,6 +91,7 @@ export interface UpdateGroupInput {
   readonly name?: string | undefined;
   readonly email?: string | null | undefined;
   readonly kind?: GroupKind | undefined;
+  readonly postingPolicy?: GroupPostingPolicy;
   readonly description?: string | undefined;
   readonly orgUnitId?: string | null | undefined;
 }
@@ -116,10 +104,6 @@ export interface AddGroupMemberInput {
   readonly addedBy: string;
 }
 
-/**
- * Persistence contract. Implemented by {@link PostgresGroupsStore} (production)
- * and {@link InMemoryGroupsStore} (tests / offline).
- */
 interface GroupsStore {
   listOrgUnits(orgId: string): Promise<readonly OrgUnitRecord[]>;
   getOrgUnit(orgId: string, id: string): Promise<OrgUnitRecord | null>;
@@ -127,6 +111,7 @@ interface GroupsStore {
   updateOrgUnit(input: UpdateOrgUnitInput): Promise<OrgUnitRecord | null>;
   deleteOrgUnit(orgId: string, id: string): Promise<"deleted" | "not_found" | "has_children">;
 
+  eligibleDomains(orgId: string): ReturnType<typeof eligibleMailAddressDomains>;
   listGroups(orgId: string): Promise<readonly GroupRecord[]>;
   getGroup(orgId: string, id: string): Promise<GroupRecord | null>;
   createGroup(input: CreateGroupInput): Promise<GroupRecord>;
@@ -147,11 +132,8 @@ class GroupsConflictError extends Error {
   }
 }
 
-// --------------------------------------------------------------------------
-// Validation
-// --------------------------------------------------------------------------
-
 const uuid = z.string().uuid();
+const groupPostingPolicySchema = z.enum(["organization", "anyone"]);
 const groupKindSchema = z.enum(["group", "security", "mailing_list"]);
 const groupMemberRoleSchema = z.enum(["member", "manager", "owner"]);
 const nameSchema = z.string().trim().min(1).max(200);
@@ -181,6 +163,7 @@ const createGroupBody = z
     name: nameSchema,
     email: z.string().trim().email().max(320).nullable().default(null),
     kind: groupKindSchema.default("group"),
+    postingPolicy: groupPostingPolicySchema.default("organization"),
     description: descriptionSchema,
     orgUnitId: uuid.nullable().default(null),
   })
@@ -191,6 +174,7 @@ const updateGroupBody = z
     name: nameSchema.optional(),
     email: z.string().trim().email().max(320).nullable().optional(),
     kind: groupKindSchema.optional(),
+    postingPolicy: groupPostingPolicySchema.optional(),
     description: z.string().trim().max(2000).optional(),
     orgUnitId: uuid.nullable().optional(),
   })
@@ -209,38 +193,18 @@ const addMemberBody = z
 const idParams = z.object({ id: uuid });
 const groupMemberParams = z.object({ id: uuid, actorId: uuid });
 
-// --------------------------------------------------------------------------
-// Routes
-// --------------------------------------------------------------------------
-
 export interface RegisterAdminGroupsRoutesOptions {
   readonly store: GroupsStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly auditSink: AdminConsoleAuditSink;
 }
 
-/**
- * Register the Groups & OUs admin routes:
- *
- *   GET    /api/admin/org-units
- *   POST   /api/admin/org-units
- *   PATCH  /api/admin/org-units/:id
- *   DELETE /api/admin/org-units/:id
- *   GET    /api/admin/groups
- *   POST   /api/admin/groups
- *   PATCH  /api/admin/groups/:id
- *   DELETE /api/admin/groups/:id
- *   GET    /api/admin/groups/:id/members
- *   POST   /api/admin/groups/:id/members
- *   DELETE /api/admin/groups/:id/members/:actorId
- */
+/** Register audited groups and organization-unit administration. */
 export async function registerAdminGroupsRoutes(
   app: FastifyInstance,
   options: RegisterAdminGroupsRoutesOptions,
 ): Promise<void> {
   const { store, actorFromRequest, auditSink } = options;
-
-  // ---- Org units ----------------------------------------------------------
 
   app.get("/api/admin/org-units", async (request, reply) => {
     const actor = await actorFromRequest(request);
@@ -379,7 +343,12 @@ export async function registerAdminGroupsRoutes(
     return { status: "deleted" };
   });
 
-  // ---- Groups -------------------------------------------------------------
+  app.get("/api/admin/groups/eligible-domains", async (request, reply) => {
+    const actor = await actorFromRequest(request);
+    if (!canReadAdminConsole(actor, "admin.groups"))
+      return sendForbidden(reply, adminConsoleReadScope);
+    return { eligibleDomains: await store.eligibleDomains(actor.orgId) };
+  });
 
   app.get("/api/admin/groups", async (request, reply) => {
     const actor = await actorFromRequest(request);
@@ -413,6 +382,7 @@ export async function registerAdminGroupsRoutes(
         name: body.data.name,
         email: body.data.email,
         kind: body.data.kind,
+        postingPolicy: body.data.postingPolicy,
         description: body.data.description,
         orgUnitId: body.data.orgUnitId,
         createdBy: actor.id,
@@ -429,7 +399,7 @@ export async function registerAdminGroupsRoutes(
       verb: "admin.group.created",
       objectType: "admin_group",
       objectId: group.id,
-      metadata: { name: group.name, kind: group.kind },
+      metadata: { name: group.name, kind: group.kind, postingPolicy: group.postingPolicy },
     });
     return reply.code(201).send({ group });
   });
@@ -473,6 +443,9 @@ export async function registerAdminGroupsRoutes(
         ...(body.data.name === undefined ? {} : { name: body.data.name }),
         ...(body.data.email === undefined ? {} : { email: body.data.email }),
         ...(body.data.kind === undefined ? {} : { kind: body.data.kind }),
+        ...(body.data.postingPolicy === undefined
+          ? {}
+          : { postingPolicy: body.data.postingPolicy }),
         ...(body.data.description === undefined ? {} : { description: body.data.description }),
         ...(body.data.orgUnitId === undefined ? {} : { orgUnitId: body.data.orgUnitId }),
       });
@@ -524,8 +497,6 @@ export async function registerAdminGroupsRoutes(
     });
     return { status: "deleted" };
   });
-
-  // ---- Membership ---------------------------------------------------------
 
   app.get("/api/admin/groups/:id/members", async (request, reply) => {
     const actor = await actorFromRequest(request);
@@ -632,10 +603,6 @@ export async function registerAdminGroupsRoutes(
   });
 }
 
-// --------------------------------------------------------------------------
-// Postgres store
-// --------------------------------------------------------------------------
-
 interface OrgUnitRow {
   readonly id: string;
   readonly org_id: string;
@@ -655,6 +622,7 @@ interface GroupRow {
   readonly name: string;
   readonly email: string | null;
   readonly kind: GroupKind;
+  readonly posting_policy?: GroupPostingPolicy;
   readonly description: string;
   readonly org_unit_id: string | null;
   readonly member_count: string | number;
@@ -784,10 +752,14 @@ export class PostgresGroupsStore implements GroupsStore {
     }
   }
 
+  eligibleDomains(orgId: string): ReturnType<typeof eligibleMailAddressDomains> {
+    return eligibleMailAddressDomains(this.sql, orgId);
+  }
+
   async listGroups(orgId: string): Promise<readonly GroupRecord[]> {
     const rows = await this.sql<GroupRow[]>`
       select
-        g.id, g.org_id, g.name, g.email, g.kind, g.description, g.org_unit_id,
+        g.id, g.org_id, g.name, g.email, g.kind, g.posting_policy, g.description, g.org_unit_id,
         coalesce(count(a.id), 0) as member_count,
         g.created_at, g.updated_at
       from admin_groups g
@@ -804,7 +776,7 @@ export class PostgresGroupsStore implements GroupsStore {
   async getGroup(orgId: string, id: string): Promise<GroupRecord | null> {
     const rows = await this.sql<GroupRow[]>`
       select
-        g.id, g.org_id, g.name, g.email, g.kind, g.description, g.org_unit_id,
+        g.id, g.org_id, g.name, g.email, g.kind, g.posting_policy, g.description, g.org_unit_id,
         coalesce(count(a.id), 0) as member_count,
         g.created_at, g.updated_at
       from admin_groups g
@@ -818,6 +790,20 @@ export class PostgresGroupsStore implements GroupsStore {
     return row === undefined ? null : mapGroupRow(row);
   }
 
+  private async assertGroupAddress(orgId: string, email: string, id: string): Promise<void> {
+    try {
+      await this.sql`select helix_assert_directory_address(${orgId}, ${email}, 'group', ${id})`;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "23505")
+        throw new GroupsConflictError(
+          "This email address is already assigned to a user, alias, or group.",
+        );
+      if (error instanceof Error && "code" in error && error.code === "23514")
+        throw new GroupsConflictError("Choose a verified domain with mail and aliases enabled.");
+      throw error;
+    }
+  }
+
   async createGroup(input: CreateGroupInput): Promise<GroupRecord> {
     if (
       input.orgUnitId !== null &&
@@ -825,12 +811,14 @@ export class PostgresGroupsStore implements GroupsStore {
     ) {
       throw new GroupsConflictError("Org unit not found in this organization.");
     }
+    const id = randomUUID();
+    if (input.email !== null) await this.assertGroupAddress(input.orgId, input.email, id);
     const rows = await this.sql<GroupRow[]>`
-      insert into admin_groups (org_id, name, email, kind, description, org_unit_id, created_by)
-      values (${input.orgId}, ${input.name}, ${input.email}, ${input.kind},
+      insert into admin_groups (id, org_id, name, email, kind, posting_policy, description, org_unit_id, created_by)
+      values (${id}, ${input.orgId}, ${input.name}, ${input.email}, ${input.kind}, ${input.postingPolicy ?? "organization"},
               ${input.description}, ${input.orgUnitId}, ${input.createdBy})
       on conflict do nothing
-      returning id, org_id, name, email, kind, description, org_unit_id,
+      returning id, org_id, name, email, kind, posting_policy, description, org_unit_id,
                 0 as member_count, created_at, updated_at
     `;
     const row = rows[0];
@@ -852,16 +840,19 @@ export class PostgresGroupsStore implements GroupsStore {
     ) {
       throw new GroupsConflictError("Org unit not found in this organization.");
     }
+    if (input.email !== undefined && input.email !== null)
+      await this.assertGroupAddress(input.orgId, input.email, input.id);
     const rows = await this.sql<GroupRow[]>`
       update admin_groups
       set name = ${input.name ?? existing.name},
           email = ${input.email === undefined ? existing.email : input.email},
           kind = ${input.kind ?? existing.kind},
+          posting_policy = ${input.postingPolicy ?? existing.postingPolicy},
           description = ${input.description ?? existing.description},
           org_unit_id = ${input.orgUnitId === undefined ? existing.orgUnitId : input.orgUnitId},
           updated_at = now()
       where org_id = ${input.orgId} and id = ${input.id}
-      returning id, org_id, name, email, kind, description, org_unit_id,
+      returning id, org_id, name, email, kind, posting_policy, description, org_unit_id,
                 0 as member_count, created_at, updated_at
     `;
     const row = rows[0];
@@ -954,6 +945,7 @@ function mapGroupRow(row: GroupRow): GroupRecord {
     name: row.name,
     email: row.email,
     kind: row.kind,
+    postingPolicy: row.posting_policy ?? "organization",
     description: row.description,
     orgUnitId: row.org_unit_id,
     memberCount: Number(row.member_count),
@@ -973,10 +965,6 @@ function mapGroupMemberRow(row: GroupMemberRow): GroupMemberRecord {
   };
 }
 
-// --------------------------------------------------------------------------
-// In-memory store (tests / offline)
-// --------------------------------------------------------------------------
-
 interface MemOrgUnit {
   id: string;
   orgId: string;
@@ -993,16 +981,13 @@ interface MemGroup {
   name: string;
   email: string | null;
   kind: GroupKind;
+  postingPolicy: GroupPostingPolicy;
   description: string;
   orgUnitId: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-/**
- * Deterministic in-memory {@link GroupsStore}. IDs are supplied so tests stay
- * stable; `now` defaults to a fixed clock.
- */
 export class InMemoryGroupsStore implements GroupsStore {
   readonly #orgUnits = new Map<string, MemOrgUnit>();
   readonly #groups = new Map<string, MemGroup>();
@@ -1090,6 +1075,7 @@ export class InMemoryGroupsStore implements GroupsStore {
       name: group.name,
       email: group.email,
       kind: group.kind,
+      postingPolicy: group.postingPolicy,
       description: group.description,
       orgUnitId: group.orgUnitId,
       memberCount: this.#members.filter((member) => member.groupId === group.id).length,
@@ -1185,6 +1171,10 @@ export class InMemoryGroupsStore implements GroupsStore {
     return "deleted";
   }
 
+  eligibleDomains(): ReturnType<typeof eligibleMailAddressDomains> {
+    return Promise.resolve([]);
+  }
+
   async listGroups(orgId: string): Promise<readonly GroupRecord[]> {
     return [...this.#groups.values()]
       .filter((group) => group.orgId === orgId)
@@ -1215,6 +1205,7 @@ export class InMemoryGroupsStore implements GroupsStore {
       name: input.name,
       email: input.email,
       kind: input.kind,
+      postingPolicy: input.postingPolicy ?? "organization",
       description: input.description,
       orgUnitId: input.orgUnitId,
       createdAt: now,
@@ -1245,6 +1236,7 @@ export class InMemoryGroupsStore implements GroupsStore {
     if (input.kind !== undefined) {
       group.kind = input.kind;
     }
+    if (input.postingPolicy !== undefined) group.postingPolicy = input.postingPolicy;
     if (input.description !== undefined) {
       group.description = input.description;
     }

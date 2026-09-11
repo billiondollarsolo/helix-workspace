@@ -61,12 +61,27 @@ vi.mock("@/components/shell", () => ({
   ),
 }));
 
-vi.mock("./api", () => ({
+vi.mock("./api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./api")>()),
   streamAssistantChat: (
     input: { readonly conversationId?: string; readonly message: string },
     callbacks: AssistantChatStreamCallbacks,
   ) => streamAssistantChatMock(input, callbacks),
   listAssistantConversations: () => listAssistantConversationsMock(),
+  listAssistantTools: () =>
+    Promise.resolve({ groups: [{ id: "mail", label: "Mail", count: 4, defaultEnabled: true }] }),
+  listAssistantModels: () =>
+    Promise.resolve({
+      models: [{ id: "groq/llama", label: "Llama", providerId: "groq", model: "llama" }],
+      defaultModelId: "groq/llama",
+    }),
+  getAssistantConversation: () =>
+    Promise.resolve({
+      messages: [
+        { id: "saved-user", role: "user", content: "Previous question" },
+        { id: "saved-assistant", role: "assistant", content: "Persisted answer" },
+      ],
+    }),
   setAssistantConversationPinned: (input: {
     readonly conversationId: string;
     readonly pinned: boolean;
@@ -294,6 +309,42 @@ describe("AssistantSurface", () => {
     expect(text).toContain("Catch me up on mail");
   });
 
+  it("shows tool progress and failed outcomes without losing the retry draft", async () => {
+    let failTurn: (reason: Error) => void = () => undefined;
+    let streamCallbacks: AssistantChatStreamCallbacks | undefined;
+    streamAssistantChatMock.mockImplementation((_input, callbacks) => {
+      streamCallbacks = callbacks;
+      callbacks.onTool?.({ toolCallId: "search-1", toolId: "web.search", status: "running" });
+      return new Promise((_resolve, reject) => {
+        failTurn = reject;
+      });
+    });
+    render();
+    await flush();
+    setComposerValue("Find a public source");
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')?.click());
+    await flush();
+    expect(container.querySelector('[aria-label="Tool activity"]')?.textContent).toContain(
+      "Running",
+    );
+    act(() => {
+      streamCallbacks?.onTool?.({
+        toolCallId: "search-1",
+        toolId: "web.search",
+        status: "failed",
+        error: "Search timed out.",
+      });
+      failTurn(new Error("Try the search again."));
+    });
+    await flush();
+    expect(container.querySelectorAll('[aria-label="Tool activity"] li')).toHaveLength(1);
+    expect(container.querySelector('[aria-label="Tool activity"]')?.textContent).toContain(
+      "Search timed out.",
+    );
+    expect(container.textContent).toContain("Try the search again.");
+    expect(textarea().value).toBe("Find a public source");
+  });
+
   it("streams an assistant reply and hydrates persisted history from the turn", async () => {
     streamAssistantChatMock.mockImplementation((_input, callbacks) => {
       callbacks.onDelta("Hello ");
@@ -361,7 +412,8 @@ describe("AssistantSurface", () => {
     act(() => {
       threadButton?.click();
     });
-    expect(container.textContent ?? "").toContain("Conversation reopened");
+    await flush();
+    expect(container.textContent ?? "").toContain("Persisted answer");
 
     setComposerValue("continue please");
     act(() => {
@@ -489,7 +541,7 @@ describe("AssistantSurface", () => {
     expect(streamAssistantChatMock).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the friendly fallback message when the assistant request fails", async () => {
+  it("keeps the draft and displays the backend error when the request fails", async () => {
     streamAssistantChatMock.mockRejectedValue(new Error("network down"));
     render();
     await flush();
@@ -498,7 +550,35 @@ describe("AssistantSurface", () => {
       textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     await flush();
-    expect(container.textContent ?? "").toContain("Configure a provider in Settings");
+    expect(container.textContent ?? "").toContain("network down");
+    expect(textarea().value).toBe("summarize my inbox");
+  });
+
+  it("keeps incremental text visible while streaming and stops without losing the partial response", async () => {
+    streamAssistantChatMock.mockImplementation((_input, callbacks) => {
+      callbacks.onDelta("Partial response");
+      return new Promise((_resolve, reject) =>
+        callbacks.signal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        }),
+      );
+    });
+    render();
+    await flush();
+    setComposerValue("Keep this draft");
+    act(() => {
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flush();
+    expect(container.textContent).toContain("Partial response");
+    act(() => {
+      buttonByText("Stop response")?.click();
+    });
+    await flush();
+    expect(container.textContent).toContain("Partial response");
+    expect(container.textContent).toContain("Response stopped.");
+    expect(textarea().value).toBe("Keep this draft");
+    expect(buttonByText("Stop response")).toBeUndefined();
   });
 
   it("shows an unavailable notice when the conversation list is unreachable", async () => {

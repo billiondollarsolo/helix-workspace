@@ -4,6 +4,7 @@
    surfaces all project from. */
 
 import { authenticatedFetch } from "@/lib/auth";
+import { responseError } from "@/lib/tool-call";
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 export interface AdminUser {
@@ -123,16 +124,12 @@ export async function listAdminUsers(
   const response = await authenticatedFetch(`/api/admin/users?${params.toString()}`);
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(errorMessageFromOutput(output) ?? `Admin users failed with ${response.status}`);
+    throw responseError(response, output, "Admin users");
   }
   if (!isAdminUsersListResponse(output)) {
     throw new Error("Admin users response was missing required fields.");
   }
   return output;
-}
-
-function errorMessageFromOutput(output: unknown): string | undefined {
-  return isRecord(output) && typeof output.error === "string" ? output.error : undefined;
 }
 
 function appendParam(params: URLSearchParams, key: string, value: string | undefined): void {

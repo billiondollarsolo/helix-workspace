@@ -24,7 +24,8 @@ describe("PostgresMailStore raw source", () => {
       [],
       [],
       [{ id: threadId }],
-      [{ id: messageId }],
+      [],
+      [], // canonical identity
       [{ id: objectId }],
       [],
       [{ actor_id: actorId }],
@@ -35,7 +36,7 @@ describe("PostgresMailStore raw source", () => {
       storageResolver: async () => ({ client: storage, managedBy: "helix-default", prefix: "" }),
     });
 
-    await store.insertInboundMessage({
+    const { messageId: storedMessageId } = await store.insertInboundMessage({
       orgId,
       actorId: null,
       mailboxActorIds: [actorId],
@@ -47,7 +48,7 @@ describe("PostgresMailStore raw source", () => {
       rawSource: source,
     });
 
-    const expectedKey = `mail/sources/${messageId}/${source.sha256}.eml`;
+    const expectedKey = `mail/sources/${storedMessageId}/${source.sha256}.eml`;
     expect(storage.puts).toHaveLength(1);
     expect(storage.puts[0]).toMatchObject({
       key: expectedKey,
@@ -55,7 +56,7 @@ describe("PostgresMailStore raw source", () => {
       contentType: "message/rfc822",
       metadata: {
         objectId,
-        messageId,
+        messageId: storedMessageId,
         sha256: source.sha256,
         parser: source.parser,
         projectionVersion: "1",

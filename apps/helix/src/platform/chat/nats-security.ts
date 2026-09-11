@@ -61,7 +61,8 @@ export function createChatNatsSecurityPolicy(
     connection: {
       ...(servers.length === 0 ? {} : { servers }),
       name: "helix-chat",
-      noEcho: true,
+      // Publishers and local WebSocket/SSE subscribers share this connection.
+      noEcho: false,
       reconnect: true,
       maxReconnectAttempts: -1,
       ...(user === undefined ? {} : { user, pass: pass as string }),

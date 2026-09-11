@@ -1,11 +1,16 @@
 import { envFlag } from "../bootstrap/env.js";
 import { createSearchEngine } from "../bootstrap/search.js";
-import { createConfiguredVectorStore, EnrichmentWorker } from "../platform/ai/index.js";
-import { createSemanticSearchEmbeddingProvider } from "../platform/ai/providers/factory.js";
+import { EnrichmentWorker } from "../platform/ai/index.js";
+import { SemanticSearchRuntime } from "../platform/search/semantic-runtime.js";
+import { resolveSearchSourceDocument } from "../platform/search/source-documents.js";
 import { registerCalendarIndexer } from "../platform/calendar/index.js";
 import { registerCardDavIndexer } from "../platform/carddav/index.js";
 import { registerChatEnrichments, registerChatIndexer } from "../platform/chat/index.js";
-import { registerDriveEnrichments, registerDriveIndexer } from "../platform/drive/index.js";
+import {
+  driveRecordToIndexDocument,
+  registerDriveEnrichments,
+  registerDriveIndexer,
+} from "../platform/drive/index.js";
 import { registerMailEnrichments, registerMailIndexer } from "../platform/mail/index.js";
 import {
   authorizeWorkspaceSearchHit,
@@ -18,7 +23,6 @@ import {
   SearchReconciliationWorker,
   SearchReindexService,
   SearchShadowReindexWorker,
-  SemanticSearchEngine,
 } from "../platform/search/index.js";
 import type { installStorage } from "./storage.js";
 
@@ -41,31 +45,48 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
   } = context;
   const searchEngine = await createSearchEngine(bootEnv.HELIX_REGION);
 
-  const semanticEmbeddingProvider = createSemanticSearchEmbeddingProvider(
-    runtimeConfiguration.current.ai,
-  );
-
-  const vectorStore = createConfiguredVectorStore(runtimeConfiguration.current.ai, { sql });
-
+  const semanticSearchRuntime = new SemanticSearchRuntime({
+    sql,
+    getConfig: () => runtimeConfiguration.current,
+    classifications: context.resourceClassificationService,
+    loadDocument: async (document) => {
+      if (document.type !== "drive") return document;
+      const fileId = document.attributes?.fileId;
+      if (typeof fileId !== "string") return null;
+      const record = await driveStore.getDriveSearchRecord(fileId, true);
+      return record === null || record.orgId !== document.attributes?.orgId
+        ? null
+        : driveRecordToIndexDocument(record);
+    },
+    resolveDocument: (request, hit) =>
+      resolveSearchSourceDocument(
+        {
+          mail: mailStore,
+          drive: { getDriveSearchRecord: (id) => driveStore.getDriveSearchRecord(id, true) },
+          chat: chatStore,
+          calendar: calendarStore,
+        },
+        request,
+        hit,
+      ),
+  });
   const projectedSearchEngine =
-    searchEngine !== undefined &&
-    semanticEmbeddingProvider !== undefined &&
-    vectorStore !== undefined
-      ? new SemanticSearchEngine({
-          keyword: searchEngine,
-          embeddings: semanticEmbeddingProvider,
-          vectorStore,
-        })
-      : searchEngine;
+    searchEngine === undefined ? undefined : semanticSearchRuntime.wrap(searchEngine);
 
   const runtimeSearchEngine =
     projectedSearchEngine === undefined
       ? undefined
       : new AuthorizingSearchEngine({
           engine: projectedSearchEngine,
+          hydrate: (request, hit) => semanticSearchRuntime.classifyHit(request, hit),
           authorize: (request, hit) =>
             authorizeWorkspaceSearchHit(
-              { chat: chatStore, contacts: cardDavContactStore },
+              {
+                chat: chatStore,
+                contacts: cardDavContactStore,
+                mail: mailStore,
+                drive: driveStore,
+              },
               request,
               hit,
             ),
@@ -124,7 +145,12 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
       : new SearchShadowReindexWorker({
           store: searchDurabilityStore,
           sources: searchSources,
-          shadowEngine: (uid) => searchEngine.forIndex(uid),
+          shadowEngine: (uid) => {
+            const keyword = searchEngine.forIndex(uid);
+            return Object.assign(semanticSearchRuntime.wrap(keyword), {
+              ensureIndex: () => keyword.ensureIndex(),
+            });
+          },
           swap: (uid) => searchEngine.swapWith(uid),
           onError: (error) => {
             app.log.error({ error }, "Shadow search reindex failed");
@@ -231,6 +257,7 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
     ...context,
     searchEngine,
     projectedSearchEngine,
+    semanticSearchRuntime,
     runtimeSearchEngine,
     searchReindexJobService,
     searchEventIndexer,

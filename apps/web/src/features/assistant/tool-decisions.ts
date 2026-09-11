@@ -4,7 +4,7 @@ import {
   type AssistantToolDecisionResult,
 } from "./api";
 
-export type ToolStatus = "pending" | "confirmed" | "cancelled" | "running";
+export type ToolStatus = "pending" | "confirmed" | "cancelled" | "running" | "failed";
 
 export interface ApplyAssistantToolDecisionInput {
   readonly conversationId: string;
@@ -34,6 +34,7 @@ export async function applyAssistantToolDecision({
       pendingId: pendingId ?? toolCallId,
       decision,
     });
+    if (result.error !== undefined) setToolError(toolCallId, result.error);
     setToolStatus(toolCallId, result.status);
     return result;
   } catch (error) {

@@ -47,6 +47,35 @@ describe("Tenant API RPS limiters", () => {
     });
   });
 
+  it("keeps actor buckets independent and honors their full window and reset", async () => {
+    const limiter = new InMemoryTenantApiRpsLimiter();
+    const at = new Date("2026-09-10T12:00:00Z");
+    const input = { orgId, limit: 1, windowMs: 10_000, bucket: "browser:alice:app", at };
+    await limiter.consume(input);
+    await expect(
+      limiter.consume({ ...input, at: new Date(at.getTime() + 1_000) }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      retryAfterSeconds: 9,
+      resetsAt: "2026-09-10T12:00:10.000Z",
+    });
+    await expect(limiter.consume({ ...input, bucket: "browser:bob:app" })).resolves.toMatchObject({
+      allowed: true,
+    });
+    await expect(
+      limiter.consume({ ...input, bucket: "browser:alice:admin" }),
+    ).resolves.toMatchObject({ allowed: true });
+    await expect(limiter.consume({ orgId, limit: 1, at })).resolves.toMatchObject({
+      allowed: true,
+    });
+    await expect(
+      limiter.consume({ ...input, at: new Date(at.getTime() + 10_000) }),
+    ).resolves.toMatchObject({ allowed: true, used: 1 });
+    limiter.reset(orgId);
+    await expect(limiter.consume(input)).resolves.toMatchObject({ allowed: true, used: 1 });
+    await expect(limiter.consume({ ...input, windowMs: 0 })).rejects.toThrow("windowMs");
+  });
+
   it("rejects invalid tenant API RPS limits", () => {
     expect(() => normalizeApiRpsLimit(-1)).toThrow("api_rps_limit");
     expect(() => normalizeApiRpsLimit(1.5)).toThrow("api_rps_limit");
@@ -97,5 +126,31 @@ describe("Tenant API RPS limiters", () => {
     expect(calls[0]?.[6]).toEqual(expect.stringMatching(/^1779624000000:/u));
     expect(calls[1]?.[6]).toEqual(expect.stringMatching(/^1779624000000:/u));
     expect(calls[0]?.[6]).not.toBe(calls[1]?.[6]);
+  });
+
+  it("keeps Redis browser buckets within the org hash slot with a ten-second window", async () => {
+    const calls: unknown[][] = [];
+    const limiter = new RedisTenantApiRpsLimiter({
+      async eval(...args: unknown[]) {
+        calls.push(args);
+        return [0, 120, 8];
+      },
+    });
+    await expect(
+      limiter.consume({
+        orgId,
+        limit: 120,
+        bucket: "browser:alice:admin",
+        windowMs: 10_000,
+        at: new Date("2026-09-10T12:00:00Z"),
+      }),
+    ).resolves.toMatchObject({
+      allowed: false,
+      retryAfterSeconds: 8,
+      resetsAt: "2026-09-10T12:00:08.000Z",
+    });
+    expect(calls[0]?.[2]).toBe(`helix:tenant-api-rps:{${orgId}}:browser%3Aalice%3Aadmin`);
+    expect(calls[0]?.[4]).toBe(10_000);
+    expect(calls[0]?.[5]).toBe(120);
   });
 });

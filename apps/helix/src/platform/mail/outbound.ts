@@ -61,7 +61,7 @@ export interface MailSendServiceOptions {
 }
 
 export interface OutboundMailWorkerOptions {
-  readonly store: OutboundMailQueueStore;
+  readonly store: Pick<OutboundMailQueueStore, "claimDueOutbound">;
   readonly dispatcher: OutboundMailDispatcher;
   readonly owner?: string;
   readonly leaseMs?: number;
@@ -85,6 +85,8 @@ export interface QueueMailInput {
 }
 
 export interface OutboundDispatchOptions {
+  /** Short database phases; transport I/O runs after their transactions commit. */
+  readonly runForTenant?: <T>(orgId: string, operation: () => Promise<T>) => Promise<T>;
   /**
    * Called when a dispatch attempt finds nothing to do.
    *
@@ -285,6 +287,7 @@ export class MailSendService {
       ...(input.references === undefined ? {} : { references: input.references }),
     });
     return this.options.store.createOutbound({
+      senderAuthenticated: true,
       orgId: input.orgId,
       actorId: input.actorId,
       ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
@@ -347,6 +350,7 @@ export class OutboundMailDispatcher {
   private readonly resolveAttachment: AttachmentObjectResolver | undefined;
   private readonly metrics: OutboundDispatchOptions["metrics"];
   private readonly suppressionStore: OutboundDispatchOptions["suppressionStore"];
+  private readonly runForTenant: NonNullable<OutboundDispatchOptions["runForTenant"]>;
 
   constructor(
     private readonly store: OutboundMailQueueStore,
@@ -361,6 +365,7 @@ export class OutboundMailDispatcher {
     this.resolveAttachment = options.resolveAttachment;
     this.metrics = options.metrics;
     this.suppressionStore = options.suppressionStore;
+    this.runForTenant = options.runForTenant ?? ((_orgId, operation) => operation());
   }
 
   async dispatch(outbound: ClaimedOutboundMail): Promise<MailOutboundRecord | null> {
@@ -389,14 +394,27 @@ export class OutboundMailDispatcher {
             span.setAttribute("helix.mail.attempt", outbound.attemptCount);
             let delivery: MailOutboundDeliveryResult;
             try {
+              if (outbound.deliveryMetadata.senderAuthenticated === true) {
+                const authorized = await this.runForTenant(outbound.orgId, async () =>
+                  this.store.resolveAuthorizedSender?.(
+                    outbound.orgId,
+                    outbound.actorId,
+                    outbound.envelope.from.address,
+                  ),
+                );
+                if (authorized == null)
+                  throw new MailDeliveryError(
+                    "The sender address is no longer authorized; choose a current sending address and send again.",
+                    false,
+                  );
+              }
               const recipients = [
                 ...outbound.envelope.to,
                 ...outbound.envelope.cc,
                 ...outbound.envelope.bcc,
               ].map((recipient) => normalizeMailboxAddress(recipient.address).address);
-              const suppressed = await this.suppressionStore?.findActiveSuppressions(
-                outbound.orgId,
-                recipients,
+              const suppressed = await this.runForTenant(outbound.orgId, async () =>
+                this.suppressionStore?.findActiveSuppressions(outbound.orgId, recipients),
               );
               if (suppressed !== undefined && suppressed.length > 0) {
                 throw new MailProviderConfigurationError(
@@ -420,11 +438,13 @@ export class OutboundMailDispatcher {
               if (outbound.attemptCount >= this.maxAttempts || isTerminalDeliveryError(error)) {
                 span.setAttribute("helix.mail.delivery_status", "dead_lettered");
                 recordDelivery("error");
-                return await this.store.markOutboundDeadLettered({
-                  id: outbound.id,
-                  leaseToken: outbound.leaseToken,
-                  lastError: new MailProviderError(message, error).message,
-                });
+                return await this.runForTenant(outbound.orgId, () =>
+                  this.store.markOutboundDeadLettered({
+                    id: outbound.id,
+                    leaseToken: outbound.leaseToken,
+                    lastError: new MailProviderError(message, error).message,
+                  }),
+                );
               }
               const delay = computeBackoffMs(
                 outbound.attemptCount,
@@ -435,21 +455,25 @@ export class OutboundMailDispatcher {
               span.setAttribute("helix.mail.delivery_status", "retry");
               span.setAttribute("helix.mail.next_delay_ms", delay);
               recordDelivery("retry");
-              return await this.store.markOutboundRetry({
-                id: outbound.id,
-                leaseToken: outbound.leaseToken,
-                nextAttemptAt: new Date(this.now().getTime() + delay),
-                lastError: message,
-              });
+              return await this.runForTenant(outbound.orgId, () =>
+                this.store.markOutboundRetry({
+                  id: outbound.id,
+                  leaseToken: outbound.leaseToken,
+                  nextAttemptAt: new Date(this.now().getTime() + delay),
+                  lastError: message,
+                }),
+              );
             }
             span.setAttribute("helix.mail.delivery_status", "sent");
             recordDelivery("success");
-            return await this.store.markOutboundSent({
-              id: outbound.id,
-              leaseToken: outbound.leaseToken,
-              providerMessageId: delivery.providerMessageId,
-              deliveryMetadata: delivery.deliveryMetadata,
-            });
+            return await this.runForTenant(outbound.orgId, () =>
+              this.store.markOutboundSent({
+                id: outbound.id,
+                leaseToken: outbound.leaseToken,
+                providerMessageId: delivery.providerMessageId,
+                deliveryMetadata: delivery.deliveryMetadata,
+              }),
+            );
           } finally {
             span.end();
           }

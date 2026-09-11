@@ -186,6 +186,113 @@ describe("AdminSecurity", () => {
     expect(container.textContent).toContain("Enforcement");
   });
 
+  it("saves solo-operator safeguards independently and preserves a failed draft", async () => {
+    let saved = {
+      ...policy("mfa", true, "required"),
+      settings: {
+        adminMfa: "tier_default",
+        sensitiveActionMfaRequired: true,
+        secondAdminApprovalRequired: true,
+      },
+      effectiveControls: {
+        adminMfaRequired: true,
+        sensitiveActionMfaRequired: true,
+        secondAdminApprovalRequired: true,
+        adminMfaSource: "tier",
+      },
+    };
+    const writes: unknown[] = [];
+    vi.mocked(fetch).mockImplementation((_url, init) => {
+      if (init?.method === "PUT") {
+        const body = JSON.parse(typeof init.body === "string" ? init.body : "{}") as typeof saved;
+        writes.push(body);
+        if (writes.length === 1)
+          return Promise.resolve(
+            Response.json(
+              { error: { message: "Sign in again before changing administrator safeguards." } },
+              { status: 403 },
+            ),
+          );
+        saved = {
+          ...saved,
+          ...body,
+          effectiveControls: {
+            adminMfaRequired: false,
+            sensitiveActionMfaRequired: false,
+            secondAdminApprovalRequired: false,
+            adminMfaSource: "policy",
+          },
+        };
+        return Promise.resolve(Response.json({ policy: saved }));
+      }
+      return Promise.resolve(Response.json({ policies: [saved] }));
+    });
+    routerSearch.current = { policy: "mfa" };
+    await render();
+    await waitFor(() =>
+      expect(container.querySelector('[aria-label="Administrator MFA"]')).not.toBeNull(),
+    );
+    const select = container.querySelector<HTMLSelectElement>('[aria-label="Administrator MFA"]')!;
+    await act(() => {
+      select.value = "optional";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return Promise.resolve();
+    });
+    const checkbox = (label: string) =>
+      [...container.querySelectorAll("label")]
+        .find((item) => item.textContent?.trim() === label)
+        ?.querySelector("input");
+    await act(() => {
+      checkbox("Require recent MFA for sensitive actions")?.click();
+      checkbox("Require a second administrator for sensitive actions")?.click();
+      return Promise.resolve();
+    });
+    const save = () =>
+      [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === "Save policy",
+      )!;
+    await act(() => {
+      save().click();
+      return Promise.resolve();
+    });
+    await waitFor(() => expect(container.textContent).toContain("Sign in again before changing"));
+    expect(select.value).toBe("optional");
+    expect(checkbox("Require recent MFA for sensitive actions")?.checked).toBe(false);
+    await act(() => {
+      save().click();
+      return Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(container.querySelector('[aria-label="Administrator MFA"]')).toBeNull(),
+    );
+    expect(writes).toEqual([
+      {
+        enabled: true,
+        enforcement: "required",
+        settings: {
+          adminMfa: "optional",
+          sensitiveActionMfaRequired: false,
+          secondAdminApprovalRequired: false,
+        },
+      },
+      {
+        enabled: true,
+        enforcement: "required",
+        settings: {
+          adminMfa: "optional",
+          sensitiveActionMfaRequired: false,
+          secondAdminApprovalRequired: false,
+        },
+      },
+    ]);
+    await waitFor(() =>
+      expect(
+        container.querySelector('dl[aria-label="Effective administrator safeguards"]')?.textContent,
+      ).toContain("Optional (policy)"),
+    );
+    expect(container.textContent).toContain("Not required");
+  });
+
   it("renders honest chips from runtimeStatus (Required only when enforced)", async () => {
     await render();
 

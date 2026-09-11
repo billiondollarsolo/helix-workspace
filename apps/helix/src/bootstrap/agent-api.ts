@@ -76,7 +76,15 @@ export async function installAgentApi(context: Awaited<ReturnType<typeof install
     credentialStore: agentCredentialStore,
     ...(sessionActorResolver === undefined ? {} : { sessionResolver: sessionActorResolver }),
     onError: (error) => {
-      app.log.error({ error }, "Assistant SSE stream error");
+      app.log.error(
+        {
+          err:
+            error instanceof Error
+              ? { type: error.name, message: error.message, stack: error.stack }
+              : undefined,
+        },
+        "Assistant SSE stream error",
+      );
     },
   });
 

@@ -2,7 +2,7 @@ import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
 
 export type AssistantToolDecision = "confirm" | "cancel";
-type AssistantToolDecisionStatus = "confirmed" | "cancelled";
+type AssistantToolDecisionStatus = "confirmed" | "cancelled" | "failed";
 
 export interface AssistantToolDecisionInput {
   readonly conversationId: string;
@@ -12,6 +12,8 @@ export interface AssistantToolDecisionInput {
 
 export interface AssistantToolDecisionResult {
   readonly status: AssistantToolDecisionStatus;
+  readonly turn?: AssistantTurnResponseWithPendingConfirmations;
+  readonly error?: string;
 }
 
 export interface AssistantMemoryForgetResult {
@@ -34,7 +36,77 @@ export interface AssistantTurnToolCall {
   readonly toolId: string;
   readonly input?: Record<string, unknown>;
   readonly status?: string;
+  readonly error?: string;
   readonly pending?: AssistantTurnPendingConfirmation;
+}
+
+export interface AssistantAttachment {
+  readonly objectId: string;
+  readonly name: string;
+  readonly mimeType: string;
+  readonly byteSize: number;
+}
+
+export interface AssistantToolActivity {
+  readonly toolCallId: string;
+  readonly toolId: string;
+  readonly status: "running" | "executed" | "failed" | "skipped" | "pending_confirmation";
+  readonly error?: string;
+}
+export interface AssistantSource {
+  readonly id: string;
+  readonly type: string;
+  readonly title?: string;
+  readonly url?: string;
+}
+export interface AssistantToolGroups {
+  readonly groups: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly count: number;
+    readonly defaultEnabled: boolean;
+  }[];
+}
+export function listAssistantTools(): Promise<AssistantToolGroups> {
+  return callAssistantTool<AssistantToolGroups>("assistant.tools.list", {});
+}
+
+export interface AssistantChatInput {
+  readonly conversationId?: string;
+  readonly editMessageId?: string;
+  readonly webSearch?: boolean;
+  readonly toolGroups?: readonly string[];
+  readonly message: string;
+  readonly memoryOptIn?: boolean;
+  readonly modelId?: string;
+  readonly attachmentObjectIds?: readonly string[];
+}
+
+export interface AssistantModels {
+  readonly webSearchEnabled?: boolean;
+  readonly models: readonly {
+    readonly id: string;
+    readonly label: string;
+    readonly providerId: string;
+    readonly model: string;
+  }[];
+  readonly defaultModelId?: string;
+}
+
+export function listAssistantModels(): Promise<AssistantModels> {
+  return callAssistantTool<AssistantModels>("assistant.models.list", {}).then((output) => ({
+    ...output,
+    models: Array.isArray(output.models) ? output.models : [],
+  }));
+}
+
+export function getAssistantConversation(
+  conversationId: string,
+): Promise<AssistantTurnResponseWithPendingConfirmations> {
+  return callAssistantTool<AssistantTurnResponseWithPendingConfirmations>(
+    "assistant.conversation.get",
+    { conversationId },
+  );
 }
 
 export interface AssistantTurnResponseWithPendingConfirmations {
@@ -57,12 +129,7 @@ export interface AssistantTurnResponseWithPendingConfirmations {
     };
     readonly metadata?: Record<string, unknown>;
   };
-  readonly sources?: readonly {
-    readonly id: string;
-    readonly type: string;
-    readonly title?: string;
-    readonly url?: string;
-  }[];
+  readonly sources?: readonly AssistantSource[];
   readonly toolCalls?: readonly AssistantTurnToolCall[];
   readonly pendingConfirmations?: readonly AssistantTurnPendingConfirmation[];
   /** Full persisted conversation history after the turn (newest last). */
@@ -71,6 +138,11 @@ export interface AssistantTurnResponseWithPendingConfirmations {
     readonly conversationId?: string;
     readonly role: "system" | "user" | "assistant" | "tool";
     readonly content: string;
+    readonly attachments?: readonly AssistantAttachment[];
+    readonly sources?: readonly AssistantSource[];
+    readonly toolActivity?: readonly AssistantToolActivity[];
+    readonly toolGroups?: readonly string[];
+    readonly webSearch?: boolean;
     readonly createdAt?: string;
   }[];
 }
@@ -101,17 +173,29 @@ export async function decideAssistantToolCall(
     );
   }
 
+  if (
+    !isRecord(output) ||
+    !isRecord(output.conversation) ||
+    typeof output.conversation.id !== "string" ||
+    !isRecord(output.response) ||
+    typeof output.response.content !== "string" ||
+    !Array.isArray(output.messages)
+  ) {
+    throw new Error(
+      "Could not read the action result. Reopen the conversation to check its outcome.",
+    );
+  }
+  const turn = output as AssistantTurnResponseWithPendingConfirmations;
+  const failed = turn.toolCalls?.find((call) => call.status === "failed");
   return {
-    status: statusFromOutput(output) ?? statusFromDecision(input.decision),
+    status: failed === undefined ? statusFromDecision(input.decision) : "failed",
+    turn,
+    ...(failed === undefined ? {} : { error: failed.error ?? "The approved action failed." }),
   };
 }
 
 export async function sendAssistantChat(
-  input: {
-    readonly conversationId?: string;
-    readonly message: string;
-    readonly memoryOptIn?: boolean;
-  },
+  input: AssistantChatInput,
   fetchImpl: AssistantToolDecisionFetch = authenticatedFetch,
 ): Promise<AssistantTurnResponseWithPendingConfirmations> {
   const response = await fetchImpl("/api/tools/assistant.chat", {
@@ -119,10 +203,18 @@ export async function sendAssistantChat(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       message: input.message,
+      metadata: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
       ...(isAssistantBackendConversationId(input.conversationId)
         ? { conversationId: input.conversationId }
         : {}),
       ...(input.memoryOptIn === undefined ? {} : { memoryOptIn: input.memoryOptIn }),
+      ...(input.modelId === undefined ? {} : { modelId: input.modelId }),
+      ...(input.editMessageId === undefined ? {} : { editMessageId: input.editMessageId }),
+      ...(input.webSearch === undefined ? {} : { webSearch: input.webSearch }),
+      ...(input.toolGroups === undefined ? {} : { toolGroups: input.toolGroups }),
+      ...(input.attachmentObjectIds === undefined
+        ? {}
+        : { attachmentObjectIds: input.attachmentObjectIds }),
     }),
   });
   const output: unknown = await response.json().catch(() => ({}));
@@ -139,35 +231,34 @@ export async function sendAssistantChat(
 export interface AssistantChatStreamCallbacks {
   /** Invoked for each incremental text fragment as it arrives. */
   readonly onDelta: (text: string) => void;
+  readonly onTool?: (activity: AssistantToolActivity) => void;
+  readonly signal?: AbortSignal;
 }
 
-/**
- * Sends an assistant chat message and reports the response incrementally.
- *
- * When the backend responds with `text/event-stream` the body is parsed as
- * Server-Sent Events and each `delta` event is forwarded to `onDelta` as it
- * arrives. When the backend responds with plain JSON (today's tool endpoint)
- * the final text is revealed progressively so the UI still renders
- * incrementally. Either way the resolved value is the complete turn.
- */
+/** Streams real deltas; JSON responses are returned as a single complete turn. */
 export async function streamAssistantChat(
-  input: {
-    readonly conversationId?: string;
-    readonly message: string;
-    readonly memoryOptIn?: boolean;
-  },
+  input: AssistantChatInput,
   callbacks: AssistantChatStreamCallbacks,
   fetchImpl: AssistantToolDecisionFetch = authenticatedFetch,
 ): Promise<AssistantTurnResponseWithPendingConfirmations> {
   const response = await fetchImpl("/api/tools/assistant.chat", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "text/event-stream" },
+    ...(callbacks.signal === undefined ? {} : { signal: callbacks.signal }),
     body: JSON.stringify({
       message: input.message,
+      metadata: { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
       ...(isAssistantBackendConversationId(input.conversationId)
         ? { conversationId: input.conversationId }
         : {}),
       ...(input.memoryOptIn === undefined ? {} : { memoryOptIn: input.memoryOptIn }),
+      ...(input.modelId === undefined ? {} : { modelId: input.modelId }),
+      ...(input.editMessageId === undefined ? {} : { editMessageId: input.editMessageId }),
+      ...(input.webSearch === undefined ? {} : { webSearch: input.webSearch }),
+      ...(input.toolGroups === undefined ? {} : { toolGroups: input.toolGroups }),
+      ...(input.attachmentObjectIds === undefined
+        ? {}
+        : { attachmentObjectIds: input.attachmentObjectIds }),
     }),
   });
 
@@ -183,9 +274,7 @@ export async function streamAssistantChat(
     );
   }
 
-  const turn = output as AssistantTurnResponseWithPendingConfirmations;
-  revealAssistantResponse(turn.response?.content ?? "", callbacks.onDelta);
-  return turn;
+  return output as AssistantTurnResponseWithPendingConfirmations;
 }
 
 /** Parses an assistant SSE body, forwarding `delta` text and resolving the final turn. */
@@ -196,20 +285,26 @@ async function consumeAssistantSseStream(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let finalTurn: AssistantTurnResponseWithPendingConfirmations = {};
+  let finalTurn: AssistantTurnResponseWithPendingConfirmations | undefined;
+  const abort = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  callbacks.signal?.addEventListener("abort", abort, { once: true });
   try {
     for (;;) {
+      callbacks.signal?.throwIfAborted();
       const { done, value } = await reader.read();
+      callbacks.signal?.throwIfAborted();
       if (done) {
         break;
       }
       buffer += decoder.decode(value, { stream: true });
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary !== -1) {
-        const frame = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
+      let boundary = /\r?\n\r?\n/u.exec(buffer);
+      while (boundary !== null) {
+        const frame = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
         finalTurn = applyAssistantSseFrame(frame, callbacks, finalTurn);
-        boundary = buffer.indexOf("\n\n");
+        boundary = /\r?\n\r?\n/u.exec(buffer);
       }
     }
     buffer += decoder.decode();
@@ -217,16 +312,20 @@ async function consumeAssistantSseStream(
       finalTurn = applyAssistantSseFrame(buffer, callbacks, finalTurn);
     }
   } finally {
+    callbacks.signal?.removeEventListener("abort", abort);
+    await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
+  if (finalTurn === undefined)
+    throw new Error("The response was interrupted. Try sending your message again.");
   return finalTurn;
 }
 
 function applyAssistantSseFrame(
   frame: string,
   callbacks: AssistantChatStreamCallbacks,
-  finalTurn: AssistantTurnResponseWithPendingConfirmations,
-): AssistantTurnResponseWithPendingConfirmations {
+  finalTurn: AssistantTurnResponseWithPendingConfirmations | undefined,
+): AssistantTurnResponseWithPendingConfirmations | undefined {
   const dataLines = frame
     .split(/\r?\n/u)
     .filter((line) => line.startsWith("data:"))
@@ -244,26 +343,31 @@ function applyAssistantSseFrame(
   if (!isRecord(parsed)) {
     return finalTurn;
   }
+  if (parsed.type === "error")
+    throw new Error(errorMessageFromOutput(parsed) ?? "The response failed. Try again.");
   if (parsed.type === "delta" && typeof parsed.text === "string") {
     callbacks.onDelta(parsed.text);
+    return finalTurn;
+  }
+  if (
+    parsed.type === "tool" &&
+    typeof parsed.toolCallId === "string" &&
+    typeof parsed.toolId === "string" &&
+    typeof parsed.status === "string" &&
+    ["running", "executed", "failed", "skipped", "pending_confirmation"].includes(parsed.status)
+  ) {
+    callbacks.onTool?.({
+      toolCallId: parsed.toolCallId,
+      toolId: parsed.toolId,
+      status: parsed.status as AssistantToolActivity["status"],
+      ...(typeof parsed.error === "string" ? { error: parsed.error } : {}),
+    });
     return finalTurn;
   }
   if (parsed.type === "final" && isRecord(parsed.turn)) {
     return parsed.turn;
   }
   return finalTurn;
-}
-
-/**
- * Reveals a non-streamed response through the incremental `onDelta` callback.
- * Used when the backend returns plain JSON rather than an SSE stream so the UI
- * still renders the assistant turn via the streaming code path.
- */
-function revealAssistantResponse(text: string, onDelta: (text: string) => void): void {
-  const trimmed = text.trim();
-  if (trimmed.length > 0) {
-    onDelta(trimmed);
-  }
 }
 
 export async function forgetAssistantMemory(
@@ -395,7 +499,7 @@ export async function deleteAssistantConversation(
 async function callAssistantTool<Output>(
   toolId: string,
   input: unknown,
-  fetchImpl: AssistantToolDecisionFetch,
+  fetchImpl: AssistantToolDecisionFetch = authenticatedFetch,
 ): Promise<Output> {
   // Note: most assistant confirmation flows are handled explicitly through
   // assistant.confirmation.approve/cancel (the assistant tool-decision UI),
@@ -430,13 +534,6 @@ export function isAssistantBackendConversationId(value: string | undefined): val
 
 function statusFromDecision(decision: AssistantToolDecision): AssistantToolDecisionStatus {
   return decision === "confirm" ? "confirmed" : "cancelled";
-}
-
-function statusFromOutput(output: unknown): AssistantToolDecisionStatus | undefined {
-  if (!isRecord(output)) {
-    return undefined;
-  }
-  return output.status === "confirmed" || output.status === "cancelled" ? output.status : undefined;
 }
 
 function errorMessageFromOutput(output: unknown): string | undefined {

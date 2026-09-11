@@ -12,7 +12,8 @@
  */
 
 import type { Actor, SecurityTier } from "@helix/sdk-types";
-import { actorHasAdminScope, evaluateAdminMfa, type AdminMfaDecision } from "../auth/mfa.js";
+import { resolveAdminSecurityControls } from "../auth/admin-security-policy.js";
+import { actorHasAdminScope, type AdminMfaDecision } from "../auth/mfa.js";
 
 /** Local copies of policy types to avoid a circular import with security-policies.ts. */
 export type PolicyEnforcement = "disabled" | "optional" | "required";
@@ -47,8 +48,8 @@ export const SECURITY_POLICY_RUNTIME_CAPABILITIES: readonly PolicyRuntimeCapabil
     policyType: "mfa",
     mode: "partial",
     summary:
-      "Enforced for admin-scoped requests when the org policy is enabled+required, or when the security tier already requires admin MFA. End-user MFA at sign-in is not yet platform-gated.",
-    enforcementPoints: ["preHandler /api/admin/* (evaluateOrgAdminMfa)"],
+      "Admin MFA can follow the tier or an explicit operator choice. Sensitive-action MFA and second-admin approval are independent controls. End-user MFA at sign-in is not platform-gated.",
+    enforcementPoints: ["Admin MFA hook", "crown-jewel gate", "backup restore routes"],
   },
   {
     policyType: "sso",
@@ -338,40 +339,8 @@ function normalizeDomain(value: string): string {
 // MFA (ADM.2) — org policy + tier
 // --------------------------------------------------------------------------
 
-interface OrgMfaPolicyView {
-  readonly enabled: boolean;
-  readonly enforcement: PolicyEnforcement;
-  readonly allowedMethods: readonly string[];
-  readonly rememberDeviceDays: number;
-}
-
-function parseOrgMfaPolicy(
-  policy: Pick<SecurityPolicyLike, "enabled" | "enforcement" | "settings"> | null | undefined,
-): OrgMfaPolicyView {
-  if (policy === null || policy === undefined) {
-    return {
-      enabled: false,
-      enforcement: "optional",
-      allowedMethods: ["hardware_key", "totp"],
-      rememberDeviceDays: 0,
-    };
-  }
-  const settings = policy.settings;
-  const allowedMethods = Array.isArray(settings.allowedMethods)
-    ? settings.allowedMethods.filter((value): value is string => typeof value === "string")
-    : ["hardware_key", "totp"];
-  return {
-    enabled: policy.enabled,
-    enforcement: policy.enforcement,
-    allowedMethods,
-    rememberDeviceDays:
-      typeof settings.rememberDeviceDays === "number" ? settings.rememberDeviceDays : 0,
-  };
-}
-
 /**
- * Admin MFA: require a verified factor when either the security tier demands
- * it (Tier 2+) or the org MFA policy is enabled with enforcement=required.
+ * Admin MFA follows the tier until an operator explicitly chooses a policy.
  */
 export function evaluateOrgAdminMfa(input: {
   readonly tier: SecurityTier;
@@ -380,17 +349,7 @@ export function evaluateOrgAdminMfa(input: {
   readonly orgMfaPolicy?:
     Pick<SecurityPolicyLike, "enabled" | "enforcement" | "settings"> | null | undefined;
 }): AdminMfaDecision {
-  const tierDecision = evaluateAdminMfa({
-    tier: input.tier,
-    actor: input.actor,
-    mfaVerified: input.mfaVerified,
-  });
-  if (!tierDecision.allowed) {
-    return tierDecision;
-  }
-
-  const orgPolicy = parseOrgMfaPolicy(input.orgMfaPolicy);
-  if (!orgPolicy.enabled || orgPolicy.enforcement !== "required") {
+  if (!resolveAdminSecurityControls(input.tier, input.orgMfaPolicy).adminMfaRequired) {
     return { allowed: true };
   }
   if (!actorHasAdminScope(input.actor)) {

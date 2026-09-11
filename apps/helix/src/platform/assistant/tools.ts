@@ -4,6 +4,7 @@ import { actorToolInvocationPrincipal } from "../auth/tool-invocation-principal.
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
 import { toJsonObject } from "../util/json.js";
+import { assistantToolGroupIds } from "./tool-selection.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { AssistantOrchestrator } from "./orchestrator.js";
 import type { AssistantConversation, AssistantStore } from "./types.js";
@@ -37,13 +38,23 @@ const deleteConversationSchema = z.object({
   conversationId: uuidSchema,
 });
 
-const chatSchema = z.object({
-  conversationId: uuidSchema.optional(),
-  message: z.string().min(1).max(100_000),
-  title: z.string().min(1).max(200).optional(),
-  memoryOptIn: z.boolean().optional(),
-  metadata: metadataSchema,
-});
+export const assistantChatBodySchema = z
+  .object({
+    conversationId: uuidSchema.optional(),
+    editMessageId: uuidSchema.optional(),
+    message: z.string().min(1).max(100_000),
+    modelId: z.string().min(1).max(300).optional(),
+    webSearch: z.boolean().optional(),
+    toolGroups: z.array(z.enum(assistantToolGroupIds)).max(8).optional(),
+    attachmentObjectIds: z.array(uuidSchema).max(5).optional(),
+    title: z.string().min(1).max(200).optional(),
+    memoryOptIn: z.boolean().optional(),
+    metadata: metadataSchema,
+  })
+  .refine((input) => input.editMessageId === undefined || input.conversationId !== undefined, {
+    message: "Editing a message requires its conversationId.",
+    path: ["conversationId"],
+  });
 
 const forgetSchema = z.object({
   conversationId: uuidSchema.optional(),
@@ -79,6 +90,34 @@ export function createAssistantToolDefinitions(
   options: CreateAssistantToolDefinitionsOptions,
 ): readonly ToolDefinition[] {
   return [
+    defineTool({
+      id: "assistant.tools.list",
+      description: "List authorized Assistant tool groups and default selection.",
+      permission: "assistant.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(z.object({}), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: (_input, ctx) => options.orchestrator.listToolGroups(ctx.actor),
+    }),
+    defineTool({
+      id: "assistant.models.list",
+      description: "List configured models available to Assistant.",
+      permission: "assistant.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(z.object({}), genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: () => options.orchestrator.listModels(),
+    }),
+    defineTool<z.output<typeof pinConversationSchema>, unknown>({
+      id: "assistant.conversation.get",
+      description: "Read the current actor's saved conversation and attachments.",
+      permission: "assistant.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(pinConversationSchema, genericObjectJsonSchema),
+      outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
+      handler: (input, ctx) =>
+        options.orchestrator.getConversation(ctx.actor, input.conversationId),
+    }),
     defineTool<z.output<typeof createConversationSchema>, unknown>({
       id: "assistant.conversation.create",
       description: "Create an assistant conversation.",
@@ -184,20 +223,27 @@ export function createAssistantToolDefinitions(
         return { conversationId: input.conversationId, deleted: true };
       },
     }),
-    defineTool<z.output<typeof chatSchema>, unknown>({
+    defineTool<z.output<typeof assistantChatBodySchema>, unknown>({
       id: "assistant.chat",
       description:
         "Send a message to Helix Assistant with search, memory, and visible tool context.",
       permission: "assistant.write",
       sideEffects: "write",
-      inputSchema: zodToolSchema(chatSchema, genericObjectJsonSchema),
+      inputSchema: zodToolSchema(assistantChatBodySchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) =>
         options.orchestrator.sendMessage({
           actor: ctx.actor,
           principal: actorToolInvocationPrincipal(ctx.actor),
           content: input.message,
+          ...(input.webSearch === undefined ? {} : { webSearch: input.webSearch }),
+          ...(input.toolGroups === undefined ? {} : { toolGroups: input.toolGroups }),
+          ...(input.modelId === undefined ? {} : { modelId: input.modelId }),
+          ...(input.attachmentObjectIds === undefined
+            ? {}
+            : { attachmentObjectIds: input.attachmentObjectIds }),
           ...(input.conversationId === undefined ? {} : { conversationId: input.conversationId }),
+          ...(input.editMessageId === undefined ? {} : { editMessageId: input.editMessageId }),
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.memoryOptIn === undefined ? {} : { memoryOptIn: input.memoryOptIn }),
           metadata: toJsonObject(input.metadata),

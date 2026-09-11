@@ -105,12 +105,26 @@ export interface AiMailSpamConfig {
   readonly betaEnabled?: boolean;
 }
 
+/** Admin-managed public web search; keys are write-only in API responses. */
+export interface AiWebSearchConfig {
+  readonly enabled?: boolean;
+  readonly provider?: "brave" | "searxng";
+  readonly baseUrl?: string;
+  readonly apiKey?: string;
+  readonly apiKeyConfigured?: boolean;
+  /** Maximum results, 1–10; defaults to 5. */
+  readonly maxResults?: number;
+}
+
 export interface AiConfig {
   readonly enabled?: boolean;
   readonly defaultPosture?: AiDefaultPosture;
   readonly providers?: readonly AiProviderConfig[];
   readonly vectorStore?: AiPluginRefConfig;
   readonly embeddingProvider?: AiPluginRefConfig;
+  readonly webSearch?: AiWebSearchConfig;
+  /** Native Assistant execution rounds (1–256, default 128), followed by a final answer. */
+  readonly assistant?: { readonly maxToolRounds?: number };
   readonly routing?: AiRoutingConfig;
   readonly costLimits?: AiCostLimitsConfig;
   readonly audit?: AiAuditConfig;

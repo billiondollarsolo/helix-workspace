@@ -223,11 +223,12 @@ export async function installStorage(context: Awaited<ReturnType<typeof installA
 
   const mailQuarantineStore = new PostgresMailQuarantineStore(sql, driveStorageResolver);
 
+  const attachmentScannerConfig = driveConfig.malwareScanner ?? mailCfg.clamav;
   const driveVirusScanner =
-    mailCfg.clamav === undefined
+    attachmentScannerConfig === undefined
       ? undefined
       : createClamAvVirusScanner({
-          ...mailCfg.clamav,
+          ...attachmentScannerConfig,
           tier: securityTier,
           metrics,
           maxFileBytes: driveConfig.antivirus.maxFileBytes,

@@ -120,8 +120,8 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("Mail address governance
 
   it("expands mailing lists only to active same-organization members", async () => {
     const groups = await database<{ readonly id: string }[]>`
-      insert into admin_groups (org_id, name, email, kind, created_by)
-      values (${org}, 'Team', ${`team@${domain}`}, 'mailing_list', ${owner})
+      insert into admin_groups (org_id, name, email, kind, created_by, posting_policy)
+      values (${org}, 'Team', ${`team@${domain}`}, 'mailing_list', ${owner}, 'anyone')
       returning id
     `;
     const groupId = groups[0]?.id;

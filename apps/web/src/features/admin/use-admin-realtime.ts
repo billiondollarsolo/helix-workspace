@@ -48,7 +48,10 @@ import { apiPath } from "@/lib/auth";
  *  the caller's tenant. A bare `*` would be rejected; a leading concrete token
  *  is required. */
 const SUBJECT_ROUTES: Readonly<Record<string, readonly QueryKey[]>> = {
-  "helix.config.changed": [["admin", "platform-config"]],
+  "helix.config.changed": [
+    ["admin", "platform-config"],
+    ["admin", "ai-retrieval"],
+  ],
   "flags.changed.*": [
     ["admin", "tenant-config"],
     ["admin", "core-apps"],
@@ -73,6 +76,7 @@ const SECTION_SUBJECTS: Partial<Record<AdminSectionId, readonly string[]>> = {
   overview: ["helix.config.changed", "flags.changed.*"],
   "tier-readiness": ["helix.config.changed"],
   "ai-providers": ["helix.config.changed"],
+  "ai-retrieval": ["helix.config.changed"],
   "workspace-settings": ["flags.changed.*"],
   "workspace-apps": ["flags.changed.*"],
   "ai-costs": ["platform.ai_cost.warning"],
@@ -268,7 +272,7 @@ function acquire(subject: string, listener: (frame: AdminEventFrame) => void): (
         () => {
           openSocket(subject, hub.get(subject) ?? created);
         },
-        { wait: () => reconnectDelay(created.attempt) },
+        { wait: () => (created.attempt === 0 ? 0 : reconnectDelay(created.attempt)) },
       ),
     };
     entry = created;
@@ -278,7 +282,8 @@ function acquire(subject: string, listener: (frame: AdminEventFrame) => void): (
   entry.listeners.add(listener);
   entry.refCount += 1;
   if (entry.socket === null && !entry.givenUp) {
-    openSocket(subject, entry);
+    // Let an immediately discarded React mount cancel before starting a handshake.
+    entry.reconnect.maybeExecute();
   }
   recomputeConnectionState();
 

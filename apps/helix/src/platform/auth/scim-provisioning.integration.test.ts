@@ -239,6 +239,7 @@ describe("Postgres SCIM provisioning", { skip: !process.env.DATABASE_URL }, () =
       await tx`delete from app_passwords where actor_id in (${SOURCE}, ${TARGET})`;
       await tx`delete from admin_groups where org_id = ${ORG_A} and
                (id = ${GROUP} or name like 'SCIM integration %')`;
+      await tx`delete from search_reindex_jobs where org_id = ${ORG_A}`;
       await tx`delete from objects where id = ${OBJECT}`;
       await tx`delete from resource_classifications where org_id in (${ORG_A}, ${ORG_B})`;
       await tx`delete from actors where org_id = ${ORG_A} and

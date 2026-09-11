@@ -131,6 +131,7 @@ export function validateMailAttachmentSelection(
 }
 
 export interface MailSendInput {
+  readonly from?: MailApiAddress;
   readonly draft?: { readonly id: string; readonly revision: number };
   readonly idempotencyKey?: string;
   readonly to: readonly MailApiAddress[];
@@ -292,6 +293,7 @@ export async function sendMail(
     {
       ...(input.draft === undefined ? {} : { draft: input.draft }),
       ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+      ...(input.from === undefined ? {} : { from: input.from }),
       to: input.to,
       cc: input.cc ?? [],
       bcc: input.bcc ?? [],
@@ -334,6 +336,7 @@ export async function replyToMail(
     "mail.reply",
     {
       threadId: input.threadId,
+      ...(input.from === undefined ? {} : { from: input.from }),
       to: input.to,
       cc: input.cc ?? [],
       bcc: input.bcc ?? [],

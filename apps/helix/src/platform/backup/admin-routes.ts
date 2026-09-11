@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { z } from "zod";
 import { env } from "../../config/env.js";
+import type { AdminSecurityControls } from "../auth/admin-security-policy.js";
 import {
   RestoreJobIdempotencyConflict,
   type RestoreAuditSink,
@@ -25,13 +26,15 @@ const backupCreateSchema = z.object({
   backupId: backupIdSchema.optional(),
 });
 
-const restoreSchema = z.object({
-  backupId: backupIdSchema,
-  encrypted: z.boolean().default(false),
-  targetDatabase: z.string().regex(/^helix_restore_[a-z0-9_]{1,49}$/u),
-  targetObjectBucket: z.string().regex(/^helix-restore-[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u),
-  idempotencyKey: z.string().trim().min(1).max(128),
-});
+const restoreSchema = z
+  .object({
+    backupId: backupIdSchema,
+    encrypted: z.boolean().default(false),
+    targetDatabase: z.string().regex(/^helix_restore_[a-z0-9_]{1,49}$/u),
+    targetObjectBucket: z.string().regex(/^helix-restore-[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u),
+    idempotencyKey: z.string().trim().min(1).max(128),
+  })
+  .strict();
 const restoreJobParamsSchema = z.object({ id: z.string().uuid() });
 
 export interface BackupOperationResult {
@@ -61,6 +64,11 @@ export interface RegisterBackupAdminRoutesOptions {
   readonly restoreJobs: RestoreJobStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly stepUpVerified: (request: FastifyRequest) => Promise<boolean> | boolean;
+  readonly securityControls?: (
+    actor: Actor,
+  ) => Promise<
+    Pick<AdminSecurityControls, "sensitiveActionMfaRequired" | "secondAdminApprovalRequired">
+  >;
   readonly auditSink: RestoreAuditSink;
 }
 
@@ -89,7 +97,8 @@ export async function registerBackupAdminRoutes(
     if (!canRestoreBackups(actor)) {
       return reply.code(403).send(restorePermissionDeniedResponse());
     }
-    if (!(await options.stepUpVerified(request))) {
+    const controls = await securityControls(actor);
+    if (controls.sensitiveActionMfaRequired && !(await options.stepUpVerified(request))) {
       return reply.code(403).send(stepUpRequiredResponse());
     }
 
@@ -102,14 +111,14 @@ export async function registerBackupAdminRoutes(
 
     const id = randomUUID();
     try {
-      const job = await options.restoreJobs.createJob(id, actor, parsed.data);
-      await appendRestoreAudit(
-        options.auditSink,
-        actor,
-        job.id,
-        "backup.restore.requested",
-        parsed.data,
-      );
+      const job = await options.restoreJobs.createJob(id, actor, {
+        ...parsed.data,
+        requiredApprovals: controls.secondAdminApprovalRequired ? 1 : 0,
+      });
+      await appendRestoreAudit(options.auditSink, actor, job.id, "backup.restore.requested", {
+        ...parsed.data,
+        requiredApprovals: job.requiredApprovals,
+      });
       return await reply.code(202).send(job);
     } catch (error) {
       if (error instanceof RestoreJobIdempotencyConflict) {
@@ -131,7 +140,10 @@ export async function registerBackupAdminRoutes(
   app.post("/api/admin/restores/:id/approvals", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canRestoreBackups(actor)) return reply.code(403).send(restorePermissionDeniedResponse());
-    if (!(await options.stepUpVerified(request)))
+    if (
+      (await securityControls(actor)).sensitiveActionMfaRequired &&
+      !(await options.stepUpVerified(request))
+    )
       return reply.code(403).send(stepUpRequiredResponse());
     const parsed = restoreJobParamsSchema.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid restore job id." });
@@ -155,7 +167,10 @@ export async function registerBackupAdminRoutes(
   app.post("/api/admin/restores/:id/cancel", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canRestoreBackups(actor)) return reply.code(403).send(restorePermissionDeniedResponse());
-    if (!(await options.stepUpVerified(request)))
+    if (
+      (await securityControls(actor)).sensitiveActionMfaRequired &&
+      !(await options.stepUpVerified(request))
+    )
       return reply.code(403).send(stepUpRequiredResponse());
     const parsed = restoreJobParamsSchema.safeParse(request.params);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid restore job id." });
@@ -175,6 +190,15 @@ export async function registerBackupAdminRoutes(
     const job = await options.restoreJobs.cancelJob(current.id, actor.orgId);
     return job ?? reply.code(409).send({ error: "Restore job cannot be cancelled." });
   });
+
+  async function securityControls(actor: Actor) {
+    return (
+      options.securityControls?.(actor) ?? {
+        sensitiveActionMfaRequired: true,
+        secondAdminApprovalRequired: true,
+      }
+    );
+  }
 }
 
 function canOperateBackups(actor: Actor): boolean {
@@ -356,6 +380,7 @@ async function appendRestoreAudit(
     readonly backupId: string;
     readonly targetDatabase: string;
     readonly targetObjectBucket: string;
+    readonly requiredApprovals?: number;
   },
 ): Promise<void> {
   await sink.append({
@@ -368,6 +393,9 @@ async function appendRestoreAudit(
       backupId: input.backupId,
       targetDatabase: input.targetDatabase,
       targetObjectBucket: input.targetObjectBucket,
+      ...(input.requiredApprovals === undefined
+        ? {}
+        : { requiredApprovals: input.requiredApprovals }),
     },
   });
 }

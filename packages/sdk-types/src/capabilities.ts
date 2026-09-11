@@ -72,11 +72,16 @@ export interface AIMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
   readonly content: string;
   readonly name?: string;
+  readonly toolCalls?: readonly AIToolChoice[];
+  readonly toolCallId?: string;
 }
 
 export interface AIToolChoice {
   readonly id: string;
   readonly input?: JsonObject;
+  readonly callId?: string;
+  /** Safe provider parsing failure. Feed back as a tool result without invoking the tool. */
+  readonly error?: string;
 }
 
 export interface ChatRequest {
@@ -86,6 +91,7 @@ export interface ChatRequest {
   readonly tools?: readonly string[];
   readonly classification?: AIClassification;
   readonly metadata?: JsonObject;
+  readonly signal?: AbortSignal;
 }
 
 export interface AICallContext {

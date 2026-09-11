@@ -115,7 +115,7 @@ export class MailSearchStore {
         m.id as message_id,
         t.subject,
         m.body,
-        m.metadata,
+        case when helix_mailbox_sent_message(m.org_id, m.id, ${input.actorId}) then m.metadata else (m.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
         m.sent_at,
         mts.labels,
         mts.read_at,
@@ -129,9 +129,10 @@ export class MailSearchStore {
         on mts.thread_id = t.id
        and mts.actor_id = ${input.actorId}
        and mts.org_id = ${input.orgId}
-      left join mail_outbound_messages outbound on outbound.message_id = m.id
+      left join mail_outbound_messages outbound on outbound.message_id = m.id and outbound.org_id = ${input.orgId} and outbound.actor_id = ${input.actorId}
       where m.org_id = ${input.orgId}
         and m.kind = 'mail'
+        and (m.actor_id = ${input.actorId} or exists (select 1 from mail_message_deliveries visible where visible.org_id = ${input.orgId} and visible.message_id = m.id and visible.actor_id = ${input.actorId}))
         and m.deleted_at is null
         and (
           exists (
@@ -187,7 +188,7 @@ export class MailSearchStore {
         m.id as message_id,
         t.subject,
         m.body,
-        m.metadata,
+        case when helix_mailbox_sent_message(m.org_id, m.id, ${input.actorId}) then m.metadata else (m.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
         m.sent_at,
         m.updated_at,
         mailbox.actor_id,
@@ -201,6 +202,7 @@ export class MailSearchStore {
       where m.id = ${input.messageId}
         and m.org_id = ${input.orgId}
         and m.kind = 'mail'
+        and (m.actor_id = ${input.actorId} or exists (select 1 from mail_message_deliveries visible where visible.org_id = ${input.orgId} and visible.message_id = m.id and visible.actor_id = ${input.actorId}))
         and m.deleted_at is null
         and mailbox.deleted_at is null
       limit 1
@@ -220,7 +222,7 @@ export class MailSearchStore {
         m.id as message_id,
         t.subject,
         m.body,
-        m.metadata,
+        case when helix_mailbox_sent_message(m.org_id, m.id, mailbox.actor_id) then m.metadata else (m.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
         m.sent_at,
         m.updated_at,
         mailbox.actor_id,
@@ -233,6 +235,7 @@ export class MailSearchStore {
       where m.id = ${input.messageId}
         and (${input.orgId ?? null}::uuid is null or m.org_id = ${input.orgId ?? null}::uuid)
         and m.kind = 'mail'
+        and (m.actor_id = mailbox.actor_id or exists (select 1 from mail_message_deliveries visible where visible.org_id = m.org_id and visible.message_id = m.id and visible.actor_id = mailbox.actor_id))
         and m.deleted_at is null
         and mailbox.deleted_at is null
       order by mailbox.actor_id

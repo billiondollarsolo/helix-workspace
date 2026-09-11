@@ -1,4 +1,4 @@
-import { mailSpamResultSchema } from "@helix/contracts";
+import { mailDraftSchema, mailDraftSaveInputSchema, mailSpamResultSchema } from "@helix/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { ForbiddenError } from "../../api/api-error.js";
 import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
@@ -434,11 +434,12 @@ describe("mail.draft tools", () => {
       updatedAt: now,
     });
     const { tool } = toolById("mail.draft.save", { saveDraft });
-    await tool.handler(
+    const result = await tool.handler(
       {
         id: "11111111-1111-4111-8111-111111111111",
         expectedRevision: 1,
         idempotencyKey: "44444444-4444-4444-8444-444444444444",
+        from: { address: "alias@b.com", name: "Alternate identity" },
         to: [{ address: "a@b.com" }],
         cc: [],
         bcc: [],
@@ -458,7 +459,48 @@ describe("mail.draft tools", () => {
         expectedRevision: 1,
         idempotencyKey: "44444444-4444-4444-8444-444444444444",
         attachmentObjectIds: ["55555555-5555-4555-8555-555555555555"],
+        envelope: expect.objectContaining({
+          from: { address: "alias@b.com", name: "Alternate identity" },
+        }),
       }),
+    );
+    expect(mailDraftSchema.parse(result).from).toEqual({
+      address: "alias@b.com",
+      name: "Alternate identity",
+    });
+    expect(
+      mailDraftSaveInputSchema.parse({
+        idempotencyKey: "44444444-4444-4444-8444-444444444444",
+        from: { address: "alias@b.com" },
+      }).from?.address,
+    ).toBe("alias@b.com");
+  });
+
+  it.each(["mail.draft.get", "mail.draft.list"])("%s restores the saved sender", async (id) => {
+    const now = new Date("2026-09-10T12:00:00.000Z");
+    const draft = {
+      id: "11111111-1111-4111-8111-111111111111",
+      orgId: "22222222-2222-4222-8222-222222222222",
+      actorId: "33333333-3333-4333-8333-333333333333",
+      threadId: null,
+      envelope: { from: { address: "alias@b.com", name: "Alternate identity" } },
+      revision: 1,
+      expiresAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const { tool } = toolById(id, {
+      getDraft: vi.fn().mockResolvedValue(draft),
+      listDrafts: vi.fn().mockResolvedValue([draft]),
+    });
+    const result = (await tool.handler({ id: draft.id }, {
+      actor: { id: draft.actorId, orgId: draft.orgId },
+    } as never)) as {
+      draft?: unknown;
+      drafts?: unknown[];
+    };
+    expect(mailDraftSchema.parse(result.draft ?? result.drafts?.[0]).from).toEqual(
+      draft.envelope.from,
     );
   });
 });

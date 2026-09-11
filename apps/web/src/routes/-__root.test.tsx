@@ -5,7 +5,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RouteErrorState, RouteNotFoundState, routeErrorDetails } from "./__root";
 
+const invalidate = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
 vi.mock("@tanstack/react-router", () => ({
+  useRouter: () => ({ invalidate }),
   createRootRouteWithContext: () => (config: unknown) => config,
   Link: ({
     to,
@@ -31,6 +34,7 @@ describe("root route recovery states", () => {
   let root: Root;
 
   beforeEach(() => {
+    invalidate.mockClear();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -61,6 +65,7 @@ describe("root route recovery states", () => {
     expect(container.querySelector<HTMLAnchorElement>('a[href="/"]')).not.toBeNull();
     act(() => retry?.click());
     expect(reset).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledTimes(1);
   });
 
   it("renders an actionable not-found state", () => {

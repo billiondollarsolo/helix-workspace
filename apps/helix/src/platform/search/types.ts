@@ -1,4 +1,5 @@
 import type { JsonObject, JsonValue } from "@helix/sdk-types";
+import type { DataClassification } from "../ai/classification/index.js";
 
 export interface IndexDocument {
   readonly id: string;
@@ -12,6 +13,8 @@ export interface IndexDocument {
 
 export interface SearchRequest {
   readonly query: string;
+  /** Server-derived context floor, applied before sending query text to embeddings. */
+  readonly classification?: DataClassification;
   readonly types?: readonly string[];
   readonly limit?: number;
   readonly offset?: number;
@@ -25,6 +28,8 @@ export interface SearchRequest {
    * items. When unset, only org-shared items are returned.
    */
   readonly forActorId?: string;
+  /** Server-set tenant identity, independent of the index query language. */
+  readonly forOrgId?: string;
 }
 
 export interface SearchHit extends IndexDocument {

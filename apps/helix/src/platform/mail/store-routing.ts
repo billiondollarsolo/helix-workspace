@@ -1,6 +1,6 @@
 import type { JsonObject } from "@helix/sdk-types";
 import type postgres from "postgres";
-import { MailInboundQuotaExceededError } from "./errors.js";
+import { rejectAddressDelivery, MailInboundQuotaExceededError } from "./errors.js";
 import { normalizeAddress } from "./store-addresses.js";
 import { type MailboxDelegateRecord } from "./store-contracts.js";
 import type {
@@ -84,7 +84,10 @@ export class MailRoutingStore {
     return recipients.length === 1 ? (recipients[0] ?? null) : null;
   }
 
-  async resolveInboundRecipients(address: string): Promise<readonly MailInboundRecipient[]> {
+  async resolveInboundRecipients(
+    address: string,
+    senderAuthenticated = false,
+  ): Promise<readonly MailInboundRecipient[]> {
     const normalized = normalizeAddress(address);
     const domain = emailDomain(normalized);
     if (domain === null) {
@@ -99,8 +102,8 @@ export class MailRoutingStore {
       }[]
     >`
       select org_id, actor_id, address, quota_exceeded
-      from helix_resolve_inbound_mailboxes(${normalized}, ${domain})
-    `;
+      from helix_resolve_inbound_mailboxes_for_sender(${normalized}, ${domain}, ${senderAuthenticated})
+    `.catch(rejectAddressDelivery);
     if (rows.some((recipient) => recipient.quota_exceeded)) {
       throw new MailInboundQuotaExceededError();
     }
@@ -111,17 +114,18 @@ export class MailRoutingStore {
     }));
   }
 
-  async resolveInboundAddress(address: string): Promise<MailInboundAddressResolution> {
+  async resolveInboundAddress(
+    address: string,
+    senderAuthenticated = false,
+  ): Promise<MailInboundAddressResolution> {
     const normalized = normalizeAddress(address);
     const domain = emailDomain(normalized);
     if (domain === null) return { address: normalized, recipients: [], rules: [] };
 
-    const [recipients, rows] = await Promise.all([
-      this.resolveInboundRecipients(normalized),
-      this.sql<InboundRoutingRuleRow[]>`
-        select * from helix_resolve_inbound_routing_rules(${normalized}, ${domain})
-      `,
-    ]);
+    const recipients = await this.resolveInboundRecipients(normalized, senderAuthenticated);
+    const rows = await this.sql<InboundRoutingRuleRow[]>`
+      select * from helix_resolve_inbound_routing_rules(${normalized}, ${domain})
+    `.catch(rejectAddressDelivery);
     if (rows.some((row) => row.target_quota_exceeded === true)) {
       throw new MailInboundQuotaExceededError();
     }

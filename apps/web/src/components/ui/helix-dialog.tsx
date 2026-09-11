@@ -26,6 +26,10 @@ const FOCUSABLE =
 export function Dialog({ title, children, onClose, footer, width }: DialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     const previousFocus =
@@ -46,7 +50,7 @@ export function Dialog({ title, children, onClose, footer, width }: DialogProps)
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose?.();
+        onCloseRef.current?.();
         return;
       }
       if (event.key !== "Tab" || !dialogRef.current) {
@@ -78,7 +82,7 @@ export function Dialog({ title, children, onClose, footer, width }: DialogProps)
         previousFocus.focus();
       }
     };
-  }, [onClose]);
+  }, []);
 
   const style: CSSProperties | undefined = width ? { width } : undefined;
 
@@ -93,7 +97,7 @@ export function Dialog({ title, children, onClose, footer, width }: DialogProps)
     >
       <div
         ref={dialogRef}
-        className="dialog"
+        className="dialog min-w-0"
         style={style}
         role="dialog"
         aria-modal="true"

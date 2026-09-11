@@ -1,4 +1,5 @@
-import { Link, Outlet, createRootRouteWithContext } from "@tanstack/react-router";
+import { Link, Outlet, createRootRouteWithContext, useRouter } from "@tanstack/react-router";
+import { useQueryErrorResetBoundary } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useRef } from "react";
 import type { RouterContext } from "@/router-context";
 
@@ -20,6 +21,8 @@ export function RouteErrorState({
   readonly reset?: (() => void) | undefined;
 }) {
   const mainRef = useRouteStateFocus();
+  const router = useRouter();
+  const queryErrors = useQueryErrorResetBoundary();
   const details = routeErrorDetails(error);
   return (
     <main ref={mainRef} className="route-state" tabIndex={-1} aria-labelledby="route-error-title">
@@ -32,11 +35,11 @@ export function RouteErrorState({
             type="button"
             className="btn primary"
             onClick={() => {
-              if (reset !== undefined) {
-                reset();
-              } else {
-                window.location.reload();
-              }
+              queryErrors.reset();
+              // Resetting the render boundary alone retains failed beforeLoad
+              // results. Invalidation reruns session verification and loaders.
+              void router.invalidate();
+              reset?.();
             }}
           >
             Retry

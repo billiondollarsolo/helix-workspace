@@ -28,7 +28,8 @@ import {
   readSecurityPolicies,
   registerAdminSecurityPoliciesRoutes,
 } from "../platform/admin/security-policies.js";
-import { evaluateOrgAdminMfa } from "../platform/admin/security-policy-runtime.js";
+import { installAdminSecurityGate } from "../platform/auth/admin-security-gate.js";
+import { resolveAdminSecurityControls } from "../platform/auth/admin-security-policy.js";
 import { PostgresAdminServiceStatusStore } from "../platform/admin/service-status.js";
 import { AdminServicesCatalog, registerAdminServicesRoutes } from "../platform/admin/services.js";
 import { registerTenantConfigAdminRoutes } from "../platform/admin/tenant-config.js";
@@ -39,12 +40,6 @@ import {
 } from "../platform/apps/admin-routes.js";
 import { registerAuditLogAdminRoutes } from "../platform/audit/routes.js";
 import {
-  actorExistsInOrg,
-  disableActorForOffboard,
-  registerAdminUsersRoutes,
-  revokeSessionsForActorSql,
-} from "../platform/auth/admin-users.js";
-import {
   createCsrfToken,
   csrfTokenFromCookie,
   isTrustedCookieMutation,
@@ -52,14 +47,10 @@ import {
   normalizeTrustedOrigins,
   serializeCsrfCookie,
 } from "../platform/auth/browser-security.js";
-import {
-  installCrownJewelGate,
-  PostgresCrownJewelApprovalStore,
-} from "../platform/auth/crown-jewel.js";
+import { PostgresCrownJewelApprovalStore } from "../platform/auth/crown-jewel.js";
 import { registerDomainIdentityDiscoveryRoute } from "../platform/auth/domain-identity.js";
 import { OAuthTokenService } from "../platform/auth/oauth.js";
 import { registerOAuthRoutes } from "../platform/auth/routes.js";
-import { PostgresProfileStore, registerProfileRoutes } from "../platform/auth/profile.js";
 import { registerTenantScimRoutes } from "../platform/auth/scim-routes.js";
 import {
   registerBackupAdminRoutes,
@@ -80,7 +71,8 @@ import {
   registerChatModerationRoutes,
   registerChatRoutes,
 } from "../platform/chat/index.js";
-import { registerPlatformConfigAdminRoutes } from "../platform/config/admin.js";
+import { registerAiConfigurationRoutes } from "./ai-configuration-routes.js";
+import { registerUserAccountRoutes } from "./user-account-routes.js";
 import { registerDriveScanAdminRoutes } from "../platform/drive/index.js";
 import { registerEventRoutes } from "../platform/events/routes.js";
 import { EventStreamLimiter } from "../platform/events/stream-limit.js";
@@ -195,44 +187,13 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
   } = context;
   installHttpMetrics(app, metrics);
 
-  // P2-1 / ADM.2: enforce MFA for admin-scoped requests when the security tier
-  // requires it (Tier 2+) *or* the org MFA security policy is enabled+required.
-  // Every `/api/admin/*` route shares this prefix so a single preHandler gates
-  // the surface. Org policy is loaded from the admin security-policies store.
-  app.addHook("preHandler", async (request, reply) => {
-    const url = request.url.split("?")[0] ?? "";
-    if (!isAdminMfaProtectedPath(url)) {
-      return;
-    }
-    const actor = await actorFromAuthenticatedRequest(request);
-    const orgMfaPolicy = await securityPoliciesStore.get(actor.orgId, "mfa");
-    const decision = evaluateOrgAdminMfa({
-      tier: securityTier,
-      actor,
-      mfaVerified: await mfaResolver.isMfaVerified(request, actor),
-      orgMfaPolicy,
-    });
-    if (!decision.allowed) {
-      const traceId = traceIdForRequest(request);
-      app.log.warn(
-        { actorId: actor.id, tier: securityTier, route: url },
-        "Rejected admin-scoped request: verified MFA factor required",
-      );
-      return reply.code(decision.statusCode).send(
-        buildErrorEnvelope({
-          statusCode: decision.statusCode,
-          code: decision.code,
-          message: decision.message,
-          traceId,
-        }),
-      );
-    }
-  });
-
-  installCrownJewelGate(app, {
-    store: new PostgresCrownJewelApprovalStore(sql),
+  installAdminSecurityGate(app, {
+    policies: securityPoliciesStore,
+    approvals: new PostgresCrownJewelApprovalStore(sql),
     actorFromRequest: actorFromAuthenticatedRequest,
     mfa: mfaResolver,
+    securityTier: () => runtimeConfiguration.current.security.tier,
+    protectedPath: isAdminMfaProtectedPath,
     traceId: traceIdForRequest,
   });
 
@@ -386,10 +347,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     auditSink: auditStore,
   });
 
-  await registerPlatformConfigAdminRoutes(app, {
-    service: platformConfig,
-    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-  });
+  await registerAiConfigurationRoutes(context);
 
   await registerAdminServicesRoutes(app, {
     catalog: new AdminServicesCatalog({
@@ -485,9 +443,16 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
          four cards. */
   registerAdminOverviewRoutes(app, {
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    readDomains: (actor) => readDomainsWithRecords(adminDomainsStore, actor.orgId),
-    readPolicies: (actor) => readSecurityPolicies(securityPoliciesStore, actor.orgId),
-    readPlatformConfig: () => platformConfig.getStatus(),
+    readDomains: async (actor) => ({
+      domains: await readDomainsWithRecords(adminDomainsStore, actor.orgId),
+    }),
+    readPolicies: (actor) =>
+      readSecurityPolicies(
+        securityPoliciesStore,
+        actor.orgId,
+        runtimeConfiguration.current.security.tier,
+      ),
+    readPlatformConfig: (actor) => platformConfig.getStatus(actor),
     readDirectory: async (actor) => {
       /* Same page size Overview's Directory card asks for, so the aggregate and
                  the Users section share one reading rather than disagreeing by a page. */
@@ -521,25 +486,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
   });
 
-  await registerAdminUsersRoutes(app, {
-    store: adminUsersStore,
-    actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    // E7.2: production offboard cascade (org-scoped resolve + disable + sessions + credentials).
-    offboardStores: {
-      resolveTargetInOrg: (input) => actorExistsInOrg(sql, input),
-      disableActor: (input) => disableActorForOffboard(sql, input),
-      revokeSessionsForActor: (input) => revokeSessionsForActorSql(sql, input),
-      appPasswords: appPasswordStore,
-      agentCredentials: oauthStore,
-    },
-  });
-
-  registerProfileRoutes(app, {
-    store: new PostgresProfileStore(sql),
-    sessionActorResolver,
-    actorFromRequest: actorFromAuthenticatedRequest,
-    auditSink: auditStore,
-  });
+  await registerUserAccountRoutes(context);
 
   await registerPeopleRoutes(app, {
     store: new PostgresPeopleStore(sql),
@@ -571,6 +518,9 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     store: securityPoliciesStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     auditSink: auditStore,
+    mfa: mfaResolver,
+    securityTier: () => runtimeConfiguration.current.security.tier,
+    hasOtherAdministrator: (actor) => securityPoliciesStore.hasOtherAdministrator(actor),
   });
 
   await registerTenantConfigAdminRoutes(app, {
@@ -692,6 +642,11 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     stepUpVerified: async (request) =>
       mfaResolver.isMfaVerified(request, await actorFromAuthenticatedRequest(request)),
+    securityControls: async (actor) =>
+      resolveAdminSecurityControls(
+        runtimeConfiguration.current.security.tier,
+        await securityPoliciesStore.get(actor.orgId, "mfa"),
+      ),
     auditSink: auditStore,
   });
 

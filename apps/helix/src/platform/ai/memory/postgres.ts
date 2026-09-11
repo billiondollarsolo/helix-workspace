@@ -1,6 +1,9 @@
-import type { Actor, JsonObject } from "@helix/sdk-types";
+import type { Actor, DataClassification, JsonObject } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { validateVector, vectorToPgLiteral } from "../vector/types.js";
+import { maxClassification } from "../classification/policy.js";
+import { classifyMemoryContent } from "./privacy.js";
+import { isDataClassification } from "../classification/effective.js";
 import {
   validateMemoryText,
   validateRecallLimit,
@@ -39,10 +42,18 @@ export class PostgresMemoryStore implements MemoryStore {
     this.#defaultSource = options.defaultSource ?? "assistant.conversation";
   }
 
-  async recall(actor: Actor, query: string, k: number): Promise<readonly MemoryItem[]> {
+  async recall(
+    actor: Actor,
+    query: string,
+    k: number,
+    classification?: DataClassification,
+  ): Promise<readonly MemoryItem[]> {
     const content = validateMemoryText(query, "Memory recall query");
     const limit = validateRecallLimit(k);
-    const embedding = await this.embedOne(content);
+    const embedding = await this.embedOne(
+      content,
+      classifyMemoryContent(content, classification ?? "standard"),
+    );
     const queryVector = vectorToPgLiteral(embedding);
     const rows = await this.sql<MemoryItemRow[]>`
       select
@@ -69,7 +80,20 @@ export class PostgresMemoryStore implements MemoryStore {
   async store(actor: Actor, item: MemoryInput): Promise<MemoryItem> {
     const content = validateMemoryText(item.content, "Memory content");
     const source = validateMemoryText(item.source ?? this.#defaultSource, "Memory source");
-    const embedding = item.embedding ?? (await this.embedOne(content));
+    const label = item.metadata?.classification ?? item.metadata?.effectiveClassification;
+    const effective = item.metadata?.effectiveClassification;
+    const classification = classifyMemoryContent(
+      content,
+      maxClassification(
+        isDataClassification(label) ? label : "restricted",
+        effective === undefined
+          ? "public"
+          : isDataClassification(effective)
+            ? effective
+            : "restricted",
+      ),
+    );
+    const embedding = item.embedding ?? (await this.embedOne(content, classification));
     validateVector(embedding);
     const rows = await this.sql<MemoryItemRow[]>`
       insert into memory_items (org_id, actor_id, source, content, embedding, metadata, expires_at)
@@ -79,7 +103,7 @@ export class PostgresMemoryStore implements MemoryStore {
         ${source},
         ${content},
         ${vectorToPgLiteral(embedding)}::vector,
-        ${this.sql.json(item.metadata ?? {})},
+        ${this.sql.json({ ...item.metadata, classification })},
         ${item.expiresAt === undefined ? null : new Date(item.expiresAt)}
       )
       returning id, org_id, actor_id, source, content, metadata, null::double precision as score, created_at, expires_at
@@ -128,8 +152,11 @@ export class PostgresMemoryStore implements MemoryStore {
     return deleted;
   }
 
-  private async embedOne(text: string): Promise<readonly number[]> {
-    const embeddings = await this.options.embeddingProvider.embed([text]);
+  private async embedOne(
+    text: string,
+    classification: DataClassification,
+  ): Promise<readonly number[]> {
+    const embeddings = await this.options.embeddingProvider.embed([text], classification);
     const embedding = embeddings[0];
     if (embedding === undefined) {
       throw new Error("Memory embedding provider returned no embedding");

@@ -1,7 +1,8 @@
+import { AssistantComposer } from "./assistant-composer";
+import { AssistantConversation } from "./assistant-conversation";
 import { cn } from "@/lib/utils";
 import { iconMap as Icons } from "@/components/icon-map";
 import {
-  FileText as DocIcon,
   Pencil as EditPenIcon,
   History as HistoryIcon,
   Ellipsis as MoreIcon,
@@ -9,29 +10,28 @@ import {
   Pin as PinIcon,
   Plus as PlusIcon,
   Search as SearchIcon,
-  Send as SendIcon,
   Sparkles as SparklesIcon,
   Trash2 as TrashIcon,
 } from "lucide-react";
 /* Assistant conversations and actions use the backend tools. Replies stream
    through streamAssistantChat; selecting a thread continues that conversation. */
 import { SurfaceFrame } from "@/components/shell";
-import { Avatar } from "@/components/ui/avatar";
 import { Dialog } from "@/components/ui/helix-dialog";
 import {
   deleteAssistantConversation,
+  isAssistantBackendConversationId,
   forgetAssistantMemory,
   renameAssistantConversation,
   setAssistantConversationPinned,
   streamAssistantChat,
   type AssistantConversationListItem,
+  type AssistantAttachment,
   type AssistantTurnResponseWithPendingConfirmations,
 } from "@/features/assistant/api";
 import {
   ASSISTANT_ERROR_FALLBACK,
   ASSISTANT_QUICK_PROMPTS,
   assistantNowTime,
-  type AssistantBlock,
   type AssistantChatMessage,
   type AssistantThread,
 } from "@/features/assistant/assistant-data";
@@ -42,12 +42,13 @@ import {
 import {
   ASSISTANT_QUERY_ROOT,
   assistantConversationsQueryOptions,
+  assistantConversationQueryOptions,
 } from "@/features/assistant/queries";
 import { applyAssistantToolDecision } from "@/features/assistant/tool-decisions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bucketThreadsByDate, type ThreadSidebarItem } from "./date-buckets";
 import { sessionUserQueryOptions } from "@/lib/auth";
 function toThread(item: AssistantConversationListItem): AssistantThread {
@@ -93,6 +94,10 @@ export function AssistantSurface() {
   const [conversation, setConversation] = useState<readonly AssistantChatMessage[]>([]);
   const [hasMessages, setHasMessages] = useState(() => urlSearch.conversation !== undefined);
   const [pending, setPending] = useState(false);
+  const [toolGroups, setToolGroups] = useState<readonly string[] | undefined>();
+  const [modelId, setModelId] = useState("");
+  const [editing, setEditing] = useState<AssistantChatMessage | null>(null);
+  const streamController = useRef<AbortController | null>(null);
   const [search, setSearch] = useState("");
   const [renameTarget, setRenameTarget] = useState<AssistantThread | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AssistantThread | null>(null);
@@ -110,27 +115,42 @@ export function AssistantSurface() {
     },
     [navigate],
   );
-  // Deep link: if the URL conversation id changes (back/forward/share), open it.
+  useEffect(
+    () => () => {
+      streamController.current?.abort();
+    },
+    [],
+  );
+  // URL navigation and sidebar selection both hydrate the persisted conversation.
   useEffect(() => {
     const fromUrl = urlSearch.conversation;
-    if (fromUrl === undefined) {
-      return;
-    }
-    if (conversationIdRef.current === fromUrl && threadId === fromUrl) {
-      return;
-    }
+    if (conversationIdRef.current === fromUrl) return;
+    streamController.current?.abort();
+    streamController.current = null;
+    setPending(false);
     conversationIdRef.current = fromUrl;
-    setThreadId(fromUrl);
-    setHasMessages(true);
-    setConversation([
-      {
-        id: `resume-${fromUrl}`,
-        role: "assistant",
-        text: "Conversation reopened. Send a message to pick up where you left off.",
-        time: assistantNowTime(),
-      },
-    ]);
-  }, [threadId, urlSearch.conversation]);
+    setThreadId(fromUrl ?? null);
+    setHasMessages(fromUrl !== undefined);
+    setConversation([]);
+    setToolGroups(undefined);
+    setEditing(null);
+    setPendingApprovals([]);
+  }, [urlSearch.conversation]);
+  const historyQuery = useQuery({
+    ...assistantConversationQueryOptions(threadId),
+    enabled: threadId !== null && !pending,
+  });
+  useEffect(() => {
+    if (!pending && conversation.length === 0 && historyQuery.data !== undefined) {
+      const hydrated = hydrateConversation(historyQuery.data);
+      if (hydrated !== null) {
+        setConversation(hydrated);
+        setToolGroups(
+          [...hydrated].reverse().find((message) => message.role === "user")?.toolGroups,
+        );
+      }
+    }
+  }, [historyQuery.data, pending, conversation.length]);
   const trimmedSearch = search.trim();
   const conversationsQuery = useQuery(
     assistantConversationsQueryOptions(trimmedSearch.length === 0 ? {} : { query: trimmedSearch }),
@@ -147,22 +167,46 @@ export function AssistantSurface() {
     [conversationsQuery.data],
   );
   const send = useCallback(
-    (raw: string) => {
+    (
+      raw: string,
+      attachments: readonly AssistantAttachment[] = [],
+      requestedModelId = modelId,
+      webSearch = false,
+      selectedToolGroups = toolGroups,
+      editedMessage: AssistantChatMessage | null = null,
+    ): Promise<boolean> => {
       const text = raw.trim();
-      if (text.length === 0 || pending) {
-        return;
+      if (text.length === 0 || pending || streamController.current !== null) {
+        return Promise.resolve(false);
       }
+      const controller = new AbortController();
+      streamController.current = controller;
+      void queryClient.cancelQueries({
+        queryKey: [ASSISTANT_QUERY_ROOT, "conversation", threadId],
+      });
       setHasMessages(true);
-      const turnId = `turn-${String(Date.now())}`;
+      const turnId = `turn-${crypto.randomUUID()}`;
       const userMessage: AssistantChatMessage = {
         id: `${turnId}-user`,
         role: "user",
         text,
+        attachments,
+        webSearch,
+        ...(selectedToolGroups === undefined ? {} : { toolGroups: selectedToolGroups }),
         time: assistantNowTime(),
       };
       const assistantId = `${turnId}-assistant`;
+      const originalConversation = conversation;
       setConversation((prev) => [
-        ...prev,
+        ...(editedMessage === null
+          ? prev
+          : prev.slice(
+              0,
+              Math.max(
+                0,
+                prev.findIndex((message) => message.id === editedMessage.id),
+              ),
+            )),
         userMessage,
         {
           id: assistantId,
@@ -180,10 +224,40 @@ export function AssistantSurface() {
           ),
         );
       };
-      void streamAssistantChat(
-        { conversationId: conversationIdRef.current, message: text },
+      return streamAssistantChat(
         {
+          conversationId: conversationIdRef.current,
+          message: text,
+          ...(isAssistantBackendConversationId(editedMessage?.id)
+            ? { editMessageId: editedMessage.id }
+            : {}),
+          ...(requestedModelId ? { modelId: requestedModelId } : {}),
+          webSearch,
+          ...(selectedToolGroups === undefined ? {} : { toolGroups: selectedToolGroups }),
+          attachmentObjectIds: attachments.map(({ objectId }) => objectId),
+        },
+        {
+          signal: controller.signal,
+          onTool: (activity) => {
+            if (controller.signal.aborted || streamController.current !== controller) return;
+            setConversation((prev) =>
+              prev.map((message) =>
+                message.id === assistantId
+                  ? {
+                      ...message,
+                      toolActivity: [
+                        ...(message.toolActivity ?? []).filter(
+                          (entry) => entry.toolCallId !== activity.toolCallId,
+                        ),
+                        activity,
+                      ],
+                    }
+                  : message,
+              ),
+            );
+          },
           onDelta: (fragment) => {
+            if (controller.signal.aborted || streamController.current !== controller) return;
             setConversation((prev) =>
               prev.map((message) =>
                 message.id === assistantId
@@ -195,10 +269,14 @@ export function AssistantSurface() {
         },
       )
         .then((turn) => {
+          if (controller.signal.aborted || streamController.current !== controller) return false;
+          setEditing(null);
+          setToolGroups(selectedToolGroups);
           const finalText = turn.response?.content;
           const backendId = turn.conversation?.id;
           conversationIdRef.current = backendId ?? conversationIdRef.current;
           if (backendId !== undefined) {
+            queryClient.setQueryData(assistantConversationQueryOptions(backendId).queryKey, turn);
             setThreadId(backendId);
             pushConversationUrl(backendId);
           }
@@ -210,6 +288,7 @@ export function AssistantSurface() {
           } else {
             patch({
               streaming: false,
+              ...(turn.sources === undefined ? {} : { sources: turn.sources }),
               ...(finalText !== undefined && finalText.length > 0 ? { text: finalText } : {}),
             });
           }
@@ -234,15 +313,47 @@ export function AssistantSurface() {
           }
           setPendingApprovals(fromTurn.length > 0 ? fromTurn : fromCalls);
           invalidateConversations();
+          return true;
         })
-        .catch(() => {
-          patch({ streaming: false, errored: true, text: ASSISTANT_ERROR_FALLBACK });
+        .catch((cause: unknown) => {
+          if (streamController.current === controller && editedMessage !== null) {
+            setConversation(originalConversation);
+            setNotice(
+              controller.signal.aborted
+                ? "Response stopped. Your original conversation is unchanged."
+                : cause instanceof Error
+                  ? cause.message
+                  : ASSISTANT_ERROR_FALLBACK,
+            );
+          } else if (streamController.current === controller)
+            patch({
+              streaming: false,
+              errored: !controller.signal.aborted,
+              error: controller.signal.aborted
+                ? "Response stopped."
+                : cause instanceof Error
+                  ? cause.message
+                  : ASSISTANT_ERROR_FALLBACK,
+            });
+          return false;
         })
         .finally(() => {
-          setPending(false);
+          if (streamController.current === controller) {
+            streamController.current = null;
+            setPending(false);
+          }
         });
     },
-    [pending, invalidateConversations, pushConversationUrl],
+    [
+      pending,
+      modelId,
+      toolGroups,
+      queryClient,
+      threadId,
+      conversation,
+      invalidateConversations,
+      pushConversationUrl,
+    ],
   );
   const decidePending = useCallback(
     async (item: PendingApprovalItem, decision: "confirm" | "cancel") => {
@@ -257,7 +368,7 @@ export function AssistantSurface() {
         ),
       );
       try {
-        await applyAssistantToolDecision({
+        const result = await applyAssistantToolDecision({
           conversationId,
           pendingId: item.id,
           toolCallId: item.toolCallId ?? item.id,
@@ -281,44 +392,55 @@ export function AssistantSurface() {
             );
           },
         });
+        if (result.turn !== undefined) {
+          queryClient.setQueryData(
+            assistantConversationQueryOptions(conversationId).queryKey,
+            result.turn,
+          );
+        }
+        if (conversationIdRef.current !== conversationId) return;
+        if (result.turn !== undefined) {
+          const hydrated = hydrateConversation(result.turn);
+          if (hydrated !== null) setConversation(hydrated);
+        }
+        if (result.error !== undefined) setNotice(result.error);
         setPendingApprovals((prev) =>
-          prev.map((entry) =>
-            entry.id === item.id
-              ? { ...entry, status: decision === "confirm" ? "confirmed" : "cancelled" }
-              : entry,
-          ),
+          prev.map((entry) => (entry.id === item.id ? { ...entry, status: result.status } : entry)),
         );
+        invalidateConversations();
       } catch {
         // Error state already set via setToolError when possible.
       } finally {
         setApprovalBusy(false);
       }
     },
-    [],
+    [queryClient, invalidateConversations],
   );
   const openThread = useCallback(
     (id: string) => {
       setThreadId(id);
       setHasMessages(true);
-      // Reopen and continue this backend conversation. The full message history
-      // hydrates from the next turn's persisted `messages`; until then we show a
-      // resume hint so the user knows which conversation is active.
+      streamController.current?.abort();
+      streamController.current = null;
+      setPending(false);
+      setPendingApprovals([]);
       conversationIdRef.current = id;
-      setConversation([
-        {
-          id: `resume-${id}`,
-          role: "assistant",
-          text: "Conversation reopened. Send a message to pick up where you left off.",
-          time: assistantNowTime(),
-        },
-      ]);
+      setConversation([]);
+      setToolGroups(undefined);
+      setEditing(null);
       pushConversationUrl(id);
     },
     [pushConversationUrl],
   );
   const startNewChat = useCallback(() => {
+    streamController.current?.abort();
+    streamController.current = null;
+    setPending(false);
+    setPendingApprovals([]);
     setThreadId(null);
     setConversation([]);
+    setToolGroups(undefined);
+    setEditing(null);
     setHasMessages(false);
     conversationIdRef.current = undefined;
     pushConversationUrl(null);
@@ -392,6 +514,18 @@ export function AssistantSurface() {
     },
     [pinMutation],
   );
+  const composerProps = {
+    initialToolGroups: toolGroups,
+    onToolGroupsChange: setToolGroups,
+    pending,
+    disabled:
+      approvalBusy || (threadId !== null && (historyQuery.isPending || historyQuery.isError)),
+    onStop: () => streamController.current?.abort(),
+    modelId,
+    onModelChange: setModelId,
+    onNewChat: startNewChat,
+    onCancelEdit: () => setEditing(null),
+  };
   return (
     <SurfaceFrame
       title="Helix AI"
@@ -434,15 +568,52 @@ export function AssistantSurface() {
             </button>
           </div>
         )}
+        {threadId !== null && !pending && historyQuery.isPending ? (
+          <p role="status" className="p-4">
+            Loading conversation…
+          </p>
+        ) : null}
+        {threadId !== null && historyQuery.isError ? (
+          <p role="alert" className="p-4">
+            Could not load this conversation.{" "}
+            <button
+              className="btn sm"
+              type="button"
+              onClick={() => {
+                void queryClient.invalidateQueries({
+                  queryKey: assistantConversationQueryOptions(threadId).queryKey,
+                });
+              }}
+            >
+              Retry conversation
+            </button>
+          </p>
+        ) : null}
         {hasMessages ? (
           <AssistantConversation
             conversation={conversation}
             userName={userName}
-            pending={pending}
+            pending={pending || approvalBusy}
             onNavigate={navigateToSurface}
+            onEdit={setEditing}
+            onResend={(message) => {
+              void send(
+                message.text,
+                message.attachments ?? [],
+                modelId,
+                message.webSearch ?? false,
+                message.toolGroups,
+                message,
+              );
+            }}
           />
         ) : (
-          <AssistantHero onPrompt={send} userName={userName} />
+          <AssistantHero
+            onPrompt={(text) => {
+              void send(text);
+            }}
+            userName={userName}
+          />
         )}
         <PendingApprovalsPanel
           items={pendingApprovals}
@@ -454,7 +625,19 @@ export function AssistantSurface() {
             void decidePending(item, "cancel");
           }}
         />
-        <AssistantComposer onSend={send} pending={pending || approvalBusy} />
+        <div hidden={editing !== null} className="shrink-0">
+          <AssistantComposer {...composerProps} key={threadId ?? "new"} onSend={send} />
+        </div>
+        {editing !== null ? (
+          <AssistantComposer
+            {...composerProps}
+            key={editing.id}
+            editing={editing}
+            onSend={(text, attachments, selectedModel, webSearch, selectedGroups) =>
+              send(text, attachments, selectedModel, webSearch, selectedGroups, editing)
+            }
+          />
+        ) : null}
       </div>
       {renameTarget !== null && (
         <RenameDialog
@@ -491,8 +674,25 @@ function hydrateConversation(
   if (messages === undefined || messages.length === 0) {
     return null;
   }
+  // Each tool round persists cumulative details; show them once, on the last
+  // assistant message before the next user turn, including pending-only replies.
+  const finalAssistantIds = new Set<string>();
+  let hasLaterAssistant = false;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role === "user") hasLaterAssistant = false;
+    if (message?.role === "assistant" && !hasLaterAssistant) {
+      finalAssistantIds.add(message.id);
+      hasLaterAssistant = true;
+    }
+  }
   const visible = messages.filter(
-    (message) => message.role === "user" || message.role === "assistant",
+    (message) =>
+      message.role === "user" ||
+      (message.role === "assistant" &&
+        (message.content.trim().length > 0 ||
+          (finalAssistantIds.has(message.id) &&
+            (message.toolActivity?.length || message.sources?.length)))),
   );
   if (visible.length === 0) {
     return null;
@@ -501,6 +701,15 @@ function hydrateConversation(
     id: message.id,
     role: message.role === "user" ? "user" : "assistant",
     text: message.content,
+    ...(message.attachments === undefined ? {} : { attachments: message.attachments }),
+    ...(message.sources === undefined || !finalAssistantIds.has(message.id)
+      ? {}
+      : { sources: message.sources }),
+    ...(message.toolActivity === undefined || !finalAssistantIds.has(message.id)
+      ? {}
+      : { toolActivity: message.toolActivity }),
+    ...(message.toolGroups === undefined ? {} : { toolGroups: message.toolGroups }),
+    ...(message.webSearch === undefined ? {} : { webSearch: message.webSearch }),
     time:
       message.createdAt === undefined
         ? assistantNowTime()
@@ -623,6 +832,7 @@ function VirtualizedThreadList({
   );
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
+    useFlushSync: false,
     count: sidebarItems.length,
     getScrollElement: () => scrollRef.current,
     // Headers ~28px, threads ~52px on average. Estimate roughly; measureElement
@@ -787,7 +997,7 @@ function ThreadItem({
       </button>
       <button
         type="button"
-        className="icon-btn absolute top-1.5 right-1 w-5.5 h-5.5"
+        className="icon-btn absolute top-1.5 right-1 w-6 h-6"
         aria-label={`Chat options for ${thread.title}`}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
@@ -991,278 +1201,6 @@ function AssistantHero({ onPrompt, userName }: AssistantHeroProps) {
               </button>
             );
           })}
-        </div>
-      </div>
-    </div>
-  );
-}
-/* ---------------------------------------------------------- conversation -- */
-interface AssistantConversationProps {
-  readonly userName: string;
-  readonly conversation: readonly AssistantChatMessage[];
-  readonly pending: boolean;
-  readonly onNavigate: (target: string) => void;
-}
-function AssistantConversation({
-  conversation,
-  pending,
-  onNavigate,
-  userName,
-}: AssistantConversationProps) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const streamingText = conversation
-    .filter((message) => message.streaming === true)
-    .map((message) => message.text)
-    .join("");
-  const totalRows = conversation.length + 1;
-  const virtualizer = useVirtualizer({
-    count: totalRows,
-    getScrollElement: () => scrollRef.current,
-    // ChatGPT-ish: bot replies are usually 200-400px tall, user prompts ~80px.
-    // measureElement refines after first paint; estimate is just for layout.
-    estimateSize: (index) => (index === conversation.length ? 56 : 240),
-    overscan: 4,
-    getItemKey: (index) =>
-      index === conversation.length
-        ? "disclaimer"
-        : (conversation[index]?.id ?? `m:${String(index)}`),
-  });
-  // Streaming: keep the bottom row in view while the assistant types. We use
-  // the virtualizer's scrollToIndex (not raw scrollTop) so the windowed list
-  // measures + renders the target row before we land on it.
-  useEffect(() => {
-    if (totalRows === 0) return;
-    virtualizer.scrollToIndex(totalRows - 1, { align: "end" });
-    // We intentionally depend on length + streaming text + pending so every
-    // delta nudges us back to the bottom even mid-stream.
-  }, [virtualizer, totalRows, pending, streamingText]);
-  return (
-    <div
-      ref={scrollRef}
-      className="flex-1 overflow-y-auto [padding:24px_32px]"
-      data-testid="assistant-conversation"
-    >
-      <div
-        className="relative max-w-200 [margin:0_auto] w-full"
-        style={{ height: virtualizer.getTotalSize() }}
-      >
-        {virtualizer.getVirtualItems().map((virtual) => {
-          const isFooter = virtual.index === conversation.length;
-          const message = isFooter ? null : conversation[virtual.index];
-          if (!isFooter && message === undefined) return null;
-          return (
-            <div
-              key={virtual.key}
-              ref={virtualizer.measureElement}
-              data-index={virtual.index}
-              className="absolute top-0 left-0 w-full"
-              style={{ transform: `translateY(${String(virtual.start)}px)` }}
-            >
-              {isFooter ? (
-                <div className="flex justify-center [padding:16px_0]">
-                  <span className="[font-size:var(--text-caption)] text-muted-foreground flex items-center gap-2">
-                    <SparklesIcon size={16} /> Helix AI may produce inaccurate information. Verify
-                    important details.
-                  </span>
-                </div>
-              ) : (
-                <ChatMessage
-                  message={message as AssistantChatMessage}
-                  onNavigate={onNavigate}
-                  userName={userName}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-interface ChatMessageProps {
-  readonly userName: string;
-  readonly message: AssistantChatMessage;
-  readonly onNavigate: (target: string) => void;
-}
-function ChatMessage({ message, onNavigate, userName }: ChatMessageProps) {
-  if (message.role === "user") {
-    return (
-      <div className="flex gap-3 mb-5 justify-end">
-        <div className="[background:var(--accent-soft)] text-foreground [padding:10px_14px] [border-radius:12px] max-w-130 [font-size:var(--text-body-sm)] [line-height:1.55] [border:1px_solid_var(--accent-soft-border)] whitespace-pre-wrap">
-          {message.text}
-        </div>
-        <Avatar name={userName} size={28} />
-      </div>
-    );
-  }
-  const isPending = message.streaming === true && message.text.length === 0;
-  return (
-    <div className="flex gap-3 mb-6">
-      <div className="w-7 h-7 rounded-lg shrink-0 [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [color:white] grid [place-items:center]">
-        <SparklesIcon size={14} />
-      </div>
-      <div className="flex-1 min-w-0">
-        {isPending ? (
-          <PendingDots />
-        ) : (
-          <>
-            {message.text.length > 0 && (
-              <div className="[font-size:var(--text-body-sm)] [line-height:1.6] mb-3 whitespace-pre-wrap">
-                {message.text}
-              </div>
-            )}
-            {message.blocks?.map((block, index) => (
-              <MessageBlock
-                key={`${message.id}-block-${String(index)}`}
-                block={block}
-                onNavigate={onNavigate}
-              />
-            ))}
-            {message.streaming !== true && (
-              <div className="flex gap-1 mt-3">
-                <button
-                  type="button"
-                  className="icon-btn"
-                  aria-label="Copy response"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(message.text);
-                  }}
-                >
-                  <DocIcon size={16} />
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-function PendingDots() {
-  return (
-    <div
-      className="inline-flex gap-1 items-center [padding:10px_0]"
-      role="status"
-      aria-label="Helix AI is thinking"
-    >
-      {[0, 1, 2].map((index) => (
-        <span
-          key={index}
-          className="w-1.5 h-1.5 [border-radius:999px] [background:var(--text-3)]"
-          style={{ animation: `helix-pending 1.2s ${String(index * 0.15)}s infinite` }}
-        />
-      ))}
-    </div>
-  );
-}
-/* ----------------------------------------------------------------- block -- */
-interface MessageBlockProps {
-  readonly block: AssistantBlock;
-  readonly onNavigate: (target: string) => void;
-}
-function MessageBlock({ block, onNavigate }: MessageBlockProps) {
-  if (block.kind === "list") {
-    return (
-      <div className="bg-card [border:1px_solid_var(--border)] rounded-lg [padding:12px_14px] mb-2">
-        <div className="font-semibold [font-size:var(--text-body-sm)] mb-2">{block.title}</div>
-        <ul className="m-0 pl-4.5 [font-size:var(--text-meta)] [line-height:1.6]">
-          {block.items.map((item, index) => (
-            <li key={index} className="mb-1">
-              {item}
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  }
-  if (block.kind === "draft") {
-    return (
-      <div className="bg-card [border:1px_solid_var(--border)] rounded-lg mb-2 overflow-hidden">
-        <div className="bg-muted [padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-1.5 [font-size:var(--text-meta)]">
-          <EditPenIcon size={16} />
-          <span className="font-semibold">{block.title}</span>
-          <span className="chip accent ml-auto">Draft</span>
-        </div>
-        <div className="[padding:12px_14px] whitespace-pre-wrap [font-size:var(--text-meta)] [line-height:1.6]">
-          {block.body}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="flex gap-1.5 flex-wrap">
-      {block.items.map((action, index) => {
-        const ActionIcon = Icons[action.icon];
-        return (
-          <button
-            key={`${action.label}-${String(index)}`}
-            type="button"
-            className="btn sm"
-            onClick={() => {
-              if (action.target !== undefined) {
-                onNavigate(action.target);
-              }
-            }}
-          >
-            <ActionIcon size={16} /> {action.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-/* -------------------------------------------------------------- composer -- */
-interface AssistantComposerProps {
-  readonly onSend: (text: string) => void;
-  readonly pending: boolean;
-}
-function AssistantComposer({ onSend, pending }: AssistantComposerProps) {
-  const [text, setText] = useState("");
-  const submit = useCallback(() => {
-    if (text.trim().length === 0 || pending) {
-      return;
-    }
-    onSend(text);
-    setText("");
-  }, [text, pending, onSend]);
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        submit();
-      }
-    },
-    [submit],
-  );
-  return (
-    <div className="[padding:12px_32px_20px] shrink-0">
-      <div className="max-w-200 [margin:0_auto]">
-        <div className="[border:1px_solid_var(--border)] [border-radius:14px] bg-card p-1 [box-shadow:var(--shadow-sm)]">
-          <textarea
-            value={text}
-            onChange={(event) => {
-              setText(event.target.value);
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask anything…"
-            aria-label="Message Helix AI"
-            className="w-full [padding:12px_14px] [border:none] outline-none bg-transparent [font-size:var(--text-body)] [line-height:1.5] [resize:none] min-h-15 [font-family:inherit] text-foreground"
-          />
-          <div className="flex [padding:4px_8px_6px] gap-1 items-center">
-            <div className="flex-1" />
-            <span className="[font-size:var(--text-caption)] text-muted-foreground">
-              <span className="kbd">↵</span> send · <span className="kbd">⇧↵</span> newline
-            </span>
-            <button
-              type="button"
-              className={cn("btn primary sm", pending ? "[opacity:0.5]" : "[opacity:1]")}
-              disabled={pending}
-              onClick={submit}
-              aria-label="Send message"
-            >
-              <SendIcon size={16} />
-            </button>
-          </div>
         </div>
       </div>
     </div>

@@ -160,7 +160,7 @@ describe("AssistantOrchestrator", () => {
 
     expect(resumed.toolCalls).toMatchObject([
       {
-        toolCallId: turn.pendingConfirmations[0]?.id,
+        toolCallId: turn.toolCalls.find((call) => call.pending !== undefined)?.toolCallId,
         toolId: "drive.share",
         input: {
           preview: {
@@ -183,7 +183,7 @@ describe("AssistantOrchestrator", () => {
     });
     expect(resumed.messages.at(-2)).toMatchObject({
       role: "tool",
-      toolCallId: turn.pendingConfirmations[0]?.id,
+      toolCallId: turn.toolCalls.find((call) => call.pending !== undefined)?.toolCallId,
       metadata: {
         toolCall: {
           status: "executed",
@@ -282,7 +282,7 @@ describe("AssistantOrchestrator", () => {
     });
     expect(cancelled.toolCalls).toEqual([
       {
-        toolCallId: pendingId,
+        toolCallId: turn.toolCalls[0]?.toolCallId,
         toolId: "demo.delete",
         input: {
           preview: {
@@ -304,7 +304,7 @@ describe("AssistantOrchestrator", () => {
     });
     expect(cancelled.messages.at(-2)).toMatchObject({
       role: "tool",
-      toolCallId: pendingId,
+      toolCallId: turn.toolCalls[0]?.toolCallId,
       metadata: {
         cancelledPendingTool: {
           id: pendingId,
@@ -683,7 +683,7 @@ class ShareFlowAI implements AICapability {
     expect(JSON.stringify(request.messages)).toContain("Q3 Launch PRD");
     expect(JSON.stringify(request.messages)).toContain("Bruno asked Ada");
     expect(JSON.stringify(request.messages)).toContain("chat:share-request");
-    expect(JSON.stringify(request.messages)).not.toContain("/chat/launch?message=share-request");
+    expect(JSON.stringify(request.messages)).toContain("/chat/launch?message=share-request");
     return {
       providerId: "fake",
       model: "fake-model",
@@ -744,9 +744,8 @@ class CancelFlowAI implements AICapability {
     this.calls.push(request);
     if (this.calls.length === 1) {
       expect(request.feature).toBe("assistant.chat");
-      expect(request.tools).toEqual(
-        expect.arrayContaining(["demo.delete", "assistant.confirmation.cancel"]),
-      );
+      expect(request.tools).toContain("demo.delete");
+      expect(request.tools).not.toContain("assistant.confirmation.cancel");
       return {
         providerId: "fake",
         model: "fake-model",

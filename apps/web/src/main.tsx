@@ -22,7 +22,8 @@ const queryClient = new QueryClient({
     queries: {
       ...QUERY_RETRY_DEFAULTS,
       staleTime: 30_000,
-      throwOnError: true,
+      // Background failures must not unmount a working screen or discard drafts.
+      throwOnError: (_error, query) => query.state.data === undefined,
     },
     mutations: { retry: false },
   },

@@ -172,6 +172,7 @@ export const ADMIN_NAV_GROUPS = [
     title: "AI",
     items: [
       { id: "ai-providers", label: "AI providers", icon: "Sparkles" },
+      { id: "ai-retrieval", label: "AI retrieval", icon: "Globe" },
       { id: "ai-costs", label: "Cost limits", icon: "Credit" },
       { id: "ai-observability", label: "Observability", icon: "Eye" },
     ],

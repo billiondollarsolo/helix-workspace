@@ -1,3 +1,4 @@
+import { eligibleMailDomainsSchema } from "@/lib/mail-addresses";
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
@@ -59,6 +60,7 @@ const groupSchema = z.object({
   name: z.string(),
   email: z.string().nullable(),
   kind: z.enum(GROUP_KINDS),
+  postingPolicy: z.enum(["organization", "anyone"]).default("organization"),
   description: z.string(),
   orgUnitId: z.string().nullable(),
   memberCount: z.number().int(),
@@ -75,6 +77,7 @@ export interface CreateGroupInput {
   readonly name: string;
   readonly email?: string | null;
   readonly kind?: GroupKind;
+  readonly postingPolicy?: "organization" | "anyone";
   readonly description?: string;
   readonly orgUnitId?: string | null;
 }
@@ -197,6 +200,19 @@ export async function createGroup(
   return (await parseResponse(response, "create group", groupResponseSchema)).group;
 }
 
+export async function updateGroup(
+  id: string,
+  input: CreateGroupInput,
+  fetchImpl: AuthFetch = authenticatedFetch,
+): Promise<Group> {
+  const response = await fetchImpl(`/api/admin/groups/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify(input),
+  });
+  return (await parseResponse(response, "update group", groupResponseSchema)).group;
+}
+
 export async function deleteGroup(
   id: string,
   fetchImpl: AuthFetch = authenticatedFetch,
@@ -245,3 +261,16 @@ export async function removeGroupMember(
   );
   await ensureOk(response, "remove group member");
 }
+
+export const groupMailDomainsQueryOptions = () =>
+  queryOptions({
+    queryKey: ["admin", "groups", "eligible-domains"] as const,
+    ...ADMIN_QUERY_DEFAULTS,
+    queryFn: async () =>
+      parseResponse(
+        await authenticatedFetch("/api/admin/groups/eligible-domains"),
+        "load eligible group domains",
+        z.object({ eligibleDomains: eligibleMailDomainsSchema }),
+      ),
+    throwOnError: false,
+  });

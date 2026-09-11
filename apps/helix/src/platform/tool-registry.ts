@@ -77,6 +77,8 @@ export interface ToolQuotaLimitMetadata {
 }
 
 export interface ToolInvokeOptions {
+  /** Server-only alternate transport handler; the registry still validates, authorizes and audits. */
+  readonly executeHandler?: (input: unknown, context: ToolContext) => Promise<unknown>;
   readonly request?: RequestContext;
   readonly actor?: Actor;
   /**
@@ -99,9 +101,7 @@ export interface ToolInvokeOptions {
    * or audit records.
    */
   readonly executionIdempotencyKey?: string;
-  /**
-   * Internal correlation for execution of an already-approved pending action.
-   */
+  /** Internal correlation for execution of an already-approved pending action. */
   readonly pendingActionId?: string;
   /** Registry-authored reason when an emergency operational control denies a call. */
   readonly operationalControlReason?: AgentOperationalControlReason;
@@ -681,7 +681,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         if (queueRequired) return await queueConfirmation();
 
         try {
-          const output = await tool.handler(input, context);
+          const output = await (invokeOptions?.executeHandler ?? tool.handler)(input, context);
           const parsedOutput = tool.outputSchema.parse(output) as Output;
           if (
             options.dlp !== undefined &&

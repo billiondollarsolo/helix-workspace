@@ -1,9 +1,4 @@
 export {
-  formatAssistantSseEvent,
-  registerAssistantStreamRoute,
-  type AssistantStreamOrchestrator,
-} from "./bootstrap/assistant-routes.js";
-export {
   getSmtpMailReceiverConfig,
   HELIX_LOG_REDACT_PATHS,
   verifyDefaultOrgAtBoot,

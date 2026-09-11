@@ -3,6 +3,8 @@ import type { DriveAutoTagWrite, DriveEnrichmentWrite, DriveSearchRecord } from 
 import { type DriveStoreContext } from "./context.js";
 import { mapDriveSearchRecord } from "./mappers.js";
 import { type DriveSearchProjectionRow } from "./rows.js";
+import { isTextFile, readSearchText, SEARCH_FILE_BYTES } from "../text-content.js";
+import { readStoredUpload, storageForOrg } from "./storage.js";
 function uniqueStrings(values: readonly string[]): readonly string[] {
   const seen = new Set<string>();
   const output: string[] = [];
@@ -19,6 +21,7 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
 export async function getDriveSearchRecord(
   context: DriveStoreContext,
   fileId: string,
+  includeContent = false,
 ): Promise<DriveSearchRecord | null> {
   const rows = await context.sql<DriveSearchProjectionRow[]>`
       with recursive target as (
@@ -51,7 +54,27 @@ export async function getDriveSearchRecord(
       from target t
       left join actors a on a.id = t.owner_actor_id and a.org_id = t.org_id
     `;
-  return rows[0] === undefined ? null : mapDriveSearchRecord(rows[0]);
+  const row = rows[0];
+  if (row === undefined) return null;
+  const record = mapDriveSearchRecord(row);
+  if (
+    !includeContent ||
+    row.metadata.status !== "ready" ||
+    row.sha256 === null ||
+    record.byteSize > SEARCH_FILE_BYTES ||
+    !isTextFile(record.mimeType, record.name)
+  )
+    return record;
+  const storage = await storageForOrg(context, record.orgId);
+  const content = await readStoredUpload(storage, row.storage_key);
+  if (content === undefined || content === null)
+    throw new Error("Search source file contents are unavailable.");
+  const textContent = await readSearchText(content.body, row.sha256);
+  // Storage I/O can race edits, malware quarantine, or grant revocation: reload authoritative metadata.
+  const current = await getDriveSearchRecord(context, fileId);
+  return current?.sha256 === row.sha256 && current.metadata?.status === "ready"
+    ? { ...current, textContent }
+    : null;
 }
 
 export function getDriveEnrichmentRecord(

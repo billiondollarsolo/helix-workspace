@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { redirectToLogin, sessionQueryKeys } from "@/lib/auth";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
@@ -8,6 +10,11 @@ import type { SettingsSectionId } from "./overlay-context";
 
 const navigate = vi.fn();
 let routeSearch: Record<string, unknown> = {};
+
+vi.mock("@/lib/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth")>()),
+  redirectToLogin: vi.fn(),
+}));
 
 vi.mock("@tanstack/react-router", () => ({
   Outlet: () => <main id="main-content">Workspace</main>,
@@ -92,8 +99,16 @@ function applySearchUpdate(
 describe("AppShell settings URL state", () => {
   let container: HTMLDivElement;
   let root: Root;
+  let client: QueryClient;
 
   beforeEach(() => {
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(sessionQueryKeys.current, {
+      id: "user",
+      actorId: "actor",
+      name: "User",
+      email: "user@example.test",
+    });
     routeSearch = { settings: "shortcuts", q: "launch" };
     container = document.createElement("div");
     document.body.append(container);
@@ -103,11 +118,18 @@ describe("AppShell settings URL state", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    client.clear();
     vi.clearAllMocks();
   });
 
   it("opens deep-linked sections and preserves route search while changing or closing them", () => {
-    act(() => root.render(<AppShell />));
+    act(() =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <AppShell />
+        </QueryClientProvider>,
+      ),
+    );
 
     expect(container.querySelector('[data-testid="settings"]')?.getAttribute("data-section")).toBe(
       "shortcuts",
@@ -138,9 +160,32 @@ describe("AppShell settings URL state", () => {
     });
   });
 
+  it("hides cached workspace content and redirects when the shared session becomes null", async () => {
+    act(() =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <AppShell />
+        </QueryClientProvider>,
+      ),
+    );
+    expect(container.textContent).toContain("Workspace");
+    await act(async () => {
+      client.setQueryData(sessionQueryKeys.current, null);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(container.textContent).not.toContain("Workspace");
+    expect(redirectToLogin).toHaveBeenCalledOnce();
+  });
+
   it("routes Help to the keyboard-shortcuts section", () => {
     routeSearch = {};
-    act(() => root.render(<AppShell />));
+    act(() =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <AppShell />
+        </QueryClientProvider>,
+      ),
+    );
     act(() => findButton(container, "Help")?.click());
 
     const helpNavigation = navigate.mock.calls[0]?.[0] as {

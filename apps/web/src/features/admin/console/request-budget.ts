@@ -1,56 +1,22 @@
 import { QUERY_RETRY_DEFAULTS } from "@/lib/query-retry";
 
-/* The admin console's shared request policy.
- *
- * Every request outside `/api/auth` is metered against the tenant's
- * `api_rps_limit` quota — five per second on the default plan
- * (`packages/contracts/src/tenant-config.ts`), counted per org over a hard
- * one-second sliding window (`apps/helix/src/platform/limits/api-rps.ts`,
- * refusing when `state.length + 1 > limit`).
- *
- * This module exists because that policy used to live in exactly one section
- * file. `sections/overview.tsx` discovered the problem the expensive way — its
- * five checks left in the same tick, one came back 429, and because every admin
- * `queryOptions` set `retry: false` the refusal was *permanent* until the
- * operator clicked Retry. The console's front door was raising a red alarm
- * about a limit it had tripped itself, on every cold load.
- *
- * Overview then grew a release queue and a 429-only retry, and kept them
- * private. Meanwhile Billing (3 queries), Webhooks (3), Drive, Tier readiness,
- * Audit, Groups, App passwords and Agent credentials (2 each) sit at or over
- * the same ceiling once the shell's two are counted, with no retry at all. The
- * mitigation belongs where every section can reach it. */
-
-/* ------------------------------------------------------------------ */
-/* The budget                                                          */
-/* ------------------------------------------------------------------ */
-
-/** The tenant's default per-second request ceiling. Mirrors
- *  `api_rps_limit` in `packages/contracts/src/tenant-config.ts`. */
-export const TENANT_API_RPS_LIMIT = 5;
+/* Mirrors the verified-human browser allowance. Integration API quotas do not
+ * delay browser queries; ordinary page loads fit in one burst. */
+export const CLIENT_STARTUP_REQUEST_BUDGET = 120;
+export const CLIENT_REQUEST_WINDOW_MS = 10_000;
 
 /** What the app shell spends before a section renders anything.
  *
- *  Three, measured against a running workspace rather than counted from the
- *  source — the source undercounted twice. Overview's original comment assumed
- *  one; reading the code suggested two; a real cold load of `/admin/overview`
- *  shows three metered requests landing inside 20 ms of each other:
+ *  Two shared queries run on a cold load with the notifications panel closed:
  *
  *    /api/core-apps                        (rail + launcher, use-enabled-apps.ts)
  *    /api/tools/notifications.unread-count (bell badge, surface-frame.tsx)
- *    /api/tools/notifications.list         (notifications panel)
  *
- *  `/api/auth/get-session` also fires twice and is genuinely exempt
- *  (`installTenantApiRpsLimitHook` skips `/api/auth/*`), which is what made the
- *  earlier estimates plausible.
- *
- *  If the shell ever stops fetching one of these, lower the number — it exists
- *  to be an honest count, and an inflated one costs every section latency it
- *  does not need to pay. */
-export const SHELL_BASELINE_REQUESTS = 3;
+ *  The feed loads when opened. Session reads are exempt from this limit. */
+export const SHELL_BASELINE_REQUESTS = 2;
 
 /** How many requests a section may fire in one second without help. */
-export const SECTION_REQUEST_BUDGET = TENANT_API_RPS_LIMIT - SHELL_BASELINE_REQUESTS;
+export const SECTION_REQUEST_BUDGET = CLIENT_STARTUP_REQUEST_BUDGET - SHELL_BASELINE_REQUESTS;
 
 /* ------------------------------------------------------------------ */
 /* Freshness tiers                                                     */
@@ -99,17 +65,9 @@ export const ADMIN_QUERY_DEFAULTS = {
 /* Release pacing                                                      */
 /* ------------------------------------------------------------------ */
 
-/** Spacing that keeps `count` requests inside the section budget.
- *
- *  Derived rather than guessed. Overview hardcoded 250 ms against an assumed
- *  one-request shell; with the real two-request shell that still overflows the
- *  window. */
+/** Pace only batches larger than a full browser request window. */
 export function releaseIntervalMs(count: number): number {
-  if (count <= SECTION_REQUEST_BUDGET) {
-    return 0;
-  }
-  /* Spread `count` releases over as many whole seconds as the budget needs,
-     with a small margin so rounding cannot put one extra request in the window. */
-  const seconds = Math.ceil(count / SECTION_REQUEST_BUDGET);
-  return Math.ceil((seconds * 1_000) / count) + 50;
+  if (count <= SECTION_REQUEST_BUDGET) return 0;
+  const windows = Math.ceil(count / SECTION_REQUEST_BUDGET);
+  return Math.ceil((windows * CLIENT_REQUEST_WINDOW_MS) / count) + 50;
 }

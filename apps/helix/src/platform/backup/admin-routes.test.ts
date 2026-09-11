@@ -8,6 +8,7 @@ import {
   ScriptedBackupAdminService,
   type BackupAdminService,
   type BackupOperationResult,
+  type RegisterBackupAdminRoutesOptions,
 } from "./admin-routes.js";
 import type { RestoreJob, RestoreJobRequest, RestoreJobStore } from "./restore-jobs.js";
 
@@ -59,7 +60,7 @@ describe("backup admin routes", () => {
     expect(harness.jobs.jobs).toHaveLength(0);
   });
 
-  it("creates a durable pending job and requires two other stepped-up approvers", async () => {
+  it("requires one other stepped-up admin when second-admin approval is enabled", async () => {
     const harness = await createHarness();
     const created = await harness.app.inject({
       method: "POST",
@@ -94,13 +95,60 @@ describe("backup admin routes", () => {
       targetObjectBucket: restorePayload.targetObjectBucket,
     });
     expect(selfApproval.statusCode).toBe(409);
-    expect(first.json()).toMatchObject({ status: "pending_approval", approvalCount: 1 });
-    expect(second.json()).toMatchObject({ status: "queued", approvalCount: 2 });
+    expect(first.json()).toMatchObject({
+      status: "queued",
+      approvalCount: 1,
+      requiredApprovals: 1,
+    });
+    expect(second.statusCode).toBe(409);
     expect(harness.audit.map((record) => record.verb)).toEqual([
       "backup.restore.requested",
       "backup.restore.approved",
-      "backup.restore.approved",
     ]);
+  });
+
+  it.each([false, true])(
+    "honors independent MFA and approval choices (approval %s)",
+    async (required) => {
+      const harness = await createHarness(async () => ({
+        sensitiveActionMfaRequired: false,
+        secondAdminApprovalRequired: required,
+      }));
+      const create = (scopes: string, extra = {}) =>
+        harness.app.inject({
+          method: "POST",
+          url: "/api/admin/restores",
+          headers: adminHeaders(scopes),
+          payload: { ...restorePayload, ...extra },
+        });
+      expect((await create("mail.read")).statusCode).toBe(403);
+      expect((await create("admin.backups.restore", { requiredApprovals: 0 })).statusCode).toBe(
+        400,
+      );
+      const response = await create("admin.backups.restore");
+      expect(response.statusCode).toBe(202);
+      expect(response.json()).toMatchObject({
+        status: required ? "pending_approval" : "queued",
+        approvalCount: 0,
+        requiredApprovals: required ? 1 : 0,
+      });
+      expect(harness.audit[0]?.metadata).toMatchObject({ requiredApprovals: required ? 1 : 0 });
+    },
+  );
+
+  it("keeps MFA when approvals alone are disabled", async () => {
+    const harness = await createHarness(async () => ({
+      sensitiveActionMfaRequired: true,
+      secondAdminApprovalRequired: false,
+    }));
+    const response = await harness.app.inject({
+      method: "POST",
+      url: "/api/admin/restores",
+      headers: adminHeaders("admin.backups.restore"),
+      payload: restorePayload,
+    });
+    expect(response.statusCode).toBe(403);
+    expect(harness.jobs.jobs).toHaveLength(0);
   });
 
   it("requires explicit safe isolated restore targets", async () => {
@@ -140,7 +188,9 @@ describe("backup admin routes", () => {
   });
 });
 
-async function createHarness(): Promise<{
+async function createHarness(
+  securityControls?: RegisterBackupAdminRoutesOptions["securityControls"],
+): Promise<{
   app: ReturnType<typeof fastify>;
   jobs: FakeRestoreJobStore;
   audit: (AuditRecord & { readonly orgId: string })[];
@@ -153,6 +203,7 @@ async function createHarness(): Promise<{
     restoreJobs: jobs,
     actorFromRequest,
     stepUpVerified: (request) => request.headers["x-test-mfa"] === "true",
+    ...(securityControls === undefined ? {} : { securityControls }),
     auditSink: { append: async (record) => void audit.push(record) },
   });
   return { app, jobs, audit };
@@ -190,7 +241,7 @@ class FakeRestoreJobStore implements RestoreJobStore {
     const updated: RestoreJob = {
       ...current,
       approvalCount: approvals.size,
-      status: approvals.size >= 2 ? "queued" : "pending_approval",
+      status: approvals.size >= current.requiredApprovals ? "queued" : "pending_approval",
     };
     this.jobs[index] = updated;
     return updated;
@@ -218,8 +269,9 @@ function makeJob(id: string, actor: Actor, input: RestoreJobRequest): RestoreJob
     encrypted: input.encrypted,
     targetDatabase: input.targetDatabase,
     targetObjectBucket: input.targetObjectBucket,
-    status: "pending_approval",
+    status: input.requiredApprovals === 0 ? "queued" : "pending_approval",
     approvalCount: 0,
+    requiredApprovals: input.requiredApprovals ?? 2,
     attemptCount: 0,
     cancellationRequested: false,
   };

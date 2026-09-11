@@ -1,5 +1,7 @@
 import { KMSClient } from "@aws-sdk/client-kms";
 import { readFile } from "node:fs/promises";
+import { tenantMailClaims } from "../platform/mail/outbound-claims.js";
+import { LocalMailTransport } from "../platform/mail/local-delivery.js";
 import { MailProviderConfigurationError } from "../platform/mail/errors.js";
 import {
   DispatchTimeTransportResolver,
@@ -98,7 +100,10 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
         providerStore: outboundProviderStore,
         domainStore: sendingDomainStore,
         secrets: mailSecretProvider,
-        dkimResolver: (orgId) => (from) => mailDkimKeyStore.resolveSigningKey(orgId, from),
+        dkimResolver: (orgId) => (from) =>
+          withTenantPostgresContext(sql, { orgId }, () =>
+            mailDkimKeyStore.resolveSigningKey(orgId, from),
+          ),
         cacheTtlMs: 0,
         ...(outboundMailConfig === undefined
           ? {}
@@ -115,40 +120,49 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
   const outboundMailWorker = !mailAppRegistered
     ? undefined
     : new OutboundMailWorker({
-        store: mailStore,
+        store: tenantMailClaims(sql, mailStore),
         intervalMs: bootEnv.OUTBOX_POLL_INTERVAL_MS,
         batchSize: bootEnv.OUTBOX_BATCH_SIZE,
         dispatcher: new OutboundMailDispatcher(
           mailStore,
-          async (outbound) => {
-            if (outboundTransportResolver === undefined)
-              throw new MailDeliveryError("Outbound routing is unavailable.", false);
-            const decision = await outboundTransportResolver.transportFor(
-              outbound.orgId,
-              outbound.envelope.from.address.split("@").at(-1) ?? "",
-              outbound.providerId,
-            );
-            const bound = await mailStore.bindOutboundProviderDecision({
-              id: outbound.id,
-              orgId: outbound.orgId,
-              providerId: decision.providerId,
-              providerKind: decision.providerKind,
-              source: decision.source,
-              leaseToken: outbound.leaseToken,
-            });
-            if (bound === null)
-              throw new MailProviderConfigurationError(
-                "MAIL_PROVIDER_DECISION_CONFLICT",
-                "Outbound provider binding or lease changed before dispatch.",
+          async (outbound) =>
+            new LocalMailTransport(sql, outbound, async () => {
+              if (outboundTransportResolver === undefined)
+                throw new MailDeliveryError("Outbound routing is unavailable.", false);
+              const decision = await withTenantPostgresContext(sql, { orgId: outbound.orgId }, () =>
+                outboundTransportResolver.transportFor(
+                  outbound.orgId,
+                  outbound.envelope.from.address.split("@").at(-1) ?? "",
+                  outbound.providerId,
+                ),
               );
-            return decision.source === "environment" && outboundMailConfig !== undefined
-              ? new NodemailerMailTransport(outboundMailConfig, (from) =>
-                  mailDkimKeyStore.resolveSigningKey(outbound.orgId, from),
-                )
-              : decision.transport;
-          },
+              const bound = await withTenantPostgresContext(sql, { orgId: outbound.orgId }, () =>
+                mailStore.bindOutboundProviderDecision({
+                  id: outbound.id,
+                  orgId: outbound.orgId,
+                  providerId: decision.providerId,
+                  providerKind: decision.providerKind,
+                  source: decision.source,
+                  leaseToken: outbound.leaseToken,
+                }),
+              );
+              if (bound === null)
+                throw new MailProviderConfigurationError(
+                  "MAIL_PROVIDER_DECISION_CONFLICT",
+                  "Outbound provider binding or lease changed before dispatch.",
+                );
+              return decision.source === "environment" && outboundMailConfig !== undefined
+                ? new NodemailerMailTransport(outboundMailConfig, (from) =>
+                    withTenantPostgresContext(sql, { orgId: outbound.orgId }, () =>
+                      mailDkimKeyStore.resolveSigningKey(outbound.orgId, from),
+                    ),
+                  )
+                : decision.transport;
+            }),
           {
             metrics,
+            runForTenant: (orgId, operation) =>
+              withTenantPostgresContext(sql, { orgId }, operation),
             suppressionStore: mailDeliveryEventStore,
             // Stream/large attachments referenced by Drive objectId (G8 / Mail A2.5).
             resolveAttachment: async (objectId, context) => {

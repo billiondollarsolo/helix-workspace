@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AuthorizingSearchEngine,
   authorizeChatSearchHit,
@@ -59,6 +59,8 @@ describe("AuthorizingSearchEngine", () => {
       authorizeWorkspaceSearchHit(
         {
           chat: { getRoomForActor: async () => null },
+          mail: { getMailSearchRecord: async () => null },
+          drive: { getDriveSearchRecord: async () => null },
           contacts: {
             getContactByIdForActor: async (input) => {
               checked.push(input);
@@ -75,6 +77,86 @@ describe("AuthorizingSearchEngine", () => {
       ),
     ).resolves.toBe(false);
     expect(checked).toEqual([{ orgId: "org-1", actorId: "actor-1", contactId: "contact-1" }]);
+  });
+
+  it("never returns another mailbox's keyword/Bcc projection, even for the same message", async () => {
+    const mail = { getMailSearchRecord: vi.fn(async () => ({})) };
+    const source = new FakeEngine(
+      ["sender", "recipient"].map((owner) => ({
+        id: `mail:${owner}:message`,
+        type: "mail",
+        body: owner === "sender" ? "Bcc secret@example.test" : "launch",
+        attributes: {
+          orgId: "org",
+          messageId: "message",
+          ragVisibility: "private",
+          ragOwnerActorId: owner,
+        },
+      })),
+    );
+    const engine = new AuthorizingSearchEngine({
+      engine: source,
+      authorize: (request, hit) =>
+        authorizeWorkspaceSearchHit(
+          {
+            mail,
+            drive: { getDriveSearchRecord: async () => null },
+            chat: { getRoomForActor: async () => null },
+            contacts: { getContactByIdForActor: async () => null },
+          },
+          request,
+          hit,
+        ),
+    });
+    const result = await engine.search({
+      query: "secret",
+      forActorId: "recipient",
+      forOrgId: "org",
+    });
+    expect(result.hits.map((hit) => hit.id)).toEqual(["mail:recipient:message"]);
+    expect(JSON.stringify(result)).not.toContain("secret@example.test");
+    expect(mail.getMailSearchRecord).toHaveBeenCalledOnce();
+    mail.getMailSearchRecord.mockResolvedValueOnce(null as never);
+    expect(
+      (await engine.search({ query: "launch", forActorId: "recipient", forOrgId: "org" })).hits,
+    ).toEqual([]);
+    expect(
+      (await engine.search({ query: "launch", forActorId: "recipient", forOrgId: "foreign" })).hits,
+    ).toEqual([]);
+  });
+
+  it("removes stale Drive keyword and semantic hits immediately when canonical access is revoked", async () => {
+    const drive = {
+      getDriveSearchRecord: vi.fn(async () => ({ orgId: "org", allowedActorIds: ["reader"] })),
+    };
+    const source = new FakeEngine(
+      ["keyword", "semantic"].map((searchProvenance) => ({
+        id: `drive:${searchProvenance}`,
+        type: "drive",
+        body: "private plan",
+        attributes: { orgId: "org", fileId: "file", allowedActorIds: ["reader"], searchProvenance },
+      })),
+    );
+    const engine = new AuthorizingSearchEngine({
+      engine: source,
+      authorize: (request, hit) =>
+        authorizeWorkspaceSearchHit(
+          {
+            drive,
+            mail: { getMailSearchRecord: async () => null },
+            chat: { getRoomForActor: async () => null },
+            contacts: { getContactByIdForActor: async () => null },
+          },
+          request,
+          hit,
+        ),
+    });
+    const request = { query: "plan", forOrgId: "org", forActorId: "reader" };
+    expect((await engine.search(request)).hits).toHaveLength(2);
+    drive.getDriveSearchRecord.mockResolvedValue({ orgId: "org", allowedActorIds: [] });
+    expect((await engine.search(request)).hits).toEqual([]);
+    drive.getDriveSearchRecord.mockResolvedValue({ orgId: "foreign", allowedActorIds: ["reader"] });
+    expect((await engine.search(request)).hits).toEqual([]);
   });
 });
 

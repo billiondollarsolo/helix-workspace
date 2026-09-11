@@ -54,7 +54,7 @@ function DriveRoute() {
     <SurfaceFrame
       title="Drive"
       icon={<DriveIcon size={16} />}
-      searchPlaceholder="Search Drive"
+      searchPlaceholder="Search Drive (type:pdf owner:me)"
       searchValue={searchValue}
       onSearchChange={onSearchChange}
     >

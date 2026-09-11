@@ -46,6 +46,7 @@ import {
   type DriveScope,
 } from "./queries";
 import { driveShareTargetsFromInput } from "./share-access";
+import { uploadDriveBatch } from "./drive-upload-batch";
 import { openDenialMessage } from "./upload-status-ui";
 import { useDocumentSurfaceViewPreference } from "./view-preference";
 
@@ -106,8 +107,10 @@ export function DriveShell() {
   const [selectedFileId, setSelectedFileId] = useState<string | null>(driveSearch.file ?? null);
   const [processingUpload, setProcessingUpload] = useState<ProcessingDriveUpload | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [batchUploading, setBatchUploading] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const folderId =
     trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : (driveSearch.folder ?? null);
   // Drive URL sync — every state transition (scope, folder, selection)
@@ -347,13 +350,35 @@ export function DriveShell() {
     pushUrl({ scope: next, folder: null, file: null });
   };
   const onPickFile = () => fileInputRef.current?.click();
-  const onFileChosen = (event: ChangeEvent<HTMLInputElement>) => {
-    const chosen = event.target.files?.[0];
-    if (chosen !== undefined) {
-      uploadMutation.mutate({
-        file: chosen,
-      });
+  const onPickFolder = () => folderInputRef.current?.click();
+  const uploadFiles = (files: readonly File[]) => {
+    if (files.length === 0) return;
+    const only = files[0];
+    if (
+      files.length === 1 &&
+      only !== undefined &&
+      !(typeof only.webkitRelativePath === "string" && only.webkitRelativePath.includes("/"))
+    ) {
+      uploadMutation.mutate({ file: only });
+      return;
     }
+    setBatchUploading(true);
+    void uploadDriveBatch({
+      files,
+      parentFolderId: folderId,
+      createFolder: (name, parentId) =>
+        createDriveEntry({ kind: "folder", name, folderId: parentId }),
+      uploadFile: (file, destFolderId) => uploadDriveFile({ file, folderId: destFolderId }),
+    })
+      .then(() => {
+        void invalidateDrive();
+      })
+      .finally(() => {
+        setBatchUploading(false);
+      });
+  };
+  const onFileChosen = (event: ChangeEvent<HTMLInputElement>) => {
+    uploadFiles(Array.from(event.target.files ?? []));
     event.target.value = "";
   };
   const isTrashScope = scope === "trash";
@@ -391,6 +416,22 @@ export function DriveShell() {
       <input
         ref={fileInputRef}
         type="file"
+        multiple
+        aria-hidden="true"
+        tabIndex={-1}
+        className="hidden"
+        onChange={onFileChosen}
+      />
+      <input
+        ref={(node) => {
+          folderInputRef.current = node;
+          if (node !== null) {
+            node.setAttribute("webkitdirectory", "");
+            node.setAttribute("directory", "");
+          }
+        }}
+        type="file"
+        multiple
         aria-hidden="true"
         tabIndex={-1}
         className="hidden"
@@ -452,8 +493,9 @@ export function DriveShell() {
         activeScope={scope}
         onScopeChange={onScopeChange}
         onPickFile={onPickFile}
+        onPickFolder={onPickFolder}
         onNewItem={onNewItem}
-        uploading={uploadMutation.isPending}
+        uploading={uploadMutation.isPending || batchUploading}
         creating={createMutation.isPending}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -471,10 +513,9 @@ export function DriveShell() {
           onOpenFolder={openFolder}
           onSetStarred={(id, starred) => starMutation.mutate({ objectId: id, starred })}
           onUpload={onPickFile}
+          onUploadFolder={onPickFolder}
           onDropFiles={(droppedFiles) => {
-            for (const file of droppedFiles) {
-              uploadMutation.mutate({ file });
-            }
+            uploadFiles(droppedFiles);
           }}
           onNewItem={onNewItem}
           loading={itemsQuery.isLoading}
@@ -491,7 +532,7 @@ export function DriveShell() {
           }
           uploadError={uploadMutation.isError ? uploadMutation.error : null}
           onRetry={() => void invalidateDrive()}
-          uploading={uploadMutation.isPending}
+          uploading={uploadMutation.isPending || batchUploading}
           creating={createMutation.isPending}
           canHideShared={scope === "shared"}
           onItemAction={onItemAction}

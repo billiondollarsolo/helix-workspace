@@ -3,6 +3,7 @@ import { BadRequestError } from "../../../api/api-error.js";
 import { withTenantIoSagaPostgresContext as withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
 import { toSqlJson } from "../../util/sql.js";
 import { DriveForbiddenError } from "../errors.js";
+import { parseDriveSearchQuery } from "../search-query.js";
 import type { DriveEntryPage, DriveEntryRecord, DriveSearchHit } from "../types.js";
 import { appendDriveActivity } from "./activity.js";
 import {
@@ -548,7 +549,44 @@ export async function search(
     readonly limit?: number;
   },
 ): Promise<readonly DriveSearchHit[]> {
-  const query = input.query ?? "";
+  const parsed = parseDriveSearchQuery(input.query ?? "");
+  const nameLike = parsed.text.length > 0 ? `%${parsed.text}%` : "%";
+  const limit = input.limit ?? 50;
+  const folderHits: DriveSearchHit[] = parsed.includeFolders
+    ? (
+        await context.sql<
+          {
+            id: string;
+            name: string;
+            parent_folder_id: string | null;
+            updated_at: Date;
+          }[]
+        >`select id, name, parent_folder_id, updated_at
+          from drive_folders
+          where org_id = ${input.orgId}
+            and deleted_at is null
+            and (${input.folderId ?? null}::uuid is null or parent_folder_id = ${input.folderId ?? null})
+            and name ilike ${nameLike}
+            and (${parsed.ownerMe} = false or owner_actor_id = ${input.actorId})
+            and helix_drive_effective_role(
+              ${input.orgId}, ${input.actorId}, 'drive_folder', id
+            ) is not null
+          order by updated_at desc
+          limit ${limit}`
+      ).map((row) => ({
+        objectId: row.id,
+        name: row.name,
+        mimeType: "application/vnd.helix.folder",
+        byteSize: 0,
+        sha256: null,
+        folderId: row.parent_folder_id,
+        preview: "",
+        updatedAt: row.updated_at,
+      }))
+    : [];
+  if (parsed.foldersOnly) {
+    return folderHits;
+  }
   const rows = await context.sql<DriveSearchRow[]>`
       select o.*, (select max(version_number) from drive_versions v where v.object_id = o.id) as version_number
       from objects o
@@ -557,14 +595,18 @@ export async function search(
         and o.deleted_at is null
         and coalesce(o.metadata->>'status', 'ready') = 'ready'
         and (${input.folderId ?? null}::uuid is null or o.metadata->>'folderId' = ${input.folderId ?? null})
-        and (${query} = '' or coalesce(o.metadata->>'name', o.storage_key) ilike ${`%${query}%`} or o.mime_type ilike ${`%${query}%`})
+        and coalesce(o.metadata->>'name', o.storage_key) ilike ${nameLike}
+        and (${parsed.ownerMe} = false or o.owner_actor_id = ${input.actorId})
+        and (${parsed.mimeContains ?? null}::text is null
+          or o.mime_type ilike ${parsed.mimeContains ?? ""}
+          or coalesce(o.metadata->>'name', '') ilike ${parsed.nameSuffix ?? ""})
         and helix_drive_effective_role(
           ${input.orgId}, ${input.actorId}, 'object', o.id
         ) is not null
       order by o.updated_at desc
-      limit ${input.limit ?? 50}
+      limit ${limit}
     `;
-  return rows.map(mapSearchHit);
+  return [...folderHits, ...rows.map(mapSearchHit)].slice(0, limit);
 }
 
 export async function updateFileFolder(

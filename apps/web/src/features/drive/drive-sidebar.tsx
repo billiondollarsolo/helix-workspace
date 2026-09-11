@@ -1,5 +1,6 @@
 import { iconMap as Icons } from "@/components/icon-map";
 import { Folder as FolderIcon, Plus as PlusIcon, Upload as UploadIcon } from "lucide-react";
+import { DriveSyncControl } from "./drive-sync-dialog";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { type DriveCreateKind } from "./api";
@@ -17,10 +18,12 @@ export function DriveNewMenuItems({
   onRun,
   onNewItem,
   onUploadFile,
+  onUploadFolder,
 }: {
   readonly onRun: (action: () => void) => void;
   readonly onNewItem: (kind: DriveCreateKind) => void;
   readonly onUploadFile: () => void;
+  readonly onUploadFolder: () => void;
 }) {
   return (
     <>
@@ -28,22 +31,28 @@ export function DriveNewMenuItems({
         type="button"
         role="menuitem"
         className="btn w-full justify-start font-normal"
-
         onClick={() => onRun(() => onNewItem("folder"))}
       >
         <FolderIcon size={16} />
         New folder
       </button>
-      {null}
       <button
         type="button"
         role="menuitem"
         className="btn w-full justify-start font-normal"
-
         onClick={() => onRun(onUploadFile)}
       >
         <UploadIcon size={16} />
         Upload file
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="btn w-full justify-start font-normal"
+        onClick={() => onRun(onUploadFolder)}
+      >
+        <FolderIcon size={16} />
+        Upload folder
       </button>
     </>
   );
@@ -63,6 +72,7 @@ export function DriveSidebar({
   activeScope,
   onScopeChange,
   onPickFile,
+  onPickFolder,
   onNewItem,
   uploading,
   creating,
@@ -70,6 +80,7 @@ export function DriveSidebar({
   readonly activeScope: DriveScope;
   readonly onScopeChange: (scope: DriveScope) => void;
   readonly onPickFile: () => void;
+  readonly onPickFolder: () => void;
   readonly onNewItem: (kind: DriveCreateKind) => void;
   readonly uploading: boolean;
   readonly creating: boolean;
@@ -116,6 +127,7 @@ export function DriveSidebar({
                 onRun={handleMenuItem}
                 onNewItem={onNewItem}
                 onUploadFile={onPickFile}
+                onUploadFolder={onPickFolder}
               />
             </div>
           </>
@@ -138,6 +150,7 @@ export function DriveSidebar({
         );
       })}
       <div className="mt-auto pt-3">
+        <DriveSyncControl />
         <DriveQuotaMeter />
       </div>
     </aside>

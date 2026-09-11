@@ -81,6 +81,7 @@ export function DriveMain({
   onOpenFolder,
   onSetStarred,
   onUpload,
+  onUploadFolder,
   onDropFiles,
   onNewItem,
   loading,
@@ -106,6 +107,7 @@ export function DriveMain({
   readonly onOpenFolder: (folder: DriveFolderItem) => void;
   readonly onSetStarred: (id: string, starred: boolean) => void;
   readonly onUpload: () => void;
+  readonly onUploadFolder: () => void;
   readonly onDropFiles: (files: readonly File[]) => void;
   readonly onNewItem: (kind: DriveCreateKind) => void;
   readonly loading: boolean;
@@ -337,6 +339,7 @@ export function DriveMain({
                 onRun={handleFabMenuItem}
                 onNewItem={onNewItem}
                 onUploadFile={onUpload}
+                onUploadFolder={onUploadFolder}
               />
             </div>
           </>

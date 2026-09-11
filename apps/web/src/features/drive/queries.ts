@@ -126,7 +126,7 @@ export function driveItemsInputFromRouteSearch(search: DriveRouteSearch): DriveI
 export function entryFromSearchHit(hit: DriveApiSearchHit): DriveApiEntry {
   return {
     id: hit.objectId,
-    type: "file",
+    type: hit.mimeType === "application/vnd.helix.folder" ? "folder" : "file",
     name: hit.name,
     folderId: hit.folderId,
     ownerActorId: null,

@@ -288,6 +288,20 @@ describe("entryFromSearchHit", () => {
       deletedAt: null,
     });
   });
+
+  it("promotes folder search hits to folder entries", () => {
+    const entry = entryFromSearchHit({
+      objectId: "folder-9",
+      name: "Projects",
+      mimeType: "application/vnd.helix.folder",
+      byteSize: 0,
+      sha256: null,
+      folderId: null,
+      preview: "",
+      updatedAt: "2026-05-20T10:00:00.000Z",
+    });
+    expect(entry.type).toBe("folder");
+  });
 });
 
 describe("Drive session identity", () => {

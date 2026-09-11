@@ -22,6 +22,7 @@ import {
   type DriveFolderItem,
 } from "./drive-data";
 import { DriveDetailsPanel } from "./drive-details-panel";
+import { DriveShareDialog } from "./drive-share-dialog";
 import { DriveMain } from "./drive-file-list";
 import "./drive-shell.css";
 import { DriveSidebar } from "./drive-sidebar";
@@ -95,6 +96,7 @@ export function DriveShell() {
   const [trail, setTrail] = useState<readonly DriveCrumb[]>([]);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(driveSearch.file ?? null);
   const [processingUpload, setProcessingUpload] = useState<ProcessingDriveUpload | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderId =
     trail.length > 0 ? (trail[trail.length - 1]?.id ?? null) : (driveSearch.folder ?? null);
@@ -447,6 +449,16 @@ export function DriveShell() {
             shareMutation.mutate({ objectId: id, role, ...driveShareTargetsFromInput(targets) })
           }
           shareDone={shareMutation.isSuccess}
+          onOpenShare={() => setShareOpen(true)}
+        />
+      ) : null}
+      {selectedFile !== null ? (
+        <DriveShareDialog
+          objectId={selectedFile.id}
+          objectName={selectedFile.name}
+          ownerActorId={selectedEntry?.ownerActorId ?? null}
+          open={shareOpen}
+          onOpenChange={setShareOpen}
         />
       ) : null}
     </>

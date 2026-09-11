@@ -10,14 +10,20 @@ import {
   canReadObjectSql,
   requireFolderAccess,
   requireFolderAddChildren,
+  requireFolderRole,
   requireReadyObjectRole,
 } from "./authz.js";
 import { type DriveStoreContext } from "./context.js";
 import { type DriveDocumentSurfaceView } from "./contracts.js";
 import { assertDriveRestoreAllowed } from "./lifecycle.js";
-import { mapDriveListEntry, mapObjectEntry, mapSearchHit } from "./mappers.js";
+import { mapDriveListEntry, mapFolderEntry, mapObjectEntry, mapSearchHit } from "./mappers.js";
 import { withoutMetadataKey } from "./metadata.js";
-import { type DriveListCursor, type DriveListRow, type DriveSearchRow } from "./rows.js";
+import {
+  type DriveFolderRow,
+  type DriveListCursor,
+  type DriveListRow,
+  type DriveSearchRow,
+} from "./rows.js";
 function driveListFilterKey(input: {
   readonly orgId: string;
   readonly actorId: string;
@@ -469,10 +475,15 @@ export async function rename(
   },
 ): Promise<DriveEntryRecord | null> {
   return context.sql.begin(async (tx) => {
-    await requireReadyObjectRole(tx, input.orgId, input.actorId, input.objectId, "editor");
     const name = input.name.trim();
     if (name.length === 0) {
       throw new BadRequestError("Drive rename requires a non-empty name.");
+    }
+    const object = await tx<
+      { id: string }[]
+    >`select id from objects where id = ${input.objectId} and org_id = ${input.orgId} and kind in ('file', 'recording') and deleted_at is null`;
+    if (object[0] !== undefined) {
+      await requireReadyObjectRole(tx, input.orgId, input.actorId, input.objectId, "editor");
     }
     const rows = await tx<DriveSearchRow[]>`
         update objects
@@ -492,8 +503,24 @@ export async function rename(
         objectId: input.objectId,
         payload: { name },
       });
+      return mapObjectEntry(rows[0]);
     }
-    return rows[0] === undefined ? null : mapObjectEntry(rows[0]);
+    await requireFolderRole(tx, input.orgId, input.actorId, input.objectId, "editor");
+    const folderRows = await tx<DriveFolderRow[]>`
+      update drive_folders
+      set name = ${name}, updated_at = now()
+      where id = ${input.objectId} and org_id = ${input.orgId} and deleted_at is null
+      returning *
+    `;
+    if (folderRows[0] === undefined) return null;
+    await appendDriveActivity(tx, {
+      orgId: input.orgId,
+      actorId: input.actorId,
+      verb: "drive.folder.renamed",
+      objectId: input.objectId,
+      payload: { name },
+    });
+    return mapFolderEntry(folderRows[0]);
   });
 }
 

@@ -1,8 +1,10 @@
 import { queryOptions } from "@tanstack/react-query";
 import { sessionUserQueryOptions } from "@/lib/auth";
 import {
+  getDriveQuotaUsage,
   listDrive,
   listDriveAccess,
+  listDriveVersions,
   listDriveWorkflows,
   getDriveUploadStatus,
   searchDrive,
@@ -181,12 +183,30 @@ export function applyDriveScope(
           entry.ownerActorId === null ||
           entry.ownerActorId === currentActorId,
       );
+    case "home":
+      return live;
     default:
       return live;
   }
 }
 
 /** Query for the current session actor id — used for scope filtering + owner labels. */
+export function driveVersionsQueryOptions(objectId: string, enabled: boolean) {
+  return queryOptions({
+    queryKey: ["drive", "versions", objectId] as const,
+    queryFn: () => listDriveVersions(objectId),
+    enabled,
+  });
+}
+
+export function driveQuotaQueryOptions() {
+  return queryOptions({
+    queryKey: ["drive", "quota"] as const,
+    queryFn: () => getDriveQuotaUsage(),
+    staleTime: 30_000,
+  });
+}
+
 export function driveActorQueryOptions() {
   return queryOptions({
     ...sessionUserQueryOptions(),
@@ -214,6 +234,17 @@ export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriv
       // My Drive and Shared with me are folder trees. At the root they ask
       // for owned items vs share-roots; inside a folder they list children.
       // Recent / Starred stay flat cross-folder file views.
+      if (scope === "home") {
+        const page = await listDrive({
+          folderId: input.folderId ?? null,
+          limit: input.limit ?? 100,
+        });
+        if ((input.folderId ?? null) !== null) {
+          return { mode: "list", entries: page.entries };
+        }
+        const suggestions = deriveDriveSuggestions(page.entries);
+        return { mode: "list", entries: [...suggestions.folders, ...suggestions.files] };
+      }
       if (scope === "my" || scope === "shared" || scope === "trash") {
         const folderId = input.folderId ?? null;
         return {

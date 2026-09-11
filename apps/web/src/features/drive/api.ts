@@ -491,6 +491,14 @@ export async function transitionDriveWorkflow(
     fetchImpl,
   );
 }
+export async function getDriveQuotaUsage(fetchImpl: DriveApiFetch = authenticatedFetch): Promise<{
+  readonly usedBytes: number;
+  readonly limitBytes: number | null;
+  readonly unlimited: boolean;
+  readonly percentUsed: number | null;
+}> {
+  return callDriveTool("drive.quota.usage", {}, fetchImpl);
+}
 export async function listDriveAccess(
   objectId: string,
   fetchImpl: DriveApiFetch = authenticatedFetch,

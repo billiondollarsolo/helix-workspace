@@ -355,6 +355,7 @@ function DriveEmptyState({
   readonly onUpload: () => void;
 }) {
   const copy: Record<DriveScope, string> = {
+    home: "Nothing to suggest yet. Open a file or share something to populate Home.",
     my: "This folder is empty. Upload a file to get started.",
     shared: "Nothing has been shared with you yet.",
     recent: "No recent files.",

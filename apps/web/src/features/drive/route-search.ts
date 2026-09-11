@@ -4,7 +4,15 @@ import {
   optionalStringSearchParam,
 } from "@/lib/search-params";
 
-const DRIVE_SCOPE_IDS = ["my", "shared", "recent", "starred", "recordings", "trash"] as const;
+const DRIVE_SCOPE_IDS = [
+  "home",
+  "my",
+  "shared",
+  "recent",
+  "starred",
+  "recordings",
+  "trash",
+] as const;
 export type DriveScope = (typeof DRIVE_SCOPE_IDS)[number];
 
 export interface DriveRouteSearch {

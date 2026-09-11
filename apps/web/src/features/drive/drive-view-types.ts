@@ -1,6 +1,7 @@
 import { type DriveScope } from "./queries";
 
 export const SCOPE_TITLE: Record<DriveScope, string> = {
+  home: "Home",
   my: "My Drive",
   shared: "Shared with me",
   recent: "Recent",

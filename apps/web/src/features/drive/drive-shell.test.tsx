@@ -239,6 +239,20 @@ describe("DriveShell", () => {
           }),
         );
       }
+      if (url === "/v1/api/tools/drive.quota.usage") {
+        return Promise.resolve(
+          Response.json({
+            orgId: "00000000-0000-4000-8000-000000000100",
+            usedBytes: 1024,
+            limitBytes: 10240,
+            unlimited: false,
+            percentUsed: 10,
+          }),
+        );
+      }
+      if (url === "/v1/api/tools/drive.versions.list") {
+        return Promise.resolve(Response.json({ versions: [] }));
+      }
       if (url === "/v1/api/tools/drive.star.set") {
         return Promise.resolve(
           Response.json({

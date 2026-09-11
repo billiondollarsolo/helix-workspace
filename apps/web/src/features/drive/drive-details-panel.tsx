@@ -16,6 +16,8 @@ import {
   driveDownloadResult,
   driveRawDownloadUrl,
   removeDriveAccess,
+  renameDriveObject,
+  revertDriveVersion,
   updateDriveAccessRole,
   type DriveAccessGrant,
   type DriveAccessRole,
@@ -23,7 +25,7 @@ import {
 } from "./api";
 import { DRIVE_FILE_META, formatModified, type DriveFileItem } from "./drive-data";
 import { DriveWorkflows } from "./drive-workflows";
-import { driveAccessQueryOptions, driveQueryKeys } from "./queries";
+import { driveAccessQueryOptions, driveQueryKeys, driveVersionsQueryOptions } from "./queries";
 import {
   DRIVE_ACCESS_ROLE_OPTIONS,
   driveAccessRoleLabel,
@@ -48,6 +50,7 @@ export function DriveDetailsPanel({
   onSetStarred,
   onShare,
   shareDone,
+  onOpenShare,
 }: {
   readonly file: DriveFileItem;
   readonly entry: DriveApiEntry | null;
@@ -66,11 +69,13 @@ export function DriveDetailsPanel({
   readonly onSetStarred: (id: string, starred: boolean) => void;
   readonly onShare: (id: string, targets: readonly string[], role: DriveAccessRole) => void;
   readonly shareDone: boolean;
+  readonly onOpenShare: () => void;
 }) {
   const meta = DRIVE_FILE_META[file.type];
   const FileIcon = Icons[meta.icon];
   const [shareInput, setShareInput] = useState("");
   const [shareRole, setShareRole] = useState<DriveAccessRole>("reader");
+  const [renameValue, setRenameValue] = useState(file.name);
   const openable = canOpenDriveObject({
     uploadState: file.uploadState ?? entry?.uploadState,
     available: file.available ?? entry?.available,
@@ -115,6 +120,24 @@ export function DriveDetailsPanel({
   const download = entry === null ? null : driveDownloadResult(entry);
   const queryClient = useQueryClient();
   const accessQuery = useQuery(driveAccessQueryOptions(file.id, entry !== null && !isTrash));
+  const versionsQuery = useQuery(driveVersionsQueryOptions(file.id, entry !== null && !isTrash));
+  const renameMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
+    mutationFn: (name: string) => renameDriveObject({ objectId: file.id, name }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+    },
+  });
+  const revertMutation = useMutation({
+    onMutate: () => undefined,
+    onError: () => undefined,
+    mutationFn: (versionNumber: number) => revertDriveVersion(file.id, versionNumber),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["drive", "versions", file.id] });
+      void queryClient.invalidateQueries({ queryKey: driveQueryKeys.all });
+    },
+  });
   const removeAccessMutation = useMutation({
     onMutate: () => undefined,
     onError: () => undefined,
@@ -169,8 +192,26 @@ export function DriveDetailsPanel({
           {<FileIcon size={56} />}
         </div>
         <div className="[padding:12px_14px]">
-          <div className="[font-size:var(--text-body)] font-semibold mb-1 [word-break:break-word]">
-            {file.name}
+          <div className="flex gap-1.5 mb-1">
+            <input
+              className="input flex-1 min-w-0 [font-size:var(--text-body-sm)]"
+              value={renameValue}
+              aria-label="File name"
+              onChange={(event) => setRenameValue(event.target.value)}
+            />
+            <button
+              type="button"
+              className="btn sm"
+              disabled={
+                busy ||
+                renameMutation.isPending ||
+                renameValue.trim().length === 0 ||
+                renameValue.trim() === file.name
+              }
+              onClick={() => renameMutation.mutate(renameValue.trim())}
+            >
+              Rename
+            </button>
           </div>
           <div className="row gap-2 [font-size:var(--text-caption)] text-muted-foreground mb-3">
             <span className="uppercase">{file.type}</span>
@@ -296,6 +337,15 @@ export function DriveDetailsPanel({
           {!isTrash ? (
             <>
               <div className="section-label [padding:8px_0_6px]">Share</div>
+              <button
+                type="button"
+                className="btn sm w-full mb-1.5"
+                disabled={busy}
+                onClick={onOpenShare}
+              >
+                <UsersIcon size={16} />
+                Share & links
+              </button>
               <div className="flex gap-1.5 mb-1.5">
                 <input
                   className="input flex-1 min-w-0 [font-size:var(--text-meta)]"
@@ -340,6 +390,32 @@ export function DriveDetailsPanel({
                 onRemove={(actorId) => removeAccessMutation.mutate(actorId)}
                 onRoleChange={(actorId, role) => updateAccessMutation.mutate({ actorId, role })}
               />
+              {(versionsQuery.data ?? []).length > 0 ? (
+                <>
+                  <div className="section-label [padding:12px_0_6px]">Version history</div>
+                  <ul className="grid gap-1.5 mb-3 [padding:0] [list-style:none]">
+                    {(versionsQuery.data ?? []).slice(0, 8).map((version) => (
+                      <li
+                        key={String(version.versionNumber)}
+                        className="flex items-center gap-2 [font-size:var(--text-caption)]"
+                      >
+                        <span className="flex-1 min-w-0 truncate">
+                          v{String(version.versionNumber)}
+                          {version.createdAt ? ` · ${formatModified(version.createdAt)}` : ""}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn sm"
+                          disabled={busy || revertMutation.isPending}
+                          onClick={() => revertMutation.mutate(version.versionNumber)}
+                        >
+                          Restore
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
             </>
           ) : null}
 

@@ -3,6 +3,7 @@ import type { DriveAccessGrantRecord } from "../types.js";
 import { appendDriveActivity } from "./activity.js";
 import {
   assertDriveObjectReady,
+  requireFolderRole,
   requireObjectAccess,
   requireObjectRole,
   requireReadyObjectAccess,
@@ -26,21 +27,35 @@ export async function share(
   readonly role: string;
 }> {
   return context.sql.begin(async (tx) => {
-    const object = await requireObjectRole(tx, input.orgId, input.actorId, input.objectId, "owner");
-    assertDriveObjectReady(object);
     const role = parseDriveRole(input.role);
     const sharedWithActorIds = [...new Set(input.targetActorIds)];
+    const folder = await tx<
+      { id: string }[]
+    >`select id from drive_folders where org_id = ${input.orgId} and id = ${input.objectId} and deleted_at is null`;
+    const resourceType = folder.length > 0 ? "drive_folder" : "object";
+    if (resourceType === "drive_folder") {
+      await requireFolderRole(tx, input.orgId, input.actorId, input.objectId, "owner");
+    } else {
+      const object = await requireObjectRole(
+        tx,
+        input.orgId,
+        input.actorId,
+        input.objectId,
+        "owner",
+      );
+      assertDriveObjectReady(object);
+    }
     for (const targetActorId of sharedWithActorIds) {
       await tx`
           insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id, expires_at)
-          values (${input.orgId}, ${targetActorId}, 'object', ${input.objectId}, ${role}, ${input.actorId}, ${input.expiresAt ?? null})
+          values (${input.orgId}, ${targetActorId}, ${resourceType}, ${input.objectId}, ${role}, ${input.actorId}, ${input.expiresAt ?? null})
           on conflict do nothing
         `;
     }
     await appendDriveActivity(tx, {
       orgId: input.orgId,
       actorId: input.actorId,
-      verb: "drive.object.shared",
+      verb: resourceType === "drive_folder" ? "drive.folder.shared" : "drive.object.shared",
       objectId: input.objectId,
       payload: { sharedWithActorIds, role },
     });
@@ -56,6 +71,25 @@ export async function listAccess(
     readonly objectId: string;
   },
 ): Promise<readonly DriveAccessGrantRecord[]> {
+  const folder = await context.sql<
+    { owner_actor_id: string | null }[]
+  >`select owner_actor_id from drive_folders where org_id = ${input.orgId} and id = ${input.objectId} and deleted_at is null`;
+  if (folder[0] !== undefined) {
+    await requireFolderRole(context.sql, input.orgId, input.actorId, input.objectId, "reader");
+    const rows = await context.sql<DriveAccessGrantRow[]>`
+      select distinct on (p.actor_id)
+        p.actor_id, p.role, a.display_name, a.email, p.granted_by_actor_id, p.expires_at, p.created_at, p.updated_at
+      from permissions p
+      left join actors a on a.id = p.actor_id and a.org_id = p.org_id
+      where p.org_id = ${input.orgId}
+        and p.resource_type = 'drive_folder'
+        and p.resource_id = ${input.objectId}
+        and (p.expires_at is null or p.expires_at > now())
+        and (${folder[0].owner_actor_id}::uuid is null or p.actor_id <> ${folder[0].owner_actor_id})
+      order by p.actor_id, p.updated_at desc, p.created_at desc
+    `;
+    return rows.map(mapDriveAccessGrant);
+  }
   await requireReadyObjectAccess(context.sql, input.orgId, input.actorId, input.objectId);
   const rows = await context.sql<DriveAccessGrantRow[]>`
       select distinct on (p.actor_id)

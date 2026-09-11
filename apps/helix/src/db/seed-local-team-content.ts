@@ -4,12 +4,16 @@ import type postgres from "postgres";
 import { chatGovernanceMetadata } from "../platform/chat/governance.js";
 import { toSqlJson } from "../platform/util/sql.js";
 import {
+  adminFolderRole,
+  teamFolderFixtures,
+  type TeamFolderFixture,
+} from "./local-team-drive-fixtures.js";
+import {
   LOCAL_TEAM_ADMIN,
   LOCAL_TEAM_GROUPS,
   LOCAL_TEAM_DIRECT_MESSAGES,
   LOCAL_TEAM_PEOPLE,
   LOCAL_TEAM_ROOMS,
-  LOCAL_TEAM_SHARED_FOLDERS,
   LOCAL_TEAM_SOURCE,
   teamDay,
   teamId,
@@ -29,8 +33,12 @@ async function grant(
   owner: string,
 ) {
   await sql`insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
-    values (${orgId}, ${actorId}, ${resourceType}, ${resourceId}, ${role}, ${owner})
-    on conflict do nothing`;
+    select ${orgId}, ${actorId}, ${resourceType}, ${resourceId}, ${role}, ${owner}
+    where not exists (
+      select 1 from permissions
+      where org_id = ${orgId} and actor_id = ${actorId} and resource_type = ${resourceType}
+        and resource_id = ${resourceId} and role = ${role} and status = 'active'
+    )`;
 }
 
 export async function seedTeamContent(sql: Sql, orgId: string, anchorDate: string): Promise<void> {
@@ -46,22 +54,11 @@ export async function seedTeamContent(sql: Sql, orgId: string, anchorDate: strin
         values (${orgId}, ${group.id}, ${teamPerson(index).actorId}, ${index === group.members[0] ? "owner" : "member"}, ${owner})`;
     }
   }
-  const folders = [
-    ...LOCAL_TEAM_PEOPLE.map((person) => ({
-      id: person.folderId,
-      name: `${person.firstName}'s Harbor projects`,
-      owner: person.index,
-      members: [person.index],
-    })),
-    ...LOCAL_TEAM_SHARED_FOLDERS,
-  ];
-  for (const folder of folders) {
+  for (const folder of orderedTeamFolders()) {
     const owner = teamPerson(folder.owner).actorId;
-    const inserted =
-      await sql`insert into drive_folders (id, org_id, name, owner_actor_id, created_by_actor_id, metadata)
-      values (${folder.id}, ${orgId}, ${folder.name}, ${owner}, ${owner}, ${sql.json({ source: LOCAL_TEAM_SOURCE })})
-      on conflict (id) do nothing returning id`;
-    if (inserted.length === 0) continue;
+    await sql`insert into drive_folders (id, org_id, name, parent_folder_id, owner_actor_id, created_by_actor_id, metadata)
+      values (${folder.id}, ${orgId}, ${folder.name}, ${folder.parentId ?? null}, ${owner}, ${owner}, ${sql.json({ source: LOCAL_TEAM_SOURCE })})
+      on conflict (id) do nothing`;
     for (const index of folder.members) {
       await grant(
         sql,
@@ -70,6 +67,18 @@ export async function seedTeamContent(sql: Sql, orgId: string, anchorDate: strin
         "drive_folder",
         folder.id,
         index === folder.owner ? "owner" : "editor",
+        owner,
+      );
+    }
+    for (const index of folder.readers ?? []) {
+      if (index === folder.owner || folder.members.some((member) => member === index)) continue;
+      await grant(
+        sql,
+        orgId,
+        teamPerson(index).actorId,
+        "drive_folder",
+        folder.id,
+        "reader",
         owner,
       );
     }
@@ -97,6 +106,21 @@ export async function seedTeamContent(sql: Sql, orgId: string, anchorDate: strin
     );
   }
   await includeWorkspaceAdmin(sql, orgId, anchorDate);
+}
+
+function orderedTeamFolders(): TeamFolderFixture[] {
+  const remaining = [...teamFolderFixtures()];
+  const ordered: TeamFolderFixture[] = [];
+  const seen = new Set<string>();
+  while (remaining.length > 0) {
+    const next = remaining.findIndex((folder) => !folder.parentId || seen.has(folder.parentId));
+    if (next < 0) throw new Error("Team folder fixtures have a missing parent or a cycle.");
+    const folder = remaining.splice(next, 1)[0];
+    if (folder === undefined) throw new Error("Team folder fixtures are empty.");
+    ordered.push(folder);
+    seen.add(folder.id);
+  }
+  return ordered;
 }
 
 async function seedPersonMail(sql: Sql, orgId: string, person: TeamPerson, anchorDate: string) {
@@ -241,14 +265,16 @@ async function includeWorkspaceAdmin(sql: Sql, orgId: string, anchorDate: string
   for (const room of LOCAL_TEAM_ROOMS.filter((entry) => entry.includeAdmin)) {
     await grant(sql, orgId, adminId, "thread", room.id, "member", samara.actorId);
   }
-  for (const folder of LOCAL_TEAM_SHARED_FOLDERS) {
+  for (const folder of teamFolderFixtures()) {
+    const role = adminFolderRole(folder);
+    if (role === null) continue;
     await grant(
       sql,
       orgId,
       adminId,
       "drive_folder",
       folder.id,
-      "editor",
+      role,
       teamPerson(folder.owner).actorId,
     );
   }

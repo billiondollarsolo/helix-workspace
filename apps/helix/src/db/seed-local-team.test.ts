@@ -4,10 +4,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { verifyPassword } from "better-auth/crypto";
 import type { StorageObject } from "@helix/sdk-types";
 import { cleanupTestTenants } from "../test-support/cleanup-tenants.js";
+import { teamFileFixtures, teamFolderFixtures } from "./local-team-drive-fixtures.js";
 import {
   LOCAL_TEAM_PEOPLE,
   LOCAL_TEAM_SOURCE,
-  teamFileFixtures,
   teamId,
   teamPerson,
   LOCAL_TEAM_DIRECT_MESSAGES,
@@ -19,7 +19,21 @@ it("reserves unique fixture identities, useful files, and local-only targets", (
   expect(new Set(LOCAL_TEAM_PEOPLE.map((person) => person.actorId)).size).toBe(10);
   expect(new Set(LOCAL_TEAM_PEOPLE.map((person) => person.email)).size).toBe(10);
   expect(LOCAL_TEAM_PEOPLE.flatMap((person) => person.aliases).length).toBeGreaterThan(10);
-  expect(teamFileFixtures()).toHaveLength(34);
+  expect(teamFileFixtures().map((file) => file.key)).toEqual([
+    ...new Set(teamFileFixtures().map((file) => file.key)),
+  ]);
+  expect(teamFolderFixtures().map((folder) => folder.id)).toEqual([
+    ...new Set(teamFolderFixtures().map((folder) => folder.id)),
+  ]);
+  const folderIds = new Set(teamFolderFixtures().map((folder) => folder.id));
+  for (const folder of teamFolderFixtures()) {
+    if (folder.parentId) expect(folderIds.has(folder.parentId)).toBe(true);
+  }
+  for (const file of teamFileFixtures()) {
+    if (file.folderId) expect(folderIds.has(file.folderId)).toBe(true);
+  }
+  expect(teamFileFixtures().length).toBeGreaterThan(100);
+  expect(teamFolderFixtures().length).toBeGreaterThan(70);
   expect(() => {
     assertLocalTeamTarget("postgres://localhost/demo");
   }).not.toThrow();
@@ -140,8 +154,9 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
       seedLocalTeam(sql, { orgId, storage, scanner, anchorDate: "2026-09-10" }),
     ).rejects.toThrow("Interrupted fixture upload");
     const result = await seedLocalTeam(sql, { orgId, storage, scanner, anchorDate: "2026-09-10" });
-    expect(result.files).toHaveLength(34);
-    expect(scans).toBe(34);
+    const fileCount = teamFileFixtures().length;
+    expect(result.files).toHaveLength(fileCount);
+    expect(scans).toBe(fileCount);
     const repeated = await seedLocalTeam(sql, {
       orgId,
       storage,
@@ -151,7 +166,7 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
     expect(repeated.files.map((file) => file.objectId)).toEqual(
       result.files.map((file) => file.objectId),
     );
-    expect(scans).toBe(34);
+    expect(scans).toBe(fileCount);
     const counts = await sql`select
       (select count(*)::int from threads where org_id = ${orgId} and kind = 'mail') as mail,
       (select count(*)::int from threads where org_id = ${orgId} and kind = 'chat_room') as rooms,
@@ -165,7 +180,7 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
       dms: 10,
       conversations: 30,
       events: 30,
-      files: 34,
+      files: fileCount,
     });
     const privateFile = result.files.find((file) => file.key === "private-decision");
     assert(privateFile);
@@ -180,7 +195,7 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
     expect(await role(teamPerson(9).actorId)).toBeNull();
     expect(await verifyLocalTeam(sql, storage, orgId)).toMatchObject({
       ok: true,
-      counts: { drive_files: 34 },
+      counts: { drive_files: fileCount },
     });
     const firstBlob = [...blobs.entries()][0];
     assert(firstBlob);
@@ -188,7 +203,7 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
     blobs.delete(key);
     await expect(verifyLocalTeam(sql, storage, orgId)).rejects.toThrow("bytes are missing");
     blobs.set(key, saved);
-  }, 30_000);
+  }, 120_000);
   it("refuses an occupied fixture identity without overwriting the person", async () => {
     const person = teamPerson(0);
     await sql`update actors set metadata = ${sql.json({ source: "real-person" })} where id = ${person.actorId}`;

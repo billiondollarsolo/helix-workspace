@@ -7,12 +7,12 @@ import { toUint8Array } from "../platform/drive/store/storage.js";
 import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js";
 import { createSqlClient } from "./client.js";
 import { insertMailMessage } from "../platform/mail/store-message-write.js";
+import { teamFileFixtures, teamFolderFixtures } from "./local-team-drive-fixtures.js";
 import {
   LOCAL_TEAM_ADMIN,
   LOCAL_TEAM_DIRECT_MESSAGES,
   LOCAL_TEAM_DOMAINS,
   LOCAL_TEAM_SOURCE,
-  teamFileFixtures,
   teamId,
   teamPerson,
 } from "./local-team-fixtures.js";
@@ -60,7 +60,7 @@ export async function verifyLocalTeam(
         assistant_conversations: withAdmin ? 31 : 30,
         assistant_messages: withAdmin ? 122 : 120,
         calendar_events: 30,
-        drive_folders: 13,
+        drive_folders: teamFolderFixtures().length,
       };
       const counts = rows[0];
       assert(counts, "Team count query returned no row.");
@@ -86,22 +86,46 @@ export async function verifyLocalTeam(
         metadata->>'avScannedAt' as scanned_at, metadata->>'seedKey' as seed_key
       from objects where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE} order by metadata->>'seedKey'`;
       if (files.length !== teamFileFixtures().length)
-        throw new Error(`Expected 34 Drive files, found ${String(files.length)}.`);
+        throw new Error(
+          `Expected ${String(teamFileFixtures().length)} Drive files, found ${String(files.length)}.`,
+        );
+      const pairFile = files.find((file) => file.seed_key === "pair-customer-brief");
+      if (!pairFile) throw new Error("Customer briefing pair-share file is missing.");
+      await assertDriveRoles(tx, orgId, pairFile.id, [
+        [0, "owner"],
+        [4, "editor"],
+        [8, null],
+      ]);
       const privateFile = files.find((file) => file.seed_key === "private-decision");
       if (!privateFile) throw new Error("Private launch file is missing.");
-      for (const [index, expectedRole] of [
+      await assertDriveRoles(tx, orgId, privateFile.id, [
         [0, "owner"],
         [1, "editor"],
         [9, null],
-      ] as const) {
-        const roles = await tx<
-          { role: string | null }[]
-        >`select helix_drive_effective_role(${orgId}, ${teamPerson(index).actorId}, 'object', ${privateFile.id}) as role`;
-        if (roles[0]?.role !== expectedRole)
-          throw new Error(
-            `Private launch file access is incorrect for ${teamPerson(index).displayName}.`,
-          );
-      }
+      ]);
+      const brief = files.find((file) => file.seed_key === "0-brief");
+      if (!brief) throw new Error("Samara's shared brief is missing.");
+      await assertDriveRoles(tx, orgId, brief.id, [
+        [0, "owner"],
+        [4, "editor"],
+        [1, null],
+        [8, null],
+      ]);
+      const nestedWeek = files.find((file) => file.seed_key === "weekly-week-1");
+      if (!nestedWeek) throw new Error("Nested week-1 notes are missing.");
+      await assertDriveRoles(tx, orgId, nestedWeek.id, [
+        [0, "owner"],
+        [9, "editor"],
+        [7, "editor"],
+      ]);
+      const runbook = files.find((file) => file.seed_key === "engineering-runbook");
+      if (!runbook) throw new Error("Engineering runbook is missing.");
+      await assertDriveRoles(tx, orgId, runbook.id, [
+        [1, "owner"],
+        [3, "editor"],
+        [7, "reader"],
+        [6, null],
+      ]);
       const notes = files.find((file) => file.seed_key === "0-notes");
       if (!notes) throw new Error("Samara's private notes file is missing.");
       const outsiderNotes = await tx<
@@ -120,6 +144,16 @@ export async function verifyLocalTeam(
         >`select helix_drive_effective_role(${orgId}, ${LOCAL_TEAM_ADMIN.actorId}, 'object', ${notes.id}) as role`;
         if (adminNotes[0]?.role !== null)
           throw new Error("Workspace admin can open personal working notes that were not shared.");
+        const adminBrief = await tx<
+          { role: string | null }[]
+        >`select helix_drive_effective_role(${orgId}, ${LOCAL_TEAM_ADMIN.actorId}, 'object', ${brief.id}) as role`;
+        if (adminBrief[0]?.role !== "reader")
+          throw new Error("Workspace admin should have reader access to Samara's shared brief.");
+        const adminPair = await tx<
+          { role: string | null }[]
+        >`select helix_drive_effective_role(${orgId}, ${LOCAL_TEAM_ADMIN.actorId}, 'object', ${pairFile.id}) as role`;
+        if (adminPair[0]?.role !== null)
+          throw new Error("Workspace admin can open a pair-share folder that was not granted.");
         const adminAlias = LOCAL_TEAM_ADMIN.aliases[0];
         const mailbox = await tx<
           { actor_id: string }[]
@@ -169,6 +203,21 @@ export async function verifyLocalTeam(
     privateDriveBoundary: "owner/editor/outsider verified",
     liveSend,
   };
+}
+
+async function assertDriveRoles(
+  tx: postgres.TransactionSql,
+  orgId: string,
+  objectId: string,
+  expected: readonly (readonly [number, string | null])[],
+) {
+  for (const [index, role] of expected) {
+    const rows = await tx<
+      { role: string | null }[]
+    >`select helix_drive_effective_role(${orgId}, ${teamPerson(index).actorId}, 'object', ${objectId}) as role`;
+    if (rows[0]?.role !== role)
+      throw new Error(`Drive access is incorrect for ${teamPerson(index).displayName}.`);
+  }
 }
 
 async function exerciseInternalMail(tx: postgres.TransactionSql, orgId: string) {

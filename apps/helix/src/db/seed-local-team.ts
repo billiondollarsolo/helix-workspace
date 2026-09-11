@@ -13,6 +13,11 @@ import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js
 import { createSqlClient, resolveDatabaseUrl } from "./client.js";
 import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 import {
+  adminFileShareRole,
+  teamFileFixtures,
+  teamFileShares,
+} from "./local-team-drive-fixtures.js";
+import {
   LOCAL_TEAM_ADMIN,
   LOCAL_TEAM_GROUPS,
   LOCAL_TEAM_PASSWORD,
@@ -21,7 +26,7 @@ import {
   LOCAL_TEAM_SCOPES,
   LOCAL_TEAM_SOURCE,
   teamDay,
-  teamFileFixtures,
+  teamPerson,
 } from "./local-team-fixtures.js";
 import { seedTeamContent } from "./seed-local-team-content.js";
 import { seedLocalTeamDomain } from "./seed-local-team-domain.js";
@@ -183,6 +188,43 @@ export async function seedLocalTeam(sql: postgres.Sql, options: TeamSeedOptions 
           folderId: fixture.folderId,
           name: fixture.name,
         });
+      }
+      const adminPresent = await withTenantPostgresContext(
+        sql,
+        { orgId },
+        (tx) =>
+          tx`select id from actors where org_id = ${orgId} and id = ${LOCAL_TEAM_ADMIN.actorId}`,
+      );
+      for (const share of teamFileShares()) {
+        const file = files.find((entry) => entry.key === share.fileKey);
+        if (file === undefined) continue;
+        const grants: { actorId: string; role: string }[] = [
+          ...(share.members ?? []).map((index) => ({
+            actorId: teamPerson(index).actorId,
+            role: "editor",
+          })),
+          ...(share.readers ?? []).map((index) => ({
+            actorId: teamPerson(index).actorId,
+            role: "reader",
+          })),
+        ];
+        const adminRole = adminFileShareRole(share);
+        if (adminRole && adminPresent.length > 0)
+          grants.push({ actorId: LOCAL_TEAM_ADMIN.actorId, role: adminRole });
+        for (const grant of grants) {
+          await withTenantPostgresContext(
+            sql,
+            { orgId, actorId: file.ownerActorId },
+            (tx) =>
+              tx`insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
+              select ${orgId}, ${grant.actorId}, 'object', ${file.objectId}, ${grant.role}, ${file.ownerActorId}
+              where not exists (
+                select 1 from permissions
+                where org_id = ${orgId} and actor_id = ${grant.actorId} and resource_type = 'object'
+                  and resource_id = ${file.objectId} and role = ${grant.role} and status = 'active'
+              )`,
+          );
+        }
       }
     }
     return {

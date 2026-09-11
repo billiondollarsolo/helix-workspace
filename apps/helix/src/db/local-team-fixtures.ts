@@ -228,30 +228,6 @@ export const LOCAL_TEAM_ROOMS = [
   },
 ] as const;
 
-export const LOCAL_TEAM_SHARED_FOLDERS = [
-  {
-    id: teamId(1, 101),
-    name: "Harbor team resources",
-    owner: 0,
-    members: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-    includeAdmin: true,
-  },
-  {
-    id: teamId(1, 102),
-    name: "Harbor private launch working files",
-    owner: 0,
-    members: [0, 1, 2],
-    includeAdmin: true,
-  },
-  {
-    id: teamId(1, 103),
-    name: "Harbor engineering handover",
-    owner: 1,
-    members: [1, 3, 5, 8],
-    includeAdmin: true,
-  },
-] as const;
-
 export function teamDay(anchorDate: string, dayOffset: number, hour = 14): Date {
   const date = new Date(`${anchorDate}T00:00:00.000Z`);
   if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== anchorDate) {
@@ -260,76 +236,6 @@ export function teamDay(anchorDate: string, dayOffset: number, hour = 14): Date 
   date.setUTCDate(date.getUTCDate() + dayOffset);
   date.setUTCHours(hour);
   return date;
-}
-
-export function teamFileFixtures() {
-  const personal = LOCAL_TEAM_PEOPLE.flatMap((person) => [
-    {
-      key: `${String(person.index)}-brief`,
-      owner: person,
-      folderId: person.folderId,
-      name: `${person.documentTitle}.md`,
-      mimeType: "text/markdown",
-      body: `# ${person.documentTitle}\n\nOwner: ${person.displayName}, ${person.jobTitle}\nProject: Harbor pilot\n\n## Outcome\nHelp a ten-person team coordinate customer work without losing decisions across Mail, Drive, and Chat.\n\n## This week\n- Review the latest customer feedback with Elena and Nora.\n- Check ${person.focus}.\n- Bring one concrete improvement to the Thursday readiness review.\n\n## Acceptance checks\n- Every change has an owner and a clear next step.\n- Private working files are shared only with the intended people.\n- The handover includes a rollback plan and a useful example.\n\n## Open question\nWhich small change would save a teammate the most time?\n`,
-    },
-    {
-      key: `${String(person.index)}-tasks`,
-      owner: person,
-      folderId: person.folderId,
-      name: "Weekly priorities.csv",
-      mimeType: "text/csv",
-      body: `priority,task,owner,status\n1,Finish ${person.documentTitle},${person.displayName},in progress\n2,Review pilot feedback,${person.displayName},ready\n3,Share Thursday update,${person.displayName},planned\n`,
-    },
-    {
-      key: `${String(person.index)}-notes`,
-      owner: person,
-      folderId: null,
-      name: `${person.firstName}'s working notes.txt`,
-      mimeType: "text/plain",
-      body: `${person.displayName} — personal working notes\n\nMy focus: ${person.focus}.\n\nMonday: agree on the smallest useful pilot.\nTuesday: collect evidence, including a successful test and a useful failure.\nWednesday: ask another team member to try the flow.\nThursday: review readiness together.\nFriday: document what we learned.\n\nPrivate reminder: keep this file personal until the draft is ready.\n`,
-    },
-  ]);
-  const owner = teamPerson(0);
-  return [
-    ...personal,
-    {
-      key: "shared-handbook",
-      owner,
-      folderId: teamId(1, 101),
-      name: "Harbor team handbook.md",
-      mimeType: "text/markdown",
-      body:
-        "# Harbor team handbook\n\nWe run a small customer pilot with ten fictional coworkers.\n\n## Working together\nUse Mail for decisions that need a durable answer. Use Chat for a quick clarification. Keep working documents in Drive and share only with the people who need them.\n\n## Weekly rhythm\nMonday planning, Thursday readiness review, Friday learning notes.\n\n## People\n" +
-        LOCAL_TEAM_PEOPLE.map(
-          (person) => `- ${person.displayName}: ${person.jobTitle} (${person.email})`,
-        ).join("\n") +
-        "\n",
-    },
-    {
-      key: "shared-milestones",
-      owner,
-      folderId: teamId(1, 101),
-      name: "Pilot milestones.csv",
-      mimeType: "text/csv",
-      body: "milestone,owner,status\nScope agreed,Samara Malik,complete\nDesign review,Imani Reed,in progress\nAccess review,Priya Shah,planned\nCustomer rehearsal,Elena Costa,planned\nLaunch note,Mateo Silva,draft\n",
-    },
-    {
-      key: "private-decision",
-      owner,
-      folderId: teamId(1, 102),
-      name: "Pilot scope decision.md",
-      mimeType: "text/markdown",
-      body: "# Pilot scope decision\n\nPrivate working draft for Samara, Theo, and Imani.\n\nWe will invite a small team first. The acceptance test is a real exchange: send an internal mail, review a shared file, clarify it in Chat, and record the next meeting.\n\nOpen decisions: invitation timing, clear empty states, and how to explain access failures.\n\nDecision owner: Samara. Engineering review: Theo. Design review: Imani.\n",
-    },
-    {
-      key: "engineering-runbook",
-      owner: teamPerson(1),
-      folderId: teamId(1, 103),
-      name: "Pilot operations runbook.md",
-      mimeType: "text/markdown",
-      body: "# Pilot operations runbook\n\nOwners: Theo, Jun, Omar, and Priya.\n\nBefore a change: verify backup restoration, repeat the permission matrix, and check service health.\nDuring a change: watch delivery errors and request latency.\nAfter a change: try an internal mail, a private room, and a scan-clean file download.\n\nIf a check fails, stop the rollout and keep the previous service version available. Record the failure and its owner in Harbor engineering.\n",
-    },
-  ];
 }
 
 export function teamPerson(index: number): TeamPerson {

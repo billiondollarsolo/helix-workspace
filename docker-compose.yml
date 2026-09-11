@@ -128,7 +128,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:8.8.1-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb
+    image: redis:8.10.1-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "127.0.0.1:${REDIS_PORT:-28433}:6379"
@@ -252,7 +252,7 @@ services:
     restart: unless-stopped
 
   mailpit:
-    image: axllent/mailpit:v1.31.0@sha256:c96991d9bef73594c246d89ca81411d4e916f03e76a7d2d72fa2ab5dd3c9ce24
+    image: axllent/mailpit:v1.31.1@sha256:98b916bd3c8d61f7633a52d3ea2f58d00620cb01ca57ab59edde68c347a95365
     ports:
       - "127.0.0.1:${MAILPIT_SMTP_PORT:-28457}:1025"
       - "127.0.0.1:${MAILPIT_WEB_PORT:-28458}:8025"
@@ -284,7 +284,7 @@ services:
   # INSTREAM TCP protocol when MAIL_CLAMAV_ENABLED=true. Opt-in via the
   # `mail-security` compose profile.
   clamav:
-    image: clamav/clamav:1.5.4@sha256:f0954d679017eb6d48221e2b2be3ac5457bf278a844f39b672376f55a085f591
+    image: clamav/clamav:1.5.4@sha256:1fdfd24c6f0a0fb60788481487459a6d4eda8a9b448641594e04db8410d34422
     platform: linux/amd64
     profiles: ["mail-security"]
     environment:
@@ -510,7 +510,7 @@ services:
     restart: unless-stopped
 
   jitsi-turn:
-    image: coturn/coturn:4.7.0-alpine@sha256:2a0c41042b02c6daa33f35ce3781da20fe0d08da6cf2746c8ae62a890802cc36
+    image: coturn/coturn:4.18.0-alpine@sha256:c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e
     profiles: ["meet"]
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -602,7 +602,7 @@ services:
     restart: unless-stopped
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.159.0@sha256:1f2c54a30e713fac6b3ae77a1ec84010c2007e29ced8ec666214fc2f6739c1cc
+    image: otel/opentelemetry-collector-contrib:0.160.0@sha256:799dc6cf12c96192af37b5bdba804da8c10b3bc563b43cb90c3f3c58d9572ad6
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     profiles: ["observability"]
     ports:
@@ -643,7 +643,7 @@ services:
     restart: unless-stopped
 
   tempo:
-    image: grafana/tempo:3.0.2@sha256:cda87c212d8c584dc0b89e337e7ed648a5100feb657e5d528480ee4fa03dbbe3
+    image: grafana/tempo:3.0.3@sha256:0296560ac66f8a3600d7fb3014a52c189d4d9c3549ad6ff441bf2409855d68d5
     command: ["-config.file=/etc/tempo.yaml"]
     profiles: ["observability"]
     ports:

@@ -47,6 +47,7 @@ export function DriveShareDialog({
   const [oneTime, setOneTime] = useState(false);
   const [allowDownload, setAllowDownload] = useState(true);
   const [notifyPeople, setNotifyPeople] = useState(true);
+  const [shareMessage, setShareMessage] = useState("");
   const [creatingPublicLink, setCreatingPublicLink] = useState(false);
   const [publicLinkError, setPublicLinkError] = useState<string | null>(null);
   const accessQueryKey = driveQueryKeys.access(objectId);
@@ -75,6 +76,7 @@ export function DriveShareDialog({
       readonly targets: readonly string[];
       readonly role: DriveAccessRole;
       readonly notify: boolean;
+      readonly message: string;
     }) => {
       const targets = driveShareTargetsFromInput(input.targets);
       return shareDrive({
@@ -84,10 +86,12 @@ export function DriveShareDialog({
         role: input.role,
         expiresAt: null,
         notify: input.notify,
+        ...(input.message.length === 0 ? {} : { message: input.message }),
       });
     },
     onSuccess: async () => {
       setShareInput("");
+      setShareMessage("");
       await invalidateAccess();
     },
   });
@@ -119,7 +123,12 @@ export function DriveShareDialog({
     if (targets.length === 0) {
       return;
     }
-    shareMutation.mutate({ targets, role: shareRole, notify: notifyPeople });
+    shareMutation.mutate({
+      targets,
+      role: shareRole,
+      notify: notifyPeople,
+      message: shareMessage.trim(),
+    });
   };
 
   const copyLink = (publicLink = false) => {
@@ -230,6 +239,17 @@ export function DriveShareDialog({
             />{" "}
             Notify people
           </label>
+          {notifyPeople ? (
+            <textarea
+              className="input min-h-20"
+              aria-label="Share message"
+              placeholder="Add a message"
+              value={shareMessage}
+              onChange={(event) => {
+                setShareMessage(event.currentTarget.value);
+              }}
+            />
+          ) : null}
           <button
             type="button"
             className="btn sm primary"

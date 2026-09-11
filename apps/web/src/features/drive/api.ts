@@ -50,6 +50,7 @@ export interface DriveShareInput {
   readonly role?: DriveRole;
   readonly expiresAt?: string | null;
   readonly notify?: boolean;
+  readonly message?: string;
 }
 export type DriveAccessRole = Exclude<DriveRole, "owner">;
 export interface DriveUploadInput {
@@ -450,6 +451,9 @@ export async function shareDrive(
       role: input.role ?? "reader",
       expiresAt: input.expiresAt ?? null,
       ...(input.notify === undefined ? {} : { notify: input.notify }),
+      ...(input.message === undefined || input.message.trim().length === 0
+        ? {}
+        : { message: input.message.trim() }),
     },
     fetchImpl,
   );

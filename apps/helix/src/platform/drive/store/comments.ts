@@ -6,7 +6,12 @@ import { DriveForbiddenError, DriveNotFoundError } from "../errors.js";
 import type { DriveCommentPage, DriveCommentRecord, DriveCommentRevisionPage } from "../types.js";
 import { appendDriveActivity } from "./activity.js";
 import { assertDriveObjectReady } from "./authz.js";
-import { notifyDriveCommentMentions, notifyDriveCommentReply } from "./comment-notifications.js";
+import {
+  notifyDriveCommentMentions,
+  notifyDriveCommentReply,
+  type DriveCommentMailNotice,
+} from "./comment-notifications.js";
+import { deliverDriveMail } from "./share-notifications.js";
 import { type DriveStoreContext } from "./context.js";
 import { mapDriveComment, mapDriveCommentListItem, mapDriveCommentRevision } from "./mappers.js";
 import {
@@ -148,7 +153,7 @@ export async function createComment(
     readonly metadata?: JsonObject | undefined;
   },
 ): Promise<DriveCommentRecord> {
-  return context.sql.begin(async (tx) => {
+  const { comment, notices } = await context.sql.begin(async (tx) => {
     const object = await requireReadyDriveCommentObject(
       tx,
       input.orgId,
@@ -187,7 +192,7 @@ export async function createComment(
       objectId: input.objectId,
       payload: { commentId: comment.id, parentCommentId: comment.parentCommentId },
     });
-    await notifyDriveCommentMentions(tx, {
+    const mention = await notifyDriveCommentMentions(tx, {
       orgId: input.orgId,
       actorId: input.actorId,
       object,
@@ -197,7 +202,7 @@ export async function createComment(
       body: input.body,
       metadata: comment.metadata,
     });
-    await notifyDriveCommentReply(tx, {
+    const reply = await notifyDriveCommentReply(tx, {
       orgId: input.orgId,
       actorId: input.actorId,
       object,
@@ -205,8 +210,10 @@ export async function createComment(
       parentCommentId: comment.parentCommentId,
       body: comment.body,
     });
-    return comment;
+    return { comment, notices: [mention, reply] };
   });
+  await sendCommentMail(context, input.orgId, input.actorId, notices);
+  return comment;
 }
 
 export async function listComments(
@@ -412,7 +419,7 @@ export async function updateComment(
     readonly body: string;
   },
 ): Promise<DriveCommentRecord | null> {
-  return context.sql.begin(async (tx) => {
+  const result = await context.sql.begin(async (tx) => {
     const existingRows = await tx<DriveCommentRow[]>`
         select *
         from drive_comments
@@ -423,7 +430,7 @@ export async function updateComment(
       `;
     const existing = existingRows[0];
     if (existing === undefined) {
-      return null;
+      return { comment: null, mention: null };
     }
     const object = await requireDriveCommentMutation(
       tx,
@@ -433,7 +440,7 @@ export async function updateComment(
       "author",
     );
     if (existing.body === input.body) {
-      return mapDriveComment(existing);
+      return { comment: mapDriveComment(existing), mention: null };
     }
     const rows = await tx<DriveCommentRow[]>`
         update drive_comments
@@ -455,7 +462,7 @@ export async function updateComment(
     const addedTokens = mentionTokensForComment(existing.metadata, input.body).filter(
       (token) => !oldTokens.has(token),
     );
-    await notifyDriveCommentMentions(tx, {
+    const mention = await notifyDriveCommentMentions(tx, {
       orgId: input.orgId,
       actorId: input.actorId,
       object,
@@ -466,8 +473,40 @@ export async function updateComment(
       metadata: comment.metadata,
       tokens: addedTokens,
     });
-    return comment;
+    return { comment, mention };
   });
+  if (result.comment === null) return null;
+  await sendCommentMail(context, input.orgId, input.actorId, [result.mention]);
+  return result.comment;
+}
+
+async function sendCommentMail(
+  context: DriveStoreContext,
+  orgId: string,
+  actorId: string,
+  notices: readonly (DriveCommentMailNotice | null)[],
+): Promise<void> {
+  const mailer = context.options.shareMailer;
+  if (mailer === undefined) return;
+  for (const notice of notices) {
+    if (notice === null || notice.authorEmail === null || notice.recipients.length === 0) {
+      continue;
+    }
+    const authorEmail = notice.authorEmail;
+    await deliverDriveMail(context, () =>
+      mailer.sendComment({
+        orgId,
+        actorId,
+        objectId: notice.objectId,
+        title: notice.title,
+        authorName: notice.authorName,
+        authorEmail,
+        body: notice.body,
+        kind: notice.kind,
+        recipients: notice.recipients,
+      }),
+    );
+  }
 }
 
 export async function deleteComment(

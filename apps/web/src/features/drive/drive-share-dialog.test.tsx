@@ -334,6 +334,27 @@ describe("DriveShareDialog", () => {
     });
   });
 
+  it("includes an optional message when notifying people", async () => {
+    render();
+    await settle();
+    setInput("Email, name, or actor ID", "maya@helix.local");
+    const message = container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Share message"]',
+    );
+    expect(message).not.toBeNull();
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+      setter?.call(message, "Please review page two.");
+      message?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    clickButton("Share");
+    await settle();
+    expect(toolCalls.find((call) => call.url === "/v1/api/tools/drive.share")?.body).toMatchObject({
+      notify: true,
+      message: "Please review page two.",
+    });
+  });
+
   function render(open = true) {
     act(() => {
       root.render(

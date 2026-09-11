@@ -188,6 +188,7 @@ export interface DriveStore {
     readonly role: string;
     readonly expiresAt?: Date | null;
     readonly notify?: boolean;
+    readonly message?: string;
   }): Promise<{
     readonly objectId: string;
     readonly sharedWithActorIds: readonly string[];

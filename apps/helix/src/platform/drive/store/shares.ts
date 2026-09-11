@@ -22,6 +22,7 @@ export async function share(
     readonly role: string;
     readonly expiresAt?: Date | null;
     readonly notify?: boolean;
+    readonly message?: string;
   },
 ): Promise<{
   readonly objectId: string;
@@ -70,6 +71,7 @@ export async function share(
         resourceType,
         targetActorIds: sharedWithActorIds,
         role,
+        ...(input.message === undefined ? {} : { message: input.message }),
       });
     }
     return { objectId: input.objectId, sharedWithActorIds, role, notice };
@@ -94,6 +96,7 @@ export async function share(
           authorName: notice.authorName,
           authorEmail,
           recipients,
+          ...(input.message === undefined ? {} : { message: input.message }),
         }),
       );
     }

@@ -75,6 +75,27 @@ describe("Drive share mail", () => {
     expect(mail.created[0]?.envelope.to[0]?.address).toBe("ada@helix.example.com");
     expect(mail.created[1]?.envelope.to[0]?.address).toBe("maya@helix.example.com");
   });
+
+  it("queues mention and reply comment mail", async () => {
+    const mail = new FakeMailStore();
+    const sender = createMailDriveShareSender({
+      store: mail as unknown as MailStore,
+      publicBaseUrl: "https://helix.example.com",
+    });
+    await sender.sendComment({
+      orgId: "org-1",
+      actorId: "actor-ada",
+      objectId: "file-1",
+      title: "Specs.pdf",
+      authorName: "Ada Park",
+      authorEmail: "ada@helix.example.com",
+      body: "Can @Maya review this?",
+      kind: "mention",
+      recipients: [{ email: "maya@helix.example.com", displayName: "Maya Chen" }],
+    });
+    expect(mail.created[0]?.envelope.subject).toBe('Ada Park mentioned you in "Specs.pdf"');
+    expect(mail.created[0]?.envelope.text).toContain("Can @Maya review this?");
+  });
 });
 
 class FakeMailStore {

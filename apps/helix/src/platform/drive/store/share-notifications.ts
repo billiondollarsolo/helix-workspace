@@ -23,6 +23,7 @@ export async function notifyDriveShare(
     readonly resourceType: "object" | "drive_folder";
     readonly targetActorIds: readonly string[];
     readonly role: string;
+    readonly message?: string;
   },
 ): Promise<DriveShareNotice | null> {
   const recipients = [...new Set(input.targetActorIds)].filter((id) => id !== input.actorId);
@@ -39,7 +40,7 @@ export async function notifyDriveShare(
         org_id, actor_id, verb, object_type, object_id, summary, body, payload
       ) values (
         ${input.orgId}, ${recipientId}, 'drive.object.shared', ${input.resourceType}, ${input.objectId},
-        ${summary}, ${null},
+        ${summary}, ${input.message ?? null},
         ${sql.json({ sharedByActorId: input.actorId, role: input.role })}
       )`;
   }

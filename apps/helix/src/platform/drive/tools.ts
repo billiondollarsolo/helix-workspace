@@ -122,6 +122,7 @@ const shareSchema = z
     role: z.enum(["reader", "commenter", "editor", "owner"]).default("reader"),
     expiresAt: z.string().datetime().nullable().optional(),
     notify: z.boolean().optional(),
+    message: z.string().max(2000).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.actorIds.length === 0 && value.actorRefs.length === 0) {
@@ -505,6 +506,7 @@ export function createDriveToolDefinitions(
           role: input.role,
           expiresAt: toNullableDate(input.expiresAt),
           notify: input.notify !== false,
+          ...(input.message === undefined ? {} : { message: input.message }),
         });
       },
     }),

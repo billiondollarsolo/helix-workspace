@@ -42,10 +42,23 @@ export interface DriveAccessDecisionMailInput {
   readonly requesterName: string | null;
 }
 
+export interface DriveCommentMailInput {
+  readonly orgId: string;
+  readonly actorId: string;
+  readonly objectId: string;
+  readonly title: string;
+  readonly authorName: string;
+  readonly authorEmail: string;
+  readonly body: string;
+  readonly kind: "mention" | "reply";
+  readonly recipients: readonly DriveShareMailRecipient[];
+}
+
 export interface DriveShareMailer {
   sendShare(input: DriveShareMailInput): Promise<void>;
   sendAccessRequest(input: DriveAccessRequestMailInput): Promise<void>;
   sendAccessDecision(input: DriveAccessDecisionMailInput): Promise<void>;
+  sendComment(input: DriveCommentMailInput): Promise<void>;
 }
 
 export function createMailDriveShareSender(options: {
@@ -111,6 +124,30 @@ export function createMailDriveShareSender(options: {
           attachments: [],
         },
       });
+    },
+    async sendComment(input) {
+      const from = address(input.authorEmail, input.authorName);
+      const url = openUrl(input.objectId);
+      const subject =
+        input.kind === "mention"
+          ? `${input.authorName} mentioned you in "${input.title}"`
+          : `${input.authorName} replied to your comment in "${input.title}"`;
+      for (const recipient of input.recipients) {
+        await service.queue({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          envelope: {
+            from,
+            to: [address(recipient.email, recipient.displayName)],
+            cc: [],
+            bcc: [],
+            subject,
+            text: commentText(input, url),
+            html: commentHtml(input, url),
+            attachments: [],
+          },
+        });
+      }
     },
   };
 }
@@ -183,6 +220,22 @@ function accessDecisionHtml(input: DriveAccessDecisionMailInput, url: string): s
     ? `<p><a href="${escapeHtml(url)}">Open</a></p>`
     : `<p><a href="${escapeHtml(url)}">View item</a></p>`;
   return `<p>${escapeHtml(input.ownerName)} ${verb} your request to access <strong>${escapeHtml(input.title)}</strong>.</p>${link}`;
+}
+
+function commentText(input: DriveCommentMailInput, url: string): string {
+  const intro =
+    input.kind === "mention"
+      ? `${input.authorName} mentioned you in "${input.title}".`
+      : `${input.authorName} replied to your comment in "${input.title}".`;
+  return [intro, "", input.body, "", `Open in Helix Drive:`, url].join("\n");
+}
+
+function commentHtml(input: DriveCommentMailInput, url: string): string {
+  const intro =
+    input.kind === "mention"
+      ? `${escapeHtml(input.authorName)} mentioned you in <strong>${escapeHtml(input.title)}</strong>.`
+      : `${escapeHtml(input.authorName)} replied to your comment in <strong>${escapeHtml(input.title)}</strong>.`;
+  return `<p>${intro}</p><blockquote>${escapeHtml(input.body)}</blockquote><p><a href="${escapeHtml(url)}">Open</a></p>`;
 }
 
 function escapeHtml(value: string): string {

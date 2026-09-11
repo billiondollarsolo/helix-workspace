@@ -1,8 +1,10 @@
 import { instantToLocalDateTime } from "@helix/contracts";
+import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { chatGovernanceMetadata } from "../platform/chat/governance.js";
 import { toSqlJson } from "../platform/util/sql.js";
 import {
+  LOCAL_TEAM_ADMIN,
   LOCAL_TEAM_GROUPS,
   LOCAL_TEAM_DIRECT_MESSAGES,
   LOCAL_TEAM_PEOPLE,
@@ -94,6 +96,7 @@ export async function seedTeamContent(sql: Sql, orgId: string, anchorDate: strin
       anchorDate,
     );
   }
+  await includeWorkspaceAdmin(sql, orgId, anchorDate);
 }
 
 async function seedPersonMail(sql: Sql, orgId: string, person: TeamPerson, anchorDate: string) {
@@ -225,6 +228,136 @@ async function seedPersonCalendar(sql: Sql, orgId: string, person: TeamPerson, a
       values (${orgId}, ${eventId}, ${person.actorId}, ${person.email}, ${person.displayName}, 'required', 'accepted', true, ${sql.json({ source: LOCAL_TEAM_SOURCE })})`;
     await grant(sql, orgId, person.actorId, "thread", threadId, "owner", person.actorId);
     await grant(sql, orgId, person.actorId, "event", eventId, "owner", person.actorId);
+  }
+}
+
+async function includeWorkspaceAdmin(sql: Sql, orgId: string, anchorDate: string) {
+  const admin = await sql<
+    { id: string }[]
+  >`select id from actors where org_id = ${orgId} and id = ${LOCAL_TEAM_ADMIN.actorId}`;
+  if (admin.length === 0) return;
+  const adminId = LOCAL_TEAM_ADMIN.actorId;
+  const samara = teamPerson(0);
+  for (const room of LOCAL_TEAM_ROOMS.filter((entry) => entry.includeAdmin)) {
+    await grant(sql, orgId, adminId, "thread", room.id, "member", samara.actorId);
+  }
+  for (const folder of LOCAL_TEAM_SHARED_FOLDERS) {
+    await grant(
+      sql,
+      orgId,
+      adminId,
+      "drive_folder",
+      folder.id,
+      "editor",
+      teamPerson(folder.owner).actorId,
+    );
+  }
+  await sql`insert into admin_group_members (org_id, group_id, actor_id, role, added_by)
+    values (${orgId}, ${LOCAL_TEAM_GROUPS[0].id}, ${adminId}, 'member', ${samara.actorId})
+    on conflict do nothing`;
+  const dmId = teamId(3, 201);
+  const dmKey = createHash("sha256")
+    .update([adminId, samara.actorId].sort().join(","))
+    .digest("hex");
+  await seedAdminDirectMessage(sql, orgId, dmId, dmKey, samara, anchorDate);
+  await seedAdminMail(sql, orgId, samara, anchorDate);
+  await seedAdminAssistant(sql, orgId, anchorDate);
+  await sql`insert into messages (id, org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
+    values (${teamId(12, 9001)}, ${orgId}, ${teamId(3, 1)}, ${adminId}, 'chat', 'Avery here — I can see the shared Harbor folders. Flag me if a permission looks wrong.', 'plain',
+      ${sql.json({ source: LOCAL_TEAM_SOURCE })}, ${teamDay(anchorDate, -1, 16)})
+    on conflict (id) do nothing`;
+}
+
+async function seedAdminDirectMessage(
+  sql: Sql,
+  orgId: string,
+  id: string,
+  participantKey: string,
+  samara: TeamPerson,
+  anchorDate: string,
+) {
+  await sql`select pg_advisory_xact_lock(hashtextextended(${`${orgId}:${participantKey}`}, 0))`;
+  const prior = await sql<
+    { thread_id: string }[]
+  >`select thread_id from chat_room_settings where org_id = ${orgId} and participant_key = ${participantKey}`;
+  const roomId = prior[0]?.thread_id ?? id;
+  if (prior.length === 0) {
+    const inserted =
+      await sql`insert into threads (id, org_id, kind, subject, created_by_actor_id, metadata)
+      values (${id}, ${orgId}, 'chat_dm', ${`${LOCAL_TEAM_ADMIN.displayName} and ${samara.displayName}`}, ${samara.actorId}, ${sql.json({ source: LOCAL_TEAM_SOURCE })})
+      on conflict (id) do nothing returning id`;
+    if (inserted.length === 0) return;
+    await sql`insert into chat_room_settings (thread_id, org_id, name, topic, privacy, participant_key, read_receipts_enabled, metadata)
+      values (${id}, ${orgId}, ${`${LOCAL_TEAM_ADMIN.displayName} and ${samara.displayName}`}, 'Admin check-in for the Harbor pilot', 'private', ${participantKey}, true,
+        ${sql.json(toSqlJson({ source: LOCAL_TEAM_SOURCE, ...chatGovernanceMetadata("chat_dm", { spaceType: "project", externalAccess: "internal" }) }))})`;
+    await grant(sql, orgId, samara.actorId, "thread", id, "owner", samara.actorId);
+    await grant(sql, orgId, LOCAL_TEAM_ADMIN.actorId, "thread", id, "member", samara.actorId);
+  }
+  const lines = [
+    "Avery, can you confirm the shared Harbor folder is visible from the admin account?",
+    "Yes. I can open team resources and the private launch working files. I cannot open personal working notes.",
+  ];
+  for (const [index, body] of lines.entries()) {
+    const actorId = index === 0 ? samara.actorId : LOCAL_TEAM_ADMIN.actorId;
+    await sql`insert into messages (id, org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
+      values (${teamId(12, 20100 + index)}, ${orgId}, ${roomId}, ${actorId}, 'chat', ${body}, 'plain',
+        ${sql.json({ source: LOCAL_TEAM_SOURCE })}, ${new Date(teamDay(anchorDate, -1, 17).getTime() + index * 180_000)})
+      on conflict (id) do nothing`;
+  }
+}
+
+async function seedAdminMail(sql: Sql, orgId: string, samara: TeamPerson, anchorDate: string) {
+  const threadId = teamId(2, 201);
+  const inserted =
+    await sql`insert into threads (id, org_id, kind, subject, created_by_actor_id, metadata)
+    values (${threadId}, ${orgId}, 'mail', 'Harbor access review — admin', ${samara.actorId}, ${sql.json({ source: LOCAL_TEAM_SOURCE })})
+    on conflict (id) do nothing returning id`;
+  if (inserted.length === 0) return;
+  const admin = LOCAL_TEAM_ADMIN;
+  const bodies = [
+    `Hi Avery,\n\nPlease confirm you can open Harbor team resources and cannot open my personal working notes.\n\n${samara.displayName}`,
+    `Hi Samara,\n\nConfirmed. Shared folders are visible. Personal notes stay private. I will keep an eye on unexpected grants.\n\n${admin.displayName}`,
+  ];
+  for (const [reply, body] of bodies.entries()) {
+    const sender = reply === 0 ? samara : admin;
+    const target = reply === 0 ? admin : samara;
+    const messageId = teamId(4, 2010 + reply);
+    await sql`insert into messages (id, org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
+      values (${messageId}, ${orgId}, ${threadId}, ${sender.actorId}, 'mail', ${body}, 'plain',
+        ${sql.json({ source: LOCAL_TEAM_SOURCE, direction: "outbound", from: { address: sender.email, name: sender.displayName }, to: [{ address: target.email, name: target.displayName }], cc: [], bcc: [], subject: "Harbor access review — admin", messageId: `<${messageId}@demo.helix.local>` })},
+        ${teamDay(anchorDate, -2, 10 + reply)})`;
+    for (const actorId of [samara.actorId, admin.actorId]) {
+      await sql`insert into mail_message_deliveries (org_id, message_id, actor_id, received_at)
+        values (${orgId}, ${messageId}, ${actorId}, ${actorId === sender.actorId ? null : teamDay(anchorDate, -2, 10 + reply)})`;
+    }
+  }
+  for (const actorId of [samara.actorId, admin.actorId]) {
+    await grant(sql, orgId, actorId, "thread", threadId, "owner", samara.actorId);
+    await sql`insert into mail_thread_state (actor_id, thread_id, org_id, labels, read_at, starred)
+      values (${actorId}, ${threadId}, ${orgId}, ${sql.array(["inbox", "sent"], 1009)}, ${teamDay(anchorDate, -1)}, false)
+      on conflict do nothing`;
+  }
+}
+
+async function seedAdminAssistant(sql: Sql, orgId: string, anchorDate: string) {
+  const id = teamId(6, 201);
+  const inserted =
+    await sql`insert into assistant_conversations (id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, created_at, updated_at)
+    values (${id}, ${orgId}, ${LOCAL_TEAM_ADMIN.actorId}, 'Review Harbor sharing', false, ${teamDay(anchorDate, -1)},
+      ${sql.json({ source: LOCAL_TEAM_SOURCE, synthetic: true })}, ${teamDay(anchorDate, -2, 11)}, ${teamDay(anchorDate, -1, 11)})
+    on conflict (id) do nothing returning id`;
+  if (inserted.length === 0) return;
+  const exchanges = [
+    ["user", "Which Harbor Drive folders should the workspace admin be able to open?"],
+    [
+      "assistant",
+      "Open Harbor team resources and the private launch working files. Do not open a teammate's personal working notes unless they shared that file with you.",
+    ],
+  ] as const;
+  for (const [index, [role, content]] of exchanges.entries()) {
+    await sql`insert into assistant_messages (id, org_id, conversation_id, actor_id, role, content, metadata, created_at)
+      values (${teamId(7, 2010 + index)}, ${orgId}, ${id}, ${LOCAL_TEAM_ADMIN.actorId}, ${role}, ${content},
+        ${sql.json({ source: LOCAL_TEAM_SOURCE, synthetic: true })}, ${new Date(teamDay(anchorDate, -1, 11).getTime() + index * 60_000)})`;
   }
 }
 

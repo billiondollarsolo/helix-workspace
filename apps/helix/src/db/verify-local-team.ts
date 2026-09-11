@@ -8,10 +8,12 @@ import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js
 import { createSqlClient } from "./client.js";
 import { insertMailMessage } from "../platform/mail/store-message-write.js";
 import {
+  LOCAL_TEAM_ADMIN,
   LOCAL_TEAM_DIRECT_MESSAGES,
   LOCAL_TEAM_DOMAINS,
   LOCAL_TEAM_SOURCE,
   teamFileFixtures,
+  teamId,
   teamPerson,
 } from "./local-team-fixtures.js";
 import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
@@ -30,26 +32,33 @@ export async function verifyLocalTeam(
       const rows = await tx<Record<string, number>[]>`select
       (select count(*)::int from actors where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as accounts,
       (select count(*)::int from threads where org_id = ${orgId} and kind = 'mail' and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as mail_threads,
-      (select count(*)::int from messages where org_id = ${orgId} and kind = 'mail' and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as mail_messages,
+      (select count(*)::int from messages where org_id = ${orgId} and kind = 'mail' and metadata->>'source' = ${LOCAL_TEAM_SOURCE} and coalesce(metadata->>'seedKey','') <> 'live-internal-send') as mail_messages,
       (select count(*)::int from threads where org_id = ${orgId} and kind = 'chat_room' and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as chat_rooms,
-      (select count(*)::int from chat_room_settings where org_id = ${orgId} and participant_key = any(${tx.array(
-        LOCAL_TEAM_DIRECT_MESSAGES.map((direct) => direct.participantKey),
-        1009,
-      )})) as direct_messages,
+      (select count(distinct thread_id)::int from chat_room_settings where org_id = ${orgId} and (
+        participant_key = any(${tx.array(
+          LOCAL_TEAM_DIRECT_MESSAGES.map((direct) => direct.participantKey),
+          1009,
+        )})
+        or thread_id = ${teamId(3, 201)}
+      )) as direct_messages,
       (select count(*)::int from messages where org_id = ${orgId} and kind = 'chat' and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as chat_messages,
       (select count(*)::int from assistant_conversations where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as assistant_conversations,
       (select count(*)::int from assistant_messages where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as assistant_messages,
       (select count(*)::int from cal_events where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as calendar_events,
       (select count(*)::int from drive_folders where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as drive_folders`;
+      const adminPresent = await tx<
+        { id: string }[]
+      >`select id from actors where org_id = ${orgId} and id = ${LOCAL_TEAM_ADMIN.actorId}`;
+      const withAdmin = adminPresent.length > 0;
       const expected = {
         accounts: 10,
-        mail_threads: 20,
-        mail_messages: 60,
+        mail_threads: withAdmin ? 21 : 20,
+        mail_messages: withAdmin ? 62 : 60,
         chat_rooms: 5,
-        direct_messages: 10,
-        chat_messages: 80,
-        assistant_conversations: 30,
-        assistant_messages: 120,
+        direct_messages: withAdmin ? 11 : 10,
+        chat_messages: withAdmin ? 83 : 80,
+        assistant_conversations: withAdmin ? 31 : 30,
+        assistant_messages: withAdmin ? 122 : 120,
         calendar_events: 30,
         drive_folders: 13,
       };
@@ -100,6 +109,24 @@ export async function verifyLocalTeam(
       >`select helix_drive_effective_role(${orgId}, ${teamPerson(1).actorId}, 'object', ${notes.id}) as role`;
       if (outsiderNotes[0]?.role !== null)
         throw new Error("Personal working notes leaked to a teammate who was not granted access.");
+      if (withAdmin) {
+        const adminLaunch = await tx<
+          { role: string | null }[]
+        >`select helix_drive_effective_role(${orgId}, ${LOCAL_TEAM_ADMIN.actorId}, 'object', ${privateFile.id}) as role`;
+        if (adminLaunch[0]?.role !== "editor")
+          throw new Error("Workspace admin is missing shared launch-file access.");
+        const adminNotes = await tx<
+          { role: string | null }[]
+        >`select helix_drive_effective_role(${orgId}, ${LOCAL_TEAM_ADMIN.actorId}, 'object', ${notes.id}) as role`;
+        if (adminNotes[0]?.role !== null)
+          throw new Error("Workspace admin can open personal working notes that were not shared.");
+        const adminAlias = LOCAL_TEAM_ADMIN.aliases[0];
+        const mailbox = await tx<
+          { actor_id: string }[]
+        >`select actor_id from helix_resolve_inbound_mailboxes(${adminAlias}, 'harbor.local', 100)`;
+        if (mailbox[0]?.actor_id !== LOCAL_TEAM_ADMIN.actorId)
+          throw new Error(`Admin alias ${adminAlias} did not resolve.`);
+      }
       const domains = await tx<
         { domain: string }[]
       >`select domain from admin_domains where org_id = ${orgId} and domain = any(${tx.array([...LOCAL_TEAM_DOMAINS], 1009)}) and status = 'verified'`;

@@ -5,6 +5,16 @@ export const LOCAL_TEAM_SOURCE = "local-team-demo-v1";
 export const LOCAL_TEAM_PASSWORD = "helix-team-demo-password";
 export const LOCAL_TEAM_DOMAINS = ["helix.local", "harbor.local"] as const;
 
+/** Existing login-seed admin; team content grants this actor in, and never recreates the account. */
+export const LOCAL_TEAM_ADMIN = {
+  actorId: "00000000-0000-4000-8000-000000000110",
+  email: "admin@helix.local",
+  aliases: ["admin@harbor.local", "avery.park@harbor.local"],
+  displayName: "Avery Park",
+  firstName: "Avery",
+  jobTitle: "Workspace admin",
+} as const;
+
 /** Reserved fixture namespace; the seed never replaces an existing row. */
 export function teamId(category: number, index: number): string {
   return `1${String(category).padStart(7, "0")}-0000-4000-8000-${String(index).padStart(12, "0")}`;
@@ -185,30 +195,35 @@ export const LOCAL_TEAM_ROOMS = [
     id: teamId(3, 1),
     name: "Harbor team lounge",
     members: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    includeAdmin: true,
     topic: "Daily check-ins, useful discoveries, and Friday demos.",
   },
   {
     id: teamId(3, 2),
     name: "Harbor engineering",
     members: [1, 3, 5, 8],
+    includeAdmin: false,
     topic: "Deployment readiness, observability, and access boundaries.",
   },
   {
     id: teamId(3, 3),
     name: "Harbor launch decisions",
     members: [0, 1, 2],
+    includeAdmin: true,
     topic: "Private working room for pilot scope and design decisions.",
   },
   {
     id: teamId(3, 4),
     name: "Harbor budget planning",
     members: [0, 7],
+    includeAdmin: false,
     topic: "Private pilot forecast and spend review.",
   },
   {
     id: teamId(3, 5),
     name: "Harbor customer feedback",
     members: [4, 6, 9],
+    includeAdmin: true,
     topic: "Interview synthesis, customer questions, and launch guidance.",
   },
 ] as const;
@@ -219,9 +234,22 @@ export const LOCAL_TEAM_SHARED_FOLDERS = [
     name: "Harbor team resources",
     owner: 0,
     members: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    includeAdmin: true,
   },
-  { id: teamId(1, 102), name: "Harbor private launch working files", owner: 0, members: [0, 1, 2] },
-  { id: teamId(1, 103), name: "Harbor engineering handover", owner: 1, members: [1, 3, 5, 8] },
+  {
+    id: teamId(1, 102),
+    name: "Harbor private launch working files",
+    owner: 0,
+    members: [0, 1, 2],
+    includeAdmin: true,
+  },
+  {
+    id: teamId(1, 103),
+    name: "Harbor engineering handover",
+    owner: 1,
+    members: [1, 3, 5, 8],
+    includeAdmin: true,
+  },
 ] as const;
 
 export function teamDay(anchorDate: string, dayOffset: number, hour = 14): Date {

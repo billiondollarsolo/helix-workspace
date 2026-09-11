@@ -13,6 +13,7 @@ import { withTenantPostgresContext } from "../platform/tenancy/postgres-roles.js
 import { createSqlClient, resolveDatabaseUrl } from "./client.js";
 import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 import {
+  LOCAL_TEAM_ADMIN,
   LOCAL_TEAM_GROUPS,
   LOCAL_TEAM_PASSWORD,
   LOCAL_TEAM_PEOPLE,
@@ -82,6 +83,18 @@ export async function seedLocalTeam(sql: postgres.Sql, options: TeamSeedOptions 
       }
       const owner = LOCAL_TEAM_PEOPLE[0];
       if (owner) await seedLocalTeamDomain(tx, orgId, owner.actorId);
+      const adminRow =
+        await tx`select id from actors where org_id = ${orgId} and id = ${LOCAL_TEAM_ADMIN.actorId}`;
+      if (adminRow.length > 0) {
+        for (const alias of LOCAL_TEAM_ADMIN.aliases) {
+          await tx`insert into mail_aliases (org_id, actor_id, email, display_name, is_primary, receive_enabled, send_as_enabled)
+            select ${orgId}, ${LOCAL_TEAM_ADMIN.actorId}, ${alias}, ${LOCAL_TEAM_ADMIN.displayName}, false, true, true
+            where not exists (
+              select 1 from mail_aliases
+              where org_id = ${orgId} and email = ${alias} and disabled_at is null
+            )`;
+        }
+      }
       for (const person of LOCAL_TEAM_PEOPLE) {
         for (const alias of person.aliases) {
           await tx`insert into mail_aliases (org_id, actor_id, email, display_name, is_primary, receive_enabled, send_as_enabled)

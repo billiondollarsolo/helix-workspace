@@ -84,7 +84,7 @@ describe("raw mail evidence", () => {
   });
 
   it("verifies byte identity and deterministic reparsing", async () => {
-    const source = prepareMailRawSource(raw, await simpleParser(raw));
+    const source = prepareMailRawSource(raw, await simpleParser(raw, { skipTextToHtml: true }));
 
     await expect(verifyMailRawSource(source)).resolves.toBeUndefined();
     expect(source.bytes).toEqual(raw);
@@ -106,7 +106,7 @@ describe("raw mail evidence", () => {
   });
 
   it("fails closed for mutated bytes, projections, and unknown versions", async () => {
-    const source = prepareMailRawSource(raw, await simpleParser(raw));
+    const source = prepareMailRawSource(raw, await simpleParser(raw, { skipTextToHtml: true }));
     const mutated = Buffer.from(source.bytes);
     mutated[mutated.byteLength - 5] = mutated[mutated.byteLength - 5] === 65 ? 66 : 65;
 

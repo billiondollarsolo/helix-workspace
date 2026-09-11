@@ -1296,13 +1296,13 @@ export function summarizeAuthentication(result: AuthenticateResult): MailAuthent
               error: result.dmarc.error,
               alignment: compactJsonObject({
                 spf: compactJsonObject({
-                  result: result.dmarc.alignment.spf.result ?? null,
-                  strict: result.dmarc.alignment.spf.strict,
+                  result: result.dmarc.alignment?.spf?.result ?? null,
+                  strict: result.dmarc.alignment?.spf?.strict,
                 }),
                 dkim: compactJsonObject({
-                  result: result.dmarc.alignment.dkim.result ?? null,
-                  strict: result.dmarc.alignment.dkim.strict,
-                  underSized: result.dmarc.alignment.dkim.underSized,
+                  result: result.dmarc.alignment?.dkim?.result ?? null,
+                  strict: result.dmarc.alignment?.dkim?.strict,
+                  underSized: result.dmarc.alignment?.dkim?.underSized,
                 }),
               }),
             }),

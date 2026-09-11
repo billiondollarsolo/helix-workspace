@@ -41,7 +41,7 @@ export async function verifyMailRawSource(source: MailRawSourceInput): Promise<v
   ) {
     throw new MailRawSourceIntegrityError();
   }
-  const reparsed = projectParsedMail(await simpleParser(source.bytes));
+  const reparsed = projectParsedMail(await simpleParser(source.bytes, { skipTextToHtml: true }));
   if (sha256(canonicalJson(reparsed)) !== source.projectionSha256) {
     throw new MailRawSourceIntegrityError();
   }

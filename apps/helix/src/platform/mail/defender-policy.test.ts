@@ -124,7 +124,11 @@ describe("Agent Defender policy", () => {
   it("keeps send tools off the loop unless allowSend is on", () => {
     expect(mailLoopToolIds(false)).not.toContain("mail.send");
     expect(mailLoopToolIds(true)).toContain("mail.reply");
-    expect(authenticationUntrusted({ ...auth, spf: "fail", dkim: "fail" })).toBe(true);
+    expect(authenticationUntrusted({ ...auth, dmarc: "fail" })).toBe(true);
+    expect(authenticationUntrusted({ spf: "none", dkim: "none", dmarc: "none", arc: "none" })).toBe(
+      true,
+    );
+    expect(authenticationUntrusted({ ...auth, dmarc: "pass" })).toBe(false);
     const prompt = formatMailLoopPrompt({
       fromAddress: "a@b.test",
       subject: "Hi",

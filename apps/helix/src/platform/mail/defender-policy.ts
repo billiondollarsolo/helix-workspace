@@ -100,9 +100,9 @@ export function detectPromptInjection(subject: string, bodyText: string): readon
 }
 
 export function authenticationUntrusted(auth: AgentDefenderAuth): boolean {
-  if (auth.dmarc === "fail" || auth.dmarc === "permerror") return true;
-  if (auth.spf === "fail" && auth.dkim === "fail") return true;
-  return false;
+  if (auth.arc === "pass") return false;
+  if (auth.dmarc === "pass") return false;
+  return true;
 }
 
 export function evaluateAgentDefender(input: {

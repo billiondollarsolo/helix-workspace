@@ -125,6 +125,7 @@ security definer
 set search_path = pg_catalog, public
 set row_security = off
 as $$
+#variable_conflict use_column
 begin
   if helix_current_org_id() is distinct from input_org_id
     or helix_current_actor_id() is distinct from input_operator_id

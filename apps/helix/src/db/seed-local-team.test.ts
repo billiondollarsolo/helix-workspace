@@ -13,6 +13,7 @@ import {
 import {
   LOCAL_TEAM_PEOPLE,
   LOCAL_TEAM_SOURCE,
+  isLegacyTeamId,
   teamId,
   teamPerson,
   LOCAL_TEAM_DIRECT_MESSAGES,
@@ -21,6 +22,11 @@ import { assertLocalTeamTarget, seedLocalTeam } from "./seed-local-team.js";
 import { verifyLocalTeam } from "./verify-local-team.js";
 
 it("reserves unique fixture identities, useful files, and local-only targets", () => {
+  expect(isLegacyTeamId(teamPerson(0).actorId)).toBe(true);
+  expect(teamId(1, 116)).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu,
+  );
+  expect(isLegacyTeamId(teamId(1, 116))).toBe(false);
   expect(new Set(LOCAL_TEAM_PEOPLE.map((person) => person.actorId)).size).toBe(10);
   expect(new Set(LOCAL_TEAM_PEOPLE.map((person) => person.email)).size).toBe(10);
   expect(LOCAL_TEAM_PEOPLE.flatMap((person) => person.aliases).length).toBeGreaterThan(10);
@@ -49,9 +55,7 @@ it("reserves unique fixture identities, useful files, and local-only targets", (
   }
   expect(teamFileFixtures().length + teamVolumeFileFixtures(true).length).toBeGreaterThan(300);
   expect(teamFolderFixtures().length + volumeFolderFixtures(true).length).toBeGreaterThan(150);
-  expect(
-    teamSeedCounts({ withAdmin: true, driveFolders: 1 }).mail_threads,
-  ).toBeGreaterThan(1000);
+  expect(teamSeedCounts({ withAdmin: true, driveFolders: 1 }).mail_threads).toBeGreaterThan(1000);
   expect(() => {
     assertLocalTeamTarget("postgres://localhost/demo");
   }).not.toThrow();

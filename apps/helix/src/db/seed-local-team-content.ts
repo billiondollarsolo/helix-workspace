@@ -15,6 +15,7 @@ import {
   LOCAL_TEAM_PEOPLE,
   LOCAL_TEAM_ROOMS,
   LOCAL_TEAM_SOURCE,
+  teamChildId,
   teamDay,
   teamId,
   teamPerson,
@@ -43,6 +44,7 @@ async function grant(
 }
 
 export async function seedTeamContent(sql: Sql, orgId: string, anchorDate: string): Promise<void> {
+  await replaceStaleTeamContent(sql, orgId);
   for (const group of LOCAL_TEAM_GROUPS) {
     const owner = teamPerson(group.members[0]).actorId;
     const inserted =
@@ -111,6 +113,44 @@ export async function seedTeamContent(sql: Sql, orgId: string, anchorDate: strin
       .length > 0;
   await includeWorkspaceAdmin(sql, orgId, anchorDate);
   await seedTeamVolume(sql, orgId, anchorDate, adminPresent);
+}
+
+async function replaceStaleTeamContent(sql: Sql, orgId: string): Promise<void> {
+  const expectedFolder = teamFolderFixtures()[0];
+  const expectedMessage = teamChildId(LOCAL_TEAM_ROOMS[0]?.id ?? teamId(3, 1), 0);
+  const stale = await sql<
+    { folders: number; expected_folder: number; expected_message: number }[]
+  >`select
+      (select count(*)::int from drive_folders where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as folders,
+      (select count(*)::int from drive_folders where org_id = ${orgId} and id = ${expectedFolder?.id ?? teamId(1, 1)}) as expected_folder,
+      (select count(*)::int from messages where org_id = ${orgId} and id = ${expectedMessage}) as expected_message`;
+  const row = stale[0];
+  if (!row || row.folders === 0) return;
+  if (row.expected_folder > 0 && row.expected_message > 0) return;
+  await sql`delete from cal_attendees where org_id = ${orgId} and event_id in (
+    select id from cal_events where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE})`;
+  await sql`delete from cal_events where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
+  await sql`delete from assistant_messages where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
+  await sql`delete from mail_message_deliveries where org_id = ${orgId} and message_id in (
+    select id from messages where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE})`;
+  await sql`delete from messages where org_id = ${orgId} and (
+    metadata->>'source' = ${LOCAL_TEAM_SOURCE}
+    or thread_id in (select id from threads where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE})
+  )`;
+  await sql`delete from mail_thread_state where org_id = ${orgId} and thread_id in (
+    select id from threads where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE})`;
+  await sql`delete from chat_room_settings where org_id = ${orgId} and thread_id in (
+    select id from threads where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE})`;
+  await sql`delete from objects where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
+  await sql`delete from drive_folders where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
+  await sql`delete from threads where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
+  await sql`delete from assistant_conversations where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
+  await sql`delete from cal_calendars where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}`;
+  await sql`delete from mail_drafts where org_id = ${orgId} and actor_id in ${sql([
+    ...LOCAL_TEAM_PEOPLE.map((person) => person.actorId),
+    LOCAL_TEAM_ADMIN.actorId,
+  ])}`;
+  await sql`delete from admin_groups where org_id = ${orgId} and id::text ~ ${"^1[0-9]{7}-0000-4000-8000-[0-9]{12}$"}`;
 }
 
 function orderedTeamFolders(): TeamFolderFixture[] {
@@ -454,9 +494,8 @@ async function seedRoom(
       ];
   for (const [index, body] of lines.entries()) {
     const actor = teamPerson(members[index % members.length] ?? -1);
-    const suffix = Number(id.slice(-12));
     await sql`insert into messages (id, org_id, thread_id, actor_id, kind, body, body_format, metadata, sent_at)
-      values (${teamId(12, suffix * 100 + index)}, ${orgId}, ${roomId}, ${actor.actorId}, 'chat', ${body}, 'plain',
+      values (${teamChildId(roomId, index)}, ${orgId}, ${roomId}, ${actor.actorId}, 'chat', ${body}, 'plain',
         ${sql.json({ source: LOCAL_TEAM_SOURCE })}, ${new Date(teamDay(anchorDate, -1, 15).getTime() + index * 300_000)}) on conflict (id) do nothing`;
   }
 }

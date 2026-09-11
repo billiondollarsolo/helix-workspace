@@ -15,9 +15,37 @@ export const LOCAL_TEAM_ADMIN = {
   jobTitle: "Workspace admin",
 } as const;
 
-/** Reserved fixture namespace; the seed never replaces an existing row. */
+/** Actor IDs stay on the original reserved UUIDs so existing logins are not duplicated. */
+export function teamActorId(index: number): string {
+  return `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+}
+
+/** Deterministic UUID v5 for seeded rows. Looks like a normal UUID in URLs; stable across reruns. */
 export function teamId(category: number, index: number): string {
-  return `1${String(category).padStart(7, "0")}-0000-4000-8000-${String(index).padStart(12, "0")}`;
+  if (category === 0) return teamActorId(index);
+  return uuidv5(`helix:local-team:${String(category)}:${String(index)}`);
+}
+
+const TEAM_UUID_NAMESPACE = Buffer.from("7c3e1b906a2f4d118c4a0b9e5d7f2a14", "hex");
+
+function uuidv5(name: string): string {
+  const hash = createHash("sha1")
+    .update(Buffer.concat([TEAM_UUID_NAMESPACE, Buffer.from(name, "utf8")]))
+    .digest();
+  const version = hash[6] ?? 0;
+  const variant = hash[8] ?? 0;
+  hash[6] = (version & 0x0f) | 0x50;
+  hash[8] = (variant & 0x3f) | 0x80;
+  const hex = hash.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+export function isLegacyTeamId(id: string): boolean {
+  return /^1[0-9]{7}-0000-4000-8000-[0-9]{12}$/u.test(id);
+}
+
+export function teamChildId(parentId: string, index: number): string {
+  return uuidv5(`helix:local-team:child:${parentId}:${String(index)}`);
 }
 
 export const LOCAL_TEAM_SCOPES = [
@@ -132,7 +160,7 @@ export const LOCAL_TEAM_PEOPLE = people.map(
     const lastName = displayName.split(" ").at(-1)?.toLowerCase() ?? key;
     return {
       index,
-      actorId: teamId(0, index + 1),
+      actorId: teamActorId(index + 1),
       email: `demo.${key}@helix.local`,
       aliases: [
         `${key}@harbor.local`,

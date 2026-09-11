@@ -11,7 +11,7 @@ import {
 import { type DriveStoreContext } from "./context.js";
 import { mapDriveAccessGrant } from "./mappers.js";
 import { type DriveAccessGrantRow } from "./rows.js";
-import { notifyDriveShare } from "./share-notifications.js";
+import { deliverDriveMail, notifyDriveShare } from "./share-notifications.js";
 export async function share(
   context: DriveStoreContext,
   input: {
@@ -28,7 +28,7 @@ export async function share(
   readonly sharedWithActorIds: readonly string[];
   readonly role: string;
 }> {
-  return context.sql.begin(async (tx) => {
+  const result = await context.sql.begin(async (tx) => {
     const role = parseDriveRole(input.role);
     const sharedWithActorIds = [...new Set(input.targetActorIds)];
     const folder = await tx<
@@ -61,8 +61,9 @@ export async function share(
       objectId: input.objectId,
       payload: { sharedWithActorIds, role },
     });
+    let notice = null;
     if (input.notify !== false) {
-      await notifyDriveShare(tx, {
+      notice = await notifyDriveShare(tx, {
         orgId: input.orgId,
         actorId: input.actorId,
         objectId: input.objectId,
@@ -71,8 +72,37 @@ export async function share(
         role,
       });
     }
-    return { objectId: input.objectId, sharedWithActorIds, role };
+    return { objectId: input.objectId, sharedWithActorIds, role, notice };
   });
+  const notice = result.notice;
+  const mailer = context.options.shareMailer;
+  const authorEmail = notice?.authorEmail ?? null;
+  if (notice !== null && mailer !== undefined && authorEmail !== null) {
+    const recipients = notice.recipients.flatMap((recipient) =>
+      recipient.email === null
+        ? []
+        : [{ email: recipient.email, displayName: recipient.displayName }],
+    );
+    if (recipients.length > 0) {
+      await deliverDriveMail(context, () =>
+        mailer.sendShare({
+          orgId: input.orgId,
+          actorId: input.actorId,
+          objectId: notice.objectId,
+          title: notice.title,
+          role: notice.role,
+          authorName: notice.authorName,
+          authorEmail,
+          recipients,
+        }),
+      );
+    }
+  }
+  return {
+    objectId: result.objectId,
+    sharedWithActorIds: result.sharedWithActorIds,
+    role: result.role,
+  };
 }
 
 export async function listAccess(

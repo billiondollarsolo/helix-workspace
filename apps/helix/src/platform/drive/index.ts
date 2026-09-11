@@ -11,6 +11,7 @@ export * from "./scan-admin.js";
 export * from "./scan-retry-worker.js";
 export * from "./scanning.js";
 export * from "./search/index.js";
+export { createMailDriveShareSender, type DriveShareMailer } from "./share-mail.js";
 export * from "./share-link-security.js";
 export * from "./storage-policy.js";
 export * from "./store.js";

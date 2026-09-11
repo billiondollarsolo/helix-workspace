@@ -306,8 +306,8 @@ describe("PostgresDriveStore query shape", () => {
     const recipientId = "66666666-6666-4666-8666-666666666666";
     const recording = createRecordingSql([
       [
-        { id: actorId, display_name: "Ada Park" },
-        { id: recipientId, display_name: "Maya Chen" },
+        { id: actorId, display_name: "Ada Park", email: "ada@helix.example.com" },
+        { id: recipientId, display_name: "Maya Chen", email: "maya@helix.example.com" },
       ],
       [{ name: "Specs.pdf" }],
       [],

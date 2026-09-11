@@ -9,6 +9,11 @@ import { isDriveObjectReady, requireReadyObjectAccess } from "./authz.js";
 import { type DriveStoreContext } from "./context.js";
 import { mapObjectEntry } from "./mappers.js";
 import { type DriveSearchRow } from "./rows.js";
+import {
+  deliverDriveMail,
+  loadDriveItemTitle,
+  loadDriveMailActors,
+} from "./share-notifications.js";
 
 export async function setHiddenShare(
   context: DriveStoreContext,
@@ -70,6 +75,35 @@ export async function requestAccess(
         ${"Someone requested access to a Drive item"}, ${input.message ?? null},
         ${context.sql.json({ requesterActorId: input.actorId, requestId })}
       )`;
+    const mailer = context.options.shareMailer;
+    if (mailer !== undefined) {
+      const actors = await loadDriveMailActors(context.sql, input.orgId, [input.actorId, ownerId]);
+      const requester = actors.get(input.actorId);
+      const owner = actors.get(ownerId);
+      const requesterEmail = requester?.email ?? null;
+      const ownerEmail = owner?.email ?? null;
+      if (requesterEmail !== null && ownerEmail !== null) {
+        const title = await loadDriveItemTitle(
+          context.sql,
+          input.orgId,
+          input.objectId,
+          resourceType,
+        );
+        await deliverDriveMail(context, () =>
+          mailer.sendAccessRequest({
+            orgId: input.orgId,
+            actorId: input.actorId,
+            objectId: input.objectId,
+            title,
+            message: input.message ?? null,
+            requesterName: requester?.displayName ?? "Someone",
+            requesterEmail,
+            ownerEmail,
+            ownerName: owner?.displayName ?? null,
+          }),
+        );
+      }
+    }
   }
   return { requestId };
 }
@@ -154,6 +188,45 @@ export async function decideAccessRequest(
       ${input.approve ? "Your Drive access request was approved" : "Your Drive access request was declined"},
       ${null}, ${context.sql.json({ requestId: input.requestId })}
     )`;
+  const mailer = context.options.shareMailer;
+  if (mailer !== undefined) {
+    const request = (
+      await context.sql<
+        { resource_id: string; resource_type: "object" | "drive_folder" }[]
+      >`select resource_id, resource_type from drive_access_requests where id = ${input.requestId}`
+    )[0];
+    if (request !== undefined) {
+      const actors = await loadDriveMailActors(context.sql, input.orgId, [
+        input.actorId,
+        requesterId,
+      ]);
+      const owner = actors.get(input.actorId);
+      const requester = actors.get(requesterId);
+      const ownerEmail = owner?.email ?? null;
+      const requesterEmail = requester?.email ?? null;
+      if (ownerEmail !== null && requesterEmail !== null) {
+        const title = await loadDriveItemTitle(
+          context.sql,
+          input.orgId,
+          request.resource_id,
+          request.resource_type === "drive_folder" ? "drive_folder" : "object",
+        );
+        await deliverDriveMail(context, () =>
+          mailer.sendAccessDecision({
+            orgId: input.orgId,
+            actorId: input.actorId,
+            objectId: request.resource_id,
+            title,
+            approved: input.approve,
+            ownerName: owner?.displayName ?? "Someone",
+            ownerEmail,
+            requesterEmail,
+            requesterName: requester?.displayName ?? null,
+          }),
+        );
+      }
+    }
+  }
   return { requestId: input.requestId, approved: input.approve };
 }
 

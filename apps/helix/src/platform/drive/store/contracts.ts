@@ -3,6 +3,7 @@ import { type DlpGuard } from "../../dlp.js";
 import type { TenantPresignedPutUpload, TenantStorageResolver } from "../../storage/index.js";
 import type { DriveConfig } from "../config.js";
 import { type VirusScanner } from "../scanning.js";
+import type { DriveShareMailer } from "../share-mail.js";
 import type {
   DriveAccessGrantRecord,
   DriveCommentPage,
@@ -467,6 +468,8 @@ export interface PostgresDriveStoreOptions {
   /** Lifetime for a prepared multipart plan and its presigned URLs (default 15 minutes). */
   readonly multipartSessionTtlMs?: number;
   readonly dlp?: DlpGuard;
+  readonly shareMailer?: DriveShareMailer;
+  readonly onShareMailError?: (error: unknown) => void;
 }
 
 interface DriveVirusScanUnavailableEvent {

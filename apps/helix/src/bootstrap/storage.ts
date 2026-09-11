@@ -3,6 +3,7 @@ import { PostgresChatAttachmentStore } from "../platform/chat/index.js";
 import { loadDriveConfig } from "../platform/drive/config.js";
 import {
   createClamAvVirusScanner,
+  createMailDriveShareSender,
   DriveVirusScanRetryWorker,
   PostgresDriveStore,
   PostgresDriveWorkflowStore,
@@ -243,6 +244,13 @@ export async function installStorage(context: Awaited<ReturnType<typeof installA
   const driveStore = new PostgresDriveStore(sql, driveStorage, {
     metrics,
     gc: driveConfig.gc,
+    shareMailer: createMailDriveShareSender({
+      store: mailStore,
+      publicBaseUrl: bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
+    }),
+    onShareMailError: (error: unknown) => {
+      app.log.error({ error }, "Drive share mail failed");
+    },
     storageResolver: driveStorageResolver,
     events: eventBus,
     contentAddressedDedup: driveConfig.contentAddressedDedup,

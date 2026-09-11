@@ -19,7 +19,15 @@ import {
 type MailApiAddress = MailAddress;
 
 export type MailFolderKey =
-  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
+  | "inbox"
+  | "starred"
+  | "snoozed"
+  | "sent"
+  | "drafts"
+  | "archive"
+  | "spam"
+  | "held"
+  | "trash";
 
 type MailCategoryTab = "primary" | "updates" | "promotions" | "social";
 

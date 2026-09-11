@@ -112,6 +112,7 @@ export function AdminAccessRelatedNav({ current }: { readonly current: AdminSect
       items={siblings(current, [
         ["app-passwords", "App passwords"],
         ["agent-credentials", "Agent credentials"],
+        ["agent-defender", "Helix Agent Defender"],
         ["agent-controls", "Agent emergency controls"],
         ["oauth-apps", "OAuth apps"],
       ])}

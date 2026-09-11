@@ -295,6 +295,8 @@ export interface AssistantSendMessageInput {
   /** Server-internal invocation policy; never persisted in conversation data. */
   readonly principal?: ToolInvocationPrincipal;
   readonly content: string;
+  /** When set, only these Helix tools are visible for the turn (mail loop). */
+  readonly toolIds?: readonly string[];
   readonly conversationId?: string;
   /** Branch this owned user message and regenerate using only its preceding history. */
   readonly editMessageId?: string;

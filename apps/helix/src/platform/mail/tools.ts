@@ -30,6 +30,7 @@ import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { MAIL_CATEGORY_TABS } from "./category.js";
 import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
 import { sanitizeMailHtml } from "./html-rendering.js";
+import type { AgentDefenderIngest } from "./defender-ingest.js";
 import { ingestRawMail, MailauthAuthenticator, type MailAuthenticator } from "./ingest.js";
 import { hasExternalRecipient, requireTenantMailRecipients } from "./recipient-authorization.js";
 import { MailSendService } from "./outbound.js";
@@ -355,6 +356,7 @@ export interface CreateMailToolDefinitionsOptions {
    * message, but it is recorded so the From header is not trusted.
    */
   readonly inboundAuthenticator?: MailAuthenticator;
+  readonly agentDefender?: AgentDefenderIngest;
 }
 
 export function createMailToolDefinitions(
@@ -525,6 +527,7 @@ export function createMailToolDefinitions(
             receivedAt,
           },
           authenticator,
+          ...(options.agentDefender === undefined ? {} : { agentDefender: options.agentDefender }),
         });
         return {
           ok: true,
@@ -652,6 +655,7 @@ export function createMailToolDefinitions(
           orgId: ctx.actor.orgId,
           actorId: input.mailboxActorId ?? ctx.actor.id,
           threadId: input.threadId,
+          ...(ctx.actor.type === "agent" ? { excludeHeld: true } : {}),
         });
         return { thread: thread === null ? null : serializeThread(thread) };
       },
@@ -892,6 +896,9 @@ export function createMailToolDefinitions(
       inputSchema: zodToolSchema(threadsListSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(mailThreadsListResultSchema, genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        if (ctx.actor.type === "agent" && input.folder === "held") {
+          return { threads: [], total: 0, limit: input.limit, offset: input.offset };
+        }
         const result = await options.store.listThreads({
           orgId: ctx.actor.orgId,
           actorId: input.mailboxActorId ?? ctx.actor.id,
@@ -924,7 +931,9 @@ export function createMailToolDefinitions(
             orgId: ctx.actor.orgId,
             actorId: input.mailboxActorId ?? ctx.actor.id,
           })
-        ).map(serializeFolder),
+        )
+          .filter((folder) => ctx.actor.type !== "agent" || folder.id !== "held")
+          .map(serializeFolder),
       }),
     }),
     defineTool<z.output<typeof labelsListSchema>, unknown>({

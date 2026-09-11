@@ -16,6 +16,7 @@ import {
   PostgresOutboundProviderStore,
   SmtpMailReceiver,
   SmtpSubmissionServer,
+  createAgentDefenderIngest,
 } from "../platform/mail/index.js";
 import { OutboxWorker } from "../platform/outbox/outbox.js";
 import {
@@ -244,6 +245,7 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
       : new SmtpMailReceiver({
           store: mailStore,
           quarantineStore: mailQuarantineStore,
+          agentDefender: createAgentDefenderIngest(sql),
           resolveRecipient: (address) => mailStore.resolveInboundAddress(address),
           authorizeForward: async ({ orgId, actorId, content }) => {
             const decision = await dlp.evaluate({

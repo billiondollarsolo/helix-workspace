@@ -308,7 +308,7 @@ export class AssistantOrchestrator {
       toolGroups,
       ...(input.metadata?.timeZone === undefined ? {} : { timeZone: input.metadata.timeZone }),
       ...(slashHook?.instruction === undefined ? {} : { slashInstruction: slashHook.instruction }),
-      ...(slashHook?.toolIds === undefined ? {} : { toolIds: slashHook.toolIds }),
+      toolIds: input.toolIds ?? slashHook?.toolIds,
     };
     const userMessage = await this.options.store.appendMessage({
       orgId: input.actor.orgId,

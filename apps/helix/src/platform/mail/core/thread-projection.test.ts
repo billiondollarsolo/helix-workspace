@@ -13,6 +13,7 @@ function base(overrides: Partial<ThreadProjectionSource> = {}): ThreadProjection
   return {
     deletedAt: null,
     spamAt: null,
+    heldAt: null,
     archivedAt: null,
     threadArchivedAt: null,
     starred: false,
@@ -27,6 +28,8 @@ describe("folderPredicate", () => {
   it("classifies inbox/spam/archive/starred/snoozed/sent/drafts/trash", () => {
     expect(folderPredicate("inbox", base(), now)).toBe(true);
     expect(folderPredicate("spam", base({ spamAt: now }), now)).toBe(true);
+    expect(folderPredicate("held", base({ heldAt: now }), now)).toBe(true);
+    expect(folderPredicate("inbox", base({ heldAt: now }), now)).toBe(false);
     expect(folderPredicate("archive", base({ archivedAt: now }), now)).toBe(true);
     expect(folderPredicate("starred", base({ starred: true }), now)).toBe(true);
     expect(

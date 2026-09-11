@@ -359,6 +359,14 @@ describe("admin console request budget", () => {
             "/v1/api/tools/agent.credentials.list",
           ],
         },
+        "agent-defender": {
+          "requestCount": 2,
+          "settled": true,
+          "urls": [
+            "/v1/api/tools/agent.defender.holds.list",
+            "/v1/api/tools/agent.defender.policy.list",
+          ],
+        },
         "ai-costs": {
           "requestCount": 1,
           "settled": true,

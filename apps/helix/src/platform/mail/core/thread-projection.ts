@@ -7,6 +7,7 @@ import type { MailFolderId, MailThreadRowRecord } from "../types.js";
 export interface ThreadProjectionSource {
   readonly deletedAt: Date | null;
   readonly spamAt: Date | null;
+  readonly heldAt: Date | null;
   readonly archivedAt: Date | null;
   readonly threadArchivedAt: Date | null;
   readonly starred: boolean;
@@ -26,10 +27,13 @@ export function folderPredicate(
       return row.deletedAt !== null;
     case "spam":
       return row.deletedAt === null && row.spamAt !== null;
+    case "held":
+      return row.deletedAt === null && row.spamAt === null && row.heldAt !== null;
     case "archive":
       return (
         row.deletedAt === null &&
         row.spamAt === null &&
+        row.heldAt === null &&
         (row.archivedAt !== null || row.threadArchivedAt !== null)
       );
     case "starred":
@@ -49,6 +53,7 @@ export function folderPredicate(
       return (
         row.deletedAt === null &&
         row.spamAt === null &&
+        row.heldAt === null &&
         row.archivedAt === null &&
         row.threadArchivedAt === null &&
         (row.snoozedUntil === null || row.snoozedUntil.getTime() <= now.getTime()) &&
@@ -61,6 +66,7 @@ export function folderPredicate(
 const FOLDER_RESOLUTION_ORDER: readonly MailFolderId[] = [
   "trash",
   "spam",
+  "held",
   "drafts",
   "snoozed",
   "starred",

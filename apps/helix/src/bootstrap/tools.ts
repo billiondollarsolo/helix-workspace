@@ -42,6 +42,9 @@ import {
   RedisAgentRateCostLimiter,
 } from "../platform/limits/index.js";
 import {
+  AgentDefenderLoopWorker,
+  createAgentDefenderIngest,
+  registerAgentDefenderTools,
   registerMailDeliveryEventRoutes,
   registerMailSourceRoutes,
   registerMailStreamRoutes,
@@ -417,6 +420,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
   // Core-app agent tools are contributed per app, conditionally on enablement
   // + role: a disabled app contributes no tools to the registry, so it is
   // absent from REST, tRPC, MCP and the assistant.
+  const agentDefenderIngest = createAgentDefenderIngest(sql);
   if (coreApps.shouldRegister("mail")) {
     registerMailTools(tools, {
       store: mailStore,
@@ -426,7 +430,9 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
           .filter((domain) => domain.status === "verified" && domain.mailEnabled)
           .map((domain) => domain.domain),
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
+      agentDefender: agentDefenderIngest,
     });
+    registerAgentDefenderTools(tools, agentDefenderIngest.store);
     await registerCanonicalApi(app, async (api) => {
       registerMailDeliveryEventRoutes(api, {
         store: mailDeliveryEventStore,
@@ -684,38 +690,49 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     readonly name: string;
     readonly worker: SupervisedWorker;
   }[] = [];
+  const loadWorkerActor = async (orgId: string, actorId: string): Promise<Actor | null> => {
+    const rows = (await sql`
+      select id, org_id, type, display_name, email, scopes
+      from actors
+      where id = ${actorId} and org_id = ${orgId} and disabled_at is null
+      limit 1
+    `) as unknown as readonly {
+      readonly id: string;
+      readonly org_id: string;
+      readonly type: Actor["type"];
+      readonly display_name: string;
+      readonly email: string | null;
+      readonly scopes: readonly string[];
+    }[];
+    const row = rows[0];
+    if (row === undefined) return null;
+    return {
+      id: row.id,
+      orgId: row.org_id,
+      type: row.type,
+      displayName: row.display_name,
+      ...(row.email === null ? {} : { email: row.email }),
+      scopes: row.scopes,
+    };
+  };
   leaderGatedWorkers.push({
     name: "assistant-routine-worker",
-    worker: new AssistantRoutineWorker(
-      routineStore,
-      assistantOrchestrator,
-      async (orgId, actorId) => {
-        const rows = (await sql`
-          select id, org_id, type, display_name, email, scopes
-          from actors
-          where id = ${actorId} and org_id = ${orgId} and disabled_at is null
-          limit 1
-        `) as unknown as readonly {
-          readonly id: string;
-          readonly org_id: string;
-          readonly type: Actor["type"];
-          readonly display_name: string;
-          readonly email: string | null;
-          readonly scopes: readonly string[];
-        }[];
-        const row = rows[0];
-        if (row === undefined) return null;
-        return {
-          id: row.id,
-          orgId: row.org_id,
-          type: row.type,
-          displayName: row.display_name,
-          ...(row.email === null ? {} : { email: row.email }),
-          scopes: row.scopes,
-        };
-      },
-    ),
+    worker: new AssistantRoutineWorker(routineStore, assistantOrchestrator, loadWorkerActor),
   });
+  if (coreApps.shouldRegister("mail") && coreApps.shouldRegister("assistant")) {
+    leaderGatedWorkers.push({
+      name: "agent-defender-loop-worker",
+      worker: new AgentDefenderLoopWorker({
+        defender: agentDefenderIngest.store,
+        mail: mailStore,
+        orchestrator: assistantOrchestrator,
+        loadActor: loadWorkerActor,
+        onError: (error, job) => {
+          app.log.error({ error, jobId: job.id }, "Agent Defender mail loop failed");
+        },
+      }),
+    });
+  }
 
   registerAgentCredentialTools(tools, {
     store: agentCredentialStore,

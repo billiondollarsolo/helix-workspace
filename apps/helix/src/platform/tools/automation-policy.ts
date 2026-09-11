@@ -74,6 +74,7 @@ export function evaluateAutomationPolicy(input: {
 }): AutomationPolicyDecision {
   if (
     input.tool.id.startsWith("agent.credentials.") ||
+    input.tool.id.startsWith("agent.defender.") ||
     input.tool.id.includes("automation.policy") ||
     input.tool.permission === "admin.agents" ||
     input.tool.permission === "admin.config.write"

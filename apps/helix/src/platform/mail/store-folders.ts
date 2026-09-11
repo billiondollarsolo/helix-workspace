@@ -29,6 +29,7 @@ const MAIL_FOLDER_LABELS: Readonly<Record<MailFolderId, string>> = {
   drafts: "Drafts",
   archive: "Archive",
   spam: "Spam",
+  held: "Held",
   trash: "Trash",
 };
 
@@ -68,6 +69,7 @@ export class MailFolderStore {
           mts.read_at,
           mts.starred,
           mts.spam_at,
+          mts.held_at,
           (
             select bool_or(mo.metadata->>'direction' = 'outbound')
             from messages mo
@@ -133,6 +135,7 @@ export class MailFolderStore {
           select array_remove(array[
             case when deleted_at is null
               and spam_at is null
+              and held_at is null
               and coalesce(archived_at, thread_archived_at) is null
               and (snoozed_until is null or snoozed_until <= ${now})
               and has_received then 'inbox' end,
@@ -142,9 +145,10 @@ export class MailFolderStore {
             case when deleted_at is null and has_outbound is true then 'sent' end,
             -- Queued outbound still contributes to Drafts totals (undo window).
             case when deleted_at is null and outbound_status = 'queued' then 'drafts' end,
-            case when deleted_at is null and spam_at is null
+            case when deleted_at is null and spam_at is null and held_at is null
               and coalesce(archived_at, thread_archived_at) is not null then 'archive' end,
             case when deleted_at is null and spam_at is not null then 'spam' end,
+            case when deleted_at is null and spam_at is null and held_at is not null then 'held' end,
             case when deleted_at is not null then 'trash' end
           ], null) as folders
         ) f

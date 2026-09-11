@@ -13,6 +13,7 @@ const FOLDER_ICONS: Readonly<Record<MailFolderKey, IconName>> = {
   drafts: "EditPen",
   archive: "Archive",
   spam: "Bell",
+  held: "Shield",
   trash: "Trash",
 };
 
@@ -25,6 +26,7 @@ const FOLDER_ORDER: readonly MailFolderKey[] = [
   "drafts",
   "archive",
   "spam",
+  "held",
   "trash",
 ];
 

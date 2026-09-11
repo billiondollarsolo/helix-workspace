@@ -7,7 +7,15 @@ import type { MailCategoryTab } from "./category.js";
  * is "threads with starred = true", `archive` is "threads with archived_at set".
  */
 export type MailFolderId =
-  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
+  | "inbox"
+  | "starred"
+  | "snoozed"
+  | "sent"
+  | "drafts"
+  | "archive"
+  | "spam"
+  | "held"
+  | "trash";
 
 export const MAIL_FOLDER_IDS = [
   "inbox",
@@ -17,6 +25,7 @@ export const MAIL_FOLDER_IDS = [
   "drafts",
   "archive",
   "spam",
+  "held",
   "trash",
 ] as const satisfies readonly MailFolderId[];
 
@@ -272,6 +281,8 @@ export interface MailThreadStatePatch {
   readonly starred?: boolean | undefined;
   /** Stamps (or, when `null`, clears) the per-actor Spam-folder routing flag. */
   readonly spamAt?: Date | null | undefined;
+  /** Agent Defender hold — not visible to the agent until an owner releases it. */
+  readonly heldAt?: Date | null | undefined;
 }
 
 export interface MailVacationRecord {
@@ -381,6 +392,8 @@ export interface MailThreadGetRequest {
   readonly orgId: string;
   readonly actorId: string;
   readonly threadId: string;
+  /** When true, held threads are invisible (agent mail loop / agent tools). */
+  readonly excludeHeld?: boolean | undefined;
 }
 
 export interface MailThreadMessage {

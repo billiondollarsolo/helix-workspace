@@ -33,6 +33,7 @@ import {
   type SmtpTransportSecurity,
 } from "./smtp-transport-security.js";
 import type { SpamScanner, SpamScanResult } from "./spam.js";
+import { finishInboundAgentDefender, type AgentDefenderIngest } from "./defender-ingest.js";
 import type { MailStore } from "./store.js";
 import type {
   MailAddress,
@@ -177,6 +178,7 @@ export interface SmtpReceiverOptions {
     ((orgId: string) => Promise<InboundScanFailurePolicy>) | undefined;
   readonly resolveAuthenticationPolicy?:
     ((orgId: string) => Promise<InboundAuthenticationPolicy>) | undefined;
+  readonly agentDefender?: AgentDefenderIngest;
   /** Establish the tenant-local database context for a direct SMTP delivery. */
   readonly runForTenant?:
     (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>) | undefined;
@@ -589,25 +591,15 @@ async function queueInboundForward(
   });
 }
 
-export async function ingestSmtpEnvelope(input: {
-  readonly store: MailStore;
-  readonly quarantineStore?: MailQuarantineStore | undefined;
-  readonly resolveRecipient: (address: string) => Promise<MailInboundRecipientResolution>;
-  readonly raw: Buffer | string;
-  readonly envelopeFrom?: string | undefined;
-  readonly envelopeTo: readonly string[];
-  readonly remoteAddress?: string | undefined;
-  readonly helo?: string | undefined;
-  readonly authenticator?: MailAuthenticator | undefined;
-  readonly scanners?: InboundMailScanners | undefined;
-  readonly resolveScanFailurePolicy?:
-    ((orgId: string) => Promise<InboundScanFailurePolicy>) | undefined;
-  readonly resolveAuthenticationPolicy?:
-    ((orgId: string) => Promise<InboundAuthenticationPolicy>) | undefined;
-  readonly runForTenant?:
-    (<T>(orgId: string, operation: () => Promise<T>) => Promise<T>) | undefined;
-  readonly authorizeForward?: SmtpReceiverOptions["authorizeForward"];
-}): Promise<readonly IngestRawMailResult[]> {
+export async function ingestSmtpEnvelope(
+  input: Omit<SmtpReceiverOptions, "transportSecurity"> & {
+    readonly raw: Buffer | string;
+    readonly envelopeTo: readonly string[];
+    readonly envelopeFrom?: string | undefined;
+    readonly remoteAddress?: string | undefined;
+    readonly helo?: string | undefined;
+  },
+): Promise<readonly IngestRawMailResult[]> {
   const resolved = await Promise.all(input.envelopeTo.map(input.resolveRecipient));
   if (resolved.some((resolution) => !acceptsInboundRecipient(resolution))) {
     throw rejectedRecipient("unknown mailbox");
@@ -667,6 +659,7 @@ export async function ingestSmtpEnvelope(input: {
             scanners: { ...input.scanners, failurePolicy },
             malwareDisposition: "quarantine",
             ...(authenticationPolicy === undefined ? {} : { authenticationPolicy }),
+            ...(input.agentDefender === undefined ? {} : { agentDefender: input.agentDefender }),
             input: {
               orgId,
               recipients: [...tenant.mailboxes.values()],
@@ -724,6 +717,7 @@ export async function ingestRawMail(input: {
   readonly malwareDisposition?: "spam" | "quarantine" | "reject";
   readonly authenticationPolicy?: InboundAuthenticationPolicy | false;
   readonly threatVerdicts?: InboundThreatVerdicts;
+  readonly agentDefender?: AgentDefenderIngest;
 }): Promise<IngestRawMailResult> {
   // P2-6: an `smtp.receive` span covers authentication, parsing, persistence,
   // inbound-filter evaluation, and spam/antivirus scanning for one message.
@@ -883,6 +877,8 @@ export async function ingestRawMail(input: {
               ),
             );
           }
+          // prettier-ignore
+          await finishInboundAgentDefender(input, deliveredRecipients, fromAddress, parsed, auth, scan.routedToSpam, stored);
           if (scan.routedToSpam && stored.created && input.store.recordSpamFeedback !== undefined) {
             const feedback = autoSpamFeedback(scan);
             for (const recipient of deliveredRecipients)
@@ -912,7 +908,6 @@ export async function ingestRawMail(input: {
 class MailInboundQuarantinedError extends Error {
   constructor(readonly quarantineId: string) {
     super("Inbound mail accepted into quarantine.");
-    this.name = "MailInboundQuarantinedError";
     this.name = "MailInboundQuarantinedError";
   }
 }

@@ -72,6 +72,8 @@ export class MailThreadStore {
     const starredPatch = input.patch.starred ?? false;
     const hasSpamAtPatch = input.patch.spamAt !== undefined;
     const spamAtPatch = input.patch.spamAt ?? null;
+    const hasHeldAtPatch = input.patch.heldAt !== undefined;
+    const heldAtPatch = input.patch.heldAt ?? null;
 
     await this.sql`
       update mail_thread_state
@@ -101,6 +103,10 @@ export class MailThreadStore {
           when ${hasSpamAtPatch} then ${spamAtPatch}
           else mail_thread_state.spam_at
         end,
+        held_at = case
+          when ${hasHeldAtPatch} then ${heldAtPatch}
+          else mail_thread_state.held_at
+        end,
         updated_at = now()
       where org_id = ${input.orgId}
         and actor_id = ${input.actorId}
@@ -109,7 +115,7 @@ export class MailThreadStore {
   }
 
   async getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null> {
-    const rows = await this.sql<MailThreadRow[]>`
+    const rows = await this.sql<(MailThreadRow & { readonly held_at: Date | null })[]>`
       select
         t.id as thread_id,
         t.subject,
@@ -120,6 +126,7 @@ export class MailThreadStore {
         mts.snoozed_until,
         mts.read_at,
         mts.starred,
+        mts.held_at,
         m.id as message_id,
         m.body,
         m.body_format,
@@ -186,7 +193,9 @@ export class MailThreadStore {
       order by m.sent_at asc
     `;
 
-    return rows.length === 0 ? null : mapThreadDetail(rows);
+    if (rows.length === 0) return null;
+    if (input.excludeHeld === true && rows[0]?.held_at != null) return null;
+    return mapThreadDetail(rows);
   }
 
   async listThreads(input: MailThreadListRequest): Promise<MailThreadListResult> {
@@ -244,6 +253,7 @@ export class MailThreadStore {
           mts.read_at,
           mts.starred,
           mts.spam_at,
+          mts.held_at,
           mts.category,
           (
             select count(*)::int from messages mm
@@ -327,7 +337,8 @@ export class MailThreadStore {
           case ${folder}::text
             when 'trash' then deleted_at is not null
             when 'spam' then deleted_at is null and spam_at is not null
-            when 'archive' then deleted_at is null and spam_at is null
+            when 'held' then deleted_at is null and spam_at is null and held_at is not null
+            when 'archive' then deleted_at is null and spam_at is null and held_at is null
               and coalesce(archived_at, thread_archived_at) is not null
             when 'starred' then deleted_at is null and starred is true
             when 'snoozed' then deleted_at is null
@@ -336,6 +347,7 @@ export class MailThreadStore {
             when 'drafts' then deleted_at is null and outbound_status = 'queued'
             else /* inbox */ deleted_at is null
               and spam_at is null
+              and held_at is null
               and coalesce(archived_at, thread_archived_at) is null
               and (snoozed_until is null or snoozed_until <= ${now})
               and has_received
@@ -383,6 +395,7 @@ export class MailThreadStore {
           mts.read_at,
           mts.starred,
           mts.spam_at,
+          mts.held_at,
           mts.category,
           t.subject,
           m.body,
@@ -458,7 +471,8 @@ export class MailThreadStore {
         case ${folder}::text
           when 'trash' then deleted_at is not null
           when 'spam' then deleted_at is null and spam_at is not null
-          when 'archive' then deleted_at is null and spam_at is null
+          when 'held' then deleted_at is null and spam_at is null and held_at is not null
+          when 'archive' then deleted_at is null and spam_at is null and held_at is null
             and coalesce(archived_at, thread_archived_at) is not null
           when 'starred' then deleted_at is null and starred is true
           when 'snoozed' then deleted_at is null
@@ -467,6 +481,7 @@ export class MailThreadStore {
           when 'drafts' then deleted_at is null and outbound_status = 'queued'
           else /* inbox */ deleted_at is null
             and spam_at is null
+            and held_at is null
             and coalesce(archived_at, thread_archived_at) is null
             and (snoozed_until is null or snoozed_until <= ${now})
             and has_received

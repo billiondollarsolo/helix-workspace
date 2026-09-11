@@ -10,12 +10,16 @@ import { insertMailMessage } from "../platform/mail/store-message-write.js";
 import { teamFileFixtures, teamFolderFixtures } from "./local-team-drive-fixtures.js";
 import {
   LOCAL_TEAM_ADMIN,
-  LOCAL_TEAM_DIRECT_MESSAGES,
   LOCAL_TEAM_DOMAINS,
   LOCAL_TEAM_SOURCE,
-  teamId,
   teamPerson,
 } from "./local-team-fixtures.js";
+import {
+  teamSeedCounts,
+  teamVolumeFileFixtures,
+  volumeDirectMessageKeys,
+  volumeFolderFixtures,
+} from "./local-team-volume.js";
 import { DEFAULT_LOCAL_OAUTH_ORG_ID } from "./seed-local-oauth.js";
 import { assertLocalTeamTarget, localTeamResolvedStorage } from "./seed-local-team.js";
 
@@ -29,39 +33,26 @@ export async function verifyLocalTeam(
     sql,
     { orgId },
     async (tx) => {
+      const adminPresent = await tx<
+        { id: string }[]
+      >`select id from actors where org_id = ${orgId} and id = ${LOCAL_TEAM_ADMIN.actorId}`;
+      const withAdmin = adminPresent.length > 0;
       const rows = await tx<Record<string, number>[]>`select
       (select count(*)::int from actors where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as accounts,
       (select count(*)::int from threads where org_id = ${orgId} and kind = 'mail' and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as mail_threads,
       (select count(*)::int from messages where org_id = ${orgId} and kind = 'mail' and metadata->>'source' = ${LOCAL_TEAM_SOURCE} and coalesce(metadata->>'seedKey','') <> 'live-internal-send') as mail_messages,
       (select count(*)::int from threads where org_id = ${orgId} and kind = 'chat_room' and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as chat_rooms,
-      (select count(distinct thread_id)::int from chat_room_settings where org_id = ${orgId} and (
-        participant_key = any(${tx.array(
-          LOCAL_TEAM_DIRECT_MESSAGES.map((direct) => direct.participantKey),
-          1009,
-        )})
-        or thread_id = ${teamId(3, 201)}
-      )) as direct_messages,
+      (select count(distinct thread_id)::int from chat_room_settings where org_id = ${orgId} and
+        participant_key = any(${tx.array([...volumeDirectMessageKeys(withAdmin)], 1009)})) as direct_messages,
       (select count(*)::int from messages where org_id = ${orgId} and kind = 'chat' and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as chat_messages,
       (select count(*)::int from assistant_conversations where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as assistant_conversations,
       (select count(*)::int from assistant_messages where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as assistant_messages,
       (select count(*)::int from cal_events where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as calendar_events,
       (select count(*)::int from drive_folders where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE}) as drive_folders`;
-      const adminPresent = await tx<
-        { id: string }[]
-      >`select id from actors where org_id = ${orgId} and id = ${LOCAL_TEAM_ADMIN.actorId}`;
-      const withAdmin = adminPresent.length > 0;
-      const expected = {
-        accounts: 10,
-        mail_threads: withAdmin ? 21 : 20,
-        mail_messages: withAdmin ? 62 : 60,
-        chat_rooms: 5,
-        direct_messages: withAdmin ? 11 : 10,
-        chat_messages: withAdmin ? 83 : 80,
-        assistant_conversations: withAdmin ? 31 : 30,
-        assistant_messages: withAdmin ? 122 : 120,
-        calendar_events: 30,
-        drive_folders: teamFolderFixtures().length,
-      };
+      const expected = teamSeedCounts({
+        withAdmin,
+        driveFolders: teamFolderFixtures().length + volumeFolderFixtures(withAdmin).length,
+      });
       const counts = rows[0];
       assert(counts, "Team count query returned no row.");
       for (const [name, count] of Object.entries(expected)) {
@@ -85,9 +76,10 @@ export async function verifyLocalTeam(
       select id, storage_key, sha256, byte_size, owner_actor_id, metadata->>'status' as status,
         metadata->>'avScannedAt' as scanned_at, metadata->>'seedKey' as seed_key
       from objects where org_id = ${orgId} and metadata->>'source' = ${LOCAL_TEAM_SOURCE} order by metadata->>'seedKey'`;
-      if (files.length !== teamFileFixtures().length)
+      const expectedFiles = teamFileFixtures().length + teamVolumeFileFixtures(withAdmin).length;
+      if (files.length !== expectedFiles)
         throw new Error(
-          `Expected ${String(teamFileFixtures().length)} Drive files, found ${String(files.length)}.`,
+          `Expected ${String(expectedFiles)} Drive files, found ${String(files.length)}.`,
         );
       const pairFile = files.find((file) => file.seed_key === "pair-customer-brief");
       if (!pairFile) throw new Error("Customer briefing pair-share file is missing.");

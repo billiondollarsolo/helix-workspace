@@ -6,6 +6,11 @@ import type { StorageObject } from "@helix/sdk-types";
 import { cleanupTestTenants } from "../test-support/cleanup-tenants.js";
 import { teamFileFixtures, teamFolderFixtures } from "./local-team-drive-fixtures.js";
 import {
+  teamSeedCounts,
+  teamVolumeFileFixtures,
+  volumeFolderFixtures,
+} from "./local-team-volume.js";
+import {
   LOCAL_TEAM_PEOPLE,
   LOCAL_TEAM_SOURCE,
   teamId,
@@ -32,8 +37,21 @@ it("reserves unique fixture identities, useful files, and local-only targets", (
   for (const file of teamFileFixtures()) {
     if (file.folderId) expect(folderIds.has(file.folderId)).toBe(true);
   }
-  expect(teamFileFixtures().length).toBeGreaterThan(100);
-  expect(teamFolderFixtures().length).toBeGreaterThan(70);
+  const volumeFolders = volumeFolderFixtures(true);
+  const allFolderIds = new Set([...folderIds, ...volumeFolders.map((folder) => folder.id)]);
+  for (const folder of volumeFolders) {
+    if (folder.parentId) expect(allFolderIds.has(folder.parentId)).toBe(true);
+  }
+  const volumeKeys = teamVolumeFileFixtures(true).map((file) => file.key);
+  expect(volumeKeys).toEqual([...new Set(volumeKeys)]);
+  for (const file of teamVolumeFileFixtures(true)) {
+    if (file.folderId) expect(allFolderIds.has(file.folderId)).toBe(true);
+  }
+  expect(teamFileFixtures().length + teamVolumeFileFixtures(true).length).toBeGreaterThan(300);
+  expect(teamFolderFixtures().length + volumeFolderFixtures(true).length).toBeGreaterThan(150);
+  expect(
+    teamSeedCounts({ withAdmin: true, driveFolders: 1 }).mail_threads,
+  ).toBeGreaterThan(1000);
   expect(() => {
     assertLocalTeamTarget("postgres://localhost/demo");
   }).not.toThrow();
@@ -154,7 +172,7 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
       seedLocalTeam(sql, { orgId, storage, scanner, anchorDate: "2026-09-10" }),
     ).rejects.toThrow("Interrupted fixture upload");
     const result = await seedLocalTeam(sql, { orgId, storage, scanner, anchorDate: "2026-09-10" });
-    const fileCount = teamFileFixtures().length;
+    const fileCount = teamFileFixtures().length + teamVolumeFileFixtures(false).length;
     expect(result.files).toHaveLength(fileCount);
     expect(scans).toBe(fileCount);
     const repeated = await seedLocalTeam(sql, {
@@ -174,12 +192,16 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
       (select count(*)::int from assistant_conversations where org_id = ${orgId}) as conversations,
       (select count(*)::int from cal_events where org_id = ${orgId}) as events,
       (select count(*)::int from objects where org_id = ${orgId} and metadata->>'status' = 'ready' and metadata ? 'avScannedAt') as files`;
+    const expected = teamSeedCounts({
+      withAdmin: false,
+      driveFolders: 0,
+    });
     expect(counts[0]).toEqual({
-      mail: 20,
-      rooms: 5,
-      dms: 10,
-      conversations: 30,
-      events: 30,
+      mail: expected.mail_threads,
+      rooms: expected.chat_rooms,
+      dms: expected.direct_messages,
+      conversations: expected.assistant_conversations,
+      events: expected.calendar_events,
       files: fileCount,
     });
     const privateFile = result.files.find((file) => file.key === "private-decision");
@@ -203,7 +225,7 @@ describe.skipIf(!process.env.DATABASE_URL)("additive team account seed", () => {
     blobs.delete(key);
     await expect(verifyLocalTeam(sql, storage, orgId)).rejects.toThrow("bytes are missing");
     blobs.set(key, saved);
-  }, 120_000);
+  }, 300_000);
   it("refuses an occupied fixture identity without overwriting the person", async () => {
     const person = teamPerson(0);
     await sql`update actors set metadata = ${sql.json({ source: "real-person" })} where id = ${person.actorId}`;

@@ -17,6 +17,7 @@ import {
   teamFileFixtures,
   teamFileShares,
 } from "./local-team-drive-fixtures.js";
+import { teamVolumeFileFixtures } from "./local-team-volume.js";
 import {
   LOCAL_TEAM_ADMIN,
   LOCAL_TEAM_GROUPS,
@@ -140,7 +141,14 @@ export async function seedLocalTeam(sql: postgres.Sql, options: TeamSeedOptions 
         },
         requireVirusScanner: true,
       });
-      for (const fixture of teamFileFixtures()) {
+      const adminPresent = await withTenantPostgresContext(
+        sql,
+        { orgId },
+        (tx) =>
+          tx`select id from actors where org_id = ${orgId} and id = ${LOCAL_TEAM_ADMIN.actorId}`,
+      );
+      const volumeFiles = teamVolumeFileFixtures(adminPresent.length > 0);
+      for (const fixture of [...teamFileFixtures(), ...volumeFiles]) {
         const existing = await withTenantPostgresContext(
           sql,
           { orgId, actorId: fixture.owner.actorId },
@@ -189,12 +197,6 @@ export async function seedLocalTeam(sql: postgres.Sql, options: TeamSeedOptions 
           name: fixture.name,
         });
       }
-      const adminPresent = await withTenantPostgresContext(
-        sql,
-        { orgId },
-        (tx) =>
-          tx`select id from actors where org_id = ${orgId} and id = ${LOCAL_TEAM_ADMIN.actorId}`,
-      );
       for (const share of teamFileShares()) {
         const file = files.find((entry) => entry.key === share.fileKey);
         if (file === undefined) continue;

@@ -20,6 +20,7 @@ import {
   teamPerson,
   type TeamPerson,
 } from "./local-team-fixtures.js";
+import { seedTeamVolume } from "./seed-local-team-volume.js";
 
 type Sql = postgres.TransactionSql;
 
@@ -105,7 +106,11 @@ export async function seedTeamContent(sql: Sql, orgId: string, anchorDate: strin
       anchorDate,
     );
   }
+  const adminPresent =
+    (await sql`select id from actors where org_id = ${orgId} and id = ${LOCAL_TEAM_ADMIN.actorId}`)
+      .length > 0;
   await includeWorkspaceAdmin(sql, orgId, anchorDate);
+  await seedTeamVolume(sql, orgId, anchorDate, adminPresent);
 }
 
 function orderedTeamFolders(): TeamFolderFixture[] {

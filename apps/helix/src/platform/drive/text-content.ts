@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 const TEXT_EXTENSIONS =
-  /\.(?:txt|md|csv|tsv|json|log|yaml|yml|js|ts|tsx|jsx|py|sql|rs|go|java|c|cpp|h|css|html|xml|sh|toml|ini)$/iu;
+  /\.(?:txt|md|rst|csv|tsv|json|log|yaml|yml|js|mjs|cjs|ts|tsx|jsx|py|sql|rs|go|java|kt|kts|c|cc|cpp|h|hpp|cs|css|html|htm|xml|sh|bash|zsh|toml|ini|conf|env|php|rb|swift|scala|lua|pl|pm|r|dart|vue|svelte|hs|ex|exs|proto|graphql|tf|hcl|bat|ps1|cmd)$/iu;
 export const SEARCH_FILE_BYTES = 512 * 1024;
 
 export function isTextFile(mimeType: string, name: string): boolean {

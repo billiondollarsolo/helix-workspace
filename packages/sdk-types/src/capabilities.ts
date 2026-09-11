@@ -68,12 +68,18 @@ export type AIProviderProtocol =
 
 export type AIClassification = "public" | "standard" | "confidential" | "restricted";
 
+export interface AIMessageImage {
+  readonly mimeType: string;
+  readonly data: string;
+}
+
 export interface AIMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
   readonly content: string;
   readonly name?: string;
   readonly toolCalls?: readonly AIToolChoice[];
   readonly toolCallId?: string;
+  readonly images?: readonly AIMessageImage[];
 }
 
 export interface AIToolChoice {

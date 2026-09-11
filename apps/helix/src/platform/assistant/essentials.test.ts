@@ -345,7 +345,7 @@ describe("Assistant models, attachments and saved history", () => {
     expect(
       assistantChatBodySchema.safeParse({
         message: "x",
-        attachmentObjectIds: Array.from({ length: 6 }, () => objectId),
+        attachmentObjectIds: Array.from({ length: 11 }, () => objectId),
       }).success,
     ).toBe(false);
   });

@@ -3,8 +3,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  askUserFields,
   normalizePendingApprovals,
   pendingApprovalsVisible,
+  pendingItemsFromTurn,
   PendingApprovalsPanel,
   type PendingApprovalItem,
 } from "./pending-approvals";
@@ -44,6 +46,30 @@ describe("pending approvals helpers (A12)", () => {
       false,
     );
     expect(pendingApprovalsVisible([{ id: "p1", toolId: "mail.send" }])).toBe(true);
+    expect(
+      pendingItemsFromTurn({
+        pendingConfirmations: [{ id: "p1", toolId: "ask.user" }],
+        toolCalls: [
+          {
+            toolCallId: "c1",
+            toolId: "ask.user",
+            input: { question: "ZIP?" },
+            pending: { id: "p1", toolId: "ask.user" },
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        id: "p1",
+        toolId: "ask.user",
+        toolCallId: "c1",
+        status: "pending",
+        input: { question: "ZIP?" },
+      },
+    ]);
+    expect(askUserFields({ fields: [{ id: "zip", label: "ZIP" }] })).toEqual([
+      { id: "zip", label: "ZIP", type: "text", options: [] },
+    ]);
   });
 });
 
@@ -194,6 +220,37 @@ describe("PendingApprovalsPanel", () => {
       ["tool-calendar", undefined],
       ["tool-calendar", undefined],
     ]);
+  });
+
+  it("collects ask.user field answers on approve", () => {
+    const onConfirm = vi.fn();
+    const items: PendingApprovalItem[] = [
+      {
+        id: "pending-ask",
+        toolId: "ask.user",
+        input: { question: "What ZIP?", fields: [{ id: "zip", label: "ZIP code" }] },
+      },
+    ];
+    act(() => {
+      root.render(
+        <PendingApprovalsPanel items={items} onConfirm={onConfirm} onCancel={() => undefined} />,
+      );
+    });
+    expect(container.textContent).toContain("What ZIP?");
+    const field = container.querySelector("input[type='text']");
+    expect(field).not.toBeNull();
+    act(() => {
+      if (field instanceof HTMLInputElement) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setter?.call(field, "20882");
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+        field.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    act(() => {
+      buttonByText("Approve")?.click();
+    });
+    expect(onConfirm).toHaveBeenCalledWith(items[0], { answers: { zip: "20882" } });
   });
 
   it("returns null when no pending items remain", () => {

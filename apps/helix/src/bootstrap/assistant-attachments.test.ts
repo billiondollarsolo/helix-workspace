@@ -95,14 +95,32 @@ describe("Assistant Drive attachment boundary", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("rejects unsupported formats, invalid UTF-8 and binary text", async () => {
-    const { options, file, open } = setup();
+  it("loads images and PDFs and rejects other binaries", async () => {
+    const png = Uint8Array.from([137, 80, 78, 71]);
+    const { options, file, open } = setup(png);
     options.driveStore.openFile.mockResolvedValueOnce({
       ...file,
+      byteSize: png.byteLength,
+      entry: { ...file.entry, name: "photo.png", mimeType: "image/png" },
+    });
+    const image = await loadAssistantAttachments(options, { actor, objectIds: ["file"] });
+    expect(image[0]?.source.media).toMatchObject({ mimeType: "image/png" });
+    expect(image[0]?.source.body).toContain("Image attachment");
+    const pdf = new TextEncoder().encode("%PDF-1.4 (Hello Gaithersburg)");
+    options.driveStore.openFile.mockResolvedValueOnce({
+      ...file,
+      byteSize: pdf.byteLength,
       entry: { ...file.entry, name: "report.pdf", mimeType: "application/pdf" },
     });
+    open.mockResolvedValueOnce(pdf);
+    const loadedPdf = await loadAssistantAttachments(options, { actor, objectIds: ["file"] });
+    expect(loadedPdf[0]?.source.body).toContain("Hello Gaithersburg");
+    options.driveStore.openFile.mockResolvedValueOnce({
+      ...file,
+      entry: { ...file.entry, name: "archive.zip", mimeType: "application/zip" },
+    });
     await expect(loadAssistantAttachments(options, { actor, objectIds: ["file"] })).rejects.toThrow(
-      "not supported",
+      "images, or PDFs",
     );
     open.mockResolvedValueOnce(new Uint8Array([255]));
     await expect(loadAssistantAttachments(options, { actor, objectIds: ["file"] })).rejects.toThrow(
@@ -116,15 +134,15 @@ describe("Assistant Drive attachment boundary", () => {
 
   it("enforces byte and character limits even when storage metadata understates the stream", async () => {
     const { options, open } = setup();
-    open.mockResolvedValueOnce(new Uint8Array(512 * 1024 + 1));
+    open.mockResolvedValueOnce(new Uint8Array(10 * 1024 * 1024 + 1));
     await expect(loadAssistantAttachments(options, { actor, objectIds: ["file"] })).rejects.toThrow(
       "limit",
     );
-    open.mockResolvedValueOnce(new TextEncoder().encode("a".repeat(100_001)));
-    await expect(loadAssistantAttachments(options, { actor, objectIds: ["file"] })).rejects.toThrow(
-      "100,000",
-    );
     expect(options.dlp.evaluate).not.toHaveBeenCalled();
+    open.mockResolvedValueOnce(new TextEncoder().encode("a".repeat(100_001)));
+    const paged = await loadAssistantAttachments(options, { actor, objectIds: ["file"] });
+    expect(paged[0]?.source.body?.length).toBe(100_001);
+    expect(options.dlp.evaluate).toHaveBeenCalled();
   });
 
   it("preserves a stored restrictive classification even when text and DLP classify it lower", async () => {

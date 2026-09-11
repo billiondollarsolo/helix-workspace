@@ -77,6 +77,20 @@ export class PostgresMemoryStore implements MemoryStore {
     return rows.map(rowToMemoryItem);
   }
 
+  async list(actor: Actor, limit: number): Promise<readonly MemoryItem[]> {
+    const rows = await this.sql<MemoryItemRow[]>`
+      select id, org_id, actor_id, source, content, metadata, null::double precision as score,
+        created_at, expires_at
+      from memory_items
+      where org_id = ${actor.orgId}
+        and actor_id = ${actor.id}
+        and (expires_at is null or expires_at > now())
+      order by created_at desc
+      limit ${validateRecallLimit(limit)}
+    `;
+    return rows.map(rowToMemoryItem);
+  }
+
   async store(actor: Actor, item: MemoryInput): Promise<MemoryItem> {
     const content = validateMemoryText(item.content, "Memory content");
     const source = validateMemoryText(item.source ?? this.#defaultSource, "Memory source");
@@ -113,6 +127,25 @@ export class PostgresMemoryStore implements MemoryStore {
       throw new Error("Failed to store memory item");
     }
     return rowToMemoryItem(row);
+  }
+
+  async replace(actor: Actor, id: string, item: MemoryInput): Promise<MemoryItem | null> {
+    const content = validateMemoryText(item.content, "Memory content");
+    const embedding = item.embedding ?? (await this.embedOne(content, "standard"));
+    validateVector(embedding);
+    const rows = await this.sql<MemoryItemRow[]>`
+      update memory_items
+      set content = ${content},
+        embedding = ${vectorToPgLiteral(embedding)}::vector,
+        metadata = ${this.sql.json({ ...item.metadata })}
+      where org_id = ${actor.orgId}
+        and actor_id = ${actor.id}
+        and id = ${id}::uuid
+      returning id, org_id, actor_id, source, content, metadata, null::double precision as score,
+        created_at, expires_at
+    `;
+    const row = rows[0];
+    return row === undefined ? null : rowToMemoryItem(row);
   }
 
   async forget(actor: Actor, criteria: ForgetCriteria): Promise<number> {

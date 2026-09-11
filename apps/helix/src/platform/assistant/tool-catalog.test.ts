@@ -73,7 +73,8 @@ describe("Assistant native tool catalog limits", () => {
       const chat = vi.fn(async (request: ChatRequest) => {
         const searching = Boolean(request.tools?.length);
         if (!searching) {
-          expect(request.messages.at(-1)?.content).toContain("tool-call budget is exhausted");
+          expect(request.messages.filter((message) => message.role === "system")).toHaveLength(1);
+          expect(request.messages[0]?.content).toContain("tool-call budget is exhausted");
           expect(request.messages[0]?.content).not.toContain("Visible tools:");
           expect(openAIRequest(request).body.tools).toBeUndefined();
         }
@@ -179,4 +180,129 @@ describe("Assistant native tool catalog limits", () => {
       expect(requests[0]?.messages[0]?.content).toContain("tool catalog is selected for this turn");
     },
   );
+
+  it("keeps historically used web tools available after the user turns web search off", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+    for (const id of ["web.search", "web.fetch"])
+      tools.register({
+        id,
+        description: id,
+        permission: "assistant.read",
+        sideEffects: "read",
+        inputSchema: zodToolSchema(z.object({ query: z.string().optional() }), {
+          type: "object",
+          properties: { query: { type: "string" } },
+        }),
+        outputSchema: zodToolSchema(z.object({}), { type: "object", properties: {} }),
+        handler: async () => ({ results: [] }),
+      });
+    const requests: ChatRequest[] = [];
+    const assistant = new AssistantOrchestrator({
+      store: new InMemoryAssistantStore(),
+      tools,
+      webSearchEnabled: () => true,
+      ai: {
+        async chat(request) {
+          requests.push(request);
+          if (request.messages.some((message) => message.role === "tool"))
+            return { message: "I need a ZIP code.", model: "test", providerId: "test" };
+          if (requests.length === 1)
+            return {
+              message: "",
+              model: "test",
+              providerId: "test",
+              toolCalls: [
+                { id: "web.search", callId: "fc_search", input: { query: "weather tomorrow" } },
+              ],
+            };
+          return { message: "Gaithersburg is cloudy.", model: "test", providerId: "test" };
+        },
+      },
+    });
+    const first = await assistant.sendMessage({
+      actor,
+      content: "whats the weather tomorrow",
+      webSearch: true,
+      toolGroups: [],
+    });
+    await assistant.sendMessage({
+      actor,
+      content: "whats teh weatehr for 20882",
+      conversationId: first.conversation.id,
+      webSearch: false,
+      toolGroups: [],
+    });
+    const followUp = requests.find((request) =>
+      request.messages.some(
+        (message) => message.role === "user" && message.content === "whats teh weatehr for 20882",
+      ),
+    );
+    expect(followUp).toBeDefined();
+    if (followUp === undefined) return;
+    expect(followUp.tools).toEqual(expect.arrayContaining(["web.search", "web.fetch"]));
+    expect(
+      [...(openAIRequest(followUp).body.tools ?? [])].map((tool) => tool.function.name).sort(),
+    ).toEqual(["platform_ping", "web_fetch", "web_search"]);
+    const wire = openAIRequest(followUp).body.messages.find((message) =>
+      Array.isArray(message.tool_calls),
+    );
+    expect(wire).toMatchObject({
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "fc_search", function: { name: "web_search" } }],
+    });
+  });
+
+  it("does not re-enable web tools when the administrator has disabled web search", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+    tools.register({
+      id: "web.search",
+      description: "Search",
+      permission: "assistant.read",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(z.object({}), { type: "object", properties: {} }),
+      outputSchema: zodToolSchema(z.object({}), { type: "object", properties: {} }),
+      handler: async () => ({ results: [] }),
+    });
+    let enabled = true;
+    const requests: ChatRequest[] = [];
+    const assistant = new AssistantOrchestrator({
+      store: new InMemoryAssistantStore(),
+      tools,
+      webSearchEnabled: () => enabled,
+      ai: {
+        async chat(request) {
+          requests.push(request);
+          if (request.messages.some((message) => message.role === "tool"))
+            return { message: "Need a location.", model: "test", providerId: "test" };
+          if (enabled)
+            return {
+              message: "",
+              model: "test",
+              providerId: "test",
+              toolCalls: [{ id: "web.search", callId: "fc_search", input: {} }],
+            };
+          return { message: "I cannot search the web.", model: "test", providerId: "test" };
+        },
+      },
+    });
+    const first = await assistant.sendMessage({
+      actor,
+      content: "weather",
+      webSearch: true,
+      toolGroups: [],
+    });
+    enabled = false;
+    await assistant.sendMessage({
+      actor,
+      content: "20882",
+      conversationId: first.conversation.id,
+      webSearch: false,
+      toolGroups: [],
+    });
+    const followUp = requests.find((request) =>
+      request.messages.some((message) => message.role === "user" && message.content === "20882"),
+    );
+    expect(followUp?.tools).not.toEqual(expect.arrayContaining(["web.search", "web.fetch"]));
+  });
 });

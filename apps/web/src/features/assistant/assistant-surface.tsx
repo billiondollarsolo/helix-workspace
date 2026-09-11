@@ -37,6 +37,7 @@ import {
 } from "@/features/assistant/assistant-data";
 import {
   PendingApprovalsPanel,
+  pendingItemsFromTurn,
   type PendingApprovalItem,
 } from "@/features/assistant/pending-approvals";
 import {
@@ -95,6 +96,7 @@ export function AssistantSurface() {
   const [hasMessages, setHasMessages] = useState(() => urlSearch.conversation !== undefined);
   const [pending, setPending] = useState(false);
   const [toolGroups, setToolGroups] = useState<readonly string[] | undefined>();
+  const [webSearch, setWebSearch] = useState(false);
   const [modelId, setModelId] = useState("");
   const [editing, setEditing] = useState<AssistantChatMessage | null>(null);
   const streamController = useRef<AbortController | null>(null);
@@ -133,6 +135,7 @@ export function AssistantSurface() {
     setHasMessages(fromUrl !== undefined);
     setConversation([]);
     setToolGroups(undefined);
+    setWebSearch(false);
     setEditing(null);
     setPendingApprovals([]);
   }, [urlSearch.conversation]);
@@ -145,9 +148,9 @@ export function AssistantSurface() {
       const hydrated = hydrateConversation(historyQuery.data);
       if (hydrated !== null) {
         setConversation(hydrated);
-        setToolGroups(
-          [...hydrated].reverse().find((message) => message.role === "user")?.toolGroups,
-        );
+        const lastUser = [...hydrated].reverse().find((message) => message.role === "user");
+        setToolGroups(lastUser?.toolGroups);
+        setWebSearch(lastUser?.webSearch === true);
       }
     }
   }, [historyQuery.data, pending, conversation.length]);
@@ -292,26 +295,7 @@ export function AssistantSurface() {
               ...(finalText !== undefined && finalText.length > 0 ? { text: finalText } : {}),
             });
           }
-          // A12: surface pending tool confirmations for explicit approve/deny.
-          const fromTurn: PendingApprovalItem[] = (turn.pendingConfirmations ?? []).map(
-            (pending) => ({
-              id: pending.id,
-              toolId: pending.toolId,
-              status: "pending" as const,
-            }),
-          );
-          const fromCalls: PendingApprovalItem[] = [];
-          for (const call of turn.toolCalls ?? []) {
-            if (call.pending !== undefined) {
-              fromCalls.push({
-                id: call.pending.id,
-                toolId: call.pending.toolId,
-                toolCallId: call.toolCallId,
-                status: "pending",
-              });
-            }
-          }
-          setPendingApprovals(fromTurn.length > 0 ? fromTurn : fromCalls);
+          setPendingApprovals(pendingItemsFromTurn(turn));
           invalidateConversations();
           return true;
         })
@@ -356,7 +340,11 @@ export function AssistantSurface() {
     ],
   );
   const decidePending = useCallback(
-    async (item: PendingApprovalItem, decision: "confirm" | "cancel") => {
+    async (
+      item: PendingApprovalItem,
+      decision: "confirm" | "cancel",
+      metadata?: Record<string, unknown>,
+    ) => {
       const conversationId = conversationIdRef.current;
       if (conversationId === undefined) {
         return;
@@ -373,6 +361,7 @@ export function AssistantSurface() {
           pendingId: item.id,
           toolCallId: item.toolCallId ?? item.id,
           decision,
+          ...(metadata === undefined ? {} : { metadata }),
           setToolError: (_toolCallId, message) => {
             setPendingApprovals((prev) =>
               prev.map((entry) =>
@@ -427,6 +416,7 @@ export function AssistantSurface() {
       conversationIdRef.current = id;
       setConversation([]);
       setToolGroups(undefined);
+      setWebSearch(false);
       setEditing(null);
       pushConversationUrl(id);
     },
@@ -440,6 +430,7 @@ export function AssistantSurface() {
     setThreadId(null);
     setConversation([]);
     setToolGroups(undefined);
+    setWebSearch(false);
     setEditing(null);
     setHasMessages(false);
     conversationIdRef.current = undefined;
@@ -618,23 +609,29 @@ export function AssistantSurface() {
         <PendingApprovalsPanel
           items={pendingApprovals}
           busy={approvalBusy}
-          onConfirm={(item) => {
-            void decidePending(item, "confirm");
+          onConfirm={(item, metadata) => {
+            void decidePending(item, "confirm", metadata);
           }}
           onCancel={(item) => {
             void decidePending(item, "cancel");
           }}
         />
         <div hidden={editing !== null} className="shrink-0">
-          <AssistantComposer {...composerProps} key={threadId ?? "new"} onSend={send} />
+          <AssistantComposer
+            {...composerProps}
+            key={threadId ?? "new"}
+            webSearch={webSearch}
+            onWebSearchChange={setWebSearch}
+            onSend={send}
+          />
         </div>
         {editing !== null ? (
           <AssistantComposer
             {...composerProps}
             key={editing.id}
             editing={editing}
-            onSend={(text, attachments, selectedModel, webSearch, selectedGroups) =>
-              send(text, attachments, selectedModel, webSearch, selectedGroups, editing)
+            onSend={(text, attachments, selectedModel, searchEnabled, selectedGroups) =>
+              send(text, attachments, selectedModel, searchEnabled, selectedGroups, editing)
             }
           />
         ) : null}
@@ -907,7 +904,7 @@ function VirtualizedThreadList({
                 key={virtual.key}
                 ref={virtualizer.measureElement}
                 data-index={virtual.index}
-                className="absolute top-0 left-0 w-full"
+                className="absolute top-0 left-0 w-full has-[[role=menu]]:z-30"
                 style={{ transform: `translateY(${String(virtual.start)}px)` }}
               >
                 {item.kind === "header" ? (
@@ -960,7 +957,7 @@ function ThreadItem({
     };
   }, [menuOpen]);
   return (
-    <div className="relative">
+    <div className={cn("relative", menuOpen ? "z-30" : "")}>
       <button
         type="button"
         onClick={() => {
@@ -1012,7 +1009,7 @@ function ThreadItem({
       {menuOpen && (
         <div
           role="menu"
-          className="absolute top-7 right-1 [z-index:20] min-w-35 bg-card [border:1px_solid_var(--border)] rounded-lg [box-shadow:var(--shadow-md)] p-1 flex flex-col"
+          className="absolute top-7 right-1 z-50 min-w-35 rounded-lg border p-1 flex flex-col [background:var(--surface)] [border-color:var(--border)] [box-shadow:var(--shadow-md)]"
         >
           <button
             type="button"

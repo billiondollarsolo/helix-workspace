@@ -133,6 +133,14 @@ export interface AiConfig {
   readonly operatorLlm?: AiOperatorLlmConfig;
   /** Mail spam AI beta toggle. */
   readonly mailSpamAi?: AiMailSpamConfig;
+  /** Operator-configured MCP/OpenAPI servers injected into Assistant as `ext.*` tools. */
+  readonly toolServers?: readonly {
+    readonly id: string;
+    readonly type: "openapi" | "mcp";
+    readonly baseUrl: string;
+    readonly specUrl?: string;
+    readonly apiKey?: string;
+  }[];
 }
 
 export interface ObservabilitySamplingConfig {

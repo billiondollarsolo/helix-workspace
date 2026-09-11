@@ -14,6 +14,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type postgres from "postgres";
 import { z } from "zod";
 import { compactJsonObject } from "../util/json.js";
+import { aiToolServersUpdateSchema } from "./ai-tool-servers-schema.js";
 import { finishTenantRequestTransaction } from "../tenancy/middleware.js";
 import {
   EnvConfigSource,
@@ -189,6 +190,7 @@ const aiConfigUpdateSchema = z
       .optional(),
     operatorLlm: aiOperatorLlmUpdateSchema.optional(),
     mailSpamAi: aiMailSpamUpdateSchema.optional(),
+    toolServers: aiToolServersUpdateSchema,
   })
   .strict();
 

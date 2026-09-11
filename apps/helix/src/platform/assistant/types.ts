@@ -190,6 +190,12 @@ export interface AssistantStore {
     readonly conversationId: string;
     readonly enabled: boolean;
   }): Promise<AssistantConversation | null>;
+  patchConversationMetadata(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+    readonly metadata: JsonObject;
+  }): Promise<AssistantConversation | null>;
   getMemoryPreference(actor: Actor): Promise<AssistantMemoryPreference | null>;
   setMemoryPreference(input: {
     readonly actor: Actor;
@@ -212,6 +218,10 @@ export interface AssistantSource {
   readonly url?: string;
   readonly body?: string;
   readonly score?: number;
+  readonly media?: {
+    readonly mimeType: string;
+    readonly data: string;
+  };
 }
 
 type AssistantToolCallStatus = "executed" | "pending_confirmation" | "failed" | "skipped";

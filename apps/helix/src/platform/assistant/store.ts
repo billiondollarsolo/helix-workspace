@@ -298,6 +298,23 @@ export class InMemoryAssistantStore implements AssistantStore {
     return updated;
   }
 
+  async patchConversationMetadata(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+    readonly metadata: JsonObject;
+  }): Promise<AssistantConversation | null> {
+    const conversation = await this.getConversation(input);
+    if (conversation === null) return null;
+    const updated = {
+      ...conversation,
+      metadata: input.metadata,
+      updatedAt: new Date().toISOString(),
+    };
+    this.#conversations.set(updated.id, updated);
+    return updated;
+  }
+
   async getMemoryPreference(actor: Actor): Promise<AssistantMemoryPreference | null> {
     return this.#memoryPreferences.get(memoryPreferenceKey(actor.orgId, actor.id)) ?? null;
   }
@@ -600,6 +617,24 @@ export class PostgresAssistantStore implements AssistantStore {
     const rows = await this.sql<AssistantConversationRow[]>`
       update assistant_conversations
       set memory_opt_in = ${input.enabled}, updated_at = now()
+      where org_id = ${input.orgId}
+        and actor_id = ${input.actorId}
+        and id = ${input.conversationId}
+        and archived_at is null
+      returning id, org_id, actor_id, title, memory_opt_in, pinned_at, metadata, archived_at, created_at, updated_at
+    `;
+    return optionalConversation(rows);
+  }
+
+  async patchConversationMetadata(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly conversationId: string;
+    readonly metadata: JsonObject;
+  }): Promise<AssistantConversation | null> {
+    const rows = await this.sql<AssistantConversationRow[]>`
+      update assistant_conversations
+      set metadata = ${this.sql.json(toSqlJson(input.metadata))}, updated_at = now()
       where org_id = ${input.orgId}
         and actor_id = ${input.actorId}
         and id = ${input.conversationId}

@@ -108,6 +108,25 @@ describe("native OpenAI-compatible tools", () => {
       content: "Invoke only the exact function names in the supplied native tools.",
     });
     expect(built.body.messages[1]).toEqual({ role: "user", content: "List my files" });
+    expect(
+      openAIRequest({
+        ...request,
+        tools: [],
+        messages: [
+          {
+            role: "user",
+            content: "What is in this photo?",
+            images: [{ mimeType: "image/png", data: "abc" }],
+          },
+        ],
+      }).body.messages[0],
+    ).toEqual({
+      role: "user",
+      content: [
+        { type: "text", text: "What is in this photo?" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,abc" } },
+      ],
+    });
     expect(openAIRequest({ ...request, tools: ["missing.tool"] }).body).not.toHaveProperty("tools");
     const ids = Array.from({ length: 129 }, (_, index) => `tool.${String(index)}`);
     expect(() =>
@@ -230,11 +249,46 @@ describe("native OpenAI-compatible tools", () => {
     });
     expect(built.body.tools?.map((tool) => tool.function.name)).toEqual(["drive_list"]);
     expect(built.body.messages).toContainEqual({
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "prior-chat",
+          type: "function",
+          function: { name: "chat_room_list", arguments: "{}" },
+        },
+      ],
+    });
+    expect(built.body.messages).toContainEqual({
       role: "tool",
       tool_call_id: "prior-chat",
       content: "Previous room list",
     });
     expect(built.body).not.toHaveProperty("tool_choice");
+  });
+
+  it("merges extra system messages into the leading system prompt", () => {
+    const built = openAIRequest({
+      ...request,
+      tools: [],
+      messages: [
+        { role: "system", content: "You are Helix Assistant." },
+        { role: "user", content: "Hi" },
+        { role: "assistant", content: "Hello" },
+        { role: "system", content: "The tool-call budget is exhausted. Give your final answer." },
+      ],
+    });
+    expect(built.body.messages.filter((message) => message.role === "system")).toHaveLength(1);
+    expect(built.body.messages[0]).toEqual({
+      role: "system",
+      content:
+        "You are Helix Assistant.\n\nThe tool-call budget is exhausted. Give your final answer.",
+    });
+    expect(built.body.messages.map((message) => message.role)).toEqual([
+      "system",
+      "user",
+      "assistant",
+    ]);
   });
 
   it("adds alias guidance to the existing system prompt without changing canonical user content", () => {

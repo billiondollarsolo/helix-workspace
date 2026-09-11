@@ -32,6 +32,44 @@ export function openAIRequest(request: ChatRequest) {
     throw new Error(
       "OpenAI-compatible providers accept at most 128 tools; select a smaller tool catalog for this request.",
     );
+  const pending = new Set<string>();
+  const messages = mergeLeadingSystem(
+    request.messages.map((message, index): Record<string, unknown> => {
+      if (message.role === "tool") {
+        if (message.toolCallId && pending.delete(message.toolCallId))
+          return { role: "tool", content: message.content, tool_call_id: message.toolCallId };
+        return {
+          role: "user",
+          content: `Untrusted tool context (${message.name ?? "workspace"}):\n${message.content}`,
+        };
+      }
+      pending.clear();
+      const responses = followingToolResponses(
+        request.messages,
+        index,
+        new Set(message.toolCalls?.map((call) => call.callId)),
+      );
+      const calls =
+        message.role === "assistant"
+          ? message.toolCalls?.flatMap((call) => {
+              if (!call.callId || !responses.has(call.callId)) return [];
+              pending.add(call.callId);
+              return [
+                {
+                  id: call.callId,
+                  type: "function",
+                  function: { name: nameFor(call.id), arguments: JSON.stringify(call.input ?? {}) },
+                },
+              ];
+            })
+          : undefined;
+      return {
+        role: message.role,
+        content: openAIMessageContent(message, Boolean(calls?.length)),
+        ...(calls?.length ? { tool_calls: calls } : {}),
+      };
+    }),
+  );
   const tools = [...definitions].map(([id, tool]) => ({
     type: "function",
     function: {
@@ -40,42 +78,6 @@ export function openAIRequest(request: ChatRequest) {
       parameters: tool.inputSchema,
     },
   }));
-  const pending = new Set<string>();
-  const messages = request.messages.map((message, index): Record<string, unknown> => {
-    if (message.role === "tool") {
-      if (message.toolCallId && pending.delete(message.toolCallId))
-        return { role: "tool", content: message.content, tool_call_id: message.toolCallId };
-      return {
-        role: "user",
-        content: `Untrusted tool context (${message.name ?? "workspace"}):\n${message.content}`,
-      };
-    }
-    pending.clear();
-    const responses = followingToolResponses(
-      request.messages,
-      index,
-      new Set(message.toolCalls?.map((call) => call.callId)),
-    );
-    const calls =
-      message.role === "assistant"
-        ? message.toolCalls?.flatMap((call) => {
-            if (!call.callId || !responses.has(call.callId)) return [];
-            pending.add(call.callId);
-            return [
-              {
-                id: call.callId,
-                type: "function",
-                function: { name: nameFor(call.id), arguments: JSON.stringify(call.input ?? {}) },
-              },
-            ];
-          })
-        : undefined;
-    return {
-      role: message.role,
-      content: message.content,
-      ...(calls?.length ? { tool_calls: calls } : {}),
-    };
-  });
   if (tools.length) {
     const ids = [...definitions.keys()].sort((a, b) => b.length - a.length);
     const displayIds = new RegExp(
@@ -99,6 +101,38 @@ export function openAIRequest(request: ChatRequest) {
     },
     toolIds: new Map([...names].map(([id, name]) => [name, id])),
   };
+}
+
+function openAIMessageContent(message: AIMessage, hasCalls: boolean): unknown {
+  if (message.role === "user" && message.images !== undefined && message.images.length > 0)
+    return [
+      ...(message.content.length === 0 ? [] : [{ type: "text", text: message.content }]),
+      ...message.images.map((image) => ({
+        type: "image_url",
+        image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+      })),
+    ];
+  if (message.role === "assistant" && hasCalls && message.content.trim().length === 0) return null;
+  return message.content;
+}
+
+function mergeLeadingSystem(
+  messages: readonly Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const extras: string[] = [];
+  const kept: Record<string, unknown>[] = [];
+  for (const message of messages) {
+    if (message.role === "system" && kept.some((entry) => entry.role === "system")) {
+      extras.push(String(message.content));
+      continue;
+    }
+    kept.push(message);
+  }
+  if (extras.length === 0) return kept;
+  const system = kept.find((message) => message.role === "system");
+  if (system !== undefined) system.content = `${String(system.content)}\n\n${extras.join("\n\n")}`;
+  else kept.unshift({ role: "system", content: extras.join("\n\n") });
+  return kept;
 }
 
 function followingToolResponses(

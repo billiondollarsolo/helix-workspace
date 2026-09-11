@@ -7,8 +7,36 @@ import { driveUploadStatusQueryOptions } from "@/features/drive/queries";
 import { assistantModelsQueryOptions, assistantToolsQueryOptions } from "./queries";
 import type { AssistantAttachment } from "./api";
 
+const MAX_FILES = 10;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
 const TEXT_EXTENSIONS =
-  /\.(?:txt|md|csv|tsv|json|log|yaml|yml|js|ts|tsx|jsx|py|sql|rs|go|java|c|cpp|h|css|html|xml|sh|toml|ini)$/iu;
+  /\.(?:txt|md|rst|csv|tsv|json|log|yaml|yml|js|mjs|cjs|ts|tsx|jsx|py|sql|rs|go|java|kt|kts|c|cc|cpp|h|hpp|cs|css|html|htm|xml|sh|bash|zsh|toml|ini|conf|env|php|rb|swift|scala|lua|pl|pm|r|dart|vue|svelte|hs|ex|exs|proto|graphql|tf|hcl|bat|ps1|cmd)$/iu;
+const IMAGE_EXTENSIONS = /\.(?:png|jpe?g|gif|webp)$/iu;
+const TEXT_TYPES = new Set([
+  "application/json",
+  "application/javascript",
+  "application/xml",
+  "application/yaml",
+  "application/x-yaml",
+]);
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"]);
+
+function isAllowedComposerFile(file: File): boolean {
+  if (
+    file.type.startsWith("text/") ||
+    TEXT_TYPES.has(file.type) ||
+    IMAGE_TYPES.has(file.type) ||
+    file.type === "application/pdf"
+  )
+    return true;
+  return (
+    (!file.type || file.type === "application/octet-stream") &&
+    (TEXT_EXTENSIONS.test(file.name) ||
+      IMAGE_EXTENSIONS.test(file.name) ||
+      /\.pdf$/iu.test(file.name))
+  );
+}
 interface Upload {
   readonly id: string;
   readonly file: File;
@@ -29,6 +57,8 @@ export function AssistantComposer({
   onCancelEdit,
   initialToolGroups,
   onToolGroupsChange,
+  webSearch: webSearchProp,
+  onWebSearchChange,
 }: {
   readonly onSend: (
     text: string,
@@ -39,6 +69,8 @@ export function AssistantComposer({
   ) => Promise<boolean>;
   readonly initialToolGroups?: readonly string[] | undefined;
   readonly onToolGroupsChange: (groups: readonly string[]) => void;
+  readonly webSearch?: boolean;
+  readonly onWebSearchChange?: (enabled: boolean) => void;
   readonly pending: boolean;
   readonly disabled: boolean;
   readonly onStop: () => void;
@@ -53,7 +85,10 @@ export function AssistantComposer({
   } | null;
   readonly onCancelEdit: () => void;
 }) {
-  const [webSearch, setWebSearch] = useState(editing?.webSearch ?? false);
+  const [uncontrolledWebSearch, setUncontrolledWebSearch] = useState(editing?.webSearch ?? false);
+  const webSearch =
+    onWebSearchChange === undefined ? uncontrolledWebSearch : (webSearchProp ?? false);
+  const setWebSearch = onWebSearchChange ?? setUncontrolledWebSearch;
   const [chosenGroups, setChosenGroups] = useState<readonly string[] | undefined>(
     editing?.toolGroups,
   );
@@ -139,39 +174,21 @@ export function AssistantComposer({
 
   function attach(files: readonly File[]) {
     setError(null);
-    if (uploads.length + retainedAttachments.length + files.length > 5) {
-      setError("Attach up to 5 text or code files.");
+    if (uploads.length + retainedAttachments.length + files.length > MAX_FILES) {
+      setError(`Attach up to ${String(MAX_FILES)} files.`);
       return;
     }
     if (
-      files.some((file) => file.size > 512 * 1024) ||
+      files.some((file) => file.size > MAX_FILE_BYTES) ||
       [...uploads.map(({ file }) => file), ...files].reduce((size, file) => size + file.size, 0) >
-        1024 * 1024 -
+        MAX_TOTAL_BYTES -
           retainedAttachments.reduce((size, attachment) => size + attachment.byteSize, 0)
     ) {
-      setError("Use files up to 512 KiB each and 1 MiB total.");
+      setError("Use files up to 10 MB each and 25 MB total.");
       return;
     }
-    if (
-      files.some(
-        (file) =>
-          !(
-            file.type.startsWith("text/") ||
-            [
-              "application/json",
-              "application/javascript",
-              "application/xml",
-              "application/yaml",
-              "application/x-yaml",
-            ].includes(file.type) ||
-            ((!file.type || file.type === "application/octet-stream") &&
-              TEXT_EXTENSIONS.test(file.name))
-          ),
-      )
-    ) {
-      setError(
-        "Use text or code files. This model cannot read images, PDFs, or other binary files.",
-      );
+    if (files.some((file) => !isAllowedComposerFile(file))) {
+      setError("Use text, images, or PDFs.");
       return;
     }
     const additions = files.map((file) => ({
@@ -200,7 +217,6 @@ export function AssistantComposer({
       )
     ) {
       setText("");
-      setWebSearch(false);
       setUploads([]);
       setRetainedAttachments([]);
       setError(null);
@@ -347,9 +363,8 @@ export function AssistantComposer({
             tabIndex={-1}
             type="file"
             multiple
-            aria-label={
-              editing ? "Attach text or code files to edited message" : "Attach text or code files"
-            }
+            accept="text/*,image/png,image/jpeg,image/gif,image/webp,application/pdf,.txt,.md,.csv,.json,.py,.rs,.go,.ts,.tsx,.js,.png,.jpg,.jpeg,.gif,.webp,.pdf"
+            aria-label="Attach"
             disabled={pending || disabled}
             onChange={(event) => {
               attach(Array.from(event.target.files ?? []));
@@ -379,28 +394,19 @@ export function AssistantComposer({
                     className="flex cursor-pointer items-center gap-2 rounded-md p-2 text-sm outline-none focus:bg-accent"
                     onSelect={() => fileInput.current?.click()}
                   >
-                    <Paperclip size={16} /> Attach files
+                    <Paperclip size={16} /> Files
                   </DropdownMenu.Item>
-                  <p className="px-2 pb-2 text-xs text-muted-foreground">
-                    Text and code · 5 files · 512 KiB each
-                  </p>
                   {models.data?.webSearchEnabled === true ? (
-                    <>
-                      <DropdownMenu.CheckboxItem
-                        checked={webSearch}
-                        onCheckedChange={setWebSearch}
-                        className="flex cursor-pointer items-center gap-2 rounded-md p-2 text-sm outline-none focus:bg-accent"
-                      >
-                        <Globe size={16} /> Web search
-                        <DropdownMenu.ItemIndicator className="ml-auto">
-                          <Check size={16} />
-                        </DropdownMenu.ItemIndicator>
-                      </DropdownMenu.CheckboxItem>
-                      <p className="max-w-64 px-2 pb-2 text-xs text-muted-foreground">
-                        Sends this message’s search query to your configured search provider and
-                        lets Assistant read public pages.
-                      </p>
-                    </>
+                    <DropdownMenu.CheckboxItem
+                      checked={webSearch}
+                      onCheckedChange={setWebSearch}
+                      className="flex cursor-pointer items-center gap-2 rounded-md p-2 text-sm outline-none focus:bg-accent"
+                    >
+                      <Globe size={16} /> Search
+                      <DropdownMenu.ItemIndicator className="ml-auto">
+                        <Check size={16} />
+                      </DropdownMenu.ItemIndicator>
+                    </DropdownMenu.CheckboxItem>
                   ) : null}
                   <DropdownMenu.Sub>
                     <DropdownMenu.SubTrigger className="flex cursor-pointer items-center gap-2 rounded-md p-2 text-sm outline-none focus:bg-accent">
@@ -450,11 +456,6 @@ export function AssistantComposer({
                               </DropdownMenu.ItemIndicator>
                             </DropdownMenu.CheckboxItem>
                           ))}
-                          {availableGroups.some((group) => group.id === "other") ? (
-                            <p className="max-w-64 px-2 py-2 text-xs text-muted-foreground">
-                              Workspace search spans all workspace data you can currently access.
-                            </p>
-                          ) : null}
                           {tools.data && availableGroups.length === 0 ? (
                             <p className="p-2 text-sm">No workspace tools available.</p>
                           ) : null}
@@ -481,7 +482,7 @@ export function AssistantComposer({
               onClick={() => setWebSearch(false)}
               aria-label="Turn off web search"
             >
-              <Globe size={14} /> Web search on <X size={12} />
+              <Globe size={14} /> Search <X size={12} />
             </button>
           ) : null}
           <label className="ml-auto min-w-0 text-xs">

@@ -45,6 +45,11 @@ function safeLink(value: string): string {
   }
 }
 
+/** Drop unlinked model citation tokens such as 【web_fetch】 or 【Source title】. */
+export function stripCitationPlaceholders(text: string): string {
+  return text.replace(/[^\S\n]*【[^】]{0,120}】/gu, "").replace(/[^\S\n]{2,}/gu, " ");
+}
+
 export const AssistantMarkdown = memo(function AssistantMarkdown({
   text,
 }: {
@@ -58,7 +63,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         urlTransform={safeLink}
         components={components}
       >
-        {text}
+        {stripCitationPlaceholders(text)}
       </Markdown>
     </div>
   );

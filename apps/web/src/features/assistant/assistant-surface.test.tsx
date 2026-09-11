@@ -47,6 +47,7 @@ const renameAssistantConversationMock =
 const deleteAssistantConversationMock =
   vi.fn<(input: { readonly conversationId: string }) => Promise<void>>();
 const forgetAssistantMemoryMock = vi.fn<() => Promise<AssistantMemoryForgetResult>>();
+const getAssistantConversationMock = vi.fn<() => Promise<{ messages: readonly unknown[] }>>();
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
@@ -74,14 +75,9 @@ vi.mock("./api", async (importOriginal) => ({
     Promise.resolve({
       models: [{ id: "groq/llama", label: "Llama", providerId: "groq", model: "llama" }],
       defaultModelId: "groq/llama",
+      webSearchEnabled: true,
     }),
-  getAssistantConversation: () =>
-    Promise.resolve({
-      messages: [
-        { id: "saved-user", role: "user", content: "Previous question" },
-        { id: "saved-assistant", role: "assistant", content: "Persisted answer" },
-      ],
-    }),
+  getAssistantConversation: () => getAssistantConversationMock(),
   setAssistantConversationPinned: (input: {
     readonly conversationId: string;
     readonly pinned: boolean;
@@ -143,6 +139,7 @@ describe("AssistantSurface", () => {
     renameAssistantConversationMock.mockReset();
     deleteAssistantConversationMock.mockReset();
     forgetAssistantMemoryMock.mockReset();
+    getAssistantConversationMock.mockReset();
 
     listAssistantConversationsMock.mockResolvedValue(CONVERSATIONS);
     setAssistantConversationPinnedMock.mockResolvedValue({
@@ -163,6 +160,12 @@ describe("AssistantSurface", () => {
     });
     deleteAssistantConversationMock.mockResolvedValue(undefined);
     forgetAssistantMemoryMock.mockResolvedValue({ forgottenCount: 3 });
+    getAssistantConversationMock.mockResolvedValue({
+      messages: [
+        { id: "saved-user", role: "user", content: "Previous question" },
+        { id: "saved-assistant", role: "assistant", content: "Persisted answer" },
+      ],
+    });
 
     container = document.createElement("div");
     document.body.append(container);
@@ -424,6 +427,49 @@ describe("AssistantSurface", () => {
       expect.objectContaining({
         conversationId: "22222222-2222-4222-8222-222222222222",
         message: "continue please",
+        webSearch: false,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("restores web search from the last user message when reopening a conversation", async () => {
+    getAssistantConversationMock.mockResolvedValue({
+      messages: [
+        {
+          id: "saved-user",
+          role: "user",
+          content: "whats the weather tomorrow",
+          webSearch: true,
+        },
+        { id: "saved-assistant", role: "assistant", content: "I need a ZIP code." },
+      ],
+    });
+    streamAssistantChatMock.mockResolvedValue({
+      conversation: { id: "22222222-2222-4222-8222-222222222222" },
+      response: { content: "Searching Gaithersburg." },
+    });
+
+    render();
+    await flush();
+    const threadButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.includes("Summarize unread inbox") === true,
+    );
+    act(() => {
+      threadButton?.click();
+    });
+    await flush();
+    expect(container.querySelector('[aria-label="Turn off web search"]')).not.toBeNull();
+    setComposerValue("whats teh weatehr for 20882");
+    act(() => {
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flush();
+    expect(streamAssistantChatMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: "22222222-2222-4222-8222-222222222222",
+        message: "whats teh weatehr for 20882",
+        webSearch: true,
       }),
       expect.anything(),
     );

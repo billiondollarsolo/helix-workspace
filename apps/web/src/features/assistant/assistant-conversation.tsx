@@ -4,7 +4,12 @@ import { Copy, RotateCcw, Pencil as EditPenIcon, Sparkles as SparklesIcon } from
 import { Avatar } from "@/components/ui/avatar";
 import { iconMap as Icons } from "@/components/icon-map";
 import { apiPath } from "@/lib/auth";
-import { AssistantSourceList, AssistantToolActivityList } from "./assistant-tool-results";
+import {
+  AssistantEvidenceDrawer,
+  AssistantSourceList,
+  AssistantToolActivityList,
+  type PublicWebSource,
+} from "./assistant-tool-results";
 import { AssistantMarkdown } from "./assistant-markdown";
 import type { AssistantBlock, AssistantChatMessage } from "./assistant-data";
 /* ---------------------------------------------------------- conversation -- */
@@ -24,6 +29,7 @@ export function AssistantConversation({
   onEdit,
   onResend,
 }: AssistantConversationProps) {
+  const [evidence, setEvidence] = useState<readonly PublicWebSource[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamingText = conversation
     .filter((message) => message.streaming === true)
@@ -79,11 +85,20 @@ export function AssistantConversation({
                 pending={pending}
                 onEdit={onEdit}
                 onResend={onResend}
+                onOpenEvidence={setEvidence}
               />
             </div>
           );
         })}
       </div>
+      {evidence !== null ? (
+        <AssistantEvidenceDrawer
+          sources={evidence}
+          onClose={() => {
+            setEvidence(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -94,6 +109,7 @@ interface ChatMessageProps {
   readonly onNavigate: (target: string) => void;
   readonly onEdit: (message: AssistantChatMessage) => void;
   readonly onResend: (message: AssistantChatMessage) => void;
+  readonly onOpenEvidence: (sources: readonly PublicWebSource[]) => void;
 }
 function ChatMessage({
   message,
@@ -102,6 +118,7 @@ function ChatMessage({
   pending,
   onEdit,
   onResend,
+  onOpenEvidence,
 }: ChatMessageProps) {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const actions = (
@@ -209,7 +226,7 @@ function ChatMessage({
                 onNavigate={onNavigate}
               />
             ))}
-            <AssistantSourceList sources={message.sources ?? []} />
+            <AssistantSourceList sources={message.sources ?? []} onOpenEvidence={onOpenEvidence} />
             {message.text.length > 0 ? actions : null}
           </>
         )}

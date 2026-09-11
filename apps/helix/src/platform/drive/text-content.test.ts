@@ -23,6 +23,8 @@ it("reads complete UTF-8 text streams and rejects changed, binary or oversized c
     ["text/plain; charset=utf-8", "notes.txt"],
     ["application/json", "data.json"],
     ["application/octet-stream", "script.py"],
+    ["application/octet-stream", "main.rs"],
+    ["application/octet-stream", "App.vue"],
   ])
     expect(isTextFile(mime ?? "", name ?? "")).toBe(true);
   expect(isTextFile("application/pdf", "report.pdf")).toBe(false);

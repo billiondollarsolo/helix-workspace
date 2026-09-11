@@ -138,7 +138,10 @@ export function formatUntrustedToolResult(input: {
     output: input.output ?? null,
   });
   // A bounded page chunk includes up to 4,000 characters plus its exact URL and pagination.
-  const limit = input.toolId === "web.fetch" ? 12_000 : assistantContextLimits.toolResultCharacters;
+  const limit =
+    input.toolId === "web.fetch" || input.toolId === "context.view"
+      ? 12_000
+      : assistantContextLimits.toolResultCharacters;
   let preview = sanitizeUntrustedText(serialized, limit + 1);
   if (preview.length > limit) {
     // Preserve returned counts: a clipped JSON list must not look like a complete result.

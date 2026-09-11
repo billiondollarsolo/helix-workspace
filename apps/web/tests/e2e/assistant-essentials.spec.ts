@@ -82,11 +82,11 @@ test("selects a model, scans uploads before sending, retains failed drafts and r
   const composer = page.getByRole("textbox", { name: "Message Helix AI" });
   await composer.fill("Review the attached file");
   await page
-    .getByLabel("Attach text or code files", { exact: true })
-    .setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: Buffer.from("binary") });
-  await expect(page.getByRole("alert")).toContainText("cannot read images");
+    .getByLabel("Attach", { exact: true })
+    .setInputFiles({ name: "clip.mp4", mimeType: "video/mp4", buffer: Buffer.from("binary") });
+  await expect(page.getByRole("alert")).toContainText("Use text, images, or PDFs");
   expect(backend.uploads).toBe(0);
-  await page.getByLabel("Attach text or code files", { exact: true }).setInputFiles({
+  await page.getByLabel("Attach", { exact: true }).setInputFiles({
     name: attachment.name,
     mimeType: attachment.mimeType,
     buffer: Buffer.from("const answer = 42;\n"),
@@ -151,13 +151,13 @@ test("copies messages and edits or resends a preserved conversation branch", asy
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(markdown);
   const options = page.getByRole("button", { name: "More composer options" });
   await options.click();
-  await expect(page.getByRole("menuitem", { name: "Attach files" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Files" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "New chat" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(options).toBeFocused();
   backend.clean = true;
   await composer.fill("Keep my separate unsent draft");
-  await page.getByLabel("Attach text or code files", { exact: true }).setInputFiles({
+  await page.getByLabel("Attach", { exact: true }).setInputFiles({
     name: "draft.ts",
     mimeType: "text/plain",
     buffer: Buffer.from("const draft = true;"),
@@ -227,7 +227,7 @@ test("blocks a quarantined attachment and lets the user remove it", async ({ pag
   await page.goto("/assistant");
   await page.getByRole("textbox", { name: "Message Helix AI" }).fill("Read this file");
   await page
-    .getByLabel("Attach text or code files", { exact: true })
+    .getByLabel("Attach", { exact: true })
     .setInputFiles({ name: "blocked.txt", mimeType: "text/plain", buffer: Buffer.from("blocked") });
   await expect(page.getByRole("alert")).toContainText("unavailable after scanning");
   await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
@@ -303,7 +303,7 @@ for (const outcome of ["executed", "failed", "cancelled"] as const) {
   });
 }
 
-test("web search is explicit per message and hidden when the administrator disables it", async ({
+test("web search stays on until the user turns it off and is hidden when the administrator disables it", async ({
   page,
 }) => {
   const backend = await mockBackend(page);
@@ -311,25 +311,26 @@ test("web search is explicit per message and hidden when the administrator disab
   const composer = page.getByRole("textbox", { name: "Message Helix AI" });
   await expect(page.getByRole("button", { name: "Turn off web search" })).toHaveCount(0);
   await page.getByRole("button", { name: "More composer options" }).click();
-  await expect(page.getByRole("menuitemcheckbox", { name: "Web search" })).not.toBeChecked();
-  await expect(page.getByText(/lets Assistant read public pages/)).toBeVisible();
-  await page.getByRole("menuitemcheckbox", { name: "Web search" }).click();
+  await expect(page.getByRole("menuitemcheckbox", { name: "Search" })).not.toBeChecked();
+  await page.getByRole("menuitemcheckbox", { name: "Search" }).click();
   await expect(page.getByRole("button", { name: "Turn off web search" })).toBeVisible();
   await composer.fill("Search the web for this topic");
   await composer.press("Enter");
   await expect(page.getByRole("heading", { name: "Review", exact: true })).toBeVisible();
   expect(backend.requests[0]).toMatchObject({ webSearch: true });
-  await expect(page.getByRole("button", { name: "Turn off web search" })).toHaveCount(0);
-  await composer.fill("A follow-up without web access");
+  await expect(page.getByRole("button", { name: "Turn off web search" })).toBeVisible();
+  await composer.fill("A follow-up that still needs the web");
   await composer.press("Enter");
   await expect.poll(() => backend.requests.length).toBe(2);
-  expect(backend.requests[1]).toMatchObject({ webSearch: false });
+  expect(backend.requests[1]).toMatchObject({ webSearch: true });
+  await page.getByRole("button", { name: "Turn off web search" }).click();
+  await expect(page.getByRole("button", { name: "Turn off web search" })).toHaveCount(0);
   await page.unroute("**/api/**");
   await mockBackend(page, false, false);
   await page.reload();
   await page.getByRole("button", { name: "More composer options" }).click();
-  await expect(page.getByRole("menuitem", { name: "Attach files" })).toBeVisible();
-  await expect(page.getByRole("menuitemcheckbox", { name: "Web search" })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Files" })).toBeVisible();
+  await expect(page.getByRole("menuitemcheckbox", { name: "Search" })).toHaveCount(0);
 });
 
 test("selects authorized tool groups, retains choices through failures and reopens thin sources and outcomes", async ({
@@ -366,21 +367,25 @@ test("selects authorized tool groups, retains choices through failures and reope
   await composer.press("Enter");
   await expect(page.getByRole("alert")).toContainText("Provider is busy");
   await composer.press("Enter");
-  await expect(page.getByRole("list", { name: "Sources" }).getByRole("link")).toHaveCount(2);
+  await expect(page.getByRole("list", { name: "Sources" })).toContainText("weather.example");
+  await expect(page.getByRole("button", { name: "Evidence" })).toBeVisible();
   expect(backend.requests).toEqual([
     expect.objectContaining({ toolGroups: ["mail", "admin"] }),
     expect.objectContaining({ toolGroups: ["mail", "admin"] }),
   ]);
+  await expect(page.getByText("Tool failed", { exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Tool activity" })).toContainText("Completed");
   await expect(page.getByRole("list", { name: "Tool activity" })).toContainText("Page unavailable");
   await expect(page.getByRole("button", { name: "Copy response", exact: true })).toHaveCount(1);
   await page.reload();
-  await expect(page.getByRole("list", { name: "Sources" })).toContainText("Search result");
-  await expect(page.getByRole("list", { name: "Sources" })).toContainText("Read page");
-  await expect(page.getByRole("link", { name: "Forecast page read" })).toHaveAttribute(
+  await page.getByRole("button", { name: "Evidence" }).click();
+  const evidence = page.getByRole("dialog", { name: "Evidence" });
+  await expect(evidence.getByRole("link")).toHaveCount(2);
+  await expect(evidence.getByRole("link", { name: "Forecast page read" })).toHaveAttribute(
     "href",
     "https://weather.example/forecast",
   );
+  await expect(evidence).not.toContainText("Read page");
   await page.getByRole("button", { name: "More composer options" }).click();
   await page.getByRole("menuitem", { name: "Tools", exact: true }).hover();
   await expect(page.getByRole("menuitemcheckbox", { name: "Mail (8)" })).toBeChecked();
@@ -422,6 +427,7 @@ test("plain-text persisted answers have a stable conversation heading", async ({
     1,
   );
   await expect(page.getByRole("list", { name: "Sources" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Evidence" })).toBeVisible();
   await page.addScriptTag({ content: axe.source });
   expect(
     await page.evaluate(
@@ -472,7 +478,7 @@ for (const width of [390, 768, 1440]) {
       expect((await disclaimer.boundingBox())?.y).toBeGreaterThan(sendBox?.y ?? 0);
       await page.addScriptTag({ content: axe.source });
       await page.getByRole("button", { name: "More composer options" }).click();
-      await page.getByRole("menuitemcheckbox", { name: "Web search" }).click();
+      await page.getByRole("menuitemcheckbox", { name: "Search" }).click();
       await expect(page.getByRole("button", { name: "Turn off web search" })).toBeVisible();
       for (const menuOpen of [false, true]) {
         if (menuOpen) await page.getByRole("button", { name: "More composer options" }).click();

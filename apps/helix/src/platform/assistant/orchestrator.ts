@@ -1,8 +1,11 @@
 import {
   systemMessage,
   routeVisibleTools,
+  retainHistoricalTools,
+  historyUsesWebTools,
   effectiveClassificationForTurn,
   toAIMessage,
+  withSourceImages,
   aiCallContext,
   prepareVisibleTools,
   finishToolPrompt,
@@ -32,6 +35,14 @@ import { projectAssistantWebSources } from "./tool-sources.js";
 import { promptHistory, streamChatTurn } from "./tool-loop.js";
 import { maxClassification, type DataClassification } from "../ai/classification/index.js";
 import type { MemoryItem, MemoryStore } from "../ai/memory/index.js";
+import {
+  catalogsForServers,
+  visibleToolsFromServers,
+  type ToolServerConfig,
+} from "../ai/tool-servers.js";
+import { sourcesForPrompt } from "./attachment-retrieval.js";
+import { titleAfterFirstTurn } from "./titles.js";
+import { askUserResult, invokeBuiltinAssistantTool, toolActivity } from "./builtin-tools.js";
 import {
   toolInvocationOptions,
   type ToolInvocationPrincipal,
@@ -68,9 +79,7 @@ import type {
   AssistantTurnResponse,
   AssistantVisibleTool,
   AssistantSource,
-  AssistantToolActivity,
 } from "./types.js";
-
 export interface AssistantOrchestratorOptions {
   readonly store: AssistantStore;
   readonly ai: AICapability;
@@ -81,6 +90,8 @@ export interface AssistantOrchestratorOptions {
     readonly objectIds: readonly string[];
     readonly signal?: AbortSignal;
   }) => Promise<readonly AssistantLoadedAttachment[]>;
+  readonly embed?: (texts: readonly string[]) => Promise<readonly (readonly number[])[]>;
+  readonly generateTitles?: boolean;
   readonly tools: RuntimeToolRegistry;
   readonly search?: SearchEngine;
   /** Server-enabled application types eligible for retrieval context. */
@@ -101,8 +112,8 @@ export interface AssistantOrchestratorOptions {
     readonly content: string;
   }) => Promise<DataClassification>;
   readonly classifyToolResult?: AssistantToolResultClassifier;
+  readonly toolServers?: () => readonly ToolServerConfig[];
 }
-
 interface TurnSettings {
   readonly webSearch: boolean;
   readonly toolGroups: readonly string[];
@@ -180,18 +191,16 @@ export class AssistantOrchestrator {
       messages: await this.#conversationMessages(actor.orgId, conversationId),
     };
   }
-
   async sendMessage(input: AssistantSendMessageInput): Promise<AssistantTurnResponse> {
     // Drain buffered mode to its return value.
     const turn = this.#runTurn(input, "buffered");
     let step = await turn.next();
     while (!step.done) step = await turn.next();
-    return step.value;
+    return titleAfterFirstTurn(this.options, input, step.value);
   }
-
   async *sendMessageStream(input: AssistantSendMessageInput): AsyncGenerator<AssistantStreamEvent> {
     const turn = yield* this.#runTurn(input, "streaming");
-    yield { type: "final", turn };
+    yield { type: "final", turn: await titleAfterFirstTurn(this.options, input, turn) };
   }
 
   async *#runTurn(
@@ -340,7 +349,11 @@ export class AssistantOrchestrator {
     });
     const [recalledMemory, allVisibleTools] = await Promise.all([
       this.collectMemoryContext(input.actor, conversation, searchQuery, effectiveClassification),
-      this.listVisibleTools(input.actor, input.principal, input.webSearch),
+      this.listVisibleTools(
+        input.actor,
+        input.principal,
+        input.webSearch || historyUsesWebTools(history),
+      ),
     ]);
     for (const item of recalledMemory)
       effectiveClassification = maxClassification(
@@ -362,7 +375,11 @@ export class AssistantOrchestrator {
     sources.unshift(...retrievedSources);
     for (const source of retrievedSources)
       effectiveClassification = maxClassification(effectiveClassification, source.classification);
-    const visibleTools = routeVisibleTools(allVisibleTools, settings.toolIds, settings.toolGroups);
+    const visibleTools = retainHistoricalTools(
+      allVisibleTools,
+      routeVisibleTools(allVisibleTools, settings.toolIds, settings.toolGroups),
+      history,
+    );
     return yield* this.#continueTurn({
       input,
       mode,
@@ -381,7 +398,6 @@ export class AssistantOrchestrator {
       }),
     });
   }
-
   async *#continueTurn(context: {
     readonly input: AssistantSendMessageInput;
     readonly mode: "buffered" | "streaming";
@@ -396,7 +412,8 @@ export class AssistantOrchestrator {
     readonly initialToolCalls?: readonly AssistantToolCallResult[];
     readonly responseMetadata?: JsonObject;
   }): AsyncGenerator<AssistantStreamEvent, AssistantTurnResponse> {
-    const { input, mode, conversation, model, settings, visibleTools, memory } = context;
+    const { input, mode, model, settings, visibleTools, memory } = context;
+    let conversation = context.conversation;
     const maxRounds =
       settings.maxToolRounds ??
       this.options.getMaxToolRounds?.() ??
@@ -408,11 +425,17 @@ export class AssistantOrchestrator {
     let sources = [...context.sources];
     const toolCalls: AssistantToolCallResult[] = [...(context.initialToolCalls ?? [])];
     const pendingConfirmations: PendingToolInvocation[] = [];
-    const promptMessages: AIMessage[] = [
-      systemMessage({ tools: visibleTools, ...settings }),
-      ...untrustedContextMessages(sources, memory),
-      ...promptHistory(context.history).map(toAIMessage),
-    ];
+    const promptMessages: AIMessage[] = withSourceImages(
+      [
+        systemMessage({ tools: visibleTools, ...settings }),
+        ...untrustedContextMessages(
+          await sourcesForPrompt(sources, context.history, this.options.embed),
+          memory,
+        ),
+        ...promptHistory(context.history).map(toAIMessage),
+      ],
+      sources,
+    );
     let aiResponse: ChatResponse | undefined;
     let responseMessage: AssistantMessage | undefined;
     for (
@@ -472,6 +495,8 @@ export class AssistantOrchestrator {
             ? await this.invokeToolCall({
                 actor: input.actor,
                 principal: principalForAssistantInput(input),
+                conversation,
+                sources,
                 visibleTools: roundTools,
                 toolCallId,
                 toolId: call.id,
@@ -501,6 +526,12 @@ export class AssistantOrchestrator {
           }),
         ];
         yield { type: "tool", ...toolActivity(result) };
+        const latest = await this.options.store.getConversation({
+          orgId: input.actor.orgId,
+          actorId: input.actor.id,
+          conversationId: conversation.id,
+        });
+        if (latest !== null) conversation = latest;
       }
       const savedSettings = {
         ...settings,
@@ -522,7 +553,7 @@ export class AssistantOrchestrator {
           ...(aiResponse.metadata === undefined ? {} : { ai: aiResponse.metadata }),
           toolCalls: aiResponse.toolCalls ?? [],
           toolActivity: toolCalls.map(toolActivity),
-          sources: sources.map(({ body: _body, ...source }) => source),
+          sources: sources.map(({ body: _body, media: _media, ...source }) => source),
           assistantTurn: savedSettings,
           ...context.responseMetadata,
         }),
@@ -566,17 +597,14 @@ export class AssistantOrchestrator {
       effectiveClassification,
     };
   }
-
   async approvePendingTool(
     input: AssistantApprovePendingToolInput,
   ): Promise<AssistantTurnResponse> {
     return this.#resumePendingTool(input, true);
   }
-
   async cancelPendingTool(input: AssistantCancelPendingToolInput): Promise<AssistantTurnResponse> {
     return this.#resumePendingTool(input, false);
   }
-
   async #resumePendingTool(
     input: AssistantApprovePendingToolInput | AssistantCancelPendingToolInput,
     approve: boolean,
@@ -657,7 +685,7 @@ export class AssistantOrchestrator {
             toolId: pending.toolId,
             input: toJsonObject({ preview: pending.preview }),
             status: "executed",
-            output: toJsonValue(execution.output),
+            output: toJsonValue(askUserResult(pending.toolId, execution.output, input.metadata)),
             classification: await this.classifyToolResult(
               input.actor,
               pending.toolId,
@@ -715,6 +743,11 @@ export class AssistantOrchestrator {
       toolResults: [toolCall],
       ...(input.classification === undefined ? {} : { clientHint: input.classification }),
     });
+    const allVisibleTools = await this.listVisibleTools(
+      input.actor,
+      input.principal,
+      settings.webSearch || historyUsesWebTools(history),
+    );
     const continuation = this.#continueTurn({
       input: {
         ...input,
@@ -726,10 +759,10 @@ export class AssistantOrchestrator {
       conversation,
       model,
       settings,
-      visibleTools: routeVisibleTools(
-        await this.listVisibleTools(input.actor, input.principal, settings.webSearch),
-        settings.toolIds,
-        settings.toolGroups,
+      visibleTools: retainHistoricalTools(
+        allVisibleTools,
+        routeVisibleTools(allVisibleTools, settings.toolIds, settings.toolGroups),
+        history,
       ),
       sources,
       memory: [],
@@ -745,7 +778,6 @@ export class AssistantOrchestrator {
     while (!step.done) step = await continuation.next();
     return step.value;
   }
-
   async forgetMemory(input: AssistantForgetMemoryInput): Promise<AssistantForgetMemoryResult> {
     const forgottenCount =
       (await this.options.memory?.forget(input.actor, input.criteria ?? { all: true })) ?? 0;
@@ -794,7 +826,6 @@ export class AssistantOrchestrator {
       ...(preference === null ? {} : { preference }),
     };
   }
-
   async #requireConversation(actor: Actor, conversationId: string): Promise<AssistantConversation> {
     const conversation = await this.options.store.getConversation({
       orgId: actor.orgId,
@@ -849,17 +880,21 @@ export class AssistantOrchestrator {
     principal?: ToolInvocationPrincipal,
     webSearch = false,
   ): Promise<readonly AssistantVisibleTool[]> {
-    return prepareVisibleTools(
+    const prepared = prepareVisibleTools(
       await this.options.tools.listVisible(actor),
       principal,
       webSearch && this.options.webSearchEnabled?.() === true,
     );
+    const servers = await catalogsForServers(this.options.toolServers?.() ?? []);
+    return [...prepared, ...visibleToolsFromServers(servers)];
   }
 
   private async invokeToolCall(input: {
     readonly actor: Actor;
     readonly principal: ToolInvocationPrincipal;
     readonly request?: RequestContext;
+    readonly conversation: AssistantConversation;
+    readonly sources: readonly AssistantSource[];
     readonly visibleTools: readonly AssistantVisibleTool[];
     readonly toolCallId: string;
     readonly toolId: string;
@@ -874,8 +909,24 @@ export class AssistantOrchestrator {
           (this.options.webSearchEnabled?.(input.effectiveClassification) &&
             ["public", "standard"].includes(input.effectiveClassification))),
     );
+    if (visible === undefined) {
+      return {
+        toolCallId: input.toolCallId,
+        toolId: input.toolId,
+        input: input.input,
+        status: "skipped",
+        error: `Tool is not visible to actor: ${input.toolId}`,
+        sourceIds: input.sourceIds,
+      };
+    }
+    const builtin = await invokeBuiltinAssistantTool({
+      ...input,
+      store: this.options.store,
+      ...(this.options.toolServers === undefined ? {} : { toolServers: this.options.toolServers }),
+    });
+    if (builtin !== undefined) return builtin;
     const tool = this.options.tools.get(input.toolId);
-    if (visible === undefined || tool === undefined) {
+    if (tool === undefined) {
       return {
         toolCallId: input.toolCallId,
         toolId: input.toolId,
@@ -961,13 +1012,4 @@ export class AssistantOrchestrator {
       metadata: { conversationId: conversation.id, classification },
     });
   }
-}
-
-function toolActivity(result: AssistantToolCallResult): AssistantToolActivity {
-  return {
-    toolCallId: result.toolCallId,
-    toolId: result.toolId,
-    status: result.status,
-    ...(result.error === undefined ? {} : { error: result.error }),
-  };
 }

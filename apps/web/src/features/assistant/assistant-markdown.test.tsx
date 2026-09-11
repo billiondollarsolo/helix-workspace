@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { AssistantMarkdown } from "./assistant-markdown";
+import { AssistantMarkdown, stripCitationPlaceholders } from "./assistant-markdown";
 
 const container = document.createElement("div");
 let root: ReturnType<typeof createRoot>;
@@ -54,6 +54,18 @@ it("copies the original fenced code and makes clipboard failures actionable", as
     await Promise.resolve();
   });
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("copy it manually");
+});
+
+it("strips unlinked web_fetch citation tokens", () => {
+  expect(stripCitationPlaceholders("Rain 【web_fetch】 tonight 【Source title】.")).toBe(
+    "Rain tonight.",
+  );
+  root = createRoot(container);
+  act(() =>
+    root.render(<AssistantMarkdown text="See 【web.fetch】 the [note](https://example.test)." />),
+  );
+  expect(container.textContent).not.toContain("web.fetch");
+  expect(container.querySelector("a")?.getAttribute("href")).toBe("https://example.test");
 });
 
 it("renders streamed GFM tables with headers, inline formatting and safe source links", () => {

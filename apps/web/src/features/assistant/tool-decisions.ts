@@ -14,6 +14,7 @@ export interface ApplyAssistantToolDecisionInput {
   readonly decideToolCall?: typeof decideAssistantToolCall;
   readonly setToolError: (toolCallId: string, message: string | undefined) => void;
   readonly setToolStatus: (toolCallId: string, status: ToolStatus) => void;
+  readonly metadata?: Record<string, unknown>;
 }
 
 export async function applyAssistantToolDecision({
@@ -24,6 +25,7 @@ export async function applyAssistantToolDecision({
   setToolStatus,
   pendingId,
   toolCallId,
+  metadata,
 }: ApplyAssistantToolDecisionInput): Promise<AssistantToolDecisionResult> {
   setToolError(toolCallId, undefined);
   setToolStatus(toolCallId, "running");
@@ -33,6 +35,7 @@ export async function applyAssistantToolDecision({
       conversationId,
       pendingId: pendingId ?? toolCallId,
       decision,
+      ...(metadata === undefined ? {} : { metadata }),
     });
     if (result.error !== undefined) setToolError(toolCallId, result.error);
     setToolStatus(toolCallId, result.status);

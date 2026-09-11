@@ -103,6 +103,14 @@ function sourcesFor(toolId: string, output: unknown): Source[] | null {
       const result = webFetchResultSchema.safeParse(output);
       return result.success ? [{ data: result.data, refs: [] }] : null;
     }
+    case "context.view":
+    case "context.grep":
+    case "memory.search":
+    case "memory.list":
+    case "chats.search":
+    case "chats.view":
+    case "ask.user":
+      return [];
     case "web.search": {
       const result = webSearchResultSchema.safeParse(output);
       return result.success ? result.data.results.map((data) => ({ data, refs: [] })) : null;

@@ -5,11 +5,20 @@ import { createAssistantToolResultClassifier } from "./assistant-tool-classifica
 import { createHelixTRPCRouter } from "../api/trpc.js";
 import { agentLimitBudgetOverrideFromEnv, resolveConfirmationTimeoutMs } from "../bootstrap/env.js";
 import { deriveClassification } from "../platform/ai/index.js";
+import { createSemanticSearchEmbeddingProvider } from "../platform/ai/providers/factory.js";
+import { registerMemoryTools } from "../platform/ai/memory/index.js";
 import {
   AssistantOrchestrator,
   AssistantSlashCommandHooks,
   registerAssistantTools,
 } from "../platform/assistant/index.js";
+import { registerAskUserTool } from "../platform/assistant/ask-user.js";
+import { registerChatRecallTools } from "../platform/assistant/chats.js";
+import { registerContextTools } from "../platform/assistant/context-tools.js";
+import { registerTaskTools } from "../platform/assistant/tasks.js";
+import { registerRoutineTools } from "../platform/assistant/routines.js";
+import { PostgresRoutineStore } from "../platform/assistant/routines-postgres.js";
+import { AssistantRoutineWorker } from "../platform/assistant/routines-worker.js";
 import { registerAppPasswordTools } from "../platform/auth/app-passwords.js";
 import { enforceCredentialPolicy } from "../platform/auth/credentials.js";
 import {
@@ -593,6 +602,13 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     );
   };
   registerWebSearchTool(tools, () => context.runtimeConfiguration.current.ai, webSearchAllowed);
+  registerMemoryTools(tools, assistantMemory);
+  registerContextTools(tools);
+  registerTaskTools(tools);
+  registerChatRecallTools(tools);
+  registerAskUserTool(tools);
+  const routineStore = new PostgresRoutineStore(sql);
+  registerRoutineTools(tools, routineStore);
 
   const assistantSlashCommands = new AssistantSlashCommandHooks();
 
@@ -605,6 +621,10 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     }));
   }
 
+  const attachmentEmbedder = createSemanticSearchEmbeddingProvider(
+    context.runtimeConfiguration.current.ai,
+    process.env,
+  );
   const assistantSearchTypes: readonly GlobalSearchType[] = [
     ...(coreApps.shouldRegister("mail") ? (["mail"] as const) : []),
     ...(coreApps.shouldRegister("chat") ? (["chat"] as const) : []),
@@ -630,6 +650,10 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
         { driveStore, classifications: resourceClassificationService, dlp },
         input,
       ),
+    ...(attachmentEmbedder === undefined
+      ? {}
+      : { embed: (texts: readonly string[]) => attachmentEmbedder.embed(texts) }),
+    generateTitles: true,
     tools,
     memory: assistantMemory,
     ...(runtimeSearchEngine === undefined ? {} : { search: runtimeSearchEngine }),
@@ -640,6 +664,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       deriveClassification({ content, scanContent: true }).classification,
     classifyToolResult: createAssistantToolResultClassifier(resourceClassificationService),
     blockHighRiskToolsWhenUntrusted: securityTier !== "personal",
+    toolServers: () => context.runtimeConfiguration.current.ai?.toolServers ?? [],
   });
 
   if (coreApps.shouldRegister("assistant")) {
@@ -659,6 +684,38 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     readonly name: string;
     readonly worker: SupervisedWorker;
   }[] = [];
+  leaderGatedWorkers.push({
+    name: "assistant-routine-worker",
+    worker: new AssistantRoutineWorker(
+      routineStore,
+      assistantOrchestrator,
+      async (orgId, actorId) => {
+        const rows = (await sql`
+          select id, org_id, type, display_name, email, scopes
+          from actors
+          where id = ${actorId} and org_id = ${orgId} and disabled_at is null
+          limit 1
+        `) as unknown as readonly {
+          readonly id: string;
+          readonly org_id: string;
+          readonly type: Actor["type"];
+          readonly display_name: string;
+          readonly email: string | null;
+          readonly scopes: readonly string[];
+        }[];
+        const row = rows[0];
+        if (row === undefined) return null;
+        return {
+          id: row.id,
+          orgId: row.org_id,
+          type: row.type,
+          displayName: row.display_name,
+          ...(row.email === null ? {} : { email: row.email }),
+          scopes: row.scopes,
+        };
+      },
+    ),
+  });
 
   registerAgentCredentialTools(tools, {
     store: agentCredentialStore,

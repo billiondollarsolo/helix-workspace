@@ -4,6 +4,7 @@ import { actorToolInvocationPrincipal } from "../auth/tool-invocation-principal.
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
 import { toJsonObject } from "../util/json.js";
+import { assistantAttachmentLimits } from "./attachment-limits.js";
 import { assistantToolGroupIds } from "./tool-selection.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { AssistantOrchestrator } from "./orchestrator.js";
@@ -46,7 +47,7 @@ export const assistantChatBodySchema = z
     modelId: z.string().min(1).max(300).optional(),
     webSearch: z.boolean().optional(),
     toolGroups: z.array(z.enum(assistantToolGroupIds)).max(8).optional(),
-    attachmentObjectIds: z.array(uuidSchema).max(5).optional(),
+    attachmentObjectIds: z.array(uuidSchema).max(assistantAttachmentLimits.maxFiles).optional(),
     title: z.string().min(1).max(200).optional(),
     memoryOptIn: z.boolean().optional(),
     metadata: metadataSchema,

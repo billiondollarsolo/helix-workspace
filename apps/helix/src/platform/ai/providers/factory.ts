@@ -32,6 +32,7 @@ import {
 } from "../index.js";
 import { providerAllowedForClassification } from "../routing.js";
 import { resolveAiEnv } from "../operator-settings.js";
+import { createLocalEmbeddingProvider, localEmbeddingsEnabled } from "../embeddings/local.js";
 import { protectMemoryEmbeddings } from "../memory/privacy.js";
 
 /** Refresh the runtime only when the saved configuration changes. */
@@ -181,10 +182,11 @@ export function createSemanticSearchEmbeddingProvider(
   env: NodeJS.ProcessEnv = process.env,
   fetch?: typeof globalThis.fetch,
 ): MemoryEmbeddingProvider | undefined {
-  if (aiConfig?.enabled === false || aiConfig?.embeddingProvider === undefined) {
-    return undefined;
-  }
-  return createConfiguredEmbeddingProvider(aiConfig, env, fetch, false);
+  if (aiConfig?.enabled === false) return undefined;
+  const configured = createConfiguredEmbeddingProvider(aiConfig, env, fetch, false);
+  if (configured !== undefined) return configured;
+  if (!localEmbeddingsEnabled(env)) return undefined;
+  return createLocalEmbeddingProvider();
 }
 
 function createConfiguredEmbeddingProvider(

@@ -41,7 +41,9 @@ export interface MemoryStore {
     k: number,
     classification?: DataClassification,
   ): Promise<readonly MemoryItem[]>;
+  list?(actor: Actor, limit: number): Promise<readonly MemoryItem[]>;
   store(actor: Actor, item: MemoryInput): Promise<MemoryItem>;
+  replace?(actor: Actor, id: string, item: MemoryInput): Promise<MemoryItem | null>;
   forget(actor: Actor, criteria: ForgetCriteria): Promise<number>;
 }
 

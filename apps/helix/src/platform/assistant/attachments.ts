@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AssistantMessage } from "./types.js";
+import { assistantAttachmentLimits } from "./attachment-limits.js";
 import { assistantToolGroupIds } from "./tool-selection.js";
 import { projectAssistantWebSources } from "./tool-sources.js";
 
@@ -31,7 +32,7 @@ const attachmentsSchema = z
       byteSize: z.number().int().nonnegative(),
     }),
   )
-  .max(5);
+  .max(assistantAttachmentLimits.maxFiles);
 
 /** Only the server's stored references become attachment chips or subsequent context. */
 export function projectAssistantMessages(

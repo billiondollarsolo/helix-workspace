@@ -8,6 +8,7 @@ export interface AssistantToolDecisionInput {
   readonly conversationId: string;
   readonly pendingId: string;
   readonly decision: AssistantToolDecision;
+  readonly metadata?: Record<string, unknown>;
 }
 
 export interface AssistantToolDecisionResult {
@@ -162,6 +163,7 @@ export async function decideAssistantToolCall(
     body: JSON.stringify({
       conversationId: input.conversationId,
       pendingId: input.pendingId,
+      ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
     }),
   });
   const output: unknown = await response.json().catch(() => ({}));

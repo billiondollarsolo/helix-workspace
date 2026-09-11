@@ -10,10 +10,16 @@ import type { AssistantLoadedAttachment } from "../platform/assistant/types.js";
 import { dlpDecisionError, type DlpGuard } from "../platform/dlp.js";
 import type { PostgresDriveStore } from "../platform/drive/index.js";
 import { isTextFile } from "../platform/drive/text-content.js";
+import { assistantAttachmentLimits } from "../platform/assistant/attachment-limits.js";
+import {
+  extractPdfText,
+  imageMimeType,
+  isImageFile,
+  isPdfFile,
+} from "../platform/assistant/media.js";
 
-const FILE_BYTES = 512 * 1024;
-const TOTAL_BYTES = 1024 * 1024;
-const TOTAL_CHARACTERS = 100_000;
+const { maxFiles, maxFileBytes, maxTotalBytes, maxBodyChars, scanChars } =
+  assistantAttachmentLimits;
 
 /** Reads only actor-authorized, scan-clean Drive bytes; attachments never become trusted instructions. */
 export async function loadAssistantAttachments(
@@ -30,12 +36,11 @@ export async function loadAssistantAttachments(
 ): Promise<readonly AssistantLoadedAttachment[]> {
   requireActorScope(input.actor, "drive.read");
   const ids = [...new Set(input.objectIds)];
-  if (ids.length > 5)
+  if (ids.length > maxFiles)
     throw new BadRequestError(
-      "This conversation includes too many files. Start a new chat with up to 5 text or code files.",
+      `This conversation includes too many files. Start a new chat with up to ${String(maxFiles)} attachments.`,
     );
   let totalBytes = 0;
-  let totalCharacters = 0;
   const loaded: AssistantLoadedAttachment[] = [];
   for (const objectId of ids) {
     input.signal?.throwIfAborted();
@@ -57,65 +62,62 @@ export async function loadAssistantAttachments(
     const mimeType =
       (file.entry.mimeType ?? "application/octet-stream").split(";", 1)[0]?.toLowerCase() ??
       "application/octet-stream";
-    if (!isTextFile(mimeType, file.entry.name))
+    const image = isImageFile(mimeType, file.entry.name);
+    const pdf = isPdfFile(mimeType, file.entry.name);
+    if (!isTextFile(mimeType, file.entry.name) && !image && !pdf)
+      throw new BadRequestError(`Cannot read ${file.entry.name}. Use text, code, images, or PDFs.`);
+    if (file.byteSize > maxFileBytes || totalBytes + file.byteSize > maxTotalBytes)
       throw new BadRequestError(
-        `Cannot read ${file.entry.name}. Use text or code files; images, PDFs, and binary formats are not supported by this model.`,
-      );
-    if (file.byteSize > FILE_BYTES || totalBytes + file.byteSize > TOTAL_BYTES)
-      throw new BadRequestError(
-        "Use attachments up to 512 KiB each and 1 MiB total. Start a new chat with fewer or smaller files.",
+        "Use attachments up to 10 MB each and 25 MB total. Start a new chat with fewer or smaller files.",
       );
     const body = await file.open();
     if (body === null)
       throw new NotFoundError("The attached file's contents are unavailable. Upload it again.");
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    let content = "";
-    let fileBytes = 0;
-    const decode = (chunk: Uint8Array) => {
+    const bytes = await readAttachmentBytes(body, maxFileBytes, () => {
       input.signal?.throwIfAborted();
-      fileBytes += chunk.byteLength;
-      totalBytes += chunk.byteLength;
-      if (fileBytes > FILE_BYTES || totalBytes > TOTAL_BYTES)
-        throw new BadRequestError(
-          "Attachment contents exceed the 512 KiB per-file or 1 MiB total limit.",
-        );
+    });
+    if (bytes.byteLength > maxFileBytes || totalBytes + bytes.byteLength > maxTotalBytes)
+      throw new BadRequestError(
+        "Attachment contents exceed the 10 MB per-file or 25 MB total limit.",
+      );
+    totalBytes += bytes.byteLength;
+    let content: string;
+    let media: { mimeType: string; data: string } | undefined;
+    if (image) {
+      media = {
+        mimeType: imageMimeType(mimeType, file.entry.name),
+        data: Buffer.from(bytes).toString("base64"),
+      };
+      content = `Image attachment ${file.entry.name} (${String(bytes.byteLength)} bytes).`;
+    } else if (pdf) {
+      const extracted = extractPdfText(bytes);
+      content =
+        extracted.length > 0
+          ? extracted
+          : `PDF attachment ${file.entry.name} (${String(bytes.byteLength)} bytes) with no extractable text. Ask for a screenshot if you need to see the page.`;
+    } else {
       try {
-        content += decoder.decode(chunk, { stream: true });
+        content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       } catch {
         throw new BadRequestError(
           `Cannot read ${file.entry.name} as UTF-8 text. Save it as UTF-8 and upload it again.`,
         );
       }
-      if (content.length + totalCharacters > TOTAL_CHARACTERS)
+      if (content.includes("\0"))
         throw new BadRequestError(
-          "Attachment text exceeds 100,000 characters. Start a new chat with shorter files.",
+          `Cannot read ${file.entry.name}: it contains binary data. Upload a text, image, or PDF file.`,
         );
-    };
-    if (body instanceof Uint8Array) decode(body);
-    else for await (const chunk of body) decode(chunk);
-    try {
-      content += decoder.decode();
-    } catch {
-      throw new BadRequestError(
-        `Cannot read ${file.entry.name} as UTF-8 text. Save it as UTF-8 and upload it again.`,
-      );
     }
-    if (content.includes("\0"))
-      throw new BadRequestError(
-        `Cannot read ${file.entry.name}: it contains binary data. Upload a text or code file.`,
-      );
-    totalCharacters += content.length;
-    if (totalCharacters > TOTAL_CHARACTERS)
-      throw new BadRequestError(
-        "Attachment text exceeds 100,000 characters. Start a new chat with shorter files.",
-      );
+    if (content.length > maxBodyChars)
+      content = `${content.slice(0, maxBodyChars)}\n\n[Truncated. Use context.view to page this attachment.]`;
+    const scanContent = content.slice(0, scanChars);
     const resource = { orgId: input.actor.orgId, resourceType: "drive.file", resourceId: objectId };
     const classification = await options.classifications.get(resource);
     const decision = await options.dlp.evaluate({
       orgId: input.actor.orgId,
       actorId: input.actor.id,
       boundary: "api_agent",
-      content,
+      content: scanContent,
       resources: [resource],
     });
     if (decision.action === "warn")
@@ -125,7 +127,7 @@ export async function loadAssistantAttachments(
     if (decision.action === "block" || decision.action === "quarantine")
       throw dlpDecisionError(decision);
     loaded.push({
-      attachment: { objectId, name: file.entry.name, mimeType, byteSize: fileBytes },
+      attachment: { objectId, name: file.entry.name, mimeType, byteSize: bytes.byteLength },
       source: {
         id: objectId,
         type: "drive.attachment",
@@ -134,15 +136,48 @@ export async function loadAssistantAttachments(
         trust: "untrusted_retrieved",
         classification: maxClassification(
           maxClassification(classification?.classification ?? "standard", decision.classification),
-          deriveClassification({ content, scanContent: true }).classification,
+          deriveClassification({ content: scanContent, scanContent: true }).classification,
         ),
         provenance: {
           sourceId: objectId,
           sourceType: "drive.attachment",
           orgId: input.actor.orgId,
         },
+        ...(media === undefined ? {} : { media }),
       },
     });
   }
   return loaded;
+}
+
+async function readAttachmentBytes(
+  body: AsyncIterable<Uint8Array> | Uint8Array,
+  maxBytes: number,
+  onChunk: () => void,
+): Promise<Uint8Array> {
+  if (body instanceof Uint8Array) {
+    if (body.byteLength > maxBytes)
+      throw new BadRequestError(
+        "Attachment contents exceed the 10 MB per-file or 25 MB total limit.",
+      );
+    return body;
+  }
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of body) {
+    onChunk();
+    size += chunk.byteLength;
+    if (size > maxBytes)
+      throw new BadRequestError(
+        "Attachment contents exceed the 10 MB per-file or 25 MB total limit.",
+      );
+    chunks.push(chunk);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }

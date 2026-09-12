@@ -46,11 +46,11 @@
     "lint": "eslint src vitest.config.mjs"
   },
   "dependencies": {
-    "zod": "3.25.76"
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@helix/config": "workspace:*",
-    "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
   }
 }

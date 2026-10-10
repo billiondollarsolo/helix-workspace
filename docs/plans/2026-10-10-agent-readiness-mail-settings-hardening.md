@@ -153,6 +153,21 @@ unformatted files, two seed lint errors) are reported separately, not hidden.
 
 ## 6. Batch 2 recommendations
 
+### Decisions (product owner, 2026-10-10)
+
+| #   | Question                                               | Decision                                                                                   |
+| --- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| D1  | Can an agent acting for a user ever skip confirmation? | No. Delegated agents never act as the user; writes always queue for the user's approval.   |
+| D2  | Do new MCP clients need admin approval?                | Clients from trusted hosts (admin-maintained allowlist) skip approval; all others need it. |
+| D3  | Approval expiry                                        | 1 hour default (configurable per automation policy). Email alerts on by default (opt-out). |
+| D4  | Maximum desktop-sync file size                         | 5 GiB, with chunked upload.                                                                |
+| D5  | Browser push notifications                             | In 1.0, alongside in-app and email.                                                        |
+| D6  | Native mail clients                                    | Support standard desktop mail apps over **IMAP and POP3**. No custom Helix mail apps.      |
+
+D6 reverses a documented 1.0 non-claim ("no Helix-hosted IMAP server" in `README.md`,
+`docs/release/1.0-scope.md`, `docs/product-claims-mvp.md`, `docs/mail-security-and-reliability.md`).
+Those documents change when the feature ships with release evidence, not before.
+
 Each item: the recommendation, why, and the decision needed from the product owner.
 
 ### 6.1 User-delegated OAuth tokens (MC4)
@@ -265,15 +280,45 @@ Each item: the recommendation, why, and the decision needed from the product own
   header only from the edge.
 - **Decision:** none needed; recommended XFORWARD.
 
-### 6.10 Standard mail client access
+### 6.10 Standard mail client access (D6: IMAP and POP3)
 
-- 1.x: **mbox export** per folder or whole mailbox (background job, download link) and **mbox /
-  EML import** for migration. Per-message `.eml` download already exists for inbound mail; extend
-  it to sent mail.
-- Re-evaluate **IMAP + SMTP submission with app passwords** for 2.0 if native clients become a
-  requirement. App-password infrastructure already exists (CardDAV). JMAP alone would not help
-  Thunderbird, Apple Mail, or Outlook.
-- **Decision:** whether native mail clients are a 2.0 requirement.
+Desktop mail apps need three things: read (IMAP or POP3), send (SMTP submission), and sign-in
+(app passwords). Receiving IMAP/POP alone would leave Thunderbird, Apple Mail, and Outlook unable
+to send, so **SMTP submission is included**.
+
+- **Architecture:** a Helix-native mail access service on top of the existing Postgres mail
+  store, not a separate mail store. Running Dovecot against its own Maildir would duplicate every
+  message and need two-way sync with labels, threads, retention, and legal hold, which is the
+  wrong trade for 5–50 users.
+- **Sign-in:** app passwords with a new `mail.imap` / `mail.pop` / `mail.submit` scope (existing
+  app-password infrastructure, already used by CardDAV and WebDAV). `AUTHENTICATE PLAIN` and
+  `LOGIN` over TLS only; per-IP failed-auth limits as in DS2. Admins can disable each protocol.
+- **IMAP4rev2 (RFC 9051) with IMAP4rev1 compatibility:** CAPABILITY, STARTTLS/implicit TLS (993),
+  LOGIN/AUTHENTICATE, LIST/STATUS (including SPECIAL-USE: Sent, Drafts, Trash, Junk, Archive),
+  SELECT/EXAMINE, FETCH/UID FETCH (BODY[], BODYSTRUCTURE, ENVELOPE, FLAGS), STORE (\Seen,
+  \Flagged, \Deleted, \Answered, \Draft), SEARCH/UID SEARCH, COPY/MOVE, EXPUNGE/UID EXPUNGE,
+  APPEND (Sent and Drafts), IDLE, ENABLE, NAMESPACE, ID. Then CONDSTORE/QRESYNC for fast resync.
+- **Mapping:** Helix folders become IMAP mailboxes; labels appear as additional mailboxes (Gmail
+  style) so a message can live in several; stable UIDVALIDITY per mailbox and monotonically
+  increasing UIDs stored in a new table; flags map to existing read/star/draft state.
+- **POP3 (RFC 1939 + RFC 2449 CAPA, RFC 2595 STLS, port 995):** Inbox only; "delete after
+  download" honours retention and legal hold (a deleted message moves to Trash rather than being
+  purged if a hold applies).
+- **SMTP submission (RFC 6409, port 587 STARTTLS / 465 implicit TLS):** uses the existing
+  `smtp-server` dependency and the existing outbound pipeline, so DKIM, suppression, malware
+  scanning, attachment limits, aliases/send-as authorization, and audit all apply unchanged.
+  The sender must be the user's own address or an authorized alias.
+- **Safety:** every protocol session is audited (login, mailbox opened, messages deleted/sent);
+  connection and command rate limits; maximum literal size; idle timeouts.
+- **Infrastructure:** Caddy does not proxy raw TCP, so ports 993/995/587/465 are exposed by the
+  mail edge or a TCP proxy with TLS certificates from the same ACME source; compose, Helm, and
+  firewall docs updated.
+- **Delivery order:** (1) app-password scopes + SMTP submission, (2) IMAP read-only core
+  (LIST/SELECT/FETCH/SEARCH/IDLE), (3) IMAP writes (STORE/COPY/MOVE/EXPUNGE/APPEND), (4) POP3,
+  (5) CONDSTORE/QRESYNC. Each stage is tested against Thunderbird, Apple Mail, and Outlook and
+  with a protocol conformance suite (for example imaptest).
+- **Effort:** this is the largest Batch 2 item — a multi-week project, not a patch.
+- **Also:** mbox export and import stay in scope for migration.
 
 ## Validation log
 

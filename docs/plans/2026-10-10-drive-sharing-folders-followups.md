@@ -252,5 +252,13 @@ Issues already on the base commit and not addressed by this change (outside Driv
   `config/ai-tool-servers-schema.ts`.
 - `pnpm lint` (app): 2 `no-unnecessary-condition` errors in `seed-local-team-content.ts`.
 
-Full-repo `pnpm lint`, `pnpm test`, and `pnpm build` results with `--continue` are recorded below
-once the run completes.
+Full-repo runs (`turbo run <task> --continue`, after building workspace packages):
+
+| Gate                      | Result                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------- |
+| `pnpm test`               | Passed: app 3312 passed / 254 skipped; web 900 passed; cli 115; contracts 40; sdk 10; others pass |
+| `pnpm lint`               | All packages pass except the 2 existing seed errors in `@helix/app`                               |
+| `pnpm typecheck`          | All packages pass except the 4 existing seed/Assistant errors in `@helix/app`                     |
+| `pnpm build`              | Web builds; `@helix/app` fails only on the same 4 existing type errors                            |
+| `pnpm format:check`       | Only the 3 existing unformatted files                                                             |
+| `pnpm quality:boundaries` | Passed                                                                                            |

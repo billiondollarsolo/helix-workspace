@@ -326,7 +326,7 @@ describe("Drive WebDAV routes", () => {
       headers: { authorization: basic("ada@example.test", "delete") },
     });
 
-    expect(blockedPut.statusCode).toBe(401);
+    expect(blockedPut.statusCode).toBe(403);
     expect(createdFolder.statusCode).toBe(201);
     expect(store.folders.map((folder) => folder.name)).toContain("Notes");
     expect(createdFile.statusCode).toBe(201);
@@ -347,7 +347,8 @@ describe("Drive WebDAV routes", () => {
     expect(downloaded.statusCode).toBe(200);
     expect(downloaded.headers["content-type"]).toContain("text/plain");
     expect(downloaded.body).toBe("hello webdav");
-    expect(blockedDelete.statusCode).toBe(401);
+    expect(blockedDelete.statusCode).toBe(403);
+    expect(blockedDelete.body).toContain('"drive.delete" scope');
     expect(deleted.statusCode).toBe(204);
     expect(store.trashed).toEqual([uploadId]);
   });
@@ -1307,12 +1308,11 @@ describe("Drive transport hardening", () => {
   });
   it("rate-limits WebDAV authentication before password verification", async () => {
     const app = fastify();
+    const deny = () => ({ allowed: false, retryAfterSeconds: 30 });
     await registerDriveRoutes(app, {
       store: new FakeWebDavDriveStore(),
       appPasswords: new FakeAppPasswordAuthenticator(),
-      rateLimiter: {
-        consume: () => ({ allowed: false, retryAfterSeconds: 30 }),
-      },
+      rateLimiter: { consume: deny, peek: deny },
     });
 
     const response = await app.inject({

@@ -223,6 +223,30 @@ describe("AppPasswordsManagement", () => {
     ).toEqual([submit]);
   });
 
+  it("offers a Desktop sync (WebDAV) preset with read, write, and delete scopes", async () => {
+    fetchMock.mockImplementation((input) => {
+      if (isAdminUsersRequest(input)) {
+        return Promise.resolve(Response.json(adminUsersPage()));
+      }
+      if (input === "/v1/api/tools/app.passwords.list") {
+        return Promise.resolve(Response.json({ appPasswords: [] }));
+      }
+      return Promise.resolve(Response.json({ error: "unexpected" }, { status: 500 }));
+    });
+
+    renderAppPasswords();
+    await waitForText("Create app password");
+
+    const preset = findButton("Desktop sync (WebDAV)");
+    expect(preset.type).toBe("button");
+    expect(document.getElementById(preset.getAttribute("aria-describedby") ?? "")).not.toBeNull();
+    clickButton("Desktop sync (WebDAV)");
+    const scopes = document.getElementById("app-password-scopes");
+    expect(scopes).toBeInstanceOf(HTMLTextAreaElement);
+    expect((scopes as HTMLTextAreaElement).value).toBe("drive.read drive.write drive.delete");
+    expect(findButton("drive.delete").getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("disables creation and says so when the actor list cannot load", async () => {
     fetchMock.mockImplementation((input) => {
       if (isAdminUsersRequest(input)) {

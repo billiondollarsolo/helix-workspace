@@ -120,4 +120,12 @@ export interface PendingToolInvocation {
   readonly executionStartedAt?: string;
   readonly executionCompletedAt?: string;
   readonly traceId?: string;
+  /**
+   * Absolute URL a human approver uses to approve this action (an
+   * authenticated `POST`). Set by surfaces that know the public base URL,
+   * such as MCP `tools/call` results; absent elsewhere.
+   */
+  readonly approvalUrl?: string;
+  /** Absolute URL that returns this action's current status (authenticated `GET`). */
+  readonly statusUrl?: string;
 }

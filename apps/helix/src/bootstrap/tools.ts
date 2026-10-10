@@ -64,6 +64,7 @@ import type { GlobalSearchType } from "../platform/search/scope.js";
 import { signupEventSchemas } from "../platform/signup/event-schemas.js";
 import { buildEffectiveTenantConfig } from "../platform/tenancy/index.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
+import { createActionTools } from "../platform/tools/actions-tools.js";
 import { createAgentOperationalControlTools } from "../platform/tools/agent-operational-controls-tools.js";
 import { RuntimeAgentOperationalControlStore } from "../platform/tools/agent-operational-controls.js";
 import { PendingActionExpiryWorker } from "../platform/tools/pending-action-expiry-worker.js";
@@ -409,6 +410,9 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
   });
 
   for (const tool of createAgentOperationalControlTools(agentOperationalControls)) {
+    tools.register(tool);
+  }
+  for (const tool of createActionTools(tools)) {
     tools.register(tool);
   }
 

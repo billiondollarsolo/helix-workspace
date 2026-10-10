@@ -50,6 +50,7 @@ import type {
   MailVacationRecord,
   StoredMailMessage,
 } from "./types.js";
+import type { SetMailUserSettingsInput } from "./user-settings-input.js";
 export {
   type BindOutboundProviderDecisionInput,
   type ClaimedOutboundMail,
@@ -286,14 +287,7 @@ export class PostgresMailStore
     return this.preferences.getUserSettings(orgId, actorId);
   }
 
-  setUserSettings(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly signatureText: string;
-    readonly signatureHtml: string | null;
-    readonly includeSignatureOnReplies: boolean;
-    readonly blockedSenders: readonly string[];
-  }): Promise<MailUserSettings> {
+  setUserSettings(input: SetMailUserSettingsInput): Promise<MailUserSettings> {
     return this.preferences.setUserSettings(input);
   }
 

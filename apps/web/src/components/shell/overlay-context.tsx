@@ -8,9 +8,7 @@ const SETTINGS_SECTION_IDS = [
   "profile",
   "appearance",
   "language",
-  "notify",
   "signature",
-  "ai",
   "security",
   "shortcuts",
 ] as const;

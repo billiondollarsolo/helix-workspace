@@ -6,12 +6,10 @@ import type {
   TenantStorageMigrationJobRecord,
   TenantStorageMigrationJobStore,
 } from "../storage/index.js";
-import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
+import { InMemoryTenantConfigAdminStore as SharedTenantConfigStore } from "../../test-support/tenant-config-store.js";
+import type { OrgRecord } from "../tenancy/orgs.js";
 import type { PlanRecord, PlanStore } from "../tenancy/plans.js";
-import {
-  registerTenantConfigAdminRoutes as registerTenantConfigAdminRoutesWithoutAudit,
-  type TenantConfigAdminStore,
-} from "./tenant-config.js";
+import { registerTenantConfigAdminRoutes as registerTenantConfigAdminRoutesWithoutAudit } from "./tenant-config.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
 const actorId = "11111111-1111-4111-8111-111111111111";
@@ -1126,47 +1124,37 @@ describe("tenant config admin routes", () => {
   });
 });
 
-class InMemoryTenantConfigAdminStore implements TenantConfigAdminStore {
-  readonly updates: UpdateTenantConfigInput[] = [];
-  #org: OrgRecord | null;
+describe("tenant config merge semantics", () => {
+  it("keeps flags the admin did not submit when one flag is saved", async () => {
+    const store = new InMemoryTenantConfigAdminStore({
+      featureFlags: { byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: true },
+      quotas: { api_rps_limit: 5, actors_limit: null },
+    });
+    const app = fastify();
+    await registerTenantConfigAdminRoutes(app, { store, actorFromRequest });
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/api/admin/tenant-config",
+      headers: headers("admin.console.write"),
+      payload: { features: { ai_smart_compose: false }, quotas: { api_rps_limit: 9 } },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(body(response)).toMatchObject({
+      tenantConfig: {
+        features: { byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: false },
+        quotas: { api_rps_limit: 9, actors_limit: null },
+      },
+    });
+    await expect(store.findById(orgId)).resolves.toMatchObject({
+      featureFlags: { byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: false },
+    });
+    await app.close();
+  });
+});
 
+class InMemoryTenantConfigAdminStore extends SharedTenantConfigStore {
   constructor(overrides: Partial<OrgRecord> = {}) {
-    this.#org = {
-      id: orgId,
-      slug: "acme",
-      displayName: "Acme",
-      status: "active",
-      tier: "business",
-      planId: "business",
-      region: "us-east-1",
-      byoConfig: {},
-      featureFlags: { ai_smart_compose: false },
-      quotas: { api_rps_limit: 5 },
-      branding: {},
-      suspendedAt: null,
-      softDeletedAt: null,
-      hardDeletedAt: null,
-      ...overrides,
-    };
-  }
-
-  async findById(id: string): Promise<OrgRecord | null> {
-    return id === this.#org?.id ? this.#org : null;
-  }
-
-  async updateTenantConfig(input: UpdateTenantConfigInput): Promise<OrgRecord | null> {
-    this.updates.push(input);
-    if (this.#org === null || input.orgId !== this.#org.id) {
-      return null;
-    }
-    this.#org = {
-      ...this.#org,
-      ...(input.byoConfig === undefined ? {} : { byoConfig: input.byoConfig }),
-      ...(input.featureFlags === undefined ? {} : { featureFlags: input.featureFlags }),
-      ...(input.quotas === undefined ? {} : { quotas: input.quotas }),
-      ...(input.branding === undefined ? {} : { branding: input.branding }),
-    };
-    return this.#org;
+    super(orgId, overrides);
   }
 }
 

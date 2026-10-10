@@ -33,6 +33,7 @@ describe("SettingsPage", () => {
         jobTitle: "",
         about: "",
       },
+      error: null,
     } as never);
   });
 
@@ -104,12 +105,12 @@ describe("SettingsPage", () => {
     opener.remove();
   });
 
-  it.each(["ai", "shortcuts"] as const)("omits editor controls from %s settings", (section) => {
+  it("omits editor controls from shortcuts settings", () => {
     act(() =>
       root.render(
         <SettingsPage
           open
-          section={section}
+          section="shortcuts"
           onSectionChange={() => undefined}
           onClose={() => undefined}
         />,
@@ -118,6 +119,34 @@ describe("SettingsPage", () => {
     expect(container.querySelector("section[aria-label]")?.textContent).not.toMatch(
       /\bDocs\b|\bSheets\b|Go to Docs|Formula generation/,
     );
+  });
+
+  it("lists only sections backed by real settings, without inert switches", () => {
+    for (const section of ["profile", "appearance", "language", "security"] as const) {
+      act(() =>
+        root.render(
+          <SettingsPage
+            open
+            section={section}
+            onSectionChange={() => undefined}
+            onClose={() => undefined}
+          />,
+        ),
+      );
+      expect(container.querySelector('[role="switch"][disabled]')).toBeNull();
+      expect(container.textContent).not.toMatch(
+        /doc, sheet, or deck|Document comments|Meeting summaries|hosted models|API key/u,
+      );
+    }
+    const nav = Array.from(container.querySelectorAll("nav button")).map((b) => b.textContent);
+    expect(nav).toEqual([
+      "Profile",
+      "Appearance",
+      "Language & region",
+      "Mail signature",
+      "Security",
+      "Keyboard shortcuts",
+    ]);
   });
 
   it("renders controlled deep-linked sections with labelled browser metadata", () => {

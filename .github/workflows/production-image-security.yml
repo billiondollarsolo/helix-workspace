@@ -14,6 +14,7 @@ on:
       - "infra/nats/**"
       - "infra/postgres/**"
       - "infra/spamassassin/**"
+      - "infra/clamav/**"
       - "infra/caddy/Caddyfile.production"
       - "infra/scripts/normalize-image-spdx.mjs"
       - "infra/scripts/prune-production-deploy.mjs"
@@ -40,6 +41,7 @@ on:
       - "infra/nats/**"
       - "infra/postgres/**"
       - "infra/spamassassin/**"
+      - "infra/clamav/**"
       - "infra/caddy/Caddyfile.production"
       - "infra/scripts/normalize-image-spdx.mjs"
       - "infra/scripts/prune-production-deploy.mjs"
@@ -261,10 +263,9 @@ jobs:
             image: helix/spamassassin:4.0.2-patched
             context: infra/spamassassin
           - inventory_name: clamav
-            source: pull
-            image: clamav/clamav:1.5.3@sha256:7f5389ccaa2368c383fa80e167ccfe44348d71e685f926fce4755eed1757673a
-            registry_subject: docker.io/clamav/clamav
-            digest: sha256:7f5389ccaa2368c383fa80e167ccfe44348d71e685f926fce4755eed1757673a
+            source: build
+            image: helix/clamav:1.5.4-patched
+            context: infra/clamav
 
     defaults:
       run:
@@ -425,6 +426,11 @@ jobs:
             artifact: helix-workspace-spamassassin-publication-candidate
             local_image: helix/spamassassin:4.0.2-patched
             registry_name: helix-workspace-spamassassin
+            workspace_source: false
+          - candidate: clamav
+            artifact: helix-workspace-clamav-publication-candidate
+            local_image: helix/clamav:1.5.4-patched
+            registry_name: helix-workspace-clamav
             workspace_source: false
 
     steps:

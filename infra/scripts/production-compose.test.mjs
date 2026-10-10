@@ -24,6 +24,8 @@ const promotedImages = Object.freeze({
     "ghcr.io/billiondollarsolo/helix-workspace-cerbos@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   spamassassin:
     "ghcr.io/billiondollarsolo/helix-workspace-spamassassin@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  clamav:
+    "ghcr.io/billiondollarsolo/helix-workspace-clamav@sha256:2222222222222222222222222222222222222222222222222222222222222222",
 });
 const secretNames = [
   "database_url",
@@ -88,6 +90,7 @@ beforeAll(() => {
     HELIX_MEILISEARCH_IMAGE: promotedImages.meilisearch,
     HELIX_CERBOS_IMAGE: promotedImages.cerbos,
     HELIX_SPAMD_IMAGE: promotedImages.spamassassin,
+    HELIX_CLAMAV_IMAGE: promotedImages.clamav,
     HELIX_DOMAIN: "workspace.example.test",
     CADDY_HTTP_PORT: "80",
     CADDY_HTTPS_PORT: "443",
@@ -202,8 +205,7 @@ describe("production Compose overlay", () => {
         "rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff",
       cerbos: promotedImages.cerbos,
       spamd: promotedImages.spamassassin,
-      clamav:
-        "clamav/clamav:1.5.4@sha256:f0954d679017eb6d48221e2b2be3ac5457bf278a844f39b672376f55a085f591",
+      clamav: promotedImages.clamav,
     });
     expect(resolvedCompose.services.clamav.platform).toBe("linux/amd64");
     for (const dependency of [

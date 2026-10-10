@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 const dockerfiles = Object.fromEntries(
-  ["postgres", "nats", "meilisearch", "cerbos", "spamassassin"].map((name) => [
+  ["postgres", "nats", "meilisearch", "cerbos", "spamassassin", "clamav"].map((name) => [
     name,
     readFileSync(resolve(`infra/${name}/Dockerfile`), "utf8"),
   ]),
@@ -88,5 +88,12 @@ describe("production dependency image build contracts", () => {
     );
     expect(spamassassinEntrypoint).toContain('cp -a "${baked_rules}/." "${active_rules}/"');
     expect(dockerfiles.spamassassin).toContain("c-ares=1.34.8-r0");
+  });
+  it("rebuilds ClamAV on its pinned upstream image with patched pcre2", () => {
+    expect(dockerfiles.clamav).toMatch(
+      new RegExp(`^ARG SOURCE_IMAGE=clamav/clamav:1\\.5\\.4@sha256:${SHA256}$`, "mu"),
+    );
+    expect(dockerfiles.clamav).toContain("apk add --no-cache --upgrade pcre2=10.49-r0");
+    expect(dockerfiles.clamav).not.toMatch(/^(?:ENTRYPOINT|CMD|USER) /mu);
   });
 });

@@ -284,7 +284,10 @@ services:
   # INSTREAM TCP protocol when MAIL_CLAMAV_ENABLED=true. Opt-in via the
   # `mail-security` compose profile.
   clamav:
-    image: clamav/clamav:1.5.4@sha256:f0954d679017eb6d48221e2b2be3ac5457bf278a844f39b672376f55a085f591
+    build:
+      context: ./infra/clamav
+    image: helix/clamav:1.5.4-patched
+    pull_policy: never
     platform: linux/amd64
     profiles: ["mail-security"]
     environment:

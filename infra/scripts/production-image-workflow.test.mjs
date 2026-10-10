@@ -14,7 +14,14 @@ describe("production image supply-chain workflow", () => {
     expect(source.match(/- "patches\/\*\*"/gu)).toHaveLength(2);
     expect(source.match(/- "docker-compose\.yml"/gu)).toHaveLength(2);
     expect(source.match(/- "docker-compose\.production\.yml"/gu)).toHaveLength(2);
-    for (const directory of ["cerbos", "meilisearch", "nats", "postgres", "spamassassin"]) {
+    for (const directory of [
+      "cerbos",
+      "clamav",
+      "meilisearch",
+      "nats",
+      "postgres",
+      "spamassassin",
+    ]) {
       expect(source.match(new RegExp(`- "infra/${directory}/\\*\\*"`, "gu"))).toHaveLength(2);
     }
     expect(source.match(/- "infra\/scripts\/normalize-image-spdx\.mjs"/gu)).toHaveLength(2);
@@ -63,8 +70,9 @@ describe("production image supply-chain workflow", () => {
       "meilisearch",
       "cerbos",
       "spamassassin",
+      "clamav",
     ]);
-    expect(publishJob).not.toMatch(/candidate: (?:redis|rustfs|clamav)/u);
+    expect(publishJob).not.toMatch(/candidate: (?:redis|rustfs)/u);
     expect(
       source.match(/uses: actions\/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6/gu),
     ).toHaveLength(3);
@@ -116,7 +124,7 @@ describe("production image supply-chain workflow", () => {
     expect(source).toContain("schemaVersion: 1");
     expect(source).toContain("repository: process.env.WORKSPACE_REPOSITORY");
     expect(publishJob.match(/workspace_source: true/gu)).toHaveLength(2);
-    expect(publishJob.match(/workspace_source: false/gu)).toHaveLength(5);
+    expect(publishJob.match(/workspace_source: false/gu)).toHaveLength(6);
     expect(publishJob).toContain("name: Verify workspace application source predicate");
     expect(publishJob).toContain("name: Sign workspace application source provenance");
     expect(publishJob).toContain(
@@ -204,11 +212,6 @@ describe("production image supply-chain workflow", () => {
         "rustfs",
         "docker.io/rustfs/rustfs",
         "sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff",
-      ],
-      [
-        "clamav",
-        "docker.io/clamav/clamav",
-        "sha256:7f5389ccaa2368c383fa80e167ccfe44348d71e685f926fce4755eed1757673a",
       ],
     ]) {
       const entry = source.slice(

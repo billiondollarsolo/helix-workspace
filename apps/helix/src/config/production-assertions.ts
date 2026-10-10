@@ -35,6 +35,7 @@ const PRODUCTION_IMAGE_REPOSITORIES = {
   HELIX_MEILISEARCH_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-meilisearch",
   HELIX_CERBOS_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-cerbos",
   HELIX_SPAMD_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-spamassassin",
+  HELIX_CLAMAV_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-clamav",
 } as const;
 const KNOWN_DEVELOPMENT_VALUES: Readonly<Record<string, readonly string[]>> = {
   BETTER_AUTH_SECRET: [
@@ -82,17 +83,10 @@ export interface ProductionPostgresConfiguration {
   readonly POSTGRES_TLS_CERT_FILE?: string | undefined;
   readonly POSTGRES_TLS_KEY_FILE?: string | undefined;
 }
-export interface ProductionDeploymentConfiguration {
+export type ProductionDeploymentConfiguration = {
   readonly NODE_ENV?: string | undefined;
   readonly HELIX_WORKSPACE_PROFILE?: string | undefined;
-  readonly HELIX_IMAGE?: string | undefined;
-  readonly HELIX_WEB_IMAGE?: string | undefined;
-  readonly HELIX_POSTGRES_IMAGE?: string | undefined;
-  readonly HELIX_NATS_IMAGE?: string | undefined;
-  readonly HELIX_MEILISEARCH_IMAGE?: string | undefined;
-  readonly HELIX_CERBOS_IMAGE?: string | undefined;
-  readonly HELIX_SPAMD_IMAGE?: string | undefined;
-}
+} & { readonly [K in keyof typeof PRODUCTION_IMAGE_REPOSITORIES]?: string | undefined };
 function normalized(value: string | undefined): string | undefined {
   const result = value?.trim();
   return result === undefined || result.length === 0 ? undefined : result;

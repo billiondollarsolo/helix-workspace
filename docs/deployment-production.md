@@ -94,8 +94,9 @@ not deployment inputs:
 | `HELIX_MEILISEARCH_IMAGE` | Helix Meilisearch image           |
 | `HELIX_CERBOS_IMAGE`      | Helix Cerbos image                |
 | `HELIX_SPAMD_IMAGE`       | Helix SpamAssassin image          |
+| `HELIX_CLAMAV_IMAGE`      | Helix ClamAV image                |
 
-The pinned Redis, RustFS, and ClamAV references remain checked into the base Compose file. The
+The pinned Redis and RustFS references remain checked into the base Compose file. The
 resolved production-config evidence must capture all ten active digests and the final release
 packet must bind each digest to its scan and SBOM.
 
@@ -107,10 +108,12 @@ and verified source archives. CI builds or pulls every one of these images, prod
 runs a fail-closed High/Critical Trivy scan, and retains the machine-readable result. No locally
 built image is pushed until both application scans and all eight dependency scans succeed. The
 publication job loads checksummed archives exported by the scan jobs, verifies their source
-revision and image IDs, and publishes those exact images without rebuilding. Redis, RustFS, and
-ClamAV remain digest-pinned pull-and-scan inputs and are not republished by Helix. A release packet
+revision and image IDs, and publishes those exact images without rebuilding. Redis and RustFS
+remain digest-pinned pull-and-scan inputs and are not republished by Helix. ClamAV is rebuilt on
+its pinned upstream Alpine image to pick up patched runtime packages (pcre2) before the upstream
+tag does, then scanned and promoted like the other Helix-built images. A release packet
 must bind the exact resolved image digests—not merely these human-readable tags—to its corresponding
-scan and SBOM. The official ClamAV 1.5.3 container is amd64-only, so this Compose deployment targets
+scan and SBOM. The official ClamAV 1.5.4 Alpine container is amd64-only, so this Compose deployment targets
 `linux/amd64` for that service.
 
 SpamAssassin's image contains the Apache-published 4.0.2 rules archive, verified against Apache's

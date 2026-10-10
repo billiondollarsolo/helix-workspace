@@ -36,6 +36,7 @@ export const commandActions: Record<string, readonly string[]> = {
   mail: [
     "send",
     "reply",
+    "forward",
     "list",
     "search",
     "label",
@@ -113,6 +114,7 @@ const securityTierValues = ["personal", "business", "enterprise", "sovereign"] a
 const mailActionFlags: Record<string, readonly string[]> = {
   send: ["--to", "--cc", "--bcc", "--from", "--subject", "--body", "--html", "--json"],
   reply: ["--thread-id", "--message-id", "--body", "--html", "--cc", "--bcc", "--json"],
+  forward: "--thread-id --message-id --to --cc --bcc --subject --body --json".split(" "),
   list: "--folder --tab --label --query --limit --offset --mailbox-actor-id --json".split(" "),
   search: ["--query", "--label", "--limit", "--mailbox-actor-id", "--json"],
   label: ["--thread-id", "--add", "--remove", "--json"],

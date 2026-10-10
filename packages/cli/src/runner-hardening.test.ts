@@ -284,3 +284,31 @@ describe("subcommand help (CA15)", () => {
     expect(action.stdout).toContain("Exit codes:");
   });
 });
+
+describe("helix mail forward", () => {
+  it("calls mail.forward with the schema's field names", async () => {
+    const { parseCliArgs } = await import("./parser.js");
+    expect(
+      parseCliArgs([
+        "mail",
+        "forward",
+        "--thread-id",
+        "thread-1",
+        "--message-id",
+        "message-1",
+        "--to",
+        "ada@example.com",
+        "--body",
+        "FYI",
+      ]),
+    ).toEqual({
+      kind: "tool-call",
+      toolId: "mail.forward",
+      json: {
+        source: "inline",
+        value:
+          '{"threadId":"thread-1","messageId":"message-1","to":["ada@example.com"],"bodyText":"FYI"}',
+      },
+    });
+  });
+});

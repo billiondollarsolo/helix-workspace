@@ -310,6 +310,12 @@ function parseMailCommand(
         toolId: "mail.reply",
         json: parseMailOptions(jsonArgs, mailReplyOptions, "helix mail reply"),
       };
+    case "forward":
+      return {
+        kind: "tool-call",
+        toolId: "mail.forward",
+        json: parseMailOptions(jsonArgs, mailForwardOptions, "helix mail forward"),
+      };
     case "list":
       return {
         kind: "tool-call",
@@ -416,7 +422,7 @@ function parseMailCommand(
 }
 
 const mailUsageSummary =
-  "Usage: helix mail <send|reply|list|search|label|archive|delete|snooze|read|star|thread-get|filter-create|filter-update|filter-delete|vacation-get|vacation-set> [--json [JSON]]";
+  "Usage: helix mail <send|reply|forward|list|search|label|archive|delete|snooze|read|star|thread-get|filter-create|filter-update|filter-delete|vacation-get|vacation-set> [--json [JSON]]";
 const mailLabelApplyUsage =
   "Usage: helix mail label [--thread-id <id>] [--add <label>] [--remove <label>] [--json [JSON]]";
 const mailArchiveUsage = "Usage: helix mail archive [--thread-id <id>] [--json [JSON]]";
@@ -599,6 +605,22 @@ const mailReplyOptions = {
     ["--message-id", "messageId"],
     ["--body", "bodyText"],
     ["--html", "bodyHtml"],
+  ]),
+  numbers: new Map<string, string>(),
+} as const;
+
+// Attachments are re-attached by default; pass `includeAttachments: false` via --json to skip them.
+const mailForwardOptions = {
+  arrays: new Map([
+    ["--to", "to"],
+    ["--cc", "cc"],
+    ["--bcc", "bcc"],
+  ]),
+  strings: new Map([
+    ["--thread-id", "threadId"],
+    ["--message-id", "messageId"],
+    ["--subject", "subject"],
+    ["--body", "bodyText"],
   ]),
   numbers: new Map<string, string>(),
 } as const;

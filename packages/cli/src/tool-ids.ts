@@ -49,6 +49,7 @@ export const CLI_TOOL_IDS = [
   "mail.filter.update",
   "mail.label.apply",
   "mail.read.set",
+  "mail.forward",
   "mail.reply",
   "mail.search",
   "mail.send",

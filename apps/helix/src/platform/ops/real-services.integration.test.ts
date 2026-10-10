@@ -105,7 +105,8 @@ describe.runIf(enabled)("mandatory real-service contracts", () => {
     };
     await expect(policy.can(actor, "drive.read", resource)).resolves.toBe(true);
     await expect(policy.can({ ...actor, scopes: [] }, "drive.read", resource)).resolves.toBe(false);
-  });
+    // Indexing, two clamd scans, and spamd's first rule load exceed Vitest's 5s default.
+  }, 60_000);
 });
 
 function timeout(milliseconds: number): Promise<never> {

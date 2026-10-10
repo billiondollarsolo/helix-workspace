@@ -85,7 +85,8 @@ describe.runIf(enabled)("mandatory real-service contracts", () => {
       ),
     ).resolves.toMatchObject({ clean: false });
     await expect(
-      new SpamdScanner({ host: spamdHost, port: spamdPort, threshold: 5 }).scan(
+      // The first request to a fresh spamd also pays for child start-up and rule compilation.
+      new SpamdScanner({ host: spamdHost, port: spamdPort, threshold: 5, timeoutMs: 30_000 }).scan(
         "From: sender@example.test\r\nTo: user@example.test\r\nSubject: Contract\r\n\r\nHello",
       ),
     ).resolves.toMatchObject({ evidence: { scanned: true } });

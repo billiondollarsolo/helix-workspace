@@ -6,7 +6,7 @@ import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 
-export const taskStatuses = ["pending", "in_progress", "completed", "cancelled"] as const;
+const taskStatuses = ["pending", "in_progress", "completed", "cancelled"] as const;
 export type TaskStatus = (typeof taskStatuses)[number];
 
 export interface ConversationTask {

@@ -11,9 +11,9 @@ import {
 
 export const VOLUME_MAIL_THREADS_PER_ACTOR = 120;
 export const VOLUME_MAIL_MESSAGES_PER_THREAD = 3;
-export const VOLUME_FILES_PER_PERSON = 16;
-export const VOLUME_ADMIN_FILES = 24;
-export const VOLUME_SHARED_FILES = 40;
+const VOLUME_FILES_PER_PERSON = 16;
+const VOLUME_ADMIN_FILES = 24;
+const VOLUME_SHARED_FILES = 40;
 export const VOLUME_ASSISTANT_PER_PERSON = 16;
 export const VOLUME_ADMIN_ASSISTANT = 20;
 export const VOLUME_ASSISTANT_MESSAGES = 4;
@@ -22,9 +22,9 @@ export const VOLUME_ADMIN_EVENTS = 16;
 export const VOLUME_ROOM_EXTRA_MESSAGES = 36;
 export const VOLUME_DM_MESSAGES = 8;
 export const VOLUME_EXISTING_DM_EXTRA = 8;
-export const VOLUME_WEEKS_PER_PERSON = 8;
+const VOLUME_WEEKS_PER_PERSON = 8;
 
-export const ADMIN_FOLDER_ROOT = teamId(1, 400);
+const ADMIN_FOLDER_ROOT = teamId(1, 400);
 export const ADMIN_CALENDAR_ID = teamId(5, 201);
 
 export interface VolumeActor {
@@ -402,12 +402,4 @@ export function teamSeedCounts(input: {
       (input.withAdmin ? VOLUME_ADMIN_EVENTS : 0),
     drive_folders: input.driveFolders,
   };
-}
-
-export function teamVolumeFileCount(withAdmin: boolean): number {
-  return teamVolumeFileFixtures(withAdmin).length;
-}
-
-export function teamVolumeFolderCount(withAdmin: boolean): number {
-  return volumeFolderFixtures(withAdmin).length;
 }

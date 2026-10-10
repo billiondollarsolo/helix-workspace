@@ -30,6 +30,14 @@ describe("seedLocalOAuth", () => {
     expect(JSON.stringify(result)).not.toContain("scrypt$");
 
     expect(recording.beginCalls).toBe(1);
+    const orgInsertIndex = recording.calls.findIndex((call) =>
+      call.text.includes("insert into orgs"),
+    );
+    expect(recording.calls[orgInsertIndex]?.text).toContain("on conflict (id) do nothing");
+    expect(recording.calls[orgInsertIndex]?.values).toContain(DEFAULT_LOCAL_OAUTH_ORG_ID);
+    expect(orgInsertIndex).toBeLessThan(
+      recording.calls.findIndex((call) => call.text.includes("insert into actors")),
+    );
     const actorUpsert = recording.calls.find((call) => call.text.includes("insert into actors"));
     expect(actorUpsert?.text).toContain("on conflict (id) do update");
     expect(actorUpsert?.values).toContain(DEFAULT_LOCAL_OAUTH_ACTOR_ID);

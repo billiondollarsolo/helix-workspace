@@ -99,6 +99,8 @@ export async function applyGeneratedTitle(input: {
       conversationId: input.turn.conversation.id,
       title,
     });
+    // The conversation can be deleted while the title is being generated.
+    if (conversation === null) return input.turn;
     return { ...input.turn, conversation };
   } catch {
     return input.turn;

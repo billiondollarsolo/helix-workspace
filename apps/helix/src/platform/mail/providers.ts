@@ -173,9 +173,9 @@ export class SesMailProvider implements OutboundMailProvider {
       metadata: {
         provider: "ses",
         region: this.#region,
-        response: info.response,
-        accepted: info.accepted as JsonObject[keyof JsonObject],
-        rejected: info.rejected as JsonObject[keyof JsonObject],
+        response: info.response ?? null,
+        accepted: info.accepted,
+        rejected: info.rejected,
       },
     };
   }
@@ -302,9 +302,9 @@ export class SmtpRelayMailProvider implements OutboundMailProvider {
       metadata: {
         provider: "smtp",
         host: this.#host,
-        response: info.response,
-        accepted: info.accepted as JsonObject[keyof JsonObject],
-        rejected: info.rejected as JsonObject[keyof JsonObject],
+        response: info.response ?? null,
+        accepted: info.accepted,
+        rejected: info.rejected,
       },
     };
   }

@@ -270,35 +270,45 @@ export function productionDependencyInventory(deployRoot) {
   return inventory;
 }
 
+/** The `brace-expansion` version pinned by the workspace override. */
+function pinnedBraceExpansionVersion() {
+  const workspace = readFileSync(join(REPO_ROOT, "pnpm-workspace.yaml"), "utf8");
+  const version = /^\s*"brace-expansion":\s*"([^"]+)"\s*$/mu.exec(workspace)?.[1];
+  if (version === undefined) {
+    throw new Error("pnpm-workspace.yaml must pin brace-expansion with an override");
+  }
+  return version;
+}
+
 function validateLegacyBraceGlobCompatibility(deployRoot) {
   const packages = productionDependencyPackages(deployRoot);
   const requireFromHere = createRequire(import.meta.url);
-  for (const version of ["3.1.5", "5.1.9"]) {
-    const candidate = packages.find(
-      (dependency) => dependency.name === "minimatch" && dependency.version === version,
-    );
-    if (candidate === undefined) {
-      throw new Error(`Production dependency tree is missing minimatch@${version}`);
-    }
-    const minimatch = requireFromHere(join(candidate.root, "minimatch.js"));
+  // Every minimatch the production tree resolves must still match brace globs
+  // through the pinned, bounded brace-expansion.
+  for (const candidate of packages.filter((dependency) => dependency.name === "minimatch")) {
+    const loaded = requireFromHere(candidate.root);
+    const minimatch = typeof loaded === "function" ? loaded : loaded?.minimatch;
     if (
       typeof minimatch !== "function" ||
       minimatch("report-a.csv", "report-{a,b}.csv") !== true ||
       minimatch("report-c.csv", "report-{a,b}.csv") !== false
     ) {
-      throw new Error(`minimatch@${version} cannot consume the patched brace-expansion API`);
+      throw new Error(
+        `minimatch@${candidate.version} cannot consume the patched brace-expansion API`,
+      );
     }
   }
 
+  const braceVersion = pinnedBraceExpansionVersion();
   const braceExpansion = packages.find(
-    (dependency) => dependency.name === "brace-expansion" && dependency.version === "5.0.8",
+    (dependency) => dependency.name === "brace-expansion" && dependency.version === braceVersion,
   );
   if (braceExpansion === undefined) {
-    throw new Error("Production dependency tree must resolve brace-expansion@5.0.8");
+    throw new Error(`Production dependency tree must resolve brace-expansion@${braceVersion}`);
   }
   const braceModule = requireFromHere(braceExpansion.root);
   if (typeof braceModule?.expand !== "function") {
-    throw new Error("brace-expansion@5.0.8 must expose its bounded expansion API");
+    throw new Error(`brace-expansion@${braceVersion} must expose its bounded expansion API`);
   }
   const bounded = braceModule.expand("{a,b}".repeat(300), {
     max: 100_000,

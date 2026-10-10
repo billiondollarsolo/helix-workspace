@@ -38,7 +38,10 @@ export function createTasks(
     .map((title) => ({ id: randomUUID(), title: title.slice(0, 200), status: "pending" as const }));
   if (created.length === 0) throw new BadRequestError("Provide at least one task title.");
   const tasks = [...existing, ...created].slice(0, 40);
-  return { tasks, metadata: { ...metadata, tasks: JSON.parse(JSON.stringify(tasks)) as JsonObject } };
+  return {
+    tasks,
+    metadata: { ...metadata, tasks: JSON.parse(JSON.stringify(tasks)) as JsonObject },
+  };
 }
 
 export function updateTask(

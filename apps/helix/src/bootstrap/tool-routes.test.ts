@@ -1,10 +1,15 @@
 import type { ToolDefinition } from "@helix/sdk-types";
-import fastify from "fastify";
+import fastify, { type FastifyInstance } from "fastify";
 import { describe, expect, it } from "vitest";
 import { InMemoryIdempotencyStore } from "../api/idempotency.js";
 import { createPlatformMetrics } from "../api/metrics.js";
 import { InMemoryOAuthClientStore } from "../platform/auth/oauth.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
+import {
+  CredentialAuthError,
+  sendCredentialAuthError,
+  traceIdForRequest,
+} from "./request-principal.js";
 import { registerToolRestRoutes } from "./tool-routes.js";
 
 const passthrough = {
@@ -24,7 +29,7 @@ function writeTool(id: string, handler: ToolDefinition["handler"]): ToolDefiniti
   };
 }
 
-async function setup(tool: ToolDefinition) {
+async function setup(tool: ToolDefinition, configure?: (app: FastifyInstance) => void) {
   const tokenStore = new InMemoryOAuthClientStore();
   await tokenStore.saveToken({
     token: "idem-token",
@@ -39,6 +44,7 @@ async function setup(tool: ToolDefinition) {
   const tools = createToolRegistry();
   tools.register(tool);
   const app = fastify();
+  configure?.(app);
   registerToolRestRoutes(
     app,
     {
@@ -58,6 +64,34 @@ async function setup(tool: ToolDefinition) {
     });
   return { app, post };
 }
+
+describe("tool REST bearer authentication (CA4)", () => {
+  it("answers an unknown bearer with 401 and a WWW-Authenticate challenge", async () => {
+    const { app } = await setup(
+      writeTool("auth.write", async () => ({ ok: true })),
+      (app) => {
+        app.setErrorHandler((error, request, reply) => {
+          if (error instanceof CredentialAuthError) {
+            return sendCredentialAuthError(reply, error, traceIdForRequest(request));
+          }
+          throw error;
+        });
+      },
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tools/auth.write",
+      headers: { authorization: "Bearer revoked-token" },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.headers["www-authenticate"]).toBe('Bearer error="invalid_token"');
+    expect(response.json()).toMatchObject({ error: { code: "unauthenticated" } });
+    await app.close();
+  });
+});
 
 describe("tool REST idempotency claims (CA3)", () => {
   it("executes concurrent identical requests once and reports the duplicate as in progress", async () => {

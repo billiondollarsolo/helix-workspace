@@ -1,7 +1,7 @@
 # Agent readiness, Drive sync, Mail standards, and Settings hardening
 
 Date: 2026-10-10
-Status: in progress — Batch 1 being implemented on branch `agent-readiness-hardening`.
+Status: Batch 1 implemented and validated on `agent-readiness-hardening`; Batch 2 planned (section 6).
 
 ## 1. Why
 
@@ -375,4 +375,44 @@ start with the Workers AI or Jev API behind the opt-in notice).
 
 ## Validation log
 
-Filled in when Batch 1 lands.
+Batch 1 landed on `agent-readiness-hardening` as five area branches (A–E) merged in, plus
+integration fixes found while merging: MCP reading structured validation issues, an unused mail
+schema, the tenant-config Postgres fixture, the CLI field-contract test with its 12 fixes, and
+`helix mail forward`.
+
+Environment: Node 24.18.0, pnpm 11.18.0, PostgreSQL 16.15 with pgvector 0.8.5 built from the
+commit production pins (`159b79a`), all 203 migrations applied, per-file template databases
+(`HELIX_TEST_DATABASE_TEMPLATE`). Production uses PostgreSQL 18; Docker is unavailable here.
+
+| Check                                             | Result                                                                                    |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `pnpm test` (`turbo --continue --force`, live DB) | app 3648 passed, 4 failed, 3 skipped; web 901; cli 140; contracts 40; sdk 10; others pass |
+| `pnpm typecheck`                                  | All packages pass except 5 errors already on `main`                                       |
+| `pnpm lint`                                       | All packages pass except errors already on `main`                                         |
+| `pnpm build`                                      | Web and packages build; `@helix/app` fails only on errors already on `main`               |
+| `pnpm format:check`                               | Only 3 files already unformatted on `main`                                                |
+| `pnpm quality:boundaries`                         | Passed                                                                                    |
+| Shared-helper structure check                     | Passed                                                                                    |
+| File-size check                                   | Only 2 Drive test files already over on `main`                                            |
+| Playwright (mail, drive, admin, profile, scope)   | 12 passed                                                                                 |
+| `pnpm audit:a11y`                                 | Passed: 162 audits, 0 violations                                                          |
+| Tenant-config merge against PostgreSQL            | Passes; fails on the previous replace behaviour                                           |
+| CLI field-contract test                           | Passes; failed with 12 mismatches before the CLI fixes                                    |
+
+Failures that also occur on `main` (none introduced by this branch):
+
+- Fixed by the open `drive-folder-sharing-followups` branch: `drive/store-authz.test.ts`,
+  `drive/store-production-hardening.test.ts`, the `drive/tools.ts` type error, and the
+  `drive/api.test.ts` / `drive-shell.test.tsx` size limits.
+- Seed and Assistant code: 4 type errors, 2 lint errors, 3 unformatted files.
+- Live migration tests: `0111` finds `assistant_routines` foreign keys without `org_id` coupling
+  (a real tenant-integrity gap from the Assistant change on `main`); `0081` expects SQLSTATE 23001
+  and likely depends on the PostgreSQL 18 version used in CI.
+
+Open follow-ups from Batch 1:
+
+- `actions.get` requires the `platform.read` scope.
+- The web signature form leaves an existing HTML signature in place; add a notice or an HTML
+  editor in Batch 2.
+- `mail.forward` is not yet listed in the admin services catalogue.
+- Filter management UI (ST4) is Batch 2.

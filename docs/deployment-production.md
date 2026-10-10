@@ -101,7 +101,7 @@ resolved production-config evidence must capture all ten active digests and the 
 packet must bind each digest to its scan and SBOM.
 
 The checked-in stack also fixes the complete active dependency inventory: PostgreSQL 18.6 with
-pgvector 0.8.5, Redis 8.8.3, NATS 2.14.3, Meilisearch 1.51.0, RustFS 1.0.0, Cerbos
+pgvector 0.8.5, Redis 8.8.3, NATS 2.14.3, Meilisearch 1.51.0, RustFS 1.0.0-beta.12, Cerbos
 0.54.0, SpamAssassin 4.0.2, and ClamAV 1.5.4. Registry images use immutable manifest digests.
 Helix-built dependency images use digest-pinned build/runtime bases, immutable source revisions,
 and verified source archives. CI builds or pulls every one of these images, produces an SPDX SBOM,

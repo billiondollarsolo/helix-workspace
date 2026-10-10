@@ -251,9 +251,9 @@ jobs:
             context: infra/meilisearch
           - inventory_name: rustfs
             source: pull
-            image: rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+            image: rustfs/rustfs:1.0.0-beta.12@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21
             registry_subject: docker.io/rustfs/rustfs
-            digest: sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+            digest: sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21
           - inventory_name: cerbos
             source: build
             image: helix/cerbos:0.54.0-patched

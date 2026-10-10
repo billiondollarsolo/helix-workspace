@@ -28,7 +28,8 @@ test.describe("/assistant feature flow", () => {
     await page.getByRole("button", { name: "Send message" }).click();
 
     // The user's prompt is echoed into the conversation regardless of backend.
-    await expect(page.getByText(prompt)).toBeVisible();
+    // The composer keeps the draft until the send settles, so scope to the conversation.
+    await expect(page.getByTestId("assistant-conversation").getByText(prompt)).toBeVisible();
 
     if (!isLiveBackend()) {
       await expect(

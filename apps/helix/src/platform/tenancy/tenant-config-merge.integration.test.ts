@@ -22,7 +22,7 @@ describe(
         insert into orgs (id, slug, display_name, status, byo_config, feature_flags, quotas)
         values (
           ${orgId}, 'tenant-config-merge', 'Tenant config merge', 'active',
-          ${sql.json({ storage: { kind: "byo" } })},
+          ${sql.json({ storage: { kind: "byo", credentials_secret_handle: "tenant-config-merge" } })},
           ${sql.json({ byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: true })},
           ${sql.json({ api_rps_limit: 5 })}
         )

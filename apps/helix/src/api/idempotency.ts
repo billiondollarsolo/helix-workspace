@@ -287,28 +287,3 @@ function parseStoredRecord(serialized: string): IdempotencyRecord {
     expiresAt: record.expiresAt,
   };
 }
-
-export type IdempotencyOutcome =
-  | { readonly kind: "miss" }
-  | { readonly kind: "replay"; readonly record: IdempotencyRecord }
-  | { readonly kind: "conflict" };
-
-/**
- * Resolves the idempotency state for an incoming request: a cache miss (proceed
- * and store), a replay (return the stored result), or a conflict (the key was
- * reused with a different payload).
- */
-export async function resolveIdempotency(
-  store: IdempotencyStore,
-  key: string,
-  requestHash: string,
-): Promise<IdempotencyOutcome> {
-  const record = await store.get(key);
-  if (record === undefined) {
-    return { kind: "miss" };
-  }
-  if (record.requestHash !== requestHash) {
-    return { kind: "conflict" };
-  }
-  return { kind: "replay", record };
-}

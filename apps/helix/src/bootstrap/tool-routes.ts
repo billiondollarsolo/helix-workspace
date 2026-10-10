@@ -6,7 +6,6 @@ import {
   DEFAULT_IDEMPOTENCY_TTL_MS,
   fingerprintRequestPayload,
   idempotencyStorageKey,
-  resolveIdempotency,
   type IdempotencyStore,
 } from "../api/idempotency.js";
 import type { PlatformMetrics } from "../api/metrics.js";
@@ -23,6 +22,7 @@ import {
   type RuntimeToolRegistry,
   type ToolInvokeErrorResult,
   type ToolInvokeOptions,
+  type ToolInvokeResult,
 } from "../platform/tool-registry.js";
 import { resolveRequestPrincipal, traceIdForRequest } from "./request-principal.js";
 
@@ -51,6 +51,36 @@ export interface ToolRestRoutesOptions {
   readonly idempotencyStore?: IdempotencyStore;
   /** TTL for stored idempotency records, in milliseconds. */
   readonly idempotencyTtlMs?: number;
+}
+
+/**
+ * How long an in-flight idempotency claim blocks duplicates. Bounded so a
+ * crashed replica cannot pin a key for the whole replay window.
+ */
+const IDEMPOTENCY_CLAIM_TTL_MS = 10 * 60 * 1000;
+const IDEMPOTENCY_IN_PROGRESS_RETRY_AFTER_SECONDS = 2;
+/** Failures that describe the caller's situation rather than the request; never replayed. */
+const TRANSIENT_TOOL_STATUS_CODES: ReadonlySet<number> = new Set([401, 403, 408, 429]);
+
+function isPersistableIdempotentResult(result: ToolInvokeResult): boolean {
+  return (
+    result.ok || (result.statusCode < 500 && !TRANSIENT_TOOL_STATUS_CODES.has(result.statusCode))
+  );
+}
+
+function toolResultStatusCode(result: ToolInvokeResult): number {
+  if (!result.ok) return result.statusCode;
+  return result.status === "pending_confirmation" ? 202 : 200;
+}
+
+function sendToolInvokeResult(reply: FastifyReply, result: ToolInvokeResult, traceId: string) {
+  if (!result.ok) {
+    return sendToolInvokeError(reply, result, traceId);
+  }
+  if (result.status === "pending_confirmation") {
+    return reply.code(202).send({ status: result.status, pending: result.pending });
+  }
+  return reply.code(200).send(result.output);
 }
 
 /** Extracts the `Idempotency-Key` header value if present. */
@@ -116,66 +146,78 @@ export function registerToolRestRoutes(
               };
             })()
           : undefined;
-      if (idempotency !== undefined) {
-        const outcome = await resolveIdempotency(
-          idempotency.store,
-          idempotency.key,
-          idempotency.hash,
+      if (idempotency === undefined) {
+        const result = await invokeTool(
+          options.tools,
+          principal,
+          params.toolId,
+          request.body,
+          request,
         );
-        if (outcome.kind === "conflict") {
-          reply.header("api-version", HELIX_API_VERSION_HEADER_VALUE);
-          return reply.code(409).send(
-            buildErrorEnvelope({
-              statusCode: 409,
-              code: "idempotency_key_reused",
-              message: "Idempotency-Key was already used with a different request payload.",
-              traceId,
-            }),
-          );
-        }
-        if (outcome.kind === "replay") {
-          reply.header("idempotency-replayed", "true");
-          const replayed = outcome.record.result;
-          if (!replayed.ok) {
-            return sendToolInvokeError(reply, replayed, traceId);
-          }
-          if (replayed.status === "pending_confirmation") {
-            return reply.code(202).send({ status: replayed.status, pending: replayed.pending });
-          }
-          return reply.code(outcome.record.statusCode).send(replayed.output);
-        }
+        return sendToolInvokeResult(reply, result, traceId);
       }
-      const result = await invokeTool(
-        options.tools,
-        principal,
-        params.toolId,
-        request.body,
-        request,
+      // CA3: claim the key atomically before invoking so concurrent retries
+      // cannot both execute the mutation.
+      const claim = await idempotency.store.claim(
+        idempotency.key,
+        idempotency.hash,
+        IDEMPOTENCY_CLAIM_TTL_MS,
       );
-      if (idempotency !== undefined) {
-        const statusCode = result.ok
-          ? result.status === "pending_confirmation"
-            ? 202
-            : 200
-          : result.statusCode;
-        // Only persist deterministic outcomes — transient 5xx failures should
-        // be retryable rather than pinned to a stored error.
-        if (result.ok || result.statusCode < 500) {
-          await idempotency.store.set(idempotency.key, {
-            result,
-            statusCode,
-            requestHash: idempotency.hash,
-            expiresAt: Date.now() + (options.idempotencyTtlMs ?? DEFAULT_IDEMPOTENCY_TTL_MS),
-          });
-        }
+      if (claim.kind === "conflict") {
+        reply.header("api-version", HELIX_API_VERSION_HEADER_VALUE);
+        return reply.code(409).send(
+          buildErrorEnvelope({
+            statusCode: 409,
+            code: "idempotency_key_reused",
+            message: "Idempotency-Key was already used with a different request payload.",
+            traceId,
+          }),
+        );
       }
-      if (!result.ok) {
-        return sendToolInvokeError(reply, result, traceId);
+      if (claim.kind === "in_progress") {
+        reply.header("api-version", HELIX_API_VERSION_HEADER_VALUE);
+        reply.header("retry-after", String(IDEMPOTENCY_IN_PROGRESS_RETRY_AFTER_SECONDS));
+        return reply.code(409).send(
+          buildErrorEnvelope({
+            statusCode: 409,
+            code: "idempotency_in_progress",
+            message:
+              "A request with this Idempotency-Key is still running. Retry after it completes to receive its result.",
+            traceId,
+            details: { retryAfterSeconds: IDEMPOTENCY_IN_PROGRESS_RETRY_AFTER_SECONDS },
+          }),
+        );
       }
-      if (result.status === "pending_confirmation") {
-        return reply.code(202).send({ status: result.status, pending: result.pending });
+      if (claim.kind === "replay") {
+        reply.header("idempotency-replayed", "true");
+        return sendToolInvokeResult(reply, claim.record.result, traceId);
       }
-      return result.output;
+      let result: ToolInvokeResult;
+      try {
+        result = await invokeTool(options.tools, principal, params.toolId, request.body, request);
+      } catch (error) {
+        await idempotency.store.release(idempotency.key, claim.claimToken);
+        throw error;
+      }
+      if (!isPersistableIdempotentResult(result)) {
+        // Auth, timeout, rate-limit, and server failures describe the moment,
+        // not the request: free the key so a retry runs instead of replaying.
+        await idempotency.store.release(idempotency.key, claim.claimToken);
+        return sendToolInvokeResult(reply, result, traceId);
+      }
+      try {
+        await idempotency.store.complete(idempotency.key, claim.claimToken, {
+          result,
+          statusCode: toolResultStatusCode(result),
+          requestHash: idempotency.hash,
+          expiresAt: Date.now() + (options.idempotencyTtlMs ?? DEFAULT_IDEMPOTENCY_TTL_MS),
+        });
+      } catch (error) {
+        // The mutation already ran; report its result rather than inviting a
+        // retry that could execute it twice.
+        request.log.warn({ err: error }, "Failed to persist idempotent tool result");
+      }
+      return sendToolInvokeResult(reply, result, traceId);
     });
   }
   if (methods.includes("GET")) {

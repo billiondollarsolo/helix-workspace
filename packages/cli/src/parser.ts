@@ -583,8 +583,8 @@ const mailSendOptions = {
   strings: new Map([
     ["--from", "from"],
     ["--subject", "subject"],
-    ["--body", "body"],
-    ["--html", "html"],
+    ["--body", "bodyText"],
+    ["--html", "bodyHtml"],
   ]),
   numbers: new Map<string, string>(),
 } as const;
@@ -597,8 +597,8 @@ const mailReplyOptions = {
   strings: new Map([
     ["--thread-id", "threadId"],
     ["--message-id", "messageId"],
-    ["--body", "body"],
-    ["--html", "html"],
+    ["--body", "bodyText"],
+    ["--html", "bodyHtml"],
   ]),
   numbers: new Map<string, string>(),
 } as const;
@@ -858,9 +858,9 @@ const chatMessageListOptions = {
 const chatSendUsage =
   "Usage: helix chat send [--room-id <id>] [--body <text>] [--text <text>] [--json [JSON]]";
 const chatCreateRoomUsage =
-  "Usage: helix chat create-room [--name <name>] [--description <text>] [--member <id>] [--private] [--json [JSON]]";
+  "Usage: helix chat create-room [--name <name>] [--description <text>] [--member <id>] [--privacy <discoverable|restricted|private>] [--json [JSON]]";
 const chatSearchUsage =
-  "Usage: helix chat search [--query <text>] [--room-id <id>] [--limit <number>] [--cursor <cursor>] [--json [JSON]]";
+  "Usage: helix chat search [--query <text>] [--room-id <id>] [--limit <number>] [--json [JSON]]";
 
 const chatSendOptions = {
   arrays: new Map<string, string>(),
@@ -881,10 +881,14 @@ const chatCreateRoomOptions = {
     ["--description", "topic"],
     ["--topic", "topic"],
     ["--kind", "kind"],
+    ["--privacy", "privacy"],
   ]),
   numbers: new Map<string, string>(),
-  booleans: new Map([["--private", "isPrivate"]]),
-  enums: new Map([["--kind", new Set(["chat_room", "chat_dm"])]]),
+  booleans: new Map<string, string>(),
+  enums: new Map([
+    ["--kind", new Set(["chat_room", "chat_dm"])],
+    ["--privacy", new Set(["discoverable", "restricted", "private"])],
+  ]),
 } as const;
 
 const chatSearchOptions = {
@@ -892,7 +896,6 @@ const chatSearchOptions = {
   strings: new Map([
     ["--query", "query"],
     ["--room-id", "roomId"],
-    ["--cursor", "cursor"],
   ]),
   numbers: new Map([["--limit", "limit"]]),
   booleans: new Map<string, string>(),
@@ -1221,8 +1224,6 @@ const calendarEventRespondOptions = {
   arrays: new Map<string, string>(),
   strings: new Map([
     ["--event-id", "eventId"],
-    ["--attendee-email", "attendeeEmail"],
-    ["--rsvp-token", "rsvpToken"],
     ["--response", "responseStatus"],
   ]),
   numbers: new Map<string, string>(),
@@ -2034,9 +2035,9 @@ const webhookInboundUsage =
   "Usage: helix webhook inbound <create|update|delete|rotate-secret|list> [--json [JSON]]";
 const webhookDeliveryUsage = "Usage: helix webhook delivery <get|list> [--json [JSON]]";
 const webhookOutboundCreateUsage =
-  "Usage: helix webhook outbound create [--name <name>] [--url <url>] [--event-subject <subject>] [--secret-ref <ref>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
+  "Usage: helix webhook outbound create [--name <name>] [--url <url>] [--event-subject <subject>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
 const webhookOutboundUpdateUsage =
-  "Usage: helix webhook outbound update [--id <id>] [--name <name>] [--url <url>] [--event-subject <subject>] [--secret-ref <ref>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
+  "Usage: helix webhook outbound update [--id <id>] [--name <name>] [--url <url>] [--event-subject <subject>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
 const webhookOutboundDeleteUsage =
   "Usage: helix webhook outbound delete [--id <id>] [--json [JSON]]";
 const webhookOutboundListUsage = "Usage: helix webhook outbound list [--json [JSON]]";
@@ -2045,9 +2046,9 @@ const webhookOutboundTestUsage =
 const webhookOutboundReplayUsage =
   "Usage: helix webhook outbound replay [--delivery-id <id>] [--id <id>] [--json [JSON]]";
 const webhookInboundCreateUsage =
-  "Usage: helix webhook inbound create [--name <name>] [--slug <slug>] [--source <source>] [--secret-ref <ref>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
+  "Usage: helix webhook inbound create [--name <name>] [--slug <slug>] [--source <source>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
 const webhookInboundUpdateUsage =
-  "Usage: helix webhook inbound update [--id <id>] [--name <name>] [--slug <slug>] [--source <source>] [--secret-ref <ref>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
+  "Usage: helix webhook inbound update [--id <id>] [--name <name>] [--slug <slug>] [--source <source>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
 const webhookInboundDeleteUsage = "Usage: helix webhook inbound delete [--id <id>] [--json [JSON]]";
 const webhookInboundRotateSecretUsage =
   "Usage: helix webhook inbound rotate-secret [--id <id>] [--json [JSON]]";
@@ -2066,7 +2067,6 @@ const webhookOutboundBaseOptions = {
   strings: new Map([
     ["--name", "name"],
     ["--url", "url"],
-    ["--secret-ref", "secretRef"],
   ]),
   numbers: new Map<string, string>(),
   booleans: webhookEnabledOptions,
@@ -2116,7 +2116,6 @@ const webhookInboundBaseOptions = {
     ["--name", "name"],
     ["--slug", "slug"],
     ["--source", "source"],
-    ["--secret-ref", "secretRef"],
   ]),
   numbers: new Map<string, string>(),
   booleans: webhookEnabledOptions,

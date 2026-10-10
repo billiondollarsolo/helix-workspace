@@ -178,9 +178,9 @@ describe("runCli completion commands", () => {
     expect(stdout.output).toContain("--to --cc --bcc --from --subject --body --html --json");
     expect(stdout.output).toContain("--room-id --body --text --json");
     expect(stdout.output).toContain("--folder --name --mime-type --byte-size --sha256 --json");
-    expect(stdout.output).toContain("--event-id --attendee-email --rsvp-token --response --json");
+    expect(stdout.output).toContain("--event-id --response --json");
     expect(stdout.output).toContain("--room-id --expires-in-seconds --moderator --json");
-    expect(stdout.output).toContain("--event-subject --secret-ref --header --headers");
+    expect(stdout.output).toContain("--event-subject --header --headers");
     expect(stdout.output).toContain("--direction --status --limit --json");
     expect(stdout.output).toContain("app-passwords agent-credentials");
     expect(stdout.output).toContain("--actor-id --label --scope --expires-at --json");
@@ -261,8 +261,6 @@ describe("runCli webhook wrapper commands", () => {
           "https://hooks.example/build",
           "--event-subject",
           "build.finished",
-          "--secret-ref",
-          "secret/webhooks/build",
           "--header",
           "X-Helix=cli",
           "--metadata",
@@ -296,7 +294,6 @@ describe("runCli webhook wrapper commands", () => {
             name: "Build events",
             url: "https://hooks.example/build",
             eventSubjects: ["build.finished"],
-            secretRef: "secret/webhooks/build",
             headers: { "X-Helix": "cli" },
             metadata: { team: "platform" },
             enabled: false,
@@ -969,7 +966,7 @@ describe("runCli tool discovery commands", () => {
             "content-type": "application/json",
             "idempotency-key": expect.any(String),
           },
-          body: '{"to":["ada@example.com"],"subject":"Hi","body":"Hello"}',
+          body: '{"to":["ada@example.com"],"subject":"Hi","bodyText":"Hello"}',
         },
       },
     ]);

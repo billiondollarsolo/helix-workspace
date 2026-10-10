@@ -202,7 +202,7 @@ describe("production Compose overlay", () => {
       nats: promotedImages.nats,
       meilisearch: promotedImages.meilisearch,
       rustfs:
-        "rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff",
+        "rustfs/rustfs:1.0.0-beta.12@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21",
       cerbos: promotedImages.cerbos,
       spamd: promotedImages.spamassassin,
       clamav: promotedImages.clamav,

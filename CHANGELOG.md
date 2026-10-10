@@ -12,8 +12,8 @@ All notable changes to Helix Workspace are documented here. This file follows
   pinned upstream image can take patched Alpine packages first. Production Compose requires
   `HELIX_CLAMAV_IMAGE` with an immutable `helix-workspace-clamav` digest.
 - Dependency images move to Go 1.26.9, Alpine 3.24.2, PostgreSQL 18.6, Redis 8.8.3,
-  RustFS 1.0.0, OpenSSL 3.5.9, and patched Go modules in NATS, Cerbos, and Caddy; the
-  scanned inventory now matches the Compose pins.
+  OpenSSL 3.5.9, and patched Go modules in NATS, Cerbos, and Caddy; the scanned inventory now
+  matches the Compose pins (RustFS stays on 1.0.0-beta.12 until 1.0.0 passes its health check).
 
 ### Fixed
 

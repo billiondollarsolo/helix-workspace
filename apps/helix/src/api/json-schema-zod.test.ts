@@ -52,4 +52,18 @@ describe("jsonSchemaToZod", () => {
       schema.parse(true);
     }).toThrow();
   });
+
+  it("accepts every type of a nullable type array and const values", () => {
+    const nullable = jsonSchemaToZod({ type: ["string", "null"], format: "uuid" });
+    expect(nullable.parse(null)).toBeNull();
+    expect(nullable.parse("x")).toBe("x");
+    expect(() => {
+      nullable.parse(1);
+    }).toThrow();
+    const constant = jsonSchemaToZod({ type: "string", const: "folder" });
+    expect(constant.parse("folder")).toBe("folder");
+    expect(() => {
+      constant.parse("file");
+    }).toThrow();
+  });
 });

@@ -19,6 +19,11 @@ import { MailFolderStore } from "./store-folders.js";
 import { MailInboundStore } from "./store-inbound.js";
 import { MailOutboundStore } from "./store-outbound.js";
 import { MailPreferencesStore } from "./store-preferences.js";
+import {
+  type MessageAttachmentContent,
+  type ReadMessageAttachmentInput,
+  readVisibleMessageAttachment,
+} from "./store-attachment-read.js";
 import { MailRoutingStore } from "./store-routing.js";
 import { MailSearchStore } from "./store-search.js";
 import { MailThreadStore } from "./store-threads.js";
@@ -89,7 +94,10 @@ export class PostgresMailStore
   private readonly drafts: MailDraftStore;
   private readonly searchProjection: MailSearchStore;
 
-  constructor(sql: postgres.Sql, options: PostgresMailStoreOptions = {}) {
+  constructor(
+    private readonly sql: postgres.Sql,
+    private readonly options: PostgresMailStoreOptions = {},
+  ) {
     this.drafts = new MailDraftStore(sql);
     this.routing = new MailRoutingStore(sql);
     this.inbound = new MailInboundStore(sql, options);
@@ -162,6 +170,12 @@ export class PostgresMailStore
 
   insertInboundMessage(input: MailMessageInput): Promise<StoredMailMessage> {
     return this.inbound.insertInboundMessage(input);
+  }
+
+  readMessageAttachment(
+    input: ReadMessageAttachmentInput,
+  ): Promise<MessageAttachmentContent | null> {
+    return readVisibleMessageAttachment(this.sql, this.options.storageResolver, input);
   }
 
   readRawSource(input: {

@@ -392,7 +392,7 @@ async function persistRawSource(
  * ingest pipeline may surface this either as an explicit boolean flag or under
  * a parsed-headers map; absence is treated as "no signal".
  */
-function headerHasListUnsubscribe(metadata: JsonObject | undefined): boolean {
+export function headerHasListUnsubscribe(metadata: JsonObject | undefined): boolean {
   if (metadata === undefined) {
     return false;
   }

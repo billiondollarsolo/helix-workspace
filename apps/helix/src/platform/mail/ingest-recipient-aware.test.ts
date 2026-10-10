@@ -68,7 +68,7 @@ function input(store: RecordingStore) {
   };
 }
 describe("recipient-aware SMTP ingest", () => {
-  it("stores separate tenant copies with only their resolved recipients", async () => {
+  it("delivers each tenant copy only to its resolved mailboxes, keeping To/Cc as received", async () => {
     const store = new RecordingStore();
     await ingestSmtpEnvelope(input(store));
     expect(store.messages).toHaveLength(2);
@@ -76,14 +76,18 @@ describe("recipient-aware SMTP ingest", () => {
     const second = store.messages.find((message) => message.orgId === "org-two");
     if (first === undefined || second === undefined)
       throw new Error("Both tenant messages are required.");
+    // Delivery and visibility come only from the tenant's own envelope recipients.
     expect(first.mailboxActorIds).toEqual(["owner-one", "alias-one"]);
     expect(second.mailboxActorIds).toEqual(["owner-two"]);
-    expect(JSON.stringify({ to: first.to, cc: first.cc, bcc: first.bcc })).not.toContain(
-      "two.example",
-    );
-    expect(JSON.stringify({ to: second.to, cc: second.cc, bcc: second.bcc })).not.toContain(
-      "one.example",
-    );
+    // The visible headers are the sender's, identical in every copy; Bcc stays private.
+    for (const message of [first, second]) {
+      expect(message.to.map((entry) => entry.address)).toEqual([
+        "owner@one.example",
+        "owner@two.example",
+      ]);
+      expect(message.cc?.map((entry) => entry.address)).toEqual(["alias@one.example"]);
+      expect(message.bcc).toEqual([]);
+    }
   });
   it("does not duplicate successful tenant delivery after a partial failure", async () => {
     const store = new RecordingStore();

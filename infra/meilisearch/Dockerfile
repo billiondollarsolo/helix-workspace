@@ -8,8 +8,8 @@ FROM ${SOURCE_IMAGE} AS source
 FROM ${RUNTIME_BASE} AS runtime
 
 RUN apk add --no-cache \
-      libcrypto3=3.5.8-r0 \
-      libssl3=3.5.8-r0
+      libcrypto3=3.5.9-r0 \
+      libssl3=3.5.9-r0
 
 LABEL org.opencontainers.image.title="helix-meilisearch" \
       org.opencontainers.image.description="Meilisearch 1.51.0 on a patched minimal runtime" \

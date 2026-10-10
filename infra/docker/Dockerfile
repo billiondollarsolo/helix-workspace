@@ -103,8 +103,8 @@ LABEL org.opencontainers.image.title="helix-workspace-web" \
       org.opencontainers.image.source="https://github.com/billiondollarsolo/helix-workspace"
 
 RUN apk add --no-cache \
-      libcrypto3=3.5.8-r0 \
-      libssl3=3.5.8-r0 \
+      libcrypto3=3.5.9-r0 \
+      libssl3=3.5.9-r0 \
     && addgroup -g 10001 -S helix \
     && adduser -u 10001 -S -D -G helix helix \
     && mkdir -p /config /data /srv \

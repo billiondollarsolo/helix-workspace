@@ -27,8 +27,8 @@ RUN tar -xzf /tmp/nats-server.tar.gz --strip-components=1 \
 FROM ${RUNTIME_BASE} AS runtime
 
 RUN apk add --no-cache \
-      libcrypto3=3.5.8-r0 \
-      libssl3=3.5.8-r0
+      libcrypto3=3.5.9-r0 \
+      libssl3=3.5.9-r0
 
 LABEL org.opencontainers.image.title="helix-nats-server" \
       org.opencontainers.image.description="NATS 2.14.3 rebuilt with patched Go and x/crypto" \

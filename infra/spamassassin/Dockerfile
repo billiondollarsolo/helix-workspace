@@ -22,8 +22,8 @@ LABEL org.opencontainers.image.title="helix-spamassassin" \
 RUN apk update \
     && apk add --no-cache --upgrade \
       c-ares=1.34.8-r0 \
-      libcrypto3=3.5.8-r0 \
-      libssl3=3.5.8-r0 \
+      libcrypto3=3.5.9-r0 \
+      libssl3=3.5.9-r0 \
       perl=5.42.2-r1 \
     && rm -rf /var/cache/apk/*
 

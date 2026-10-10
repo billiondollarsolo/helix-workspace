@@ -61,8 +61,8 @@ describe("production dependency image build contracts", () => {
   });
   it("installs the exact Alpine packages that close current high-severity advisories", () => {
     for (const dockerfile of [dockerfiles.nats, dockerfiles.meilisearch, workspaceDockerfile]) {
-      expect(dockerfile).toContain("libcrypto3=3.5.8-r0");
-      expect(dockerfile).toContain("libssl3=3.5.8-r0");
+      expect(dockerfile).toContain("libcrypto3=3.5.9-r0");
+      expect(dockerfile).toContain("libssl3=3.5.9-r0");
     }
     expect(dockerfiles.postgres).toContain("c-ares=1.34.8-r0");
   });

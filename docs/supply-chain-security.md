@@ -58,8 +58,8 @@ complete their scans and SBOM inventory before any image is published. Successfu
 the exact locally reviewed images as checksummed Docker image archives; the aggregate
 publication job verifies the workflow revision, archive checksum, and loaded image ID before
 pushing those same bits by immutable commit tag. It never rebuilds an image. Only the application,
-web, PostgreSQL, NATS, Meilisearch, Cerbos, and SpamAssassin images are published; digest-pinned
-Redis, RustFS, and ClamAV remain pull-and-scan inventory. GitHub then creates Sigstore-backed
+web, PostgreSQL, NATS, Meilisearch, Cerbos, SpamAssassin, and ClamAV images are published;
+digest-pinned Redis and RustFS remain pull-and-scan inventory. GitHub then creates Sigstore-backed
 provenance and SBOM attestations for each exact registry digest. The raw SBOMs and signed
 attestation bundles are retained together as workflow supply-chain evidence. Application and web
 artifacts bind the exact workspace commit SHA. Their pushed digests receive an additional signed
@@ -75,6 +75,6 @@ After each Helix-built image has its pushed registry digest, CI derives a separa
 document that preserves the discovered package inventory and adds one `CONTAINER` package binding
 the exact repository subject and digest. The normalized document has a single `documentDescribes`
 root, unique SPDX identifiers, supported `creationInfo` fields, and a SHA-256 sidecar; that exact
-file is used for the SBOM attestation. The pull-only Redis, RustFS, and ClamAV documents are
+file is used for the SBOM attestation. The pull-only Redis and RustFS documents are
 normalized the same way against their checked-in Docker Hub subjects and pinned digests before
 evidence upload.

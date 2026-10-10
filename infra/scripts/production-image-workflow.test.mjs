@@ -14,7 +14,14 @@ describe("production image supply-chain workflow", () => {
     expect(source.match(/- "patches\/\*\*"/gu)).toHaveLength(2);
     expect(source.match(/- "docker-compose\.yml"/gu)).toHaveLength(2);
     expect(source.match(/- "docker-compose\.production\.yml"/gu)).toHaveLength(2);
-    for (const directory of ["cerbos", "meilisearch", "nats", "postgres", "spamassassin"]) {
+    for (const directory of [
+      "cerbos",
+      "clamav",
+      "meilisearch",
+      "nats",
+      "postgres",
+      "spamassassin",
+    ]) {
       expect(source.match(new RegExp(`- "infra/${directory}/\\*\\*"`, "gu"))).toHaveLength(2);
     }
     expect(source.match(/- "infra\/scripts\/normalize-image-spdx\.mjs"/gu)).toHaveLength(2);
@@ -63,8 +70,9 @@ describe("production image supply-chain workflow", () => {
       "meilisearch",
       "cerbos",
       "spamassassin",
+      "clamav",
     ]);
-    expect(publishJob).not.toMatch(/candidate: (?:redis|rustfs|clamav)/u);
+    expect(publishJob).not.toMatch(/candidate: (?:redis|rustfs)/u);
     expect(
       source.match(/uses: actions\/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6/gu),
     ).toHaveLength(3);
@@ -116,7 +124,7 @@ describe("production image supply-chain workflow", () => {
     expect(source).toContain("schemaVersion: 1");
     expect(source).toContain("repository: process.env.WORKSPACE_REPOSITORY");
     expect(publishJob.match(/workspace_source: true/gu)).toHaveLength(2);
-    expect(publishJob.match(/workspace_source: false/gu)).toHaveLength(5);
+    expect(publishJob.match(/workspace_source: false/gu)).toHaveLength(6);
     expect(publishJob).toContain("name: Verify workspace application source predicate");
     expect(publishJob).toContain("name: Sign workspace application source provenance");
     expect(publishJob).toContain(
@@ -198,17 +206,12 @@ describe("production image supply-chain workflow", () => {
       [
         "redis",
         "docker.io/library/redis",
-        "sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb",
+        "sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec",
       ],
       [
         "rustfs",
         "docker.io/rustfs/rustfs",
-        "sha256:84ce557a0245a06a9aae5516f55ee0f007fca78d41df356f419306fdc0cb168c",
-      ],
-      [
-        "clamav",
-        "docker.io/clamav/clamav",
-        "sha256:7f5389ccaa2368c383fa80e167ccfe44348d71e685f926fce4755eed1757673a",
+        "sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff",
       ],
     ]) {
       const entry = source.slice(
@@ -238,7 +241,7 @@ describe("production image supply-chain workflow", () => {
   });
   it("uses a pinned minimal application runtime and prunes unreachable build dependencies", () => {
     expect(dockerfile).toContain(
-      "ARG RUNTIME_BASE=gcr.io/distroless/nodejs24-debian13:nonroot@sha256:af85d11ce7ef10172855a6e3649e3e8125b1b9e3ca41849ec2918036f05cb212",
+      "ARG RUNTIME_BASE=gcr.io/distroless/nodejs24-debian13:nonroot@sha256:9eeb7f5887d0e239e78264b06f7f11d2e14be534050481803a9e4728fcdd278e",
     );
     expect(dockerfile).toContain("node infra/scripts/prune-production-deploy.mjs /app/deploy");
     const runtime = dockerStage("runtime");

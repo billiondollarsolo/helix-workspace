@@ -57,6 +57,8 @@ services:
         reference with digest is required}
       HELIX_SPAMD_IMAGE: ${HELIX_SPAMD_IMAGE:?immutable HELIX_SPAMD_IMAGE registry
         reference with digest is required}
+      HELIX_CLAMAV_IMAGE: ${HELIX_CLAMAV_IMAGE:?immutable HELIX_CLAMAV_IMAGE registry
+        reference with digest is required}
       DATABASE_URL: !reset "null"
       DATABASE_URL_FILE: /run/secrets/migration_database_url
       POSTGRES_TLS_CA_FILE: /run/secrets/postgres_ca
@@ -112,6 +114,8 @@ services:
       HELIX_CERBOS_IMAGE: ${HELIX_CERBOS_IMAGE:?immutable HELIX_CERBOS_IMAGE registry
         reference with digest is required}
       HELIX_SPAMD_IMAGE: ${HELIX_SPAMD_IMAGE:?immutable HELIX_SPAMD_IMAGE registry
+        reference with digest is required}
+      HELIX_CLAMAV_IMAGE: ${HELIX_CLAMAV_IMAGE:?immutable HELIX_CLAMAV_IMAGE registry
         reference with digest is required}
       HELIX_SECURITY_TIER: business
       HELIX_PUBLIC_URL: https://${HELIX_DOMAIN:?HELIX_DOMAIN is required}
@@ -546,6 +550,10 @@ services:
           memory: 1g
 
   clamav:
+    image: ${HELIX_CLAMAV_IMAGE:?immutable HELIX_CLAMAV_IMAGE registry reference with
+      digest is required}
+    build: !reset "null"
+    pull_policy: always
     profiles: !override []
     ports: !override []
     networks: !override

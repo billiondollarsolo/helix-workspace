@@ -6,6 +6,7 @@ import {
   applyDriveScope,
   deriveDriveSuggestions,
   driveActorQueryOptions,
+  driveQuotaQueryOptions,
   entryFromSearchHit,
 } from "./queries";
 
@@ -307,5 +308,13 @@ describe("Drive session identity", () => {
       unsubscribe();
       client.clear();
     }
+  });
+});
+
+describe("Drive quota meter query", () => {
+  it("never escalates a permission error into the Drive view's error boundary", () => {
+    const options = driveQuotaQueryOptions();
+    expect(options.throwOnError).toBe(false);
+    expect(options.retry).toBe(false);
   });
 });

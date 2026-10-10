@@ -42,6 +42,7 @@ import {
   type ToolPolicyRequestChannel,
 } from "./tools/policy-firewall.js";
 import type { ConfirmationGate, PendingActionRecord } from "./tools/registry.js";
+import { toolInputFailure, type ToolInvokeErrorDetails } from "./tool-input-issues.js";
 
 export type ToolInvokeResult<Output = unknown> =
   | { readonly ok: true; readonly status?: "executed"; readonly output: Output }
@@ -58,6 +59,7 @@ export type ToolInvokeResult<Output = unknown> =
       readonly retryAfterSeconds?: number;
       readonly rateLimit?: ToolRateLimitMetadata;
       readonly quotaLimit?: ToolQuotaLimitMetadata;
+      readonly details?: ToolInvokeErrorDetails;
     };
 export type ToolInvokeErrorResult = Extract<ToolInvokeResult, { readonly ok: false }>;
 
@@ -464,10 +466,11 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         statusCode: number,
         error: string,
         denialOptions: ToolInvokeOptions | undefined = invokeOptions,
+        details?: ToolInvokeErrorDetails,
       ): Promise<ToolInvokeResult<Output>> {
         return completeInvocation(
           span,
-          { ok: false, statusCode, error },
+          { ok: false, statusCode, error, ...(details && { details }) },
           {
             actor,
             ...(tool === undefined ? {} : { tool }),
@@ -519,12 +522,9 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         try {
           input = tool.inputSchema.parse(rawInput);
         } catch (error) {
-          return await completeDenial(
-            400,
-            error instanceof Error ? error.message : "Tool input validation failed",
-          );
+          const failure = toolInputFailure(toolId, error);
+          return await completeDenial(400, failure.message, invokeOptions, failure.details);
         }
-
         const compositionResult = checkScopeComposition(actor, tool, input);
         if (!compositionResult.ok) {
           span.setAttribute("helix.tool.missing_scopes", compositionResult.missingScopes.join(","));

@@ -161,6 +161,7 @@ export function shouldResolveTenantForRequest(request: FastifyRequest): boolean 
     path === "/openapi.json" ||
     path === "/openapi.yaml" ||
     path === "/asyncapi.json" ||
+    path.startsWith("/.well-known/") ||
     path.startsWith("/api/scim/v2/") ||
     path === "/api/signup" ||
     path === "/api/signup/verify-email" ||

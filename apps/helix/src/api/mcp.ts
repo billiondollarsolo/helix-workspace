@@ -1,9 +1,6 @@
 import type { Actor, RequestContext } from "@helix/sdk-types";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
-import {
-  toolInvocationOptions,
-  type ToolInvocationPrincipal,
-} from "../platform/auth/tool-invocation-principal.js";
+import type { ToolInvocationPrincipal } from "../platform/auth/tool-invocation-principal.js";
 import {
   createScopedSearchRequest,
   globalSearchTypes,
@@ -11,50 +8,38 @@ import {
 } from "../platform/search/scope.js";
 import type { SearchEngine, SearchHit } from "../platform/search/types.js";
 import type { RuntimeToolRegistry } from "../platform/tool-registry.js";
+import type { IdempotencyStore } from "./idempotency.js";
 import {
-  DEFAULT_IDEMPOTENCY_TTL_MS,
-  InMemoryIdempotencyStore,
-  fingerprintRequestPayload,
-  idempotencyStorageKey,
-  type IdempotencyStore,
-} from "./idempotency.js";
+  isRecord,
+  jsonRpcError,
+  jsonRpcResult,
+  parseJsonRpcRequest,
+  requestMeta,
+  type JsonRpcId,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+} from "./mcp-jsonrpc.js";
+import { createCuratedPromptProvider, type McpPromptProvider } from "./mcp-prompts.js";
+import { callMcpTool, projectMcpTool } from "./mcp-tools.js";
 import { HELIX_SERVER_VERSION, MCP_PROTOCOL_VERSION } from "./version.js";
-
-type JsonRpcId = string | number | null;
-type JsonRpcRequest = {
-  readonly jsonrpc?: string;
-  readonly id?: JsonRpcId;
-  readonly method?: string;
-  readonly params?: unknown;
-};
-
-type JsonRpcResponse =
-  | {
-      readonly jsonrpc: "2.0";
-      readonly id: JsonRpcId;
-      readonly result: unknown;
-    }
-  | {
-      readonly jsonrpc: "2.0";
-      readonly id: JsonRpcId;
-      readonly error: {
-        readonly code: number;
-        readonly message: string;
-      };
-    };
-type JsonRpcErrorResponse = Extract<JsonRpcResponse, { readonly error: unknown }>;
 
 const MCP_DEFAULT_MAX_BODY_BYTES = 256 * 1024;
 const MCP_DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MCP_MAX_IDENTIFIER_LENGTH = 256;
 const MCP_MAX_RESOURCE_URI_LENGTH = 2_048;
 
+/** Protocol revisions this server speaks, newest first. */
+export const MCP_SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = [
+  MCP_PROTOCOL_VERSION,
+  "2025-03-26",
+];
+
 export interface McpRequestLimits {
   readonly maxBodyBytes?: number;
   readonly requestTimeoutMs?: number;
 }
 
-type McpHandlerInput = {
+export type McpHandlerInput = {
   readonly tools: RuntimeToolRegistry;
   readonly principal: ToolInvocationPrincipal;
   readonly request?: RequestContext;
@@ -63,43 +48,14 @@ type McpHandlerInput = {
   readonly prompts?: McpPromptProvider;
   readonly idempotencyStore?: IdempotencyStore;
   readonly limits?: McpRequestLimits;
+  /** `Mcp-Session-Id` echoed by the client, if any. */
+  readonly sessionId?: string;
+  /** Public origin used to build approval links for pending actions. */
+  readonly publicBaseUrl?: string;
 };
 
-const defaultIdempotencyStores = new WeakMap<RuntimeToolRegistry, IdempotencyStore>();
-const inFlightMutations = new Map<
-  string,
-  {
-    readonly requestHash: string;
-    readonly result: Promise<Awaited<ReturnType<RuntimeToolRegistry["invoke"]>>>;
-  }
->();
-/**
- * MCP prompt descriptor surfaced via `prompts/list` (P1-4).
- */
-interface McpPrompt {
-  readonly name: string;
-  readonly description?: string;
-  readonly arguments?: readonly {
-    readonly name: string;
-    readonly description?: string;
-    readonly required?: boolean;
-  }[];
-}
-
-interface McpPromptMessage {
-  readonly role: "user" | "assistant";
-  readonly content: { readonly type: "text"; readonly text: string };
-}
-
-interface McpPromptResult {
-  readonly description?: string;
-  readonly messages: readonly McpPromptMessage[];
-}
-
-export interface McpPromptProvider {
-  list(actor: Actor): Promise<readonly McpPrompt[]>;
-  get(actor: Actor, name: string, args: Record<string, unknown>): Promise<McpPromptResult | null>;
-}
+export type { McpPromptProvider } from "./mcp-prompts.js";
+export type { JsonRpcResponse } from "./mcp-jsonrpc.js";
 
 /**
  * Handle an MCP JSON-RPC request inside an `mcp.<method>` span (P2-6).
@@ -167,9 +123,10 @@ async function dispatchMcpJsonRpcRequest(
   switch (request.method) {
     case "initialize":
       return jsonRpcResult(request.id, {
-        protocolVersion: MCP_PROTOCOL_VERSION,
+        protocolVersion: negotiateProtocolVersion(request.params),
         serverInfo: {
           name: "helix",
+          title: "Helix Workspace",
           version: HELIX_SERVER_VERSION,
         },
         capabilities: {
@@ -177,101 +134,28 @@ async function dispatchMcpJsonRpcRequest(
           resources: { listChanged: false },
           prompts: { listChanged: false },
         },
+        instructions:
+          "Helix tools act on the signed-in user's Mail, Drive, Chat, and Calendar. Write tools called by an agent usually return a pending action that a human must approve in Helix; ask the user to approve it and poll actions.get instead of retrying.",
       });
     case "ping":
       return jsonRpcResult(request.id, {});
     case "tools/list":
       return jsonRpcResult(request.id, {
-        tools: (await input.tools.listVisible(input.principal.actor)).map((tool) => ({
-          name: tool.id,
-          description: tool.description,
-          inputSchema: tool.inputSchema.toJsonSchema(),
-          annotations: {
-            permission: tool.permission,
-            sideEffects: tool.sideEffects,
-            confirmationRequired: tool.confirmationRequired ?? false,
-            ...(tool.estimatedCostUsdMicros === undefined
-              ? {}
-              : { estimatedCostUsdMicros: tool.estimatedCostUsdMicros }),
-          },
-        })),
+        tools: (await input.tools.listVisible(input.principal.actor)).map((tool) =>
+          projectMcpTool(tool, input.principal.actor),
+        ),
       });
-    case "tools/call": {
-      const params = parseToolCallParams(request.params);
-      if (params === undefined) {
-        return jsonRpcError(request.id, -32602, "tools/call requires params.name.");
-      }
-      if (params.name.length > MCP_MAX_IDENTIFIER_LENGTH) {
-        return jsonRpcError(request.id, -32602, "Tool name exceeds the allowed size.");
-      }
-      const tool = input.tools.get(params.name);
-      const mutationRequiresIdempotency =
-        input.principal.actor.type === "agent" && tool !== undefined && tool.sideEffects !== "read";
-      if (mutationRequiresIdempotency && params.idempotencyKey === undefined) {
-        return jsonRpcError(
-          request.id,
-          -32602,
-          "Agent tools/call mutations require params._meta.idempotencyKey.",
-        );
-      }
-      if (params.idempotencyKey !== undefined && !isValidIdempotencyKey(params.idempotencyKey)) {
-        return jsonRpcError(request.id, -32602, "MCP idempotency key is invalid.");
-      }
-      const invoke = () =>
-        input.tools.invoke(params.name, params.arguments ?? {}, {
-          ...toolInvocationOptions(input.principal, input.request),
-          ...(params.idempotencyKey === undefined
-            ? {}
-            : {
-                executionIdempotencyKey: params.idempotencyKey,
-                idempotencyFingerprint: fingerprintRequestPayload(params.idempotencyKey),
-              }),
-          policyContext: {
-            effectiveClassification: "standard",
-            sourceIds: [],
-            containsUntrustedContext: false,
-            requestChannel: "mcp",
-            tenantId: input.principal.actor.orgId,
-          },
-          enforceConfirmation: true,
-        });
-      const result =
-        mutationRequiresIdempotency && params.idempotencyKey !== undefined
-          ? await invokeMcpMutationIdempotently({
-              input,
-              toolId: params.name,
-              arguments: params.arguments ?? {},
-              idempotencyKey: params.idempotencyKey,
-              invoke,
-            })
-          : await invoke();
-      if ("jsonrpc" in result) {
-        return { ...result, id: request.id ?? null };
-      }
-      if (!result.ok) {
-        return jsonRpcError(request.id, statusToJsonRpcCode(result.statusCode), result.error);
-      }
-      if (result.status === "pending_confirmation") {
-        return jsonRpcResult(request.id, {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify({ status: result.status, pending: result.pending }),
-            },
-          ],
-          structuredContent: { status: result.status, pending: result.pending },
-        });
-      }
-      return jsonRpcResult(request.id, {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result.output),
-          },
-        ],
-        structuredContent: result.output,
+    case "tools/call":
+      return callMcpTool(request, {
+        tools: input.tools,
+        principal: input.principal,
+        ...(input.request === undefined ? {} : { request: input.request }),
+        ...(input.idempotencyStore === undefined
+          ? {}
+          : { idempotencyStore: input.idempotencyStore }),
+        ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+        ...(input.publicBaseUrl === undefined ? {} : { publicBaseUrl: input.publicBaseUrl }),
       });
-    }
     case "resources/list": {
       const provider = input.resources ?? emptyResourceProvider;
       return jsonRpcResult(request.id, {
@@ -309,7 +193,7 @@ async function dispatchMcpJsonRpcRequest(
       });
     }
     case "prompts/list": {
-      const provider = input.prompts ?? createToolPromptProvider(input.tools);
+      const provider = input.prompts ?? createCuratedPromptProvider(input.tools);
       return jsonRpcResult(request.id, {
         prompts: await provider.list(input.principal.actor),
       });
@@ -322,8 +206,22 @@ async function dispatchMcpJsonRpcRequest(
       if (params.name.length > MCP_MAX_IDENTIFIER_LENGTH) {
         return jsonRpcError(request.id, -32602, "Prompt name exceeds the allowed size.");
       }
-      const provider = input.prompts ?? createToolPromptProvider(input.tools);
-      const prompt = await provider.get(input.principal.actor, params.name, params.arguments ?? {});
+      const provider = input.prompts ?? createCuratedPromptProvider(input.tools);
+      const args = params.arguments ?? {};
+      const listed = (await provider.list(input.principal.actor)).find(
+        (prompt) => prompt.name === params.name,
+      );
+      const missing = (listed?.arguments ?? []).filter(
+        (argument) => argument.required === true && args[argument.name] === undefined,
+      );
+      if (missing.length > 0) {
+        return jsonRpcError(
+          request.id,
+          -32602,
+          `Prompt ${params.name} requires arguments: ${missing.map((entry) => entry.name).join(", ")}.`,
+        );
+      }
+      const prompt = await provider.get(input.principal.actor, params.name, args);
       if (prompt === null) {
         return jsonRpcError(request.id, -32004, `Prompt not found: ${params.name}`);
       }
@@ -335,87 +233,47 @@ async function dispatchMcpJsonRpcRequest(
 }
 
 /**
- * Default prompt provider derived from the tool registry (P1-4): each visible
- * tool is surfaced as a "run this tool" prompt so MCP clients without a bespoke
- * prompt catalog still get a discoverable, schema-aware prompt surface.
+ * Picks the protocol revision for `initialize`: the client's requested
+ * revision when this server supports it, otherwise the newest one.
  */
-function createToolPromptProvider(tools: RuntimeToolRegistry): McpPromptProvider {
-  return {
-    async list(actor) {
-      return (await tools.listVisible(actor)).map((tool) => ({
-        name: `tool:${tool.id}`,
-        description: `Invoke the ${tool.id} tool: ${tool.description}`,
-        arguments: [
-          {
-            name: "input",
-            description: `JSON arguments for ${tool.id}, matching its input schema.`,
-            required: tool.sideEffects !== "read",
-          },
-        ],
-      }));
-    },
-    async get(actor, name, args) {
-      if (!name.startsWith("tool:")) {
-        return null;
-      }
-      const toolId = name.slice("tool:".length);
-      const visible = await tools.listVisible(actor);
-      const tool = visible.find((candidate) => candidate.id === toolId);
-      if (tool === undefined) {
-        return null;
-      }
-      const inputText = args.input === undefined ? "{}" : JSON.stringify(args.input, null, 2);
-      return {
-        description: `Invoke the ${tool.id} tool.`,
-        messages: [
-          {
-            role: "user",
-            content: {
-              type: "text",
-              text: [
-                `Call the Helix tool \`${tool.id}\` (${tool.description}).`,
-                `Input schema: ${JSON.stringify(tool.inputSchema.toJsonSchema())}`,
-                `Arguments: ${inputText}`,
-              ].join("\n"),
-            },
-          },
-        ],
-      };
-    },
-  };
+function negotiateProtocolVersion(params: unknown): string {
+  const requested = isRecord(params) ? params.protocolVersion : undefined;
+  return typeof requested === "string" && MCP_SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+    ? requested
+    : MCP_PROTOCOL_VERSION;
 }
 
 /**
- * Result of an MCP request handled over the streaming/SSE transport (PRD §9.5).
- * `events` are emitted in order; for non-streaming methods this is a single
- * `message` event carrying the JSON-RPC response.
+ * A server-to-client message on the Streamable HTTP SSE stream. Every event
+ * uses the standard SSE `message` event carrying one JSON-RPC message.
  */
 export interface McpStreamEvent {
-  readonly event: "message" | "progress";
+  readonly event: "message";
   readonly data: unknown;
 }
 
 /**
- * Handles an MCP request over the SSE/streaming transport. Long-running
- * `tools/call` invocations emit an initial `progress` event so clients (and
- * proxies) keep the connection warm, followed by the terminal `message` event
- * with the JSON-RPC response. Short methods emit a single `message` event.
+ * Handles an MCP request over the SSE response of Streamable HTTP. When the
+ * client supplied `params._meta.progressToken`, a `tools/call` first emits a
+ * `notifications/progress` message for that token (keeping proxies warm);
+ * the terminal event is always the JSON-RPC response.
  */
-export async function* handleMcpStreamingRequest(input: {
-  readonly tools: RuntimeToolRegistry;
-  readonly principal: ToolInvocationPrincipal;
-  readonly request?: RequestContext;
-  readonly body: unknown;
-  readonly resources?: McpResourceProvider;
-  readonly prompts?: McpPromptProvider;
-  readonly idempotencyStore?: IdempotencyStore;
-  readonly limits?: McpRequestLimits;
-}): AsyncGenerator<McpStreamEvent> {
+export async function* handleMcpStreamingRequest(
+  input: McpHandlerInput,
+): AsyncGenerator<McpStreamEvent> {
   const request = parseJsonRpcRequest(input.body);
-  if (request.method === "tools/call") {
+  const progressToken = requestMeta(request.params)?.progressToken;
+  if (
+    request.method === "tools/call" &&
+    (typeof progressToken === "string" || typeof progressToken === "number")
+  ) {
     yield {
-      event: "progress",
-      data: { jsonrpc: "2.0", method: "notifications/progress", params: { progress: 0 } },
+      event: "message",
+      data: {
+        jsonrpc: "2.0",
+        method: "notifications/progress",
+        params: { progressToken, progress: 0, message: "Tool call started." },
+      },
     };
   }
   const response = await handleMcpJsonRpcRequest(input);
@@ -487,115 +345,7 @@ export function createSearchMcpResourceProvider(engine: SearchEngine): McpResour
   };
 }
 
-function parseJsonRpcRequest(body: unknown): JsonRpcRequest {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return { id: null };
-  }
-  const record = body as Record<string, unknown>;
-  const request: JsonRpcRequest = {
-    id: isJsonRpcId(record.id) ? record.id : null,
-    params: record.params,
-  };
-  return typeof record.method === "string" ? { ...request, method: record.method } : request;
-}
-
-function parseToolCallParams(params: unknown):
-  | {
-      readonly name: string;
-      readonly arguments?: unknown;
-      readonly idempotencyKey?: string;
-    }
-  | undefined {
-  if (typeof params !== "object" || params === null || Array.isArray(params)) {
-    return undefined;
-  }
-  const record = params as Record<string, unknown>;
-  const metadata =
-    typeof record._meta === "object" && record._meta !== null && !Array.isArray(record._meta)
-      ? (record._meta as Record<string, unknown>)
-      : undefined;
-  const idempotencyKey =
-    typeof metadata?.idempotencyKey === "string"
-      ? metadata.idempotencyKey
-      : typeof record.idempotencyKey === "string"
-        ? record.idempotencyKey
-        : undefined;
-  return typeof record.name === "string"
-    ? {
-        name: record.name,
-        arguments: record.arguments,
-        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-      }
-    : undefined;
-}
-
-async function invokeMcpMutationIdempotently(input: {
-  readonly input: McpHandlerInput;
-  readonly toolId: string;
-  readonly arguments: unknown;
-  readonly idempotencyKey: string;
-  readonly invoke: () => ReturnType<RuntimeToolRegistry["invoke"]>;
-}): Promise<Awaited<ReturnType<RuntimeToolRegistry["invoke"]>> | JsonRpcErrorResponse> {
-  const store = input.input.idempotencyStore ?? defaultIdempotencyStore(input.input.tools);
-  const storageKey = idempotencyStorageKey({
-    orgId: input.input.principal.actor.orgId,
-    actorId: input.input.principal.actor.id,
-    toolId: input.toolId,
-    idempotencyKey: input.idempotencyKey,
-  });
-  const requestHash = fingerprintRequestPayload({
-    toolId: input.toolId,
-    arguments: input.arguments,
-  });
-  const claim = await store.claim(storageKey, requestHash, DEFAULT_IDEMPOTENCY_TTL_MS);
-  if (claim.kind === "conflict") {
-    return jsonRpcError(null, -32009, "MCP idempotency key was reused with different arguments.");
-  }
-  if (claim.kind === "replay") {
-    return claim.record.result;
-  }
-  if (claim.kind === "in_progress") {
-    const local = inFlightMutations.get(storageKey);
-    if (local !== undefined && local.requestHash === requestHash) {
-      return local.result;
-    }
-    return jsonRpcError(null, -32010, "MCP mutation with this idempotency key is in progress.");
-  }
-
-  const result = input.invoke();
-  inFlightMutations.set(storageKey, { requestHash, result });
-  try {
-    const completed = await result;
-    await store.complete(storageKey, claim.claimToken, {
-      result: completed,
-      statusCode: completed.ok
-        ? completed.status === "pending_confirmation"
-          ? 202
-          : 200
-        : completed.statusCode,
-      requestHash,
-      expiresAt: Date.now() + DEFAULT_IDEMPOTENCY_TTL_MS,
-    });
-    return completed;
-  } catch (error) {
-    await store.release(storageKey, claim.claimToken);
-    throw error;
-  } finally {
-    inFlightMutations.delete(storageKey);
-  }
-}
-
-function defaultIdempotencyStore(tools: RuntimeToolRegistry): IdempotencyStore {
-  const existing = defaultIdempotencyStores.get(tools);
-  if (existing !== undefined) {
-    return existing;
-  }
-  const created = new InMemoryIdempotencyStore();
-  defaultIdempotencyStores.set(tools, created);
-  return created;
-}
-
-function isAuthenticatedMcpPrincipal(principal: ToolInvocationPrincipal): boolean {
+export function isAuthenticatedMcpPrincipal(principal: ToolInvocationPrincipal): boolean {
   return principal.actor.id !== "anonymous" && principal.actor.type !== "system"
     ? principal.actor.orgId !== "00000000-0000-0000-0000-000000000000"
     : principal.actor.type === "system";
@@ -607,10 +357,6 @@ function serializedByteLength(value: unknown): number {
   } catch {
     return Number.POSITIVE_INFINITY;
   }
-}
-
-function isValidIdempotencyKey(value: string): boolean {
-  return value.length >= 8 && value.length <= 200 && /^[\x21-\x7e]+$/u.test(value);
 }
 
 async function dispatchWithDeadline(
@@ -664,18 +410,6 @@ function parsePromptGetParams(
   return { name: record.name, ...(args === undefined ? {} : { arguments: args }) };
 }
 
-function jsonRpcResult(id: JsonRpcId | undefined, result: unknown): JsonRpcResponse {
-  return { jsonrpc: "2.0", id: id ?? null, result };
-}
-
-function jsonRpcError(
-  id: JsonRpcId | undefined,
-  code: number,
-  message: string,
-): JsonRpcErrorResponse {
-  return { jsonrpc: "2.0", id: id ?? null, error: { code, message } };
-}
-
 function mcpHttpError(
   error: unknown,
 ): { readonly statusCode: number; readonly message: string } | null {
@@ -697,10 +431,6 @@ function mcpHttpError(
   };
 }
 
-function isJsonRpcId(value: unknown): value is JsonRpcId {
-  return typeof value === "string" || typeof value === "number" || value === null;
-}
-
 function statusToJsonRpcCode(statusCode: number): number {
   if (statusCode === 400) {
     return -32602;
@@ -709,7 +439,7 @@ function statusToJsonRpcCode(statusCode: number): number {
     return -32003;
   }
   if (statusCode === 404) {
-    return -32601;
+    return -32004;
   }
   if (statusCode === 429) {
     return -32029;

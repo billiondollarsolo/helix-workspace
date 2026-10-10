@@ -1,14 +1,25 @@
 import { systemActor } from "../api/actor.js";
 import { buildAsyncApiDocument } from "../api/asyncapi.js";
 import { createStoreBackedMcpResourceProvider } from "../api/mcp-resources.js";
-import { formatSseEvent, handleMcpJsonRpcRequest, handleMcpStreamingRequest } from "../api/mcp.js";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import {
+  buildProtectedResourceMetadata,
+  handleMcpHttpPost,
+  mcpMethodNotAllowedOutcome,
+  mcpUnauthorizedOutcome,
+  type McpHttpOutcome,
+} from "../api/mcp-http.js";
+import { formatSseEvent } from "../api/mcp.js";
 import { buildOpenApiDocument, openApiDocumentToYaml } from "../api/openapi.js";
 import { projectToolListItem } from "../api/tool-projection.js";
 import { createRequestContext } from "../api/trace.js";
-import { HELIX_API_VERSION_HEADER_VALUE } from "../api/version.js";
+import { HELIX_API_VERSION_HEADER_VALUE, versionedApiPath } from "../api/version.js";
+import { oauthAuthorizationServerMetadata } from "../platform/auth/authorization-server-metadata.js";
+import type { ToolInvocationPrincipal } from "../platform/auth/tool-invocation-principal.js";
 import { resolveCoreAppStatuses } from "../platform/apps/core-apps.js";
 import { registerAssistantStreamRoute } from "./assistant-routes.js";
 import type { installObservability } from "./observability.js";
+import { CredentialAuthError } from "./request-principal.js";
 import { acceptsEventStream } from "./route-scope.js";
 import {
   registerActionStatusRoutes,
@@ -16,7 +27,7 @@ import {
   registerToolRestRoutes,
 } from "./tool-routes.js";
 
-export async function installAgentApi(context: Awaited<ReturnType<typeof installObservability>>) {
+export async function installAgentApi(context: AgentApiContext) {
   const {
     app,
     metrics,
@@ -148,40 +159,92 @@ export async function installAgentApi(context: Awaited<ReturnType<typeof install
       drive: driveStore,
     });
 
+  const publicBaseUrl = mcpPublicBaseUrl(context);
   app.post("/mcp", async (request, reply) => {
-    const principal = await principalFromAuthenticatedRequest(request);
-    const requestContext = createRequestContext(request);
-    // PRD §9.5: when the client negotiates SSE, stream the JSON-RPC response
-    // over text/event-stream so long-running tool calls keep the connection
-    // warm; otherwise fall back to a plain JSON-RPC POST response.
-    if (acceptsEventStream(request)) {
-      reply.raw.writeHead(200, {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache, no-transform",
-        connection: "keep-alive",
-        "api-version": HELIX_API_VERSION_HEADER_VALUE,
-      });
-      for await (const event of handleMcpStreamingRequest({
-        tools,
-        principal,
-        request: requestContext,
-        body: request.body,
-        resources: mcpResourceProvider(),
-        idempotencyStore,
-      })) {
-        reply.raw.write(formatSseEvent(event));
+    let principal: ToolInvocationPrincipal;
+    try {
+      principal = await principalFromAuthenticatedRequest(request);
+    } catch (error) {
+      // MC5: a rejected bearer gets a 401 challenge before any SSE stream opens.
+      if (error instanceof CredentialAuthError && error.statusCode === 401) {
+        return sendMcpOutcome(reply, mcpUnauthorizedOutcome(publicBaseUrl, error.message));
       }
-      reply.raw.end();
-      return reply;
+      throw error;
     }
-    return handleMcpJsonRpcRequest({
+    const outcome = await handleMcpHttpPost({
       tools,
       principal,
-      request: requestContext,
+      request: createRequestContext(request),
       body: request.body,
       resources: mcpResourceProvider(),
       idempotencyStore,
+      headers: request.headers,
+      acceptsEventStream: acceptsEventStream(request),
+      publicBaseUrl,
     });
+    return sendMcpOutcome(reply, outcome);
   });
+  // MC6: no server-initiated SSE stream and no session teardown endpoint.
+  app.get("/mcp", async (_request, reply) => sendMcpOutcome(reply, mcpMethodNotAllowedOutcome()));
+  app.delete("/mcp", async (_request, reply) =>
+    sendMcpOutcome(reply, mcpMethodNotAllowedOutcome()),
+  );
   return { ...context };
+}
+
+type AgentApiContext = Awaited<ReturnType<typeof installObservability>>;
+
+/** Public origin used for MCP metadata and approval links. */
+function mcpPublicBaseUrl(context: Pick<AgentApiContext, "bootEnv" | "oauthIssuer">): string {
+  return (
+    context.bootEnv.HELIX_PUBLIC_URL ??
+    context.bootEnv.PUBLIC_BASE_URL ??
+    context.oauthIssuer
+  ).replace(/\/+$/u, "");
+}
+
+export async function sendMcpOutcome(reply: FastifyReply, outcome: McpHttpOutcome) {
+  if (outcome.kind === "stream") {
+    reply.raw.writeHead(outcome.statusCode, {
+      ...outcome.headers,
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "api-version": HELIX_API_VERSION_HEADER_VALUE,
+    });
+    for await (const event of outcome.events) {
+      reply.raw.write(formatSseEvent(event));
+    }
+    reply.raw.end();
+    return reply;
+  }
+  reply.code(outcome.statusCode).headers(outcome.headers);
+  return outcome.body === undefined ? reply.send() : reply.send(outcome.body);
+}
+
+/**
+ * Root-level discovery documents for MCP clients (MC5): RFC 9728 protected
+ * resource metadata and an issuer-relative RFC 8414 alias. Registered on the
+ * root app because well-known URIs are not versioned.
+ */
+export function registerMcpWellKnownRoutes(
+  app: FastifyInstance,
+  context: Pick<AgentApiContext, "bootEnv" | "oauthIssuer" | "tools">,
+): void {
+  const publicBaseUrl = mcpPublicBaseUrl(context);
+  const protectedResource = async (_request: FastifyRequest, reply: FastifyReply) =>
+    reply.header("cache-control", "public, max-age=300").send(
+      buildProtectedResourceMetadata({
+        publicBaseUrl,
+        authorizationServer: context.oauthIssuer,
+        tools: context.tools.list(),
+      }),
+    );
+  app.get("/.well-known/oauth-protected-resource", protectedResource);
+  app.get(`/.well-known/oauth-protected-resource${versionedApiPath("/mcp")}`, protectedResource);
+  app.get("/.well-known/oauth-authorization-server", async (_request, reply) =>
+    reply
+      .header("cache-control", "public, max-age=3600")
+      .send(oauthAuthorizationServerMetadata(context.oauthIssuer)),
+  );
 }

@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { uploadLocalDriveFile } from "./upload.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
+import { setTimeout as wait } from "node:timers/promises";
 
 import {
   buildHelixRequest,
@@ -11,9 +13,28 @@ import {
   buildMcpToolListRequest,
   credentialFilePath,
   type HelixCliEnv,
+  type HelixRequest,
 } from "./client.js";
 import { generateCompletionScript } from "./completion.js";
-import { CliUsageError, type HelixCommand, parseCliArgs, usage } from "./parser.js";
+import {
+  createHttpClient,
+  EXIT_CODES,
+  sendForText,
+  type FetchLike,
+  type HttpClient,
+} from "./http.js";
+import {
+  extractGlobalOptions,
+  type GlobalOptions,
+  pendingActionId,
+  reportError,
+  reportPending,
+  wantsJsonOutput,
+} from "./options.js";
+import { CliUsageError, type HelixCommand, type JsonArgument, parseCliArgs } from "./parser.js";
+import { scopedUsage, usage } from "./usage.js";
+
+export type { FetchLike } from "./http.js";
 
 export interface CliIo {
   readonly stdout: NodeJS.WritableStream;
@@ -21,17 +42,31 @@ export interface CliIo {
   readonly stdin: NodeJS.ReadableStream;
 }
 
-export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+/** Test seams for retry backoff and idempotency key generation. */
+export interface CliDependencies {
+  readonly sleep?: (ms: number) => Promise<void>;
+  readonly randomUUID?: () => string;
+}
+
+/** Everything a command needs to talk to Helix for one CLI invocation. */
+export interface CliContext {
+  readonly env: HelixCliEnv;
+  readonly io: CliIo;
+  readonly http: HttpClient;
+  readonly options: GlobalOptions;
+  /** Idempotency-Key for this invocation's tool calls, reused across retries. */
+  readonly idempotencyKey: string;
+  readonly newIdempotencyKey: () => string;
+}
 
 export async function runCli(
   args: readonly string[],
   env: HelixCliEnv,
   io: CliIo,
   fetchImpl: FetchLike = fetch,
+  dependencies: CliDependencies = {},
 ): Promise<number> {
-  const transport = fetchImpl;
-  fetchImpl = (url, init) =>
-    transport(url, { ...init, redirect: "error", signal: AbortSignal.timeout(120_000) });
+  let output: GlobalOptions["output"] = wantsJsonOutput(args) ? "json" : "text";
   try {
     if (args.length === 1 && args[0] === "--version") {
       const metadata = JSON.parse(
@@ -40,73 +75,97 @@ export async function runCli(
       io.stdout.write(`helix ${metadata.version}\n`);
       return 0;
     }
-    const command = parseCliArgs(args);
+    const extracted = extractGlobalOptions(args, env);
+    const options = extracted.options;
+    output = options.output;
+    if (options.help !== undefined) {
+      io.stdout.write(`${options.help.length === 0 ? usage : scopedUsage(options.help)}\n`);
+      return 0;
+    }
+    const command = parseCliArgs(extracted.args);
     if (command.kind === "help") {
       io.stdout.write(`${usage}\n`);
       return 0;
     }
 
-    if (command.kind === "mcp-serve") {
-      return await serveMcpStdio(env, io, fetchImpl);
-    }
+    const newIdempotencyKey = dependencies.randomUUID ?? randomUUID;
+    const context: CliContext = {
+      env,
+      io,
+      options,
+      http: createHttpClient(fetchImpl, {
+        timeoutMs: options.timeoutMs,
+        sleep: dependencies.sleep ?? ((ms) => wait(ms)),
+      }),
+      idempotencyKey: options.idempotencyKey ?? newIdempotencyKey(),
+      newIdempotencyKey,
+    };
+    return await runCommand(command, context);
+  } catch (error) {
+    return reportError(io.stderr, output, error, usage);
+  }
+}
 
-    if (command.kind === "completion") {
+async function runCommand(command: HelixCommand, context: CliContext): Promise<number> {
+  const { env, io } = context;
+  switch (command.kind) {
+    case "mcp-serve":
+      return await serveMcpStdio(context);
+    case "completion":
       io.stdout.write(generateCompletionScript(command.shell));
       return 0;
-    }
-
-    if (command.kind === "logout") {
+    case "logout":
       return logout(env, io);
-    }
-
-    if (command.kind === "tool-list" && command.source === "openapi") {
-      return await listOpenApiTools(env, io, fetchImpl);
-    }
-
-    if (command.kind === "tool-list" && command.source === "mcp") {
-      return await listMcpTools(env, io, fetchImpl);
-    }
-
-    if (command.kind === "mcp-resource-list") {
-      return await listMcpResources(env, io, fetchImpl);
-    }
-
-    if (command.kind === "mcp-resource-read") {
-      return await readMcpResource(command.uri, env, io, fetchImpl);
-    }
-
-    if (command.kind === "tool-describe") {
-      return await describeOpenApiTool(command.toolId, env, io, fetchImpl);
-    }
-
-    if (command.kind === "tool-call" && command.transport === "mcp") {
-      const input = await resolveToolInput(command.json, io.stdin);
-      return await callMcpTool(command.toolId, input, env, io, fetchImpl);
-    }
-
-    const input =
-      command.kind === "tool-call" ? await resolveToolInput(command.json, io.stdin) : undefined;
-    if (command.kind === "tool-call" && command.uploadPath !== undefined) {
-      return await uploadLocalDriveFile(command.uploadPath, input, env, io, fetchImpl);
-    }
-    const request = buildHelixRequest(command, env, input);
-    const response = await fetchImpl(request.url, request.init);
-    const text = await response.text();
-
-    if (!response.ok) {
-      io.stderr.write(formatHttpError(response.status, text));
-      return 1;
-    }
-
-    io.stdout.write(formatCommandOutput(command, text));
-    return 0;
-  } catch (error) {
-    io.stderr.write(`${formatError(error)}\n`);
-    if (error instanceof CliUsageError) {
-      io.stderr.write(`${usage}\n`);
-    }
-    return 1;
+    case "mcp-resource-list":
+      return await writeMcpJsonResult(buildMcpResourceListRequest(env), context);
+    case "mcp-resource-read":
+      return await writeMcpJsonResult(buildMcpResourceReadRequest(env, command.uri), context);
+    case "tool-describe":
+      return await describeOpenApiTool(command.toolId, context);
+    default:
+      break;
   }
+  if (command.kind === "tool-list" && command.source === "openapi") {
+    io.stdout.write(formatJsonValue({ tools: projectOpenApiTools(await fetchOpenApi(context)) }));
+    return 0;
+  }
+  if (command.kind === "tool-list" && command.source === "mcp") {
+    const result = await fetchMcpResult(buildMcpToolListRequest(env), context, true);
+    io.stdout.write(formatJsonValue(normalizeMcpToolListResult(result)));
+    return 0;
+  }
+
+  const input =
+    command.kind === "tool-call" ? await resolveToolInput(command.json, io.stdin) : undefined;
+  if (command.kind === "tool-call" && command.transport === "mcp") {
+    return await callMcpTool(command.toolId, input, context);
+  }
+  if (command.kind === "tool-call" && command.uploadPath !== undefined) {
+    return await uploadLocalDriveFile(command.uploadPath, input, context);
+  }
+  const isToolCall = command.kind === "tool-call";
+  const request = buildHelixRequest(
+    command,
+    env,
+    input,
+    isToolCall ? context.idempotencyKey : undefined,
+  );
+  const text = await sendForText(request, context, isToolCall || request.init.method === "GET");
+  io.stdout.write(formatCommandOutput(command, text.body));
+  return text.status === 202 ? reportPendingBody(text.body, context) : 0;
+}
+
+function reportPendingBody(body: string, context: CliContext): number {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch {
+    return 0;
+  }
+  const actionId = pendingActionId(parsed);
+  return actionId === undefined
+    ? 0
+    : reportPending(context.io.stderr, context.options.output, actionId);
 }
 
 type OpenApiToolProjection = {
@@ -135,54 +194,22 @@ type MutableOpenApiToolProjection = {
   outputSchema?: OpenApiSchemaValue;
 };
 
-async function listOpenApiTools(
-  env: HelixCliEnv,
-  io: CliIo,
-  fetchImpl: FetchLike,
-): Promise<number> {
-  const document = await fetchOpenApiDocument(env, io, fetchImpl);
-  if (document === undefined) {
-    return 1;
-  }
-
-  io.stdout.write(formatJsonValue({ tools: projectOpenApiTools(document) }));
-  return 0;
-}
-
-async function describeOpenApiTool(
-  toolId: string,
-  env: HelixCliEnv,
-  io: CliIo,
-  fetchImpl: FetchLike,
-): Promise<number> {
-  const document = await fetchOpenApiDocument(env, io, fetchImpl);
-  if (document === undefined) {
-    return 1;
-  }
-
+async function describeOpenApiTool(toolId: string, context: CliContext): Promise<number> {
+  const document = await fetchOpenApi(context);
   const tool = projectOpenApiTools(document).find((entry) => entry.id === toolId);
   if (tool === undefined) {
-    io.stderr.write(`Tool not found in OpenAPI document: ${toolId}\n`);
-    return 1;
+    context.io.stderr.write(`Tool not found in OpenAPI document: ${toolId}\n`);
+    return EXIT_CODES.notFound;
   }
 
-  io.stdout.write(formatJsonValue(tool));
+  context.io.stdout.write(formatJsonValue(tool));
   return 0;
 }
 
-async function fetchOpenApiDocument(
-  env: HelixCliEnv,
-  io: CliIo,
-  fetchImpl: FetchLike,
-): Promise<Record<string, unknown> | undefined> {
-  const request = buildHelixRequest({ kind: "openapi-get" }, env);
-  const response = await fetchImpl(request.url, request.init);
-  const text = await response.text();
-  if (!response.ok) {
-    io.stderr.write(formatHttpError(response.status, text));
-    return undefined;
-  }
-  const parsed = parseJsonText(text, "OpenAPI document");
+async function fetchOpenApi(context: CliContext): Promise<Record<string, unknown>> {
+  const request = buildHelixRequest({ kind: "openapi-get" }, context.env);
+  const { body } = await sendForText(request, context, true);
+  const parsed = parseJsonText(body, "OpenAPI document");
   if (!isRecord(parsed)) {
     throw new Error("OpenAPI document was not a JSON object.");
   }
@@ -191,86 +218,32 @@ async function fetchOpenApiDocument(
 
 /**
  * Performs an MCP JSON-RPC request and returns the wrapped `result` payload.
- * Returns `undefined` after writing the HTTP or JSON-RPC failure to stderr, so
- * callers only have to decide how to render a success.
+ * HTTP failures throw {@link HttpError}; JSON-RPC errors throw their message.
  */
 async function fetchMcpResult(
-  request: ReturnType<typeof buildMcpRequest>,
-  io: CliIo,
-  fetchImpl: FetchLike,
-): Promise<{ readonly value: unknown } | undefined> {
-  const response = await fetchImpl(request.url, request.init);
-  const text = await response.text();
-  if (!response.ok) {
-    io.stderr.write(formatHttpError(response.status, text));
-    return undefined;
-  }
-
-  const result = parseMcpResult(text);
+  request: HelixRequest,
+  context: CliContext,
+  idempotent: boolean,
+): Promise<unknown> {
+  const { body } = await sendForText(request, context, idempotent);
+  const result = parseMcpResult(body);
   if (!result.ok) {
-    io.stderr.write(`${result.message}\n`);
-    return undefined;
+    throw new Error(result.message);
   }
-
-  return { value: result.value };
+  return result.value;
 }
 
-async function listMcpTools(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike): Promise<number> {
-  const result = await fetchMcpResult(buildMcpToolListRequest(env), io, fetchImpl);
-  if (result === undefined) {
-    return 1;
-  }
-
-  io.stdout.write(formatJsonValue(normalizeMcpToolListResult(result.value)));
-  return 0;
+async function callMcpTool(toolId: string, input: unknown, context: CliContext): Promise<number> {
+  const request = buildMcpToolCallRequest(context.env, toolId, input, context.idempotencyKey);
+  // MCP honours the idempotency key only for agent mutations, so network
+  // errors are not retried here; 429 is still retried.
+  const result = await fetchMcpResult(request, context, false);
+  context.io.stdout.write(formatJsonValue(unwrapMcpToolCallResult(result)));
+  return isRecord(result) && result.isError === true ? 1 : 0;
 }
 
-async function callMcpTool(
-  toolId: string,
-  input: unknown,
-  env: HelixCliEnv,
-  io: CliIo,
-  fetchImpl: FetchLike,
-): Promise<number> {
-  const result = await fetchMcpResult(buildMcpToolCallRequest(env, toolId, input), io, fetchImpl);
-  if (result === undefined) {
-    return 1;
-  }
-
-  io.stdout.write(formatJsonValue(unwrapMcpToolCallResult(result.value)));
-  return isRecord(result.value) && result.value.isError === true ? 1 : 0;
-}
-
-async function listMcpResources(
-  env: HelixCliEnv,
-  io: CliIo,
-  fetchImpl: FetchLike,
-): Promise<number> {
-  const request = buildMcpResourceListRequest(env);
-  return await writeMcpJsonResult(request, io, fetchImpl);
-}
-
-async function readMcpResource(
-  uri: string,
-  env: HelixCliEnv,
-  io: CliIo,
-  fetchImpl: FetchLike,
-): Promise<number> {
-  const request = buildMcpResourceReadRequest(env, uri);
-  return await writeMcpJsonResult(request, io, fetchImpl);
-}
-
-async function writeMcpJsonResult(
-  request: ReturnType<typeof buildMcpRequest>,
-  io: CliIo,
-  fetchImpl: FetchLike,
-): Promise<number> {
-  const result = await fetchMcpResult(request, io, fetchImpl);
-  if (result === undefined) {
-    return 1;
-  }
-
-  io.stdout.write(formatJsonValue(result.value));
+async function writeMcpJsonResult(request: HelixRequest, context: CliContext): Promise<number> {
+  context.io.stdout.write(formatJsonValue(await fetchMcpResult(request, context, true)));
   return 0;
 }
 
@@ -438,7 +411,8 @@ type McpInputFrame = {
   readonly framing: "content-length" | "line";
 };
 
-async function serveMcpStdio(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike): Promise<number> {
+async function serveMcpStdio(context: CliContext): Promise<number> {
+  const { io } = context;
   let buffer: Buffer = Buffer.alloc(0);
 
   for await (const chunk of io.stdin) {
@@ -446,13 +420,13 @@ async function serveMcpStdio(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike):
     const parsed = extractMcpFrames(buffer, false);
     buffer = parsed.remaining;
     for (const frame of parsed.frames) {
-      await forwardMcpFrame(frame, env, io, fetchImpl);
+      await forwardMcpFrame(frame, context);
     }
   }
 
   const parsed = extractMcpFrames(buffer, true);
   for (const frame of parsed.frames) {
-    await forwardMcpFrame(frame, env, io, fetchImpl);
+    await forwardMcpFrame(frame, context);
   }
   if (parsed.remaining.toString("utf8").trim().length > 0) {
     throw new Error("Incomplete MCP JSON-RPC message.");
@@ -461,12 +435,8 @@ async function serveMcpStdio(env: HelixCliEnv, io: CliIo, fetchImpl: FetchLike):
   return 0;
 }
 
-async function forwardMcpFrame(
-  frame: McpInputFrame,
-  env: HelixCliEnv,
-  io: CliIo,
-  fetchImpl: FetchLike,
-): Promise<void> {
+async function forwardMcpFrame(frame: McpInputFrame, context: CliContext): Promise<void> {
+  const { env, io } = context;
   let message: unknown;
   const failure = (id: string | number | null, code: number, reason: string) =>
     writeMcpFrame(
@@ -496,7 +466,8 @@ async function forwardMcpFrame(
   const id = notification ? null : (message.id as string | number | null);
   try {
     const request = buildMcpRequest(env, frame.body);
-    const response = await fetchImpl(request.url, request.init);
+    // The MCP client owns retries for forwarded frames; only 429 is retried here.
+    const response = await context.http.send(request.url, request.init, { idempotent: false });
     if (!response.ok) {
       if (!notification)
         await failure(id, -32000, `Helix MCP request failed (${String(response.status)}).`);
@@ -596,19 +567,31 @@ async function writeMcpFrame(
 }
 
 async function resolveToolInput(
-  json: { readonly source: "empty" | "inline" | "stdin"; readonly value?: string },
-  stdin: NodeJS.ReadableStream,
+  json: JsonArgument,
+  stdin: NodeJS.ReadableStream & { readonly isTTY?: boolean },
 ): Promise<unknown> {
   if (json.source === "empty") {
     return {};
   }
+  if (json.source === "stdin" && stdin.isTTY === true) {
+    // CA14: never block waiting for an interactive terminal.
+    throw new CliUsageError(
+      "--json without a value reads JSON from stdin, but stdin is a terminal. Pass --json '<JSON>' or pipe JSON into the command.",
+    );
+  }
 
   const raw = json.source === "inline" ? json.value : await readAll(stdin);
-  if (raw === undefined || raw.trim().length === 0) {
+  if (raw.trim().length === 0) {
     return {};
   }
 
-  return JSON.parse(raw) as unknown;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    const where = json.source === "inline" ? "--json argument" : "stdin";
+    const reason = error instanceof Error ? error.message : "invalid JSON";
+    throw new CliUsageError(`Invalid JSON in ${where}: ${reason}`);
+  }
 }
 
 async function readAll(stream: NodeJS.ReadableStream): Promise<string> {
@@ -667,11 +650,6 @@ function parseAccessToken(text: string): string | undefined {
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function formatHttpError(status: number, text: string): string {
-  const body = text.trim().length === 0 ? "" : ` ${text}`;
-  return `Helix API request failed (${String(status)}).${body}\n`;
 }
 
 function formatError(error: unknown): string {

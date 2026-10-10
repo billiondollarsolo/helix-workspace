@@ -12,6 +12,8 @@ export interface HelixCliEnv {
   readonly HELIX_API_KEY?: string;
   readonly HELIX_TRACE_TOKEN?: string;
   readonly HELIX_CREDENTIALS_FILE?: string;
+  /** Per-request timeout in seconds (default 120). */
+  readonly HELIX_TIMEOUT?: string;
   readonly XDG_CONFIG_HOME?: string;
   readonly HOME?: string;
 }
@@ -48,6 +50,7 @@ export function buildHelixRequest(
   command: HelixCommand,
   env: HelixCliEnv,
   input?: unknown,
+  idempotencyKey?: string,
 ): HelixRequest {
   switch (command.kind) {
     case "tool-list":
@@ -55,16 +58,28 @@ export function buildHelixRequest(
         throw new Error(`Command does not map to a REST tool list request: ${command.source}`);
       }
       return createRequest(env, "GET", "/api/tools");
-    case "tool-call":
+    case "tool-call": {
       if (command.transport !== undefined && command.transport !== "rest") {
         throw new Error(`Command does not map to a REST tool call request: ${command.transport}`);
       }
-      return createRequest(
+      const request = createRequest(
         env,
         "POST",
         `/api/tools/${encodeURIComponent(command.toolId)}`,
         input ?? {},
       );
+      // CA9: the server replays the first result for a repeated key, so the
+      // CLI can retry a tool call without executing it twice.
+      return idempotencyKey === undefined
+        ? request
+        : {
+            url: request.url,
+            init: {
+              ...request.init,
+              headers: { ...request.init.headers, "idempotency-key": idempotencyKey },
+            },
+          };
+    }
     case "auth-token":
       return createFormRequest(env, "/oauth/token", {
         grant_type: "client_credentials",
@@ -138,6 +153,7 @@ export function buildMcpToolCallRequest(
   env: HelixCliEnv,
   toolId: string,
   input: unknown,
+  idempotencyKey?: string,
 ): HelixRequest {
   return buildMcpRequest(
     env,
@@ -148,6 +164,7 @@ export function buildMcpToolCallRequest(
       params: {
         name: toolId,
         arguments: input ?? {},
+        ...(idempotencyKey === undefined ? {} : { _meta: { idempotencyKey } }),
       },
     }),
   );

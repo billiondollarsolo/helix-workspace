@@ -4,6 +4,7 @@ import { runCli } from "./runner.js";
 
 export { buildHelixRequest, buildMcpRequest } from "./client.js";
 export { parseCliArgs } from "./parser.js";
+export { CLI_TOOL_IDS } from "./tool-ids.js";
 export type { HelixCliEnv, HelixRequest } from "./client.js";
 export type { HelixCommand, JsonArgument } from "./parser.js";
 

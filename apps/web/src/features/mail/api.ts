@@ -72,8 +72,9 @@ export interface MailSearchHit {
   readonly starred?: boolean;
 }
 
-interface MailThreadMessage {
+export interface MailThreadMessage {
   readonly id: string;
+  readonly subject?: string;
   readonly from?: MailApiAddress;
   readonly to: readonly MailApiAddress[];
   readonly cc: readonly MailApiAddress[];
@@ -143,8 +144,20 @@ export interface MailSendInput {
   readonly sendAt?: string;
 }
 
-export interface MailReplyInput extends MailSendInput {
+export interface MailReplyInput extends Omit<MailSendInput, "to" | "subject"> {
   readonly threadId: string;
+  /** Message being answered; the server defaults to the latest one not sent by the user. */
+  readonly messageId?: string;
+  /** Explicit recipients; omitted, the server derives Reply-To/From (and To/Cc for reply all). */
+  readonly to?: readonly MailApiAddress[];
+  readonly subject?: string;
+  readonly replyAll?: boolean;
+}
+
+export interface MailForwardInput extends Omit<MailSendInput, "draft" | "attachments"> {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly includeAttachments?: boolean;
 }
 
 export interface MailSendResult {
@@ -336,12 +349,39 @@ export async function replyToMail(
     "mail.reply",
     {
       threadId: input.threadId,
+      ...(input.messageId === undefined ? {} : { messageId: input.messageId }),
+      ...(input.replyAll === true ? { replyAll: true } : {}),
+      ...(input.from === undefined ? {} : { from: input.from }),
+      ...(input.to === undefined ? {} : { to: input.to }),
+      cc: input.cc ?? [],
+      bcc: input.bcc ?? [],
+      ...(input.subject === undefined ? {} : { subject: input.subject }),
+      bodyText: input.bodyText,
+      ...(input.sendAt === undefined ? {} : { sendAt: input.sendAt }),
+    },
+    fetchImpl,
+  );
+}
+
+/** Forward one message as a new thread; the server quotes it and re-attaches its files. */
+export async function forwardMail(
+  input: MailForwardInput,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<MailSendResult> {
+  return callMailTool<MailSendResult>(
+    "mail.forward",
+    {
+      threadId: input.threadId,
+      messageId: input.messageId,
       ...(input.from === undefined ? {} : { from: input.from }),
       to: input.to,
       cc: input.cc ?? [],
       bcc: input.bcc ?? [],
       subject: input.subject,
       bodyText: input.bodyText,
+      ...(input.includeAttachments === undefined
+        ? {}
+        : { includeAttachments: input.includeAttachments }),
       ...(input.sendAt === undefined ? {} : { sendAt: input.sendAt }),
     },
     fetchImpl,

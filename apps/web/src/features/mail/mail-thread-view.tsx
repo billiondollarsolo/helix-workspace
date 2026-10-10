@@ -1,6 +1,4 @@
-import { MailSenderSelect, useMailSender } from "./mail-sender-select";
 import { Avatar } from "@/components/ui/avatar";
-import { useMutation } from "@tanstack/react-query";
 import {
   Archive as ArchiveIcon,
   ArrowLeft as ArrowLeftIcon,
@@ -9,27 +7,17 @@ import {
   Forward as ForwardIcon,
   Inbox as InboxIcon,
   Reply as ReplyIcon,
-  Send as SendIcon,
   Clock as SnoozeIcon,
   Tag as TagIcon,
   Trash2 as TrashIcon,
-  X as XIcon,
 } from "lucide-react";
-import { useCallback, useState } from "react";
-import {
-  replyToMail,
-  type MailLabelSummary,
-  type MailSendInput,
-  type MailThreadDetail,
-  type MailThreadRow,
-} from "./api";
-import { parseRecipients } from "./mail-compose";
+import { useState } from "react";
+import type { MailLabelSummary, MailThreadDetail, MailThreadRow } from "./api";
 import { MailHtmlBody } from "./mail-html-body";
+import { MailReplyPanel, type ReplyMode } from "./mail-reply-panel";
 import { formatThreadTime, isBetaSpamCatch } from "./mail-view-helpers";
 
 /* --------------------------------------------------------------- thread view */
-
-type ReplyMode = "reply" | "replyAll" | "forward";
 
 interface ThreadViewProps {
   readonly row: MailThreadRow;
@@ -72,68 +60,12 @@ export function ThreadView({
   actionError,
 }: ThreadViewProps) {
   const [replyMode, setReplyMode] = useState<ReplyMode | null>(null);
-  const sender = useMailSender(undefined, replyMode !== null);
-  const [replyText, setReplyText] = useState("");
-  const [replyTo, setReplyTo] = useState("");
-  const [replyFailed, setReplyFailed] = useState(false);
   const senderName = row.from.split(",")[0] ?? row.from;
   const subject = detail?.subject ?? row.subject;
   const labels = (detail?.labels ?? row.labels)
     .map((slug) => labelColors.get(slug))
     .filter((label): label is MailLabelSummary => label != null);
   const messages = detail?.messages ?? [];
-  const participantCount = detail?.participants.length ?? row.messageCount;
-
-  const replyMutation = useMutation({
-    mutationFn: (input: MailSendInput) => replyToMail({ ...input, threadId: row.threadId }),
-    onMutate: () => {
-      setReplyFailed(false);
-    },
-    onError: () => {
-      setReplyFailed(true);
-    },
-    onSuccess: () => {
-      setReplyMode(null);
-      setReplyText("");
-      setReplyTo("");
-    },
-  });
-
-  const closeReply = useCallback(() => {
-    setReplyMode(null);
-    setReplyText("");
-    setReplyTo("");
-    setReplyFailed(false);
-  }, []);
-
-  const handleReplySend = useCallback(() => {
-    const fallbackAddress = detail?.messages.at(-1)?.from?.address ?? row.fromEmail;
-    const recipients =
-      replyMode === "forward"
-        ? parseRecipients(replyTo)
-        : fallbackAddress.trim() === ""
-          ? []
-          : [{ address: fallbackAddress }];
-    if (!sender.authorized || recipients.length === 0 || replyText.trim() === "") {
-      return;
-    }
-    replyMutation.mutate({
-      from: { address: sender.from },
-      to: recipients,
-      subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
-      bodyText: replyText,
-    });
-  }, [
-    detail,
-    replyMode,
-    replyMutation,
-    replyText,
-    replyTo,
-    row.fromEmail,
-    sender.authorized,
-    sender.from,
-    subject,
-  ]);
 
   return (
     <div className="flex-1 flex flex-col bg-card">
@@ -396,78 +328,17 @@ export function ThreadView({
           </div>
 
           {replyMode != null && (
-            <div className="mt-4 bg-card [border:1px_solid_var(--accent-soft-border)] rounded-lg p-0 [box-shadow:0_0_0_3px_var(--accent-soft)]">
-              <div className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2 [font-size:var(--text-meta)]">
-                {replyMode === "forward" ? <ForwardIcon size={16} /> : <ReplyIcon size={16} />}
-                <span className="font-semibold">
-                  {replyMode === "reply" && `Replying to ${senderName}`}
-                  {replyMode === "replyAll" && `Replying all (${String(participantCount)} people)`}
-                  {replyMode === "forward" && `Forwarding "${subject}"`}
-                </span>
-                <button
-                  type="button"
-                  className="icon-btn ml-auto"
-
-                  onClick={closeReply}
-                  aria-label="Close reply"
-                >
-                  <XIcon size={16} />
-                </button>
-              </div>
-              <div className="px-3.5">
-                <MailSenderSelect sender={sender} disabled={replyMutation.isPending} />
-              </div>
-              {replyMode === "forward" && (
-                <div className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2">
-                  <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">
-                    To
-                  </span>
-                  <input
-                    className="input flex-1 [border:none] h-6.5"
-                    aria-label="Forward recipients"
-                    placeholder="Add recipients"
-                    value={replyTo}
-                    onChange={(event) => {
-                      setReplyTo(event.target.value);
-                    }}
-                  />
-                </div>
-              )}
-              <textarea
-                value={replyText}
-                onChange={(event) => {
-                  setReplyText(event.target.value);
-                }}
-                placeholder="Write your reply…"
-                aria-label="Reply body"
-                className="w-full min-h-30 p-3.5 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)] [line-height:1.55] [resize:vertical] [font-family:inherit]"
-              />
-              {replyFailed && (
-                <div className="[margin:0_14px_8px] [font-size:var(--text-caption)] text-destructive">
-                  Could not send reply. Try again.
-                </div>
-              )}
-              <div className="flex items-center gap-1 [padding:8px_12px] [border-top:1px_solid_var(--border)]">
-                <button
-                  type="button"
-                  className="btn primary"
-                  disabled={
-                    replyMutation.isPending || replyText.trim() === "" || !sender.authorized
-                  }
-                  onClick={handleReplySend}
-                >
-                  <SendIcon size={16} /> {replyMutation.isPending ? "Sending…" : "Send"}
-                </button>
-                <button
-                  type="button"
-                  className="btn ghost ml-auto"
-
-                  onClick={closeReply}
-                >
-                  Discard
-                </button>
-              </div>
-            </div>
+            <MailReplyPanel
+              key={replyMode}
+              mode={replyMode}
+              threadId={row.threadId}
+              subject={subject}
+              senderName={senderName}
+              original={messages.at(-1)}
+              onClose={() => {
+                setReplyMode(null);
+              }}
+            />
           )}
         </div>
       </div>

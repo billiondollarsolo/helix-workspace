@@ -25,6 +25,16 @@ test.describe("/assistant feature flow", () => {
 
     const composer = page.getByRole("textbox", { name: "Message Helix AI" });
     await composer.fill(prompt);
+
+    const modelPicker = page.getByRole("combobox", { name: "Assistant model" });
+    await expect(modelPicker).not.toHaveText("Loading models…");
+    if (isLiveBackend() && (await modelPicker.isDisabled())) {
+      // The live stack configures no AI provider: the composer must say so and
+      // refuse to send rather than pretend to answer.
+      await expect(modelPicker).toHaveText("No models available");
+      await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+      return;
+    }
     await page.getByRole("button", { name: "Send message" }).click();
 
     // The user's prompt is echoed into the conversation regardless of backend.

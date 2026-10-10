@@ -97,7 +97,7 @@ test("keeps a genuine permission denial on the page without a login loop", async
     return route.fulfill({ json: {} });
   });
   await page.goto("/admin/users");
-  await expect(page.getByText("Admin users failed with 403")).toBeVisible();
+  await expect(page.getByRole("alert").getByText("Denied for this role.")).toBeVisible();
   await expect(page).toHaveURL(/\/admin\/users$/u);
   // Existing directory loader prefetches once; the mounted query reports the denial once.
   expect(requests).toBe(2);

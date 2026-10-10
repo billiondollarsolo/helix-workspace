@@ -182,4 +182,4 @@ export function adminFileShareRole(share: TeamFileShare): "editor" | "reader" | 
   return null;
 }
 
-export { teamFileFixtures, type TeamFileFixture } from "./local-team-drive-files.js";
+export { teamFileFixtures } from "./local-team-drive-files.js";

@@ -1,16 +1,13 @@
 import type { MemoryEmbeddingProvider } from "../memory/types.js";
 
 /** Local fallback when the chat provider (Groq, etc.) has no embeddings API. */
-export const LOCAL_EMBEDDING_DIMENSIONS = 384;
+const LOCAL_EMBEDDING_DIMENSIONS = 384;
 
 export function localEmbeddingsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.HELIX_LOCAL_EMBEDDINGS !== "false";
 }
 
-export function hashedEmbedding(
-  text: string,
-  dimensions = LOCAL_EMBEDDING_DIMENSIONS,
-): readonly number[] {
+function hashedEmbedding(text: string, dimensions = LOCAL_EMBEDDING_DIMENSIONS): readonly number[] {
   const vector = Array.from({ length: dimensions }, () => 0);
   const tokens = text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
   for (const token of tokens) {

@@ -29,6 +29,9 @@ All notable changes to Helix Workspace are documented here. This file follows
   rename reports success or the server's error.
 - Renaming an unknown Drive file reports a file error instead of an unknown folder.
 - The Drive share dialog closes with Escape and focuses the people field when opened.
+- Search reindex keyset cursors keep PostgreSQL's microsecond precision, so rows
+  that share one millisecond (bulk seeds and imports) no longer return the same
+  page forever and stall demo preparation.
 - Local startup supports rrule's CommonJS export and existing Meilisearch indexes;
   mail retention uses the database clock for its default cutoff.
 - Fresh demo setup supplies current identity, Calendar, Chat, and Mail delivery

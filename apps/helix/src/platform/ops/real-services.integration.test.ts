@@ -74,8 +74,10 @@ describe.runIf(enabled)("mandatory real-service contracts", () => {
     ).resolves.toMatchObject({ hits: [] });
 
     const scanner = createClamAvVirusScanner({ host: clamavHost, port: clamavPort });
-    await expect(scanner.scan(Buffer.from("ordinary workspace file"))).resolves.toEqual({
+    await expect(scanner.scan(Buffer.from("ordinary workspace file"))).resolves.toMatchObject({
       clean: true,
+      disposition: "allow",
+      securityScan: { state: "clean", evidence: { scannerName: "clamav" } },
     });
     await expect(
       scanner.scan(

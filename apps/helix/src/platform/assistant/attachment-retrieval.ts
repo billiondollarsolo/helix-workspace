@@ -63,7 +63,12 @@ async function retrieveBody(
   if (embed === undefined || queryVector === undefined || query.trim().length === 0)
     return excerpt(body, limit);
   const chunks = chunkDocument(
-    { id: source.id, type: source.type, title: source.title, body },
+    {
+      id: source.id,
+      type: source.type,
+      ...(source.title === undefined ? {} : { title: source.title }),
+      body,
+    },
     chunking,
   ).slice(0, maxChunksPerFile);
   if (chunks.length === 0) return excerpt(body, limit);

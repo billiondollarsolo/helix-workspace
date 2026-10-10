@@ -151,6 +151,130 @@ Per area: focused vitest, eslint, and tsc. Whole branch: `pnpm format:check`, `p
 `pnpm audit:a11y`. Known failures already on `main` (seed and Assistant type errors, three
 unformatted files, two seed lint errors) are reported separately, not hidden.
 
+## 6. Batch 2 recommendations
+
+Each item: the recommendation, why, and the decision needed from the product owner.
+
+### 6.1 User-delegated OAuth tokens (MC4)
+
+- A token a user grants to an agent becomes a principal of **type `agent`** with
+  `onBehalfOf = user`, `approvalOwner = user`, and `clientId`. It is never treated as the human.
+- Effective permissions are the **intersection** of the user's permissions, the token's scopes,
+  and the scopes the client is allowed to request.
+- Writes go through the policy firewall as agent writes, so they queue for the user's approval.
+- Match credentials by (client id, user id, token hash), not by actor id. Audit records both the
+  agent client and the user.
+- Access tokens 1 h; refresh tokens 30 days, rotated on use, with reuse detection that revokes
+  the whole grant.
+- Users see and revoke "Connected apps"; admins can disable a client for the whole org.
+- **Decision:** confirm "agent acting for a user" is never allowed to act as the user without
+  confirmation (recommended: yes, never).
+
+### 6.2 MCP client registration and token audience (MC5)
+
+- Support **Client ID Metadata Documents** (preferred in the current MCP spec) and **dynamic
+  client registration**, but new clients land in a **pending** state until an admin approves
+  them. Optionally pre-approve known hosts (for example claude.ai, and localhost redirect URIs for
+  desktop clients).
+- Require the RFC 8707 `resource` parameter; tokens carry `aud` = the MCP resource URL, and
+  `/mcp` rejects tokens for any other audience.
+- **Decision:** admin approval required for every new client (recommended), or an allowlist of
+  trusted hosts that skip approval.
+
+### 6.3 Approvals inbox and notifications (MC3)
+
+- An **Approvals** page in the shell with a badge count. Each card shows the agent, the user it
+  acts for, a plain-language summary ("Send email to ana@acme.com, subject 'Q3 numbers', 1
+  attachment"), the full arguments on expand, when it was requested, and when it expires.
+- Approve / Reject; re-authentication for high-risk actions (external email, sharing outside the
+  org, delete).
+- Notify the approval owner in-app (always) and by email (opt-out). The MCP result carries an
+  `approvalUrl` deep link; use MCP elicitation when the client supports it.
+- Default expiry 1 hour (today 10 minutes), configurable per automation policy.
+- Allow "approve similar actions from this agent for the next 15 minutes", bounded by the
+  existing automation-policy limits (action, target, time window, rate) and audited.
+- **Decision:** default expiry and whether email notifications are on by default.
+
+### 6.4 Prompt-injection boundary (MC9)
+
+- Treat mail bodies, chat messages from others, file text, and web results as **untrusted**.
+  Return them in clearly delimited blocks with provenance (`source`, `sender`, `external`).
+- Return plain text by default; drop raw HTML `source`; strip hidden text; cap sizes with
+  continuation cursors.
+- Mark the agent session **tainted** after it reads untrusted content. While tainted,
+  high-risk writes always require confirmation, even if an automation policy would allow them.
+- Show the taint on the approval card ("proposed after reading an external email from X").
+- Do not rely on a classifier as a gate; the confirmation is the control.
+- **Decision:** none needed; recommended as default behaviour.
+
+### 6.5 WebDAV completeness (DS9–DS11)
+
+- **MOVE / COPY** mapped to the existing rename, move, and copy store operations, so renames keep
+  version history and share links. Honour `Destination` and `Overwrite`.
+- **Modification times:** accept `X-OC-Mtime` on PUT (reply `X-OC-MTime: accepted`) and store it
+  as the client mtime shown in `getlastmodified`.
+- **Checksums:** compute MD5 and SHA-1 while streaming the upload (SHA-256 already exists) and
+  expose `oc:checksums`; switch the rclone remote to `vendor=owncloud`.
+- **Large files:** stream PUT bodies to object storage instead of buffering; then add Nextcloud
+  chunked upload v2 for files above the single-request limit.
+- **Decision:** the maximum file size to support for sync (recommended: 5 GiB with chunking).
+
+### 6.6 Background desktop sync (DS13–DS15)
+
+- Setup installs a per-user schedule: macOS LaunchAgent, Linux `systemd --user` timer, Windows
+  Task Scheduler. Every 5 minutes, with `--recover --max-lock 2m --resilient
+--conflict-resolve newer --conflict-loser num --log-file`, plus a run lock.
+- Subcommands: `status`, `sync-now`, `pause`, `resume`, `logs`, `uninstall`.
+- Move the tool into the Helix CLI (`helix drive sync setup`) so users don't need a repo clone.
+- Keep rclone as the engine for 1.x; a native client is not justified yet.
+- **Decision:** none needed.
+
+### 6.7 Settings concurrency (ST5) and one settings pattern
+
+- Every settings read returns a `version`; writes accept `expectedVersion`. A mismatch returns
+  409 with the current value, and the UI offers "Reload" or "Overwrite".
+- Agents may omit `expectedVersion`; partial updates (Batch 1) already keep them from wiping
+  unrelated fields.
+- One server helper (partial merge, version, audit) and one web `useSettingsForm` hook (dirty,
+  saving, saved, `role=alert` errors) used by every settings form.
+- **Decision:** none needed.
+
+### 6.8 Missing settings screens (ST6, ST7, ST9, ST12)
+
+- **Vacation responder (Mail settings):** on/off, start and end in the user's time zone, subject,
+  message, "only reply to people in my organization", and reply at most once per sender every 7
+  days (RFC 3834 guidance). Reuses the existing `mail.vacation.*` tools.
+- **Filters:** list, edit, enable/disable, delete; reuses existing tools.
+- **Signatures per alias**, default reply vs. reply-all, external images (ask / always for
+  trusted senders / never), undo-send delay.
+- **Language and region:** locale, time zone (detected from the browser and confirmed), week
+  start, date format; stored on the profile. Used by vacation schedules, scheduled send, and
+  digests.
+- **Notifications:** real preferences per category (mentions, direct messages, shares,
+  approvals) and channel (in-app, email, browser push), plus quiet hours. Approval notifications
+  in-app cannot be turned off.
+- **Decision:** whether browser push is in 1.x (recommended: later; in-app and email first).
+
+### 6.9 Inbound SPF behind the mail edge (ML8)
+
+- Have the edge pass the original client IP to Helix: Postfix `smtp_send_xforward_command = yes`
+  on the edge relay, and accept `XFORWARD` in Helix's SMTP server **only** from the edge's
+  address. SPF then evaluates the real sender IP. (To verify against the installed smtp-server
+  version before building.)
+- Alternative: verify SPF/DKIM/DMARC at the edge (Rspamd) and trust its Authentication-Results
+  header only from the edge.
+- **Decision:** none needed; recommended XFORWARD.
+
+### 6.10 Standard mail client access
+
+- 1.x: **mbox export** per folder or whole mailbox (background job, download link) and **mbox /
+  EML import** for migration. Per-message `.eml` download already exists for inbound mail; extend
+  it to sent mail.
+- Re-evaluate **IMAP + SMTP submission with app passwords** for 2.0 if native clients become a
+  requirement. App-password infrastructure already exists (CardDAV). JMAP alone would not help
+  Thunderbird, Apple Mail, or Outlook.
+- **Decision:** whether native mail clients are a 2.0 requirement.
+
 ## Validation log
 
 Filled in when Batch 1 lands.

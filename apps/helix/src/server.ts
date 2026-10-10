@@ -22,7 +22,7 @@ export {
   createAssistantProviders,
 } from "./platform/ai/providers/factory.js";
 import type { FastifyInstance } from "fastify";
-import { installAgentApi } from "./bootstrap/agent-api.js";
+import { installAgentApi, registerMcpWellKnownRoutes } from "./bootstrap/agent-api.js";
 import { installApps } from "./bootstrap/apps.js";
 import { installAuditWorkers } from "./bootstrap/audit-workers.js";
 import { installAuth } from "./bootstrap/auth.js";
@@ -51,6 +51,7 @@ export async function createHelixServer(): Promise<FastifyInstance> {
     const observability = await installObservability(workers);
     await installAgentApi(observability);
   });
+  registerMcpWellKnownRoutes(tools.app, tools);
   registerHealthRoutes(tools.app, new ReadinessMonitor(tools.readinessProbes));
   return tools.app;
 }

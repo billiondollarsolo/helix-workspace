@@ -54,6 +54,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Typecheck E2E specs
         run: pnpm --filter @helix/web typecheck:e2e
 
@@ -115,6 +118,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
 
       - name: Install Playwright browsers
         run: pnpm --filter @helix/web exec playwright install --with-deps chromium

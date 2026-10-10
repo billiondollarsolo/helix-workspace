@@ -21,6 +21,8 @@ All notable changes to Helix Workspace are documented here. This file follows
   mail retention uses the database clock for its default cutoff.
 - Fresh demo setup supplies current identity, Calendar, Chat, and Mail delivery
   fields, creates the tenant before its users, and verifies the actual login handler.
+- Assistant routines are covered by forced tenant row-level security like every other
+  `org_id` table; the table was created after the RLS sweeps and shipped without it.
 - The standalone OAuth and login seeds create their tenant on a fresh database.
 - CI builds workspace packages before tests and jobs, creates the S3 contract bucket for
   live e2e, and its mocked browser suites match BetterAuth's signed-out session response.

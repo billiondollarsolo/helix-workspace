@@ -6,7 +6,20 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ## [Unreleased]
 
+### Added
+
+- Drive folders have a details panel to rename and share them; people added to a folder get
+  access to everything inside it.
+- Drive Home suggests recently updated folders and files from across Drive.
+
 ### Fixed
+
+- Drive folder access grants can be changed and removed, not only created.
+- The Drive file details panel resets its rename field when another file is selected.
+- Drive version restore asks for confirmation, skips the current version, and reports the result;
+  rename reports success or the server's error.
+- Renaming an unknown Drive file reports a file error instead of an unknown folder.
+- The Drive share dialog closes with Escape and focuses the people field when opened.
 
 - Local startup supports rrule's CommonJS export and existing Meilisearch indexes;
   mail retention uses the database clock for its default cutoff.

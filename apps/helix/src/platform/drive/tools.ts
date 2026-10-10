@@ -437,10 +437,10 @@ export function createDriveToolDefinitions(
           folderId: input.folderId ?? null,
           includeTrashed: input.includeTrashed,
           limit: input.limit,
-          cursor: input.cursor,
-          kind: input.kind,
-          acrossFolders: input.acrossFolders,
-          view: input.view,
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+          ...(input.kind === undefined ? {} : { kind: input.kind }),
+          ...(input.acrossFolders === undefined ? {} : { acrossFolders: input.acrossFolders }),
+          ...(input.view === undefined ? {} : { view: input.view }),
         });
         const serialized = page.entries.map(serializeEntry);
         // Owner display names: one batched lookup per list call.

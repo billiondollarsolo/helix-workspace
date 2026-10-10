@@ -138,7 +138,8 @@ async function mockAppApi(
     if (pathname === "/v1/api/auth/get-session") {
       await fulfillJson(
         route,
-        request.headers().cookie?.includes(expectedCookie) ? { user: sessionUser } : {},
+        // BetterAuth answers JSON null when the request carries no session.
+        request.headers().cookie?.includes(expectedCookie) ? { user: sessionUser } : null,
       );
       return;
     }

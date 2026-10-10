@@ -383,8 +383,16 @@ export function toolErrorResult(result: ToolInvokeResult & { readonly ok: false 
 }
 
 function validationIssues(result: { readonly error: string }): readonly ValidationIssue[] {
+  // Prefer the registry's structured `details.issues`; older results carried
+  // `issues` directly or a JSON-serialized zod issue list in `error`.
+  const fromDetails = (result as { readonly details?: { readonly issues?: unknown } }).details
+    ?.issues;
   const fromResult = (result as { readonly issues?: unknown }).issues;
-  const candidates: unknown = Array.isArray(fromResult) ? fromResult : parseJson(result.error);
+  const candidates: unknown = Array.isArray(fromDetails)
+    ? fromDetails
+    : Array.isArray(fromResult)
+      ? fromResult
+      : parseJson(result.error);
   if (!Array.isArray(candidates)) return [];
   return candidates.flatMap((candidate): ValidationIssue[] => {
     if (!isRecord(candidate) || typeof candidate.message !== "string") return [];

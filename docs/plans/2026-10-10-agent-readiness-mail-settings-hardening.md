@@ -320,6 +320,59 @@ to send, so **SMTP submission is included**.
 - **Effort:** this is the largest Batch 2 item — a multi-week project, not a patch.
 - **Also:** mbox export and import stay in scope for migration.
 
+### 6.11 AI spam and triage with decision models (Jev, Clef)
+
+**What they are.** Both are new (September and October 2026) "decision models": instead of
+generating text, they take a state (the message) plus typed questions (choice, score, true/false)
+and return a probability for every option in one pass. That fits spam and triage better than the
+current optional LLM second pass (`platform/mail/spam-ai.ts`): structured output, calibrated
+confidences, lower cost and latency, and nothing to parse.
+
+|                    | Jev (TypeSafe AI)                                     | Clef / Clef-flash (Cloudflare)                                                       |
+| ------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Released           | 15 Sep 2026                                           | 1 Oct 2026                                                                           |
+| Weights            | Closed; hosted API only (early-access waitlist)       | Open weights, Apache-2.0, on Hugging Face (training data not public)                 |
+| Size               | Not published                                         | Clef 27B, Clef-flash 9B (Qwen backbones)                                             |
+| Hosting            | TypeSafe API, also via Vercel AI Gateway / OpenRouter | Self-host (vLLM/SGLang/Transformers) or Cloudflare Workers AI                        |
+| Price (reported)   | ~$0.042 per million input tokens, output free         | ~$0.24 per million input tokens for Clef on Workers AI; self-hosted is hardware cost |
+| Context            | 32k–64k (sources differ)                              | 64k; image input supported                                                           |
+| Self-host hardware | n/a                                                   | Clef-flash ~41 GB VRAM (vendor), less with community FP8/NVFP4 builds; Clef ~85 GB   |
+| Data handling      | Zero-retention option reported; confirm with vendor   | Stays inside the deployment when self-hosted                                         |
+| Interface          | `systemone` state + questions                         | Same Jev-compatible interface                                                        |
+
+Caveats: both are weeks old; benchmarks are vendor-reported; nothing public measures them on spam
+corpora. Reports disagree on whether stock vLLM serves Clef's custom decision head or needs a
+plugin.
+
+**Recommendation.**
+
+1. Add a `DecisionModelProvider` interface speaking the shared Jev-compatible request shape, with
+   three configurations an admin chooses from: **self-hosted Clef-flash (recommended default,
+   mail never leaves the deployment)**, Cloudflare Workers AI Clef, or the TypeSafe Jev API.
+   External providers are admin opt-in, show a clear "message content is sent to <provider>"
+   notice, and honour DLP labels (restricted mail is never sent out).
+2. Keep **SpamAssassin as the required first pass**. The decision model is a second pass on
+   messages SpamAssassin scores as uncertain, plus every message for triage.
+3. One call per message asks a small fixed question set:
+   - `verdict`: legitimate / spam / phishing / scam (choice)
+   - `category`: primary / updates / promotions / social (choice) — drives the existing Mail tabs
+   - `needsReply`: true/false, and `urgency`: can wait / this week / today (score)
+4. Act conservatively: spam only above a high confidence threshold set per org; phishing above
+   threshold is quarantined, never deleted; anything else stays in the inbox. Store the
+   probabilities as evidence on the message so users and admins can see why.
+5. **Shadow mode first:** record verdicts without acting for a trial period, compare against
+   SpamAssassin and user "Spam / Not spam" actions, then enable actions per org.
+6. **Measure before enabling:** evaluate on a labelled set (for example the public SpamAssassin
+   corpus plus the org's own spam/not-spam feedback) and report precision, recall, and above all
+   the false-positive rate on legitimate mail. Ship only if false positives are at or below
+   SpamAssassin's.
+7. Later: use the org's feedback for Cloudflare's RL fine-tuning, or a pgvector nearest-neighbour
+   check against messages users have already labelled, to adapt to each organisation.
+
+**Decision needed (D7):** approve the self-hosted Clef-flash default with Jev and Workers AI as
+opt-in alternatives, and whether a GPU host for Clef-flash is acceptable for the pilot (if not,
+start with the Workers AI or Jev API behind the opt-in notice).
+
 ## Validation log
 
 Filled in when Batch 1 lands.

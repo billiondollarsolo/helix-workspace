@@ -87,6 +87,7 @@ export async function seedLocalOAuth(
   const secretHash = await hashSecret(clientSecret);
 
   await withTenantPostgresContext(sql, { orgId }, async (tx) => {
+    await ensureLocalSeedOrg(tx, orgId);
     await tx`
     insert into actors (
       id,
@@ -176,6 +177,24 @@ export async function seedLocalOAuth(
     warning:
       "Local development seed only. Do not use this client secret outside local evidence runs.",
   };
+}
+
+/**
+ * Creates the seed tenant when it is missing, leaving an existing org untouched.
+ * Region and tier match the demo seed, which cannot change a region later.
+ */
+export async function ensureLocalSeedOrg(
+  sql: postgres.Sql | postgres.TransactionSql,
+  orgId: string,
+): Promise<void> {
+  await sql`
+    insert into orgs (id, slug, display_name, status, tier, region, metadata)
+    values (
+      ${orgId}, ${`local-${orgId}`}, 'Local Workspace', 'active', 'personal', 'local',
+      ${JSON.stringify({ source: "local-seed" })}::jsonb
+    )
+    on conflict (id) do nothing
+  `;
 }
 
 function uniqueScopes(scopes: readonly string[]): string[] {

@@ -1407,8 +1407,13 @@ describe("MailShell", () => {
       typeof (filterCall?.[1] as RequestInit).body === "string"
         ? ((filterCall?.[1] as RequestInit).body as string)
         : "{}",
-    ) as { readonly criteria?: { readonly fromContains?: string } };
+    ) as { readonly criteria?: { readonly fromContains?: string }; readonly actions?: unknown };
     expect(body.criteria?.fromContains).toBe("mira@helix.io");
+    // The server rejects action-less filters; the default action is named to the user.
+    expect(body.actions).toEqual({ archive: true });
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      "New mail from mira@helix.io will skip the inbox and go to Archive.",
+    );
   });
 
   /* ============================================================

@@ -155,14 +155,15 @@ unformatted files, two seed lint errors) are reported separately, not hidden.
 
 ### Decisions (product owner, 2026-10-10)
 
-| #   | Question                                               | Decision                                                                                   |
-| --- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| D1  | Can an agent acting for a user ever skip confirmation? | No. Delegated agents never act as the user; writes always queue for the user's approval.   |
-| D2  | Do new MCP clients need admin approval?                | Clients from trusted hosts (admin-maintained allowlist) skip approval; all others need it. |
-| D3  | Approval expiry                                        | 1 hour default (configurable per automation policy). Email alerts on by default (opt-out). |
-| D4  | Maximum desktop-sync file size                         | 5 GiB, with chunked upload.                                                                |
-| D5  | Browser push notifications                             | In 1.0, alongside in-app and email.                                                        |
-| D6  | Native mail clients                                    | Support standard desktop mail apps over **IMAP and POP3**. No custom Helix mail apps.      |
+| #   | Question                                               | Decision                                                                                                                               |
+| --- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| D1  | Can an agent acting for a user ever skip confirmation? | No. Delegated agents never act as the user; writes always queue for the user's approval.                                               |
+| D2  | Do new MCP clients need admin approval?                | Clients from trusted hosts (admin-maintained allowlist) skip approval; all others need it.                                             |
+| D3  | Approval expiry                                        | 1 hour default (configurable per automation policy). Email alerts on by default (opt-out).                                             |
+| D4  | Maximum desktop-sync file size                         | 5 GiB, with chunked upload.                                                                                                            |
+| D5  | Browser push notifications                             | In 1.0, alongside in-app and email.                                                                                                    |
+| D6  | Native mail clients                                    | Support standard desktop mail apps over **IMAP and POP3**. No custom Helix mail apps.                                                  |
+| D7  | AI spam and triage provider                            | Start with hosted providers only: Cloudflare Workers AI Clef or the TypeSafe Jev API, admin opt-in. No self-hosted Clef-flash for now. |
 
 D6 reverses a documented 1.0 non-claim ("no Helix-hosted IMAP server" in `README.md`,
 `docs/release/1.0-scope.md`, `docs/product-claims-mvp.md`, `docs/mail-security-and-reliability.md`).
@@ -369,9 +370,10 @@ plugin.
 7. Later: use the org's feedback for Cloudflare's RL fine-tuning, or a pgvector nearest-neighbour
    check against messages users have already labelled, to adapt to each organisation.
 
-**Decision needed (D7):** approve the self-hosted Clef-flash default with Jev and Workers AI as
-opt-in alternatives, and whether a GPU host for Clef-flash is acceptable for the pilot (if not,
-start with the Workers AI or Jev API behind the opt-in notice).
+**Decided (D7):** start with the **hosted** providers only — Cloudflare Workers AI Clef or the
+TypeSafe Jev API — enabled per org by an admin, behind the "message content is sent to
+<provider>" notice, with DLP-restricted mail never sent. Self-hosted Clef-flash is deferred; the
+`DecisionModelProvider` interface keeps it a configuration change later.
 
 ## Validation log
 

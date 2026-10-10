@@ -313,7 +313,7 @@ function parseMailCommand(
     case "list":
       return {
         kind: "tool-call",
-        toolId: "mail.list",
+        toolId: "mail.threads.list",
         json: parseMailOptions(jsonArgs, mailListOptions, "helix mail list"),
       };
     case "search":
@@ -575,7 +575,11 @@ function parseMailFilterOptions(
 }
 
 const mailSendOptions = {
-  arrays: new Set(["--to", "--cc", "--bcc"]),
+  arrays: new Map([
+    ["--to", "to"],
+    ["--cc", "cc"],
+    ["--bcc", "bcc"],
+  ]),
   strings: new Map([
     ["--from", "from"],
     ["--subject", "subject"],
@@ -586,7 +590,10 @@ const mailSendOptions = {
 } as const;
 
 const mailReplyOptions = {
-  arrays: new Set(["--cc", "--bcc"]),
+  arrays: new Map([
+    ["--cc", "cc"],
+    ["--bcc", "bcc"],
+  ]),
   strings: new Map([
     ["--thread-id", "threadId"],
     ["--message-id", "messageId"],
@@ -596,29 +603,36 @@ const mailReplyOptions = {
   numbers: new Map<string, string>(),
 } as const;
 
+// Flags mirror the `mail.threads.list` input schema (folder/offset paging).
 const mailListOptions = {
-  arrays: new Set(["--label"]),
+  arrays: new Map<string, string>(),
   strings: new Map([
-    ["--mailbox", "mailbox"],
-    ["--cursor", "cursor"],
+    ["--folder", "folder"],
+    ["--tab", "tab"],
+    ["--label", "label"],
+    ["--query", "query"],
+    ["--mailbox-actor-id", "mailboxActorId"],
   ]),
   numbers: new Map([["--limit", "limit"]]),
+  offsets: new Map([["--offset", "offset"]]),
 } as const;
 
+// Flags mirror the `mail.search` input schema, which has no paging cursor.
 const mailSearchOptions = {
-  arrays: new Set(["--label"]),
+  arrays: new Map([["--label", "labels"]]),
   strings: new Map([
     ["--query", "query"],
-    ["--mailbox", "mailbox"],
-    ["--cursor", "cursor"],
+    ["--mailbox-actor-id", "mailboxActorId"],
   ]),
   numbers: new Map([["--limit", "limit"]]),
 } as const;
 
 type MailOptionSpec = {
-  readonly arrays: ReadonlySet<string>;
+  readonly arrays: ReadonlyMap<string, string>;
   readonly strings: ReadonlyMap<string, string>;
   readonly numbers: ReadonlyMap<string, string>;
+  /** Non-negative integer flags such as `--offset`. */
+  readonly offsets?: ReadonlyMap<string, string>;
 };
 
 function parseMailOptions(
@@ -642,9 +656,12 @@ function parseMailOptions(
       throw new CliUsageError(mailUsage(commandName, spec));
     }
 
-    if (spec.arrays.has(flag)) {
-      const field = flag.slice(2).replaceAll("-", "_");
-      input[field] = [...readStringArray(input[field]), ...parseCommaSeparatedValues(value)];
+    const arrayField = spec.arrays.get(flag);
+    if (arrayField !== undefined) {
+      input[arrayField] = [
+        ...readStringArray(input[arrayField]),
+        ...parseCommaSeparatedValues(value),
+      ];
       continue;
     }
 
@@ -657,6 +674,16 @@ function parseMailOptions(
     const numberField = spec.numbers.get(flag);
     if (numberField !== undefined) {
       input[numberField] = parsePositiveInteger(value, mailUsage(commandName, spec));
+      continue;
+    }
+
+    const offsetField = spec.offsets?.get(flag);
+    if (offsetField !== undefined) {
+      const offset = Number(value);
+      if (!Number.isSafeInteger(offset) || offset < 0) {
+        throw new CliUsageError(mailUsage(commandName, spec));
+      }
+      input[offsetField] = offset;
       continue;
     }
 
@@ -713,9 +740,11 @@ function rejectPositionalSubject(subject: string | undefined, usageMessage: stri
 }
 
 function mailUsage(commandName: string, spec: MailOptionSpec): string {
-  const arrayFlags = [...spec.arrays].map((flag) => `${flag} <value>`);
+  const arrayFlags = [...spec.arrays.keys()].map((flag) => `${flag} <value>`);
   const stringFlags = [...spec.strings.keys()].map((flag) => `${flag} <value>`);
-  const numberFlags = [...spec.numbers.keys()].map((flag) => `${flag} <number>`);
+  const numberFlags = [...spec.numbers.keys(), ...(spec.offsets?.keys() ?? [])].map(
+    (flag) => `${flag} <number>`,
+  );
   return `Usage: ${commandName} [--json [JSON]] [${[...arrayFlags, ...stringFlags, ...numberFlags].join("] [")}]`;
 }
 
@@ -2417,98 +2446,3 @@ function parseJsonArgument(args: readonly string[]): JsonArgument {
 
   return { source: "inline", value };
 }
-
-export const usage = `Usage:
-  helix --version
-  helix tool list [--source <api|openapi|mcp>]
-  helix tool describe <id>
-  helix tool call <id> [--transport <rest|mcp>] [--json [JSON]]
-  helix search <query>
-  helix search --query <text> [--type <mail|chat|drive|calendar>] [--limit <number>] [--json [JSON]]
-  helix mail send [--to <email>] [--cc <email>] [--bcc <email>] [--from <email>] [--subject <text>] [--body <text>] [--html <html>] [--json [JSON]]
-  helix mail reply [--thread-id <id>] [--message-id <id>] [--body <text>] [--html <html>] [--cc <email>] [--bcc <email>] [--json [JSON]]
-  helix mail list [--mailbox <name>] [--label <label>] [--limit <number>] [--cursor <cursor>] [--json [JSON]]
-  helix mail search [--query <text>] [--mailbox <name>] [--label <label>] [--limit <number>] [--cursor <cursor>] [--json [JSON]]
-  helix mail label [--thread-id <id>] [--add <label>] [--remove <label>] [--json [JSON]]
-  helix mail archive [--thread-id <id>] [--json [JSON]]
-  helix mail delete [--thread-id <id>] [--json [JSON]]
-  helix mail snooze [--thread-id <id>] [--until <iso>] [--json [JSON]]
-  helix mail read [--thread-id <id>] [--unread] [--json [JSON]]
-  helix mail star [--thread-id <id>] [--starred] [--unstarred] [--json [JSON]]
-  helix mail thread-get [--thread-id <id>] [--json [JSON]]
-  helix mail filter-create [--name <name>] [--priority <number>] [--enabled] [--disabled] [--criteria <json-object>] [--actions <json-object>] [--json [JSON]]
-  helix mail filter-update [--id <id>] [--name <name>] [--priority <number>] [--enabled] [--disabled] [--criteria <json-object>] [--actions <json-object>] [--json [JSON]]
-  helix mail filter-delete [--id <id>] [--json [JSON]]
-  helix mail vacation-get [--json [JSON]]
-  helix mail vacation-set [--enabled] [--disabled] [--subject <text>] [--body <text>] [--start <iso>] [--end <iso>] [--json [JSON]]
-  helix chat send [--room-id <id>] [--body <text>] [--text <text>] [--json [JSON]]
-  helix chat react [--json [JSON]]
-  helix chat edit [--json [JSON]]
-  helix chat delete [--json [JSON]]
-  helix chat create-room [--name <name>] [--subject <text>] [--description <text>] [--topic <text>] [--member <actor-id>] [--kind <chat_room|chat_dm>] [--private] [--json [JSON]]
-  helix chat invite [--json [JSON]]
-  helix chat search [--query <text>] [--room-id <id>] [--limit <number>] [--cursor <cursor>] [--json [JSON]]
-  helix chat messages [--room-id <id>] [--before <iso>] [--limit <number>] [--json [JSON]]
-  helix drive upload <path> [--prepared <json-file>] [--folder <folder-id>] [--name <name>] [--mime-type <type>] [--byte-size <number>] [--sha256 <hex>] [--json [JSON]]
-  helix drive finalize [--json [JSON]]
-  helix drive list [--folder <folder-id>] [--limit <number>] [--include-trashed] [--json [JSON]]
-  helix drive share [--json [JSON]]
-  helix drive move [--json [JSON]]
-  helix drive trash [--json [JSON]]
-  helix drive restore [--json [JSON]]
-  helix drive delete [--json [JSON]]
-  helix drive search [--query <text>] [--folder <folder-id>] [--limit <number>] [--json [JSON]]
-  helix calendar event-create [--calendar-id <id>] [--title <text>] [--description <text>] [--start <iso>] [--end <iso>] [--timezone <tz>] [--location <text>] [--attendee <email>] [--all-day] [--json [JSON]]
-  helix calendar event-update [--event-id <id>] [--calendar-id <id>] [--title <text>] [--description <text>] [--start <iso>] [--end <iso>] [--timezone <tz>] [--location <text>] [--attendee <email>] [--all-day] [--json [JSON]]
-  helix calendar event-delete [--event-id <id>] [--send-cancellation] [--json [JSON]]
-  helix calendar event-respond [--event-id <id>] [--attendee-email <email>] [--rsvp-token <token>] [--response <accepted|declined|tentative>] [--json [JSON]]
-  helix calendar event-list [--calendar-id <id>] [--start <iso>] [--end <iso>] [--limit <number>] [--json [JSON]]
-  helix calendar find-time [--attendee <email>] [--attendee-email <email>] [--attendee-actor-id <id>] [--duration-minutes <number>] [--step-minutes <number>] [--limit <number>] [--start <iso>] [--end <iso>] [--json [JSON]]
-  helix webhook outbound create [--name <name>] [--url <url>] [--event-subject <subject>] [--secret-ref <ref>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]
-  helix webhook outbound update [--id <id>] [--name <name>] [--url <url>] [--event-subject <subject>] [--secret-ref <ref>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]
-  helix webhook outbound delete [--id <id>] [--json [JSON]]
-  helix webhook outbound list [--json [JSON]]
-  helix webhook outbound test [--id <id>] [--subject <subject>] [--payload <json>] [--json [JSON]]
-  helix webhook outbound replay [--delivery-id <id>] [--id <id>] [--json [JSON]]
-  helix webhook inbound create [--name <name>] [--slug <slug>] [--source <source>] [--secret-ref <ref>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]
-  helix webhook inbound update [--id <id>] [--name <name>] [--slug <slug>] [--source <source>] [--secret-ref <ref>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]
-  helix webhook inbound delete [--id <id>] [--json [JSON]]
-  helix webhook inbound rotate-secret [--id <id>] [--json [JSON]]
-  helix webhook inbound list [--json [JSON]]
-  helix webhook delivery get [--id <id>] [--json [JSON]]
-  helix webhook delivery list [--direction <outbound|inbound>] [--status <pending|in_progress|delivered|failed|abandoned>] [--limit <number>] [--json [JSON]]
-  helix admin app-passwords list [--actor-id <id>] [--include-revoked] [--json [JSON]]
-  helix admin app-passwords create [--actor-id <id>] [--label <label>] [--scope <scope>] [--expires-at <iso>] [--json [JSON]]
-  helix admin app-passwords revoke [--password-id <id>] [--json [JSON]]
-  helix admin agent-credentials list [--actor-id <id>] [--include-revoked] [--json [JSON]]
-  helix admin agent-credentials create --actor-id <id> --credential-type <api_key|oauth_client|mtls_cert> --label <label> --purpose <purpose> --scope <scope> [--expires-at <iso>] [--json [JSON]]
-  helix admin agent-credentials revoke --credential-id <id> [--json [JSON]]
-  helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]
-  helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]
-  helix backup create
-  helix restore --from <backup-id> --target-db <isolated-db> --target-bucket <isolated-bucket> --idempotency-key <key> [--encrypted]
-  helix reindex --all
-  helix action status <action-id>
-  helix action approve <action-id>
-  helix action cancel <action-id>
-  helix tier set <personal|business|enterprise|sovereign>
-  helix assistant chat [--json [JSON]]
-  helix assistant new [--json [JSON]]
-  helix assistant forget [--json [JSON]]
-  helix assistant approve [--conversation-id <id>] [--pending-id <id>] [--json [JSON]]
-  helix assistant cancel [--conversation-id <id>] [--pending-id <id>] [--json [JSON]]
-  helix login --client-id <id> --client-secret <secret> [--scope <scopes>]
-  helix logout
-  helix auth token --client-id <id> --client-secret <secret> [--scope <scopes>]
-  helix openapi get
-  helix asyncapi get
-  helix mcp serve
-  helix mcp resources list
-  helix mcp resources read <uri>
-  helix completion <bash|zsh|fish>
-
-Environment:
-  HELIX_BASE_URL         Base URL for the Helix API
-  HELIX_ACCESS_TOKEN     Optional bearer token for API requests
-  HELIX_API_KEY          API key for the agent identity (takes precedence over HELIX_ACCESS_TOKEN)
-  HELIX_CREDENTIALS_FILE Override path for stored credentials (helix logout)`;

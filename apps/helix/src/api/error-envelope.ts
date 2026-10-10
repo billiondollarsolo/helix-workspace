@@ -53,6 +53,9 @@ export function toolErrorEnvelope(
   if (result.quotaLimit !== undefined) {
     details.quotaLimit = result.quotaLimit satisfies ToolQuotaLimitMetadata;
   }
+  if (result.details !== undefined) {
+    details.issues = result.details.issues;
+  }
   return buildErrorEnvelope({
     statusCode: result.statusCode,
     message: result.error,

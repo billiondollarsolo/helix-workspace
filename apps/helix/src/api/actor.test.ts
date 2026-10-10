@@ -166,6 +166,51 @@ describe("actorFromRequestWithAccessTokenAndSession", () => {
   });
 });
 
+describe("toolInvocationPrincipalFromRequest bearer failures (CA4)", () => {
+  const emptyTokenStore = {
+    async saveToken() {},
+    async findToken() {
+      return null;
+    },
+  };
+  const sessionUser = {
+    async resolve() {
+      return { id: "user-1", orgId: "org-1", type: "user" as const, displayName: "User" };
+    },
+  };
+
+  it("rejects an unknown or expired bearer with 401 and an invalid_token challenge", async () => {
+    const result = await toolInvocationPrincipalFromRequest(
+      requestWith({ authorization: "Bearer expired-token", cookie: "session=1" }, {}),
+      emptyTokenStore,
+      sessionUser,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      statusCode: 401,
+      code: "unauthenticated",
+      message: "The bearer access token is invalid or expired. Obtain a new token and retry.",
+      wwwAuthenticate: 'Bearer error="invalid_token"',
+    });
+  });
+
+  it("keeps cookie-session and anonymous resolution unchanged without a bearer", async () => {
+    const session = await toolInvocationPrincipalFromRequest(
+      requestWith({ cookie: "session=1" }, {}),
+      emptyTokenStore,
+      sessionUser,
+    );
+    const anonymous = await toolInvocationPrincipalFromRequest(
+      requestWith({}, {}),
+      emptyTokenStore,
+    );
+
+    expect(session).toMatchObject({ ok: true, principal: { actor: { id: "user-1" } } });
+    expect(anonymous).toMatchObject({ ok: true, principal: { actor: { id: "anonymous" } } });
+  });
+});
+
 describe("resolveCredentialAuthenticatedActor", () => {
   function agentCredential(overrides: Partial<AgentCredentialRecord>): AgentCredentialRecord {
     return {

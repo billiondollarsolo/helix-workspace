@@ -115,11 +115,22 @@ describe("CLI local file upload", () => {
   });
   it("preserves the reservation on failure and resumes without creating another object", async () => {
     const f = await fixture();
+    let storageAttempts = 0;
     expect(
-      await runCli(["drive", "upload", f.path], env, f.io, async (url) =>
-        url.endsWith("drive.upload") ? json(prepared) : new Response(null, { status: 503 }),
+      await runCli(
+        ["drive", "upload", f.path],
+        env,
+        f.io,
+        async (url) => {
+          if (url.endsWith("drive.upload")) return json(prepared);
+          storageAttempts += 1;
+          return new Response(null, { status: 503 });
+        },
+        { sleep: async () => undefined },
       ),
     ).toBe(1);
+    // CA8: the presigned PUT is retried three times before the reservation is printed.
+    expect(storageAttempts).toBe(4);
     const resumeFile = join(f.directory, "prepared.json");
     await writeFile(resumeFile, f.stdout.text());
     const stdout = capture();
@@ -147,9 +158,62 @@ describe("CLI local file upload", () => {
         calls += 1;
         return json({ status: "pending_confirmation", pending: { id: "approval-1" } });
       }),
-    ).toBe(2);
+    ).toBe(6);
     expect(calls).toBe(1);
-    expect(f.stderr.text()).toContain("awaits approval");
+    expect(f.stderr.text()).toContain("helix action approve approval-1");
+  });
+  it("resumes from the {status, output} printed by helix action approve (CA10)", async () => {
+    const f = await fixture();
+    const approved = join(f.directory, "approved.json");
+    await writeFile(approved, JSON.stringify({ status: "executed", output: prepared }));
+    const calls: string[] = [];
+    expect(
+      await runCli(["drive", "upload", f.path, "--prepared", approved], env, f.io, async (url) => {
+        calls.push(url);
+        return url.includes("storage.example") ? new Response(null) : json({ status: "active" });
+      }),
+    ).toBe(0);
+    expect(calls).toEqual([
+      prepared.uploadUrl,
+      "https://helix.example/v1/api/tools/drive.finalize",
+    ]);
+  });
+  it("retries a failed multipart part without restarting the upload (CA8)", async () => {
+    const f = await fixture();
+    const attempts: string[] = [];
+    const fetcher: FetchLike = async (url, init) => {
+      if (url.endsWith("drive.upload"))
+        return json({
+          ...prepared,
+          multipart: {
+            uploadId: "multipart-1",
+            partSize: 3,
+            partCount: 2,
+            partUrls: ["https://storage.example/1", "https://storage.example/2"],
+          },
+        });
+      if (url.includes("storage.example")) {
+        attempts.push(url);
+        if (url.endsWith("/2") && attempts.filter((entry) => entry === url).length < 3) {
+          throw new TypeError("socket hang up");
+        }
+        expect(init.signal).toBeInstanceOf(AbortSignal);
+        return new Response(null, { headers: { etag: `etag-${url.slice(-1)}` } });
+      }
+      return json({ status: "active" });
+    };
+    const sleeps: number[] = [];
+    const sleep = async (ms: number) => {
+      sleeps.push(ms);
+    };
+    expect(await runCli(["drive", "upload", f.path], env, f.io, fetcher, { sleep })).toBe(0);
+    expect(attempts).toEqual([
+      "https://storage.example/1",
+      "https://storage.example/2",
+      "https://storage.example/2",
+      "https://storage.example/2",
+    ]);
+    expect(sleeps).toHaveLength(2);
   });
   it.each([
     { sha256: "a".repeat(64) },

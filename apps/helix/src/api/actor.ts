@@ -43,7 +43,12 @@ export type CredentialResolution =
       readonly statusCode: number;
       readonly code: string;
       readonly message: string;
+      /** RFC 6750 challenge to return in `WWW-Authenticate`, when one applies. */
+      readonly wwwAuthenticate?: string;
     };
+
+/** Challenge sent when a presented bearer access token is unknown or expired. */
+export const INVALID_BEARER_TOKEN_CHALLENGE = 'Bearer error="invalid_token"';
 
 export type CredentialActorResolution =
   | { readonly ok: true; readonly actor: Actor }
@@ -175,6 +180,16 @@ export async function toolInvocationPrincipalFromRequest(
       }
       return { ok: true, principal: actorToolInvocationPrincipal(actor) };
     }
+    // CA4: a presented bearer that does not resolve is an authentication
+    // failure (RFC 6750 §3.1), not an anonymous request that later fails
+    // authorization with 403. Cookie-only requests never reach this branch.
+    return {
+      ok: false,
+      statusCode: 401,
+      code: "unauthenticated",
+      message: "The bearer access token is invalid or expired. Obtain a new token and retry.",
+      wwwAuthenticate: INVALID_BEARER_TOKEN_CHALLENGE,
+    };
   }
 
   const sessionActor = await sessionResolver?.resolve(request);

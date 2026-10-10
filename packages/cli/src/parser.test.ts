@@ -100,15 +100,15 @@ describe("parseCliArgs", () => {
       toolId: "mail.reply",
       json: { source: "stdin" },
     });
-    expect(parseCliArgs(["mail", "list", "--mailbox", "inbox", "--limit", "25"])).toEqual({
+    expect(parseCliArgs(["mail", "list", "--folder", "inbox", "--limit", "25"])).toEqual({
       kind: "tool-call",
-      toolId: "mail.list",
-      json: { source: "inline", value: '{"mailbox":"inbox","limit":25}' },
+      toolId: "mail.threads.list",
+      json: { source: "inline", value: '{"folder":"inbox","limit":25}' },
     });
     expect(parseCliArgs(["mail", "search", "--query", "roadmap", "--label", "work"])).toEqual({
       kind: "tool-call",
       toolId: "mail.search",
-      json: { source: "inline", value: '{"query":"roadmap","label":["work"]}' },
+      json: { source: "inline", value: '{"query":"roadmap","labels":["work"]}' },
     });
     expect(parseCliArgs(["mail", "search", "--json", '{"query":"roadmap"}'])).toEqual({
       kind: "tool-call",

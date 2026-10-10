@@ -99,9 +99,9 @@ The pinned Redis, RustFS, and ClamAV references remain checked into the base Com
 resolved production-config evidence must capture all ten active digests and the final release
 packet must bind each digest to its scan and SBOM.
 
-The checked-in stack also fixes the complete active dependency inventory: PostgreSQL 18.4 with
-pgvector 0.8.5, Redis 8.8.1, NATS 2.14.3, Meilisearch 1.51.0, RustFS 1.0.0-beta.11, Cerbos
-0.54.0, SpamAssassin 4.0.2, and ClamAV 1.5.3. Registry images use immutable manifest digests.
+The checked-in stack also fixes the complete active dependency inventory: PostgreSQL 18.6 with
+pgvector 0.8.5, Redis 8.8.3, NATS 2.14.3, Meilisearch 1.51.0, RustFS 1.0.0, Cerbos
+0.54.0, SpamAssassin 4.0.2, and ClamAV 1.5.4. Registry images use immutable manifest digests.
 Helix-built dependency images use digest-pinned build/runtime bases, immutable source revisions,
 and verified source archives. CI builds or pulls every one of these images, produces an SPDX SBOM,
 runs a fail-closed High/Critical Trivy scan, and retains the machine-readable result. No locally
@@ -137,7 +137,7 @@ deployment must use a rehearsed logical dump/restore or `pg_upgrade`; changing o
 1. Stop Helix writes and retain a filesystem/storage snapshot of the PostgreSQL 17 volume.
 2. Run the existing backup verification and restore drill, then create a fresh `pg_dumpall
 --globals-only` and `pg_dump --format=custom` application backup with the PostgreSQL 17 client.
-3. Start PostgreSQL 18.4 with pgvector 0.8.5 against a new empty volume. Restore globals first,
+3. Start PostgreSQL 18.6 with pgvector 0.8.5 against a new empty volume. Restore globals first,
    restore the application database, and run `ALTER EXTENSION vector UPDATE TO '0.8.5'`.
 4. Run every Helix migration, the migration compatibility check, tenant-isolation tests, row-count
    and checksum sampling, a full search reindex, and the live data-plane smoke.

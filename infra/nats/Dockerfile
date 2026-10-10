@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
-ARG BUILD_BASE=golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
-ARG RUNTIME_BASE=alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+ARG BUILD_BASE=golang:1.26.9-alpine3.24@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
+ARG RUNTIME_BASE=alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 FROM ${BUILD_BASE} AS build
 
@@ -16,7 +16,7 @@ ADD --checksum=sha256:${NATS_SERVER_ARCHIVE_SHA256} \
 
 RUN tar -xzf /tmp/nats-server.tar.gz --strip-components=1 \
     && rm /tmp/nats-server.tar.gz \
-    && go get golang.org/x/crypto@v0.52.0 \
+    && go get golang.org/x/crypto@v0.55.0 \
     && go mod verify \
     && CGO_ENABLED=0 go build \
       -trimpath \
@@ -27,8 +27,8 @@ RUN tar -xzf /tmp/nats-server.tar.gz --strip-components=1 \
 FROM ${RUNTIME_BASE} AS runtime
 
 RUN apk add --no-cache \
-      libcrypto3=3.5.7-r0 \
-      libssl3=3.5.7-r0
+      libcrypto3=3.5.8-r0 \
+      libssl3=3.5.8-r0
 
 LABEL org.opencontainers.image.title="helix-nats-server" \
       org.opencontainers.image.description="NATS 2.14.3 rebuilt with patched Go and x/crypto" \

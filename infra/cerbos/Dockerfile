@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.25.0@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
-ARG BUILD_BASE=golang:1.26.5-alpine3.24@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
+ARG BUILD_BASE=golang:1.26.9-alpine3.24@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
 
 FROM ${BUILD_BASE} AS build
 
@@ -19,7 +19,7 @@ ADD --checksum=sha256:${CERBOS_ARCHIVE_SHA256} \
 
 RUN tar -xzf /tmp/cerbos.tar.gz --strip-components=1 \
     && rm /tmp/cerbos.tar.gz \
-    && go get google.golang.org/grpc@v1.82.1 \
+    && go get google.golang.org/grpc@v1.83.2 golang.org/x/net@v0.60.0 \
     && go mod verify \
     && CGO_ENABLED=0 go build \
       -trimpath \

@@ -195,11 +195,11 @@ describe("production Compose overlay", () => {
     ).toEqual({
       postgres: promotedImages.postgres,
       redis:
-        "redis:8.8.1-alpine@sha256:8096655e437712b07503796fb64d81359256cfcff0ab29d95a7da72863786efb",
+        "redis:8.8.3-alpine@sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec",
       nats: promotedImages.nats,
       meilisearch: promotedImages.meilisearch,
       rustfs:
-        "rustfs/rustfs:1.0.0-beta.12@sha256:41fe89380f4120a337790c02af192c3fe7bb55c3edc2e6e9357b487b47c6ab21",
+        "rustfs/rustfs:1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff",
       cerbos: promotedImages.cerbos,
       spamd: promotedImages.spamassassin,
       clamav:

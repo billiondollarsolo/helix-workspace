@@ -214,6 +214,14 @@ export interface MailOutboundEnvelope {
   readonly messageId?: string | undefined;
   readonly inReplyTo?: string | undefined;
   readonly references?: readonly string[] | undefined;
+  readonly replyTo?: MailEnvelopeAddress | undefined;
+  /** Allowlisted extra headers (see `OUTBOUND_EXTRA_HEADER_NAMES`), e.g. Auto-Submitted. */
+  readonly headers?: Readonly<Record<string, string>> | undefined;
+  /**
+   * Transient SMTP RCPT list when it differs from the visible headers (local
+   * delivery already handled some recipients). Never persisted.
+   */
+  readonly envelopeRecipients?: readonly string[] | undefined;
 }
 
 export interface StoredMailMessage {
@@ -395,6 +403,11 @@ export interface MailThreadMessage {
   readonly plainBody?: string | undefined;
   readonly hasAttachment: boolean;
   readonly attachments: readonly MailThreadAttachment[];
+  /** RFC 5322 Message-ID, References, and Reply-To used to build replies. */
+  readonly messageIdHeader?: string | undefined;
+  readonly references?: readonly string[] | undefined;
+  readonly replyTo?: readonly MailEnvelopeAddress[] | undefined;
+  readonly subject?: string | undefined;
 }
 
 export interface MailThreadAttachment {

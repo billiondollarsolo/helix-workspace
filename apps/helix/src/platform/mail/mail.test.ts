@@ -92,7 +92,6 @@ describe("mail ingest", () => {
       arc: false,
       bimi: false,
     });
-
     expect(auth).toMatchObject({
       spf: "pass",
       dkim: "pass",
@@ -488,6 +487,7 @@ describe("mail tools", () => {
       "mail.filter.list",
       "mail.filter.update",
       "mail.folders.list",
+      "mail.forward",
       "mail.inbound.accept",
       "mail.label.apply",
       "mail.labels.list",

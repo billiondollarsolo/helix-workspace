@@ -22,7 +22,7 @@ import {
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { BadRequestError, ConflictError, ForbiddenError } from "../../api/api-error.js";
+import { BadRequestError, ConflictError } from "../../api/api-error.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
@@ -31,9 +31,15 @@ import { MAIL_CATEGORY_TABS } from "./category.js";
 import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
 import { sanitizeMailHtml } from "./html-rendering.js";
 import { ingestRawMail, MailauthAuthenticator, type MailAuthenticator } from "./ingest.js";
-import { hasExternalRecipient, requireTenantMailRecipients } from "./recipient-authorization.js";
+import { formatMailboxAddress } from "./outbound-format.js";
 import { MailSendService } from "./outbound.js";
-import { mailOutboundDisplayStatus } from "./reliability.js";
+import {
+  addressSchema,
+  createMailComposeToolDefinitions,
+  genericObjectJsonSchema,
+  mailUserSettings,
+  serializeOutbound,
+} from "./tools-compose.js";
 import { MailDraftConflictError, type MailStore } from "./store.js";
 import { normalizeProviderDeliveryId } from "./threading.js";
 import type {
@@ -42,7 +48,6 @@ import type {
   MailFolderSummary,
   MailInboundRecipient,
   MailLabelRecord,
-  MailOutboundEnvelope,
   MailOutboundRecord,
   MailThreadRowRecord,
   MailUserSettings,
@@ -55,44 +60,6 @@ import { MAIL_FOLDER_IDS } from "./types.js";
 const uuidSchema = z.string().uuid();
 const emailSchema = z.string().email();
 const mailboxTargetShape = { mailboxActorId: uuidSchema.optional() } as const;
-
-const addressSchema = z.union([
-  emailSchema.transform((address) => ({ address })),
-  z.object({
-    address: emailSchema,
-    name: z.string().min(1).optional(),
-  }),
-]);
-
-const attachmentSchema = z
-  .object({
-    filename: z.string().min(1).max(255).optional(),
-    contentType: z.string().min(1).max(255).optional(),
-    objectId: z.string().uuid(),
-  })
-  .strict();
-
-const sendSchema = z.object({
-  draft: z.object({ id: uuidSchema, revision: z.number().int().positive() }).optional(),
-  from: addressSchema.optional(),
-  to: z.array(addressSchema).min(1),
-  cc: z.array(addressSchema).default([]),
-  bcc: z.array(addressSchema).default([]),
-  subject: z.string().max(998),
-  bodyText: z.string(),
-  bodyHtml: z.string().optional(),
-  attachments: z.array(attachmentSchema).max(100).default([]),
-  undoWindowMs: z.number().int().min(0).max(300_000).optional(),
-  sendAt: z
-    .string()
-    .datetime()
-    .refine((value) => {
-      const delay = Date.parse(value) - Date.now();
-      return delay > 0 && delay <= 366 * 24 * 60 * 60_000;
-    }, "Scheduled mail must be sent within the next 366 days.")
-    .optional(),
-  idempotencyKey: z.string().trim().min(8).max(200).optional(),
-});
 
 const headerValueSchema = z
   .string()
@@ -121,13 +88,6 @@ const inboundAcceptSchema = z.object({
   receivedAt: z.string().datetime().optional(),
   remoteAddress: z.string().min(1).optional(),
   helo: headerValueSchema.optional(),
-});
-
-const replySchema = sendSchema.omit({ subject: true }).extend({
-  threadId: uuidSchema,
-  subject: z.string().max(998).optional(),
-  inReplyTo: z.string().optional(),
-  references: z.array(z.string()).default([]),
 });
 
 const labelApplySchema = z.object({
@@ -245,11 +205,6 @@ const mailboxDelegateGrantSchema = mailboxDelegateSchema.extend({
   expiresAt: z.string().datetime().nullable().optional(),
 });
 
-const genericObjectJsonSchema = {
-  type: "object",
-  additionalProperties: true,
-} as const;
-
 const mailOkThreadSchema = z.object({
   ok: z.literal(true),
   threadId: z.string(),
@@ -286,14 +241,6 @@ const mailUserSettingsOutputSchema = z.object({
 });
 const mailOutboundGetOutputSchema = z.object({
   outbound: mailJsonObjectSchema.nullable(),
-});
-const mailSendOutputSchema = z.object({
-  id: z.string().optional(),
-  messageId: z.string().optional(),
-  threadId: z.string().optional(),
-  status: z.string().optional(),
-  undoUntil: z.string().optional(),
-  queuedAt: z.string().optional(),
 });
 const mailFilterDeleteOutputSchema = z.object({
   id: z.string(),
@@ -339,6 +286,8 @@ export interface CreateMailToolDefinitionsOptions {
    */
   readonly internalDomains?: readonly string[];
   readonly resolveInternalDomains?: (orgId: string) => Promise<readonly string[]>;
+  /** Extra addresses that reach the actor (domain aliases); excluded from replies. */
+  readonly resolveOwnAddresses?: (orgId: string, actorId: string) => Promise<readonly string[]>;
   /**
    * Auto-classifies newly sent mail messages (PRD §8.4). When provided, the
    * `mail.send` / `mail.reply` handlers classify the resulting message from
@@ -365,105 +314,8 @@ export function createMailToolDefinitions(
     ...(options.undoWindowMs === undefined ? {} : { undoWindowMs: options.undoWindowMs }),
   });
 
-  const internalDomains = new Set(
-    (
-      options.internalDomains ??
-      (options.defaultFromDomain === undefined ? [] : [options.defaultFromDomain])
-    ).map((domain) => domain.toLowerCase()),
-  );
-  const externalRecipientScope = {
-    scope: "mail.external",
-    reason:
-      "Sending mail to a recipient outside the organization's domains requires the mail.external scope.",
-    when: (input: { to?: unknown; cc?: unknown; bcc?: unknown }) =>
-      options.resolveInternalDomains === undefined && hasExternalRecipient(input, internalDomains),
-  };
-
   return [
-    defineTool<z.output<typeof sendSchema>, unknown>({
-      id: "mail.send",
-      description: "Send now after the undo delay, or schedule delivery for a future time.",
-      permission: "mail.send",
-      sideEffects: "external_communication",
-      confirmationRequired: true,
-      scopeComposition: { conditionalScopes: [externalRecipientScope] },
-      rateLimit: { perActor: { perHour: 60, perDay: 200 } },
-      inputSchema: zodToolSchema(sendSchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        await requireTenantMailRecipients(input, ctx, options.resolveInternalDomains);
-        const from = await authorizedFrom(input.from, ctx.actor, options);
-        const settings = await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id);
-        const outbound = await new MailSendService({
-          store: options.store,
-          undoWindowMs: input.undoWindowMs ?? options.undoWindowMs ?? 30_000,
-        }).queue({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          envelope: applySignature(toEnvelope(input, from), settings, false),
-          ...(input.draft === undefined ? {} : { draft: input.draft }),
-          ...(input.sendAt === undefined ? {} : { sendAt: new Date(input.sendAt) }),
-          source: ctx.actor.type === "agent" ? "agent" : "interactive",
-          ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
-        });
-        await options.classifyResource?.({
-          actor: ctx.actor,
-          resourceType: "mail.message",
-          resourceId: outbound.messageId,
-          derivation: { content: `${input.subject}\n${input.bodyText}`, scanContent: true },
-        });
-        return serializeOutbound(outbound);
-      },
-    }),
-    defineTool<z.output<typeof replySchema>, unknown>({
-      id: "mail.reply",
-      description: "Reply after the undo delay, or schedule the reply for a future time.",
-      permission: "mail.send",
-      sideEffects: "external_communication",
-      confirmationRequired: true,
-      scopeComposition: { conditionalScopes: [externalRecipientScope] },
-      inputSchema: zodToolSchema(replySchema, genericObjectJsonSchema),
-      outputSchema: zodToolSchema(mailSendOutputSchema, genericObjectJsonSchema),
-      handler: async (input, ctx) => {
-        await requireTenantMailRecipients(input, ctx, options.resolveInternalDomains);
-        const from = await authorizedFrom(input.from, ctx.actor, options);
-        const settings = await mailUserSettings(options.store, ctx.actor.orgId, ctx.actor.id);
-        const outbound = await new MailSendService({
-          store: options.store,
-          undoWindowMs: input.undoWindowMs ?? options.undoWindowMs ?? 30_000,
-        }).queue({
-          orgId: ctx.actor.orgId,
-          actorId: ctx.actor.id,
-          threadId: input.threadId,
-          ...(input.inReplyTo === undefined ? {} : { inReplyTo: input.inReplyTo }),
-          references: input.references,
-          source: ctx.actor.type === "agent" ? "agent" : "interactive",
-          ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
-          ...(input.sendAt === undefined ? {} : { sendAt: new Date(input.sendAt) }),
-          envelope: applySignature(
-            toEnvelope(
-              {
-                ...input,
-                subject: input.subject ?? "Re:",
-              },
-              from,
-            ),
-            settings,
-            true,
-          ),
-        });
-        await options.classifyResource?.({
-          actor: ctx.actor,
-          resourceType: "mail.message",
-          resourceId: outbound.messageId,
-          derivation: {
-            content: `${input.subject ?? "Re:"}\n${input.bodyText}`,
-            scanContent: true,
-          },
-        });
-        return serializeOutbound(outbound);
-      },
-    }),
+    ...createMailComposeToolDefinitions(options),
     defineTool<z.output<typeof inboundAcceptSchema>, unknown>({
       id: "mail.inbound.accept",
       description:
@@ -1267,72 +1119,6 @@ function serializeMailboxDelegate(delegate: {
   };
 }
 
-function toEnvelope(
-  input: z.output<typeof sendSchema> | z.output<typeof replySchema>,
-  from: MailOutboundEnvelope["from"],
-): MailOutboundEnvelope {
-  return {
-    from,
-    to: input.to.map(normalizeAddress),
-    cc: input.cc.map(normalizeAddress),
-    bcc: input.bcc.map(normalizeAddress),
-    subject: "subject" in input && input.subject !== undefined ? input.subject : "Re:",
-    text: input.bodyText,
-    ...(input.bodyHtml === undefined ? {} : { html: input.bodyHtml }),
-    attachments: input.attachments.map((attachment) => ({
-      ...(attachment.filename === undefined ? {} : { filename: attachment.filename }),
-      mimeType: attachment.contentType ?? "application/octet-stream",
-      ...(attachment.contentType === undefined ? {} : { contentType: attachment.contentType }),
-      objectId: attachment.objectId,
-    })),
-  };
-}
-
-async function mailUserSettings(
-  store: MailStore,
-  orgId: string,
-  actorId: string,
-): Promise<MailUserSettings> {
-  return (
-    (await store.getUserSettings?.(orgId, actorId)) ?? {
-      signatureText: "",
-      signatureHtml: null,
-      includeSignatureOnReplies: true,
-      blockedSenders: [],
-      updatedAt: new Date(0),
-    }
-  );
-}
-
-function applySignature(
-  envelope: MailOutboundEnvelope,
-  settings: MailUserSettings,
-  reply: boolean,
-): MailOutboundEnvelope {
-  if (
-    (reply && !settings.includeSignatureOnReplies) ||
-    (settings.signatureText.length === 0 && settings.signatureHtml === null)
-  ) {
-    return envelope;
-  }
-  const signatureHtml =
-    settings.signatureHtml ??
-    settings.signatureText
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;")
-      .replaceAll("\n", "<br>");
-  return {
-    ...envelope,
-    text: `${envelope.text}\n\n-- \n${settings.signatureText}`,
-    ...(envelope.html === undefined
-      ? {}
-      : { html: `${envelope.html}<br><div class="helix-mail-signature">${signatureHtml}</div>` }),
-  };
-}
-
 function serializeUserSettings(settings: MailUserSettings) {
   return {
     signatureText: settings.signatureText,
@@ -1343,74 +1129,14 @@ function serializeUserSettings(settings: MailUserSettings) {
   };
 }
 
-async function authorizedFrom(
-  requested: z.output<typeof addressSchema> | undefined,
-  actor: {
-    readonly id: string;
-    readonly orgId: string;
-    readonly email?: string;
-    readonly displayName?: string;
-  },
-  options: CreateMailToolDefinitionsOptions,
-): Promise<MailOutboundEnvelope["from"]> {
-  const primary = actorFrom(actor, options.defaultFromDomain);
-  const candidate = requested?.address ?? primary.address;
-  if (options.store.resolveAuthorizedSender !== undefined) {
-    const authorized = await options.store.resolveAuthorizedSender(
-      actor.orgId,
-      actor.id,
-      candidate,
-    );
-    if (authorized === null) {
-      throw new ForbiddenError("The requested From address is not an authorized sending identity.");
-    }
-    const requestedName =
-      requested !== undefined && "name" in requested ? requested.name : undefined;
-    return {
-      address: authorized,
-      ...((requestedName ?? actor.displayName) === undefined
-        ? {}
-        : { name: requestedName ?? actor.displayName }),
-    };
-  }
-  if (
-    requested === undefined ||
-    requested.address.toLowerCase() === primary.address.toLowerCase()
-  ) {
-    return primary;
-  }
-  const alias = (await options.store.listAliases?.(actor.orgId, actor.id))?.find(
-    (candidate) => candidate.email.toLowerCase() === requested.address.toLowerCase(),
-  );
-  if (alias === undefined) {
-    throw new ForbiddenError("The requested From address is not an authorized sending identity.");
-  }
-  return {
-    address: alias.email,
-    ...(alias.displayName === null && actor.displayName === undefined
-      ? {}
-      : { name: alias.displayName ?? actor.displayName }),
-  };
-}
-
-function normalizeAddress(address: {
-  readonly address: string;
-  readonly name?: string | undefined;
-}): MailOutboundEnvelope["from"] {
-  return {
-    address: address.address,
-    ...(address.name === undefined ? {} : { name: address.name }),
-  };
-}
-
 function structuredInboundInputToRfc822(
   input: z.output<typeof inboundAcceptSchema>,
   receivedAt: Date,
 ): string {
   const headers = [
-    `From: ${formatMailAddress(input.from)}`,
-    `To: ${input.to.map(formatMailAddress).join(", ")}`,
-    ...(input.cc.length === 0 ? [] : [`Cc: ${input.cc.map(formatMailAddress).join(", ")}`]),
+    `From: ${formatMailboxAddress(input.from)}`,
+    `To: ${input.to.map(formatMailboxAddress).join(", ")}`,
+    ...(input.cc.length === 0 ? [] : [`Cc: ${input.cc.map(formatMailboxAddress).join(", ")}`]),
     `Subject: ${input.subject}`,
     `Message-ID: ${formatMessageId(input.messageId)}`,
     `Date: ${receivedAt.toUTCString()}`,
@@ -1418,13 +1144,6 @@ function structuredInboundInputToRfc822(
     "Content-Type: text/plain; charset=utf-8",
   ];
   return `${headers.join("\r\n")}\r\n\r\n${input.bodyText}\r\n`;
-}
-
-function formatMailAddress(address: z.output<typeof addressSchema>): string {
-  if (!("name" in address) || address.name === undefined) {
-    return address.address;
-  }
-  return `"${address.name.replaceAll('"', '\\"')}" <${address.address}>`;
 }
 
 function formatMessageId(messageId: string | undefined): string {
@@ -1471,33 +1190,6 @@ function normalizeFilterPatch(input: Omit<z.output<typeof filterUpdateSchema>, "
 
 function normalizeMetadata(metadata: Record<string, unknown>): JsonObject {
   return JSON.parse(JSON.stringify(metadata)) as JsonObject;
-}
-
-function actorFrom(
-  actor: { readonly email?: string; readonly displayName?: string; readonly id: string },
-  domain?: string,
-): MailOutboundEnvelope["from"] {
-  return {
-    address: actor.email ?? `${actor.id}@${domain ?? "localhost"}`,
-    ...(actor.displayName === undefined ? {} : { name: actor.displayName }),
-  };
-}
-
-function serializeOutbound(
-  outbound: Pick<
-    MailOutboundRecord,
-    "id" | "messageId" | "threadId" | "status" | "undoUntil" | "createdAt" | "deliveryMetadata"
-  >,
-) {
-  return {
-    id: outbound.id,
-    messageId: outbound.messageId,
-    threadId: outbound.threadId,
-    status: outbound.status,
-    deliveryStatus: mailOutboundDisplayStatus(outbound),
-    undoUntil: outbound.undoUntil.toISOString(),
-    queuedAt: outbound.createdAt.toISOString(),
-  };
 }
 
 function serializeOutboundDetail(outbound: MailOutboundRecord) {

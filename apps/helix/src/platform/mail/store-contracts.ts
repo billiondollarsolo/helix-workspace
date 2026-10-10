@@ -2,6 +2,10 @@ import type { JsonObject } from "@helix/sdk-types";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import type { PostgresMailAttachmentIngestor } from "./attachment-ingestion.js";
 import type {
+  MessageAttachmentContent,
+  ReadMessageAttachmentInput,
+} from "./store-attachment-read.js";
+import type {
   MailAliasRecord,
   MailDraftRecord,
   MailFilterActions,
@@ -219,6 +223,10 @@ export interface MailStore {
   }): Promise<boolean>;
   search(input: MailSearchRequest): Promise<readonly MailSearchHit[]>;
   getThread(input: MailThreadGetRequest): Promise<MailThreadDetail | null>;
+  /** Bytes of an attachment on a message the actor can see (used by forward). */
+  readMessageAttachment?(
+    input: ReadMessageAttachmentInput,
+  ): Promise<MessageAttachmentContent | null>;
   /**
    * List the thread-row projection for one folder view, optionally filtered by
    * category tab, label, and free-text query. Paginated; returns `total` for

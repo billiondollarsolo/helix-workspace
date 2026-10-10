@@ -1279,7 +1279,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
 }
 
 export function featureFlagForTool(tool: Pick<ToolDefinition, "id">): string | undefined {
-  if (tool.id === "mail.send" || tool.id === "mail.reply") {
+  if (tool.id === "mail.send" || tool.id === "mail.reply" || tool.id === "mail.forward") {
     return "mail_outbound";
   }
   if (tool.id === "drive.share" || tool.id.startsWith("drive.access.")) {

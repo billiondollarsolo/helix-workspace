@@ -152,7 +152,7 @@ async function sendSmtpMessage(message: SmtpMessage): Promise<void> {
 }
 
 async function searchMailpit(query: string): Promise<MailpitSearchResponse> {
-  const url = new URL("/v1/api/v1/search", mailpitApiBaseUrl);
+  const url = new URL("/api/v1/search", mailpitApiBaseUrl);
   url.searchParams.set("query", query);
   const response = await fetch(url);
   if (!response.ok) {

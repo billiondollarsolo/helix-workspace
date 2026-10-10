@@ -60,7 +60,6 @@ import { MAIL_FOLDER_IDS } from "./types.js";
 // tool groups into tools-drafts.ts / tools-aliases.ts when next expanding (G9).
 
 const uuidSchema = z.string().uuid();
-const emailSchema = z.string().email();
 const mailboxTargetShape = { mailboxActorId: uuidSchema.optional() } as const;
 
 const headerValueSchema = z

@@ -161,8 +161,9 @@ export class SpamdScanner implements SpamScanner {
       socket.connect(this.#port, this.#host, () => {
         // SPAMC/1.5 SYMBOLS request: returns the score header plus the list of
         // triggered rule symbols. Headers are CRLF-delimited; a blank line ends
-        // the header block. spamd reads exactly `Content-length` body bytes, so
-        // the connection is left open for the bidirectional reply.
+        // the header block. spamd keeps reading until the client half-closes its
+        // write side (it otherwise waits out its own 30s read timeout), so end
+        // the request after the body; the reply is still read until spamd closes.
         const header = [
           "SYMBOLS SPAMC/1.5",
           `Content-length: ${String(body.byteLength)}`,
@@ -170,7 +171,7 @@ export class SpamdScanner implements SpamScanner {
           "",
         ].join("\r\n");
         socket.write(header);
-        socket.write(body);
+        socket.end(body);
       });
     });
   }

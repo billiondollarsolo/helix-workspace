@@ -111,6 +111,37 @@ describe("SpamdScanner", () => {
     const result = await scanner.scan("hello");
     expect(result.isSpam).toBe(false);
   });
+
+  it("half-closes the request so spamd replies without waiting out its read timeout", async () => {
+    // Real spamd only starts scoring once the client shuts down its write side.
+    const server: Server = createServer({ allowHalfOpen: true }, (socket) => {
+      socket.resume();
+      socket.on("end", () => {
+        socket.end("SPAMD/1.1 0 EX_OK\r\nSpam: False ; 2.3 / 5.0\r\n\r\nMISSING_DATE\r\n");
+      });
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    servers.push({
+      close: () =>
+        new Promise<void>((done) =>
+          server.close(() => {
+            done();
+          }),
+        ),
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("No port.");
+    const scanner = new SpamdScanner({
+      host: "127.0.0.1",
+      port: address.port,
+      threshold: 5,
+      timeoutMs: 1_000,
+    });
+    await expect(scanner.scan("Subject: Contract\r\n\r\nHello")).resolves.toMatchObject({
+      score: 2.3,
+      symbols: ["MISSING_DATE"],
+    });
+  });
 });
 
 describe("clamd protocol parsing", () => {

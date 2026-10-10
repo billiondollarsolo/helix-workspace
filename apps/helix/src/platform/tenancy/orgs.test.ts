@@ -325,6 +325,25 @@ describe("PostgresOrgStore", () => {
     expect(recording.calls[1]?.values).toContain("11111111-1111-4111-8111-111111111111");
   });
 
+  it("merges submitted flag and quota keys instead of replacing the JSON", async () => {
+    const recording = createRecordingSql([[], [orgRow({})]]);
+    const store = new PostgresOrgStore(recording.sql);
+
+    await store.updateTenantConfig({
+      orgId: "11111111-1111-4111-8111-111111111111",
+      featureFlags: { ai_smart_compose: false, watermark: null },
+      quotas: { actors_limit: null },
+    });
+
+    const update = recording.calls[1]?.text.replace(/\s+/gu, " ") ?? "";
+    expect(update).toContain("else (feature_flags || ?::jsonb) - ?::text[]");
+    expect(update).toContain("else (quotas || ?::jsonb) - ?::text[]");
+    expect(recording.jsonValues).toContainEqual({ ai_smart_compose: false });
+    // A null flag removes the override; a null quota is stored as "unlimited".
+    expect(recording.arrays).toEqual([["watermark"], []]);
+    expect(recording.jsonValues).toContainEqual({ actors_limit: null });
+  });
+
   it("lists BYO storage orgs and persists bounded health", async () => {
     const recording = createRecordingSql([
       [{ id: "org-a" }, { id: "org-b" }],

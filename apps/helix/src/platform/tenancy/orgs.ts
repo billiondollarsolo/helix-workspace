@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import type { HelixConfig, JsonObject } from "@helix/sdk-types";
 import { isSingleTenant } from "../mode/index.js";
+import {
+  FEATURE_FLAGS_PATCH,
+  QUOTAS_PATCH,
+  tenantConfigPatchParts,
+} from "./tenant-config-patch.js";
 
 export const DEFAULT_ORG_ID = "00000000-0000-0000-0000-000000000000";
 export const DEFAULT_ORG_SLUG = "default";
@@ -50,9 +55,13 @@ export interface CreateOrgInput {
 
 export interface UpdateTenantConfigInput {
   readonly orgId: string;
+  /** Replaces the stored object. */
   readonly byoConfig?: JsonObject | undefined;
+  /** Key-level patch; a `null` value removes the key. */
   readonly featureFlags?: JsonObject | undefined;
+  /** Key-level patch; `null` is stored (it means unlimited). */
   readonly quotas?: JsonObject | undefined;
+  /** Replaces the stored object. */
   readonly branding?: JsonObject | undefined;
   readonly changedByActorId?: string | null | undefined;
   readonly reason?: string | undefined;
@@ -537,6 +546,10 @@ export class PostgresOrgStore implements OrgStore {
           set_config('helix.tenant_config_changed_by', ${input.changedByActorId ?? ""}, true),
           set_config('helix.tenant_config_reason', ${input.reason ?? "tenant-config:update"}, true)
       `;
+      // Flags and quotas merge key by key; BYO config and branding replace.
+      // See tenant-config-patch.ts for why each section behaves as it does.
+      const flags = tenantConfigPatchParts(input.featureFlags ?? {}, FEATURE_FLAGS_PATCH);
+      const quotas = tenantConfigPatchParts(input.quotas ?? {}, QUOTAS_PATCH);
       const rows = await tx<OrgRow[]>`
         update orgs
         set
@@ -546,11 +559,12 @@ export class PostgresOrgStore implements OrgStore {
           end,
           feature_flags = case
             when ${input.featureFlags === undefined} then feature_flags
-            else ${tx.json(jsonObjectValue(input.featureFlags))}
+            else (feature_flags || ${tx.json(flags.merge)}::jsonb)
+              - ${tx.array([...flags.remove])}::text[]
           end,
           quotas = case
             when ${input.quotas === undefined} then quotas
-            else ${tx.json(jsonObjectValue(input.quotas))}
+            else (quotas || ${tx.json(quotas.merge)}::jsonb) - ${tx.array([...quotas.remove])}::text[]
           end,
           branding = case
             when ${input.branding === undefined} then branding

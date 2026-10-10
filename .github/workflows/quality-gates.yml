@@ -56,6 +56,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Check source formatting
         run: pnpm format:check
 
@@ -155,6 +158,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Start PostgreSQL and RustFS using reviewed image pins
         run: docker compose up -d --build --wait postgres rustfs
 
@@ -230,6 +236,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
+
       - name: Check formatting
         run: pnpm format:check
 
@@ -290,6 +299,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
 
       - name: Check Docker daemon
         run: docker info
@@ -423,6 +435,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm turbo run build --filter="./packages/*"
 
       - name: Build web app
         run: pnpm --filter @helix/web build

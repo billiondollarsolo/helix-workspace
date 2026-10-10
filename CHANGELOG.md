@@ -17,6 +17,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Search reindex keyset cursors keep PostgreSQL's microsecond precision, so rows
+  that share one millisecond (bulk seeds and imports) no longer return the same
+  page forever and stall demo preparation.
 - Local startup supports rrule's CommonJS export and existing Meilisearch indexes;
   mail retention uses the database clock for its default cutoff.
 - Fresh demo setup supplies current identity, Calendar, Chat, and Mail delivery

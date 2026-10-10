@@ -321,9 +321,7 @@ function postgresSource<Record>(options: PostgresSourceOptions<Record>): SearchR
         return {
           documents,
           done: rows.length < batchSize,
-          ...(last === undefined
-            ? {}
-            : { cursor: { id: last.id, updatedAt: last.updatedAt.toISOString() } }),
+          ...(last === undefined ? {} : { cursor: { id: last.id, updatedAt: last.cursorAt } }),
         };
       }
       const rows = await collectIdPage({
@@ -332,10 +330,7 @@ function postgresSource<Record>(options: PostgresSourceOptions<Record>): SearchR
         predicate: options.predicate,
         orgId,
         limit: batchSize,
-        cursor:
-          cursor === undefined
-            ? undefined
-            : { id: cursor.id, updatedAt: new Date(cursor.updatedAt) },
+        cursor,
       });
       const documents = await collectDocuments(
         rows.map((row) => row.id),
@@ -346,13 +341,16 @@ function postgresSource<Record>(options: PostgresSourceOptions<Record>): SearchR
       return {
         documents,
         done: rows.length < batchSize,
-        ...(last === undefined
-          ? {}
-          : { cursor: { id: last.id, updatedAt: last.updatedAt.toISOString() } }),
+        ...(last === undefined ? {} : { cursor: { id: last.id, updatedAt: last.cursorAt } }),
       };
     },
   };
 }
+// Keyset cursors must keep PostgreSQL's microsecond precision: a JS Date drops it,
+// so rows sharing one millisecond would compare greater than the truncated cursor
+// and the same page would be returned forever. Bind it as text too: postgres.js
+// converts timestamptz parameters through Date, which truncates them again.
+const CURSOR_AT_SQL = `to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 async function collectDurableIdPage(
   sql: postgres.Sql,
   type: SearchReindexType,
@@ -362,33 +360,29 @@ async function collectDurableIdPage(
   readonly {
     readonly id: string;
     readonly orgId: string;
-    readonly updatedAt: Date;
+    readonly cursorAt: string;
   }[]
 > {
   const rows = await sql<
     {
       id: string;
       org_id: string;
-      updated_at: Date;
+      cursor_at: string;
     }[]
   >`
-    select * from helix_search_reindex_id_page(
-      ${type}, ${cursor?.updatedAt ?? null}, ${cursor?.id ?? null}, ${limit}
+    select id, org_id, ${sql.unsafe(CURSOR_AT_SQL)} as cursor_at
+    from helix_search_reindex_id_page(
+      ${type}, ${cursor?.updatedAt ?? null}::text::timestamptz, ${cursor?.id ?? null}, ${limit}
     )
   `;
-  return rows.map((row) => ({ id: row.id, orgId: row.org_id, updatedAt: row.updated_at }));
+  return rows.map((row) => ({ id: row.id, orgId: row.org_id, cursorAt: row.cursor_at }));
 }
 async function* collectPostgresDocumentBatches<Record>(
   options: PostgresSourceOptions<Record> & {
     readonly orgId?: string | undefined;
   },
 ): AsyncIterable<readonly IndexDocument[]> {
-  let cursor:
-    | {
-        readonly updatedAt: Date;
-        readonly id: string;
-      }
-    | undefined;
+  let cursor: SearchReindexCursor | undefined;
   for (;;) {
     const rows = await collectIdPage({
       sql: options.sql,
@@ -415,7 +409,7 @@ async function* collectPostgresDocumentBatches<Record>(
     }
     const last = rows.at(-1);
     if (last === undefined) return;
-    cursor = { id: last.id, updatedAt: last.updatedAt };
+    cursor = { id: last.id, updatedAt: last.cursorAt };
   }
 }
 async function collectDocuments<Record>(
@@ -439,28 +433,23 @@ async function collectIdPage(input: {
   readonly predicate: string;
   readonly orgId: string | undefined;
   readonly limit: number;
-  readonly cursor:
-    | {
-        readonly updatedAt: Date;
-        readonly id: string;
-      }
-    | undefined;
+  readonly cursor: SearchReindexCursor | undefined;
 }): Promise<
   readonly {
     readonly id: string;
-    readonly updatedAt: Date;
+    readonly cursorAt: string;
   }[]
 > {
   const rows = await input.sql.unsafe<
     {
       readonly id: string;
-      readonly updated_at: Date;
+      readonly cursor_at: string;
     }[]
   >(
-    `select id, updated_at from ${input.tableName} where ${input.predicate} and ($1::uuid is null or org_id = $1::uuid) and ($3::timestamptz is null or (updated_at, id) > ($3::timestamptz, $4::uuid)) order by updated_at asc, id asc limit $2`,
+    `select id, ${CURSOR_AT_SQL} as cursor_at from ${input.tableName} where ${input.predicate} and ($1::uuid is null or org_id = $1::uuid) and ($3::text is null or (updated_at, id) > ($3::text::timestamptz, $4::uuid)) order by updated_at asc, id asc limit $2`,
     [input.orgId ?? null, input.limit, input.cursor?.updatedAt ?? null, input.cursor?.id ?? null],
   );
-  return rows.map((row) => ({ id: row.id, updatedAt: row.updated_at }));
+  return rows.map((row) => ({ id: row.id, cursorAt: row.cursor_at }));
 }
 async function* collectSourceBatches(
   source: SearchReindexSource,

@@ -25,6 +25,7 @@ import type {
   MailVacationRecord,
   StoredMailMessage,
 } from "./types.js";
+import type { SetMailUserSettingsInput } from "./user-settings-input.js";
 
 export interface CreateMailFilterInput {
   readonly orgId: string;
@@ -194,14 +195,8 @@ export interface MailStore {
   }): Promise<boolean>;
   listFilters(orgId: string, actorId: string): Promise<readonly MailFilterRecord[]>;
   getUserSettings?(orgId: string, actorId: string): Promise<MailUserSettings>;
-  setUserSettings?(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-    readonly signatureText: string;
-    readonly signatureHtml: string | null;
-    readonly includeSignatureOnReplies: boolean;
-    readonly blockedSenders: readonly string[];
-  }): Promise<MailUserSettings>;
+  /** Partial update; see SetMailUserSettingsInput. */
+  setUserSettings?(input: SetMailUserSettingsInput): Promise<MailUserSettings>;
   getVacation(orgId: string, actorId: string): Promise<MailVacationRecord | null>;
   setVacation(input: SetMailVacationInput): Promise<MailVacationRecord>;
   getActiveVacation(orgId: string, actorId: string, now?: Date): Promise<MailVacationRecord | null>;

@@ -29,6 +29,7 @@ import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { MAIL_CATEGORY_TABS } from "./category.js";
 import { MailFilterNotFoundError, MailInboundActorForbiddenError } from "./errors.js";
+import { FILTER_ACTION_REQUIRED, hasFilterAction } from "./filter-actions.js";
 import { sanitizeMailHtml } from "./html-rendering.js";
 import { ingestRawMail, MailauthAuthenticator, type MailAuthenticator } from "./ingest.js";
 import { hasExternalRecipient, requireTenantMailRecipients } from "./recipient-authorization.js";
@@ -36,6 +37,7 @@ import { MailSendService } from "./outbound.js";
 import { mailOutboundDisplayStatus } from "./reliability.js";
 import { MailDraftConflictError, type MailStore } from "./store.js";
 import { normalizeProviderDeliveryId } from "./threading.js";
+import { mailUserSettingsPatch, mailUserSettingsSetSchema } from "./user-settings-input.js";
 import type {
   MailFilterActions,
   MailFilterCriteria,
@@ -167,19 +169,24 @@ const filterCriteriaSchema = z.object({
   hasAttachment: z.boolean().optional(),
 });
 
-const filterActionsSchema = z.object({
-  applyLabels: z.array(z.string().min(1)).optional(),
-  archive: z.boolean().optional(),
-  delete: z.boolean().optional(),
-  snoozeUntil: z.string().datetime().optional(),
-});
+const filterActionsSchema = z
+  .object(
+    {
+      applyLabels: z.array(z.string().min(1)).optional(),
+      archive: z.boolean().optional(),
+      delete: z.boolean().optional(),
+      snoozeUntil: z.string().datetime().optional(),
+    },
+    { required_error: FILTER_ACTION_REQUIRED },
+  )
+  .refine(hasFilterAction, { message: FILTER_ACTION_REQUIRED });
 
 const filterCreateSchema = z.object({
   name: z.string().min(1),
   enabled: z.boolean().default(true),
   priority: z.number().int().default(100),
   criteria: filterCriteriaSchema.default({}),
-  actions: filterActionsSchema.default({}),
+  actions: filterActionsSchema,
 });
 
 const filterUpdateSchema = filterCreateSchema.partial().extend({ id: uuidSchema });
@@ -204,14 +211,7 @@ const vacationSetSchema = z
   );
 
 const userSettingsGetSchema = z.object({});
-const userSettingsSetSchema = z
-  .object({
-    signatureText: z.string().max(40_000).default(""),
-    signatureHtml: z.string().max(100_000).nullable().default(null),
-    includeSignatureOnReplies: z.boolean().default(true),
-    blockedSenders: z.array(emailSchema).max(1_000).default([]),
-  })
-  .strict();
+const userSettingsSetSchema = mailUserSettingsSetSchema;
 
 const searchSchema = z.object({
   query: z.string().trim().max(1_000).optional(),
@@ -837,7 +837,8 @@ export function createMailToolDefinitions(
       z.output<typeof mailUserSettingsOutputSchema>
     >({
       id: "mail.settings.set",
-      description: "Save the current user's server-enforced mail signature and block list.",
+      description:
+        "Update the current user's mail signature and block list. Omitted fields keep their saved values; signatureHtml: null clears the HTML signature.",
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(userSettingsSetSchema, genericObjectJsonSchema),
@@ -850,13 +851,7 @@ export function createMailToolDefinitions(
           await options.store.setUserSettings({
             orgId: ctx.actor.orgId,
             actorId: ctx.actor.id,
-            signatureText: input.signatureText.trim(),
-            signatureHtml:
-              input.signatureHtml === null ? null : sanitizeMailHtml(input.signatureHtml).html,
-            includeSignatureOnReplies: input.includeSignatureOnReplies,
-            blockedSenders: [
-              ...new Set(input.blockedSenders.map((address) => address.toLowerCase())),
-            ],
+            ...mailUserSettingsPatch(input),
           }),
         );
       },

@@ -35,6 +35,8 @@ All notable changes to Helix Workspace are documented here. This file follows
   fields, creates the tenant before its users, and verifies the actual login handler.
 - Assistant routines are covered by forced tenant row-level security like every other
   `org_id` table; the table was created after the RLS sweeps and shipped without it.
+- Drive no longer replaces the whole view with an error page when a member without
+  `admin.drive` loads it; the optional storage meter now hides on a permission error.
 - Inbound spam scanning half-closes its spamd request; spamd otherwise waited out its 30s read
   timeout, so every scan hit the client's 10s timeout and mail went unscanned.
 - The standalone OAuth and login seeds create their tenant on a fresh database.

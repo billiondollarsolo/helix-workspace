@@ -205,11 +205,18 @@ export function driveVersionsQueryOptions(objectId: string, enabled: boolean) {
   });
 }
 
+/**
+ * Organization storage usage for the sidebar meter. `drive.quota.usage` needs
+ * `admin.drive`, so most members get a permission error; the meter is optional,
+ * so it hides instead of retrying or replacing the Drive view with an error page.
+ */
 export function driveQuotaQueryOptions() {
   return queryOptions({
     queryKey: driveQueryKeys.quota,
     queryFn: () => getDriveQuotaUsage(),
     staleTime: 30_000,
+    retry: false,
+    throwOnError: false,
   });
 }
 

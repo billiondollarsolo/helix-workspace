@@ -7,6 +7,7 @@ import {
   deriveDriveSuggestions,
   driveActorQueryOptions,
   driveItemsInputFromRouteSearch,
+  driveQuotaQueryOptions,
   entryFromSearchHit,
 } from "./queries";
 
@@ -332,5 +333,13 @@ describe("driveItemsInputFromRouteSearch", () => {
     expect(driveItemsInputFromRouteSearch({ scope: "recent", folder: "folder-eng" })).toMatchObject(
       { scope: "recent", folderId: null },
     );
+  });
+});
+
+describe("Drive quota meter query", () => {
+  it("never escalates a permission error into the Drive view's error boundary", () => {
+    const options = driveQuotaQueryOptions();
+    expect(options.throwOnError).toBe(false);
+    expect(options.retry).toBe(false);
   });
 });

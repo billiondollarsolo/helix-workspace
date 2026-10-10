@@ -166,6 +166,20 @@ jobs:
           pnpm --filter @helix/app db:seed:oauth
           pnpm --filter @helix/app db:seed:logins
 
+      - name: Prepare S3 contract bucket
+        env:
+          S3_CONTRACT_ENDPOINT: http://127.0.0.1:28437
+          S3_CONTRACT_ACCESS_KEY: helixrustfs
+          S3_CONTRACT_SECRET_KEY: helix_rustfs_dev_secret
+          S3_CONTRACT_BUCKET: helix-objects
+        run: >-
+          pnpm --filter @helix/app exec tsx --eval
+          'import { createS3CompatibleStorage } from "./src/platform/storage/index.ts";
+          void createS3CompatibleStorage({ endpoint: process.env.S3_CONTRACT_ENDPOINT,
+          region: "us-east-1", bucket: process.env.S3_CONTRACT_BUCKET,
+          credentials: { accessKeyId: process.env.S3_CONTRACT_ACCESS_KEY,
+          secretAccessKey: process.env.S3_CONTRACT_SECRET_KEY }, fetch }).ensureBucket();'
+
       - name: Run mandatory real-service contracts
         env:
           HELIX_REAL_SERVICES_INTEGRATION: "1"

@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 /* ---------- shared bits ---------- */
 
@@ -35,7 +35,7 @@ export function SettingsField({
   );
 }
 
-export const SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE =
+const SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE =
   "Account-backed settings are not available in this build yet.";
 
 /* Spread onto every control whose value has nowhere to persist yet, so the
@@ -44,60 +44,6 @@ export const UNAVAILABLE_CONTROL_PROPS = {
   disabled: true,
   title: SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE,
 } as const;
-
-function Toggle({
-  defaultOn,
-  label,
-  disabledReason,
-}: {
-  defaultOn: boolean;
-  label: string;
-  disabledReason?: string;
-}) {
-  const [on, setOn] = useState(defaultOn);
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-label={label}
-      aria-checked={on}
-      aria-description={disabledReason}
-      title={disabledReason}
-      disabled={disabledReason !== undefined}
-      onClick={() => setOn((value) => !value)}
-      className={cn(
-        "w-9 h-5 [border-radius:999px] relative [transition:background_0.15s]",
-        on ? "[background:var(--accent)]" : "[background:var(--surface-3)]",
-      )}
-    >
-      <span
-        className={cn(
-          "absolute top-0.5 w-4 h-4 [border-radius:999px] [background:white] [transition:left_0.15s] [box-shadow:0_1px_2px_rgba(0,0,0,0.15)]",
-          on ? "left-4.5" : "left-0.5",
-        )}
-      />
-    </button>
-  );
-}
-
-export function UnavailableSettingsButton({
-  children,
-  className = "btn sm",
-}: {
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <button
-      type="button"
-      className={className}
-      {...UNAVAILABLE_CONTROL_PROPS}
-      aria-description={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
-    >
-      {children}
-    </button>
-  );
-}
 
 /** Pill-style single-choice control (Density, Text size). */
 export function SegmentedControl<TValue extends string>({
@@ -137,34 +83,6 @@ export function SegmentedControl<TValue extends string>({
           </button>
         );
       })}
-    </div>
-  );
-}
-
-/** Label + description on the left, a switch on the right. `className` carries the
-    caller's row padding and separator borders. */
-export function ToggleRow({
-  label,
-  desc,
-  defaultOn,
-  className,
-}: {
-  label: string;
-  desc: string;
-  defaultOn: boolean;
-  className: string;
-}) {
-  return (
-    <div className={cn("flex items-center", className)}>
-      <div className="flex-1">
-        <div className="[font-size:var(--text-body-sm)] font-medium">{label}</div>
-        <div className="[font-size:var(--text-caption)] text-muted-foreground mt-0.5">{desc}</div>
-      </div>
-      <Toggle
-        defaultOn={defaultOn}
-        label={label}
-        disabledReason={SETTINGS_ACCOUNT_STORAGE_UNAVAILABLE}
-      />
     </div>
   );
 }

@@ -589,8 +589,9 @@ export async function getMailUserSettings(
   return callMailTool<MailUserSettings>("mail.settings.get", {}, fetchImpl);
 }
 
+/** Partial update: omitted fields keep their saved values. */
 export async function setMailUserSettings(
-  input: Omit<MailUserSettings, "updatedAt">,
+  input: Partial<Omit<MailUserSettings, "updatedAt">>,
   fetchImpl: MailApiFetch = authenticatedFetch,
 ): Promise<MailUserSettings> {
   return callMailTool<MailUserSettings>("mail.settings.set", input, fetchImpl);

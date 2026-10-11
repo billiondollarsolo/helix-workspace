@@ -173,7 +173,8 @@ test("keeps the session and unsent Assistant draft through a backend restart and
   await expect(page.getByTestId("assistant-thread-list")).toContainText("Saved chat");
   down = true;
   await page.clock.setSystemTime(new Date(now + 31_000));
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: /^Account:/ }).click();
+  await page.getByRole("button", { name: "Manage your account", exact: true }).click();
   await expect(page).toHaveURL(/\/assistant\?settings=profile/u);
   await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
   await expect.poll(() => failedSessions).toBeGreaterThan(0);

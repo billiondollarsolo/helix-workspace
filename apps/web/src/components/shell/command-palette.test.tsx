@@ -5,12 +5,25 @@ import { QueryClient } from "@tanstack/react-query";
 import { WebPlatformProvider, createWebPlatformHost } from "@helix/sdk-web";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ContentSearchState } from "@/features/search/use-content-search";
 import { CommandPalette } from "./command-palette";
 
 const navigateMock = vi.fn();
+const idleContent: ContentSearchState = {
+  query: "",
+  hitsByType: [],
+  people: [],
+  loading: false,
+  failed: false,
+};
+const content = vi.hoisted(() => ({ state: undefined as ContentSearchState | undefined }));
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
+}));
+
+vi.mock("@/features/search/use-content-search", () => ({
+  useContentSearch: () => content.state ?? idleContent,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -27,6 +40,7 @@ describe("CommandPalette", () => {
     queryClient = new QueryClient();
     root = createRoot(container);
     navigateMock.mockClear();
+    content.state = undefined;
   });
 
   afterEach(() => {
@@ -43,7 +57,6 @@ describe("CommandPalette", () => {
     const close = vi.fn();
     const host = createWebPlatformHost({
       queryClient,
-      getColorMode: () => "system",
     });
     host.registerCommandPaletteItems([
       {
@@ -77,7 +90,6 @@ describe("CommandPalette", () => {
     const close = vi.fn();
     const host = createWebPlatformHost({
       queryClient,
-      getColorMode: () => "system",
     });
     host.registerCommandPaletteItems([
       {
@@ -114,7 +126,6 @@ describe("CommandPalette", () => {
     const close = vi.fn();
     const host = createWebPlatformHost({
       queryClient,
-      getColorMode: () => "system",
     });
     host.registerCommandPaletteItems([
       {
@@ -175,6 +186,101 @@ describe("CommandPalette", () => {
     opener.remove();
   });
 
+  it("opens compose and the event editor through router params", () => {
+    const close = vi.fn();
+    render(createWebPlatformHost({ queryClient }), close);
+
+    setSearchQuery("new email");
+    act(() => buttonWithText("New email").click());
+    expect(navigateMock).toHaveBeenLastCalledWith({ to: "/mail", search: { compose: "new" } });
+
+    setSearchQuery("schedule");
+    act(() => buttonWithText("Schedule meeting").click());
+    expect(navigateMock).toHaveBeenLastCalledWith({ to: "/calendar", search: { create: "event" } });
+  });
+
+  it("lists content results grouped by app under the command matches", () => {
+    content.state = {
+      query: "harbor",
+      hitsByType: [
+        {
+          type: "mail",
+          hits: [
+            {
+              id: "mail:1",
+              type: "mail",
+              title: "Harbor review",
+              attributes: { threadId: "11111111-1111-4111-8111-111111111111", fromName: "Nora" },
+            },
+          ],
+        },
+        {
+          type: "drive",
+          hits: [
+            {
+              id: "drive:1",
+              type: "drive",
+              title: "Harbor brief.md",
+              attributes: { fileId: "f-1", parentFolderId: "folder-1" },
+            },
+          ],
+        },
+      ],
+      people: [
+        {
+          id: "p-1",
+          email: "luca@helix.test",
+          displayName: "Luca Harbor",
+          kind: "directory",
+          favorite: false,
+          avatarDataUrl: null,
+          relationship: {},
+          actorId: null,
+          title: null,
+        },
+      ],
+      loading: false,
+      failed: false,
+    };
+    render(createWebPlatformHost({ queryClient }), vi.fn());
+    setSearchQuery("harbor");
+
+    const groups = Array.from(container.querySelectorAll('[role="group"]')).map((group) =>
+      group.firstElementChild?.textContent?.trim(),
+    );
+    expect(groups).toEqual(["Search", "Mail", "Files", "People"]);
+    expect(buttonWithText("Harbor review").textContent).toContain("Nora");
+
+    act(() => buttonWithText("Harbor review").click());
+    expect(navigateMock).toHaveBeenLastCalledWith({
+      to: "/mail",
+      search: { thread: "11111111-1111-4111-8111-111111111111" },
+    });
+    act(() => buttonWithText("Harbor brief.md").click());
+    expect(navigateMock).toHaveBeenLastCalledWith({
+      to: "/drive",
+      search: { file: "f-1", folder: "folder-1" },
+    });
+    act(() => buttonWithText("Luca Harbor").click());
+    expect(navigateMock).toHaveBeenLastCalledWith({
+      to: "/mail",
+      search: { compose: "new", to: "luca@helix.test" },
+    });
+    act(() => buttonWithText("Search Helix for").click());
+    expect(navigateMock).toHaveBeenLastCalledWith({ to: "/search", search: { q: "harbor" } });
+  });
+
+  it("announces content search progress and failures", () => {
+    content.state = { ...idleContent, query: "har", loading: true };
+    render(createWebPlatformHost({ queryClient }), vi.fn());
+    setSearchQuery("har");
+    expect(container.querySelector(".palette-status")?.textContent).toContain("Searching");
+
+    content.state = { ...idleContent, query: "har", failed: true };
+    setSearchQuery("harb");
+    expect(container.querySelector(".palette-status")?.textContent).toContain("unavailable");
+  });
+
   function render(
     host: ReturnType<typeof createWebPlatformHost>,
     onClose: () => void,
@@ -188,7 +294,6 @@ describe("CommandPalette", () => {
             mode: "system",
             resolvedMode: "light",
             setMode: () => undefined,
-            toggle: () => undefined,
           })}
         >
           <CommandPalette open={open} onClose={onClose} openSettings={() => undefined} />

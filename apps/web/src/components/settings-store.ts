@@ -167,14 +167,6 @@ export function setAppearance<K extends keyof AppearanceSettings>(
   appearanceStore.setState((prev) => ({ ...prev, [key]: value }));
 }
 
-/** Switch to the opposite of what is on screen, as an explicit choice. */
-export function toggleTheme(): void {
-  appearanceStore.setState((prev) => ({
-    ...prev,
-    theme: resolveTheme(prev.theme) === "dark" ? "light" : "dark",
-  }));
-}
-
 /** Reset to defaults — used by tests. */
 export function resetAppearanceForTest(): void {
   appearanceStore.setState(() => DEFAULTS);

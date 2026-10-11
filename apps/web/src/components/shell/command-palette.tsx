@@ -2,14 +2,22 @@ import { cn } from "@/lib/utils";
 import { iconMap as Icons, type IconName } from "@/components/icon-map";
 import { ChevronRight as ChevronRightIcon, Search as SearchIcon } from "lucide-react";
 /* CommandPalette — ⌘K global launcher.
-   Ported from the design handoff (overlays.jsx → CommandPalette).
-   Categorized results (Apps / Actions / Settings / People / Documents);
-   arrow-key navigation; Enter selects; Escape closes. */
+   Matching commands first (apps, actions, settings, plugin commands), then
+   content: a jump to the full results page, and mail, files, chat messages,
+   events and people. Arrow keys move; Enter selects; Escape closes. */
 
 import { APPS } from "@/components/apps";
 import { Avatar } from "@/components/ui/avatar";
+import type { GlobalSearchType } from "@/features/search/api";
+import {
+  SEARCH_TYPE_LABELS,
+  searchHitDetail,
+  searchHitTarget,
+  searchHitTitle,
+} from "@/features/search/search-hits";
+import { useContentSearch, type ContentSearchState } from "@/features/search/use-content-search";
 import { usePlatformSnapshot, type CommandItem, type WebPlatformHost } from "@helix/sdk-web";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, type UseNavigateResult } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 interface PaletteItem {
@@ -25,13 +33,85 @@ interface PaletteItem {
   action: () => void | Promise<void>;
 }
 
-/* "Create X" entries. Each one currently just lands on the owning surface —
-   the surfaces open their own composer from there. */
-const ACTION_COMMANDS: readonly { id: string; title: string; icon: IconName; route: string }[] = [
-  { id: "new-email", title: "New email", icon: "EditPen", route: "/mail" },
-  { id: "schedule-meeting", title: "Schedule meeting", icon: "Calendar", route: "/calendar" },
-  { id: "start-meet-call", title: "Start a Helix Meet call", icon: "Video", route: "/meet" },
-];
+const CONTENT_ICONS: Readonly<Record<GlobalSearchType, IconName>> = {
+  mail: "Mail",
+  drive: "Drive",
+  chat: "Chat",
+  calendar: "Calendar",
+};
+
+type Navigate = UseNavigateResult<string>;
+
+/* "Create X" entries open the owning surface's editor through its URL state:
+   `/mail?compose=new` and `/calendar?create=event`. */
+function actionCommands(navigate: Navigate): PaletteItem[] {
+  return [
+    {
+      id: "new-email",
+      group: "Actions",
+      title: "New email",
+      icon: "EditPen",
+      keywords: ["compose", "write", "message"],
+      action: () => void navigate({ to: "/mail", search: { compose: "new" } }),
+    },
+    {
+      id: "schedule-meeting",
+      group: "Actions",
+      title: "Schedule meeting",
+      icon: "Calendar",
+      keywords: ["event", "invite", "create"],
+      action: () => void navigate({ to: "/calendar", search: { create: "event" } }),
+    },
+    {
+      id: "start-meet-call",
+      group: "Actions",
+      title: "Start a video call",
+      icon: "Video",
+      keywords: ["meet", "call"],
+      action: () => void navigate({ to: "/meet" }),
+    },
+  ];
+}
+
+/** Content results after the commands: a full-search jump, then hits by app. */
+function contentItems(content: ContentSearchState, navigate: Navigate): PaletteItem[] {
+  if (content.query.length === 0) {
+    return [];
+  }
+  const q = content.query;
+  return [
+    {
+      id: "search-all",
+      group: "Search",
+      title: `Search Helix for “${q}”`,
+      sub: "Mail, files, chat messages, events and people",
+      icon: "Grid",
+      action: () => void navigate({ to: "/search", search: { q } }),
+    },
+    ...content.hitsByType.flatMap(({ type, hits }) =>
+      hits.map<PaletteItem>((hit) => ({
+        id: `hit:${hit.id}`,
+        group: SEARCH_TYPE_LABELS[type],
+        title: searchHitTitle(hit),
+        sub: searchHitDetail(hit),
+        icon: CONTENT_ICONS[type],
+        action: () => void navigate(searchHitTarget(hit)),
+      })),
+    ),
+    ...content.people.map<PaletteItem>((person) => ({
+      id: `person:${person.id}`,
+      group: "People",
+      title: person.displayName,
+      sub: person.email ?? undefined,
+      avatar: person.displayName,
+      action: () =>
+        void navigate({
+          to: "/mail",
+          search: person.email === null ? {} : { compose: "new", to: person.email },
+        }),
+    })),
+  ];
+}
 
 export interface CommandPaletteProps {
   open: boolean;
@@ -46,6 +126,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const content = useContentSearch(query, open);
 
   const goto = useCallback(
     (route: string) => {
@@ -64,13 +145,7 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
         keywords: [app.name, app.route],
         action: () => goto(app.route),
       })),
-      ...ACTION_COMMANDS.map((command) => ({
-        id: command.id,
-        group: "Actions",
-        title: command.title,
-        icon: command.icon,
-        action: () => goto(command.route),
-      })),
+      ...actionCommands(navigate),
       {
         id: "account-settings",
         group: "Settings",
@@ -91,8 +166,11 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
       return base;
     }
     const lower = query.toLowerCase();
-    return base.filter((item) => paletteItemMatchesQuery(item, lower));
-  }, [query, goto, openSettings, registeredCommands]);
+    return [
+      ...base.filter((item) => paletteItemMatchesQuery(item, lower)),
+      ...contentItems(content, navigate),
+    ];
+  }, [query, goto, navigate, openSettings, registeredCommands, content]);
 
   useEffect(() => {
     if (!open) {
@@ -217,89 +295,85 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
           />
           <span className="kbd">esc</span>
         </div>
-        <div
-          id="command-palette-results"
-          role="listbox"
-          aria-label="Commands"
-          className="overflow-y-auto flex-1 p-1.5"
-        >
-          {Array.from(groups.entries()).map(([group, groupItems]) => {
-            const groupLabelId = `command-palette-group-${group.toLowerCase().replaceAll(" ", "-")}`;
-            return (
-              <div key={group} role="group" aria-labelledby={groupLabelId}>
-                <div
-                  id={groupLabelId}
-                  className="type-chip text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [padding:8px_12px_4px]"
-                >
-                  {group}
+        <div className="overflow-y-auto flex-1 p-1.5">
+          <div id="command-palette-results" role="listbox" aria-label="Commands and results">
+            {Array.from(groups.entries()).map(([group, groupItems]) => {
+              const groupLabelId = `command-palette-group-${group.toLowerCase().replaceAll(" ", "-")}`;
+              return (
+                <div key={group} role="group" aria-labelledby={groupLabelId}>
+                  <div
+                    id={groupLabelId}
+                    className="type-chip text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [padding:8px_12px_4px]"
+                  >
+                    {group}
+                  </div>
+                  {groupItems.map((item) => {
+                    const myIndex = runningIndex;
+                    runningIndex += 1;
+                    const Icon = item.icon ? Icons[item.icon] : null;
+                    const active = myIndex === index;
+                    const disabled = item.disabledReason !== undefined;
+                    let glyph: ReactNode = null;
+                    if (item.avatar) {
+                      glyph = <Avatar name={item.avatar} size={20} />;
+                    } else if (Icon !== null) {
+                      glyph = <Icon />;
+                    }
+                    return (
+                      <button
+                        key={`${item.group}-${item.title}-${myIndex}`}
+                        id={`command-palette-option-${String(myIndex)}`}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        aria-disabled={disabled}
+                        tabIndex={-1}
+                        disabled={disabled}
+                        title={item.disabledReason}
+                        onClick={() => {
+                          if (disabled) {
+                            return;
+                          }
+                          void item.action();
+                          onClose();
+                        }}
+                        onMouseEnter={() => setIndex(myIndex)}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 [padding:8px_12px] rounded-md type-body-sm text-left",
+                          active && !disabled
+                            ? "[background:var(--accent-soft)]"
+                            : "bg-transparent",
+                          disabled ? "[opacity:0.72]" : "[opacity:1]",
+                          disabled
+                            ? "cursor-not-allowed text-muted-foreground"
+                            : active
+                              ? "cursor-pointer text-primary"
+                              : "cursor-pointer text-foreground",
+                        )}
+                      >
+                        <span className="w-6 h-6 rounded bg-muted grid [place-items:center] shrink-0">
+                          {glyph}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate">{item.title}</div>
+                          {item.sub || item.disabledReason ? (
+                            <div className="truncate type-caption [color:var(--text-2)]">
+                              {item.disabledReason ?? item.sub}
+                            </div>
+                          ) : null}
+                        </div>
+                        {item.shortcut ? <span className="kbd">{item.shortcut}</span> : null}
+                        {active ? <ChevronRightIcon size={16} /> : null}
+                      </button>
+                    );
+                  })}
                 </div>
-                {groupItems.map((item) => {
-                  const myIndex = runningIndex;
-                  runningIndex += 1;
-                  const Icon = item.icon ? Icons[item.icon] : null;
-                  const active = myIndex === index;
-                  const disabled = item.disabledReason !== undefined;
-                  let glyph: ReactNode = null;
-                  if (item.avatar) {
-                    glyph = <Avatar name={item.avatar} size={20} />;
-                  } else if (Icon !== null) {
-                    glyph = <Icon />;
-                  }
-                  return (
-                    <button
-                      key={`${item.group}-${item.title}-${myIndex}`}
-                      id={`command-palette-option-${String(myIndex)}`}
-                      type="button"
-                      role="option"
-                      aria-selected={active}
-                      aria-disabled={disabled}
-                      tabIndex={-1}
-                      disabled={disabled}
-                      title={item.disabledReason}
-                      onClick={() => {
-                        if (disabled) {
-                          return;
-                        }
-                        void item.action();
-                        onClose();
-                      }}
-                      onMouseEnter={() => setIndex(myIndex)}
-                      className={cn(
-                        "w-full flex items-center gap-2.5 [padding:8px_12px] rounded-md type-body-sm text-left",
-                        active && !disabled ? "[background:var(--accent-soft)]" : "bg-transparent",
-                        disabled ? "[opacity:0.72]" : "[opacity:1]",
-                        disabled
-                          ? "cursor-not-allowed text-muted-foreground"
-                          : active
-                            ? "cursor-pointer text-primary"
-                            : "cursor-pointer text-foreground",
-                      )}
-                    >
-                      <span className="w-6 h-6 rounded bg-muted grid [place-items:center] shrink-0">
-                        {glyph}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="truncate">{item.title}</div>
-                        {item.sub || item.disabledReason ? (
-                          <div className="truncate type-caption text-muted-foreground">
-                            {item.disabledReason ?? item.sub}
-                          </div>
-                        ) : null}
-                      </div>
-                      {item.shortcut ? <span className="kbd">{item.shortcut}</span> : null}
-                      {active ? <ChevronRightIcon size={16} /> : null}
-                    </button>
-                  );
-                })}
-              </div>
-            );
-          })}
-          {items.length === 0 ? (
-            <div className="empty p-8" role="status" aria-live="polite">
-              <SearchIcon size={16} />
-              <div>No results for &quot;{query}&quot;</div>
-            </div>
-          ) : null}
+              );
+            })}
+          </div>
+          <div className="palette-status" role="status" aria-live="polite">
+            {paletteStatus(query, items.length, content)}
+          </div>
         </div>
         <div className="[border-top:1px_solid_var(--border)] [padding:8px_14px] flex gap-4 type-caption text-muted-foreground">
           <span className="row gap-2">
@@ -315,6 +389,13 @@ export function CommandPalette({ open, onClose, openSettings }: CommandPalettePr
       </div>
     </div>
   );
+}
+
+function paletteStatus(query: string, count: number, content: ContentSearchState): string {
+  if (query.trim().length === 0) return "";
+  if (content.loading) return "Searching mail, files, chat and events…";
+  if (content.failed) return "Content search is unavailable right now.";
+  return count === 0 ? `No results for “${query.trim()}”` : "";
 }
 
 function firstEnabledIndex(items: readonly PaletteItem[]): number {

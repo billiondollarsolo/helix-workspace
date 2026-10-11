@@ -5,6 +5,10 @@
 
 @import "tailwindcss";
 
+/* `dark:` utilities follow the app theme (settings-store sets data-theme),
+   not the operating-system preference. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 /* Self-hosted Geist Sans + Geist Mono (variable) */
 @import "@fontsource-variable/geist/index.css";
 @import "@fontsource-variable/geist-mono/index.css";
@@ -754,7 +758,8 @@
    ============================================================ */
   .app {
     display: grid;
-    grid-template-columns: 52px 1fr;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     height: 100vh;
     height: 100dvh;
     overflow: hidden;
@@ -814,21 +819,27 @@
     outline-offset: 2px;
   }
 
-  /* Explicit placement so overlays / banners cannot auto-place into tracks. */
+  /* Explicit placement so overlays cannot auto-place into tracks. The offline
+   banner spans the first row; rail and workspace share the second. */
+  .app > .network-status {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
   .app > .rail {
     grid-column: 1;
-    grid-row: 1;
+    grid-row: 2;
     min-height: 0;
   }
   .app > .workspace {
     grid-column: 2;
-    grid-row: 1;
+    grid-row: 2;
     min-width: 0;
     min-height: 0;
   }
 
   /* === Icon rail (always visible, always dark) === */
   .rail {
+    width: 52px;
     background: var(--rail);
     color: var(--rail-fg);
     display: flex;
@@ -851,7 +862,11 @@
     height: 36px;
     display: grid;
     place-items: center;
+    padding: 0;
+    background: transparent;
+    border: 0;
     border-radius: 6px;
+    cursor: pointer;
     color: var(--rail-fg);
     position: relative;
     transition:
@@ -899,6 +914,9 @@
   .rail-item:focus-visible .rail-tip {
     opacity: 1;
   }
+  .rail-item[data-state="open"] .rail-tip {
+    opacity: 0;
+  }
   .rail-divider {
     width: 24px;
     height: 1px;
@@ -914,7 +932,7 @@
     height: 44px;
     display: flex;
     align-items: center;
-    padding: 0 12px;
+    padding: 0 8px 0 12px;
     gap: 12px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
@@ -950,10 +968,50 @@
   }
   .search input {
     flex: 1;
+    min-width: 0;
+    height: 100%;
     background: transparent;
     border: none;
     outline: none;
     font-size: var(--text-body-lg);
+  }
+  .search-palette {
+    display: grid;
+    place-items: center;
+    padding: 2px;
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .search-palette:focus-visible {
+    outline: 2px solid var(--accent);
+  }
+  .search-clear {
+    width: 22px;
+    height: 22px;
+  }
+  .topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .topbar-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    display: grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    color: var(--label-on);
+    font-size: var(--text-overline);
+    font-weight: 700;
+    background: var(--danger);
+    border: 2px solid var(--surface);
+    border-radius: 999px;
   }
 
   /* Placeholders had no rule at all, so every input used the engine's default
@@ -978,8 +1036,9 @@
   .workspace {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100%;
     min-width: 0;
+    min-height: 0;
   }
   .workspace-body {
     flex: 1;
@@ -1504,9 +1563,9 @@
    ============================================================ */
   .launcher {
     position: absolute;
-    top: 48px;
-    left: 56px;
-    width: 320px;
+    top: 8px;
+    left: 60px;
+    width: 336px;
     background: var(--surface);
     border-radius: 12px;
     box-shadow: var(--shadow-lg);
@@ -1538,19 +1597,34 @@
     background: var(--hover);
   }
   .launcher-icon {
-    width: 36px;
-    height: 36px;
-    border-radius: 9px;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
     display: grid;
     place-items: center;
-    color: white;
+    color: var(--label-on);
+  }
+  .launcher-icon-neutral {
+    color: var(--text-2);
+    background: var(--surface-3);
+  }
+  .launcher-title {
+    padding: 4px 6px 10px;
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+    font-weight: 600;
+  }
+  .launcher-tile[aria-current="page"] {
+    background: var(--accent-soft);
   }
 
   .notification-row {
     display: flex;
-    gap: 10px;
+    gap: 12px;
     width: 100%;
-    padding: 10px 14px;
+    padding: 10px 16px;
+    color: var(--text);
+    border: 0;
     border-bottom: 1px solid var(--border);
     background: transparent;
     cursor: pointer;
@@ -1569,305 +1643,6 @@
   .notification-row.unread:hover,
   .notification-row.unread:focus-visible {
     background: color-mix(in srgb, var(--accent-soft) 82%, var(--accent) 18%);
-  }
-
-  .network-status {
-    position: fixed;
-    top: max(12px, env(safe-area-inset-top));
-    left: 50%;
-    z-index: 1200;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    max-width: min(560px, calc(100vw - 32px));
-    padding: 9px 14px;
-    color: #fff;
-    font-size: var(--text-meta);
-    font-weight: 600;
-    line-height: 1.4;
-    background: #334155;
-    border: 1px solid rgb(255 255 255 / 18%);
-    border-radius: 999px;
-    box-shadow: var(--shadow-lg);
-    transform: translateX(-50%);
-  }
-
-  .network-status.reconnected {
-    background: #047857;
-  }
-
-  .network-status-dot {
-    width: 8px;
-    height: 8px;
-    flex: 0 0 auto;
-    background: #fbbf24;
-    border-radius: 999px;
-  }
-
-  .network-status.reconnected .network-status-dot {
-    background: #a7f3d0;
-  }
-
-  .profile-menu-action:hover,
-  .profile-menu-action:focus-visible {
-    background: var(--hover) !important;
-  }
-
-  .profile-menu button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-
-  .search-page {
-    display: flex;
-    flex: 1;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    padding: clamp(16px, 3vw, 32px);
-    overflow: hidden;
-  }
-
-  .search-page-header h1 {
-    margin: 0;
-    font-size: var(--text-h1);
-    text-wrap: balance;
-  }
-
-  .search-page-header p {
-    margin: 4px 0 0;
-    color: var(--text-2);
-  }
-
-  .search-controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 20px;
-  }
-
-  .search-query-field {
-    display: flex;
-    flex: 1 1 280px;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
-
-  .search-type-filters {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .search-results-meta {
-    min-height: 32px;
-    padding: 10px 2px 6px;
-    color: var(--text-2);
-    font-size: var(--text-meta);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .search-results-scroll {
-    flex: 1;
-    min-height: 240px;
-    overflow: auto;
-    overscroll-behavior: contain;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-  }
-
-  .search-results-table {
-    min-width: 680px;
-  }
-
-  .search-results-body {
-    position: relative;
-  }
-
-  .search-result-open {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    width: 100%;
-    min-width: 0;
-    padding: 4px;
-    text-align: left;
-    border-radius: var(--radius);
-  }
-
-  .search-result-open:hover,
-  .search-result-open:focus-visible {
-    background: var(--hover);
-  }
-
-  .search-result-open > span {
-    display: grid;
-    min-width: 0;
-  }
-
-  .search-result-open strong,
-  .search-result-open small {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .search-result-open small {
-    color: var(--text-2);
-  }
-
-  .search-results-error {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 16px;
-    color: var(--danger);
-  }
-
-  @media (max-width: 760px) {
-    .app {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(0, 1fr) auto;
-    }
-
-    .workspace {
-      grid-row: 1;
-      grid-column: 1;
-      height: 100%;
-      min-height: 0;
-    }
-
-    .rail {
-      grid-row: 2;
-      grid-column: 1;
-      flex-direction: row;
-      align-items: center;
-      width: 100%;
-      min-height: 56px;
-      padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom))
-        max(8px, env(safe-area-inset-left));
-      overflow-x: auto;
-      overflow-y: hidden;
-      overscroll-behavior-x: contain;
-      border-top: 1px solid var(--border);
-      border-right: 0;
-    }
-
-    .rail-logo,
-    .rail-item {
-      width: 44px;
-      height: 44px;
-      flex: 0 0 44px;
-      margin: 0;
-    }
-
-    .rail-divider {
-      width: 1px;
-      height: 28px;
-      flex: 0 0 1px;
-      margin: 0 5px;
-    }
-
-    .rail-spacer {
-      display: none;
-    }
-
-    .rail-tip {
-      display: none;
-    }
-
-    .topbar {
-      min-height: 52px;
-      height: auto;
-      padding: max(4px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 4px
-        max(8px, env(safe-area-inset-left));
-      gap: 6px;
-    }
-
-    .topbar-title {
-      max-width: 112px;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-
-    .topbar .search {
-      min-width: 100px;
-    }
-
-    .topbar-actions {
-      flex: 0 0 auto;
-      gap: 2px;
-    }
-
-    .topbar-actions .icon-btn {
-      min-width: 40px;
-      min-height: 40px;
-    }
-
-    .kbd {
-      display: none;
-    }
-
-    .surf-sidebar {
-      width: min(42vw, 160px);
-      padding: 8px 6px;
-    }
-
-    .launcher {
-      position: fixed;
-      inset: auto max(8px, env(safe-area-inset-right)) calc(62px + env(safe-area-inset-bottom))
-        max(8px, env(safe-area-inset-left));
-      width: auto;
-      max-height: min(70dvh, 540px);
-      overflow: auto;
-      overscroll-behavior: contain;
-    }
-
-    .compose {
-      right: max(8px, env(safe-area-inset-right));
-      bottom: calc(56px + env(safe-area-inset-bottom));
-      left: max(8px, env(safe-area-inset-left));
-      width: auto;
-      max-height: calc(100dvh - 116px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-      overflow: auto;
-      overscroll-behavior: contain;
-      border-bottom: 1px solid var(--border);
-      border-radius: 8px;
-    }
-
-    .dialog-backdrop {
-      padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
-        max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-    }
-
-    .dialog {
-      width: 100%;
-      max-width: 100%;
-    }
-
-    .search-page {
-      padding: 14px;
-    }
-
-    .search-results-error {
-      align-items: stretch;
-      flex-direction: column;
-    }
-  }
-
-  @media (max-width: 520px) {
-    .topbar-title {
-      display: none;
-    }
-
-    .topbar-actions > button[title="Toggle theme"],
-    .topbar-actions > button[title="Settings"] {
-      display: none;
-    }
   }
 
   /* ============================================================
@@ -3807,7 +3582,8 @@
   }
 
   /* ============================================================
-   Shell resilience — network status, compose recovery, mobile rail
+   Shell chrome — offline banner, menus, sheets, account card,
+   notifications, search page, phone layout, navigation collapse
    ============================================================ */
   .compose-minimized {
     width: min(360px, calc(100vw - 32px));
@@ -3839,213 +3615,809 @@
     border-radius: 4px;
   }
 
+  /* === Offline banner ===
+     Describes the device's connection only. Server failures are reported by
+     the surface that made the request, in its own error state. */
   .network-status {
-    position: fixed;
-    top: max(12px, env(safe-area-inset-top));
-    left: 50%;
-    z-index: 1200;
     display: flex;
     align-items: center;
-    gap: 8px;
-    max-width: min(560px, calc(100vw - 32px));
-    padding: 9px 14px;
-    color: #fff;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+    color: var(--rail-fg-strong);
     font-size: var(--text-meta);
-    font-weight: 600;
     line-height: 1.4;
-    background: #334155;
-    border: 1px solid rgb(255 255 255 / 18%);
-    border-radius: 999px;
-    box-shadow: var(--shadow-lg);
-    transform: translateX(-50%);
+    text-align: center;
+    background: var(--rail);
+    border-bottom: 1px solid var(--border);
   }
 
   .network-status.reconnected {
-    background: #047857;
+    color: var(--success);
+    background: var(--success-soft);
   }
 
-  .network-status-dot {
-    width: 8px;
-    height: 8px;
-    flex: 0 0 auto;
-    background: #fbbf24;
-    border-radius: 999px;
+  /* === Sheets and dialogs (quick settings, More, About) === */
+  .sheet-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    background: rgb(0 0 0 / 32%);
   }
 
-  .network-status.reconnected .network-status-dot {
-    background: #a7f3d0;
+  .more-sheet-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 12px 12px 20px;
+    border-bottom: 1px solid var(--border);
   }
 
-  .profile-menu-action:hover,
-  .profile-menu-action:focus-visible {
-    background: var(--hover) !important;
+  .more-sheet-title {
+    margin: 0;
+    font-size: var(--text-body-lg);
+    font-weight: 600;
   }
 
-  .profile-menu button:focus-visible {
+  .quick-settings-body {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .quick-settings-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .quick-settings-group legend {
+    margin-bottom: 6px;
+    padding: 0;
+    font-size: var(--text-caption);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-2);
+  }
+
+  .quick-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .quick-option:hover {
+    background: var(--hover);
+  }
+
+  .quick-option:has(input:checked) {
+    border-color: var(--accent-soft-border);
+    background: var(--accent-soft);
+  }
+
+  .quick-option:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .quick-option input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+
+  .quick-option-label {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    font-size: var(--text-body-sm);
+  }
+
+  .quick-option-hint {
+    color: var(--text-2);
+    font-size: var(--text-caption);
+  }
+
+  .quick-preview {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    width: 52px;
+    height: 32px;
+    padding: 4px 6px;
+    border: 1px solid var(--border-2);
+    border-radius: 6px;
+    background: var(--surface-2);
+  }
+
+  /* Fixed swatches: each preview shows its theme whatever the current one is. */
+  .quick-preview[data-preview-theme] {
+    --preview-rail: #1e1b2e;
+    --preview-light: #fafaf9;
+    --preview-dark: #18181b;
+  }
+
+  .quick-preview[data-preview-theme="system"] {
+    background: linear-gradient(
+      90deg,
+      var(--preview-rail) 0 22%,
+      var(--preview-light) 22% 61%,
+      var(--preview-dark) 61%
+    );
+  }
+
+  .quick-preview[data-preview-theme="light"] {
+    background: linear-gradient(90deg, var(--preview-rail) 0 22%, var(--preview-light) 22%);
+  }
+
+  .quick-preview[data-preview-theme="dark"] {
+    background: linear-gradient(90deg, var(--preview-rail) 0 22%, var(--preview-dark) 22%);
+  }
+
+  .quick-preview[data-preview-density] span {
+    display: block;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--text-3);
+  }
+
+  .quick-preview[data-preview-density="default"] {
+    gap: 8px;
+  }
+
+  .quick-preview[data-preview-density="comfortable"] {
+    gap: 6px;
+  }
+
+  .quick-preview[data-preview-density="compact"] {
+    gap: 3px;
+  }
+
+  .more-sheet {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 901;
+    max-height: 80dvh;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+    background: var(--surface);
+    border-radius: 16px 16px 0 0;
+    box-shadow: var(--shadow-lg);
+    animation: sheet-in-up 0.18s ease-out;
+  }
+
+  .more-sheet-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    margin: 0;
+    padding: 12px;
+    list-style: none;
+  }
+
+  .more-sheet-actions {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 12px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .more-sheet-action {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 48px;
+    padding: 0 10px;
+    color: var(--text);
+    font-size: var(--text-body-sm);
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .more-sheet-action:hover {
+    background: var(--hover);
+  }
+
+  .more-sheet-action:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
   }
 
+  .about-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: 901;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(400px, calc(100vw - 32px));
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg);
+    transform: translate(-50%, -50%);
+  }
+
+  .about-dialog-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .about-dialog-title {
+    margin: 0;
+    font-size: var(--text-body-lg);
+    font-weight: 600;
+  }
+
+  .about-dialog-text {
+    margin: 0;
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+  }
+
+  .about-dialog-docs {
+    align-self: flex-start;
+    text-decoration: none;
+  }
+
+  @keyframes sheet-in-up {
+    from {
+      transform: translateY(24px);
+      opacity: 0;
+    }
+  }
+
+  /* === Account card === */
+  .topbar-avatar {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    background: none;
+    border: 0;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+
+  .topbar-avatar:hover {
+    background: var(--hover);
+  }
+
+  .topbar-avatar:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .account-card {
+    position: relative;
+    z-index: 1100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: min(320px, calc(100vw - 16px));
+    padding: 24px 16px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .account-card-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+  }
+
+  .account-card-name {
+    margin-top: 6px;
+    font-size: var(--text-body-lg);
+    font-weight: 600;
+  }
+
+  .account-card-email {
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .account-card-manage {
+    margin: 10px 0 6px;
+    padding-inline: 20px;
+    border-radius: 999px;
+  }
+
+  .account-card-signout {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 44px;
+    margin-top: 6px;
+    color: var(--text);
+    font-size: var(--text-body-sm);
+    background: var(--surface);
+    border: 0;
+    border-radius: 12px;
+    cursor: pointer;
+  }
+
+  .account-card-signout:hover {
+    background: var(--hover);
+  }
+
+  .account-card-signout:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .account-card-signout:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+
+  /* === Notifications panel === */
+  .notif-panel {
+    position: fixed;
+    top: 52px;
+    right: 8px;
+    z-index: 250;
+    display: flex;
+    flex-direction: column;
+    width: min(400px, calc(100vw - 16px));
+    max-height: min(80vh, 640px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .notif-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 10px 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .notif-panel-title {
+    margin: 0;
+    font-size: var(--text-body);
+    font-weight: 600;
+  }
+
+  .notif-panel-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .notif-panel-body {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  .notif-group-title {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin: 0;
+    padding: 10px 16px 4px;
+    color: var(--text-2);
+    font-size: var(--text-caption);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: var(--surface);
+  }
+
+  .notification-avatar {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .notification-app {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    color: var(--label-on);
+    border: 2px solid var(--surface);
+    border-radius: 999px;
+  }
+
+  .notification-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    font-size: var(--text-meta);
+    line-height: 1.45;
+  }
+
+  .notification-row.unread .notification-summary {
+    font-weight: 600;
+  }
+
+  .notification-body {
+    overflow: hidden;
+    color: var(--text-2);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .notification-text time {
+    color: var(--text-3);
+    font-size: var(--text-caption);
+  }
+
+  .notification-dot {
+    flex-shrink: 0;
+    align-self: center;
+    width: 8px;
+    height: 8px;
+    background: var(--accent);
+    border-radius: 999px;
+  }
+
+  /* === Command palette status line === */
+  .palette-status {
+    padding: 6px 12px;
+    color: var(--text-3);
+    font-size: var(--text-caption);
+  }
+
+  .palette-status:empty {
+    display: none;
+  }
+
+  /* === Side-panel rail === */
+  .side-panel-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 2px;
+    width: 44px;
+    padding: 8px 0;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+  }
+
+  .side-panel-rail-button {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    color: var(--text-2);
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+  }
+
+  .side-panel-rail-button:hover {
+    background: var(--hover);
+  }
+
+  .side-panel-rail-button[aria-pressed="true"] {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  /* === Search results page === */
   .search-page {
     display: flex;
     flex: 1;
     flex-direction: column;
-    min-width: 0;
-    min-height: 0;
-    padding: clamp(16px, 3vw, 32px);
-    overflow: hidden;
-  }
-
-  .search-page-header h1 {
-    margin: 0;
-    font-size: var(--text-h1);
-    text-wrap: balance;
-  }
-
-  .search-page-header p {
-    margin: 4px 0 0;
-    color: var(--text-2);
-  }
-
-  .search-controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 20px;
-  }
-
-  .search-query-field {
-    display: flex;
-    flex: 1 1 280px;
-    align-items: center;
     gap: 8px;
     min-width: 0;
+    min-height: 0;
+    padding: 16px clamp(16px, 3vw, 32px) 32px;
+    overflow-y: auto;
   }
 
-  .search-type-filters {
+  .search-chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
+  }
+
+  .search-chip {
+    min-height: 32px;
+    padding: 0 14px;
+    color: var(--text);
+    font-size: var(--text-body-sm);
+    background: var(--surface);
+    border: 1px solid var(--border-2);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .search-chip:hover {
+    background: var(--hover);
+  }
+
+  .search-chip[aria-pressed="true"] {
+    color: var(--accent);
+    font-weight: 600;
+    background: var(--accent-soft);
+    border-color: var(--accent-soft-border);
+  }
+
+  .search-chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .search-results-meta {
-    min-height: 32px;
-    padding: 10px 2px 6px;
+    min-height: 20px;
+    margin: 0;
     color: var(--text-2);
     font-size: var(--text-meta);
     font-variant-numeric: tabular-nums;
   }
 
-  .search-results-scroll {
-    flex: 1;
-    min-height: 240px;
-    overflow: auto;
-    overscroll-behavior: contain;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg, 8px);
-    background: var(--surface);
+  .search-section-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 12px 0 4px;
+    color: var(--text-2);
+    font-size: var(--text-caption);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
-  .search-results-table {
-    min-width: 680px;
+  .search-result-list {
+    display: flex;
+    flex-direction: column;
+    max-width: 860px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
   }
 
-  .search-results-body {
-    position: relative;
-  }
-
-  .search-result-open {
+  .search-result {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
-    width: 100%;
-    min-width: 0;
-    padding: 4px;
-    text-align: left;
-    border-radius: var(--radius, 6px);
+    gap: 12px;
+    padding: 10px 12px;
+    color: var(--text);
+    text-decoration: none;
+    border-radius: 8px;
   }
 
-  .search-result-open:hover,
-  .search-result-open:focus-visible {
+  a.search-result:hover {
     background: var(--hover);
   }
 
-  .search-result-open > span {
+  a.search-result:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  .search-result-icon {
     display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 8px;
+  }
+
+  .search-result-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
     min-width: 0;
   }
 
-  .search-result-open strong,
-  .search-result-open small {
+  .search-result-title {
     overflow: hidden;
+    font-size: var(--text-body);
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .search-result-open small {
+  .search-result-detail {
     color: var(--text-2);
+    font-size: var(--text-meta);
   }
 
-  .search-results-error {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 16px;
-    color: var(--danger);
+  .search-result-snippet {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .search-more {
+    align-self: flex-start;
+    margin-top: 8px;
+  }
+
+  /* === Bottom navigation (phones) === */
+  .bottom-nav {
+    display: none;
+  }
+
+  /* === Desktop navigation collapse ===
+     The hamburger narrows each surface sidebar to an icon rail. Labels stay
+     in the accessibility tree; anything that is not a nav row, the primary
+     action, or a container of nav rows is hidden. A sidebar with neither
+     hides entirely. */
+  @media (min-width: 761px) {
+    .app[data-nav-collapsed] .surf-sidebar {
+      width: 72px;
+      padding-inline: 8px;
+      overflow-x: hidden;
+    }
+
+    .app[data-nav-collapsed] .surf-sidebar:not(:has(.surf-nav-row, > .btn.primary)) {
+      display: none;
+    }
+
+    .app[data-nav-collapsed]
+      .surf-sidebar
+      *:not(.surf-nav-row, .surf-nav-row *, .btn.primary, .btn.primary *, :has(.surf-nav-row)) {
+      display: none;
+    }
+
+    .app[data-nav-collapsed] .surf-sidebar .surf-nav-row {
+      justify-content: center;
+      padding: 0;
+    }
+
+    .app[data-nav-collapsed] .surf-sidebar .surf-nav-row > .label,
+    .app[data-nav-collapsed] .surf-sidebar .surf-nav-row > .count {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    /* Icon-only primary action. The label is shrunk to nothing, not removed,
+       so the button keeps its accessible name. */
+    .app[data-nav-collapsed] .surf-sidebar > .btn.primary {
+      justify-content: center;
+      /* Beats the sidebar's own `w-full` utility. */
+      width: 48px !important;
+      height: 48px;
+      margin-inline: auto;
+      padding: 0;
+      gap: 0;
+      font-size: 0;
+      border-radius: 14px;
+    }
   }
 
   @media (max-width: 760px) {
     .app {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-rows: auto minmax(0, 1fr) auto;
     }
 
     .app > .workspace,
     .workspace {
-      grid-row: 1;
+      grid-row: 2;
       grid-column: 1;
       height: 100%;
       min-height: 0;
     }
 
     .app > .rail,
-    .rail {
-      grid-row: 2;
-      grid-column: 1;
-      flex-direction: row;
-      align-items: center;
-      width: 100%;
-      min-height: 56px;
-      padding: 6px max(8px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom))
-        max(8px, env(safe-area-inset-left));
-      overflow-x: auto;
-      overflow-y: hidden;
-      overscroll-behavior-x: contain;
-      border-top: 1px solid var(--border);
-      border-right: 0;
-    }
-
-    .rail-logo,
-    .rail-item {
-      width: 44px;
-      height: 44px;
-      flex: 0 0 44px;
-      margin: 0;
-    }
-
-    .rail-divider {
-      width: 1px;
-      height: 28px;
-      flex: 0 0 1px;
-      margin: 0 5px;
-    }
-
-    .rail-spacer {
+    .launcher {
       display: none;
     }
 
-    .rail-tip {
+    .app > .bottom-nav {
+      grid-row: 3;
+      grid-column: 1;
+      display: flex;
+      align-items: stretch;
+      padding: 4px max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom))
+        max(4px, env(safe-area-inset-left));
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+    }
+
+    .bottom-nav-item {
+      display: flex;
+      flex: 1 1 0;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      min-width: 0;
+      min-height: 56px;
+      padding: 0;
+      color: var(--text-2);
+      font-size: var(--text-caption);
+      text-decoration: none;
+      background: none;
+      border: 0;
+      cursor: pointer;
+    }
+
+    .bottom-nav-pill {
+      display: grid;
+      place-items: center;
+      width: 56px;
+      height: 30px;
+      border-radius: 999px;
+      transition: background-color 0.15s ease;
+    }
+
+    .bottom-nav-item:hover .bottom-nav-pill {
+      background: var(--hover);
+    }
+
+    .bottom-nav-item[data-active] {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .bottom-nav-item[data-active] .bottom-nav-pill {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .bottom-nav-item:focus-visible {
+      outline: none;
+    }
+
+    .bottom-nav-item:focus-visible .bottom-nav-pill {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+
+    .bottom-nav-label {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .side-panel-rail {
       display: none;
     }
 
@@ -4058,6 +4430,8 @@
     }
 
     .topbar-title {
+      flex-shrink: 1;
+      min-width: 0;
       max-width: 112px;
       overflow: hidden;
       white-space: nowrap;
@@ -4065,7 +4439,7 @@
     }
 
     .topbar .search {
-      min-width: 100px;
+      min-width: 0;
     }
 
     .topbar-actions {
@@ -4078,23 +4452,13 @@
       min-height: 40px;
     }
 
-    .kbd {
+    .search-palette {
       display: none;
     }
 
     .surf-sidebar {
       width: min(42vw, 160px);
       padding: 8px 6px;
-    }
-
-    .launcher {
-      position: fixed;
-      inset: auto max(8px, env(safe-area-inset-right)) calc(88px + env(safe-area-inset-bottom))
-        max(8px, env(safe-area-inset-left));
-      width: auto;
-      max-height: min(55dvh, 420px);
-      overflow: auto;
-      overscroll-behavior: contain;
     }
 
     .compose {
@@ -4120,28 +4484,28 @@
     }
 
     .search-page {
-      padding: 14px;
+      padding: 12px 12px 24px;
     }
 
-    .search-results-error {
-      align-items: stretch;
-      flex-direction: column;
+    .notif-panel {
+      top: 56px;
+      right: 8px;
+      left: 8px;
+      width: auto;
     }
   }
 
   @media (max-width: 520px) {
-    .topbar-title {
-      display: none;
-    }
-
-    .topbar-actions > button[title="Toggle theme"],
-    .topbar-actions > button[title="Settings"] {
+    .topbar-title > svg,
+    .topbar-quick-settings {
       display: none;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .network-status {
+    .more-sheet,
+    .bottom-nav-pill {
+      animation: none;
       transition: none;
     }
     /* The skeleton still has to read as "not the real content", so it keeps a
@@ -4154,16 +4518,20 @@
     }
   }
 
-  /* Keep section navigation available without squeezing the primary mobile pane. */
+  /* The hamburger: collapses the sidebar on desktop, opens it as a drawer on
+     phones. Only shown where the surface has section navigation. */
   .workspace-navigation-toggle {
     display: none;
   }
-  @media (max-width: 700px) {
+  .workspace:has(.surf-sidebar) .workspace-navigation-toggle {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+  @media (max-width: 760px) {
     .workspace-body {
       position: relative;
     }
-    .workspace:has(.surf-sidebar, .admin-nav, .assistant-thread-sidebar)
-      .workspace-navigation-toggle {
+    .workspace:has(.admin-nav, .assistant-thread-sidebar) .workspace-navigation-toggle {
       display: inline-flex;
       flex-shrink: 0;
     }
@@ -4191,9 +4559,6 @@
     .workspace-body .tabs .tab {
       flex-shrink: 0;
     }
-  }
-
-  @media (max-width: 700px) {
     .workspace .assistant-thread-sidebar {
       display: none !important;
       position: absolute;

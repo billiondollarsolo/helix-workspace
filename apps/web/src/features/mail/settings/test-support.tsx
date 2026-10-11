@@ -4,16 +4,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
 import { ShellOverlayContext, type ShellOverlayApi } from "@/components/shell/overlay-context";
+import { shellOverlaysForTest } from "@/test/shell-overlays";
 import { mount, settle } from "@/test/ui";
 
 export function renderSettings(ui: ReactNode, overlays: Partial<ShellOverlayApi> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const api: ShellOverlayApi = {
-    openNotifications: () => undefined,
-    openPalette: () => undefined,
-    openSettings: () => undefined,
-    ...overlays,
-  };
+  const api: ShellOverlayApi = { ...shellOverlaysForTest(), ...overlays };
   const view = mount(
     <QueryClientProvider client={client}>
       <ShellOverlayContext.Provider value={api}>{ui}</ShellOverlayContext.Provider>

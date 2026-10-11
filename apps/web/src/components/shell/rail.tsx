@@ -1,50 +1,49 @@
 import { iconMap as Icons } from "@/components/icon-map";
-import { CircleHelp as HelpIcon } from "lucide-react";
-/* Left icon Rail — 52px, always dark. Ported from the design handoff
-   (shell.jsx → Rail). Helix logo opens the app launcher; app icons navigate;
-   active app gets a 2px violet tick. Notifications and Profile live in the
-   TopBar; only Help is pinned here at the bottom. */
+/* Desktop navigation rail — always dark. The logo opens the app launcher, the
+   pinned apps navigate, and Help sits at the bottom. Phones use `BottomNav`
+   instead; the two swap at the shell breakpoint in CSS. */
 
 import { APPS, appForRoute } from "@/components/apps";
 import { HelixLogo } from "@/components/shell/helix-logo";
+import { HelpMenu } from "@/components/shell/help-menu";
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 import { Link, useLocation } from "@tanstack/react-router";
+import type { ReactNode } from "react";
 
 export interface RailProps {
   /** Open the app launcher popover. */
   onOpenLauncher: () => void;
   /** Whether the app launcher popover is expanded. */
   launcherOpen: boolean;
-  /** Open workspace help. */
-  onOpenHelp: () => void;
+  /** The app launcher, rendered inside the navigation landmark. */
+  children?: ReactNode;
 }
 
-export function Rail({ onOpenLauncher, launcherOpen, onOpenHelp }: RailProps) {
+export function Rail({ onOpenLauncher, launcherOpen, children }: RailProps) {
   const location = useLocation();
   const activeApp = appForRoute(location.pathname);
   const enabled = useEnabledApps();
 
   return (
-    /* `nav`, not `div`: these are the product's primary destinations, and as a
-       bare div their links sat outside every landmark — axe's `region` rule,
-       and in practice a screen-reader user with no way to jump to app
-       navigation. The label distinguishes it from the in-app navigation each
-       surface renders. */
     <nav className="rail" aria-label="Apps">
       <button
         type="button"
         className="rail-logo"
-        onClick={onOpenLauncher}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenLauncher();
+        }}
         aria-label="Helix apps"
         aria-expanded={launcherOpen}
         aria-controls="app-launcher"
         aria-haspopup="menu"
-        title="Apps"
+        title="Helix apps"
       >
         <HelixLogo size={22} />
       </button>
+      {children}
       <div className="rail-divider" />
-      {APPS.filter((app) => enabled.isEnabled(app.id)).map((app) => {
+      {APPS.filter((app) => app.pinned && enabled.isEnabled(app.id)).map((app) => {
         const Icon = Icons[app.icon];
         const active = activeApp?.id === app.id;
         return (
@@ -55,16 +54,15 @@ export function Rail({ onOpenLauncher, launcherOpen, onOpenHelp }: RailProps) {
             aria-label={app.name}
             aria-current={active ? "page" : undefined}
           >
-            <Icon size={16} />
-            <span className="rail-tip">{app.name}</span>
+            <Icon size={16} aria-hidden="true" />
+            <span className="rail-tip" aria-hidden="true">
+              {app.name}
+            </span>
           </Link>
         );
       })}
       <div className="rail-spacer" />
-      <button type="button" className="rail-item" aria-label="Help" onClick={onOpenHelp}>
-        <HelpIcon size={16} />
-        <span className="rail-tip">Help</span>
-      </button>
+      <HelpMenu />
     </nav>
   );
 }

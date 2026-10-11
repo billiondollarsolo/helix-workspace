@@ -1,512 +1,249 @@
-import { CalendarDays, Folder, Inbox, MessageSquare, Search, type LucideIcon } from "lucide-react";
+/* Search results for `/search?q=`. A ranked list of mail, files, chat messages
+   and events from `search.query`, people from the directory, and app filter
+   chips. The query itself is edited in the top bar. */
+
 import {
-  flexRender,
-  getCoreRowModel,
-  useReactTable,
-  type ColumnDef,
-  type Row,
-} from "@tanstack/react-table";
+  CalendarDays,
+  Folder,
+  Inbox,
+  MessageSquare,
+  Search as SearchIcon,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useDebouncedValue } from "@tanstack/react-pacer/debouncer";
-import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { useState } from "react";
+import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { EmptyState } from "@/components/ui/empty-state";
+import { InlineError } from "@/components/ui/inline-error";
+import { Skeleton } from "@/components/ui/skeleton";
+import { peopleDirectoryQueryOptions, type PeopleDirectoryPerson } from "@/features/people/api";
+import type { GlobalSearchHit, GlobalSearchType } from "./api";
 import { globalSearchQueryOptions, invalidateGlobalSearch } from "./queries";
-import { globalSearchTypes, type GlobalSearchHit, type GlobalSearchType } from "./api";
+import type { SearchFilter } from "./route-search";
+import {
+  SEARCH_TYPE_LABELS,
+  SEARCH_TYPE_ORDER,
+  searchHitDetail,
+  searchHitSnippet,
+  searchHitTarget,
+  searchHitTitle,
+} from "./search-hits";
 
-export interface SearchRouteSearchState {
-  readonly q?: string;
-  readonly types?: readonly GlobalSearchType[];
+/** `search.query` caps a page at 50 hits. */
+const PAGE_SIZES = [20, 50] as const;
+const PEOPLE_IN_ALL = 4;
+
+const FILTERS: readonly { readonly id: SearchFilter | undefined; readonly label: string }[] = [
+  { id: undefined, label: "All" },
+  ...SEARCH_TYPE_ORDER.map((type) => ({ id: type, label: SEARCH_TYPE_LABELS[type] })),
+  { id: "people", label: "People" },
+];
+
+const TYPE_ICONS: Readonly<Record<GlobalSearchType, LucideIcon>> = {
+  mail: Inbox,
+  drive: Folder,
+  chat: MessageSquare,
+  calendar: CalendarDays,
+};
+
+export interface SearchResultsShellProps {
+  readonly query: string;
+  readonly filter: SearchFilter | undefined;
+  readonly onFilterChange: (filter: SearchFilter | undefined) => void;
 }
 
-interface SearchResultsShellProps {
-  readonly initialQuery?: string;
-  readonly initialTypes?: readonly GlobalSearchType[];
-  readonly onOpenSearchHit?: (hit: GlobalSearchHit) => void;
-  readonly onSearchStateChange?: (state: SearchRouteSearchState) => void;
-}
-
-interface SearchResultRow {
-  readonly hit: GlobalSearchHit;
-  readonly title: string;
-  readonly body: string;
-  readonly typeLabel: string;
-  readonly updatedAtLabel: string;
-  readonly updatedAtIso?: string;
-  readonly scoreLabel: string;
-}
-
-const searchDebounceMs = 300;
-const searchResultEstimate = 64;
-const emptySearchTypes: readonly GlobalSearchType[] = [];
-
-export function SearchResultsShell({
-  initialQuery = "",
-  initialTypes = emptySearchTypes,
-  onOpenSearchHit,
-  onSearchStateChange,
-}: SearchResultsShellProps) {
-  const [draftQuery, setDraftQuery] = useState(initialQuery);
-  const [selectedTypes, setSelectedTypes] = useState<readonly GlobalSearchType[]>(initialTypes);
-  const [debouncedQuery] = useDebouncedValue(draftQuery.trim(), { wait: searchDebounceMs });
-  const resultScrollRef = useRef<HTMLDivElement | null>(null);
-  const normalizedQuery = debouncedQuery.trim();
-  const queryTypes = selectedTypes.length > 0 ? selectedTypes : undefined;
+export function SearchResultsShell({ query, filter, onFilterChange }: SearchResultsShellProps) {
+  const normalized = query.trim();
+  const [pageSize, setPageSize] = useState<(typeof PAGE_SIZES)[number]>(PAGE_SIZES[0]);
   const queryClient = useQueryClient();
-  const searchInput = { query: normalizedQuery, types: queryTypes, limit: 100 };
-  const searchQuery = useQuery({
-    ...globalSearchQueryOptions(searchInput),
-    enabled: normalizedQuery.length > 0,
+  const wantsContent = normalized.length > 0 && filter !== "people";
+  const wantsPeople = normalized.length > 0 && (filter === undefined || filter === "people");
+  const searchInput = {
+    query: normalized,
+    ...(filter === undefined || filter === "people" ? {} : { types: [filter] }),
+    limit: pageSize,
+  };
+  const content = useQuery({ ...globalSearchQueryOptions(searchInput), enabled: wantsContent });
+  const people = useQuery({
+    ...peopleDirectoryQueryOptions({ query: normalized, limit: filter === "people" ? 25 : 8 }),
+    enabled: wantsPeople,
   });
-  const hits = normalizedQuery.length > 0 ? (searchQuery.data?.hits ?? []) : [];
-  const rows = useMemo(() => hits.map(searchResultRowFromHit), [hits]);
-  const columns = useMemo<ColumnDef<SearchResultRow>[]>(
-    () => [
-      {
-        accessorKey: "title",
-        header: "Result",
-        cell: ({ row }) => {
-          const Icon = iconForSearchType(row.original.hit.type);
-          return (
-            <button
-              aria-label={`Open ${row.original.title}`}
-              className="search-result-open"
-              onClick={() => onOpenSearchHit?.(row.original.hit)}
-              type="button"
-            >
-              <Icon aria-hidden="true" size={16} />
-              <span>
-                <strong>{row.original.title}</strong>
-                {row.original.body.length > 0 ? <small>{row.original.body}</small> : null}
-              </span>
-            </button>
-          );
-        },
-      },
-      {
-        accessorKey: "typeLabel",
-        header: "Type",
-      },
-      {
-        accessorKey: "updatedAtLabel",
-        header: "Updated",
-        cell: ({ row }) =>
-          row.original.updatedAtIso === undefined ? (
-            row.original.updatedAtLabel
-          ) : (
-            <time
-              dateTime={row.original.updatedAtIso}
-              title={formatAbsoluteTimestamp(row.original.updatedAtIso)}
-            >
-              {row.original.updatedAtLabel}
-            </time>
-          ),
-      },
-      {
-        accessorKey: "scoreLabel",
-        header: "Score",
-      },
-    ],
-    [onOpenSearchHit],
-  );
-  const table = useReactTable({
-    columns,
-    data: rows,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (row) => row.hit.id,
-  });
-  const tableRows = table.getRowModel().rows;
-  const virtualizer = useVirtualizer({
-    count: tableRows.length,
-    getScrollElement: () => resultScrollRef.current,
-    estimateSize: () => searchResultEstimate,
-    overscan: 8,
-    initialRect: { height: 520, width: 960 },
-  });
-  const measuredVirtualItems = virtualizer.getVirtualItems();
-  const virtualItems =
-    measuredVirtualItems.length > 0
-      ? measuredVirtualItems
-      : fallbackVirtualItems(tableRows.length, searchResultEstimate);
-  const totalSize = Math.max(virtualizer.getTotalSize(), tableRows.length * searchResultEstimate);
-  const selectedTypeSet = useMemo(() => new Set(selectedTypes), [selectedTypes]);
 
-  useEffect(() => {
-    setDraftQuery(initialQuery);
-  }, [initialQuery]);
-
-  useEffect(() => {
-    setSelectedTypes(initialTypes);
-  }, [initialTypes]);
-
-  useEffect(() => {
-    onSearchStateChange?.(routeSearchStateFromValues(normalizedQuery, selectedTypes));
-  }, [normalizedQuery, onSearchStateChange, selectedTypes]);
+  const hits = wantsContent ? (content.data?.hits ?? []) : [];
+  const persons = wantsPeople
+    ? (people.data ?? []).slice(0, filter === "people" ? undefined : PEOPLE_IN_ALL)
+    : [];
+  const loading = (wantsContent && content.isLoading) || (wantsPeople && people.isLoading);
+  const failed = (wantsContent && content.isError) || (filter === "people" && people.isError);
+  const total = (content.data?.estimatedTotalHits ?? hits.length) + persons.length;
 
   return (
-    <section className="search-page" aria-labelledby="search-title" role="main">
-      <header className="search-page-header">
-        <div>
-          <h1 id="search-title">Search</h1>
-          <p>Find mail, chat messages, Drive files, and calendar events.</p>
-        </div>
-      </header>
+    <div className="search-page">
+      <h1 className="sr-only">Search results</h1>
+      <div className="search-chips" role="group" aria-label="Filter results by app">
+        {FILTERS.map((option) => (
+          <button
+            key={option.label}
+            type="button"
+            className="search-chip"
+            aria-pressed={filter === option.id}
+            onClick={() => {
+              setPageSize(PAGE_SIZES[0]);
+              onFilterChange(option.id);
+            }}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
 
-      <div className="search-controls" aria-label="Search controls">
-        <label className="search-query-field">
-          <span className="sr-only">Search query</span>
-          <Search aria-hidden="true" size={17} />
-          <Input
-            type="search"
-            name="workspace-search"
-            autoComplete="off"
-            enterKeyHint="search"
-            spellCheck={false}
-            onChange={(event) => setDraftQuery(event.target.value)}
-            placeholder="Search workspace content…"
-            value={draftQuery}
-          />
-        </label>
-        <div className="search-type-filters" aria-label="Result types">
-          {globalSearchTypes.map((type) => (
+      <p className="search-results-meta" aria-live="polite">
+        {statusText({ query: normalized, loading, failed, total })}
+      </p>
+
+      {normalized.length === 0 ? (
+        <EmptyState
+          icon={<SearchIcon aria-hidden="true" />}
+          title="Search Helix"
+          body="Search mail, files, chat messages, events and people from the box above."
+        />
+      ) : null}
+
+      {loading ? (
+        <Skeleton variant="row" count={5} label="Searching" className="search-result-list" />
+      ) : null}
+
+      {!loading && failed ? (
+        <InlineError
+          className="search-result-list"
+          message="Search is unavailable right now. Try again in a moment."
+          retryLabel="Retry search"
+          onRetry={() => {
+            void invalidateGlobalSearch(queryClient, searchInput);
+            void queryClient.invalidateQueries({ queryKey: ["people", "directory"] });
+          }}
+        />
+      ) : null}
+
+      {!loading && persons.length > 0 ? <PeopleResults people={persons} /> : null}
+
+      {!loading && hits.length > 0 ? (
+        <section aria-labelledby="search-content-heading">
+          <h2 id="search-content-heading" className="search-section-title">
+            {filter === undefined || filter === "people" ? "Results" : SEARCH_TYPE_LABELS[filter]}
+          </h2>
+          <ul className="search-result-list">
+            {hits.map((hit) => (
+              <li key={hit.id}>
+                <SearchHitLink hit={hit} query={normalized} />
+              </li>
+            ))}
+          </ul>
+          {hits.length === pageSize && pageSize < PAGE_SIZES[1] ? (
             <Button
-              aria-pressed={selectedTypeSet.has(type)}
-              key={type}
-              onClick={() => setSelectedTypes(toggleSearchType(selectedTypes, type))}
               type="button"
-              variant={selectedTypeSet.has(type) ? "default" : "outline"}
+              variant="outline"
+              className="search-more"
+              onClick={() => setPageSize(PAGE_SIZES[1])}
             >
-              {labelForSearchType(type)}
-            </Button>
-          ))}
-          {selectedTypes.length > 0 ? (
-            <Button
-              onClick={() => setSelectedTypes(emptySearchTypes)}
-              type="button"
-              variant="ghost"
-            >
-              Clear filters
+              Show more results
             </Button>
           ) : null}
-        </div>
-      </div>
+        </section>
+      ) : null}
 
-      <div className="search-results-meta" aria-live="polite">
-        {resultStatusText({
-          error: searchQuery.isError,
-          estimatedTotalHits: searchQuery.data?.estimatedTotalHits,
-          fetching: searchQuery.isFetching,
-          hits: hits.length,
-          query: normalizedQuery,
-        })}
-      </div>
-
-      <div
-        className="search-results-scroll"
-        data-testid="search-results-virtualizer"
-        ref={resultScrollRef}
-      >
-        <Table
-          aria-label="Search results"
-          aria-rowcount={rows.length + 1}
-          className="search-results-table"
-          style={{ minHeight: `${String(totalSize)}px` }}
-        >
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow className="search-results-table-row" key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody className="search-results-body" style={{ height: totalSize }}>
-            {renderSearchResultsBody({
-              columns,
-              isError: searchQuery.isError,
-              isLoading: searchQuery.isLoading || (searchQuery.isFetching && rows.length === 0),
-              normalizedQuery,
-              onRetry: () => {
-                void invalidateGlobalSearch(queryClient, searchInput);
-              },
-              rows: tableRows,
-              virtualItems,
-            })}
-          </TableBody>
-        </Table>
-      </div>
-    </section>
-  );
-}
-
-function renderSearchResultsBody({
-  columns,
-  isError,
-  isLoading,
-  normalizedQuery,
-  onRetry,
-  rows,
-  virtualItems,
-}: {
-  readonly columns: readonly ColumnDef<SearchResultRow>[];
-  readonly isError: boolean;
-  readonly isLoading: boolean;
-  readonly normalizedQuery: string;
-  readonly onRetry: () => void;
-  readonly rows: readonly Row<SearchResultRow>[];
-  readonly virtualItems: readonly VirtualItem[];
-}) {
-  if (normalizedQuery.length === 0) {
-    return (
-      <SearchResultsStateRow colSpan={columns.length}>
-        Enter a query to search.
-      </SearchResultsStateRow>
-    );
-  }
-
-  if (isLoading) {
-    return Array.from({ length: 6 }, (_, index) => (
-      <TableRow
-        className="search-results-table-row search-result-skeleton-row"
-        key={`loading-${String(index)}`}
-        style={virtualItemStyle({
-          end: (index + 1) * searchResultEstimate,
-          index,
-          key: index,
-          lane: 0,
-          size: searchResultEstimate,
-          start: index * searchResultEstimate,
-        })}
-      >
-        <TableCell colSpan={columns.length}>
-          <span className="search-result-skeleton">
-            <span aria-hidden="true" />
-            <span aria-hidden="true" />
-            <span aria-hidden="true" />
-            <span className="sr-only">Searching</span>
-          </span>
-        </TableCell>
-      </TableRow>
-    ));
-  }
-
-  if (isError) {
-    return (
-      <SearchResultsStateRow colSpan={columns.length}>
-        <SearchErrorState onRetry={onRetry} />
-      </SearchResultsStateRow>
-    );
-  }
-
-  if (rows.length === 0) {
-    return (
-      <SearchResultsStateRow colSpan={columns.length}>No matching results.</SearchResultsStateRow>
-    );
-  }
-
-  return virtualItems.map((virtualItem) => {
-    const row = rows[virtualItem.index];
-    if (row === undefined) {
-      return null;
-    }
-    return (
-      <TableRow
-        aria-rowindex={virtualItem.index + 2}
-        className="search-results-table-row"
-        data-index={virtualItem.index}
-        key={row.id}
-        style={virtualItemStyle(virtualItem)}
-      >
-        {row.getVisibleCells().map((cell) => (
-          <TableCell key={cell.id}>
-            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-          </TableCell>
-        ))}
-      </TableRow>
-    );
-  });
-}
-
-export function SearchErrorState({ onRetry }: { readonly onRetry: () => void }) {
-  return (
-    <div className="search-results-error" role="alert">
-      <span>Search is unavailable. Check your connection, then try again.</span>
-      <Button onClick={onRetry} size="sm" type="button" variant="outline">
-        Retry search
-      </Button>
+      {!loading && !failed && normalized.length > 0 && hits.length === 0 && persons.length === 0 ? (
+        <EmptyState
+          icon={<SearchIcon aria-hidden="true" />}
+          title={`No results for “${normalized}”`}
+          body="Check the spelling, try fewer words, or pick another app above."
+        />
+      ) : null}
     </div>
   );
 }
 
-function SearchResultsStateRow({
-  children,
-  colSpan,
-}: {
-  readonly children: ReactNode;
-  readonly colSpan: number;
-}) {
+function SearchHitLink({ hit, query }: { readonly hit: GlobalSearchHit; readonly query: string }) {
+  const Icon = TYPE_ICONS[hit.type];
+  const detail = searchHitDetail(hit);
+  const snippet = searchHitSnippet(hit, query);
   return (
-    <TableRow className="search-results-table-row search-results-state-row">
-      <TableCell colSpan={colSpan}>{children}</TableCell>
-    </TableRow>
+    <Link {...searchHitTarget(hit)} className="search-result">
+      <span className="search-result-icon" data-type={hit.type}>
+        <Icon aria-hidden="true" size={16} />
+      </span>
+      <span className="search-result-text">
+        <span className="search-result-title">{searchHitTitle(hit)}</span>
+        <span className="search-result-detail">
+          {SEARCH_TYPE_LABELS[hit.type]}
+          {detail.length > 0 ? ` · ${detail}` : ""}
+        </span>
+        {snippet.length > 0 ? <span className="search-result-snippet">{snippet}</span> : null}
+      </span>
+    </Link>
   );
 }
 
-function fallbackVirtualItems(count: number, itemEstimate: number): readonly VirtualItem[] {
-  return Array.from({ length: Math.min(count, 20) }, (_, index) => ({
-    end: (index + 1) * itemEstimate,
-    index,
-    key: index,
-    lane: 0,
-    size: itemEstimate,
-    start: index * itemEstimate,
-  }));
+function PeopleResults({ people }: { readonly people: readonly PeopleDirectoryPerson[] }) {
+  return (
+    <section aria-labelledby="search-people-heading">
+      <h2 id="search-people-heading" className="search-section-title">
+        <Users aria-hidden="true" size={14} /> People
+      </h2>
+      <ul className="search-result-list">
+        {people.map((person) => (
+          <li key={person.id}>
+            {person.email === null ? (
+              <span className="search-result">
+                <PersonSummary person={person} />
+              </span>
+            ) : (
+              <Link
+                to="/mail"
+                search={{ compose: "new", to: person.email }}
+                className="search-result"
+                aria-label={`Email ${person.displayName}`}
+              >
+                <PersonSummary person={person} />
+              </Link>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
-function virtualItemStyle(virtualItem: VirtualItem): CSSProperties {
-  return {
-    left: 0,
-    position: "absolute",
-    top: 0,
-    transform: `translateY(${String(virtualItem.start)}px)`,
-    width: "100%",
-  };
+function PersonSummary({ person }: { readonly person: PeopleDirectoryPerson }) {
+  return (
+    <>
+      <Avatar name={person.displayName} size={32} src={person.avatarDataUrl ?? undefined} />
+      <span className="search-result-text">
+        <span className="search-result-title">{person.displayName}</span>
+        {person.email === null ? null : (
+          <span className="search-result-detail">{person.email}</span>
+        )}
+      </span>
+    </>
+  );
 }
 
-function routeSearchStateFromValues(
-  query: string,
-  types: readonly GlobalSearchType[],
-): SearchRouteSearchState {
-  return {
-    ...(query.length > 0 ? { q: query } : {}),
-    ...(types.length > 0 ? { types } : {}),
-  };
-}
-
-function toggleSearchType(
-  selectedTypes: readonly GlobalSearchType[],
-  type: GlobalSearchType,
-): readonly GlobalSearchType[] {
-  return selectedTypes.includes(type)
-    ? selectedTypes.filter((selectedType) => selectedType !== type)
-    : [...selectedTypes, type];
-}
-
-function searchResultRowFromHit(hit: GlobalSearchHit): SearchResultRow {
-  return {
-    hit,
-    title: hit.title ?? labelForSearchType(hit.type),
-    body: hit.body ?? "",
-    typeLabel: labelForSearchType(hit.type),
-    updatedAtLabel: formatUpdatedAt(hit.updatedAt),
-    ...(hit.updatedAt === undefined ? {} : { updatedAtIso: hit.updatedAt }),
-    scoreLabel: formatScore(hit.score),
-  };
-}
-
-function resultStatusText({
-  error,
-  estimatedTotalHits,
-  fetching,
-  hits,
+function statusText({
   query,
+  loading,
+  failed,
+  total,
 }: {
-  readonly error: boolean;
-  readonly estimatedTotalHits?: number;
-  readonly fetching: boolean;
-  readonly hits: number;
   readonly query: string;
+  readonly loading: boolean;
+  readonly failed: boolean;
+  readonly total: number;
 }): string {
-  if (query.length === 0) {
-    return "Search across your workspace.";
-  }
-  if (error) {
-    return "Search could not load.";
-  }
-  if (fetching && hits === 0) {
-    return "Searching…";
-  }
-  const total = estimatedTotalHits ?? hits;
-  return `${new Intl.NumberFormat().format(total)} ${total === 1 ? "result" : "results"}`;
-}
-
-function formatUpdatedAt(updatedAt: string | undefined): string {
-  if (updatedAt === undefined) {
-    return "Unknown";
-  }
-  const parsed = new Date(updatedAt);
-  if (Number.isNaN(parsed.getTime())) {
-    return "Unknown";
-  }
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(parsed);
-}
-
-function formatScore(score: number | undefined): string {
-  if (score === undefined) {
-    return "Relevant";
-  }
-  if (score >= 0 && score <= 1) {
-    return new Intl.NumberFormat(undefined, {
-      style: "percent",
-      maximumFractionDigits: 0,
-    }).format(score);
-  }
-  return new Intl.NumberFormat(undefined, {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-  }).format(score);
-}
-
-function formatAbsoluteTimestamp(iso: string): string {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return "Unknown";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "full",
-    timeStyle: "long",
-  }).format(parsed);
-}
-
-function iconForSearchType(type: GlobalSearchType): LucideIcon {
-  switch (type) {
-    case "mail":
-      return Inbox;
-    case "chat":
-      return MessageSquare;
-    case "drive":
-      return Folder;
-    case "calendar":
-      return CalendarDays;
-  }
-}
-
-function labelForSearchType(type: GlobalSearchType): string {
-  switch (type) {
-    case "mail":
-      return "Mail";
-    case "chat":
-      return "Chat";
-    case "drive":
-      return "Drive";
-    case "calendar":
-      return "Calendar";
-  }
+  if (query.length === 0) return "";
+  if (loading) return "Searching…";
+  if (failed) return "Search could not load.";
+  return `${new Intl.NumberFormat().format(total)} ${total === 1 ? "result" : "results"} for “${query}”`;
 }

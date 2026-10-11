@@ -219,38 +219,36 @@ describe("design tokens", () => {
 });
 
 /**
- * E2.4 — shell responsive contract used by mobile (390×844) e2e.
- * Asserts the production CSS media blocks that reparent the rail as a bottom bar.
+ * Shell responsive contract used by the mobile (390×844) e2e.
+ * Phones swap the desktop rail for a bottom navigation bar under the workspace.
  * (styles.css has multiple `@media (max-width: 760px)` sections; we join them all.)
  */
 describe("mobile shell responsive CSS (viewport ≤760 / 390 design width)", () => {
   const mobileCss = extractAllMediaBlocks(STYLES, "(max-width: 760px)").join("\n");
   const narrowTopbarCss = extractAllMediaBlocks(STYLES, "(max-width: 520px)").join("\n");
 
-  it("moves the rail to a horizontal bottom row with 44px targets", () => {
+  it("swaps the rail for a bottom navigation row with 56px targets", () => {
     expect(mobileCss.length).toBeGreaterThan(0);
-    expect(mobileCss).toMatch(/\.app\s*\{[^}]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto/s);
-    expect(mobileCss).toMatch(/\.rail\s*\{[^}]*flex-direction:\s*row/s);
-    expect(mobileCss).toMatch(/\.rail\s*\{[^}]*grid-row:\s*2/s);
     expect(mobileCss).toMatch(
-      /\.rail-(?:logo|item)\s*,\s*\.rail-(?:logo|item)\s*\{[^}]*width:\s*44px/s,
+      /\.app\s*\{[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/s,
     );
-    expect(mobileCss).toMatch(
-      /\.rail-(?:logo|item)\s*,\s*\.rail-(?:logo|item)\s*\{[^}]*height:\s*44px/s,
-    );
-    expect(mobileCss).toMatch(/\.rail\s*\{[^}]*safe-area-inset-bottom/s);
-    expect(mobileCss).toMatch(/\.workspace\s*\{[^}]*grid-row:\s*1/s);
+    expect(mobileCss).toMatch(/\.app > \.rail,\s*\.launcher\s*\{[^}]*display:\s*none/s);
+    expect(mobileCss).toMatch(/\.app > \.bottom-nav\s*\{[^}]*grid-row:\s*3/s);
+    expect(mobileCss).toMatch(/\.app > \.bottom-nav\s*\{[^}]*safe-area-inset-bottom/s);
+    expect(mobileCss).toMatch(/\.bottom-nav-item\s*\{[^}]*min-height:\s*56px/s);
+    expect(mobileCss).toMatch(/\.workspace\s*\{[^}]*grid-row:\s*2/s);
+    expect(mobileCss).toMatch(/\.side-panel-rail\s*\{[^}]*display:\s*none/s);
   });
 
-  it("keeps launcher and compose above the bottom rail on small viewports", () => {
-    expect(mobileCss).toMatch(/\.launcher\s*\{[^}]*position:\s*fixed/s);
+  it("keeps compose above the bottom bar and top-bar targets at 40px", () => {
     expect(mobileCss).toMatch(/\.compose\s*\{[^}]*bottom:\s*calc\(56px/s);
     expect(mobileCss).toMatch(/\.topbar-actions\s+\.icon-btn\s*\{[^}]*min-width:\s*40px/s);
   });
 
-  it("collapses topbar chrome further at 520px (fits 390-wide phones)", () => {
+  it("keeps the app title at 520px and drops secondary chrome instead", () => {
     expect(narrowTopbarCss.length).toBeGreaterThan(0);
-    expect(narrowTopbarCss).toMatch(/\.topbar-title\s*\{[^}]*display:\s*none/s);
+    expect(narrowTopbarCss).not.toMatch(/\.topbar-title\s*\{[^}]*display:\s*none/s);
+    expect(narrowTopbarCss).toMatch(/\.topbar-quick-settings\s*\{[^}]*display:\s*none/s);
   });
 });
 

@@ -186,7 +186,7 @@ export interface SidePanelRailProps {
 }
 export function SidePanelRail({ activeTool, onToggle }: SidePanelRailProps) {
   return (
-    <div className="w-11 shrink-0 [border-left:1px_solid_var(--border)] bg-card flex flex-col items-center [padding:8px_0] gap-0.5">
+    <div className="side-panel-rail">
       {SIDE_TOOLS.map((tool) => {
         const Icon = Icons[tool.icon];
         const active = activeTool === tool.id;
@@ -200,21 +200,7 @@ export function SidePanelRail({ activeTool, onToggle }: SidePanelRailProps) {
             aria-label={tool.label}
             aria-pressed={active}
             title={tool.label}
-            className={cn(
-              "w-8 h-8 rounded-md grid [place-items:center] relative",
-              active ? "[background:var(--accent-soft)]" : "bg-transparent",
-              active ? "text-primary" : "[color:var(--text-2)]",
-            )}
-            onMouseEnter={(event) => {
-              if (!active) {
-                event.currentTarget.style.background = "var(--hover)";
-              }
-            }}
-            onMouseLeave={(event) => {
-              if (!active) {
-                event.currentTarget.style.background = "transparent";
-              }
-            }}
+            className="side-panel-rail-button"
           >
             <Icon size={16} />
           </button>

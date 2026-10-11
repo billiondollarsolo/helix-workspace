@@ -1,7 +1,8 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 import { seedBrowserSession } from "./support/backend-mode";
-const PRIMARY_NAMES = ["Mail", "Calendar", "Drive", "Meet", "Chat", "Helix AI", "Admin"] as const;
+const PRIMARY_NAMES = ["Mail", "Calendar", "Drive", "Chat", "Meet", "Helix AI", "Admin"] as const;
+const PINNED_NAMES = ["Mail", "Calendar", "Drive", "Chat", "Meet"] as const;
 const EXCLUDED_NAMES = ["Docs", "Sheets", "Slides", "PDF"] as const;
 test.describe("workspace product scope", () => {
   test("launcher shows communication and file storage apps", async ({ page }) => {
@@ -17,8 +18,7 @@ test.describe("workspace product scope", () => {
     const itemNames = await launcher.getByRole("menuitem").allTextContents();
     const normalized = itemNames.map((name) => name.trim());
 
-    expect(normalized).toEqual(expect.arrayContaining([...PRIMARY_NAMES]));
-    expect(normalized).toHaveLength(PRIMARY_NAMES.length);
+    expect(normalized).toEqual([...PRIMARY_NAMES, "Search"]);
 
     for (const excluded of EXCLUDED_NAMES) {
       await expect(launcher.getByRole("menuitem", { name: excluded })).toHaveCount(0);
@@ -28,9 +28,14 @@ test.describe("workspace product scope", () => {
     for (const excluded of EXCLUDED_NAMES) {
       await expect(page.getByRole("link", { name: excluded })).toHaveCount(0);
     }
-    for (const primary of ["Mail", "Drive", "Chat", "Helix AI", "Admin"] as const) {
-      await expect(page.getByRole("link", { name: primary })).toBeVisible();
+    // The rail carries the pinned communication apps; the launcher has the rest.
+    await page.keyboard.press("Escape");
+    await expect(launcher).toBeHidden();
+    const rail = page.getByRole("navigation", { name: "Apps" });
+    for (const pinned of PINNED_NAMES) {
+      await expect(rail.getByRole("link", { name: pinned })).toBeVisible();
     }
+    await expect(rail.getByRole("link", { name: "Helix AI" })).toHaveCount(0);
   });
 
   test("removed editor and viewer routes return 404", async ({ page }) => {

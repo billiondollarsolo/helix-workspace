@@ -30,6 +30,7 @@ import {
   mailThreadsQueryOptions,
 } from "./queries";
 import { useMailRealtime } from "./use-mail-realtime";
+import { useMailShortcuts } from "./use-mail-shortcuts";
 
 /* ------------------------------------------------------------------- shell */
 
@@ -457,6 +458,22 @@ export function MailShell() {
     },
     [filterMutation, threads],
   );
+
+  useMailShortcuts({
+    threads,
+    openThreadId: selectedRow?.threadId ?? null,
+    checkedIds,
+    onCheckedChange: setCheckedIds,
+    onCompose: () => setComposeOpen(true),
+    onOpen: handleSelect,
+    onBack: () => setSelected(null),
+    onStar: (ids, starred) =>
+      runBulk(ids, (threadId) => starMutation.mutate({ threadId, starred })),
+    onArchive: handleBulkArchive,
+    onDelete: handleBulkDelete,
+    onSpam: folder === "spam" ? undefined : handleBulkSpam,
+    onRead: handleBulkRead,
+  });
 
   const actionBusy =
     archiveMutation.isPending ||

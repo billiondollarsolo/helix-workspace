@@ -1,5 +1,6 @@
 import { SurfaceFrame } from "@/components/shell";
 import { sessionUserQueryOptions } from "@/lib/auth";
+import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { MessageCircle as ChatIcon } from "lucide-react";
@@ -415,6 +416,19 @@ export function ChatShell() {
     },
     [activeRoomId, threadId, invalidateMessages],
   );
+
+  const stepRoom = (step: 1 | -1) => () => {
+    const order = [...spaces, ...directs].map((room) => room.id);
+    const next = order[order.indexOf(activeRoomId ?? "") + step];
+    if (next === undefined) return false;
+    setActiveRoomId(next);
+    setThreadId(null);
+  };
+  useShortcuts("chat", {
+    "chat.close-thread": threadMessage === null ? undefined : () => setThreadId(null),
+    "chat.previous-conversation": stepRoom(-1),
+    "chat.next-conversation": stepRoom(1),
+  });
 
   return (
     <SurfaceFrame

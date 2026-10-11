@@ -205,3 +205,45 @@ export function useResolvedTheme(): ResolvedTheme {
     () => resolveTheme(mode),
   );
 }
+
+/* Keyboard shortcuts on/off — Gmail-style switch. Off silences single-key
+   shortcuts and `g` sequences; Ctrl/Alt/⌘ chords such as ⌘K keep working. */
+
+const SHORTCUTS_STORAGE_KEY = "helix-keyboard-shortcuts";
+
+function readShortcutsEnabled(): boolean {
+  if (typeof window === "undefined") {
+    return true;
+  }
+  try {
+    return window.localStorage.getItem(SHORTCUTS_STORAGE_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+const shortcutsEnabledStore = new Store<boolean>(readShortcutsEnabled());
+
+export function keyboardShortcutsEnabled(): boolean {
+  return shortcutsEnabledStore.state;
+}
+
+export function setKeyboardShortcutsEnabled(enabled: boolean): void {
+  shortcutsEnabledStore.setState(() => enabled);
+  try {
+    window.localStorage.setItem(SHORTCUTS_STORAGE_KEY, enabled ? "on" : "off");
+  } catch {
+    /* storage may be unavailable (private mode) — the in-memory value still applies */
+  }
+}
+
+export function useKeyboardShortcutsEnabled(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const subscription = shortcutsEnabledStore.subscribe(onChange);
+      return () => subscription.unsubscribe();
+    },
+    () => shortcutsEnabledStore.state,
+    () => shortcutsEnabledStore.state,
+  );
+}

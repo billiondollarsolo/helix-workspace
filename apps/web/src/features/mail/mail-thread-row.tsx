@@ -61,6 +61,7 @@ export function ThreadRow({
       )}
       role="button"
       tabIndex={0}
+      data-thread-id={thread.threadId}
       onClick={onClick}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {

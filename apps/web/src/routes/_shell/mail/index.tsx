@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { MailShell } from "@/features/mail/mail-shell";
+import { mailComposeHandoffFromSearch, type MailComposeHandoff } from "@/features/people/handoff";
 import {
   optionalEnumSearchParam,
   optionalStringSearchParam,
@@ -11,7 +12,7 @@ import {
 // previous view and links are shareable.
 const mailTabs = ["primary", "social", "promotions", "updates", "forums"] as const;
 
-interface ShellMailRouteSearch {
+interface ShellMailRouteSearch extends MailComposeHandoff {
   readonly folder?: string;
   readonly tab?: (typeof mailTabs)[number];
   readonly thread?: string;
@@ -33,6 +34,7 @@ export const Route = createFileRoute("/_shell/mail/")({
       ...(thread === undefined ? {} : { thread }),
       ...(q === undefined ? {} : { q }),
       ...(label === undefined ? {} : { label }),
+      ...mailComposeHandoffFromSearch(search),
     };
   },
 });

@@ -14,6 +14,8 @@ describe("People API", () => {
         kind: "personal",
         email: "ada@example.com",
         displayName: "Ada",
+        actorId: "00000000-0000-4000-8000-000000000002",
+        title: "Analyst",
         favorite: true,
         avatarDataUrl: null,
         relationship: { manager: "Grace" },
@@ -45,6 +47,8 @@ describe("People API", () => {
       kind: "personal",
       email: "ada@example.com",
       displayName: "Ada",
+      actorId: null,
+      title: null,
       favorite: false,
       avatarDataUrl: null,
       relationship: {},
@@ -101,6 +105,8 @@ describe("People API", () => {
         kind: "personal",
         email: "ada@example.com",
         display_name: "Ada",
+        actor_id: "00000000-0000-4000-8000-000000000002",
+        title: "Analyst",
         favorite: true,
         avatar_data_url: null,
         relationship: {},
@@ -115,7 +121,12 @@ describe("People API", () => {
         query: "ada",
         limit: 25,
       }),
-    ).resolves.toHaveLength(1);
+    ).resolves.toEqual([
+      expect.objectContaining({
+        actorId: "00000000-0000-4000-8000-000000000002",
+        title: "Analyst",
+      }),
+    ]);
 
     expect(queries.slice(0, 2).join(" ")).toContain("set_config('helix.org_id'");
     const directoryQuery = queries.at(-1) ?? "";
@@ -125,6 +136,8 @@ describe("People API", () => {
     expect(directoryQuery).toContain("row_number() over");
     expect(directoryQuery).toContain("from carddav_contacts");
     expect(directoryQuery).toContain("from admin_groups");
+    expect(directoryQuery).toContain("max(actor_id::text) over identity");
+    expect(directoryQuery).toContain("'jobTitle'");
   });
 });
 

@@ -17,6 +17,23 @@ All notable changes to Helix Workspace are documented here. This file follows
   keyboard-driven selectable lists (j/k, x, Shift-click ranges).
 - Avatars and labels draw from a 24-colour palette that stays readable in light and dark themes,
   and text everywhere follows the Text size setting.
+- Keyboard shortcuts work across the workspace. Press `?` for the full list, `/` to search the
+  current app, and `g` then a letter to jump: `i`/`s`/`t`/`d` for Inbox, Starred, Sent, and
+  Drafts; `c` Calendar, `k` Chat, `r` Drive, `h` Meet. Mail supports `c`, `j`/`k`, `o`/Enter,
+  `u`, `x`, `s`, `e`, `#`, `!`, Shift+I/Shift+U, `r`/`a`/`f`, and ⌘/Ctrl+Enter to send.
+  Calendar supports `d`/`w`/`m`/`a` views, `t`, `j`/`k` or `n`/`p`, `c`, and `e`. Drive supports
+  `n` (new folder), Shift+U (upload), and Delete (move to trash). Chat supports Esc to close a
+  thread and Alt+↑/↓ to switch conversations. Shortcuts pause while typing and while a dialog or
+  menu is open. Settings → Keyboard shortcuts lists them all and can turn single-key shortcuts off.
+- People picker: pick recipients by name or email from your organization's directory, your
+  contacts and groups, as chips. Enter, Tab or a comma adds a chip, Backspace removes the last one,
+  pasting a list adds one chip per address, and invalid addresses show in red. Starting a direct
+  message in Chat now uses it instead of asking for an actor ID.
+- Person cards: hover or focus a person in the Contacts side panel to see their photo or initials,
+  email and job title, with Send email, Chat, Schedule a meeting and Copy email actions.
+- The Contacts side panel shows avatars, job titles and "Group" or "Contact" labels instead of raw
+  source names, and searches people and groups as you type. The people directory now returns each
+  entry's job title and organization member, so a personal contact for a colleague links to them.
 
 - Drive accepts S3 commands. An S3-compatible gateway at `/v1/s3` lets the AWS CLI, rclone, boto3,
   and the AWS SDKs list, upload, download, copy, and delete Drive files, including multipart uploads,

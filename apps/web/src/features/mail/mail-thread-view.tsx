@@ -1,4 +1,5 @@
 import { Avatar } from "@/components/ui/avatar";
+import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
 import {
   Archive as ArchiveIcon,
   ArrowLeft as ArrowLeftIcon,
@@ -60,6 +61,11 @@ export function ThreadView({
   actionError,
 }: ThreadViewProps) {
   const [replyMode, setReplyMode] = useState<ReplyMode | null>(null);
+  useShortcuts("mail.thread", {
+    "mail.thread.reply": () => setReplyMode("reply"),
+    "mail.thread.reply-all": () => setReplyMode("replyAll"),
+    "mail.thread.forward": () => setReplyMode("forward"),
+  });
   const senderName = row.from.split(",")[0] ?? row.from;
   const subject = detail?.subject ?? row.subject;
   const labels = (detail?.labels ?? row.labels)

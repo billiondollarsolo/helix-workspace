@@ -19,6 +19,7 @@ import { useShellOverlays } from "@/components/shell/overlay-context";
 import { ProfileMenu } from "@/components/shell/profile-menu";
 import { Avatar } from "@/components/ui/avatar";
 import { sessionUserQueryOptions } from "@/lib/auth";
+import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
 import { useQuery } from "@tanstack/react-query";
 import { useRef, useState, type ReactNode } from "react";
 
@@ -59,6 +60,12 @@ export function TopBar({
   const avatarName = sessionQuery.data?.name ?? sessionQuery.data?.email ?? "User";
 
   const hasLiveSearch = typeof onSearchChange === "function";
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  useShortcuts("global", {
+    "global.focus-search": hasLiveSearch
+      ? () => searchInputRef.current?.focus()
+      : overlays.openPalette,
+  });
 
   return (
     <header className="topbar relative">
@@ -72,6 +79,7 @@ export function TopBar({
         <div className="search">
           <SearchIcon size={16} />
           <input
+            ref={searchInputRef}
             name={`${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-search`}
             value={searchValue ?? ""}
             onChange={(event) => onSearchChange(event.target.value)}

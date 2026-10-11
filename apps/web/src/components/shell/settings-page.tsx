@@ -3,10 +3,11 @@ import type { SettingsSectionId } from "@/components/shell/overlay-context";
 import { cn } from "@/lib/utils";
 import { ArrowLeft as ArrowLeftIcon } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
-import { LanguageSection, ProfileSection, ShortcutsSection } from "./settings-account";
+import { LanguageSection, ProfileSection } from "./settings-account";
 import { AppearanceSection } from "./settings-appearance";
 import { S3KeysSection } from "./settings-s3-keys";
 import { SecuritySection } from "./settings-security";
+import { ShortcutsSection } from "./settings-shortcuts";
 import { SignatureSection } from "./settings-signature";
 
 /* ---------- shell ---------- */

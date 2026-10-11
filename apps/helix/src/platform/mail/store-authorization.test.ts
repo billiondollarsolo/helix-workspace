@@ -9,37 +9,62 @@ const threadId = "33333333-3333-4333-8333-333333333333";
 const messageId = "44444444-4444-4444-8444-444444444444";
 
 describe("Postgres mail mailbox authorization", () => {
-  it("parses only the search operators advertised by the Mail UI", () => {
+  it("parses Gmail-style operators, quoted phrases and relative dates", () => {
+    const now = new Date("2026-10-11T12:00:00.000Z");
     expect(
-      parseMailSearchQuery('road map from:"Mira Okafor" label:urgent has:attachment label:team'),
+      parseMailSearchQuery(
+        'road "launch plan" from:"Mira Okafor" to:me cc:ops subject:Q4 label:Urgent ' +
+          "has:attachment is:unread is:starred in:sent category:social filename:pdf " +
+          "before:2026/10/01 newer_than:2d",
+        now,
+      ),
     ).toEqual({
-      text: "road map",
-      from: "Mira Okafor",
-      labels: ["urgent", "team"],
+      terms: ["launch plan", "road"],
+      from: ["Mira Okafor"],
+      to: ["me", "ops"],
+      subject: ["Q4"],
+      filenames: ["pdf"],
+      labels: ["urgent"],
       hasAttachment: true,
+      unread: true,
+      starred: true,
+      scope: "sent",
+      category: "social",
+      before: new Date("2026-10-01T00:00:00.000Z"),
+      after: new Date("2026-10-09T12:00:00.000Z"),
     });
-    expect(parseMailSearchQuery("has:calendar launch")).toEqual({
-      text: "has:calendar launch",
+    expect(parseMailSearchQuery("has:calendar in:nowhere older_than:1m launch", now)).toEqual({
+      terms: ["has:calendar", "in:nowhere", "launch"],
+      from: [],
+      to: [],
+      subject: [],
+      filenames: [],
       labels: [],
+      before: new Date("2026-09-11T12:00:00.000Z"),
     });
+    expect(parseMailSearchQuery("before:2026/02/30").terms).toEqual(["before:2026/02/30"]);
   });
 
-  it("applies parsed sender, label, and attachment filters inside bounded SQL", async () => {
-    const recording = recordingSql([[], []]);
+  it("applies parsed operators inside bounded SQL across the selected folder", async () => {
+    const recording = recordingSql([]);
     const store = new PostgresMailStore(recording.sql);
 
     await store.listThreads({
       orgId,
       actorId,
-      query: "from:mira label:urgent has:attachment roadmap",
+      folder: "all",
+      query: "from:mira label:urgent has:attachment is:unread roadmap",
     });
 
-    expect(recording.calls).toHaveLength(2);
-    for (const query of recording.calls) {
-      expect(query).toContain("metadata->'from'->>'address'");
-      expect(query).toContain("has_attachment");
-      expect(query).toContain("coalesce(labels");
-    }
+    const text = recording.calls.join("\n");
+    expect(text).toContain("metadata->'from'->>'address'");
+    expect(text).toContain("message_attachments any_attachment");
+    expect(text).toContain("from mail_labels named");
+    expect(text).toContain("when 'all' then deleted_at is null and spam_at is null");
+    expect(text).toContain("jsonb_build_object('name', sender.name");
+    expect(recording.values.flat()).toEqual(
+      expect.arrayContaining(["all", "%mira%", "%roadmap%", "urgent", true]),
+    );
   });
 
   it("requires the actor's mailbox state row to read a known thread", async () => {

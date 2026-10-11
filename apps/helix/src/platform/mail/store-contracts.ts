@@ -1,3 +1,4 @@
+import type { MailLabelColorName } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
 import type { TenantStorageResolver } from "../storage/tenant-resolver.js";
 import type { PostgresMailAttachmentIngestor } from "./attachment-ingestion.js";
@@ -18,6 +19,7 @@ import type {
   MailOutboundEnvelope,
   MailOutboundRecord,
   MailRawSourceRecord,
+  MailScheduledSendRecord,
   MailSearchHit,
   MailSearchRequest,
   MailThreadDetail,
@@ -75,6 +77,8 @@ export interface CreateOutboundMailInput {
   readonly threadId?: string;
   readonly envelope: MailOutboundEnvelope;
   readonly undoUntil: Date;
+  /** The send was scheduled for `undoUntil` rather than held for the undo window. */
+  readonly scheduled?: boolean | undefined;
   readonly outboxSubject: string;
   readonly idempotencyKey?: string | undefined;
 }
@@ -234,11 +238,44 @@ export interface MailStore {
     readonly actorId: string;
     readonly now?: Date | undefined;
   }): Promise<readonly MailFolderSummary[]>;
-  /** Org + actor labels with display colours and live thread counts. */
+  /** Org + actor labels with display colours and live thread and unread counts. */
   listLabels(input: {
     readonly orgId: string;
     readonly actorId: string;
   }): Promise<readonly MailLabelRecord[]>;
+  createLabel?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly name: string;
+    readonly color: MailLabelColorName;
+    readonly parentId: string | null;
+  }): Promise<MailLabelRecord>;
+  updateLabel?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+    readonly name?: string | undefined;
+    readonly color?: MailLabelColorName | undefined;
+    readonly parentId?: string | null | undefined;
+  }): Promise<MailLabelRecord>;
+  /** Returns the ids of the label and its nested labels that were deleted. */
+  deleteLabel?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly id: string;
+  }): Promise<readonly string[]>;
+  listScheduledSends?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly limit: number;
+    readonly offset: number;
+  }): Promise<{ readonly scheduled: readonly MailScheduledSendRecord[]; readonly total: number }>;
+  rescheduleSend?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly outboundId: string;
+    readonly sendAt: Date;
+  }): Promise<MailScheduledSendRecord | null>;
   saveDraft?(input: {
     readonly orgId: string;
     readonly actorId: string;

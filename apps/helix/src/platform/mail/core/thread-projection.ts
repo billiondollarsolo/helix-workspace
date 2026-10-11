@@ -112,6 +112,7 @@ export function projectThreadRow(input: ProjectThreadRowInput): MailThreadRowRec
     category: input.category as MailThreadRowRecord["category"],
     folder: resolveFolderForRow(input.projection, input.now),
     snoozedUntil: input.snoozedUntil?.toISOString() ?? null,
+    participants: [],
   };
 }
 

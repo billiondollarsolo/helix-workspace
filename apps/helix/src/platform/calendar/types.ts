@@ -240,3 +240,15 @@ export interface CalendarActivityPayload extends JsonObject {
 export interface CalendarSearchProjectionStore {
   getCalendarSearchRecord(eventId: string): Promise<CalendarSearchRecord | null>;
 }
+
+/** Creates the video room behind "Add video conferencing" on an event. */
+export interface CalendarConferenceProvider {
+  createRoom(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly subject: string;
+    readonly startsAt: Date;
+    readonly endsAt: Date;
+    readonly participantActorIds: readonly string[];
+  }): Promise<{ readonly roomId: string; readonly joinCode: string; readonly joinUrl: string }>;
+}

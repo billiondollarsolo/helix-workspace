@@ -30,7 +30,7 @@ import type {
 } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import { isJsonObject } from "@helix/sdk-types";
-import { assistantToolGroups, selectedToolGroups } from "./tool-selection.js";
+import { assistantToolGroups, explicitToolGroups } from "./tool-selection.js";
 import { projectAssistantWebSources } from "./tool-sources.js";
 import { promptHistory, streamChatTurn } from "./tool-loop.js";
 import { maxClassification, type DataClassification } from "../ai/classification/index.js";
@@ -117,7 +117,7 @@ export interface AssistantOrchestratorOptions {
 }
 interface TurnSettings {
   readonly webSearch: boolean;
-  readonly toolGroups: readonly string[];
+  readonly toolGroups?: readonly string[] | undefined;
   readonly timeZone?: JsonValue;
   readonly slashInstruction?: string;
   readonly toolIds?: readonly string[];
@@ -210,7 +210,7 @@ export class AssistantOrchestrator {
     input.signal?.throwIfAborted();
     if (input.webSearch && !this.options.webSearchEnabled?.())
       throw new BadRequestError("Web search is disabled by administrator policy.");
-    const toolGroups = selectedToolGroups(input.toolGroups);
+    const toolGroups = explicitToolGroups(input.toolGroups);
     const model = await this.#selectModel(input.modelId);
     const existing =
       input.conversationId === undefined
@@ -377,7 +377,7 @@ export class AssistantOrchestrator {
       effectiveClassification = maxClassification(effectiveClassification, source.classification);
     const visibleTools = retainHistoricalTools(
       allVisibleTools,
-      routeVisibleTools(allVisibleTools, settings.toolIds, settings.toolGroups),
+      routeVisibleTools(allVisibleTools, settings.toolIds, settings.toolGroups, input.content),
       history,
     );
     return yield* this.#continueTurn({
@@ -643,7 +643,7 @@ export class AssistantOrchestrator {
       saved.usedToolRounds >= 0
         ? { usedToolRounds: saved.usedToolRounds }
         : {}),
-      toolGroups: selectedToolGroups(
+      toolGroups: explicitToolGroups(
         Array.isArray(saved.toolGroups)
           ? saved.toolGroups.filter((value): value is string => typeof value === "string")
           : undefined,
@@ -753,7 +753,7 @@ export class AssistantOrchestrator {
         ...input,
         content: origin.content,
         webSearch: settings.webSearch,
-        toolGroups: settings.toolGroups,
+        ...(settings.toolGroups === undefined ? {} : { toolGroups: settings.toolGroups }),
       },
       mode: "buffered",
       conversation,
@@ -761,7 +761,7 @@ export class AssistantOrchestrator {
       settings,
       visibleTools: retainHistoricalTools(
         allVisibleTools,
-        routeVisibleTools(allVisibleTools, settings.toolIds, settings.toolGroups),
+        routeVisibleTools(allVisibleTools, settings.toolIds, settings.toolGroups, origin.content),
         history,
       ),
       sources,

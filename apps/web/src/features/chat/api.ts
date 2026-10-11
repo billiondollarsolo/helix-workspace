@@ -7,6 +7,8 @@ import type {
   ChatReadReceipt,
   ChatRoom,
   ChatSearchHit,
+  ChatMentionsListResult,
+  ChatUnreadListResult,
 } from "@helix/contracts";
 import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
@@ -530,6 +532,21 @@ export function createChatRealtimeClient(options: ChatRealtimeClientOptions): Ch
       socket.close();
     },
   };
+}
+
+/** Unread and @mention counts per conversation for Home and the sidebar badges. */
+export async function listChatUnread(
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<ChatUnreadListResult> {
+  return callChatTool<ChatUnreadListResult>("chat.unread.list", {}, fetchImpl);
+}
+
+/** Messages that @mention the actor, newest first; pass `nextBefore` to page. */
+export async function listChatMentions(
+  input: { readonly limit?: number; readonly before?: string } = {},
+  fetchImpl: ChatApiFetch = authenticatedFetch,
+): Promise<ChatMentionsListResult> {
+  return callChatTool<ChatMentionsListResult>("chat.mentions.list", input, fetchImpl);
 }
 
 async function callChatTool<Output>(

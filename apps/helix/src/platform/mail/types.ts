@@ -7,14 +7,25 @@ import type { MailCategoryTab } from "./category.js";
  * is "threads with starred = true", `archive` is "threads with archived_at set".
  */
 export type MailFolderId =
-  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
+  | "inbox"
+  | "starred"
+  | "snoozed"
+  | "sent"
+  | "scheduled"
+  | "drafts"
+  | "all"
+  | "archive"
+  | "spam"
+  | "trash";
 
 export const MAIL_FOLDER_IDS = [
   "inbox",
   "starred",
   "snoozed",
   "sent",
+  "scheduled",
   "drafts",
+  "all",
   "archive",
   "spam",
   "trash",
@@ -38,11 +49,14 @@ export interface MailLabelRecord {
   /** Stable slug stored on `mail_thread_state.labels`. */
   readonly slug: string;
   readonly name: string;
-  /** Hex display colour. */
+  /** Hex display colour from the label palette. */
   readonly color: string;
+  readonly parentId: string | null;
   readonly sortOrder: number;
   /** Threads visible to the actor currently carrying this label. */
   readonly threadCount: number;
+  /** Unread labelled threads outside Spam and Trash. */
+  readonly unreadCount: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -71,9 +85,34 @@ export interface MailThreadRowRecord {
   readonly category: MailCategoryTab;
   readonly folder: MailFolderId;
   readonly snoozedUntil: string | null;
+  /** Up to four distinct senders (recipients for drafts), oldest first. */
+  readonly participants: readonly MailThreadParticipant[];
   /** Who filed this thread into Spam (from message scan metadata). */
   readonly spamCatcher?:
     "spamd" | "ai" | "rules" | "user" | "virus" | "scanner-policy" | "auth-failure" | null;
+}
+
+/** A send scheduled for later that has not been handed off yet. */
+export interface MailScheduledSendRecord {
+  readonly outboundId: string;
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly subject: string;
+  readonly preview: string;
+  readonly to: readonly MailAddress[];
+  readonly cc: readonly MailAddress[];
+  readonly bcc: readonly MailAddress[];
+  readonly hasAttachment: boolean;
+  readonly sendAt: Date;
+  readonly createdAt: Date;
+  /** The stored outbound envelope, used to return a cancelled send to Drafts. */
+  readonly envelope: JsonObject;
+}
+
+export interface MailThreadParticipant {
+  readonly name: string;
+  readonly email: string;
+  readonly isMe: boolean;
 }
 
 export interface MailThreadListRequest {

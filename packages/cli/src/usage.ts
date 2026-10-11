@@ -1,3 +1,8 @@
+import { workspaceCommandUsage } from "./workspace-commands.js";
+
+const workspaceLines = (scope: string) =>
+  (workspaceCommandUsage[scope] ?? []).map((line) => `  ${line}`).join("\n");
+
 /** Full CLI help text, printed by `helix --help` and after usage errors. */
 export const usage = `Usage:
   helix --version
@@ -9,7 +14,7 @@ export const usage = `Usage:
   helix mail send [--to <email>] [--cc <email>] [--bcc <email>] [--from <email>] [--subject <text>] [--body <text>] [--html <html>] [--json [JSON]]
   helix mail reply [--thread-id <id>] [--message-id <id>] [--to <email>] [--cc <email>] [--bcc <email>] [--body <text>] [--html <html>] [--json [JSON]]
   helix mail forward [--thread-id <id>] [--message-id <id>] [--to <email>] [--cc <email>] [--bcc <email>] [--subject <text>] [--body <text>] [--json [JSON]]
-  helix mail list [--folder <inbox|starred|snoozed|sent|drafts|archive|spam|trash>] [--tab <primary|updates|promotions|social>] [--label <label>] [--query <text>] [--limit <number>] [--offset <number>] [--mailbox-actor-id <id>] [--json [JSON]]
+  helix mail list [--folder <inbox|starred|snoozed|sent|scheduled|drafts|all|archive|spam|trash>] [--tab <primary|updates|promotions|social>] [--label <label>] [--query <text>] [--limit <number>] [--offset <number>] [--mailbox-actor-id <id>] [--json [JSON]]
   helix mail search [--query <text>] [--label <label>] [--limit <number>] [--mailbox-actor-id <id>] [--json [JSON]]
   helix mail label [--thread-id <id>] [--add <label>] [--remove <label>] [--json [JSON]]
   helix mail archive [--thread-id <id>] [--json [JSON]]
@@ -23,6 +28,7 @@ export const usage = `Usage:
   helix mail filter-delete [--id <id>] [--json [JSON]]
   helix mail vacation-get [--json [JSON]]
   helix mail vacation-set [--enabled] [--disabled] [--subject <text>] [--body <text>] [--start <iso>] [--end <iso>] [--json [JSON]]
+${workspaceLines("mail")}
   helix chat send [--room-id <id>] [--body <text>] [--text <text>] [--json [JSON]]
   helix chat react [--json [JSON]]
   helix chat edit [--json [JSON]]
@@ -31,6 +37,8 @@ export const usage = `Usage:
   helix chat invite [--json [JSON]]
   helix chat search [--query <text>] [--room-id <id>] [--limit <number>] [--json [JSON]]
   helix chat messages [--room-id <id>] [--before <iso>] [--limit <number>] [--json [JSON]]
+${workspaceLines("chat")}
+${workspaceLines("account")}
   helix drive upload <path> [--prepared <json-file>] [--folder <folder-id>] [--name <name>] [--mime-type <type>] [--byte-size <number>] [--sha256 <hex>] [--json [JSON]]
   helix drive finalize [--json [JSON]]
   helix drive list [--folder <folder-id>] [--limit <number>] [--include-trashed] [--json [JSON]]

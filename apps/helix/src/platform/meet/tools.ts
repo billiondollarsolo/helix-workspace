@@ -591,7 +591,9 @@ function createMeetToolDefinitions(
   ];
 }
 
-function deploymentJitsiOrigin(options: CreateMeetToolDefinitionsOptions): string {
+export function deploymentJitsiOrigin(
+  options: Pick<CreateMeetToolDefinitionsOptions, "jitsiPublicUrl" | "jwtSubject">,
+): string {
   const configured = options.jitsiPublicUrl ?? `https://${options.jwtSubject ?? "meet.localhost"}`;
   const url = new URL(configured);
   if (

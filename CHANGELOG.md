@@ -8,6 +8,26 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Mail labels: create, rename, recolour (24 named palette colours) and nest your own labels, and
+  delete a label with its sublabels. Label lists show unread counts.
+- Mail search understands `from:`, `to:`, `cc:`, `subject:`, `label:`, `in:` (including
+  `in:anywhere`), `category:`, `has:attachment`, `is:unread`, `is:starred`, `filename:`,
+  `before:`/`after:`, `older_than:`/`newer_than:` and quoted phrases, across every folder except
+  Spam and Trash.
+- An All mail view, and a Scheduled view that lists scheduled sends; you can move a scheduled send
+  to another time, or cancel it to get it back as a draft.
+- Mail thread rows list up to four participants with "me" for you, and message reads include each
+  attachment's name, size, type, inline flag and a download link (passive images can show inline).
+- Personal preferences: language, time zone (taken from your browser until you choose one), date
+  and time format, week start, working hours, and the Mail reading pane, density and conversation
+  view (`account.preferences.get` / `.set`, `helix account preferences`).
+- Account security: change your password (optionally signing out everywhere else), see your signed-in
+  browsers and devices, and sign out any of them. People can now create, list and revoke their own
+  app passwords without admin rights; creating one needs a signed-in web session.
+- Chat unread and @mention counts per conversation and a Mentions feed (`chat.unread.list`,
+  `chat.mentions.list`, `helix chat unread|mentions`).
+- "Add video conferencing" on new calendar events creates a Meet room and stores its join link on
+  the event when Meet is configured.
 - Appearance offers a System theme that follows the device's light or dark setting, and is now the
   default. Density choices are Default, Comfortable, and Compact; Compact fits more rows on screen.
 - Confirmation messages appear in the bottom-left corner and can offer Undo.
@@ -104,6 +124,14 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- The API no longer stops answering after the Drive grid/list toggle. Signing in no longer holds
+  identity locks for the whole request, and Drive layout, star and other database-only changes stay
+  in the request's own transaction.
+- The Assistant no longer fails with "Too many Assistant tools are selected" for fully scoped
+  admins. Without an explicit choice it picks the most relevant tool groups up to the provider
+  limit; an explicit choice over the limit returns `assistant_tool_limit_exceeded` with the groups
+  to turn off.
+- The scenarios seed runs again on the current calendar and chat schema.
 - One-time secrets are no longer stored with confirmed tool actions. App passwords, agent
   credential secrets, Drive share-link tokens, and Drive S3 secret keys used to be saved in the
   pending action's result (and the idempotency replay cache), and `actions.get` could fetch them

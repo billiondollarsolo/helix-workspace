@@ -74,6 +74,7 @@ const detail: MailThreadDetail = {
       body: "Shall we plan?",
       bodyFormat: "plain",
       hasAttachment: false,
+      attachments: [],
     },
     {
       id: "message-2",
@@ -86,6 +87,7 @@ const detail: MailThreadDetail = {
       body: "Quarterly plans attached.",
       bodyFormat: "plain",
       hasAttachment: true,
+      attachments: [],
     },
   ],
 };

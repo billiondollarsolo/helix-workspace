@@ -1,5 +1,5 @@
 /**
- * Flag wrappers for mail labels and scheduled sends, personal account
+ * Flag wrappers for mail labels and scheduled sends, contacts, personal account
  * preferences and app passwords, and the chat Home/Mentions views. Creating an
  * app password needs a signed-in web session, so the CLI cannot mint one; use
  * Settings → Security.
@@ -19,6 +19,26 @@ interface CommandSpec {
 }
 
 const mailbox = { "--mailbox-actor-id": "mailboxActorId" } as const;
+const contactFields = {
+  "--given-name": "givenName",
+  "--family-name": "familyName",
+  "--company": "company",
+  "--job-title": "jobTitle",
+  "--birthday": "birthday",
+  "--notes": "notes",
+} as const;
+const contactFieldUsage =
+  "[--given-name <name>] [--family-name <name>] [--company <name>] [--job-title <title>] [--birthday <YYYY-MM-DD>] [--notes <text>]";
+/** Commands whose input holds lists (contact ids, emails) take `--json`. */
+const jsonOnly = (spec: {
+  readonly toolId: string;
+  readonly action: string;
+  readonly shape: string;
+}): CommandSpec => ({
+  toolId: spec.toolId,
+  usage: `helix contacts ${spec.action} --json '${spec.shape}'`,
+  flags: {},
+});
 
 const COMMANDS: Readonly<Record<string, Readonly<Record<string, CommandSpec>>>> = {
   mail: {
@@ -73,6 +93,92 @@ const COMMANDS: Readonly<Record<string, Readonly<Record<string, CommandSpec>>>> 
       toolId: "mail.scheduled.cancel",
       usage: "helix mail scheduled-cancel --outbound-id <id> [--json [JSON]]",
       flags: { strings: { "--outbound-id": "outboundId" }, required: ["outboundId"] },
+    },
+  },
+  contacts: {
+    list: {
+      toolId: "contacts.list",
+      usage:
+        "helix contacts list [--view <contacts|trash>] [--label <label>] [--query <text>] [--limit <number>] [--offset <number>] [--json [JSON]]",
+      flags: {
+        strings: { "--view": "view", "--label": "label", "--query": "query" },
+        numbers: { "--limit": "limit", "--offset": "offset" },
+      },
+    },
+    get: {
+      toolId: "contacts.get",
+      usage: "helix contacts get --id <id> [--json [JSON]]",
+      flags: { strings: { "--id": "id" }, required: ["id"] },
+    },
+    create: {
+      toolId: "contacts.create",
+      usage: `helix contacts create ${contactFieldUsage} [--json [JSON]]`,
+      flags: { strings: contactFields },
+    },
+    update: {
+      toolId: "contacts.update",
+      usage: `helix contacts update --id <id> ${contactFieldUsage} [--json [JSON]]`,
+      flags: { strings: { "--id": "id", ...contactFields }, required: ["id"] },
+    },
+    trash: jsonOnly({ toolId: "contacts.trash", action: "trash", shape: '{"ids":["<id>"]}' }),
+    restore: jsonOnly({ toolId: "contacts.restore", action: "restore", shape: '{"ids":["<id>"]}' }),
+    purge: jsonOnly({ toolId: "contacts.purge", action: "purge", shape: '{"ids":["<id>"]}' }),
+    duplicates: {
+      toolId: "contacts.duplicates.list",
+      usage: "helix contacts duplicates [--json [JSON]]",
+      flags: {},
+    },
+    merge: jsonOnly({
+      toolId: "contacts.merge",
+      action: "merge",
+      shape: '{"targetId":"<id>","sourceIds":["<id>"]}',
+    }),
+    import: jsonOnly({
+      toolId: "contacts.import",
+      action: "import",
+      shape: '{"format":"vcard|csv","content":"…","dryRun":true}',
+    }),
+    export: {
+      toolId: "contacts.export",
+      usage: "helix contacts export [--label <label>] [--json [JSON]]",
+      flags: { strings: { "--label": "label" } },
+    },
+    labels: {
+      toolId: "contacts.labels.list",
+      usage: "helix contacts labels [--json [JSON]]",
+      flags: {},
+    },
+    "label-create": {
+      toolId: "contacts.label.create",
+      usage: "helix contacts label-create --name <name> [--json [JSON]]",
+      flags: { strings: { "--name": "name" }, required: ["name"] },
+    },
+    "label-rename": {
+      toolId: "contacts.label.rename",
+      usage: "helix contacts label-rename --name <name> --new-name <name> [--json [JSON]]",
+      flags: {
+        strings: { "--name": "name", "--new-name": "newName" },
+        required: ["name", "newName"],
+      },
+    },
+    "label-delete": {
+      toolId: "contacts.label.delete",
+      usage: "helix contacts label-delete --name <name> [--json [JSON]]",
+      flags: { strings: { "--name": "name" }, required: ["name"] },
+    },
+    "label-apply": jsonOnly({
+      toolId: "contacts.label.apply",
+      action: "label-apply",
+      shape: '{"ids":["<id>"],"add":["<label>"],"remove":["<label>"]}',
+    }),
+    directory: {
+      toolId: "contacts.directory.list",
+      usage:
+        "helix contacts directory [--query <text>] [--limit <number>] [--offset <number>] [--json [JSON]]",
+      flags: {
+        strings: { "--query": "query" },
+        numbers: { "--limit": "limit", "--offset": "offset" },
+      },
     },
   },
   account: {

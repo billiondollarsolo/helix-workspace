@@ -92,6 +92,22 @@ describe("SurfaceFrame", () => {
     expect(window.localStorage.getItem("helix-nav-collapsed")).toBeNull();
   });
 
+  it("closes the phone drawer once the surface navigates", () => {
+    media.mobile = true;
+    const frame = (key: string) => (
+      <ShellOverlayContext.Provider value={overlays}>
+        <SurfaceFrame title="Contacts" navigationKey={key}>
+          <aside className="surf-sidebar" />
+        </SurfaceFrame>
+      </ShellOverlayContext.Provider>
+    );
+    act(() => root.render(frame("/contacts")));
+    act(() => button("Main menu").click());
+    expect(button("Main menu").getAttribute("aria-expanded")).toBe("true");
+    act(() => root.render(frame("/contacts?label=Family")));
+    expect(button("Main menu").getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("submits the top search to /search, scoped to the current app", () => {
     render();
     const input = container.querySelector<HTMLInputElement>('input[aria-label="Search events"]');

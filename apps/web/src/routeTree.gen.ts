@@ -20,6 +20,9 @@ import { Route as ShellAdminSectionRouteImport } from './routes/_shell/admin/$se
 import { Route as ShellAssistantIndexRouteImport } from './routes/_shell/assistant/index'
 import { Route as ShellCalendarIndexRouteImport } from './routes/_shell/calendar/index'
 import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
+import { Route as ShellContactsIndexRouteImport } from './routes/_shell/contacts/index'
+import { Route as ShellContactsContactIdRouteImport } from './routes/_shell/contacts/$contactId'
+import { Route as ShellContactsNewRouteImport } from './routes/_shell/contacts/new'
 import { Route as ShellDriveIndexRouteImport } from './routes/_shell/drive/index'
 import { Route as ShellMailIndexRouteImport } from './routes/_shell/mail/index'
 import { Route as ShellMeetIndexRouteImport } from './routes/_shell/meet/index'
@@ -79,6 +82,21 @@ const ShellChatIndexRoute = ShellChatIndexRouteImport.update({
   path: '/chat/',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellContactsIndexRoute = ShellContactsIndexRouteImport.update({
+  id: '/contacts/',
+  path: '/contacts/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellContactsContactIdRoute = ShellContactsContactIdRouteImport.update({
+  id: '/contacts/$contactId',
+  path: '/contacts/$contactId',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellContactsNewRoute = ShellContactsNewRouteImport.update({
+  id: '/contacts/new',
+  path: '/contacts/new',
+  getParentRoute: () => ShellRoute,
+} as any)
 const ShellDriveIndexRoute = ShellDriveIndexRouteImport.update({
   id: '/drive/',
   path: '/drive/',
@@ -107,10 +125,13 @@ export interface FileRoutesByFullPath {
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
   '/admin/$section': typeof ShellAdminSectionRoute
+  '/contacts/$contactId': typeof ShellContactsContactIdRoute
+  '/contacts/new': typeof ShellContactsNewRoute
   '/admin/': typeof ShellAdminIndexRoute
   '/assistant/': typeof ShellAssistantIndexRoute
   '/calendar/': typeof ShellCalendarIndexRoute
   '/chat/': typeof ShellChatIndexRoute
+  '/contacts/': typeof ShellContactsIndexRoute
   '/drive/': typeof ShellDriveIndexRoute
   '/mail/': typeof ShellMailIndexRoute
   '/meet/': typeof ShellMeetIndexRoute
@@ -123,10 +144,13 @@ export interface FileRoutesByTo {
   '/signup/invite': typeof SignupInviteRoute
   '/signup/verify-email': typeof SignupVerifyEmailRoute
   '/admin/$section': typeof ShellAdminSectionRoute
+  '/contacts/$contactId': typeof ShellContactsContactIdRoute
+  '/contacts/new': typeof ShellContactsNewRoute
   '/admin': typeof ShellAdminIndexRoute
   '/assistant': typeof ShellAssistantIndexRoute
   '/calendar': typeof ShellCalendarIndexRoute
   '/chat': typeof ShellChatIndexRoute
+  '/contacts': typeof ShellContactsIndexRoute
   '/drive': typeof ShellDriveIndexRoute
   '/mail': typeof ShellMailIndexRoute
   '/meet': typeof ShellMeetIndexRoute
@@ -141,10 +165,13 @@ export interface FileRoutesById {
   '/signup_/invite': typeof SignupInviteRoute
   '/signup_/verify-email': typeof SignupVerifyEmailRoute
   '/_shell/admin/$section': typeof ShellAdminSectionRoute
+  '/_shell/contacts/$contactId': typeof ShellContactsContactIdRoute
+  '/_shell/contacts/new': typeof ShellContactsNewRoute
   '/_shell/admin/': typeof ShellAdminIndexRoute
   '/_shell/assistant/': typeof ShellAssistantIndexRoute
   '/_shell/calendar/': typeof ShellCalendarIndexRoute
   '/_shell/chat/': typeof ShellChatIndexRoute
+  '/_shell/contacts/': typeof ShellContactsIndexRoute
   '/_shell/drive/': typeof ShellDriveIndexRoute
   '/_shell/mail/': typeof ShellMailIndexRoute
   '/_shell/meet/': typeof ShellMeetIndexRoute
@@ -159,10 +186,13 @@ export interface FileRouteTypes {
     | '/signup/invite'
     | '/signup/verify-email'
     | '/admin/$section'
+    | '/contacts/$contactId'
+    | '/contacts/new'
     | '/admin/'
     | '/assistant/'
     | '/calendar/'
     | '/chat/'
+    | '/contacts/'
     | '/drive/'
     | '/mail/'
     | '/meet/'
@@ -175,10 +205,13 @@ export interface FileRouteTypes {
     | '/signup/invite'
     | '/signup/verify-email'
     | '/admin/$section'
+    | '/contacts/$contactId'
+    | '/contacts/new'
     | '/admin'
     | '/assistant'
     | '/calendar'
     | '/chat'
+    | '/contacts'
     | '/drive'
     | '/mail'
     | '/meet'
@@ -192,10 +225,13 @@ export interface FileRouteTypes {
     | '/signup_/invite'
     | '/signup_/verify-email'
     | '/_shell/admin/$section'
+    | '/_shell/contacts/$contactId'
+    | '/_shell/contacts/new'
     | '/_shell/admin/'
     | '/_shell/assistant/'
     | '/_shell/calendar/'
     | '/_shell/chat/'
+    | '/_shell/contacts/'
     | '/_shell/drive/'
     | '/_shell/mail/'
     | '/_shell/meet/'
@@ -290,6 +326,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellChatIndexRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/contacts/': {
+      id: '/_shell/contacts/'
+      path: '/contacts'
+      fullPath: '/contacts/'
+      preLoaderRoute: typeof ShellContactsIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/contacts/$contactId': {
+      id: '/_shell/contacts/$contactId'
+      path: '/contacts/$contactId'
+      fullPath: '/contacts/$contactId'
+      preLoaderRoute: typeof ShellContactsContactIdRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/contacts/new': {
+      id: '/_shell/contacts/new'
+      path: '/contacts/new'
+      fullPath: '/contacts/new'
+      preLoaderRoute: typeof ShellContactsNewRouteImport
+      parentRoute: typeof ShellRoute
+    }
     '/_shell/drive/': {
       id: '/_shell/drive/'
       path: '/drive'
@@ -323,10 +380,13 @@ declare module '@tanstack/react-router' {
 
 interface ShellRouteChildren {
   ShellAdminSectionRoute: typeof ShellAdminSectionRoute
+  ShellContactsContactIdRoute: typeof ShellContactsContactIdRoute
+  ShellContactsNewRoute: typeof ShellContactsNewRoute
   ShellAdminIndexRoute: typeof ShellAdminIndexRoute
   ShellAssistantIndexRoute: typeof ShellAssistantIndexRoute
   ShellCalendarIndexRoute: typeof ShellCalendarIndexRoute
   ShellChatIndexRoute: typeof ShellChatIndexRoute
+  ShellContactsIndexRoute: typeof ShellContactsIndexRoute
   ShellDriveIndexRoute: typeof ShellDriveIndexRoute
   ShellMailIndexRoute: typeof ShellMailIndexRoute
   ShellMeetIndexRoute: typeof ShellMeetIndexRoute
@@ -335,10 +395,13 @@ interface ShellRouteChildren {
 
 const ShellRouteChildren: ShellRouteChildren = {
   ShellAdminSectionRoute: ShellAdminSectionRoute,
+  ShellContactsContactIdRoute: ShellContactsContactIdRoute,
+  ShellContactsNewRoute: ShellContactsNewRoute,
   ShellAdminIndexRoute: ShellAdminIndexRoute,
   ShellAssistantIndexRoute: ShellAssistantIndexRoute,
   ShellCalendarIndexRoute: ShellCalendarIndexRoute,
   ShellChatIndexRoute: ShellChatIndexRoute,
+  ShellContactsIndexRoute: ShellContactsIndexRoute,
   ShellDriveIndexRoute: ShellDriveIndexRoute,
   ShellMailIndexRoute: ShellMailIndexRoute,
   ShellMeetIndexRoute: ShellMeetIndexRoute,

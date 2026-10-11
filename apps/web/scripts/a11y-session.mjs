@@ -186,7 +186,57 @@ const MAIL_LABEL = {
   shared: false,
 };
 
+const AUDIT_CONTACT = {
+  id: "00000000-0000-4000-8000-0000000000e1",
+  displayName: "Ada Lovelace",
+  givenName: "Ada",
+  familyName: "Lovelace",
+  company: "Analytical Engines",
+  jobTitle: "Mathematician",
+  emails: [{ type: "work", value: "ada@example.com" }],
+  phones: [{ type: "mobile", value: "+44 20 7946 0000" }],
+  addresses: [
+    {
+      type: "home",
+      street: "12 St James's Square",
+      city: "London",
+      region: "",
+      postalCode: "SW1Y 4JH",
+      country: "United Kingdom",
+    },
+  ],
+  birthday: "1815-12-10",
+  notes: "Wrote the first published algorithm.",
+  labels: ["Family"],
+  photoDataUrl: null,
+  starred: true,
+  memberActorId: null,
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  deletedAt: null,
+};
+
 const TOOL_FIXTURES = new Map([
+  /* Contacts: one starred, labelled contact so the list, the contact page and
+     the edit form audit their populated states. */
+  ["contacts.list", { contacts: [AUDIT_CONTACT], total: 1 }],
+  ["contacts.get", { contact: AUDIT_CONTACT }],
+  ["contacts.labels.list", { labels: [{ name: "Family", count: 1 }], total: 1 }],
+  ["contacts.duplicates.list", { groups: [] }],
+  [
+    "contacts.directory.list",
+    {
+      members: [
+        {
+          actorId: AUDIT_ACTOR.id,
+          displayName: AUDIT_ACTOR.displayName,
+          email: AUDIT_ACTOR.email,
+          jobTitle: "Auditor",
+          avatarDataUrl: null,
+        },
+      ],
+      total: 1,
+    },
+  ],
   ["notifications.unread-count", { count: 0 }],
   /* Settings → Mail: one label, one filter and one blocked address, so each
      tab audits its populated list rather than an empty state. */

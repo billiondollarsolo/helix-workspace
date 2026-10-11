@@ -213,6 +213,18 @@ const scopeCatalog = [
     surfaces: ["agent"],
   },
 
+  // Contacts.
+  {
+    scope: "contacts.read",
+    description: "Read your contacts, contact labels and the organization directory.",
+    surfaces: ["agent"],
+  },
+  {
+    scope: "contacts.write",
+    description: "Create, edit, label, import, merge and delete your contacts.",
+    surfaces: ["agent"],
+  },
+
   // Meet.
   { scope: "meet.read", description: "Read meeting rooms and join tokens.", surfaces: ["agent"] },
   { scope: "meet.write", description: "Create and end meeting rooms.", surfaces: ["agent"] },

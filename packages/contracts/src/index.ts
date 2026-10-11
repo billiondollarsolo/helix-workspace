@@ -8,3 +8,4 @@ export * from "./calendar-time.js";
 export * from "./security-scanning.js";
 export * from "./account.js";
 export * from "./chat-inbox.js";
+export * from "./contacts.js";

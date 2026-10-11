@@ -30,6 +30,8 @@ const RETIRED = [
   "slides.read",
   "slides.write",
 ];
+/** Catalog entries that later migrations add (0215: the Contacts app). */
+const ADDED_AFTER_0203 = ["contacts.read", "contacts.write"];
 const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 class Rollback extends Error {}
@@ -46,7 +48,9 @@ describe("0203 retire unknown IAM permissions migration", () => {
     expect(migration).not.toMatch(/disable trigger/iu);
     const known = /permission <> all \(array\[([^\]]*)\]/u.exec(migration)?.[1] ?? "";
     const listed = [...known.matchAll(/'([^']+)'/gu)].map((match) => match[1] ?? "");
-    expect(listed.sort(byCodePoint)).toEqual([...ALL_SCOPES].sort(byCodePoint));
+    expect(listed.sort(byCodePoint)).toEqual(
+      ALL_SCOPES.filter((scope) => !ADDED_AFTER_0203.includes(scope)).sort(byCodePoint),
+    );
   });
 });
 

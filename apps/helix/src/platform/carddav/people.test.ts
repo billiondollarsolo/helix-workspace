@@ -40,39 +40,6 @@ describe("People API", () => {
     });
   });
 
-  it("imports and exports the same personal vCard identity", async () => {
-    const store = fakeStore();
-    store.importContact.mockResolvedValue({
-      id: "00000000-0000-4000-8000-000000000010",
-      kind: "personal",
-      email: "ada@example.com",
-      displayName: "Ada",
-      actorId: null,
-      title: null,
-      favorite: false,
-      avatarDataUrl: null,
-      relationship: {},
-    });
-    store.exportContact.mockResolvedValue("BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Ada\r\nEND:VCARD\r\n");
-    const app = fastify();
-    await registerPeopleRoutes(app, { store, actorFromRequest: () => actor() });
-
-    const imported = await app.inject({
-      method: "POST",
-      url: "/api/people/contacts/import",
-      payload: { vcard: "BEGIN:VCARD\r\nVERSION:4.0\r\nFN:Ada\r\nEND:VCARD\r\n" },
-    });
-    const exported = await app.inject({
-      method: "GET",
-      url: "/api/people/contacts/00000000-0000-4000-8000-000000000010/export",
-    });
-
-    expect(imported.statusCode).toBe(201);
-    expect(exported.statusCode).toBe(200);
-    expect(exported.headers["content-type"]).toContain("text/vcard");
-    expect(exported.body).toContain("FN:Ada");
-  });
-
   it("projects bounded favorites, avatars, and relationships from standard vCards", () => {
     const parsed = parseVcard(
       "ada.vcf",
@@ -144,11 +111,6 @@ describe("People API", () => {
 function fakeStore() {
   return {
     list: vi.fn<PeopleStore["list"]>().mockResolvedValue([]),
-    importContact: vi.fn<PeopleStore["importContact"]>(),
-    exportContact: vi.fn<PeopleStore["exportContact"]>(),
-    updateContact: vi.fn<PeopleStore["updateContact"]>(),
-    deleteContact: vi.fn<PeopleStore["deleteContact"]>(),
-    mergeContacts: vi.fn<PeopleStore["mergeContacts"]>(),
   };
 }
 

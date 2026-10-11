@@ -8,6 +8,22 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Contacts app (`/contacts`, in the app launcher and the phone More sheet): an A–Z list of your
+  contacts with email, phone, job title and labels, sorted by first or last name; select several
+  to label, export or delete them (with Undo), or star and edit one from the row. A contact page
+  shows every email, phone, address, birthday and note with Email, Chat (for people in your
+  organization), Schedule and Copy. Create and edit contacts with any number of emails, phones
+  and addresses, a birthday, notes, labels and a picture. Labels can be created, renamed and
+  deleted. Import vCard (.vcf) or CSV files from other contacts apps after a preview of what will
+  be imported, export as vCard, merge contacts that share an email or phone, browse your
+  organization's Directory and add people to your contacts, and recover deleted contacts from
+  Trash for 30 days. Shortcuts: `c` create, `j`/`k` move, `x` select, `e` edit, `#` delete.
+- Contacts are the same vCards CardDAV clients sync, and labels are their categories. New
+  `contacts.*` tools (`contacts.list`, `.get`, `.create`, `.update`, `.trash`, `.restore`,
+  `.purge`, `.merge`, `.duplicates.list`, `.import`, `.export`, `.labels.list`, `.label.create`,
+  `.label.rename`, `.label.delete`, `.label.apply`, `.directory.list`) under the new
+  `contacts.read` and `contacts.write` permissions, which every member holds; `helix contacts …`
+  in the CLI.
 - Settings works like a "Manage your account" page: a Profile home with shortcuts to Personal info,
   Security, Language & region and App passwords, sections grouped under Account, Preferences and
   Apps, and a search box that finds sections and individual settings. On phones, Settings opens on
@@ -299,6 +315,8 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Removed
 
+- The `/api/people/contacts/*` import, export, update, delete and merge routes; the `contacts.*`
+  tools replace them. `/api/people` and `/api/people/autocomplete` are unchanged.
 - Unused tenant feature flags `ai_smart_compose`, `dlp_enforcement` and `watermark` from the
   contract, admin API and Workspace settings: there is no compose assist, DLP is configured
   by the `dlp` security policy, and nothing renders watermarks. Migration

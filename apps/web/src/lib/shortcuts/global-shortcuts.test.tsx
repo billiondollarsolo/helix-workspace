@@ -82,6 +82,7 @@ describe("GlobalShortcuts", () => {
       "Calendar",
       "Drive",
       "Chat",
+      "Contacts",
       "Compose and dialogs",
     ]);
     expect(dialog?.textContent).toContain("Go to Mail inbox");

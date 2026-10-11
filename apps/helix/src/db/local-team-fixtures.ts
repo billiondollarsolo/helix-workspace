@@ -63,6 +63,8 @@ export const LOCAL_TEAM_SCOPES = [
   "chat.create",
   "meet.read",
   "meet.write",
+  "contacts.read",
+  "contacts.write",
   "assistant.read",
   "assistant.write",
   "assistant.memory",

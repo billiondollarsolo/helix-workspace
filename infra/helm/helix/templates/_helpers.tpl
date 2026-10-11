@@ -279,7 +279,9 @@ default role. Input is the chart root context.
 {{- define "helix.containerEnv" -}}
 - name: NODE_ENV
   value: production
-# The exact digest this pod runs, for the production image-pinning check.
+# The production image-pinning check: a Helm release pins the image it runs.
+- name: HELIX_DEPLOYMENT_KIND
+  value: helm
 - name: HELIX_IMAGE
   value: {{ include "helix.image" . | quote }}
 - name: HOST

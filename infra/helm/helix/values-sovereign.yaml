@@ -71,7 +71,7 @@ siem:
 # mode — which is why the STIG image (FIPS-validated OpenSSL) is mandatory here.
 fips:
   enabled: true
-  imageRepository: registry.example.internal/helix/helix-fips
+  imageRepository: ghcr.io/billiondollarsolo/helix-workspace-fips
   # Required at install time; no placeholder can pass chart rendering.
   imageDigest: ""
   nodeSelector:

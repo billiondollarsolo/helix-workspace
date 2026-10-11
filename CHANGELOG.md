@@ -282,6 +282,12 @@ All notable changes to Helix Workspace are documented here. This file follows
   rewrite `recovery.externalClusters` entries as `{name, barmanObjectName, serverName}`. Backups now
   need the Barman Cloud Plugin. See "Upgrading to chart 1.0.0" in the Helm README; PostgreSQL 17
   clusters must be restored into a new PostgreSQL 18 cluster.
+- The production image-pinning check is deployment-aware through a required
+  `HELIX_DEPLOYMENT_KIND` (`compose` or `helm`, set by `docker-compose.production.yml` and the
+  chart; missing or unknown fails closed). Compose still requires all eight pinned images; Helm
+  requires `HELIX_IMAGE` from an approved repository (`ghcr.io/billiondollarsolo/helix-workspace`
+  or `-fips`). The chart's default `image.repository` and the sovereign FIPS repository now use
+  those official names.
 - The Helm migration Job gets its own NetworkPolicy (DNS and PostgreSQL egress only;
   `networkPolicy.migrate.egress.endpoints` for an external server) and every Helix pod receives
   `HELIX_IMAGE` from the selected image digest.
@@ -371,6 +377,8 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Removed
 
+- `infra/scripts/v1-phase-artifact-gate.test.mjs`, an unwired structural test that still required
+  removed editor artifacts (`editor-perf-budget.ts`); the R3 go/no-go script no longer lists it.
 - The `/api/people/contacts/*` import, export, update, delete and merge routes; the `contacts.*`
   tools replace them. `/api/people` and `/api/people/autocomplete` are unchanged.
 - Unused tenant feature flags `ai_smart_compose`, `dlp_enforcement` and `watermark` from the

@@ -40,7 +40,7 @@ The rendered ConfigMap and Deployment must carry the FIPS contract from `infra/s
 The sovereign overlay enables `stig.imagePolicy.requireDigest=true`. Before production traffic:
 
 - Replace the placeholder zero `fips.imageDigest` with the promoted internal digest.
-- Confirm the rendered image uses `registry.example.internal/helix/helix-fips@sha256:<digest>`.
+- Confirm the rendered image uses `ghcr.io/billiondollarsolo/helix-workspace-fips@sha256:<digest>`.
 - Reject `latest`, mutable tags, placeholder digests, and images outside the approved internal registry.
 - Verify signatures offline and save output as `cosign-verify-images.txt`.
 - Include `sbom.spdx.json` or `sbom.cyclonedx.json` for each image.

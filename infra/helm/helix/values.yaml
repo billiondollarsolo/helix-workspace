@@ -21,7 +21,7 @@ availability:
     failureThreshold: 60
 
 image:
-  repository: ghcr.io/helix/helix
+  repository: ghcr.io/billiondollarsolo/helix-workspace
   # Required at install time. Tags are deliberately unsupported.
   digest: ""
   pullPolicy: IfNotPresent
@@ -491,7 +491,7 @@ siem:
 
 fips:
   enabled: false
-  imageRepository: registry.example.internal/helix/helix-fips
+  imageRepository: ghcr.io/billiondollarsolo/helix-workspace-fips
   imageDigest: ""
   nodeSelector:
     node-restriction.kubernetes.io/fips: "true"

@@ -159,7 +159,7 @@ SOVEREIGN_VERIFIER_POLICY="$WORK_DIR/sovereign-verifier-network-policy.yaml"
 ALLOWLIST_POLICY="$WORK_DIR/allowlist-network-policy.yaml"
 
 assert_contains "$BASE" '^kind: Deployment$' "base chart must render a Deployment"
-assert_contains "$BASE" 'image: "ghcr.io/helix/helix@sha256:1111111111111111111111111111111111111111111111111111111111111111"' "base deployment must use only the approved digest"
+assert_contains "$BASE" 'image: "ghcr.io/billiondollarsolo/helix-workspace@sha256:1111111111111111111111111111111111111111111111111111111111111111"' "base deployment must use only the approved digest"
 assert_contains "$BASE" '^kind: Job$' "base chart must render the pre-install image verifier"
 assert_contains "$BASE" 'helm.sh/hook: pre-install,pre-upgrade' "image verification must block installs and upgrades"
 assert_contains "$BASE" 'ghcr.io/sigstore/cosign/cosign:v3\.0\.6@sha256:de9c65609e6bde17e6b48de485ee788407c9502fa08b8f4459f595b21f56cd00' "image verifier itself must be digest-pinned"
@@ -321,7 +321,9 @@ assert_contains "$ENTERPRISE_MIGRATE_POLICY" 'cnpg.io/cluster: "helix-postgres"'
 assert_contains "$ENTERPRISE_MIGRATE_POLICY" '^          port: 5432$' "migration Job must reach only PostgreSQL"
 assert_not_contains "$ENTERPRISE_MIGRATE_POLICY" 'port: 443|cidr:' "migration Job must not reach public HTTPS"
 assert_contains "$ENTERPRISE_UPGRADE" 'helm.sh/hook: pre-install,pre-upgrade' "upgrade migration policy must precede the pre-upgrade Job"
-assert_contains "$BASE" "^              value: \"ghcr\\.io/helix/helix@${VALIDATION_DIGEST}\"$" "pods must receive HELIX_IMAGE from the selected image digest"
+assert_contains "$BASE" "^              value: \"ghcr\\.io/billiondollarsolo/helix-workspace@${VALIDATION_DIGEST}\"$" "pods must receive HELIX_IMAGE from the selected image digest"
+assert_contains "$BASE" '^              value: helm$' "Helm pods must declare HELIX_DEPLOYMENT_KIND=helm for the image-pinning check"
+assert_contains "$SOVEREIGN" "^              value: \"ghcr\\.io/billiondollarsolo/helix-workspace-fips@" "sovereign pods must pin the approved FIPS repository"
 assert_template_fails migrate-public-https --set networkPolicy.migrate.egress.publicHttps=true
 assert_template_fails cnpg-tag-image --set cloudnativepg.enabled=true --set-string cloudnativepg.image.digest=
 assert_template_fails cnpg-placeholder-image --set cloudnativepg.enabled=true \
@@ -331,7 +333,7 @@ assert_template_fails cnpg-superuser-owner --set cloudnativepg.enabled=true --se
 
 assert_contains "$SOVEREIGN" 'helix.io/security-tier: "sovereign"' "sovereign overlay must label the tier"
 assert_contains "$SOVEREIGN" 'priorityClassName: "helix-workspace-critical"' "sovereign workloads must use an operator-managed priority class"
-assert_contains "$SOVEREIGN" 'registry\.example\.internal/helix/helix-fips@sha256:' "sovereign overlay must use a digest-pinned FIPS image"
+assert_contains "$SOVEREIGN" 'ghcr\.io/billiondollarsolo/helix-workspace-fips@sha256:' "sovereign overlay must use a digest-pinned FIPS image"
 assert_contains "$SOVEREIGN" 'HELIX_FIPS_MODE: "required"' "sovereign overlay must require FIPS mode"
 assert_contains "$SOVEREIGN" 'HELIX_CRYPTO_ADAPTER: "node-openssl-fips"' "sovereign overlay must select the FIPS crypto adapter"
 assert_contains "$SOVEREIGN" 'HELIX_AIRGAP_MODE: "required"' "sovereign overlay must require air-gap mode"

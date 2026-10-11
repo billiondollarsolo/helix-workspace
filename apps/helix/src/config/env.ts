@@ -173,6 +173,7 @@ const migrationEnvSchema = envSchema.pick({
   POSTGRES_POOL_MAX: true,
   HELIX_MIGRATION_DATABASE_WAIT_SECONDS: true,
   HELIX_WORKSPACE_PROFILE: true,
+  HELIX_DEPLOYMENT_KIND: true,
   HELIX_IMAGE: true,
   HELIX_WEB_IMAGE: true,
   HELIX_POSTGRES_IMAGE: true,

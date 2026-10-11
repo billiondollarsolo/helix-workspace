@@ -21,7 +21,7 @@ spec:
     placeholderDigestsAllowed: false
   images:
     application:
-      repository: registry.example.internal/helix/helix-fips
+      repository: ghcr.io/billiondollarsolo/helix-workspace-fips
       digestValue: fips.imageDigest
       requiredEvidence:
         - image-digest-map.yaml

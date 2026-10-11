@@ -8,6 +8,7 @@ const base = {
   REDIS_URL: "redis://localhost:6379",
 };
 const productionImageEnvironment = {
+  HELIX_DEPLOYMENT_KIND: "compose",
   HELIX_IMAGE:
     "ghcr.io/billiondollarsolo/helix-workspace@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   HELIX_WEB_IMAGE:

@@ -1,3 +1,7 @@
+import {
+  validateProductionDeploymentConfiguration,
+  type ProductionDeploymentConfiguration,
+} from "./production-images.js";
 import type { Env } from "./env.js";
 import {
   PRODUCTION_MVP_DISABLED_MODULES,
@@ -27,16 +31,6 @@ const DISALLOWED_MAIL_HOSTS = new Set([
   "smtp4dev",
 ]);
 const PRODUCTION_DISABLED_MODULES = PRODUCTION_MVP_DISABLED_MODULES;
-const PRODUCTION_IMAGE_REPOSITORIES = {
-  HELIX_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace",
-  HELIX_WEB_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-web",
-  HELIX_POSTGRES_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-postgres",
-  HELIX_NATS_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-nats",
-  HELIX_MEILISEARCH_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-meilisearch",
-  HELIX_CERBOS_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-cerbos",
-  HELIX_SPAMD_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-spamassassin",
-  HELIX_CLAMAV_IMAGE: "ghcr.io/billiondollarsolo/helix-workspace-clamav",
-} as const;
 const KNOWN_DEVELOPMENT_VALUES: Readonly<Record<string, readonly string[]>> = {
   BETTER_AUTH_SECRET: [
     "helix_local_better_auth_secret_change_me_32_chars",
@@ -83,10 +77,6 @@ export interface ProductionPostgresConfiguration {
   readonly POSTGRES_TLS_CERT_FILE?: string | undefined;
   readonly POSTGRES_TLS_KEY_FILE?: string | undefined;
 }
-export type ProductionDeploymentConfiguration = {
-  readonly NODE_ENV?: string | undefined;
-  readonly HELIX_WORKSPACE_PROFILE?: string | undefined;
-} & { readonly [K in keyof typeof PRODUCTION_IMAGE_REPOSITORIES]?: string | undefined };
 function normalized(value: string | undefined): string | undefined {
   const result = value?.trim();
   return result === undefined || result.length === 0 ? undefined : result;
@@ -288,25 +278,7 @@ export function assertProductionPostgresConfiguration(
     throw new ProductionConfigurationError(issues);
   }
 }
-function validateProductionDeploymentConfiguration(
-  environment: ProductionDeploymentConfiguration,
-  issues: ProductionConfigurationIssue[],
-): void {
-  for (const [variable, repository] of Object.entries(PRODUCTION_IMAGE_REPOSITORIES)) {
-    const imageReference = environment[variable as keyof typeof PRODUCTION_IMAGE_REPOSITORIES];
-    const expectedPrefix = `${repository}@sha256:`;
-    if (
-      imageReference === undefined ||
-      !imageReference.startsWith(expectedPrefix) ||
-      !/^[a-f0-9]{64}$/u.test(imageReference.slice(expectedPrefix.length))
-    ) {
-      issues.push({
-        variable,
-        message: `must be the promoted ${repository} image pinned by an immutable sha256 digest`,
-      });
-    }
-  }
-}
+export type { ProductionDeploymentConfiguration };
 export function assertProductionDeploymentConfiguration(
   environment: ProductionDeploymentConfiguration,
 ): void {

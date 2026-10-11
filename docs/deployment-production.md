@@ -97,6 +97,14 @@ not deployment inputs:
 | `HELIX_SPAMD_IMAGE`       | Helix SpamAssassin image          |
 | `HELIX_CLAMAV_IMAGE`      | Helix ClamAV image                |
 
+The application and migration process enforce this at startup according to
+`HELIX_DEPLOYMENT_KIND`, which every production deployment declares and which fails closed when
+missing or unknown. `docker-compose.production.yml` sets `compose`: all eight variables above are
+required. The Helm chart sets `helm`: only `HELIX_IMAGE` is required (the chart sets it from the
+image it runs, `ghcr.io/billiondollarsolo/helix-workspace` or the sovereign
+`ghcr.io/billiondollarsolo/helix-workspace-fips`), because the chart deploys no other Helix
+service image the application runs; any other image variable that is set must still be pinned.
+
 The pinned Redis and RustFS references remain checked into the base Compose file. The
 resolved production-config evidence must capture all ten active digests and the final release
 packet must bind each digest to its scan and SBOM.

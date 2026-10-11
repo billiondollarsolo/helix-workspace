@@ -24,6 +24,7 @@ export const runtimeEnv = {
   HELIX_ROLE: optionalString,
   HELIX_APPS: optionalString,
   HELIX_WORKSPACE_PROFILE: optionalString,
+  HELIX_DEPLOYMENT_KIND: optionalString,
   HELIX_IMAGE: optionalString,
   HELIX_WEB_IMAGE: optionalString,
   HELIX_POSTGRES_IMAGE: optionalString,

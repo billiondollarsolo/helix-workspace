@@ -53,6 +53,7 @@ Production assertions impose additional requirements; follow the [deployment gui
 | `HELIX_CONFIG_JSON`                                | Optional     | —                                                           |
 | `HELIX_DATA_ENCRYPTION_KEY`                        | Optional     | —                                                           |
 | `HELIX_DEFAULT_ORG_ID`                             | Optional     | `00000000-0000-0000-0000-000000000000`                      |
+| `HELIX_DEPLOYMENT_KIND`                            | Optional     | —                                                           |
 | `HELIX_DISABLED_TOOLS`                             | Optional     | —                                                           |
 | `HELIX_DOCS_PDF_RENDER_TIMEOUT_MS`                 | Optional     | `15000`                                                     |
 | `HELIX_DOCS_PDF_RENDERER`                          | Optional     | —                                                           |

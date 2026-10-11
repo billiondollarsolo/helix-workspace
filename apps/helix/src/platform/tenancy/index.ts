@@ -5,7 +5,7 @@ export * from "./tenant-deletion.js";
 export * from "./lifecycle-routes.js";
 export * from "./middleware.js";
 export * from "./orgs.js";
-export * from "./plans.js";
+export * from "./effective-config.js";
 export * from "./postgres-roles.js";
 export * from "./provisioning.js";
 export * from "./provisioning-bootstrap.js";

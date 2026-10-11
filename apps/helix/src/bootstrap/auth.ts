@@ -90,7 +90,6 @@ import {
   initialOwnerActorStepName,
   objectStorePrefixStepName,
   PostgresOrgStore,
-  PostgresPlanStore,
   PostgresTenantBootstrapSeedStore,
   PostgresTenantOwnerActorStore,
   PostgresTenantProvisioningStore,
@@ -311,8 +310,6 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
       })
     : undefined;
 
-  const planStore = new PostgresPlanStore(sql);
-
   const defaultOrg = resolveDefaultOrgInput(process.env);
 
   const appPasswordStore = new PostgresAppPasswordStore(sql);
@@ -485,7 +482,6 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
     signupVerifiedIdentityStore,
     signupOnboardingInviteTokenStore,
     tenantProvisioningWorker,
-    planStore,
     defaultOrg,
     appPasswordStore,
     adminUsersStore,

@@ -5,7 +5,7 @@ import type { FastifyRequest } from "fastify";
 import type { HelixConfig, TenantConfig } from "@helix/sdk-types";
 import { isSingleTenant, resolveHelixMode } from "../mode/index.js";
 import type { OrgRecord, OrgStore } from "./orgs.js";
-import { buildEffectiveTenantConfig, type PlanStore } from "./plans.js";
+import { buildEffectiveTenantConfig } from "./effective-config.js";
 import { assertTenantRegion } from "./residency.js";
 import { resolveRequestOrgIdentity } from "./request-tenant-identity.js";
 
@@ -21,7 +21,6 @@ export interface TenantContext {
 export interface TenantResolutionOptions {
   readonly config: Pick<HelixConfig, "mode">;
   readonly orgs: OrgStore;
-  readonly plans?: PlanStore;
   readonly request: Pick<FastifyRequest, "headers" | "url" | "method">;
   readonly defaultOrg?: {
     readonly id?: string;
@@ -107,8 +106,7 @@ export async function resolveTenantContext(
     );
   }
 
-  const plan = options.plans === undefined ? null : await options.plans.findById(org.planId);
-  const effectiveConfig = buildEffectiveTenantConfig({ org, plan });
+  const effectiveConfig = buildEffectiveTenantConfig({ org });
 
   // G1.8 — Request-path org id must come from an explicitly resolved tenant
   // (mode-bound single-tenant org or SaaS slug/header), never from inventing a

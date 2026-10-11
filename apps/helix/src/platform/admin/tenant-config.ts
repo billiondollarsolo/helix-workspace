@@ -12,7 +12,7 @@ import {
   type TenantStorageResolver,
 } from "../storage/index.js";
 import type { OrgRecord, UpdateTenantConfigInput } from "../tenancy/orgs.js";
-import { buildEffectiveTenantConfig, type PlanRecord, type PlanStore } from "../tenancy/plans.js";
+import { buildEffectiveTenantConfig } from "../tenancy/effective-config.js";
 import { toJsonObject } from "../util/json.js";
 import { hasControlCharacter } from "../util/strings.js";
 import {
@@ -39,12 +39,6 @@ interface TenantConfigAdminView {
   readonly features: JsonObject;
   readonly quotas: JsonObject;
   readonly branding: JsonObject;
-  readonly plan: {
-    readonly id: string;
-    readonly displayName: string;
-    readonly featureFlagsDefault: JsonObject;
-    readonly quotasDefault: JsonObject;
-  } | null;
   readonly effective: {
     readonly byo: JsonObject;
     readonly features: JsonObject;
@@ -60,20 +54,12 @@ export interface RegisterTenantConfigAdminRoutesOptions {
   readonly storageResolver?: TenantStorageResolver | undefined;
   readonly storageMigrationJobs?:
     Pick<TenantStorageMigrationJobStore, "create" | "findByIdForOrg"> | undefined;
-  readonly plans?: Pick<PlanStore, "findById"> | undefined;
   readonly featureFlagEvents?: Pick<EventBus, "publish"> | undefined;
   readonly onFeatureFlagEventError?: ((error: unknown) => void) | undefined;
 }
 
 const dlpModeSchema = z.enum(["off", "warn", "block"]);
 const watermarkModeSchema = z.enum(["off", "visible", "invisible", "both"]);
-const supportTierSchema = z.enum([
-  "community",
-  "email-48h",
-  "priority-24h",
-  "premium-4h",
-  "premium-1h-named",
-]);
 
 const featureFlagsSchema = z
   .object({
@@ -81,21 +67,8 @@ const featureFlagsSchema = z
     ai_smart_compose: z.boolean().optional(),
     dlp_enforcement: dlpModeSchema.optional(),
     watermark: watermarkModeSchema.optional(),
-    b2b_sharing: z.boolean().optional(),
     mail_outbound: z.boolean().optional(),
     mail_inbound_policy: inboundAuthenticationPolicySchema.optional(),
-    sso_saml: z.boolean().optional(),
-    scim_provisioning: z.boolean().optional(),
-    custom_domain: z.boolean().optional(),
-    byo_storage: z.boolean().optional(),
-    byo_database: z.boolean().optional(),
-    byo_kms: z.boolean().optional(),
-    byo_ai_provider: z.boolean().optional(),
-    white_label: z.boolean().optional(),
-    multi_region_dr: z.boolean().optional(),
-    dedicated_csm: z.boolean().optional(),
-    marketplace_install_paid: z.boolean().optional(),
-    support_tier: supportTierSchema.optional(),
   })
   .strict();
 
@@ -288,7 +261,7 @@ export async function registerTenantConfigAdminRoutes(
     if (org === null) {
       return reply.code(404).send(notFound("Tenant config not found."));
     }
-    return { tenantConfig: await tenantConfigView(org, options.plans) };
+    return { tenantConfig: tenantConfigView(org) };
   });
 
   app.patch("/api/admin/tenant-config", async (request, reply) => {
@@ -302,18 +275,6 @@ export async function registerTenantConfigAdminRoutes(
         .code(400)
         .send(invalidRequest("Invalid tenant config update.", body.error.issues));
     }
-    if (body.data.byo?.storage?.kind === "byo") {
-      const current = await options.store.findById(actor.orgId);
-      if (current === null) {
-        return reply.code(404).send(notFound("Tenant config not found."));
-      }
-      if (current.featureFlags.byo_storage !== true && body.data.features?.byo_storage !== true) {
-        return reply
-          .code(400)
-          .send(invalidRequest("BYO storage is not enabled for this tenant.", []));
-      }
-    }
-
     const org = await options.store.updateTenantConfig({
       orgId: actor.orgId,
       ...(body.data.byo === undefined ? {} : { byoConfig: toJsonObject(body.data.byo) }),
@@ -352,7 +313,7 @@ export async function registerTenantConfigAdminRoutes(
         });
     }
 
-    return { tenantConfig: await tenantConfigView(org, options.plans) };
+    return { tenantConfig: tenantConfigView(org) };
   });
 
   app.post("/api/admin/tenant-config/byo-storage/test", async (request, reply) => {
@@ -524,17 +485,12 @@ export async function registerTenantConfigAdminRoutes(
         return reply.code(409).send(conflict(message));
       }
 
-      const featureFlags =
-        job.target === "byo" && org.featureFlags.byo_storage !== true
-          ? { ...org.featureFlags, byo_storage: true }
-          : undefined;
       const updatedOrg = await options.store.updateTenantConfig({
         orgId: actor.orgId,
         byoConfig: {
           ...org.byoConfig,
           storage: storageConfig,
         },
-        ...(featureFlags === undefined ? {} : { featureFlags }),
         changedByActorId: actor.id,
         reason: `tenant storage migration cutover: ${job.id}`,
       });
@@ -554,58 +510,29 @@ export async function registerTenantConfigAdminRoutes(
           status: job.status,
         },
       });
-      if (featureFlags !== undefined) {
-        void options.featureFlagEvents
-          ?.publish(`flags.changed.${actor.orgId}`, {
-            orgId: actor.orgId,
-            changedByActorId: actor.id,
-            reason: `tenant storage migration cutover: ${job.id}`,
-            keys: ["byo_storage"],
-          })
-          .catch((error: unknown) => {
-            options.onFeatureFlagEventError?.(error);
-          });
-      }
 
       return {
         migration: tenantStorageMigrationJobView(job),
-        tenantConfig: await tenantConfigView(updatedOrg, options.plans),
+        tenantConfig: tenantConfigView(updatedOrg),
       };
     },
   );
 }
 
-async function tenantConfigView(
-  org: OrgRecord,
-  plans: Pick<PlanStore, "findById"> | undefined,
-): Promise<TenantConfigAdminView> {
-  const plan = plans === undefined ? null : await plans.findById(org.planId);
-  const effective = buildEffectiveTenantConfig({ org, plan });
+function tenantConfigView(org: OrgRecord): TenantConfigAdminView {
+  const effective = buildEffectiveTenantConfig({ org });
   return {
     orgId: org.id,
     byo: org.byoConfig,
     features: org.featureFlags,
     quotas: org.quotas,
     branding: org.branding,
-    plan: planView(plan),
     effective: {
       byo: effective.byo,
       features: effective.features as JsonObject,
       quotas: effective.quotas as JsonObject,
       branding: effective.branding as JsonObject,
     },
-  };
-}
-
-function planView(plan: PlanRecord | null): TenantConfigAdminView["plan"] {
-  if (plan === null) {
-    return null;
-  }
-  return {
-    id: plan.id,
-    displayName: plan.displayName,
-    featureFlagsDefault: plan.featureFlagsDefault,
-    quotasDefault: plan.quotasDefault,
   };
 }
 

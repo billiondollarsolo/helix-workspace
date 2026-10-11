@@ -74,7 +74,7 @@ export function lifecycleFormFromPolicy(policy: DriveLifecyclePolicy): DriveLife
 export function formatQuotaSummary(usage: DriveQuotaUsage): string {
   const used = formatBytes(usage.usedBytes);
   if (usage.unlimited || usage.limitBytes === null) {
-    return `${used} used · unlimited plan limit`;
+    return `${used} used · no storage limit`;
   }
   const limit = formatBytes(usage.limitBytes);
   const pct = usage.percentUsed === null ? "—" : `${String(usage.percentUsed)}%`;

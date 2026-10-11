@@ -9,23 +9,16 @@ const scope = {
 };
 
 describe("AI cost budgets", () => {
-  it("resolves PRD tier defaults", () => {
-    expect(resolveAICostBudget("personal")).toMatchObject({
-      actorDailyUsdMicros: null,
-      featureDailyUsdMicros: null,
-    });
-    expect(resolveAICostBudget("business")).toMatchObject({
-      actorDailyUsdMicros: aiUsdToMicros(10),
-      featureDailyUsdMicros: null,
-    });
-    expect(resolveAICostBudget("enterprise")).toMatchObject({
-      actorDailyUsdMicros: aiUsdToMicros(50),
-      featureDailyUsdMicros: null,
-    });
-    expect(resolveAICostBudget("sovereign")).toMatchObject({
-      actorDailyUsdMicros: 0,
-      featureDailyUsdMicros: 0,
-    });
+  it("leaves every security tier unlimited unless an admin sets a budget", () => {
+    for (const tier of ["personal", "business", "enterprise", "sovereign"] as const) {
+      expect(resolveAICostBudget(tier)).toMatchObject({
+        actorDailyUsdMicros: null,
+        featureDailyUsdMicros: null,
+      });
+    }
+    expect(
+      resolveAICostBudget("business", { actorDailyUsdMicros: aiUsdToMicros(10) }),
+    ).toMatchObject({ actorDailyUsdMicros: aiUsdToMicros(10), featureDailyUsdMicros: null });
   });
 });
 

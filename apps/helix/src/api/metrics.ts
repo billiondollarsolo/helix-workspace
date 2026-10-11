@@ -68,12 +68,10 @@ export interface PlatformMetrics extends SecurityScanningMetrics {
   recordSignupFunnelEvent(input: {
     readonly step: string;
     readonly tier?: string | undefined;
-    readonly planId?: string | undefined;
     readonly region?: string | undefined;
   }): void;
   recordSignupActivationSlo(input: {
     readonly tier: string;
-    readonly planId: string;
     readonly region: string;
     readonly durationSeconds: number;
     readonly withinTarget: boolean;
@@ -193,14 +191,14 @@ export function createPlatformMetrics(): PlatformMetrics {
   });
   const signupFunnelEvents = new Counter({
     name: "helix_signup_funnel_events_total",
-    help: "Total privacy-safe signup funnel events by step and plan dimensions.",
-    labelNames: ["step", "tier", "plan_id", "region"],
+    help: "Total privacy-safe signup funnel events by step and tenant dimensions.",
+    labelNames: ["step", "tier", "region"],
     registers: [registry],
   });
   const signupActivationDuration = new Histogram({
     name: "helix_signup_activation_duration_seconds",
-    help: "Self-service signup activation duration by plan dimensions and SLO target result.",
-    labelNames: ["tier", "plan_id", "region", "within_target"],
+    help: "Self-service signup activation duration by tenant dimensions and SLO target result.",
+    labelNames: ["tier", "region", "within_target"],
     buckets: [1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600],
     registers: [registry],
   });
@@ -521,18 +519,16 @@ export function createPlatformMetrics(): PlatformMetrics {
       toolPolicyDenials.inc(labels);
     },
     recordSignupFunnelEvent(input) {
-      const labels: LabelValues<"step" | "tier" | "plan_id" | "region"> = {
+      const labels: LabelValues<"step" | "tier" | "region"> = {
         step: input.step,
         tier: input.tier ?? "unknown",
-        plan_id: input.planId ?? "unknown",
         region: input.region ?? "unknown",
       };
       signupFunnelEvents.inc(labels);
     },
     recordSignupActivationSlo(input) {
-      const labels: LabelValues<"tier" | "plan_id" | "region" | "within_target"> = {
+      const labels: LabelValues<"tier" | "region" | "within_target"> = {
         tier: input.tier,
-        plan_id: input.planId,
         region: input.region,
         within_target: input.withinTarget ? "true" : "false",
       };

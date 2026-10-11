@@ -28,7 +28,6 @@ export interface TenantExportManifest {
     readonly displayName: string;
     readonly status: string;
     readonly tier: string;
-    readonly planId: string;
     readonly region: string;
   };
   readonly configSnapshot: {
@@ -107,7 +106,6 @@ export function buildTenantExportManifest(
       displayName: input.org.displayName,
       status: input.org.status,
       tier: input.org.tier,
-      planId: input.org.planId,
       region: input.org.region,
     },
     configSnapshot: {
@@ -216,8 +214,6 @@ export async function countTenantExportRows(
     union all select 'admin_group_members', count(*)::integer from admin_group_members where org_id = ${orgId}
     union all select 'admin_security_policies', count(*)::integer from admin_security_policies where org_id = ${orgId}
     union all select 'admin_oauth_apps', count(*)::integer from admin_oauth_apps where org_id = ${orgId}
-    union all select 'admin_billing_accounts', count(*)::integer from admin_billing_accounts where org_id = ${orgId}
-    union all select 'admin_billing_invoices', count(*)::integer from admin_billing_invoices where org_id = ${orgId}
     union all select 'admin_domains', count(*)::integer from admin_domains where org_id = ${orgId}
     union all select 'admin_dns_records', count(*)::integer from admin_dns_records where org_id = ${orgId}
     union all select 'ai_artifacts', count(*)::integer from ai_artifacts where org_id = ${orgId}

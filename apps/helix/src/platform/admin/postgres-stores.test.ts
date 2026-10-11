@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { createRecordingSql } from "../../test-support/recording-sql.js";
-import { PostgresBillingStore } from "./billing.js";
 import { PostgresDomainsStore } from "./domains.js";
 import { PostgresGroupsStore } from "./groups.js";
 import { PostgresOAuthAppsStore } from "./oauth-apps.js";
@@ -110,70 +109,6 @@ describe("PostgresOAuthAppsStore", () => {
     });
     expect(recording.calls[0]?.text).toContain("update admin_oauth_apps");
     expect(recording.calls[0]?.values).toContain("revoked");
-  });
-});
-
-describe("PostgresBillingStore", () => {
-  it("reads the billing account scoped to the org", async () => {
-    const recording = createRecordingSql([[]]);
-    const store = new PostgresBillingStore(recording.sql);
-    await store.getAccount(orgId);
-    expect(recording.calls[0]?.text).toContain("from admin_billing_accounts");
-    expect(recording.calls[0]?.values).toContain(orgId);
-  });
-
-  it("lists invoices ordered by issued date with a keyset cursor", async () => {
-    const recording = createRecordingSql([[]]);
-    const store = new PostgresBillingStore(recording.sql);
-    await store.listInvoices({
-      orgId,
-      limit: 51,
-      cursor: { createdAt: new Date("2026-05-01T00:00:00.000Z"), id: "x" },
-    });
-    expect(recording.calls[0]?.text).toContain("from admin_billing_invoices");
-    expect(recording.calls[0]?.text).toContain("(issued_at, id) <");
-    expect(recording.calls[0]?.values).toContain(51);
-  });
-
-  it("lists usage rollups scoped to org, period, and metric key", async () => {
-    const recording = createRecordingSql([[]]);
-    const store = new PostgresBillingStore(recording.sql);
-    const from = new Date("2026-05-01T00:00:00.000Z");
-    const to = new Date("2026-05-31T00:00:00.000Z");
-    await store.listUsageRollups({
-      orgId,
-      from,
-      to,
-      metricKey: "ai_tokens",
-    });
-
-    expect(recording.calls[0]?.text).toContain("from metering_rollups");
-    expect(recording.calls[0]?.text).toContain("org_id = ?");
-    expect(recording.calls[0]?.text).toContain("period_start >=");
-    expect(recording.calls[0]?.text).toContain("metric_key =");
-    expect(recording.calls[0]?.values).toEqual(
-      expect.arrayContaining([orgId, from, to, "ai_tokens"]),
-    );
-  });
-
-  it("rejects usage rollup rows with unknown metric keys", async () => {
-    const recording = createRecordingSql([
-      [
-        {
-          org_id: orgId,
-          period_start: new Date("2026-05-23T00:00:00.000Z"),
-          period_end: new Date("2026-05-24T00:00:00.000Z"),
-          metric_key: "custom_metric",
-          quantity: "1",
-          computed_at: new Date("2026-05-24T00:05:00.000Z"),
-        },
-      ],
-    ]);
-    const store = new PostgresBillingStore(recording.sql);
-
-    await expect(store.listUsageRollups({ orgId })).rejects.toThrow(
-      "Unknown metering rollup metric key",
-    );
   });
 });
 

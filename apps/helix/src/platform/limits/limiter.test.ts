@@ -21,26 +21,17 @@ const scope = {
 };
 
 describe("agent rate/cost limits", () => {
-  it("resolves PRD tier defaults", () => {
-    expect(resolveAgentLimitBudget("personal")).toMatchObject({
-      requestsPerMinute: null,
+  it("leaves every security tier unlimited unless an admin sets a budget", () => {
+    for (const tier of ["personal", "business", "enterprise", "sovereign"] as const) {
+      expect(resolveAgentLimitBudget(tier)).toMatchObject({
+        requestsPerMinute: null,
+        requestsPerDay: null,
+        costPerDayUsdMicros: null,
+      });
+    }
+    expect(resolveAgentLimitBudget("business", { requestsPerMinute: 60 })).toMatchObject({
+      requestsPerMinute: 60,
       requestsPerDay: null,
-      costPerDayUsdMicros: null,
-    });
-    expect(resolveAgentLimitBudget("business")).toMatchObject({
-      requestsPerMinute: 60,
-      requestsPerDay: 5_000,
-      costPerDayUsdMicros: usdToMicros(10),
-    });
-    expect(resolveAgentLimitBudget("enterprise")).toMatchObject({
-      requestsPerMinute: 60,
-      requestsPerDay: 5_000,
-      costPerDayUsdMicros: usdToMicros(50),
-    });
-    expect(resolveAgentLimitBudget("sovereign")).toMatchObject({
-      requestsPerMinute: 30,
-      requestsPerDay: 1_000,
-      costPerDayUsdMicros: 0,
     });
   });
 
@@ -92,13 +83,14 @@ describe("agent rate/cost limits", () => {
     }
   });
 
-  it("treats sovereign cloud cost allowance as a zero-dollar cap", async () => {
+  it("still enforces an admin-configured zero-dollar cap", async () => {
     const limiter = new InMemoryAgentRateCostLimiter();
 
     const blocked = await limiter.consume({
       orgId: "org-1",
       actorId: "agent-2",
       tier: "sovereign",
+      budget: resolveAgentLimitBudget("sovereign", { costPerDayUsdMicros: 0 }),
       estimatedCostUsdMicros: 1,
       at: new Date("2026-05-20T12:00:00.000Z"),
     });

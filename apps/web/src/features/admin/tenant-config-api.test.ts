@@ -16,12 +16,6 @@ const tenantConfigPayload = {
     features: { ai_smart_compose: true },
     quotas: { api_rps_limit: 10 },
     branding: { display_name_override: "Acme" },
-    plan: {
-      id: "business",
-      displayName: "Business",
-      featureFlagsDefault: { ai_smart_compose: true },
-      quotasDefault: { api_rps_limit: 25 },
-    },
     effective: {
       byo: {},
       features: { ai_smart_compose: true },
@@ -73,7 +67,6 @@ describe("tenant-config-api", () => {
 
     expect(result.orgId).toBe("org-1");
     expect(result.features.ai_smart_compose).toBe(true);
-    expect(result.plan?.displayName).toBe("Business");
     expect(result.effective.quotas.api_rps_limit).toBe(10);
     expect(fetchImpl).toHaveBeenCalledWith("/api/admin/tenant-config", { method: "GET" });
   });

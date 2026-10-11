@@ -4,7 +4,7 @@
 
 ## Status
 
-Proposed (gates public OSS release timing; affects marketplace + partner program)
+Superseded by [ADR-0030](adr-0030-free-open-source-no-plans-or-limits.md): Helix is free and open source with no plans, paid features, license keys, billing or plan limits. Previously: Proposed (gates public OSS release timing; affects marketplace + partner program)
 
 ## Context
 

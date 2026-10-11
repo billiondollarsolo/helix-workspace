@@ -37,35 +37,18 @@ export async function prefetchAdminTenantConfigQuery(queryClient: TenantConfigRo
   await queryClient.ensureQueryData(tenantConfigQueryOptions()).catch(() => undefined);
 }
 
+/* Org-admin policy switches. Helix has no plans or entitlements: every feature
+   is available to every org and these default to on; an admin may turn one
+   off for their own workspace. */
 const BOOLEAN_FEATURE_FLAGS = [
   ["assistant_retrieval", "Assistant retrieval"],
   ["ai_smart_compose", "AI smart compose"],
-  ["b2b_sharing", "External sharing (public links)"],
   ["mail_outbound", "Outbound mail"],
-  ["scim_provisioning", "SCIM provisioning"],
-  ["custom_domain", "Custom domains"],
-  ["byo_storage", "BYO storage"],
-  ["byo_database", "BYO database"],
-  ["byo_kms", "BYO KMS"],
-  ["byo_ai_provider", "BYO AI provider"],
-  ["white_label", "White label"],
-  ["multi_region_dr", "Multi-region DR"],
-  ["dedicated_csm", "Dedicated CSM"],
-  ["marketplace_install_paid", "Paid marketplace installs"],
 ] as const;
 
 export const BOOLEAN_FEATURE_FLAG_GROUPS = [
   { title: "AI", keys: ["assistant_retrieval", "ai_smart_compose"] },
-  { title: "Sharing & mail", keys: ["b2b_sharing", "mail_outbound"] },
-  { title: "Identity", keys: ["scim_provisioning", "custom_domain"] },
-  {
-    title: "Bring your own",
-    keys: ["byo_storage", "byo_database", "byo_kms", "byo_ai_provider"],
-  },
-  {
-    title: "Plan entitlements",
-    keys: ["white_label", "multi_region_dr", "dedicated_csm", "marketplace_install_paid"],
-  },
+  { title: "Mail", keys: ["mail_outbound"] },
 ] as const satisfies ReadonlyArray<{
   readonly title: string;
   readonly keys: readonly string[];
@@ -74,11 +57,6 @@ export const BOOLEAN_FEATURE_FLAG_GROUPS = [
 const SELECT_FEATURE_FLAGS = [
   ["dlp_enforcement", "DLP enforcement", ["off", "warn", "block"]],
   ["watermark", "Watermark", ["off", "visible", "invisible", "both"]],
-  [
-    "support_tier",
-    "Support tier",
-    ["community", "email-48h", "priority-24h", "premium-4h", "premium-1h-named"],
-  ],
 ] as const;
 
 const QUOTA_FIELDS = [
@@ -373,13 +351,6 @@ export function TenantConfigManagement() {
     setError(null);
     const input: Parameters<typeof updateTenantConfig>[0] = {
       byo: { storage: parsed },
-      ...(parsed.kind === "byo"
-        ? {
-            features: {
-              byo_storage: true,
-            },
-          }
-        : {}),
       reason: "admin settings update: byo storage",
     };
     mutation.mutate(input);
@@ -849,9 +820,7 @@ export function TenantConfigManagement() {
           <section aria-label="Quotas" className={CARD_CLASS}>
             <SectionHeader icon={<Gauge aria-hidden="true" />} title="Quotas" />
             <p className="text-xs text-muted-foreground">
-              {query.data?.plan === null || query.data?.plan === undefined
-                ? "Effective limits are shown from system defaults and tenant overrides."
-                : `${query.data.plan.displayName} plan defaults with tenant overrides applied.`}
+              No limit applies unless this workspace sets its own override.
             </p>
             <Disclosure
               detail={quotaSummary(QUOTA_FIELDS.length, quotaOverrideCount)}
@@ -865,7 +834,6 @@ export function TenantConfigManagement() {
                     effective={query.data?.effective.quotas[key]}
                     label={label}
                     override={query.data?.quotas[key]}
-                    planDefault={query.data?.plan?.quotasDefault[key]}
                   />
                 ))}
               </div>
@@ -995,12 +963,10 @@ function QuotaRow({
   effective,
   label,
   override,
-  planDefault,
 }: {
   readonly effective: unknown;
   readonly label: string;
   readonly override: unknown;
-  readonly planDefault: unknown;
 }) {
   return (
     <div
@@ -1009,8 +975,6 @@ function QuotaRow({
     >
       <span className="font-medium text-foreground">{label}</span>
       <span className="font-mono text-sm text-foreground">{formatQuotaValue(effective)}</span>
-      <span className="text-muted-foreground">Plan</span>
-      <span className="text-right text-muted-foreground">{formatQuotaValue(planDefault)}</span>
       {override === undefined ? null : (
         <>
           <span className="text-muted-foreground">Override</span>

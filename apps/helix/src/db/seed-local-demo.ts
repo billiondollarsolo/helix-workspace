@@ -217,10 +217,10 @@ export async function seedLocalDemo(
 
 async function seedOrg(sql: SeedSql, orgId: string): Promise<void> {
   await sql`
-    insert into orgs (id, slug, display_name, status, tier, region, feature_flags, metadata)
+    insert into orgs (id, slug, display_name, status, tier, region, metadata)
     values (
       ${orgId}, 'local-demo', 'Local Demo Workspace', 'active', 'personal', 'local',
-      ${json(sql, { b2b_sharing: true })}, ${json(sql, { source: LOCAL_DEMO_SOURCE })}
+      ${json(sql, { source: LOCAL_DEMO_SOURCE })}
     )
     on conflict (id) do update
     set
@@ -229,7 +229,6 @@ async function seedOrg(sql: SeedSql, orgId: string): Promise<void> {
       status = excluded.status,
       tier = excluded.tier,
       region = excluded.region,
-      feature_flags = orgs.feature_flags || excluded.feature_flags,
       metadata = orgs.metadata || excluded.metadata,
       updated_at = now()
   `;

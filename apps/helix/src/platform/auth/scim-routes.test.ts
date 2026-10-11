@@ -998,7 +998,6 @@ function orgRecord(overrides: Partial<OrgRecord>): OrgRecord {
     displayName: "Acme",
     status: "active",
     tier: "business",
-    planId: "business",
     region: "us-east-1",
     byoConfig: {},
     featureFlags: {},

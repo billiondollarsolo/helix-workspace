@@ -1,24 +1,30 @@
 import { describe, expect, it } from "vitest";
 import type { OrgRecord } from "./orgs.js";
-import { buildEffectiveTenantConfig, type PlanRecord } from "./plans.js";
+import { buildEffectiveTenantConfig } from "./effective-config.js";
 
 describe("buildEffectiveTenantConfig", () => {
-  it("merges system defaults, plan defaults, and tenant overrides in precedence order", () => {
+  it("gives a new org every feature and unlimited quotas", () => {
+    const effective = buildEffectiveTenantConfig({ org: org({}) });
+
+    for (const [key, value] of Object.entries(effective.features)) {
+      if (typeof value === "boolean") {
+        expect({ key, value }).toEqual({ key, value: true });
+      }
+    }
+    expect(effective.features.dlp_enforcement).toBe("off");
+    expect(effective.features.watermark).toBe("off");
+    expect(Object.keys(effective.quotas).length).toBeGreaterThan(0);
+    for (const [key, value] of Object.entries(effective.quotas)) {
+      expect({ key, value }).toEqual({ key, value: null });
+    }
+  });
+
+  it("merges system defaults and tenant overrides in precedence order", () => {
     const effective = buildEffectiveTenantConfig({
-      plan: plan({
-        featureFlagsDefault: {
-          ai_smart_compose: true,
-          dlp_enforcement: "warn",
-        },
-        quotasDefault: {
-          actors_limit: 25,
-          storage_bytes_limit: 50_000_000_000,
-        },
-      }),
       org: org({
         featureFlags: {
           dlp_enforcement: "block",
-          byo_storage: true,
+          ai_smart_compose: false,
         },
         quotas: {
           actors_limit: 50,
@@ -29,17 +35,16 @@ describe("buildEffectiveTenantConfig", () => {
       }),
     });
 
-    expect(effective.features.ai_smart_compose).toBe(true);
+    expect(effective.features.ai_smart_compose).toBe(false);
     expect(effective.features.dlp_enforcement).toBe("block");
-    expect(effective.features.byo_storage).toBe(true);
-    expect(effective.quotas.storage_bytes_limit).toBe(50_000_000_000);
+    expect(effective.features.assistant_retrieval).toBe(true);
+    expect(effective.quotas.storage_bytes_limit).toBeNull();
     expect(effective.quotas.actors_limit).toBe(50);
     expect(effective.branding.accent_color_hex).toBe("#2f6fed");
   });
 
   it("applies per-request overrides above tenant config", () => {
     const effective = buildEffectiveTenantConfig({
-      plan: null,
       org: org({
         featureFlags: { ai_smart_compose: false },
         quotas: { export_jobs_per_hour: 10 },
@@ -62,7 +67,6 @@ function org(overrides: Partial<OrgRecord>): OrgRecord {
     displayName: "Default",
     status: "active",
     tier: "personal",
-    planId: "personal",
     region: "default",
     byoConfig: {},
     featureFlags: {},
@@ -71,16 +75,6 @@ function org(overrides: Partial<OrgRecord>): OrgRecord {
     suspendedAt: null,
     softDeletedAt: null,
     hardDeletedAt: null,
-    ...overrides,
-  };
-}
-
-function plan(overrides: Partial<PlanRecord>): PlanRecord {
-  return {
-    id: "pro",
-    displayName: "Pro",
-    featureFlagsDefault: {},
-    quotasDefault: {},
     ...overrides,
   };
 }

@@ -5,8 +5,10 @@ per organization and actor. Admin REST and tRPC requests use a separate allowanc
 so a busy workspace tab cannot consume the requests needed for admin controls.
 Other people in the organization also retain their own allowance.
 
-The existing `api_rps_limit` tenant quota applies to integration API and agent
-credentials, and requests without a verified human session. A bearer token or API
+The `api_rps_limit` tenant quota applies to integration API and agent
+credentials, and requests without a verified human session. It is unlimited
+(`null`) by default because Helix has no plan limits (ADR-0030); an org admin may
+set one for their own tenant. A bearer token or API
 key retains that quota even when accompanied by a valid session cookie. A cookie
 name, client identity header, user-agent, or admin URL does not establish a human
 session: the existing Better Auth verifier, active membership, tenant binding,

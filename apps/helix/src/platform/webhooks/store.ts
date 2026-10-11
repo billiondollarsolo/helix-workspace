@@ -639,11 +639,7 @@ async function assertOutboundWebhookQuotaAvailable(
 ): Promise<void> {
   const rows = await sql<OutboundWebhookQuotaRow[]>`
     select
-      case
-        when o.quotas ? 'outbound_webhooks_limit' then o.quotas -> 'outbound_webhooks_limit'
-        when p.quotas_default ? 'outbound_webhooks_limit' then p.quotas_default -> 'outbound_webhooks_limit'
-        else '5'::jsonb
-      end as outbound_webhooks_limit,
+      o.quotas -> 'outbound_webhooks_limit' as outbound_webhooks_limit,
       (
         select count(*)::int
         from outbound_webhooks wh
@@ -651,7 +647,6 @@ async function assertOutboundWebhookQuotaAvailable(
           and wh.deleted_at is null
       ) as active_outbound_webhook_count
     from orgs o
-    left join plans p on p.id = o.plan_id
     where o.id = ${orgId}
     limit 1
     for update of o
@@ -672,11 +667,9 @@ async function assertOutboundWebhookQuotaAvailable(
   }
 }
 
+/** A missing, null or malformed limit means unlimited: Helix has no plan quotas. */
 function outboundWebhookLimitFromJson(value: JsonValue | null): number | null {
-  if (value === null) {
-    return null;
-  }
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 5;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function countFromDatabase(value: string | number): number {

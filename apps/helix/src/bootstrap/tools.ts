@@ -92,7 +92,6 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     tenantStorageSecretReader,
     orgStore,
     securityPoliciesStore,
-    planStore,
     appPasswordStore,
     auditStore,
     webhookSecretResolver,
@@ -304,10 +303,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       if (org === null) {
         return null;
       }
-      return buildEffectiveTenantConfig({
-        org,
-        plan: await planStore.findById(org.planId),
-      });
+      return buildEffectiveTenantConfig({ org });
     },
   });
 

@@ -145,7 +145,6 @@ export async function registerInviteRoutes(
           ownerActorId: identity.actorId,
           betterAuthUserId: identity.betterAuthUserId,
           tier: org.tier,
-          planId: org.planId,
           region: org.region,
           source: "signup",
           status: "active",
@@ -447,7 +446,7 @@ async function enqueueSignupVerificationEmail(input: {
 async function enqueueSignupActivationSloObserved(input: {
   readonly outbox: Pick<OutboxStore, "insert"> | undefined;
   readonly metrics: PlatformMetrics | undefined;
-  readonly org: Pick<OrgRecord, "id" | "slug" | "tier" | "planId" | "region">;
+  readonly org: Pick<OrgRecord, "id" | "slug" | "tier" | "region">;
   readonly provisioning: {
     readonly createdAt: Date;
     readonly completedSteps: readonly string[];
@@ -469,7 +468,6 @@ async function enqueueSignupActivationSloObserved(input: {
       orgId: input.org.id,
       orgSlug: input.org.slug,
       tier: input.org.tier,
-      planId: input.org.planId,
       region: input.org.region,
       source: "signup",
       slo: "signup_activation",
@@ -484,7 +482,6 @@ async function enqueueSignupActivationSloObserved(input: {
   });
   input.metrics?.recordSignupActivationSlo({
     tier: input.org.tier,
-    planId: input.org.planId,
     region: input.org.region,
     durationSeconds,
     withinTarget: durationSeconds <= signupActivationSloTargetSeconds,
@@ -515,7 +512,6 @@ async function enqueueSignupFunnelEvent(input: {
       orgId: input.org.id,
       orgSlug: input.org.slug,
       tier: input.org.tier,
-      planId: input.org.planId,
       region: input.org.region,
       ...input.payload,
     },
@@ -531,7 +527,7 @@ function recordSignupFunnelMetric(
   metrics: PlatformMetrics | undefined,
   input: {
     readonly step: string;
-    readonly org?: Pick<OrgRecord, "tier" | "planId" | "region"> | undefined;
+    readonly org?: Pick<OrgRecord, "tier" | "region"> | undefined;
   },
 ): void {
   metrics?.recordSignupFunnelEvent({
@@ -540,7 +536,6 @@ function recordSignupFunnelMetric(
       ? {}
       : {
           tier: input.org.tier,
-          planId: input.org.planId,
           region: input.org.region,
         }),
   });

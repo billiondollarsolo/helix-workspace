@@ -20,7 +20,6 @@ const org = {
   displayName: "Acme",
   status: "soft_deleted",
   tier: "enterprise",
-  planId: "enterprise",
   region: "us-east",
   byoConfig: {},
   featureFlags: {},

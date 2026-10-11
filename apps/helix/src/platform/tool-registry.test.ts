@@ -123,6 +123,35 @@ describe("RuntimeToolRegistry", () => {
     ).resolves.toMatchObject({ ok: true });
   });
 
+  it("never gates public link creation behind a tenant feature flag", async () => {
+    const evaluations: string[] = [];
+    const registry = createToolRegistry({
+      featureFlags: {
+        get: (_key, _defaultValue) => false as typeof _defaultValue,
+        async getAsync<T>(key: string) {
+          evaluations.push(key);
+          return false as T;
+        },
+      },
+    });
+    registry.register(
+      tool({
+        id: "drive.link.create",
+        permission: "platform.read",
+        handler: async () => ({ created: true }),
+      }),
+    );
+
+    await expect(registry.listVisible(actor)).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "drive.link.create" })]),
+    );
+    await expect(registry.invoke("drive.link.create", {}, { actor })).resolves.toMatchObject({
+      ok: true,
+      output: { created: true },
+    });
+    expect(evaluations).not.toContain("b2b_sharing");
+  });
+
   it("live-reads tenant feature flags as tool kill switches", async () => {
     const evaluations: unknown[] = [];
     let enabled = false;
@@ -1714,7 +1743,7 @@ describe("featureFlagForTool", () => {
     expect(featureFlagForTool({ id: "mail.send" })).toBe("mail_outbound");
     expect(featureFlagForTool({ id: "mail.reply" })).toBe("mail_outbound");
     expect(featureFlagForTool({ id: "drive.share" })).toBeUndefined();
-    expect(featureFlagForTool({ id: "drive.link.create" })).toBe("b2b_sharing");
+    expect(featureFlagForTool({ id: "drive.link.create" })).toBeUndefined();
     expect(featureFlagForTool({ id: "platform.ping" })).toBeUndefined();
   });
 });

@@ -13,7 +13,6 @@ import { installHttpMetrics } from "../api/metrics.js";
 import { WEBSOCKET_MAX_PAYLOAD_BYTES } from "../api/request-body.js";
 import { createRequestContext } from "../api/trace.js";
 import { HELIX_SERVER_VERSION } from "../api/version.js";
-import { PostgresBillingStore, registerAdminBillingRoutes } from "../platform/admin/billing.js";
 import { AuthoritativeDnsResolver } from "../platform/admin/dns-resolver.js";
 import { readDomainsWithRecords, registerAdminDomainsRoutes } from "../platform/admin/domains.js";
 import { PostgresGroupsStore, registerAdminGroupsRoutes } from "../platform/admin/groups.js";
@@ -91,7 +90,6 @@ import {
   registerOutboundMailAdminRoutes,
 } from "../platform/mail/index.js";
 import { registerMeetRoutes } from "../platform/meet/index.js";
-import { isSaas } from "../platform/mode/index.js";
 import { registerSearchAdminRoutes } from "../platform/search/index.js";
 import { registerInviteRoutes } from "../platform/signup/routes.js";
 import {
@@ -135,7 +133,6 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     signupEmailVerificationTokenStore,
     signupVerifiedIdentityStore,
     signupOnboardingInviteTokenStore,
-    planStore,
     appPasswordStore,
     adminUsersStore,
     adminDomainsStore,
@@ -500,7 +497,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
   });
 
   // Wave-1 admin console: Groups & OUs, security policies, OAuth apps,
-  // billing, and domain/DNS management. Each route group writes through the
+  // and domain/DNS management. Each route group writes through the
   // immutable audit store so admin-console changes are tamper-evidently logged.
   await registerAdminGroupsRoutes(app, {
     store: new PostgresGroupsStore(sql),
@@ -529,7 +526,6 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     auditSink: auditStore,
     storageResolver: driveStorageResolver,
     storageMigrationJobs: tenantStorageMigrationJobStore,
-    plans: planStore,
     featureFlagEvents: eventBus,
     onFeatureFlagEventError: (error) => {
       app.log.error({ error }, "Tenant feature flag change event emission failed");
@@ -542,10 +538,8 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     exportPlanner: createPostgresTenantExportManifestPlanner(sql),
     auditSink: auditStore,
     exportJobLimiter: tenantHourlyQuotaLimiter,
-    exportJobLimit: async ({ org }) => {
-      const plan = await planStore.findById(org.planId);
-      return buildEffectiveTenantConfig({ org, plan }).quotas.export_jobs_per_hour;
-    },
+    exportJobLimit: async ({ org }) =>
+      buildEffectiveTenantConfig({ org }).quotas.export_jobs_per_hour,
     events: eventBus,
     onEventError: (error) => {
       app.log.error({ error }, "Tenant export quota event emission failed");
@@ -597,13 +591,6 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
       bootEnv.PUBLIC_BASE_URL ??
       "http://localhost:3000",
   });
-
-  if (isSaas(runtimeConfiguration.current)) {
-    await registerAdminBillingRoutes(app, {
-      store: new PostgresBillingStore(sql),
-      actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
-    });
-  }
 
   await registerAdminDomainsRoutes(app, {
     store: domainsStore,

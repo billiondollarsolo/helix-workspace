@@ -17,8 +17,8 @@ describe("PostgresWebhookStore", () => {
     );
 
     expect(recording.calls).toHaveLength(1);
-    expect(recording.calls[0]?.text).toContain("o.quotas ? 'outbound_webhooks_limit'");
-    expect(recording.calls[0]?.text).toContain("p.quotas_default ? 'outbound_webhooks_limit'");
+    expect(recording.calls[0]?.text).toContain("o.quotas -> 'outbound_webhooks_limit'");
+    expect(recording.calls[0]?.text).not.toContain("plans");
     expect(recording.calls[0]?.text).toContain("for update of o");
     expect(recording.calls[0]?.text).toContain("from outbound_webhooks wh");
     expect(recording.calls[0]?.text).toContain("wh.deleted_at is null");
@@ -42,7 +42,18 @@ describe("PostgresWebhookStore", () => {
     expect(recording.calls[1]?.text).toContain("insert into outbound_webhooks");
   });
 
-  it("allows creation below limit and resolves org override before plan default", async () => {
+  it("treats a missing outbound_webhooks_limit as unlimited", async () => {
+    const recording = createRecordingSql([
+      [{ outbound_webhooks_limit: null, active_outbound_webhook_count: 5 }],
+      [outboundWebhookRow()],
+    ]);
+    const store = new PostgresWebhookStore(recording.sql, secrets);
+
+    await expect(store.createOutbound(createOutboundInput())).resolves.toMatchObject({ orgId });
+    expect(recording.calls[1]?.text).toContain("insert into outbound_webhooks");
+  });
+
+  it("allows creation below an admin-configured limit", async () => {
     const recording = createRecordingSql([
       quotaRow({ limit: 3, used: 2 }),
       [outboundWebhookRow({ id: "33333333-3333-4333-8333-333333333333" })],
@@ -53,11 +64,6 @@ describe("PostgresWebhookStore", () => {
       id: "33333333-3333-4333-8333-333333333333",
     });
 
-    const quotaSql = recording.calls[0]?.text ?? "";
-    expect(quotaSql.indexOf("o.quotas ? 'outbound_webhooks_limit'")).toBeGreaterThanOrEqual(0);
-    expect(quotaSql.indexOf("p.quotas_default ? 'outbound_webhooks_limit'")).toBeGreaterThan(
-      quotaSql.indexOf("o.quotas ? 'outbound_webhooks_limit'"),
-    );
     expect(recording.calls[1]?.text).toContain("insert into outbound_webhooks");
   });
 

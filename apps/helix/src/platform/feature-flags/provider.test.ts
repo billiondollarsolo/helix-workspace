@@ -13,14 +13,14 @@ describe("TenantConfigFeatureFlagProvider", () => {
     const tenantConfig = config({
       features: {
         ...SYSTEM_TENANT_CONFIG.features,
-        ai_smart_compose: true,
-        support_tier: "premium-4h",
+        ai_smart_compose: false,
+        dlp_enforcement: "block",
       },
     });
 
-    expect(provider.get("ai_smart_compose", false, { tenantConfig })).toBe(true);
-    await expect(provider.getAsync("support_tier", "community", { tenantConfig })).resolves.toBe(
-      "premium-4h",
+    expect(provider.get("ai_smart_compose", true, { tenantConfig })).toBe(false);
+    await expect(provider.getAsync("dlp_enforcement", "off", { tenantConfig })).resolves.toBe(
+      "block",
     );
   });
 
@@ -29,7 +29,7 @@ describe("TenantConfigFeatureFlagProvider", () => {
       config({
         features: {
           ...SYSTEM_TENANT_CONFIG.features,
-          assistant_retrieval: true,
+          assistant_retrieval: false,
         },
       }),
     );
@@ -39,8 +39,8 @@ describe("TenantConfigFeatureFlagProvider", () => {
     });
 
     await expect(
-      provider.getAsync("assistant_retrieval", false, { orgId: "org-1", actorId: "actor-1" }),
-    ).resolves.toBe(true);
+      provider.getAsync("assistant_retrieval", true, { orgId: "org-1", actorId: "actor-1" }),
+    ).resolves.toBe(false);
     expect(loadTenantConfig).toHaveBeenCalledWith({
       orgId: "org-1",
       context: { orgId: "org-1", actorId: "actor-1", environment: "test" },

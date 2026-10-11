@@ -2,7 +2,7 @@
  *
  * The Helix design handoff used to ship a large `*_DATA` seed bundle here
  * (workspace meta, sign-in chart, audit events, OAuth apps, DNS records,
- * billing plan/invoices, etc.) used as offline fallbacks throughout the
+ * etc.) used as offline fallbacks throughout the
  * console. That seed was removed: the console now renders only live data
  * from the platform APIs, and surfaces loading / error / empty states when
  * an endpoint is unavailable. The only thing that lives here now is the
@@ -134,7 +134,6 @@ export const ADMIN_NAV_GROUPS = [
     title: "Organization",
     items: [
       { id: "domains", label: "Domains", icon: "Globe" },
-      { id: "billing", label: "Billing & usage", icon: "Credit" },
       { id: "workspace-settings", label: "Workspace settings", icon: "Settings" },
     ],
   },
@@ -187,36 +186,6 @@ export type AdminSectionId =
   (typeof ADMIN_NAV_ROOT)["id"] | (typeof ADMIN_NAV_GROUPS)[number]["items"][number]["id"];
 
 /** Every section id, in sidebar order. */
-/* Sections a deployment does not run.
- *
- * Billing is metered SaaS plumbing and is PARKED while Helix ships as open
- * source: there is no billing service behind it, `/api/admin/billing/*` answers
- * 404, and the section can only ever render its own error — a top-level slot
- * advertising a feature that is not there. Off by default, matching this repo's
- * fail-closed rule; a hosted build that grows a billing service turns it on
- * with VITE_HELIX_BILLING_ENABLED=true and the section is already written.
- *
- * Parked, not deleted, and the distinction is deliberate: the code is complete
- * and its shape is the record of what a hosted build would need. What parking
- * costs is bounded — the section is one lazy chunk nothing fetches, it is
- * absent from the nav, `isAdminSectionId` makes `/admin/billing` a 404 rather
- * than an unreachable page, and the request-budget harness skips it so it
- * cannot hold an over-budget entry open against work nobody is going to do.
- *
- * Build-time rather than a capability probe: the sidebar renders on every admin
- * page, and giving it a runtime query would put one more request into the burst
- * that already trips the session rate limiter on Overview. */
-const BILLING_ENABLED = import.meta.env.VITE_HELIX_BILLING_ENABLED === "true";
-
-const DISABLED_SECTIONS: ReadonlySet<string> = new Set(BILLING_ENABLED ? [] : ["billing"]);
-
-/** Nav groups this deployment actually serves. Groups left empty are dropped
- *  rather than rendered as a heading with nothing under it. */
-export const ADMIN_NAV_GROUPS_FOR_BUILD = ADMIN_NAV_GROUPS.map((group) => ({
-  title: group.title,
-  items: group.items.filter((item) => !DISABLED_SECTIONS.has(item.id)),
-})).filter((group) => group.items.length > 0);
-
 export const ADMIN_SECTION_IDS: readonly AdminSectionId[] = [
   ADMIN_NAV_ROOT.id,
   ...ADMIN_NAV_GROUPS.flatMap((group) => group.items.map((item) => item.id)),
@@ -231,9 +200,7 @@ export const DEFAULT_ADMIN_SECTION: AdminSectionId = ADMIN_NAV_ROOT.id;
  *  navigation the `<h1>` has not rendered yet, and a topbar still reading
  *  "Admin" is why a click used to look like nothing had happened.
  *
- *  Built from `ADMIN_NAV_GROUPS` (not the build-filtered list) so a section that
- *  this deployment does not serve still resolves rather than falling through to
- *  the id. */
+ *  Built from `ADMIN_NAV_GROUPS`. */
 const SECTION_LABELS: Record<string, string> = Object.fromEntries<string>([
   [ADMIN_NAV_ROOT.id, ADMIN_NAV_ROOT.label],
   ...ADMIN_NAV_GROUPS.flatMap((group) =>
@@ -245,11 +212,7 @@ export function adminSectionLabel(id: AdminSectionId): string {
   return SECTION_LABELS[id] ?? id;
 }
 
-/** Route-param guard — `/admin/<anything>` has to be narrowed before use.
- *
- *  A section this deployment does not serve is treated as unknown, so
- *  `/admin/billing` 404s on a self-hosted install rather than rendering a page
- *  that is unreachable from the nav and can only show an error. */
+/** Route-param guard — `/admin/<anything>` has to be narrowed before use. */
 export function isAdminSectionId(value: string): value is AdminSectionId {
-  return (ADMIN_SECTION_IDS as readonly string[]).includes(value) && !DISABLED_SECTIONS.has(value);
+  return (ADMIN_SECTION_IDS as readonly string[]).includes(value);
 }

@@ -3,8 +3,8 @@
  *
  * Admin › Overview reads five figures, each from the endpoint that owns it:
  * domains, security policies, platform config, the directory and core apps.
- * As five client requests that is five of the tenant's five-per-second budget
- * (`api_rps_limit`) on top of the three the app shell already spends, so the
+ * As five client requests that was five of a five-per-second budget
+ * (`api_rps_limit`, formerly 5 by default; now unlimited unless an admin sets it) on top of the three the app shell already spends, so the
  * page could not load without tripping the limiter it was reporting on. The
  * client grew a release queue to stagger them — roughly a second of deliberate
  * self-throttling on the console's front door, and it still earned a 429 on a

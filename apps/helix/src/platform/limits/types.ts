@@ -83,31 +83,24 @@ export interface AgentRateCostLimiter {
   getUsage(input: AgentLimitUsageInput): Promise<AgentLimitUsage>;
 }
 
+/**
+ * Helix has no plan limits: every security tier starts with no agent request
+ * or cost budget. An org admin can still opt into a budget, which arrives as
+ * the `override` below. Sovereign's local-only AI posture is enforced by the
+ * AI routing policy, not by a budget.
+ */
+const unlimitedAgentLimitBudget: AgentLimitBudget = {
+  requestsPerMinute: null,
+  requestsPerDay: null,
+  costPerDayUsdMicros: null,
+  costWarningThresholdRatio: 0.8,
+};
+
 const tierAgentLimitBudgets: Record<SecurityTier, AgentLimitBudget> = {
-  personal: {
-    requestsPerMinute: null,
-    requestsPerDay: null,
-    costPerDayUsdMicros: null,
-    costWarningThresholdRatio: 0.8,
-  },
-  business: {
-    requestsPerMinute: 60,
-    requestsPerDay: 5_000,
-    costPerDayUsdMicros: 10 * USD_MICROS,
-    costWarningThresholdRatio: 0.8,
-  },
-  enterprise: {
-    requestsPerMinute: 60,
-    requestsPerDay: 5_000,
-    costPerDayUsdMicros: 50 * USD_MICROS,
-    costWarningThresholdRatio: 0.8,
-  },
-  sovereign: {
-    requestsPerMinute: 30,
-    requestsPerDay: 1_000,
-    costPerDayUsdMicros: 0,
-    costWarningThresholdRatio: 0.8,
-  },
+  personal: unlimitedAgentLimitBudget,
+  business: unlimitedAgentLimitBudget,
+  enterprise: unlimitedAgentLimitBudget,
+  sovereign: unlimitedAgentLimitBudget,
 };
 
 export function resolveAgentLimitBudget(

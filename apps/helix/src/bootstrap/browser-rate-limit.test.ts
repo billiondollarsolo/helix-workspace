@@ -42,7 +42,6 @@ function setup() {
           displayName: "Test",
           status: "active",
           tier: "business",
-          planId: "business",
           region: "us-east-1",
           byoConfig: {},
           featureFlags: {},

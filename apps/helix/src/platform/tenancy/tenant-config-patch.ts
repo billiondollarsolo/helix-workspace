@@ -5,9 +5,9 @@ import type { JsonObject, JsonValue } from "@helix/sdk-types";
  *
  * - `featureFlags` is a key-level patch: submitted keys overwrite stored keys,
  *   keys that are not submitted are kept, and a key submitted as JSON `null`
- *   is removed so the plan default applies again.
+ *   is removed so the system default applies again.
  * - `quotas` is a key-level patch too, but `null` is a stored value meaning
- *   "unlimited" (it overrides a plan limit), so it is kept rather than removed.
+ *   "unlimited", so it is kept rather than removed.
  * - `byoConfig` and `branding` are replaced whole: every caller sends the full
  *   object (the admin UI posts the whole branding form with blank fields
  *   dropped, and BYO storage always sends the complete `storage` block), so

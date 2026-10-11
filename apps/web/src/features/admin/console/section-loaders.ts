@@ -55,10 +55,6 @@ export const ADMIN_SECTION_LOADERS: Record<AdminSectionId, AdminSectionLoader> =
     exportName: "AdminDomain",
     prefetch: "prefetchAdminDomainsQuery",
   },
-  billing: {
-    load: () => import("@/features/admin/sections/billing"),
-    exportName: "AdminBilling",
-  },
   "workspace-settings": {
     load: () => import("@/features/admin/tenant-config-management"),
     exportName: "TenantConfigManagement",

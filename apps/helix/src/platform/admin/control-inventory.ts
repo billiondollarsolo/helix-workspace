@@ -20,7 +20,6 @@ export type AdminControlSurface =
   | "users_groups"
   | "domains_dns"
   | "core_apps"
-  | "billing_plan"
   | "oauth_apps"
   | "tenant_config"
   | "mail_admin"
@@ -114,14 +113,6 @@ export const ADMIN_CONTROL_INVENTORY: readonly AdminControlInventoryEntry[] = [
     paths: ["GET/PUT /api/admin/core-apps", "HELIX_APPS / production-assertions"],
     mode: "partial",
     notes: "Admin UI + packaging gates; production fail-closed on MVP allowlist.",
-  },
-  {
-    id: "billing.plan",
-    surface: "billing_plan",
-    title: "Plan / license UI",
-    paths: ["GET /api/admin/billing"],
-    mode: "partial",
-    notes: "Self-host plan surface; SaaS billing is out of v1 GA scope.",
   },
   {
     id: "oauth.apps",

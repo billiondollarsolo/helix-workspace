@@ -18,7 +18,6 @@ export class InMemoryTenantConfigAdminStore implements TenantConfigAdminStore {
       displayName: "Acme",
       status: "active",
       tier: "business",
-      planId: "business",
       region: "us-east-1",
       byoConfig: {},
       featureFlags: { ai_smart_compose: false },

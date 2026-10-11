@@ -4,18 +4,7 @@ global:
 route:
   receiver: helix-null
   group_by:
-    [
-      "alertname",
-      "severity",
-      "priority",
-      "owner",
-      "service",
-      "product",
-      "slo",
-      "tier",
-      "plan_id",
-      "region",
-    ]
+    ["alertname", "severity", "priority", "owner", "service", "product", "slo", "tier", "region"]
   group_wait: 10s
   group_interval: 5m
   repeat_interval: 4h

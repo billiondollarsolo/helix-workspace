@@ -7,10 +7,28 @@ import {
 } from "./tenant-config.js";
 
 describe("tenant-config contract", () => {
-  it("defaults every editors flag with sdk-types parity", () => {
-    expect(SYSTEM_TENANT_FEATURE_FLAGS.assistant_retrieval).toBe(false);
-    expect(SYSTEM_TENANT_FEATURE_FLAGS.mail_outbound).toBe(true);
-    expect(SYSTEM_TENANT_FEATURE_FLAGS.support_tier).toBe("community");
+  it("turns every boolean feature on by default", () => {
+    for (const [key, value] of Object.entries(SYSTEM_TENANT_FEATURE_FLAGS)) {
+      if (typeof value === "boolean") {
+        expect({ key, value }).toEqual({ key, value: true });
+      }
+    }
+    expect(SYSTEM_TENANT_FEATURE_FLAGS.dlp_enforcement).toBe("off");
+    expect(SYSTEM_TENANT_FEATURE_FLAGS.watermark).toBe("off");
+  });
+
+  it("leaves every quota unlimited by default", () => {
+    for (const value of Object.values(SYSTEM_TENANT_QUOTAS)) {
+      expect(value).toBeNull();
+    }
+  });
+
+  it("still parses stored configs that carry retired plan-era keys", () => {
+    const parsed = tenantConfigSchema.parse({
+      ...SYSTEM_TENANT_CONFIG,
+      features: { ...SYSTEM_TENANT_FEATURE_FLAGS, b2b_sharing: false, support_tier: "community" },
+    });
+    expect(parsed.features.mail_outbound).toBe(true);
   });
 
   it("parses a full tenant config object", () => {

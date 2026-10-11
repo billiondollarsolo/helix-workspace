@@ -80,7 +80,6 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
     orgStore,
     domainsStore,
     securityPoliciesStore,
-    planStore,
     defaultOrg,
     auditStore,
     eventBus,
@@ -166,7 +165,6 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
     resolveTenantContext({
       config: runtimeConfiguration.current,
       orgs: orgStore,
-      plans: planStore,
       request,
       defaultOrg,
       rootHosts: configuredTenantRootHosts,

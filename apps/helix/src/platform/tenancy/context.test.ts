@@ -128,23 +128,11 @@ describe("resolveTenantContext", () => {
     const acme = orgRecord({
       id: "11111111-1111-4111-8111-111111111111",
       slug: "acme",
-      planId: "business",
       featureFlags: { ai_smart_compose: false },
     });
     const context = await resolveTenantContext({
       config: { mode: "multi-tenant-saas" },
       orgs: storeWith({ orgsBySlug: { acme } }),
-      plans: {
-        async findById(id) {
-          expect(id).toBe("business");
-          return {
-            id,
-            displayName: "Business",
-            featureFlagsDefault: { ai_smart_compose: true },
-            quotasDefault: { actors_limit: null },
-          };
-        },
-      },
       request: requestWith({ host: "acme.helix.app" }),
       rootHosts: ["helix.app"],
     });
@@ -343,7 +331,6 @@ function orgRecord(overrides: Partial<OrgRecord>): OrgRecord {
     displayName: "Default",
     status: "active",
     tier: "personal",
-    planId: "personal",
     region: "default",
     byoConfig: {},
     featureFlags: {},

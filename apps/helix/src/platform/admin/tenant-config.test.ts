@@ -8,7 +8,6 @@ import type {
 } from "../storage/index.js";
 import { InMemoryTenantConfigAdminStore as SharedTenantConfigStore } from "../../test-support/tenant-config-store.js";
 import type { OrgRecord } from "../tenancy/orgs.js";
-import type { PlanRecord, PlanStore } from "../tenancy/plans.js";
 import { registerTenantConfigAdminRoutes as registerTenantConfigAdminRoutesWithoutAudit } from "./tenant-config.js";
 
 const orgId = "22222222-2222-4222-8222-222222222222";
@@ -53,7 +52,6 @@ describe("tenant config admin routes", () => {
     await registerTenantConfigAdminRoutes(app, {
       store,
       actorFromRequest,
-      plans: new InMemoryPlanStore(),
     });
 
     const response = await app.inject({
@@ -70,16 +68,10 @@ describe("tenant config admin routes", () => {
         features: { ai_smart_compose: false },
         quotas: { api_rps_limit: 5 },
         branding: {},
-        plan: {
-          id: "business",
-          displayName: "Business",
-          featureFlagsDefault: { ai_smart_compose: true, byo_storage: true },
-          quotasDefault: { api_rps_limit: 25, actors_limit: 500 },
-        },
         effective: {
           byo: {},
-          features: { ai_smart_compose: false, byo_storage: true },
-          quotas: { api_rps_limit: 5, actors_limit: 500 },
+          features: { ai_smart_compose: false, assistant_retrieval: true, mail_outbound: true },
+          quotas: { api_rps_limit: 5, actors_limit: null, storage_bytes_limit: null },
           branding: {},
         },
       },
@@ -113,9 +105,7 @@ describe("tenant config admin routes", () => {
       url: "/api/admin/tenant-config",
       headers: headers("admin.console.write"),
       payload: {
-        // The feature flag can arrive in the same PATCH as the config so
-        // onboarding can enable BYO storage atomically.
-        features: { ai_smart_compose: true, dlp_enforcement: "warn", byo_storage: true },
+        features: { ai_smart_compose: true, dlp_enforcement: "warn", mail_outbound: false },
         byo: {
           storage: {
             kind: "byo",
@@ -156,7 +146,7 @@ describe("tenant config admin routes", () => {
             lifecycle: { object_lock: "compliance", retention_days: 30 },
           },
         },
-        featureFlags: { ai_smart_compose: true, dlp_enforcement: "warn", byo_storage: true },
+        featureFlags: { ai_smart_compose: true, dlp_enforcement: "warn", mail_outbound: false },
         quotas: { api_rps_limit: 10, actors_limit: null },
         branding: { accent_color_hex: "#2f6fed", display_name_override: "Acme" },
         changedByActorId: actorId,
@@ -173,7 +163,7 @@ describe("tenant config admin routes", () => {
             credentials_secret_handle: "s3",
           },
         },
-        features: { ai_smart_compose: true, dlp_enforcement: "warn", byo_storage: true },
+        features: { ai_smart_compose: true, dlp_enforcement: "warn", mail_outbound: false },
         quotas: { api_rps_limit: 10, actors_limit: null },
         branding: { accent_color_hex: "#2f6fed", display_name_override: "Acme" },
       },
@@ -193,7 +183,7 @@ describe("tenant config admin routes", () => {
           orgId,
           changedByActorId: actorId,
           reason: "admin settings update",
-          keys: ["ai_smart_compose", "byo_storage", "dlp_enforcement"],
+          keys: ["ai_smart_compose", "dlp_enforcement", "mail_outbound"],
         },
       },
     ]);
@@ -231,7 +221,7 @@ describe("tenant config admin routes", () => {
     await app.close();
   });
 
-  it("requires the BYO storage feature before accepting BYO storage config", async () => {
+  it("accepts BYO storage config without any plan or feature entitlement", async () => {
     const app = fastify();
     await registerTenantConfigAdminRoutes(app, {
       store: new InMemoryTenantConfigAdminStore(),
@@ -255,8 +245,10 @@ describe("tenant config admin routes", () => {
       },
     });
 
-    expect(response.statusCode).toBe(400);
-    expect(body(response).error).toBe("BYO storage is not enabled for this tenant.");
+    expect(response.statusCode).toBe(200);
+    expect(body(response)).toMatchObject({
+      tenantConfig: { byo: { storage: { kind: "byo", bucket: "acme-helix-data" } } },
+    });
     await app.close();
   });
 
@@ -272,7 +264,6 @@ describe("tenant config admin routes", () => {
       url: "/api/admin/tenant-config",
       headers: headers("admin.console.write"),
       payload: {
-        features: { byo_storage: true },
         byo: {
           storage: {
             kind: "byo",
@@ -305,7 +296,6 @@ describe("tenant config admin routes", () => {
       url: "/api/admin/tenant-config",
       headers: headers("admin.console.write"),
       payload: {
-        features: { byo_storage: true },
         byo: {
           storage: {
             kind: "byo",
@@ -862,7 +852,6 @@ describe("tenant config admin routes", () => {
       {
         orgId,
         byoConfig: { storage: targetStorage },
-        featureFlags: { ai_smart_compose: false, byo_storage: true },
         changedByActorId: actorId,
         reason: "tenant storage migration cutover: 33333333-3333-4333-8333-333333333333",
       },
@@ -871,7 +860,7 @@ describe("tenant config admin routes", () => {
       migration: { status: "succeeded", target: "byo" },
       tenantConfig: {
         byo: { storage: targetStorage },
-        features: { ai_smart_compose: false, byo_storage: true },
+        features: { ai_smart_compose: false },
       },
     });
     expect(auditRecords).toEqual([
@@ -882,17 +871,8 @@ describe("tenant config admin routes", () => {
         metadata: { target: "byo", dryRun: false, status: "succeeded" },
       }),
     ]);
-    expect(featureFlagEvents).toEqual([
-      {
-        subject: `flags.changed.${orgId}`,
-        payload: {
-          orgId,
-          changedByActorId: actorId,
-          reason: "tenant storage migration cutover: 33333333-3333-4333-8333-333333333333",
-          keys: ["byo_storage"],
-        },
-      },
-    ]);
+    // Cutover no longer flips a BYO entitlement flag: BYO storage is always available.
+    expect(featureFlagEvents).toEqual([]);
     await app.close();
   });
 
@@ -909,7 +889,7 @@ describe("tenant config admin routes", () => {
     } as const;
     const store = new InMemoryTenantConfigAdminStore({
       byoConfig: { storage: sourceStorage },
-      featureFlags: { ai_smart_compose: false, byo_storage: true },
+      featureFlags: { ai_smart_compose: false },
     });
     storageMigrationJobs.jobs.push(
       migrationJob({
@@ -1127,7 +1107,7 @@ describe("tenant config admin routes", () => {
 describe("tenant config merge semantics", () => {
   it("keeps flags the admin did not submit when one flag is saved", async () => {
     const store = new InMemoryTenantConfigAdminStore({
-      featureFlags: { byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: true },
+      featureFlags: { mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: true },
       quotas: { api_rps_limit: 5, actors_limit: null },
     });
     const app = fastify();
@@ -1141,12 +1121,12 @@ describe("tenant config merge semantics", () => {
     expect(response.statusCode).toBe(200);
     expect(body(response)).toMatchObject({
       tenantConfig: {
-        features: { byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: false },
+        features: { mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: false },
         quotas: { api_rps_limit: 9, actors_limit: null },
       },
     });
     await expect(store.findById(orgId)).resolves.toMatchObject({
-      featureFlags: { byo_storage: true, dlp_enforcement: "warn", ai_smart_compose: false },
+      featureFlags: { mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: false },
     });
     await app.close();
   });
@@ -1155,20 +1135,6 @@ describe("tenant config merge semantics", () => {
 class InMemoryTenantConfigAdminStore extends SharedTenantConfigStore {
   constructor(overrides: Partial<OrgRecord> = {}) {
     super(orgId, overrides);
-  }
-}
-
-class InMemoryPlanStore implements Pick<PlanStore, "findById"> {
-  async findById(id: string): Promise<PlanRecord | null> {
-    if (id !== "business") {
-      return null;
-    }
-    return {
-      id,
-      displayName: "Business",
-      featureFlagsDefault: { ai_smart_compose: true, byo_storage: true },
-      quotasDefault: { api_rps_limit: 25, actors_limit: 500 },
-    };
   }
 }
 

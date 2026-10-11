@@ -159,7 +159,14 @@ export function registerAssistantStreamRoute(
         if (!reply.raw.headersSent)
           return await sendToolInvokeError(reply, result, traceIdForRequest(request));
         if (!abort.signal.aborted)
-          reply.raw.write(formatAssistantSseEvent({ type: "error", message: result.error }));
+          reply.raw.write(
+            formatAssistantSseEvent({
+              type: "error",
+              message: result.error,
+              ...(result.code === undefined ? {} : { code: result.code }),
+              ...(result.codeDetails === undefined ? {} : { details: result.codeDetails }),
+            }),
+          );
       } else if (result.status === "pending_confirmation") {
         return await reply.code(202).send({ status: result.status, pending: result.pending });
       } else {
@@ -198,6 +205,9 @@ export type AssistantSseFrame =
   | {
       readonly type: "error";
       readonly message: string;
+      /** Domain error code with its remedy, e.g. `assistant_tool_limit_exceeded`. */
+      readonly code?: string;
+      readonly details?: Readonly<Record<string, unknown>>;
     };
 
 /** Serializes an assistant SSE frame to the `text/event-stream` wire format. */

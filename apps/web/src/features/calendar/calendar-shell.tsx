@@ -76,6 +76,8 @@ function useNow(): Date {
 /** Prefilled "new event" intent from another app, e.g. a person's "Schedule a meeting". */
 export interface CalendarCreateIntent {
   readonly attendees: readonly string[];
+  /** Add video conferencing, e.g. from Meet's "Schedule in Calendar". */
+  readonly conference: boolean;
 }
 
 export interface CalendarShellProps {
@@ -224,7 +226,10 @@ export function CalendarShell({
     if (createIntent === null || handledIntent.current === createIntent) return;
     handledIntent.current = createIntent;
     const guests = parseAddressList(createIntent.attendees.join(","));
-    openEditor(draftFor({ date: today, start: 9, guests }));
+    openEditor({
+      ...draftFor({ date: today, start: 9, guests }),
+      addConference: createIntent.conference,
+    });
     onCreateIntentHandled?.();
   }, [createIntent, draftFor, onCreateIntentHandled, openEditor, today]);
 

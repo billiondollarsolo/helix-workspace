@@ -47,9 +47,52 @@ test.describe("/assistant feature flow", () => {
       ),
     ).toBeVisible({ timeout: 30_000 });
   });
+
+  test("turns a tool group off and retries when the tool limit is exceeded", async ({ page }) => {
+    test.skip(isLiveBackend(), "The live tool registry stays under the provider limit.");
+    const accessToken = await seedBrowserSession(page, "e2e-assistant-limit-token");
+    const chatBodies: Record<string, unknown>[] = [];
+    await mockAssistantBackend(page, accessToken, chatBodies);
+    await page.goto("/assistant");
+
+    await page.getByRole("textbox", { name: "Message Helix AI" }).fill("Audit the workspace");
+    const modelPicker = page.getByRole("combobox", { name: "Assistant model" });
+    await expect(modelPicker.locator("option")).toHaveText(["Claude Sonnet 4.5"]);
+
+    // The tool-group selector shows each group's size and the provider limit.
+    await page.getByRole("button", { name: "More composer options" }).click();
+    await page.getByRole("menuitem", { name: "Tools", exact: true }).hover();
+    const automatic = page.getByRole("menuitemcheckbox", { name: "Choose automatically" });
+    await expect(automatic).toBeChecked();
+    await expect(page.getByText("Helix AI picks up to 128 tools for each request")).toBeVisible();
+    await automatic.click();
+    await page.getByRole("menuitemcheckbox", { name: "Administration (40)" }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Webhooks (12)" }).click();
+    await expect(page.getByText("143 of 128 tools on")).toBeVisible();
+    await expect(page.getByText("15 over the limit")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Send message" }).click();
+
+    const conversation = page.getByTestId("assistant-conversation");
+    await expect(
+      conversation.getByRole("alert").filter({ hasText: "Too many tool groups are on" }),
+    ).toContainText("(143 of 128 tools)");
+    await conversation.getByRole("button", { name: "Turn off Administration (40)" }).click();
+
+    await expect(conversation.getByText("Here is the audit.")).toBeVisible();
+    expect(chatBodies).toHaveLength(2);
+    expect(chatBodies[0]?.toolGroups).toEqual(["mail", "admin", "webhooks"]);
+    expect(chatBodies[1]?.toolGroups).toEqual(["mail", "webhooks"]);
+  });
 });
 
-async function mockAssistantBackend(page: Page, accessToken: string) {
+async function mockAssistantBackend(
+  page: Page,
+  accessToken: string,
+  limitedChatBodies?: Record<string, unknown>[],
+) {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -65,9 +108,72 @@ async function mockAssistantBackend(page: Page, accessToken: string) {
     }
 
     if (pathname === "/v1/api/tools/assistant.models.list") {
+      await fulfillJson(
+        route,
+        limitedChatBodies === undefined
+          ? {
+              models: [
+                { id: "test/model", label: "Test model", providerId: "test", model: "model" },
+              ],
+              defaultModelId: "test/model",
+            }
+          : {
+              models: [
+                {
+                  id: "anthropic/claude-sonnet-4-5",
+                  label: "anthropic · claude-sonnet-4-5",
+                  providerId: "anthropic",
+                  model: "claude-sonnet-4-5",
+                },
+              ],
+              defaultModelId: "anthropic/claude-sonnet-4-5",
+            },
+      );
+      return;
+    }
+
+    if (limitedChatBodies !== undefined && pathname === "/v1/api/tools/assistant.tools.list") {
       await fulfillJson(route, {
-        models: [{ id: "test/model", label: "Test model", providerId: "test", model: "model" }],
-        defaultModelId: "test/model",
+        limit: 128,
+        groups: [
+          { id: "mail", label: "Mail", count: 91, defaultEnabled: true },
+          { id: "admin", label: "Administration", count: 40, defaultEnabled: false },
+          { id: "webhooks", label: "Webhooks", count: 12, defaultEnabled: false },
+        ],
+      });
+      return;
+    }
+
+    if (limitedChatBodies !== undefined && pathname === "/v1/api/tools/assistant.chat") {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      limitedChatBodies.push(body);
+      if (limitedChatBodies.length === 1) {
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: {
+              code: "assistant_tool_limit_exceeded",
+              message: "The selected tool groups include 143 tools; the limit is 128.",
+              traceId: "trace-limit",
+              details: {
+                limit: 128,
+                selected: 143,
+                excess: 15,
+                groups: [
+                  { id: "mail", label: "Mail", count: 91 },
+                  { id: "admin", label: "Administration", count: 40 },
+                  { id: "webhooks", label: "Webhooks", count: 12 },
+                ],
+              },
+            },
+          }),
+        });
+        return;
+      }
+      await fulfillJson(route, {
+        conversation: { id: "00000000-0000-4000-8000-000000000321" },
+        response: { id: "00000000-0000-4000-8000-000000000322", content: "Here is the audit." },
       });
       return;
     }

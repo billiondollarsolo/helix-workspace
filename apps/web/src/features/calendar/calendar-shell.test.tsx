@@ -443,12 +443,25 @@ describe("CalendarShell", () => {
   it("opens the editor prefilled from a person's Schedule a meeting handoff", async () => {
     mockBackend([]);
     const onCreateIntentHandled = vi.fn();
-    render({}, { createIntent: { attendees: ["sam@helix.test"] }, onCreateIntentHandled });
+    render(
+      {},
+      { createIntent: { attendees: ["sam@helix.test"], conference: false }, onCreateIntentHandled },
+    );
     await flush();
 
     const editor = document.querySelector("[data-calendar-editor]");
     expect(editor?.textContent).toContain("sam@helix.test");
+    expect(editor?.textContent).toContain("Add video conferencing");
     expect(onCreateIntentHandled).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds video conferencing when Meet hands off Schedule in Calendar", async () => {
+    mockBackend([]);
+    render({}, { createIntent: { attendees: [], conference: true } });
+    await flush();
+
+    const editor = document.querySelector("[data-calendar-editor]");
+    expect(editor?.textContent).toContain("A video call link will be added when you save");
   });
 
   it("shows actionable errors when the calendar service is unreachable", async () => {

@@ -49,14 +49,47 @@ const deleteAssistantConversationMock =
 const forgetAssistantMemoryMock = vi.fn<() => Promise<AssistantMemoryForgetResult>>();
 const getAssistantConversationMock = vi.fn<() => Promise<{ messages: readonly unknown[] }>>();
 
+let routeSearch: { readonly prompt?: string } = {};
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
-  useSearch: () => ({}),
+  useSearch: () => routeSearch,
+  Link: ({
+    children,
+    to,
+    search,
+    className,
+  }: {
+    readonly children: ReactNode;
+    readonly to: string;
+    readonly search: Record<string, string>;
+    readonly className?: string;
+  }) => (
+    <a href={`${to}?${new URLSearchParams(search).toString()}`} className={className}>
+      {children}
+    </a>
+  ),
 }));
 
 vi.mock("@/components/shell", () => ({
-  SurfaceFrame: ({ children, title }: { readonly children: ReactNode; readonly title: string }) => (
+  SurfaceFrame: ({
+    children,
+    title,
+    searchPlaceholder,
+    searchValue,
+    onSearchChange,
+  }: {
+    readonly children: ReactNode;
+    readonly title: string;
+    readonly searchPlaceholder?: string;
+    readonly searchValue?: string;
+    readonly onSearchChange?: (value: string) => void;
+  }) => (
     <div data-testid="surface-frame" data-title={title}>
+      <input
+        aria-label={searchPlaceholder}
+        value={searchValue ?? ""}
+        onChange={(event) => onSearchChange?.(event.target.value)}
+      />
       {children}
     </div>
   ),
@@ -70,7 +103,10 @@ vi.mock("./api", async (importOriginal) => ({
   ) => streamAssistantChatMock(input, callbacks),
   listAssistantConversations: () => listAssistantConversationsMock(),
   listAssistantTools: () =>
-    Promise.resolve({ groups: [{ id: "mail", label: "Mail", count: 4, defaultEnabled: true }] }),
+    Promise.resolve({
+      limit: 128,
+      groups: [{ id: "mail", label: "Mail", count: 4, defaultEnabled: true }],
+    }),
   listAssistantModels: () =>
     Promise.resolve({
       models: [{ id: "groq/llama", label: "Llama", providerId: "groq", model: "llama" }],
@@ -92,6 +128,7 @@ vi.mock("./api", async (importOriginal) => ({
 }));
 
 const { AssistantSurface } = await import("./assistant-surface");
+const { AssistantRequestError } = await import("./tool-limit");
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -133,6 +170,7 @@ describe("AssistantSurface", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-05-27T12:00:00.000Z"));
     navigateMock.mockReset();
+    routeSearch = {};
     streamAssistantChatMock.mockReset();
     listAssistantConversationsMock.mockReset();
     setAssistantConversationPinnedMock.mockReset();
@@ -235,6 +273,22 @@ describe("AssistantSurface", () => {
     });
   }
 
+  /** Opens a Radix menu from the keyboard, as the menu's own tests do. */
+  async function openMenu(trigger: HTMLButtonElement | null) {
+    expect(trigger).not.toBeNull();
+    act(() => {
+      trigger?.focus();
+      trigger?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flush();
+  }
+
+  function menuItem(text: string): HTMLElement | undefined {
+    return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) =>
+      item.textContent.includes(text),
+    );
+  }
+
   function buttonByText(text: string): HTMLButtonElement | undefined {
     return [...container.querySelectorAll("button")].find(
       (button) => button.textContent?.includes(text) === true,
@@ -244,16 +298,12 @@ describe("AssistantSurface", () => {
   it("greets the current user and follows updates to the shared session", async () => {
     render();
     await flush();
-    expect(container.querySelector("h1")?.textContent).toBe(
-      "What can I help you with, Léa Nguyen?",
-    );
+    expect(container.querySelector("h1")?.textContent).toBe("Hi Léa, what can I help with?");
     act(() => {
       queryClient.setQueryData(sessionQueryKeys.current, { ...SESSION_USER, name: "Priya Shah" });
     });
     await flush();
-    expect(container.querySelector("h1")?.textContent).toBe(
-      "What can I help you with, Priya Shah?",
-    );
+    expect(container.querySelector("h1")?.textContent).toBe("Hi Priya, what can I help with?");
   });
 
   it.each([null, { ...SESSION_USER, name: "   " }])(
@@ -262,7 +312,7 @@ describe("AssistantSurface", () => {
       queryClient.setQueryData(sessionQueryKeys.current, user);
       render();
       await flush();
-      expect(container.querySelector("h1")?.textContent).toBe("What can I help you with?");
+      expect(container.querySelector("h1")?.textContent).toBe("What can I help with?");
     },
   );
 
@@ -272,21 +322,21 @@ describe("AssistantSurface", () => {
     expect(listAssistantConversationsMock).toHaveBeenCalled();
     const text = container.textContent ?? "";
     expect(text).toContain("Pinned");
-    // The Recent section is now subdivided into ChatGPT-style date buckets.
-    // Our fixture lives ~6 days back, which lands in "Previous 7 Days".
     expect(text).toContain("Previous 7 Days");
     expect(text).toContain("Draft Q3 board update narrative");
     expect(text).toContain("Summarize unread inbox");
   });
 
-  it("searches conversations by passing the query through to the list tool", async () => {
+  it("searches conversations from the top bar, with no second search box", async () => {
     render();
     await flush();
     listAssistantConversationsMock.mockClear();
 
-    const searchInput = container.querySelector<HTMLInputElement>(
+    const searchInputs = container.querySelectorAll<HTMLInputElement>(
       'input[aria-label="Search chats"]',
     );
+    expect(searchInputs).toHaveLength(1);
+    const searchInput = searchInputs[0] ?? null;
     if (searchInput === null) {
       throw new Error("search input not found");
     }
@@ -295,7 +345,6 @@ describe("AssistantSurface", () => {
       searchInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await flush();
-    // The list query refetches once the search query changes.
     expect(listAssistantConversationsMock).toHaveBeenCalled();
   });
 
@@ -308,7 +357,7 @@ describe("AssistantSurface", () => {
       newChat?.click();
     });
     const text = container.textContent ?? "";
-    expect(text).toContain("What can I help you with");
+    expect(text).toContain("what can I help with");
     expect(text).toContain("Catch me up on mail");
   });
 
@@ -478,14 +527,12 @@ describe("AssistantSurface", () => {
   it("pins a conversation through assistant.conversation.pin", async () => {
     render();
     await flush();
-    const optionsButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Chat options for Summarize unread inbox"]',
+    await openMenu(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Chat options for Summarize unread inbox"]',
+      ),
     );
-    expect(optionsButton).not.toBeNull();
-    act(() => {
-      optionsButton?.click();
-    });
-    const pinItem = buttonByText("Pin");
+    const pinItem = menuItem("Pin");
     expect(pinItem).toBeDefined();
     act(() => {
       pinItem?.click();
@@ -500,15 +547,15 @@ describe("AssistantSurface", () => {
   it("renames a conversation through assistant.conversation.rename", async () => {
     render();
     await flush();
-    const optionsButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Chat options for Summarize unread inbox"]',
+    await openMenu(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Chat options for Summarize unread inbox"]',
+      ),
     );
     act(() => {
-      optionsButton?.click();
+      menuItem("Rename")?.click();
     });
-    act(() => {
-      buttonByText("Rename")?.click();
-    });
+    await flush();
     const titleInput = container.querySelector<HTMLInputElement>('input[aria-label="Chat title"]');
     expect(titleInput).not.toBeNull();
     if (titleInput !== null) {
@@ -530,18 +577,16 @@ describe("AssistantSurface", () => {
   it("deletes a conversation through assistant.conversation.delete after confirmation", async () => {
     render();
     await flush();
-    const optionsButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Chat options for Summarize unread inbox"]',
+    await openMenu(
+      container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Chat options for Summarize unread inbox"]',
+      ),
     );
     act(() => {
-      optionsButton?.click();
+      menuItem("Archive")?.click();
     });
-    act(() => {
-      // The menu entry was renamed to "Archive" to match the backend's
-      // soft-delete semantics (sets archived_at, retains history).
-      buttonByText("Archive")?.click();
-    });
-    const confirmButton = [...container.querySelectorAll("button")].find(
+    await flush();
+    const confirmButton = [...document.querySelectorAll("button")].find(
       (button) => button.className.includes("danger") && button.textContent === "Archive",
     );
     expect(confirmButton).toBeDefined();
@@ -557,10 +602,19 @@ describe("AssistantSurface", () => {
   it("forgets assistant memory through assistant.memory.forget", async () => {
     render();
     await flush();
-    const forgetButton = buttonByText("Forget memory");
-    expect(forgetButton).toBeDefined();
+    await openMenu(buttonByText("Memory") ?? null);
     act(() => {
-      forgetButton?.click();
+      menuItem("Forget memory")?.click();
+    });
+    await flush();
+    // Nothing is forgotten until the confirmation is accepted.
+    expect(forgetAssistantMemoryMock).not.toHaveBeenCalled();
+    const confirm = [...document.querySelectorAll("button")].find(
+      (button) => button.className.includes("danger") && button.textContent === "Forget memory",
+    );
+    expect(confirm).toBeDefined();
+    act(() => {
+      confirm?.click();
     });
     await flush();
     expect(forgetAssistantMemoryMock).toHaveBeenCalled();
@@ -631,6 +685,115 @@ describe("AssistantSurface", () => {
     listAssistantConversationsMock.mockRejectedValue(new Error("offline"));
     render();
     await flush();
-    expect(container.textContent ?? "").toContain("Chats unavailable — try again later.");
+    expect(container.textContent ?? "").toContain("Couldn't load chats");
+    expect(buttonByText("Retry")).toBeDefined();
+  });
+
+  it("offers one-click tool-group toggles when the tool limit is exceeded, then retries", async () => {
+    streamAssistantChatMock
+      .mockRejectedValueOnce(
+        new AssistantRequestError("Too many tools.", "assistant_tool_limit_exceeded", {
+          limit: 128,
+          selected: 143,
+          excess: 15,
+          groups: [
+            { id: "admin", label: "Administration", count: 40 },
+            { id: "mail", label: "Mail", count: 30 },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce({ response: { content: "Here is your catch-up." } });
+    render();
+    await flush();
+    setComposerValue("Catch me up on mail");
+    act(() => {
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flush();
+
+    const alert = [...container.querySelectorAll('[role="alert"]')].find((node) =>
+      node.textContent.includes("Too many tool groups are on (143 of 128 tools)."),
+    );
+    expect(alert).toBeDefined();
+    const turnOff = buttonByText("Turn off Administration (40)");
+    expect(buttonByText("Turn off Mail (30)")).toBeDefined();
+    act(() => {
+      turnOff?.click();
+    });
+    await flush();
+
+    expect(streamAssistantChatMock).toHaveBeenCalledTimes(2);
+    expect(streamAssistantChatMock.mock.calls[1]?.[0]).toMatchObject({
+      message: "Catch me up on mail",
+      toolGroups: ["mail"],
+    });
+    expect(container.textContent).toContain("Here is your catch-up.");
+    expect(container.textContent).not.toContain("Too many tool groups");
+  });
+
+  it("links workspace citations to the mail, drive, chat and calendar items", async () => {
+    streamAssistantChatMock.mockResolvedValue({
+      conversation: { id: "33333333-3333-4333-8333-333333333333" },
+      response: { content: "Two things." },
+      sources: [
+        { id: "s1", type: "mail", title: "Harbor launch", url: "/mail/thread-9?message=m-1" },
+        { id: "s2", type: "drive", title: "Harbor brief.md", url: "/drive/file-4" },
+        { id: "s3", type: "chat", title: "#harbor", url: "/chat/room-2?message=c-1" },
+        { id: "s4", type: "calendar", title: "Harbor sync", url: "/calendar/events/ev-7" },
+        { id: "s5", type: "web.search", title: "News", url: "https://example.com/a" },
+      ],
+      messages: [
+        { id: "m1", role: "user", content: "harbor status" },
+        { id: "m2", role: "assistant", content: "Two things." },
+      ],
+    });
+    render();
+    await flush();
+    setComposerValue("harbor status");
+    act(() => {
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flush();
+
+    const links = [
+      ...container.querySelectorAll<HTMLAnchorElement>('[aria-label="Workspace sources"] a'),
+    ].map((link) => [link.textContent, link.getAttribute("href")]);
+    expect(links).toEqual([
+      ["Harbor launch", "/mail?thread=thread-9"],
+      ["Harbor brief.md", "/drive?file=file-4"],
+      ["#harbor", "/chat?room=room-2"],
+      ["Harbor sync", "/calendar?event=ev-7"],
+    ]);
+  });
+
+  it("regenerates an answer by sending its prompt again", async () => {
+    streamAssistantChatMock
+      .mockResolvedValueOnce({ response: { content: "First answer." } })
+      .mockResolvedValueOnce({ response: { content: "Second answer." } });
+    render();
+    await flush();
+    setComposerValue("Draft an email");
+    act(() => {
+      textarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await flush();
+    act(() => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Regenerate response"]')?.click();
+    });
+    await flush();
+    expect(streamAssistantChatMock).toHaveBeenCalledTimes(2);
+    expect(streamAssistantChatMock.mock.calls[1]?.[0]).toMatchObject({ message: "Draft an email" });
+    expect(container.textContent).toContain("Second answer.");
+    expect(container.textContent).not.toContain("First answer.");
+  });
+
+  it("sends a prompt handed over in the URL once, as a new chat", async () => {
+    routeSearch = { prompt: "Find a file" };
+    streamAssistantChatMock.mockResolvedValue({ response: { content: "Found it." } });
+    render();
+    await flush();
+    expect(streamAssistantChatMock).toHaveBeenCalledTimes(1);
+    expect(streamAssistantChatMock.mock.calls[0]?.[0]).toMatchObject({ message: "Find a file" });
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/assistant", search: {}, replace: true });
   });
 });

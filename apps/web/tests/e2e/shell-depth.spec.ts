@@ -76,13 +76,15 @@ test.describe("shell search", () => {
   test("top search opens /search with app filter chips", async ({ page }) => {
     await seedSession(page);
     await mockShellBackend(page);
-    await page.goto("/calendar");
-    await page.getByRole("textbox", { name: "Search events" }).fill("harbor");
+    // Meet has no search of its own, so the top bar searches the workspace.
+    await page.goto("/meet");
+    await page.getByRole("textbox", { name: "Search Helix" }).fill("harbor");
     await page.keyboard.press("Enter");
 
-    // Scoped to the app the search started in; "All" widens it.
-    await expect(page).toHaveURL(/\/search\?q=harbor&type=calendar$/);
+    await expect(page).toHaveURL(/\/search\?q=harbor$/);
     const main = page.getByRole("main", { name: "Search" });
+    await main.getByRole("button", { name: "Events" }).click();
+    await expect(page).toHaveURL(/\/search\?q=harbor&type=calendar$/);
     await expect(main.getByRole("link", { name: /Harbor sync/ })).toBeVisible();
     await main.getByRole("button", { name: "All" }).click();
     await expect(page).toHaveURL(/\/search\?q=harbor$/);

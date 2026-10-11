@@ -1,5 +1,6 @@
 import { authenticatedFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
+import { assistantRequestError } from "./tool-limit";
 
 export type AssistantToolDecision = "confirm" | "cancel";
 type AssistantToolDecisionStatus = "confirmed" | "cancelled" | "failed";
@@ -61,6 +62,8 @@ export interface AssistantSource {
   readonly url?: string;
 }
 export interface AssistantToolGroups {
+  /** Most tools one request may declare. */
+  readonly limit: number;
   readonly groups: readonly {
     readonly id: string;
     readonly label: string;
@@ -271,9 +274,7 @@ export async function streamAssistantChat(
 
   const output: unknown = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(
-      errorMessageFromOutput(output) ?? `Assistant chat failed with ${String(response.status)}`,
-    );
+    throw assistantRequestError(output, `Assistant chat failed with ${String(response.status)}`);
   }
 
   return output as AssistantTurnResponseWithPendingConfirmations;
@@ -346,7 +347,7 @@ function applyAssistantSseFrame(
     return finalTurn;
   }
   if (parsed.type === "error")
-    throw new Error(errorMessageFromOutput(parsed) ?? "The response failed. Try again.");
+    throw assistantRequestError(parsed, "The response failed. Try again.");
   if (parsed.type === "delta" && typeof parsed.text === "string") {
     callbacks.onDelta(parsed.text);
     return finalTurn;

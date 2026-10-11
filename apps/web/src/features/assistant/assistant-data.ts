@@ -1,11 +1,10 @@
 import { type IconName } from "@/components/icon-map";
 import type { AssistantAttachment, AssistantSource, AssistantToolActivity } from "./api";
-/** A conversation entry in the 240px thread list. */
+import type { AssistantToolLimit } from "./tool-limit";
+/** A conversation in the chats list. */
 export interface AssistantThread {
   readonly id: string;
   readonly title: string;
-  /** Relative time label, e.g. "10m ago". */
-  readonly time: string;
   /** Last-activity wall-clock for date-bucket grouping (0 when unknown). */
   readonly updatedAtMs: number;
   readonly pinned?: boolean;
@@ -15,8 +14,8 @@ interface AssistantQuickPrompt {
   readonly icon: IconName;
   readonly title: string;
   readonly sub: string;
-  /** Tile tint — a hex colour from the handoff palette. */
-  readonly color: string;
+  /** Tile tint: a `--label-<tone>` palette name. */
+  readonly tone: "red" | "violet" | "pink" | "blue";
 }
 /** A rich block attached to an assistant message. */
 export type AssistantBlock =
@@ -58,34 +57,35 @@ export interface AssistantChatMessage {
   readonly streaming?: boolean;
   /** True when the reply failed and shows the fallback message. */
   readonly errored?: boolean;
+  /** The failure was the provider's tool limit; offers groups to turn off. */
+  readonly toolLimit?: AssistantToolLimit;
 }
-const STORAGE_ONLY_QUICK_PROMPTS: readonly AssistantQuickPrompt[] = [
+export const ASSISTANT_QUICK_PROMPTS: readonly AssistantQuickPrompt[] = [
   {
     icon: "Mail",
     title: "Catch me up on mail",
     sub: "Summarize unread threads",
-    color: "#dc2626",
+    tone: "red",
   },
   {
     icon: "Drive",
     title: "Find a file",
     sub: "Search Drive by name or topic",
-    color: "#7c3aed",
+    tone: "violet",
   },
   {
     icon: "Chat",
     title: "Catch me up on chat",
     sub: "Summarize relevant conversations",
-    color: "#db2777",
+    tone: "pink",
   },
   {
     icon: "Sparkles",
     title: "Draft an email",
     sub: "Turn a request into a clear message",
-    color: "#2563eb",
+    tone: "blue",
   },
 ];
-export const ASSISTANT_QUICK_PROMPTS = STORAGE_ONLY_QUICK_PROMPTS;
 /** Friendly fallback shown when the assistant endpoint is unreachable. */
 export const ASSISTANT_ERROR_FALLBACK =
   "I couldn't reach the model just now. Configure a provider in Settings → Helix AI, or try again in a moment.";

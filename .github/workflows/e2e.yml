@@ -203,6 +203,20 @@ jobs:
             src/platform/tenancy/cross-tenant-isolation.test.ts \
             --maxWorkers=1
 
+      - name: Start deterministic AI model
+        # A real assistant round trip needs a provider; this OpenAI-compatible fake
+        # answers deterministically with no network or secrets.
+        run: |
+          pnpm --filter @helix/app exec tsx ../web/tests/e2e/support/fake-model-server.ts > /tmp/helix-fake-model.log 2>&1 &
+          echo "$!" > /tmp/helix-fake-model.pid
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:28480/healthz >/dev/null && exit 0
+            sleep 1
+          done
+          echo "Fake AI model did not start" >&2
+          cat /tmp/helix-fake-model.log
+          exit 1
+
       - name: Start Helix API from source
         env:
           HOST: 0.0.0.0
@@ -239,6 +253,10 @@ jobs:
           MAIL_SMTP_RECEIVER_ENABLED: "true"
           MAIL_SMTP_RECEIVER_HOST: 0.0.0.0
           MAIL_SMTP_RECEIVER_PORT: "2525"
+          OPENAI_API_KEY: helix-e2e-fake
+          OPENAI_BASE_URL: http://127.0.0.1:28480/v1
+          OPENAI_MODEL: helix-e2e-model
+          HELIX_AI_ALLOW_PRIVATE_NETWORK: "true"
         run: |
           pnpm --filter @helix/app exec tsx src/index.ts > /tmp/helix-api.log 2>&1 &
           echo "$!" > /tmp/helix-api.pid
@@ -256,9 +274,11 @@ jobs:
       - name: Stop Helix API
         if: always()
         run: |
-          if [ -f /tmp/helix-api.pid ]; then
-            kill "$(cat /tmp/helix-api.pid)" || true
-          fi
+          for pid_file in /tmp/helix-api.pid /tmp/helix-fake-model.pid; do
+            if [ -f "$pid_file" ]; then
+              kill "$(cat "$pid_file")" || true
+            fi
+          done
 
       - name: Dump Helix API log
         if: always()

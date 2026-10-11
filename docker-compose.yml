@@ -128,7 +128,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:8.8.3-alpine@sha256:0b2b77d3ea5078274795e3177cdbdada8b96316684a38911d528534ed679b5ec
+    image: redis:8.10.2-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "127.0.0.1:${REDIS_PORT:-28433}:6379"
@@ -252,7 +252,7 @@ services:
     restart: unless-stopped
 
   mailpit:
-    image: axllent/mailpit:v1.31.0@sha256:c96991d9bef73594c246d89ca81411d4e916f03e76a7d2d72fa2ab5dd3c9ce24
+    image: axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
     ports:
       - "127.0.0.1:${MAILPIT_SMTP_PORT:-28457}:1025"
       - "127.0.0.1:${MAILPIT_WEB_PORT:-28458}:8025"
@@ -312,7 +312,7 @@ services:
     restart: unless-stopped
 
   caddy:
-    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
     environment:
       HELIX_DOMAIN: ${HELIX_DOMAIN:-localhost}
       HELIX_UPSTREAM: ${HELIX_UPSTREAM:-helix:3000}
@@ -513,7 +513,7 @@ services:
     restart: unless-stopped
 
   jitsi-turn:
-    image: coturn/coturn:4.7.0-alpine@sha256:2a0c41042b02c6daa33f35ce3781da20fe0d08da6cf2746c8ae62a890802cc36
+    image: coturn/coturn:4.18.0-alpine@sha256:c29135c08565810d37053f384584392b7c24b69570fc81a721b878d6fe63e04e
     profiles: ["meet"]
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -605,7 +605,7 @@ services:
     restart: unless-stopped
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.159.0@sha256:1f2c54a30e713fac6b3ae77a1ec84010c2007e29ced8ec666214fc2f6739c1cc
+    image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     profiles: ["observability"]
     ports:
@@ -618,7 +618,7 @@ services:
     restart: unless-stopped
 
   prometheus:
-    image: prom/prometheus:v3.14.0@sha256:5ce7540c3c00ef4ab0c9d2c995c6a5b9c421f44b4a115d97a2c7af3b1c21cbb0
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
     profiles: ["observability"]
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-28446}:9090"
@@ -632,7 +632,7 @@ services:
     restart: unless-stopped
 
   alertmanager:
-    image: prom/alertmanager:v0.34.0@sha256:690c7b525f4367aa91f73e2f91c632206d32e97c6384bdbf2fb7a861b420340d
+    image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
@@ -646,7 +646,7 @@ services:
     restart: unless-stopped
 
   tempo:
-    image: grafana/tempo:3.0.2@sha256:cda87c212d8c584dc0b89e337e7ed648a5100feb657e5d528480ee4fa03dbbe3
+    image: grafana/tempo:3.1.0@sha256:3076b8dcdfb32fd6bc5ccef85e7b7313e6199b9cb84366257fc17ecb696db5fd
     command: ["-config.file=/etc/tempo.yaml"]
     profiles: ["observability"]
     ports:
@@ -657,7 +657,7 @@ services:
     restart: unless-stopped
 
   loki:
-    image: grafana/loki:3.7.7@sha256:d70e4659623f3e109af669cae76fe2a5dd5be54e2298fe8aed380d982fbc2500
+    image: grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
     command: ["-config.file=/etc/loki/local-config.yaml"]
     profiles: ["observability"]
     ports:
@@ -668,7 +668,7 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:13.2.1@sha256:f772d434e8fab0049deb2b1b30abd43342bcfca1537614aa8d36080232cf4283
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
     profiles: ["observability"]
     environment:
       GF_ANALYTICS_REPORTING_ENABLED: "false"

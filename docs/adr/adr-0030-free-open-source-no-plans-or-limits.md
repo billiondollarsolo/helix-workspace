@@ -69,7 +69,7 @@ These are security and safety controls, not plan limits:
 - Tenant export manifests and signup events no longer carry `planId`; signup metrics no longer
   carry a `plan_id` label.
 - The built-in `billing_admin` IAM role and the `admin.billing` permission are retired
-  (migration `0203_retire_billing_admin_role.sql`). Existing grants are recorded as revoked
+  (migration `0203_retire_unknown_iam_permissions.sql`). Existing grants are recorded as revoked
   in the append-only delegation log and then removed, so they no longer appear in admin
   views, APIs or actor authorization.
 - A suspended tenant answers `423 Locked` with code `tenant-suspended` (previously

@@ -56,10 +56,15 @@ All notable changes to Helix Workspace are documented here. This file follows
   `marketplace_install_paid`, `support_tier`); stored values still parse and are ignored.
 - The CI step that cleared the demo org's `api_rps_limit` before the k6 load test.
 - The `billing_admin` IAM role and the `admin.billing` permission, including its Cerbos rule
-  and scope-catalog entry. Migration `0203_retire_billing_admin_role.sql` records every
-  existing grant as revoked in the append-only delegation log, removes those grants (and any
-  delegated beneath them), strips the permission from custom roles and stored credential and
-  token scopes, and stops new organizations from receiving the role.
+  and scope-catalog entry, and the retired editor (`docs.*`, `sheets.*`, `slides.*`) and
+  `imap` permissions still left in the database permission catalog. Migration
+  `0203_retire_unknown_iam_permissions.sql` retires every catalog permission the app does not
+  know: roles that held only retired permissions are removed after each grant (and any
+  delegated beneath it) is recorded as revoked in the append-only delegation log; other roles
+  and stored credential and token scopes lose just those entries, and a credential left with
+  no scope is revoked. A stale entry previously made the whole stored permission set fail
+  closed. A live test now keeps the database catalog equal to the app's scope catalog, and
+  new organizations no longer receive `billing_admin`.
 - Leftover billing and plan wording in docs, tests and the observability plugin README.
 
 ### Fixed

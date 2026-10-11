@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DELEGATED_ADMIN_ROLE_PERMISSIONS } from "../../platform/permissions/roles.js";
-import { isKnownScope } from "../../platform/permissions/scope-catalog.js";
+import { ALL_SCOPES, isKnownScope } from "../../platform/permissions/scope-catalog.js";
 import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { skipUnlessLiveDatabase } from "../../test-support/live-suite.js";
 
@@ -15,25 +15,44 @@ const customRole = "d2030000-0000-4000-8000-0000000000b2";
 const rootBinding = "d2030000-0000-4000-8000-0000000000c1";
 const childBinding = "d2030000-0000-4000-8000-0000000000c2";
 const viewerBinding = "d2030000-0000-4000-8000-0000000000c3";
+const editorRole = "d2030000-0000-4000-8000-0000000000b3";
+const editorBinding = "d2030000-0000-4000-8000-0000000000c4";
+const editorOnlyCredential = "d2030000-0000-4000-8000-0000000000e1";
+const mixedCredential = "d2030000-0000-4000-8000-0000000000e2";
+const RETIRED = [
+  "admin.billing",
+  "docs.comment",
+  "docs.read",
+  "docs.write",
+  "imap",
+  "sheets.read",
+  "sheets.write",
+  "slides.read",
+  "slides.write",
+];
+const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 class Rollback extends Error {}
 
-describe("0203 retire billing admin migration", () => {
-  it("removes the permission from the application catalog", async () => {
+describe("0203 retire unknown IAM permissions migration", () => {
+  it("lists exactly the application catalog and removes the retired permissions", async () => {
     const migration = await readFile(
-      new URL("./0203_retire_billing_admin_role.sql", import.meta.url),
+      new URL("./0203_retire_unknown_iam_permissions.sql", import.meta.url),
       "utf8",
     );
-    expect(isKnownScope("admin.billing")).toBe(false);
+    for (const permission of RETIRED) expect(isKnownScope(permission)).toBe(false);
     expect(Object.keys(DELEGATED_ADMIN_ROLE_PERMISSIONS)).not.toContain("billing_admin");
     expect(migration).toContain("insert into iam_delegation_events");
     expect(migration).not.toMatch(/disable trigger/iu);
+    const known = /permission <> all \(array\[([^\]]*)\]/u.exec(migration)?.[1] ?? "";
+    const listed = [...known.matchAll(/'([^']+)'/gu)].map((match) => match[1] ?? "");
+    expect(listed.sort(byCodePoint)).toEqual([...ALL_SCOPES].sort(byCodePoint));
   });
 });
 
 describe(
-  "0203 retire billing admin migration (PostgreSQL)",
-  { skip: skipUnlessLiveDatabase("billing admin retirement") },
+  "0203 retire unknown IAM permissions migration (PostgreSQL)",
+  { skip: skipUnlessLiveDatabase("unknown IAM permission retirement") },
   () => {
     let sql: postgres.Sql;
     let migration = "";
@@ -42,7 +61,7 @@ describe(
       if (databaseUrl === undefined) throw new Error("Database URL is required.");
       sql = postgres(databaseUrl, { max: 1, prepare: false });
       migration = await readFile(
-        new URL("./0203_retire_billing_admin_role.sql", import.meta.url),
+        new URL("./0203_retire_unknown_iam_permissions.sql", import.meta.url),
         "utf8",
       );
       await cleanupTestTenants(sql, [org]);
@@ -52,6 +71,15 @@ describe(
     afterAll(async () => {
       await cleanupTestTenants(sql, [org]);
       await sql.end();
+    });
+
+    it("keeps the database permission catalog equal to the application catalog", async () => {
+      const catalog = await sql<{ permission: string }[]>`
+        select permission from iam_permission_catalog
+      `;
+      expect(catalog.map((row) => row.permission).sort(byCodePoint)).toEqual(
+        [...ALL_SCOPES].sort(byCodePoint),
+      );
     });
 
     it("leaves no billing role, permission or catalog entry behind", async () => {
@@ -75,25 +103,32 @@ describe(
     it("retires existing grants, keeps other grants and records the revocations", async () => {
       const outcome = await sql
         .begin(async (tx) => {
-          await tx`insert into iam_permission_catalog (permission, catalog_version) values ('admin.billing', 2)`;
+          await tx`
+            insert into iam_permission_catalog (permission, catalog_version)
+            select permission, 2 from unnest(${RETIRED}::text[]) permission
+          `;
           await tx`
             insert into actors (id, org_id, type, display_name, scopes)
             values
-              (${holder}, ${org}, 'user', 'Holder', array['platform.read', 'admin.billing']),
+              (${holder}, ${org}, 'user', 'Holder', array['docs.read', 'platform.read', 'admin.billing']),
               (${delegate}, ${org}, 'user', 'Delegate', array['admin.billing'])
           `;
           await tx`
             insert into iam_roles (id, org_id, role_key, display_name, kind)
             values
               (${billingRole}, ${org}, 'billing_admin', 'Billing administrator', 'built_in'),
-              (${customRole}, ${org}, 'finance_ops', 'Finance ops', 'custom')
+              (${customRole}, ${org}, 'finance_ops', 'Finance ops', 'custom'),
+              (${editorRole}, ${org}, 'docs_editor', 'Docs editor', 'custom')
           `;
           await tx`
             insert into iam_role_permissions (org_id, role_id, permission, effect)
             values
               (${org}, ${billingRole}, 'admin.billing', 'allow'),
               (${org}, ${customRole}, 'admin.billing', 'allow'),
-              (${org}, ${customRole}, 'admin.audit', 'allow')
+              (${org}, ${customRole}, 'admin.audit', 'allow'),
+              (${org}, ${customRole}, 'sheets.write', 'deny'),
+              (${org}, ${editorRole}, 'docs.read', 'allow'),
+              (${org}, ${editorRole}, 'docs.write', 'allow')
           `;
           await tx`
             insert into iam_role_bindings
@@ -117,6 +152,22 @@ describe(
                    ${holder}, ${rootBinding}
             from organization_memberships where org_id = ${org} and actor_id = ${delegate}
           `;
+          await tx`
+            insert into iam_role_bindings
+              (id, org_id, role_id, principal_type, membership_id, scope_type)
+            select ${editorBinding}, ${org}, ${editorRole}, 'membership', id, 'org'
+            from organization_memberships where org_id = ${org} and actor_id = ${delegate}
+          `;
+          await tx`
+            insert into agent_credentials
+              (id, org_id, actor_id, owner_actor_id, credential_type, api_key_hash, scopes,
+               expires_at, label, purpose)
+            values
+              (${editorOnlyCredential}, ${org}, ${holder}, ${holder}, 'api_key', 'retire-hash-1',
+               array['sheets.read'], now() + interval '1 day', 'Sheets', 'Retired editor'),
+              (${mixedCredential}, ${org}, ${holder}, ${holder}, 'api_key', 'retire-hash-2',
+               array['slides.write', 'mail.read'], now() + interval '1 day', 'Mail', 'Mail')
+          `;
 
           await tx.unsafe(migration);
 
@@ -135,10 +186,32 @@ describe(
             where org_id = ${org} and event_type = 'revoked'
             order by binding_id
           `;
+          const roles = await tx<{ role_key: string }[]>`
+            select role_key from iam_roles where org_id = ${org} and kind = 'custom' order by role_key
+          `;
+          const credentials = await tx<{ id: string; scopes: string[]; revoked: boolean }[]>`
+            select id, scopes, revoked_at is not null as revoked
+            from agent_credentials where org_id = ${org} order by id
+          `;
+          const [catalog] = await tx<{ retired: number }[]>`
+            select count(*)::int as retired from iam_permission_catalog
+            where permission = any(${RETIRED}::text[])
+          `;
           const [loaded] = await tx<{ bindings: { allow: string[] }[] }[]>`
             select helix_actor_role_bindings(${org}, ${holder}) as bindings
           `;
-          throw new Rollback(JSON.stringify({ bindings, custom, scopes, events, loaded }));
+          throw new Rollback(
+            JSON.stringify({
+              bindings,
+              custom,
+              roles,
+              credentials,
+              catalog,
+              scopes,
+              events,
+              loaded,
+            }),
+          );
         })
         .catch((error: unknown) => {
           if (error instanceof Rollback) return JSON.parse(error.message) as unknown;
@@ -148,6 +221,12 @@ describe(
       expect(outcome).toEqual({
         bindings: [{ id: viewerBinding }],
         custom: [{ permission: "admin.audit" }],
+        roles: [{ role_key: "finance_ops" }],
+        credentials: [
+          { id: editorOnlyCredential, scopes: ["sheets.read"], revoked: true },
+          { id: mixedCredential, scopes: ["mail.read"], revoked: false },
+        ],
+        catalog: { retired: 0 },
         scopes: [
           { id: holder, scopes: ["platform.read"] },
           { id: delegate, scopes: [] },
@@ -155,6 +234,7 @@ describe(
         events: [
           { binding_id: rootBinding, reason: "permission_retired" },
           { binding_id: childBinding, reason: "permission_retired" },
+          { binding_id: editorBinding, reason: "permission_retired" },
         ],
         loaded: {
           bindings: [

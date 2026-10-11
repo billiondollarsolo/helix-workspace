@@ -6,6 +6,13 @@ import { commitStorageUsage } from "../drive/index.js";
 import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { toSqlJson } from "../util/sql.js";
 import { hasControlCharacter } from "../util/strings.js";
+import {
+  appendMeetActivity,
+  grantMeetAccess,
+  grantThreadAccess,
+  type SqlLike,
+} from "./room-writes.js";
+import { activateScheduledMeetRoom, type MeetRoomActivationInput } from "./scheduled-join.js";
 import type {
   MeetActorRef,
   MeetAttendanceRecord,
@@ -163,6 +170,8 @@ export interface MeetStore {
     readonly actorId: string;
     readonly code: string;
   }): Promise<MeetRoomRecord | null>;
+  /** Open a scheduled room for an authorized member join; see `openRoomForMemberJoin`. */
+  activateScheduledRoom(input: MeetRoomActivationInput): Promise<MeetRoomRecord | null>;
   createGuestInvite(input: {
     readonly id: string;
     readonly orgId: string;
@@ -343,8 +352,6 @@ interface ExistingRecordingAttachmentRow {
   readonly message_id: string;
   readonly storage_key: string;
 }
-
-type SqlLike = postgres.Sql | postgres.TransactionSql;
 
 export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
   constructor(private readonly sql: postgres.Sql) {}
@@ -853,6 +860,16 @@ export class PostgresMeetStore implements MeetStore, MeetMediaWebhookStore {
     return roomId === undefined
       ? null
       : selectRoomForActor(this.sql, input.orgId, input.actorId, roomId);
+  }
+
+  async activateScheduledRoom(input: MeetRoomActivationInput): Promise<MeetRoomRecord | null> {
+    return this.sql.begin(async (tx) => {
+      if ((await selectRoomForActor(tx, input.orgId, input.actorId, input.roomId)) === null) {
+        return null;
+      }
+      await activateScheduledMeetRoom(tx, input);
+      return selectRoomForActor(tx, input.orgId, input.actorId, input.roomId);
+    });
   }
 
   async createGuestInvite(input: {
@@ -1981,6 +1998,15 @@ export class InMemoryMeetStore implements MeetStore {
     return room === undefined ? null : this.getRoomForActor({ ...input, roomId: room.id });
   }
 
+  async activateScheduledRoom(input: MeetRoomActivationInput): Promise<MeetRoomRecord | null> {
+    const room = this.#rooms.get(input.roomId);
+    if (room === undefined || (await this.getRoomForActor(input)) === null) return null;
+    if (room.status === "scheduled") {
+      this.#rooms.set(room.id, { ...room, status: "active", startedAt: input.at, updatedAt: input.at });
+    }
+    return this.getRoomForActor(input);
+  }
+
   async createGuestInvite(input: {
     readonly id: string;
     readonly orgId: string;
@@ -2762,53 +2788,6 @@ async function selectRoomByRef(
     return selectRoomByName(sql, orgId, ref.roomName);
   }
   return null;
-}
-
-async function grantThreadAccess(
-  sql: SqlLike,
-  orgId: string,
-  threadId: string,
-  actorId: string,
-  role: string,
-  grantedByActorId: string,
-): Promise<void> {
-  await sql`
-    insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
-    values (${orgId}, ${actorId}, 'thread', ${threadId}, ${role}, ${grantedByActorId})
-    on conflict do nothing
-  `;
-}
-
-async function grantMeetAccess(
-  sql: SqlLike,
-  orgId: string,
-  roomId: string,
-  actorId: string,
-  role: string,
-  grantedByActorId: string,
-): Promise<void> {
-  await sql`
-    insert into permissions (org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id)
-    values (${orgId}, ${actorId}, 'meet_room', ${roomId}, ${role}, ${grantedByActorId})
-    on conflict do nothing
-  `;
-}
-
-async function appendMeetActivity(
-  sql: SqlLike,
-  orgId: string,
-  actorId: string | null,
-  verb: string,
-  roomId: string,
-  payload: JsonObject,
-): Promise<void> {
-  const hash = createHash("sha256")
-    .update(`${orgId}:${actorId ?? "system"}:${verb}:${roomId}:${String(Date.now())}`)
-    .digest("hex");
-  await sql`
-    insert into activity (org_id, actor_id, verb, object_type, object_id, payload, prev_hash, this_hash)
-    values (${orgId}, ${actorId}, ${verb}, 'meet_room', ${roomId}, ${sql.json(toSqlJson(payload))}, null, ${hash})
-  `;
 }
 
 function normalizeRoomName(value: string): string {

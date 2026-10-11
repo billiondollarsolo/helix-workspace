@@ -2,7 +2,10 @@
  * Server-side HTML sanitizer for mail rendering. Removes executable and
  * network-capable markup before the isolated mail frame receives HTML.
  * The allowlist tokenizer preserves supported formatting and strips other tags.
+ * Inline styles keep only the text formatting allowed by `sanitizeInlineStyle`.
  */
+
+import { sanitizeInlineStyle } from "./inline-style.js";
 
 const ALLOWED_TAGS: ReadonlySet<string> = new Set([
   "a",
@@ -232,6 +235,11 @@ function sanitizeAttributes(tagName: string, raw: string): string {
       continue;
     }
     if (name === "xlink:href" || name === "xmlns" || name === "srcdoc") {
+      continue;
+    }
+    if (name === "style") {
+      const style = sanitizeInlineStyle(value);
+      if (style !== "") parts.push(`style="${escapeAttributeValue(style)}"`);
       continue;
     }
     if (!allowed.has(name) && !global.has(name)) {

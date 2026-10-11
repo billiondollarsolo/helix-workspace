@@ -8,6 +8,15 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Keyboard shortcuts work across the workspace. Press `?` for the full list, `/` to search the
+  current app, and `g` then a letter to jump: `i`/`s`/`t`/`d` for Inbox, Starred, Sent, and
+  Drafts; `c` Calendar, `k` Chat, `r` Drive, `h` Meet. Mail supports `c`, `j`/`k`, `o`/Enter,
+  `u`, `x`, `s`, `e`, `#`, `!`, Shift+I/Shift+U, `r`/`a`/`f`, and ⌘/Ctrl+Enter to send.
+  Calendar supports `d`/`w`/`m`/`a` views, `t`, `j`/`k` or `n`/`p`, `c`, and `e`. Drive supports
+  `n` (new folder), Shift+U (upload), and Delete (move to trash). Chat supports Esc to close a
+  thread and Alt+↑/↓ to switch conversations. Shortcuts pause while typing and while a dialog or
+  menu is open. Settings → Keyboard shortcuts lists them all and can turn single-key shortcuts off.
+
 - Drive accepts S3 commands. An S3-compatible gateway at `/v1/s3` lets the AWS CLI, rclone, boto3,
   and the AWS SDKs list, upload, download, copy, and delete Drive files, including multipart uploads,
   ranged downloads, and presigned URLs. It maps the buckets `my-drive` and `shared-with-me` onto

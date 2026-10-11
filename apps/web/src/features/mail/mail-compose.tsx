@@ -39,6 +39,7 @@ import {
   pickLatestMailDraft,
   serverDraftToComposeFields,
 } from "./mail-compose-server-draft";
+import { useComposeSendShortcut } from "./use-mail-shortcuts";
 
 interface ComposeProps {
   readonly onClose: () => void;
@@ -357,6 +358,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
     subject,
     to,
   ]);
+  useComposeSendShortcut(handleSend, canSend);
 
   const requestClose = useCallback(() => {
     if (hasDraft) {
@@ -821,7 +823,6 @@ export function Compose({ onClose, onSent }: ComposeProps) {
               type="button"
               className="icon-btn ml-auto"
               aria-label="Discard draft"
-
               onClick={requestClose}
             >
               <TrashIcon size={16} />

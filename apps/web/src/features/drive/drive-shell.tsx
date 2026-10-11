@@ -1,3 +1,4 @@
+import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
 import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -337,6 +338,14 @@ export function DriveShell() {
     event.target.value = "";
   };
   const isTrashScope = scope === "trash";
+  useShortcuts("drive", {
+    "drive.new-folder": createMutation.isPending ? undefined : () => onNewItem("folder"),
+    "drive.upload": uploadMutation.isPending ? undefined : onPickFile,
+    "drive.trash":
+      selectedFileId === null || isTrashScope
+        ? undefined
+        : () => trashMutation.mutate(selectedFileId),
+  });
   return (
     <>
       <input

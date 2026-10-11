@@ -16,6 +16,7 @@ import { NotificationsPanel } from "@/components/shell/notifications-panel";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { SettingsPage } from "@/components/shell/settings-page";
 import { NetworkStatus } from "@/components/shell/network-status";
+import { GlobalShortcuts } from "@/lib/shortcuts/global-shortcuts";
 import {
   ShellOverlayContext,
   isSettingsSectionId,
@@ -70,18 +71,6 @@ export function AppShell() {
     setSettingsSection(undefined, true);
   }, [setSettingsSection]);
 
-  // ⌘K global shortcut.
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setPaletteOpen((open) => !open);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
   useEffect(() => {
     if (previousPathRef.current === location.pathname) {
       return;
@@ -110,6 +99,10 @@ export function AppShell() {
           Skip to main content
         </a>
         <NetworkStatus />
+        <GlobalShortcuts
+          onTogglePalette={() => setPaletteOpen((open) => !open)}
+          onOpenShortcutSettings={() => overlays.openSettings("shortcuts")}
+        />
         <Rail
           launcherOpen={launcherOpen}
           onOpenLauncher={() => setLauncherOpen((open) => !open)}

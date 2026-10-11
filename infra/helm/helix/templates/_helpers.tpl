@@ -111,6 +111,27 @@ topologySpreadConstraints:
 {{- if and .Values.cloudnativepg.backup.enabled (not (contains .Values.external.s3.region .Values.cloudnativepg.backup.barmanObjectStore.destinationPath)) -}}
 {{- fail "cloudnativepg backup destinationPath must include the deployment region" -}}
 {{- end -}}
+{{- if hasKey .Values.cloudnativepg.backup.barmanObjectStore.wal "additionalCommandArgs" -}}
+{{- fail "cloudnativepg.backup.barmanObjectStore.wal.additionalCommandArgs is not a Barman Cloud field; use wal.archiveAdditionalCommandArgs (and restoreAdditionalCommandArgs)" -}}
+{{- end -}}
+{{- if hasKey .Values.cloudnativepg "imageName" -}}
+{{- fail "cloudnativepg.imageName is unsupported; set cloudnativepg.image.repository and cloudnativepg.image.digest (PostgreSQL 18 with pgvector, pinned by digest)" -}}
+{{- end -}}
+{{- if .Values.cloudnativepg.enabled -}}
+{{- $cnpgDigest := required "cloudnativepg.image.digest must be the published helix-workspace-postgres-cnpg sha256 digest" .Values.cloudnativepg.image.digest -}}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $cnpgDigest) -}}
+{{- fail "cloudnativepg.image.digest must match sha256:<64 lowercase hex characters>" -}}
+{{- end -}}
+{{- if eq $cnpgDigest "sha256:0000000000000000000000000000000000000000000000000000000000000000" -}}
+{{- fail "cloudnativepg.image.digest cannot be a placeholder" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z_][a-z0-9_]{0,62}$" .Values.cloudnativepg.bootstrap.owner) -}}
+{{- fail "cloudnativepg.bootstrap.owner must be a lowercase PostgreSQL identifier" -}}
+{{- end -}}
+{{- if has .Values.cloudnativepg.bootstrap.owner (list "postgres" "helix_migration_owner" "helix_app" "helix_worker" "helix_readonly") -}}
+{{- fail "cloudnativepg.bootstrap.owner must be the dedicated migration login (helix_migrator), not a superuser or a Helix runtime role" -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.external.postgres.url -}}
 {{- fail "external.postgres.url is unsupported in production; use external.postgres.urlSecret" -}}
 {{- end -}}
@@ -146,7 +167,13 @@ topologySpreadConstraints:
 {{- if and .Values.ingress.enabled (not $networkPolicy.application.ingress) -}}
 {{- fail "ingress.enabled requires at least one exact networkPolicy.application.ingress source" -}}
 {{- end -}}
-{{- $policies := dict "application" $networkPolicy.application "imageVerifier" $networkPolicy.imageVerifier "roleDefault" $networkPolicy.roleDefault -}}
+{{- $policies := dict "application" $networkPolicy.application "imageVerifier" $networkPolicy.imageVerifier "roleDefault" $networkPolicy.roleDefault "migrate" $networkPolicy.migrate -}}
+{{- if $networkPolicy.migrate.ingress -}}
+{{- fail "networkPolicy.migrate ingress must remain empty" -}}
+{{- end -}}
+{{- if $networkPolicy.migrate.egress.publicHttps -}}
+{{- fail "networkPolicy.migrate egress is DNS, PostgreSQL, and exact secret-store endpoints only; publicHttps is not allowed" -}}
+{{- end -}}
 {{- range $role := .Values.roleDeployments -}}
 {{- $_ := set $policies (printf "roleDeployments.%s.networkPolicy" $role.name) ($role.networkPolicy | default $networkPolicy.roleDefault) -}}
 {{- end -}}
@@ -252,6 +279,11 @@ default role. Input is the chart root context.
 {{- define "helix.containerEnv" -}}
 - name: NODE_ENV
   value: production
+# The production image-pinning check: a Helm release pins the image it runs.
+- name: HELIX_DEPLOYMENT_KIND
+  value: helm
+- name: HELIX_IMAGE
+  value: {{ include "helix.image" . | quote }}
 - name: HOST
   value: 0.0.0.0
 - name: PORT
@@ -353,6 +385,10 @@ default role. Input is the chart root context.
       name: {{ required "external.postgres.urlSecret.name is required when external.postgres.url is empty" .Values.external.postgres.urlSecret.name | quote }}
       key: {{ .Values.external.postgres.urlSecret.key | quote }}
   {{- end }}
+{{- if include "helix.cloudnativepgClientTls" . }}
+- name: POSTGRES_TLS_CA_FILE
+  value: /var/run/helix/postgres-tls/ca.crt
+{{- end }}
 - name: REDIS_URL
   {{- if .Values.external.redis.url }}
   value: {{ .Values.external.redis.url | quote }}
@@ -493,6 +529,92 @@ An explicit `apps` list takes precedence over a named `role`.
 {{- end }}
 {{- end -}}
 
+{{- define "helix.cloudnativepgImage" -}}
+{{- $image := .Values.cloudnativepg.image -}}
+{{- $digest := required "cloudnativepg.image.digest must be the published helix-workspace-postgres-cnpg sha256 digest" $image.digest -}}
+{{- printf "%s@%s" $image.repository $digest -}}
+{{- end -}}
+
+{{- /*
+  Hook events for the migration Job and its NetworkPolicy. An in-chart
+  CloudNativePG Cluster does not exist during pre-install hooks, so the first
+  install migrates post-install; every upgrade migrates pre-upgrade.
+*/ -}}
+{{- define "helix.migrationHook" -}}
+{{- if and .Values.cloudnativepg.enabled .Release.IsInstall -}}
+post-install
+{{- else -}}
+pre-install,pre-upgrade
+{{- end -}}
+{{- end -}}
+
+{{- define "helix.cloudnativepgClientTls" -}}
+{{- if and .Values.cloudnativepg.enabled .Values.cloudnativepg.clientTls.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{- /* Operator-generated server CA (`<clusterName>-ca`, key ca.crt). */ -}}
+{{- define "helix.postgresTlsVolumeMount" -}}
+{{- if include "helix.cloudnativepgClientTls" . -}}
+- name: postgres-tls
+  mountPath: /var/run/helix/postgres-tls
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "helix.postgresTlsVolume" -}}
+{{- if include "helix.cloudnativepgClientTls" . -}}
+- name: postgres-tls
+  secret:
+    secretName: {{ printf "%s-ca" .Values.cloudnativepg.clusterName | quote }}
+    items:
+      - key: ca.crt
+        path: ca.crt
+{{- end }}
+{{- end -}}
+
+{{- define "helix.cloudnativepgObjectStoreName" -}}
+{{- printf "%s-backup" .Values.cloudnativepg.clusterName -}}
+{{- end -}}
+
+{{- /*
+  Superuser bootstrap for the CloudNativePG application database. Keep this in
+  step with infra/postgres/init/001_extensions.sql and
+  infra/postgres/init/002_production_roles.sh (Compose) — the
+  postgres-bootstrap contract test compares them. Every extension a migration
+  creates is installed here because pgvector is not a trusted extension, and
+  the role attributes match migration 0090 exactly so the non-superuser owner
+  never needs to run ALTER ROLE. The function grants reproduce the ACLs 0090
+  sets when a superuser migrates (extension functions stay superuser-owned, so
+  the owner cannot change them later); pg_trgm comes after them because a
+  superuser migration first creates it in 0168, after 0090's REVOKE.
+*/ -}}
+{{- define "helix.cloudnativepgBootstrapSQL" -}}
+{{- $owner := .Values.cloudnativepg.bootstrap.owner -}}
+- CREATE EXTENSION IF NOT EXISTS vector
+- CREATE EXTENSION IF NOT EXISTS pgcrypto
+- |
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_migration_owner') THEN
+      CREATE ROLE helix_migration_owner NOLOGIN NOSUPERUSER BYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_app') THEN
+      CREATE ROLE helix_app LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_worker') THEN
+      CREATE ROLE helix_worker LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_readonly') THEN
+      CREATE ROLE helix_readonly LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+    END IF;
+  END
+  $$
+- GRANT helix_migration_owner TO {{ $owner }}
+- REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC
+- GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO helix_migration_owner, helix_app, helix_worker
+- CREATE EXTENSION IF NOT EXISTS pg_trgm
+{{- end -}}
+
 {{- define "helix.cloudnativepgObjectStore" -}}
 {{- $store := . -}}
 destinationPath: {{ required "cloudnativepg.backup.barmanObjectStore.destinationPath is required when CloudNativePG backup is enabled" $store.destinationPath | quote }}
@@ -535,8 +657,12 @@ wal:
   {{- with .maxParallel }}
   maxParallel: {{ . }}
   {{- end }}
-  {{- with .additionalCommandArgs }}
-  additionalCommandArgs:
+  {{- with .archiveAdditionalCommandArgs }}
+  archiveAdditionalCommandArgs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .restoreAdditionalCommandArgs }}
+  restoreAdditionalCommandArgs:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 {{- end }}

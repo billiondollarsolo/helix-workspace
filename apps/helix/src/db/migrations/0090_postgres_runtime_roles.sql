@@ -1,39 +1,92 @@
 -- Schema ownership and runtime access are separate. Operators attach secrets
 -- to the three LOGIN roles; no credential material belongs in migrations.
+--
+-- Role DDL requires superuser (SUPERUSER, BYPASSRLS, and REPLICATION are
+-- superuser-only attributes). A superuser migrator creates and repairs the
+-- roles here. A non-superuser database owner (CloudNativePG initdb owner, the
+-- production Compose `helix_migrator`) runs this migration only after the
+-- platform bootstrap pre-provisioned every role with exactly these attributes
+-- and granted it membership in helix_migration_owner; see
+-- docs/deployment-production.md#database. Drift is then reported instead of
+-- failing on an ALTER ROLE the owner may not run.
 
 do $$
 declare
-  role_name text;
+  desired record;
+  existing pg_roles%rowtype;
+  can_manage_roles boolean := (select rolsuper from pg_roles where rolname = current_user);
 begin
-  foreach role_name in array array[
-    'helix_migration_owner', 'helix_app', 'helix_worker', 'helix_readonly'
-  ]
+  for desired in
+    select *
+    from (values
+      ('helix_migration_owner', 'alter role helix_migration_owner nologin nosuperuser bypassrls noinherit nocreatedb nocreaterole noreplication', false, true),
+      ('helix_app', 'alter role helix_app login nosuperuser nobypassrls noinherit nocreatedb nocreaterole noreplication', true, false),
+      ('helix_worker', 'alter role helix_worker login nosuperuser nobypassrls noinherit nocreatedb nocreaterole noreplication', true, false),
+      ('helix_readonly', 'alter role helix_readonly login nosuperuser nobypassrls noinherit nocreatedb nocreaterole noreplication', true, false)
+    ) as roles(role_name, alter_statement, can_login, bypass_rls)
   loop
-    if not exists (select 1 from pg_roles where rolname = role_name) then
-      execute format('create role %I', role_name);
+    select * into existing from pg_roles where rolname = desired.role_name;
+    if not found then
+      if not can_manage_roles then
+        raise exception 'Helix database role % is missing and % cannot create it.', desired.role_name, current_user
+          using hint = 'Pre-provision the Helix roles as a superuser (CloudNativePG bootstrap.initdb.postInitApplicationSQL and managed roles, or infra/postgres/init/002_production_roles.sh), or run this migration once as a superuser.';
+      end if;
+      execute format('create role %I', desired.role_name);
+      execute desired.alter_statement;
+    elsif existing.rolsuper
+      or existing.rolcanlogin <> desired.can_login
+      or existing.rolbypassrls <> desired.bypass_rls
+      or existing.rolinherit
+      or existing.rolcreatedb
+      or existing.rolcreaterole
+      or existing.rolreplication then
+      if not can_manage_roles then
+        raise exception 'Helix database role % has unexpected attributes and % cannot repair them.', desired.role_name, current_user
+          using hint = format('Run as a superuser: %s;', desired.alter_statement);
+      end if;
+      execute desired.alter_statement;
     end if;
   end loop;
 end
 $$;
 
-alter role helix_migration_owner nologin nosuperuser bypassrls noinherit
-  nocreatedb nocreaterole noreplication;
-alter role helix_app login nosuperuser nobypassrls noinherit
-  nocreatedb nocreaterole noreplication;
-alter role helix_worker login nosuperuser nobypassrls noinherit
-  nocreatedb nocreaterole noreplication;
-alter role helix_readonly login nosuperuser nobypassrls noinherit
-  nocreatedb nocreaterole noreplication;
-
-revoke helix_migration_owner from helix_app, helix_worker, helix_readonly;
+do $$
+declare
+  member_name text;
+begin
+  for member_name in
+    select member_role.rolname
+    from pg_auth_members membership
+    join pg_roles owner_role on owner_role.oid = membership.roleid
+    join pg_roles member_role on member_role.oid = membership.member
+    where owner_role.rolname = 'helix_migration_owner'
+      and member_role.rolname in ('helix_app', 'helix_worker', 'helix_readonly')
+  loop
+    execute format('revoke helix_migration_owner from %I', member_name);
+  end loop;
+end
+$$;
 
 do $$
 begin
-  if current_user <> 'helix_migration_owner' then
+  if current_user <> 'helix_migration_owner'
+    and not exists (
+      select 1
+      from pg_auth_members membership
+      join pg_roles owner_role on owner_role.oid = membership.roleid
+      join pg_roles member_role on member_role.oid = membership.member
+      where owner_role.rolname = 'helix_migration_owner'
+        and member_role.rolname = current_user
+    ) then
     execute format('grant helix_migration_owner to %I with admin option', current_user);
   end if;
 end
 $$;
+
+-- The new owner needs CREATE on the schema before it can receive ownership
+-- from a non-superuser. Superusers bypass this check, so the order is
+-- behaviour-preserving for existing installs.
+grant usage, create on schema public to helix_migration_owner;
 
 do $$
 declare

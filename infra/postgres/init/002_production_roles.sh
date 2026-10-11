@@ -35,6 +35,12 @@ psql \
   --set=database_name="$POSTGRES_DB" \
   --username "$POSTGRES_USER" \
   --dbname "$POSTGRES_DB" <<'SQL'
+-- Role model shared with migration 0090 and the CloudNativePG bootstrap
+-- (infra/helm/helix/templates/_helpers.tpl helix.cloudnativepgBootstrapSQL).
+-- Attributes match 0090 exactly so the non-superuser helix_migrator never
+-- needs ALTER ROLE. helix_worker and helix_readonly are created here without
+-- a password so the local-development 002_runtime_roles.sql never gives them
+-- its well-known passwords in production.
 SELECT format(
   'CREATE ROLE helix_migrator LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
   :'migration_password'
@@ -42,18 +48,42 @@ SELECT format(
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_migrator')
 \gexec
 
+SELECT 'CREATE ROLE helix_migration_owner NOLOGIN NOSUPERUSER BYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_migration_owner')
+\gexec
+
 SELECT format(
-  'CREATE ROLE helix_app LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION',
+  'CREATE ROLE helix_app LOGIN PASSWORD %L NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION',
   :'app_password'
 )
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'helix_app')
 \gexec
 
+SELECT format(
+  'CREATE ROLE %I LOGIN NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION',
+  role_name
+)
+FROM unnest(array['helix_worker', 'helix_readonly']) AS role_name
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name)
+\gexec
+
 ALTER ROLE helix_migrator PASSWORD :'migration_password';
 ALTER ROLE helix_app PASSWORD :'app_password';
+GRANT helix_migration_owner TO helix_migrator;
+-- The migration login owns the database so it can create trusted extensions
+-- and grant on the public schema (owned by pg_database_owner).
+ALTER DATABASE :"database_name" OWNER TO helix_migrator;
 GRANT CONNECT ON DATABASE :"database_name" TO helix_migrator, helix_app;
 GRANT USAGE, CREATE ON SCHEMA public TO helix_migrator;
 GRANT USAGE ON SCHEMA public TO helix_app;
+-- Match the function ACLs migration 0090 applies when a superuser migrates:
+-- extension functions (pgvector, pgcrypto, pg_trgm) are superuser-owned, so
+-- the non-superuser owner cannot change their privileges later.
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO helix_migration_owner, helix_app, helix_worker;
+-- Created after the grants, as migration 0168 does, so its function ACLs
+-- match a superuser-migrated database.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ALTER DEFAULT PRIVILEGES FOR ROLE helix_migrator IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO helix_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE helix_migrator IN SCHEMA public

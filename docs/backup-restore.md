@@ -89,7 +89,7 @@ archive_timeout = 60        # bound RPO to 60s of un-archived WAL
 
 Mount a durable volume at `/wal_archive` (override with `HELIX_WAL_ARCHIVE_DIR`). `backup.sh --include-wal` issues `pg_switch_wal()` and copies every archived segment into the backup archive under `wal/`. Tier 3 (15 min) and Tier 4 (5 min) RPO targets are met by setting `archive_timeout` at or below the target and running base backups frequently.
 
-For Kubernetes, the enterprise Helm overlay delegates WAL archiving to CloudNativePG's `barmanObjectStore` instead of the script — see the section below.
+For Kubernetes, the enterprise Helm overlay delegates WAL archiving to CloudNativePG and its Barman Cloud Plugin instead of the script — see the section below.
 
 ## Backup Encryption
 
@@ -179,13 +179,54 @@ HELIX_BACKUP_KEY_CUSTODY_REF=vault://production/helix-backup-age \
 
 The Helm enterprise profile enables CloudNativePG and renders:
 
-- A `Cluster` with `spec.backup.barmanObjectStore` for base backups and WAL archive.
-- A daily `ScheduledBackup` using the CloudNativePG six-field cron format.
-- Explicit KMS/TDE annotations and PVC template annotations under `cloudnativepg.tde`.
+- An `ObjectStore` (`barmancloud.cnpg.io/v1`) for base backups and the WAL archive, with the
+  retention policy (`cloudnativepg.backup.retentionPolicy`, 30 days by default).
+- A `Cluster` whose `plugins` entry makes the Barman Cloud Plugin (`barman-cloud.cloudnative-pg.io`)
+  the WAL archiver, with `serverName` as a plugin parameter.
+- A daily `ScheduledBackup` with `method: plugin`, using the CloudNativePG six-field cron format and
+  `target: prefer-standby`.
+- Explicit KMS/TDE annotations under `cloudnativepg.tde`, applied to PVCs through
+  `inheritedMetadata`.
 
-Before installing the enterprise overlay, set `cloudnativepg.backup.barmanObjectStore.destinationPath`, `endpointURL`, S3 credential secret names, storage encryption annotations, and Barman KMS arguments for your object store. The default values are placeholders and assume a Secret named `helix-cnpg-backup`.
+The plugin runs barman-cloud as a sidecar injected by the operator, so the Helix CloudNativePG
+operand image does not bundle it. Install the Barman Cloud Plugin alongside CloudNativePG 1.26 or
+newer before enabling backups; the in-core `spec.backup.barmanObjectStore` integration is
+deprecated and is not rendered.
 
-For PITR drills, create a restore values file that enables `cloudnativepg.bootstrap.recovery.enabled`, sets `cloudnativepg.bootstrap.recovery.source`, supplies `cloudnativepg.recovery.externalClusters` with the source object's `barmanObjectStore`, and sets one `recoveryTarget` such as `targetTime`, `targetLSN`, or `targetName`. Restore into a new CloudNativePG cluster; CloudNativePG recovery is not an in-place operation.
+Before installing the enterprise overlay, set `cloudnativepg.backup.barmanObjectStore.destinationPath`
+(it must contain the deployment region), `endpointURL`, S3 credential secret names, storage
+encryption annotations, and the KMS arguments (`wal.archiveAdditionalCommandArgs`,
+`data.additionalCommandArgs`) for your object store. The default values are placeholders and assume
+a Secret named `helix-cnpg-backup`. Any S3-compatible endpoint works: RustFS (the Compose object
+store) with its HTTPS endpoint and access keys, or an external S3 service. Keep database backups in
+a bucket separate from Drive objects and, for Business tier and above, off-host as described above.
+
+For PITR drills, create a restore values file that enables `cloudnativepg.bootstrap.recovery.enabled`,
+sets `cloudnativepg.bootstrap.recovery.source`, and adds a matching
+`cloudnativepg.recovery.externalClusters` entry:
+
+```yaml
+cloudnativepg:
+  clusterName: helix-postgres-restore
+  bootstrap:
+    recovery:
+      enabled: true
+      source: helix-postgres-backup
+      recoveryTarget:
+        targetTime: "2026-10-01T00:00:00Z"
+  recovery:
+    externalClusters:
+      - name: helix-postgres-backup
+        barmanObjectName: helix-postgres-backup # ObjectStore holding the source backups
+        serverName: helix-postgres # serverName the source cluster archived under
+```
+
+Use one `recoveryTarget` such as `targetTime`, `targetLSN`, or `targetName`. Restore into a new
+CloudNativePG cluster; CloudNativePG recovery is not an in-place operation. A recovered cluster
+already contains the `vector`, `pgcrypto`, and `pg_trgm` extensions and the Helix roles, so the
+bootstrap SQL does not run; managed roles reapply the runtime passwords. Before pointing Helix at
+it, confirm `SELECT extversion FROM pg_extension WHERE extname = 'vector'` and run
+`ALTER EXTENSION vector UPDATE` if the operand ships a newer pgvector than the source.
 
 ## Restore
 

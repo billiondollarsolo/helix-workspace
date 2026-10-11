@@ -14,6 +14,7 @@ const originalNodeEnv = process.env.NODE_ENV;
 const originalDatabaseUrl = process.env.DATABASE_URL;
 
 const productionImageEnvironment = {
+  HELIX_DEPLOYMENT_KIND: "compose",
   HELIX_IMAGE:
     "ghcr.io/billiondollarsolo/helix-workspace@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   HELIX_WEB_IMAGE:

@@ -55,11 +55,12 @@ Migrations are never applied by the application at boot — the entrypoint is
 method runs them separately, and both are ordered so that new code never
 serves against an old schema:
 
-| Method            | What runs migrations                  | Ordering                                                                                  |
-| ----------------- | ------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Docker Compose    | the one-shot `helix-migrate` service  | the app `depends_on` it with `condition: service_completed_successfully`                  |
-| Helm / Kubernetes | the `<release>-migrate` Job           | a `pre-install,pre-upgrade` hook, so Helm waits for it and aborts the release if it fails |
-| Anything else     | `pnpm --filter @helix/app db:migrate` | you own the ordering; run it to completion before the new image serves traffic            |
+| Method                        | What runs migrations                  | Ordering                                                                                                                                              |
+| ----------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Docker Compose                | the one-shot `helix-migrate` service  | the app `depends_on` it with `condition: service_completed_successfully`                                                                              |
+| Helm / Kubernetes             | the `<release>-migrate` Job           | a `pre-install,pre-upgrade` hook, so Helm waits for it and aborts the release if it fails                                                             |
+| Helm + in-chart CloudNativePG | the same Job                          | `post-install` on the first install (the Cluster must exist first; the runner waits up to `migrations.databaseWaitSeconds`), `pre-upgrade` afterwards |
+| Anything else                 | `pnpm --filter @helix/app db:migrate` | you own the ordering; run it to completion before the new image serves traffic                                                                        |
 
 The runner takes a Postgres advisory lock, so it is safe to run while an old
 replica is still serving and safe to run concurrently from two places.
@@ -96,6 +97,14 @@ not deployment inputs:
 | `HELIX_SPAMD_IMAGE`       | Helix SpamAssassin image          |
 | `HELIX_CLAMAV_IMAGE`      | Helix ClamAV image                |
 
+The application and migration process enforce this at startup according to
+`HELIX_DEPLOYMENT_KIND`, which every production deployment declares and which fails closed when
+missing or unknown. `docker-compose.production.yml` sets `compose`: all eight variables above are
+required. The Helm chart sets `helm`: only `HELIX_IMAGE` is required (the chart sets it from the
+image it runs, `ghcr.io/billiondollarsolo/helix-workspace` or the sovereign
+`ghcr.io/billiondollarsolo/helix-workspace-fips`), because the chart deploys no other Helix
+service image the application runs; any other image variable that is set must still be pinned.
+
 The pinned Redis and RustFS references remain checked into the base Compose file. The
 resolved production-config evidence must capture all ten active digests and the final release
 packet must bind each digest to its scan and SBOM.
@@ -106,7 +115,8 @@ pgvector 0.8.5, Redis 8.8.3, NATS 2.14.3, Meilisearch 1.51.0, RustFS 1.0.0-beta.
 Helix-built dependency images use digest-pinned build/runtime bases, immutable source revisions,
 and verified source archives. CI builds or pulls every one of these images, produces an SPDX SBOM,
 runs a fail-closed High/Critical Trivy scan, and retains the machine-readable result. No locally
-built image is pushed until both application scans and all eight dependency scans succeed. The
+built image is pushed until both application scans and all nine dependency scans (the eight
+Compose services plus the CloudNativePG PostgreSQL operand) succeed. The
 publication job loads checksummed archives exported by the scan jobs, verifies their source
 revision and image IDs, and publishes those exact images without rebuilding. Redis and RustFS
 remain digest-pinned pull-and-scan inputs and are not republished by Helix. ClamAV is rebuilt on
@@ -168,6 +178,126 @@ The overlay enables the existing WORM-Postgres audit destination so the Business
 an enforced audit sink and removes the development immutable-S3 credentials. This is a bootstrap
 control, not the final off-host assurance gate: configure and prove immutable off-host audit
 shipping before the private pilot.
+
+## Database
+
+Helix requires **PostgreSQL 18** with **pgvector 0.8 or newer** (the shipped images pin
+pgvector 0.8.5). pgvector is not optional: migrations create `vector` columns for AI memory
+(`memory_items`), vector collections (`vector_items`), and semantic search, so the schema cannot be
+applied without it. Which semantic-search backend a tenant selects (pgvector or Qdrant) is runtime
+configuration; the extension is required either way.
+
+| Deployment                     | PostgreSQL image                                                                  | Who creates extensions and roles                                                                                      |
+| ------------------------------ | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Compose (local and production) | `infra/postgres/Dockerfile` → `helix-workspace-postgres` (PostgreSQL 18.6 Alpine) | `infra/postgres/init/001_extensions.sql` and, with production password files, `002_production_roles.sh`, as superuser |
+| Helm with CloudNativePG        | `infra/postgres/Dockerfile.cnpg` → `helix-workspace-postgres-cnpg`                | the Cluster's `bootstrap.initdb.postInitApplicationSQL` (superuser) plus CloudNativePG managed roles                  |
+| Helm with external PostgreSQL  | operator-provided PostgreSQL 18 with pgvector ≥ 0.8                               | the operator, once, as a superuser (below)                                                                            |
+
+The 1.0 release is the production Compose stack ([1.0 scope](release/1.0-scope.md)). For
+Kubernetes, CloudNativePG is the supported database path and the enterprise overlay enables it;
+ADR-0022/0023 are historical proposals and do not change the 1.0 packaging. The chart default
+(`cloudnativepg.enabled: false`) expects an external PostgreSQL that meets the same requirements.
+
+### Required extensions
+
+| Extension  | Minimum | Why                                                   | Trusted |
+| ---------- | ------- | ----------------------------------------------------- | ------- |
+| `vector`   | 0.8.0   | `vector` columns and operators (memory, search, RAG)  | no      |
+| `pgcrypto` | —       | digests and random values in defaults and functions   | yes     |
+| `pg_trgm`  | —       | trigram indexes for contacts and the people directory | yes     |
+
+`vector` is not a trusted extension, so only a superuser can create it. Helix migrations run as
+the non-superuser migration login `helix_migrator`, so every deployment installs the extensions
+before the first migration: Compose through its init scripts, CloudNativePG through the
+superuser bootstrap SQL the chart renders. `pgcrypto` and `pg_trgm` are trusted and the owning
+login could create them, but the bootstrap installs them too so all paths produce the same
+function privileges.
+
+### Role model
+
+| Role                    | Login | Purpose                                                                            |
+| ----------------------- | ----- | ---------------------------------------------------------------------------------- |
+| `helix_migrator`        | yes   | migration login and database owner; NOSUPERUSER; member of `helix_migration_owner` |
+| `helix_migration_owner` | no    | owns every Helix object; BYPASSRLS; assumed by the runner after migration 0090     |
+| `helix_app`             | yes   | application runtime; NOSUPERUSER, NOBYPASSRLS, NOINHERIT, owns nothing             |
+| `helix_worker`          | yes   | worker runtime; same constraints as `helix_app`                                    |
+| `helix_readonly`        | yes   | read-only access; same constraints                                                 |
+
+Creating roles and setting BYPASSRLS requires a superuser, so the bootstrap provisions all four
+Helix roles with exactly the attributes migration 0090 enforces and grants `helix_migration_owner`
+to `helix_migrator`. Migration 0090 then only verifies them; if a role is missing or has drifted
+and the migrator is not a superuser, it stops with the `ALTER ROLE` statement to run. Application
+replicas still refuse to start unless they connect as a non-owner, NOSUPERUSER, NOBYPASSRLS role
+(`assertTenantSafeDatabaseRole`).
+
+### Startup checks
+
+- The migration runner first checks the server: PostgreSQL 18 or newer, each extension installed
+  or creatable by the connecting role, and pgvector at least 0.8.0. A failure names the missing
+  piece and the SQL to run, instead of a `permission denied` part-way through the migrations.
+  `HELIX_MIGRATION_DATABASE_WAIT_SECONDS` (Helm `migrations.databaseWaitSeconds`, default 600 in
+  the chart) retries connection failures only, so a CloudNativePG cluster that is still
+  initialising does not fail the first install.
+- Production application replicas check the same requirements at boot as the runtime role, and
+  log a warning when the installed extension is older than the server's package (for example after
+  an image upgrade).
+
+### Upgrading pgvector
+
+A new image ships new extension files but leaves the installed SQL objects at the old version.
+After rolling out a PostgreSQL image with a newer pgvector, run as a superuser (the extension
+owner) in the Helix database:
+
+```sql
+ALTER EXTENSION vector UPDATE;
+SELECT extversion FROM pg_extension WHERE extname = 'vector';
+```
+
+Until then the application logs the version mismatch at startup.
+
+### External PostgreSQL
+
+Provide PostgreSQL 18 with the pgvector package (≥ 0.8.0) installed, TLS with a CA that the
+application pins (`POSTGRES_TLS_CA_FILE`), and run once as a superuser in the Helix database:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE ROLE helix_migrator LOGIN PASSWORD '<migration password>' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+CREATE ROLE helix_migration_owner NOLOGIN NOSUPERUSER BYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+CREATE ROLE helix_app LOGIN PASSWORD '<app password>' NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+CREATE ROLE helix_worker LOGIN PASSWORD '<worker password>' NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+CREATE ROLE helix_readonly LOGIN PASSWORD '<readonly password>' NOSUPERUSER NOBYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;
+ALTER DATABASE helix OWNER TO helix_migrator;
+GRANT helix_migration_owner TO helix_migrator;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO helix_migration_owner, helix_app, helix_worker;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+```
+
+Managed services that expose a restricted "admin" role instead of a superuser (for example
+`rds_superuser` or `azure_pg_admin`) must allow-list `vector`, `pgcrypto`, and `pg_trgm`, and that
+admin role must be able to create the BYPASSRLS `helix_migration_owner` role. Point
+`HELIX_MIGRATION_DATABASE_URL` (Helm `external.postgres.migrationUrlSecret`) at `helix_migrator` and
+`DATABASE_URL` at `helix_app`. The infra/postgres/init scripts are the reference for this SQL.
+
+### CloudNativePG
+
+The chart renders a `postgresql.cnpg.io/v1` `Cluster` that runs the digest-pinned
+`helix-workspace-postgres-cnpg` operand. That image is the CloudNativePG `minimal` PostgreSQL
+18.6 image (Debian, PGDG packages, UID 26, the layout the instance manager expects) plus pgvector
+0.8.5 compiled from the same pinned commit and verified archive as the Compose image. The upstream
+`standard` flavour also contains pgvector, but as whatever PGDG package was current at its weekly
+rebuild, so it cannot guarantee the version Compose pins. The Production Image Security workflow
+builds, SBOM-scans, Trivy-gates, and publishes the operand like every other dependency image; set
+its published digest in `cloudnativepg.image.digest`. Tags are rejected.
+
+Backups use the Barman Cloud Plugin (`barman-cloud.cloudnative-pg.io`): the operator injects
+barman-cloud as a sidecar, which is why the operand does not bundle it. The in-core
+`barmanObjectStore` integration is deprecated since CloudNativePG 1.26. Requirements: CloudNativePG
+1.26 or newer and, when backups are enabled, the Barman Cloud Plugin. Details are in
+[`backup-restore.md`](backup-restore.md#enterprise-cloudnativepg-pitr) and the
+[Helm chart README](../infra/helm/helix/README.md#database).
 
 ## Secret files
 

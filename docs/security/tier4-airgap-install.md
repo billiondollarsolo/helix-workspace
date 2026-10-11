@@ -50,14 +50,14 @@ Build it with a FIPS 140-3 validated runtime base pinned by digest:
 docker build -f infra/docker/Dockerfile.stig \
   --build-arg RUNTIME_BASE=cgr.dev/chainguard/node-fips@sha256:<digest> \
   --build-arg BUILD_BASE=node@sha256:<digest> \
-  -t registry.example.internal/helix/helix-fips:0.9.0 .
+  -t ghcr.io/billiondollarsolo/helix-workspace-fips:0.9.0 .
 ```
 
 Record the resulting image digest:
 
 ```sh
 docker inspect --format '{{index .RepoDigests 0}}' \
-  registry.example.internal/helix/helix-fips:0.9.0
+  ghcr.io/billiondollarsolo/helix-workspace-fips:0.9.0
 ```
 
 ### 1.3 Generate supply-chain evidence
@@ -88,7 +88,7 @@ shipped — the STIG admission policy rejects it.
 ```yaml
 fips:
   enabled: true
-  imageRepository: registry.example.internal/helix/helix-fips
+  imageRepository: ghcr.io/billiondollarsolo/helix-workspace-fips
   imageDigest: sha256:<real-digest>
 ```
 
@@ -121,7 +121,7 @@ Re-verify image signatures with the offline trust root:
 
 ```sh
 cosign verify --key <offline-pub-key> \
-  registry.example.internal/helix/helix-fips@sha256:<digest>
+  ghcr.io/billiondollarsolo/helix-workspace-fips@sha256:<digest>
 ```
 
 Stop and investigate on any checksum or signature mismatch — do not proceed.
@@ -130,12 +130,15 @@ Stop and investigate on any checksum or signature mismatch — do not proceed.
 
 ## Stage 3 — Import images
 
-Load each image into the approved internal registry **by digest**:
+Load each image into the approved internal registry **by digest**, under the same repository
+path, and configure the cluster's container runtime to serve `ghcr.io` from that mirror. The
+application only accepts the official repository names
+(`ghcr.io/billiondollarsolo/helix-workspace` and `-fips`) in `HELIX_IMAGE`:
 
 ```sh
 skopeo copy \
   docker-archive:helix-fips-0.9.0.tar \
-  docker://registry.example.internal/helix/helix-fips:0.9.0
+  docker://registry.example.internal/billiondollarsolo/helix-workspace-fips:0.9.0
 ```
 
 After import, confirm the digest is unchanged from `image-digest-map.yaml`.
@@ -199,7 +202,7 @@ helm upgrade --install helix ./helix-0.9.0.tgz \
 
 The rendered Deployment will:
 
-- pull `registry.example.internal/helix/helix-fips@sha256:<digest>`;
+- pull `ghcr.io/billiondollarsolo/helix-workspace-fips@sha256:<digest>`;
 - schedule only on nodes labeled `node-restriction.kubernetes.io/fips=true`;
 - set `HELIX_FIPS_MODE=required` and `HELIX_CRYPTO_ADAPTER=node-openssl-fips`
   from the ConfigMap, activating `FipsCryptoProvider` in fail-closed mode.

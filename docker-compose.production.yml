@@ -43,6 +43,7 @@ services:
       - dist/db/migrate.js
     environment:
       NODE_ENV: production
+      HELIX_DEPLOYMENT_KIND: compose
       HELIX_IMAGE: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest
         is required}
       HELIX_WEB_IMAGE: ${HELIX_WEB_IMAGE:?immutable HELIX_WEB_IMAGE registry reference
@@ -101,6 +102,7 @@ services:
     pull_policy: always
     environment:
       NODE_ENV: production
+      HELIX_DEPLOYMENT_KIND: compose
       HELIX_IMAGE: ${HELIX_IMAGE:?immutable HELIX_IMAGE registry reference with digest
         is required}
       HELIX_WEB_IMAGE: ${HELIX_WEB_IMAGE:?immutable HELIX_WEB_IMAGE registry reference

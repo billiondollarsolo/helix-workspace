@@ -1,12 +1,15 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-const dockerfiles = Object.fromEntries(
-  ["postgres", "nats", "meilisearch", "cerbos", "spamassassin", "clamav"].map((name) => [
-    name,
-    readFileSync(resolve(`infra/${name}/Dockerfile`), "utf8"),
-  ]),
-);
+const dockerfiles = {
+  ...Object.fromEntries(
+    ["postgres", "nats", "meilisearch", "cerbos", "spamassassin", "clamav"].map((name) => [
+      name,
+      readFileSync(resolve(`infra/${name}/Dockerfile`), "utf8"),
+    ]),
+  ),
+  "postgres-cnpg": readFileSync(resolve("infra/postgres/Dockerfile.cnpg"), "utf8"),
+};
 const spamassassinEntrypoint = readFileSync(resolve("infra/spamassassin/entrypoint.sh"), "utf8");
 const dataPlaneFixture = readFileSync(resolve("infra/scripts/data-plane-live-fixture.mjs"), "utf8");
 const workspaceDockerfile = readFileSync(resolve("infra/docker/Dockerfile"), "utf8");
@@ -26,7 +29,7 @@ describe("production dependency image build contracts", () => {
     }
   });
   it("builds source dependencies from immutable commits and checksum-verified archives", () => {
-    for (const name of ["postgres", "nats", "cerbos"]) {
+    for (const name of ["postgres", "postgres-cnpg", "nats", "cerbos"]) {
       const dockerfile = dockerfiles[name];
       expect(dockerfile, `${name} source commit`).toMatch(
         new RegExp(`^ARG \\S*_COMMIT=${COMMIT}$`, "mu"),
@@ -46,6 +49,26 @@ describe("production dependency image build contracts", () => {
     expect(dockerfiles.cerbos).toContain(
       "go get google.golang.org/grpc@v1.83.2 golang.org/x/net@v0.60.0",
     );
+  });
+  it("builds the CloudNativePG operand from the Compose PostgreSQL major and pgvector source", () => {
+    const pinned = (dockerfile, name) =>
+      new RegExp(`^ARG ${name}=(\\S+)$`, "mu").exec(dockerfile)?.[1];
+    for (const name of ["PGVECTOR_COMMIT", "PGVECTOR_ARCHIVE_SHA256"]) {
+      expect(pinned(dockerfiles["postgres-cnpg"], name), name).toBe(
+        pinned(dockerfiles.postgres, name),
+      );
+    }
+    const composeBase = pinned(dockerfiles.postgres, "POSTGRES_BASE");
+    const cnpgBase = pinned(dockerfiles["postgres-cnpg"], "CNPG_POSTGRES_BASE");
+    expect(composeBase).toMatch(/^postgres:18\.6-/u);
+    expect(cnpgBase).toMatch(
+      new RegExp(
+        `^ghcr\\.io/cloudnative-pg/postgresql:18\\.6-minimal-trixie@sha256:${SHA256}$`,
+        "u",
+      ),
+    );
+    expect(dockerfiles["postgres-cnpg"]).toContain('"postgresql-server-dev-18=${server_version}"');
+    expect(dockerfiles["postgres-cnpg"]).toMatch(/^USER 26$/mu);
   });
   it("pins data-plane validation clients to the production service lines", () => {
     expect(dataPlaneFixture).toContain("natsio/nats-box:0.19.7@sha256:");

@@ -13,6 +13,7 @@ import {
   assertTenantSafeDatabaseRole,
   createSqlClient,
 } from "../db/client.js";
+import { assertPostgresPrerequisites } from "../db/postgres-prerequisites.js";
 import { PostgresDomainsStore } from "../platform/admin/domains.js";
 import { PostgresSecurityPoliciesStore } from "../platform/admin/security-policies.js";
 import { PostgresAssistantStore } from "../platform/assistant/index.js";
@@ -113,6 +114,12 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
   if (bootEnv.NODE_ENV === "production") {
     await assertTenantSafeDatabaseRole(sql);
     await assertTenantRlsCoverage(sql);
+    // pgvector backs schema columns, not only the optional semantic search
+    // backend: refuse to serve from a server without the required extensions.
+    const prerequisites = await assertPostgresPrerequisites(sql, "runtime");
+    for (const warning of prerequisites.warnings) {
+      app.log.warn(warning);
+    }
   }
 
   const redisConnection = resolveRedisConnection(bootEnv);

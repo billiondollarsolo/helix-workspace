@@ -54,6 +54,7 @@ function productionFixture(): Record<string, string> {
     DRIVE_CLAMAV_MAX_BYTES: "1073741824",
     HELIX_STARTUP_MIGRATION_CHECK: "true",
     HELIX_EDITORS_MIGRATIONS_ENABLED: "false",
+    HELIX_DEPLOYMENT_KIND: "compose",
     HELIX_IMAGE:
       "ghcr.io/billiondollarsolo/helix-workspace@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     HELIX_WEB_IMAGE:

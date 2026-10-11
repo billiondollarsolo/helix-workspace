@@ -6,6 +6,8 @@ CHART_DIR=${HELIX_HELM_CHART_DIR:-"$ROOT_DIR/infra/helm/helix"}
 HELM_BIN=${HELM_BIN:-helm}
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/helix-helm-validation.XXXXXX")
 VALIDATION_DIGEST=sha256:1111111111111111111111111111111111111111111111111111111111111111
+CNPG_VALIDATION_DIGEST=sha256:2222222222222222222222222222222222222222222222222222222222222222
+CRD_SCHEMA_LOCATION=${HELIX_CRD_SCHEMA_LOCATION:-"https://raw.githubusercontent.com/datreeio/CRDs-catalog/63669a570e231d4f1f8396d229a1de512bcf0a34/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"}
 trap 'rm -rf "$WORK_DIR"' EXIT
 
 render() {
@@ -14,10 +16,12 @@ render() {
   "$HELM_BIN" lint "$CHART_DIR" \
     --set-string image.digest="$VALIDATION_DIGEST" \
     --set-string fips.imageDigest="$VALIDATION_DIGEST" \
+    --set-string cloudnativepg.image.digest="$CNPG_VALIDATION_DIGEST" \
     "$@" >/dev/null
   "$HELM_BIN" template helix "$CHART_DIR" \
     --set-string image.digest="$VALIDATION_DIGEST" \
     --set-string fips.imageDigest="$VALIDATION_DIGEST" \
+    --set-string cloudnativepg.image.digest="$CNPG_VALIDATION_DIGEST" \
     "$@" >"$WORK_DIR/$name.yaml"
 }
 
@@ -66,6 +70,7 @@ assert_template_fails() {
   if "$HELM_BIN" template helix "$CHART_DIR" \
     --set-string image.digest="$VALIDATION_DIGEST" \
     --set-string fips.imageDigest="$VALIDATION_DIGEST" \
+    --set-string cloudnativepg.image.digest="$CNPG_VALIDATION_DIGEST" \
     "$@" >"$WORK_DIR/$name.out" 2>&1; then
     echo "Helm validation failed: unsafe network configuration $name was accepted" >&2
     exit 1
@@ -96,6 +101,18 @@ render business -f "$CHART_DIR/values-business.yaml"
 render enterprise -f "$CHART_DIR/values-enterprise.yaml"
 render sovereign -f "$CHART_DIR/values-sovereign.yaml"
 render observability --set monitoring.prometheusRule.enabled=true
+# `helm lint` has no --is-upgrade; the enterprise overlay was linted above.
+"$HELM_BIN" template helix "$CHART_DIR" \
+  --set-string image.digest="$VALIDATION_DIGEST" \
+  --set-string fips.imageDigest="$VALIDATION_DIGEST" \
+  --set-string cloudnativepg.image.digest="$CNPG_VALIDATION_DIGEST" \
+  -f "$CHART_DIR/values-enterprise.yaml" --is-upgrade >"$WORK_DIR/enterprise-upgrade.yaml"
+render cnpg-recovery -f "$CHART_DIR/values-enterprise.yaml" \
+  --set cloudnativepg.bootstrap.recovery.enabled=true \
+  --set-string 'cloudnativepg.recovery.externalClusters[0].name=helix-postgres-backup' \
+  --set-string 'cloudnativepg.recovery.externalClusters[0].barmanObjectName=helix-postgres-backup' \
+  --set-string 'cloudnativepg.recovery.externalClusters[0].serverName=helix-postgres' \
+  --set-string 'cloudnativepg.bootstrap.recovery.recoveryTarget.targetTime=2026-10-01T00:00:00Z'
 render roles \
   --set 'roleDeployments[0].name=realtime' \
   --set 'roleDeployments[0].role=realtime' \
@@ -131,6 +148,8 @@ extract_policy "$ROLES" helix-realtime "$WORK_DIR/role-network-policy.yaml"
 extract_policy "$ENTERPRISE" helix-default "$WORK_DIR/enterprise-default-network-policy.yaml"
 extract_policy "$SOVEREIGN" helix-image-verifier "$WORK_DIR/sovereign-verifier-network-policy.yaml"
 extract_policy "$NETWORK_ALLOWLIST" helix-default "$WORK_DIR/allowlist-network-policy.yaml"
+extract_policy "$BASE" helix-migrate "$WORK_DIR/base-migrate-network-policy.yaml"
+extract_policy "$ENTERPRISE" helix-migrate "$WORK_DIR/enterprise-migrate-network-policy.yaml"
 
 BASE_DEFAULT_POLICY="$WORK_DIR/base-default-network-policy.yaml"
 BASE_VERIFIER_POLICY="$WORK_DIR/base-verifier-network-policy.yaml"
@@ -140,7 +159,7 @@ SOVEREIGN_VERIFIER_POLICY="$WORK_DIR/sovereign-verifier-network-policy.yaml"
 ALLOWLIST_POLICY="$WORK_DIR/allowlist-network-policy.yaml"
 
 assert_contains "$BASE" '^kind: Deployment$' "base chart must render a Deployment"
-assert_contains "$BASE" 'image: "ghcr.io/helix/helix@sha256:1111111111111111111111111111111111111111111111111111111111111111"' "base deployment must use only the approved digest"
+assert_contains "$BASE" 'image: "ghcr.io/billiondollarsolo/helix-workspace@sha256:1111111111111111111111111111111111111111111111111111111111111111"' "base deployment must use only the approved digest"
 assert_contains "$BASE" '^kind: Job$' "base chart must render the pre-install image verifier"
 assert_contains "$BASE" 'helm.sh/hook: pre-install,pre-upgrade' "image verification must block installs and upgrades"
 assert_contains "$BASE" 'ghcr.io/sigstore/cosign/cosign:v3\.0\.6@sha256:de9c65609e6bde17e6b48de485ee788407c9502fa08b8f4459f595b21f56cd00' "image verifier itself must be digest-pinned"
@@ -240,7 +259,7 @@ assert_contains "$ENTERPRISE" 'helix.io/security-tier: "enterprise"' "enterprise
 assert_contains "$ENTERPRISE" 'priorityClassName: "helix-workspace-critical"' "enterprise workloads must use an operator-managed priority class"
 assert_contains "$ENTERPRISE" '^kind: Cluster$' "enterprise overlay must render CloudNativePG Cluster"
 assert_contains "$ENTERPRISE" '^kind: ScheduledBackup$' "enterprise overlay must render CloudNativePG ScheduledBackup"
-assert_contains "$ENTERPRISE" 'barmanObjectStore:' "enterprise overlay must configure CloudNativePG object-store backups"
+assert_contains "$ENTERPRISE" 'barmanObjectName: "helix-postgres-backup"' "enterprise overlay must configure CloudNativePG object-store backups"
 assert_contains "$ENTERPRISE" 'helix.io/postgres-tde: required' "enterprise overlay must carry Postgres TDE/KMS annotations"
 assert_contains "$ENTERPRISE" 'VAULT_ADDR' "enterprise overlay must expose Vault wiring"
 assert_contains "$ENTERPRISE" 'HELIX_VAULT_AUTH_PATH' "enterprise overlay must expose Vault auth path for dynamic tenant secret reads"
@@ -255,9 +274,66 @@ assert_contains "$ENTERPRISE_DEFAULT_POLICY" 'cnpg.io/cluster: "helix-postgres"'
 assert_contains "$ENTERPRISE_DEFAULT_POLICY" 'cnpg.io/podRole: instance' "CloudNativePG egress must select database pods only"
 assert_contains "$ENTERPRISE_DEFAULT_POLICY" '^          port: 5432$' "CloudNativePG egress must allow only PostgreSQL traffic"
 
+# Database: CloudNativePG runs PostgreSQL 18 with pgvector and creates every
+# migration extension and the Helix role model before migrations run as the
+# non-superuser owner (docs/deployment-production.md#database).
+ENTERPRISE_UPGRADE="$WORK_DIR/enterprise-upgrade.yaml"
+CNPG_RECOVERY="$WORK_DIR/cnpg-recovery.yaml"
+assert_contains "$ENTERPRISE" "imageName: \"ghcr\\.io/billiondollarsolo/helix-workspace-postgres-cnpg@${CNPG_VALIDATION_DIGEST}\"" "CloudNativePG must run the digest-pinned Helix PostgreSQL 18 + pgvector operand"
+assert_not_contains "$ENTERPRISE" 'cloudnative-pg/postgresql:' "CloudNativePG must not run an upstream operand without pgvector"
+for extension in vector pgcrypto pg_trgm; do
+  assert_contains "$ENTERPRISE" "^        - CREATE EXTENSION IF NOT EXISTS ${extension}$" "CloudNativePG bootstrap must create the ${extension} extension as the superuser"
+done
+assert_contains "$ENTERPRISE" '^        - GRANT helix_migration_owner TO helix_migrator$' "CloudNativePG bootstrap must let the owner assume the schema owner role"
+assert_contains "$ENTERPRISE" 'CREATE ROLE helix_migration_owner NOLOGIN NOSUPERUSER BYPASSRLS NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION;' "CloudNativePG bootstrap must create the schema owner with the migration 0090 attributes"
+assert_contains "$ENTERPRISE" '^      - name: helix_app$' "CloudNativePG must manage the runtime role"
+assert_contains "$ENTERPRISE" 'name: "helix-postgres-role-app"' "runtime role password must come from a Secret"
+assert_not_contains "$ENTERPRISE" '^        superuser: true$' "managed roles must never be superusers"
+assert_contains "$ENTERPRISE" '^kind: ObjectStore$' "CloudNativePG backups must use a Barman Cloud Plugin ObjectStore"
+assert_contains "$ENTERPRISE" 'apiVersion: barmancloud\.cnpg\.io/v1' "ObjectStore must use the Barman Cloud Plugin API"
+assert_contains "$ENTERPRISE" '^    - name: "barman-cloud\.cloudnative-pg\.io"$' "Cluster must archive WAL through the Barman Cloud Plugin"
+assert_contains "$ENTERPRISE" '^      isWALArchiver: true$' "Barman Cloud Plugin must be the WAL archiver"
+assert_contains "$ENTERPRISE" '^  method: plugin$' "ScheduledBackup must use the Barman Cloud Plugin"
+assert_not_contains "$ENTERPRISE" '^    barmanObjectStore:$' "deprecated in-core barmanObjectStore must not be rendered"
+assert_contains "$ENTERPRISE" '"helm.sh/hook": post-install$' "first install must migrate after the CloudNativePG Cluster exists"
+assert_contains "$ENTERPRISE_UPGRADE" '"helm.sh/hook": pre-install,pre-upgrade$' "upgrades must migrate before the Deployment rolls"
+assert_contains "$ENTERPRISE" '^            - name: HELIX_MIGRATION_DATABASE_URL$' "migration Job must receive the owner credential"
+assert_contains "$ENTERPRISE" '^                  name: "helix-postgres-app"$' "migration Job must default to the CloudNativePG owner Secret"
+assert_contains "$ENTERPRISE" '^                  key: uri$' "migration Job must read the CloudNativePG owner URI"
+assert_contains "$ENTERPRISE" '^              value: "600"$' "migration Job must wait for a bootstrapping cluster"
+assert_contains "$ENTERPRISE" 'value: /var/run/helix/postgres-tls/ca\.crt' "CloudNativePG clients must pin the operator CA"
+assert_contains "$ENTERPRISE" 'secretName: "helix-postgres-ca"' "CloudNativePG CA must come from the operator Secret"
+assert_contains "$CNPG_RECOVERY" '^    recovery:$' "recovery values must bootstrap from a backup"
+assert_contains "$CNPG_RECOVERY" 'barmanObjectName: "helix-postgres-backup"' "recovery must read the source through the Barman Cloud Plugin"
+assert_not_contains "$CNPG_RECOVERY" 'postInitApplicationSQL:' "a restored cluster already carries its extensions and roles"
+assert_not_contains "$BASE" '^kind: Cluster$|POSTGRES_TLS_CA_FILE|HELIX_MIGRATION_DATABASE_URL' "external Postgres must not render CloudNativePG wiring"
+BASE_MIGRATE_POLICY="$WORK_DIR/base-migrate-network-policy.yaml"
+ENTERPRISE_MIGRATE_POLICY="$WORK_DIR/enterprise-migrate-network-policy.yaml"
+assert_contains "$BASE_MIGRATE_POLICY" 'helix.io/role: "migrate"' "migration Job must have its own NetworkPolicy"
+assert_contains "$BASE_MIGRATE_POLICY" 'helm.sh/hook: pre-install,pre-upgrade' "migration policy must exist before the pre-install/pre-upgrade Job"
+assert_contains "$BASE_MIGRATE_POLICY" 'helm.sh/hook-weight: "-20"' "migration policy must be created before the Job"
+assert_contains "$BASE_MIGRATE_POLICY" '^  ingress: \[\]$' "migration Job must deny all ingress"
+assert_contains "$BASE_MIGRATE_POLICY" 'k8s-app: kube-dns' "migration Job must reach exact cluster DNS"
+assert_not_contains "$BASE_MIGRATE_POLICY" 'port: 443|cidr:|namespaceSelector: \{\}|podSelector: \{\}|- \{\}' "migration Job must have no egress beyond DNS until a PostgreSQL endpoint is configured"
+assert_contains "$BASE" 'helix.io/service-account: "helix"' "migration pods must carry the network identity label"
+assert_contains "$ENTERPRISE_MIGRATE_POLICY" 'helm.sh/hook: post-install' "first-install migration policy must follow the post-install Job"
+assert_contains "$ENTERPRISE_MIGRATE_POLICY" 'cnpg.io/cluster: "helix-postgres"' "migration Job must reach the CloudNativePG cluster"
+assert_contains "$ENTERPRISE_MIGRATE_POLICY" '^          port: 5432$' "migration Job must reach only PostgreSQL"
+assert_not_contains "$ENTERPRISE_MIGRATE_POLICY" 'port: 443|cidr:' "migration Job must not reach public HTTPS"
+assert_contains "$ENTERPRISE_UPGRADE" 'helm.sh/hook: pre-install,pre-upgrade' "upgrade migration policy must precede the pre-upgrade Job"
+assert_contains "$BASE" "^              value: \"ghcr\\.io/billiondollarsolo/helix-workspace@${VALIDATION_DIGEST}\"$" "pods must receive HELIX_IMAGE from the selected image digest"
+assert_contains "$BASE" '^              value: helm$' "Helm pods must declare HELIX_DEPLOYMENT_KIND=helm for the image-pinning check"
+assert_contains "$SOVEREIGN" "^              value: \"ghcr\\.io/billiondollarsolo/helix-workspace-fips@" "sovereign pods must pin the approved FIPS repository"
+assert_template_fails migrate-public-https --set networkPolicy.migrate.egress.publicHttps=true
+assert_template_fails cnpg-tag-image --set cloudnativepg.enabled=true --set-string cloudnativepg.image.digest=
+assert_template_fails cnpg-placeholder-image --set cloudnativepg.enabled=true \
+  --set-string cloudnativepg.image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
+assert_template_fails cnpg-legacy-image-name --set-string cloudnativepg.imageName=ghcr.io/cloudnative-pg/postgresql:17
+assert_template_fails cnpg-superuser-owner --set cloudnativepg.enabled=true --set-string cloudnativepg.bootstrap.owner=postgres
+
 assert_contains "$SOVEREIGN" 'helix.io/security-tier: "sovereign"' "sovereign overlay must label the tier"
 assert_contains "$SOVEREIGN" 'priorityClassName: "helix-workspace-critical"' "sovereign workloads must use an operator-managed priority class"
-assert_contains "$SOVEREIGN" 'registry\.example\.internal/helix/helix-fips@sha256:' "sovereign overlay must use a digest-pinned FIPS image"
+assert_contains "$SOVEREIGN" 'ghcr\.io/billiondollarsolo/helix-workspace-fips@sha256:' "sovereign overlay must use a digest-pinned FIPS image"
 assert_contains "$SOVEREIGN" 'HELIX_FIPS_MODE: "required"' "sovereign overlay must require FIPS mode"
 assert_contains "$SOVEREIGN" 'HELIX_CRYPTO_ADAPTER: "node-openssl-fips"' "sovereign overlay must select the FIPS crypto adapter"
 assert_contains "$SOVEREIGN" 'HELIX_AIRGAP_MODE: "required"' "sovereign overlay must require air-gap mode"
@@ -345,6 +421,15 @@ if command -v kubeconform >/dev/null 2>&1; then
     -kubernetes-version 1.36.3 \
     -ignore-missing-schemas \
     "$BASE" "$BUSINESS" "$ENTERPRISE" "$SOVEREIGN" "$OBSERVABILITY" "$ROLES"
+  # CloudNativePG Cluster/ScheduledBackup and Barman Cloud ObjectStore schemas
+  # from an immutable CRDs-catalog commit, so CRD fields are checked as well.
+  kubeconform \
+    -strict \
+    -kubernetes-version 1.36.3 \
+    -schema-location default \
+    -schema-location "$CRD_SCHEMA_LOCATION" \
+    -ignore-missing-schemas \
+    "$ENTERPRISE" "$ENTERPRISE_UPGRADE" "$CNPG_RECOVERY"
 elif [[ "${CI:-}" == "true" ]]; then
   echo "Helm validation failed: kubeconform v0.8.0 is required in CI." >&2
   exit 1

@@ -21,7 +21,7 @@ availability:
     failureThreshold: 60
 
 image:
-  repository: ghcr.io/helix/helix
+  repository: ghcr.io/billiondollarsolo/helix-workspace
   # Required at install time. Tags are deliberately unsupported.
   digest: ""
   pullPolicy: IfNotPresent
@@ -212,6 +212,13 @@ external:
     urlSecret:
       name: helix-postgres
       key: DATABASE_URL
+    # Owner-capable credential (helix_migrator) given only to the migration
+    # Job as HELIX_MIGRATION_DATABASE_URL. Empty falls back to the
+    # CloudNativePG `<clusterName>-app` Secret (key `uri`) when CloudNativePG is
+    # enabled, otherwise to DATABASE_URL.
+    migrationUrlSecret:
+      name: ""
+      key: DATABASE_URL
   redis:
     url: redis://redis.example.internal:6379
     urlSecret:
@@ -313,6 +320,17 @@ networkPolicy:
       publicHttps: false
       endpoints: []
       inCluster: []
+  # The schema migration Job (hook) may reach DNS and PostgreSQL only. With
+  # CloudNativePG enabled its cluster pods are allowed automatically; for an
+  # external PostgreSQL list the exact host (/32 or /128) and port under
+  # endpoints. With vault.agentInject, also list the exact Vault endpoint or
+  # in-cluster workload the injected agent needs. Public HTTPS is rejected.
+  migrate:
+    ingress: []
+    egress:
+      publicHttps: false
+      endpoints: []
+      inCluster: []
   # Cosign needs registry access before install/upgrade. It has no ingress and
   # may only use DNS and public HTTPS; sovereign installs disable public HTTPS.
   imageVerifier:
@@ -335,12 +353,24 @@ vault:
     enabled: false
     providerClassName: helix-vault
 
+# In-chart PostgreSQL via the CloudNativePG operator: the Kubernetes database
+# path, enabled by the enterprise overlay. Requires CloudNativePG >= 1.26 and
+# the Barman Cloud Plugin when backups are enabled. The default stays off: the
+# 1.0 business release runs production Compose, and Kubernetes installs without
+# CloudNativePG must point external.postgres at PostgreSQL 18 with pgvector
+# >= 0.8 (see docs/deployment-production.md#database).
 cloudnativepg:
   enabled: false
   clusterName: helix-postgres
   annotations: {}
   inheritedAnnotations: {}
-  imageName: ghcr.io/cloudnative-pg/postgresql:17
+  # Helix CNPG operand: the CloudNativePG `minimal` PostgreSQL 18.6 image plus
+  # pgvector 0.8.5 compiled from the same pinned commit as the Compose image
+  # (infra/postgres/Dockerfile.cnpg). Tags are unsupported; set the digest
+  # published by the Production Image Security workflow.
+  image:
+    repository: ghcr.io/billiondollarsolo/helix-workspace-postgres-cnpg
+    digest: ""
   instances: 3
   postgresql:
     parameters: {}
@@ -365,21 +395,46 @@ cloudnativepg:
       volumeMode: Filesystem
   bootstrap:
     database: helix
-    owner: helix
+    # The initdb owner is the migration-only login. It is never a superuser;
+    # bootstrap SQL grants it membership in helix_migration_owner.
+    owner: helix_migrator
     secret:
       name: ""
+    # Appended after the Helix bootstrap SQL (extensions and role model) in
+    # bootstrap.initdb.postInitApplicationSQL. Runs once, as the superuser.
+    extraPostInitApplicationSQL: []
     recovery:
       enabled: false
       source: helix-postgres-backup
       database: helix
-      owner: helix
+      owner: helix_migrator
       secret:
         name: ""
       recoveryTarget: {}
+  # Runtime LOGIN roles reconciled by CloudNativePG managed roles. Each Secret
+  # must be type kubernetes.io/basic-auth, labelled cnpg.io/reload=true, and
+  # its password must match the credential in the matching DATABASE_URL.
+  roles:
+    app:
+      passwordSecret: helix-postgres-role-app
+    worker:
+      passwordSecret: helix-postgres-role-worker
+    readonly:
+      passwordSecret: helix-postgres-role-readonly
+  # Mount the operator-generated server CA (`<clusterName>-ca`) and pin it via
+  # POSTGRES_TLS_CA_FILE for application and migration pods.
+  clientTls:
+    enabled: true
   backup:
     enabled: false
+    # Barman Cloud Plugin (barman-cloud.cloudnative-pg.io). The in-core
+    # `spec.backup.barmanObjectStore` integration is deprecated since
+    # CloudNativePG 1.26, and the minimal-based operand ships no barman-cloud.
+    pluginName: barman-cloud.cloudnative-pg.io
     target: prefer-standby
     retentionPolicy: 30d
+    # Rendered as the ObjectStore `spec.configuration` (same structure as the
+    # former in-core barmanObjectStore). RustFS or any S3 endpoint works.
     barmanObjectStore:
       destinationPath: ""
       endpointURL: ""
@@ -399,7 +454,8 @@ cloudnativepg:
         compression: gzip
         encryption: AES256
         maxParallel: 4
-        additionalCommandArgs: []
+        archiveAdditionalCommandArgs: []
+        restoreAdditionalCommandArgs: []
       data:
         compression: gzip
         encryption: AES256
@@ -416,6 +472,8 @@ cloudnativepg:
     suspend: false
     target: ""
   recovery:
+    # Each entry: {name, barmanObjectName, serverName}. The ObjectStore named
+    # by barmanObjectName must exist in the release namespace.
     externalClusters: []
   tde:
     enabled: false
@@ -433,7 +491,7 @@ siem:
 
 fips:
   enabled: false
-  imageRepository: registry.example.internal/helix/helix-fips
+  imageRepository: ghcr.io/billiondollarsolo/helix-workspace-fips
   imageDigest: ""
   nodeSelector:
     node-restriction.kubernetes.io/fips: "true"
@@ -483,6 +541,10 @@ migrations:
   # failure is a database that is not reachable yet rather than contention.
   backoffLimit: 1
   activeDeadlineSeconds: 900
+  # Seconds the runner waits for PostgreSQL and its bootstrap prerequisites
+  # (extensions, roles) before failing. Covers a CloudNativePG cluster that is
+  # still initialising during a first install.
+  databaseWaitSeconds: 600
   resources:
     requests:
       cpu: 100m

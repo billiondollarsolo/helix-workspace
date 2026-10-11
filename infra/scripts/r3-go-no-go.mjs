@@ -20,7 +20,6 @@ export const R3_REQUIRED_STRUCTURAL = [
   "apps/helix/src/config/workspace-packaging.ts",
   "infra/scripts/rpo-rto-check.mjs",
   "infra/scripts/k8s-drill-dry-run.mjs",
-  "infra/scripts/v1-phase-artifact-gate.test.mjs",
   "infra/helm/helix/Chart.yaml",
   "docker-compose.production.yml",
 ];

@@ -41,6 +41,11 @@
       "surface": "shell"
     },
     {
+      "name": "Search",
+      "path": "/search?q=harbor",
+      "surface": "shell"
+    },
+    {
       "name": "Mail settings General",
       "path": "/assistant?settings=mail/general",
       "surface": "shell"

@@ -8,6 +8,7 @@ import { ShellOverlayContext } from "@/components/shell";
 import { MAIL_COMPOSE_RECOVERY_KEY, writeMailComposeRecovery } from "./mail-compose-recovery";
 import { MailShell } from "./mail-shell";
 import { FOLDERS, LABELS, threadRow, UPDATES_ROW, THREAD_DETAIL } from "./mail-shell.test-fixtures";
+import { shellOverlaysForTest } from "@/test/shell-overlays";
 
 const navigateMock = vi.fn();
 const uploadDriveFileMock = vi.fn();
@@ -38,11 +39,7 @@ vi.mock("@helix/sdk-web", () => ({
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-const overlayApi = {
-  openNotifications: vi.fn(),
-  openPalette: vi.fn(),
-  openSettings: vi.fn(),
-};
+const overlayApi = shellOverlaysForTest();
 
 describe("MailShell", () => {
   let container: HTMLDivElement;

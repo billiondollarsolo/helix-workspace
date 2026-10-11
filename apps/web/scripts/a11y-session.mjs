@@ -88,6 +88,24 @@ const FIXTURES = new Map([
     },
   ],
   ["/v1/api/core-apps", coreAppsShell()],
+  [
+    "/v1/api/people",
+    {
+      people: [
+        {
+          id: "a11y-person",
+          email: "harbor.lead@helix.local",
+          displayName: "Harbor Lead",
+          kind: "directory",
+          favorite: false,
+          avatarDataUrl: null,
+          relationship: {},
+          actorId: null,
+          title: null,
+        },
+      ],
+    },
+  ],
   ["/v1/api/admin/core-apps", coreAppsAdmin()],
   ["/v1/api/admin/users", { users: [AUDIT_ACTOR], nextCursor: null }],
   ["/v1/api/admin/domains", { domains: [] }],
@@ -181,6 +199,29 @@ const TOOL_FIXTURES = new Map([
   ],
   ["notifications.list", { notifications: [] }],
   ["webhook.overview", { outbound: [], inbound: [], deliveries: [] }],
+  [
+    "search.query",
+    {
+      query: "harbor",
+      estimatedTotalHits: 2,
+      hits: [
+        {
+          id: "mail:a11y",
+          type: "mail",
+          title: "Harbor review",
+          body: "Harbor review\nCan we move the harbor review to Thursday?",
+          attributes: { threadId: "00000000-0000-4000-8000-0000000000b1", fromName: "Nora" },
+        },
+        {
+          id: "drive:a11y",
+          type: "drive",
+          title: "Harbor brief.md",
+          body: "Harbor brief.md",
+          attributes: { fileId: "a11y-file", ownerName: "Samara" },
+        },
+      ],
+    },
+  ],
 ]);
 
 /**

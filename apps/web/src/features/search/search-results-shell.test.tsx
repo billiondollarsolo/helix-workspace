@@ -1,221 +1,196 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, type AnchorHTMLAttributes, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SearchErrorState, SearchResultsShell } from "./search-results-shell";
 import type { GlobalSearchHit } from "./api";
+import type { SearchFilter } from "./route-search";
+import { SearchResultsShell } from "./search-results-shell";
 
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({
+    to,
+    search,
+    children,
+    ...props
+  }: {
+    readonly to: string;
+    readonly search?: Record<string, string | boolean>;
+    readonly children: ReactNode;
+  } & AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a
+      href={`${to}?${new URLSearchParams(search as Record<string, string>).toString()}`}
+      {...props}
+    >
+      {children}
+    </a>
+  ),
+}));
 
-const backendHits = [
+const hits = [
   {
-    body: "Planning notes for the launch",
-    id: "mail:launch-plan",
-    score: 0.91,
-    title: "Launch plan",
+    id: "mail:1",
     type: "mail",
-    updatedAt: "2026-05-20T12:00:00.000Z",
-    url: "/mail?thread=launch-plan",
+    title: "Launch plan",
+    body: "Launch plan\nNora Patel <nora@helix.test>\nmira@helix.test\nPlanning notes for the launch next week.",
+    attributes: {
+      threadId: "11111111-1111-4111-8111-111111111111",
+      fromName: "Nora Patel",
+      sentAt: "2026-05-20T12:00:00.000Z",
+    },
   },
   {
-    body: "Drive result body",
-    id: "drive:launch-deck",
-    score: 0.72,
-    title: "Launch deck",
+    id: "drive:1",
     type: "drive",
-    updatedAt: "2026-05-20T12:05:00.000Z",
-    url: "/drive/launch-deck",
+    title: "Launch deck.pdf",
+    body: "Launch deck.pdf application/pdf",
+    attributes: { fileId: "f-1", parentFolderId: "folder-1", path: ["Launch", "Launch deck.pdf"] },
   },
 ] satisfies readonly GlobalSearchHit[];
+
+const people = [
+  {
+    id: "p-1",
+    email: "luca@helix.test",
+    displayName: "Luca Launch",
+    kind: "directory",
+    favorite: false,
+    avatarDataUrl: null,
+    relationship: {},
+    actorId: null,
+    title: null,
+  },
+];
 
 describe("SearchResultsShell", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let queryClient: QueryClient;
+  let client: QueryClient;
   let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
+  let searchFails = false;
 
   beforeEach(() => {
-    vi.useFakeTimers();
+    searchFails = false;
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    queryClient = new QueryClient({
-      defaultOptions: {
-        queries: {
-          retry: false,
-          staleTime: 0,
-        },
-      },
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    fetchMock = vi.fn<typeof fetch>((input) => {
+      const url = requestUrl(input);
+      if (url.includes("search.query")) {
+        return Promise.resolve(
+          searchFails
+            ? Response.json({ error: "down" }, { status: 503 })
+            : Response.json({ hits, query: "launch", estimatedTotalHits: hits.length }),
+        );
+      }
+      if (url.includes("/api/people")) {
+        return Promise.resolve(Response.json({ people }));
+      }
+      return Promise.resolve(Response.json({}));
     });
-    fetchMock = vi.fn<typeof fetch>(() =>
-      Promise.resolve(
-        Response.json({
-          estimatedTotalHits: backendHits.length,
-          hits: backendHits,
-          query: "launch",
-        }),
-      ),
-    );
     vi.stubGlobal("fetch", fetchMock);
-    globalThis.ResizeObserver = class ResizeObserver {
-      disconnect() {
-        return undefined;
-      }
-
-      observe() {
-        return undefined;
-      }
-
-      unobserve() {
-        return undefined;
-      }
-    };
   });
 
   afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
-    vi.useRealTimers();
+    act(() => root.unmount());
     container.remove();
+    client.clear();
     vi.unstubAllGlobals();
-    document.body.replaceChildren();
   });
 
-  it("renders backend search hits in a virtualized shadcn table", async () => {
-    renderSearch();
-    await waitForText("Launch plan");
-
-    const virtualizer = container.querySelector('[data-testid="search-results-virtualizer"]');
-    expect(virtualizer).toBeInstanceOf(HTMLDivElement);
-    const table = container.querySelector("table");
-    expect(table).toBeInstanceOf(HTMLTableElement);
-    expect(table?.textContent).toContain("Planning notes for the launch");
-    expect(table?.querySelector("[data-index='0']")).toBeInstanceOf(HTMLTableRowElement);
-    expect(table?.querySelector("time")?.getAttribute("dateTime")).toBe("2026-05-20T12:00:00.000Z");
-    expect(table?.querySelector("time")?.getAttribute("title")).toBeTruthy();
-    const searchInput = container.querySelector<HTMLInputElement>('input[type="search"]');
-    expect(searchInput?.name).toBe("workspace-search");
-    expect(searchInput?.autocomplete).toBe("off");
-
-    expect(
-      Array.from(
-        container.querySelectorAll(".search-type-filters button"),
-        (button) => button.textContent,
-      ),
-    ).toEqual(["Mail", "Chat", "Drive", "Calendar"]);
-
-    expect(JSON.parse(requestBodyAt(0))).toEqual({
-      limit: 100,
-      offset: 0,
-      query: "launch",
-    });
-  });
-
-  it("opens a selected search hit", async () => {
-    const onOpenSearchHit = vi.fn();
-    renderSearch({ onOpenSearchHit });
-    await waitForText("Launch plan");
-
-    await act(async () => {
-      button("Open Launch plan").click();
-      await Promise.resolve();
-    });
-
-    expect(onOpenSearchHit).toHaveBeenCalledWith(backendHits[0]);
-  });
-
-  it("projects result type filters into route state and backend query input", async () => {
-    const onSearchStateChange = vi.fn();
-    renderSearch({ onSearchStateChange });
-    await waitForText("Launch plan");
-
-    await act(async () => {
-      button("Drive").click();
-      await Promise.resolve();
-    });
-    await waitForFetchCallCount(2);
-
-    expect(onSearchStateChange).toHaveBeenLastCalledWith({ q: "launch", types: ["drive"] });
-    expect(JSON.parse(requestBodyAt(1))).toEqual({
-      limit: 100,
-      offset: 0,
-      query: "launch",
-      types: ["drive"],
-    });
-    expect(container.textContent).toContain("Clear filters");
-
-    await act(async () => {
-      button("Clear filters").click();
-      await Promise.resolve();
-    });
-    expect(onSearchStateChange).toHaveBeenLastCalledWith({ q: "launch" });
-  });
-
-  it("offers an actionable retry when search is unavailable", () => {
-    const onRetry = vi.fn();
-    act(() => root.render(<SearchErrorState onRetry={onRetry} />));
-
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      "Check your connection",
-    );
-    act(() => button("Retry search").click());
-    expect(onRetry).toHaveBeenCalledTimes(1);
-  });
-
-  function renderSearch(props: Partial<Parameters<typeof SearchResultsShell>[0]> = {}) {
+  function render(query: string, filter?: SearchFilter, onFilterChange = vi.fn()) {
     act(() => {
       root.render(
-        <QueryClientProvider client={queryClient}>
-          <SearchResultsShell initialQuery="launch" {...props} />
+        <QueryClientProvider client={client}>
+          <SearchResultsShell query={query} filter={filter} onFilterChange={onFilterChange} />
         </QueryClientProvider>,
       );
     });
+    return onFilterChange;
   }
 
-  async function waitForText(text: string) {
-    for (let index = 0; index < 20; index += 1) {
+  async function settle() {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       await act(async () => {
-        vi.advanceTimersByTime(300);
-        await Promise.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 0));
       });
-      if (container.textContent?.includes(text)) {
-        return;
-      }
     }
-    throw new Error(`Missing text: ${text}`);
   }
 
-  async function waitForFetchCallCount(count: number) {
-    for (let index = 0; index < 20; index += 1) {
-      await act(async () => {
-        await Promise.resolve();
-      });
-      if (fetchMock.mock.calls.length >= count) {
-        return;
-      }
-    }
-    throw new Error(`Expected ${String(count)} fetch calls.`);
+  function searchBodies(): unknown[] {
+    return fetchMock.mock.calls
+      .filter(([input]) => requestUrl(input).includes("search.query"))
+      .map(([, init]) => JSON.parse(typeof init?.body === "string" ? init.body : "{}") as unknown);
   }
 
-  function button(name: string) {
-    const candidate = [...container.querySelectorAll("button")].find(
-      (element) => element.textContent === name || element.getAttribute("aria-label") === name,
+  it("prompts for a query before searching", () => {
+    render("");
+    expect(container.textContent).toContain("Search mail, files, chat messages, events and people");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lists people and ranked content with links into each app", async () => {
+    render("launch");
+    await settle();
+
+    expect(container.textContent).toContain("3 results for “launch”");
+    const links = Array.from(container.querySelectorAll<HTMLAnchorElement>("a.search-result"));
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/mail?compose=new&to=luca%40helix.test",
+      "/mail?thread=11111111-1111-4111-8111-111111111111",
+      "/drive?file=f-1&folder=folder-1",
+    ]);
+    expect(links[1]?.textContent).toContain("Mail · Nora Patel");
+    expect(links[1]?.textContent).toContain("Planning notes for the launch");
+    expect(links[1]?.textContent).not.toContain("nora@helix.test");
+    expect(links[2]?.textContent).toContain("in Launch");
+    expect(searchBodies()).toEqual([{ query: "launch", limit: 20, offset: 0 }]);
+  });
+
+  it("filters by app with pressed chips", async () => {
+    const onFilterChange = render("launch", "drive");
+    await settle();
+    const chips = Array.from(container.querySelectorAll<HTMLButtonElement>(".search-chip"));
+    expect(chips.map((chip) => chip.textContent)).toEqual([
+      "All",
+      "Mail",
+      "Files",
+      "Chat messages",
+      "Events",
+      "People",
+    ]);
+    expect(chips.find((chip) => chip.getAttribute("aria-pressed") === "true")?.textContent).toBe(
+      "Files",
     );
-    if (!(candidate instanceof HTMLButtonElement)) {
-      throw new Error(`Missing button: ${name}`);
-    }
-    return candidate;
-  }
+    expect(searchBodies()).toEqual([{ query: "launch", types: ["drive"], limit: 20, offset: 0 }]);
+    expect(fetchMock.mock.calls.some(([input]) => requestUrl(input).includes("/api/people"))).toBe(
+      false,
+    );
 
-  function requestBodyAt(index: number): string {
-    const body = fetchMock.mock.calls[index]?.[1]?.body;
-    if (typeof body !== "string") {
-      throw new Error(`Missing string request body at index ${String(index)}`);
-    }
-    return body;
-  }
+    act(() => chips[5]?.click());
+    expect(onFilterChange).toHaveBeenCalledWith("people");
+  });
+
+  it("explains a failed search and retries it", async () => {
+    searchFails = true;
+    render("launch", "mail");
+    await settle();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "Search is unavailable",
+    );
+    searchFails = false;
+    const retry = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Retry search",
+    );
+    act(() => retry?.click());
+    await settle();
+    expect(container.textContent).toContain("Launch plan");
+  });
 });
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+}

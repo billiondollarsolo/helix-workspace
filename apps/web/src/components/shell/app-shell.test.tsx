@@ -6,7 +6,7 @@ import { redirectToLogin, sessionQueryKeys } from "@/lib/auth";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./app-shell";
-import type { SettingsSectionId } from "./overlay-context";
+import { useShellOverlays, type SettingsSectionId } from "./overlay-context";
 
 const navigate = vi.fn();
 let routeSearch: Record<string, unknown> = {};
@@ -24,22 +24,31 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 vi.mock("@/components/shell/rail", () => ({
-  Rail: ({
-    onOpenLauncher,
-    onOpenHelp,
-  }: {
-    readonly onOpenLauncher: () => void;
-    readonly onOpenHelp: () => void;
-  }) => (
-    <>
-      <button type="button" onClick={onOpenLauncher}>
-        Apps
-      </button>
-      <button type="button" onClick={onOpenHelp}>
-        Help
-      </button>
-    </>
-  ),
+  Rail: ({ onOpenLauncher }: { readonly onOpenLauncher: () => void }) => {
+    const overlays = useShellOverlays();
+    return (
+      <>
+        <button type="button" onClick={onOpenLauncher}>
+          Apps
+        </button>
+        <button type="button" onClick={overlays.openShortcuts}>
+          Keyboard shortcuts
+        </button>
+      </>
+    );
+  },
+}));
+
+vi.mock("@/components/shell/bottom-nav", () => ({
+  BottomNav: () => null,
+}));
+
+vi.mock("@/components/shell/quick-settings", () => ({
+  QuickSettings: () => null,
+}));
+
+vi.mock("@/components/shell/help-menu", () => ({
+  AboutDialog: () => null,
 }));
 
 vi.mock("@/components/shell/app-launcher", () => ({
@@ -177,7 +186,7 @@ describe("AppShell settings URL state", () => {
     expect(redirectToLogin).toHaveBeenCalledOnce();
   });
 
-  it("routes Help to the keyboard-shortcuts section", () => {
+  it("opens the keyboard-shortcuts help dialog from Help", () => {
     routeSearch = {};
     act(() =>
       root.render(
@@ -186,14 +195,9 @@ describe("AppShell settings URL state", () => {
         </QueryClientProvider>,
       ),
     );
-    act(() => findButton(container, "Help")?.click());
-
-    const helpNavigation = navigate.mock.calls[0]?.[0] as {
-      readonly search: (previous: Record<string, unknown>) => Record<string, unknown>;
-    };
-    expect(applySearchUpdate(helpNavigation, { q: "launch" })).toEqual({
-      q: "launch",
-      settings: "shortcuts",
-    });
+    act(() => findButton(container, "Keyboard shortcuts")?.click());
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain("Keyboard shortcuts");
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

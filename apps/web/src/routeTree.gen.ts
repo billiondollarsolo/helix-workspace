@@ -23,6 +23,7 @@ import { Route as ShellChatIndexRouteImport } from './routes/_shell/chat/index'
 import { Route as ShellDriveIndexRouteImport } from './routes/_shell/drive/index'
 import { Route as ShellMailIndexRouteImport } from './routes/_shell/mail/index'
 import { Route as ShellMeetIndexRouteImport } from './routes/_shell/meet/index'
+import { Route as ShellSearchIndexRouteImport } from './routes/_shell/search/index'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -93,6 +94,11 @@ const ShellMeetIndexRoute = ShellMeetIndexRouteImport.update({
   path: '/meet/',
   getParentRoute: () => ShellRoute,
 } as any)
+const ShellSearchIndexRoute = ShellSearchIndexRouteImport.update({
+  id: '/search/',
+  path: '/search/',
+  getParentRoute: () => ShellRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -108,6 +114,7 @@ export interface FileRoutesByFullPath {
   '/drive/': typeof ShellDriveIndexRoute
   '/mail/': typeof ShellMailIndexRoute
   '/meet/': typeof ShellMeetIndexRoute
+  '/search/': typeof ShellSearchIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -123,6 +130,7 @@ export interface FileRoutesByTo {
   '/drive': typeof ShellDriveIndexRoute
   '/mail': typeof ShellMailIndexRoute
   '/meet': typeof ShellMeetIndexRoute
+  '/search': typeof ShellSearchIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -140,6 +148,7 @@ export interface FileRoutesById {
   '/_shell/drive/': typeof ShellDriveIndexRoute
   '/_shell/mail/': typeof ShellMailIndexRoute
   '/_shell/meet/': typeof ShellMeetIndexRoute
+  '/_shell/search/': typeof ShellSearchIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -157,6 +166,7 @@ export interface FileRouteTypes {
     | '/drive/'
     | '/mail/'
     | '/meet/'
+    | '/search/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -172,6 +182,7 @@ export interface FileRouteTypes {
     | '/drive'
     | '/mail'
     | '/meet'
+    | '/search'
   id:
     | '__root__'
     | '/'
@@ -188,6 +199,7 @@ export interface FileRouteTypes {
     | '/_shell/drive/'
     | '/_shell/mail/'
     | '/_shell/meet/'
+    | '/_shell/search/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -299,6 +311,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellMeetIndexRouteImport
       parentRoute: typeof ShellRoute
     }
+    '/_shell/search/': {
+      id: '/_shell/search/'
+      path: '/search'
+      fullPath: '/search/'
+      preLoaderRoute: typeof ShellSearchIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
   }
 }
 
@@ -311,6 +330,7 @@ interface ShellRouteChildren {
   ShellDriveIndexRoute: typeof ShellDriveIndexRoute
   ShellMailIndexRoute: typeof ShellMailIndexRoute
   ShellMeetIndexRoute: typeof ShellMeetIndexRoute
+  ShellSearchIndexRoute: typeof ShellSearchIndexRoute
 }
 
 const ShellRouteChildren: ShellRouteChildren = {
@@ -322,6 +342,7 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellDriveIndexRoute: ShellDriveIndexRoute,
   ShellMailIndexRoute: ShellMailIndexRoute,
   ShellMeetIndexRoute: ShellMeetIndexRoute,
+  ShellSearchIndexRoute: ShellSearchIndexRoute,
 }
 
 const ShellRouteWithChildren = ShellRoute._addFileChildren(ShellRouteChildren)

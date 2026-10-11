@@ -1,171 +1,157 @@
 import {
   Bell as BellIcon,
-  Moon as MoonIcon,
   Search as SearchIcon,
   Settings as SettingsIcon,
-  Sun as SunIcon,
   X as XIcon,
 } from "lucide-react";
-/* TopBar — surface title, search slot, action slot, theme toggle, bell,
-   settings cog, profile avatar. Ported from the design handoff
-   (shell.jsx → TopBar). 44px compact / 56px roomy via CSS.
+/* TopBar — navigation toggle, surface title, search, surface actions,
+   notifications, quick settings and the account button.
 
-   The search renders as a live `<input>` when `onSearchChange` is supplied
-   (e.g. Mail's operator search); otherwise it is a button that opens the
-   ⌘K command palette. */
+   Search is always a real search form. A surface that passes `onSearchChange`
+   owns the query (Mail searches mail, Drive searches files) and is told about
+   Enter through `onSearchSubmit`. Otherwise Enter opens `/search?q=…`, scoped
+   to the current app when its content is indexed. */
 
-import { toggleTheme, useResolvedTheme } from "@/components/settings-store";
+import { appForRoute } from "@/components/apps";
 import { useShellOverlays } from "@/components/shell/overlay-context";
 import { ProfileMenu } from "@/components/shell/profile-menu";
-import { Avatar } from "@/components/ui/avatar";
-import { sessionUserQueryOptions } from "@/lib/auth";
+import { searchFilterForApp } from "@/features/search/route-search";
 import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
-import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState, type ReactNode } from "react";
 
 export interface TopBarProps {
   /** Surface name shown left of search. */
   title: string;
+  /** Navigation toggle rendered before the title. */
   navigationToggle?: ReactNode;
   /** Icon next to the title. */
   icon?: ReactNode;
-  /** Search input / palette button placeholder text. */
+  /** Search placeholder text, also the field's accessible name. */
   searchPlaceholder?: string;
   /** Surface-specific action buttons rendered before the shell controls. */
   actions?: ReactNode;
   /** Unread notification count — drives the bell badge. */
   notifUnread?: number;
-  /** Live search value. When provided with `onSearchChange`, search is a
-   *  controlled input instead of a palette trigger. */
+  /** Surface-owned query. Supply with `onSearchChange`. */
   searchValue?: string;
-  /** Live search change handler — its presence switches search to a live input. */
+  /** Makes the surface own the query instead of opening `/search`. */
   onSearchChange?: (value: string) => void;
+  /** Enter in a surface-owned search. */
+  onSearchSubmit?: (value: string) => void;
 }
 
 export function TopBar({
   title,
   navigationToggle,
   icon,
-  searchPlaceholder = "Search",
+  searchPlaceholder = "Search Helix",
   actions,
   notifUnread = 0,
   searchValue,
   onSearchChange,
+  onSearchSubmit,
 }: TopBarProps) {
   const overlays = useShellOverlays();
-  const theme = useResolvedTheme();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const profileButtonRef = useRef<HTMLButtonElement | null>(null);
-  const sessionQuery = useQuery(sessionUserQueryOptions());
-  const avatarName = sessionQuery.data?.name ?? sessionQuery.data?.email ?? "User";
-
-  const hasLiveSearch = typeof onSearchChange === "function";
+  const navigate = useNavigate();
+  const [draft, setDraft] = useState("");
+  const surfaceOwnsSearch = typeof onSearchChange === "function";
+  const value = surfaceOwnsSearch ? (searchValue ?? "") : draft;
+  const setValue = surfaceOwnsSearch ? onSearchChange : setDraft;
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   useShortcuts("global", {
-    "global.focus-search": hasLiveSearch
-      ? () => searchInputRef.current?.focus()
-      : overlays.openPalette,
+    "global.focus-search": () => searchInputRef.current?.focus(),
   });
 
   return (
-    <header className="topbar relative">
+    <header className="topbar">
       {navigationToggle}
       <div className="topbar-title">
         {icon}
         <span>{title}</span>
       </div>
-      <div className="w-4" />
-      {hasLiveSearch ? (
-        <div className="search">
-          <SearchIcon size={16} />
-          <input
-            ref={searchInputRef}
-            name={`${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-search`}
-            value={searchValue ?? ""}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder={searchPlaceholder}
-            aria-label={searchPlaceholder}
-          />
-          {searchValue ? (
-            <button
-              type="button"
-              className="icon-btn w-5.5 h-5.5"
-
-              onClick={() => onSearchChange("")}
-              aria-label="Clear search"
-            >
-              <XIcon size={16} />
-            </button>
-          ) : (
-            <span className="kbd">⌘K</span>
-          )}
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={overlays.openPalette}
-          className="search cursor-pointer text-left"
-
-          aria-label="Open command palette"
-        >
-          <SearchIcon size={16} />
-          <span className="flex-1 text-muted-foreground type-body-sm">{searchPlaceholder}</span>
-          <span className="kbd">⌘K</span>
-        </button>
-      )}
-      <div className="topbar-actions row gap-2 ml-auto">
+      <form
+        role="search"
+        className="search"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (surfaceOwnsSearch) {
+            onSearchSubmit?.(value);
+            return;
+          }
+          const q = value.trim();
+          if (q.length === 0) return;
+          // Read at submit time: the app the person is in when they press Enter.
+          const scope = searchFilterForApp(appForRoute(window.location.pathname)?.id);
+          void navigate({ to: "/search", search: { q, ...(scope ? { type: scope } : {}) } });
+        }}
+      >
+        <SearchIcon size={16} aria-hidden="true" />
+        <input
+          ref={searchInputRef}
+          type="text"
+          name={`${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-search`}
+          autoComplete="off"
+          enterKeyHint="search"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder={searchPlaceholder}
+          aria-label={searchPlaceholder}
+        />
+        {value ? (
+          <button
+            type="button"
+            className="icon-btn search-clear"
+            onClick={() => setValue("")}
+            aria-label="Clear search"
+          >
+            <XIcon size={16} aria-hidden="true" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="search-palette"
+            onClick={overlays.openPalette}
+            aria-label="Open command palette"
+            title="Command palette"
+          >
+            <span className="kbd" aria-hidden="true">
+              ⌘K
+            </span>
+          </button>
+        )}
+      </form>
+      <div className="topbar-actions">
         {actions}
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={toggleTheme}
-          title="Toggle theme"
-          aria-label="Toggle theme"
-        >
-          {theme === "dark" ? <SunIcon size={16} /> : <MoonIcon size={16} />}
-        </button>
         <button
           type="button"
           className="icon-btn relative"
           onClick={overlays.openNotifications}
+          data-notifications-trigger
           title="Notifications"
-          aria-label="Notifications"
+          aria-label={
+            notifUnread > 0 ? `Notifications, ${String(notifUnread)} unread` : "Notifications"
+          }
         >
-          <BellIcon size={16} />
+          <BellIcon size={16} aria-hidden="true" />
           {notifUnread > 0 ? (
-            <span className="absolute top-1 right-1 min-w-3.5 h-3.5 [padding:0_3px] [background:var(--danger)] [color:white] type-overline font-bold [border-radius:999px] grid [place-items:center] [border:2px_solid_var(--surface)]">
-              {notifUnread}
+            <span className="topbar-badge" aria-hidden="true">
+              {notifUnread > 99 ? "99+" : notifUnread}
             </span>
           ) : null}
         </button>
         <button
           type="button"
-          className="icon-btn"
-          onClick={() => overlays.openSettings()}
-          title="Settings"
-          aria-label="Settings"
+          className="icon-btn topbar-quick-settings"
+          onClick={overlays.openQuickSettings}
+          title="Quick settings"
+          aria-label="Quick settings"
+          aria-haspopup="dialog"
         >
-          <SettingsIcon size={16} />
+          <SettingsIcon size={16} aria-hidden="true" />
         </button>
-        <button
-          ref={profileButtonRef}
-          type="button"
-          onClick={() => setMenuOpen((open) => !open)}
-          className="[border-radius:999px] p-0 [border:none] [background:none] cursor-pointer"
-          aria-label="Profile"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          aria-controls="profile-menu"
-        >
-          <Avatar name={avatarName} size={28} />
-        </button>
+        <ProfileMenu openSettings={overlays.openSettings} />
       </div>
-      <ProfileMenu
-        open={menuOpen}
-        onClose={() => setMenuOpen(false)}
-        anchorRef={profileButtonRef}
-        openSettings={overlays.openSettings}
-      />
     </header>
   );
 }

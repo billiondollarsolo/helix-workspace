@@ -89,6 +89,63 @@ describe("NotificationsPanel", () => {
     opener.remove();
   });
 
+  it("groups by app, marks unread rows, and offers Mark all read", async () => {
+    const item = (id: string, verb: string, unread: boolean) => ({
+      id,
+      verb,
+      summary: `${verb} summary`,
+      body: null,
+      createdAt: "2026-07-28T12:00:00.000Z",
+      unread,
+    });
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        items: [
+          item("1", "chat.mention", true),
+          item("2", "mail.received", false),
+          item("3", "approval.requested", true),
+          item("4", "mail.received", true),
+        ],
+      },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+    } as never);
+    act(() => root.render(<NotificationsPanel open onClose={() => undefined} />));
+    await act(async () => Promise.resolve());
+
+    const headings = Array.from(container.querySelectorAll("h3")).map((h) => h.textContent);
+    expect(headings).toEqual(["Mail", "Chat", "Helix"]);
+    expect(container.querySelectorAll(".notification-dot")).toHaveLength(3);
+    expect(container.querySelector('[role="tab"][aria-selected="false"]')?.textContent).toBe(
+      "Unread (3)",
+    );
+
+    const markAll = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Mark all read",
+    );
+    expect(markAll?.disabled).toBe(false);
+    act(() => markAll?.click());
+    expect(markAllRead).toHaveBeenCalledTimes(1);
+
+    const mailRow = container.querySelector<HTMLButtonElement>(".notification-row.unread");
+    act(() => mailRow?.click());
+    expect(markRead).toHaveBeenCalledWith(["4"]);
+    expect(navigate).toHaveBeenCalledWith({ to: "/mail" });
+  });
+
+  it("shows an empty state when everything is read", async () => {
+    vi.mocked(useQuery).mockReturnValue({
+      data: { items: [] },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+    } as never);
+    act(() => root.render(<NotificationsPanel open onClose={() => undefined} />));
+    await act(async () => Promise.resolve());
+    expect(container.textContent).toContain("You’re all caught up");
+  });
+
   it("formats past and future values without hardcoded English abbreviations", () => {
     const now = Date.parse("2026-07-28T12:05:00.000Z");
     expect(formatRelativeNotificationTime("2026-07-28T12:00:00.000Z", now, "en-US").relative).toBe(

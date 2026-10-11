@@ -16,6 +16,7 @@ import {
 } from "./jitsi-external-api";
 import type { MeetCallSession } from "./meet-shell";
 import * as authModule from "@/lib/auth";
+import { shellOverlaysForTest } from "@/test/shell-overlays";
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
   const actual = await importOriginal<typeof TanStackRouter>();
@@ -28,11 +29,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-const noopOverlays = {
-  openNotifications: () => undefined,
-  openPalette: () => undefined,
-  openSettings: () => undefined,
-};
+const noopOverlays = shellOverlaysForTest();
 
 /* A live `meet.meetings.list` payload covering Today (active) + Recent. */
 const meetingsPayload = {

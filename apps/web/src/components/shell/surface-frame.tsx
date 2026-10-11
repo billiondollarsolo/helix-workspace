@@ -1,19 +1,22 @@
 import { Menu as MenuIcon } from "lucide-react";
-/* SurfaceFrame — the per-surface chrome wrapper.
-   Renders `.workspace` (TopBar + `.workspace-body`) with the right side-panel
-   rail, mirroring the prototype's per-app `.workspace` element.
-
-   Surface agents wrap their surface body in this:
+/* SurfaceFrame — the per-surface chrome wrapper: `.workspace` with the TopBar,
+   the surface body, and the side-panel rail.
 
      <SurfaceFrame title="Mail" icon={<MailIcon />}>
        <MailSidebar /> <ThreadList />
      </SurfaceFrame>
 
-   The TopBar's search becomes a live input when `searchValue` +
-   `onSearchChange` are passed; otherwise it opens the ⌘K palette. */
+   The hamburger collapses the surface's `.surf-sidebar` to an icon rail on
+   desktop (remembered per device) and opens it as a drawer on phones.
+
+   Search: pass `searchValue` + `onSearchChange` (+ `onSearchSubmit` for Enter)
+   for a surface-owned search such as Mail's; omit them and the top bar opens
+   `/search?q=…` instead. */
 
 import { SidePanel, SidePanelRail, type SideTool } from "@/components/shell/side-panel";
 import { TopBar } from "@/components/shell/top-bar";
+import { toggleNavCollapsed, useNavCollapsed } from "@/components/shell/nav-collapse";
+import { useMobileLayout } from "@/components/shell/use-mobile-layout";
 import { unreadCountQueryOptions } from "@/features/notifications/api";
 import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
@@ -27,11 +30,12 @@ export interface SurfaceFrameProps {
   searchPlaceholder?: string;
   /** Surface-specific TopBar action buttons. */
   actions?: ReactNode;
-  /** Live search value — supply with `onSearchChange` for an operator-style
-   *  search input (Mail). Omit to use the ⌘K palette trigger. */
+  /** Surface-owned query — supply with `onSearchChange`. */
   searchValue?: string;
-  /** Live search change handler. */
+  /** Makes the top-bar search drive this surface instead of `/search`. */
   onSearchChange?: (value: string) => void;
+  /** Enter in a surface-owned search. */
+  onSearchSubmit?: (value: string) => void;
   /** The surface body — typically a left sidebar + main pane. Rendered inside
    *  `.workspace-body`, before the side-panel rail. */
   children: ReactNode;
@@ -44,26 +48,35 @@ export function SurfaceFrame({
   actions,
   searchValue,
   onSearchChange,
+  onSearchSubmit,
   children,
 }: SurfaceFrameProps) {
-  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [sideTool, setSideTool] = useState<SideTool | null>(null);
+  const collapsed = useNavCollapsed();
+  const mobile = useMobileLayout();
   // Live unread count for the bell badge. Polls every 30s and refreshes when
   // notifications.mark-read / mark-all-read run (queryClient invalidation).
   const { data: unreadData } = useQuery(unreadCountQueryOptions());
 
   return (
-    <div className="workspace" data-navigation-open={navigationOpen}>
+    <div className="workspace" data-navigation-open={drawerOpen}>
       <TopBar
         navigationToggle={
           <button
             type="button"
             className="icon-btn workspace-navigation-toggle"
-            aria-label="Toggle section navigation"
-            aria-expanded={navigationOpen}
-            onClick={() => setNavigationOpen((open) => !open)}
+            aria-label="Main menu"
+            aria-expanded={mobile ? drawerOpen : !collapsed}
+            onClick={() => {
+              if (mobile) {
+                setDrawerOpen((open) => !open);
+              } else {
+                toggleNavCollapsed();
+              }
+            }}
           >
-            <MenuIcon size={16} />
+            <MenuIcon size={18} aria-hidden="true" />
           </button>
         }
         title={title}
@@ -73,6 +86,7 @@ export function SurfaceFrame({
         notifUnread={unreadData?.count ?? 0}
         searchValue={searchValue}
         onSearchChange={onSearchChange}
+        onSearchSubmit={onSearchSubmit}
       />
       <main id="main-content" className="workspace-body" aria-label={title} tabIndex={-1}>
         {children}

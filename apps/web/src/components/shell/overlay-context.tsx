@@ -1,6 +1,6 @@
-/* Shell overlay state — notifications panel, command palette, settings page.
-   Ported from app.jsx's root-owned overlay booleans. Provided once by the
-   `_shell` layout so any surface or shell control can open them. */
+/* Shell overlay triggers — notifications, command palette, quick settings,
+   settings page, keyboard shortcuts and About. Provided once by the `_shell`
+   layout so any surface or shell control can open them. */
 
 import { createContext, useContext } from "react";
 
@@ -41,6 +41,12 @@ export interface ShellOverlayApi {
   openPalette: () => void;
   /** Open the full-screen settings page. */
   openSettings: (section?: SettingsSectionId) => void;
+  /** Open the quick settings drawer. */
+  openQuickSettings: () => void;
+  /** Open the keyboard-shortcuts help dialog. */
+  openShortcuts: () => void;
+  /** Open the About dialog. */
+  openAbout: () => void;
 }
 
 export const ShellOverlayContext = createContext<ShellOverlayApi | null>(null);

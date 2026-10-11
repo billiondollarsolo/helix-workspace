@@ -2,55 +2,82 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 
 test.describe("mobile shell layout", () => {
-  test("moves app navigation to a safe bottom rail without page overflow", async ({ page }) => {
+  test("uses a five-slot bottom bar with a More sheet and no page overflow", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await seedSession(page);
     await mockBackend(page);
     await page.goto("/drive");
     await expect(page.getByRole("main", { name: "Drive" })).toBeVisible();
 
+    const bottomNav = page.locator(".bottom-nav");
+    await expect(bottomNav).toBeVisible();
+    await expect(page.locator(".rail")).toBeHidden();
+    await expect(page.locator(".side-panel-rail")).toBeHidden();
+    await expect(page.locator(".topbar-title")).toHaveText("Drive");
+
+    const items = bottomNav.locator(".bottom-nav-item");
+    await expect(items).toHaveCount(5);
+    await expect(items).toHaveText(["Mail", "Calendar", "Drive", "Chat", "More"]);
+
     const layout = await page.evaluate(() => {
-      const rail = document.querySelector<HTMLElement>(".rail");
+      const nav = document.querySelector<HTMLElement>(".bottom-nav");
       const workspace = document.querySelector<HTMLElement>(".workspace");
-      const firstRailItem = document.querySelector<HTMLElement>(".rail-item");
-      if (rail === null || workspace === null || firstRailItem === null) {
+      const active = document.querySelector<HTMLElement>(".bottom-nav-item[data-active]");
+      const pill = active?.querySelector<HTMLElement>(".bottom-nav-pill") ?? null;
+      if (nav === null || workspace === null || active === null || pill === null) {
         throw new Error("Mobile shell elements were not rendered.");
       }
-      const railRect = rail.getBoundingClientRect();
-      const workspaceRect = workspace.getBoundingClientRect();
-      const itemRect = firstRailItem.getBoundingClientRect();
+      const item = active.getBoundingClientRect();
       return {
+        activeLabel: active.textContent,
         bodyWidth: document.documentElement.scrollWidth,
-        railBottom: railRect.bottom,
-        railDirection: getComputedStyle(rail).flexDirection,
-        railTop: railRect.top,
-        targetHeight: itemRect.height,
-        targetWidth: itemRect.width,
+        navBottom: nav.getBoundingClientRect().bottom,
+        navTop: nav.getBoundingClientRect().top,
+        pillBackground: getComputedStyle(pill).backgroundColor,
+        pillRadius: getComputedStyle(pill).borderTopLeftRadius,
+        targetHeight: item.height,
+        targetWidth: item.width,
         viewportWidth: document.documentElement.clientWidth,
-        workspaceBottom: workspaceRect.bottom,
+        workspaceBottom: workspace.getBoundingClientRect().bottom,
       };
     });
 
-    expect(layout.railDirection).toBe("row");
-    expect(layout.railBottom).toBeLessThanOrEqual(844);
-    expect(layout.workspaceBottom).toBeLessThanOrEqual(layout.railTop + 1);
+    expect(layout.activeLabel).toBe("Drive");
+    expect(layout.pillBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(layout.pillRadius).toBe("999px");
+    expect(layout.navBottom).toBeLessThanOrEqual(844);
+    expect(layout.workspaceBottom).toBeLessThanOrEqual(layout.navTop + 1);
     expect(layout.targetWidth).toBeGreaterThanOrEqual(44);
     expect(layout.targetHeight).toBeGreaterThanOrEqual(44);
     expect(layout.bodyWidth).toBeLessThanOrEqual(layout.viewportWidth);
 
-    await page.getByRole("button", { name: "Helix apps" }).click();
-    const launcher = page.getByRole("menu", { name: "Helix apps" });
-    await expect(launcher).toBeVisible();
-    const launcherBox = await launcher.boundingBox();
-    expect(launcherBox?.x ?? -1).toBeGreaterThanOrEqual(0);
-    expect((launcherBox?.x ?? 0) + (launcherBox?.width ?? 0)).toBeLessThanOrEqual(390);
-    expect((launcherBox?.y ?? 0) + (launcherBox?.height ?? 0)).toBeLessThanOrEqual(layout.railTop);
+    await bottomNav.getByRole("button", { name: "More" }).click();
+    const sheet = page.getByRole("dialog", { name: "More" });
+    await expect(sheet).toBeVisible();
+    await sheet.evaluate((element) =>
+      Promise.all(element.getAnimations().map((animation) => animation.finished)),
+    );
+    await expect(sheet.getByRole("link")).toHaveText(["Meet", "Helix AI", "Admin", "Search"]);
+    const sheetBox = await sheet.boundingBox();
+    expect(sheetBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+    expect((sheetBox?.x ?? 0) + (sheetBox?.width ?? 0)).toBeLessThanOrEqual(390);
+    expect((sheetBox?.y ?? 0) + (sheetBox?.height ?? 0)).toBeLessThanOrEqual(844);
+
+    await sheet.getByRole("link", { name: "Meet" }).click();
+    await expect(page).toHaveURL(/\/meet(?:[/?#]|$)/);
+    await expect(sheet).toBeHidden();
+    await expect(bottomNav.getByRole("button", { name: "More" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
   });
+
   test("keeps Mail controls usable while section navigation is collapsed", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await mockBackend(page);
     await page.goto("/mail");
-    const navigation = page.getByRole("button", { name: "Toggle section navigation" });
+    await expect(page.locator(".topbar-title")).toHaveText("Mail");
+    const navigation = page.getByRole("button", { name: "Main menu" });
     await expect(navigation).toBeVisible();
     await expect(page.getByRole("button", { name: "Compose", exact: true })).toBeHidden();
     const refresh = page.getByRole("button", { name: "Refresh", exact: true });

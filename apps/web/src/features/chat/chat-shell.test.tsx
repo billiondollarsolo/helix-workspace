@@ -13,6 +13,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { sessionQueryKeys } from "@/lib/auth";
+import { shellOverlaysForTest } from "@/test/shell-overlays";
 
 const ROOM_ID = "33333333-3333-4333-8333-333333333333";
 const DM_ID = "55555555-5555-4555-8555-555555555555";
@@ -148,11 +149,7 @@ class FakeWebSocket {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-const overlayApi = {
-  openNotifications: vi.fn(),
-  openPalette: vi.fn(),
-  openSettings: vi.fn(),
-};
+const overlayApi = shellOverlaysForTest();
 
 const navigateMock = vi.fn();
 vi.mock("@tanstack/react-router", () => ({

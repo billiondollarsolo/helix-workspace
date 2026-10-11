@@ -56,7 +56,8 @@ describe("AppLauncher", () => {
 
     const menu = container.querySelector<HTMLElement>('[role="menu"]');
     const items = Array.from(container.querySelectorAll<HTMLAnchorElement>('[role="menuitem"]'));
-    expect(items).toHaveLength(7);
+    expect(items).toHaveLength(8);
+    expect(items.map((item) => item.textContent)).toContain("Search");
     expect(items[0]?.dataset.preload).toBe("intent");
     expect(document.activeElement).toBe(items[0]);
 
@@ -77,5 +78,16 @@ describe("AppLauncher", () => {
     act(() => root.render(<AppLauncher open={false} onClose={close} />));
     expect(document.activeElement).toBe(opener);
     opener.remove();
+  });
+
+  it("closes on a pointer press outside the grid", () => {
+    const close = vi.fn();
+    act(() => {
+      root.render(<AppLauncher open onClose={close} />);
+    });
+    act(() => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

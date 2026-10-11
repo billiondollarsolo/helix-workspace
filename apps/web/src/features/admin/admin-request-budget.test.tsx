@@ -22,6 +22,7 @@ import {
   SHELL_BASELINE_REQUESTS,
   CLIENT_STARTUP_REQUEST_BUDGET,
 } from "@/features/admin/console/request-budget";
+import { shellOverlaysForTest } from "@/test/shell-overlays";
 
 /** TopBar calls `sessionUserQueryOptions()` → fetch("/v1/api/auth/get-session").
  * /api/auth* is the one path exempt from the RPS limiter, so it belongs in no
@@ -191,11 +192,7 @@ interface SkippedSection {
   readonly skipped: string;
 }
 
-const overlayApi = {
-  openNotifications: vi.fn(),
-  openPalette: vi.fn(),
-  openSettings: vi.fn(),
-};
+const overlayApi = shellOverlaysForTest();
 
 /** A memory router carrying just `/admin/$section`, as in the console's own
  *  suite: the console reads its section from the route, so measuring through

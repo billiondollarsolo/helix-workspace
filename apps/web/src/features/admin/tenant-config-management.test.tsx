@@ -33,8 +33,7 @@ const tenantConfigPayload = {
       },
     },
     features: {
-      ai_smart_compose: true,
-      dlp_enforcement: "warn",
+      mail_outbound: false,
     },
     quotas: {
       api_rps_limit: 10,
@@ -43,10 +42,9 @@ const tenantConfigPayload = {
     effective: {
       byo: {},
       features: {
-        ai_smart_compose: true,
-        dlp_enforcement: "warn",
         assistant_retrieval: true,
-        mail_outbound: true,
+        mail_outbound: false,
+        calendar_import_invitations: false,
       },
       quotas: {
         api_rps_limit: 10,
@@ -178,7 +176,7 @@ describe("TenantConfigManagement", () => {
 
     await waitFor(() => {
       expect(container.textContent).toContain("Workspace settings");
-      expect(container.textContent).toContain("AI smart compose");
+      expect(container.textContent).toContain("Assistant searches workspace content");
       expect(container.textContent).toContain("2 tenant overrides");
       expect(container.textContent).toContain("Integration API RPS");
       expect(container.textContent).toContain("Override");
@@ -191,7 +189,9 @@ describe("TenantConfigManagement", () => {
     expect(container.textContent).toContain("org-1");
     expect(inputByLabel("Display name").value).toBe("Acme");
     expect(inputByLabel("Import calendar invitations from email").checked).toBe(false);
-    expect(selectByLabel("DLP enforcement").value).toBe("warn");
+    // Unset flags show their effective default, not the absent stored value.
+    expect(inputByLabel("Assistant searches workspace content").checked).toBe(true);
+    expect(inputByLabel("Outbound mail").checked).toBe(false);
     expect(selectByLabel("Storage mode").value).toBe("byo");
     expect(selectByLabel("Provider").value).toBe("s3-compatible");
     expect(inputByLabel("Bucket").value).toBe("acme-helix-data");
@@ -210,13 +210,12 @@ describe("TenantConfigManagement", () => {
     await render();
 
     await waitFor(() => {
-      expect(checkboxByLabel("AI smart compose").checked).toBe(true);
-      expect(selectByLabel("DLP enforcement").value).toBe("warn");
+      expect(checkboxByLabel("Assistant searches workspace content").checked).toBe(true);
+      expect(checkboxByLabel("Outbound mail").checked).toBe(false);
     });
     await act(async () => {
-      checkboxByLabel("AI smart compose").click();
-      selectByLabel("DLP enforcement").value = "block";
-      selectByLabel("DLP enforcement").dispatchEvent(new Event("change", { bubbles: true }));
+      checkboxByLabel("Assistant searches workspace content").click();
+      checkboxByLabel("Outbound mail").click();
       buttonByLabel("Save feature flags").click();
       await Promise.resolve();
     });
@@ -227,14 +226,14 @@ describe("TenantConfigManagement", () => {
       });
     });
     expect(patchBody().features).toStrictEqual({
-      ai_smart_compose: false,
-      dlp_enforcement: "block",
+      assistant_retrieval: false,
+      mail_outbound: true,
     });
     expect(patchBody()).not.toHaveProperty("quotas");
     expect(patchBody()).not.toHaveProperty("branding");
   });
 
-  it("shows effective quotas without plan defaults or normal quota editing", async () => {
+  it("shows effective quotas read-only", async () => {
     fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
 
     await render();
@@ -246,7 +245,6 @@ describe("TenantConfigManagement", () => {
       expect(container.textContent).toContain("Actors");
       expect(container.textContent).toContain("Unlimited");
     });
-    expect(container.textContent).not.toMatch(/\bplan\b/iu);
     expect(() => inputByLabel("Integration API RPS")).toThrow(
       'Field "Integration API RPS" not found.',
     );
@@ -325,7 +323,6 @@ describe("TenantConfigManagement", () => {
         reason: "admin settings update: byo storage",
       });
     });
-    // BYO storage needs no entitlement flag: there are no plans.
     expect(patchBody()).not.toHaveProperty("features");
     expect(patchBody()).not.toHaveProperty("quotas");
     expect(patchBody()).not.toHaveProperty("branding");
@@ -902,13 +899,13 @@ describe("TenantConfigManagement", () => {
     await render();
 
     await waitFor(() => {
-      expect(checkboxByLabel("AI smart compose").checked).toBe(true);
+      expect(checkboxByLabel("Assistant searches workspace content").checked).toBe(true);
     });
     expect(buttonByLabel("Save feature flags").disabled).toBe(true);
     expect(container.textContent).toContain("No unsaved flag changes.");
 
     await act(async () => {
-      checkboxByLabel("AI smart compose").click();
+      checkboxByLabel("Assistant searches workspace content").click();
       await Promise.resolve();
     });
 

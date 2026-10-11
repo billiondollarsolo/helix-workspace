@@ -94,8 +94,9 @@ export interface AssistantOrchestratorOptions {
   readonly generateTitles?: boolean;
   readonly tools: RuntimeToolRegistry;
   readonly search?: SearchEngine;
-  /** Server-enabled application types eligible for retrieval context. */
+  /** Retrieval context: server-enabled app types, gated by the tenant `assistant_retrieval` flag. */
   readonly searchTypes?: readonly GlobalSearchType[];
+  readonly retrievalEnabled?: (actor: Actor) => Promise<boolean>;
   readonly memory?: MemoryStore;
   readonly confirmationGate?: ConfirmationGate;
   readonly slashCommands?: AssistantSlashCommandHooks;
@@ -192,8 +193,7 @@ export class AssistantOrchestrator {
     };
   }
   async sendMessage(input: AssistantSendMessageInput): Promise<AssistantTurnResponse> {
-    // Drain buffered mode to its return value.
-    const turn = this.#runTurn(input, "buffered");
+    const turn = this.#runTurn(input, "buffered"); // Drain buffered mode to its return value.
     let step = await turn.next();
     while (!step.done) step = await turn.next();
     return titleAfterFirstTurn(this.options, input, step.value);
@@ -360,9 +360,9 @@ export class AssistantOrchestrator {
         effectiveClassification,
         classificationAttribute(item.metadata),
       );
-    // Public web search does not implicitly attach unrelated workspace records.
+    // Web search turns and orgs with `assistant_retrieval` off attach no workspace records.
     const retrievedSources =
-      input.webSearch === true
+      input.webSearch === true || (await this.options.retrievalEnabled?.(input.actor)) === false
         ? []
         : await collectSearchContext(
             this.options.search,

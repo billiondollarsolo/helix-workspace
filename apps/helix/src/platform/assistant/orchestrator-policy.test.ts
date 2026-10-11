@@ -5,6 +5,9 @@ import { AllowAllToolAccessPolicy } from "../permissions/tool-access.js";
 import type { SearchEngine, SearchHit, SearchRequest } from "../search/index.js";
 import { createToolRegistry } from "../tool-registry.js";
 import { InMemoryConfirmationGate, InMemoryPendingActionStore } from "../tools/registry.js";
+import { buildEffectiveTenantConfig } from "../tenancy/effective-config.js";
+import { TenantConfigFeatureFlagProvider } from "../feature-flags/provider.js";
+import { ASSISTANT_RETRIEVAL_FLAG } from "./context-policy.js";
 import { AssistantOrchestrator } from "./orchestrator.js";
 import { InMemoryAssistantStore } from "./store.js";
 
@@ -106,6 +109,60 @@ describe("Assistant A1-A3 policy integration", () => {
 
     expect(observedRequest?.types).toEqual(["drive"]);
   });
+
+  it.each([
+    [true, 1],
+    [false, 0],
+  ])(
+    "runs workspace retrieval only when the tenant assistant_retrieval flag is %s",
+    async (enabled, searches) => {
+      const requests: SearchRequest[] = [];
+      const flags = new TenantConfigFeatureFlagProvider({
+        loadTenantConfig: async ({ orgId }) =>
+          buildEffectiveTenantConfig({
+            org: {
+              byoConfig: {},
+              featureFlags: orgId === actor.orgId ? { assistant_retrieval: enabled } : {},
+              quotas: {},
+              branding: {},
+            },
+          }),
+      });
+      let prompt = "";
+      const hits: SearchHit[] = [
+        {
+          id: "drive-1",
+          type: "drive",
+          body: "Launch plan body",
+          attributes: { orgId: actor.orgId, classification: "standard" },
+        },
+      ];
+      const assistant = new AssistantOrchestrator({
+        store: new InMemoryAssistantStore(),
+        search: {
+          ...searchEngine(hits),
+          async search(request) {
+            requests.push(request);
+            return { query: request.query, hits };
+          },
+        },
+        retrievalEnabled: (turnActor) =>
+          flags.getAsync(ASSISTANT_RETRIEVAL_FLAG, true, { orgId: turnActor.orgId }),
+        ai: {
+          async chat(request) {
+            prompt = request.messages.map((message) => message.content).join("\n");
+            return { message: "ok", model: "test", providerId: "test" };
+          },
+        },
+        tools: createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() }),
+      });
+
+      await assistant.sendMessage({ actor, content: "Find the launch plan" });
+
+      expect(requests).toHaveLength(searches);
+      expect(prompt.includes("Launch plan body")).toBe(enabled);
+    },
+  );
 
   it("lets a server-owned user-input classifier raise but not lower the turn", async () => {
     let observed = "";

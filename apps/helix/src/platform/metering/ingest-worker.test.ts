@@ -50,7 +50,7 @@ describe("MeteringIngestWorker", () => {
     await expect(
       worker.handle({
         subject: meteringSubjectForOrg("22222222-2222-4222-8222-222222222222"),
-        payload: { orgId, eventType: "api.call.billable", quantity: "1", metadata: {} },
+        payload: { orgId, eventType: "export.completed", quantity: "1", metadata: {} },
         occurredAt: "2026-05-24T12:00:00.000Z",
       }),
     ).rejects.toThrow("does not match");

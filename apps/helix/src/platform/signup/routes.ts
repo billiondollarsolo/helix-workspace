@@ -1,4 +1,4 @@
-import type { Actor, MeteringClient } from "@helix/sdk-types";
+import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { unauthenticatedActor } from "../../api/actor.js";
@@ -7,7 +7,6 @@ import type { PlatformMetrics } from "../../api/metrics.js";
 import { SIGNUP_BODY_LIMIT_BYTES } from "../../api/request-body.js";
 import { createRequestContext } from "../../api/trace.js";
 import type { BetterAuthSessionIssuer } from "../auth/better-auth.js";
-import { emitSeatDelta } from "../metering/seat-events.js";
 import type { OutboxStore } from "../outbox/outbox.js";
 import type { OrgRecord, OrgStore, TenantProvisioningStore } from "../tenancy/index.js";
 import {
@@ -32,8 +31,6 @@ interface InviteRouteDependencies {
   readonly publicBaseUrl: string;
   readonly actorFromRequest: (request: FastifyRequest) => Actor | Promise<Actor>;
   readonly onboardingInvites: SignupOnboardingInviteTokenStore;
-  readonly metering?: MeteringClient;
-  readonly onMeteringError?: (error: unknown) => void;
   readonly metrics?: PlatformMetrics;
 }
 
@@ -125,16 +122,6 @@ export async function registerInviteRoutes(
         provisioning,
         succeededProvisioning,
         request,
-      });
-      emitSeatDelta({
-        metering: options.metering,
-        onMeteringError: options.onMeteringError,
-        orgId: org.id,
-        quantity: 1,
-        source: "signup",
-        reason: "owner_verified",
-        actorId: identity.actorId,
-        trace: traceForOutbox(request).trace,
       });
       await options.outbox.insert({
         subject: "tenant.provisioned",
@@ -366,17 +353,6 @@ export async function registerInviteRoutes(
       recordSignupFunnelMetric(options.metrics, {
         step: "onboarding_invite_accepted",
         org,
-      });
-      emitSeatDelta({
-        metering: options.metering,
-        onMeteringError: options.onMeteringError,
-        orgId: org.id,
-        quantity: 1,
-        source: "signup",
-        reason: "onboarding_invite_accepted",
-        actorId: actor.id,
-        invitedByActorId: acceptance.invite.invitedByActorId,
-        trace: traceForOutbox(request).trace,
       });
 
       return {

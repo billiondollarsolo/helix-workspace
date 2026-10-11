@@ -37,18 +37,6 @@ describe(
       await sql.end();
     });
 
-    it("has no plans table or org plan column", async () => {
-      const [row] = await sql<{ plans: string | null; plan_columns: number }[]>`
-        select
-          to_regclass('public.plans')::text as plans,
-          (
-            select count(*)::int from information_schema.columns
-            where table_schema = 'public' and table_name = 'orgs' and column_name = 'plan_id'
-          ) as plan_columns
-      `;
-      expect(row).toEqual({ plans: null, plan_columns: 0 });
-    });
-
     it("treats a missing or null storage limit as unlimited", async () => {
       const rows = await sql<{ org_id: string; limit_bytes: string | null }[]>`
         select org_id::text, public.helix_storage_limit_bytes(org_id)::text as limit_bytes

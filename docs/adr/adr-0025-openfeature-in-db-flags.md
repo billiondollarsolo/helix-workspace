@@ -6,14 +6,13 @@
 
 ## Status
 
-Proposed (gates Platform v2 per-tenant config + Commercial plan/SKU mechanics)
+Proposed (gates Platform v2 per-tenant config)
 
 ## Context
 
 helix needs feature flags for:
 
 - Per-tenant feature gating (per `01-platform-v2/per-tenant-config.md`)
-- Per-tier plan feature gating (per Commercial spec)
 - Per-actor experiments (A/B tests)
 - Operator emergency disables (kill switches)
 - Progressive rollout of new features
@@ -37,7 +36,7 @@ export const flags = {
 };
 ```
 
-Backend reads from `tenant_config.feature_flags` merged with `plans.feature_flags_default`. Context-evaluated (orgId, actorId, environment) so per-actor experiments work.
+Backend reads from `tenant_config.feature_flags` merged over system defaults. Context-evaluated (orgId, actorId, environment) so per-actor experiments work.
 
 ## Consequences
 
@@ -46,7 +45,7 @@ Backend reads from `tenant_config.feature_flags` merged with `plans.feature_flag
 - OpenFeature is an emerging open standard; vendor-neutral.
 - In-DB backend has zero third-party dependencies.
 - Future swap to Unleash / LaunchDarkly is one provider implementation.
-- Resolves both per-tenant + per-plan + per-actor cases in one mental model.
+- Resolves per-tenant and per-actor cases in one mental model.
 
 ### Negative
 
@@ -64,8 +63,7 @@ Backend reads from `tenant_config.feature_flags` merged with `plans.feature_flag
 - `packages/sdk/src/feature-flags.ts` exposes typed `flags.get(key)`.
 - `apps/helix/src/platform/feature-flags/` implements provider:
   - Loads `tenant_config.feature_flags` per request from cache.
-  - Loads `plans.feature_flags_default` from cache.
-  - Merges; tenant overrides plan.
+  - Merges over system defaults; tenant overrides win.
   - Per-actor experiment overlays.
 - Cache invalidation: NATS `flags.changed.<orgId>` event from admin console flag edits.
 - Kill-switch flags (`emergency.*`) skip cache; always live-evaluated.
@@ -87,6 +85,5 @@ Backend reads from `tenant_config.feature_flags` merged with `plans.feature_flag
 ## References
 
 - `01-platform-v2/per-tenant-config.md`
-- `02-commercial/plans-and-skus.md`
 - `decisions-owed.md` O4
 - OpenFeature spec (external)

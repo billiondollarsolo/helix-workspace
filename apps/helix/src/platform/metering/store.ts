@@ -102,10 +102,7 @@ export class PostgresMeteringRollupStore implements MeteringRollupStore {
             when 'ai.tokens' then 'ai_tokens'
             when 'ai.image.generated' then 'ai_images_generated'
             when 'storage.delta' then 'storage_delta_bytes'
-            when 'seats.delta' then 'seats_delta'
             when 'export.completed' then 'exports_count'
-            when 'collab.session.opened' then 'collab_session_seconds'
-            when 'api.call.billable' then 'api_calls_billable'
           end as metric_key,
           sum(events.quantity) as quantity,
           jsonb_build_object(
@@ -125,10 +122,7 @@ export class PostgresMeteringRollupStore implements MeteringRollupStore {
           'ai.tokens',
           'ai.image.generated',
           'storage.delta',
-          'seats.delta',
-          'export.completed',
-          'collab.session.opened',
-          'api.call.billable'
+          'export.completed'
         )
         group by events.org_id, candidate.period_start, metric_key
       ),
@@ -192,70 +186,9 @@ export class PostgresMeteringRollupStore implements MeteringRollupStore {
         from storage_points
         group by org_id, period_start
       ),
-      seat_baselines as (
-        select
-          candidate.org_id,
-          candidate.period_start,
-          coalesce(sum(prior.quantity), 0) as baseline
-        from candidate_periods candidate
-        left join metering_events prior
-          on prior.org_id = candidate.org_id
-          and prior.event_type = 'seats.delta'
-          and prior.occurred_at < candidate.period_start
-        group by candidate.org_id, candidate.period_start
-      ),
-      seat_points as (
-        select
-          baseline.org_id,
-          baseline.period_start,
-          baseline.period_start as sample_at,
-          baseline.baseline as quantity
-        from seat_baselines baseline
-        union all
-        select
-          candidate.org_id,
-          candidate.period_start,
-          events.occurred_at as sample_at,
-          baseline.baseline + coalesce(
-            sum(events.quantity) over (
-              partition by candidate.org_id, candidate.period_start
-              order by events.occurred_at, events.id
-              rows between unbounded preceding and current row
-            ),
-            0
-          ) as quantity
-        from candidate_periods candidate
-        join seat_baselines baseline
-          on baseline.org_id = candidate.org_id
-          and baseline.period_start = candidate.period_start
-        join metering_events events
-          on events.org_id = candidate.org_id
-          and events.event_type = 'seats.delta'
-          and events.occurred_at >= candidate.period_start
-          and events.occurred_at < candidate.period_start + interval '1 day'
-      ),
-      seats_daily as (
-        select
-          org_id,
-          period_start,
-          (period_start + 1)::date as period_end,
-          'seats_max' as metric_key,
-          greatest(max(quantity), 0) as quantity,
-          jsonb_build_object(
-            'event_count',
-            count(*) - 1,
-            'rollup_kind',
-            'daily_max_from_deltas',
-            'source',
-            'metering_events_v1'
-          ) as details
-        from seat_points
-        group by org_id, period_start
-      ),
       rollups as (
         select * from aggregated
         union all select * from storage_daily
-        union all select * from seats_daily
       ),
       upserted as (
         insert into metering_rollups (

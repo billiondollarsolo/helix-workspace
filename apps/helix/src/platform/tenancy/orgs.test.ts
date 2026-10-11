@@ -294,7 +294,7 @@ describe("PostgresOrgStore", () => {
       [],
       [
         orgRow({
-          featureFlags: { ai_smart_compose: true },
+          featureFlags: { assistant_retrieval: true },
           quotas: { api_rps_limit: 10 },
         }),
       ],
@@ -303,14 +303,14 @@ describe("PostgresOrgStore", () => {
 
     const org = await store.updateTenantConfig({
       orgId: "11111111-1111-4111-8111-111111111111",
-      featureFlags: { ai_smart_compose: true },
+      featureFlags: { assistant_retrieval: true },
       quotas: { api_rps_limit: 10 },
       changedByActorId: "22222222-2222-4222-8222-222222222222",
       reason: "admin settings update",
     });
 
     expect(org).toMatchObject({
-      featureFlags: { ai_smart_compose: true },
+      featureFlags: { assistant_retrieval: true },
       quotas: { api_rps_limit: 10 },
     });
     expect(recording.calls[0]?.text).toContain("helix.tenant_config_changed_by");
@@ -331,16 +331,16 @@ describe("PostgresOrgStore", () => {
 
     await store.updateTenantConfig({
       orgId: "11111111-1111-4111-8111-111111111111",
-      featureFlags: { ai_smart_compose: false, watermark: null },
+      featureFlags: { assistant_retrieval: false, calendar_import_invitations: null },
       quotas: { actors_limit: null },
     });
 
     const update = recording.calls[1]?.text.replace(/\s+/gu, " ") ?? "";
     expect(update).toContain("else (feature_flags || ?::jsonb) - ?::text[]");
     expect(update).toContain("else (quotas || ?::jsonb) - ?::text[]");
-    expect(recording.jsonValues).toContainEqual({ ai_smart_compose: false });
+    expect(recording.jsonValues).toContainEqual({ assistant_retrieval: false });
     // A null flag removes the override; a null quota is stored as "unlimited".
-    expect(recording.arrays).toEqual([["watermark"], []]);
+    expect(recording.arrays).toEqual([["calendar_import_invitations"], []]);
     expect(recording.jsonValues).toContainEqual({ actors_limit: null });
   });
 
@@ -391,7 +391,7 @@ describe("PostgresOrgStore", () => {
       },
     });
 
-    // BYO storage needs no entitlement flag; the configured storage kind decides.
+    // The configured storage kind alone selects BYO orgs.
     expect(recording.calls[0]?.text).not.toContain("feature_flags");
     expect(recording.calls[0]?.text).toContain("byo_config->'storage'->>'kind' = 'byo'");
     expect(recording.calls[0]?.values).toEqual([2]);

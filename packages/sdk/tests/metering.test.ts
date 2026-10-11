@@ -41,7 +41,7 @@ describe("EventBusMeteringClient", () => {
     const client = new EventBusMeteringClient({ events: recording.events });
 
     await expect(
-      client.emit(orgId, { type: "unknown.metric" as "api.call.billable", quantity: 1 }),
+      client.emit(orgId, { type: "unknown.metric" as "export.completed", quantity: 1 }),
     ).rejects.toThrow("Unsupported metering event type");
     expect(recording.publications).toHaveLength(0);
   });

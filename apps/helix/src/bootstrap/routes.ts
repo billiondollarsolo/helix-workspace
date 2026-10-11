@@ -580,11 +580,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     outbox: outboxStore,
     actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     onboardingInvites: signupOnboardingInviteTokenStore,
-    metering: meteringClient,
     metrics,
-    onMeteringError: (error: unknown) => {
-      app.log.error({ error }, "Signup seat metering emission failed");
-    },
     publicBaseUrl:
       bootEnv.BETTER_AUTH_URL ??
       bootEnv.HELIX_PUBLIC_URL ??

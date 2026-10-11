@@ -8,13 +8,21 @@ import {
 
 describe("tenant config patches", () => {
   it("keeps unsubmitted flags and removes flags submitted as null", () => {
-    const current = { mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: true };
+    const current = {
+      mail_outbound: false,
+      calendar_import_invitations: true,
+      assistant_retrieval: true,
+    };
     expect(
-      applyTenantConfigPatch(current, { ai_smart_compose: false }, FEATURE_FLAGS_PATCH),
-    ).toEqual({ mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: false });
-    expect(applyTenantConfigPatch(current, { dlp_enforcement: null }, FEATURE_FLAGS_PATCH)).toEqual(
-      { mail_outbound: false, ai_smart_compose: true },
-    );
+      applyTenantConfigPatch(current, { assistant_retrieval: false }, FEATURE_FLAGS_PATCH),
+    ).toEqual({
+      mail_outbound: false,
+      calendar_import_invitations: true,
+      assistant_retrieval: false,
+    });
+    expect(
+      applyTenantConfigPatch(current, { calendar_import_invitations: null }, FEATURE_FLAGS_PATCH),
+    ).toEqual({ mail_outbound: false, assistant_retrieval: true });
   });
 
   it("stores null quotas because null means unlimited", () => {

@@ -12,22 +12,22 @@ describe("feature flag client", () => {
   });
 
   it("returns defaults before a provider is configured", async () => {
-    expect(flags.get("ai_smart_compose", false)).toBe(false);
-    await expect(flags.getAsync("ai_smart_compose", false)).resolves.toBe(false);
+    expect(flags.get("mail_outbound", false)).toBe(false);
+    await expect(flags.getAsync("mail_outbound", false)).resolves.toBe(false);
   });
 
   it("delegates sync and async evaluation to the configured provider", async () => {
     const provider = new StaticFeatureFlagProvider(
       new Map<string, unknown>([
-        ["ai_smart_compose", true],
-        ["dlp_enforcement", "block"],
+        ["mail_outbound", true],
+        ["calendar_import_invitations", true],
       ]),
     );
 
     flags.setProvider(provider);
 
-    expect(flags.get("ai_smart_compose", false)).toBe(true);
-    await expect(flags.getAsync("dlp_enforcement", "off")).resolves.toBe("block");
+    expect(flags.get("mail_outbound", false)).toBe(true);
+    await expect(flags.getAsync("calendar_import_invitations", false)).resolves.toBe(true);
   });
 
   it("passes evaluation context to providers", async () => {

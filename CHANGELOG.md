@@ -20,19 +20,19 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
-- Helix is free and open source with no plans or limits (ADR-0030). Every organization gets
-  every feature, and every quota (storage, AI tokens and images, actors, outbound webhooks,
-  integration API requests per second, export jobs per hour) defaults to unlimited; an org
-  admin may still set its own cap. Storage no longer falls back to 5 GB, webhooks to 5, or the
-  integration API to 5 requests per second. Agent and AI cost budgets have no default for any
-  security tier; admin-configured budgets still apply, and sovereign stays local-AI-only.
-- Organizations can always share Drive files with their own members and create public share
-  links for anyone with permission; the `b2b_sharing` flag no longer gates anything.
-- BYO storage no longer requires a `byo_storage` entitlement flag.
-- Tenant export manifests and signup events drop `planId`, and signup metrics and Alertmanager
-  grouping drop the `plan_id` label.
-- A suspended tenant now answers `423 Locked` (code `tenant-suspended`) instead of
-  `402 Payment Required`, with a message that says how to restore access.
+- Every quota (storage, AI tokens and images, actors, outbound webhooks, integration API
+  requests per second, export jobs per hour) defaults to unlimited, and agent and AI cost
+  budgets have no default for any security tier; an org admin may still set a cap (ADR-0030).
+  Sovereign stays local-AI-only.
+- Organizations can always create public Drive share links for anyone with permission, and
+  BYO storage needs no feature flag.
+- A suspended tenant now answers `423 Locked` (code `tenant-suspended`) with a message that
+  says how to restore access.
+- The `assistant_retrieval` tenant flag (default on) now governs the Assistant's automatic
+  workspace search context: when an admin turns it off, the server runs no mail, chat, Drive
+  or calendar search for Assistant turns. Admin › Workspace settings shows each flag's
+  effective value, so a default-on flag no longer appears off until saved.
+- Usage metering keeps AI tokens, AI images, storage and export metrics only.
 - Live E2E runs give the API a deterministic OpenAI-compatible model
   (`apps/web/tests/e2e/support/fake-model-server.ts`), so the assistant spec sends a
   prompt and checks the streamed provider answer instead of only the no-model state.
@@ -45,27 +45,24 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Removed
 
-- Commercial plans: the `plans` table, `orgs.plan_id`, plan defaults in the effective tenant
-  config, and the plan types in `@helix/contracts` / `@helix/sdk-types`
-  (`CommercialPlanId`, `SupportTier`).
-- Billing: `/api/admin/billing/*`, the `admin_billing_accounts` and `admin_billing_invoices`
-  tables, and the admin console's "Billing & usage" section with its "Upgrade plan" link and
-  `VITE_HELIX_BILLING_ENABLED` build flag.
-- Plan-entitlement feature flags and their admin toggles (`b2b_sharing`, `byo_*`, `sso_saml`,
-  `scim_provisioning`, `custom_domain`, `white_label`, `multi_region_dr`, `dedicated_csm`,
-  `marketplace_install_paid`, `support_tier`); stored values still parse and are ignored.
+- Unused tenant feature flags `ai_smart_compose`, `dlp_enforcement` and `watermark` from the
+  contract, admin API and Workspace settings: there is no compose assist, DLP is configured
+  by the `dlp` security policy, and nothing renders watermarks. Migration
+  `0205_drop_unused_tenant_flags_and_metering_metrics.sql` strips them, and every other
+  retired flag key, from stored org feature flags.
+- The seat, API-call and collaboration-session metering event types and their rollup keys
+  from `@helix/sdk-types`, the rollup worker and signup; nothing else emitted them. Migration
+  0205 deletes their stored events and rollups.
+- ADRs 0020, 0021, 0024 and 0026; what still holds is folded into ADR-0030.
 - The CI step that cleared the demo org's `api_rps_limit` before the k6 load test.
-- The `billing_admin` IAM role and the `admin.billing` permission, including its Cerbos rule
-  and scope-catalog entry, and the retired editor (`docs.*`, `sheets.*`, `slides.*`) and
-  `imap` permissions still left in the database permission catalog. Migration
+- Retired editor (`docs.*`, `sheets.*`, `slides.*`), `imap` and other unknown permissions
+  still left in the database permission catalog. Migration
   `0203_retire_unknown_iam_permissions.sql` retires every catalog permission the app does not
   know: roles that held only retired permissions are removed after each grant (and any
   delegated beneath it) is recorded as revoked in the append-only delegation log; other roles
   and stored credential and token scopes lose just those entries, and a credential left with
   no scope is revoked. A stale entry previously made the whole stored permission set fail
-  closed. A live test now keeps the database catalog equal to the app's scope catalog, and
-  new organizations no longer receive `billing_admin`.
-- Leftover billing and plan wording in docs, tests and the observability plugin README.
+  closed. A live test now keeps the database catalog equal to the app's scope catalog.
 
 ### Fixed
 

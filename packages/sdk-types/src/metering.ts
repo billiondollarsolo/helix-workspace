@@ -5,10 +5,7 @@ export const meteringEventTypes = [
   "ai.tokens",
   "ai.image.generated",
   "storage.delta",
-  "seats.delta",
   "export.completed",
-  "collab.session.opened",
-  "api.call.billable",
 ] as const;
 
 export type MeteringEventType = (typeof meteringEventTypes)[number];
@@ -17,11 +14,7 @@ export const meteringRollupMetricKeys = [
   "ai_tokens",
   "storage_delta_bytes",
   "exports_count",
-  "api_calls_billable",
   "ai_images_generated",
-  "seats_delta",
-  "seats_max",
-  "collab_session_seconds",
   "storage_avg_bytes",
 ] as const;
 
@@ -31,10 +24,7 @@ export const meteringRollupMetricKeyByEventType = {
   "ai.tokens": "ai_tokens",
   "ai.image.generated": "ai_images_generated",
   "storage.delta": "storage_delta_bytes",
-  "seats.delta": "seats_delta",
   "export.completed": "exports_count",
-  "collab.session.opened": "collab_session_seconds",
-  "api.call.billable": "api_calls_billable",
 } as const satisfies Record<MeteringEventType, MeteringRollupMetricKey>;
 
 export interface MeteringEvent {

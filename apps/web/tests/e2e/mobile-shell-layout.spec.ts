@@ -79,14 +79,19 @@ test.describe("mobile shell layout", () => {
     await expect(page.locator(".topbar-title")).toHaveText("Mail");
     const navigation = page.getByRole("button", { name: "Main menu" });
     await expect(navigation).toBeVisible();
-    await expect(page.getByRole("button", { name: "Compose", exact: true })).toBeHidden();
+    // The sidebar's Compose hides with the menu; the floating Compose stays over the list.
+    const sidebarCompose = page
+      .getByRole("complementary", { name: "Mail navigation" })
+      .getByRole("button", { name: "Compose", exact: true });
+    await expect(sidebarCompose).toBeHidden();
+    await expect(page.getByRole("button", { name: "Compose", exact: true })).toBeVisible();
     const refresh = page.getByRole("button", { name: "Refresh", exact: true });
     await expect(refresh).toBeVisible();
     await refresh.click();
     await navigation.click();
-    await expect(page.getByRole("button", { name: "Compose", exact: true })).toBeVisible();
+    await expect(sidebarCompose).toBeVisible();
     await navigation.click();
-    await expect(page.getByRole("button", { name: "Compose", exact: true })).toBeHidden();
+    await expect(sidebarCompose).toBeHidden();
   });
 });
 

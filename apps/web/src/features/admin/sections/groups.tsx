@@ -1,685 +1,314 @@
+/* Admin › Directory › Groups & org units. */
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Building as BuildingIcon,
+  Copy as CopyIcon,
+  Pencil as PencilIcon,
   Plus as PlusIcon,
   Trash2 as TrashIcon,
   Users as UsersIcon,
 } from "lucide-react";
-/* Admin › People › Groups & org units. */
-
-import { GroupMailForm } from "./group-mail-form";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { MenuSeparator } from "@/components/ui/menu";
+import { SelectableList, SelectAllCheckbox } from "@/components/ui/selectable-list";
+import { notify } from "@/components/ui/toast";
+import { useAdminSectionSearch, useAdminSectionTab } from "@/features/admin/admin-section-search";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import { AdminField, AdminInput, AdminToolbar } from "@/features/admin/console/controls";
+import { AdminInput, AdminToolbar } from "@/features/admin/console/controls";
+import { formatCount, pluralize } from "@/features/admin/console/format";
 import {
-  EmptyRow,
-  EmptyState,
+  LoadingState,
   MutationError,
   PageHeading,
-  PageScroll,
   QueryFailureBanner,
-  StateBanner,
   useQueryFailure,
 } from "@/features/admin/console/primitives";
-import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
+import { AdminTabs } from "@/features/admin/console/tabs";
+import { RowMenu, RowMenuItem } from "@/features/admin/console/widgets";
 import {
-  addGroupMember,
-  createGroup,
-  updateGroup,
-  createOrgUnit,
   deleteGroup,
-  deleteOrgUnit,
-  groupMembersQueryOptions,
   groupsAdminQueryKeys,
   groupsQueryOptions,
-  orgUnitsQueryOptions,
-  removeGroupMember,
   type Group,
-  type GroupMember,
-  type OrgUnit,
 } from "@/features/admin/groups-api";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { GroupSheet } from "./group-sheet";
+import { OrgUnitsPanel } from "./org-units";
 
-/* ------------------------------------------------------------------ */
-/* Groups & OUs                                                       */
-/* ------------------------------------------------------------------ */
+const GROUP_TABS = [
+  { id: "groups", label: "Groups" },
+  { id: "org-units", label: "Org units" },
+] as const;
+const GROUP_TAB_IDS = GROUP_TABS.map((tab) => tab.id);
 
-/** Tree indent for a nested org unit, as a fixed class per depth.
- *
- *  A computed `paddingLeft` would have to be an inline style, which cannot be
- *  themed or overridden; depth is clamped at four because the indent is a
- *  reading aid, and past that the name column has nothing left to give. */
-const INDENT_CLASS = ["pl-0", "pl-5", "pl-10", "pl-[60px]", "pl-[80px]"] as const;
+const KIND_LABEL: Record<Group["kind"], string> = {
+  mailing_list: "Email group",
+  group: "Group",
+  security: "Security group",
+};
 
-function indentClass(depth: number): string {
-  return INDENT_CLASS[Math.min(Math.max(depth, 0), INDENT_CLASS.length - 1)] ?? "pl-0";
-}
-
-interface GroupsRow {
-  readonly key: string;
-  readonly id: string | null;
-  readonly name: string;
-  readonly members: number;
-  readonly children: number;
-  readonly type: "OU" | "Group";
-  readonly indent: number;
-}
-
-/** Order OU records depth-first by their materialized `path` so children
- *  render under their parent with a tree indent. */
-function projectOrgUnitRows(units: readonly OrgUnit[]): readonly GroupsRow[] {
-  return [...units]
-    .sort((a, b) => a.path.localeCompare(b.path))
-    .map((unit) => ({
-      key: `ou:${unit.id}`,
-      id: unit.id,
-      name: unit.name,
-      members: unit.memberCount,
-      children: unit.childCount,
-      type: "OU" as const,
-      indent: Math.max(0, unit.path.split(" > ").length - 1),
-    }));
-}
-
-function projectGroupRows(groups: readonly Group[]): readonly GroupsRow[] {
-  return groups.map((group) => ({
-    key: `g:${group.id}`,
-    id: group.id,
-    name: group.email ?? group.name,
-    members: group.memberCount,
-    /* Groups do not nest — only org units carry children. */
-    children: 0,
-    type: "Group" as const,
-    indent: 0,
-  }));
-}
-
-/* ------------------------------------------------------------------ */
-/* Deletion copy                                                      */
-/* ------------------------------------------------------------------ */
-
-/** What deleting this row actually costs, read off the row the operator
- *  clicked.
- *
- *  Deleting an org unit and deleting a group are different consequences, so
- *  they get different sentences: an org unit is the scope groups hang off, a
- *  group *is* the membership list. Every number here is the row's own reported
- *  count — never an estimate, and never a generic "this cannot be undone". */
-function deletionCopy(row: GroupsRow): {
-  readonly title: string;
-  readonly confirmLabel: string;
-  readonly body: string;
-  readonly blastRadius: string | undefined;
-} {
-  const people = row.members === 1 ? "1 group member" : `${String(row.members)} group members`;
-
-  if (row.type === "OU") {
-    const scope =
-      row.members === 0
-        ? null
-        : `${people} sit in groups scoped to this org unit; that scope disappears with the unit and has to be re-assigned group by group.`;
-    /* The server refuses to delete an org unit that still has children, so a
-       unit with any is the one case where the operator needs to know the click
-       will be rejected before they make it. */
-    const childNote =
-      row.children === 0
-        ? null
-        : `It still has ${row.children === 1 ? "1 child org unit" : `${String(row.children)} child org units`} under it, and Helix refuses to delete a unit with children — re-parent or delete those first.`;
-    const sentences = [scope, childNote].filter((part) => part !== null);
-    return {
-      title: "Delete org unit",
-      confirmLabel: "Delete org unit",
-      body: `Deleting the org unit ${row.name} removes the unit itself, not the groups or people under it. Anything scoped to this unit stops being scoped to anything.`,
-      blastRadius: sentences.length === 0 ? undefined : sentences.join(" "),
-    };
-  }
-
-  return {
-    title: "Delete group",
-    confirmLabel: "Delete group",
-    body: `Deleting the group ${row.name} removes the group and its membership list.`,
-    /* A group with no members hits nothing downstream, and the policy says to
-       omit the blast radius rather than pad it with a generic warning. */
-    blastRadius:
-      row.members === 0
-        ? undefined
-        : `${people} lose this group. Rebuilding it means re-adding every one of them by actor UUID — this console has no other way to add a member.`,
-  };
-}
-
-/** The "create one of these, by name" form. Org units and groups are the same
- *  control down to the panel class — one text field and one submit — so they
- *  share it rather than drifting apart the next time either is touched. Empty
- *  input is rejected here so neither caller can post a blank name. */
-function CreateNameForm({
-  toolbarLabel,
-  fieldLabel,
-  placeholder,
-  submitLabel,
-  value,
-  onChange,
-  pending,
-  onSubmit,
-}: {
-  readonly toolbarLabel: string;
-  readonly fieldLabel: string;
-  readonly placeholder: string;
-  readonly submitLabel: string;
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-  readonly pending: boolean;
-  readonly onSubmit: (name: string) => void;
-}) {
-  return (
-    <form
-      className="panel mb-3 px-3 pt-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (value.trim().length === 0) {
-          return;
-        }
-        onSubmit(value.trim());
-      }}
-    >
-      <AdminToolbar label={toolbarLabel}>
-        <AdminField label={fieldLabel} className="flex-1">
-          <AdminInput
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder={placeholder}
-          />
-        </AdminField>
-        <Button type="submit" className="self-end" disabled={pending}>
-          {pending ? "Creating…" : submitLabel}
-        </Button>
-      </AdminToolbar>
-    </form>
-  );
-}
-
-/** Membership panel for a selected group — list + add + remove members. */
-function GroupMembershipPanel({ group }: { group: Group }) {
+function GroupsPanel({ onCreate }: { readonly onCreate: () => void }) {
   const queryClient = useQueryClient();
-  const membersQuery = useQuery(groupMembersQueryOptions(group.id));
-  const [actorId, setActorId] = useState("");
-  /* Snapshot of the row under the cursor: the member list refetches on its own
-     and the dialog has to keep describing the member the operator picked. */
-  const [removeTarget, setRemoveTarget] = useState<GroupMember | null>(null);
-
+  const { search, patchSearch } = useAdminSectionSearch("groups");
+  const groupsQuery = useQuery(groupsQueryOptions());
+  const [filter, setFilter] = useState("");
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [deleting, setDeleting] = useState<readonly Group[] | null>(null);
   const invalidate = () => {
-    void queryClient.invalidateQueries({
-      queryKey: groupsAdminQueryKeys.groupMembers(group.id),
-    });
     void queryClient.invalidateQueries({ queryKey: groupsAdminQueryKeys.groups() });
   };
+  const failure = useQueryFailure(groupsQuery, invalidate);
 
-  const addMutation = useMutation({
-    mutationFn: (id: string) => addGroupMember(group.id, { actorId: id }),
+  const deleteMutation = useMutation({
+    mutationFn: async (groups: readonly Group[]) => {
+      for (const group of groups) {
+        await deleteGroup(group.id);
+      }
+    },
     onMutate: () => undefined,
     onError: () => undefined,
-    onSuccess: () => {
-      setActorId("");
+    onSuccess: (_result, groups) => {
+      setSelected(new Set());
+      notify({
+        message:
+          groups.length === 1
+            ? `Deleted ${groups[0]?.name ?? "group"}`
+            : `Deleted ${pluralize(groups.length, "group")}`,
+      });
+    },
+    onSettled: () => {
+      setDeleting(null);
       invalidate();
     },
   });
-  const removeMutation = useMutation({
-    mutationFn: (id: string) => removeGroupMember(group.id, id),
-    onMutate: () => undefined,
-    onError: () => undefined,
-    onSuccess: () => invalidate(),
-  });
 
-  const members = membersQuery.data ?? [];
-
-  const membersFailure = useQueryFailure(membersQuery, () => {
-    void queryClient.invalidateQueries({
-      queryKey: groupsAdminQueryKeys.groupMembers(group.id),
-    });
-  });
-
-  const columns: readonly AdminColumn<GroupMember>[] = [
-    {
-      id: "actor",
-      header: "Actor",
-      width: "100%",
-      cell: (member) => <span className="mono block max-w-[46ch] truncate">{member.actorId}</span>,
-    },
-    {
-      id: "role",
-      header: "Role",
-      width: "90px",
-      cell: (member) => <span className="chip">{member.role}</span>,
-    },
-    {
-      id: "remove",
-      header: "Remove member",
-      headerHidden: true,
-      align: "right",
-      width: "90px",
-      cell: (member) => (
-        /* Was a grey icon button that fired the DELETE on the first click,
-           sitting a few pixels from the row above it. */
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="destructive"
-          title={`Remove member ${member.actorId}`}
-          aria-label={`Remove member ${member.actorId}`}
-          disabled={removeMutation.isPending}
-          onClick={() => setRemoveTarget(member)}
-        >
-          <TrashIcon size={16} />
-        </Button>
+  const groups = groupsQuery.data ?? [];
+  const needle = filter.trim().toLowerCase();
+  const filtered = useMemo(
+    () =>
+      groups.filter(
+        (group) =>
+          needle.length === 0 ||
+          group.name.toLowerCase().includes(needle) ||
+          (group.email ?? "").toLowerCase().includes(needle),
       ),
-    },
-  ];
+    [groups, needle],
+  );
+  const selectedGroups = filtered.filter((group) => selected.has(group.id));
+  const openGroup = groups.find((group) => group.id === search.group) ?? null;
+  const setOpenGroup = (group: Group | null) => patchSearch({ group: group?.id });
+  const memberTotal = (list: readonly Group[]) =>
+    list.reduce((total, group) => total + group.memberCount, 0);
 
   return (
-    <div className="panel mb-3 p-4">
-      {/* h2, under the section's one h1: this panel is a sub-view of the
-          directory below it. */}
-      <h2 className="mb-2 font-semibold type-body-sm">Members of {group.name}</h2>
-      {membersFailure !== null ? (
-        /* Panel-level: the directory table below is still live, so this retry
-           must not outrank it. */
-        <QueryFailureBanner
-          summary="Group members are unavailable"
-          subject="group members"
-          error={membersFailure.error}
-          isRetrying={membersFailure.isRetrying}
-          onRetry={membersFailure.retry}
-        >
-          Removing a member needs the list, so only adding one is possible until this loads.
-        </QueryFailureBanner>
-      ) : null}
-      <MutationError error={addMutation.error} />
-      <MutationError error={removeMutation.error} />
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (actorId.trim().length === 0) {
-            return;
-          }
-          addMutation.mutate(actorId.trim());
-        }}
-      >
-        <AdminToolbar label={`Add a member to ${group.name}`}>
-          <AdminField label="Member actor id" className="flex-1">
-            <AdminInput
-              value={actorId}
-              onChange={(event) => setActorId(event.target.value)}
-              placeholder="Actor UUID"
-            />
-          </AdminField>
-          <Button type="submit" size="sm" className="self-end" disabled={addMutation.isPending}>
-            <PlusIcon size={16} /> Add member
+    <>
+      {selectedGroups.length > 0 ? (
+        <div className="admin-list-toolbar" role="toolbar" aria-label="Selected groups">
+          <SelectAllCheckbox
+            total={filtered.length}
+            selectedCount={selectedGroups.length}
+            onToggle={(all) =>
+              setSelected(all ? new Set(filtered.map((group) => group.id)) : new Set())
+            }
+            label="Select all groups"
+          />
+          <span className="type-body-sm font-medium" role="status">
+            {formatCount(selectedGroups.length)} selected
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setDeleting(selectedGroups)}
+          >
+            <TrashIcon aria-hidden="true" /> Delete
           </Button>
+        </div>
+      ) : (
+        <AdminToolbar label="Group filters">
+          <SelectAllCheckbox
+            total={filtered.length}
+            selectedCount={0}
+            onToggle={(all) =>
+              setSelected(all ? new Set(filtered.map((group) => group.id)) : new Set())
+            }
+            label="Select all groups"
+          />
+          <AdminInput
+            type="search"
+            className="w-full max-w-[320px]"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Search by name or email"
+            aria-label="Search groups"
+          />
         </AdminToolbar>
-      </form>
-      {/* A failure with nothing to show renders no table at all: the banner
-          above is the whole account of the state, and an "empty" members table
-          under it would claim this group has no members when we never read
-          them. */}
-      {membersFailure !== null && members.length === 0 ? null : (
-        <AdminTable
-          label={`Members of ${group.name}`}
-          columns={columns}
-          rows={members}
-          rowKey={(member) => member.id}
-          empty={
-            <EmptyRow>
-              {membersQuery.isPending
-                ? "Loading members…"
-                : "No members in this group yet — add one by actor ID above."}
-            </EmptyRow>
-          }
+      )}
+      <MutationError error={deleteMutation.error} />
+
+      {failure !== null ? (
+        <QueryFailureBanner
+          summary="Groups couldn't be loaded"
+          subject="groups"
+          error={failure.error}
+          isRetrying={failure.isRetrying}
+          onRetry={failure.retry}
         />
+      ) : groupsQuery.isPending ? (
+        <LoadingState label="Loading groups" variant="row" count={4} />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<UsersIcon />}
+          title={needle.length > 0 ? "No groups match your search" : "No groups yet"}
+          body={
+            needle.length > 0
+              ? "Try a different name or email address."
+              : "Groups share an email address and give access to many people at once."
+          }
+          action={
+            needle.length > 0 ? undefined : (
+              <Button type="button" variant="outline" onClick={onCreate}>
+                <PlusIcon aria-hidden="true" /> Create group
+              </Button>
+            )
+          }
+          headingLevel={2}
+          size="inline"
+        />
+      ) : (
+        <div className="admin-list">
+          <div className="admin-list-header admin-group-row" aria-hidden="true">
+            <span>Name</span>
+            <span>Type</span>
+            <span>Members</span>
+            <span />
+          </div>
+          <SelectableList
+            items={filtered}
+            getKey={(group) => group.id}
+            getItemLabel={(group) => group.name}
+            label="Groups"
+            selectedKeys={selected}
+            onSelectedKeysChange={setSelected}
+            onOpen={(group) => setOpenGroup(group)}
+            renderItem={(group, state) => (
+              <div className="admin-group-row">
+                <span className="min-w-0">
+                  <span className="admin-row-title">{group.name}</span>
+                  <span className="admin-row-detail">{group.email ?? "No email address"}</span>
+                </span>
+                <span className="admin-row-cell admin-row-detail">{KIND_LABEL[group.kind]}</span>
+                <span className="admin-row-cell admin-row-detail">
+                  {pluralize(group.memberCount, "member")}
+                </span>
+                <span className="admin-row-actions">
+                  <RowMenu label={`Actions for ${group.name}`} tabIndex={state.tabIndex}>
+                    <RowMenuItem
+                      icon={<PencilIcon size={16} />}
+                      onSelect={() => setOpenGroup(group)}
+                    >
+                      Edit group and members
+                    </RowMenuItem>
+                    {group.email === null ? null : (
+                      <RowMenuItem
+                        icon={<CopyIcon size={16} />}
+                        onSelect={() => {
+                          const email = group.email ?? "";
+                          void navigator.clipboard
+                            .writeText(email)
+                            .then(() => notify({ message: "Email address copied" }))
+                            .catch(() =>
+                              notify({ message: "Couldn't copy the address", tone: "error" }),
+                            );
+                        }}
+                      >
+                        Copy email address
+                      </RowMenuItem>
+                    )}
+                    <MenuSeparator />
+                    <RowMenuItem
+                      icon={<TrashIcon size={16} />}
+                      destructive
+                      onSelect={() => setDeleting([group])}
+                    >
+                      Delete group
+                    </RowMenuItem>
+                  </RowMenu>
+                </span>
+              </div>
+            )}
+          />
+        </div>
       )}
 
-      {/* Nominally reversible, actually not: re-adding a member means typing
-          their raw actor UUID, and the removed row is the only place this
-          console ever shows it. So it clears the policy's confirm tier — one
-          object, named, with the identifier still on screen to copy.
-
-          No blast radius: it touches one membership, and this console does not
-          know what the group grants, so any "they lose access" line would be
-          the generic warning the policy rules out. */}
-      {removeTarget === null ? null : (
+      {openGroup === null ? null : (
+        <GroupSheet group={openGroup} onClose={() => setOpenGroup(null)} />
+      )}
+      {deleting === null ? null : (
         <ConfirmDestructive
           open
-          onOpenChange={(next) => {
-            if (!next) {
-              setRemoveTarget(null);
-            }
+          onOpenChange={(open) => {
+            if (!open) setDeleting(null);
           }}
-          title="Remove group member"
-          confirmLabel="Remove member"
-          isPending={removeMutation.isPending}
-          onConfirm={() =>
-            removeMutation.mutate(removeTarget.actorId, {
-              /* Settle, not success: a failure is reported by the banner behind
-                 this overlay, and holding the dialog open would cover it. */
-              onSettled: () => setRemoveTarget(null),
-            })
+          title={
+            deleting.length === 1
+              ? `Delete ${deleting[0]?.name ?? "group"}?`
+              : `Delete ${pluralize(deleting.length, "group")}?`
           }
+          blastRadius={
+            memberTotal(deleting) === 0
+              ? undefined
+              : `${pluralize(memberTotal(deleting), "membership")} will be removed, and mail to the group address stops being delivered.`
+          }
+          confirmLabel="Delete"
+          isPending={deleteMutation.isPending}
+          onConfirm={() => deleteMutation.mutate(deleting)}
         >
-          Removing actor <code>{removeTarget.actorId}</code> from {group.name} takes their{" "}
-          {removeTarget.role} role with it. Adding them back means typing that actor ID again — copy
-          it now, because this console shows it nowhere else once the row is gone.
+          Deleting removes the group and its member list. People in it keep their accounts.
         </ConfirmDestructive>
       )}
-    </div>
+    </>
   );
 }
 
 export function AdminGroups() {
-  const queryClient = useQueryClient();
-  const orgUnitsQuery = useQuery(orgUnitsQueryOptions());
-  const groupsQuery = useQuery(groupsQueryOptions());
-  const [showOuForm, setShowOuForm] = useState(false);
-  const [showGroupForm, setShowGroupForm] = useState(false);
-  const [ouName, setOuName] = useState("");
-  const [managedGroupId, setManagedGroupId] = useState<string | null>(null);
-  /* Snapshot of the row under the cursor, not just its id: the directory
-     refetches on its own and the dialog has to keep describing what was
-     picked, counts included. */
-  const [deleteTarget, setDeleteTarget] = useState<{
-    readonly row: GroupsRow;
-    readonly id: string;
-  } | null>(null);
-
-  const invalidateOrgUnits = () =>
-    void queryClient.invalidateQueries({ queryKey: groupsAdminQueryKeys.orgUnits() });
-  const invalidateGroups = () =>
-    void queryClient.invalidateQueries({ queryKey: groupsAdminQueryKeys.groups() });
-
-  const createOuMutation = useMutation({
-    mutationFn: (name: string) => createOrgUnit({ name }),
-    onMutate: () => undefined,
-    onError: () => undefined,
-    onSuccess: () => {
-      setOuName("");
-      setShowOuForm(false);
-      invalidateOrgUnits();
-    },
-  });
-  const deleteOuMutation = useMutation({
-    mutationFn: (id: string) => deleteOrgUnit(id),
-    onMutate: () => undefined,
-    onError: () => undefined,
-    onSuccess: () => invalidateOrgUnits(),
-  });
-  const deleteGroupMutation = useMutation({
-    mutationFn: (id: string) => deleteGroup(id),
-    onMutate: () => undefined,
-    onError: () => undefined,
-    onSuccess: () => invalidateGroups(),
-  });
-
-  const apiUnits = orgUnitsQuery.data ?? [];
-  const apiGroups = groupsQuery.data ?? [];
-
-  const rows = useMemo<readonly GroupsRow[]>(
-    () => [...projectOrgUnitRows(apiUnits), ...projectGroupRows(apiGroups)],
-    [apiUnits, apiGroups],
-  );
-
-  const managedGroup = apiGroups.find((group) => group.id === managedGroupId) ?? null;
-  const deleteCopy = deleteTarget === null ? null : deletionCopy(deleteTarget.row);
-
-  const orgUnitsFailure = useQueryFailure(orgUnitsQuery, invalidateOrgUnits);
-  const groupsFailure = useQueryFailure(groupsQuery, invalidateGroups);
-
-  /* Both halves of the directory come from one service, so they usually fail
-     together. Two copies of the same banner read as two incidents; one
-     page-level state says it once. The org-unit error stands in for both —
-     one service explains them. */
-  const directoryFailure =
-    orgUnitsFailure !== null && groupsFailure !== null ? orgUnitsFailure : null;
-  const retryDirectory = () => {
-    orgUnitsFailure?.retry();
-    groupsFailure?.retry();
-  };
-
-  /* Creating into a list you cannot see gives no feedback that it worked, so
-     the create controls follow the query that would show the result. */
-  const createOuDisabled = orgUnitsFailure !== null;
-  const createGroupDisabled = groupsFailure !== null;
-
-  const directoryColumns: readonly AdminColumn<GroupsRow>[] = [
-    {
-      id: "name",
-      header: "Name",
-      width: "100%",
-      cell: (row) => (
-        <div className={`row gap-2 ${indentClass(row.indent)}`}>
-          {row.type === "OU" ? <BuildingIcon size={16} /> : <UsersIcon size={16} />}
-          <span className="font-medium">{row.name}</span>
-        </div>
-      ),
-    },
-    {
-      id: "type",
-      header: "Type",
-      width: "100px",
-      cell: (row) => <span className="chip">{row.type}</span>,
-    },
-    {
-      id: "members",
-      header: "Members",
-      width: "100px",
-      cell: (row) => <span className="text-[var(--text-2)]">{row.members} members</span>,
-    },
-    {
-      id: "actions",
-      /* 170px: "Delete" says what it does instead of being a bare glyph, so
-         the two controls no longer fit in the old 140px track. */
-      header: "Row actions",
-      headerHidden: true,
-      align: "right",
-      width: "170px",
-      cell: (row) => {
-        /* Narrowed outside the callbacks below: `row.id` is nullable and
-           TypeScript drops property narrowing inside a closure. */
-        const rowId = row.id;
-        return (
-          <div className="flex justify-end gap-1.5">
-            {row.type === "Group" && rowId !== null ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                aria-label={`Manage ${row.name}`}
-                onClick={() => setManagedGroupId((current) => (current === rowId ? null : rowId))}
-              >
-                Manage
-              </Button>
-            ) : null}
-            {rowId !== null ? (
-              /* Was a bare trash glyph in the same grey as "Manage", one click
-                 from an irreversible DELETE. */
-              <Button
-                type="button"
-                size="sm"
-                variant="destructive"
-                aria-label={`Delete ${row.name}`}
-                disabled={deleteOuMutation.isPending || deleteGroupMutation.isPending}
-                onClick={() => setDeleteTarget({ row, id: rowId })}
-              >
-                <TrashIcon size={16} /> Delete
-              </Button>
-            ) : null}
-          </div>
-        );
-      },
-    },
-  ];
-
+  const [tab, selectTab] = useAdminSectionTab(GROUP_TAB_IDS, "groups", "groups");
+  const [creating, setCreating] = useState<"group" | "org-unit" | null>(null);
   return (
-    <PageScroll>
+    <>
       <PageHeading
         title="Groups & org units"
+        subtitle="Groups for mail and shared access, and org units for applying settings to part of your organization."
         actions={
-          <>
-            {/* `Button`, not `.btn`: these two sat beside `Button`s everywhere
-                else in the console, and `.btn` has no disabled styling — a
-                disabled create control still looked pressable. */}
-            <Button
-              type="button"
-              variant="outline"
-              aria-expanded={showGroupForm}
-              disabled={createGroupDisabled}
-              onClick={() => setShowGroupForm((open) => !open)}
-            >
-              <PlusIcon size={16} /> New group
+          tab === "groups" ? (
+            <Button type="button" size="sm" onClick={() => setCreating("group")}>
+              <PlusIcon aria-hidden="true" /> Create group
             </Button>
-            <Button
-              type="button"
-              aria-expanded={showOuForm}
-              disabled={createOuDisabled}
-              onClick={() => setShowOuForm((open) => !open)}
-            >
-              <PlusIcon size={16} /> New OU
+          ) : (
+            <Button type="button" size="sm" onClick={() => setCreating("org-unit")}>
+              <PlusIcon aria-hidden="true" /> Create org unit
             </Button>
-          </>
+          )
         }
       />
-
-      {directoryFailure !== null ? (
-        <QueryFailureBanner
-          summary="Groups and organizational units are unavailable"
-          subject="groups and org units"
-          error={directoryFailure.error}
-          isRetrying={orgUnitsQuery.isFetching || groupsQuery.isFetching}
-          onRetry={retryDirectory}
-          /* Nothing else is on the page when both halves are gone. */
-          retryVariant="default"
-        >
-          New group and New OU are disabled until the directory loads — creating into a list this
-          console cannot read would give you no way to confirm it worked.
-        </QueryFailureBanner>
-      ) : (
-        <>
-          {orgUnitsFailure !== null ? (
-            <QueryFailureBanner
-              summary="Organizational units are unavailable"
-              subject="org units"
-              error={orgUnitsFailure.error}
-              isRetrying={orgUnitsFailure.isRetrying}
-              onRetry={orgUnitsFailure.retry}
-            >
-              Groups below are current; only org units are missing, and New OU stays disabled until
-              they load.
-            </QueryFailureBanner>
-          ) : null}
-          {groupsFailure !== null ? (
-            <QueryFailureBanner
-              summary="Groups are unavailable"
-              subject="groups"
-              error={groupsFailure.error}
-              isRetrying={groupsFailure.isRetrying}
-              onRetry={groupsFailure.retry}
-            >
-              Organizational units below are current; only groups are missing, and New group stays
-              disabled until they load.
-            </QueryFailureBanner>
-          ) : null}
-          {orgUnitsFailure === null &&
-          groupsFailure === null &&
-          (orgUnitsQuery.isPending || groupsQuery.isPending) ? (
-            <StateBanner kind="loading">Loading groups & organizational units…</StateBanner>
-          ) : null}
-        </>
-      )}
-      <MutationError error={createOuMutation.error} />
-      <MutationError error={deleteOuMutation.error} />
-      <MutationError error={deleteGroupMutation.error} />
-
-      {showOuForm && !createOuDisabled ? (
-        <CreateNameForm
-          toolbarLabel="New org unit"
-          fieldLabel="New org unit name"
-          placeholder="Engineering"
-          submitLabel="Create OU"
-          value={ouName}
-          onChange={setOuName}
-          pending={createOuMutation.isPending}
-          onSubmit={(name) => createOuMutation.mutate(name)}
-        />
-      ) : null}
-      {showGroupForm && !createGroupDisabled ? (
-        <GroupMailForm
-          onSave={createGroup}
-          onSaved={() => {
-            setShowGroupForm(false);
-            invalidateGroups();
-          }}
-        />
-      ) : null}
-
-      {managedGroup !== null ? (
-        <>
-          <GroupMailForm
-            key={managedGroup.id}
-            group={managedGroup}
-            onSave={(input) => updateGroup(managedGroup.id, input)}
-            onSaved={invalidateGroups}
+      <AdminTabs
+        label="Groups and org units"
+        idPrefix="groups"
+        tabs={GROUP_TABS}
+        selected={tab}
+        onSelect={selectTab}
+      >
+        {tab === "groups" ? (
+          <GroupsPanel onCreate={() => setCreating("group")} />
+        ) : (
+          <OrgUnitsPanel
+            creating={creating === "org-unit"}
+            onCreatingChange={(open) => setCreating(open ? "org-unit" : null)}
           />
-          <GroupMembershipPanel group={managedGroup} />
-        </>
-      ) : null}
-
-      {rows.length === 0 ? (
-        /* "None yet" is only true once both halves actually loaded — claiming
-           it while a query is failing or in flight invents an empty directory. */
-        orgUnitsQuery.isSuccess && groupsQuery.isSuccess ? (
-          <EmptyState icon={<BuildingIcon size={16} />} title="No org units or groups yet">
-            Org units mirror your reporting structure and scope policies to a slice of the
-            directory. Groups are membership lists you can grant access with. Create either to start
-            assigning them.
-          </EmptyState>
-        ) : null
-      ) : (
-        <div className="panel">
-          <AdminTable
-            label="Org units and groups"
-            columns={directoryColumns}
-            rows={rows}
-            rowKey={(row) => row.key}
-          />
-        </div>
-      )}
-
-      {/* Irreversible and it takes other things with it, so it is the policy's
-          blast-radius tier — but not the typed-phrase tier: recreating an org
-          unit or a group is a form on this page, not a support ticket. */}
-      {deleteTarget === null || deleteCopy === null ? null : (
-        <ConfirmDestructive
-          open
-          onOpenChange={(next) => {
-            if (!next) {
-              setDeleteTarget(null);
-            }
-          }}
-          title={deleteCopy.title}
-          blastRadius={deleteCopy.blastRadius}
-          confirmLabel={deleteCopy.confirmLabel}
-          isPending={deleteOuMutation.isPending || deleteGroupMutation.isPending}
-          onConfirm={() => {
-            /* Settle, not success: the failure banners live on the page behind
-               this overlay, so the dialog must get out of their way either
-               way. */
-            const settle = { onSettled: () => setDeleteTarget(null) };
-            if (deleteTarget.row.type === "OU") {
-              deleteOuMutation.mutate(deleteTarget.id, settle);
-            } else {
-              deleteGroupMutation.mutate(deleteTarget.id, settle);
-            }
-          }}
-        >
-          {deleteCopy.body}
-        </ConfirmDestructive>
-      )}
-    </PageScroll>
+        )}
+      </AdminTabs>
+      {creating === "group" ? <GroupSheet group={null} onClose={() => setCreating(null)} /> : null}
+    </>
   );
 }

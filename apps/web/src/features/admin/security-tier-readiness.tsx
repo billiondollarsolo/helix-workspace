@@ -1,12 +1,11 @@
 /* Admin security tier readiness: live tier, target gates, and confirmed changes. */
 
-import { AdminSecurityRelatedNav } from "@/features/admin/admin-related-nav";
 import {
   resolveClosedSearchParam,
   useAdminSectionSearch,
 } from "@/features/admin/admin-section-search";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import { PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import { PageHeading, Notice } from "@/features/admin/console/primitives";
 import {
   adminPlatformConfigQueryKey,
   adminPlatformConfigQueryOptions,
@@ -251,8 +250,8 @@ export function SecurityTierReadiness() {
     /* No `role="main"`: SurfaceFrame / PageScroll already own the page shell. */
     <section className="admin-tier-page grid gap-4">
       <PageHeading
-        title="Tier readiness"
-        subtitle="See the live security tier, pick a target, review gates that block it, and apply when ready."
+        title="Security tier"
+        subtitle="Your current security tier and what a stricter tier requires."
         meta={
           <div
             className="admin-tier-score"
@@ -264,7 +263,6 @@ export function SecurityTierReadiness() {
           </div>
         }
       />
-      <AdminSecurityRelatedNav current="tier-readiness" />
 
       <p className="admin-tier-live-status m-0 text-sm text-muted-foreground" role="status">
         {platformConfigQuery.isPending
@@ -297,11 +295,11 @@ export function SecurityTierReadiness() {
         </div>
 
         {!isLiveTierSelected && backendStatus !== undefined ? (
-          <StateBanner kind="info">
+          <Notice>
             You are reviewing <strong>{selectedTierTitle}</strong>. The platform is running{" "}
             <strong>{currentTierTitle}</strong>, so gates below are catalogue requirements — not
             live measurements — until you apply this tier.
-          </StateBanner>
+          </Notice>
         ) : null}
 
         <div className="admin-tier-grid">

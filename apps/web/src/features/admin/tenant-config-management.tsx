@@ -8,7 +8,6 @@ import {
   Palette,
   RefreshCcw,
   Save,
-  ToggleLeft,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { Button } from "@/components/ui/button";
@@ -27,7 +26,15 @@ import {
   type TenantStorageHealthResult,
 } from "./tenant-config-api";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import { PageHeading } from "@/features/admin/console/primitives";
+import { formatBytes, formatCount } from "@/features/admin/console/format";
+import {
+  ErrorNotice,
+  LoadingState,
+  PageHeading,
+  PanelHeading,
+  QueryFailureBanner,
+} from "@/features/admin/console/primitives";
+import { CopyableId, SettingToggle } from "@/features/admin/console/widgets";
 import {
   BYO_STORAGE_FIELDS,
   BYO_STORAGE_KINDS,
@@ -42,33 +49,14 @@ export async function prefetchAdminTenantConfigQuery(queryClient: TenantConfigRo
   await queryClient.ensureQueryData(tenantConfigQueryOptions()).catch(() => undefined);
 }
 
-/* Org-admin policy switches. These default to on (calendar invitation import
-   is an opt-in), and an admin may change them for their own workspace. */
-const BOOLEAN_FEATURE_FLAGS = [
-  ["assistant_retrieval", "Assistant searches workspace content"],
-  ["mail_outbound", "Outbound mail"],
-  ["calendar_import_invitations", "Import calendar invitations from email"],
-  ["drive_s3_api", "Drive S3 API (access keys for aws, rclone, and S3 SDKs)"],
-] as const;
-
-export const BOOLEAN_FEATURE_FLAG_GROUPS = [
-  { title: "AI", keys: ["assistant_retrieval"] },
-  { title: "Mail", keys: ["mail_outbound"] },
-  { title: "Calendar", keys: ["calendar_import_invitations"] },
-  { title: "Drive", keys: ["drive_s3_api"] },
-] as const satisfies ReadonlyArray<{
-  readonly title: string;
-  readonly keys: readonly string[];
-}>;
-
 const QUOTA_FIELDS = [
-  ["storage_bytes_limit", "Storage bytes"],
-  ["ai_tokens_monthly_limit", "AI tokens monthly"],
-  ["ai_image_gen_monthly_limit", "AI images monthly"],
-  ["actors_limit", "Actors"],
-  ["outbound_webhooks_limit", "Outbound webhooks"],
-  ["api_rps_limit", "Integration API RPS"],
-  ["export_jobs_per_hour", "Export jobs per hour"],
+  ["storage_bytes_limit", "Storage", formatBytes],
+  ["ai_tokens_monthly_limit", "AI tokens per month", formatCount],
+  ["ai_image_gen_monthly_limit", "AI images per month", formatCount],
+  ["actors_limit", "Accounts", formatCount],
+  ["outbound_webhooks_limit", "Outbound webhooks", formatCount],
+  ["api_rps_limit", "API requests per second", formatCount],
+  ["export_jobs_per_hour", "Exports per hour", formatCount],
 ] as const;
 
 const BRANDING_FIELDS = [
@@ -89,20 +77,11 @@ const FIELD_LABEL_CLASS = "grid gap-1 text-xs text-muted-foreground";
 const CARD_CLASS =
   "grid content-start gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground";
 
-type BooleanFeatureFlagKey = (typeof BOOLEAN_FEATURE_FLAGS)[number][0];
-
-/** Flag key -> display label, so the grouped form can render by key. */
-const BOOLEAN_FEATURE_FLAG_LABELS = new Map<string, string>(BOOLEAN_FEATURE_FLAGS);
-
-/** Every boolean flag key; the test checks `BOOLEAN_FEATURE_FLAG_GROUPS` partitions it. */
-export const BOOLEAN_FEATURE_FLAG_KEYS: readonly BooleanFeatureFlagKey[] =
-  BOOLEAN_FEATURE_FLAGS.map(([key]) => key);
 type BrandingKey = (typeof BRANDING_FIELDS)[number][0];
 type ByoStorageKind = (typeof BYO_STORAGE_KINDS)[number][0];
 type ByoStorageProvider = (typeof BYO_STORAGE_PROVIDERS)[number][0];
 type ByoStorageFieldKey = (typeof BYO_STORAGE_FIELDS)[number][0];
 
-type FeatureState = Record<BooleanFeatureFlagKey, boolean>;
 type BrandingState = Record<BrandingKey, string>;
 type ByoStorageState = Record<ByoStorageFieldKey, string> & {
   readonly kind: ByoStorageKind;
@@ -111,9 +90,6 @@ type ByoStorageState = Record<ByoStorageFieldKey, string> & {
   readonly object_lock: "governance" | "compliance";
 };
 
-const emptyFeatureState = Object.fromEntries(
-  BOOLEAN_FEATURE_FLAGS.map(([key]) => [key, false]),
-) as FeatureState;
 const emptyBrandingState = Object.fromEntries(
   BRANDING_FIELDS.map(([key]) => [key, ""]),
 ) as BrandingState;
@@ -134,10 +110,6 @@ const emptyByoStorageState = {
 export function TenantConfigManagement() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [features, setFeatures] = useState<FeatureState>(emptyFeatureState);
-  const [dirtyFeatureKeys, setDirtyFeatureKeys] = useState<ReadonlySet<BooleanFeatureFlagKey>>(
-    new Set(),
-  );
   const [branding, setBranding] = useState<BrandingState>(emptyBrandingState);
   const [byoStorage, setByoStorage] = useState<ByoStorageState>(emptyByoStorageState);
   const [storageHealth, setStorageHealth] = useState<TenantStorageHealthResult | null>(null);
@@ -157,8 +129,6 @@ export function TenantConfigManagement() {
     if (query.data === undefined) {
       return;
     }
-    setFeatures(featureStateFromConfig(query.data));
-    setDirtyFeatureKeys(new Set());
     setBranding(brandingStateFromConfig(query.data));
     setByoStorage(byoStorageStateFromConfig(query.data));
     setMigrationTarget(defaultMigrationTarget(query.data));
@@ -292,25 +262,6 @@ export function TenantConfigManagement() {
     return QUOTA_FIELDS.filter(([key]) => overrides[key] !== undefined).length;
   }, [query.data]);
 
-  const saveFeatures = () => {
-    if (dirtyFeatureKeys.size === 0) {
-      return;
-    }
-    const featurePatch = Object.fromEntries(
-      [...dirtyFeatureKeys].map((key) => [key, features[key]]),
-    );
-    mutation.mutate(
-      {
-        features: featurePatch,
-        reason: "admin settings update: features",
-      },
-      {
-        onSuccess: () => {
-          setDirtyFeatureKeys(new Set());
-        },
-      },
-    );
-  };
   const saveBranding = () => {
     mutation.mutate({
       branding: compactBlankStrings(branding),
@@ -394,80 +345,30 @@ export function TenantConfigManagement() {
           scanning the page. */}
       <PageHeading
         title="Workspace settings"
-        subtitle="Feature flags, quotas, branding, and bring-your-own storage for this tenant."
+        subtitle="Your organization's profile, branding, limits, and storage."
       />
-      <p className="text-xs text-muted-foreground">
-        {orgId === null ? (
-          "Tenant identifier unavailable"
-        ) : (
-          <>
-            Tenant <code>{orgId}</code>
-          </>
-        )}
-      </p>
+      <OrganizationCard name={query.data?.orgName ?? null} orgId={orgId} />
 
-      {error !== null ? (
-        <p className="text-xs text-destructive" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error !== null ? <ErrorNotice>{error}</ErrorNotice> : null}
 
       {query.isError ? (
-        <p className="text-xs text-muted-foreground" role="status">
-          Tenant settings are unavailable.
-        </p>
+        <QueryFailureBanner
+          summary="Workspace settings couldn't be loaded"
+          subject="workspace settings"
+          error={query.error}
+          isRetrying={query.isFetching}
+          onRetry={() => {
+            void queryClient.invalidateQueries({ queryKey: tenantConfigQueryKeys.detail() });
+          }}
+        />
+      ) : query.isPending ? (
+        <LoadingState label="Loading workspace settings" variant="card" count={4} />
       ) : (
         // Two columns, not four. The console body caps at 1280px, so
         // `2xl:grid-cols-4` produced four ~300px columns of wildly unequal
         // height — Feature flags ran off the fold while Branding ended halfway
         // up. `items-start` stops each card stretching to its row's tallest.
         <div className="grid items-start gap-4 lg:grid-cols-2">
-          <form
-            aria-label="Feature flags"
-            className={CARD_CLASS}
-            onSubmit={(event) => {
-              event.preventDefault();
-              saveFeatures();
-            }}
-          >
-            <SectionHeader icon={<ToggleLeft aria-hidden="true" />} title="Feature flags" />
-            {BOOLEAN_FEATURE_FLAG_GROUPS.map((group) => (
-              <fieldset className="grid gap-2" key={group.title}>
-                <legend className="admin-flag-group-legend">{group.title}</legend>
-                {group.keys.map((key) => (
-                  <label
-                    key={key}
-                    className="flex min-h-8 items-center justify-between gap-3 text-sm"
-                  >
-                    <span>{BOOLEAN_FEATURE_FLAG_LABELS.get(key) ?? key}</span>
-                    <input
-                      checked={features[key]}
-                      className="size-4"
-                      onChange={(event) => {
-                        const checked = event.currentTarget.checked;
-                        setFeatures((current) => ({ ...current, [key]: checked }));
-                        setDirtyFeatureKeys((current) => new Set(current).add(key));
-                      }}
-                      type="checkbox"
-                    />
-                  </label>
-                ))}
-              </fieldset>
-            ))}
-            {/* Saving with nothing dirty PATCHed an empty patch — a control
-                that does nothing. The count says what the button will write. */}
-            <p className="text-xs text-muted-foreground" role="status">
-              {dirtyFeatureKeys.size === 0
-                ? "No unsaved flag changes."
-                : `${String(dirtyFeatureKeys.size)} unsaved flag change${dirtyFeatureKeys.size === 1 ? "" : "s"}.`}
-            </p>
-            <SaveButton
-              disabled={!canSave || dirtyFeatureKeys.size === 0}
-              label="Save feature flags"
-              onClick={saveFeatures}
-            />
-          </form>
-
           <form
             aria-label="Branding"
             className={CARD_CLASS}
@@ -578,22 +479,15 @@ export function TenantConfigManagement() {
                   />
                 </label>
               ))}
-              <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
-                <span>Force path-style S3</span>
-                <input
-                  checked={byoStorage.force_path_style}
-                  className="size-4"
-                  onChange={(event) => {
-                    const checked = event.currentTarget.checked;
-                    setByoStorage((current) => ({
-                      ...current,
-                      force_path_style: checked,
-                    }));
-                  }}
-                  type="checkbox"
-                  disabled={byoStorage.kind === "helix-default"}
-                />
-              </label>
+              <SettingToggle
+                label="Path-style addressing"
+                description="Needed by most S3-compatible providers other than AWS."
+                checked={byoStorage.force_path_style}
+                disabled={byoStorage.kind === "helix-default"}
+                onCheckedChange={(checked) => {
+                  setByoStorage((current) => ({ ...current, force_path_style: checked }));
+                }}
+              />
               <label className="grid gap-1 text-xs text-muted-foreground">
                 <span>Object-lock mode</span>
                 <select
@@ -660,18 +554,15 @@ export function TenantConfigManagement() {
                   <option value="helix-default">Helix default storage</option>
                 </select>
               </label>
-              <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
-                <span>Dry run only</span>
-                <input
-                  checked={migrationDryRun}
-                  className="size-4"
-                  onChange={(event) => {
-                    setMigrationDryRun(event.currentTarget.checked);
-                    setMigrationRequestConfirmed(false);
-                  }}
-                  type="checkbox"
-                />
-              </label>
+              <SettingToggle
+                label="Dry run only"
+                description="Counts what would be copied without moving anything."
+                checked={migrationDryRun}
+                onCheckedChange={(checked) => {
+                  setMigrationDryRun(checked);
+                  setMigrationRequestConfirmed(false);
+                }}
+              />
               <label className="flex min-h-8 items-center justify-between gap-3 text-sm">
                 <span>Confirm live migration request</span>
                 <input
@@ -773,7 +664,7 @@ export function TenantConfigManagement() {
           <section aria-label="Quotas" className={CARD_CLASS}>
             <SectionHeader icon={<Gauge aria-hidden="true" />} title="Quotas" />
             <p className="text-xs text-muted-foreground">
-              No limit applies unless this workspace sets its own override.
+              No limit applies unless your organization sets one.
             </p>
             <Disclosure
               detail={quotaSummary(QUOTA_FIELDS.length, quotaOverrideCount)}
@@ -781,12 +672,13 @@ export function TenantConfigManagement() {
               title="Effective limits"
             >
               <div className="grid gap-2" role="list">
-                {QUOTA_FIELDS.map(([key, label]) => (
+                {QUOTA_FIELDS.map(([key, label, format]) => (
                   <QuotaRow
                     key={key}
                     effective={query.data?.effective.quotas[key]}
                     label={label}
                     override={query.data?.quotas[key]}
+                    format={format}
                   />
                 ))}
               </div>
@@ -916,10 +808,12 @@ function QuotaRow({
   effective,
   label,
   override,
+  format,
 }: {
   readonly effective: unknown;
   readonly label: string;
   readonly override: unknown;
+  readonly format: (value: number) => string;
 }) {
   return (
     <div
@@ -927,11 +821,13 @@ function QuotaRow({
       role="listitem"
     >
       <span className="font-medium text-foreground">{label}</span>
-      <span className="font-mono text-sm text-foreground">{formatQuotaValue(effective)}</span>
+      <span className="text-sm text-foreground">{formatQuotaValue(effective, format)}</span>
       {override === undefined ? null : (
         <>
-          <span className="text-muted-foreground">Override</span>
-          <span className="text-right text-muted-foreground">{formatQuotaValue(override)}</span>
+          <span className="text-muted-foreground">Set for your organization</span>
+          <span className="text-right text-muted-foreground">
+            {formatQuotaValue(override, format)}
+          </span>
         </>
       )}
     </div>
@@ -948,17 +844,11 @@ function SaveButton({
   readonly onClick: () => void;
 }) {
   return (
-    <Button disabled={disabled} onClick={onClick} size="sm" type="button">
+    <Button disabled={disabled} onClick={onClick} size="sm" type="button" variant="outline">
       <Save aria-hidden="true" />
       {label}
     </Button>
   );
-}
-
-function featureStateFromConfig(config: TenantConfigAdminView): FeatureState {
-  return Object.fromEntries(
-    BOOLEAN_FEATURE_FLAGS.map(([key]) => [key, config.effective.features[key] === true]),
-  ) as FeatureState;
 }
 
 function brandingStateFromConfig(config: TenantConfigAdminView): BrandingState {
@@ -1067,9 +957,9 @@ function parseByoStorage(input: ByoStorageState): Record<string, unknown> | stri
    is a real "no cap". Anything else means the API did not report that key —
    which is a different claim, and rendering it as "unlimited" told an operator
    a limit was lifted when we simply do not know. */
-function formatQuotaValue(value: unknown): string {
+function formatQuotaValue(value: unknown, format: (value: number) => string): string {
   if (typeof value === "number") {
-    return new Intl.NumberFormat("en-US").format(value);
+    return format(value);
   }
   return value === null ? "Unlimited" : "Not reported";
 }
@@ -1077,9 +967,9 @@ function formatQuotaValue(value: unknown): string {
 function quotaSummary(limitCount: number, overrideCount: number): string {
   const overrides =
     overrideCount === 0
-      ? "no tenant overrides"
-      : `${String(overrideCount)} tenant override${overrideCount === 1 ? "" : "s"}`;
-  return `Read-only · ${String(limitCount)} limits · ${overrides}`;
+      ? "none set for your organization"
+      : `${String(overrideCount)} set for your organization`;
+  return `${String(limitCount)} limits · ${overrides}`;
 }
 
 function byoConnectionSummary(state: ByoStorageState): string {
@@ -1114,7 +1004,7 @@ function formatMigrationTarget(target: TenantStorageMigrationTarget): string {
 
 function brandingPlaceholder(key: BrandingKey): string | undefined {
   if (key === "accent_color_hex") {
-    return "#2f6fed";
+    return "Hex color code";
   }
   if (key === "logo_url") {
     return "https://example.com/logo.png";
@@ -1174,4 +1064,33 @@ function hasControlCharacter(value: string): boolean {
     }
   }
   return false;
+}
+
+/** The organization's name, with its ID behind a copy button for support requests. */
+function OrganizationCard({
+  name,
+  orgId,
+}: {
+  readonly name: string | null;
+  readonly orgId: string | null;
+}) {
+  return (
+    <section aria-labelledby="workspace-organization-heading" className="admin-card">
+      <PanelHeading id="workspace-organization-heading" title="Organization" />
+      <dl className="admin-facts">
+        <div>
+          <dt>Name</dt>
+          <dd>{name ?? "—"}</dd>
+        </div>
+        {orgId === null ? null : (
+          <div>
+            <dt>Organization ID</dt>
+            <dd>
+              <CopyableId value={orgId} label="organization ID" />
+            </dd>
+          </div>
+        )}
+      </dl>
+    </section>
+  );
 }

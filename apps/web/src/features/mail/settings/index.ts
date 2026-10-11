@@ -8,6 +8,8 @@
    - openLabelDialog(request: MailLabelDialogRequest): void
        { mode: "create", parentId? } opens New label (nested under
        `parentId` when given); { mode: "edit", labelId } opens Edit label.
+   - openRemoveLabelDialog(labelId: string): void
+       Asks to confirm removing a label and the labels nested under it.
 
    Components:
    - <LabelColorMenu label={MailLabelSummary} />
@@ -25,6 +27,7 @@
 export {
   openFilterDialog,
   openLabelDialog,
+  openRemoveLabelDialog,
   type MailFilterPrefill,
   type MailLabelDialogRequest,
 } from "./dialog-store";

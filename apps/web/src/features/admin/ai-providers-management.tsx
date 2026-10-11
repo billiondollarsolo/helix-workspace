@@ -7,12 +7,17 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { SettingToggle } from "@/features/admin/console/widgets";
 import { Plus, Save, Shield, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AdminAiRelatedNav } from "@/features/admin/admin-related-nav";
-import { PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import {
+  PanelHeading,
+  ErrorNotice,
+  LoadingState,
+  Notice,
+} from "@/features/admin/console/primitives";
 import {
   adminPlatformConfigQueryKey,
   adminPlatformConfigQueryOptions,
@@ -42,7 +47,7 @@ function parseModelsCsv(csv: string): string[] {
 }
 
 /** Product slots operators assign in Admin. */
-export const AI_FEATURE_SLOTS = [
+const AI_FEATURE_SLOTS = [
   {
     feature: "assistant.chat",
     label: "Assistant chat (default model)",
@@ -386,24 +391,21 @@ export function AIProvidersManagement() {
 
   return (
     <section className="grid gap-4">
-      <PageHeading
-        title="AI providers"
-        subtitle="Register OpenAI-compatible endpoints, then assign which provider and model each Helix AI feature uses. Assistant can offer multiple models when providers are tagged for chat."
+      <PanelHeading
+        title="Models"
+        subtitle="Model providers, and which model each Assistant feature uses."
       />
-      <AdminAiRelatedNav current="ai-providers" />
 
-      {configQuery.isPending ? (
-        <StateBanner kind="loading">Loading AI configuration…</StateBanner>
-      ) : null}
+      {configQuery.isPending ? <LoadingState label="Loading AI configuration…" /> : null}
       {configQuery.isError ? (
-        <StateBanner kind="error">
+        <ErrorNotice>
           {configQuery.error instanceof Error
             ? configQuery.error.message
             : "Could not load platform configuration."}
-        </StateBanner>
+        </ErrorNotice>
       ) : null}
-      {formError !== null ? <StateBanner kind="error">{formError}</StateBanner> : null}
-      {savedNotice !== null ? <StateBanner kind="info">{savedNotice}</StateBanner> : null}
+      {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
+      {savedNotice !== null ? <Notice>{savedNotice}</Notice> : null}
 
       <section
         aria-labelledby="ai-providers-list-heading"
@@ -428,9 +430,9 @@ export function AIProvidersManagement() {
         </p>
 
         {editor.providers.length === 0 ? (
-          <StateBanner kind="info">
+          <Notice>
             No providers yet. Add one, or set OPENAI_* env vars as bootstrap until you save here.
-          </StateBanner>
+          </Notice>
         ) : null}
 
         <div className="grid gap-4">
@@ -515,28 +517,16 @@ export function AIProvidersManagement() {
                     }
                   />
                 </label>
-                <label className="flex min-h-8 items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={provider.enabled}
-                    aria-label={`Provider ${String(index + 1)} enabled`}
-                    onChange={(event) =>
-                      updateProvider(index, { enabled: event.currentTarget.checked })
-                    }
-                  />
-                  <span>Enabled</span>
-                </label>
-                <label className="flex min-h-8 items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={provider.offerInChat}
-                    aria-label={`Provider ${String(index + 1)} offer in chat`}
-                    onChange={(event) =>
-                      updateProvider(index, { offerInChat: event.currentTarget.checked })
-                    }
-                  />
-                  <span>Offer models in Assistant chat picker</span>
-                </label>
+                <SettingToggle
+                  label="Enabled"
+                  checked={provider.enabled}
+                  onCheckedChange={(checked) => updateProvider(index, { enabled: checked })}
+                />
+                <SettingToggle
+                  label="Offer models in Assistant chat picker"
+                  checked={provider.offerInChat}
+                  onCheckedChange={(checked) => updateProvider(index, { offerInChat: checked })}
+                />
               </div>
             </article>
           ))}

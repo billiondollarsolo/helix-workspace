@@ -76,7 +76,7 @@
       "surface": "shell"
     },
     {
-      "name": "Admin Tier readiness",
+      "name": "Admin Security tier",
       "path": "/admin/tier-readiness",
       "surface": "shell"
     },
@@ -91,7 +91,7 @@
       "surface": "shell"
     },
     {
-      "name": "Admin Overview",
+      "name": "Admin Home",
       "path": "/admin/overview",
       "surface": "shell"
     },
@@ -116,7 +116,7 @@
       "surface": "shell"
     },
     {
-      "name": "Admin Workspace apps",
+      "name": "Admin All apps",
       "path": "/admin/workspace-apps",
       "surface": "shell"
     },
@@ -146,13 +146,43 @@
       "surface": "shell"
     },
     {
-      "name": "Admin AI cost limits",
+      "name": "Admin AI costs",
       "path": "/admin/ai-costs",
       "surface": "shell"
     },
     {
       "name": "Admin AI observability",
       "path": "/admin/ai-observability",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Drive",
+      "path": "/admin/drive",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Chat",
+      "path": "/admin/chat",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Calendar",
+      "path": "/admin/calendar",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Meet",
+      "path": "/admin/meet",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Assistant",
+      "path": "/admin/assistant",
+      "surface": "shell"
+    },
+    {
+      "name": "Admin Agent controls",
+      "path": "/admin/agent-controls",
       "surface": "shell"
     }
   ],

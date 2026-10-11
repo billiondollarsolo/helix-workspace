@@ -14,8 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AdminAiRelatedNav } from "@/features/admin/admin-related-nav";
-import { PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import { PageHeading, ErrorNotice, LoadingState } from "@/features/admin/console/primitives";
 import { useQuery } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { useMemo } from "react";
@@ -147,18 +146,17 @@ export function AIObservabilityDashboard() {
     // in admin-console.tsx, so the scroll container already wraps this.
     <>
       <PageHeading
-        title="Observability"
-        subtitle="Spend, audit, and privacy controls in force for AI calls, plus which metrics already have a provisioned dashboard panel. Live series are read in Grafana, not here. Keys and models are under AI providers."
+        title="AI observability"
+        subtitle="Spend, audit, and privacy controls for AI usage, and where to find its metrics."
       />
-      <AdminAiRelatedNav current="ai-observability" />
 
       {platformConfigQuery.isPending ? (
-        <StateBanner kind="loading">Loading observability config…</StateBanner>
+        <LoadingState label="Loading observability config…" />
       ) : null}
       {platformConfigQuery.isError ? (
-        <StateBanner kind="error">
+        <ErrorNotice>
           Observability config is unavailable or missing admin config scope.
-        </StateBanner>
+        </ErrorNotice>
       ) : null}
 
       <div className="admin-tier-page">

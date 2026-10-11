@@ -6,15 +6,14 @@ import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive
 import { AdminSelect, AdminToolbar } from "@/features/admin/console/controls";
 import {
   EmptyRow,
-  EmptyState,
   MutationError,
   PageHeading,
-  PageScroll,
   QueryFailureBanner,
-  StateBanner,
   StatusChip,
   useQueryFailure,
+  LoadingState,
 } from "@/features/admin/console/primitives";
+import { EmptyState } from "@/components/ui/empty-state";
 import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   defaultOAuthAppsInput,
@@ -38,8 +37,7 @@ import { useMemo, useState } from "react";
  *  reaches the reason from the control rather than by hunting for it. */
 const FILTERS_REASON_ID = "oauth-apps-filters-unavailable";
 
-const NO_GRANTS_REASON =
-  "No app has been granted OAuth access yet, so there is nothing to filter. These controls come back as soon as a grant exists.";
+const NO_GRANTS_REASON = "Filters turn on once an app has access.";
 
 function riskVariant(risk: OAuthAppRisk): string {
   return risk === "high" ? "danger" : risk === "medium" ? "warning" : "success";
@@ -254,14 +252,14 @@ export function AdminApps() {
   ];
 
   return (
-    <PageScroll>
+    <>
       {/* Named for the sidebar entry that opens it: "App permissions" sent an
           operator looking for OAuth grants to a page that appeared to be about
           something else, and "Apps" in this console also means the first-party
           modules under Workspace apps. */}
       <PageHeading
         title="OAuth apps"
-        subtitle="Third-party apps that have OAuth access to Helix Workspace data"
+        subtitle="Third-party apps people have connected to their accounts."
       />
 
       <AdminToolbar label="OAuth app filters">
@@ -326,14 +324,13 @@ export function AdminApps() {
           onRetry={appsFailure.retry}
           /* The grant table is the page; with it gone the retry is the only
              thing left to do here. */
-          retryVariant="default"
         >
           The search, status, and risk filters stay disabled until the list loads — each one re-runs
           this same request. Existing grants are unaffected; this is a console read failure, and no
           app has lost or gained access.
         </QueryFailureBanner>
       ) : appsQuery.isPending ? (
-        <StateBanner kind="loading">Loading OAuth apps…</StateBanner>
+        <LoadingState label="Loading OAuth apps…" />
       ) : null}
       <MutationError error={statusMutation.error} />
       <MutationError error={revokeMutation.error} />
@@ -344,14 +341,17 @@ export function AdminApps() {
           row when one turns up. A filtered-to-nothing table keeps its header and
           the inline row instead: there the frame is the context. */}
       {appsFailure === null && noGrants ? (
-        <EmptyState icon={<GridIcon size={16} />} title="No app has been granted OAuth access">
-          An OAuth grant is a standing authorization: a workspace user consents once, and the app
-          keeps its own token for workspace data until an admin revokes it. This is where apps
-          someone connected on their own become visible to you. Each row that appears carries the
-          scope the app asked for and how many users hold a token for it — approve the ones this
-          workspace sanctions, block the ones it does not, and revoke to delete every token already
-          issued.
-        </EmptyState>
+        <EmptyState
+          icon={<GridIcon size={16} />}
+          title="No app has been granted OAuth access"
+          size="inline"
+          body={
+            <>
+              Apps appear here when someone connects one to their account. You can then approve,
+              block, or revoke each one.
+            </>
+          }
+        />
       ) : null}
 
       {appsFailure !== null || noGrants ? null : (
@@ -406,6 +406,6 @@ export function AdminApps() {
           user would have to authorize the app again.
         </ConfirmDestructive>
       )}
-    </PageScroll>
+    </>
   );
 }

@@ -61,7 +61,6 @@
   "apps/web/src/features/assistant/assistant-surface.tsx": 1270,
   "apps/web/src/features/drive/api.test.ts": 848,
   "apps/web/src/features/drive/drive-shell.test.tsx": 1033,
-  "apps/web/src/features/mail/mail-shell.test.tsx": 1123,
   "apps/web/src/features/meet/jitsi-external-api.ts": 845,
   "apps/web/src/features/meet/meet-call.tsx": 885,
   "apps/web/src/features/webhooks/webhook-management.test.tsx": 866,

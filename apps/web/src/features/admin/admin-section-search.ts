@@ -30,8 +30,10 @@ export interface AdminSectionSearch {
   readonly actorType?: string;
   /** Users status filter. */
   readonly status?: string;
-  /** Expanded user id in the directory. */
+  /** User whose details are open in the directory. */
   readonly user?: string;
+  /** Group open for editing. */
+  readonly group?: string;
   /** Focused domain id (domains section). */
   readonly domain?: string;
 }
@@ -45,6 +47,7 @@ const ADMIN_SECTION_SEARCH_KEYS = [
   "actorType",
   "status",
   "user",
+  "group",
   "domain",
 ] as const satisfies readonly (keyof AdminSectionSearch)[];
 
@@ -58,6 +61,7 @@ export function validateAdminSectionSearch(search: Record<string, unknown>): Adm
   const status = optionalStringSearchParam(search.status);
   const user = optionalUuidSearchParam(search.user) ?? optionalStringSearchParam(search.user);
   const domain = optionalStringSearchParam(search.domain);
+  const group = optionalUuidSearchParam(search.group) ?? optionalStringSearchParam(search.group);
 
   return {
     ...(tab === undefined ? {} : { tab }),
@@ -68,6 +72,7 @@ export function validateAdminSectionSearch(search: Record<string, unknown>): Adm
     ...(actorType === undefined ? {} : { actorType }),
     ...(status === undefined ? {} : { status }),
     ...(user === undefined ? {} : { user }),
+    ...(group === undefined ? {} : { group }),
     ...(domain === undefined ? {} : { domain }),
   };
 }
@@ -132,6 +137,7 @@ const FILTER_SEARCH_KEYS: ReadonlySet<string> = new Set([
   "actorType",
   "status",
   "user",
+  "group",
   "policy",
   "domain",
 ]);

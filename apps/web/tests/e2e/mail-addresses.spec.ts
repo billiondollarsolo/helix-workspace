@@ -436,10 +436,10 @@ async function mockAddresses(page: Page, failFirst = false) {
 }
 
 async function openCompose(page: Page) {
-  if ((page.viewportSize()?.width ?? 1440) <= 760)
-    await page.getByRole("button", { name: "Main menu", exact: true }).click();
-  // On phones the compose window opens full screen over the menu.
-  await page.getByRole("button", { name: "Compose", exact: true }).click();
+  const compose = page.getByRole("button", { name: "Compose", exact: true });
+  // Phones use the floating Compose button over the list; the sidebar button is in the closed menu.
+  if ((page.viewportSize()?.width ?? 1440) <= 760) await compose.last().click();
+  else await compose.click();
 }
 
 test("domain identity choices retain MFA and second-administrator gates", async ({ page }) => {

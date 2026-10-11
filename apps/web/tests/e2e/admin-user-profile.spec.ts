@@ -28,8 +28,7 @@ test("admin edits human profiles with recoverable errors and persisted directory
 }) => {
   const updates = await mockAdminProfiles(page, true);
   await page.goto("/admin/users");
-  await expect(page.getByRole("button", { name: /^Edit profile for / })).toHaveCount(1);
-  await page.getByRole("button", { name: "Edit profile for Morgan Lee", exact: true }).click();
+  await openEditProfile(page, "Morgan Lee");
   const dialog = page.getByRole("dialog", { name: "Edit profile for Morgan Lee", exact: true });
   await expect(dialog.getByLabel("Display name", { exact: true })).toHaveValue("Morgan Lee");
   await expect(dialog.locator('input[name="email"], input[name="role"]')).toHaveCount(0);
@@ -43,11 +42,9 @@ test("admin edits human profiles with recoverable errors and persisted directory
   await dialog.getByRole("button", { name: "Save profile", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(updates).toEqual([editedFields, editedFields]);
-  await expect(
-    page.getByRole("button", { name: "Edit profile for Morgan Quinn", exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("Morgan Quinn", { exact: true }).first()).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "Edit profile for Morgan Quinn", exact: true }).click();
+  await openEditProfile(page, "Morgan Quinn");
   const reopened = page.getByRole("dialog", { name: "Edit profile for Morgan Quinn", exact: true });
   for (const [label, value] of [
     ["Display name", editedFields.displayName],
@@ -65,8 +62,8 @@ test("admin profile dialog is accessible on mobile and restores keyboard focus",
   await page.setViewportSize({ width: 390, height: 844 });
   await mockAdminProfiles(page);
   await page.goto("/admin/users");
-  const opener = page.getByRole("button", { name: "Edit profile for Morgan Lee", exact: true });
-  await opener.click();
+  const opener = page.getByRole("button", { name: "Actions for Morgan Lee", exact: true });
+  await openEditProfile(page, "Morgan Lee");
   const dialog = page.getByRole("dialog", { name: "Edit profile for Morgan Lee", exact: true });
   const displayName = dialog.getByLabel("Display name", { exact: true });
   await expect(displayName).toHaveValue("Morgan Lee");
@@ -95,6 +92,12 @@ test("admin profile dialog is accessible on mobile and restores keyboard focus",
   await expect(dialog).toHaveCount(0);
   await expect(opener).toBeFocused();
 });
+
+/** Edit profile lives in the row ⋮ menu. */
+async function openEditProfile(page: Page, name: string): Promise<void> {
+  await page.getByRole("button", { name: `Actions for ${name}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit profile", exact: true }).click();
+}
 
 async function mockAdminProfiles(page: Page, failFirstSave = false): Promise<unknown[]> {
   await seedBrowserSession(page, "admin-profile-session");

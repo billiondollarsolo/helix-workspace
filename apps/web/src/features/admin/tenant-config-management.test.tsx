@@ -4,11 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  BOOLEAN_FEATURE_FLAG_GROUPS,
-  BOOLEAN_FEATURE_FLAG_KEYS,
-  TenantConfigManagement,
-} from "./tenant-config-management";
+import { TenantConfigManagement } from "./tenant-config-management";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -16,6 +12,7 @@ import {
 const tenantConfigPayload = {
   tenantConfig: {
     orgId: "org-1",
+    orgName: "Acme Corp",
     byo: {
       storage: {
         kind: "byo",
@@ -115,21 +112,6 @@ const liveStorageMigrationPayload = {
   },
 };
 
-describe("boolean feature-flag groups", () => {
-  /* The form renders flags by walking the groups, so a flag missing from every
-   * group is silently absent from the UI. This is the only thing that catches it. */
-  it("place every boolean flag in exactly one group", () => {
-    const grouped = BOOLEAN_FEATURE_FLAG_GROUPS.flatMap((group) => [...group.keys]);
-    expect(new Set(grouped).size, "a flag appears in more than one group").toBe(grouped.length);
-
-    // Derived from the labels map the form uses, so this stays honest if the
-    // flag list grows.
-    const declared = new Set(BOOLEAN_FEATURE_FLAG_KEYS);
-    expect([...declared].filter((key) => !grouped.includes(key)).sort()).toEqual([]);
-    expect(grouped.filter((key) => !declared.has(key)).sort()).toEqual([]);
-  });
-});
-
 describe("TenantConfigManagement", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -176,22 +158,16 @@ describe("TenantConfigManagement", () => {
 
     await waitFor(() => {
       expect(container.textContent).toContain("Workspace settings");
-      expect(container.textContent).toContain("Assistant searches workspace content");
-      expect(container.textContent).toContain("2 tenant overrides");
-      expect(container.textContent).toContain("Integration API RPS");
-      expect(container.textContent).toContain("Override");
+      expect(container.textContent).toContain("2 set for your organization");
+      expect(container.textContent).toContain("API requests per second");
     });
-    // The flag list is grouped by area.
-    expect(
-      [...container.querySelectorAll("fieldset > legend")].map((element) => element.textContent),
-    ).toEqual(BOOLEAN_FEATURE_FLAG_GROUPS.map((group) => group.title));
-    // The tenant id stays on the page, just not as the page's title.
+    // Feature switches live on each app's page now, not here.
+    expect(container.textContent).not.toContain("Assistant searches workspace content");
+    // The organization is named; its ID sits behind a copy button.
+    expect(container.textContent).toContain("Acme Corp");
     expect(container.textContent).toContain("org-1");
+    expect(container.querySelector('[aria-label="Copy organization ID"]')).not.toBeNull();
     expect(inputByLabel("Display name").value).toBe("Acme");
-    expect(inputByLabel("Import calendar invitations from email").checked).toBe(false);
-    // Unset flags show their effective default, not the absent stored value.
-    expect(inputByLabel("Assistant searches workspace content").checked).toBe(true);
-    expect(inputByLabel("Outbound mail").checked).toBe(false);
     expect(selectByLabel("Storage mode").value).toBe("byo");
     expect(selectByLabel("Provider").value).toBe("s3-compatible");
     expect(inputByLabel("Bucket").value).toBe("acme-helix-data");
@@ -204,49 +180,20 @@ describe("TenantConfigManagement", () => {
     expect(requestUrlOf(fetchMock.mock.calls[0]?.[0])).toContain("/api/admin/tenant-config");
   });
 
-  it("saves feature flags without writing quotas or branding", async () => {
-    fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
-
-    await render();
-
-    await waitFor(() => {
-      expect(checkboxByLabel("Assistant searches workspace content").checked).toBe(true);
-      expect(checkboxByLabel("Outbound mail").checked).toBe(false);
-    });
-    await act(async () => {
-      checkboxByLabel("Assistant searches workspace content").click();
-      checkboxByLabel("Outbound mail").click();
-      buttonByLabel("Save feature flags").click();
-      await Promise.resolve();
-    });
-
-    await waitFor(() => {
-      expect(patchBody()).toMatchObject({
-        reason: "admin settings update: features",
-      });
-    });
-    expect(patchBody().features).toStrictEqual({
-      assistant_retrieval: false,
-      mail_outbound: true,
-    });
-    expect(patchBody()).not.toHaveProperty("quotas");
-    expect(patchBody()).not.toHaveProperty("branding");
-  });
-
   it("shows effective quotas read-only", async () => {
     fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
 
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("2 tenant overrides");
-      expect(container.textContent).toContain("Integration API RPS");
+      expect(container.textContent).toContain("2 set for your organization");
+      expect(container.textContent).toContain("API requests per second");
       expect(container.textContent).toContain("10");
-      expect(container.textContent).toContain("Actors");
+      expect(container.textContent).toContain("Accounts");
       expect(container.textContent).toContain("Unlimited");
     });
-    expect(() => inputByLabel("Integration API RPS")).toThrow(
-      'Field "Integration API RPS" not found.',
+    expect(() => inputByLabel("API requests per second")).toThrow(
+      'Field "API requests per second" not found.',
     );
     expect(() => buttonByLabel("Save quotas")).toThrow('Button "Save quotas" not found.');
     expect(fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH")).toHaveLength(0);
@@ -382,7 +329,7 @@ describe("TenantConfigManagement", () => {
 
     await waitFor(() => {
       expect(selectByLabel("Migration target").value).toBe("helix-default");
-      expect(checkboxByLabel("Dry run only").checked).toBe(true);
+      expect(switchByLabel("Dry run only").getAttribute("aria-checked") === "true").toBe(true);
     });
     await act(async () => {
       buttonByLabel("Request migration").click();
@@ -443,7 +390,7 @@ describe("TenantConfigManagement", () => {
       expect(buttonByLabel("Request migration").disabled).toBe(false);
     });
     await act(async () => {
-      checkboxByLabel("Dry run only").click();
+      switchByLabel("Dry run only").click();
       checkboxByLabel("Confirm live migration request").click();
       buttonByLabel("Request migration").click();
       await Promise.resolve();
@@ -506,7 +453,7 @@ describe("TenantConfigManagement", () => {
       expect(buttonByLabel("Request migration").disabled).toBe(false);
     });
     await act(async () => {
-      checkboxByLabel("Dry run only").click();
+      switchByLabel("Dry run only").click();
       await Promise.resolve();
     });
     expect(buttonByLabel("Request migration").disabled).toBe(true);
@@ -586,7 +533,7 @@ describe("TenantConfigManagement", () => {
       expect(buttonByLabel("Request migration").disabled).toBe(false);
     });
     await act(async () => {
-      checkboxByLabel("Dry run only").click();
+      switchByLabel("Dry run only").click();
       checkboxByLabel("Confirm live migration request").click();
       buttonByLabel("Request migration").click();
       await Promise.resolve();
@@ -639,7 +586,7 @@ describe("TenantConfigManagement", () => {
       expect(buttonByLabel("Request migration").disabled).toBe(false);
     });
     await act(async () => {
-      checkboxByLabel("Dry run only").click();
+      switchByLabel("Dry run only").click();
       checkboxByLabel("Confirm live migration request").click();
       buttonByLabel("Request migration").click();
       await Promise.resolve();
@@ -687,7 +634,7 @@ describe("TenantConfigManagement", () => {
       expect(buttonByLabel("Request migration").disabled).toBe(false);
     });
     await act(async () => {
-      checkboxByLabel("Dry run only").click();
+      switchByLabel("Dry run only").click();
       checkboxByLabel("Confirm live migration request").click();
       buttonByLabel("Request migration").click();
       await Promise.resolve();
@@ -789,14 +736,14 @@ describe("TenantConfigManagement", () => {
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("2 tenant overrides");
+      expect(container.textContent).toContain("2 set for your organization");
     });
     const quotas = detailsBySummary("Effective limits");
-    expect(quotas.querySelector("summary")?.textContent).toContain("2 tenant overrides");
-    expect(quotas.querySelector("summary")?.textContent).toContain("Read-only");
+    expect(quotas.querySelector("summary")?.textContent).toContain("2 set for your organization");
+    expect(quotas.querySelector("summary")?.textContent).toContain("7 limits");
     // Two quota keys carry a tenant override, so the panel must not start shut.
     expect(quotas.open).toBe(true);
-    expect(quotas.textContent).toContain("Integration API RPS");
+    expect(quotas.textContent).toContain("API requests per second");
   });
 
   it("reads an unreported quota as unknown rather than unlimited", async () => {
@@ -805,12 +752,12 @@ describe("TenantConfigManagement", () => {
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("2 tenant overrides");
+      expect(container.textContent).toContain("2 set for your organization");
     });
     const quotas = detailsBySummary("Effective limits");
-    expect(rowByLabel(quotas, "Storage bytes").textContent).toContain("Not reported");
+    expect(rowByLabel(quotas, "Storage").textContent).toContain("Not reported");
     // `actors_limit` is an explicit null override — that one really is uncapped.
-    expect(rowByLabel(quotas, "Actors").textContent).toContain("Unlimited");
+    expect(rowByLabel(quotas, "Accounts").textContent).toContain("Unlimited");
     expect(container.textContent).not.toContain("unlimited");
   });
 
@@ -854,7 +801,7 @@ describe("TenantConfigManagement", () => {
     // Nothing is set, so the read-only quota panel folds away too.
     expect(detailsBySummary("Effective limits").open).toBe(false);
     expect(detailsBySummary("Effective limits").querySelector("summary")?.textContent).toContain(
-      "no tenant overrides",
+      "none set for your organization",
     );
   });
 
@@ -893,26 +840,6 @@ describe("TenantConfigManagement", () => {
     expect(migration.querySelector("summary")?.textContent).toContain("Dry Run");
   });
 
-  it("gates the feature-flag save on there being something to save", async () => {
-    fetchMock.mockResolvedValue(Response.json(tenantConfigPayload));
-
-    await render();
-
-    await waitFor(() => {
-      expect(checkboxByLabel("Assistant searches workspace content").checked).toBe(true);
-    });
-    expect(buttonByLabel("Save feature flags").disabled).toBe(true);
-    expect(container.textContent).toContain("No unsaved flag changes.");
-
-    await act(async () => {
-      checkboxByLabel("Assistant searches workspace content").click();
-      await Promise.resolve();
-    });
-
-    expect(buttonByLabel("Save feature flags").disabled).toBe(false);
-    expect(container.textContent).toContain("1 unsaved flag change.");
-  });
-
   it("shows an unavailable state when the admin API rejects the request", async () => {
     fetchMock.mockResolvedValue(
       Response.json({ error: "Missing required scope" }, { status: 403 }),
@@ -921,7 +848,7 @@ describe("TenantConfigManagement", () => {
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("Tenant settings are unavailable.");
+      expect(container.textContent).toContain("Workspace settings couldn't be loaded");
     });
   });
 
@@ -955,6 +882,18 @@ describe("TenantConfigManagement", () => {
       throw new Error(`POST request for "${urlPart}" not found.`);
     }
     return JSON.parse(call[1].body) as Record<string, unknown>;
+  }
+
+  function switchByLabel(label: string): HTMLButtonElement {
+    const match = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+      (candidate) =>
+        document.getElementById(candidate.getAttribute("aria-labelledby") ?? "")?.textContent ===
+        label,
+    );
+    if (match === undefined) {
+      throw new Error(`Switch "${label}" not found.`);
+    }
+    return match;
   }
 
   function checkboxByLabel(label: string): HTMLInputElement {

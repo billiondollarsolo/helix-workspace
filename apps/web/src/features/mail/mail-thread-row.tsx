@@ -1,241 +1,201 @@
+/* One conversation in the list: the content cell of a SelectableList row.
+   Desktop reads "★ Samara, me (3)  [Label] Subject — snippet   📎 Mar 4" with
+   archive/delete/read/snooze buttons over the date on hover or focus. Under
+   640px it stacks sender + date, subject and snippet, with the star and the
+   attachment icon on the right. The row itself is the keyboard focus target;
+   these buttons take `tabIndex` from the row state. */
+
 import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { Archive, Clock, Inbox, MailOpen, Mail, Paperclip, Star, Trash2 } from "lucide-react";
+import type { ComponentProps, DragEvent } from "react";
+import type { MailFolderKey, MailLabelSummary, MailThreadRow } from "./api";
+import type { MailAction } from "./mail-actions";
+import { MailSnoozePopover } from "./mail-snooze-picker";
 import {
-  Archive as ArchiveIcon,
-  Eye as EyeIcon,
-  Inbox as InboxIcon,
-  Mail as MailIcon,
-  Paperclip as PaperclipIcon,
-  Clock as SnoozeIcon,
-  Star as StarIcon,
-  Trash2 as TrashIcon,
-} from "lucide-react";
-import { type MailLabelSummary, type MailThreadRow } from "./api";
-import { formatThreadTime } from "./mail-view-helpers";
+  formatThreadTime,
+  labelChipStyle,
+  participantsLabel,
+  restoreActionLabel,
+} from "./mail-view-helpers";
 
-/* --------------------------------------------------------------- thread row */
+/** Drag payload type for conversations dropped on sidebar folders and labels. */
+export const MAIL_DRAG_TYPE = "application/x-helix-mail-threads";
 
-interface ThreadRowProps {
+interface ThreadRowHandlers {
+  readonly onAction: (ids: readonly string[], action: MailAction) => void;
+  readonly onSnooze: (ids: readonly string[], until: string) => void;
+}
+
+interface ThreadRowProps extends ThreadRowHandlers, Omit<ComponentProps<"div">, "onDragStart"> {
   readonly thread: MailThreadRow;
-  readonly checked: boolean;
-  readonly selected: boolean;
-  readonly labelColors: ReadonlyMap<string, MailLabelSummary>;
-  readonly onClick: () => void;
-  readonly onToggleStar: () => void;
-  readonly onToggleCheck: (event: React.MouseEvent) => void;
-  readonly onArchive: () => void;
-  readonly onDelete: () => void;
-  readonly onSnooze: () => void;
-  readonly restoreLabel: string | null;
-  readonly onRestore: () => void;
-  readonly onToggleRead: () => void;
-  readonly busy: boolean;
+  readonly folder: MailFolderKey;
+  readonly labelsBySlug: ReadonlyMap<string, MailLabelSummary>;
+  /** The label view on screen; its own chip is left off the rows. */
+  readonly activeLabel: string | null;
+  readonly showAvatar: boolean;
+  readonly tabIndex: 0 | -1;
+  /** Ids a drag from this row carries: the selection if the row is in it. */
+  readonly dragIds: () => readonly string[];
+}
+
+/** A hover action; spreads extra props so it can be a popover trigger. */
+function RowButton({ label, ...props }: ComponentProps<"button"> & { readonly label: string }) {
+  return (
+    <button
+      type="button"
+      className="mail-row-action focus-ring"
+      aria-label={label}
+      title={label}
+      {...props}
+    />
+  );
 }
 
 export function ThreadRow({
   thread,
-  checked,
-  selected,
-  labelColors,
-  onClick,
-  onToggleStar,
-  onToggleCheck,
-  onArchive,
-  onDelete,
+  folder,
+  labelsBySlug,
+  activeLabel,
+  showAvatar,
+  tabIndex,
+  dragIds,
+  onAction,
   onSnooze,
-  restoreLabel,
-  onRestore,
-  onToggleRead,
-  busy,
+  ...rest
 }: ThreadRowProps) {
+  const ids = [thread.threadId];
+  const draft = folder === "drafts";
+  const sender = participantsLabel(thread);
   const labels = thread.labels
-    .map((slug) => labelColors.get(slug))
-    .filter((label): label is MailLabelSummary => label != null);
+    .filter((slug) => slug !== activeLabel)
+    .map((slug) => labelsBySlug.get(slug))
+    .filter((label): label is MailLabelSummary => label !== undefined);
+  const restoreLabel = restoreActionLabel(folder);
+  const time = formatThreadTime(thread.time);
 
   return (
     <div
-      className={cn(
-        "mail-thread-row render-contained-list-item",
-        "grid [grid-template-columns:20px_20px_24px_minmax(0,_200px)_minmax(0,_1fr)_auto] items-center gap-x-3 [padding:var(--rd-row-py)_16px] [border-bottom:1px_solid_var(--border)] cursor-pointer [transition:background_0.08s] type-row [min-height:var(--rd-list-row-h)]",
-        checked || selected ? "[background:var(--accent-soft)]" : "bg-transparent",
-      )}
-      role="button"
-      tabIndex={0}
+      {...rest}
+      className="mail-row"
       data-thread-id={thread.threadId}
-      onClick={onClick}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onClick();
-        }
-      }}
-
-      onMouseEnter={(event) => {
-        if (!checked && !selected) {
-          event.currentTarget.style.background = "var(--hover)";
-        }
-      }}
-      onMouseLeave={(event) => {
-        if (!checked && !selected) {
-          event.currentTarget.style.background = "transparent";
-        }
+      data-unread={thread.unread || undefined}
+      data-avatar={showAvatar || undefined}
+      draggable
+      onDragStart={(event: DragEvent<HTMLDivElement>) => {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData(MAIL_DRAG_TYPE, JSON.stringify(dragIds()));
+        event.dataTransfer.setData("text/plain", thread.subject);
       }}
     >
-      <input
-        type="checkbox"
-        aria-label={`Select ${thread.subject}`}
-        checked={checked}
-        onChange={() => undefined}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggleCheck(event);
-        }}
-        className="[accent-color:var(--accent)] m-0"
-      />
+      {showAvatar ? (
+        <span className="mail-row-avatar" aria-hidden="true">
+          <Avatar
+            name={thread.participants.find((person) => !person.isMe)?.name || thread.from}
+            size={24}
+          />
+        </span>
+      ) : null}
       <button
         type="button"
-        aria-label={thread.starred ? "Unstar" : "Star"}
+        className={cn("mail-row-star focus-ring", thread.starred && "is-starred")}
+        aria-label="Star"
         aria-pressed={thread.starred}
-        disabled={busy}
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggleStar();
-        }}
-        className={cn(
-          "w-4.5 h-4.5 grid [place-items:center]",
-          thread.starred ? "[color:var(--star)]" : "text-muted-foreground",
-        )}
+        tabIndex={tabIndex}
+        onClick={() => onAction(ids, { kind: "star", starred: !thread.starred })}
       >
-        <StarIcon size={16} />
+        <Star aria-hidden="true" fill={thread.starred ? "currentColor" : "none"} />
       </button>
-      <Avatar name={thread.from.split(",")[0] ?? thread.from} size={22} />
-      <span
-        className={cn(
-          "truncate",
-          thread.unread ? "font-semibold" : "font-medium",
-          thread.unread ? "text-foreground" : "[color:var(--text-2)]",
-        )}
-      >
-        {thread.from}
-        {thread.messageCount > 1 && (
-          <span className="text-muted-foreground font-normal"> ({thread.messageCount})</span>
-        )}
+      <span className="mail-row-sender">
+        {draft ? <span className="mail-row-draft">Draft</span> : null}
+        {draft && sender !== "" ? " " : null}
+        <span>{sender}</span>
       </span>
-      <div className="flex items-center gap-2 min-w-0">
+      <span className="mail-row-text">
         {labels.map((label) => (
-          <span
-            key={label.id}
-            className="type-chip [padding:0_5px] h-4 [line-height:16px] [border-radius:3px] font-medium shrink-0"
-            style={{ background: `${label.color}1f`, color: label.color }}
-          >
+          <span key={label.id} className="mail-row-label" style={labelChipStyle(label)}>
             {label.name}
           </span>
         ))}
-        <span className="truncate min-w-0">
-          <span
-            className={cn(
-              thread.unread ? "font-semibold" : "font-medium",
-              thread.unread ? "text-foreground" : "[color:var(--text-2)]",
-            )}
-          >
-            {thread.subject}
+        <span className="mail-row-subject">{thread.subject || "(no subject)"}</span>
+        {thread.preview === "" ? null : (
+          <span className="mail-row-snippet">
+            <span className="mail-row-dash" aria-hidden="true">
+              {" — "}
+            </span>
+            {thread.preview}
           </span>
-          <span className="text-muted-foreground font-normal"> — {thread.preview}</span>
-        </span>
-      </div>
-      {/* Date + inline hover actions cell */}
-      <div className="mail-thread-row-meta">
-        <span
-          className={cn(
-            "mail-thread-row-date",
-            "type-caption flex items-center gap-1.5",
-            thread.unread ? "font-semibold" : "font-normal",
-            thread.unread ? "[color:var(--text-2)]" : "text-muted-foreground",
-          )}
+        )}
+      </span>
+      <span className="mail-row-meta">
+        {thread.hasAttachment ? (
+          <Paperclip className="mail-row-clip" aria-label="Has attachment" role="img" />
+        ) : null}
+        <time className="mail-row-date" dateTime={thread.time}>
+          {time}
+        </time>
+      </span>
+      {/* Clicks in the snooze popover (a portal) still bubble through React to the row: stop them here. */}
+      <span
+        className="mail-row-actions"
+        role="group"
+        aria-label={`Actions for ${thread.subject}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {restoreLabel !== null ? (
+          <RowButton
+            label={restoreLabel}
+            tabIndex={tabIndex}
+            onClick={() =>
+              onAction(ids, {
+                kind:
+                  folder === "trash" ? "restore" : folder === "snoozed" ? "unsnooze" : "unarchive",
+              })
+            }
+          >
+            <Inbox aria-hidden="true" />
+          </RowButton>
+        ) : folder === "spam" ? (
+          <RowButton
+            label="Not spam"
+            tabIndex={tabIndex}
+            onClick={() => onAction(ids, { kind: "notSpam" })}
+          >
+            <Inbox aria-hidden="true" />
+          </RowButton>
+        ) : (
+          <RowButton
+            label="Archive"
+            tabIndex={tabIndex}
+            onClick={() => onAction(ids, { kind: "archive" })}
+          >
+            <Archive aria-hidden="true" />
+          </RowButton>
+        )}
+        {folder === "trash" ? null : (
+          <RowButton
+            label="Delete"
+            tabIndex={tabIndex}
+            onClick={() => onAction(ids, { kind: "trash" })}
+          >
+            <Trash2 aria-hidden="true" />
+          </RowButton>
+        )}
+        <RowButton
+          label={thread.unread ? "Mark as read" : "Mark as unread"}
+          tabIndex={tabIndex}
+          onClick={() => onAction(ids, { kind: "read", unread: !thread.unread })}
         >
-          {thread.hasAttachment && <PaperclipIcon size={16} />}
-          <span>{formatThreadTime(thread.time)}</span>
-        </span>
-        {/* Hover action strip — visible on :hover / :focus-within via CSS */}
-        <div
-          className="mail-thread-row-actions"
-          role="toolbar"
-          aria-label={`Actions for ${thread.subject}`}
-        >
-          {restoreLabel !== null && (
-            <button
-              type="button"
-              className="mail-row-action-btn"
-              aria-label={restoreLabel}
-              title={restoreLabel}
-              tabIndex={0}
-              disabled={busy}
-              onClick={(event) => {
-                event.stopPropagation();
-                onRestore();
-              }}
-            >
-              <InboxIcon size={16} />
-            </button>
-          )}
-          <button
-            type="button"
-            className="mail-row-action-btn"
-            aria-label="Archive"
-            title="Archive"
-            tabIndex={0}
-            disabled={busy}
-            onClick={(event) => {
-              event.stopPropagation();
-              onArchive();
-            }}
-          >
-            <ArchiveIcon size={16} />
-          </button>
-          <button
-            type="button"
-            className="mail-row-action-btn"
-            aria-label="Delete"
-            title="Delete"
-            tabIndex={0}
-            disabled={busy}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete();
-            }}
-          >
-            <TrashIcon size={16} />
-          </button>
-          <button
-            type="button"
-            className="mail-row-action-btn"
-            aria-label={thread.unread ? "Mark read" : "Mark unread"}
-            title={thread.unread ? "Mark read" : "Mark unread"}
-            tabIndex={0}
-            disabled={busy}
-            onClick={(event) => {
-              event.stopPropagation();
-              onToggleRead();
-            }}
-          >
-            {thread.unread ? <EyeIcon size={16} /> : <MailIcon size={16} />}
-          </button>
-          <button
-            type="button"
-            className="mail-row-action-btn"
-            aria-label="Snooze"
-            title="Snooze"
-            tabIndex={0}
-            disabled={busy}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSnooze();
-            }}
-          >
-            <SnoozeIcon size={16} />
-          </button>
-        </div>
-      </div>
+          {thread.unread ? <MailOpen aria-hidden="true" /> : <Mail aria-hidden="true" />}
+        </RowButton>
+        {folder === "snoozed" || folder === "trash" || folder === "spam" ? null : (
+          <MailSnoozePopover align="end" onSnooze={(until) => onSnooze(ids, until)}>
+            <RowButton label="Snooze" tabIndex={tabIndex}>
+              <Clock aria-hidden="true" />
+            </RowButton>
+          </MailSnoozePopover>
+        )}
+      </span>
     </div>
   );
 }

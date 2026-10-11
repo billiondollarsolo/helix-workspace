@@ -165,21 +165,6 @@ function installMemoryStorage(): Map<string, string> {
   return store;
 }
 
-/** jsdom does no layout, so every scroll metric is 0 and the nav can never
- *  report overflow on its own. Stub the three numbers the affordance reads. */
-function stubScrollGeometry(
-  element: HTMLElement,
-  geometry: {
-    readonly clientHeight: number;
-    readonly scrollHeight: number;
-    readonly scrollTop: number;
-  },
-): void {
-  for (const [key, value] of Object.entries(geometry)) {
-    Object.defineProperty(element, key, { configurable: true, value });
-  }
-}
-
 function mockAdminSecurityResponses(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>): void {
   fetchMock.mockImplementation((input) => {
     const url =
@@ -248,9 +233,10 @@ describe("AdminConsole", () => {
      first assertion in `waitFor`. */
   async function renderConsole(section: AdminSectionId = "overview"): Promise<void> {
     await renderRouter(section);
+    /* A section's first cold import can take seconds under a busy test run. */
     await waitFor(() => {
       expect(container.querySelector("h1")).not.toBeNull();
-    });
+    }, 8000);
   }
 
   function renderRouter(section: AdminSectionId): Promise<void> {
@@ -274,7 +260,7 @@ describe("AdminConsole", () => {
 
   /** Click a sidebar entry by its visible label. */
   function clickNav(label: string): Promise<void> {
-    const link = [...container.querySelectorAll("a.admin-nav-link")].find(
+    const link = [...container.querySelectorAll(".admin-nav a.surf-nav-row")].find(
       (element) => element.textContent?.trim() === label,
     );
     if (!link) {
@@ -293,7 +279,7 @@ describe("AdminConsole", () => {
 
   /** One sidebar group, found by its heading text. */
   function navGroup(title: string): HTMLElement {
-    const label = [...container.querySelectorAll(".admin-nav-group-label")].find(
+    const label = [...container.querySelectorAll(".admin-nav-group-title")].find(
       (element) => element.textContent?.trim() === title,
     );
     const group = label?.closest(".admin-nav-group");
@@ -316,15 +302,6 @@ describe("AdminConsole", () => {
       throw new Error(`Nav group "${title}" has no section list`);
     }
     return list;
-  }
-
-  /** The nav's scroll container. */
-  function navElement(): HTMLElement {
-    const nav = container.querySelector<HTMLElement>("nav.admin-nav");
-    if (!nav) {
-      throw new Error("Admin nav not rendered");
-    }
-    return nav;
   }
 
   beforeEach(() => {
@@ -364,7 +341,20 @@ describe("AdminConsole", () => {
     // Overview's own content is covered by sections/overview.test.tsx; this is
     // a routing test, so it asserts only that the default section is the one
     // that rendered.
-    expect(container.querySelector("h1")?.textContent).toBe("Overview");
+    expect(container.querySelector("h1")?.textContent).toBe("Home");
+  });
+
+  it("puts one search box for settings, users, and groups above every page", async () => {
+    mockJsonResponse(fetchMock, apiUsers);
+
+    await renderRouter("users");
+
+    /* The bar is console chrome, outside the section's Suspense boundary, so
+       it is there before the page's own code has loaded. */
+    await waitFor(() => {
+      const search = container.querySelector('.admin-searchbar [role="combobox"]');
+      expect(search?.getAttribute("aria-label")).toBe("Search admin settings, users, and groups");
+    });
   });
 
   it("renders the section named in the URL, not a fixed default", async () => {
@@ -386,16 +376,17 @@ describe("AdminConsole", () => {
     const groupTitles = [...container.querySelectorAll(".admin-nav-group h2")].map((element) =>
       element.textContent?.trim(),
     );
-    expect(groupTitles).toEqual([
-      "Organization",
-      "People",
-      "Security",
-      "Apps & integrations",
-      "AI",
-      "Platform",
-    ]);
+    expect(groupTitles).toEqual(["Directory", "Apps", "Security", "Reporting", "Account"]);
+    // Every heading has the same shape, whether or not it can fold.
+    expect(
+      [...container.querySelectorAll(".admin-nav-group h2")].every(
+        (heading) => heading.className === "admin-nav-group-title",
+      ),
+    ).toBe(true);
 
-    const current = [...container.querySelectorAll('a.admin-nav-link[aria-current="page"]')];
+    const current = [
+      ...container.querySelectorAll('.admin-nav a.surf-nav-row[aria-current="page"]'),
+    ];
     expect(current).toHaveLength(1);
     expect(current[0]?.textContent?.trim()).toBe("Domains");
   });
@@ -408,12 +399,10 @@ describe("AdminConsole", () => {
     // Progressive disclosure buys vertical space, but paying for it with a
     // section the operator has to hunt for is the worse trade. Nothing is
     // folded until someone folds it.
-    for (const title of ["Organization", "People", "Security", "Apps & integrations", "AI"]) {
+    for (const title of ["Directory", "Apps", "Security", "Reporting", "Account"]) {
       expect(navGroupList(title).hidden).toBe(false);
       expect(navGroupToggle(title)?.getAttribute("aria-expanded")).toBe("true");
     }
-    // No count badges while expanded: the rows themselves are the count.
-    expect(container.querySelector(".admin-nav-group-count")).toBeNull();
   });
 
   it("folds a nav group from its heading and takes the folded rows out of the tab order", async () => {
@@ -421,8 +410,8 @@ describe("AdminConsole", () => {
 
     await renderConsole("overview");
 
-    const toggle = navGroupToggle("Apps & integrations");
-    const list = navGroupList("Apps & integrations");
+    const toggle = navGroupToggle("Apps");
+    const list = navGroupList("Apps");
     if (!toggle) {
       throw new Error("Expected a fold control on a group that is not the active one");
     }
@@ -444,19 +433,15 @@ describe("AdminConsole", () => {
       return Promise.resolve();
     });
 
-    expect(navGroupToggle("Apps & integrations")?.getAttribute("aria-expanded")).toBe("false");
+    expect(navGroupToggle("Apps")?.getAttribute("aria-expanded")).toBe("false");
     // `hidden`, not a CSS height collapse — rows nobody can see must not be
     // tab stops.
-    expect(navGroupList("Apps & integrations").hidden).toBe(true);
+    expect(navGroupList("Apps").hidden).toBe(true);
     // Folding must not throw focus away from the control that did it.
-    expect(document.activeElement).toBe(navGroupToggle("Apps & integrations"));
-    // The summary says what went behind the fold.
-    expect(
-      navGroup("Apps & integrations").querySelector(".admin-nav-group-count")?.textContent,
-    ).toBe("9");
+    expect(document.activeElement).toBe(navGroupToggle("Apps"));
     expect(window.localStorage.setItem).toHaveBeenCalledWith(
       COLLAPSED_GROUPS_KEY,
-      JSON.stringify(["Apps & integrations"]),
+      JSON.stringify(["Apps"]),
     );
   });
 
@@ -470,15 +455,15 @@ describe("AdminConsole", () => {
     // closure meant both handlers read the same pre-batch snapshot, so the
     // second click overwrote the first and one group silently unfolded.
     await act(() => {
-      navGroupToggle("AI")?.click();
-      navGroupToggle("Apps & integrations")?.click();
+      navGroupToggle("Reporting")?.click();
+      navGroupToggle("Apps")?.click();
       return Promise.resolve();
     });
 
-    expect(navGroupList("AI").hidden).toBe(true);
-    expect(navGroupList("Apps & integrations").hidden).toBe(true);
+    expect(navGroupList("Reporting").hidden).toBe(true);
+    expect(navGroupList("Apps").hidden).toBe(true);
     // Storage must agree with what is on screen, not with one of the two.
-    expect(store.get(COLLAPSED_GROUPS_KEY)).toBe(JSON.stringify(["AI", "Apps & integrations"]));
+    expect(store.get(COLLAPSED_GROUPS_KEY)).toBe(JSON.stringify(["Reporting", "Apps"]));
   });
 
   it("keeps the group holding the active section open, with no control to fold it", async () => {
@@ -486,31 +471,25 @@ describe("AdminConsole", () => {
     // Every group folded, including the one the operator is about to land in.
     store.set(
       COLLAPSED_GROUPS_KEY,
-      JSON.stringify([
-        "Organization",
-        "People",
-        "Security",
-        "Apps & integrations",
-        "AI",
-        "Platform",
-      ]),
+      JSON.stringify(["Directory", "Apps", "Security", "Reporting", "Account"]),
     );
     mockJsonResponse(fetchMock, apiUsers);
 
     await renderConsole("audit");
 
-    // Audit log lives in Security. A stored preference may never hide the row
+    // Audit log lives in Reporting. A stored preference may never hide the row
     // the operator is standing on.
-    expect(navGroupList("Security").hidden).toBe(false);
-    expect(navGroupToggle("Security")).toBeNull();
-    expect(navGroup("Security").hasAttribute("data-current")).toBe(true);
+    expect(navGroupList("Reporting").hidden).toBe(false);
+    expect(navGroupToggle("Reporting")).toBeNull();
 
-    for (const title of ["Organization", "People", "Apps & integrations", "AI", "Platform"]) {
+    for (const title of ["Directory", "Apps", "Security", "Account"]) {
       expect(navGroupList(title).hidden).toBe(true);
       expect(navGroupToggle(title)?.getAttribute("aria-expanded")).toBe("false");
     }
 
-    const current = [...container.querySelectorAll('a.admin-nav-link[aria-current="page"]')];
+    const current = [
+      ...container.querySelectorAll('.admin-nav a.surf-nav-row[aria-current="page"]'),
+    ];
     expect(current).toHaveLength(1);
     expect(current[0]?.textContent?.trim()).toBe("Audit log");
     expect(current[0]?.closest("ul")?.hidden).toBe(false);
@@ -522,18 +501,18 @@ describe("AdminConsole", () => {
 
     await renderConsole("overview");
 
-    const toggle = navGroupToggle("AI");
+    const toggle = navGroupToggle("Reporting");
     await act(() => {
       toggle?.click();
       return Promise.resolve();
     });
-    expect(navGroupList("AI").hidden).toBe(true);
+    expect(navGroupList("Reporting").hidden).toBe(true);
 
     // The console re-renders the sidebar on every section change; a fold that
     // unfolds itself on the next click is worse than no fold at all.
     await clickNav("Users");
     expect(currentPath()).toBe("/admin/users");
-    expect(navGroupList("AI").hidden).toBe(true);
+    expect(navGroupList("Reporting").hidden).toBe(true);
 
     // ...and it survives a full remount, which is what a refresh or a
     // deep-linked reload actually does to this component.
@@ -543,55 +522,13 @@ describe("AdminConsole", () => {
     });
     root = createRoot(container);
     await renderConsole("groups");
-    expect(navGroupList("AI").hidden).toBe(true);
+    expect(navGroupList("Reporting").hidden).toBe(true);
     // The fold is a preference, not a hard hide: reopening it is one click.
     await act(() => {
-      navGroupToggle("AI")?.click();
+      navGroupToggle("Reporting")?.click();
       return Promise.resolve();
     });
-    expect(navGroupList("AI").hidden).toBe(false);
-  });
-
-  it("flags the edge with more nav behind it instead of scrolling silently", async () => {
-    mockJsonResponse(fetchMock, apiUsers);
-
-    await renderConsole("overview");
-
-    const nav = navElement();
-    const scroll = () =>
-      act(() => {
-        nav.dispatchEvent(new Event("scroll"));
-        return Promise.resolve();
-      });
-
-    // 900px of sections in an 843px-tall nav, parked at the top: the only
-    // thing hidden is below.
-    stubScrollGeometry(nav, { clientHeight: 843, scrollHeight: 900, scrollTop: 0 });
-    await scroll();
-    expect(nav.hasAttribute("data-overflow-bottom")).toBe(true);
-    expect(nav.hasAttribute("data-overflow-top")).toBe(false);
-
-    stubScrollGeometry(nav, { clientHeight: 843, scrollHeight: 900, scrollTop: 30 });
-    await scroll();
-    expect(nav.hasAttribute("data-overflow-top")).toBe(true);
-    expect(nav.hasAttribute("data-overflow-bottom")).toBe(true);
-
-    stubScrollGeometry(nav, { clientHeight: 843, scrollHeight: 900, scrollTop: 57 });
-    await scroll();
-    expect(nav.hasAttribute("data-overflow-top")).toBe(true);
-    expect(nav.hasAttribute("data-overflow-bottom")).toBe(false);
-
-    // A nav that fits claims nothing. A fade that is always lit is the same
-    // class of lie as a scroll that is never announced.
-    stubScrollGeometry(nav, { clientHeight: 843, scrollHeight: 843, scrollTop: 0 });
-    await scroll();
-    expect(nav.hasAttribute("data-overflow-top")).toBe(false);
-    expect(nav.hasAttribute("data-overflow-bottom")).toBe(false);
-
-    // The fades are paint, not content.
-    const fades = [...nav.querySelectorAll(".admin-nav-fade")];
-    expect(fades).toHaveLength(2);
-    expect(fades.every((fade) => fade.getAttribute("aria-hidden") === "true")).toBe(true);
+    expect(navGroupList("Reporting").hidden).toBe(false);
   });
 
   it("scrolls the active section into view when it sits below the fold", async () => {
@@ -610,13 +547,12 @@ describe("AdminConsole", () => {
     try {
       mockJsonResponse(fetchMock, apiUsers);
 
-      // Services is the last row in the last group — the one measured below
-      // the fold. Deep-linking to it must not open a nav that looks like it
-      // does not contain the section you asked for.
-      await renderConsole("services");
+      // Webhooks is the last row in the last group. Deep-linking to it must not
+      // open a nav that looks like it does not contain the section you asked for.
+      await renderConsole("webhooks");
 
-      const active = container.querySelector('a.admin-nav-link[aria-current="page"]');
-      expect(active?.textContent?.trim()).toBe("Services");
+      const active = container.querySelector('.admin-nav a.surf-nav-row[aria-current="page"]');
+      expect(active?.textContent?.trim()).toBe("Webhooks");
       expect(targets).toContain(active);
       // `nearest` so it never yanks a nav the operator has scrolled themselves.
       expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
@@ -653,7 +589,7 @@ describe("AdminConsole", () => {
 
     await clickNav("Workspace settings");
     await waitFor(() => {
-      expect(container.textContent).toContain("Tenant settings");
+      expect(container.querySelector("h1")?.textContent).toBe("Workspace settings");
     });
     expect(currentPath()).toBe("/admin/workspace-settings");
 
@@ -688,7 +624,7 @@ describe("AdminConsole", () => {
       expect(container.textContent).toContain("Mira Okafor");
     });
     // disabledAt -> suspended status projection
-    expect(container.textContent).toContain("suspended");
+    expect(container.textContent).toContain("Suspended");
     const requestedUsers = fetchMock.mock.calls.some((call) => {
       const input = call[0];
       const url =
@@ -731,12 +667,9 @@ describe("AdminConsole", () => {
       return Promise.resolve();
     });
 
-    const localLogin = container.querySelector<HTMLInputElement>(
-      'input[aria-label="Local email/password login enabled"]',
+    expect(container.textContent).toContain(
+      "Email and password sign-in stays on alongside single sign-on.",
     );
-    expect(container.textContent).toContain("Local email/password login remains enabled");
-    expect(localLogin?.checked).toBe(true);
-    expect(localLogin?.disabled).toBe(true);
   });
 
   it("shows the empty-state row when the users API returns no rows", async () => {
@@ -745,7 +678,7 @@ describe("AdminConsole", () => {
     await renderConsole("users");
 
     await waitFor(() => {
-      expect(container.textContent).toContain("No users match the current filters.");
+      expect(container.textContent).toContain("No users yet");
     });
   });
 
@@ -775,7 +708,7 @@ describe("AdminConsole", () => {
       expect(container.textContent).toContain("Marcus Bell");
     });
 
-    const search = container.querySelector<HTMLInputElement>('input[aria-label="Filter users"]');
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="Search users"]');
     if (!search) {
       throw new Error("Search input not found");
     }
@@ -813,8 +746,7 @@ describe("AdminConsole", () => {
       return Promise.resolve();
     });
 
-    expect(container.textContent).toContain("selected");
-    expect(container.textContent).toContain("Change role");
-    expect(container.textContent).toContain("Suspend");
+    expect(container.textContent).toContain("2 selected");
+    expect(container.textContent).toContain("Copy email addresses");
   });
 });

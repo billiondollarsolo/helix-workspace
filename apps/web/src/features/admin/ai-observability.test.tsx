@@ -69,7 +69,7 @@ describe("AIObservabilityDashboard", () => {
     await prefetchPlatformConfig();
     await renderDashboard();
 
-    expect(container.textContent).toContain("Observability");
+    expect(container.textContent).toContain("AI observability");
     expect(container.textContent).toContain("$5.00");
     expect(container.textContent).toContain("Cost by provider, feature, and actor");
     expect(container.textContent).toContain("provider, model, feature, actor_id");
@@ -81,7 +81,7 @@ describe("AIObservabilityDashboard", () => {
     );
     // h1 → h2 panels → h3 cards, with nothing skipped in between.
     expect(headingOutline()).toEqual([
-      "H1:Observability",
+      "H1:AI observability",
       "H2:Controls in force",
       "H3:Cost budgets",
       "H3:Request audit",
@@ -124,11 +124,13 @@ describe("AIObservabilityDashboard", () => {
     expect(container.textContent).toContain("Observability config is unavailable");
     expect(container.textContent).toContain("Pending live telemetry");
     expect(container.textContent).toContain("Dashboard provisioned");
-    expect(container.querySelector('[role="alert"]')?.getAttribute("data-kind")).toBe("error");
+    expect(container.querySelector('[role="alert"]')?.getAttribute("data-slot")).toBe(
+      "inline-error",
+    );
     // Without a tier there is no honest budget or gating state to show, so the
     // governance cards stay away rather than inventing one.
     expect(container.querySelector(".admin-ai-cost-card")).toBeNull();
-    expect(headingOutline()).toEqual(["H1:Observability", "H2:Required AI metrics"]);
+    expect(headingOutline()).toEqual(["H1:AI observability", "H2:Required AI metrics"]);
   });
 
   it("prefetches the shared platform config query with contained failures", async () => {

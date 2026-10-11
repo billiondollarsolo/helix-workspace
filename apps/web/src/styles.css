@@ -2467,30 +2467,23 @@
    Admin console — grouped sidebar navigation
    ============================================================ */
 
-  /* Nineteen sections plus six group headings will not fit every viewport. The
-   nav scrolls rather than pretending otherwise; the spacing below is tuned so the default
-   density fits a standard laptop without one. */
   .admin-nav {
-    width: 232px;
+    width: 240px;
     flex-shrink: 0;
     border-right: 1px solid var(--border);
     background: var(--surface);
-    /* Extra bottom padding so Platform / Services is not flush with the
-     viewport edge (or under the sticky overflow fade). */
-    padding: 8px 8px 28px;
+    padding: 12px 8px 24px;
+    gap: 0;
     overflow-y: auto;
-    scroll-padding-bottom: 28px;
+    /* Keeps the active row clear of the edges when it is scrolled into view. */
+    scroll-padding-block: 24px;
   }
   .admin-nav-group {
-    margin-top: 8px;
+    margin-top: 12px;
   }
-  /* Spacing only. The element already carries `.section-label`, which supplies
-   the caption size, weight and colour — an earlier `font-size: inherit` here
-   out-specified it and threw all three away, rendering these at body size. */
-  .admin-nav-group h2 {
-    padding: 6px 10px 2px;
-    line-height: 1.3;
+  .admin-nav-group-title {
     margin: 0;
+    padding: 0 10px 2px;
   }
   .admin-nav-group ul {
     list-style: none;
@@ -2498,105 +2491,52 @@
     padding: 0;
   }
 
-  .admin-nav-link {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: var(--rd-list-row-h);
-    padding: 0 10px;
-    border-radius: var(--radius);
-    font-size: var(--rd-row-fs);
-    color: var(--text);
-    text-decoration: none;
-  }
-  .admin-nav-link:hover {
-    background: var(--hover);
-  }
-  .admin-nav-link[data-active] {
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-weight: 600;
+  /* Rows are the shell's `.surf-nav-row`, so the hamburger's icon rail
+     treats the admin nav like every other surface sidebar. */
+  .admin-nav .surf-nav-row:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: -2px;
   }
 
-  /* Collapsible group headings. The group holding the active section renders as
-   a plain heading rather than a toggle — collapsing the group you are standing
-   in would hide the page you are on. */
+  /* One heading style whether or not the group can fold: same size, weight,
+   case and colour for the plain heading and the toggle button. */
   .admin-nav-group-heading {
     display: flex;
     align-items: center;
     gap: 6px;
     width: 100%;
+    min-height: 28px;
     padding: 0;
+    border: 0;
     background: none;
-    color: inherit;
-    font: inherit;
+    color: var(--text-2);
+    font-size: var(--text-meta);
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
     text-align: left;
   }
   .admin-nav-group-toggle {
     cursor: pointer;
-    /* WCAG 2.2 target size (2.5.8): the toggle was 14.3px tall, so the row an
-     operator has to hit to fold a group was half the minimum. The heading's own
-     padding supplies the rest of the box, so this only has to guarantee the
-     floor. */
-    min-height: 24px;
   }
   .admin-nav-group-toggle:hover {
-    color: var(--text-2);
+    color: var(--text);
   }
   .admin-nav-group-toggle:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--focus-ring-color);
     outline-offset: 2px;
     border-radius: var(--radius);
   }
-  /* `--text-3` on `--surface` measures 2.52:1 at 11px — below the 4.5:1 these
-   uppercase 11px labels need. They are structural navigation headings, not
-   incidental text, so they take the readable token rather than the faint one. */
   .admin-nav-group-label {
     flex: 1;
     min-width: 0;
-    color: var(--text-2);
-  }
-  /* What is behind the fold, stated in the summary. */
-  .admin-nav-group-count {
-    font-variant-numeric: tabular-nums;
-    color: var(--text-3);
   }
   .admin-nav-group-chevron {
     flex-shrink: 0;
-    transition: transform 0.15s ease;
+    transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
   }
   .admin-nav-group-toggle[aria-expanded="false"] .admin-nav-group-chevron {
     transform: rotate(-90deg);
-  }
-
-  /* Scroll affordance. Nineteen sections plus six headings will not fit a laptop
-   viewport at any density we ship, so the nav scrolls — but a silent scroll
-   leaves the last group invisible with nothing saying more exists. Sticky and
-   pulled out of flow, so the affordance costs no vertical space.
-   Only paint when the matching edge actually overflows — a permanent bottom
-   fade washed out Platform/Services even when the list fit. */
-  .admin-nav-fade {
-    position: sticky;
-    z-index: 1;
-    height: 24px;
-    pointer-events: none;
-    flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 0.12s ease;
-  }
-  .admin-nav[data-overflow-top] .admin-nav-fade-top,
-  .admin-nav[data-overflow-bottom] .admin-nav-fade-bottom {
-    opacity: 1;
-  }
-  .admin-nav-fade-top {
-    top: 0;
-    margin-bottom: -24px;
-    background: linear-gradient(to bottom, var(--surface) 20%, transparent);
-  }
-  .admin-nav-fade-bottom {
-    bottom: 0;
-    margin-top: -24px;
-    background: linear-gradient(to top, var(--surface) 20%, transparent);
   }
 
   /* Note under the tier Apply control explaining why it is de-emphasised. */
@@ -2606,47 +2546,7 @@
     color: var(--text-3);
   }
 
-  /* Sidebar section filter. 22 sections across 6 groups do not fit the nav; the
-   overflow fade, autoscroll and folding groups all compensate for the absence
-   of this one control. */
-  .admin-nav-filter {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 0 4px 8px;
-    padding: 0 8px;
-    height: 30px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface-2);
-    color: var(--text-2);
-  }
-  .admin-nav-filter:focus-within {
-    border-color: var(--accent, var(--text-3));
-  }
-  .admin-nav-filter input {
-    flex: 1;
-    min-width: 0;
-    border: 0;
-    background: none;
-    color: var(--text);
-    font-size: var(--text-meta);
-    outline: none;
-  }
-  /* The UA's own clear button in a search input sits at a different size in every
-   engine and fights the 30px row. */
-  .admin-nav-filter input::-webkit-search-cancel-button {
-    appearance: none;
-  }
-  .admin-nav-empty {
-    margin: 4px 8px 8px;
-    font-size: var(--text-meta);
-    color: var(--text-2);
-  }
-
-  /* Only rendered when the event socket is NOT healthy — a permanent green light
-   is noise, and the failure this guards against is a dead connection reading as
-   a quiet system. */
+  /* Only rendered while live updates are down. */
   .admin-nav-realtime {
     margin: 12px 4px 0;
     padding: 6px 8px;
@@ -2661,79 +2561,132 @@
   }
 
   /* ============================================================
-   Admin console — page chrome
+   Admin console — search bar and page layout
 
-   The console body is as wide as the window. Without a cap, a form field
-   stretches to whatever is left (a hostname input at 1350px), and a row's
-   trailing control drifts a screen's width from the label it belongs to.
+   Every page renders into the same container: a search bar on top, then a
+   scrolling page with one padding and one content width.
    ============================================================ */
 
-  /* Shown while a section's chunk is in flight, in place of the blank pane that
-   used to be there. Page-shaped so the geometry survives the swap: a spinner
-   centred in an empty column would move every element once the real content
-   arrives. */
-  .admin-skeleton {
-    display: grid;
-    gap: 12px;
+  .admin-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
   }
-  .admin-skeleton-title,
-  .admin-skeleton-subtitle,
-  .admin-skeleton-row {
-    border-radius: var(--radius);
-    background: var(--surface-2);
-    animation: admin-skeleton-pulse 1.4s ease-in-out infinite;
-  }
-  .admin-skeleton-title {
-    height: 26px;
-    width: 220px;
-  }
-  .admin-skeleton-subtitle {
-    height: 14px;
-    width: 340px;
-    max-width: 100%;
-  }
-  .admin-skeleton-panel {
-    display: grid;
-    gap: 1px;
-    margin-top: 8px;
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
+  .admin-searchbar {
+    flex-shrink: 0;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
     background: var(--surface);
   }
-  .admin-skeleton-row {
-    height: var(--rd-list-row-h, 36px);
+  .admin-search {
+    position: relative;
+    max-width: 640px;
   }
-  /* Staggered, so the block reads as one loading surface rather than four
-   elements flashing in lockstep. */
-  .admin-skeleton-row:nth-child(2) {
-    animation-delay: 0.1s;
+  .admin-search-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-2);
+    pointer-events: none;
   }
-  .admin-skeleton-row:nth-child(3) {
-    animation-delay: 0.2s;
+  .admin-search input {
+    width: 100%;
+    height: 40px;
+    padding: 0 12px 0 40px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-lg);
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: var(--text-body-sm);
   }
-  .admin-skeleton-row:nth-child(4) {
-    animation-delay: 0.3s;
+  .admin-search input::placeholder {
+    color: var(--text-2);
   }
-
-  @keyframes admin-skeleton-pulse {
-    0%,
-    100% {
-      opacity: 0.55;
-    }
-    50% {
-      opacity: 0.9;
-    }
+  .admin-search input:focus-visible {
+    outline: none;
+    border-color: var(--focus-ring-color);
+    background: var(--surface);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .admin-search-results {
+    position: absolute;
+    z-index: 40;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    max-height: min(70vh, 480px);
+    overflow-y: auto;
+    padding: 6px 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+  }
+  .admin-search-heading {
+    padding: 8px 16px 4px;
+    font-size: var(--text-caption);
+    font-weight: 600;
+    color: var(--text-2);
+  }
+  .admin-search-option {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 6px 16px;
+    cursor: pointer;
+  }
+  .admin-search-option[aria-selected="true"] {
+    background: var(--hover-strong);
+  }
+  .admin-search-option-icon {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    flex-shrink: 0;
+    color: var(--text-2);
+  }
+  .admin-search-option-text {
+    display: grid;
+    min-width: 0;
+  }
+  .admin-search-option-title {
+    font-size: var(--text-body-sm);
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .admin-search-option-detail {
+    font-size: var(--text-caption);
+    color: var(--text-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .admin-search-empty {
+    padding: 12px 16px;
+    font-size: var(--text-body-sm);
+    color: var(--text-2);
   }
 
   .admin-page {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 24px;
+    padding: 24px 24px 48px;
     min-width: 0;
   }
+  .admin-page:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: -2px;
+  }
   .admin-page-inner {
-    max-width: 1280px;
+    max-width: 1200px;
+    margin: 0 auto;
+    min-width: 0;
   }
 
   .admin-page-header {
@@ -2741,8 +2694,16 @@
   }
   .admin-page-header-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--gap-sm);
+  }
+  .admin-page-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
   }
   .admin-page-header h1 {
     font-size: var(--text-h2);
@@ -2752,42 +2713,216 @@
   .admin-page-actions {
     margin-left: auto;
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: var(--gap-sm);
   }
   .admin-page-subtitle {
     margin: 4px 0 0;
     font-size: var(--text-body-sm);
     color: var(--text-2);
-    max-width: 76ch;
+    max-width: 72ch;
   }
 
-  /* Form fields in a config surface are read left-to-right against their label;
-   a field wider than its longest plausible value just adds travel. Sections
-   that need a wide field (search, URLs) opt out with any max-w-* utility.
-   In @layer base so that opt-out actually works -- unlayered, this beat every
-   max-w-* utility and the escape hatch would have been a lie. See the
-   element-reset block near the top of this file. */
+  /* A part of a page: tab panel or card heading (h2). */
+  .admin-panel-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--gap-sm);
+    margin-bottom: 12px;
+  }
+  .admin-panel-header-text {
+    min-width: 0;
+    flex: 1;
+  }
+  .admin-panel-header h2 {
+    margin: 0;
+    font-size: var(--text-body);
+    font-weight: 600;
+  }
+  .admin-panel-header p {
+    margin: 2px 0 0;
+    font-size: var(--text-body-sm);
+    color: var(--text-2);
+  }
+
+  /* Settings cards stacked down the page. */
+  .admin-stack {
+    display: grid;
+    gap: 16px;
+    min-width: 0;
+  }
+  .admin-card {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    min-width: 0;
+    padding: 16px 20px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+  }
+  .admin-card > .admin-panel-header {
+    margin-bottom: 0;
+  }
+  .admin-muted {
+    margin: 0;
+    font-size: var(--text-body-sm);
+    color: var(--text-2);
+  }
+
+  /* Label/value pairs. */
+  .admin-facts {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+  }
+  .admin-facts > div {
+    display: grid;
+    grid-template-columns: minmax(96px, 200px) minmax(0, 1fr);
+    gap: 12px;
+    align-items: center;
+  }
+  [data-slot="side-sheet"] .admin-facts > div {
+    grid-template-columns: 120px minmax(0, 1fr);
+  }
+  .admin-facts dt {
+    font-size: var(--text-body-sm);
+    color: var(--text-2);
+  }
+  .admin-facts dd {
+    margin: 0;
+    min-width: 0;
+    font-size: var(--text-body-sm);
+  }
+
+  /* A boolean setting: text on the left, switch on the right. */
+  .admin-setting-list {
+    display: grid;
+  }
+  .admin-setting-list > .admin-setting + .admin-setting {
+    border-top: 1px solid var(--border);
+  }
+  .admin-setting {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 0;
+  }
+  .admin-setting-text {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+  .admin-setting-label {
+    font-size: var(--text-body-sm);
+    font-weight: 500;
+    color: var(--text);
+  }
+  .admin-setting-description {
+    font-size: var(--text-meta);
+    color: var(--text-2);
+    max-width: 64ch;
+  }
+  .admin-switch {
+    position: relative;
+    flex-shrink: 0;
+    width: 36px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    /* The thumb is drawn in currentColor, so its contrast with the track is
+       the switch's own text contrast. */
+    color: var(--surface);
+    background: var(--text-3);
+    cursor: pointer;
+    transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+  }
+  .admin-switch[data-state="on"] {
+    background: var(--accent);
+  }
+  .admin-switch:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .admin-switch-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: var(--shadow-sm);
+    transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+  }
+  .admin-switch[data-state="on"] .admin-switch-thumb {
+    transform: translateX(16px);
+  }
+
+  /* Tabs for sibling views of one page. */
+  .admin-tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 20px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+  }
+  .admin-tab {
+    flex-shrink: 0;
+    padding: 10px 14px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--text-2);
+    font-size: var(--text-body-sm);
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .admin-tab:hover {
+    color: var(--text);
+    background: var(--hover);
+  }
+  .admin-tab[aria-selected="true"] {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .admin-tabpanel {
+    min-width: 0;
+  }
+
+  .admin-skeleton {
+    display: grid;
+    gap: 24px;
+  }
+  .admin-loading {
+    margin-bottom: 12px;
+  }
+
+  /* Form fields in a config surface are read against their label; a field wider
+   than its longest plausible value just adds travel. Opt out with max-w-*. */
   @layer base {
     .admin-page-inner input:not([type="checkbox"]):not([type="radio"]),
     .admin-page-inner select,
     .admin-page-inner textarea {
-      max-width: 420px;
+      max-width: min(420px, 100%);
     }
   }
 
-  .admin-banner {
+  .admin-notice {
     padding: 10px 12px;
     border-radius: var(--radius);
-    font-size: var(--text-meta);
+    font-size: var(--text-body-sm);
     margin-bottom: 12px;
     border: 1px solid var(--border);
     background: var(--surface-2);
     color: var(--text-2);
   }
-  .admin-banner[data-kind="error"] {
-    background: var(--danger-soft);
-    border-color: var(--danger-soft);
-    color: var(--danger);
+  .admin-error {
+    margin-bottom: 12px;
   }
 
   .admin-empty-row {
@@ -2797,69 +2932,13 @@
     color: var(--text-2);
   }
 
-  /* One empty state for the whole console: mark, what this surface holds, and
-   the action that fills it. */
-  .admin-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding: 48px 24px;
-    text-align: center;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-  }
-  .admin-empty-icon {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    margin-bottom: 4px;
-    border-radius: 50%;
-    background: var(--surface-2);
-    color: var(--text-3);
-  }
-  .admin-empty-title {
-    margin: 0;
-    font-size: var(--text-body);
-    font-weight: 600;
-  }
-  .admin-empty-body {
-    margin: 0;
-    font-size: var(--text-body-sm);
-    color: var(--text-2);
-    max-width: 52ch;
-    line-height: 1.5;
-  }
-  .admin-empty-action {
-    margin-top: 10px;
-  }
-
-  /* Recoverable-error banner: summary, honest cause, raw detail, retry. Shared
-   by every admin surface via QueryFailureBanner. */
-  .admin-failure {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    flex-wrap: wrap;
-  }
   .admin-failure-body {
     display: grid;
     gap: 2px;
     min-width: 0;
-    flex: 1;
-  }
-  .admin-failure-summary {
-    font-weight: 600;
   }
   .admin-failure-detail {
     font-size: var(--text-caption);
-    /* Was `opacity: 0.85`, which dims the text *and* whatever it sits on, so the
-     ratio fell below AA in both themes. This line is the raw error message —
-     the one thing here support can act on — so it is de-emphasised by colour,
-     which the contrast tokens account for, rather than by transparency, which
-     they cannot. */
     color: var(--text-2);
     overflow-wrap: anywhere;
   }
@@ -2875,16 +2954,6 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--gap-sm);
-    margin-bottom: 12px;
-  }
-
-  /* Bulk-selection action bar. */
-  .admin-bulk-bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--gap-sm);
-    padding: 8px 12px;
     margin-bottom: 12px;
   }
 
@@ -2992,11 +3061,9 @@
   /* One caption treatment for the console, replacing `HEADER_CELL` and its four
    near-copies. */
   .admin-table-head {
-    font-size: var(--text-caption);
+    font-size: var(--text-meta);
     color: var(--text-2);
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
   .admin-table-head[data-align="right"],
   .admin-table-cell[data-align="right"] {
@@ -3035,7 +3102,7 @@
   }
   .admin-unavailable-reason {
     font-size: var(--text-caption);
-    color: var(--text-3);
+    color: var(--text-2);
   }
 
   /* `.row` does not wrap; the Overview empty state carries four destination
@@ -3067,22 +3134,269 @@
     font-weight: 600;
   }
 
-  /* Feature-flag group headings inside the tenant-settings form. A <legend> in
-   a display:grid <fieldset> needs floating out of flow to sit above the rows
-   rather than inline with the first one. */
-  .admin-flag-group-legend {
-    float: left;
-    width: 100%;
-    padding: 0;
-    margin-bottom: 2px;
-    font-size: var(--text-caption);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
+  /* Selectable admin lists (Users, Groups): a header, then SelectableList rows
+   laid out in the same columns. On phones each row stacks into a card. */
+  .admin-list {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
+    overflow: hidden;
   }
-  .admin-flag-group-legend + * {
-    clear: both;
+  .admin-list-header {
+    padding: 8px 0 8px calc(var(--rd-row-px) + 20px);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--text-meta);
+    font-weight: 600;
+    color: var(--text-2);
+  }
+  .admin-list [role="row"] + [role="row"] {
+    border-top: 1px solid var(--border);
+  }
+  .admin-list-footer {
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+  }
+  .admin-list-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--gap-sm);
+    min-height: 40px;
+    margin-bottom: 12px;
+    padding: 0 8px 0 calc(var(--rd-row-px) + 1px);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+  }
+  .admin-filter-bar > input[type="checkbox"] {
+    margin-left: calc(var(--rd-row-px) + 1px);
+  }
+  .admin-user-row,
+  .admin-group-row {
+    display: grid;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    padding: 6px 8px 6px 4px;
+  }
+  .admin-user-row {
+    grid-template-columns: minmax(0, 1fr) 150px 110px 130px 40px;
+  }
+  .admin-group-row {
+    grid-template-columns: minmax(0, 1fr) 120px 120px 40px;
+  }
+  .admin-user-name {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+  }
+  .admin-row-title {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--rd-row-fs);
+    font-weight: 500;
+    color: var(--text);
+  }
+  .admin-row-detail {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--text-caption);
+    color: var(--text-2);
+  }
+  .admin-row-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+  }
+  .admin-row-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+  @media (max-width: 640px) {
+    .admin-list-header {
+      display: none;
+    }
+    /* Name and ⋮ on the first line, the other columns wrapped beneath. */
+    .admin-user-row,
+    .admin-group-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px 8px;
+    }
+    .admin-user-name,
+    .admin-group-row > :first-child {
+      flex: 1 1 calc(100% - 48px);
+      min-width: 0;
+    }
+    .admin-row-actions {
+      flex: 0 0 auto;
+    }
+    .admin-row-cell {
+      order: 1;
+      flex-direction: row;
+      align-items: center;
+      gap: 6px;
+    }
+    .admin-domain-row {
+      flex-wrap: wrap;
+    }
+    .admin-searchbar {
+      padding: 8px 16px;
+    }
+    .admin-page {
+      padding: 16px 16px 40px;
+    }
+  }
+
+  /* Audit log: filters on one wrapping row, a fixed-layout table that never
+   scrolls sideways, and the raw record in the details sheet. */
+  .admin-audit-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .admin-audit-range {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .admin-audit-actor {
+    min-width: 220px;
+    max-width: 320px;
+    flex: 1;
+  }
+  /* Label above the field, like the other filters. */
+  .admin-audit-actor .people-picker {
+    flex-direction: column;
+    gap: 4px;
+  }
+  .admin-audit-actor .people-picker-label {
+    padding-top: 0;
+    font-size: var(--text-caption);
+    color: var(--text-2);
+  }
+  .admin-audit-actor .people-picker-field {
+    width: 100%;
+    min-height: 30px;
+  }
+  .admin-audit-table {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+  }
+  .admin-audit-table .admin-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+  .admin-audit-table .admin-table-cell {
+    overflow: hidden;
+  }
+  .admin-audit-event {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    padding: 2px 4px;
+    margin-left: -4px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  .admin-audit-event:hover .admin-row-title {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+  .admin-json {
+    margin: 0;
+    max-height: 50vh;
+    overflow: auto;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    font-family: "Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: var(--text-caption);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .admin-member-list {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .admin-member {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+  }
+  .admin-member + .admin-member {
+    border-top: 1px solid var(--border);
+  }
+
+  /* Tables become a list of cards on phones: one card per row, each value
+   under its column caption (`data-label`), no sideways scrolling. */
+  @media (max-width: 640px) {
+    .admin-page table,
+    .admin-page tbody,
+    .admin-page tr,
+    .admin-page td {
+      display: block;
+      width: 100%;
+    }
+    .admin-page thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .admin-page table {
+      border: 0;
+      background: none;
+    }
+    .admin-page tbody tr {
+      margin-bottom: 8px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+    }
+    .admin-page tbody td {
+      height: auto;
+      max-width: none;
+      padding: 4px 0;
+      border: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      text-align: left;
+    }
+    .admin-page tbody td:empty {
+      display: none;
+    }
+    .admin-page tbody td[data-label]::before {
+      content: attr(data-label);
+      display: block;
+      font-size: var(--text-caption);
+      color: var(--text-2);
+    }
+    .admin-page [data-slot="table-container"] {
+      overflow: visible;
+    }
   }
 
   /* ============================================================
@@ -3099,38 +3413,6 @@
     display: flex;
     flex-direction: column;
     gap: var(--gap);
-  }
-
-  .webhooks-header {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--gap);
-    flex-wrap: wrap;
-  }
-  .webhooks-header h1 {
-    font-size: var(--text-h2);
-    font-weight: 600;
-    margin: 0;
-  }
-  .webhooks-header p {
-    margin: 4px 0 0;
-    font-size: var(--text-body-sm);
-    color: var(--text-3);
-    max-width: 76ch;
-  }
-  .webhooks-kicker {
-    font-size: var(--text-caption);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
-    margin: 0;
-  }
-  .webhooks-header-actions {
-    margin-left: auto;
-    display: flex;
-    gap: var(--gap-sm);
-    flex-wrap: wrap;
   }
 
   /* Summary strip — one figure per metric. */
@@ -3261,14 +3543,6 @@
   .webhooks-form-actions {
     margin-top: 4px;
   }
-  .webhooks-checkbox {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: var(--text-meta);
-    color: var(--text-2);
-  }
-
   /* Tables. The wrapper scrolls so a long endpoint URL never widens the page. */
   .webhooks-table-wrap {
     overflow-x: auto;
@@ -4213,6 +4487,12 @@
     .app[data-nav-collapsed] .surf-sidebar .surf-nav-row {
       justify-content: center;
       padding: 0;
+    }
+
+    /* The admin nav folds groups; the rail has no group headings to unfold
+       them with, so it shows every group's rows. */
+    .app[data-nav-collapsed] .admin-nav ul[hidden] {
+      display: block;
     }
 
     .app[data-nav-collapsed] .surf-sidebar .surf-nav-row > .label,

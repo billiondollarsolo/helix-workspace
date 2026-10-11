@@ -105,9 +105,11 @@ describe("mail.filter.create actions", () => {
         create.inputSchema.parse({ name: "From a", criteria: { fromContains: "a" }, actions }),
       ).toThrow(FILTER_ACTION_REQUIRED);
     }
-    expect(() =>
-      create.inputSchema.parse({ name: "From a", criteria: {}, actions: { archive: true } }),
-    ).not.toThrow();
+    for (const actions of [{ archive: true }, { markRead: true }, { star: true }]) {
+      expect(() =>
+        create.inputSchema.parse({ name: "From a", criteria: {}, actions }),
+      ).not.toThrow();
+    }
   });
 
   it("rejects clearing every action on update", () => {

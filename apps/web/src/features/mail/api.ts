@@ -205,8 +205,11 @@ interface MailFilterCriteria {
 }
 
 interface MailFilterActions {
+  /** Label slugs. */
   readonly applyLabels?: readonly string[];
   readonly archive?: boolean;
+  readonly markRead?: boolean;
+  readonly star?: boolean;
   readonly delete?: boolean;
   readonly snoozeUntil?: string;
 }

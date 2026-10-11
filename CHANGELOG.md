@@ -75,8 +75,18 @@ All notable changes to Helix Workspace are documented here. This file follows
   `SEQUENCE` updates apply, and `CANCEL` cancels the imported event. The import sends no mail,
   skips spam-routed messages and events the recipient already has, ignores calendars over
   1 MiB or 1,000 VEVENTs, and never fails mail delivery.
+- Settings → Mail with General, Labels, and Filters and blocked addresses tabs; link to a tab
+  with `?settings=mail/<tab>`. General holds conversation view, reading pane, density, the
+  signature and the vacation responder (first and last day, subject, message). Labels lists your
+  labels as a tree with New label, Edit (name, "Nest label under", 24 colours) and Remove.
+  Filters are created in two steps, with a count of matching conversations before you choose
+  what happens to new mail; blocked addresses can be added and unblocked there.
+- Mail filters can mark matching mail as read and star it (`markRead`, `star` actions).
 
 ### Changed
+
+- Blocked senders moved from the Mail signature page to Settings → Mail → Filters and blocked
+  addresses; the separate Mail signature settings page is gone.
 
 - Every quota (storage, AI tokens and images, actors, outbound webhooks, integration API
   requests per second, export jobs per hour) defaults to unlimited, and agent and AI cost

@@ -135,6 +135,8 @@ const filterActionsSchema = z
     {
       applyLabels: z.array(z.string().min(1)).optional(),
       archive: z.boolean().optional(),
+      markRead: z.boolean().optional(),
+      star: z.boolean().optional(),
       delete: z.boolean().optional(),
       snoozeUntil: z.string().datetime().optional(),
     },
@@ -591,7 +593,8 @@ export function createMailToolDefinitions(
     }),
     defineTool<z.output<typeof filterCreateSchema>, z.output<typeof mailFilterSchema>>({
       id: "mail.filter.create",
-      description: "Create a mail filter.",
+      description:
+        "Create a mail filter. Criteria match incoming mail (fromContains, toContains, subjectContains, bodyContains, hasAttachment); actions apply label slugs, archive, markRead, star, delete or snoozeUntil.",
       permission: "mail.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(filterCreateSchema, genericObjectJsonSchema),
@@ -1173,6 +1176,8 @@ function normalizeActions(actions: z.output<typeof filterActionsSchema>): MailFi
   return {
     ...(actions.applyLabels === undefined ? {} : { applyLabels: actions.applyLabels }),
     ...(actions.archive === undefined ? {} : { archive: actions.archive }),
+    ...(actions.markRead === undefined ? {} : { markRead: actions.markRead }),
+    ...(actions.star === undefined ? {} : { star: actions.star }),
     ...(actions.delete === undefined ? {} : { delete: actions.delete }),
     ...(actions.snoozeUntil === undefined ? {} : { snoozeUntil: actions.snoozeUntil }),
   };

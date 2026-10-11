@@ -7,6 +7,8 @@ import {
 import {
   getMailThread,
   getMailUserSettings,
+  getMailVacation,
+  listMailFilters,
   listMailFolders,
   listMailLabels,
   listMailThreads,
@@ -176,6 +178,22 @@ export function mailUserSettingsQueryOptions() {
   return queryOptions({
     queryKey: mailQueryKeys.settings(),
     queryFn: () => getMailUserSettings(),
+    throwOnError: false,
+  });
+}
+
+export function mailFiltersQueryOptions() {
+  return queryOptions({
+    queryKey: mailQueryKeys.filters(),
+    queryFn: () => listMailFilters(),
+    throwOnError: false,
+  });
+}
+
+export function mailVacationQueryOptions() {
+  return queryOptions({
+    queryKey: mailQueryKeys.vacation(),
+    queryFn: () => getMailVacation(),
     throwOnError: false,
   });
 }

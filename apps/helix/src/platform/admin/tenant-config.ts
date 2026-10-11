@@ -63,6 +63,7 @@ const featureFlagsSchema = z
     assistant_retrieval: z.boolean().optional(),
     mail_outbound: z.boolean().optional(),
     calendar_import_invitations: z.boolean().optional(),
+    drive_s3_api: z.boolean().optional(),
     mail_inbound_policy: inboundAuthenticationPolicySchema.optional(),
   })
   .strict();

@@ -4,7 +4,7 @@ import { registerAgentCredentialTools } from "../platform/auth/tools.js";
 import { registerAssistantTools } from "../platform/assistant/index.js";
 import { registerCalendarTools } from "../platform/calendar/index.js";
 import { registerChatTools } from "../platform/chat/index.js";
-import { registerDriveTools } from "../platform/drive/index.js";
+import { registerDriveS3KeyTools, registerDriveTools } from "../platform/drive/index.js";
 import { registerMailTools } from "../platform/mail/index.js";
 import { registerMeetTools } from "../platform/meet/index.js";
 import { registerSearchTools } from "../platform/search/index.js";
@@ -22,6 +22,7 @@ function registeredTools() {
   registerMailTools(registry, unused);
   registerChatTools(registry, unused);
   registerDriveTools(registry, unused);
+  registerDriveS3KeyTools(registry, unused);
   registerCalendarTools(registry, unused);
   registerMeetTools(registry, unused);
   registerSearchTools(registry, unused);

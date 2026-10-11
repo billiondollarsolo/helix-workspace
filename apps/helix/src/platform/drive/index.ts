@@ -7,6 +7,7 @@ export * from "./lifecycle.js";
 export * from "./multipart.js";
 export * from "./range-response.js";
 export * from "./routes.js";
+export * from "./s3/index.js";
 export * from "./scan-admin.js";
 export * from "./scan-retry-worker.js";
 export * from "./scanning.js";

@@ -1,12 +1,17 @@
 import { ForbiddenError, NotFoundError } from "../api/api-error.js";
 import { requireActorScope } from "../api/scopes.js";
 import { dlpDecisionError } from "../platform/dlp.js";
+import { HELIX_API_VERSION_PREFIX } from "../api/version.js";
 import {
+  DriveS3MultipartCleanupWorker,
+  PostgresDriveS3MultipartStore,
   registerDriveRoutes,
+  registerDriveS3Gateway,
   registerDriveShareLinkRoute,
   safeDriveContentHeaders,
   sendStreamWithRangeSupport,
 } from "../platform/drive/index.js";
+import { loadEffectiveTenantConfig } from "../platform/tenancy/effective-config.js";
 import type { installTools } from "./tools.js";
 
 export async function installDriveRoutes(context: Awaited<ReturnType<typeof installTools>>) {
@@ -18,6 +23,13 @@ export async function installDriveRoutes(context: Awaited<ReturnType<typeof inst
     driveConfig,
     dlp,
     actorFromAuthenticatedRequest,
+    sql,
+    orgStore,
+    auditStore,
+    driveS3AccessKeyStore,
+    driveStorage,
+    driveStorageResolver,
+    leaderGatedWorkers,
   } = context;
   if (coreApps.shouldRegister("drive")) {
     await registerDriveRoutes(app, {
@@ -26,6 +38,43 @@ export async function installDriveRoutes(context: Awaited<ReturnType<typeof inst
       requireTls: driveConfig.isProduction,
       bodyLimitBytes: driveConfig.antivirus.maxFileBytes,
       dlp,
+    });
+    // S3-compatible gateway at /v1/s3: SigV4 access keys, translated onto the
+    // same Drive store operations (scan, DLP, quota, retention, audit).
+    const s3Multipart = new PostgresDriveS3MultipartStore(sql);
+    const resolveS3Storage = async (orgId: string) =>
+      (await driveStorageResolver({ orgId }))?.client ?? driveStorage;
+    leaderGatedWorkers.push({
+      name: "drive-s3-multipart-cleanup-worker",
+      worker: new DriveS3MultipartCleanupWorker({
+        sql,
+        multipart: s3Multipart,
+        resolveStorage: resolveS3Storage,
+        intervalMs: 15 * 60 * 1000,
+        batchSize: 100,
+        onError: (error) => {
+          app.log.error({ error }, "Drive S3 multipart cleanup failed");
+        },
+      }),
+    });
+    await registerDriveS3Gateway(app, {
+      store: driveStore,
+      accessKeys: driveS3AccessKeyStore,
+      multipart: s3Multipart,
+      resolveStorage: resolveS3Storage,
+      audit: auditStore,
+      dlp,
+      publicPrefix: HELIX_API_VERSION_PREFIX,
+      requireTls: driveConfig.isProduction,
+      limits: { maxObjectBytes: driveConfig.antivirus.maxFileBytes },
+      isEnabled: async (request, orgId) => {
+        const config =
+          request.tenant?.orgId === orgId
+            ? request.tenant.effectiveConfig
+            : await loadEffectiveTenantConfig({ orgs: orgStore }, orgId);
+        return config?.features.drive_s3_api !== false;
+      },
+      resolveOrgSlug: async (orgId) => (await orgStore.findById(orgId))?.slug,
     });
     await registerDriveShareLinkRoute(app, {
       store: driveStore,

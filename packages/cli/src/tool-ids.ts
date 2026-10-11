@@ -37,6 +37,8 @@ export const CLI_TOOL_IDS = [
   "drive.list",
   "drive.move",
   "drive.restore",
+  "drive.s3-keys.list",
+  "drive.s3-keys.revoke",
   "drive.search",
   "drive.share",
   "drive.trash",

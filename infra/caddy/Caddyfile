@@ -13,7 +13,9 @@
 }
 
 {$HELIX_DOMAIN:localhost} {
-	encode zstd gzip
+	# S3 clients verify Content-Length and checksums of raw object bytes.
+	@compressible not path /v1/s3 /v1/s3/*
+	encode @compressible zstd gzip
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
@@ -31,6 +33,8 @@
 		method PUT
 		path /v1/dav/files/*
 	}
+	# S3 gateway: PutObject/UploadPart bytes and multipart/batch-delete POSTs.
+	@s3_body path /v1/s3 /v1/s3/*
 	@bulk_body {
 		method POST
 		path /v1/api/tools/drive.finalize /v1/api/tools/mail.send
@@ -40,6 +44,7 @@
 			method PUT
 			path /v1/dav/files/*
 		}
+		not path /v1/s3 /v1/s3/*
 		not {
 			method POST
 			path /v1/api/tools/drive.finalize /v1/api/tools/mail.send
@@ -52,6 +57,9 @@
 		max_size 32MB
 	}
 	request_body @content_upload {
+		max_size 64MB
+	}
+	request_body @s3_body {
 		max_size 64MB
 	}
 

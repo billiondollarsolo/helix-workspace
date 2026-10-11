@@ -1,7 +1,6 @@
 import type { Actor } from "@helix/sdk-types";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
 import { parseBasicAuthorization } from "../util/http-auth.js";
-import type { DriveEntryRecord } from "./types.js";
 import type { WebDavRateLimiter } from "./webdav-security.js";
 
 const WINDOW_MS = 60_000;
@@ -93,12 +92,6 @@ export async function authorizeWebDavAccess(
     }
   }
   return { ok: true, actor };
-}
-
-/** Files that are still uploading, scanning, or quarantined cannot be downloaded,
- * so WebDAV listings omit them instead of advertising a GET that returns 404. */
-export function isWebDavListable(entry: DriveEntryRecord): boolean {
-  return entry.type === "folder" || entry.available !== false;
 }
 
 async function validCredentialsWithoutScope(

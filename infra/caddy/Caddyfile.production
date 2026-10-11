@@ -6,7 +6,9 @@
 }
 
 {$HELIX_DOMAIN} {
-	encode zstd gzip
+	# S3 clients verify Content-Length and checksums of raw object bytes.
+	@compressible not path /v1/s3 /v1/s3/*
+	encode @compressible zstd gzip
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"

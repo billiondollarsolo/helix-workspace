@@ -1,3 +1,5 @@
+import { parseDriveS3KeysCommand } from "./drive-s3-keys.js";
+
 export type HelixCommand =
   | { readonly kind: "tool-list"; readonly source?: ToolListSource }
   | {
@@ -971,13 +973,20 @@ function parseDriveCommand(
         toolId: "drive.search",
         json: parseDriveSearchOptions(jsonArgs),
       };
+    case "s3-keys": {
+      const parsed = parseDriveS3KeysCommand(subject, rest);
+      if ("usage" in parsed) throw new CliUsageError(parsed.usage);
+      const json: JsonArgument =
+        parsed.input === null ? parseJsonArgument(rest) : { source: "inline", value: parsed.input };
+      return { kind: "tool-call", toolId: parsed.toolId, json };
+    }
     default:
       throw new CliUsageError(driveUsage);
   }
 }
 
 const driveUsage =
-  "Usage: helix drive <upload|finalize|list|share|move|trash|restore|delete|search> [--json [JSON]]";
+  "Usage: helix drive <upload|finalize|list|share|move|trash|restore|delete|search|s3-keys> [--json [JSON]]";
 const driveUploadUsage =
   "Usage: helix drive upload <path> [--prepared <json-file>] [--folder <folder-id>] [--name <name>] [--mime-type <type>] [--byte-size <number>] [--sha256 <hex>] [--json [JSON]]";
 const driveListUsage =

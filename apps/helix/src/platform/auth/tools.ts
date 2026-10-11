@@ -53,6 +53,7 @@ function createAgentCredentialToolDefinitions(
       permission: agentCredentialAdminScope,
       sideEffects: "write",
       confirmationRequired: true,
+      sensitiveOutputKeys: ["secret"],
       inputSchema: zodToolSchema(createSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
@@ -106,6 +107,7 @@ function createAgentCredentialToolDefinitions(
       permission: agentCredentialAdminScope,
       sideEffects: "destructive",
       confirmationRequired: true,
+      sensitiveOutputKeys: ["secret"],
       inputSchema: zodToolSchema(rotateSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {

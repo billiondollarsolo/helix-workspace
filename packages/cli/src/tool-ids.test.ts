@@ -11,6 +11,7 @@ describe("CLI_TOOL_IDS", () => {
   it("lists exactly the tool ids the parser and upload flow can call", () => {
     const emitted = new Set([
       ...literals("./parser.ts", /toolId: "([^"]+)"/gu),
+      ...literals("./drive-s3-keys.ts", /toolId: "([^"]+)"/gu),
       ...literals("./upload.ts", /invoke\("([^"]+)"/gu),
     ]);
 

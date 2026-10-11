@@ -1,7 +1,7 @@
 import { PassThrough } from "node:stream";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
-import { helixLoggerOptions } from "./logger-redaction.js";
+import { helixLoggerOptions, redactSignedUrl } from "./logger-redaction.js";
 
 describe("helixLoggerOptions", () => {
   it("redacts HTTP and WebSocket credentials in structured logs", async () => {
@@ -44,5 +44,24 @@ describe("helixLoggerOptions", () => {
     expect(line).not.toContain("nested-access-token");
     expect(line).not.toContain("nested-client-secret");
     expect(line).toContain("[REDACTED]");
+  });
+
+  it("removes presigned-URL signatures from logged request URLs", async () => {
+    const stream = new PassThrough();
+    const output: Buffer[] = [];
+    stream.on("data", (chunk: Buffer) => output.push(chunk));
+    const logger = pino(helixLoggerOptions("info"), stream);
+    const url =
+      "/v1/s3/my-drive/a.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=HLXAAAAAAAAAAAAAAAAA%2F20261011%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20261011T000000Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=deadbeefcafe";
+    logger.info({ req: { method: "GET", url, ip: "203.0.113.7" } }, "incoming request");
+    await new Promise<void>((resolve) => stream.end(resolve));
+    const line = Buffer.concat(output).toString("utf8");
+    expect(line).not.toContain("deadbeefcafe");
+    expect(line).not.toContain("HLXAAAAAAAAAAAAAAAAA");
+    expect(line).toContain("/v1/s3/my-drive/a.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256");
+    expect(line).toContain("X-Amz-Signature=[REDACTED]");
+    expect(redactSignedUrl("/x?x-amz-security-token=t0k&b=1")).toBe(
+      "/x?x-amz-security-token=[REDACTED]&b=1",
+    );
   });
 });

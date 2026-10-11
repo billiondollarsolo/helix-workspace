@@ -3,10 +3,10 @@ import fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import type { AppPasswordAuthenticator } from "../auth/app-passwords.js";
 import { registerDriveRoutes, type WebDavDriveStore } from "./routes.js";
+import { isDriveEntryListable } from "./path-resolution.js";
 import type { DriveEntryRecord } from "./types.js";
 import {
   authorizeWebDavAccess,
-  isWebDavListable,
   WEBDAV_ACTOR_REQUEST_LIMIT,
   WEBDAV_AUTH_FAILURE_LIMIT,
 } from "./webdav-access.js";
@@ -159,11 +159,13 @@ describe("WebDAV access control", () => {
       ...base,
       ...patch,
     });
-    expect(isWebDavListable(entry({ type: "folder" }))).toBe(true);
-    expect(isWebDavListable(entry({}))).toBe(true);
-    expect(isWebDavListable(entry({ uploadState: "active", available: true }))).toBe(true);
-    expect(isWebDavListable(entry({ uploadState: "scanning", available: false }))).toBe(false);
-    expect(isWebDavListable(entry({ uploadState: "quarantined", available: false }))).toBe(false);
+    expect(isDriveEntryListable(entry({ type: "folder" }))).toBe(true);
+    expect(isDriveEntryListable(entry({}))).toBe(true);
+    expect(isDriveEntryListable(entry({ uploadState: "active", available: true }))).toBe(true);
+    expect(isDriveEntryListable(entry({ uploadState: "scanning", available: false }))).toBe(false);
+    expect(isDriveEntryListable(entry({ uploadState: "quarantined", available: false }))).toBe(
+      false,
+    );
   });
 });
 

@@ -38,7 +38,7 @@ import {
 } from "../platform/calendar/index.js";
 import { registerChatTools } from "../platform/chat/index.js";
 import { tierDefaults } from "../platform/config/tier.js";
-import { registerDriveTools } from "../platform/drive/index.js";
+import { registerDriveS3KeyTools, registerDriveTools } from "../platform/drive/index.js";
 import { createEventSchemaRegistry } from "../platform/events/schema-registry.js";
 import { TenantConfigFeatureFlagProvider } from "../platform/feature-flags/provider.js";
 import { type ReadinessProbe } from "../platform/health/readiness.js";
@@ -94,6 +94,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     orgStore,
     securityPoliciesStore,
     appPasswordStore,
+    driveS3AccessKeyStore,
     auditStore,
     webhookSecretResolver,
     webhookStore,
@@ -484,6 +485,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
   }
 
   if (coreApps.shouldRegister("drive")) {
+    registerDriveS3KeyTools(tools, { store: driveS3AccessKeyStore });
     registerDriveTools(tools, {
       store: driveStore,
       workflows: driveWorkflowStore,

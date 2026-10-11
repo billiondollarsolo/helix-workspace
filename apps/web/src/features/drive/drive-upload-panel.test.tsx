@@ -43,8 +43,9 @@ describe("upload panel copy", () => {
 
   it("describes each state, including the malware scan", () => {
     expect(uploadTaskStatus(task({ id: "a", phase: "uploading", uploadedBytes: 512 }))).toBe(
-      "512 B of 1000 B",
+      "51% · 512 B of 1000 B",
     );
+    expect(uploadTaskStatus(task({ id: "a", phase: "uploading" }))).toBe("Starting upload…");
     expect(uploadTaskStatus(task({ id: "a", phase: "scanning" }))).toBe("Scanning…");
     expect(
       uploadTaskStatus(task({ id: "a", phase: "blocked", message: "This file is quarantined." })),
@@ -138,16 +139,31 @@ describe("useDriveUploads", () => {
         updatedAt: "",
       }),
     });
-    const putFetch = globalThis.fetch;
+    const stored: string[] = [];
     vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const url =
-          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        return url.startsWith("https://storage.test")
-          ? Promise.resolve(new Response(null, { status: 200 }))
-          : putFetch(input, init);
-      }),
+      "XMLHttpRequest",
+      class extends EventTarget {
+        readonly upload = new EventTarget();
+        status = 0;
+        #url = "";
+        open(_method: string, url: string) {
+          this.#url = url;
+        }
+        setRequestHeader() {}
+        getResponseHeader() {
+          return null;
+        }
+        send(body: Blob) {
+          stored.push(this.#url);
+          queueMicrotask(() => {
+            this.upload.dispatchEvent(
+              new ProgressEvent("progress", { loaded: body.size, total: body.size }),
+            );
+            this.status = 200;
+            this.dispatchEvent(new Event("load"));
+          });
+        }
+      },
     );
     let uploads: ReturnType<typeof useDriveUploads> | undefined;
     mountWithQueries(<Harness onReady={(value) => (uploads = value)} />);
@@ -157,6 +173,7 @@ describe("useDriveUploads", () => {
       name: "plan.pdf",
       folderId: "folder-1",
     });
+    expect(stored).toEqual(["https://storage.test/put"]);
     expect(document.querySelector("li")?.getAttribute("data-phase")).toBe("scanning");
 
     state = "quarantined";

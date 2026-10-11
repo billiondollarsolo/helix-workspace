@@ -39,9 +39,9 @@ export function uploadTaskStatus(task: DriveUploadTask): string {
     case "queued":
       return "Waiting…";
     case "uploading":
-      return task.size > 0 && task.uploadedBytes > 0
-        ? `${formatByteSize(task.uploadedBytes)} of ${formatByteSize(task.size)}`
-        : "Uploading…";
+      return task.uploadedBytes > 0
+        ? `${String(uploadPercent(task))}% · ${formatByteSize(task.uploadedBytes)} of ${formatByteSize(task.size)}`
+        : "Starting upload…";
     case "scanning":
       return "Scanning…";
     case "done":
@@ -55,10 +55,10 @@ export function uploadTaskStatus(task: DriveUploadTask): string {
   }
 }
 
-function uploadPercent(task: DriveUploadTask): number | null {
-  if (task.phase === "scanning" || task.phase === "done") return 100;
-  if (task.phase !== "uploading" || task.size === 0 || task.uploadedBytes === 0) return null;
-  return Math.min(100, Math.round((task.uploadedBytes / task.size) * 100));
+/** Whole-number percent of the file sent to storage. */
+function uploadPercent(task: Pick<DriveUploadTask, "size" | "uploadedBytes">): number {
+  if (task.size === 0) return 0;
+  return Math.min(100, Math.floor((task.uploadedBytes / task.size) * 100));
 }
 
 function TaskIcon({ task }: { readonly task: DriveUploadTask }) {
@@ -145,11 +145,10 @@ export function DriveUploadPanel({
                       aria-label={`Uploading ${task.name}`}
                       aria-valuemin={0}
                       aria-valuemax={100}
-                      aria-valuenow={percent ?? undefined}
+                      aria-valuenow={percent}
                       className="drive-upload-bar"
-                      data-indeterminate={percent === null || undefined}
                     >
-                      <span style={{ width: `${String(percent ?? 35)}%` }} />
+                      <span style={{ width: `${String(percent)}%` }} />
                     </div>
                   ) : null}
                 </div>

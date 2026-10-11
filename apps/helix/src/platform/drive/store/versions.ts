@@ -1,4 +1,4 @@
-import { withTenantIoSagaPostgresContext as withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
+import { withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
 import { toSqlJson } from "../../util/sql.js";
 import { isDriveBlobStorageKey } from "../core/dedup.js";
 import { bytesFromDatabase } from "../core/mappers.js";

@@ -17,7 +17,7 @@
  * `metadata.source = 'scenarios'`) and re-author them. Safe to run as
  * the final step of `reseed.ts`.
  */
-
+import { instantToLocalDateTime } from "@helix/contracts";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import type postgres from "postgres";
@@ -608,19 +608,19 @@ async function seedCalendar(
     const startsAt = offset(spec.startsAgoHours);
     const endsAt = new Date(startsAt.getTime() + spec.durationMinutes * 60_000);
     const eventId = randomUUID();
+    const zone = "America/New_York";
     await sql`
       insert into cal_events (
         id, org_id, calendar_id, uid, title, description, location,
-        starts_at, ends_at, timezone, all_day, status,
+        starts_at, ends_at, timezone, starts_local, ends_local, all_day, status,
         organizer_actor_id, organizer_email, metadata
       ) values (
         ${eventId}, ${organizer.orgId}, ${calendarId},
         ${`scenarios-${eventId}`},
         ${spec.title}, ${spec.description ?? null}, ${spec.location ?? null},
-        ${startsAt.toISOString()}, ${endsAt.toISOString()},
-        'America/New_York', false, 'confirmed',
-        ${organizer.id}, ${organizer.email},
-        ${sql.json({ source: "scenarios" })}
+        ${startsAt.toISOString()}, ${endsAt.toISOString()}, ${zone},
+        ${instantToLocalDateTime(startsAt, zone)}, ${instantToLocalDateTime(endsAt, zone)},
+        false, 'confirmed', ${organizer.id}, ${organizer.email}, ${sql.json({ source: "scenarios" })}
       )
     `;
     for (const email of spec.attendees) {
@@ -881,9 +881,9 @@ async function seedChat(
               ${sql.json({ source: "scenarios", channel: spec.name })})
     `;
     await sql`
-      insert into chat_room_settings (thread_id, org_id, name, topic, is_private, metadata)
-      values (${threadId}, ${creator.orgId}, ${spec.name}, ${spec.topic}, ${spec.isPrivate ?? false},
-              ${sql.json({ source: "scenarios" })})
+      insert into chat_room_settings (thread_id, org_id, name, topic, privacy, metadata)
+      values (${threadId}, ${creator.orgId}, ${spec.name}, ${spec.topic},
+              ${spec.isPrivate === true ? "private" : "discoverable"}, ${sql.json({ source: "scenarios" })})
     `;
     rooms += 1;
 

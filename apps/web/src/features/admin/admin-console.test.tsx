@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { AdminConsole } from "./admin-console";
 import type { AdminSectionId } from "./admin-console-data";
+import { shellOverlaysForTest } from "@/test/shell-overlays";
 
 /** TopBar calls `sessionUserQueryOptions()` → fetch("/v1/api/auth/get-session").
  * That would consume the per-test fetchMock Response before the AdminUsers
@@ -38,11 +39,7 @@ vi.mock("@/lib/auth", async () => {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-const overlayApi = {
-  openNotifications: vi.fn(),
-  openPalette: vi.fn(),
-  openSettings: vi.fn(),
-};
+const overlayApi = shellOverlaysForTest();
 
 const apiUsers = {
   users: [
@@ -263,7 +260,7 @@ describe("AdminConsole", () => {
 
   /** Click a sidebar entry by its visible label. */
   function clickNav(label: string): Promise<void> {
-    const link = [...container.querySelectorAll("a.admin-nav-link")].find(
+    const link = [...container.querySelectorAll(".admin-nav a.surf-nav-row")].find(
       (element) => element.textContent?.trim() === label,
     );
     if (!link) {
@@ -387,7 +384,9 @@ describe("AdminConsole", () => {
       ),
     ).toBe(true);
 
-    const current = [...container.querySelectorAll('a.admin-nav-link[aria-current="page"]')];
+    const current = [
+      ...container.querySelectorAll('.admin-nav a.surf-nav-row[aria-current="page"]'),
+    ];
     expect(current).toHaveLength(1);
     expect(current[0]?.textContent?.trim()).toBe("Domains");
   });
@@ -488,7 +487,9 @@ describe("AdminConsole", () => {
       expect(navGroupToggle(title)?.getAttribute("aria-expanded")).toBe("false");
     }
 
-    const current = [...container.querySelectorAll('a.admin-nav-link[aria-current="page"]')];
+    const current = [
+      ...container.querySelectorAll('.admin-nav a.surf-nav-row[aria-current="page"]'),
+    ];
     expect(current).toHaveLength(1);
     expect(current[0]?.textContent?.trim()).toBe("Audit log");
     expect(current[0]?.closest("ul")?.hidden).toBe(false);
@@ -550,7 +551,7 @@ describe("AdminConsole", () => {
       // open a nav that looks like it does not contain the section you asked for.
       await renderConsole("webhooks");
 
-      const active = container.querySelector('a.admin-nav-link[aria-current="page"]');
+      const active = container.querySelector('.admin-nav a.surf-nav-row[aria-current="page"]');
       expect(active?.textContent?.trim()).toBe("Webhooks");
       expect(targets).toContain(active);
       // `nearest` so it never yanks a nav the operator has scrolled themselves.

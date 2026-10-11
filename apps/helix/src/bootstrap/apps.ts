@@ -61,6 +61,7 @@ import type { installAuth } from "./auth.js";
 import { verifyDefaultOrgAtBoot } from "./default-org.js";
 import {
   cacheSessionActorResolver,
+  installSessionActorPrefetchHook,
   CredentialAuthError,
   installTenantApiRpsLimitHook,
 } from "./request-principal.js";
@@ -183,8 +184,6 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
     resolveTenantContext: (request) => resolveTenantForRequest(request),
   });
 
-  installTenantPostgresContextHook(app, sql);
-
   const sessionActorResolver: SessionActorResolver | undefined =
     betterAuthRuntime === undefined
       ? undefined
@@ -205,6 +204,10 @@ export async function installApps(context: Awaited<ReturnType<typeof installAuth
             },
           ),
         });
+
+  if (sessionActorResolver !== undefined)
+    installSessionActorPrefetchHook(app, sessionActorResolver);
+  installTenantPostgresContextHook(app, sql);
 
   installTenantApiRpsLimitHook(app, {
     limiter: tenantApiRpsLimiter,

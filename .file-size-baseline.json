@@ -46,7 +46,7 @@
   "apps/helix/src/platform/storage/tenant-resolver.ts": 805,
   "apps/helix/src/platform/tenancy/export.test.ts": 825,
   "apps/helix/src/platform/tool-registry.test.ts": 1859,
-  "apps/helix/src/platform/tool-registry.ts": 1693,
+  "apps/helix/src/platform/tool-registry.ts": 1635,
   "apps/helix/src/server.test.ts": 1259,
   "apps/web/src/features/admin/admin-console.test.tsx": 823,
   "apps/web/src/features/admin/identity-management.tsx": 925,

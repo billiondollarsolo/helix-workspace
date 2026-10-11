@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { registerAccountPreferenceTools } from "../platform/auth/account-preferences.js";
 import { registerAppPasswordTools } from "../platform/auth/app-passwords.js";
 import { registerAgentCredentialTools } from "../platform/auth/tools.js";
 import { registerAssistantTools } from "../platform/assistant/index.js";
 import { registerCalendarTools } from "../platform/calendar/index.js";
 import { registerChatTools } from "../platform/chat/index.js";
+import { registerChatInboxTools } from "../platform/chat/inbox.js";
 import { registerDriveS3KeyTools, registerDriveTools } from "../platform/drive/index.js";
 import { registerMailTools } from "../platform/mail/index.js";
 import { registerMeetTools } from "../platform/meet/index.js";
@@ -30,6 +32,8 @@ function registeredTools() {
   registerWebhookTools(registry, unused);
   registerAgentCredentialTools(registry, unused);
   registerAppPasswordTools(registry, unused);
+  registerAccountPreferenceTools(registry, unused);
+  registerChatInboxTools(registry, unused);
   return registry.list();
 }
 

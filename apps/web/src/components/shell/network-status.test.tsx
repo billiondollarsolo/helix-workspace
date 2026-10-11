@@ -3,7 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NetworkStatus } from "./network-status";
+import { NetworkStatus, useOnline } from "./network-status";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -47,6 +47,28 @@ describe("NetworkStatus", () => {
       vi.advanceTimersByTime(4_000);
     });
     expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+});
+
+describe("useOnline", () => {
+  it("follows the browser connection events", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    function Probe() {
+      return <span>{useOnline() ? "online" : "offline"}</span>;
+    }
+    setOnline(true);
+    act(() => root.render(<Probe />));
+    expect(container.textContent).toBe("online");
+    setOnline(false);
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(container.textContent).toBe("offline");
+    setOnline(true);
+    act(() => root.unmount());
+    container.remove();
   });
 });
 

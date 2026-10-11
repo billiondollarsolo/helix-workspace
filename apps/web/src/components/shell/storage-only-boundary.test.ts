@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { routeForNotification } from "./notifications-panel";
+import { appForNotification } from "./notifications-panel";
 import { ASSISTANT_QUICK_PROMPTS } from "@/features/assistant/assistant-data";
 
 describe("storage-only shell surfaces", () => {
@@ -12,8 +12,9 @@ describe("storage-only shell surfaces", () => {
   });
 
   it("routes communication activity to its app", () => {
-    expect(routeForNotification({ verb: "meet.started" })).toBe("/meet");
-    expect(routeForNotification({ verb: "calendar.reminder" })).toBe("/calendar");
-    expect(routeForNotification({ verb: "drive.uploaded" })).toBe("/drive");
+    expect(appForNotification({ verb: "meet.started" })?.route).toBe("/meet");
+    expect(appForNotification({ verb: "calendar.reminder" })?.route).toBe("/calendar");
+    expect(appForNotification({ verb: "drive.uploaded" })?.route).toBe("/drive");
+    expect(appForNotification({ verb: "approval.requested" })).toBeUndefined();
   });
 });

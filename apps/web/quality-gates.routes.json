@@ -41,6 +41,26 @@
       "surface": "shell"
     },
     {
+      "name": "Search",
+      "path": "/search?q=harbor",
+      "surface": "shell"
+    },
+    {
+      "name": "Mail settings General",
+      "path": "/assistant?settings=mail/general",
+      "surface": "shell"
+    },
+    {
+      "name": "Mail settings Labels",
+      "path": "/assistant?settings=mail/labels",
+      "surface": "shell"
+    },
+    {
+      "name": "Mail settings Filters",
+      "path": "/assistant?settings=mail/filters",
+      "surface": "shell"
+    },
+    {
       "name": "Admin",
       "path": "/admin",
       "surface": "shell"

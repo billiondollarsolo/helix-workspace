@@ -66,13 +66,12 @@ function AdminNavLink({
       to="/admin/$section"
       params={{ section: item.id }}
       aria-current={active ? "page" : undefined}
-      className="admin-nav-link"
-      data-active={active ? "" : undefined}
+      className="surf-nav-row"
       onPointerEnter={preload}
       onFocus={preload}
     >
       <Icon size={16} aria-hidden="true" />
-      <span>{item.label}</span>
+      <span className="label">{item.label}</span>
     </Link>
   );
 }
@@ -108,7 +107,7 @@ export function AdminSidebar({
   }, [section]);
 
   return (
-    <nav className="admin-nav" aria-label="Administration" ref={navRef}>
+    <nav className="surf-sidebar admin-nav" aria-label="Administration" ref={navRef}>
       <AdminNavLink
         item={ADMIN_NAV_ROOT}
         active={section === ADMIN_NAV_ROOT.id}

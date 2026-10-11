@@ -12,6 +12,7 @@ describe("CLI_TOOL_IDS", () => {
     const emitted = new Set([
       ...literals("./parser.ts", /toolId: "([^"]+)"/gu),
       ...literals("./drive-s3-keys.ts", /toolId: "([^"]+)"/gu),
+      ...literals("./workspace-commands.ts", /toolId: "([^"]+)"/gu),
       ...literals("./upload.ts", /invoke\("([^"]+)"/gu),
     ]);
 

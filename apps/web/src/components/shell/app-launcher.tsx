@@ -1,10 +1,12 @@
 import { iconMap as Icons } from "@/components/icon-map";
-/* AppLauncher — 3-column grid of app tiles. Ported from the design handoff
-   (shell.jsx → AppLauncher). Anchored below the Rail logo. */
+/* AppLauncher — the full app grid, three tiles per row. The rail carries only
+   the pinned apps; this lists every enabled app plus search. Anchored beside
+   the rail logo and closed by Escape or any click outside it. */
 
 import { APPS } from "@/components/apps";
 import { useEnabledApps } from "@/features/apps/use-enabled-apps";
 import { Link } from "@tanstack/react-router";
+import { Search as SearchIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 export interface AppLauncherProps {
@@ -28,13 +30,25 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
         launcherItems(launcherRef.current)[0]?.focus();
       }
     });
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        !launcherRef.current?.contains(target) &&
+        target.closest('[aria-controls="app-launcher"]') === null
+      ) {
+        onClose();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
     return () => {
       cancelled = true;
+      document.removeEventListener("pointerdown", onPointerDown);
       if (previousFocus?.isConnected === true) {
         previousFocus.focus();
       }
     };
-  }, [open]);
+  }, [open, onClose]);
 
   if (!open) {
     return null;
@@ -47,7 +61,6 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
       className="launcher"
       role="menu"
       aria-labelledby="app-launcher-title"
-      onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
         const items = launcherItems(launcherRef.current);
         const current = items.indexOf(document.activeElement as HTMLElement);
@@ -63,10 +76,7 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
         }
       }}
     >
-      <div
-        id="app-launcher-title"
-        className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em] [padding:4px_6px_8px]"
-      >
+      <div id="app-launcher-title" className="launcher-title">
         Helix apps
       </div>
       <div className="launcher-grid">
@@ -82,12 +92,24 @@ export function AppLauncher({ open, onClose }: AppLauncherProps) {
               onClick={onClose}
             >
               <span className="launcher-icon" style={{ background: app.color }}>
-                <Icon size={16} />
+                <Icon size={20} aria-hidden="true" />
               </span>
               <span>{app.name}</span>
             </Link>
           );
         })}
+        <Link
+          to="/search"
+          preload="intent"
+          role="menuitem"
+          className="launcher-tile"
+          onClick={onClose}
+        >
+          <span className="launcher-icon launcher-icon-neutral">
+            <SearchIcon size={20} aria-hidden="true" />
+          </span>
+          <span>Search</span>
+        </Link>
       </div>
     </div>
   );

@@ -1,22 +1,27 @@
 /* AppShell — the `_shell` route layout.
-   Renders the always-dark left Rail, the surface `<Outlet/>`, and the
-   cross-app overlays (notifications, ⌘K command palette, settings).
+   Renders the offline banner, the desktop Rail or phone BottomNav, the surface
+   `<Outlet/>`, and the cross-app overlays (launcher, notifications, ⌘K
+   palette, quick settings, About, settings).
 
    Each surface renders its own `<SurfaceFrame>` (TopBar + body + side panel)
-   inside the Outlet — mirroring the prototype where every app owns a
-   `.workspace` element. Ported from the design handoff (app.jsx + shell.jsx). */
+   inside the Outlet. */
 
 import { useQuery } from "@tanstack/react-query";
 import { redirectToLogin, sessionUserQueryOptions } from "@/lib/auth";
 import { Outlet, useLocation, useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Rail } from "@/components/shell/rail";
+import { BottomNav } from "@/components/shell/bottom-nav";
 import { AppLauncher } from "@/components/shell/app-launcher";
+import { AboutDialog } from "@/components/shell/help-menu";
+import { useNavCollapsed } from "@/components/shell/nav-collapse";
+import { QuickSettings } from "@/components/shell/quick-settings";
 import { NotificationsPanel } from "@/components/shell/notifications-panel";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { SettingsPage } from "@/components/shell/settings-page";
 import { NetworkStatus } from "@/components/shell/network-status";
-import { GlobalShortcuts } from "@/lib/shortcuts/global-shortcuts";
+import { GlobalShortcuts, openShortcutsHelp } from "@/lib/shortcuts/global-shortcuts";
+import { MailDialogsHost } from "@/features/mail/settings";
 import {
   ShellOverlayContext,
   isSettingsSectionId,
@@ -37,6 +42,9 @@ export function AppShell() {
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [quickSettingsOpen, setQuickSettingsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const navCollapsed = useNavCollapsed();
 
   /* The settings overlay lives in `?settings=<section>` so it survives reload
      and back/forward. Every open/switch/close is the same navigation with a
@@ -55,17 +63,20 @@ export function AppShell() {
     [location.pathname, navigate],
   );
 
-  const overlays = useMemo<ShellOverlayApi>(
-    () => ({
+  const overlays = useMemo<ShellOverlayApi>(() => {
+    const openSettings = (section: SettingsSectionId = "profile") => {
+      setPaletteOpen(false);
+      setSettingsSection(section, false);
+    };
+    return {
       openNotifications: () => setNotifOpen(true),
       openPalette: () => setPaletteOpen(true),
-      openSettings: (section = "profile") => {
-        setPaletteOpen(false);
-        setSettingsSection(section, false);
-      },
-    }),
-    [setSettingsSection],
-  );
+      openSettings,
+      openQuickSettings: () => setQuickSettingsOpen(true),
+      openShortcuts: openShortcutsHelp,
+      openAbout: () => setAboutOpen(true),
+    };
+  }, [setSettingsSection]);
 
   const closeSettings = useCallback(() => {
     setSettingsSection(undefined, true);
@@ -87,14 +98,7 @@ export function AppShell() {
 
   return (
     <ShellOverlayContext.Provider value={overlays}>
-      <div
-        className="app"
-        onClick={() => {
-          if (launcherOpen) {
-            setLauncherOpen(false);
-          }
-        }}
-      >
+      <div className="app" data-nav-collapsed={navCollapsed || undefined}>
         <a className="skip-link" href="#main-content">
           Skip to main content
         </a>
@@ -103,14 +107,13 @@ export function AppShell() {
           onTogglePalette={() => setPaletteOpen((open) => !open)}
           onOpenShortcutSettings={() => overlays.openSettings("shortcuts")}
         />
-        <Rail
-          launcherOpen={launcherOpen}
-          onOpenLauncher={() => setLauncherOpen((open) => !open)}
-          onOpenHelp={() => overlays.openSettings("shortcuts")}
-        />
-        <AppLauncher open={launcherOpen} onClose={closeLauncher} />
+        <Rail launcherOpen={launcherOpen} onOpenLauncher={() => setLauncherOpen((open) => !open)}>
+          <AppLauncher open={launcherOpen} onClose={closeLauncher} />
+        </Rail>
 
         <Outlet />
+
+        <BottomNav />
 
         <NotificationsPanel open={notifOpen} onClose={() => setNotifOpen(false)} />
         <CommandPalette
@@ -118,6 +121,12 @@ export function AppShell() {
           onClose={() => setPaletteOpen(false)}
           openSettings={overlays.openSettings}
         />
+        <QuickSettings
+          open={quickSettingsOpen}
+          onOpenChange={setQuickSettingsOpen}
+          onSeeAllSettings={() => overlays.openSettings()}
+        />
+        <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
         <SettingsPage
           open={settingsSection !== null}
           section={settingsSection ?? "profile"}
@@ -126,6 +135,7 @@ export function AppShell() {
           }}
           onClose={closeSettings}
         />
+        <MailDialogsHost />
       </div>
     </ShellOverlayContext.Provider>
   );

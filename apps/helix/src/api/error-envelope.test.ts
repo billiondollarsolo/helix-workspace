@@ -6,6 +6,7 @@ import {
   type ToolRateLimitMetadata,
 } from "../platform/tool-registry.js";
 import { RuntimeAgentOperationalControlStore } from "../platform/tools/agent-operational-controls.js";
+import { ApiError } from "./api-error.js";
 import { buildErrorEnvelope, errorCodeForStatus, toolErrorEnvelope } from "./error-envelope.js";
 
 const rateLimitMetadata: ToolRateLimitMetadata = {
@@ -86,6 +87,29 @@ describe("error-envelope", () => {
           retryAfterSeconds: 7,
           rateLimit: result.rateLimit,
         },
+      },
+    });
+  });
+
+  it("keeps a thrown domain error code and its remedy details through the tool registry", async () => {
+    const registry = createToolRegistry();
+    registry.register({
+      ...writeTool("assistant.chat"),
+      handler: () => {
+        throw new ApiError("assistant_tool_limit_exceeded", "Turn off Mail.", {
+          details: { limit: 128, groups: [{ id: "mail", count: 60 }] },
+        });
+      },
+    });
+    const failed = await registry.invoke("assistant.chat", {}, { actor: writeActor });
+    if (failed.ok) throw new Error("expected the tool to fail");
+
+    expect(toolErrorEnvelope(failed, "trace-limit")).toEqual({
+      error: {
+        code: "assistant_tool_limit_exceeded",
+        message: "Turn off Mail.",
+        traceId: "trace-limit",
+        details: { limit: 128, groups: [{ id: "mail", count: 60 }] },
       },
     });
   });

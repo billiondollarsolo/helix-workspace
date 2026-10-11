@@ -9,8 +9,7 @@ import type {
   ToolDefinition,
 } from "@helix/sdk-types";
 import { isJsonObject } from "@helix/sdk-types";
-import { BadRequestError } from "../../api/api-error.js";
-import { filterToolGroups } from "./tool-selection.js";
+import { assistantToolLimit, assistantToolLimitError, selectTurnTools } from "./tool-selection.js";
 import {
   isDataClassification,
   resolveEffectiveClassification,
@@ -110,18 +109,12 @@ export function prepareVisibleTools(
 export function routeVisibleTools(
   tools: readonly AssistantVisibleTool[],
   routeToolIds: readonly string[] | undefined,
-  toolGroups?: readonly string[],
+  toolGroups: readonly string[] | undefined,
+  prompt: string,
 ): readonly AssistantVisibleTool[] {
-  const selected = filterToolGroups(tools, toolGroups);
   const routed =
-    routeToolIds === undefined
-      ? selected
-      : selected.filter((tool) => routeToolIds.includes(tool.id));
-  if (routed.length > 128)
-    throw new BadRequestError(
-      "Too many Assistant tools are selected. Choose fewer tool groups and try again.",
-    );
-  return routed;
+    routeToolIds === undefined ? tools : tools.filter((tool) => routeToolIds.includes(tool.id));
+  return selectTurnTools(routed, { groups: toolGroups, prompt });
 }
 
 /** Keep native web tools that already appear in this chat so strict providers can replay them. */
@@ -137,10 +130,7 @@ export function retainHistoricalTools(
   );
   if (extra.length === 0) return selected;
   const merged = [...selected, ...extra];
-  if (merged.length > 128)
-    throw new BadRequestError(
-      "Too many Assistant tools are selected. Choose fewer tool groups and try again.",
-    );
+  if (merged.length > assistantToolLimit) throw assistantToolLimitError(merged);
   return merged;
 }
 

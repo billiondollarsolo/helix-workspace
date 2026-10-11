@@ -1,6 +1,6 @@
-/* Shell overlay state — notifications panel, command palette, settings page.
-   Ported from app.jsx's root-owned overlay booleans. Provided once by the
-   `_shell` layout so any surface or shell control can open them. */
+/* Shell overlay triggers — notifications, command palette, quick settings,
+   settings page, keyboard shortcuts and About. Provided once by the `_shell`
+   layout so any surface or shell control can open them. */
 
 import { createContext, useContext } from "react";
 
@@ -8,16 +8,30 @@ const SETTINGS_SECTION_IDS = [
   "profile",
   "appearance",
   "language",
-  "signature",
+  "mail",
   "security",
   "s3-keys",
   "shortcuts",
 ] as const;
 
-export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
+type SettingsSectionBaseId = (typeof SETTINGS_SECTION_IDS)[number];
+
+/** A section, or `<section>/<tab>` to open one tab of a tabbed section (`mail/filters`). */
+export type SettingsSectionId = SettingsSectionBaseId | `${SettingsSectionBaseId}/${string}`;
+
+/** The section part of an id: `mail/filters` → `mail`. */
+export function settingsSectionBase(id: SettingsSectionId): SettingsSectionBaseId {
+  return id.split("/")[0] as SettingsSectionBaseId;
+}
 
 export function isSettingsSectionId(value: unknown): value is SettingsSectionId {
-  return typeof value === "string" && (SETTINGS_SECTION_IDS as readonly string[]).includes(value);
+  if (typeof value !== "string") return false;
+  const [section, tab, ...rest] = value.split("/");
+  return (
+    (SETTINGS_SECTION_IDS as readonly string[]).includes(section ?? "") &&
+    rest.length === 0 &&
+    (tab === undefined || /^[a-z-]+$/u.test(tab))
+  );
 }
 
 export interface ShellOverlayApi {
@@ -27,6 +41,12 @@ export interface ShellOverlayApi {
   openPalette: () => void;
   /** Open the full-screen settings page. */
   openSettings: (section?: SettingsSectionId) => void;
+  /** Open the quick settings drawer. */
+  openQuickSettings: () => void;
+  /** Open the keyboard-shortcuts help dialog. */
+  openShortcuts: () => void;
+  /** Open the About dialog. */
+  openAbout: () => void;
 }
 
 export const ShellOverlayContext = createContext<ShellOverlayApi | null>(null);

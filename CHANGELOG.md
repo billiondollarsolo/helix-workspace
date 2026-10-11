@@ -8,6 +8,26 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Mail labels: create, rename, recolour (24 named palette colours) and nest your own labels, and
+  delete a label with its sublabels. Label lists show unread counts.
+- Mail search understands `from:`, `to:`, `cc:`, `subject:`, `label:`, `in:` (including
+  `in:anywhere`), `category:`, `has:attachment`, `is:unread`, `is:starred`, `filename:`,
+  `before:`/`after:`, `older_than:`/`newer_than:` and quoted phrases, across every folder except
+  Spam and Trash.
+- An All mail view, and a Scheduled view that lists scheduled sends; you can move a scheduled send
+  to another time, or cancel it to get it back as a draft.
+- Mail thread rows list up to four participants with "me" for you, and message reads include each
+  attachment's name, size, type, inline flag and a download link (passive images can show inline).
+- Personal preferences: language, time zone (taken from your browser until you choose one), date
+  and time format, week start, working hours, and the Mail reading pane, density and conversation
+  view (`account.preferences.get` / `.set`, `helix account preferences`).
+- Account security: change your password (optionally signing out everywhere else), see your signed-in
+  browsers and devices, and sign out any of them. People can now create, list and revoke their own
+  app passwords without admin rights; creating one needs a signed-in web session.
+- Chat unread and @mention counts per conversation and a Mentions feed (`chat.unread.list`,
+  `chat.mentions.list`, `helix chat unread|mentions`).
+- "Add video conferencing" on new calendar events creates a Meet room and stores its join link on
+  the event when Meet is configured.
 - Appearance offers a System theme that follows the device's light or dark setting, and is now the
   default. Density choices are Default, Comfortable, and Compact; Compact fits more rows on screen.
 - Confirmation messages appear in the bottom-left corner and can offer Undo.
@@ -41,6 +61,20 @@ All notable changes to Helix Workspace are documented here. This file follows
 - The Contacts side panel shows avatars, job titles and "Group" or "Contact" labels instead of raw
   source names, and searches people and groups as you type. The people directory now returns each
   entry's job title and organization member, so a personal contact for a colleague links to them.
+- Search finds content, not just commands. ⌘K lists matching mail, files, chat messages, events
+  and people under the command matches, and the top search box opens a `/search` results page
+  with app filter chips. In an app with its own search (Mail, Drive) the box searches that app.
+- The settings cog opens a Quick settings drawer for theme and density, with a link to all
+  settings. The other theme toggles in the top bar and account menu are gone.
+- The hamburger collapses each app's sidebar to an icon rail on desktop and remembers the choice.
+- Help opens a menu with keyboard shortcuts, documentation and About Helix.
+- Notifications are grouped by app with unread dots, Mark all read and an empty state.
+- The account menu is an account card with "Manage your account" and Sign out.
+- Phones get a bottom bar with four apps and a More sheet, show the app title in the top bar,
+  and no longer reserve space for the side-panel rail.
+- An offline banner spans the top of the workspace while the device has no connection.
+- "New email" and "Schedule meeting" in ⌘K go to `/mail?compose=new` and
+  `/calendar?create=event`.
 
 - Drive accepts S3 commands. An S3-compatible gateway at `/v1/s3` lets the AWS CLI, rclone, boto3,
   and the AWS SDKs list, upload, download, copy, and delete Drive files, including multipart uploads,
@@ -62,9 +96,18 @@ All notable changes to Helix Workspace are documented here. This file follows
   `SEQUENCE` updates apply, and `CANCEL` cancels the imported event. The import sends no mail,
   skips spam-routed messages and events the recipient already has, ignores calendars over
   1 MiB or 1,000 VEVENTs, and never fails mail delivery.
+- Settings → Mail with General, Labels, and Filters and blocked addresses tabs; link to a tab
+  with `?settings=mail/<tab>`. General holds conversation view, reading pane, density, the
+  signature and the vacation responder (first and last day, subject, message). Labels lists your
+  labels as a tree with New label, Edit (name, "Nest label under", 24 colours) and Remove.
+  Filters are created in two steps, with a count of matching conversations before you choose
+  what happens to new mail; blocked addresses can be added and unblocked there.
+- Mail filters can mark matching mail as read and star it (`markRead`, `star` actions).
 
 ### Changed
 
+- Blocked senders moved from the Mail signature page to Settings → Mail → Filters and blocked
+  addresses; the separate Mail signature settings page is gone.
 - The admin console navigation is grouped into Home, Directory, Apps, Security, Reporting, and
   Account, and every admin page shares one layout. Feature switches moved from Workspace settings
   to the app they affect, and on/off settings use switches throughout.
@@ -119,6 +162,14 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- The API no longer stops answering after the Drive grid/list toggle. Signing in no longer holds
+  identity locks for the whole request, and Drive layout, star and other database-only changes stay
+  in the request's own transaction.
+- The Assistant no longer fails with "Too many Assistant tools are selected" for fully scoped
+  admins. Without an explicit choice it picks the most relevant tool groups up to the provider
+  limit; an explicit choice over the limit returns `assistant_tool_limit_exceeded` with the groups
+  to turn off.
+- The scenarios seed runs again on the current calendar and chat schema.
 - One-time secrets are no longer stored with confirmed tool actions. App passwords, agent
   credential secrets, Drive share-link tokens, and Drive S3 secret keys used to be saved in the
   pending action's result (and the idempotency replay cache), and `actions.get` could fetch them

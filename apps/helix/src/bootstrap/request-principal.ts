@@ -122,6 +122,25 @@ export function cacheSessionActorResolver(resolver: SessionActorResolver): Sessi
   };
 }
 
+/**
+ * Resolve the browser session actor before the request-long tenant transaction
+ * opens. Session resolution activates the identity membership, which takes row
+ * and advisory locks; inside the request transaction those locks would be held
+ * until the response and block any short I/O-saga phase on another connection
+ * (BE-001). The per-request cache hands the settled actor to later resolvers.
+ * Install it after tenant resolution and before `installTenantPostgresContextHook`.
+ */
+export function installSessionActorPrefetchHook(
+  app: FastifyInstance,
+  resolver: SessionActorResolver,
+): void {
+  app.addHook("preHandler", async (request) => {
+    if (request.tenant === null || request.headers.cookie === undefined) return;
+    // A rejection stays cached for the route, which reports it with its own envelope.
+    await resolver.resolve(request).catch(() => null);
+  });
+}
+
 const BROWSER_REQUEST_LIMIT = 120;
 const BROWSER_REQUEST_WINDOW_MS = 10_000;
 

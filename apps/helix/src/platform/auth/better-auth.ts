@@ -13,6 +13,7 @@ import { ApiError } from "../../api/api-error.js";
 import { internalApiUrl } from "../../api/version.js";
 import { parseActorRoleBindings } from "../permissions/roles.js";
 import { validatedPermissions } from "../permissions/scope-catalog.js";
+import { detachedFromTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { isRecord } from "../util/json.js";
 import { isSecurityPolicyRecoveryRequest } from "./admin-security-policy.js";
 
@@ -114,20 +115,11 @@ export class PostgresBetterAuthActorStore implements BetterAuthActorStore {
     readonly email: string;
     readonly displayName: string;
   }): Promise<ActorUserRecord | null> {
-    return this.resolveSerializable(input, 2);
-  }
-
-  private async resolveSerializable(
-    input: {
-      readonly authUserId: string;
-      readonly orgId: string;
-      readonly email: string;
-      readonly displayName: string;
-    },
-    retries: number,
-  ): Promise<ActorUserRecord | null> {
-    try {
-      return await this.sql.begin("isolation level serializable", async (tx) => {
+    // The activation function serializes provider-subject and email races with
+    // advisory locks, so it runs read committed in its own short transaction:
+    // the locks end at that commit, never held across a request (BE-001).
+    return detachedFromTenantPostgresContext(() =>
+      this.sql.begin(async (tx) => {
         const canonical = await tx<{ readonly email: string | null }[]>`
           select helix_canonical_login_email(${input.orgId}, ${input.email}) as email
         `;
@@ -160,13 +152,8 @@ export class PostgresBetterAuthActorStore implements BetterAuthActorStore {
           limit 1
         `;
         return rowToActorUser(rows[0]);
-      });
-    } catch (error) {
-      if (retries > 0 && postgresErrorCode(error) === "40001") {
-        return this.resolveSerializable(input, retries - 1);
-      }
-      throw error;
-    }
+      }),
+    );
   }
 }
 
@@ -682,8 +669,4 @@ function betterAuthUserFromSession(session: unknown): BetterAuthUser | null {
       ? { updatedAt: session.user.updatedAt }
       : {}),
   };
-}
-
-function postgresErrorCode(error: unknown): string | null {
-  return isRecord(error) && typeof error.code === "string" ? error.code : null;
 }

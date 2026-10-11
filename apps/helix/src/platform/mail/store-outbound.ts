@@ -172,7 +172,10 @@ export class MailOutboundStore {
           ...(envelope.inReplyTo === undefined ? {} : { inReplyTo: envelope.inReplyTo }),
           ...(envelope.references === undefined ? {} : { references: envelope.references }),
           attachments: staged.input.attachments,
-          metadata: { direction: "outbound" },
+          metadata: {
+            direction: "outbound",
+            ...(envelope.replyTo === undefined ? {} : { replyTo: [envelope.replyTo] }),
+          },
         });
 
         // Pre-generate the outbound id so the outbox payload is correct on first insert

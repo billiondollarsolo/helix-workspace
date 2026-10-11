@@ -284,11 +284,17 @@ export function dlpToolInvocation(
   }
   if (toolId === "web.search" || toolId === "web.fetch")
     return { boundary: "copy_export", content: input, resources: [] };
-  if (toolId === "mail.send" || toolId === "mail.reply") {
+  if (toolId === "mail.send" || toolId === "mail.reply" || toolId === "mail.forward") {
     return {
       boundary: "mail_send",
       content: input,
-      resources: driveAttachments(object.attachments),
+      resources: [
+        ...driveAttachments(object.attachments),
+        // A forward egresses the original message; its sensitivity label applies.
+        ...(toolId === "mail.forward" && typeof object.messageId === "string"
+          ? [{ resourceType: "mail.message", resourceId: object.messageId }]
+          : []),
+      ],
     };
   }
   if (

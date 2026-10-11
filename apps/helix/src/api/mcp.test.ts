@@ -9,10 +9,6 @@ import type {
   SearchResponse,
 } from "../platform/search/types.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
-import {
-  InMemoryConfirmationGate,
-  InMemoryPendingActionStore,
-} from "../platform/tools/registry.js";
 import { systemActor, unauthenticatedActor } from "./actor.js";
 import {
   createSearchMcpResourceProvider,
@@ -40,10 +36,18 @@ describe("handleMcpJsonRpcRequest", () => {
         tools: [
           {
             name: "platform.ping",
+            title: "Platform ping",
             annotations: {
-              permission: "platform.read",
-              sideEffects: "read",
-              confirmationRequired: false,
+              title: "Platform ping",
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: false,
+            },
+            _meta: {
+              "helix/permission": "platform.read",
+              "helix/sideEffects": "read",
+              "helix/confirmationRequired": false,
             },
           },
         ],
@@ -126,16 +130,16 @@ describe("handleMcpJsonRpcRequest", () => {
     const listedTool = result.tools.find((listed) => listed.name === "limited.cost-annotated");
     expect(listedTool).toMatchObject({
       name: "limited.cost-annotated",
-      annotations: {
-        permission: "platform.read",
-        sideEffects: "read",
-        confirmationRequired: false,
-        estimatedCostUsdMicros: 1_250,
+      _meta: {
+        "helix/permission": "platform.read",
+        "helix/sideEffects": "read",
+        "helix/confirmationRequired": false,
+        "helix/estimatedCostUsdMicros": 1_250,
       },
     });
   });
 
-  it("returns JSON-RPC -32029 for repeated limited agent tools/call without executing handler", async () => {
+  it("returns an isError rate-limit result for repeated limited agent tools/call without executing handler", async () => {
     const tools = createToolRegistry({
       accessPolicy: new AllowAllToolAccessPolicy(),
       agentRateCostLimiter: new InMemoryAgentRateCostLimiter(),
@@ -187,9 +191,13 @@ describe("handleMcpJsonRpcRequest", () => {
     ).resolves.toMatchObject({
       jsonrpc: "2.0",
       id: "blocked",
-      error: {
-        code: -32029,
-        message: "Agent tool invocation limit exceeded: requests_per_minute",
+      result: {
+        isError: true,
+        structuredContent: {
+          code: "rate_limited",
+          message: "Agent tool invocation limit exceeded: requests_per_minute",
+          retryAfterSeconds: expect.any(Number),
+        },
       },
     });
     expect(calls).toBe(1);
@@ -305,36 +313,6 @@ describe("handleMcpJsonRpcRequest", () => {
     expect(HELIX_SERVER_VERSION).not.toBe("0.0.0");
   });
 
-  it("lists and gets tool-derived prompts via prompts/list and prompts/get", async () => {
-    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
-    const listResponse = await handleMcpJsonRpcRequest({
-      tools,
-      principal: { actor: systemActor },
-      body: { jsonrpc: "2.0", id: "prompts", method: "prompts/list" },
-    });
-    expect(listResponse).toMatchObject({
-      result: {
-        prompts: [{ name: "tool:platform.ping" }],
-      },
-    });
-
-    const getResponse = await handleMcpJsonRpcRequest({
-      tools,
-      principal: { actor: systemActor },
-      body: {
-        jsonrpc: "2.0",
-        id: "prompt-get",
-        method: "prompts/get",
-        params: { name: "tool:platform.ping", arguments: { input: {} } },
-      },
-    });
-    if (!("result" in getResponse)) {
-      throw new Error("Expected prompts/get result.");
-    }
-    const result = getResponse.result as { readonly messages: readonly unknown[] };
-    expect(result.messages.length).toBeGreaterThan(0);
-  });
-
   it("returns an MCP error for an unknown prompt", async () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     await expect(
@@ -353,7 +331,37 @@ describe("handleMcpJsonRpcRequest", () => {
     });
   });
 
-  it("streams a progress event then a terminal message event for tools/call", async () => {
+  it("streams a progressToken progress notification then the response for tools/call", async () => {
+    const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
+    const events: McpStreamEvent[] = [];
+    for await (const event of handleMcpStreamingRequest({
+      tools,
+      principal: { actor: systemActor },
+      body: {
+        jsonrpc: "2.0",
+        id: "stream-call",
+        method: "tools/call",
+        params: { name: "platform.ping", arguments: {}, _meta: { progressToken: "tok-1" } },
+      },
+    })) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => event.event)).toEqual(["message", "message"]);
+    expect(events[0]?.data).toMatchObject({
+      jsonrpc: "2.0",
+      method: "notifications/progress",
+      params: { progressToken: "tok-1", progress: 0 },
+    });
+    const messageEvent = events[1];
+    if (messageEvent === undefined) {
+      throw new Error("Expected a terminal message event.");
+    }
+    expect(formatSseEvent(messageEvent)).toContain("event: message");
+    expect(formatSseEvent(messageEvent)).toContain('"id":"stream-call"');
+  });
+
+  it("sends no progress notification when the client gave no progressToken", async () => {
     const tools = createToolRegistry({ accessPolicy: new AllowAllToolAccessPolicy() });
     const events: McpStreamEvent[] = [];
     for await (const event of handleMcpStreamingRequest({
@@ -368,14 +376,8 @@ describe("handleMcpJsonRpcRequest", () => {
     })) {
       events.push(event);
     }
-
-    expect(events.map((event) => event.event)).toEqual(["progress", "message"]);
-    const messageEvent = events[1];
-    if (messageEvent === undefined) {
-      throw new Error("Expected a terminal message event.");
-    }
-    expect(formatSseEvent(messageEvent)).toContain("event: message");
-    expect(formatSseEvent(messageEvent)).toContain('"id":"stream-call"');
+    expect(events).toHaveLength(1);
+    expect(events[0]?.data).toMatchObject({ id: "stream-call", result: {} });
   });
 
   it("streams a single message event for non-tool methods", async () => {
@@ -524,90 +526,6 @@ describe("handleMcpJsonRpcRequest", () => {
     ).resolves.toMatchObject({
       error: { code: -32600, message: "MCP request body exceeds the allowed size." },
     });
-  });
-
-  it("requires and replays idempotency keys for agent mutations", async () => {
-    const tools = createToolRegistry({
-      accessPolicy: new AllowAllToolAccessPolicy(),
-      confirmationGate: new InMemoryConfirmationGate(new InMemoryPendingActionStore()),
-    });
-    let calls = 0;
-    tools.register(
-      tool({
-        id: "mail.mutate",
-        permission: "mail.write",
-        sideEffects: "write",
-        handler: async () => {
-          calls += 1;
-          return { call: calls };
-        },
-      }),
-    );
-    const principal = {
-      actor: { ...agentActor, scopes: [...(agentActor.scopes ?? []), "mail.write"] },
-    };
-    const body = {
-      jsonrpc: "2.0",
-      id: "mutate",
-      method: "tools/call",
-      params: {
-        name: "mail.mutate",
-        arguments: { value: 1 },
-        _meta: { idempotencyKey: "mutation-0001" },
-      },
-    };
-
-    await expect(
-      handleMcpJsonRpcRequest({
-        tools,
-        principal,
-        body: {
-          ...body,
-          params: { name: "mail.mutate", arguments: { value: 1 } },
-        },
-      }),
-    ).resolves.toMatchObject({
-      error: {
-        code: -32602,
-        message: "Agent tools/call mutations require params._meta.idempotencyKey.",
-      },
-    });
-
-    const [first, duplicate] = await Promise.all([
-      handleMcpJsonRpcRequest({ tools, principal, body }),
-      handleMcpJsonRpcRequest({ tools, principal, body }),
-    ]);
-    expect(first).toMatchObject({
-      result: {
-        structuredContent: {
-          status: "pending_confirmation",
-          pending: { status: "pending_confirmation" },
-        },
-      },
-    });
-    expect(duplicate).toEqual(first);
-    expect(calls).toBe(0);
-
-    await expect(
-      handleMcpJsonRpcRequest({
-        tools,
-        principal,
-        body: {
-          ...body,
-          params: {
-            name: "mail.mutate",
-            arguments: { value: 2 },
-            _meta: { idempotencyKey: "mutation-0001" },
-          },
-        },
-      }),
-    ).resolves.toMatchObject({
-      error: {
-        code: -32009,
-        message: "MCP idempotency key was reused with different arguments.",
-      },
-    });
-    expect(calls).toBe(0);
   });
 
   it("bounds MCP request execution time", async () => {

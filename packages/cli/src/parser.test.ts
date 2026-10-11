@@ -82,7 +82,7 @@ describe("parseCliArgs", () => {
       json: {
         source: "inline",
         value:
-          '{"to":["ada@example.com","grace@example.com"],"cc":["team@example.com"],"subject":"Launch","body":"Ready"}',
+          '{"to":["ada@example.com","grace@example.com"],"cc":["team@example.com"],"subject":"Launch","bodyText":"Ready"}',
       },
     });
     expect(parseCliArgs(["mail", "send", "--json", '{"to":["ada@example.com"]}'])).toEqual({
@@ -93,22 +93,22 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs(["mail", "reply", "--thread-id", "thread-1", "--body", "Thanks"])).toEqual({
       kind: "tool-call",
       toolId: "mail.reply",
-      json: { source: "inline", value: '{"threadId":"thread-1","body":"Thanks"}' },
+      json: { source: "inline", value: '{"threadId":"thread-1","bodyText":"Thanks"}' },
     });
     expect(parseCliArgs(["mail", "reply", "--json"])).toEqual({
       kind: "tool-call",
       toolId: "mail.reply",
       json: { source: "stdin" },
     });
-    expect(parseCliArgs(["mail", "list", "--mailbox", "inbox", "--limit", "25"])).toEqual({
+    expect(parseCliArgs(["mail", "list", "--folder", "inbox", "--limit", "25"])).toEqual({
       kind: "tool-call",
-      toolId: "mail.list",
-      json: { source: "inline", value: '{"mailbox":"inbox","limit":25}' },
+      toolId: "mail.threads.list",
+      json: { source: "inline", value: '{"folder":"inbox","limit":25}' },
     });
     expect(parseCliArgs(["mail", "search", "--query", "roadmap", "--label", "work"])).toEqual({
       kind: "tool-call",
       toolId: "mail.search",
-      json: { source: "inline", value: '{"query":"roadmap","label":["work"]}' },
+      json: { source: "inline", value: '{"query":"roadmap","labels":["work"]}' },
     });
     expect(parseCliArgs(["mail", "search", "--json", '{"query":"roadmap"}'])).toEqual({
       kind: "tool-call",
@@ -340,14 +340,15 @@ describe("parseCliArgs", () => {
         "Launch",
         "--member",
         "user-1,user-2",
-        "--private",
+        "--privacy",
+        "private",
       ]),
     ).toEqual({
       kind: "tool-call",
       toolId: "chat.create_room",
       json: {
         source: "inline",
-        value: '{"subject":"Launch","memberActorIds":["user-1","user-2"],"isPrivate":true}',
+        value: '{"subject":"Launch","memberActorIds":["user-1","user-2"],"privacy":"private"}',
       },
     });
     expect(parseCliArgs(["chat", "create-room", "--json"])).toEqual({
@@ -808,8 +809,6 @@ describe("parseCliArgs", () => {
         "https://hooks.example/build",
         "--event-subject",
         "build.started,build.finished",
-        "--secret-ref",
-        "secret/webhooks/build",
         "--header",
         "X-Helix=cli",
         "--metadata",
@@ -822,7 +821,7 @@ describe("parseCliArgs", () => {
       json: {
         source: "inline",
         value:
-          '{"name":"Build events","url":"https://hooks.example/build","eventSubjects":["build.started","build.finished"],"secretRef":"secret/webhooks/build","headers":{"X-Helix":"cli"},"metadata":{"team":"platform"},"enabled":false}',
+          '{"name":"Build events","url":"https://hooks.example/build","eventSubjects":["build.started","build.finished"],"headers":{"X-Helix":"cli"},"metadata":{"team":"platform"},"enabled":false}',
       },
     });
     expect(parseCliArgs(["webhook", "outbound", "update", "--id", webhookId, "--enabled"])).toEqual(
@@ -872,8 +871,6 @@ describe("parseCliArgs", () => {
         "github",
         "--source",
         "github",
-        "--secret-ref",
-        "secret/inbound/github",
         "--metadata",
         '{"repo":"example/repo"}',
       ]),
@@ -883,7 +880,7 @@ describe("parseCliArgs", () => {
       json: {
         source: "inline",
         value:
-          '{"name":"GitHub","slug":"github","source":"github","secretRef":"secret/inbound/github","metadata":{"repo":"example/repo"}}',
+          '{"name":"GitHub","slug":"github","source":"github","metadata":{"repo":"example/repo"}}',
       },
     });
     expect(parseCliArgs(["webhook", "inbound", "rotate-secret", "--id", webhookId])).toEqual({

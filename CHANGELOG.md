@@ -26,6 +26,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- The Assistant works again for fully scoped members: Meet tools get their own opt-in tool
+  group, so the default groups stay within the 128-tool limit instead of failing every turn
+  with "Too many Assistant tools are selected".
 - Drive folder access grants can be changed and removed, not only created.
 - The Drive file details panel resets its rename field when another file is selected.
 - Drive version restore asks for confirmation, skips the current version, and reports the result;

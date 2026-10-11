@@ -1,21 +1,41 @@
 import { createHash } from "node:crypto";
 import { openAsBlob } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { buildHelixRequest, type HelixCliEnv } from "./client.js";
-import type { CliIo, FetchLike } from "./runner.js";
+import { buildHelixRequest } from "./client.js";
+import { pendingActionId, reportPending } from "./options.js";
+import { sendForText } from "./http.js";
+import type { CliContext } from "./runner.js";
+
+/**
+ * Lowest storage throughput the CLI waits for before giving up on a PUT. The
+ * per-request timeout covers connection setup and the response; the body
+ * transfer gets extra time in proportion to its size instead of a fixed cap.
+ */
+const MIN_UPLOAD_BYTES_PER_SECOND = 64 * 1024;
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Accepts the `drive.upload` result itself, a saved `{prepared}` failure
+ * record, or the `{status:"executed", output}` printed by `helix action approve`.
+ */
+function unwrapPrepared(supplied: unknown): unknown {
+  if (record(supplied) && record(supplied.prepared)) return supplied.prepared;
+  if (record(supplied) && supplied.status === "executed" && record(supplied.output)) {
+    return record(supplied.output.prepared) ? supplied.output.prepared : supplied.output;
+  }
+  return supplied;
 }
 
 /** File-backed blobs bound memory and detect file changes between hashing and PUT. */
 export async function uploadLocalDriveFile(
   path: string,
   input: unknown,
-  env: HelixCliEnv,
-  io: CliIo,
-  fetchImpl: FetchLike,
+  context: CliContext,
 ): Promise<number> {
+  const { env, io, http } = context;
   if (!record(input)) throw new Error("Drive upload options must be an object.");
   const { preparedFile, ...options } = input;
   const mimeType =
@@ -35,28 +55,31 @@ export async function uploadLocalDriveFile(
   )
     throw new Error("Declared SHA-256 does not match the local file.");
 
+  // Each tool's idempotency record is scoped by tool id, so one key per
+  // invocation covers drive.upload and its finalize/complete call.
   const invoke = async (toolId: string, body: unknown): Promise<unknown> => {
     const request = buildHelixRequest(
       { kind: "tool-call", toolId, json: { source: "empty" } },
       env,
       body,
+      context.idempotencyKey,
     );
-    const response = await fetchImpl(request.url, request.init);
-    const text = await response.text();
-    if (!response.ok) throw new Error(`HTTP ${String(response.status)}: ${text}`);
-    return JSON.parse(text) as unknown;
+    return JSON.parse((await sendForText(request, context, true)).body) as unknown;
   };
   const supplied: unknown =
     typeof preparedFile === "string"
       ? JSON.parse(await readFile(preparedFile, "utf8"))
       : await invoke("drive.upload", { ...options, mimeType, byteSize: file.size, sha256 });
-  const prepared = record(supplied) && record(supplied.prepared) ? supplied.prepared : supplied;
-  if (record(prepared) && prepared.status === "pending_confirmation") {
+  const prepared = unwrapPrepared(supplied);
+  const pendingId = pendingActionId(prepared);
+  if (pendingId !== undefined) {
     io.stdout.write(`${JSON.stringify(prepared, null, 2)}\n`);
-    io.stderr.write(
-      "Upload awaits approval. Save the approved result and resume with --prepared <json-file>.\n",
+    return reportPending(
+      io.stderr,
+      context.options.output,
+      pendingId,
+      `save that command's output to a file and resume with: helix drive upload ${path} --prepared <file>`,
     );
-    return 2;
   }
   if (
     !record(prepared) ||
@@ -86,12 +109,18 @@ export async function uploadLocalDriveFile(
         throw new Error("Invalid storage upload header.");
       headers.set(key, value);
     }
-    const response = await fetchImpl(target.href, {
-      method: "PUT",
-      headers,
-      body,
-      redirect: "error",
-    });
+    // CA8: a presigned PUT (or one multipart part) is safe to repeat, so it
+    // is retried on network errors, 429 and 5xx, up to three times.
+    const response = await http.send(
+      target.href,
+      { method: "PUT", headers, body },
+      {
+        idempotent: true,
+        retryServerErrors: true,
+        timeoutMs:
+          http.policy.timeoutMs + Math.ceil((body.size / MIN_UPLOAD_BYTES_PER_SECOND) * 1000),
+      },
+    );
     if (!response.ok) throw new Error(`Storage upload failed: HTTP ${String(response.status)}.`);
     return response;
   };
@@ -144,7 +173,10 @@ export async function uploadLocalDriveFile(
       });
     }
     io.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return record(result) && result.status === "pending_confirmation" ? 2 : 0;
+    const finalizePendingId = pendingActionId(result);
+    return finalizePendingId === undefined
+      ? 0
+      : reportPending(io.stderr, context.options.output, finalizePendingId);
   } catch (error) {
     // The caller can save this response and repeat PUTs against the same reserved object.
     io.stdout.write(`${JSON.stringify({ prepared }, null, 2)}\n`);

@@ -97,6 +97,10 @@ export function MailShell() {
   }, [urlSearch.folder, urlSearch.tab, urlSearch.thread, urlSearch.q, urlSearch.label]);
   const [offset, setOffset] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [filterNotice, setFilterNotice] = useState<{
+    readonly kind: "created" | "error";
+    readonly text: string;
+  } | null>(null);
   // Checked (bulk-select) thread IDs
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set());
 
@@ -258,20 +262,31 @@ export function MailShell() {
     },
   });
 
+  // A filter needs an action. "Skip the inbox" (archive) is the default: it is
+  // reversible, and the notice below says exactly what the filter will do.
   const filterMutation = useMutation({
     mutationFn: (input: { readonly from: string }) =>
       createMailFilter({
-        name: `From ${input.from}`,
+        name: `From ${input.from}: skip the inbox`,
         enabled: true,
         criteria: { fromContains: input.from },
+        actions: { archive: true },
       }),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not create filter. Try again.");
-    },
-    onSuccess: () => {
-      // Brief success acknowledgement — clear any previous error
+    onMutate: () => {
       clearActionError();
+      setFilterNotice(null);
+    },
+    onError: (error) => {
+      setFilterNotice({
+        kind: "error",
+        text: `Could not create the filter. ${error instanceof Error ? error.message : "Try again."}`,
+      });
+    },
+    onSuccess: (_filter, input) => {
+      setFilterNotice({
+        kind: "created",
+        text: `Filter created. New mail from ${input.from} will skip the inbox and go to Archive.`,
+      });
     },
   });
 
@@ -612,6 +627,17 @@ export function MailShell() {
           )}
         </div>
       </SurfaceFrame>
+      {filterNotice === null ? null : (
+        <div
+          role={filterNotice.kind === "error" ? "alert" : "status"}
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 [z-index:50] flex items-center gap-3 [padding:8px_12px] rounded-lg bg-card [border:1px_solid_var(--border)] [box-shadow:var(--shadow-sm)] [font-size:var(--text-body-sm)]"
+        >
+          <span>{filterNotice.text}</span>
+          <button type="button" className="btn sm" onClick={() => setFilterNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       {composeOpen && (
         <Compose
           onClose={() => {

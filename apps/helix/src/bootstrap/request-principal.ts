@@ -1,10 +1,11 @@
 import type { Actor, EventBus } from "@helix/sdk-types";
 import { TLSSocket } from "node:tls";
-import { type FastifyInstance, type FastifyRequest } from "fastify";
+import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import {
   toolInvocationPrincipalFromRequest,
   unauthenticatedActor,
   untrustedIdentityHeader,
+  type ToolInvocationPrincipalResolution,
   type SessionActorResolver,
 } from "../api/actor.js";
 import { buildErrorEnvelope } from "../api/error-envelope.js";
@@ -29,10 +30,42 @@ export class CredentialAuthError extends Error {
     readonly statusCode: number,
     readonly code: string,
     message: string,
+    /** RFC 6750 `WWW-Authenticate` challenge for the response, when one applies. */
+    readonly wwwAuthenticate?: string,
   ) {
     super(message);
     this.name = "CredentialAuthError";
   }
+
+  static fromResolution(
+    resolution: Exclude<ToolInvocationPrincipalResolution, { readonly ok: true }>,
+  ): CredentialAuthError {
+    return new CredentialAuthError(
+      resolution.statusCode,
+      resolution.code,
+      resolution.message,
+      resolution.wwwAuthenticate,
+    );
+  }
+}
+
+/** Sends the canonical envelope (and any bearer challenge) for a credential failure. */
+export function sendCredentialAuthError(
+  reply: FastifyReply,
+  error: CredentialAuthError,
+  traceId: string,
+) {
+  if (error.wwwAuthenticate !== undefined) {
+    reply.header("www-authenticate", error.wwwAuthenticate);
+  }
+  return reply.code(error.statusCode).send(
+    buildErrorEnvelope({
+      statusCode: error.statusCode,
+      code: error.code,
+      message: error.message,
+      traceId,
+    }),
+  );
 }
 
 /**
@@ -53,7 +86,7 @@ export async function resolveRequestPrincipal(
     credentialStore,
   );
   if (!resolution.ok) {
-    throw new CredentialAuthError(resolution.statusCode, resolution.code, resolution.message);
+    throw CredentialAuthError.fromResolution(resolution);
   }
   assertActorMatchesRequestTenant(request, resolution.principal.actor);
   if (resolution.principal.actor.id !== unauthenticatedActor.id)

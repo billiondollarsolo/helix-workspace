@@ -6,7 +6,6 @@ import {
   RedisIdempotencyStore,
   fingerprintRequestPayload,
   idempotencyStorageKey,
-  resolveIdempotency,
 } from "./idempotency.js";
 
 const okResult: ToolInvokeResult = { ok: true, status: "executed", output: { sent: true } };
@@ -23,10 +22,10 @@ describe("idempotency", () => {
     ).toBe("idem:org-1:actor-1:mail.send:abc");
   });
 
-  it("returns a miss for an unknown key", async () => {
+  it("claims an unknown key", async () => {
     const store = new InMemoryIdempotencyStore();
-    const outcome = await resolveIdempotency(store, "k", fingerprintRequestPayload({ a: 1 }));
-    expect(outcome.kind).toBe("miss");
+    const outcome = await store.claim("k", fingerprintRequestPayload({ a: 1 }), 60_000);
+    expect(outcome.kind).toBe("claimed");
   });
 
   it("replays a stored result for a duplicate key with the same payload", async () => {
@@ -39,7 +38,7 @@ describe("idempotency", () => {
       expiresAt: Date.now() + 60_000,
     });
 
-    const outcome = await resolveIdempotency(store, "k", hash);
+    const outcome = await store.claim("k", hash, 60_000);
     expect(outcome.kind).toBe("replay");
     if (outcome.kind === "replay") {
       expect(outcome.record.result).toEqual(okResult);
@@ -55,7 +54,7 @@ describe("idempotency", () => {
       expiresAt: Date.now() + 60_000,
     });
 
-    const outcome = await resolveIdempotency(store, "k", fingerprintRequestPayload({ a: 2 }));
+    const outcome = await store.claim("k", fingerprintRequestPayload({ a: 2 }), 60_000);
     expect(outcome.kind).toBe("conflict");
   });
 
@@ -70,9 +69,9 @@ describe("idempotency", () => {
       expiresAt: 2_000,
     });
 
-    expect((await resolveIdempotency(store, "k", hash)).kind).toBe("replay");
+    expect((await store.claim("k", hash, 60_000)).kind).toBe("replay");
     now = 3_000;
-    expect((await resolveIdempotency(store, "k", hash)).kind).toBe("miss");
+    expect((await store.claim("k", hash, 60_000)).kind).toBe("claimed");
   });
 
   it("atomically permits only one in-memory mutation claim", async () => {

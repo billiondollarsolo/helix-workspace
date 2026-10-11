@@ -6,6 +6,7 @@ export const assistantToolGroupIds = [
   "chat",
   "drive",
   "calendar",
+  "meet",
   "notifications",
   "admin",
   "webhooks",
@@ -17,15 +18,21 @@ const labels: Record<ToolGroup, string> = {
   chat: "Chat",
   drive: "Drive",
   calendar: "Calendar",
+  meet: "Meet",
   notifications: "Notifications",
   admin: "Administration",
   webhooks: "Webhooks",
   other: "Workspace search and other tools",
 };
 
+/**
+ * Opt-in groups stay off by default so the default selection fits the 128-tool limit
+ * OpenAI-compatible providers enforce (all groups for a fully scoped member exceed it).
+ */
+const optInToolGroups: ReadonlySet<ToolGroup> = new Set(["admin", "webhooks", "meet"]);
+
 export function selectedToolGroups(groups?: readonly string[]): readonly ToolGroup[] {
-  if (groups === undefined)
-    return assistantToolGroupIds.filter((id) => id !== "admin" && id !== "webhooks");
+  if (groups === undefined) return assistantToolGroupIds.filter((id) => !optInToolGroups.has(id));
   if (
     groups.length > assistantToolGroupIds.length ||
     groups.some((id) => !assistantToolGroupIds.some((known) => known === id))

@@ -158,11 +158,18 @@ function containsFold(haystack: string, needle: string | undefined): boolean {
   return needle === undefined || haystack.toLowerCase().includes(needle.toLowerCase());
 }
 
-/** Loop-prevention guards for vacation auto-responders. */
+/**
+ * Loop-prevention guards for vacation auto-responders (RFC 3834 §2).
+ * Header keys are matched case-insensitively.
+ */
 export function shouldSkipVacationResponse(input: {
   readonly senderEmail: string;
   readonly headers?: Readonly<Record<string, string | undefined>>;
   readonly isAutoReply?: boolean;
+  /** The recipient's own addresses: never answer yourself. */
+  readonly ownAddresses?: readonly string[];
+  /** Visible To/Cc addresses; when given, the recipient must be named there. */
+  readonly visibleRecipients?: readonly string[];
 }): boolean {
   const sender = input.senderEmail.toLowerCase();
   if (
@@ -176,18 +183,34 @@ export function shouldSkipVacationResponse(input: {
   if (input.isAutoReply === true) {
     return true;
   }
-  const headers = input.headers ?? {};
-  const precedence = (headers.precedence ?? headers.Precedence ?? "").toLowerCase();
+  const headers = new Map(
+    Object.entries(input.headers ?? {}).map(([key, value]) => [
+      key.toLowerCase(),
+      (value ?? "").trim().toLowerCase(),
+    ]),
+  );
+  const precedence = headers.get("precedence") ?? "";
   if (precedence === "bulk" || precedence === "junk" || precedence === "list") {
     return true;
   }
-  const autoSubmitted = (
-    headers["auto-submitted"] ??
-    headers["Auto-Submitted"] ??
-    ""
-  ).toLowerCase();
+  const autoSubmitted = (headers.get("auto-submitted") ?? "").split(/[\s;(]/u)[0] ?? "";
   if (autoSubmitted.length > 0 && autoSubmitted !== "no") {
     return true;
   }
-  return false;
+  if ((headers.get("list-id") ?? "") !== "" || (headers.get("list-unsubscribe") ?? "") !== "") {
+    return true;
+  }
+  const suppress = (headers.get("x-auto-response-suppress") ?? "").split(/[\s,]+/u);
+  if (suppress.includes("oof") || suppress.includes("all") || headers.get("return-path") === "<>") {
+    return true;
+  }
+  const own = new Set((input.ownAddresses ?? []).map((address) => address.toLowerCase()));
+  if (own.has(sender)) {
+    return true;
+  }
+  return (
+    input.visibleRecipients !== undefined &&
+    own.size > 0 &&
+    !input.visibleRecipients.some((address) => own.has(address.toLowerCase()))
+  );
 }

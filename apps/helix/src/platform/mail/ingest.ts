@@ -1,7 +1,7 @@
 import type { JsonObject, SecurityTier } from "@helix/sdk-types";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { authenticate, type AuthenticateResult, type AuthStatus } from "mailauth";
-import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
+import { simpleParser, type ParsedMail } from "mailparser";
 import { createHash } from "node:crypto";
 import { mkdtemp, open as openFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,13 +10,10 @@ import { SMTPServer, type SMTPServerDataStream, type SMTPServerSession } from "s
 import { compactJsonObject } from "../util/json.js";
 import { MailAddressNormalizationError, normalizeMailboxAddress } from "./address-normalization.js";
 import type { AntivirusScanner, AntivirusScanResult } from "./antivirus.js";
-import {
-  inspectInboundAttachments,
-  sanitizeMailHeaderDisplayValue,
-  sanitizeMailHtml,
-} from "./content-safety.js";
+import { inspectInboundAttachments } from "./content-safety.js";
 import { MailAddressDeliveryError, MailMalwareRejectedError } from "./errors.js";
 import { evaluateInboundMail, type MailFilterEvaluationResult } from "./filters.js";
+import { addressObjectToList, parsedAttachments, parsedMailToMessage } from "./inbound-message.js";
 import {
   evaluateInboundAuthenticationPolicy,
   parseInboundAuthenticationPolicy,
@@ -35,8 +32,6 @@ import {
 import type { SpamScanner, SpamScanResult } from "./spam.js";
 import type { MailStore } from "./store.js";
 import type {
-  MailAddress,
-  MailAttachmentInput,
   MailInboundAddressResolution,
   MailInboundRecipient,
   MailInboundRoutingRule,
@@ -866,6 +861,8 @@ export async function ingestRawMail(input: {
                 stored,
                 recipientActorId: recipient.actorId,
                 recipientAddress: recipient.address,
+                // RFC 3834: never auto-reply to spam or to mail failing DMARC.
+                suppressAutoReply: scan.routedToSpam || auth.dmarc === "fail",
                 ...(input.input.receivedAt === undefined ? {} : { now: input.input.receivedAt }),
               }),
             ),
@@ -956,63 +953,6 @@ function quarantineAuthentication(auth: MailAuthenticationSummary): JsonObject {
     arc: auth.arc,
     ...(auth.evidence === undefined ? {} : { evidence: auth.evidence }),
   };
-}
-
-function parsedMailToMessage(
-  input: IngestRawMailInput,
-  parsed: ParsedMail,
-  auth: MailAuthenticationSummary,
-): MailMessageInput {
-  const visibleRecipients = new Set(
-    input.recipients.map((recipient) => recipient.address.toLowerCase()),
-  );
-  const to = addressObjectToList(parsed.to).filter((recipient) =>
-    visibleRecipients.has(recipient.address.toLowerCase()),
-  );
-
-  return {
-    orgId: input.orgId,
-    actorId: null,
-    mailboxActorIds: input.recipients.map((recipient) => recipient.actorId),
-    from: addressObjectToList(parsed.from)[0] ?? {
-      address: input.envelopeFrom ?? "unknown@localhost",
-    },
-    to,
-    cc: addressObjectToList(parsed.cc).filter((recipient) =>
-      visibleRecipients.has(recipient.address.toLowerCase()),
-    ),
-    bcc: [],
-    subject: sanitizeMailHeaderDisplayValue(parsed.subject ?? ""),
-    bodyText: parsed.text ?? "",
-    ...(typeof parsed.html === "string" ? { bodyHtml: sanitizeMailHtml(parsed.html).html } : {}),
-    messageId: parsed.messageId,
-    ...(input.providerDeliveryId === undefined
-      ? {}
-      : { providerDeliveryId: input.providerDeliveryId }),
-    inReplyTo: parsed.inReplyTo,
-    references: Array.isArray(parsed.references)
-      ? parsed.references
-      : parsed.references === undefined
-        ? []
-        : [parsed.references],
-    receivedAt: input.receivedAt ?? new Date(),
-    attachments: parsedAttachments(parsed),
-    metadata: {
-      direction: "inbound",
-      auth: { ...auth },
-      envelopeFrom: input.envelopeFrom ?? null,
-    },
-  };
-}
-
-function parsedAttachments(parsed: ParsedMail): readonly MailAttachmentInput[] {
-  return parsed.attachments.map((attachment) => ({
-    filename: attachment.filename,
-    mimeType: attachment.contentType,
-    content: attachment.content,
-    contentId: attachment.cid,
-    disposition: attachment.contentDisposition,
-  }));
 }
 
 function validateRecipients(input: IngestRawMailInput): void {
@@ -1319,20 +1259,6 @@ function authPolicyEvidence(status: AuthStatus): JsonObject | undefined {
   return status.policy === undefined ? undefined : compactJsonObject(status.policy);
 }
 
-export function addressObjectToList(
-  value: AddressObject | AddressObject[] | undefined,
-): MailAddress[] {
-  const objects = value === undefined ? [] : Array.isArray(value) ? value : [value];
-  return objects
-    .flatMap((object) =>
-      object.value.map((address) => ({
-        address: address.address ?? "",
-        ...(address.name === "" ? {} : { name: sanitizeMailHeaderDisplayValue(address.name, 320) }),
-      })),
-    )
-    .filter((address) => address.address.length > 0);
-}
-
 export async function spoolStream(
   stream: SMTPServerDataStream,
   options: { readonly maxBytes: number; readonly timeoutMs: number },
@@ -1381,6 +1307,7 @@ function rejectedRecipient(address: string): Error {
 }
 
 export type { SMTPServerSession };
+export { addressObjectToList };
 
 type SpamCatcher = "spamd" | "ai" | "rules" | "virus" | "scanner-policy" | "auth-failure" | null;
 

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { OAUTH_BODY_LIMIT_BYTES } from "../../api/request-body.js";
 import { actorHasScope } from "../../api/scopes.js";
 import { HELIX_API_VERSION_PREFIX } from "../../api/version.js";
+import { oauthAuthorizationServerMetadata } from "./authorization-server-metadata.js";
 import { getCryptoProvider, sha256Hex } from "../crypto/index.js";
 import { parseBasicAuthorization } from "../util/http-auth.js";
 import { type AuthorizationCodeService, isValidCodeChallenge } from "./authorization-code.js";
@@ -153,17 +154,9 @@ export async function registerOAuthRoutes(
   const authorizeAuditSink = options.authorizeAuditSink;
 
   app.get("/.well-known/oauth-authorization-server", async (_request, reply) =>
-    reply.header("cache-control", "public, max-age=3600").send({
-      issuer,
-      authorization_endpoint: `${issuer}${HELIX_API_VERSION_PREFIX}/oauth/authorize`,
-      token_endpoint: `${issuer}${HELIX_API_VERSION_PREFIX}/oauth/token`,
-      revocation_endpoint: `${issuer}${HELIX_API_VERSION_PREFIX}/oauth/revoke`,
-      introspection_endpoint: `${issuer}${HELIX_API_VERSION_PREFIX}/oauth/introspect`,
-      response_types_supported: ["code"],
-      grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
-      code_challenge_methods_supported: ["S256"],
-      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
-    }),
+    reply
+      .header("cache-control", "public, max-age=3600")
+      .send(oauthAuthorizationServerMetadata(issuer)),
   );
 
   app.post("/oauth/token", { bodyLimit: OAUTH_BODY_LIMIT_BYTES }, async (request, reply) => {

@@ -1,4 +1,5 @@
 import type { ParsedMail } from "mailparser";
+import { sanitizeInlineStyle } from "../security/inline-style.js";
 
 const ALLOWED_TAGS = new Set([
   "a",
@@ -80,7 +81,8 @@ export interface SanitizedMailHtml {
 /**
  * Allowlist sanitizer used both before persistence and again when projecting a
  * stored HTML message. Images may only reference MIME `cid:` parts; network,
- * data, file, and protocol-relative sources are removed.
+ * data, file, and protocol-relative sources are removed. Inline styles keep
+ * only the text formatting allowed by `sanitizeInlineStyle`.
  */
 export function sanitizeMailHtml(html: string): SanitizedMailHtml {
   const stripped = html.replace(COMMENT_PATTERN, "");
@@ -159,7 +161,12 @@ function sanitizeAttributes(
   for (let match = ATTR_PATTERN.exec(raw); match !== null; match = ATTR_PATTERN.exec(raw)) {
     const name = (match[1] ?? "").toLowerCase();
     const value = match[2] ?? match[3] ?? match[4] ?? "";
-    if (name.startsWith("on") || name === "style" || name === "srcset") continue;
+    if (name.startsWith("on") || name === "srcset") continue;
+    if (name === "style") {
+      const style = sanitizeInlineStyle(value);
+      if (style !== "") parts.push(`style="${escapeAttribute(style)}"`);
+      continue;
+    }
     if (name === "title" || name === "lang" || name === "dir") {
       parts.push(`${name}="${escapeAttribute(value)}"`);
       continue;

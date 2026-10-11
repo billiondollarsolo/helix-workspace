@@ -88,7 +88,7 @@ function user(id: string, disabledAt: string | null = null) {
     email: `${id}@helix.local`,
     displayName: `User ${id}`,
     scopes: [],
-    disabledAt,
+    ...{ status: disabledAt === null ? "active" : "suspended", disabledAt, lastSignInAt: null },
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
   };

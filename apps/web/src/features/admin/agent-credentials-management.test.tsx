@@ -382,7 +382,9 @@ function agentActor() {
     email: "scheduler@agents.example",
     displayName: "Scheduler Agent",
     scopes: ["platform.read"],
+    status: "active",
     disabledAt: null,
+    lastSignInAt: null,
     createdAt: "2026-05-01T09:00:00.000Z",
     updatedAt: "2026-05-01T09:00:00.000Z",
   };

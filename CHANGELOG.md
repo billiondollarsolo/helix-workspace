@@ -209,6 +209,14 @@ All notable changes to Helix Workspace are documented here. This file follows
   Filters are created in two steps, with a count of matching conversations before you choose
   what happens to new mail; blocked addresses can be added and unblocked there.
 - Mail filters can mark matching mail as read and star it (`markRead`, `star` actions).
+- Admins can suspend and restore a person from the Users ⋮ menu, the API
+  (`/api/admin/users/:actorId/suspend` and `/restore`) or `helix admin users suspend|restore`.
+  Suspending signs them out everywhere and stops sign-in, app passwords, S3 access keys and other
+  API credentials until they are restored; both changes are audited. The Users list shows each
+  person's status and last sign-in (`lastSignInAt`), which replaces the Added column.
+- Rate any saved Helix AI answer thumbs up or down, with an optional comment on a thumbs down
+  (`assistant.message.feedback`). Feedback is private to you and audited without its text.
+- Drive uploads and Mail compose attachments show how much has been sent as a percentage.
 - Chat has a "+ New chat" menu: Start a chat (pick one person for a direct message or several
   for a group conversation), Create a space (name, description, and restricted or open to
   everyone in the organization), and Browse spaces to join open ones.
@@ -235,6 +243,8 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- Helix AI answers keep the workspace items they cited after you reload. Only references are
+  saved, and each item is shown only while you can still open it, title included.
 - Sign-in asks for your email first, then your password (or sends you to your company sign-in when
   your domain uses one), with Show password and Forgot password. A wrong email or password always
   gets the same message, so the page never reveals whether an account exists. The demo account
@@ -310,6 +320,11 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Meetings added to Calendar events can be joined: the first invited person to join opens the
+  scheduled meeting, instead of getting "No meeting is open with that code".
+- Mail you read in Helix keeps its text colour, highlight, size, weight, style, underline,
+  alignment and indent. Only those inline styles with plain values are kept; anything else in a
+  style attribute is still removed.
 - A tool that needs confirmation (such as creating an app password) no longer fails after you
   approve it when your permission comes from a role rather than your own account scopes.
 - Opening an invitation link no longer shows the "Choose a new password" step.

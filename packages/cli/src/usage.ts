@@ -76,6 +76,7 @@ ${workspaceLines("account")}
   helix admin agent-credentials create --actor-id <id> --credential-type <api_key|oauth_client|mtls_cert> --label <label> --purpose <purpose> --scope <scope> [--expires-at <iso>] [--json [JSON]]
   helix admin agent-credentials revoke --credential-id <id> [--json [JSON]]
   helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]
+  helix admin users <suspend|restore> --actor-id <id>
   helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]
   helix backup create
   helix restore --from <backup-id> --target-db <isolated-db> --target-bucket <isolated-bucket> --idempotency-key <key> [--encrypted]

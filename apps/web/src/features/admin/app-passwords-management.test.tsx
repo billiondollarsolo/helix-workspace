@@ -453,7 +453,9 @@ function firstAdminUser() {
     email: "mina@example.com",
     displayName: "Mina Okafor",
     scopes: ["calendar.read"],
+    status: "active",
     disabledAt: null,
+    lastSignInAt: null,
     createdAt: "2026-05-01T10:00:00.000Z",
     updatedAt: "2026-05-01T10:00:00.000Z",
   };

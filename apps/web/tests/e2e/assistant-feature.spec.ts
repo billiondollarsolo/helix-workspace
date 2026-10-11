@@ -88,6 +88,87 @@ test.describe("/assistant feature flow", () => {
   });
 });
 
+test("rates a saved answer and keeps its cited items and rating after reload", async ({ page }) => {
+  test.skip(isLiveBackend(), "Feedback round trip uses a deterministic mock turn.");
+  await seedBrowserSession(page, "e2e-assistant-feedback-token");
+  const conversationId = "00000000-0000-4000-8000-000000000501";
+  const answerId = "00000000-0000-4000-8000-000000000503";
+  let rating: "up" | "down" | null = null;
+  const feedbackBodies: unknown[] = [];
+  const turn = () => ({
+    conversation: { id: conversationId },
+    response: { id: answerId, content: "The launch plan is in Drive." },
+    messages: [
+      { id: "00000000-0000-4000-8000-000000000502", role: "user", content: "Where is the plan?" },
+      {
+        id: answerId,
+        role: "assistant",
+        content: "The launch plan is in Drive.",
+        citations: [{ kind: "drive", id: "file-77", title: "Launch plan", path: "/drive/file-77" }],
+        ...(rating === null
+          ? {}
+          : { feedback: { rating, comment: null, updatedAt: "2026-10-01" } }),
+      },
+    ],
+  });
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    if (await fulfillCoreAppsRoute(route)) return;
+    if (pathname === "/v1/api/tools/assistant.models.list") {
+      await fulfillJson(route, {
+        models: [{ id: "test/model", label: "Test model", providerId: "test", model: "model" }],
+        defaultModelId: "test/model",
+      });
+      return;
+    }
+    if (pathname === "/v1/api/tools/assistant.message.feedback") {
+      const body = request.postDataJSON() as { rating: "up" | "down" | null };
+      feedbackBodies.push(body);
+      rating = body.rating;
+      await fulfillJson(route, {
+        messageId: answerId,
+        feedback: rating === null ? null : { rating, comment: null, updatedAt: "2026-10-01" },
+      });
+      return;
+    }
+    if (
+      pathname === "/v1/api/tools/assistant.chat" ||
+      pathname === "/v1/api/tools/assistant.conversation.get"
+    ) {
+      await fulfillJson(route, turn());
+      return;
+    }
+    await fulfillJson(route, {});
+  });
+
+  await page.goto("/assistant");
+  await page.getByRole("textbox", { name: "Message Helix AI" }).fill("Where is the plan?");
+  await page.getByRole("button", { name: "Send message" }).click();
+  const conversation = page.getByTestId("assistant-conversation");
+  await expect(conversation.getByText("The launch plan is in Drive.")).toBeVisible();
+  const sources = conversation.getByRole("list", { name: "Workspace sources" });
+  await expect(sources.getByRole("link", { name: "Launch plan" })).toHaveAttribute(
+    "href",
+    "/drive?file=file-77",
+  );
+
+  const good = conversation.getByRole("button", { name: "Good response" });
+  await good.click();
+  await expect(good).toHaveAttribute("aria-pressed", "true");
+  expect(feedbackBodies).toEqual([{ conversationId, messageId: answerId, rating: "up" }]);
+
+  await page.goto(`/assistant?conversation=${conversationId}`);
+  await expect(
+    page.getByTestId("assistant-conversation").getByRole("button", { name: "Good response" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    page
+      .getByRole("list", { name: "Workspace sources" })
+      .getByRole("link", { name: "Launch plan" }),
+  ).toBeVisible();
+});
+
 async function mockAssistantBackend(
   page: Page,
   accessToken: string,

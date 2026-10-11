@@ -45,4 +45,55 @@ describe("mail HTML rendering boundary", () => {
     expect(html).toContain('data-helix-href="mailto:help@example.com"');
     expect(html).not.toMatch(/href="(?:data|java)/iu);
   });
+
+  it("keeps compose text formatting in inline styles and drops everything else", () => {
+    const { html } = sanitizeMailHtml(`
+      <div style="text-align: center">Centered</div>
+      <span style="font-size: x-large; color: rgb(217, 48, 37); font-weight: bold">Big red</span>
+      <span style="background-color:#FFEE00;font-style:italic;text-decoration-line:underline">Mark</span>
+      <blockquote style="margin-left: 40px; padding-left: 1.5em; border: none">Indented</blockquote>
+      <p style="position: fixed; top: 0; font-size: 14px; display: none">Pinned</p>
+    `);
+    expect(html).toContain('<div style="text-align: center">Centered</div>');
+    expect(html).toContain(
+      '<span style="font-size: x-large; color: rgb(217, 48, 37); font-weight: bold">Big red</span>',
+    );
+    expect(html).toContain(
+      '<span style="background-color: #ffee00; font-style: italic; text-decoration-line: underline">',
+    );
+    expect(html).toContain(
+      '<blockquote style="margin-left: 40px; padding-left: 1.5em">Indented</blockquote>',
+    );
+    expect(html).toContain('<p style="font-size: 14px">Pinned</p>');
+    expect(html).not.toMatch(/position|display|border|top:/iu);
+  });
+
+  it("rejects CSS injection through inline styles", () => {
+    const { html, remoteContentBlocked } = sanitizeMailHtml(`
+      <p style="background-color: url(https://evil.example/track)">a</p>
+      <p style="color: expression(alert(1))">b</p>
+      <p style="color: var(--x)">c</p>
+      <p style="color: red; background-color: u\\72l(https://evil.example/x)">d</p>
+      <p style="color: re&#x64;; font-size: 12px">e</p>
+      <p style="color: red/**/; font-size: 12px">f</p>
+      <p style="font-size: -5px; margin-left: -9999px; padding-left: calc(100% + 1px)">g</p>
+      <p style='color: red" onmouseover="alert(1)'>h</p>
+      <p style="color: red !important; text-align: center; behavior: url(x.htc)">i</p>
+      <p style="color: rgb(0, 0, 0) url(x)">j</p>
+      <p style="font-weight: bold;}; body{background:red">k</p>
+    `);
+    expect(remoteContentBlocked).toBe(true);
+    expect(html).not.toMatch(/url|expression|var\(|evil|calc|onmouseover|!important|behavior/iu);
+    expect(html).not.toMatch(/-\d|\{|\}/u);
+    expect(html).toContain("<p>a</p>");
+    expect(html).toContain("<p>b</p>");
+    expect(html).toContain("<p>d</p>");
+    expect(html).toContain("<p>e</p>");
+    expect(html).toContain("<p>f</p>");
+    expect(html).toContain("<p>g</p>");
+    expect(html).toContain("<p>h</p>");
+    expect(html).toContain('<p style="text-align: center">i</p>');
+    expect(html).toContain("<p>j</p>");
+    expect(html).toContain('<p style="font-weight: bold">k</p>');
+  });
 });

@@ -25,7 +25,9 @@ const AUDIT_ACTOR = {
   email: "a11y-audit@helix.local",
   displayName: "Accessibility Audit",
   scopes: ["*"],
+  status: "active",
   disabledAt: null,
+  lastSignInAt: "2026-01-02T09:00:00.000Z",
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };

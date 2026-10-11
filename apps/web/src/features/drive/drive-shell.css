@@ -672,23 +672,12 @@
     background: var(--accent);
     transition: width var(--motion-duration-base) var(--motion-ease-standard);
   }
-  .drive-upload-bar[data-indeterminate] > span {
-    animation: drive-indeterminate 1.2s var(--motion-ease-standard) infinite;
-  }
   .drive-spin {
     animation: drive-spin 1s linear infinite;
   }
   @keyframes drive-spin {
     to {
       transform: rotate(360deg);
-    }
-  }
-  @keyframes drive-indeterminate {
-    from {
-      transform: translateX(-100%);
-    }
-    to {
-      transform: translateX(300%);
     }
   }
 
@@ -814,8 +803,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .drive-spin,
-    .drive-upload-bar[data-indeterminate] > span {
+    .drive-spin {
       animation: none;
     }
     .drive-upload-bar > span {

@@ -65,7 +65,11 @@ async function setup(principal = actor) {
     offboard: vi.fn().mockResolvedValue(result),
   };
   await registerAdminUsersRoutes(app, {
-    store: { listUsers: async () => [], resetMfa: async () => false },
+    store: {
+      listUsers: async () => [],
+      resetMfa: async () => false,
+      setSuspended: async () => null,
+    },
     actorFromRequest: () => principal,
     offboarding: store,
   });

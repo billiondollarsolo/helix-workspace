@@ -35,6 +35,8 @@ describe("MailHtmlBody", () => {
     expect(documentHtml).toContain("connect-src 'none'");
     expect(documentHtml).toContain("img-src 'none'");
     expect(documentHtml).toContain("form-action 'none'");
+    // The server keeps only allowlisted text formatting in style attributes.
+    expect(documentHtml).toContain("style-src-attr 'unsafe-inline'");
     expect(documentHtml).toContain("Show quoted text");
     expect(documentHtml).toContain("details[data-helix-quote]");
     expect(documentHtml).toContain("test-channel");

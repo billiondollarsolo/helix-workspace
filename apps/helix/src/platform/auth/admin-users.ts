@@ -2,8 +2,10 @@ import type { Actor, ActorType } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type postgres from "postgres";
 import { z } from "zod";
+import { ConflictError, ForbiddenError } from "../../api/api-error.js";
 import { actorHasScope } from "../../api/scopes.js";
 import { canWriteAdminConsole } from "../admin/console-shared.js";
+import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import type { PostgresActorOffboardingStore } from "./actor-offboarding.js";
 
 const adminUsersScope = "admin.users";
@@ -28,9 +30,24 @@ export interface AdminUserRecord {
   readonly email: string | null;
   readonly displayName: string;
   readonly scopes: readonly string[];
+  /** `suspended` can be restored; `removed` was offboarded or deprovisioned. */
+  readonly status: AdminUserStatus;
   readonly disabledAt: string | null;
+  /** When the person last signed in to this workspace; null if never. */
+  readonly lastSignInAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+type AdminUserStatus = "active" | "suspended" | "removed";
+
+export interface AdminUserLifecycleResult {
+  readonly actorId: string;
+  readonly status: "active" | "suspended";
+  /** False when the account was already in the requested state. */
+  readonly changed: boolean;
+  /** Sessions signed out by a suspension. */
+  readonly sessionsRevoked?: number;
 }
 
 export interface AdminUsersCursor {
@@ -54,6 +71,12 @@ export interface AdminUsersStore {
     readonly targetActorId: string;
     readonly performedByActorId: string;
   }): Promise<boolean>;
+  /** Suspend or restore a person; null when they are not in the workspace. */
+  setSuspended(
+    actor: Actor,
+    targetActorId: string,
+    suspended: boolean,
+  ): Promise<AdminUserLifecycleResult | null>;
 }
 
 export interface RegisterAdminUsersRoutesOptions {
@@ -73,30 +96,34 @@ export class PostgresAdminUsersStore implements AdminUsersStore {
     const type = input.type ?? null;
     const rows = await this.sql<AdminUserRow[]>`
       select
-        id,
-        org_id,
-        type,
-        email,
-        display_name,
-        scopes,
-        disabled_at,
-        created_at,
-        updated_at
-      from actors
-      where org_id = ${input.orgId}
-        and (${type}::actor_type is null or type = ${type}::actor_type)
-        and (${input.includeDisabled}::boolean or disabled_at is null)
+        actor.id,
+        actor.org_id,
+        actor.type,
+        actor.email,
+        actor.display_name,
+        actor.scopes,
+        actor.disabled_at,
+        membership.status as membership_status,
+        membership.last_sign_in_at,
+        actor.created_at,
+        actor.updated_at
+      from actors actor
+      left join organization_memberships membership
+        on membership.org_id = actor.org_id and membership.actor_id = actor.id
+      where actor.org_id = ${input.orgId}
+        and (${type}::actor_type is null or actor.type = ${type}::actor_type)
+        and (${input.includeDisabled}::boolean or actor.disabled_at is null)
         and (
           ${query}::text is null
-          or lower(coalesce(email, '')) like ${queryPattern}::text escape '\'
-          or lower(display_name) like ${queryPattern}::text escape '\'
-          or id::text like ${queryPattern}::text escape '\'
+          or lower(coalesce(actor.email, '')) like ${queryPattern}::text escape '\'
+          or lower(actor.display_name) like ${queryPattern}::text escape '\'
+          or actor.id::text like ${queryPattern}::text escape '\'
         )
         and (
           ${cursorCreatedAt}::timestamptz is null
-          or (created_at, id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
+          or (actor.created_at, actor.id) < (${cursorCreatedAt}::timestamptz, ${cursorId}::uuid)
         )
-      order by created_at desc, id desc
+      order by actor.created_at desc, actor.id desc
       limit ${input.limit}
     `;
     return rows.map(mapAdminUserRow);
@@ -139,6 +166,35 @@ export class PostgresAdminUsersStore implements AdminUsersStore {
       `;
       return true;
     });
+  }
+
+  async setSuspended(
+    actor: Actor,
+    targetActorId: string,
+    suspended: boolean,
+  ): Promise<AdminUserLifecycleResult | null> {
+    try {
+      return await withTenantPostgresContext(
+        this.sql,
+        { orgId: actor.orgId, actorId: actor.id },
+        async (tx) => {
+          const [row] = suspended
+            ? await tx<{ result: AdminUserLifecycleResult | null }[]>`
+                select helix_suspend_user(${actor.orgId}, ${targetActorId}) as result
+              `
+            : await tx<{ result: AdminUserLifecycleResult | null }[]>`
+                select helix_restore_user(${actor.orgId}, ${targetActorId}) as result
+              `;
+          return row?.result ?? null;
+        },
+      );
+    } catch (error) {
+      if (error instanceof Error && "code" in error) {
+        if (error.code === "23514") throw new ConflictError(error.message);
+        if (error.code === "42501") throw new ForbiddenError(error.message);
+      }
+      throw error;
+    }
   }
 }
 
@@ -212,6 +268,23 @@ export async function registerAdminUsersRoutes(
       return reply.code(204).send();
     },
   );
+  for (const [path, suspended] of [
+    ["/api/admin/users/:actorId/suspend", true],
+    ["/api/admin/users/:actorId/restore", false],
+  ] as const) {
+    app.post<{ Params: { actorId: string } }>(path, async (request, reply) => {
+      const actor = await options.actorFromRequest(request);
+      if (!canWriteAdminConsole(actor, adminUsersScope))
+        return reply.code(403).send(permissionDeniedResponse());
+      const target = uuidSchema.safeParse(request.params.actorId);
+      if (!target.success) return reply.code(400).send({ error: "Invalid actor id." });
+      const result = await options.store.setSuspended(actor, target.data, suspended);
+      if (result === null) {
+        return reply.code(404).send({ error: "That person isn't in this workspace." });
+      }
+      return result;
+    });
+  }
   if (options.offboarding !== undefined) {
     const offboarding = options.offboarding;
     const handoffSchema = z
@@ -332,8 +405,16 @@ interface AdminUserRow {
   readonly display_name: string;
   readonly scopes: readonly string[];
   readonly disabled_at: Date | null;
+  readonly membership_status: "active" | "suspended" | "deprovisioned" | null;
+  readonly last_sign_in_at: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
+}
+
+function adminUserStatus(row: AdminUserRow): AdminUserStatus {
+  if (row.membership_status === "suspended") return "suspended";
+  if (row.membership_status === "deprovisioned") return "removed";
+  return row.disabled_at === null ? "active" : "removed";
 }
 
 function mapAdminUserRow(row: AdminUserRow): AdminUserRecord {
@@ -344,7 +425,9 @@ function mapAdminUserRow(row: AdminUserRow): AdminUserRecord {
     email: row.email,
     displayName: row.display_name,
     scopes: row.scopes,
+    status: adminUserStatus(row),
     disabledAt: row.disabled_at?.toISOString() ?? null,
+    lastSignInAt: row.last_sign_in_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };

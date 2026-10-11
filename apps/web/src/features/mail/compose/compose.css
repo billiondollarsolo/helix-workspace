@@ -391,8 +391,15 @@
     content: "";
     position: absolute;
     inset: 0;
-    width: 40%;
+    width: var(--progress, 0%);
     background: var(--accent);
+    transition: width var(--motion-duration-base) var(--motion-ease-standard);
+  }
+
+  /* The malware scan has no byte count, so it keeps an activity sweep. */
+  .compose-attachment-progress[data-scanning]::after {
+    width: 40%;
+    transition: none;
     animation: compose-progress 1.2s var(--motion-ease-standard) infinite;
   }
 
@@ -407,6 +414,9 @@
 
   @media (prefers-reduced-motion: reduce) {
     .compose-attachment-progress::after {
+      transition: none;
+    }
+    .compose-attachment-progress[data-scanning]::after {
       width: 100%;
       animation: none;
       opacity: 0.6;

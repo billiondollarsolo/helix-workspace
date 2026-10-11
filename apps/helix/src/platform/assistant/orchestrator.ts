@@ -18,6 +18,7 @@ import {
 } from "./orchestrator-prompt.js";
 import { BadRequestError, NotFoundError } from "../../api/api-error.js";
 import { projectAssistantMessages } from "./attachments.js";
+import { assistantSourceMetadata, readerMessages } from "./message-annotations.js";
 import type {
   Actor,
   AICapability,
@@ -69,6 +70,7 @@ import type {
   AssistantForgetMemoryInput,
   AssistantForgetMemoryResult,
   AssistantMessage,
+  AssistantMessageAnnotations,
   AssistantLoadedAttachment,
   AssistantModelCatalog,
   AssistantSendMessageInput,
@@ -114,6 +116,8 @@ export interface AssistantOrchestratorOptions {
   }) => Promise<DataClassification>;
   readonly classifyToolResult?: AssistantToolResultClassifier;
   readonly toolServers?: () => readonly ToolServerConfig[];
+  /** Reader-specific parts of saved answers: re-checked citations and feedback. */
+  readonly annotations?: AssistantMessageAnnotations;
 }
 interface TurnSettings {
   readonly webSearch: boolean;
@@ -189,7 +193,7 @@ export class AssistantOrchestrator {
     const conversation = await this.#requireConversation(actor, conversationId);
     return {
       conversation,
-      messages: await this.#conversationMessages(actor.orgId, conversationId),
+      messages: await this.#conversationMessages(actor, conversationId),
     };
   }
   async sendMessage(input: AssistantSendMessageInput): Promise<AssistantTurnResponse> {
@@ -553,7 +557,7 @@ export class AssistantOrchestrator {
           ...(aiResponse.metadata === undefined ? {} : { ai: aiResponse.metadata }),
           toolCalls: aiResponse.toolCalls ?? [],
           toolActivity: toolCalls.map(toolActivity),
-          sources: sources.map(({ body: _body, media: _media, ...source }) => source),
+          ...assistantSourceMetadata(sources),
           assistantTurn: savedSettings,
           ...context.responseMetadata,
         }),
@@ -587,7 +591,7 @@ export class AssistantOrchestrator {
     );
     return {
       conversation,
-      messages: await this.#conversationMessages(input.actor.orgId, conversation.id),
+      messages: await this.#conversationMessages(input.actor, conversation.id),
       response: projectAssistantMessages([responseMessage])[0] ?? responseMessage,
       ai: aiResponse,
       toolCalls,
@@ -847,13 +851,8 @@ export class AssistantOrchestrator {
     );
   }
 
-  async #conversationMessages(
-    orgId: string,
-    conversationId: string,
-  ): Promise<readonly AssistantMessage[]> {
-    return projectAssistantMessages(
-      await this.options.store.listMessages({ orgId, conversationId, limit: 100 }),
-    );
+  #conversationMessages(actor: Actor, conversationId: string) {
+    return readerMessages(actor, conversationId, this.options);
   }
 
   private async collectMemoryContext(

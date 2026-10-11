@@ -89,6 +89,13 @@ export function buildHelixRequest(
       });
     case "admin-users-list":
       return createRequest(env, "GET", withQuery("/api/admin/users", command));
+    case "admin-user-lifecycle":
+      return createRequest(
+        env,
+        "POST",
+        `/api/admin/users/${encodeURIComponent(command.actorId)}/${command.action}`,
+        {},
+      );
     case "admin-audit-list":
       return createRequest(env, "GET", withQuery("/api/admin/audit-log", command));
     case "backup-create":

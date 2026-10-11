@@ -240,6 +240,8 @@ async function mockAccounts(page: Page, sourceType = "user") {
       },
     ].map((actor) => ({
       ...actor,
+      status: actor.disabledAt === null ? "active" : "removed",
+      lastSignInAt: null,
       orgId,
       email: `${actor.id}@first.test`,
       scopes: [],

@@ -1,6 +1,7 @@
 /* What an administrator can do to one account, shared by the row ⋮ menu and
  * the details sheet: edit the profile, manage mail addresses, reset sign-in
- * verification, and remove access (offboarding with a data handoff). */
+ * verification, suspend or restore, and remove access (offboarding with a
+ * data handoff). */
 
 import { RowMenuItem } from "@/features/admin/console/widgets";
 import { useMutation } from "@tanstack/react-query";
@@ -8,7 +9,9 @@ import {
   AtSign as AtSignIcon,
   KeyRound as KeyIcon,
   Pencil as PencilIcon,
+  UserCheck as UserCheckIcon,
   UserMinus as UserMinusIcon,
+  UserX as UserXIcon,
 } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 import { MenuLabel, MenuSeparator } from "@/components/ui/menu";
@@ -19,17 +22,20 @@ import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive
 import { AdminUserAddressesDialog } from "./user-addresses-dialog";
 import { UserOffboardingDialog } from "./user-offboarding-dialog";
 import { AdminUserProfileDialog } from "./user-profile-dialog";
+import { UserSuspensionDialog } from "./user-suspension-dialog";
 
-export type UserAction = "profile" | "addresses" | "reset-verification" | "offboard";
+export type UserAction =
+  "profile" | "addresses" | "reset-verification" | "suspend" | "restore" | "offboard";
 
 /** Which actions apply to this account. Only people have profiles, addresses
- *  and sign-in factors; people and agents can be offboarded. Suspended
- *  accounts have already been offboarded. */
+ *  and sign-in factors, and only people can be suspended and restored; people
+ *  and agents can be offboarded. Removed accounts stay closed. */
 export function userActionsFor(user: DirectoryUser): readonly UserAction[] {
   const actions: UserAction[] = [];
   if (user.actorType === "user") {
     actions.push("profile", "addresses");
-    if (user.status === "active") actions.push("reset-verification");
+    if (user.status === "active") actions.push("reset-verification", "suspend");
+    if (user.status === "suspended") actions.push("restore");
   }
   if ((user.actorType === "user" || user.actorType === "agent") && user.status === "active") {
     actions.push("offboard");
@@ -41,6 +47,8 @@ const ACTION_LABEL: Record<UserAction, string> = {
   profile: "Edit profile",
   addresses: "Mail addresses",
   "reset-verification": "Reset sign-in verification",
+  suspend: "Suspend user…",
+  restore: "Restore user…",
   offboard: "Remove access…",
 };
 
@@ -48,8 +56,13 @@ const ACTION_ICON: Record<UserAction, ReactNode> = {
   profile: <PencilIcon size={16} />,
   addresses: <AtSignIcon size={16} />,
   "reset-verification": <KeyIcon size={16} />,
+  suspend: <UserXIcon size={16} />,
+  restore: <UserCheckIcon size={16} />,
   offboard: <UserMinusIcon size={16} />,
 };
+
+/** The first of these starts the menu's account-access group. */
+const ACCESS_ACTIONS: ReadonlySet<UserAction> = new Set(["suspend", "restore", "offboard"]);
 
 /** The account actions as menu items, for a row ⋮ menu. */
 export function UserActionMenuItems({
@@ -65,9 +78,13 @@ export function UserActionMenuItems({
   }
   return (
     <>
-      {actions.map((action) => (
+      {actions.map((action, index) => (
         <Fragment key={action}>
-          {action === "offboard" && actions.length > 1 ? <MenuSeparator /> : null}
+          {index > 0 &&
+          ACCESS_ACTIONS.has(action) &&
+          !ACCESS_ACTIONS.has(actions[index - 1] ?? action) ? (
+            <MenuSeparator />
+          ) : null}
           <RowMenuItem
             icon={ACTION_ICON[action]}
             destructive={action === "offboard"}
@@ -100,6 +117,9 @@ export function UserActionDialog({
       return <UserOffboardingDialog actorId={user.id} name={user.name} onClose={onClose} />;
     case "reset-verification":
       return <ResetVerificationDialog user={user} onClose={onClose} />;
+    case "suspend":
+    case "restore":
+      return <UserSuspensionDialog user={user} suspend={action === "suspend"} onClose={onClose} />;
   }
 }
 

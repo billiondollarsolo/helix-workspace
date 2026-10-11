@@ -14,6 +14,7 @@ import {
   type MeetRateLimitBudget,
   type MeetRateLimiter,
 } from "./rate-limit.js";
+import { openRoomForMemberJoin } from "./scheduled-join.js";
 import { MEET_RECORDING_NOTICE_VERSION, type MeetStore } from "./store.js";
 import type {
   MeetAudiencePolicy,
@@ -349,7 +350,7 @@ function createMeetToolDefinitions(
     }),
     defineTool<z.output<typeof joinByCodeSchema>, unknown>({
       id: "meet.join-by-code",
-      description: "Join an authorized active meeting by its indexed code.",
+      description: "Join an authorized meeting by its code, opening it if it is scheduled.",
       permission: "meet.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(joinByCodeSchema, genericObjectJsonSchema),
@@ -360,8 +361,9 @@ function createMeetToolDefinitions(
           actorId: ctx.actor.id,
           code: input.code,
         });
-        if (room === null || room.status !== "active") throw new Error("Unknown active meeting.");
-        return mintMemberJoin(options, room, ctx.actor, input, jitsiOrigin);
+        if (room === null || room.status === "ended") throw new Error("Unknown active meeting.");
+        const open = await openRoomForMemberJoin(options.store, room, ctx.actor.id);
+        return mintMemberJoin(options, open, ctx.actor, input, jitsiOrigin);
       },
     }),
     defineTool<z.output<typeof createGuestInviteSchema>, unknown>({
@@ -426,9 +428,7 @@ function createMeetToolDefinitions(
         if (room === null) {
           throw new Error(`Unknown Meet room: ${input.roomId}`);
         }
-        if (room.status !== "active") {
-          throw new Error(`Meet room has ended: ${input.roomId}`);
-        }
+        if (room.status === "ended") throw new Error(`Meet room has ended: ${input.roomId}`);
         const decision = await rateLimiter.consume({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -438,7 +438,8 @@ function createMeetToolDefinitions(
         if (!decision.allowed) {
           throw meetRateLimitError(decision);
         }
-        return mintMemberJoin(options, room, ctx.actor, input, jitsiOrigin, input.expiresInSeconds);
+        const open = await openRoomForMemberJoin(options.store, room, ctx.actor.id);
+        return mintMemberJoin(options, open, ctx.actor, input, jitsiOrigin, input.expiresInSeconds);
       },
     }),
     defineTool<z.output<typeof authorizeRecordingSchema>, unknown>({

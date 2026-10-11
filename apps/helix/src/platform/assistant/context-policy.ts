@@ -8,6 +8,7 @@ import {
 import type { MemoryItem } from "../ai/memory/index.js";
 import type { SearchEngine, SearchHit } from "../search/index.js";
 import { createScopedSearchRequest, type GlobalSearchType } from "../search/scope.js";
+import { citationForSearchHit } from "./message-annotations.js";
 import type { AssistantSource } from "./types.js";
 
 /** Tenant flag (default on): automatic workspace search context for Assistant turns. */
@@ -69,6 +70,7 @@ export function prepareSearchContext(
         ? undefined
         : sanitizeUntrustedText(hit.title, assistantContextLimits.titleCharacters);
     const classification = classificationAttribute(hit.attributes);
+    const citation = citationForSearchHit(hit);
     sources.push({
       id: sanitizeIdentifier(hit.id),
       type: sanitizeIdentifier(hit.type),
@@ -86,6 +88,7 @@ export function prepareSearchContext(
         : {}),
       ...(body.length === 0 ? {} : { body }),
       ...(hit.score === undefined ? {} : { score: hit.score }),
+      ...(citation === undefined ? {} : { citation }),
     });
   }
 

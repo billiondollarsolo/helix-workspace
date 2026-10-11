@@ -42,6 +42,7 @@ const BOOLEAN_FEATURE_FLAGS = [
   ["ai_smart_compose", "AI smart compose"],
   ["b2b_sharing", "External sharing (public links)"],
   ["mail_outbound", "Outbound mail"],
+  ["calendar_import_invitations", "Import calendar invitations from email"],
   ["scim_provisioning", "SCIM provisioning"],
   ["custom_domain", "Custom domains"],
   ["byo_storage", "BYO storage"],
@@ -57,6 +58,7 @@ const BOOLEAN_FEATURE_FLAGS = [
 export const BOOLEAN_FEATURE_FLAG_GROUPS = [
   { title: "AI", keys: ["assistant_retrieval", "ai_smart_compose"] },
   { title: "Sharing & mail", keys: ["b2b_sharing", "mail_outbound"] },
+  { title: "Calendar", keys: ["calendar_import_invitations"] },
   { title: "Identity", keys: ["scim_provisioning", "custom_domain"] },
   {
     title: "Bring your own",
@@ -121,8 +123,7 @@ const BYO_STORAGE_FIELDS = [
   ["retention_days", "Object-lock retention days"],
 ] as const;
 
-/* There is no shared Select primitive, so the selects restate the shell
-   `components/ui/input` draws rather than growing a second field look. */
+/* No shared Select primitive: selects restate the `components/ui/input` field look. */
 const SELECT_CLASS =
   "h-10 w-full min-w-0 rounded-md border border-outline bg-surface-container px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30";
 
@@ -136,8 +137,7 @@ type BooleanFeatureFlagKey = (typeof BOOLEAN_FEATURE_FLAGS)[number][0];
 /** Flag key -> display label, so the grouped form can render by key. */
 const BOOLEAN_FEATURE_FLAG_LABELS = new Map<string, string>(BOOLEAN_FEATURE_FLAGS);
 
-/** Every boolean flag key. Exported so the test can check that
- *  `BOOLEAN_FEATURE_FLAG_GROUPS` partitions this list exactly. */
+/** Every boolean flag key; the test checks `BOOLEAN_FEATURE_FLAG_GROUPS` partitions it. */
 export const BOOLEAN_FEATURE_FLAG_KEYS: readonly BooleanFeatureFlagKey[] =
   BOOLEAN_FEATURE_FLAGS.map(([key]) => key);
 type SelectFeatureFlagKey = (typeof SELECT_FEATURE_FLAGS)[number][0];

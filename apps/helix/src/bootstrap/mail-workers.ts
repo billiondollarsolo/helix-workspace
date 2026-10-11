@@ -1,5 +1,10 @@
 import { KMSClient } from "@aws-sdk/client-kms";
 import { readFile } from "node:fs/promises";
+import {
+  CALENDAR_IMPORT_INVITATIONS_FLAG,
+  CalendarInvitationImporter,
+} from "../platform/calendar/invitation-import.js";
+import { TenantConfigFeatureFlagProvider } from "../platform/feature-flags/provider.js";
 import { tenantMailClaims } from "../platform/mail/outbound-claims.js";
 import { LocalMailTransport } from "../platform/mail/local-delivery.js";
 import { MailProviderConfigurationError } from "../platform/mail/errors.js";
@@ -22,7 +27,7 @@ import {
   SignupOnboardingInviteEmailWorker,
   SignupVerificationEmailWorker,
 } from "../platform/signup/email-delivery.js";
-import { withTenantPostgresContext } from "../platform/tenancy/index.js";
+import { loadEffectiveTenantConfig, withTenantPostgresContext } from "../platform/tenancy/index.js";
 import { collectBoundedBytes } from "./mail-bytes.js";
 import type { installSearch } from "./search-runtime.js";
 
@@ -36,6 +41,8 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
     identityMailTransport,
     tenantStorageSecretReader,
     orgStore,
+    planStore,
+    calendarStore,
     domainsStore,
     appPasswordStore,
     outboxStore,
@@ -249,6 +256,20 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
 
   const smtpMailReceiverConfig = mailAppRegistered ? mailCfg.receiver : undefined;
 
+  // Inbound iMIP invitations reach calendars only when the tenant flag is on (default off).
+  const tenantFeatureFlags = new TenantConfigFeatureFlagProvider({
+    environment: bootEnv.NODE_ENV,
+    loadTenantConfig: ({ orgId }) =>
+      loadEffectiveTenantConfig({ orgs: orgStore, plans: planStore }, orgId),
+  });
+  const calendarInvitations = new CalendarInvitationImporter({
+    sql,
+    store: calendarStore,
+    isEnabled: (orgId) =>
+      tenantFeatureFlags.getAsync(CALENDAR_IMPORT_INVITATIONS_FLAG, false, { orgId }),
+    logger: app.log,
+  });
+
   // Config-gated inbound content scanners: spamd (SpamAssassin) and ClamAV.
   const smtpMailReceiver =
     smtpMailReceiverConfig === undefined
@@ -268,6 +289,7 @@ export async function installMailWorkers(context: Awaited<ReturnType<typeof inst
           },
           runForTenant: (orgId, operation) =>
             withTenantPostgresContext(sql, { orgId }, async () => operation()),
+          calendarInvitations,
           transportSecurity: smtpMailReceiverConfig.transportSecurity,
           limits: smtpMailReceiverConfig.limits,
           logger: app.log,

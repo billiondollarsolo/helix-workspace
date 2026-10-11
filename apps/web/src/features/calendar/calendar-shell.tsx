@@ -3,6 +3,7 @@ import {
   localDateTimeToFloatingInstant,
   localDateTimeToInstant,
 } from "@helix/contracts";
+import { useShortcuts } from "@/lib/shortcuts/use-shortcuts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -408,6 +409,19 @@ export function CalendarShell({ routeState, onRouteStateChange }: CalendarShellP
   };
 
   const writableSelected = selectedEvent !== null && selectedEvent.apiEvent !== undefined;
+
+  useShortcuts("calendar", {
+    "calendar.view-day": () => updateState({ view: "day" }),
+    "calendar.view-week": () => updateState({ view: "week" }),
+    "calendar.view-month": () => updateState({ view: "month" }),
+    "calendar.view-agenda": () => updateState({ view: "agenda" }),
+    "calendar.today": goToday,
+    "calendar.next": () => shiftWindow(1),
+    "calendar.previous": () => shiftWindow(-1),
+    "calendar.create": () => openCreateDialog(),
+    "calendar.edit":
+      writableSelected && selectedEvent !== null ? () => openEditDialog(selectedEvent) : undefined,
+  });
 
   return (
     <section className="calendar-page flex flex-1 min-w-0 min-h-0 relative">

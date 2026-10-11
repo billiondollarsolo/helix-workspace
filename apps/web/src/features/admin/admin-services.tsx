@@ -11,8 +11,8 @@ import {
   EmptyRow,
   PageHeading,
   QueryFailureBanner,
-  StateBanner,
   useQueryFailure,
+  LoadingState,
 } from "@/features/admin/console/primitives";
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, CircleAlert, CircleDashed, CircleHelp, PlugZap } from "lucide-react";
@@ -154,7 +154,7 @@ export function AdminServicesOverview() {
           below that, so the page reads as one heading chain. */}
       <PageHeading
         title="Services"
-        subtitle="Runtime service surface, dependencies, routes, scopes, tools, and operations."
+        subtitle="Health and configuration of the services behind each app."
         meta={
           servicesQuery.data === undefined ? undefined : (
             <span className="ml-auto shrink-0 text-xs font-semibold text-muted-foreground">
@@ -165,7 +165,7 @@ export function AdminServicesOverview() {
       />
 
       {servicesQuery.isPending && failure === null ? (
-        <StateBanner kind="loading">Loading admin services</StateBanner>
+        <LoadingState label="Loading admin services" />
       ) : null}
       {failure === null ? null : (
         /* Default variant: when the catalog fails there is nothing else on this
@@ -176,7 +176,6 @@ export function AdminServicesOverview() {
           error={failure.error}
           isRetrying={failure.isRetrying}
           onRetry={failure.retry}
-          retryVariant="default"
         >
           Service readiness, dependencies and admin actions are all unknown until this loads.
         </QueryFailureBanner>

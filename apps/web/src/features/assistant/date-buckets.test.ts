@@ -11,7 +11,6 @@ function thread(id: string, daysAgo: number, pinned = false): AssistantThread {
   return {
     id,
     title: `Thread ${id}`,
-    time: `${String(daysAgo)}d`,
     updatedAtMs,
     ...(pinned ? { pinned: true } : {}),
   };

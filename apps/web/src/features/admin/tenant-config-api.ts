@@ -9,6 +9,7 @@ const jsonObjectSchema = z.record(z.string(), z.unknown());
 
 const tenantConfigSchema = z.object({
   orgId: z.string(),
+  orgName: z.string(),
   byo: jsonObjectSchema,
   features: jsonObjectSchema,
   quotas: jsonObjectSchema,

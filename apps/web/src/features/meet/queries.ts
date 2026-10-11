@@ -1,3 +1,4 @@
+import { calendarEventsQueryOptions } from "@/features/calendar/queries";
 import { queryOptions } from "@tanstack/react-query";
 import { listMeetMeetings, type MeetRoomStatus } from "./api";
 
@@ -30,6 +31,19 @@ export function meetMeetingsQueryOptions(input: MeetRoomsQueryInput = defaultMee
     queryKey: meetQueryKeys.meetings(input),
     queryFn: () => listMeetMeetings(input),
     throwOnError: false,
+  });
+}
+
+/** Today's calendar events (local day), for the hub's "Today" list. */
+export function meetTodayEventsQueryOptions() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return calendarEventsQueryOptions({
+    startsAt: start.toISOString(),
+    endsAt: end.toISOString(),
+    limit: 100,
   });
 }
 

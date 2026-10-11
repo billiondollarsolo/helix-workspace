@@ -92,6 +92,12 @@ export const driveQuotaUsageOutputSchema = z.object({
   unlimited: z.boolean(),
   percentUsed: z.number().nonnegative().nullable(),
 });
+/** Member-visible Drive storage: own usage plus the organization limit when one is set. */
+export const driveStorageUsageOutputSchema = z.object({
+  usedBytes: z.number().int().nonnegative(),
+  limitBytes: z.number().int().nonnegative().nullable(),
+  organizationUsedBytes: z.number().int().nonnegative().nullable(),
+});
 /** D11 operator lifecycle policy. */
 export const driveLifecyclePolicyOutputSchema = z.object({
   orgId: z.string().uuid(),

@@ -8,8 +8,10 @@ import {
   AssistantEvidenceDrawer,
   AssistantSourceList,
   AssistantToolActivityList,
+  WorkspaceSourceList,
   type PublicWebSource,
 } from "./assistant-tool-results";
+import { ToolLimitError } from "./tool-limit-error";
 import { AssistantMarkdown } from "./assistant-markdown";
 import type { AssistantBlock, AssistantChatMessage } from "./assistant-data";
 /* ---------------------------------------------------------- conversation -- */
@@ -20,6 +22,10 @@ interface AssistantConversationProps {
   readonly onNavigate: (target: string) => void;
   readonly onEdit: (message: AssistantChatMessage) => void;
   readonly onResend: (message: AssistantChatMessage) => void;
+  /** Sends the user message before this answer again. */
+  readonly onRegenerate: (answer: AssistantChatMessage) => void;
+  /** Turns a tool group off and retries the message before this answer. */
+  readonly onTurnOffToolGroup: (answer: AssistantChatMessage, groupId: string) => void;
 }
 export function AssistantConversation({
   conversation,
@@ -28,6 +34,8 @@ export function AssistantConversation({
   userName,
   onEdit,
   onResend,
+  onRegenerate,
+  onTurnOffToolGroup,
 }: AssistantConversationProps) {
   const [evidence, setEvidence] = useState<readonly PublicWebSource[] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -85,6 +93,8 @@ export function AssistantConversation({
                 pending={pending}
                 onEdit={onEdit}
                 onResend={onResend}
+                onRegenerate={onRegenerate}
+                onTurnOffToolGroup={onTurnOffToolGroup}
                 onOpenEvidence={setEvidence}
               />
             </div>
@@ -109,6 +119,8 @@ interface ChatMessageProps {
   readonly onNavigate: (target: string) => void;
   readonly onEdit: (message: AssistantChatMessage) => void;
   readonly onResend: (message: AssistantChatMessage) => void;
+  readonly onRegenerate: (answer: AssistantChatMessage) => void;
+  readonly onTurnOffToolGroup: (answer: AssistantChatMessage, groupId: string) => void;
   readonly onOpenEvidence: (sources: readonly PublicWebSource[]) => void;
 }
 function ChatMessage({
@@ -118,6 +130,8 @@ function ChatMessage({
   pending,
   onEdit,
   onResend,
+  onRegenerate,
+  onTurnOffToolGroup,
   onOpenEvidence,
 }: ChatMessageProps) {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
@@ -160,7 +174,17 @@ function ChatMessage({
             <RotateCcw size={16} />
           </button>
         </>
-      ) : null}
+      ) : (
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Regenerate response"
+          disabled={pending}
+          onClick={() => onRegenerate(message)}
+        >
+          <RotateCcw size={16} />
+        </button>
+      )}
       {copyStatus ? (
         <span role="status" className="text-sm">
           {copyStatus}
@@ -201,7 +225,10 @@ function ChatMessage({
   const isPending = message.streaming === true && message.text.length === 0;
   return (
     <div className="flex gap-3 mb-6">
-      <div className="w-7 h-7 rounded-lg shrink-0 [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] [color:white] grid [place-items:center]">
+      <div
+        aria-hidden="true"
+        className="w-7 h-7 rounded-lg shrink-0 [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] text-[var(--accent-fg)] grid [place-items:center]"
+      >
         <SparklesIcon size={14} />
       </div>
       <div className="flex-1 min-w-0">
@@ -214,7 +241,13 @@ function ChatMessage({
         ) : (
           <>
             {message.text.length > 0 && <AssistantMarkdown text={message.text} />}
-            {message.error ? (
+            {message.toolLimit !== undefined ? (
+              <ToolLimitError
+                limit={message.toolLimit}
+                disabled={pending}
+                onTurnOff={(groupId) => onTurnOffToolGroup(message, groupId)}
+              />
+            ) : message.error ? (
               <p role="alert" className="my-2 text-sm">
                 {message.error}
               </p>
@@ -226,6 +259,7 @@ function ChatMessage({
                 onNavigate={onNavigate}
               />
             ))}
+            <WorkspaceSourceList sources={message.sources ?? []} />
             <AssistantSourceList sources={message.sources ?? []} onOpenEvidence={onOpenEvidence} />
             {message.text.length > 0 ? actions : null}
           </>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SettingToggle } from "@/features/admin/console/widgets";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/helix-dialog";
@@ -15,9 +16,9 @@ import {
 import { sessionQueryKeys } from "@/lib/auth";
 import { profileQueryKeys } from "@/lib/profile";
 import { MailAddressInput } from "../mail-address-input";
-import { StateBanner } from "../console/primitives";
+import { ErrorNotice, LoadingState, Notice } from "../console/primitives";
 
-function AdminUserAddressesDialog({
+export function AdminUserAddressesDialog({
   actorId,
   name,
   onClose,
@@ -85,11 +86,9 @@ function AdminUserAddressesDialog({
           These addresses deliver to one user. Changing the primary mail address keeps the former
           primary as an alias. The account’s sign-in email stays unchanged.
         </p>
-        {addresses.isPending ? (
-          <StateBanner kind="loading">Loading mail addresses…</StateBanner>
-        ) : null}
+        {addresses.isPending ? <LoadingState label="Loading mail addresses…" /> : null}
         {addresses.isError ? (
-          <StateBanner kind="error">
+          <ErrorNotice>
             {addresses.error.message}{" "}
             <Button
               type="button"
@@ -102,7 +101,7 @@ function AdminUserAddressesDialog({
             >
               Retry addresses
             </Button>
-          </StateBanner>
+          </ErrorNotice>
         ) : null}
         {addresses.data ? (
           <>
@@ -120,28 +119,22 @@ function AdminUserAddressesDialog({
                     <p className="break-all text-sm font-medium">{address.address}</p>
                     {address.source === "alias" && !address.isPrimary && address.id !== null ? (
                       <div className="flex flex-wrap items-center gap-3 text-sm">
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={address.receiveEnabled}
-                            disabled={pending}
-                            onChange={(event) =>
-                              changeAlias(address, "receiveEnabled", event.target.checked)
-                            }
-                          />
-                          Receive mail at {address.address}
-                        </label>
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={address.sendAsEnabled}
-                            disabled={pending}
-                            onChange={(event) =>
-                              changeAlias(address, "sendAsEnabled", event.target.checked)
-                            }
-                          />
-                          Send as {address.address}
-                        </label>
+                        <SettingToggle
+                          label={`Receive mail at ${address.address}`}
+                          checked={address.receiveEnabled}
+                          disabled={pending}
+                          onCheckedChange={(checked) =>
+                            changeAlias(address, "receiveEnabled", checked)
+                          }
+                        />
+                        <SettingToggle
+                          label={`Send as ${address.address}`}
+                          checked={address.sendAsEnabled}
+                          disabled={pending}
+                          onCheckedChange={(checked) =>
+                            changeAlias(address, "sendAsEnabled", checked)
+                          }
+                        />
                         <Button
                           type="button"
                           size="xs"
@@ -191,7 +184,7 @@ function AdminUserAddressesDialog({
                   onChange={setPrimary}
                   domains={addresses.data.eligibleDomains}
                 />
-                <Button type="submit" disabled={primary.length === 0}>
+                <Button type="submit" variant="outline" disabled={primary.length === 0}>
                   Set primary address
                 </Button>
               </fieldset>
@@ -217,22 +210,16 @@ function AdminUserAddressesDialog({
                   domains={addresses.data.eligibleDomains}
                 />
                 <div className="flex flex-wrap gap-4 text-sm">
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={receiveEnabled}
-                      onChange={(event) => setReceiveEnabled(event.target.checked)}
-                    />
-                    Receive mail
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={sendAsEnabled}
-                      onChange={(event) => setSendAsEnabled(event.target.checked)}
-                    />
-                    Allow sending as this alias
-                  </label>
+                  <SettingToggle
+                    label="Receive mail"
+                    checked={receiveEnabled}
+                    onCheckedChange={(checked) => setReceiveEnabled(checked)}
+                  />
+                  <SettingToggle
+                    label="Allow sending as this alias"
+                    checked={sendAsEnabled}
+                    onCheckedChange={(checked) => setSendAsEnabled(checked)}
+                  />
                 </div>
                 <Button type="submit" disabled={alias.length === 0}>
                   Add alias
@@ -241,35 +228,9 @@ function AdminUserAddressesDialog({
             </form>
           </>
         ) : null}
-        {error ? <StateBanner kind="error">{error}</StateBanner> : null}
-        {notice ? <StateBanner kind="info">{notice}</StateBanner> : null}
+        {error ? <ErrorNotice>{error}</ErrorNotice> : null}
+        {notice ? <Notice>{notice}</Notice> : null}
       </div>
     </Dialog>
-  );
-}
-
-export function AdminUserAddressesButton({
-  actorId,
-  name,
-}: {
-  readonly actorId: string;
-  readonly name: string;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        onClick={() => setOpen(true)}
-        aria-label={`Manage mail addresses for ${name}`}
-      >
-        Mail addresses
-      </Button>
-      {open ? (
-        <AdminUserAddressesDialog actorId={actorId} name={name} onClose={() => setOpen(false)} />
-      ) : null}
-    </>
   );
 }

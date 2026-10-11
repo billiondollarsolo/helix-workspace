@@ -1,4 +1,5 @@
 import { useForm } from "@tanstack/react-form";
+import { SettingToggle } from "@/features/admin/console/widgets";
 import { useState } from "react";
 import {
   DetailRow,
@@ -117,14 +118,11 @@ export function OutboundForm({
             validators={{ onChange: validateWithZod(webhookEnabledSchema) }}
           >
             {(field) => (
-              <label className="webhooks-checkbox">
-                <input
-                  checked={field.state.value}
-                  onChange={(event) => field.handleChange(event.target.checked)}
-                  type="checkbox"
-                />
-                Enabled
-              </label>
+              <SettingToggle
+                label="Enabled"
+                checked={field.state.value}
+                onCheckedChange={(checked) => field.handleChange(checked)}
+              />
             )}
           </editorForm.Field>
         </>
@@ -309,14 +307,11 @@ export function InboundForm({
             validators={{ onChange: validateWithZod(webhookEnabledSchema) }}
           >
             {(field) => (
-              <label className="webhooks-checkbox">
-                <input
-                  checked={field.state.value}
-                  onChange={(event) => field.handleChange(event.target.checked)}
-                  type="checkbox"
-                />
-                Enabled
-              </label>
+              <SettingToggle
+                label="Enabled"
+                checked={field.state.value}
+                onCheckedChange={(checked) => field.handleChange(checked)}
+              />
             )}
           </editorForm.Field>
         </>

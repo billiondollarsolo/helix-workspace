@@ -8,6 +8,23 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Meet has a pre-join screen: preview your camera and microphone, turn them on or off, pick
+  devices, see who you're joining as, accept the recording notice and choose Join now. Your
+  choices carry into the call and are remembered on this device.
+- `/meet?code=…` (the Join link on calendar events) opens that meeting's pre-join screen, and
+  the code box accepts a pasted meeting link as well as a code.
+- Meet's "Today" list shows today's calendar events that have video conferencing, plus meetings
+  already running, each with Join. "New meeting" offers Start an instant meeting, Create a
+  meeting for later (with a link to copy) and Schedule in Calendar, which opens the event editor
+  with video conferencing added (`/calendar?create=event&conference=meet`).
+- In a call, Meeting details shows the joining link with Copy.
+- Helix AI answers cite the mail threads, files, chat rooms and events they drew on, each linking
+  to the item, and any answer can be regenerated.
+- When too many Helix AI tool groups are on for one request, the reply says how far over the
+  limit it is and offers one-click "Turn off <group> (count)" buttons that retry. The tool menu
+  shows each group's tool count, how many are on out of the limit, and "Choose automatically".
+- The Helix AI side panel takes a question or a suggestion and opens it as a new chat.
+
 - Mail labels: create, rename, recolour (24 named palette colours) and nest your own labels, and
   delete a label with its sublabels. Label lists show unread counts.
 - Mail search understands `from:`, `to:`, `cc:`, `subject:`, `label:`, `in:` (including
@@ -45,10 +62,38 @@ All notable changes to Helix Workspace are documented here. This file follows
   `n` (new folder), Shift+U (upload), and Delete (move to trash). Chat supports Esc to close a
   thread and Alt+↑/↓ to switch conversations. Shortcuts pause while typing and while a dialog or
   menu is open. Settings → Keyboard shortcuts lists them all and can turn single-key shortcuts off.
+- Mail search box looks through all your mail with operators such as `from:` and `has:attachment`
+  and shows "Search results"; Search options builds the query from From, To, Subject, Has the
+  words, Date within, Search in and Has attachment.
+- Mail actions (archive, delete, read/unread, move, label, snooze, spam) update the list at once and
+  offer Undo; `z` undoes the last action. Snooze offers Later today, Tomorrow, This weekend, Next
+  week (following your working hours) or a date and time.
+- Mail list: participants such as "Samara, me (3)", bold unread conversations, red "Draft",
+  select-all with Read/Unread/Starred subsets and "Select all N conversations", a right-click
+  (Shift+F10) menu, dragging conversations onto folders and labels, sender avatars on or off, and a
+  reading pane right of or below the list. Category tabs show only in the Inbox.
+- Mail sidebar in the familiar order with Scheduled, a "More" section (All Mail, Archive, Spam,
+  Trash, categories), and labels with colours, nesting, unread counts and a ⋮ menu (Label color,
+  Edit, Remove label, Add sublabel). The Label menu offers Create new and Manage labels. `g a`
+  opens All Mail.
+- Conversations collapse read messages and fold long threads into "N older messages"; message
+  headers show the contact card, "to me, Samara", the full date and how long ago, with Reply and a
+  ⋮ menu (Forward, Print, Show original, Mark unread from here). Attachments show as chips with
+  name and size that download, with "Download all". The toolbar adds Mark as unread, Move to,
+  Labels and "3 of 76 ‹ ›".
+- On phones, Mail rows show sender, subject, snippet and date, Compose floats over the list, and a
+  conversation opens full screen with a back button.
 - People picker: pick recipients by name or email from your organization's directory, your
   contacts and groups, as chips. Enter, Tab or a comma adds a chip, Backspace removes the last one,
   pasting a list adds one chip per address, and invalid addresses show in red. Starting a direct
   message in Chat now uses it instead of asking for an actor ID.
+- Admin console search: one box at the top of every admin page finds users, groups, and settings
+  ("dkim", "legal hold", "mfa") and opens the right page and tab.
+- Admin app pages for Calendar, Meet, and Assistant. Each app page starts with a switch that turns
+  the app on or off for everyone, and its own workspace settings: invitation import on Calendar,
+  the meeting server status on Meet, and models and workspace search on Assistant.
+- The audit log filters by date range, actor, event, and outcome on the server, shows each event
+  in plain words with its outcome, and opens the full record, raw JSON included, in a side panel.
 - Person cards: hover or focus a person in the Contacts side panel to see their photo or initials,
   email and job title, with Send email, Chat, Schedule a meeting and Copy email actions.
 - The Contacts side panel shows avatars, job titles and "Group" or "Contact" labels instead of raw
@@ -107,6 +152,28 @@ All notable changes to Helix Workspace are documented here. This file follows
   `SEQUENCE` updates apply, and `CANCEL` cancels the imported event. The import sends no mail,
   skips spam-routed messages and events the recipient already has, ignores calendars over
   1 MiB or 1,000 VEVENTs, and never fails mail delivery.
+- Drive works the way long-time Drive users expect: sort by name, last modified, last modified by
+  me, last opened by me or file size (folders stay on top); Type, People and Modified filter chips;
+  a list/grid switch; checkbox selection with Shift ranges and a selection toolbar ("2 selected").
+- Drive right-click menus (also Shift+F10 and each item's ⋮) with Download, Share, Copy link,
+  Rename, Move, star, File information and Move to trash, applied to the whole selection.
+- Drag files and folders onto a folder, a breadcrumb or My Drive to move them, or use Move to pick
+  a folder with the keyboard. The current folder's name opens a menu with its actions.
+- Drive's New menu offers New folder, File upload and Folder upload (folders keep their
+  structure), with a floating New button on phones. A bottom-right panel shows each upload's
+  progress, its security scan ("Scanning…"), a clear message when a file is blocked, Cancel and
+  Retry, and "N uploads complete".
+- Sharing in Drive: add people by name or email with Viewer, Commenter or Editor, change or remove
+  access, and set general access to Restricted, Anyone at your organization's domain, or Anyone
+  with the link. Copy link and Done close it out.
+- Drive's details panel has Details and Activity tabs: type, size, location, owner, dates, who
+  has access and version history.
+- Drive Trash has Restore, Delete forever and Empty trash (all confirmed), and a banner with the
+  real retention period. Trash now lists trashed files from every folder.
+- Trash, move and rename show Undo. Drive shortcuts add `a` (details), `s` (star), Enter
+  (open or download), F2 (rename), Shift+I (folder upload) and Shift+F10 (actions).
+- The Drive sidebar shows how much storage you use, and the organization limit when an admin set
+  one.
 - Mail compose opens as a docked window you can minimize, expand to full size, or stack with
   other drafts (full screen on phones). It has recipient chips with Cc/Bcc, a formatting
   toolbar, plain text mode, emoji and links, attachment chips that show upload and malware-scan
@@ -154,10 +221,26 @@ All notable changes to Helix Workspace are documented here. This file follows
 - Chat's conversation details (about, members, pinned) stay closed until you open them from the
   header, and people are added with the people picker. Retention, legal hold and history
   settings are no longer offered when creating a conversation; admins manage them in Admin.
+- Helix AI picks its tools automatically until you choose tool groups, so a fully scoped admin's
+  first prompt no longer fails.
+- Helix AI shows friendly model names; admins see the model id on hover. Chats are searched from
+  the top bar, the list is denser with a pin icon and ⋮ menus, "Forget memory" moved into a
+  Memory menu and asks first, and the new-chat page fits phones.
+- Meet's home page uses original wording, skeleton, empty and error states, and Meet's top-bar
+  search searches the whole workspace. In-call colours follow the dark theme tokens, and the
+  Leave button is red.
 
 - Compose always starts a blank message; drafts are resumed from Drafts.
 - Blocked senders moved from the Mail signature page to Settings → Mail → Filters and blocked
   addresses; the separate Mail signature settings page is gone.
+- The admin console navigation is grouped into Home, Directory, Apps, Security, Reporting, and
+  Account, and every admin page shares one layout. Feature switches moved from Workspace settings
+  to the app they affect, and on/off settings use switches throughout.
+- Admin lists show people and groups with avatars, roles, status, and a ⋮ menu for each row
+  (edit profile, mail addresses, reset sign-in verification, remove access, delete group), support
+  selecting several rows, and turn into cards on phones. Times read "3 hours ago" with the exact
+  time on hover, sizes read "5 GB", and empty limits read "Unlimited".
+- Workspace settings shows the organization's name, with its ID behind a copy button.
 - Every quota (storage, AI tokens and images, actors, outbound webhooks, integration API
   requests per second, export jobs per hour) defaults to unlimited, and agent and AI cost
   budgets have no default for any security tier; an org admin may still set a cap (ADR-0030).
@@ -207,6 +290,15 @@ All notable changes to Helix Workspace are documented here. This file follows
 - When Chat can't reach the server it says so with Retry, instead of "Offline" and an empty
   placeholder room with a working composer. The composer no longer covers the newest messages.
 - Opening a Chat thread shows its replies.
+- Drive trash now keeps items for the retention period an admin set (30 days by default) instead
+  of always 30 days. Items already in trash keep at least their original recovery window.
+
+- Mail search no longer looks only in the Inbox's Primary tab, the Label button no longer toggles
+  just the first label, Spam uses a report icon, the empty pager no longer says "No results", and
+  `?settings=` links on /mail keep the settings page open. Mail shows loading placeholders, a
+  Retry on load errors, an empty state per folder, and list rows no longer nest buttons inside
+  buttons. "Filter messages like these" opens the filter dialog with the sender filled in instead
+  of creating an archive filter without asking.
 - The API no longer stops answering after the Drive grid/list toggle. Signing in no longer holds
   identity locks for the whole request, and Drive layout, star and other database-only changes stay
   in the request's own transaction.

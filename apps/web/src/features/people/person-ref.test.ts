@@ -78,5 +78,12 @@ describe("person handoff params", () => {
       create: "event",
       attendees: "a@x.io",
     });
+    expect(calendarCreateHandoffFromSearch({ create: "event", conference: "meet" })).toEqual({
+      create: "event",
+      conference: "meet",
+    });
+    expect(calendarCreateHandoffFromSearch({ create: "event", conference: "zoom" })).toEqual({
+      create: "event",
+    });
   });
 });

@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AdminAiRelatedNav } from "./admin-related-nav";
-import { PageHeading, StateBanner } from "./console/primitives";
+import { ErrorNotice, LoadingState, Notice, PanelHeading } from "./console/primitives";
+import { RelativeTime, SettingToggle } from "./console/widgets";
 import {
   testAIRetrieval,
   aiRetrievalStatusQueryOptions,
@@ -134,14 +134,11 @@ function SecretInput({
         />
       </label>
       {configured ? (
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={clear}
-            onChange={(event) => onClear(event.target.checked)}
-          />
-          Clear stored {label.toLowerCase()}
-        </label>
+        <SettingToggle
+          label={`Clear stored ${label.toLowerCase()}`}
+          checked={clear}
+          onCheckedChange={(checked) => onClear(checked)}
+        />
       ) : null}
     </div>
   );
@@ -199,16 +196,13 @@ export function AIRetrievalManagement() {
   const busy = save.isPending || connection.isPending || reindex.isPending;
   return (
     <div className="space-y-6">
-      <PageHeading
-        title="AI retrieval"
-        subtitle="Configure semantic workspace search and optional web search for Assistant."
+      <PanelHeading
+        title="Search settings"
+        subtitle="How Assistant finds workspace content and, optionally, the web."
       />
-      <AdminAiRelatedNav current="ai-retrieval" />
-      {configQuery.isPending ? (
-        <StateBanner kind="loading">Loading retrieval settings…</StateBanner>
-      ) : null}
+      {configQuery.isPending ? <LoadingState label="Loading retrieval settings…" /> : null}
       {configQuery.isError ? (
-        <StateBanner kind="error">
+        <ErrorNotice>
           {configQuery.error.message}{" "}
           <Button
             variant="outline"
@@ -218,10 +212,10 @@ export function AIRetrievalManagement() {
           >
             Retry
           </Button>
-        </StateBanner>
+        </ErrorNotice>
       ) : null}
       {runtime.isError ? (
-        <StateBanner kind="error">
+        <ErrorNotice>
           Could not read active retrieval status. {runtime.error.message}{" "}
           <Button
             variant="outline"
@@ -233,16 +227,16 @@ export function AIRetrievalManagement() {
           >
             Retry status
           </Button>
-        </StateBanner>
+        </ErrorNotice>
       ) : null}
       {runtime.data ? (
-        <StateBanner kind="info">
+        <Notice>
           Active semantic search:{" "}
           {runtime.data.vector.enabled
             ? `${runtime.data.vector.backend ?? "configured"} · ${runtime.data.vector.embeddingModel ?? "model unavailable"} · ${runtime.data.vector.dimensions ?? "unknown"} dimensions`
             : "Disabled"}
           . Web search: {runtime.data.web.enabled ? "Enabled" : "Disabled"}.
-        </StateBanner>
+        </Notice>
       ) : null}
       {configQuery.data ? (
         <form
@@ -265,14 +259,11 @@ export function AIRetrievalManagement() {
                 Find related workspace content using an embedding model and a vector database.
                 Existing content needs indexing after this is enabled or its model changes.
               </p>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={current.vectorEnabled}
-                  onChange={(event) => change("vectorEnabled", event.target.checked)}
-                />{" "}
-                Enable semantic search
-              </label>
+              <SettingToggle
+                label="Enable semantic search"
+                checked={current.vectorEnabled}
+                onCheckedChange={(checked) => change("vectorEnabled", checked)}
+              />
               <label className="grid gap-1 text-sm">
                 Vector database
                 <select
@@ -417,17 +408,22 @@ export function AIRetrievalManagement() {
                 permissions. Indexing runs in the background and may incur embedding provider usage
                 charges.
               </p>
-              {reindex.isError ? (
-                <StateBanner kind="error">{reindex.error.message}</StateBanner>
-              ) : null}
+              {reindex.isError ? <ErrorNotice>{reindex.error.message}</ErrorNotice> : null}
               {job.data ? (
-                <StateBanner kind={job.data.status === "dead_lettered" ? "error" : "info"}>
-                  Indexing {job.data.status === "dead_lettered" ? "failed" : job.data.status} ·{" "}
-                  {job.data.phase} · {job.data.totalDocuments} documents. {job.data.lastError}
-                </StateBanner>
+                job.data.status === "dead_lettered" ? (
+                  <ErrorNotice>
+                    Indexing failed · {job.data.phase} · {job.data.totalDocuments} documents.{" "}
+                    {job.data.lastError}
+                  </ErrorNotice>
+                ) : (
+                  <Notice>
+                    Indexing {job.data.status} · {job.data.phase} · {job.data.totalDocuments}{" "}
+                    documents.
+                  </Notice>
+                )
               ) : null}
               {job.isError ? (
-                <StateBanner kind="error">
+                <ErrorNotice>
                   Could not read indexing progress. {job.error.message}{" "}
                   <Button
                     type="button"
@@ -440,7 +436,7 @@ export function AIRetrievalManagement() {
                   >
                     Retry indexing status
                   </Button>
-                </StateBanner>
+                </ErrorNotice>
               ) : null}
               {jobRunning ? (
                 <Button
@@ -454,9 +450,7 @@ export function AIRetrievalManagement() {
                   Cancel indexing
                 </Button>
               ) : null}
-              {cancel.isError ? (
-                <StateBanner kind="error">{cancel.error.message}</StateBanner>
-              ) : null}
+              {cancel.isError ? <ErrorNotice>{cancel.error.message}</ErrorNotice> : null}
             </section>
             <section aria-labelledby="web-search-title" className="space-y-4 rounded-lg border p-4">
               <h2 id="web-search-title" className="text-base font-semibold">
@@ -467,14 +461,11 @@ export function AIRetrievalManagement() {
                 provider only when selected for a message. Assistant can also read public pages for
                 that message. Private network pages and unsupported page formats are blocked.
               </p>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={current.webEnabled}
-                  onChange={(event) => change("webEnabled", event.target.checked)}
-                />{" "}
-                Enable web search
-              </label>
+              <SettingToggle
+                label="Enable web search"
+                checked={current.webEnabled}
+                onCheckedChange={(checked) => change("webEnabled", checked)}
+              />
               <label className="grid gap-1 text-sm">
                 Search provider
                 <select
@@ -557,21 +548,24 @@ export function AIRetrievalManagement() {
               </Button>
             </div>
           </fieldset>
-          {save.isError ? <StateBanner kind="error">{save.error.message}</StateBanner> : null}
-          {savedNotice ? <StateBanner kind="info">Retrieval settings saved.</StateBanner> : null}
+          {save.isError ? <ErrorNotice>{save.error.message}</ErrorNotice> : null}
+          {savedNotice ? <Notice>Retrieval settings saved.</Notice> : null}
           {connection.isPending ? (
-            <StateBanner kind="loading">
-              Testing saved {connection.variables} connection…
-            </StateBanner>
+            <LoadingState label={`Testing saved ${connection.variables} connection…`} />
           ) : null}
-          {connection.isError ? (
-            <StateBanner kind="error">{connection.error.message}</StateBanner>
-          ) : null}
+          {connection.isError ? <ErrorNotice>{connection.error.message}</ErrorNotice> : null}
           {connection.data ? (
-            <StateBanner kind={connection.data.ok ? "info" : "error"}>
-              {connection.data.message} · {connection.data.latencyMs} ms · Checked{" "}
-              {new Date(connection.data.checkedAt).toLocaleString()}
-            </StateBanner>
+            connection.data.ok ? (
+              <Notice>
+                {connection.data.message} · {connection.data.latencyMs} ms · Checked{" "}
+                <RelativeTime value={connection.data.checkedAt} />
+              </Notice>
+            ) : (
+              <ErrorNotice>
+                {connection.data.message} · {connection.data.latencyMs} ms · Checked{" "}
+                <RelativeTime value={connection.data.checkedAt} />
+              </ErrorNotice>
+            )
           ) : null}
         </form>
       ) : null}

@@ -1,4 +1,6 @@
+import { Button } from "@/components/ui/button";
 import { useAdminSectionTab } from "@/features/admin/admin-section-search";
+import { ADMIN_PAGE_TITLE_ID, PageHeading } from "@/features/admin/console/primitives";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { LucideIcon } from "lucide-react";
 import { Activity, Copy, Plus, RefreshCw, Webhook, X } from "lucide-react";
@@ -366,47 +368,48 @@ export function WebhookManagement() {
   };
 
   return (
-    <section className="webhooks-page" aria-labelledby="webhooks-title">
-      <header className="webhooks-header">
-        <div>
-          <p className="webhooks-kicker">Admin</p>
-          <h1 id="webhooks-title">Webhooks</h1>
-          <p>Manage outbound endpoints, inbound receivers, and delivery history.</p>
-        </div>
-        <div className="webhooks-header-actions">
-          <button
-            className="helix-button helix-button-secondary"
-            disabled={refreshMutation.isPending}
-            onClick={() => refreshMutation.mutate()}
-            type="button"
-          >
-            <RefreshCw aria-hidden="true" size={16} />
-            Refresh
-          </button>
-          <button
-            className="helix-button"
-            onClick={() => {
-              setActiveTab("outbound");
-              setOutboundForm(emptyOutboundForm);
-            }}
-            type="button"
-          >
-            <Plus aria-hidden="true" size={16} />
-            Outbound
-          </button>
-          <button
-            className="helix-button"
-            onClick={() => {
-              setActiveTab("inbound");
-              setInboundForm(emptyInboundForm);
-            }}
-            type="button"
-          >
-            <Plus aria-hidden="true" size={16} />
-            Inbound
-          </button>
-        </div>
-      </header>
+    <section className="webhooks-page" aria-labelledby={ADMIN_PAGE_TITLE_ID}>
+      <PageHeading
+        title="Webhooks"
+        subtitle="Send events to other systems and receive events from them."
+        actions={
+          <>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={refreshMutation.isPending}
+              onClick={() => refreshMutation.mutate()}
+            >
+              <RefreshCw aria-hidden="true" />
+              Refresh
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setActiveTab("inbound");
+                setInboundForm(emptyInboundForm);
+              }}
+            >
+              <Plus aria-hidden="true" />
+              Add inbound
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                setActiveTab("outbound");
+                setOutboundForm(emptyOutboundForm);
+              }}
+            >
+              <Plus aria-hidden="true" />
+              Add outbound
+            </Button>
+          </>
+        }
+      />
 
       <div className="webhooks-summary" aria-label="Webhook summary">
         <SummaryMetric

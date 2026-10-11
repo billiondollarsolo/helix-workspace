@@ -262,6 +262,12 @@ export function AdminTable<TRow>({
                       key={column.id}
                       className="admin-table-cell"
                       data-align={column.align ?? "left"}
+                      /* The caption, repeated on each cell for the mobile card layout. */
+                      data-label={
+                        typeof column.header === "string" && column.headerHidden !== true
+                          ? column.header
+                          : undefined
+                      }
                     >
                       {column.cell(row)}
                     </TableCell>

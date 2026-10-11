@@ -3,6 +3,7 @@ import fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import type { AssistantStreamEvent } from "../platform/assistant/index.js";
 import { InMemoryOAuthClientStore, type AccessTokenRecord } from "../platform/auth/oauth.js";
+import { assistantToolLimitError } from "../platform/assistant/tool-selection.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
 import {
   formatAssistantSseEvent,
@@ -91,6 +92,70 @@ describe("assistant SSE streaming endpoint (PRD §9.5)", () => {
     expect(capture.input).toMatchObject({
       actor: { id: "actor-sse", orgId: "org-sse" },
       content: "hi",
+    });
+    await app.close();
+  });
+
+  it("carries a domain error code and its remedy in the SSE error frame", async () => {
+    const tokenStore = new InMemoryOAuthClientStore();
+    await tokenStore.saveToken(
+      accessToken({
+        token: "limit-token",
+        actorId: "actor-limit",
+        orgId: "org-limit",
+        scopes: ["assistant.write"],
+      }),
+    );
+    const tools = createToolRegistry();
+    tools.register(
+      tool({
+        id: "assistant.chat",
+        permission: "assistant.write",
+        handler: async () => {
+          throw new Error("JSON handler must not run");
+        },
+      }),
+    );
+    const selected = Array.from({ length: 130 }, (_, index) => ({
+      id: index < 40 ? `admin.tool${String(index)}` : `mail.tool${String(index)}`,
+    }));
+    const app = fastify();
+    registerAssistantStreamRoute(app, {
+      orchestrator: {
+        // eslint-disable-next-line require-yield -- fails before the first event.
+        async *sendMessageStream() {
+          throw assistantToolLimitError(selected as never);
+        },
+      },
+      tools,
+      tokenStore,
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/tools/assistant.chat",
+      headers: { authorization: "Bearer limit-token", accept: "text/event-stream" },
+      payload: { message: "hi", toolGroups: ["mail", "admin"] },
+    });
+
+    const frame = JSON.parse(
+      response.body
+        .split("\n")
+        .find((line) => line.startsWith("data: "))
+        ?.slice(6) ?? "{}",
+    ) as Record<string, unknown>;
+    expect(frame).toMatchObject({
+      type: "error",
+      code: "assistant_tool_limit_exceeded",
+      details: {
+        limit: 128,
+        selected: 130,
+        excess: 2,
+        groups: [
+          { id: "mail", label: "Mail", count: 90 },
+          { id: "admin", label: "Administration", count: 40 },
+        ],
+      },
     });
     await app.close();
   });

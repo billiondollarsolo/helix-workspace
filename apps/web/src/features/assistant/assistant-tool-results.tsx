@@ -1,5 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Check, ChevronRight, Clock, LoaderCircle, X } from "lucide-react";
+import { iconMap as Icons, type IconName } from "@/components/icon-map";
+import type { GlobalSearchType } from "@/features/search/api";
+import { searchHitTarget, type SearchHitTarget } from "@/features/search/search-hits";
 import type { AssistantSource, AssistantToolActivity } from "./api";
 
 const statusLabels = {
@@ -110,6 +114,78 @@ export function publicWebSources(sources: readonly AssistantSource[]): readonly 
 
 function hostLabel(url: URL): string {
   return url.hostname.replace(/^www\./u, "");
+}
+
+const WORKSPACE_SOURCE_ICONS: Readonly<Record<GlobalSearchType, IconName>> = {
+  mail: "Mail",
+  drive: "Drive",
+  chat: "Chat",
+  calendar: "Calendar",
+};
+
+/** A workspace record the answer drew on, with where it opens in Helix. */
+interface WorkspaceSource {
+  readonly source: AssistantSource;
+  readonly type: GlobalSearchType;
+  readonly target: SearchHitTarget;
+}
+
+/**
+ * Workspace search hits cited by an answer. The server keeps each hit's
+ * index path (`/mail/<thread>?message=…`, `/drive/<file>`, `/chat/<room>…`,
+ * `/calendar/events/<event>`); the owning app's URL comes from `searchHitTarget`.
+ */
+function workspaceSources(sources: readonly AssistantSource[]): readonly WorkspaceSource[] {
+  return sources.flatMap((source) => {
+    const type = source.type;
+    if (type !== "mail" && type !== "drive" && type !== "chat" && type !== "calendar") return [];
+    const match = /^\/(?:mail|drive|chat|calendar\/events)\/([^/?#]+)/u.exec(source.url ?? "");
+    const id = match?.[1];
+    if (id === undefined) return [];
+    const attributes =
+      type === "mail"
+        ? { threadId: id }
+        : type === "chat"
+          ? { roomId: id }
+          : type === "drive"
+            ? { fileId: id }
+            : { eventId: id };
+    return [
+      {
+        source,
+        type,
+        target: searchHitTarget({
+          id: source.id,
+          type,
+          ...(source.title === undefined ? {} : { title: source.title }),
+          attributes,
+        }),
+      },
+    ];
+  });
+}
+
+export function WorkspaceSourceList({ sources }: { readonly sources: readonly AssistantSource[] }) {
+  const cited = workspaceSources(sources);
+  if (cited.length === 0) return null;
+  return (
+    <ul aria-label="Workspace sources" className="m-0 mt-2 flex list-none flex-wrap gap-1.5 p-0">
+      {cited.map(({ source, type, target }) => {
+        const Icon = Icons[WORKSPACE_SOURCE_ICONS[type]];
+        return (
+          <li key={source.id}>
+            <Link
+              {...target}
+              className="focus-ring inline-flex max-w-64 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 type-caption text-foreground hover:bg-[var(--hover)]"
+            >
+              <Icon size={14} aria-hidden="true" className="shrink-0 text-muted-foreground" />
+              <span className="truncate">{source.title || "Untitled"}</span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 export function AssistantSourceList({

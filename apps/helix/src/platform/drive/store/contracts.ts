@@ -110,6 +110,10 @@ export type DriveDocumentSurfaceView = "grid" | "list";
 
 export interface DriveStore {
   getStorageQuotaUsage?(input: { readonly orgId: string }): Promise<DriveStorageQuotaUsageRecord>;
+  getMemberStorageUsage?(input: {
+    readonly orgId: string;
+    readonly actorId: string;
+  }): Promise<DriveMemberStorageUsageRecord>;
   getLifecyclePolicy?(input: { readonly orgId: string }): Promise<DriveLifecyclePolicyRecord>;
   setLifecyclePolicy?(input: {
     readonly orgId: string;
@@ -463,6 +467,15 @@ export interface DriveStorageQuotaUsageRecord {
   readonly limitBytes: number | null;
   readonly unlimited: boolean;
   readonly percentUsed: number | null;
+}
+
+export interface DriveMemberStorageUsageRecord {
+  /** Bytes of files the member owns. */
+  readonly usedBytes: number;
+  /** The organization storage limit, or null when storage is unlimited. */
+  readonly limitBytes: number | null;
+  /** Pooled organization usage; only reported when a limit is set. */
+  readonly organizationUsedBytes: number | null;
 }
 
 export interface DriveLifecyclePolicyRecord {

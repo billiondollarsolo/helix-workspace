@@ -363,7 +363,7 @@ describe("AIProvidersManagement", () => {
 
     await renderPage();
     await waitFor(() => {
-      expect(container.textContent).toContain("AI providers");
+      expect(container.textContent).toContain("Models");
       expect(container.textContent).toContain("chat");
       expect(container.textContent).toContain("Feature routing");
       expect(container.textContent).not.toContain("sk-");

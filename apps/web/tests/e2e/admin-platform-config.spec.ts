@@ -37,7 +37,7 @@ test.describe("/admin platform config", () => {
     });
 
     await page.goto("/admin");
-    await adminNav(page).getByRole("link", { name: "Tier readiness", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "Security tier", exact: true }).click();
     await expect(page.getByText("Live platform config connected")).toBeVisible();
 
     await page.getByRole("button", { name: /Enterprise/ }).click();
@@ -72,7 +72,7 @@ test.describe("/admin platform config", () => {
     });
 
     await page.goto("/admin");
-    await adminNav(page).getByRole("link", { name: "Tier readiness", exact: true }).click();
+    await adminNav(page).getByRole("link", { name: "Security tier", exact: true }).click();
     await expect(page.getByText("Live platform config connected")).toBeVisible();
 
     await page.getByRole("button", { name: /Enterprise/ }).click();

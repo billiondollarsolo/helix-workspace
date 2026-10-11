@@ -125,6 +125,8 @@ export interface DriveEntryRecord {
   readonly available?: boolean | undefined;
   readonly metadata: JsonObject;
   readonly deletedAt: Date | null;
+  /** Trashed entries only: end of the recovery window, after which they can be purged. */
+  readonly trashPurgeAfter?: Date | null | undefined;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

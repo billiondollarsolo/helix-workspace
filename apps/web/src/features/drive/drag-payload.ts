@@ -1,4 +1,34 @@
 export const HELIX_DRIVE_ITEM_DRAG_MIME = "application/x-helix-drive-item";
+/** Ids being dragged inside Drive to move them into a folder or breadcrumb. */
+const HELIX_DRIVE_MOVE_DRAG_MIME = "application/x-helix-drive-move";
+
+export function setDriveMoveDragData(
+  dataTransfer: Pick<DataTransfer, "setData">,
+  ids: readonly string[],
+): void {
+  setDragData(dataTransfer, HELIX_DRIVE_MOVE_DRAG_MIME, JSON.stringify(ids));
+}
+
+/** True while an in-Drive move drag is over a target (data is unreadable until drop). */
+export function isDriveMoveDrag(dataTransfer: Pick<DataTransfer, "types">): boolean {
+  return Array.from(dataTransfer.types).includes(HELIX_DRIVE_MOVE_DRAG_MIME);
+}
+
+/** True when the drag carries files from the operating system. */
+export function isOsFileDrag(dataTransfer: Pick<DataTransfer, "types">): boolean {
+  return Array.from(dataTransfer.types).includes("Files");
+}
+
+export function parseDriveMoveDragData(dataTransfer: Pick<DataTransfer, "getData">): string[] {
+  try {
+    const parsed: unknown = JSON.parse(dataTransfer.getData(HELIX_DRIVE_MOVE_DRAG_MIME));
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string" && id.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 export interface HelixDriveItemDragPayload {
   readonly id: string;
@@ -26,7 +56,7 @@ export function setHelixDriveItemDragData(
     `<a href="${escapeHtml(href)}">${escapeHtml(payload.name)}</a>`,
   );
   dataTransfer.dropEffect = "copy";
-  dataTransfer.effectAllowed = "copyLink";
+  dataTransfer.effectAllowed = "copyMove";
 }
 
 function setDragData(

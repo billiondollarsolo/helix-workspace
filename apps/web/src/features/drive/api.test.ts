@@ -3,7 +3,8 @@ import {
   createDriveShareLink,
   createDriveWorkflow,
   deleteDriveObject,
-  driveDownloadResult,
+  driveItemUrl,
+  driveRawDownloadUrl,
   drivePublicShareUrl,
   finalizeDriveUpload,
   listDrive,
@@ -22,7 +23,6 @@ import {
   transitionDriveWorkflow,
   updateDriveAccessRole,
   uploadDriveFile,
-  type DriveApiEntry,
 } from "./api";
 
 const localValues = new Map<string, string>();
@@ -810,14 +810,14 @@ describe("drive API", () => {
     expect(fetchImpl).toHaveBeenNthCalledWith(6, "/api/tools/drive.link.revoke", expect.anything());
   });
 
-  it("downloads stored files without a viewer or conversion", () => {
-    const entry = {
-      id: "folder/file",
-      name: "Report.xlsx",
-      mimeType: "application/octet-stream",
-    } as DriveApiEntry;
-    expect(driveDownloadResult(entry).url).toBe(
-      "/v1/api/drive/objects/folder%2Ffile/content?download=1",
+  it("downloads files without a viewer, and links to items inside Drive", () => {
+    const download = driveRawDownloadUrl({ id: "folder/file" });
+    expect(download).toBe("/v1/api/drive/objects/folder%2Ffile/content?download=1");
+    expect(driveItemUrl({ id: "a b", kind: "file" }, "https://h.test/")).toBe(
+      "https://h.test/drive?file=a%20b",
+    );
+    expect(driveItemUrl({ id: "f1", kind: "folder" }, "https://h.test")).toBe(
+      "https://h.test/drive?folder=f1",
     );
   });
 

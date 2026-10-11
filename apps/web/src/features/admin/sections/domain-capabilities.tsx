@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { AdminField, AdminSelect } from "../console/controls";
+import { SettingToggle } from "../console/widgets";
 import { mailAddressQueryKeys } from "@/lib/mail-addresses";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
@@ -105,6 +106,7 @@ export function DomainCapabilitiesPanel({
               Verify ownership
             </Button>
             <Button
+              variant="outline"
               disabled={pending}
               onClick={() => rotate.mutate()}
               aria-label={`Rotate verification record for ${domain.domain}`}
@@ -180,18 +182,16 @@ export function DomainCapabilitiesPanel({
               ["federationEnabled", "Federation"],
             ] as const
           ).map(([key, label]) => (
-            <label key={key} className="flex min-h-8 items-center gap-2">
-              <input
-                type="checkbox"
-                checked={domain[key]}
-                disabled={pending}
-                onChange={(event) => {
-                  if (key === "mailEnabled" && !event.target.checked) setDisableMail(true);
-                  else update.mutate({ [key]: event.target.checked });
-                }}
-              />
-              {label}
-            </label>
+            <SettingToggle
+              key={key}
+              label={label}
+              checked={domain[key]}
+              disabled={pending}
+              onCheckedChange={(checked) => {
+                if (key === "mailEnabled" && !checked) setDisableMail(true);
+                else update.mutate({ [key]: checked });
+              }}
+            />
           ))}
           <p>
             Mail delivery also requires a configured provider and verified mail DNS records. Manage

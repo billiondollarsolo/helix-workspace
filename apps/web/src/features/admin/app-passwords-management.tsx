@@ -1,3 +1,4 @@
+import { ScopeChips } from "@/features/admin/console/widgets";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
@@ -14,9 +15,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { AdminUser } from "@/features/admin/admin-users";
-import { AdminAccessRelatedNav } from "@/features/admin/admin-related-nav";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import { EmptyRow, PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import { EmptyRow, PageHeading, ErrorNotice } from "@/features/admin/console/primitives";
 import {
   ActorNoticeBanner,
   ActorSearchField,
@@ -172,18 +172,7 @@ export function AppPasswordsManagement() {
       {
         accessorKey: "scopes",
         header: "Scopes",
-        cell: ({ row }) => (
-          <div className="flex max-w-md flex-wrap gap-1">
-            {row.original.scopes.map((scope) => (
-              <span
-                className="rounded border border-border bg-background px-1.5 py-0.5 type-caption"
-                key={scope}
-              >
-                {scope}
-              </span>
-            ))}
-          </div>
-        ),
+        cell: ({ row }) => <ScopeChips scopes={row.original.scopes} />,
       },
       {
         id: "lastUsed",
@@ -263,7 +252,7 @@ export function AppPasswordsManagement() {
     <section className="grid gap-4">
       <PageHeading
         title="App passwords"
-        subtitle="Issue one-time app passwords for IMAP, CalDAV, WebDAV, and other protocol clients. Shown once at creation — revoke when a client should lose access. For OAuth agent clients use Agent credentials."
+        subtitle="Passwords for mail, calendar, and file apps that can't use standard sign-in."
         actions={
           <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
             <input
@@ -276,7 +265,6 @@ export function AppPasswordsManagement() {
           </label>
         }
       />
-      <AdminAccessRelatedNav current="app-passwords" />
 
       {/* `items-start` / `content-start`: a grid track is stretch-aligned by
           default, so the short panel used to inherit the tall form's height and
@@ -388,11 +376,11 @@ export function AppPasswordsManagement() {
             )}
           </passwordForm.Field>
 
-          {formError !== null ? <StateBanner kind="error">{formError}</StateBanner> : null}
+          {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
           {createMutation.isError ? (
-            <StateBanner kind="error">
+            <ErrorNotice>
               {errorMessage(createMutation.error, "Could not create the app password.")}
-            </StateBanner>
+            </ErrorNotice>
           ) : null}
 
           <Button
@@ -447,14 +435,14 @@ export function AppPasswordsManagement() {
           </div>
 
           {passwordsQuery.isError ? (
-            <StateBanner kind="error">
+            <ErrorNotice>
               {errorMessage(passwordsQuery.error, "Could not load app passwords.")}
-            </StateBanner>
+            </ErrorNotice>
           ) : null}
           {revokeMutation.isError ? (
-            <StateBanner kind="error">
+            <ErrorNotice>
               {errorMessage(revokeMutation.error, "Could not revoke the app password.")}
-            </StateBanner>
+            </ErrorNotice>
           ) : null}
 
           <Table aria-label="App passwords">

@@ -14,63 +14,115 @@ interface MeetToolCall {
   readonly pathname: string;
 }
 
+test.use({
+  permissions: ["camera", "microphone"],
+  launchOptions: {
+    args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+  },
+});
+
 test.describe("/meet Jitsi embed", () => {
-  test("mints a backend token and initializes the configured Jitsi room", async ({ page }) => {
-    const calls: MeetToolCall[] = [];
-
-    await page.addInitScript(
-      ({ key, token }) => {
-        window.localStorage.setItem(key, token);
-      },
-      { key: accessTokenStorageKey, token: accessToken },
-    );
-    await mockMeetTools(page, calls);
-    await mockJitsiExternalApi(page);
+  test("joins today's meeting through the pre-join screen and loads the Jitsi room", async ({
+    page,
+  }) => {
+    const calls = await openMeet(page);
     await page.goto("/meet");
+    const today = page.getByRole("region", { name: "Today" });
+    await expect(today.getByText("Backend launch review", { exact: true })).toBeVisible();
+    await today.getByRole("button", { name: "Join Backend launch review" }).click();
+
+    await expect(page).toHaveURL(/\/meet\?code=bckl-lnch-rvw0$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Ready to join?" })).toBeVisible();
     await expect(page.getByText("Backend launch review", { exact: true })).toBeVisible();
+    await expectJoinedRoom(page, calls);
+  });
 
-    await page.getByRole("button", { name: "Join now", exact: true }).click();
-    await page.getByRole("button", { name: "I consent and join", exact: true }).click();
+  test("opens the pre-join screen straight from a calendar join link", async ({ page }) => {
+    const calls = await openMeet(page);
+    await page.goto("/meet?code=bckl-lnch-rvw0");
+    await expect(page.getByRole("heading", { level: 1, name: "Ready to join?" })).toBeVisible();
+    await expect(page.getByText("bckl-lnch-rvw0", { exact: true })).toBeVisible();
+    await expectJoinedRoom(page, calls);
+  });
 
-    await expect
-      .poll(() => calls.find((call) => call.pathname === "/v1/api/tools/meet.mint-token")?.body)
-      .toEqual(
-        expect.objectContaining({
-          roomId,
-          expiresInSeconds: 300,
-          recordingNoticeAccepted: true,
-          recordingNoticeVersion: "2026-09-02",
-          deviceId: expect.any(String),
-          joinGrantId: expect.any(String),
-        }),
-      );
+  test("previews the camera and microphone with toggles and device pickers", async ({ page }) => {
+    await openMeet(page);
+    await page.goto("/meet?code=bckl-lnch-rvw0");
+    const preview = page.getByRole("region", { name: "Camera and microphone preview" });
+    await expect(preview.getByLabel("Your camera preview")).toBeVisible();
+    await expect(preview.getByRole("combobox", { name: "Microphone" })).toBeEnabled();
+    await expect(preview.getByRole("combobox", { name: "Camera" })).toBeEnabled();
 
-    await expect
-      .poll(() =>
-        page.evaluate(
-          () =>
-            (
-              window as Window & {
-                __helixJitsiE2E?: {
-                  readonly domain: string;
-                  readonly jwt: string;
-                  readonly roomName: string;
-                };
-              }
-            ).__helixJitsiE2E ?? null,
-        ),
-      )
-      .toEqual({
-        domain: "meet.helix.test",
-        jwt: "jwt",
-        roomName: "backend-launch-review",
-      });
-    await expect(page.locator(".meet-iframe")).toHaveAttribute(
-      "allow",
-      "camera; microphone; fullscreen; display-capture; autoplay",
+    await preview.getByRole("button", { name: "Turn off camera" }).click();
+    await expect(preview.getByText("Camera is off")).toBeVisible();
+    await expect(preview.getByRole("button", { name: "Turn on camera" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
+    await preview.getByRole("button", { name: "Turn off microphone" }).click();
+    await expect(preview.getByRole("button", { name: "Turn on microphone" })).toBeVisible();
+
+    // Joining needs the recording notice accepted, at the moment of joining.
+    await page.getByRole("button", { name: "Join now", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("Accept the recording notice to join.");
   });
 });
+
+async function openMeet(page: Page): Promise<MeetToolCall[]> {
+  const calls: MeetToolCall[] = [];
+  await page.addInitScript(
+    ({ key, token }) => {
+      window.localStorage.setItem(key, token);
+    },
+    { key: accessTokenStorageKey, token: accessToken },
+  );
+  await mockMeetTools(page, calls);
+  await mockJitsiExternalApi(page);
+  return calls;
+}
+
+async function expectJoinedRoom(page: Page, calls: readonly MeetToolCall[]): Promise<void> {
+  await page.getByRole("checkbox", { name: "I consent to this meeting being recorded" }).check();
+  await page.getByRole("button", { name: "Join now", exact: true }).click();
+
+  await expect
+    .poll(() => calls.find((call) => call.pathname === "/v1/api/tools/meet.join-by-code")?.body)
+    .toEqual(
+      expect.objectContaining({
+        code: "bckl-lnch-rvw0",
+        recordingNoticeAccepted: true,
+        recordingNoticeVersion: "2026-09-02",
+        deviceId: expect.any(String),
+        joinGrantId: expect.any(String),
+      }),
+    );
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as Window & {
+              __helixJitsiE2E?: {
+                readonly domain: string;
+                readonly jwt: string;
+                readonly roomName: string;
+              };
+            }
+          ).__helixJitsiE2E ?? null,
+      ),
+    )
+    .toEqual({
+      domain: "meet.helix.test",
+      jwt: "jwt",
+      roomName: "backend-launch-review",
+    });
+  await expect(page.locator(".meet-iframe")).toHaveAttribute(
+    "allow",
+    "camera; microphone; fullscreen; display-capture; autoplay",
+  );
+  await expect(page.getByRole("button", { name: "Leave", exact: true })).toBeVisible();
+}
 
 async function mockJitsiExternalApi(page: Page): Promise<void> {
   await page.route("https://meet.helix.test/external_api.js", async (route) => {
@@ -134,9 +186,11 @@ async function mockMeetTools(page: Page, calls: MeetToolCall[]) {
       });
       return;
     }
-    if (pathname === "/v1/api/tools/meet.mint-token") {
+    if (pathname === "/v1/api/tools/meet.join-by-code") {
       await fulfillJson(route, {
         roomId,
+        code: meetMeeting.code,
+        subject: meetMeeting.subject,
         roomName: "backend-launch-review",
         jitsiDomain: "meet.helix.test",
         token: "jwt",
@@ -195,7 +249,7 @@ const meetRoom = {
 const meetMeeting = {
   ...meetRoom,
   title: meetRoom.subject,
-  code: "bck-lnd-rvw",
+  code: "bckl-lnch-rvw0",
   host: {
     actorId: meetRoom.createdByActorId,
     displayName: "Avery Park",

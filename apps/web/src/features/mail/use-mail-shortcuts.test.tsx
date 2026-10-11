@@ -12,30 +12,30 @@ const threads = ["t1", "t2", "t3"].map(
 );
 
 const handlers = {
-  onCheckedChange: vi.fn(),
+  onSelectedChange: vi.fn(),
   onCompose: vi.fn(),
   onOpen: vi.fn(),
   onBack: vi.fn(),
-  onStar: vi.fn(),
-  onArchive: vi.fn(),
-  onDelete: vi.fn(),
-  onSpam: vi.fn(),
-  onRead: vi.fn(),
+  onAction: vi.fn(),
 };
 
 function Harness({
   openThreadId,
-  checkedIds = new Set(),
+  selectedIds = new Set(),
+  canReportSpam = true,
 }: {
   readonly openThreadId: string | null;
-  readonly checkedIds?: ReadonlySet<string>;
+  readonly selectedIds?: ReadonlySet<string>;
+  readonly canReportSpam?: boolean;
 }) {
-  useMailShortcuts({ threads, openThreadId, checkedIds, ...handlers });
+  useMailShortcuts({ threads, openThreadId, selectedIds, canReportSpam, ...handlers });
   return (
-    <div>
+    <div role="grid" aria-label="Conversations">
       {threads.map((thread) => (
-        <div key={thread.threadId} role="button" tabIndex={0} data-thread-id={thread.threadId}>
-          {thread.threadId}
+        <div key={thread.threadId} role="row" tabIndex={-1}>
+          <div role="gridcell" data-thread-id={thread.threadId}>
+            {thread.threadId}
+          </div>
         </div>
       ))}
     </div>
@@ -50,7 +50,8 @@ function press(key: string, init: KeyboardEventInit = {}) {
   });
 }
 
-const focusedId = () => (document.activeElement as HTMLElement | null)?.dataset.threadId;
+const focusedId = () =>
+  document.activeElement?.querySelector<HTMLElement>("[data-thread-id]")?.dataset.threadId;
 
 describe("useMailShortcuts", () => {
   let container: HTMLDivElement;
@@ -88,32 +89,41 @@ describe("useMailShortcuts", () => {
     press("o");
     expect(handlers.onOpen).toHaveBeenCalledWith("t2");
     press("x");
-    expect(handlers.onCheckedChange).toHaveBeenCalledWith(new Set(["t2"]));
+    expect(handlers.onSelectedChange).toHaveBeenCalledWith(new Set(["t2"]));
     press("s");
-    expect(handlers.onStar).toHaveBeenCalledWith(new Set(["t2"]), false);
+    expect(handlers.onAction).toHaveBeenLastCalledWith(["t2"], { kind: "star", starred: false });
     press("e");
-    expect(handlers.onArchive).toHaveBeenCalledWith(new Set(["t2"]));
+    expect(handlers.onAction).toHaveBeenLastCalledWith(["t2"], { kind: "archive" });
     press("#", { shiftKey: true });
-    expect(handlers.onDelete).toHaveBeenCalledWith(new Set(["t2"]));
+    expect(handlers.onAction).toHaveBeenLastCalledWith(["t2"], { kind: "trash" });
     press("!", { shiftKey: true });
-    expect(handlers.onSpam).toHaveBeenCalledWith(new Set(["t2"]));
+    expect(handlers.onAction).toHaveBeenLastCalledWith(["t2"], { kind: "spam" });
     press("I", { shiftKey: true });
-    expect(handlers.onRead).toHaveBeenLastCalledWith(new Set(["t2"]), false);
+    expect(handlers.onAction).toHaveBeenLastCalledWith(["t2"], { kind: "read", unread: false });
     press("U", { shiftKey: true });
-    expect(handlers.onRead).toHaveBeenLastCalledWith(new Set(["t2"]), true);
+    expect(handlers.onAction).toHaveBeenLastCalledWith(["t2"], { kind: "read", unread: true });
     press("c");
     expect(handlers.onCompose).toHaveBeenCalledTimes(1);
   });
 
-  it("prefers checked conversations and declines actions with no target", () => {
-    act(() => root.render(<Harness openThreadId={null} checkedIds={new Set(["t1", "t3"])} />));
+  it("prefers selected conversations, skips spam in Spam, and declines without a target", () => {
+    act(() =>
+      root.render(
+        <Harness openThreadId={null} selectedIds={new Set(["t1", "t3"])} canReportSpam={false} />,
+      ),
+    );
     press("s");
-    expect(handlers.onStar).toHaveBeenCalledWith(new Set(["t1", "t3"]), true);
+    expect(handlers.onAction).toHaveBeenLastCalledWith(["t1", "t3"], {
+      kind: "star",
+      starred: true,
+    });
+    press("!", { shiftKey: true });
+    expect(handlers.onAction).toHaveBeenCalledTimes(1);
 
     act(() => root.render(<Harness openThreadId={null} />));
     (document.activeElement as HTMLElement | null)?.blur();
     press("e");
-    expect(handlers.onArchive).not.toHaveBeenCalled();
+    expect(handlers.onAction).toHaveBeenCalledTimes(1);
   });
 
   it("steps between conversations and returns to the list from an open thread", () => {
@@ -124,10 +134,10 @@ describe("useMailShortcuts", () => {
     press("k");
     expect(handlers.onOpen).toHaveBeenLastCalledWith("t1");
     press("e");
-    expect(handlers.onArchive).toHaveBeenCalledWith(new Set(["t2"]));
+    expect(handlers.onAction).toHaveBeenLastCalledWith(["t2"], { kind: "archive" });
     press("u");
     expect(handlers.onBack).toHaveBeenCalledTimes(1);
     press("x");
-    expect(handlers.onCheckedChange).not.toHaveBeenCalled();
+    expect(handlers.onSelectedChange).not.toHaveBeenCalled();
   });
 });

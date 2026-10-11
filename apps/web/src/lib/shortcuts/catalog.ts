@@ -53,6 +53,7 @@ export const SHORTCUT_CATALOG = {
   "global.go-starred": { scope: "global", keys: ["g s"], description: "Go to starred mail" },
   "global.go-sent": { scope: "global", keys: ["g t"], description: "Go to sent mail" },
   "global.go-drafts": { scope: "global", keys: ["g d"], description: "Go to drafts" },
+  "global.go-all-mail": { scope: "global", keys: ["g a"], description: "Go to All Mail" },
   "global.go-calendar": { scope: "global", keys: ["g c"], description: "Go to Calendar" },
   "global.go-chat": { scope: "global", keys: ["g k"], description: "Go to Chat" },
   "global.go-drive": { scope: "global", keys: ["g r"], description: "Go to Drive" },
@@ -73,6 +74,7 @@ export const SHORTCUT_CATALOG = {
   "mail.spam": { scope: "mail", keys: ["!"], description: "Report spam" },
   "mail.mark-read": { scope: "mail", keys: ["shift+i"], description: "Mark as read" },
   "mail.mark-unread": { scope: "mail", keys: ["shift+u"], description: "Mark as unread" },
+  "mail.undo": { scope: "mail", keys: ["z"], description: "Undo the last action" },
 
   "mail.thread.older": {
     scope: "mail.thread",
@@ -116,11 +118,25 @@ export const SHORTCUT_CATALOG = {
   },
 
   "drive.new-folder": { scope: "drive", keys: ["n"], description: "New folder" },
-  "drive.upload": { scope: "drive", keys: ["shift+u"], description: "Upload a file" },
+  "drive.upload": { scope: "drive", keys: ["shift+u"], description: "Upload files" },
+  "drive.upload-folder": { scope: "drive", keys: ["shift+i"], description: "Upload a folder" },
+  "drive.open": {
+    scope: "drive",
+    keys: ["enter"],
+    description: "Open the selected folder or download the selected file",
+  },
+  "drive.context-menu": {
+    scope: "drive",
+    keys: ["shift+f10"],
+    description: "Show actions for the selected items",
+  },
+  "drive.details": { scope: "drive", keys: ["a"], description: "Show or hide details" },
+  "drive.star": { scope: "drive", keys: ["s"], description: "Star or unstar the selection" },
+  "drive.rename": { scope: "drive", keys: ["f2"], description: "Rename the selected item" },
   "drive.trash": {
     scope: "drive",
     keys: ["delete", "backspace"],
-    description: "Move the selected file to trash",
+    description: "Move the selection to trash",
   },
 
   "chat.close-thread": {

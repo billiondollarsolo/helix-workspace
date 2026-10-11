@@ -12,8 +12,28 @@ const auditLogQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(50),
   objectId: uuidSchema.optional(),
   objectType: nonEmptyFilterSchema.optional(),
+  outcome: z.enum(["success", "failure", "denied"]).optional(),
+  since: z.string().datetime({ offset: true }).optional(),
+  until: z.string().datetime({ offset: true }).optional(),
   verb: nonEmptyFilterSchema.optional(),
 });
+
+/** How an audited action ended, read from its verb's last segment
+ *  (`tool.invocation.denied`, `drive.upload.prepare_failed`). The store's SQL
+ *  filter uses the same patterns. */
+export type AuditOutcome = "success" | "failure" | "denied";
+
+export const AUDIT_DENIED_VERB_PATTERN = "(^|[._])(denied|rejected|blocked)$";
+export const AUDIT_FAILURE_VERB_PATTERN = "(^|[._])(failed|failure|error)$";
+
+const deniedVerb = new RegExp(AUDIT_DENIED_VERB_PATTERN, "u");
+const failureVerb = new RegExp(AUDIT_FAILURE_VERB_PATTERN, "u");
+
+export function auditOutcome(verb: string): AuditOutcome {
+  if (deniedVerb.test(verb)) return "denied";
+  if (failureVerb.test(verb)) return "failure";
+  return "success";
+}
 
 export interface AuditLogRecord {
   readonly id: string;
@@ -41,6 +61,9 @@ export interface ListAuditLogInput {
   readonly limit: number;
   readonly objectId?: string | undefined;
   readonly objectType?: string | undefined;
+  readonly outcome?: AuditOutcome | undefined;
+  readonly since?: Date | undefined;
+  readonly until?: Date | undefined;
   readonly verb?: string | undefined;
 }
 
@@ -83,6 +106,9 @@ export async function registerAuditLogAdminRoutes(
       ...(cursor === undefined ? {} : { cursor }),
       ...(parsed.data.objectId === undefined ? {} : { objectId: parsed.data.objectId }),
       ...(parsed.data.objectType === undefined ? {} : { objectType: parsed.data.objectType }),
+      ...(parsed.data.outcome === undefined ? {} : { outcome: parsed.data.outcome }),
+      ...(parsed.data.since === undefined ? {} : { since: new Date(parsed.data.since) }),
+      ...(parsed.data.until === undefined ? {} : { until: new Date(parsed.data.until) }),
       ...(parsed.data.verb === undefined ? {} : { verb: parsed.data.verb }),
     });
     const pageRecords = records.slice(0, limit);
@@ -91,7 +117,7 @@ export async function registerAuditLogAdminRoutes(
       records.length > limit && lastRecord !== undefined ? encodeAuditLogCursor(lastRecord) : null;
 
     return {
-      records: pageRecords,
+      records: pageRecords.map((record) => ({ ...record, outcome: auditOutcome(record.verb) })),
       nextCursor,
     };
   });

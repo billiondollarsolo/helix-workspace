@@ -29,6 +29,7 @@ const THREADS = [
   category: "primary",
   folder: "inbox",
   snoozedUntil: null,
+  participants: [],
 }));
 
 test.describe("keyboard shortcuts", () => {
@@ -59,7 +60,7 @@ test.describe("keyboard shortcuts", () => {
 
   test("g sequences, c, and j/k drive Mail", async ({ page }) => {
     await openMail(page);
-    const rows = page.locator("[data-thread-id]");
+    const rows = page.getByRole("row");
 
     await page.keyboard.press("j");
     await expect(rows.nth(0)).toBeFocused();
@@ -70,7 +71,7 @@ test.describe("keyboard shortcuts", () => {
 
     await page.keyboard.press("o");
     await expect(page).toHaveURL(new RegExp(`thread=${THREADS[0]?.threadId}`));
-    await expect(page.getByRole("button", { name: "Reply", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reply all", exact: true })).toBeVisible();
     await page.keyboard.press("j");
     await expect(page).toHaveURL(new RegExp(`thread=${THREADS[1]?.threadId}`));
     await page.keyboard.press("u");

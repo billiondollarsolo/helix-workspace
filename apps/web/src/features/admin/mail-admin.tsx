@@ -1,4 +1,8 @@
+import { formatRelativeTime } from "@/features/admin/console/format";
+import { RelativeTime } from "@/features/admin/console/widgets";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { SettingToggle } from "@/features/admin/console/widgets";
 import {
   Globe as GlobeIcon,
   Key as KeyIcon,
@@ -7,6 +11,15 @@ import {
   Trash2 as TrashIcon,
 } from "lucide-react";
 import { useAdminSectionTab } from "./admin-section-search";
+import { AppStatusPanel, WorkspaceFlagsPanel } from "@/features/admin/console/app-settings";
+import { AdminTabs } from "@/features/admin/console/tabs";
+import {
+  EmptyRow,
+  ErrorNotice,
+  LoadingState,
+  PageHeading,
+  PanelHeading,
+} from "@/features/admin/console/primitives";
 /* Helix Admin — Mail section.
  *
  * Production TSX for the Admin console's "Mail" section. Four sub-views wired
@@ -49,19 +62,14 @@ import {
   type RoutingRule,
 } from "@/features/admin/mail-admin-api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
-} from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 /* ------------------------------------------------------------------ */
 /* Mail sub-navigation                                                */
 /* ------------------------------------------------------------------ */
 
 export const MAIL_SUBVIEWS = [
+  { id: "general", label: "General" },
   { id: "providers", label: "Outbound providers" },
   { id: "domains", label: "Mail domains" },
   { id: "deliverability", label: "Deliverability" },
@@ -73,7 +81,7 @@ export const MAIL_SUBVIEWS = [
 export type MailSubviewId = (typeof MAIL_SUBVIEWS)[number]["id"];
 
 /** Default tab when `?tab=` is missing or unknown (keeps `/admin/mail` clean). */
-export const DEFAULT_MAIL_SUBVIEW: MailSubviewId = "providers";
+export const DEFAULT_MAIL_SUBVIEW: MailSubviewId = "general";
 
 export function isMailSubviewId(value: string): value is MailSubviewId {
   return MAIL_SUBVIEWS.some((view) => view.id === value);
@@ -90,56 +98,6 @@ export function mailSubviewFromSearch(tab: string | undefined): MailSubviewId {
  */
 export function mailAdminSearchForSubview(subview: MailSubviewId): { readonly tab?: string } {
   return subview === DEFAULT_MAIL_SUBVIEW ? {} : { tab: subview };
-}
-
-const tabDomId = (id: MailSubviewId) => `mail-tab-${id}`;
-const panelDomId = (id: MailSubviewId) => `mail-panel-${id}`;
-
-/* ------------------------------------------------------------------ */
-/* Shared layout primitives (mirror admin-console.tsx)                */
-/* ------------------------------------------------------------------ */
-
-function PageScroll({ children }: { children: ReactNode }) {
-  return <div className="p-6 overflow-y-auto flex-1">{children}</div>;
-}
-
-function PageHeading({
-  title,
-  subtitle,
-  actions,
-}: {
-  title: string;
-  subtitle?: string;
-  actions?: ReactNode;
-}) {
-  return (
-    <div className={cn(subtitle ? "mb-5" : "mb-4")}>
-      <div className="flex items-center">
-        <h1 className="type-h2 font-semibold m-0">{title}</h1>
-        {actions ? <div className="ml-auto flex gap-2">{actions}</div> : null}
-      </div>
-      {subtitle ? <div className="type-body-sm text-muted-foreground mt-1">{subtitle}</div> : null}
-    </div>
-  );
-}
-
-function StateBanner({ kind, children }: { kind: "loading" | "error"; children: ReactNode }) {
-  return (
-    <div
-      role={kind === "error" ? "alert" : "status"}
-      className={cn(
-        "[padding:10px_12px] rounded-md type-meta mb-3 [border:1px_solid_var(--border)]",
-        kind === "error" ? "[background:var(--danger-soft,_var(--surface-2))]" : "bg-muted",
-        kind === "error" ? "text-destructive" : "[color:var(--text-2)]",
-      )}
-    >
-      {children}
-    </div>
-  );
-}
-
-function EmptyRow({ children }: { children: ReactNode }) {
-  return <div className="p-8 text-center type-body-sm text-muted-foreground">{children}</div>;
 }
 
 const EMPTY_PROVIDER_CONFIG: MailProviderConfig = {
@@ -292,12 +250,12 @@ function ProviderForm({ onCancel, onSubmit, pending }: ProviderFormProps) {
       </div>
 
       <div className="flex gap-2 justify-end">
-        <button type="button" className="btn" onClick={onCancel}>
+        <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
-        </button>
-        <button type="submit" className="btn primary" disabled={pending}>
+        </Button>
+        <Button type="submit" disabled={pending}>
           {pending ? "Saving…" : "Add provider"}
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -331,35 +289,29 @@ function MailProviders() {
   const providers = providersQuery.data?.providers ?? [];
 
   return (
-    <PageScroll>
-      <PageHeading
+    <>
+      <PanelHeading
         title="Outbound providers"
         subtitle="Mail-sending providers and the default used for outbound delivery"
         actions={
-          <button
+          <Button
             type="button"
-            className="btn primary"
+
             onClick={() => setShowForm((open) => !open)}
           >
             <PlusIcon size={16} /> Add provider
-          </button>
+          </Button>
         }
       />
 
-      {providersQuery.isPending ? (
-        <StateBanner kind="loading">Loading outbound providers…</StateBanner>
-      ) : null}
+      {providersQuery.isPending ? <LoadingState label="Loading outbound providers…" /> : null}
       {providersQuery.isError ? (
-        <StateBanner kind="error">
+        <ErrorNotice>
           Outbound providers are unavailable or you lack the mail admin scope.
-        </StateBanner>
+        </ErrorNotice>
       ) : null}
-      {createMutation.isError ? (
-        <StateBanner kind="error">{createMutation.error.message}</StateBanner>
-      ) : null}
-      {defaultMutation.isError ? (
-        <StateBanner kind="error">{defaultMutation.error.message}</StateBanner>
-      ) : null}
+      {createMutation.isError ? <ErrorNotice>{createMutation.error.message}</ErrorNotice> : null}
+      {defaultMutation.isError ? <ErrorNotice>{defaultMutation.error.message}</ErrorNotice> : null}
 
       {showForm ? (
         <ProviderForm
@@ -403,21 +355,23 @@ function MailProviders() {
                   {provider.enabled ? "Enabled" : "Disabled"}
                 </span>
               </span>
-              <button
+              <Button
                 type="button"
-                className="btn sm [justify-self:flex-end]"
+                variant="outline"
+                size="sm"
+                className="[justify-self:flex-end]"
 
                 disabled={provider.isDefault || defaultMutation.isPending}
                 aria-label={`Make ${provider.name} default`}
                 onClick={() => defaultMutation.mutate(provider.id)}
               >
                 {provider.isDefault ? "Default" : "Set default"}
-              </button>
+              </Button>
             </div>
           ))
         )}
       </div>
-    </PageScroll>
+    </>
   );
 }
 
@@ -453,19 +407,15 @@ function MailDomains() {
   const dkimBusy = generateMutation.isPending;
 
   return (
-    <PageScroll>
-      <PageHeading
+    <>
+      <PanelHeading
         title="Mail domains"
         subtitle="Verified workspace domains authorized to send mail"
       />
 
-      {domainsQuery.isPending ? (
-        <StateBanner kind="loading">Loading mail domains…</StateBanner>
-      ) : null}
+      {domainsQuery.isPending ? <LoadingState label="Loading mail domains…" /> : null}
       {domainsQuery.isError ? (
-        <StateBanner kind="error">
-          Mail domains are unavailable or you lack the mail admin scope.
-        </StateBanner>
+        <ErrorNotice>Mail domains are unavailable or you lack the mail admin scope.</ErrorNotice>
       ) : null}
       <p className="[color:var(--text-2)] mb-3">
         Verify and enable mail capability in Domain settings before configuring DKIM here.
@@ -486,32 +436,36 @@ function MailDomains() {
               </span>
               <span className="type-body font-semibold">{domain.domain}</span>
               {domain.isPrimary ? <span className="chip success">Primary</span> : null}
-              <button
+              <Button
                 type="button"
-                className="btn sm ml-auto"
+                variant="outline"
+                size="sm"
+                className="ml-auto"
 
                 aria-label={`Disable mail for ${domain.domain}`}
                 disabled={deleteMutation.isPending}
                 onClick={() => deleteMutation.mutate(domain.id)}
               >
                 <TrashIcon size={16} /> Disable mail
-              </button>
+              </Button>
             </div>
 
             <div className="mt-3 flex items-center mb-2">
               <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
                 DKIM keys
               </span>
-              <button
+              <Button
                 type="button"
-                className="btn sm ml-auto"
+                variant="outline"
+                size="sm"
+                className="ml-auto"
 
                 aria-label={`Generate DKIM key for ${domain.domain}`}
                 disabled={dkimBusy}
                 onClick={() => generateMutation.mutate(domain.id)}
               >
                 <KeyIcon size={16} /> {domain.dkimKeys.length === 0 ? "Generate key" : "Rotate key"}
-              </button>
+              </Button>
             </div>
 
             {domain.dkimKeys.length === 0 ? (
@@ -537,7 +491,7 @@ function MailDomains() {
           </div>
         ))
       )}
-    </PageScroll>
+    </>
   );
 }
 
@@ -565,8 +519,8 @@ function Deliverability() {
   );
 
   return (
-    <PageScroll>
-      <PageHeading
+    <>
+      <PanelHeading
         title="Deliverability"
         subtitle={
           summary
@@ -575,13 +529,9 @@ function Deliverability() {
         }
       />
 
-      {dmarcQuery.isPending ? (
-        <StateBanner kind="loading">Loading deliverability summary…</StateBanner>
-      ) : null}
+      {dmarcQuery.isPending ? <LoadingState label="Loading deliverability summary…" /> : null}
       {dmarcQuery.isError ? (
-        <StateBanner kind="error">
-          DMARC reports are unavailable or you lack the mail admin scope.
-        </StateBanner>
+        <ErrorNotice>DMARC reports are unavailable or you lack the mail admin scope.</ErrorNotice>
       ) : null}
 
       {summary ? (
@@ -630,7 +580,7 @@ function Deliverability() {
           ))
         )}
       </div>
-    </PageScroll>
+    </>
   );
 }
 
@@ -798,23 +748,19 @@ function RoutingForm({ onCancel, onSubmit, pending }: RoutingFormProps) {
             className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-full"
           />
         </label>
-        <label className="flex [align-items:end] gap-1.5 pb-2">
-          <input
-            aria-label="Stop processing"
-            type="checkbox"
-            checked={stopProcessing}
-            onChange={(event) => setStopProcessing(event.target.checked)}
-          />
-          Stop
-        </label>
+        <SettingToggle
+          label="Stop processing later rules"
+          checked={stopProcessing}
+          onCheckedChange={(checked) => setStopProcessing(checked)}
+        />
       </div>
       <div className="flex gap-2 justify-end">
-        <button type="button" className="btn" onClick={onCancel}>
+        <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
-        </button>
-        <button type="submit" className="btn primary" disabled={pending}>
+        </Button>
+        <Button type="submit" disabled={pending}>
           {pending ? "Saving…" : "Add rule"}
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -889,37 +835,31 @@ function RoutingRules() {
   );
 
   return (
-    <PageScroll>
-      <PageHeading
+    <>
+      <PanelHeading
         title="Routing rules"
         subtitle="Inbound mail routing — matched in ascending priority order"
         actions={
-          <button
+          <Button
             type="button"
-            className="btn primary"
+
             onClick={() => setShowForm((open) => !open)}
           >
             <PlusIcon size={16} /> Add rule
-          </button>
+          </Button>
         }
       />
 
-      {rulesQuery.isPending ? (
-        <StateBanner kind="loading">Loading routing rules…</StateBanner>
-      ) : null}
+      {rulesQuery.isPending ? <LoadingState label="Loading routing rules…" /> : null}
       {rulesQuery.isError ? (
-        <StateBanner kind="error">
-          Routing rules are unavailable or you lack the mail admin scope.
-        </StateBanner>
+        <ErrorNotice>Routing rules are unavailable or you lack the mail admin scope.</ErrorNotice>
       ) : null}
-      {createMutation.isError ? (
-        <StateBanner kind="error">{createMutation.error.message}</StateBanner>
-      ) : null}
+      {createMutation.isError ? <ErrorNotice>{createMutation.error.message}</ErrorNotice> : null}
       {patchMutation.isError || deleteMutation.isError ? (
-        <StateBanner kind="error">
+        <ErrorNotice>
           {(patchMutation.error ?? deleteMutation.error)?.message ??
             "Could not update routing rule."}
-        </StateBanner>
+        </ErrorNotice>
       ) : null}
 
       {showForm ? (
@@ -962,30 +902,32 @@ function RoutingRules() {
                 </span>
               </span>
               <div className="flex gap-1.5 [justify-self:flex-end]">
-                <button
+                <Button
                   type="button"
-                  className="btn sm"
+                  variant="outline"
+                  size="sm"
                   aria-label={`${rule.isEnabled ? "Disable" : "Enable"} rule ${rule.name}`}
                   disabled={patchMutation.isPending}
                   onClick={() => patchMutation.mutate({ id: rule.id, enabled: !rule.isEnabled })}
                 >
                   {rule.isEnabled ? "Disable" : "Enable"}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
-                  className="btn sm"
+                  variant="outline"
+                  size="sm"
                   aria-label={`Delete rule ${rule.name}`}
                   disabled={deleteMutation.isPending}
                   onClick={() => deleteMutation.mutate(rule.id)}
                 >
                   <TrashIcon size={16} />
-                </button>
+                </Button>
               </div>
             </div>
           ))
         )}
       </div>
-    </PageScroll>
+    </>
   );
 }
 
@@ -1005,19 +947,15 @@ function SpamFiltering() {
         : "warning";
 
   return (
-    <PageScroll>
-      <PageHeading
+    <>
+      <PanelHeading
         title="Spam filtering"
         subtitle="spamd thresholds and daemon status — configuration is environment-driven"
       />
 
-      {spamQuery.isPending ? (
-        <StateBanner kind="loading">Loading spam settings…</StateBanner>
-      ) : null}
+      {spamQuery.isPending ? <LoadingState label="Loading spam settings…" /> : null}
       {spamQuery.isError ? (
-        <StateBanner kind="error">
-          Spam settings are unavailable or you lack the mail admin scope.
-        </StateBanner>
+        <ErrorNotice>Spam settings are unavailable or you lack the mail admin scope.</ErrorNotice>
       ) : null}
 
       {settings ? (
@@ -1081,7 +1019,7 @@ function SpamFiltering() {
           </div>
         </>
       ) : null}
-    </PageScroll>
+    </>
   );
 }
 
@@ -1108,23 +1046,21 @@ function JournalSettings({
         }
       }}
     >
-      <label className="flex gap-2 items-center flex-1">
-        <input
-          aria-label="Enable compliance journal"
-          type="checkbox"
-          checked={enabled}
-          onChange={(event) => setEnabled(event.target.checked)}
-        />
-        <span>
+      <SettingToggle
+        label={`<span>
           <strong>Immutable compliance journal</strong>
           <span className="block text-muted-foreground">
-            {String(journal.entryCount)} captured messages
-            {journal.lastJournaledAt === null
-              ? ""
-              : ` · last ${new Date(journal.lastJournaledAt).toLocaleString()}`}
+            ${String(journal.entryCount)} captured messages
+            ${
+              journal.lastJournaledAt === null
+                ? ""
+                : ` · last ${formatRelativeTime(journal.lastJournaledAt)}`
+            }
           </span>
-        </span>
-      </label>
+        </span>`}
+        checked={enabled}
+        onCheckedChange={(checked) => setEnabled(checked)}
+      />
       <label>
         <span className="type-caption text-muted-foreground font-semibold uppercase [letter-spacing:.06em]">
           Retention days
@@ -1139,9 +1075,9 @@ function JournalSettings({
           className="h-7.5 rounded-md [border:1px_solid_var(--border)] bg-card text-foreground [padding:0_8px] type-meta w-35"
         />
       </label>
-      <button type="submit" className="btn primary" disabled={pending}>
+      <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : "Save journal"}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -1174,8 +1110,8 @@ function MailOperations() {
   });
 
   return (
-    <PageScroll>
-      <PageHeading
+    <>
+      <PanelHeading
         title="Mail operations"
         subtitle="Tenant-scoped delivery trace, dead-letter recovery, and recipient suppressions"
       />
@@ -1192,13 +1128,9 @@ function MailOperations() {
         maxLength={500}
         onChange={(event) => setReason(event.target.value)}
       />
-      {operations.isPending ? (
-        <StateBanner kind="loading">Loading mail operations…</StateBanner>
-      ) : null}
-      {operations.isError ? (
-        <StateBanner kind="error">{operations.error.message}</StateBanner>
-      ) : null}
-      {actionError !== null ? <StateBanner kind="error">{actionError}</StateBanner> : null}
+      {operations.isPending ? <LoadingState label="Loading mail operations…" /> : null}
+      {operations.isError ? <ErrorNotice>{operations.error.message}</ErrorNotice> : null}
+      {actionError !== null ? <ErrorNotice>{actionError}</ErrorNotice> : null}
 
       {operations.data === undefined ? null : (
         <JournalSettings
@@ -1222,14 +1154,15 @@ function MailOperations() {
                 {message.lastError ?? "No diagnostic"} · {String(message.attemptCount)} attempts
               </div>
             </div>
-            <button
+            <Button
               type="button"
-              className="btn sm"
+              variant="outline"
+              size="sm"
               disabled={reason.trim() === "" || replay.isPending}
               onClick={() => replay.mutate(message.id)}
             >
               Replay
-            </button>
+            </Button>
           </div>
         ))}
       </section>
@@ -1240,7 +1173,7 @@ function MailOperations() {
         {operations.data?.events.map((event) => (
           <div key={event.id} className="[padding:8px_0] [border-top:1px_solid_var(--border)]">
             <strong>{event.kind}</strong> · {event.recipient} ·{" "}
-            {new Date(event.occurredAt).toLocaleString()}
+            <RelativeTime value={event.occurredAt} />
             {event.diagnostic === null ? null : (
               <div className="text-muted-foreground">{event.diagnostic}</div>
             )}
@@ -1261,18 +1194,19 @@ function MailOperations() {
             <div className="flex-1">
               <strong>{suppression.address}</strong> · {suppression.reason}
             </div>
-            <button
+            <Button
               type="button"
-              className="btn sm"
+              variant="outline"
+              size="sm"
               disabled={reason.trim() === "" || remove.isPending}
               onClick={() => remove.mutate(suppression.id)}
             >
               Remove
-            </button>
+            </Button>
           </div>
         ))}
       </section>
-    </PageScroll>
+    </>
   );
 }
 
@@ -1281,6 +1215,7 @@ function MailOperations() {
 /* ================================================================== */
 
 const MAIL_SUBVIEW_CONTENT: Record<MailSubviewId, () => ReactNode> = {
+  general: MailGeneral,
   providers: MailProviders,
   domains: MailDomains,
   deliverability: Deliverability,
@@ -1297,88 +1232,40 @@ export function MailAdminSection() {
     DEFAULT_MAIL_SUBVIEW,
     "mail",
   );
-  const tabRefs = useRef<Partial<Record<MailSubviewId, HTMLButtonElement | null>>>({});
   const Subview = MAIL_SUBVIEW_CONTENT[subview];
 
-  /* Arrow keys move between tabs and only the selected tab sits in the tab
-     order — the ARIA tabs pattern. Five plain buttons would otherwise cost a
-     keyboard user five stops before reaching the panel. */
-  const moveSelection = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const last = MAIL_SUBVIEWS.length - 1;
-    const current = MAIL_SUBVIEWS.findIndex((view) => view.id === subview);
-    let nextIndex: number;
-    switch (event.key) {
-      case "ArrowRight":
-        nextIndex = (current + 1) % MAIL_SUBVIEWS.length;
-        break;
-      case "ArrowLeft":
-        nextIndex = (current + last) % MAIL_SUBVIEWS.length;
-        break;
-      case "Home":
-        nextIndex = 0;
-        break;
-      case "End":
-        nextIndex = last;
-        break;
-      default:
-        return;
-    }
-    const next = MAIL_SUBVIEWS[nextIndex];
-    if (next === undefined) {
-      return;
-    }
-    event.preventDefault();
-    selectSubview(next.id);
-    tabRefs.current[next.id]?.focus();
-  };
-
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
+    <>
       <PageHeading
         title="Mail"
-        subtitle="Outbound delivery, mail domains, deliverability, routing, and spam filtering."
+        subtitle="Sending, receiving, domains, routing, and spam protection for your organization."
       />
-
-      {/* The console's only second-level nav: sibling views of one section,
-          which is what a tab bar is for. The buttons wear the app-wide `.tab`
-          look; the bar itself is built here rather than with `.tabs` because
-          that class carries a 12px inset that would knock the tabs out of line
-          with the heading above them. */}
-      <div
-        role="tablist"
-        aria-label="Mail admin views"
-        className="mb-5 flex gap-0.5 overflow-x-auto border-b border-[var(--border)]"
-        onKeyDown={moveSelection}
+      <AdminTabs
+        label="Mail settings"
+        idPrefix="mail"
+        tabs={MAIL_SUBVIEWS}
+        selected={subview}
+        onSelect={selectSubview}
       >
-        {MAIL_SUBVIEWS.map((view) => {
-          const active = view.id === subview;
-          return (
-            <button
-              key={view.id}
-              id={tabDomId(view.id)}
-              ref={(node) => {
-                tabRefs.current[view.id] = node;
-              }}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              aria-controls={panelDomId(view.id)}
-              tabIndex={active ? 0 : -1}
-              /* Roving tabindex moves focus programmatically, so the focused
-                 tab has to be visible even though `.tab` styles only hover and
-                 selection. */
-              className={`tab shrink-0 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)] ${active ? "active" : ""}`.trim()}
-              onClick={() => selectSubview(view.id)}
-            >
-              {view.label}
-            </button>
-          );
-        })}
-      </div>
-
-      <div id={panelDomId(subview)} role="tabpanel" aria-labelledby={tabDomId(subview)}>
         <Subview />
-      </div>
+      </AdminTabs>
+    </>
+  );
+}
+
+const MAIL_FLAGS = [
+  {
+    key: "mail_outbound",
+    label: "Send mail outside the organization",
+    description: "When off, people can only send to addresses in your organization's domains.",
+  },
+] as const;
+
+function MailGeneral() {
+  return (
+    <div className="admin-stack">
+      <AppStatusPanel appId="mail" />
+      <WorkspaceFlagsPanel title="Sending" flags={MAIL_FLAGS} />
     </div>
   );
 }

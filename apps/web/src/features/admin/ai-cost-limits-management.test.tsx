@@ -125,14 +125,14 @@ describe("AICostLimitsManagement", () => {
     });
     // h1 from PageHeading, then two sibling h2 panels — no skipped levels.
     expect(headingOutline()).toEqual([
-      "H1:Cost limits",
+      "H1:AI costs",
       "H2:Set a per-user override",
       "H2:Active overrides",
     ]);
     // A null tier budget is "no cap", not "tier default" — the tier row cannot
     // inherit from itself.
     expect(container.querySelector(".admin-page-subtitle")?.textContent).toContain(
-      "business tier default (actor $10.00, feature no cap)",
+      "business tier default: $10.00 per person, Unlimited per feature.",
     );
     expect(container.textContent).toContain("$25.00");
     // Save owns the only filled button; the row action stays outlined.
@@ -172,7 +172,7 @@ describe("AICostLimitsManagement", () => {
     await waitFor(() => {
       expect(container.textContent ?? "").toContain("No per-user overrides");
     });
-    expect(container.querySelector(".admin-empty")).not.toBeNull();
+    expect(container.querySelector('[data-slot="empty-state"]')).not.toBeNull();
     expect(container.textContent).toContain("business tier default");
     // An all-header table says nothing; the empty state replaces it entirely.
     expect(container.querySelector('[role="table"]')).toBeNull();
@@ -197,9 +197,11 @@ describe("AICostLimitsManagement", () => {
         "Cost limits are unavailable or admin AI scope is missing.",
       );
     });
-    expect(container.querySelector('[role="alert"]')?.getAttribute("data-kind")).toBe("error");
+    expect(container.querySelector('[role="alert"]')?.getAttribute("data-slot")).toBe(
+      "inline-error",
+    );
     // No override list loaded, so nothing may claim the list is empty.
-    expect(container.querySelector(".admin-empty")).toBeNull();
+    expect(container.querySelector('[data-slot="empty-state"]')).toBeNull();
   });
 
   function headingOutline(): string[] {

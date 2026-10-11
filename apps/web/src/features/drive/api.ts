@@ -136,6 +136,8 @@ export async function uploadDriveFile(
     readonly file: File;
     readonly folderId: string | null;
     readonly signal?: AbortSignal;
+    /** Bytes stored so far; multipart uploads report after each part. */
+    readonly onProgress?: (uploadedBytes: number) => void;
   },
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<DriveUploadResult> {
@@ -171,6 +173,9 @@ export async function uploadDriveFile(
       record.completed,
       (completed) => {
         saveMultipartResume(resumeKey, { ...record, completed });
+        input.onProgress?.(
+          Math.min(input.file.size, completed.length * (prepared.multipart?.partSize ?? 0)),
+        );
       },
       input.signal,
     );
@@ -202,6 +207,7 @@ export async function uploadDriveFile(
     "Direct upload to storage",
     input.signal,
   );
+  input.onProgress?.(input.file.size);
   input.signal?.throwIfAborted();
   await finalizeDriveUpload(
     {
@@ -401,7 +407,7 @@ export async function listDrive(
   } = {},
   fetchImpl: DriveApiFetch = authenticatedFetch,
 ): Promise<DriveEntryPage> {
-  return callDriveTool<DriveEntryPage>(
+  const page = await callDriveTool<Partial<DriveEntryPage>>(
     "drive.list",
     {
       folderId: input.folderId ?? null,
@@ -414,6 +420,7 @@ export async function listDrive(
     },
     fetchImpl,
   );
+  return { entries: page.entries ?? [], nextCursor: page.nextCursor ?? null };
 }
 export async function searchDrive(
   input: {
@@ -491,13 +498,16 @@ export async function transitionDriveWorkflow(
     fetchImpl,
   );
 }
-export async function getDriveQuotaUsage(fetchImpl: DriveApiFetch = authenticatedFetch): Promise<{
+/** The viewer's own usage; the organization limit and pooled usage only when a limit is set. */
+export interface DriveStorageUsage {
   readonly usedBytes: number;
   readonly limitBytes: number | null;
-  readonly unlimited: boolean;
-  readonly percentUsed: number | null;
-}> {
-  return callDriveTool("drive.quota.usage", {}, fetchImpl);
+  readonly organizationUsedBytes: number | null;
+}
+export async function getDriveStorageUsage(
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<DriveStorageUsage> {
+  return callDriveTool<DriveStorageUsage>("drive.storage.usage", {}, fetchImpl);
 }
 export async function listDriveAccess(
   objectId: string,
@@ -542,6 +552,17 @@ export async function moveDriveObject(
 ): Promise<DriveApiEntry | null> {
   return callDriveTool<DriveApiEntry | null>("drive.move", { objectId, folderId }, fetchImpl);
 }
+export async function moveDriveFolder(
+  folderId: string,
+  parentFolderId: string | null,
+  fetchImpl: DriveApiFetch = authenticatedFetch,
+): Promise<DriveApiEntry | null> {
+  return callDriveTool<DriveApiEntry | null>(
+    "drive.folder.move",
+    { folderId, parentFolderId },
+    fetchImpl,
+  );
+}
 export async function setDriveObjectStarred(
   objectId: string,
   starred: boolean,
@@ -572,20 +593,7 @@ function parseDriveDocumentSurfaceView(value: unknown): DriveDocumentSurfaceView
   }
   return value;
 }
-export interface DriveDownloadResult {
-  readonly url: string;
-  readonly name: string;
-  readonly mimeType: string;
-}
-export function driveDownloadResult(entry: DriveApiEntry): DriveDownloadResult {
-  return {
-    url: driveRawDownloadUrl(entry),
-    name: entry.name,
-    mimeType: entry.mimeType ?? "application/octet-stream",
-  };
-}
-
-export function driveRawDownloadUrl(entry: DriveApiEntry): string {
+export function driveRawDownloadUrl(entry: { readonly id: string }): string {
   return `/v1/api/drive/objects/${encodeURIComponent(entry.id)}/content?download=1`;
 }
 export async function trashDriveObject(
@@ -601,13 +609,12 @@ export async function restoreDriveObject(
 ): Promise<DriveApiEntry | null> {
   return callDriveTool<DriveApiEntry | null>("drive.restore", { objectId, folderId }, fetchImpl);
 }
-export type DriveCreateKind = "folder";
+type DriveCreateKind = "folder";
 export interface DriveCreateInput {
   readonly kind: DriveCreateKind;
   readonly name: string;
   readonly folderId: string | null;
 }
-/** Result for doc/sheet/deck kinds — `{ id, app }`. Folder returns a DriveApiEntry. */
 export interface DriveCreateResult {
   readonly id: string;
 }
@@ -696,6 +703,15 @@ export async function revokeDriveShareLink(
 }> {
   return callDriveTool("drive.link.revoke", { linkId }, fetchImpl);
 }
+/** In-app link to a file or folder for people who already have access. */
+export function driveItemUrl(
+  item: { readonly id: string; readonly kind: "file" | "folder" },
+  origin: string = "location" in globalThis ? globalThis.location.origin : "",
+): string {
+  const base = origin.replace(/\/$/u, "");
+  const param = item.kind === "folder" ? "folder" : "file";
+  return `${base}/drive?${param}=${encodeURIComponent(item.id)}`;
+}
 /** Public unauthenticated URL for a share-link token. */
 export function drivePublicShareUrl(
   token: string,
@@ -768,11 +784,9 @@ function errorMessageFromOutput(output: unknown): string | undefined {
   if (!isRecord(output)) {
     return undefined;
   }
-  // Legacy `{ error: string }` payloads.
   if (typeof output.error === "string") {
     return output.error;
   }
-  // Standard Helix error envelope: `{ error: { code, message, traceId } }`.
   if (isRecord(output.error) && typeof output.error.message === "string") {
     return output.error.message;
   }

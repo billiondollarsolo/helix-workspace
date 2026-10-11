@@ -2,6 +2,7 @@ import fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { actorFromRequest } from "../../api/test-actor.js";
 import {
+  auditOutcome,
   canReadAuditLog,
   decodeAuditLogCursor,
   encodeAuditLogCursor,
@@ -60,8 +61,14 @@ describe("admin audit log routes", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({
       records: [
-        auditRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"),
-        auditRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"),
+        {
+          ...auditRecord("55555555-5555-4555-8555-555555555555", "2026-05-20T12:05:00.000Z"),
+          outcome: "success",
+        },
+        {
+          ...auditRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"),
+          outcome: "success",
+        },
       ],
       nextCursor: encodeAuditLogCursor(
         auditRecord("44444444-4444-4444-8444-444444444444", "2026-05-20T12:04:00.000Z"),
@@ -77,6 +84,57 @@ describe("admin audit log routes", () => {
       verb: "tool.invoked",
     });
     expect(store.calls[0]?.cursor).toEqual(decodeAuditLogCursor(cursor));
+  });
+
+  it("passes date range and outcome filters to the store", async () => {
+    const store = new FakeAuditLogStore([]);
+    const app = fastify();
+    await registerAuditLogAdminRoutes(app, { store, actorFromRequest });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/admin/audit-log?since=2026-05-01T00:00:00.000Z&until=2026-05-21T00:00:00.000Z&outcome=denied",
+      headers: {
+        "x-helix-actor-id": actorId,
+        "x-helix-org-id": orgId,
+        "x-helix-scopes": "admin.audit",
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(store.calls[0]).toMatchObject({
+      since: new Date("2026-05-01T00:00:00.000Z"),
+      until: new Date("2026-05-21T00:00:00.000Z"),
+      outcome: "denied",
+    });
+  });
+
+  it("rejects an unknown outcome", async () => {
+    const store = new FakeAuditLogStore([]);
+    const app = fastify();
+    await registerAuditLogAdminRoutes(app, { store, actorFromRequest });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/admin/audit-log?outcome=maybe",
+      headers: {
+        "x-helix-actor-id": actorId,
+        "x-helix-org-id": orgId,
+        "x-helix-scopes": "admin.audit",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(store.calls).toHaveLength(0);
+  });
+
+  it("reads the outcome from the verb", () => {
+    expect(auditOutcome("tool.invocation.denied")).toBe("denied");
+    expect(auditOutcome("oauth.authorization.rejected")).toBe("denied");
+    expect(auditOutcome("drive.upload.prepare_failed")).toBe("failure");
+    expect(auditOutcome("scim.auth.failed")).toBe("failure");
+    expect(auditOutcome("tool.invocation.executed")).toBe("success");
+    expect(auditOutcome("admin.domain.verification_lookup_failed")).toBe("failure");
   });
 
   it("requires admin audit scope", async () => {

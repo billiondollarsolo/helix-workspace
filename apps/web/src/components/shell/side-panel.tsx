@@ -5,11 +5,11 @@ import {
   ChevronRight as ChevronRightIcon,
   Grid2X2 as GridIcon,
   Plus as PlusIcon,
-  Sparkles as SparklesIcon,
   X as XIcon,
 } from "lucide-react";
 /* Right side panel — the 44px tool rail + 320px mini panels. */
 import { ContactsPanel } from "@/components/people/contacts-panel";
+import { AssistantSidePanel } from "@/features/assistant/assistant-side-panel";
 import { useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 export type SideTool = "calendar" | "contacts" | "ai";
@@ -125,44 +125,6 @@ function MiniCalendar() {
     </div>
   );
 }
-/* ---------- Mini Helix AI ---------- */
-function MiniAI() {
-  const navigate = useNavigate();
-  const suggestions = [
-    "Summarize my unread inbox",
-    "Draft replies to flagged threads",
-    "What did I miss while away?",
-    "Find time on my calendar this week",
-  ];
-  return (
-    <div className="flex flex-col h-full">
-      <div className="p-3.5 [border-bottom:1px_solid_var(--border)]">
-        <div className="flex items-center gap-2 text-primary font-semibold type-body-sm mb-1">
-          <SparklesIcon size={16} />
-          Helix AI
-        </div>
-        <div className="type-caption text-muted-foreground">
-          Your assistant for mail, files, and the rest of the workspace.
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto p-3">
-        <div className="type-chip text-muted-foreground font-semibold uppercase [letter-spacing:.06em] mb-2">
-          Suggested
-        </div>
-        {suggestions.map((suggestion) => (
-          <button
-            key={suggestion}
-            type="button"
-            onClick={() => void navigate({ to: "/assistant" })}
-            className="w-full text-left [padding:8px_10px] mb-1 bg-muted [border:1px_solid_var(--border)] rounded-md type-meta text-foreground"
-          >
-            {suggestion}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 interface MiniView {
   title: string;
   icon: IconName;
@@ -177,7 +139,12 @@ const MINI_VIEWS: Record<SideTool, MiniView> = {
     fullRoute: "/calendar",
   },
   contacts: { title: "Contacts", icon: "Users", Component: ContactsPanel },
-  ai: { title: "Helix AI", icon: "Sparkles", Component: MiniAI, fullRoute: "/assistant" },
+  ai: {
+    title: "Helix AI",
+    icon: "Sparkles",
+    Component: AssistantSidePanel,
+    fullRoute: "/assistant",
+  },
 };
 /* ---------- Rail + Panel ---------- */
 export interface SidePanelRailProps {

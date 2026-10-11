@@ -17,18 +17,19 @@ export const Route = createFileRoute("/_shell/drive/")({
     q: search.q?.trim() ?? "",
     scope: search.scope ?? "my",
   }),
+  // Start the listing early but render at once: Drive shows its own skeleton.
   loader: async ({ context, deps }) => {
-    const { driveItemsQueryOptions } = await import("@/features/drive/queries");
-    await context.queryClient
-      .ensureQueryData(
-        driveItemsQueryOptions({
-          folderId: deps.folder,
-          limit: deps.q.length > 0 ? 50 : 100,
-          query: deps.q,
-          scope: deps.scope,
-        }),
-      )
-      .catch(() => undefined);
+    const { driveFetchLimit, driveItemsQueryOptions, driveListLimits } =
+      await import("@/features/drive/queries");
+    const limits = driveListLimits(deps.scope, deps.q.length > 0);
+    void context.queryClient.prefetchQuery(
+      driveItemsQueryOptions({
+        folderId: deps.folder,
+        limit: driveFetchLimit(Math.min(limits.base, limits.max), limits.max),
+        query: deps.q,
+        scope: deps.scope,
+      }),
+    );
   },
 });
 

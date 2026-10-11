@@ -34,9 +34,6 @@ export interface AdminSectionLoader {
   readonly load: () => Promise<Record<string, unknown>>;
   /** Named export that renders the section. Checked at load time. */
   readonly exportName: string;
-  /** Wrap in the standard `PageScroll` container — for sections that render
-   *  their own padding but no outer scroll. */
-  readonly scroll?: boolean;
   /** Name of the module's exported `prefetchAdmin*Query` helper, when it has
    *  one. Sections without one still get their chunk preloaded. */
   readonly prefetch?: string;
@@ -58,7 +55,6 @@ export const ADMIN_SECTION_LOADERS: Record<AdminSectionId, AdminSectionLoader> =
   "workspace-settings": {
     load: () => import("@/features/admin/tenant-config-management"),
     exportName: "TenantConfigManagement",
-    scroll: true,
     prefetch: "prefetchAdminTenantConfigQuery",
   },
   users: {
@@ -78,25 +74,21 @@ export const ADMIN_SECTION_LOADERS: Record<AdminSectionId, AdminSectionLoader> =
   identity: {
     load: () => import("@/features/admin/identity-management"),
     exportName: "IdentityManagement",
-    scroll: true,
     prefetch: "prefetchAdminIdentityQuery",
   },
   "tier-readiness": {
     load: () => import("@/features/admin/security-tier-readiness"),
     exportName: "SecurityTierReadiness",
-    scroll: true,
     prefetch: "prefetchAdminReadinessQueries",
   },
   audit: {
     load: () => import("@/features/admin/audit-log"),
     exportName: "AuditLogList",
-    scroll: true,
     prefetch: "prefetchAdminAuditLogQuery",
   },
   "workspace-apps": {
     load: () => import("@/features/admin/core-apps-management"),
     exportName: "CoreAppsManagement",
-    scroll: true,
     prefetch: "prefetchAdminCoreAppsQuery",
   },
   mail: {
@@ -106,12 +98,25 @@ export const ADMIN_SECTION_LOADERS: Record<AdminSectionId, AdminSectionLoader> =
   chat: {
     load: () => import("@/features/admin/chat-admin"),
     exportName: "ChatAdminSection",
-    scroll: true,
   },
   drive: {
     load: () => import("@/features/admin/drive-admin"),
     exportName: "DriveAdminSection",
-    scroll: true,
+  },
+  calendar: {
+    load: () => import("@/features/admin/sections/calendar"),
+    exportName: "CalendarAdminSection",
+    prefetch: "prefetchAdminAppSettingsQueries",
+  },
+  meet: {
+    load: () => import("@/features/admin/sections/meet"),
+    exportName: "MeetAdminSection",
+    prefetch: "prefetchAdminAppSettingsQueries",
+  },
+  assistant: {
+    load: () => import("@/features/admin/sections/assistant"),
+    exportName: "AssistantAdminSection",
+    prefetch: "prefetchAdminAppSettingsQueries",
   },
   "oauth-apps": {
     load: () => import("@/features/admin/sections/oauth-apps"),
@@ -120,49 +125,32 @@ export const ADMIN_SECTION_LOADERS: Record<AdminSectionId, AdminSectionLoader> =
   "app-passwords": {
     load: () => import("@/features/admin/app-passwords-management"),
     exportName: "AppPasswordsManagement",
-    scroll: true,
   },
   "agent-credentials": {
     load: () => import("@/features/admin/agent-credentials-management"),
     exportName: "AgentCredentialsManagement",
-    scroll: true,
   },
   "agent-controls": {
     load: () => import("@/features/admin/agent-controls"),
     exportName: "AgentControlsManagement",
-    scroll: true,
   },
   webhooks: {
     load: () => import("@/features/webhooks/webhook-management"),
     exportName: "WebhookManagement",
-    scroll: true,
-  },
-  "ai-providers": {
-    load: () => import("@/features/admin/ai-providers-management"),
-    exportName: "AIProvidersManagement",
-    scroll: true,
-  },
-  "ai-retrieval": {
-    load: () => import("@/features/admin/ai-retrieval-management"),
-    exportName: "AIRetrievalManagement",
-    scroll: true,
   },
   "ai-costs": {
     load: () => import("@/features/admin/ai-cost-limits-management"),
     exportName: "AICostLimitsManagement",
-    scroll: true,
     prefetch: "prefetchAdminAICostLimitsQuery",
   },
   "ai-observability": {
     load: () => import("@/features/admin/ai-observability"),
     exportName: "AIObservabilityDashboard",
-    scroll: true,
     prefetch: "prefetchAdminAIObservabilityQuery",
   },
   services: {
     load: () => import("@/features/admin/admin-services"),
     exportName: "AdminServicesOverview",
-    scroll: true,
     prefetch: "prefetchAdminServicesQuery",
   },
 };

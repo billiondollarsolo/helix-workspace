@@ -8,6 +8,7 @@
  * blast radius has to describe this domain — its real DNS record count, and a
  * mail consequence only where mail is actually flowing. */
 
+import { key } from "@/test/ui";
 import { withAdminRouter } from "@/features/admin/console/test-router";
 
 import { act, createElement, type ReactNode } from "react";
@@ -184,6 +185,29 @@ describe("AdminDomain — deleting a domain", () => {
     return match;
   }
 
+  async function openRowMenu(domain: string): Promise<HTMLElement[]> {
+    const trigger = labelled(`Actions for ${domain}`);
+    trigger.focus();
+    await key("Enter", {}, trigger);
+    return [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  }
+
+  async function selectMenuItem(label: string): Promise<void> {
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (element) => element.textContent?.trim() === label,
+    );
+    if (!item) {
+      throw new Error(`Menu item "${label}" not found`);
+    }
+    item.focus();
+    await key("Enter", {}, item);
+  }
+
+  async function releaseFromMenu(domain: string): Promise<void> {
+    await openRowMenu(domain);
+    await selectMenuItem("Release domain");
+  }
+
   function click(element: HTMLElement): Promise<void> {
     return act(() => {
       element.click();
@@ -233,13 +257,16 @@ describe("AdminDomain — deleting a domain", () => {
   it("does not delete on the first click, and the control says what it does", async () => {
     await renderWith([{ domain: apiDomain(), dnsRecords: [apiDnsRecord("rec-1")] }]);
 
-    const remove = labelled("Release helix.io");
-    // Was a bare trash glyph styled identically to "Make primary".
-    expect(remove.textContent).toContain("Release");
-    expect(remove.dataset.variant).toBe("destructive");
-    expect(labelled("Make helix.io primary").dataset.variant).toBe("outline");
+    // No red button on every row: the domain's actions sit in its ⋮ menu.
+    expect(container.querySelector('[data-variant="destructive"]')).toBeNull();
+    const items = await openRowMenu("helix.io");
+    expect(items.map((item) => item.textContent?.trim())).toEqual([
+      "Make primary",
+      "Release domain",
+    ]);
+    expect(items[1]?.getAttribute("data-variant")).toBe("destructive");
 
-    await click(remove);
+    await selectMenuItem("Release domain");
 
     expect(deleteCalls()).toEqual([]);
     expect(dialogText()).toContain("Release domain");
@@ -249,7 +276,7 @@ describe("AdminDomain — deleting a domain", () => {
   it("holds the confirm button until the operator types the hostname", async () => {
     await renderWith([{ domain: apiDomain(), dnsRecords: [] }]);
 
-    await click(labelled("Release helix.io"));
+    await releaseFromMenu("helix.io");
     expect(dialogButton("action").disabled).toBe(true);
 
     await typePhrase("helix.i");
@@ -279,7 +306,7 @@ describe("AdminDomain — deleting a domain", () => {
       },
     ]);
 
-    await click(labelled("Release helix.io"));
+    await releaseFromMenu("helix.io");
 
     expect(dialogText()).toContain("quarantine period");
     expect(dialogText()).toContain("Existing data is retained");
@@ -288,7 +315,7 @@ describe("AdminDomain — deleting a domain", () => {
   it("retains data even when there are no configured DNS records", async () => {
     await renderWith([{ domain: apiDomain(), dnsRecords: [] }]);
 
-    await click(labelled("Release helix.io"));
+    await releaseFromMenu("helix.io");
 
     expect(dialogText()).toContain("Existing data is retained");
   });
@@ -296,7 +323,7 @@ describe("AdminDomain — deleting a domain", () => {
   it("claims mail stops only for a verified domain", async () => {
     await renderWith([{ domain: apiDomain(), dnsRecords: [] }]);
 
-    await click(labelled("Release helix.io"));
+    await releaseFromMenu("helix.io");
 
     expect(dialogText()).toContain("Mail delivery stops for every address at helix.io");
   });
@@ -309,7 +336,7 @@ describe("AdminDomain — deleting a domain", () => {
       },
     ]);
 
-    await click(labelled("Release helix.io"));
+    await releaseFromMenu("helix.io");
 
     // The signature bug this guards: asserting a consequence the workspace is
     // not actually exposed to, because the copy ignored the real status.
@@ -319,7 +346,7 @@ describe("AdminDomain — deleting a domain", () => {
 
   it("does not claim delivery stops when verified domain mail is disabled", async () => {
     await renderWith([{ domain: apiDomain({ mailEnabled: false }), dnsRecords: [] }]);
-    await click(labelled("Release helix.io"));
+    await releaseFromMenu("helix.io");
     expect(dialogText()).toContain("Mail is disabled for helix.io");
     expect(dialogText()).not.toContain("Mail delivery stops");
   });
@@ -327,7 +354,7 @@ describe("AdminDomain — deleting a domain", () => {
   it("surfaces that the target is the primary domain", async () => {
     await renderWith([{ domain: apiDomain({ isPrimary: true }), dnsRecords: [] }]);
 
-    await click(labelled("Release helix.io"));
+    await releaseFromMenu("helix.io");
 
     expect(dialogText()).toContain("This is the workspace's primary domain");
   });
@@ -375,7 +402,7 @@ describe("AdminDomain — deleting a domain", () => {
   it("cancelling leaves the domain in place", async () => {
     await renderWith([{ domain: apiDomain(), dnsRecords: [] }]);
 
-    await click(labelled("Release helix.io"));
+    await releaseFromMenu("helix.io");
     await click(dialogButton("cancel"));
 
     await waitFor(() => {

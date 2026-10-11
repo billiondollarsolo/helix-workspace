@@ -160,6 +160,8 @@ button, so in-row controls (star, hover actions) are not nested interactives.
 Keys: j/k and arrows move (Shift extends), Home/End, x or Space toggles,
 Enter or o opens, Ctrl/Cmd+A selects all, Escape clears. Shift-click selects
 a range; Ctrl/Cmd-click toggles. Pair with `SelectAllCheckbox` (tri-state).
+File lists pass `selectOnClick`: a click selects just that row and a double-click opens it.
+Each row carries `data-key`, for context menus and drop targets.
 
 ## Tokens and lint
 

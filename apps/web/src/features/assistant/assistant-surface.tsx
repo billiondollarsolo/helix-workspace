@@ -1,22 +1,13 @@
 import { AssistantComposer } from "./assistant-composer";
 import { AssistantConversation } from "./assistant-conversation";
-import { cn } from "@/lib/utils";
-import { iconMap as Icons } from "@/components/icon-map";
-import {
-  Pencil as EditPenIcon,
-  History as HistoryIcon,
-  Ellipsis as MoreIcon,
-  EllipsisVertical as MoreVIcon,
-  Pin as PinIcon,
-  Plus as PlusIcon,
-  Search as SearchIcon,
-  Sparkles as SparklesIcon,
-  Trash2 as TrashIcon,
-} from "lucide-react";
+import { Sparkles as SparklesIcon, X as CloseIcon } from "lucide-react";
 /* Assistant conversations and actions use the backend tools. Replies stream
-   through streamAssistantChat; selecting a thread continues that conversation. */
+   through streamAssistantChat; selecting a thread continues that conversation.
+   `/assistant?prompt=…` (the side panel's suggestions) starts a new chat. */
 import { SurfaceFrame } from "@/components/shell";
 import { Dialog } from "@/components/ui/helix-dialog";
+import { InlineError } from "@/components/ui/inline-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   deleteAssistantConversation,
   isAssistantBackendConversationId,
@@ -26,11 +17,9 @@ import {
   streamAssistantChat,
   type AssistantConversationListItem,
   type AssistantAttachment,
-  type AssistantTurnResponseWithPendingConfirmations,
 } from "@/features/assistant/api";
 import {
   ASSISTANT_ERROR_FALLBACK,
-  ASSISTANT_QUICK_PROMPTS,
   assistantNowTime,
   type AssistantChatMessage,
   type AssistantThread,
@@ -48,46 +37,27 @@ import {
 import { applyAssistantToolDecision } from "@/features/assistant/tool-decisions";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { bucketThreadsByDate, type ThreadSidebarItem } from "./date-buckets";
+import { AssistantHero } from "./assistant-hero";
+import { AssistantThreadList } from "./assistant-thread-list";
+import { AssistantRequestError } from "./tool-limit";
+import { hydrateConversation, withTurnSources } from "./conversation-history";
 import { sessionUserQueryOptions } from "@/lib/auth";
 function toThread(item: AssistantConversationListItem): AssistantThread {
   const updatedAtMs = Date.parse(item.updatedAt);
   return {
     id: item.id,
     title: item.title ?? "Untitled chat",
-    time: relativeTime(item.updatedAt),
     updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : 0,
     ...(item.pinned ? { pinned: true } : {}),
   };
-}
-/** Renders an ISO timestamp as a coarse "10m ago" style label. */
-function relativeTime(iso: string): string {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) {
-    return "";
-  }
-  const diffMs = Date.now() - then;
-  const minutes = Math.round(diffMs / 60000);
-  if (minutes < 1) {
-    return "just now";
-  }
-  if (minutes < 60) {
-    return `${String(minutes)}m ago`;
-  }
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) {
-    return `${String(hours)}h ago`;
-  }
-  const days = Math.round(hours / 24);
-  return days === 1 ? "Yesterday" : `${String(days)} days ago`;
 }
 /* ---------------------------------------------------------------- shell -- */
 export function AssistantSurface() {
   const navigate = useNavigate();
   const urlSearch: {
     readonly conversation?: string;
+    readonly prompt?: string;
   } = useSearch({ strict: false });
   const queryClient = useQueryClient();
   const userName = useQuery(sessionUserQueryOptions()).data?.name.trim() ?? "";
@@ -287,7 +257,7 @@ export function AssistantSurface() {
           // is how a continued conversation keeps every prior message.
           const hydrated = hydrateConversation(turn);
           if (hydrated !== null) {
-            setConversation(hydrated);
+            setConversation(withTurnSources(hydrated, turn.sources));
           } else {
             patch({
               streaming: false,
@@ -318,6 +288,9 @@ export function AssistantSurface() {
                 : cause instanceof Error
                   ? cause.message
                   : ASSISTANT_ERROR_FALLBACK,
+              ...(cause instanceof AssistantRequestError && cause.toolLimit !== undefined
+                ? { toolLimit: cause.toolLimit }
+                : {}),
             });
           return false;
         })
@@ -436,6 +409,39 @@ export function AssistantSurface() {
     conversationIdRef.current = undefined;
     pushConversationUrl(null);
   }, [pushConversationUrl]);
+  // The side panel hands a prompt over in the URL; send it once as a new chat.
+  const handedPrompt = urlSearch.prompt;
+  const handledPrompt = useRef<string | null>(null);
+  useEffect(() => {
+    if (handedPrompt === undefined || handledPrompt.current === handedPrompt) return;
+    handledPrompt.current = handedPrompt;
+    void navigate({ to: "/assistant", search: {}, replace: true });
+    void send(handedPrompt);
+  }, [handedPrompt, navigate, send]);
+  /** The user message an answer replies to. */
+  const promptFor = useCallback(
+    (answer: AssistantChatMessage) => {
+      const index = conversation.findIndex((message) => message.id === answer.id);
+      return conversation
+        .slice(0, Math.max(0, index))
+        .reverse()
+        .find((message) => message.role === "user");
+    },
+    [conversation],
+  );
+  const resend = useCallback(
+    (message: AssistantChatMessage, groups = message.toolGroups) => {
+      void send(
+        message.text,
+        message.attachments ?? [],
+        modelId,
+        message.webSearch ?? false,
+        groups,
+        message,
+      );
+    },
+    [send, modelId],
+  );
   const navigateToSurface = useCallback(
     (target: string) => {
       void navigate({ to: `/${target}` });
@@ -506,7 +512,7 @@ export function AssistantSurface() {
     [pinMutation],
   );
   const composerProps = {
-    initialToolGroups: toolGroups,
+    toolGroups,
     onToolGroupsChange: setToolGroups,
     pending,
     disabled:
@@ -522,14 +528,17 @@ export function AssistantSurface() {
       title="Helix AI"
       icon={<SparklesIcon size={16} />}
       searchPlaceholder="Search chats"
+      searchValue={search}
+      onSearchChange={setSearch}
     >
       <AssistantThreadList
         threadId={threadId}
         threads={threads}
         loading={conversationsQuery.isLoading}
         errored={conversationsQuery.isError}
+        retrying={conversationsQuery.isFetching}
+        onRetry={invalidateConversations}
         search={search}
-        onSearchChange={setSearch}
         onSelect={openThread}
         onNewChat={startNewChat}
         onTogglePin={togglePin}
@@ -555,30 +564,31 @@ export function AssistantSurface() {
                 setNotice(null);
               }}
             >
-              <MoreIcon size={16} />
+              <CloseIcon size={16} />
             </button>
           </div>
         )}
         {threadId !== null && !pending && historyQuery.isPending ? (
-          <p role="status" className="p-4">
-            Loading conversation…
-          </p>
+          <Skeleton
+            variant="text"
+            count={6}
+            label="Loading conversation"
+            className="mx-auto w-full max-w-200 px-3 py-6 sm:px-8"
+          />
         ) : null}
         {threadId !== null && historyQuery.isError ? (
-          <p role="alert" className="p-4">
-            Could not load this conversation.{" "}
-            <button
-              className="btn sm"
-              type="button"
-              onClick={() => {
-                void queryClient.invalidateQueries({
-                  queryKey: assistantConversationQueryOptions(threadId).queryKey,
-                });
-              }}
-            >
-              Retry conversation
-            </button>
-          </p>
+          <InlineError
+            className="mx-3 my-4 sm:mx-8"
+            title="Couldn't load this conversation"
+            message="Check your connection and try again."
+            retryLabel="Retry conversation"
+            retrying={historyQuery.isFetching}
+            onRetry={() => {
+              void queryClient.invalidateQueries({
+                queryKey: assistantConversationQueryOptions(threadId).queryKey,
+              });
+            }}
+          />
         ) : null}
         {hasMessages ? (
           <AssistantConversation
@@ -587,15 +597,21 @@ export function AssistantSurface() {
             pending={pending || approvalBusy}
             onNavigate={navigateToSurface}
             onEdit={setEditing}
-            onResend={(message) => {
-              void send(
-                message.text,
-                message.attachments ?? [],
-                modelId,
-                message.webSearch ?? false,
-                message.toolGroups,
-                message,
-              );
+            onResend={resend}
+            onRegenerate={(answer) => {
+              const prompt = promptFor(answer);
+              if (prompt !== undefined) resend(prompt);
+            }}
+            onTurnOffToolGroup={(answer, groupId) => {
+              const prompt = promptFor(answer);
+              if (prompt === undefined) return;
+              const groups = (
+                prompt.toolGroups ??
+                answer.toolLimit?.groups.map((group) => group.id) ??
+                []
+              ).filter((id) => id !== groupId);
+              setToolGroups(groups);
+              resend(prompt, groups);
             }}
           />
         ) : (
@@ -661,390 +677,6 @@ export function AssistantSurface() {
         />
       )}
     </SurfaceFrame>
-  );
-}
-/** Builds a UI conversation from a turn's persisted `messages`, or null. */
-function hydrateConversation(
-  turn: AssistantTurnResponseWithPendingConfirmations,
-): readonly AssistantChatMessage[] | null {
-  const messages = turn.messages;
-  if (messages === undefined || messages.length === 0) {
-    return null;
-  }
-  // Each tool round persists cumulative details; show them once, on the last
-  // assistant message before the next user turn, including pending-only replies.
-  const finalAssistantIds = new Set<string>();
-  let hasLaterAssistant = false;
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message?.role === "user") hasLaterAssistant = false;
-    if (message?.role === "assistant" && !hasLaterAssistant) {
-      finalAssistantIds.add(message.id);
-      hasLaterAssistant = true;
-    }
-  }
-  const visible = messages.filter(
-    (message) =>
-      message.role === "user" ||
-      (message.role === "assistant" &&
-        (message.content.trim().length > 0 ||
-          (finalAssistantIds.has(message.id) &&
-            (message.toolActivity?.length || message.sources?.length)))),
-  );
-  if (visible.length === 0) {
-    return null;
-  }
-  return visible.map((message) => ({
-    id: message.id,
-    role: message.role === "user" ? "user" : "assistant",
-    text: message.content,
-    ...(message.attachments === undefined ? {} : { attachments: message.attachments }),
-    ...(message.sources === undefined || !finalAssistantIds.has(message.id)
-      ? {}
-      : { sources: message.sources }),
-    ...(message.toolActivity === undefined || !finalAssistantIds.has(message.id)
-      ? {}
-      : { toolActivity: message.toolActivity }),
-    ...(message.toolGroups === undefined ? {} : { toolGroups: message.toolGroups }),
-    ...(message.webSearch === undefined ? {} : { webSearch: message.webSearch }),
-    time:
-      message.createdAt === undefined
-        ? assistantNowTime()
-        : assistantNowTime(new Date(message.createdAt)),
-  }));
-}
-/* ----------------------------------------------------------- thread list -- */
-interface AssistantThreadListProps {
-  readonly threadId: string | null;
-  readonly threads: readonly AssistantThread[];
-  readonly loading: boolean;
-  readonly errored: boolean;
-  readonly search: string;
-  readonly onSearchChange: (value: string) => void;
-  readonly onSelect: (id: string) => void;
-  readonly onNewChat: () => void;
-  readonly onTogglePin: (thread: AssistantThread) => void;
-  readonly onRename: (thread: AssistantThread) => void;
-  readonly onDelete: (thread: AssistantThread) => void;
-  readonly onForget: () => void;
-  readonly forgetPending: boolean;
-}
-function AssistantThreadList({
-  threadId,
-  threads,
-  loading,
-  errored,
-  search,
-  onSearchChange,
-  onSelect,
-  onNewChat,
-  onTogglePin,
-  onRename,
-  onDelete,
-  onForget,
-  forgetPending,
-}: AssistantThreadListProps) {
-  const pinned = threads.filter((thread) => thread.pinned === true);
-  const recent = threads.filter((thread) => thread.pinned !== true);
-  return (
-    <aside className="assistant-thread-sidebar w-60 shrink-0 [border-right:1px_solid_var(--border)] bg-card flex flex-col">
-      <div className="[padding:12px_12px_8px]">
-        <button
-          type="button"
-          className="btn primary lg w-full"
-
-          onClick={onNewChat}
-        >
-          <PlusIcon size={16} /> New chat
-        </button>
-      </div>
-      <div className="[padding:0_12px_8px]">
-        <div className="search h-7">
-          <SearchIcon size={16} />
-          <input
-            placeholder="Search chats"
-            aria-label="Search chats"
-            value={search}
-            onChange={(event) => {
-              onSearchChange(event.target.value);
-            }}
-          />
-        </div>
-      </div>
-      <VirtualizedThreadList
-        loading={loading}
-        errored={errored}
-        search={search}
-        threadId={threadId}
-        pinned={pinned}
-        recent={recent}
-        onSelect={onSelect}
-        onTogglePin={onTogglePin}
-        onRename={onRename}
-        onDelete={onDelete}
-      />
-      <div className="[padding:8px_12px] [border-top:1px_solid_var(--border)]">
-        <button
-          type="button"
-          className="btn sm w-full"
-
-          disabled={forgetPending}
-          onClick={onForget}
-        >
-          <HistoryIcon size={16} /> {forgetPending ? "Forgetting…" : "Forget memory"}
-        </button>
-      </div>
-    </aside>
-  );
-}
-interface VirtualizedThreadListProps {
-  readonly loading: boolean;
-  readonly errored: boolean;
-  readonly search: string;
-  readonly threadId: string | null;
-  readonly pinned: readonly AssistantThread[];
-  readonly recent: readonly AssistantThread[];
-  readonly onSelect: (id: string) => void;
-  readonly onTogglePin: (thread: AssistantThread) => void;
-  readonly onRename: (thread: AssistantThread) => void;
-  readonly onDelete: (thread: AssistantThread) => void;
-}
-/** Pinned threads render eagerly; recent threads and date headers share a
- * measured virtual list so long histories and wrapped titles stay bounded. */
-function VirtualizedThreadList({
-  loading,
-  errored,
-  search,
-  threadId,
-  pinned,
-  recent,
-  onSelect,
-  onTogglePin,
-  onRename,
-  onDelete,
-}: VirtualizedThreadListProps) {
-  const sidebarItems = useMemo<readonly ThreadSidebarItem[]>(
-    () => bucketThreadsByDate(recent),
-    [recent],
-  );
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const virtualizer = useVirtualizer({
-    useFlushSync: false,
-    count: sidebarItems.length,
-    getScrollElement: () => scrollRef.current,
-    // Headers ~28px, threads ~52px on average. Estimate roughly; measureElement
-    // refines after first render.
-    estimateSize: (index) => (sidebarItems[index]?.kind === "header" ? 28 : 52),
-    overscan: 6,
-    getItemKey: (index) => {
-      const item = sidebarItems[index];
-      if (item === undefined) return index;
-      return item.kind === "header" ? `h:${item.id}` : `t:${item.thread.id}`;
-    },
-  });
-  if (loading && pinned.length === 0 && recent.length === 0) {
-    return (
-      <div className="flex-1 overflow-y-auto [padding:4px_8px]" data-testid="assistant-thread-list">
-        <div className="[padding:12px_6px] type-meta text-muted-foreground">Loading chats…</div>
-      </div>
-    );
-  }
-  if (errored && pinned.length === 0 && recent.length === 0) {
-    return (
-      <div className="flex-1 overflow-y-auto [padding:4px_8px]" data-testid="assistant-thread-list">
-        <div className="[padding:12px_6px] type-meta text-muted-foreground">
-          Chats unavailable — try again later.
-        </div>
-      </div>
-    );
-  }
-  if (!loading && pinned.length === 0 && recent.length === 0) {
-    return (
-      <div className="flex-1 overflow-y-auto [padding:4px_8px]" data-testid="assistant-thread-list">
-        <div className="[padding:12px_6px] type-meta text-muted-foreground">
-          {search.trim().length > 0
-            ? `No chats match “${search.trim()}”.`
-            : "No chats yet — start a new one."}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div
-      ref={scrollRef}
-      className="flex-1 overflow-y-auto [padding:4px_8px]"
-      data-testid="assistant-thread-list"
-    >
-      {pinned.length > 0 && (
-        <>
-          <div className="section-label [padding:8px_4px_6px]">Pinned</div>
-          {pinned.map((thread) => (
-            <ThreadItem
-              key={thread.id}
-              thread={thread}
-              active={threadId === thread.id}
-              onSelect={onSelect}
-              onTogglePin={onTogglePin}
-              onRename={onRename}
-              onDelete={onDelete}
-            />
-          ))}
-        </>
-      )}
-
-      {sidebarItems.length > 0 && (
-        <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-          {virtualizer.getVirtualItems().map((virtual) => {
-            const item = sidebarItems[virtual.index];
-            if (item === undefined) return null;
-            return (
-              <div
-                key={virtual.key}
-                ref={virtualizer.measureElement}
-                data-index={virtual.index}
-                className="absolute top-0 left-0 w-full has-[[role=menu]]:z-30"
-                style={{ transform: `translateY(${String(virtual.start)}px)` }}
-              >
-                {item.kind === "header" ? (
-                  <div className="section-label [padding:8px_4px_6px]">{item.label}</div>
-                ) : (
-                  <ThreadItem
-                    thread={item.thread}
-                    active={threadId === item.thread.id}
-                    onSelect={onSelect}
-                    onTogglePin={onTogglePin}
-                    onRename={onRename}
-                    onDelete={onDelete}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-interface ThreadItemProps {
-  readonly thread: AssistantThread;
-  readonly active: boolean;
-  readonly onSelect: (id: string) => void;
-  readonly onTogglePin: (thread: AssistantThread) => void;
-  readonly onRename: (thread: AssistantThread) => void;
-  readonly onDelete: (thread: AssistantThread) => void;
-}
-function ThreadItem({
-  thread,
-  active,
-  onSelect,
-  onTogglePin,
-  onRename,
-  onDelete,
-}: ThreadItemProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  useEffect(() => {
-    if (!menuOpen) {
-      return;
-    }
-    const close = () => {
-      setMenuOpen(false);
-    };
-    window.addEventListener("click", close);
-    return () => {
-      window.removeEventListener("click", close);
-    };
-  }, [menuOpen]);
-  return (
-    <div className={cn("relative", menuOpen ? "z-30" : "")}>
-      <button
-        type="button"
-        onClick={() => {
-          onSelect(thread.id);
-        }}
-        aria-current={active ? "true" : undefined}
-        className={cn(
-          "w-full flex flex-col gap-0.5 [padding:8px_32px_8px_10px] rounded-md text-left",
-          active ? "[background:var(--accent-soft)]" : "bg-transparent",
-          active ? "text-primary" : "text-foreground",
-        )}
-        onMouseEnter={(event) => {
-          if (!active) {
-            event.currentTarget.style.background = "var(--hover)";
-          }
-        }}
-        onMouseLeave={(event) => {
-          if (!active) {
-            event.currentTarget.style.background = "transparent";
-          }
-        }}
-      >
-        <span className={cn("truncate", "type-meta", active ? "font-semibold" : "font-medium")}>
-          {thread.pinned === true ? "📌 " : ""}
-          {thread.title}
-        </span>
-        <span className="type-caption text-muted-foreground">{thread.time}</span>
-      </button>
-      <button
-        type="button"
-        className="icon-btn absolute top-1.5 right-1 w-6 h-6"
-        aria-label={`Chat options for ${thread.title}`}
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
-
-        onClick={(event) => {
-          event.stopPropagation();
-          setMenuOpen((open) => !open);
-        }}
-      >
-        <MoreVIcon size={16} />
-      </button>
-      {menuOpen && (
-        <div
-          role="menu"
-          className="absolute top-7 right-1 z-50 min-w-35 rounded-lg border p-1 flex flex-col [background:var(--surface)] [border-color:var(--border)] [box-shadow:var(--shadow-md)]"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md type-meta text-left bg-transparent"
-
-            onClick={(event) => {
-              event.stopPropagation();
-              setMenuOpen(false);
-              onTogglePin(thread);
-            }}
-          >
-            <PinIcon size={16} /> {thread.pinned === true ? "Unpin" : "Pin"}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md type-meta text-left bg-transparent"
-
-            onClick={(event) => {
-              event.stopPropagation();
-              setMenuOpen(false);
-              onRename(thread);
-            }}
-          >
-            <EditPenIcon size={16} /> Rename
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="menu-item flex items-center gap-2 w-full [padding:6px_8px] rounded-md type-meta text-left bg-transparent [color:var(--danger)]"
-
-            onClick={(event) => {
-              event.stopPropagation();
-              setMenuOpen(false);
-              onDelete(thread);
-            }}
-          >
-            <TrashIcon size={16} /> Archive
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 /* ------------------------------------------------------- rename / delete -- */
@@ -1129,67 +761,5 @@ function DeleteDialog({ thread, pending, onCancel, onConfirm }: DeleteDialogProp
         conversation history is retained server-side.
       </p>
     </Dialog>
-  );
-}
-/* ------------------------------------------------------------------ hero -- */
-interface AssistantHeroProps {
-  readonly userName: string;
-  readonly onPrompt: (prompt: string) => void;
-}
-function AssistantHero({ onPrompt, userName }: AssistantHeroProps) {
-  return (
-    <div className="flex-1 overflow-y-auto [padding:48px_32px]">
-      <div className="max-w-180 [margin:0_auto]">
-        <div className="w-14 h-14 [border-radius:14px] [background:linear-gradient(135deg,_var(--accent),_var(--accent-2))] grid [place-items:center] [color:white] mb-5 [box-shadow:var(--shadow-md)]">
-          <SparklesIcon size={28} />
-        </div>
-        <h1 className="type-display font-bold [letter-spacing:-0.02em] [margin:0_0_8px] [line-height:1.1]">
-          What can I help you with
-          {userName && (
-            <>
-              , <span className="text-primary">{userName}</span>
-            </>
-          )}
-          ?
-        </h1>
-        <p className="type-body-lg [color:var(--text-2)] [margin:0_0_32px]">
-          {"Connected to Mail, Drive, and Chat. Ask about your workspace or pick a prompt below."}
-        </p>
-        <div className="grid [grid-template-columns:repeat(2,_1fr)] gap-2.5">
-          {ASSISTANT_QUICK_PROMPTS.map((prompt) => {
-            const PromptIcon = Icons[prompt.icon];
-            return (
-              <button
-                key={prompt.title}
-                type="button"
-                onClick={() => {
-                  onPrompt(prompt.title);
-                }}
-                className="bg-card [border:1px_solid_var(--border)] [border-radius:10px] p-3.5 flex items-center gap-3 text-left [transition:border-color_0.15s]"
-                onMouseEnter={(event) => {
-                  event.currentTarget.style.borderColor = "var(--accent-soft-border)";
-                }}
-                onMouseLeave={(event) => {
-                  event.currentTarget.style.borderColor = "var(--border)";
-                }}
-              >
-                <span
-                  className="w-9 h-9 rounded-lg grid [place-items:center] shrink-0"
-                  style={{ background: `${prompt.color}1f`, color: prompt.color }}
-                >
-                  <PromptIcon size={16} />
-                </span>
-                <span>
-                  <span className="block type-body-sm font-semibold">{prompt.title}</span>
-                  <span className="block type-caption text-muted-foreground mt-0.5">
-                    {prompt.sub}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
   );
 }

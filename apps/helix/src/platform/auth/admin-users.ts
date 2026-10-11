@@ -39,7 +39,7 @@ export interface AdminUserRecord {
   readonly updatedAt: string;
 }
 
-export type AdminUserStatus = "active" | "suspended" | "removed";
+type AdminUserStatus = "active" | "suspended" | "removed";
 
 export interface AdminUserLifecycleResult {
   readonly actorId: string;

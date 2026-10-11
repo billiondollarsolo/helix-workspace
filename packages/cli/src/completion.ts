@@ -386,8 +386,6 @@ const adminActionFlags: Record<string, readonly string[]> = {
   "credentials:revoke": ["--credential-id", "--json"],
   "credentials:rotate": ["--credential-id", "--expires-at", "--certificate-fingerprint", "--json"],
   "users:list": ["--query", "--type", "--include-disabled", "--limit", "--cursor"],
-  "users:suspend": ["--actor-id"],
-  "users:restore": ["--actor-id"],
   "audit:list": ["--actor-id", "--object-id", "--object-type", "--verb", "--limit", "--cursor"],
   "audit-log:list": ["--actor-id", "--object-id", "--object-type", "--verb", "--limit", "--cursor"],
 };

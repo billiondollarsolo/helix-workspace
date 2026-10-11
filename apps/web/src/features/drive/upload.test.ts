@@ -255,11 +255,11 @@ describe("uploadDriveFile", () => {
         }),
       ),
     );
-    const put = vi.fn<StoragePut>(async (request) => {
+    const put = vi.fn<StoragePut>((request) => {
       expect(request.signal).toBe(controller.signal);
       controller.abort();
       request.signal?.throwIfAborted();
-      return { status: 200, etag: null };
+      return Promise.resolve({ status: 200, etag: null });
     });
 
     await expect(

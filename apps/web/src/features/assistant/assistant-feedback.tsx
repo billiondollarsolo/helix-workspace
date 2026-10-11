@@ -27,6 +27,12 @@ export function AssistantFeedbackButtons({
   const mutation = useMutation({
     mutationFn: (input: { readonly rating: Rating | null; readonly comment?: string }) =>
       setAssistantMessageFeedback({ conversationId, messageId, ...input }),
+    // Show the new rating at once; put the previous one back if saving fails.
+    onMutate: (input) => {
+      const previous = rating;
+      setRating(input.rating);
+      return { previous };
+    },
     onSuccess: (result, input) => {
       setRating(result.feedback?.rating ?? null);
       if (input.comment !== undefined) {
@@ -34,14 +40,14 @@ export function AssistantFeedbackButtons({
         notify({ message: "Thanks for the feedback" });
       }
     },
-    onError: () => {
-      setRating(initial?.rating ?? null);
+    onError: (_error, _input, context) => {
+      setRating(context?.previous ?? null);
+      setCommenting(false);
       notify({ message: "Couldn't save your feedback. Try again.", tone: "error" });
     },
   });
   const rate = (next: Rating) => {
     const value = rating === next ? null : next;
-    setRating(value);
     setCommenting(value === "down");
     mutation.mutate({ rating: value });
   };

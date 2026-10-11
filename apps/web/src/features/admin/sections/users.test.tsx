@@ -528,7 +528,9 @@ describe("AdminUsers", () => {
     fetchMock.mockImplementation((input, init) => {
       const href =
         typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (init?.method !== "POST") return listUsers?.(input, init) ?? Promise.reject();
+      if (init?.method !== "POST") {
+        return listUsers?.(input, init) ?? Promise.reject(new Error("No list mock"));
+      }
       const path = new URL(href, "http://localhost").pathname;
       posts.push(path);
       const suspended = path.endsWith("/suspend");
@@ -553,7 +555,7 @@ describe("AdminUsers", () => {
       );
       await click(item as HTMLElement);
     };
-    const confirm = async (label: string) => {
+    const confirmIn = async (label: string) => {
       const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
       const action = [...(dialog?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find(
         (element) => element.textContent?.trim() === label,
@@ -567,7 +569,7 @@ describe("AdminUsers", () => {
       "signed out on every device",
     );
     expect(posts).toEqual([]);
-    await confirm("Suspend");
+    await confirmIn("Suspend");
     await waitFor(() => {
       expect(posts).toEqual(["/v1/api/admin/users/u-1/suspend"]);
       expect(container.querySelector(".admin-user-row .chip.warning")?.textContent).toBe(
@@ -576,7 +578,7 @@ describe("AdminUsers", () => {
     });
 
     await choose("Restore user…");
-    await confirm("Restore");
+    await confirmIn("Restore");
     await waitFor(() => {
       expect(posts).toEqual(["/v1/api/admin/users/u-1/suspend", "/v1/api/admin/users/u-1/restore"]);
       expect(container.querySelector(".admin-user-row .chip.success")?.textContent).toBe("Active");

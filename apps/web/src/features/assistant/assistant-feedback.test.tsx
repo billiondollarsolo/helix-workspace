@@ -44,9 +44,11 @@ function button(label: string): HTMLButtonElement {
 
 describe("AssistantFeedbackButtons", () => {
   it("rates an answer up, and clears the rating when pressed again", async () => {
-    api.setFeedback.mockImplementation(async (input: { rating: "up" | null }) => ({
-      feedback: input.rating === null ? null : { rating: input.rating, comment: null },
-    }));
+    api.setFeedback.mockImplementation((input: { rating: "up" | null }) =>
+      Promise.resolve({
+        feedback: input.rating === null ? null : { rating: input.rating, comment: null },
+      }),
+    );
     render();
     expect(button("Good response").getAttribute("aria-pressed")).toBe("false");
 
@@ -67,9 +69,9 @@ describe("AssistantFeedbackButtons", () => {
   });
 
   it("asks for an optional comment after a thumbs down and sends it", async () => {
-    api.setFeedback.mockImplementation(async (input: { rating: "down"; comment?: string }) => ({
-      feedback: { rating: input.rating, comment: input.comment ?? null },
-    }));
+    api.setFeedback.mockImplementation((input: { rating: "down"; comment?: string }) =>
+      Promise.resolve({ feedback: { rating: input.rating, comment: input.comment ?? null } }),
+    );
     render();
     click(button("Bad response"));
     await settle();

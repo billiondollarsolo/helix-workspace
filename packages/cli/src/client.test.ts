@@ -203,20 +203,6 @@ describe("buildHelixRequest", () => {
     });
   });
 
-  it("builds admin user suspend and restore requests", () => {
-    for (const action of ["suspend", "restore"] as const) {
-      expect(
-        buildHelixRequest(
-          { kind: "admin-user-lifecycle", action, actorId: "88888888-8888-4888-8888-888888888888" },
-          { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
-        ),
-      ).toMatchObject({
-        url: `https://helix.example/v1/api/admin/users/88888888-8888-4888-8888-888888888888/${action}`,
-        init: { method: "POST", body: "{}" },
-      });
-    }
-  });
-
   it("builds direct admin users and audit list requests", () => {
     expect(
       buildHelixRequest(

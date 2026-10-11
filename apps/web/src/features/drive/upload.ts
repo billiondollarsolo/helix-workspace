@@ -23,7 +23,7 @@ export interface StoragePutRequest {
   readonly onProgress: (loaded: number) => void;
 }
 
-export interface StoragePutResponse {
+interface StoragePutResponse {
   readonly status: number;
   readonly etag: string | null;
 }
@@ -71,7 +71,12 @@ function xhrStoragePut(request: StoragePutRequest): Promise<StoragePutResponse> 
     });
     xhr.addEventListener("abort", () => {
       settle();
-      reject(request.signal?.reason ?? new DOMException("The upload was canceled.", "AbortError"));
+      const reason: unknown = request.signal?.reason;
+      reject(
+        reason instanceof Error
+          ? reason
+          : new DOMException("The upload was canceled.", "AbortError"),
+      );
     });
     request.signal?.addEventListener("abort", abort, { once: true });
     xhr.send(request.body);

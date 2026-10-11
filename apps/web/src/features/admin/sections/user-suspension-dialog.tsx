@@ -48,6 +48,7 @@ export function UserSuspensionDialog({
   const queryClient = useQueryClient();
   const mutation = useMutation({
     mutationFn: () => setAdminUserSuspended(user.id, suspend),
+    onMutate: () => undefined,
     onSuccess: () => {
       notify({ message: `${user.name} ${suspend ? "suspended" : "restored"}` });
       void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });

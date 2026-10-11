@@ -1848,22 +1848,6 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         destructive: false,
       }),
       action({
-        id: "users.suspend",
-        label: "Suspend a user and sign them out",
-        method: "POST",
-        path: "/api/admin/users/:actorId/suspend",
-        requiredScope: "admin.users",
-        destructive: true,
-      }),
-      action({
-        id: "users.restore",
-        label: "Restore a suspended user",
-        method: "POST",
-        path: "/api/admin/users/:actorId/restore",
-        requiredScope: "admin.users",
-        destructive: false,
-      }),
-      action({
         id: "agent.credentials.create",
         label: "Create scoped non-human credential",
         method: "POST",

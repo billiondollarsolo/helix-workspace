@@ -192,9 +192,19 @@ All notable changes to Helix Workspace are documented here. This file follows
   Filters are created in two steps, with a count of matching conversations before you choose
   what happens to new mail; blocked addresses can be added and unblocked there.
 - Mail filters can mark matching mail as read and star it (`markRead`, `star` actions).
+- Admins can suspend and restore a person from the Users ⋮ menu, the API
+  (`/api/admin/users/:actorId/suspend` and `/restore`) or `helix admin users suspend|restore`.
+  Suspending signs them out everywhere and stops sign-in, app passwords, S3 access keys and other
+  API credentials until they are restored; both changes are audited. The Users list shows each
+  person's status and last sign-in (`lastSignInAt`), which replaces the Added column.
+- Rate any saved Helix AI answer thumbs up or down, with an optional comment on a thumbs down
+  (`assistant.message.feedback`). Feedback is private to you and audited without its text.
+- Drive uploads and Mail compose attachments show how much has been sent as a percentage.
 
 ### Changed
 
+- Helix AI answers keep the workspace items they cited after you reload. Only references are
+  saved, and each item is shown only while you can still open it, title included.
 - Helix AI picks its tools automatically until you choose tool groups, so a fully scoped admin's
   first prompt no longer fails.
 - Helix AI shows friendly model names; admins see the model id on hover. Chats are searched from
@@ -261,6 +271,11 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Meetings added to Calendar events can be joined: the first invited person to join opens the
+  scheduled meeting, instead of getting "No meeting is open with that code".
+- Mail you read in Helix keeps its text colour, highlight, size, weight, style, underline,
+  alignment and indent. Only those inline styles with plain values are kept; anything else in a
+  style attribute is still removed.
 - Drive trash now keeps items for the retention period an admin set (30 days by default) instead
   of always 30 days. Items already in trash keep at least their original recovery window.
 

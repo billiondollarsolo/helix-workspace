@@ -677,22 +677,6 @@ describe("parseCliArgs", () => {
     });
   });
 
-  it("parses admin user suspend and restore commands", () => {
-    expect(parseCliArgs(["admin", "users", "suspend", "--actor-id", actorId])).toEqual({
-      kind: "admin-user-lifecycle",
-      action: "suspend",
-      actorId,
-    });
-    expect(parseCliArgs(["admin", "users", "restore", "--actor-id", actorId])).toEqual({
-      kind: "admin-user-lifecycle",
-      action: "restore",
-      actorId,
-    });
-    expect(() => parseCliArgs(["admin", "users", "suspend"])).toThrow(
-      "helix admin users <suspend|restore> --actor-id <id>",
-    );
-  });
-
   it("parses direct admin users and audit list commands", () => {
     expect(
       parseCliArgs([

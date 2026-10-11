@@ -70,6 +70,15 @@ export const APPS: readonly HelixApp[] = [
     pinned: true,
   },
   {
+    id: "contacts",
+    name: "Contacts",
+    description: "People you email, chat and meet with",
+    icon: "Users",
+    color: "var(--label-blue)",
+    route: "/contacts",
+    pinned: false,
+  },
+  {
     id: "assistant",
     name: "Helix AI",
     description: "Ask about your work",

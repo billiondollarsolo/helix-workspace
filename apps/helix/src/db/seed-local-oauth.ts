@@ -34,6 +34,8 @@ export const DEFAULT_LOCAL_OAUTH_SCOPES = [
   "assistant.memory",
   "meet.read",
   "meet.write",
+  "contacts.read",
+  "contacts.write",
   "admin.users",
   "admin.audit",
   "admin.agents",

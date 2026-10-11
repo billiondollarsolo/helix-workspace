@@ -30,6 +30,7 @@ import {
   createMailCalendarInvitationSender,
   registerCalendarTools,
 } from "../platform/calendar/index.js";
+import { PostgresContactsStore, registerContactsTools } from "../platform/carddav/index.js";
 import { registerChatTools } from "../platform/chat/index.js";
 import { tierDefaults } from "../platform/config/tier.js";
 import { registerDriveS3KeyTools, registerDriveTools } from "../platform/drive/index.js";
@@ -624,6 +625,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
 
   registerAppPasswordTools(tools, { store: appPasswordStore });
   registerAccountPreferenceTools(tools, { store: new PostgresAccountPreferencesStore(sql) });
+  registerContactsTools(tools, { store: new PostgresContactsStore(sql) });
 
   const trpcRouter = createHelixTRPCRouter({ tools, metrics, platformConfig });
 

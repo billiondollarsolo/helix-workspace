@@ -189,6 +189,20 @@ resourcePolicy:
         match:
           expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "calendar.write:respond" && P.attr.scopes.exists(scope, scope == "calendar.write:respond")
 
+    - actions: ["contacts.read"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "contacts.read" && P.attr.scopes.exists(scope, scope == "contacts.read")
+
+    - actions: ["contacts.write"]
+      effect: EFFECT_ALLOW
+      roles: ["user", "agent", "service_account"]
+      condition:
+        match:
+          expr: P.attr.org_id == R.attr.org_id && R.attr.permission == "contacts.write" && P.attr.scopes.exists(scope, scope == "contacts.write")
+
     - actions: ["meet.read"]
       effect: EFFECT_ALLOW
       roles: ["user", "agent", "service_account"]

@@ -38,6 +38,7 @@ ${workspaceLines("mail")}
   helix chat search [--query <text>] [--room-id <id>] [--limit <number>] [--json [JSON]]
   helix chat messages [--room-id <id>] [--before <iso>] [--limit <number>] [--json [JSON]]
 ${workspaceLines("chat")}
+${workspaceLines("contacts")}
 ${workspaceLines("account")}
   helix drive upload <path> [--prepared <json-file>] [--folder <folder-id>] [--name <name>] [--mime-type <type>] [--byte-size <number>] [--sha256 <hex>] [--json [JSON]]
   helix drive finalize [--json [JSON]]

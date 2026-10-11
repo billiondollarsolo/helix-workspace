@@ -8,6 +8,7 @@ it("exposes communication and storage without editors", () => {
     "drive",
     "chat",
     "meet",
+    "contacts",
     "assistant",
     "admin",
   ]);
@@ -25,5 +26,6 @@ it("pins the everyday communication apps and keeps the rest in the launcher", ()
 
 it("resolves nested routes to their app", () => {
   expect(appForRoute("/admin/users")?.id).toBe("admin");
+  expect(appForRoute("/contacts/00000000-0000-4000-8000-000000000001")?.id).toBe("contacts");
   expect(appForRoute("/search")).toBeUndefined();
 });

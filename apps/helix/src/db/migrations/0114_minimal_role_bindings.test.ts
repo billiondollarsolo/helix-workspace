@@ -20,10 +20,13 @@ describe("0114 minimal role bindings migration", () => {
       new URL("./0178_merge_permission_catalog.sql", import.meta.url),
       "utf8",
     );
+    const contactsMigration = await readFile(
+      new URL("./0215_contacts_app.sql", import.meta.url),
+      "utf8",
+    );
+    const catalogSources = [migration, delegatedMigration, mergeMigration, contactsMigration];
     for (const permission of ALL_SCOPES) {
-      expect(`${migration}\n${delegatedMigration}\n${mergeMigration}`).toContain(
-        `('${permission}',`,
-      );
+      expect(catalogSources.join("\n")).toContain(`('${permission}',`);
     }
     expect(migration).toContain("references organization_memberships(org_id, id)");
     expect(migration).toContain("references actors(org_id, id)");

@@ -5,7 +5,7 @@ import { BadRequestError } from "../../api/api-error.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
-import { findCalendarMeetingTimes } from "./freebusy.js";
+import { findCalendarMeetingTimes, getCalendarFreeBusy } from "./freebusy.js";
 import type { CalendarInvitationSender } from "./ics.js";
 import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
 import type {
@@ -61,6 +61,8 @@ const updateSchema = updatePatchSchema.extend({
   eventId: uuidSchema,
   patch: updatePatchSchema.optional(),
   sendInvitations: z.boolean().default(true),
+  /** Add video conferencing to an event that has none yet. */
+  conference: z.enum(["meet"]).optional(),
 });
 
 const deleteSchema = z.object({
@@ -95,6 +97,21 @@ const findTimeSchema = z.object({
   stepMinutes: z.number().int().positive().max(240).default(15),
   limit: z.number().int().positive().max(100).default(10),
 });
+
+/** One to two weeks of busy blocks for up to 20 people, for the find-a-time grid. */
+const freeBusySchema = z
+  .object({
+    actorIds: z.array(uuidSchema).min(1).max(20),
+    windowStartsAt: z.string().datetime(),
+    windowEndsAt: z.string().datetime(),
+  })
+  .refine(
+    (value) => {
+      const span = Date.parse(value.windowEndsAt) - Date.parse(value.windowStartsAt);
+      return span > 0 && span <= 14 * 86_400_000;
+    },
+    { message: "The free/busy window must be positive and at most 14 days." },
+  );
 
 const calendarsListSchema = z.object({});
 const calendarMembershipsListSchema = z.object({ calendarId: uuidSchema });
@@ -134,7 +151,12 @@ export interface CreateCalendarToolDefinitionsOptions {
 async function createConference(
   provider: CalendarConferenceProvider | undefined,
   actor: { readonly id: string; readonly orgId: string },
-  input: z.output<typeof createSchema>,
+  input: {
+    readonly title: string;
+    readonly startsAt: string;
+    readonly endsAt: string;
+    readonly attendees: readonly { readonly actorId?: string | null | undefined }[];
+  },
 ): Promise<JsonObject> {
   if (provider === undefined) {
     throw new BadRequestError(
@@ -251,18 +273,38 @@ export function createCalendarToolDefinitions(
     }),
     defineTool<z.output<typeof updateSchema>, unknown>({
       id: "calendar.event.update",
-      description: "Update a calendar event.",
+      description:
+        'Update a calendar event. conference: "meet" adds video conferencing when the event has none.',
       permission: "calendar.write",
       sideEffects: "external_communication",
       confirmationRequired: true,
-      scopeComposition: { conditionalScopes: [externalAttendeeScope] },
+      scopeComposition: { conditionalScopes: [externalAttendeeScope, meetConferenceScope] },
       inputSchema: zodToolSchema(updateSchema, genericObjectJsonSchema),
       outputSchema: unknownOutputSchema,
       handler: async (
-        { eventId, sendInvitations: shouldSend, patch: nestedPatch, ...topLevelPatch },
+        { eventId, sendInvitations: shouldSend, patch: nestedPatch, conference, ...topLevelPatch },
         ctx,
       ) => {
-        const patch = { ...topLevelPatch, ...(nestedPatch ?? {}) };
+        let patch = { ...topLevelPatch, ...(nestedPatch ?? {}) };
+        if (conference !== undefined) {
+          const current = await options.store.getEventForActor({
+            orgId: ctx.actor.orgId,
+            actorId: ctx.actor.id,
+            eventId,
+          });
+          if (current === null) throw new Error(`Unknown calendar event: ${eventId}`);
+          const metadata = patch.metadata ?? current.metadata;
+          // Adding conferencing twice keeps the existing room instead of creating another.
+          if (metadata.conference === undefined) {
+            const room = await createConference(options.conference, ctx.actor, {
+              title: patch.title ?? current.title,
+              startsAt: patch.startsAt ?? current.startsAt.toISOString(),
+              endsAt: patch.endsAt ?? current.endsAt.toISOString(),
+              attendees: patch.attendees ?? current.attendees,
+            });
+            patch = { ...patch, metadata: { ...metadata, conference: room } };
+          }
+        }
         const event = await options.store.updateEvent({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -424,6 +466,33 @@ export function createCalendarToolDefinitions(
           memberActorId: input.actorId,
         }),
       }),
+    }),
+    defineTool<z.output<typeof freeBusySchema>, unknown>({
+      id: "calendar.free-busy",
+      description:
+        "List busy time blocks (no event details) for organization members in a window of up to 14 days.",
+      permission: "calendar.read:freebusy",
+      sideEffects: "read",
+      inputSchema: zodToolSchema(freeBusySchema, genericObjectJsonSchema),
+      outputSchema: unknownOutputSchema,
+      handler: async (input, ctx) => {
+        if (!hasFreeBusyStore(options.store)) {
+          throw new Error("Calendar store does not implement free/busy lookup.");
+        }
+        const blocks = await getCalendarFreeBusy(options.store, {
+          orgId: ctx.actor.orgId,
+          actorIds: [...new Set(input.actorIds)],
+          startsAt: new Date(input.windowStartsAt),
+          endsAt: new Date(input.windowEndsAt),
+        });
+        return {
+          busy: blocks.map((block) => ({
+            actorId: block.actorId,
+            startsAt: block.startsAt.toISOString(),
+            endsAt: block.endsAt.toISOString(),
+          })),
+        };
+      },
     }),
     defineTool<z.output<typeof findTimeSchema>, unknown>({
       id: "calendar.find-time",

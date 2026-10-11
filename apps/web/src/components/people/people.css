@@ -155,9 +155,10 @@
   .person-chip-remove {
     display: grid;
     place-items: center;
-    width: 20px;
-    height: 20px;
-    margin-right: 3px;
+    /* 24px is the minimum touch target (WCAG 2.5.8). */
+    width: 24px;
+    height: 24px;
+    margin-right: 1px;
     border: 0;
     border-radius: 999px;
     color: inherit;

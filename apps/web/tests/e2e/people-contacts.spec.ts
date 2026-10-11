@@ -32,8 +32,11 @@ test.describe("contacts side panel", () => {
     await expect(card.getByRole("button", { name: "Chat" })).toBeVisible();
 
     await card.getByRole("button", { name: "Send email" }).click();
-    await expect(page).toHaveURL(/\/mail\?.*compose=new/u);
-    await expect(page).toHaveURL(/to=sam%40helix\.local/u);
+    // Mail consumes the compose handoff: a New message window addressed to Sam.
+    const compose = page.getByRole("dialog", { name: "New message" });
+    await expect(compose.getByRole("list", { name: "To recipients" })).toContainText(
+      "sam@helix.local",
+    );
   });
 
   test("searches the directory as you type", async ({ page }) => {

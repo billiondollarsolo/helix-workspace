@@ -670,7 +670,6 @@
   .panel,
   aside,
   .rail,
-  .compose,
   .dialog,
   .search,
   .btn,
@@ -1392,66 +1391,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  /* ============================================================
-   Compose modal
-   ============================================================ */
-  .compose {
-    position: fixed;
-    right: 16px;
-    bottom: 0;
-    width: 540px;
-    background: var(--surface);
-    border-radius: 8px 8px 0 0;
-    box-shadow: var(--shadow-lg);
-    border: 1px solid var(--border);
-    border-bottom: none;
-    z-index: 100;
-    display: flex;
-    flex-direction: column;
-  }
-  .compose-header {
-    height: 36px;
-    padding: 0 8px 0 14px;
-    background: var(--surface-2);
-    border-radius: 8px 8px 0 0;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-weight: 600;
-    font-size: var(--text-meta);
-    border-bottom: 1px solid var(--border);
-  }
-
-  .compose-minimized {
-    width: min(360px, calc(100vw - 32px));
-  }
-
-  .compose-recovery {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 14px;
-    color: var(--success);
-    font-size: var(--text-meta);
-    background: var(--success-soft);
-    border-bottom: 1px solid var(--border);
-  }
-
-  .compose-inline-error {
-    margin: 0;
-    padding: 6px 14px;
-    color: var(--danger);
-    font-size: var(--text-caption);
-  }
-
-  .compose input:focus-visible,
-  .compose textarea:focus-visible {
-    outline: 2px solid var(--accent) !important;
-    outline-offset: -2px;
-    border-radius: 4px;
   }
 
   /* ============================================================
@@ -3859,35 +3798,6 @@
    Shell chrome — offline banner, menus, sheets, account card,
    notifications, search page, phone layout, navigation collapse
    ============================================================ */
-  .compose-minimized {
-    width: min(360px, calc(100vw - 32px));
-  }
-
-  .compose-recovery {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 14px;
-    color: var(--success);
-    font-size: var(--text-meta);
-    background: var(--success-soft, color-mix(in oklab, var(--success) 12%, transparent));
-    border-bottom: 1px solid var(--border);
-  }
-
-  .compose-inline-error {
-    margin: 0;
-    padding: 6px 14px;
-    color: var(--danger);
-    font-size: var(--text-caption);
-  }
-
-  .compose input:focus-visible,
-  .compose textarea:focus-visible {
-    outline: 2px solid var(--accent) !important;
-    outline-offset: -2px;
-    border-radius: 4px;
-  }
 
   /* === Offline banner ===
      Describes the device's connection only. Server failures are reported by
@@ -4741,18 +4651,6 @@
       padding: 8px 6px;
     }
 
-    .compose {
-      right: max(8px, env(safe-area-inset-right));
-      bottom: calc(56px + env(safe-area-inset-bottom));
-      left: max(8px, env(safe-area-inset-left));
-      width: auto;
-      max-height: calc(100dvh - 116px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-      overflow: auto;
-      overscroll-behavior: contain;
-      border-bottom: 1px solid var(--border);
-      border-radius: 8px;
-    }
-
     .dialog-backdrop {
       padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
         max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
@@ -4848,16 +4746,6 @@
     }
     .workspace[data-navigation-open="true"] .assistant-thread-sidebar {
       display: flex !important;
-    }
-  }
-
-  @media (max-width: 640px) {
-    .calendar-toolbar {
-      height: auto !important;
-      min-height: 44px;
-      flex-wrap: wrap;
-      padding: 8px !important;
-      gap: 8px !important;
     }
   }
 }

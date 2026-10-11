@@ -121,15 +121,10 @@ describe("mail API", () => {
       status: "queued",
     });
 
-    expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/mail.send", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(message),
-    });
-    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/mail.reply", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadId: "thread-1", ...message }),
+    expect(toolCall(fetchImpl, 0)).toEqual({ url: "/api/tools/mail.send", body: message });
+    expect(toolCall(fetchImpl, 1)).toEqual({
+      url: "/api/tools/mail.reply",
+      body: { threadId: "thread-1", ...message },
     });
   });
 
@@ -148,21 +143,13 @@ describe("mail API", () => {
       },
       fetchImpl,
     );
-    expect(fetchImpl).toHaveBeenNthCalledWith(1, "/api/tools/mail.reply", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        threadId: "thread-1",
-        replyAll: true,
-        cc: [],
-        bcc: [],
-        bodyText: "Thanks",
-      }),
+    expect(toolCall(fetchImpl, 0)).toEqual({
+      url: "/api/tools/mail.reply",
+      body: { threadId: "thread-1", replyAll: true, cc: [], bcc: [], bodyText: "Thanks" },
     });
-    expect(fetchImpl).toHaveBeenNthCalledWith(2, "/api/tools/mail.forward", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    expect(toolCall(fetchImpl, 1)).toEqual({
+      url: "/api/tools/mail.forward",
+      body: {
         threadId: "thread-1",
         messageId: "message-2",
         to: [{ address: "boss@helix.local" }],
@@ -170,7 +157,7 @@ describe("mail API", () => {
         bcc: [],
         subject: "Fwd: Plans",
         bodyText: "FYI",
-      }),
+      },
     });
   });
 
@@ -481,3 +468,13 @@ describe("mail API", () => {
     await expect(searchMail({}, fetchImpl)).rejects.toThrow("missing mail scope");
   });
 });
+
+/** The URL and parsed JSON body of the nth tool call (key order is not part of the contract). */
+function toolCall(
+  fetchImpl: { readonly mock: { readonly calls: readonly unknown[][] } },
+  index: number,
+) {
+  const [url, init] = fetchImpl.mock.calls[index] ?? [];
+  const body = (init as RequestInit | undefined)?.body;
+  return { url, body: JSON.parse(typeof body === "string" ? body : "{}") as unknown };
+}

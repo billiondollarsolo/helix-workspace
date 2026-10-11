@@ -1,6 +1,10 @@
 import { SurfaceFrame } from "@/components/shell";
 import { CalendarShell } from "@/features/calendar/calendar-shell";
 import {
+  calendarCreateHandoffFromSearch,
+  type CalendarCreateHandoff,
+} from "@/features/people/handoff";
+import {
   calendarRouteSearchFromState,
   calendarRouteStateFromSearch,
   validateCalendarRouteSearch,
@@ -11,7 +15,10 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Calendar as CalendarIcon } from "lucide-react";
 
 export const Route = createFileRoute("/_shell/calendar/")({
-  validateSearch: (search): CalendarRouteSearch => validateCalendarRouteSearch(search),
+  validateSearch: (search): CalendarRouteSearch & CalendarCreateHandoff => ({
+    ...validateCalendarRouteSearch(search),
+    ...calendarCreateHandoffFromSearch(search),
+  }),
   component: CalendarRoute,
 });
 

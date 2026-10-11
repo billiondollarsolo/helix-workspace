@@ -8,6 +8,16 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- People picker: pick recipients by name or email from your organization's directory, your
+  contacts and groups, as chips. Enter, Tab or a comma adds a chip, Backspace removes the last one,
+  pasting a list adds one chip per address, and invalid addresses show in red. Starting a direct
+  message in Chat now uses it instead of asking for an actor ID.
+- Person cards: hover or focus a person in the Contacts side panel to see their photo or initials,
+  email and job title, with Send email, Chat, Schedule a meeting and Copy email actions.
+- The Contacts side panel shows avatars, job titles and "Group" or "Contact" labels instead of raw
+  source names, and searches people and groups as you type. The people directory now returns each
+  entry's job title and organization member, so a personal contact for a colleague links to them.
+
 - Drive accepts S3 commands. An S3-compatible gateway at `/v1/s3` lets the AWS CLI, rclone, boto3,
   and the AWS SDKs list, upload, download, copy, and delete Drive files, including multipart uploads,
   ranged downloads, and presigned URLs. It maps the buckets `my-drive` and `shared-with-me` onto

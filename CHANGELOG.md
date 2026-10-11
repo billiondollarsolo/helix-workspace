@@ -6,6 +6,12 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ## [Unreleased]
 
+### Added
+
+- Drive folders have a details panel to rename and share them; people added to a folder get
+  access to everything inside it.
+- Drive Home suggests recently updated folders and files from across Drive.
+
 ### Changed
 
 - Live E2E runs give the API a deterministic OpenAI-compatible model
@@ -20,6 +26,19 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Drive folder access grants can be changed and removed, not only created.
+- The Drive file details panel resets its rename field when another file is selected.
+- Drive version restore asks for confirmation, skips the current version, and reports the result;
+  rename reports success or the server's error.
+- Renaming an unknown Drive file reports a file error instead of an unknown folder.
+- The Drive share dialog closes with Escape and focuses the people field when opened.
+- OAuth client lookups work for the constrained runtime database role: `agent_credentials`
+  had only the restrictive tenant boundary, so forced RLS hid every row and the token
+  endpoint answered "Unknown OAuth client". Migration 0201 adds the permissive tenant
+  policy, and the boot-time RLS coverage check now rejects any tenant table without one.
+- The live demo data job runs its API in the demo org and points authenticated k6 at the
+  versioned `/v1` API, so tool, MCP, and search scenarios hit real routes instead of 404s.
+  The k6 metrics scenario now polls once a second instead of saturating the API.
 - Search reindex keyset cursors keep PostgreSQL's microsecond precision, so rows
   that share one millisecond (bulk seeds and imports) no longer return the same
   page forever and stall demo preparation.

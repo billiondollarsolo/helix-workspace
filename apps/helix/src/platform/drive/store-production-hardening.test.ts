@@ -20,8 +20,9 @@ describe("Drive production store invariants", () => {
     );
     expect(integrity).toContain("foreign key (org_id, actor_id) references actors (org_id, id)");
     expect(source).toContain(
-      "values (${input.orgId}, ${targetActorId}, 'object', ${input.objectId}",
+      "values (${input.orgId}, ${targetActorId}, ${resourceType}, ${input.objectId}",
     );
+    expect(source).toContain('const resourceType = folder === null ? "object" : "drive_folder";');
     expect(source).toContain("helix_drive_share_link_by_token_hash(${tokenHash})");
     expect(source).toContain("const tokenHash = sha256Hex(input.token)");
     expect(source).not.toContain("where token = ${");

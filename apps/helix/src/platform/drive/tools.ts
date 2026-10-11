@@ -474,7 +474,7 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof shareSchema>, unknown>({
       id: "drive.share",
-      description: "Share a Drive object with actors by adding platform permission grants.",
+      description: "Share a Drive file or folder with actors; folder grants cover its contents.",
       permission: "drive.write",
       sideEffects: "write",
       confirmationRequired: true,
@@ -513,7 +513,7 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof objectIdSchema>, unknown>({
       id: "drive.access.list",
-      description: "List current actor grants for a Drive object.",
+      description: "List current actor grants for a Drive file or folder.",
       permission: "drive.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(objectIdSchema, genericObjectJsonSchema),
@@ -535,7 +535,7 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof removeAccessSchema>, unknown>({
       id: "drive.access.remove",
-      description: "Remove an actor's Drive object access grant.",
+      description: "Remove an actor's access grant on a Drive file or folder.",
       permission: "drive.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(removeAccessSchema, genericObjectJsonSchema),
@@ -558,7 +558,7 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof updateAccessSchema>, unknown>({
       id: "drive.access.update",
-      description: "Change an actor's Drive object access role.",
+      description: "Change an actor's access role on a Drive file or folder.",
       permission: "drive.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(updateAccessSchema, genericObjectJsonSchema),
@@ -923,7 +923,7 @@ export function createDriveToolDefinitions(
     }),
     defineTool<z.output<typeof renameSchema>, z.output<typeof driveEntryOutputSchema>>({
       id: "drive.rename",
-      description: "Rename a Drive file (updates display name metadata).",
+      description: "Rename a Drive file or folder.",
       permission: "drive.write",
       sideEffects: "write",
       inputSchema: zodToolSchema(renameSchema, genericObjectJsonSchema),

@@ -4,6 +4,7 @@ import {
   ChevronRight as ChevronRightIcon,
   HardDrive as DriveIcon,
   Folder as FolderIcon,
+  Info as InfoIcon,
   Plus as PlusIcon,
   Upload as UploadIcon,
 } from "lucide-react";
@@ -73,6 +74,8 @@ export function DriveMain({
   selectedFileId,
   onSelectFile,
   onOpenFolder,
+  selectedFolderId,
+  onShowFolderDetails,
   onSetStarred,
   onUpload,
   onDropFiles,
@@ -96,6 +99,8 @@ export function DriveMain({
   readonly selectedFileId: string | null;
   readonly onSelectFile: (id: string) => void;
   readonly onOpenFolder: (folder: DriveFolderItem) => void;
+  readonly selectedFolderId: string | null;
+  readonly onShowFolderDetails: (folder: DriveFolderItem) => void;
   readonly onSetStarred: (id: string, starred: boolean) => void;
   readonly onUpload: () => void;
   readonly onDropFiles: (files: readonly File[]) => void;
@@ -203,22 +208,42 @@ export function DriveMain({
               <div className="section-label [padding:0_0_8px]">Folders</div>
               <div className="grid [grid-template-columns:repeat(auto-fill,_minmax(180px,_1fr))] gap-2 mb-6">
                 {folders.map((folder) => (
-                  <button
+                  <div
                     key={folder.id}
-                    type="button"
-                    onClick={() => onOpenFolder(folder)}
-                    className="bg-card [border:1px_solid_var(--border)] rounded-md [padding:10px_12px] flex items-center gap-2.5 text-left cursor-pointer"
+                    className={cn(
+                      "bg-card [border:1px_solid_var(--border)] rounded-md flex items-center",
+                      folder.id === selectedFolderId && "[border-color:var(--accent)]",
+                    )}
                   >
-                    <FolderIcon size={16} />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate [font-size:var(--text-meta)] font-medium">
-                        {folder.name}
+                    <button
+                      type="button"
+                      onClick={() => onOpenFolder(folder)}
+                      className="flex-1 min-w-0 bg-transparent [padding:10px_0_10px_12px] flex items-center gap-2.5 text-left cursor-pointer"
+                    >
+                      <FolderIcon size={16} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate [font-size:var(--text-meta)] font-medium">
+                          {folder.name}
+                        </div>
+                        <div className="[font-size:var(--text-chip)] text-muted-foreground">
+                          {folder.itemCount > 0
+                            ? `${String(folder.itemCount)} items`
+                            : "Open folder"}
+                        </div>
                       </div>
-                      <div className="[font-size:var(--text-chip)] text-muted-foreground">
-                        {folder.itemCount > 0 ? `${String(folder.itemCount)} items` : "Open folder"}
-                      </div>
-                    </div>
-                  </button>
+                    </button>
+                    {scope === "trash" ? null : (
+                      <button
+                        type="button"
+                        className="icon-btn mr-1.5"
+                        aria-label={`Details for ${folder.name}`}
+                        aria-pressed={folder.id === selectedFolderId}
+                        onClick={() => onShowFolderDetails(folder)}
+                      >
+                        <InfoIcon size={16} />
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
             </>
@@ -355,7 +380,7 @@ function DriveEmptyState({
   readonly onUpload: () => void;
 }) {
   const copy: Record<DriveScope, string> = {
-    home: "Nothing to suggest yet. Open a file or share something to populate Home.",
+    home: "No recently updated files or folders yet.",
     my: "This folder is empty. Upload a file to get started.",
     shared: "Nothing has been shared with you yet.",
     recent: "No recent files.",

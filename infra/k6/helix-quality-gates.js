@@ -354,6 +354,9 @@ export function otelHealth() {
   check(response, {
     "OTel/health surface is reachable": (res) => res.status >= 200 && res.status < 500,
   });
+  // Scrapers poll metrics periodically; an unpaced loop over the ~200 KB exposition
+  // monopolizes the API event loop and skews every other scenario's latency.
+  sleep(1);
 }
 
 function addScenario(group, exec, protectedEndpoint, vus, duration) {

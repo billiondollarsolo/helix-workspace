@@ -22,7 +22,11 @@ export interface DriveSuggestions {
 }
 
 export function deriveDriveSuggestions(entries: readonly DriveApiEntry[]): DriveSuggestions {
-  const sorted = [...entries]
+  const unique = new Map<string, DriveApiEntry>();
+  for (const entry of entries) {
+    if (!unique.has(entry.id)) unique.set(entry.id, entry);
+  }
+  const sorted = [...unique.values()]
     .filter((entry) => entry.deletedAt === null)
     .sort((a, b) => {
       const aTime = new Date(a.updatedAt).getTime();
@@ -64,6 +68,8 @@ const defaultDriveItemsInput = {
 
 export const driveQueryKeys = {
   access: (objectId: string) => ["drive", "access", objectId] as const,
+  versions: (objectId: string) => ["drive", "versions", objectId] as const,
+  quota: ["drive", "quota"] as const,
   workflows: ["drive", "workflows"] as const,
   uploadStatus: (objectId: string | null) => ["drive", "upload-status", objectId] as const,
   items: (input: DriveItemsQueryInput = defaultDriveItemsInput) =>
@@ -114,7 +120,8 @@ export function driveItemsInputFromRouteSearch(search: DriveRouteSearch): DriveI
   const scope: DriveScope =
     search.includeTrashed === true || search.scope === "trash" ? "trash" : (search.scope ?? "my");
   return {
-    folderId: scope === "my" || scope === "shared" ? (search.folder ?? null) : null,
+    folderId:
+      scope === "my" || scope === "shared" || scope === "home" ? (search.folder ?? null) : null,
     includeTrashed: scope === "trash",
     query,
     limit: query.length > 0 ? 50 : 100,
@@ -190,10 +197,9 @@ export function applyDriveScope(
   }
 }
 
-/** Query for the current session actor id — used for scope filtering + owner labels. */
 export function driveVersionsQueryOptions(objectId: string, enabled: boolean) {
   return queryOptions({
-    queryKey: ["drive", "versions", objectId] as const,
+    queryKey: driveQueryKeys.versions(objectId),
     queryFn: () => listDriveVersions(objectId),
     enabled,
   });
@@ -206,7 +212,7 @@ export function driveVersionsQueryOptions(objectId: string, enabled: boolean) {
  */
 export function driveQuotaQueryOptions() {
   return queryOptions({
-    queryKey: ["drive", "quota"] as const,
+    queryKey: driveQueryKeys.quota,
     queryFn: () => getDriveQuotaUsage(),
     staleTime: 30_000,
     retry: false,
@@ -214,6 +220,7 @@ export function driveQuotaQueryOptions() {
   });
 }
 
+/** Query for the current session actor id — used for scope filtering + owner labels. */
 export function driveActorQueryOptions() {
   return queryOptions({
     ...sessionUserQueryOptions(),
@@ -241,15 +248,19 @@ export function driveItemsQueryOptions(input: DriveItemsQueryInput = defaultDriv
       // My Drive and Shared with me are folder trees. At the root they ask
       // for owned items vs share-roots; inside a folder they list children.
       // Recent / Starred stay flat cross-folder file views.
+      // Home suggests recently updated folders from the root and recently
+      // updated files from every folder. Opening a folder lists its children.
       if (scope === "home") {
-        const page = await listDrive({
-          folderId: input.folderId ?? null,
-          limit: input.limit ?? 100,
-        });
-        if ((input.folderId ?? null) !== null) {
-          return { mode: "list", entries: page.entries };
+        const folderId = input.folderId ?? null;
+        const limit = input.limit ?? 100;
+        if (folderId !== null) {
+          return { mode: "list", entries: (await listDrive({ folderId, limit })).entries };
         }
-        const suggestions = deriveDriveSuggestions(page.entries);
+        const [root, files] = await Promise.all([
+          listDrive({ folderId: null, limit }),
+          listDrive({ folderId: null, acrossFolders: true, limit }),
+        ]);
+        const suggestions = deriveDriveSuggestions([...root.entries, ...files.entries]);
         return { mode: "list", entries: [...suggestions.folders, ...suggestions.files] };
       }
       if (scope === "my" || scope === "shared" || scope === "trash") {

@@ -6,6 +6,7 @@ import {
   applyDriveScope,
   deriveDriveSuggestions,
   driveActorQueryOptions,
+  driveItemsInputFromRouteSearch,
   driveQuotaQueryOptions,
   entryFromSearchHit,
 } from "./queries";
@@ -25,6 +26,15 @@ function makeEntry(
 }
 
 describe("deriveDriveSuggestions", () => {
+  it("de-duplicates entries returned by both the root and cross-folder listings", () => {
+    const shared = makeEntry({ id: "file1", type: "file", updatedAt: "2026-05-20T09:00:00.000Z" });
+    const result = deriveDriveSuggestions([
+      shared,
+      makeEntry({ id: "file2", type: "file", updatedAt: "2026-05-20T10:00:00.000Z" }),
+      shared,
+    ]);
+    expect(result.files.map((entry) => entry.id)).toEqual(["file2", "file1"]);
+  });
   it("splits folders and files from a mixed entry list", () => {
     const entries: DriveApiEntry[] = [
       makeEntry({ id: "f1", type: "folder", updatedAt: "2026-05-20T10:00:00.000Z" }),
@@ -308,6 +318,21 @@ describe("Drive session identity", () => {
       unsubscribe();
       client.clear();
     }
+  });
+});
+
+describe("driveItemsInputFromRouteSearch", () => {
+  it("keeps the open folder for Home so a reload stays inside it", () => {
+    expect(driveItemsInputFromRouteSearch({ scope: "home", folder: "folder-eng" })).toMatchObject({
+      scope: "home",
+      folderId: "folder-eng",
+    });
+  });
+
+  it("ignores the folder for flat scopes", () => {
+    expect(driveItemsInputFromRouteSearch({ scope: "recent", folder: "folder-eng" })).toMatchObject(
+      { scope: "recent", folderId: null },
+    );
   });
 });
 

@@ -202,6 +202,45 @@ describe("forced tenant RLS roles and schema gate", { skip: !enabled }, () => {
     }
   });
 
+  it("rejects a tenant table whose only policy is the restrictive boundary", async () => {
+    // Forced RLS with no permissive policy hides every row from the runtime role,
+    // as agent_credentials did before 0201 (OAuth clients became unknown).
+    await admin`create table helix_boundary_only_test (org_id uuid not null)`;
+    try {
+      await admin`alter table helix_boundary_only_test enable row level security`;
+      await admin`alter table helix_boundary_only_test force row level security`;
+      await admin`create policy helix_tenant_boundary on helix_boundary_only_test as restrictive for all
+        using (org_id = public.helix_current_org_id())
+        with check (org_id = public.helix_current_org_id())`;
+      await expect(assertTenantRlsCoverage(admin)).rejects.toThrow("helix_boundary_only_test");
+    } finally {
+      await admin`drop table helix_boundary_only_test`;
+    }
+  });
+
+  it("lets the runtime role resolve its own tenant's OAuth clients", async () => {
+    const clientId = "rls-hardening-oauth-client";
+    await admin`delete from agent_credentials where client_id = ${clientId}`;
+    await admin`
+      insert into agent_credentials (org_id, actor_id, owner_actor_id, credential_type, client_id,
+        secret_hash, scopes, label, purpose, expires_at)
+      values (${orgA}, ${actorA}, ${actorA}, 'oauth_client', ${clientId}, 'unused',
+        array['platform.read'], 'RLS hardening', 'RLS hardening test', now() + interval '1 day')
+    `;
+    try {
+      const visibleTo = (orgId: string) =>
+        withTenantPostgresContext(
+          app,
+          { orgId },
+          (tx) => tx`select client_id from agent_credentials where client_id = ${clientId}`,
+        );
+      expect(await visibleTo(orgA)).toEqual([{ client_id: clientId }]);
+      expect(await visibleTo(orgB)).toEqual([]);
+    } finally {
+      await admin`delete from agent_credentials where client_id = ${clientId}`;
+    }
+  });
+
   it("ANDs tenant isolation with actor policies and rejects a permissive substitute", async () => {
     await admin`create table helix_tenant_boundary_test (org_id uuid, actor_id uuid)`;
     try {

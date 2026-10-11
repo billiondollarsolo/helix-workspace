@@ -3,6 +3,7 @@ import type { DriveAccessGrantRecord } from "../types.js";
 import { appendDriveActivity } from "./activity.js";
 import {
   assertDriveObjectReady,
+  requireFolderAccess,
   requireFolderRole,
   requireObjectAccess,
   requireObjectRole,
@@ -10,7 +11,20 @@ import {
 } from "./authz.js";
 import { type DriveStoreContext } from "./context.js";
 import { mapDriveAccessGrant } from "./mappers.js";
-import { type DriveAccessGrantRow } from "./rows.js";
+import { type DriveAccessGrantRow, type SqlLike } from "./rows.js";
+
+/** Live folder lookup used to route sharing calls to folder grants instead of object grants. */
+async function findLiveFolder(
+  sql: SqlLike,
+  orgId: string,
+  id: string,
+): Promise<{ readonly owner_actor_id: string | null } | null> {
+  const rows = await sql<{ owner_actor_id: string | null }[]>`
+    select owner_actor_id from drive_folders
+    where org_id = ${orgId} and id = ${id} and deleted_at is null
+  `;
+  return rows[0] ?? null;
+}
 export async function share(
   context: DriveStoreContext,
   input: {
@@ -29,10 +43,8 @@ export async function share(
   return context.sql.begin(async (tx) => {
     const role = parseDriveRole(input.role);
     const sharedWithActorIds = [...new Set(input.targetActorIds)];
-    const folder = await tx<
-      { id: string }[]
-    >`select id from drive_folders where org_id = ${input.orgId} and id = ${input.objectId} and deleted_at is null`;
-    const resourceType = folder.length > 0 ? "drive_folder" : "object";
+    const folder = await findLiveFolder(tx, input.orgId, input.objectId);
+    const resourceType = folder === null ? "object" : "drive_folder";
     if (resourceType === "drive_folder") {
       await requireFolderRole(tx, input.orgId, input.actorId, input.objectId, "owner");
     } else {
@@ -71,10 +83,8 @@ export async function listAccess(
     readonly objectId: string;
   },
 ): Promise<readonly DriveAccessGrantRecord[]> {
-  const folder = await context.sql<
-    { owner_actor_id: string | null }[]
-  >`select owner_actor_id from drive_folders where org_id = ${input.orgId} and id = ${input.objectId} and deleted_at is null`;
-  if (folder[0] !== undefined) {
+  const folder = await findLiveFolder(context.sql, input.orgId, input.objectId);
+  if (folder !== null) {
     await requireFolderRole(context.sql, input.orgId, input.actorId, input.objectId, "reader");
     const rows = await context.sql<DriveAccessGrantRow[]>`
       select distinct on (p.actor_id)
@@ -85,7 +95,7 @@ export async function listAccess(
         and p.resource_type = 'drive_folder'
         and p.resource_id = ${input.objectId}
         and (p.expires_at is null or p.expires_at > now())
-        and (${folder[0].owner_actor_id}::uuid is null or p.actor_id <> ${folder[0].owner_actor_id})
+        and (${folder.owner_actor_id}::uuid is null or p.actor_id <> ${folder.owner_actor_id})
       order by p.actor_id, p.updated_at desc, p.created_at desc
     `;
     return rows.map(mapDriveAccessGrant);
@@ -128,6 +138,9 @@ export async function removeAccess(
   },
 ): Promise<boolean> {
   return context.sql.begin(async (tx) => {
+    if ((await findLiveFolder(tx, input.orgId, input.objectId)) !== null) {
+      return removeFolderAccess(tx, input);
+    }
     // Self-removal is allowed for any grantee; removing others requires owner.
     if (input.targetActorId !== input.actorId) {
       await requireObjectRole(tx, input.orgId, input.actorId, input.objectId, "owner");
@@ -192,6 +205,9 @@ export async function updateAccess(
   },
 ): Promise<DriveAccessGrantRecord | null> {
   return context.sql.begin(async (tx) => {
+    if ((await findLiveFolder(tx, input.orgId, input.objectId)) !== null) {
+      return updateFolderAccess(tx, input);
+    }
     const object = await requireObjectRole(tx, input.orgId, input.actorId, input.objectId, "owner");
     assertDriveObjectReady(object);
     const role = parseDriveRole(input.role);
@@ -250,4 +266,115 @@ export async function updateAccess(
     }
     return grant;
   });
+}
+
+async function removeFolderAccess(
+  tx: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly targetActorId: string;
+  },
+): Promise<boolean> {
+  // Same rule as objects: any grantee may leave; removing others requires owner.
+  if (input.targetActorId !== input.actorId) {
+    await requireFolderRole(tx, input.orgId, input.actorId, input.objectId, "owner");
+  } else {
+    await requireFolderAccess(tx, input.orgId, input.actorId, input.objectId);
+  }
+  const rows = await tx<{ readonly removed_count: number | string }[]>`
+    with target_folder as (
+      select id, owner_actor_id
+      from drive_folders
+      where id = ${input.objectId}
+        and org_id = ${input.orgId}
+        and deleted_at is null
+    ),
+    deleted as (
+      delete from permissions p
+      using target_folder f
+      where p.org_id = ${input.orgId}
+        and p.resource_type = 'drive_folder'
+        and p.resource_id = f.id
+        and p.actor_id = ${input.targetActorId}
+        and (f.owner_actor_id is null or p.actor_id <> f.owner_actor_id)
+        and p.source_group_grant_id is null
+        and (
+          ${input.targetActorId === input.actorId}
+          or f.owner_actor_id = ${input.actorId}
+          or helix_drive_effective_role(
+            ${input.orgId}, ${input.actorId}, 'drive_folder', f.id
+          ) = 'owner'
+        )
+      returning p.actor_id
+    )
+    select count(*)::int as removed_count from deleted
+  `;
+  const removed = Number(rows[0]?.removed_count ?? 0) > 0;
+  if (removed) {
+    await appendDriveActivity(tx, {
+      orgId: input.orgId,
+      actorId: input.actorId,
+      verb: "drive.folder.access_removed",
+      objectId: input.objectId,
+      payload: { targetActorId: input.targetActorId },
+    });
+  }
+  return removed;
+}
+
+async function updateFolderAccess(
+  tx: SqlLike,
+  input: {
+    readonly orgId: string;
+    readonly actorId: string;
+    readonly objectId: string;
+    readonly targetActorId: string;
+    readonly role: string;
+    readonly expiresAt?: Date | null;
+  },
+): Promise<DriveAccessGrantRecord | null> {
+  await requireFolderRole(tx, input.orgId, input.actorId, input.objectId, "owner");
+  const role = parseDriveRole(input.role);
+  const rows = await tx<DriveAccessGrantRow[]>`
+    with target_folder as (
+      select id, owner_actor_id
+      from drive_folders
+      where id = ${input.objectId}
+        and org_id = ${input.orgId}
+        and deleted_at is null
+    ),
+    updated as (
+      update permissions p
+      set role = ${role},
+          expires_at = ${input.expiresAt ?? null},
+          granted_by_actor_id = ${input.actorId},
+          updated_at = now()
+      from target_folder f
+      where p.org_id = ${input.orgId}
+        and p.resource_type = 'drive_folder'
+        and p.resource_id = f.id
+        and p.actor_id = ${input.targetActorId}
+        and (f.owner_actor_id is null or p.actor_id <> f.owner_actor_id)
+        and p.source_group_grant_id is null
+      returning p.actor_id, p.role, p.granted_by_actor_id, p.expires_at, p.created_at, p.updated_at
+    )
+    select distinct on (u.actor_id)
+      u.actor_id, u.role, a.display_name, a.email, u.granted_by_actor_id, u.expires_at, u.created_at, u.updated_at
+    from updated u
+    left join actors a on a.id = u.actor_id and a.org_id = ${input.orgId}
+    order by u.actor_id, u.updated_at desc, u.created_at desc
+  `;
+  const grant = rows[0] === undefined ? null : mapDriveAccessGrant(rows[0]);
+  if (grant !== null) {
+    await appendDriveActivity(tx, {
+      orgId: input.orgId,
+      actorId: input.actorId,
+      verb: "drive.folder.access_updated",
+      objectId: input.objectId,
+      payload: { targetActorId: input.targetActorId, role },
+    });
+  }
+  return grant;
 }

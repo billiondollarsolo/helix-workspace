@@ -58,9 +58,7 @@ describe("admin users routes", () => {
 
   it("suspends and restores people for user administrators only", async () => {
     const targetId = "55555555-5555-4555-8555-555555555555";
-    const store = new FakeAdminUsersStore([
-      userRecord(targetId, "2026-05-20T12:05:00.000Z"),
-    ]);
+    const store = new FakeAdminUsersStore([userRecord(targetId, "2026-05-20T12:05:00.000Z")]);
     const app = fastify();
     await registerAdminUsersRoutes(app, { store, actorFromRequest });
     const as = (scopes: string) => ({
@@ -355,7 +353,6 @@ class FakeAdminUsersStore implements AdminUsersStore {
       ? { actorId: targetActorId, status: suspended ? "suspended" : "active", changed: true }
       : null;
   }
-
 }
 
 function userRecord(id: string, createdAt: string): AdminUserRecord {

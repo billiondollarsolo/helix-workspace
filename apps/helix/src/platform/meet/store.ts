@@ -171,7 +171,7 @@ export interface MeetStore {
     readonly code: string;
   }): Promise<MeetRoomRecord | null>;
   /** Open a scheduled room for an authorized member join; see `openRoomForMemberJoin`. */
-  activateScheduledRoom(input: MeetRoomActivationInput): Promise<MeetRoomRecord | null>;
+  activateScheduledRoom?(input: MeetRoomActivationInput): Promise<MeetRoomRecord | null>;
   createGuestInvite(input: {
     readonly id: string;
     readonly orgId: string;
@@ -2002,7 +2002,12 @@ export class InMemoryMeetStore implements MeetStore {
     const room = this.#rooms.get(input.roomId);
     if (room === undefined || (await this.getRoomForActor(input)) === null) return null;
     if (room.status === "scheduled") {
-      this.#rooms.set(room.id, { ...room, status: "active", startedAt: input.at, updatedAt: input.at });
+      this.#rooms.set(room.id, {
+        ...room,
+        status: "active",
+        startedAt: input.at,
+        updatedAt: input.at,
+      });
     }
     return this.getRoomForActor(input);
   }

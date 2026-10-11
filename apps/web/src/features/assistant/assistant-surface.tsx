@@ -41,7 +41,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AssistantHero } from "./assistant-hero";
 import { AssistantThreadList } from "./assistant-thread-list";
 import { AssistantRequestError } from "./tool-limit";
-import { hydrateConversation, withTurnSources } from "./conversation-history";
+import { hydrateConversation } from "./conversation-history";
 import { sessionUserQueryOptions } from "@/lib/auth";
 function toThread(item: AssistantConversationListItem): AssistantThread {
   const updatedAtMs = Date.parse(item.updatedAt);
@@ -257,7 +257,7 @@ export function AssistantSurface() {
           // is how a continued conversation keeps every prior message.
           const hydrated = hydrateConversation(turn);
           if (hydrated !== null) {
-            setConversation(withTurnSources(hydrated, turn.sources));
+            setConversation(hydrated);
           } else {
             patch({
               streaming: false,
@@ -592,6 +592,7 @@ export function AssistantSurface() {
         ) : null}
         {hasMessages ? (
           <AssistantConversation
+            conversationId={threadId}
             conversation={conversation}
             userName={userName}
             pending={pending || approvalBusy}

@@ -10,6 +10,7 @@ import type {
 } from "@helix/sdk-types";
 import type { ForgetCriteria, MemoryItem } from "../ai/memory/index.js";
 import type { ToolInvocationPrincipal } from "../auth/tool-invocation-principal.js";
+import type { GlobalSearchType } from "../search/scope.js";
 
 type AssistantMessageRole = "system" | "user" | "assistant" | "tool";
 
@@ -86,8 +87,64 @@ export interface AssistantModelCatalog {
   readonly defaultModelId?: string;
 }
 
+/** A workspace record an answer cited, persisted as a reference only. */
+export interface AssistantCitationRef {
+  readonly kind: GlobalSearchType;
+  readonly id: string;
+  /** The title shown when the answer was written. */
+  readonly title: string | null;
+}
+
+/** A cited record the reader can open now, with its in-app path. */
+export interface AssistantCitation extends AssistantCitationRef {
+  readonly path: string;
+}
+
+/** One person's thumbs up/down on an answer. */
+export interface AssistantMessageFeedback {
+  readonly rating: "up" | "down";
+  readonly comment: string | null;
+  readonly updatedAt: string;
+}
+
+/** Re-checks the reader's access to one cited record; its current in-app path, or null. */
+export type AssistantCitationAccess = (
+  actor: Actor,
+  ref: Pick<AssistantCitationRef, "kind" | "id">,
+) => Promise<{ readonly path: string } | null>;
+
+export interface AssistantSetFeedbackInput {
+  readonly actor: Actor;
+  readonly conversationId: string;
+  readonly messageId: string;
+  /** Null clears the reader's feedback. */
+  readonly rating: AssistantMessageFeedback["rating"] | null;
+  readonly comment?: string | null | undefined;
+}
+
+export interface AssistantFeedbackStore {
+  /** Null when the answer is not in one of the actor's conversations. */
+  setFeedback(
+    input: AssistantSetFeedbackInput,
+  ): Promise<{ readonly feedback: AssistantMessageFeedback | null } | null>;
+  listFeedback(input: {
+    readonly actor: Actor;
+    readonly messageIds: readonly string[];
+  }): Promise<ReadonlyMap<string, AssistantMessageFeedback>>;
+}
+
+/** The reader-specific parts of a saved answer. */
+export interface AssistantMessageAnnotations {
+  readonly citationAccess?: AssistantCitationAccess | undefined;
+  readonly feedback?: AssistantFeedbackStore | undefined;
+}
+
 export interface AssistantMessage {
   readonly sources?: readonly AssistantSource[];
+  /** Workspace records the answer cited that the reader can still open. */
+  readonly citations?: readonly AssistantCitation[];
+  /** The reader's own feedback on this answer. */
+  readonly feedback?: AssistantMessageFeedback;
   readonly toolActivity?: readonly AssistantToolActivity[];
   readonly toolGroups?: readonly string[];
   readonly webSearch?: boolean;
@@ -218,6 +275,8 @@ export interface AssistantSource {
   readonly url?: string;
   readonly body?: string;
   readonly score?: number;
+  /** The workspace record behind a search hit, kept when the answer is saved. */
+  readonly citation?: Pick<AssistantCitationRef, "kind" | "id">;
   readonly media?: {
     readonly mimeType: string;
     readonly data: string;

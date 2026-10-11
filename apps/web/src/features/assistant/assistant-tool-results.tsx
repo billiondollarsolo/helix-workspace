@@ -4,7 +4,7 @@ import { Check, ChevronRight, Clock, LoaderCircle, X } from "lucide-react";
 import { iconMap as Icons, type IconName } from "@/components/icon-map";
 import type { GlobalSearchType } from "@/features/search/api";
 import { searchHitTarget, type SearchHitTarget } from "@/features/search/search-hits";
-import type { AssistantSource, AssistantToolActivity } from "./api";
+import type { AssistantCitation, AssistantSource, AssistantToolActivity } from "./api";
 
 const statusLabels = {
   running: "Running",
@@ -125,21 +125,21 @@ const WORKSPACE_SOURCE_ICONS: Readonly<Record<GlobalSearchType, IconName>> = {
 
 /** A workspace record the answer drew on, with where it opens in Helix. */
 interface WorkspaceSource {
-  readonly source: AssistantSource;
+  readonly citation: AssistantCitation;
   readonly type: GlobalSearchType;
   readonly target: SearchHitTarget;
 }
 
 /**
- * Workspace search hits cited by an answer. The server keeps each hit's
- * index path (`/mail/<thread>?message=…`, `/drive/<file>`, `/chat/<room>…`,
+ * Workspace records cited by an answer. The server re-checks the reader's
+ * access on every load and sends each record's index path
+ * (`/mail/<thread>?message=…`, `/drive/<file>`, `/chat/<room>…`,
  * `/calendar/events/<event>`); the owning app's URL comes from `searchHitTarget`.
  */
-function workspaceSources(sources: readonly AssistantSource[]): readonly WorkspaceSource[] {
-  return sources.flatMap((source) => {
-    const type = source.type;
-    if (type !== "mail" && type !== "drive" && type !== "chat" && type !== "calendar") return [];
-    const match = /^\/(?:mail|drive|chat|calendar\/events)\/([^/?#]+)/u.exec(source.url ?? "");
+function workspaceSources(citations: readonly AssistantCitation[]): readonly WorkspaceSource[] {
+  return citations.flatMap((citation) => {
+    const type = citation.kind;
+    const match = /^\/(?:mail|drive|chat|calendar\/events)\/([^/?#]+)/u.exec(citation.path);
     const id = match?.[1];
     if (id === undefined) return [];
     const attributes =
@@ -152,12 +152,12 @@ function workspaceSources(sources: readonly AssistantSource[]): readonly Workspa
             : { eventId: id };
     return [
       {
-        source,
+        citation,
         type,
         target: searchHitTarget({
-          id: source.id,
+          id: `${type}:${citation.id}`,
           type,
-          ...(source.title === undefined ? {} : { title: source.title }),
+          ...(citation.title === null ? {} : { title: citation.title }),
           attributes,
         }),
       },
@@ -165,21 +165,25 @@ function workspaceSources(sources: readonly AssistantSource[]): readonly Workspa
   });
 }
 
-export function WorkspaceSourceList({ sources }: { readonly sources: readonly AssistantSource[] }) {
-  const cited = workspaceSources(sources);
+export function WorkspaceSourceList({
+  citations,
+}: {
+  readonly citations: readonly AssistantCitation[];
+}) {
+  const cited = workspaceSources(citations);
   if (cited.length === 0) return null;
   return (
     <ul aria-label="Workspace sources" className="m-0 mt-2 flex list-none flex-wrap gap-1.5 p-0">
-      {cited.map(({ source, type, target }) => {
+      {cited.map(({ citation, type, target }) => {
         const Icon = Icons[WORKSPACE_SOURCE_ICONS[type]];
         return (
-          <li key={source.id}>
+          <li key={`${type}:${citation.id}`}>
             <Link
               {...target}
               className="focus-ring inline-flex max-w-64 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 py-1 type-caption text-foreground hover:bg-[var(--hover)]"
             >
               <Icon size={14} aria-hidden="true" className="shrink-0 text-muted-foreground" />
-              <span className="truncate">{source.title || "Untitled"}</span>
+              <span className="truncate">{citation.title || "Untitled"}</span>
             </Link>
           </li>
         );

@@ -11,11 +11,16 @@ import {
   WorkspaceSourceList,
   type PublicWebSource,
 } from "./assistant-tool-results";
+import { AssistantFeedbackButtons } from "./assistant-feedback";
 import { ToolLimitError } from "./tool-limit-error";
 import { AssistantMarkdown } from "./assistant-markdown";
 import type { AssistantBlock, AssistantChatMessage } from "./assistant-data";
 /* ---------------------------------------------------------- conversation -- */
+/** Saved answers have server ids; live, unsaved replies use local ids. */
+const SAVED_MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 interface AssistantConversationProps {
+  /** The saved conversation, once it has one; answers in it can be rated. */
+  readonly conversationId: string | null;
   readonly userName: string;
   readonly conversation: readonly AssistantChatMessage[];
   readonly pending: boolean;
@@ -28,6 +33,7 @@ interface AssistantConversationProps {
   readonly onTurnOffToolGroup: (answer: AssistantChatMessage, groupId: string) => void;
 }
 export function AssistantConversation({
+  conversationId,
   conversation,
   pending,
   onNavigate,
@@ -87,6 +93,7 @@ export function AssistantConversation({
               style={{ transform: `translateY(${String(virtual.start)}px)` }}
             >
               <ChatMessage
+                conversationId={conversationId}
                 message={message}
                 onNavigate={onNavigate}
                 userName={userName}
@@ -113,6 +120,7 @@ export function AssistantConversation({
   );
 }
 interface ChatMessageProps {
+  readonly conversationId: string | null;
   readonly userName: string;
   readonly message: AssistantChatMessage;
   readonly pending: boolean;
@@ -124,6 +132,7 @@ interface ChatMessageProps {
   readonly onOpenEvidence: (sources: readonly PublicWebSource[]) => void;
 }
 function ChatMessage({
+  conversationId,
   message,
   onNavigate,
   userName,
@@ -136,7 +145,7 @@ function ChatMessage({
 }: ChatMessageProps) {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const actions = (
-    <div className="mt-2 flex items-center gap-1">
+    <div className="mt-2 flex flex-wrap items-center gap-1">
       <button
         type="button"
         className="icon-btn"
@@ -175,15 +184,25 @@ function ChatMessage({
           </button>
         </>
       ) : (
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="Regenerate response"
-          disabled={pending}
-          onClick={() => onRegenerate(message)}
-        >
-          <RotateCcw size={16} />
-        </button>
+        <>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Regenerate response"
+            disabled={pending}
+            onClick={() => onRegenerate(message)}
+          >
+            <RotateCcw size={16} />
+          </button>
+          {conversationId !== null && SAVED_MESSAGE_ID.test(message.id) ? (
+            <AssistantFeedbackButtons
+              key={message.id}
+              conversationId={conversationId}
+              messageId={message.id}
+              initial={message.feedback}
+            />
+          ) : null}
+        </>
       )}
       {copyStatus ? (
         <span role="status" className="text-sm">
@@ -259,7 +278,7 @@ function ChatMessage({
                 onNavigate={onNavigate}
               />
             ))}
-            <WorkspaceSourceList sources={message.sources ?? []} />
+            <WorkspaceSourceList citations={message.citations ?? []} />
             <AssistantSourceList sources={message.sources ?? []} onOpenEvidence={onOpenEvidence} />
             {message.text.length > 0 ? actions : null}
           </>

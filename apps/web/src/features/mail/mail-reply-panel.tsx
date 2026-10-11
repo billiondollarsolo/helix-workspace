@@ -284,6 +284,7 @@ function ReplyComposer({
                           objectId: attachment.objectId,
                           state: "ready",
                           detail: "",
+                          progress: null,
                         }))
                       : []
                   }

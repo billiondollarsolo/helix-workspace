@@ -50,6 +50,12 @@ const forgetAssistantMemoryMock = vi.fn<() => Promise<AssistantMemoryForgetResul
 const getAssistantConversationMock = vi.fn<() => Promise<{ messages: readonly unknown[] }>>();
 
 let routeSearch: { readonly prompt?: string } = {};
+const CITATIONS = [
+  { kind: "mail", id: "m-1", title: "Harbor launch", path: "/mail/thread-9?message=m-1" },
+  { kind: "drive", id: "file-4", title: "Harbor brief.md", path: "/drive/file-4" },
+  { kind: "chat", id: "c-1", title: "#harbor", path: "/chat/room-2?message=c-1" },
+  { kind: "calendar", id: "ev-7", title: "Harbor sync", path: "/calendar/events/ev-7" },
+] as const;
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigateMock,
   useSearch: () => routeSearch,
@@ -735,16 +741,10 @@ describe("AssistantSurface", () => {
     streamAssistantChatMock.mockResolvedValue({
       conversation: { id: "33333333-3333-4333-8333-333333333333" },
       response: { content: "Two things." },
-      sources: [
-        { id: "s1", type: "mail", title: "Harbor launch", url: "/mail/thread-9?message=m-1" },
-        { id: "s2", type: "drive", title: "Harbor brief.md", url: "/drive/file-4" },
-        { id: "s3", type: "chat", title: "#harbor", url: "/chat/room-2?message=c-1" },
-        { id: "s4", type: "calendar", title: "Harbor sync", url: "/calendar/events/ev-7" },
-        { id: "s5", type: "web.search", title: "News", url: "https://example.com/a" },
-      ],
+      sources: [{ id: "s5", type: "web.search", title: "News", url: "https://example.com/a" }],
       messages: [
         { id: "m1", role: "user", content: "harbor status" },
-        { id: "m2", role: "assistant", content: "Two things." },
+        { id: "m2", role: "assistant", content: "Two things.", citations: CITATIONS },
       ],
     });
     render();

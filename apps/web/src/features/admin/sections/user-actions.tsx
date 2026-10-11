@@ -25,12 +25,7 @@ import { AdminUserProfileDialog } from "./user-profile-dialog";
 import { UserSuspensionDialog } from "./user-suspension-dialog";
 
 export type UserAction =
-  | "profile"
-  | "addresses"
-  | "reset-verification"
-  | "suspend"
-  | "restore"
-  | "offboard";
+  "profile" | "addresses" | "reset-verification" | "suspend" | "restore" | "offboard";
 
 /** Which actions apply to this account. Only people have profiles, addresses
  *  and sign-in factors, and only people can be suspended and restored; people

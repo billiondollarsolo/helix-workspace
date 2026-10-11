@@ -98,7 +98,7 @@ describe.skipIf(!live)("admin user suspension and last sign-in", () => {
         })
       ).password;
       s3AccessKeyId = (
-        await s3Keys.create({ orgId, actorId: personId, label: "Sync", scopes: ["read"] })
+        await s3Keys.create({ orgId, actorId: personId, label: "Sync", scopes: ["drive.read"] })
       ).accessKey.accessKeyId;
     });
   });
@@ -187,8 +187,9 @@ describe.skipIf(!live)("admin user suspension and last sign-in", () => {
     await expect(
       users.setSuspended({ ...operator, id: adminId }, memberId, true),
     ).rejects.toMatchObject({ statusCode: 403 });
-    await expect(users.setSuspended({ ...operator, id: memberId }, adminId, false)).resolves
-      .toMatchObject({ status: "active" });
+    await expect(
+      users.setSuspended({ ...operator, id: memberId }, adminId, false),
+    ).resolves.toMatchObject({ status: "active" });
     await admin`update actors set scopes = ${[]} where id = ${memberId}`;
     await expect(
       users.setSuspended({ ...operator, id: memberId, scopes: [] }, personId, true),

@@ -260,7 +260,7 @@ export function untrustedContextMessages(
 ): readonly AIMessage[] {
   return [
     ...sources.map((source): AIMessage => {
-      const { media: _media, ...rest } = source;
+      const { media: _media, citation: _citation, ...rest } = source;
       return {
         role: "tool",
         name: "workspace_search",

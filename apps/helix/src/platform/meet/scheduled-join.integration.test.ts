@@ -70,7 +70,9 @@ describe("joining Calendar conferencing rooms", { skip }, () => {
   }
 
   async function roomStatus(roomId: string): Promise<string | undefined> {
-    const rows = await sql<{ status: string }[]>`select status from meet_rooms where id = ${roomId}`;
+    const rows = await sql<
+      { status: string }[]
+    >`select status from meet_rooms where id = ${roomId}`;
     return rows[0]?.status;
   }
 

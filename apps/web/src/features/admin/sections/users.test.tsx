@@ -579,9 +579,7 @@ describe("AdminUsers", () => {
     await confirm("Restore");
     await waitFor(() => {
       expect(posts).toEqual(["/v1/api/admin/users/u-1/suspend", "/v1/api/admin/users/u-1/restore"]);
-      expect(container.querySelector(".admin-user-row .chip.success")?.textContent).toBe(
-        "Active",
-      );
+      expect(container.querySelector(".admin-user-row .chip.success")?.textContent).toBe("Active");
     });
   });
 

@@ -1,21 +1,11 @@
-import { loadAssistantAttachments } from "./assistant-attachments.js";
 import type { Actor } from "@helix/sdk-types";
 import { createResourceClassifier } from "../api/classify-resource.js";
-import { createAssistantToolResultClassifier } from "./assistant-tool-classification.js";
 import { createHelixTRPCRouter } from "../api/trpc.js";
 import { agentLimitBudgetOverrideFromEnv, resolveConfirmationTimeoutMs } from "../bootstrap/env.js";
-import { deriveClassification } from "../platform/ai/index.js";
-import { createSemanticSearchEmbeddingProvider } from "../platform/ai/providers/factory.js";
 import { registerMemoryTools } from "../platform/ai/memory/index.js";
-import {
-  AssistantOrchestrator,
-  AssistantSlashCommandHooks,
-  registerAssistantTools,
-} from "../platform/assistant/index.js";
 import { registerAskUserTool } from "../platform/assistant/ask-user.js";
 import { registerChatRecallTools } from "../platform/assistant/chats.js";
 import { registerContextTools } from "../platform/assistant/context-tools.js";
-import { ASSISTANT_RETRIEVAL_FLAG } from "../platform/assistant/context-policy.js";
 import { registerTaskTools } from "../platform/assistant/tasks.js";
 import { registerRoutineTools } from "../platform/assistant/routines.js";
 import { PostgresRoutineStore } from "../platform/assistant/routines-postgres.js";
@@ -74,8 +64,6 @@ import {
 } from "../platform/permissions/tool-access.js";
 import { registerSearchTools } from "../platform/search/index.js";
 import { registerWebSearchTool } from "../platform/search/web-tools.js";
-import { getWebSearchEnabled } from "../platform/search/web.js";
-import type { GlobalSearchType } from "../platform/search/scope.js";
 import { signupEventSchemas } from "../platform/signup/event-schemas.js";
 import { loadEffectiveTenantConfig } from "../platform/tenancy/index.js";
 import { createToolRegistry } from "../platform/tool-registry.js";
@@ -86,6 +74,7 @@ import { PendingActionExpiryWorker } from "../platform/tools/pending-action-expi
 import { PostgresPendingActionStore } from "../platform/tools/pending-actions-postgres-store.js";
 import { InMemoryConfirmationGate } from "../platform/tools/registry.js";
 import { registerWebhookTools } from "../platform/webhooks/index.js";
+import { installAssistantRuntime } from "./assistant-runtime.js";
 import type { installAuditWorkers } from "./audit-workers.js";
 import { registerCanonicalApi } from "./route-scope.js";
 
@@ -662,74 +651,12 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
   const routineStore = new PostgresRoutineStore(sql);
   registerRoutineTools(tools, routineStore);
 
-  const assistantSlashCommands = new AssistantSlashCommandHooks();
-
-  if (!coreApps.shouldRegister("calendar")) {
-    assistantSlashCommands.register("schedule", () => ({
-      instruction:
-        "Calendar scheduling is unavailable in this deployment. Explain that no calendar action was taken.",
-      searchQuery: "",
-      toolIds: [],
-    }));
-  }
-
-  const attachmentEmbedder = createSemanticSearchEmbeddingProvider(
-    context.runtimeConfiguration.current.ai,
-    process.env,
-  );
-  const assistantSearchTypes: readonly GlobalSearchType[] = [
-    ...(coreApps.shouldRegister("mail") ? (["mail"] as const) : []),
-    ...(coreApps.shouldRegister("chat") ? (["chat"] as const) : []),
-    ...(coreApps.shouldRegister("drive") ? (["drive"] as const) : []),
-    ...(coreApps.shouldRegister("calendar") ? (["calendar"] as const) : []),
-  ];
-
-  const assistantOrchestrator = new AssistantOrchestrator({
-    store: assistantStore,
-    ai: assistantAi,
-    listModels: () => assistantAi.listModels(),
-    getMaxToolRounds: () =>
-      context.runtimeConfiguration.current.ai?.assistant?.maxToolRounds ?? 128,
-    webSearchEnabled: (classification) =>
-      webSearchAllowed() &&
-      getWebSearchEnabled(context.runtimeConfiguration.current.ai) &&
-      (classification === undefined ||
-        !context.runtimeConfiguration.current.ai?.privacy?.blockExternalForClassifications?.includes(
-          classification,
-        )),
-    loadAttachments: (input) =>
-      loadAssistantAttachments(
-        { driveStore, classifications: resourceClassificationService, dlp },
-        input,
-      ),
-    ...(attachmentEmbedder === undefined
-      ? {}
-      : { embed: (texts: readonly string[]) => attachmentEmbedder.embed(texts) }),
-    generateTitles: true,
+  const assistantOrchestrator = installAssistantRuntime(context, {
     tools,
-    memory: assistantMemory,
-    ...(runtimeSearchEngine === undefined ? {} : { search: runtimeSearchEngine }),
-    searchTypes: assistantSearchTypes,
-    retrievalEnabled: (actor) =>
-      featureFlags.getAsync(ASSISTANT_RETRIEVAL_FLAG, true, {
-        orgId: actor.orgId,
-        actorId: actor.id,
-      }),
     confirmationGate,
-    slashCommands: assistantSlashCommands,
-    classifyUserInput: async ({ content }) =>
-      deriveClassification({ content, scanContent: true }).classification,
-    classifyToolResult: createAssistantToolResultClassifier(resourceClassificationService),
-    blockHighRiskToolsWhenUntrusted: securityTier !== "personal",
-    toolServers: () => context.runtimeConfiguration.current.ai?.toolServers ?? [],
+    featureFlags,
+    webSearchAllowed,
   });
-
-  if (coreApps.shouldRegister("assistant")) {
-    registerAssistantTools(tools, {
-      store: assistantStore,
-      orchestrator: assistantOrchestrator,
-    });
-  }
 
   // Cross-surface notifications. The activity table is the audit chain;
   // notifications is a per-recipient inbox derived from that activity.

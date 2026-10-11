@@ -79,8 +79,8 @@ export function UserSuspensionDialog({
         isPending={mutation.isPending}
         onConfirm={() => mutation.mutate()}
       >
-        They can't sign in to this workspace while suspended. Their files, mail and groups stay
-        as they are.
+        They can't sign in to this workspace while suspended. Their files, mail and groups stay as
+        they are.
       </ConfirmDestructive>
     );
   }

@@ -299,8 +299,7 @@ describe("uploadDriveFile", () => {
   });
 
   it("sends storage PUTs with XMLHttpRequest and reports its upload progress events", async () => {
-    const sent: { method: string; url: string; headers: Record<string, string>; body: Blob }[] =
-      [];
+    const sent: { method: string; url: string; headers: Record<string, string>; body: Blob }[] = [];
     let pending: { xhr: EventTarget & { status: number }; body: Blob } | null = null;
     class StorageXhr extends EventTarget {
       readonly upload = new EventTarget();

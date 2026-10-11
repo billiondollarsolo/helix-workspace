@@ -49,7 +49,7 @@ export async function openRoomForMemberJoin(
   if (room.status === "active") return room;
   const opened =
     room.status === "scheduled"
-      ? await store.activateScheduledRoom({
+      ? await store.activateScheduledRoom?.({
           orgId: room.orgId,
           actorId,
           roomId: room.id,

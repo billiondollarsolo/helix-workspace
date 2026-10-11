@@ -112,7 +112,16 @@ function projectAdminUser(user: AdminUser): DirectoryUser {
 /** CSV of the given rows, downloaded in the browser. */
 function downloadCsv(rows: readonly DirectoryUser[]): void {
   const escape = (value: string) => `"${value.replace(/"/gu, '""')}"`;
-  const header = ["Name", "Email", "Role", "Admin scopes", "Type", "Status", "Last sign-in", "Added"];
+  const header = [
+    "Name",
+    "Email",
+    "Role",
+    "Admin scopes",
+    "Type",
+    "Status",
+    "Last sign-in",
+    "Added",
+  ];
   const body = rows.map((user) =>
     [
       user.name,

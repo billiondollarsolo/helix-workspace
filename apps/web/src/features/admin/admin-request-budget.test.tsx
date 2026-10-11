@@ -132,8 +132,6 @@ const emptyPayload: Record<string, unknown> = {
   webhooks: [],
   services: [],
   limits: [],
-  invoices: [],
-  rollups: [],
   logs: [],
   sessions: [],
   accounts: [],

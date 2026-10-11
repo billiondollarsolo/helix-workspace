@@ -1,6 +1,6 @@
 # ADR-0029: Immutable Audit Log via `audit-immutable-s3` Plugin; 7-Year Retention
 
-> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features or impose a commercial license.
+> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features.
 
 ## Status
 
@@ -13,14 +13,14 @@ Audit logs are foundational for compliance (SOC 2, HIPAA, GDPR, FedRAMP). Requir
 - **Immutability** — written-once; can't be modified or deleted by application.
 - **Retention** — 7 years (typical compliance baseline).
 - **Per-tenant scoping** — tenant admin can see their own; cross-tenant queries staff-only.
-- **Shippable** — to SIEM (Splunk/Sentinel/Elastic) for Enterprise+ customers.
+- **Shippable** — to SIEM (Splunk/Sentinel/Elastic).
 - **Performant** — high write rate (every API call, every save, every share).
 
 helix-workspace already has `com.helix.audit-immutable-s3` plugin that ships to S3 with Object Lock. Build atop.
 
 ## Decision
 
-We will use **`com.helix.audit-immutable-s3` plugin as canonical audit sink** for all helix products (Platform, Editors, Commercial). Retention 7 years via S3 Object Lock in compliance mode. Per-tenant scoping via `org_id` in every audit event. SIEM ship via `com.helix.audit-siem-syslog` plugin for Enterprise+.
+We will use **`com.helix.audit-immutable-s3` plugin as canonical audit sink** for Helix. Retention 7 years via S3 Object Lock in compliance mode. Per-tenant scoping via `org_id` in every audit event. SIEM ship via `com.helix.audit-siem-syslog` plugin.
 
 Audit event taxonomy (canonical event types):
 
@@ -31,7 +31,6 @@ Audit event taxonomy (canonical event types):
 - **Resource**: `doc.opened`, `doc.saved`, `doc.shared`, `doc.exported`, `doc.suggestion.*`, `doc.comment.*`, `sheet.*`, `slide.*`, `pdf.*`
 - **AI**: `ai.request`, `ai.completion`, `ai.failed`, `ai.cost-spike`
 - **Plugin**: `plugin.installed`, `plugin.uninstalled`, `plugin.enabled`, `plugin.disabled`
-- **Billing**: none. Helix has no billing ([ADR-0030](adr-0030-free-open-source-no-plans-or-limits.md)); the `billing.*` events proposed here were never kept.
 - **Security**: `security.policy.changed`, `security.kms.revoked`, `security.dlp.blocked`, `security.breach.detected`
 - **Cross-tenant**: `share.cross_tenant.granted`, `share.cross_tenant.received`, `share.cross_tenant.revoked`
 - **Admin**: `admin.action.*` for any admin console mutation
@@ -68,7 +67,7 @@ All events: `{event_type, ts, actor_id, org_id, request_id, ip, user_agent, targ
 
 - All products emit via `host.events.publish('audit.<event_type>', payload)` from SDK.
 - `com.helix.audit-immutable-s3` consumes; writes to S3 Object Lock bucket.
-- Per-tier configuration in `byo_config.audit_sink` for Enterprise+ to specify their own SIEM URL.
+- Per-org configuration in `byo_config.audit_sink` for orgs that specify their own SIEM URL.
 - Query API for tenant admins to fetch their audit log; helix-staff query API for cross-tenant (audit-logged itself).
 
 ## Alternatives Considered

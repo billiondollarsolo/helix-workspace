@@ -13,12 +13,12 @@ const tenantConfigPayload = {
   tenantConfig: {
     orgId: "org-1",
     byo: {},
-    features: { ai_smart_compose: true },
+    features: { assistant_retrieval: true },
     quotas: { api_rps_limit: 10 },
     branding: { display_name_override: "Acme" },
     effective: {
       byo: {},
-      features: { ai_smart_compose: true },
+      features: { assistant_retrieval: true },
       quotas: { api_rps_limit: 10 },
       branding: { display_name_override: "Acme" },
     },
@@ -66,7 +66,7 @@ describe("tenant-config-api", () => {
     const result = await fetchTenantConfig(fetchImpl);
 
     expect(result.orgId).toBe("org-1");
-    expect(result.features.ai_smart_compose).toBe(true);
+    expect(result.features.assistant_retrieval).toBe(true);
     expect(result.effective.quotas.api_rps_limit).toBe(10);
     expect(fetchImpl).toHaveBeenCalledWith("/api/admin/tenant-config", { method: "GET" });
   });
@@ -76,7 +76,7 @@ describe("tenant-config-api", () => {
 
     await updateTenantConfig(
       {
-        features: { ai_smart_compose: false },
+        features: { assistant_retrieval: false },
         quotas: { api_rps_limit: 5 },
         reason: "test update",
       },
@@ -87,7 +87,7 @@ describe("tenant-config-api", () => {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        features: { ai_smart_compose: false },
+        features: { assistant_retrieval: false },
         quotas: { api_rps_limit: 5 },
         reason: "test update",
       }),

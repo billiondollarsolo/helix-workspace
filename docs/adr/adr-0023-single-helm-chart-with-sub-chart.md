@@ -1,6 +1,6 @@
 # ADR-0023: Single Helm Chart + Optional Sub-Charts for Workers / Roles
 
-> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features or impose a commercial license.
+> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features.
 
 ## Status
 

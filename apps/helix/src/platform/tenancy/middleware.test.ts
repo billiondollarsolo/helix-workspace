@@ -51,7 +51,7 @@ describe("tenant Fastify hook", () => {
     app.get("/api/tools", async (request) => ({
       orgId: request.tenant?.orgId,
       orgSlug: request.tenant?.orgSlug,
-      aiSmartCompose: request.effectiveConfig?.features.ai_smart_compose,
+      assistantRetrieval: request.effectiveConfig?.features.assistant_retrieval,
     }));
 
     const response = await app.inject({ method: "GET", url: "/api/tools" });
@@ -60,7 +60,7 @@ describe("tenant Fastify hook", () => {
     expect(response.json()).toEqual({
       orgId: tenant.orgId,
       orgSlug: "acme",
-      aiSmartCompose: true,
+      assistantRetrieval: true,
     });
     expect(resolvedUrls).toEqual(["/api/tools"]);
   });

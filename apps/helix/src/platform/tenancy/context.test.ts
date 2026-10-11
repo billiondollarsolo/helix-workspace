@@ -128,7 +128,7 @@ describe("resolveTenantContext", () => {
     const acme = orgRecord({
       id: "11111111-1111-4111-8111-111111111111",
       slug: "acme",
-      featureFlags: { ai_smart_compose: false },
+      featureFlags: { assistant_retrieval: false },
     });
     const context = await resolveTenantContext({
       config: { mode: "multi-tenant-saas" },
@@ -139,7 +139,7 @@ describe("resolveTenantContext", () => {
 
     expect(context.orgId).toBe(acme.id);
     expect(context.orgSlug).toBe("acme");
-    expect(context.effectiveConfig.features.ai_smart_compose).toBe(false);
+    expect(context.effectiveConfig.features.assistant_retrieval).toBe(false);
     expect(context.effectiveConfig.quotas.actors_limit).toBeNull();
   });
 

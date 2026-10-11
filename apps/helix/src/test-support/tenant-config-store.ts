@@ -20,7 +20,7 @@ export class InMemoryTenantConfigAdminStore implements TenantConfigAdminStore {
       tier: "business",
       region: "us-east-1",
       byoConfig: {},
-      featureFlags: { ai_smart_compose: false },
+      featureFlags: { assistant_retrieval: false },
       quotas: { api_rps_limit: 5 },
       branding: {},
       suspendedAt: null,

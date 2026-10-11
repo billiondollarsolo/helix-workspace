@@ -104,7 +104,7 @@ minimum for 1.x: documented mbox/EML export.
 
 | ID   | Sev | Finding                                                                                                                                     | Batch                                  |
 | ---- | --- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| ST1  | P0  | Saving any admin feature flag replaces the whole `feature_flags` JSON (same for `quotas`); other flags such as `byo_storage` are lost.      | 1                                      |
+| ST1  | P0  | Saving any admin feature flag replaces the whole `feature_flags` JSON (same for `quotas`); other flags such as `mail_outbound` are lost.    | 1                                      |
 | ST2  | P1  | `mail.settings.set` replaces the record; a partial agent call wipes blocked senders.                                                        | 1                                      |
 | ST3  | P1  | Web signature form always sends `signatureHtml: null`.                                                                                      | 1                                      |
 | ST4  | P1  | "Filter messages like these" creates a filter with no actions; no filter management UI.                                                     | 1 (require action), 2 (UI)             |

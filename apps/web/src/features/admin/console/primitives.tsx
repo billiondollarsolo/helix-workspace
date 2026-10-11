@@ -201,7 +201,7 @@ export function useQueryFailure(
 }
 
 /* Clients here throw plain `Error`s, so an HTTP status only survives in the
-   generated message tail — `Failed to load invoices (503).`. When the backend
+   generated message tail — `Failed to load domains (503).`. When the backend
    sends its own `error` string instead there is no status to read, and
    guessing one would put a cause on screen that we do not actually know. */
 const TRAILING_HTTP_STATUS = /\((\d{3})\)\.?$/;

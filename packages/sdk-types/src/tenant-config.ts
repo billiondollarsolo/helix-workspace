@@ -1,8 +1,6 @@
 // Types now authored in @helix/contracts (Zod single source of truth).
 // This shim preserves the historical @helix/sdk-types import path.
 export type {
-  DlpEnforcementMode,
-  WatermarkMode,
   TenantByoConfig,
   TenantFeatureFlags,
   TenantQuotas,

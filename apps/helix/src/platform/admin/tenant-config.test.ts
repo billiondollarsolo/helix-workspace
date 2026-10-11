@@ -65,12 +65,12 @@ describe("tenant config admin routes", () => {
       tenantConfig: {
         orgId,
         byo: {},
-        features: { ai_smart_compose: false },
+        features: { assistant_retrieval: false },
         quotas: { api_rps_limit: 5 },
         branding: {},
         effective: {
           byo: {},
-          features: { ai_smart_compose: false, assistant_retrieval: true, mail_outbound: true },
+          features: { assistant_retrieval: false, mail_outbound: true },
           quotas: { api_rps_limit: 5, actors_limit: null, storage_bytes_limit: null },
           branding: {},
         },
@@ -105,7 +105,7 @@ describe("tenant config admin routes", () => {
       url: "/api/admin/tenant-config",
       headers: headers("admin.console.write"),
       payload: {
-        features: { ai_smart_compose: true, dlp_enforcement: "warn", mail_outbound: false },
+        features: { assistant_retrieval: true, mail_outbound: false },
         byo: {
           storage: {
             kind: "byo",
@@ -146,7 +146,7 @@ describe("tenant config admin routes", () => {
             lifecycle: { object_lock: "compliance", retention_days: 30 },
           },
         },
-        featureFlags: { ai_smart_compose: true, dlp_enforcement: "warn", mail_outbound: false },
+        featureFlags: { assistant_retrieval: true, mail_outbound: false },
         quotas: { api_rps_limit: 10, actors_limit: null },
         branding: { accent_color_hex: "#2f6fed", display_name_override: "Acme" },
         changedByActorId: actorId,
@@ -163,7 +163,7 @@ describe("tenant config admin routes", () => {
             credentials_secret_handle: "s3",
           },
         },
-        features: { ai_smart_compose: true, dlp_enforcement: "warn", mail_outbound: false },
+        features: { assistant_retrieval: true, mail_outbound: false },
         quotas: { api_rps_limit: 10, actors_limit: null },
         branding: { accent_color_hex: "#2f6fed", display_name_override: "Acme" },
       },
@@ -183,7 +183,7 @@ describe("tenant config admin routes", () => {
           orgId,
           changedByActorId: actorId,
           reason: "admin settings update",
-          keys: ["ai_smart_compose", "dlp_enforcement", "mail_outbound"],
+          keys: ["assistant_retrieval", "mail_outbound"],
         },
       },
     ]);
@@ -221,7 +221,7 @@ describe("tenant config admin routes", () => {
     await app.close();
   });
 
-  it("accepts BYO storage config without any plan or feature entitlement", async () => {
+  it("accepts BYO storage config", async () => {
     const app = fastify();
     await registerTenantConfigAdminRoutes(app, {
       store: new InMemoryTenantConfigAdminStore(),
@@ -344,7 +344,7 @@ describe("tenant config admin routes", () => {
       method: "PATCH",
       url: "/api/admin/tenant-config",
       headers: headers("admin.console.read"),
-      payload: { features: { ai_smart_compose: true } },
+      payload: { features: { assistant_retrieval: true } },
     });
 
     expect(response.statusCode).toBe(403);
@@ -860,7 +860,7 @@ describe("tenant config admin routes", () => {
       migration: { status: "succeeded", target: "byo" },
       tenantConfig: {
         byo: { storage: targetStorage },
-        features: { ai_smart_compose: false },
+        features: { assistant_retrieval: false },
       },
     });
     expect(auditRecords).toEqual([
@@ -871,7 +871,6 @@ describe("tenant config admin routes", () => {
         metadata: { target: "byo", dryRun: false, status: "succeeded" },
       }),
     ]);
-    // Cutover no longer flips a BYO entitlement flag: BYO storage is always available.
     expect(featureFlagEvents).toEqual([]);
     await app.close();
   });
@@ -889,7 +888,7 @@ describe("tenant config admin routes", () => {
     } as const;
     const store = new InMemoryTenantConfigAdminStore({
       byoConfig: { storage: sourceStorage },
-      featureFlags: { ai_smart_compose: false },
+      featureFlags: { assistant_retrieval: false },
     });
     storageMigrationJobs.jobs.push(
       migrationJob({
@@ -1107,7 +1106,7 @@ describe("tenant config admin routes", () => {
 describe("tenant config merge semantics", () => {
   it("keeps flags the admin did not submit when one flag is saved", async () => {
     const store = new InMemoryTenantConfigAdminStore({
-      featureFlags: { mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: true },
+      featureFlags: { mail_outbound: false, assistant_retrieval: true },
       quotas: { api_rps_limit: 5, actors_limit: null },
     });
     const app = fastify();
@@ -1117,22 +1116,21 @@ describe("tenant config merge semantics", () => {
       url: "/api/admin/tenant-config",
       headers: headers("admin.console.write"),
       payload: {
-        features: { ai_smart_compose: false, calendar_import_invitations: true },
+        features: { assistant_retrieval: false, calendar_import_invitations: true },
         quotas: { api_rps_limit: 9 },
       },
     });
     expect(response.statusCode).toBe(200);
     expect(body(response)).toMatchObject({
       tenantConfig: {
-        features: { mail_outbound: false, dlp_enforcement: "warn", ai_smart_compose: false },
+        features: { mail_outbound: false, assistant_retrieval: false },
         quotas: { api_rps_limit: 9, actors_limit: null },
       },
     });
     await expect(store.findById(orgId)).resolves.toMatchObject({
       featureFlags: {
         mail_outbound: false,
-        dlp_enforcement: "warn",
-        ai_smart_compose: false,
+        assistant_retrieval: false,
         calendar_import_invitations: true,
       },
     });

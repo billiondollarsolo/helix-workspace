@@ -13,15 +13,15 @@ describe("TenantConfigFeatureFlagProvider", () => {
     const tenantConfig = config({
       features: {
         ...SYSTEM_TENANT_CONFIG.features,
-        ai_smart_compose: false,
-        dlp_enforcement: "block",
+        mail_outbound: false,
+        calendar_import_invitations: true,
       },
     });
 
-    expect(provider.get("ai_smart_compose", true, { tenantConfig })).toBe(false);
-    await expect(provider.getAsync("dlp_enforcement", "off", { tenantConfig })).resolves.toBe(
-      "block",
-    );
+    expect(provider.get("mail_outbound", true, { tenantConfig })).toBe(false);
+    await expect(
+      provider.getAsync("calendar_import_invitations", false, { tenantConfig }),
+    ).resolves.toBe(true);
   });
 
   it("loads tenant config by org for async evaluation", async () => {
@@ -50,10 +50,10 @@ describe("TenantConfigFeatureFlagProvider", () => {
   it("falls back to defaults for missing org context, missing flags, and type mismatches", async () => {
     const provider = new TenantConfigFeatureFlagProvider();
 
-    expect(provider.get("ai_smart_compose", false)).toBe(false);
-    await expect(provider.getAsync("ai_smart_compose", false)).resolves.toBe(false);
+    expect(provider.get("mail_outbound", false)).toBe(false);
+    await expect(provider.getAsync("mail_outbound", false)).resolves.toBe(false);
     expect(
-      readTenantFlag(config({ features: { ai_smart_compose: "yes" } }), "ai_smart_compose", false),
+      readTenantFlag(config({ features: { mail_outbound: "yes" } }), "mail_outbound", false),
     ).toBe(false);
   });
 });

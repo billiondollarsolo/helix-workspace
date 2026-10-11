@@ -12,18 +12,18 @@ describe("PostgresMeteringEventStore", () => {
 
     const record = await store.insertEvent({
       orgId,
-      eventType: "api.call.billable",
+      eventType: "export.completed",
       quantity: "1",
-      metadata: { route: "/api/tools" },
+      metadata: { jobId: "export-1" },
       occurredAt: new Date("2026-05-24T12:00:00.000Z"),
     });
 
     expect(record).toEqual({
       id: "event-1",
       orgId,
-      eventType: "api.call.billable",
+      eventType: "export.completed",
       quantity: "1",
-      metadata: { route: "/api/tools" },
+      metadata: { jobId: "export-1" },
       occurredAt: "2026-05-24T12:00:00.000Z",
     });
     expect(recording.calls).toHaveLength(1);
@@ -31,9 +31,9 @@ describe("PostgresMeteringEventStore", () => {
     expect(recording.calls[0]?.text).toContain("quantity::text as quantity");
     expect(recording.calls[0]?.values).toEqual([
       orgId,
-      "api.call.billable",
+      "export.completed",
       "1",
-      { route: "/api/tools" },
+      { jobId: "export-1" },
       new Date("2026-05-24T12:00:00.000Z"),
     ]);
   });
@@ -56,18 +56,11 @@ describe("PostgresMeteringRollupStore", () => {
     expect(query?.text).toContain("when 'ai.tokens' then 'ai_tokens'");
     expect(query?.text).toContain("when 'ai.image.generated' then 'ai_images_generated'");
     expect(query?.text).toContain("when 'storage.delta' then 'storage_delta_bytes'");
-    expect(query?.text).toContain("when 'seats.delta' then 'seats_delta'");
     expect(query?.text).toContain("when 'export.completed' then 'exports_count'");
-    expect(query?.text).toContain("when 'collab.session.opened' then 'collab_session_seconds'");
-    expect(query?.text).toContain("when 'api.call.billable' then 'api_calls_billable'");
     expect(query?.text).toContain("storage_baselines as");
     expect(query?.text).toContain("'storage_avg_bytes' as metric_key");
     expect(query?.text).toContain("'daily_average_from_deltas'");
-    expect(query?.text).toContain("seat_baselines as");
-    expect(query?.text).toContain("'seats_max' as metric_key");
-    expect(query?.text).toContain("'daily_max_from_deltas'");
     expect(query?.text).toContain("union all select * from storage_daily");
-    expect(query?.text).toContain("union all select * from seats_daily");
     expect(query?.text).toContain("'metering_events_v1'");
     expect(query?.text).toContain("insert into metering_rollups");
     expect(query?.text).toContain("on conflict (org_id, period_start, metric_key)");
@@ -87,7 +80,7 @@ function createRecordingSql() {
       {
         id: "event-1",
         org_id: orgId,
-        event_type: "api.call.billable",
+        event_type: "export.completed",
         quantity: "1",
         metadata: values[3],
         occurred_at: new Date("2026-05-24T12:00:00.000Z"),

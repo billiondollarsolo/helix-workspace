@@ -58,15 +58,9 @@ export interface RegisterTenantConfigAdminRoutesOptions {
   readonly onFeatureFlagEventError?: ((error: unknown) => void) | undefined;
 }
 
-const dlpModeSchema = z.enum(["off", "warn", "block"]);
-const watermarkModeSchema = z.enum(["off", "visible", "invisible", "both"]);
-
 const featureFlagsSchema = z
   .object({
     assistant_retrieval: z.boolean().optional(),
-    ai_smart_compose: z.boolean().optional(),
-    dlp_enforcement: dlpModeSchema.optional(),
-    watermark: watermarkModeSchema.optional(),
     mail_outbound: z.boolean().optional(),
     calendar_import_invitations: z.boolean().optional(),
     mail_inbound_policy: inboundAuthenticationPolicySchema.optional(),

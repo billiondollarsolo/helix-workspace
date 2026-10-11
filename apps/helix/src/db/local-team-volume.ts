@@ -65,7 +65,7 @@ const SUBJECTS = [
   "Customer follow-up",
   "Thursday notes",
   "Restore drill",
-  "Seat count",
+  "Account count",
   "Launch copy",
   "Interview quote",
   "On-call handoff",
@@ -200,7 +200,7 @@ export function volumeRooms(): readonly VolumeRoom[] {
     {
       id: teamId(3, 306),
       name: "Budget working group",
-      topic: "Seat counts and vendor hours.",
+      topic: "Account counts and vendor hours.",
       memberIndexes: [0, 7, 9],
       includeAdmin: false,
     },

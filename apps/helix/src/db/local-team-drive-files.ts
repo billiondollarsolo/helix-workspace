@@ -240,7 +240,7 @@ function sharedTeamFiles(): TeamFileFixture[] {
           ? "Decided: keep personal notes unfiled until they are ready.\nFollow-up: Elena will try the onboarding checklist from a fresh session."
           : week === 2
             ? "Northstar interview: people look for the owner first.\nFollow-up: put the owner on the first line of shared docs."
-            : "Access review scheduled with Priya.\nFollow-up: Luca will confirm seat counts before we invite the next customer.",
+            : "Access review scheduled with Priya.\nFollow-up: Luca will confirm account counts before we invite the next customer.",
       ),
       csv(
         `weekly-week-${String(week)}-actions`,
@@ -384,7 +384,7 @@ function engineeringFiles(): TeamFileFixture[] {
       1,
       fid(103),
       "Pilot operations runbook.md",
-      "Owners: Theo, Jun, Omar, and Priya. Luca may read this folder for seat-count planning.\n\nBefore a change: restore a backup, repeat the permission matrix, check service health.\nIf a check fails, stop the rollout and keep the previous version available.\n",
+      "Owners: Theo, Jun, Omar, and Priya. Luca may read this folder for account planning.\n\nBefore a change: restore a backup, repeat the permission matrix, check service health.\nIf a check fails, stop the rollout and keep the previous version available.\n",
     ),
     md(
       "runbook-restore",
@@ -472,8 +472,8 @@ function productPlanningFiles(): TeamFileFixture[] {
       "planning-budget",
       7,
       fid(181),
-      "Seat count notes.md",
-      "Ten Harbor seats plus the workspace admin. Next customer adds five seats after the access review.\n",
+      "Account count notes.md",
+      "Ten Harbor accounts plus the workspace admin. Next customer adds five accounts after the access review.\n",
     ),
     csv(
       "planning-timeline",
@@ -548,14 +548,14 @@ function pairFiles(): TeamFileFixture[] {
       7,
       fid(204),
       "Pilot budget notes.md",
-      "Shared with Samara. Keep contractor hours and seat counts in this folder only.\n",
+      "Shared with Samara. Keep contractor hours and account counts in this folder only.\n",
     ),
     csv(
       "pair-budget-lines",
       7,
       fid(204),
       "Budget lines.csv",
-      "item,amount,owner\nPilot seats,10,Luca Rossi\nStaging restore time,6h,Omar Haddad\n",
+      "item,amount,owner\nPilot accounts,10,Luca Rossi\nStaging restore time,6h,Omar Haddad\n",
     ),
     csv(
       "pair-access",
@@ -638,8 +638,8 @@ function pairFiles(): TeamFileFixture[] {
       "finance-close",
       7,
       fid(213),
-      "Seat invoice.csv",
-      "month,seats,notes\nSeptember,11,ten Harbor people plus Avery\nOctober,16,add Northstar only after access review\n",
+      "Account roster.csv",
+      "month,accounts,notes\nSeptember,11,ten Harbor people plus Avery\nOctober,16,add Northstar only after access review\n",
     ),
     md(
       "finance-close-notes",

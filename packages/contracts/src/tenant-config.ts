@@ -12,30 +12,18 @@ const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 );
 const jsonObjectSchema: z.ZodType<JsonObject> = z.record(z.string(), jsonValueSchema);
 
-export const dlpEnforcementModeSchema = z.enum(["off", "warn", "block"]);
-export type DlpEnforcementMode = z.infer<typeof dlpEnforcementModeSchema>;
-
-export const watermarkModeSchema = z.enum(["off", "visible", "invisible", "both"]);
-export type WatermarkMode = z.infer<typeof watermarkModeSchema>;
-
 export const tenantByoConfigSchema = jsonObjectSchema;
 export type TenantByoConfig = z.infer<typeof tenantByoConfigSchema>;
 
 /**
- * Tenant feature flags. Helix is free and open source with no plans: every
- * feature is available to every org. The remaining flags are org-admin policy
- * switches (an admin may turn outbound mail or AI features off), not
- * entitlements, and they default to on, except `calendar_import_invitations`,
- * which an admin opts into. Retired plan-entitlement keys in older
- * stored configs (for example `b2b_sharing`, `byo_storage` or `support_tier`)
- * still parse via passthrough and have no effect.
+ * Tenant feature flags: org-admin policy switches. `assistant_retrieval` and
+ * `mail_outbound` default to on; `calendar_import_invitations` is an opt-in.
+ * The stored object also carries structured policies such as
+ * `mail_inbound_policy`, which the app validates where it reads them.
  */
 export const tenantFeatureFlagsSchema = z
   .object({
     assistant_retrieval: z.boolean(),
-    ai_smart_compose: z.boolean(),
-    dlp_enforcement: dlpEnforcementModeSchema,
-    watermark: watermarkModeSchema,
     mail_outbound: z.boolean(),
     calendar_import_invitations: z.boolean(),
   })
@@ -43,9 +31,8 @@ export const tenantFeatureFlagsSchema = z
 export type TenantFeatureFlags = z.infer<typeof tenantFeatureFlagsSchema>;
 
 /**
- * Tenant quotas. `null` means unlimited, which is the system default: Helix
- * has no plan limits. An org admin may still set an explicit cap for its own
- * tenant.
+ * Tenant quotas. `null` means unlimited, which is the system default. An org
+ * admin may set an explicit cap for its own tenant.
  */
 export const tenantQuotasSchema = z
   .object({
@@ -82,9 +69,6 @@ export type TenantConfig = z.infer<typeof tenantConfigSchema>;
 
 export const SYSTEM_TENANT_FEATURE_FLAGS = {
   assistant_retrieval: true,
-  ai_smart_compose: true,
-  dlp_enforcement: "off",
-  watermark: "off",
   mail_outbound: true,
   calendar_import_invitations: false,
 } as const satisfies TenantFeatureFlags;

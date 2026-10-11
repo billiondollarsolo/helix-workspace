@@ -37,29 +37,22 @@ export async function prefetchAdminTenantConfigQuery(queryClient: TenantConfigRo
   await queryClient.ensureQueryData(tenantConfigQueryOptions()).catch(() => undefined);
 }
 
-/* Org-admin policy switches. Helix has no plans or entitlements: every feature
-   is available to every org. These default to on (calendar invitation import
+/* Org-admin policy switches. These default to on (calendar invitation import
    is an opt-in), and an admin may change them for their own workspace. */
 const BOOLEAN_FEATURE_FLAGS = [
-  ["assistant_retrieval", "Assistant retrieval"],
-  ["ai_smart_compose", "AI smart compose"],
+  ["assistant_retrieval", "Assistant searches workspace content"],
   ["mail_outbound", "Outbound mail"],
   ["calendar_import_invitations", "Import calendar invitations from email"],
 ] as const;
 
 export const BOOLEAN_FEATURE_FLAG_GROUPS = [
-  { title: "AI", keys: ["assistant_retrieval", "ai_smart_compose"] },
+  { title: "AI", keys: ["assistant_retrieval"] },
   { title: "Mail", keys: ["mail_outbound"] },
   { title: "Calendar", keys: ["calendar_import_invitations"] },
 ] as const satisfies ReadonlyArray<{
   readonly title: string;
   readonly keys: readonly string[];
 }>;
-
-const SELECT_FEATURE_FLAGS = [
-  ["dlp_enforcement", "DLP enforcement", ["off", "warn", "block"]],
-  ["watermark", "Watermark", ["off", "visible", "invisible", "both"]],
-] as const;
 
 const QUOTA_FIELDS = [
   ["storage_bytes_limit", "Storage bytes"],
@@ -118,14 +111,12 @@ const BOOLEAN_FEATURE_FLAG_LABELS = new Map<string, string>(BOOLEAN_FEATURE_FLAG
 /** Every boolean flag key; the test checks `BOOLEAN_FEATURE_FLAG_GROUPS` partitions it. */
 export const BOOLEAN_FEATURE_FLAG_KEYS: readonly BooleanFeatureFlagKey[] =
   BOOLEAN_FEATURE_FLAGS.map(([key]) => key);
-type SelectFeatureFlagKey = (typeof SELECT_FEATURE_FLAGS)[number][0];
-type FeatureFlagKey = BooleanFeatureFlagKey | SelectFeatureFlagKey;
 type BrandingKey = (typeof BRANDING_FIELDS)[number][0];
 type ByoStorageKind = (typeof BYO_STORAGE_KINDS)[number][0];
 type ByoStorageProvider = (typeof BYO_STORAGE_PROVIDERS)[number][0];
 type ByoStorageFieldKey = (typeof BYO_STORAGE_FIELDS)[number][0];
 
-type FeatureState = Record<BooleanFeatureFlagKey, boolean> & Record<SelectFeatureFlagKey, string>;
+type FeatureState = Record<BooleanFeatureFlagKey, boolean>;
 type BrandingState = Record<BrandingKey, string>;
 type ByoStorageState = Record<ByoStorageFieldKey, string> & {
   readonly kind: ByoStorageKind;
@@ -134,10 +125,9 @@ type ByoStorageState = Record<ByoStorageFieldKey, string> & {
   readonly object_lock: "governance" | "compliance";
 };
 
-const emptyFeatureState = {
-  ...Object.fromEntries(BOOLEAN_FEATURE_FLAGS.map(([key]) => [key, false])),
-  ...Object.fromEntries(SELECT_FEATURE_FLAGS.map(([key, , options]) => [key, options[0]])),
-} as FeatureState;
+const emptyFeatureState = Object.fromEntries(
+  BOOLEAN_FEATURE_FLAGS.map(([key]) => [key, false]),
+) as FeatureState;
 const emptyBrandingState = Object.fromEntries(
   BRANDING_FIELDS.map(([key]) => [key, ""]),
 ) as BrandingState;
@@ -159,7 +149,9 @@ export function TenantConfigManagement() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [features, setFeatures] = useState<FeatureState>(emptyFeatureState);
-  const [dirtyFeatureKeys, setDirtyFeatureKeys] = useState<ReadonlySet<FeatureFlagKey>>(new Set());
+  const [dirtyFeatureKeys, setDirtyFeatureKeys] = useState<ReadonlySet<BooleanFeatureFlagKey>>(
+    new Set(),
+  );
   const [branding, setBranding] = useState<BrandingState>(emptyBrandingState);
   const [byoStorage, setByoStorage] = useState<ByoStorageState>(emptyByoStorageState);
   const [storageHealth, setStorageHealth] = useState<TenantStorageHealthResult | null>(null);
@@ -476,31 +468,6 @@ export function TenantConfigManagement() {
                 ))}
               </fieldset>
             ))}
-            <div className="grid gap-2">
-              {SELECT_FEATURE_FLAGS.map(([key, label, options]) => (
-                <label key={key} className={FIELD_LABEL_CLASS}>
-                  <span>{label}</span>
-                  <select
-                    className={SELECT_CLASS}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      setFeatures((current) => ({
-                        ...current,
-                        [key]: value,
-                      }));
-                      setDirtyFeatureKeys((current) => new Set(current).add(key));
-                    }}
-                    value={features[key]}
-                  >
-                    {options.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            </div>
             {/* Saving with nothing dirty PATCHed an empty patch — a control
                 that does nothing. The count says what the button will write. */}
             <p className="text-xs text-muted-foreground" role="status">
@@ -1003,20 +970,9 @@ function SaveButton({
 }
 
 function featureStateFromConfig(config: TenantConfigAdminView): FeatureState {
-  return {
-    ...Object.fromEntries(
-      BOOLEAN_FEATURE_FLAGS.map(([key]) => [key, config.features[key] === true]),
-    ),
-    ...Object.fromEntries(
-      SELECT_FEATURE_FLAGS.map(([key, , options]) => [
-        key,
-        typeof config.features[key] === "string" &&
-        (options as readonly string[]).includes(config.features[key])
-          ? config.features[key]
-          : options[0],
-      ]),
-    ),
-  } as FeatureState;
+  return Object.fromEntries(
+    BOOLEAN_FEATURE_FLAGS.map(([key]) => [key, config.effective.features[key] === true]),
+  ) as FeatureState;
 }
 
 function brandingStateFromConfig(config: TenantConfigAdminView): BrandingState {

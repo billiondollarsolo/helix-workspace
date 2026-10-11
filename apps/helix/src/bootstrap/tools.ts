@@ -15,6 +15,7 @@ import {
 import { registerAskUserTool } from "../platform/assistant/ask-user.js";
 import { registerChatRecallTools } from "../platform/assistant/chats.js";
 import { registerContextTools } from "../platform/assistant/context-tools.js";
+import { ASSISTANT_RETRIEVAL_FLAG } from "../platform/assistant/context-policy.js";
 import { registerTaskTools } from "../platform/assistant/tasks.js";
 import { registerRoutineTools } from "../platform/assistant/routines.js";
 import { PostgresRoutineStore } from "../platform/assistant/routines-postgres.js";
@@ -685,6 +686,11 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
     memory: assistantMemory,
     ...(runtimeSearchEngine === undefined ? {} : { search: runtimeSearchEngine }),
     searchTypes: assistantSearchTypes,
+    retrievalEnabled: (actor) =>
+      featureFlags.getAsync(ASSISTANT_RETRIEVAL_FLAG, true, {
+        orgId: actor.orgId,
+        actorId: actor.id,
+      }),
     confirmationGate,
     slashCommands: assistantSlashCommands,
     classifyUserInput: async ({ content }) =>

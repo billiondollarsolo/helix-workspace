@@ -10,6 +10,9 @@ import type { SearchEngine, SearchHit } from "../search/index.js";
 import { createScopedSearchRequest, type GlobalSearchType } from "../search/scope.js";
 import type { AssistantSource } from "./types.js";
 
+/** Tenant flag (default on): automatic workspace search context for Assistant turns. */
+export const ASSISTANT_RETRIEVAL_FLAG = "assistant_retrieval";
+
 export const assistantContextLimits = {
   sourceCharacters: 4_000,
   totalSourceCharacters: 12_000,

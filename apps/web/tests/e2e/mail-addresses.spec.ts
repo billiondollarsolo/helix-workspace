@@ -140,15 +140,16 @@ test("saved drafts retain From after reload and revoked aliases block sending un
   const state = await mockAddresses(page);
   await page.goto("/mail");
   await openCompose(page);
-  const compose = page.locator(".compose");
+  const compose = page.locator("[data-compose-window]");
   await compose.getByLabel("From address").selectOption("support@second.test");
-  await compose.getByLabel("To", { exact: true }).fill("recipient@first.test");
+  await compose.getByRole("combobox", { name: "To", exact: true }).fill("recipient@first.test");
+  await compose.getByRole("combobox", { name: "To", exact: true }).press("Enter");
   await compose.getByLabel("Subject", { exact: true }).fill("Sender draft");
-  await compose.getByLabel("Subject", { exact: true }).blur();
   await expect.poll(() => state.draft?.from).toEqual({ address: "support@second.test" });
   state.revokeAlias();
-  await page.reload();
-  await openCompose(page);
+  // Compose starts blank; the saved draft resumes from Drafts.
+  await page.goto("/mail?folder=drafts");
+  await page.getByText("Sender draft").first().click();
   await expect(compose.getByLabel("Subject", { exact: true })).toHaveValue("Sender draft");
   await expect(compose.getByLabel("From address")).toHaveValue("support@second.test");
   await expect(compose.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
@@ -377,12 +378,8 @@ async function mockAddresses(page: Page, failFirst = false) {
       await route.fulfill({ json: state.draft });
       return;
     }
-    if (path === "/v1/api/tools/mail.draft.list") {
-      await route.fulfill({ json: { drafts: state.draft ? [state.draft] : [] } });
-      return;
-    }
     if (path === "/v1/api/tools/mail.draft.get") {
-      await route.fulfill({ json: state.draft });
+      await route.fulfill({ json: { draft: state.draft } });
       return;
     }
     if (path === "/v1/api/tools/mail.send") {
@@ -391,7 +388,32 @@ async function mockAddresses(page: Page, failFirst = false) {
       return;
     }
     if (path === "/v1/api/tools/mail.threads.list") {
-      await route.fulfill({ json: { threads: [], total: 0, limit: 50, offset: 0 } });
+      const folder = (request.postDataJSON() as { readonly folder?: string }).folder;
+      const draft = state.draft;
+      const threads =
+        folder === "drafts" && draft !== null
+          ? [
+              {
+                threadId: draft.id,
+                messageId: draft.id,
+                subject: draft.subject,
+                from: "Draft",
+                fromEmail: "",
+                preview: "",
+                time: draft.updatedAt,
+                unread: false,
+                starred: false,
+                hasAttachment: false,
+                messageCount: 0,
+                labels: [],
+                category: "primary",
+                folder: "drafts",
+                snoozedUntil: null,
+                participants: [],
+              },
+            ]
+          : [];
+      await route.fulfill({ json: { threads, total: threads.length, limit: 50, offset: 0 } });
       return;
     }
     if (path === "/v1/api/tools/mail.folders.list") {
@@ -416,9 +438,8 @@ async function mockAddresses(page: Page, failFirst = false) {
 async function openCompose(page: Page) {
   if ((page.viewportSize()?.width ?? 1440) <= 760)
     await page.getByRole("button", { name: "Main menu", exact: true }).click();
+  // On phones the compose window opens full screen over the menu.
   await page.getByRole("button", { name: "Compose", exact: true }).click();
-  if ((page.viewportSize()?.width ?? 1440) <= 760)
-    await page.getByRole("button", { name: "Main menu", exact: true }).click();
 }
 
 test("domain identity choices retain MFA and second-administrator gates", async ({ page }) => {

@@ -77,7 +77,9 @@ notify({
 ```
 
 Options: `description`, `tone` (`default` | `success` | `error`), `duration`
-(default 4s, 8s with an action, 10s for errors), `id` (replace in place).
+(default 4s, 8s with an action, 10s for errors), `id` (replace in place), and
+`secondaryAction` for a second inline action after `action` (Mail's
+"Message sent · Undo · View message").
 
 ## SplitButton
 

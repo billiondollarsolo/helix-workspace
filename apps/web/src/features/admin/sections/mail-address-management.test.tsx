@@ -8,10 +8,6 @@ import { GroupMailForm } from "./group-mail-form";
 import { createGroup, updateGroup, type Group } from "../groups-api";
 import { MailSenderSelect, useMailSender } from "../../mail/mail-sender-select";
 import { mailAddressQueryKeys, type MailAddresses } from "@/lib/mail-addresses";
-import {
-  readMailComposeRecovery,
-  writeMailComposeRecovery,
-} from "../../mail/mail-compose-recovery";
 
 const { fetchMock } = vi.hoisted(() => ({ fetchMock: vi.fn<typeof fetch>() }));
 vi.mock("@/lib/auth", async (original) => ({
@@ -391,17 +387,4 @@ it("retains a chosen sender across primary changes, blocks revoked addresses, an
   await click("Retry sending addresses");
   await fill("From address", "morgan@first.test");
   expect(container.querySelector<HTMLButtonElement>("button")?.disabled).toBe(false);
-});
-
-it("persists the selected From address through local crash recovery", () => {
-  writeMailComposeRecovery({
-    from: { address: "support@second.test" },
-    to: [],
-    cc: [],
-    bcc: [],
-    subject: "Draft",
-    bodyText: "",
-    attachments: [],
-  });
-  expect(readMailComposeRecovery()?.from).toEqual({ address: "support@second.test" });
 });

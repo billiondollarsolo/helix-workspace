@@ -16,7 +16,7 @@ import {
   type MailFolderKey,
   type MailThreadRow,
 } from "./api";
-import { Compose } from "./mail-compose";
+import { ComposeHost, openCompose } from "./compose";
 import "./mail-shell.css";
 import { MailSidebar } from "./mail-sidebar";
 import { type MailTabId } from "./mail-taxonomy";
@@ -55,7 +55,6 @@ export function MailShell() {
   const [tab, setTab] = useState<MailTabId>(urlSearch.tab ?? "primary");
   const [activeLabel, setActiveLabel] = useState<string | null>(urlSearch.label ?? null);
   const [selected, setSelected] = useState<string | null>(urlSearch.thread ?? null);
-  const [composeOpen, setComposeOpen] = useState(false);
   const [query, setQuery] = useState(urlSearch.q ?? "");
 
   // Two-way bind to the URL. Local state pushes new history entries when the
@@ -293,8 +292,13 @@ export function MailShell() {
 
   const handleSelect = useCallback(
     (id: string) => {
-      setSelected(id);
       const row = threads.find((thread) => thread.threadId === id);
+      // A saved draft (no sent messages yet) resumes in a compose window.
+      if (row?.folder === "drafts" && row.messageCount === 0) {
+        openCompose({ draftId: row.messageId });
+        return;
+      }
+      setSelected(id);
       if (row?.unread === true) {
         readMutation.mutate({ threadId: id, unread: false });
       }
@@ -464,7 +468,7 @@ export function MailShell() {
     openThreadId: selectedRow?.threadId ?? null,
     checkedIds,
     onCheckedChange: setCheckedIds,
-    onCompose: () => setComposeOpen(true),
+    onCompose: () => openCompose(),
     onOpen: handleSelect,
     onBack: () => setSelected(null),
     onStar: (ids, starred) =>
@@ -509,7 +513,7 @@ export function MailShell() {
               setCheckedIds(new Set());
             }}
             onCompose={() => {
-              setComposeOpen(true);
+              openCompose();
             }}
             folders={folders}
             labels={labels}
@@ -655,14 +659,7 @@ export function MailShell() {
           </button>
         </div>
       )}
-      {composeOpen && (
-        <Compose
-          onClose={() => {
-            setComposeOpen(false);
-          }}
-          onSent={invalidateLists}
-        />
-      )}
+      <ComposeHost />
     </>
   );
 }

@@ -4,16 +4,24 @@ import {
   deleteCalendarEvent,
   findCalendarTime,
   listCalendarEvents,
+  listCalendarFreeBusy,
+  listCalendarMemberships,
+  removeCalendarMembership,
   respondToCalendarEvent,
+  setCalendarMembership,
   updateCalendarEvent,
 } from "./api";
 import {
-  calendarEventsInputFromRouteSearch,
   calendarRouteSearchFromState,
   calendarRouteStateFromSearch,
   defaultCalendarRouteState,
   validateCalendarRouteSearch,
-} from "./queries";
+} from "./route-state";
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  return input instanceof URL ? input.href : input.url;
+}
 
 const eventId = "33333333-3333-4333-8333-333333333333";
 
@@ -236,78 +244,38 @@ describe("calendar API", () => {
 });
 
 describe("calendar route search", () => {
-  it("normalizes route search params for calendar event prefetching", () => {
-    const search = validateCalendarRouteSearch({
-      event: " evt-1 ",
-      date: "2026-05-21",
-      view: "day",
-      q: " planning ",
-      query: "ignored",
-    });
-
-    expect(search).toEqual({
-      event: "evt-1",
-      date: "2026-05-21",
-      view: "day",
-      q: "planning",
-    });
-    expect(calendarEventsInputFromRouteSearch(search)).toEqual({
-      startsAt: "2026-05-21T00:00:00.000Z",
-      endsAt: "2026-05-21T23:59:59.999Z",
-      limit: 100,
-    });
-  });
-
-  it("falls back to safe defaults and derives week/month event windows", () => {
-    const defaultSearch = validateCalendarRouteSearch({
-      date: "2026-02-31",
-      view: "year",
-      query: " backend ",
-    });
-
-    expect(defaultSearch).toEqual({
-      event: undefined,
-      date: undefined,
-      view: undefined,
-      q: "backend",
-    });
-    expect(calendarEventsInputFromRouteSearch({ date: "2026-05-21", view: "week" })).toEqual({
-      startsAt: "2026-05-18T00:00:00.000Z",
-      endsAt: "2026-05-24T23:59:59.999Z",
-      limit: 100,
-    });
-    expect(calendarEventsInputFromRouteSearch({ date: "2026-06-15", view: "month" })).toEqual({
-      startsAt: "2026-06-01T00:00:00.000Z",
-      endsAt: "2026-06-30T23:59:59.999Z",
-      limit: 100,
-    });
-    expect(calendarEventsInputFromRouteSearch({ date: "2026-06-15", view: "agenda" })).toEqual({
-      startsAt: "2026-06-15T00:00:00.000Z",
-      endsAt: "2026-07-14T23:59:59.999Z",
-      limit: 250,
-    });
+  it("normalizes route search params", () => {
+    expect(
+      validateCalendarRouteSearch({
+        event: " evt-1 ",
+        date: "2026-05-21",
+        view: "3day",
+        q: " planning ",
+      }),
+    ).toEqual({ event: "evt-1", date: "2026-05-21", view: "3day", q: "planning" });
+    expect(
+      validateCalendarRouteSearch({ date: "2026-02-31", view: "agenda", query: "ignored" }),
+    ).toEqual({ event: undefined, date: undefined, view: undefined, q: undefined });
   });
 
   it("round-trips shell route state while omitting default params", () => {
-    // A non-default date so the round-trip preserves it in the search params.
-    const customDate = "2027-01-15";
     const routeState = calendarRouteStateFromSearch({
       event: "evt-2",
-      date: customDate,
-      view: "month",
+      date: "2027-01-15",
+      view: "schedule",
       q: "launch",
     });
 
     expect(routeState).toEqual({
       eventId: "evt-2",
-      date: customDate,
-      view: "month",
+      date: "2027-01-15",
+      view: "schedule",
       query: "launch",
     });
     expect(calendarRouteSearchFromState(routeState)).toEqual({
       event: "evt-2",
-      date: customDate,
-      view: "month",
+      date: "2027-01-15",
+      view: "schedule",
       q: "launch",
     });
     expect(
@@ -317,11 +285,72 @@ describe("calendar route search", () => {
         view: "week",
         query: "",
       }),
-    ).toEqual({
-      event: undefined,
-      date: undefined,
-      view: undefined,
-      q: undefined,
+    ).toEqual({ event: undefined, date: undefined, view: undefined, q: undefined });
+  });
+});
+
+describe("calendar free/busy and sharing API", () => {
+  it("reads busy blocks and manages calendar members through tools", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: requestUrl(input),
+        body: JSON.parse(typeof init?.body === "string" ? init.body : "{}") as unknown,
+      });
+      const url = requestUrl(input);
+      if (url.endsWith("calendar.free-busy")) {
+        return Promise.resolve(
+          Response.json({
+            busy: [
+              {
+                actorId: "a1",
+                startsAt: "2026-05-20T13:00:00.000Z",
+                endsAt: "2026-05-20T14:00:00.000Z",
+              },
+            ],
+          }),
+        );
+      }
+      if (url.endsWith("calendar.memberships.list")) {
+        return Promise.resolve(
+          Response.json({
+            memberships: [
+              {
+                calendarId: "c1",
+                actorId: "a2",
+                displayName: "Sam",
+                email: "sam@x.test",
+                role: "reader",
+              },
+            ],
+          }),
+        );
+      }
+      return Promise.resolve(Response.json({ ok: true }));
     });
+
+    await expect(
+      listCalendarFreeBusy(
+        {
+          actorIds: ["a1"],
+          windowStartsAt: "2026-05-20T00:00:00.000Z",
+          windowEndsAt: "2026-05-21T00:00:00.000Z",
+        },
+        fetchImpl,
+      ),
+    ).resolves.toHaveLength(1);
+    await expect(listCalendarMemberships("c1", fetchImpl)).resolves.toEqual([
+      expect.objectContaining({ actorId: "a2", role: "reader" }),
+    ]);
+    await setCalendarMembership({ calendarId: "c1", actorId: "a2", role: "writer" }, fetchImpl);
+    await removeCalendarMembership({ calendarId: "c1", actorId: "a2" }, fetchImpl);
+
+    expect(calls.map((call) => call.url)).toEqual([
+      "/api/tools/calendar.free-busy",
+      "/api/tools/calendar.memberships.list",
+      "/api/tools/calendar.memberships.set",
+      "/api/tools/calendar.memberships.remove",
+    ]);
+    expect(calls[2]?.body).toEqual({ calendarId: "c1", actorId: "a2", role: "writer" });
   });
 });

@@ -29,6 +29,8 @@ export interface NotifyOptions {
   tone?: NotifyTone;
   /** A single inline action. Undo is the common one. */
   action?: { label: string; onAction: () => void };
+  /** A second inline action after `action`, e.g. "View message". */
+  secondaryAction?: { label: string; onAction: () => void };
   /** Milliseconds on screen. Defaults: 4s, 8s with an action, 10s for errors. */
   duration?: number;
   /** Reuse an id to replace a toast in place instead of stacking another. */
@@ -50,7 +52,7 @@ function defaultDuration({ tone, action }: Pick<NotifyOptions, "tone" | "action"
 
 /** Show a toast; returns its id for `dismissNotification`. */
 export function notify(options: NotifyOptions): string | number {
-  const { message, description, tone = "default", action, id, onClose } = options;
+  const { message, description, tone = "default", action, secondaryAction, id, onClose } = options;
   let closed = false;
   const close = (reason: NotifyCloseReason) => {
     if (closed) return;
@@ -67,6 +69,15 @@ export function notify(options: NotifyOptions): string | number {
           onClick: () => {
             close("action");
             action.onAction();
+          },
+        }
+      : undefined,
+    cancel: secondaryAction
+      ? {
+          label: secondaryAction.label,
+          onClick: () => {
+            close("action");
+            secondaryAction.onAction();
           },
         }
       : undefined,
@@ -99,6 +110,8 @@ export function AppToaster() {
           description: "text-[var(--snackbar-fg)]! opacity-80",
           actionButton:
             "bg-transparent! text-[var(--snackbar-accent)]! font-semibold! type-body-sm! hover:underline focus-visible:outline-2 focus-visible:outline-current",
+          cancelButton:
+            "order-last bg-transparent! text-[var(--snackbar-accent)]! font-semibold! type-body-sm! hover:underline focus-visible:outline-2 focus-visible:outline-current",
           closeButton:
             "top-1/2! right-2! left-auto! translate-x-0! -translate-y-1/2! border-none! bg-transparent! text-[var(--snackbar-fg)]! hover:bg-[color-mix(in_srgb,var(--snackbar-fg)_12%,transparent)]!",
         },

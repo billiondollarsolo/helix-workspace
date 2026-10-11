@@ -1,22 +1,47 @@
-import { useMutation } from "@tanstack/react-query";
+/* The inline reply at the bottom of a conversation. The header shows who the
+   reply goes to ("To: Samara") with a menu to switch between Reply, Reply
+   all, and Forward or to edit the subject; clicking the recipients opens the
+   full To/Cc/Bcc fields. Replies autosave to Drafts; Send shows the undo
+   snackbar like the compose window. */
+
+import { ChevronDown, Forward, Pencil, Reply, ReplyAll } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
+import type { MailThreadMessage } from "./api";
 import {
-  Forward as ForwardIcon,
-  Reply as ReplyIcon,
-  Send as SendIcon,
-  X as XIcon,
-} from "lucide-react";
-import { useState } from "react";
-import { forwardMail, replyToMail, type MailThreadMessage } from "./api";
-import { parseRecipients } from "./mail-compose";
-import { MailSenderSelect, useMailSender } from "./mail-sender-select";
+  EMPTY_COMPOSE_FIELDS,
+  recipientSummary,
+  type ComposeFields,
+} from "./compose/compose-fields";
+import { ComposeAttachments } from "./compose/compose-attachments";
+import type { ComposeTarget } from "./compose/compose-send";
+import { ComposerBody } from "./compose/composer-body";
+import { RecipientFields, type RecipientFieldsHandle } from "./compose/recipient-fields";
+import {
+  canReplyAll,
+  forwardSubject,
+  replyParent,
+  replyRecipients,
+  replySubject,
+  type ReplyMode,
+} from "./compose/reply-recipients";
+import { useComposeShortcuts } from "./compose/use-compose-shortcuts";
+import { useComposer } from "./compose/use-composer";
+import { useOwnAddresses } from "./compose/use-own-addresses";
 
-export type ReplyMode = "reply" | "replyAll" | "forward";
+export type { ReplyMode };
 
-/** `Fwd:` once, never `Fwd: Fwd:`. Mirrors the server's subject rule. */
-export function forwardSubject(subject: string): string {
-  const trimmed = subject.trim();
-  return /^(?:fwd?|fw):/iu.test(trimmed) ? trimmed : `Fwd: ${trimmed}`.trim();
+interface MailReplyPanelProps {
+  readonly mode: ReplyMode;
+  readonly onModeChange: (mode: ReplyMode) => void;
+  readonly threadId: string;
+  readonly subject: string;
+  readonly messages: readonly MailThreadMessage[];
+  readonly onClose: () => void;
 }
+
+const MODE_ICON = { reply: Reply, replyAll: ReplyAll, forward: Forward } as const;
+const MODE_LABEL = { reply: "Reply", replyAll: "Reply all", forward: "Forward" } as const;
 
 function mailboxText(mailbox: { readonly address: string; readonly name?: string } | undefined) {
   if (mailbox === undefined) return "";
@@ -29,165 +54,256 @@ function plainText(message: MailThreadMessage): string {
   return new DOMParser().parseFromString(message.body, "text/html").body.textContent ?? "";
 }
 
-interface MailReplyPanelProps {
-  readonly mode: ReplyMode;
-  readonly threadId: string;
-  readonly subject: string;
-  readonly senderName: string;
-  /** Message a forward quotes; replies let the server choose the parent. */
-  readonly original: MailThreadMessage | undefined;
-  readonly onClose: () => void;
+function fieldsFor(
+  mode: ReplyMode,
+  parent: MailThreadMessage | undefined,
+  own: ReadonlySet<string>,
+  subject: string,
+): Pick<ComposeFields, "to" | "cc" | "bcc" | "subject"> {
+  if (mode === "forward" || parent === undefined) {
+    return { to: [], cc: [], bcc: [], subject: forwardSubject(subject) };
+  }
+  const recipients = replyRecipients(parent, own, mode === "replyAll");
+  return { ...recipients, bcc: [], subject: replySubject(parent.subject ?? subject) };
 }
 
-/**
- * Inline reply / reply all / forward composer. Reply recipients, threading
- * headers, and the forwarded quote are built server-side by `mail.reply` and
- * `mail.forward`, so the preview here shows exactly what the server appends.
- */
-export function MailReplyPanel({
+export function MailReplyPanel(props: MailReplyPanelProps) {
+  const { own, ready } = useOwnAddresses();
+  if (!ready) {
+    return (
+      <section aria-label="Reply" className="reply-panel">
+        <p className="compose-loading" role="status">
+          Preparing reply…
+        </p>
+      </section>
+    );
+  }
+  return <ReplyComposer {...props} own={own} />;
+}
+
+function ReplyComposer({
   mode,
+  onModeChange,
   threadId,
   subject,
-  senderName,
-  original,
+  messages,
   onClose,
-}: MailReplyPanelProps) {
-  const sender = useMailSender(undefined, true);
-  const [body, setBody] = useState("");
-  const [to, setTo] = useState("");
-  const [forwardTitle, setForwardTitle] = useState(() => forwardSubject(subject));
-  const [failed, setFailed] = useState(false);
-  const recipients = parseRecipients(to);
-  const mutation = useMutation({
-    mutationFn: () => {
-      const from = { address: sender.from };
-      if (mode === "forward") {
-        if (original === undefined) throw new Error("Nothing to forward.");
-        return forwardMail({
+  own,
+}: MailReplyPanelProps & { readonly own: ReadonlySet<string> }) {
+  const rootRef = useRef<HTMLElement | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const recipientsRef = useRef<RecipientFieldsHandle | null>(null);
+  const errorId = useId();
+  const parent = replyParent(messages, own);
+  const forwarded = messages.at(-1);
+  const [includeAttachments, setIncludeAttachments] = useState(true);
+  const [editingRecipients, setEditingRecipients] = useState(mode === "forward");
+  const [editingSubject, setEditingSubject] = useState(mode === "forward");
+  const [showCc, setShowCc] = useState(false);
+  const [showBcc, setShowBcc] = useState(false);
+
+  const target: ComposeTarget =
+    mode === "forward"
+      ? {
+          kind: "forward",
           threadId,
-          messageId: original.id,
-          from,
-          to: recipients,
-          subject: forwardTitle,
-          bodyText: body,
-        });
-      }
-      return replyToMail({ threadId, from, replyAll: mode === "replyAll", bodyText: body });
+          messageId: forwarded?.id ?? "",
+          includeAttachments,
+        }
+      : { kind: "reply", threadId, ...(parent === undefined ? {} : { messageId: parent.id }) };
+
+  const composer = useComposer({
+    initial: { ...EMPTY_COMPOSE_FIELDS, ...fieldsFor(mode, parent, own, subject) },
+    initialDraft: null,
+    target,
+    autosave: mode !== "forward",
+    onDone: onClose,
+    onProblem: (field) => {
+      setEditingRecipients(true);
+      requestAnimationFrame(() => recipientsRef.current?.focus(field));
     },
-    onMutate: () => {
-      setFailed(false);
-    },
-    onError: () => {
-      setFailed(true);
-    },
-    onSuccess: onClose,
   });
-  const canSend =
-    sender.authorized &&
-    !mutation.isPending &&
-    (mode === "forward" ? recipients.length > 0 && original !== undefined : body.trim() !== "");
+  const { fields, update } = composer;
+
+  // Switching Reply / Reply all / Forward resets who it goes to, and keeps the text.
+  const appliedMode = useRef(mode);
+  useEffect(() => {
+    if (appliedMode.current === mode) return;
+    appliedMode.current = mode;
+    update(fieldsFor(mode, parent, own, subject));
+    setShowCc(false);
+    setShowBcc(false);
+    setEditingRecipients(mode === "forward");
+    setEditingSubject(mode === "forward");
+  }, [mode, own, parent, subject, update]);
+
+  useEffect(() => {
+    if (mode === "forward") recipientsRef.current?.focus("to");
+    else editorRef.current?.focus();
+  }, [mode]);
+
+  useComposeShortcuts(rootRef, {
+    send: () => {
+      composer.send();
+    },
+    cc: () => {
+      setEditingRecipients(true);
+      requestAnimationFrame(() => recipientsRef.current?.focus("cc"));
+    },
+    bcc: () => {
+      setEditingRecipients(true);
+      requestAnimationFrame(() => recipientsRef.current?.focus("bcc"));
+    },
+  });
+
+  const ModeIcon = MODE_ICON[mode];
+  const summary = recipientSummary(fields.to);
+  const ccSummary = recipientSummary([...fields.cc, ...fields.bcc]);
+  const originalAttachments =
+    mode === "forward" && forwarded !== undefined
+      ? forwarded.attachments.filter((attachment) => !attachment.inline)
+      : [];
 
   return (
-    <section
-      aria-label={mode === "forward" ? "Forward message" : "Reply"}
-      className="mt-4 bg-card [border:1px_solid_var(--accent-soft-border)] rounded-lg p-0 [box-shadow:0_0_0_3px_var(--accent-soft)]"
-    >
-      <div className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2 type-meta">
-        {mode === "forward" ? <ForwardIcon size={16} /> : <ReplyIcon size={16} />}
-        <span className="font-semibold">
-          {mode === "reply" && `Replying to ${senderName}`}
-          {mode === "replyAll" && "Replying all"}
-          {mode === "forward" && `Forwarding "${subject}"`}
-        </span>
-        <button
-          type="button"
-          className="icon-btn ml-auto"
-          onClick={onClose}
-          aria-label="Close reply"
-        >
-          <XIcon size={16} />
-        </button>
-      </div>
-      <div className="px-3.5">
-        <MailSenderSelect sender={sender} disabled={mutation.isPending} />
-      </div>
-      {mode === "forward" && (
-        <>
-          <label className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2">
-            <span className="type-meta text-muted-foreground w-12.5">To</span>
-            <input
-              className="input flex-1 [border:none] h-6.5"
-              aria-label="Forward recipients"
-              placeholder="Add recipients"
-              value={to}
-              onChange={(event) => {
-                setTo(event.target.value);
+    <section ref={rootRef} aria-label={MODE_LABEL[mode]} className="reply-panel">
+      <div className="reply-header">
+        <Menu>
+          <MenuTrigger
+            className="reply-mode-btn"
+            aria-label={`${MODE_LABEL[mode]}: change response type`}
+          >
+            <ModeIcon aria-hidden="true" size={18} />
+            <ChevronDown aria-hidden="true" size={14} />
+          </MenuTrigger>
+          <MenuContent align="start">
+            <MenuItem icon={<Reply size={16} />} onSelect={() => onModeChange("reply")}>
+              Reply
+            </MenuItem>
+            {mode === "replyAll" || canReplyAll(parent, own) ? (
+              <MenuItem icon={<ReplyAll size={16} />} onSelect={() => onModeChange("replyAll")}>
+                Reply all
+              </MenuItem>
+            ) : null}
+            <MenuItem icon={<Forward size={16} />} onSelect={() => onModeChange("forward")}>
+              Forward
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem
+              icon={<Pencil size={16} />}
+              onSelect={() => {
+                setEditingSubject(true);
               }}
-            />
-          </label>
-          <label className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2">
-            <span className="type-meta text-muted-foreground w-12.5">Subject</span>
-            <input
-              className="input flex-1 [border:none] h-6.5"
-              aria-label="Forward subject"
-              value={forwardTitle}
-              onChange={(event) => {
-                setForwardTitle(event.target.value);
+            >
+              Edit subject
+            </MenuItem>
+          </MenuContent>
+        </Menu>
+        {editingRecipients ? null : (
+          <button
+            type="button"
+            className="reply-recipients-summary"
+            aria-label={`Edit recipients. To: ${summary || "nobody yet"}${ccSummary === "" ? "" : `. Also: ${ccSummary}`}`}
+            onClick={() => {
+              setEditingRecipients(true);
+              requestAnimationFrame(() => recipientsRef.current?.focus("to"));
+            }}
+          >
+            <span className="reply-recipients-label">To:</span>{" "}
+            <span className="reply-recipients-names">
+              {summary === "" ? "Add recipients" : summary}
+            </span>
+            {ccSummary === "" ? null : <span className="reply-recipients-cc">, {ccSummary}</span>}
+          </button>
+        )}
+      </div>
+      {editingRecipients || editingSubject ? (
+        <div className="compose-fields reply-fields">
+          {editingRecipients ? (
+            <RecipientFields
+              handleRef={recipientsRef}
+              fields={fields}
+              onChange={(field, refs) => {
+                update({ [field]: refs });
               }}
+              showCc={showCc || fields.cc.length > 0}
+              showBcc={showBcc || fields.bcc.length > 0}
+              onReveal={(field) => {
+                if (field === "cc") setShowCc(true);
+                else setShowBcc(true);
+              }}
+              problem={composer.problem}
+              errorId={errorId}
             />
-          </label>
-        </>
-      )}
-      <textarea
-        value={body}
-        onChange={(event) => {
-          setBody(event.target.value);
-        }}
-        placeholder={mode === "forward" ? "Add a message (optional)" : "Write your reply…"}
-        aria-label="Reply body"
-        className="w-full min-h-30 p-3.5 [border:none] outline-none bg-transparent type-body-sm [line-height:1.55] [resize:vertical] [font-family:inherit]"
-      />
-      {mode === "forward" && original !== undefined && (
-        <blockquote
-          aria-label="Forwarded message"
-          className="[margin:0_14px_12px] [padding:8px_12px] [border-left:3px_solid_var(--border)] type-body-sm text-muted-foreground whitespace-pre-wrap"
-        >
-          {[
-            "---------- Forwarded message ---------",
-            `From: ${mailboxText(original.from)}`,
-            `Date: ${new Date(original.sentAt).toUTCString()}`,
-            `Subject: ${original.subject ?? subject}`,
-            `To: ${original.to.map(mailboxText).join(", ")}`,
-            "",
-            plainText(original),
-          ].join("\n")}
-          {original.hasAttachment && (
-            <p className="mt-2 not-italic">Attachments are forwarded with the message.</p>
-          )}
-        </blockquote>
-      )}
-      {failed && (
-        <div role="alert" className="[margin:0_14px_8px] type-caption text-destructive">
-          {mode === "forward"
-            ? "Could not forward. Try again."
-            : "Could not send reply. Try again."}
+          ) : null}
+          {editingSubject ? (
+            <div className="compose-row">
+              <input
+                className="compose-subject"
+                aria-label="Subject"
+                placeholder="Subject"
+                value={fields.subject}
+                onChange={(event) => {
+                  update({ subject: event.target.value });
+                }}
+              />
+            </div>
+          ) : null}
         </div>
-      )}
-      <div className="flex items-center gap-1 [padding:8px_12px] [border-top:1px_solid_var(--border)]">
-        <button
-          type="button"
-          className="btn primary"
-          disabled={!canSend}
-          onClick={() => {
-            mutation.mutate();
-          }}
-        >
-          <SendIcon size={16} /> {mutation.isPending ? "Sending…" : "Send"}
-        </button>
-        <button type="button" className="btn ghost ml-auto" onClick={onClose}>
-          Discard
-        </button>
-      </div>
+      ) : null}
+      <ComposerBody
+        composer={composer}
+        editorRef={editorRef}
+        placeholder={mode === "forward" ? "Add a message (optional)" : ""}
+        isReply
+        errorId={errorId}
+      >
+        {mode === "forward" && forwarded !== undefined ? (
+          <>
+            <blockquote aria-label="Forwarded message" className="reply-forwarded">
+              {[
+                "---------- Forwarded message ---------",
+                `From: ${mailboxText(forwarded.from)}`,
+                `Date: ${new Date(forwarded.sentAt).toLocaleString()}`,
+                `Subject: ${forwarded.subject ?? subject}`,
+                `To: ${forwarded.to.map(mailboxText).join(", ")}`,
+                "",
+                plainText(forwarded),
+              ].join("\n")}
+            </blockquote>
+            {originalAttachments.length > 0 ? (
+              <div className="reply-forward-attachments">
+                <ComposeAttachments
+                  label="Forwarded attachments"
+                  items={
+                    includeAttachments
+                      ? originalAttachments.map((attachment) => ({
+                          key: attachment.objectId,
+                          filename: attachment.filename ?? "Attachment",
+                          contentType: attachment.mimeType,
+                          byteSize: attachment.byteSize,
+                          objectId: attachment.objectId,
+                          state: "ready",
+                          detail: "",
+                        }))
+                      : []
+                  }
+                />
+                <label className="reply-include-attachments">
+                  <input
+                    type="checkbox"
+                    checked={includeAttachments}
+                    onChange={(event) => {
+                      setIncludeAttachments(event.target.checked);
+                    }}
+                  />
+                  Include the original{" "}
+                  {originalAttachments.length === 1 ? "attachment" : "attachments"}
+                </label>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </ComposerBody>
     </section>
   );
 }

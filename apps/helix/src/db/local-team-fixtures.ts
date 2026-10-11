@@ -58,6 +58,7 @@ export const LOCAL_TEAM_SCOPES = [
   "drive.read",
   "drive.write",
   "calendar.read",
+  "calendar.read:freebusy",
   "calendar.write",
   "calendar.manage",
   "calendar.write:respond",

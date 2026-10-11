@@ -297,44 +297,43 @@ export function ThreadView({
             );
           })}
 
-          <div className="flex gap-2 mt-4">
-            <button
-              type="button"
-              className="btn"
-              onClick={() => {
-                setReplyMode("reply");
-              }}
-            >
-              <ReplyIcon size={16} /> Reply
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => {
-                setReplyMode("replyAll");
-              }}
-            >
-              <ReplyIcon size={16} /> Reply all
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => {
-                setReplyMode("forward");
-              }}
-            >
-              <ForwardIcon size={16} /> Forward
-            </button>
-          </div>
-
-          {replyMode != null && (
+          {replyMode == null ? (
+            <div className="flex gap-2 mt-4">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setReplyMode("reply");
+                }}
+              >
+                <ReplyIcon size={16} /> Reply
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setReplyMode("replyAll");
+                }}
+              >
+                <ReplyIcon size={16} /> Reply all
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setReplyMode("forward");
+                }}
+              >
+                <ForwardIcon size={16} /> Forward
+              </button>
+            </div>
+          ) : (
             <MailReplyPanel
-              key={replyMode}
               mode={replyMode}
+              onModeChange={setReplyMode}
               threadId={row.threadId}
               subject={subject}
-              senderName={senderName}
-              original={messages.at(-1)}
+              messages={messages}
               onClose={() => {
                 setReplyMode(null);
               }}

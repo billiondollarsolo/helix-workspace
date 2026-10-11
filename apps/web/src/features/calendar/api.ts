@@ -6,9 +6,8 @@ export type CalendarApiFetch = (input: RequestInfo | URL, init?: RequestInit) =>
 
 export type CalendarApiResponseStatus = "needs_action" | "accepted" | "declined" | "tentative";
 type CalendarApiAttendeeRole = "required" | "optional" | "resource";
-type CalendarApiEventStatus = "confirmed" | "tentative" | "cancelled";
 
-interface CalendarApiAttendeeInput {
+export interface CalendarApiAttendeeInput {
   readonly actorId?: string | null;
   readonly email: string;
   readonly displayName?: string | null;
@@ -16,8 +15,9 @@ interface CalendarApiAttendeeInput {
   readonly responseStatus?: CalendarApiResponseStatus;
   readonly metadata?: Record<string, unknown>;
 }
+type CalendarApiEventStatus = "confirmed" | "tentative" | "cancelled";
 
-interface CalendarApiAttendee {
+export interface CalendarApiAttendee {
   readonly id?: string | null;
   readonly actorId?: string | null;
   readonly email: string;
@@ -81,6 +81,8 @@ export interface CalendarUpdateEventInput {
   readonly eventId: string;
   readonly patch: CalendarUpdateEventPatch;
   readonly sendInvitations?: boolean;
+  /** Add video conferencing to an event that has none yet. */
+  readonly conference?: "meet";
 }
 
 export interface CalendarDeleteEventInput {
@@ -129,7 +131,30 @@ export interface CalendarFindTimeSlot {
   }[];
 }
 
-type CalendarApiMembershipRole = "owner" | "writer" | "reader";
+type CalendarApiMembershipRole = "owner" | "manager" | "writer" | "reader";
+
+/** A busy block for one person, without event details. */
+export interface CalendarBusyBlock {
+  readonly actorId: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+}
+
+export interface CalendarFreeBusyInput {
+  readonly actorIds: readonly string[];
+  readonly windowStartsAt: string;
+  readonly windowEndsAt: string;
+}
+
+export type CalendarShareRole = "manager" | "writer" | "reader";
+
+export interface CalendarMembership {
+  readonly calendarId: string;
+  readonly actorId: string;
+  readonly displayName: string | null;
+  readonly email: string | null;
+  readonly role: CalendarApiMembershipRole;
+}
 
 /** A calendar as returned by `calendar.calendars.list` for the sidebar. */
 export interface CalendarApiCalendar {
@@ -185,6 +210,7 @@ export async function updateCalendarEvent(
       eventId: input.eventId,
       patch: input.patch,
       sendInvitations: input.sendInvitations ?? true,
+      ...(input.conference === undefined ? {} : { conference: input.conference }),
     },
     fetchImpl,
   );
@@ -237,6 +263,48 @@ export async function findCalendarTime(
   );
 
   return output.slots ?? [];
+}
+
+export async function listCalendarFreeBusy(
+  input: CalendarFreeBusyInput,
+  fetchImpl: CalendarApiFetch = authenticatedFetch,
+): Promise<readonly CalendarBusyBlock[]> {
+  const output = await callCalendarTool<{ readonly busy?: readonly CalendarBusyBlock[] }>(
+    "calendar.free-busy",
+    input,
+    fetchImpl,
+  );
+  return output.busy ?? [];
+}
+
+export async function listCalendarMemberships(
+  calendarId: string,
+  fetchImpl: CalendarApiFetch = authenticatedFetch,
+): Promise<readonly CalendarMembership[]> {
+  const output = await callCalendarTool<{ readonly memberships?: readonly CalendarMembership[] }>(
+    "calendar.memberships.list",
+    { calendarId },
+    fetchImpl,
+  );
+  return output.memberships ?? [];
+}
+
+export async function setCalendarMembership(
+  input: {
+    readonly calendarId: string;
+    readonly actorId: string;
+    readonly role: CalendarShareRole;
+  },
+  fetchImpl: CalendarApiFetch = authenticatedFetch,
+): Promise<CalendarMembership> {
+  return callCalendarTool<CalendarMembership>("calendar.memberships.set", input, fetchImpl);
+}
+
+export async function removeCalendarMembership(
+  input: { readonly calendarId: string; readonly actorId: string },
+  fetchImpl: CalendarApiFetch = authenticatedFetch,
+): Promise<void> {
+  await callCalendarTool<unknown>("calendar.memberships.remove", input, fetchImpl);
 }
 
 export async function listCalendarEvents(

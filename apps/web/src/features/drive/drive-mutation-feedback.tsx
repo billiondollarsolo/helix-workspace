@@ -8,17 +8,14 @@ export function DriveMutationFeedback({
 }) {
   if (error !== null) {
     return (
-      <div
-        role="alert"
-        className="[font-size:var(--text-caption)] [color:var(--danger,_#dc2626)] mb-2"
-      >
+      <div role="alert" className="type-caption [color:var(--danger)] mb-2">
         {error.message}
       </div>
     );
   }
   if (success === null) return null;
   return (
-    <div role="status" className="[font-size:var(--text-caption)] text-muted-foreground mb-2">
+    <div role="status" className="type-caption text-muted-foreground mb-2">
       {success}
     </div>
   );

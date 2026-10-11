@@ -179,7 +179,7 @@ export function AgentCredentialsManagement() {
         accessorKey: "clientId",
         header: "Client ID",
         cell: ({ row }) => (
-          <code className="block max-w-[18rem] truncate rounded bg-muted px-1.5 py-0.5 text-[0.6875rem]">
+          <code className="block max-w-[18rem] truncate rounded bg-muted px-1.5 py-0.5 type-caption">
             {row.original.clientId}
           </code>
         ),
@@ -196,7 +196,7 @@ export function AgentCredentialsManagement() {
               {actor === undefined ? null : (
                 <span className="truncate font-medium">{actorLabel(actor)}</span>
               )}
-              <code className="block truncate text-[0.6875rem] text-muted-foreground">
+              <code className="block truncate type-caption text-muted-foreground">
                 {row.original.actorId}
               </code>
             </div>
@@ -210,7 +210,7 @@ export function AgentCredentialsManagement() {
           <div className="flex max-w-md flex-wrap gap-1">
             {row.original.scopes.map((scope) => (
               <span
-                className="rounded border border-border bg-background px-1.5 py-0.5 text-[0.6875rem]"
+                className="rounded border border-border bg-background px-1.5 py-0.5 type-caption"
                 key={scope}
               >
                 {scope}

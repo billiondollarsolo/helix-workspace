@@ -219,7 +219,7 @@ function CoreAppRow({
           pending restart, not served by this role — still gets a badge. */}
           {pendingRestart ? <Pill background="bg-amber-500/15">Pending restart</Pill> : null}
           {!app.inRole ? (
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
+            <span className="type-chip font-semibold uppercase tracking-wide text-[var(--text-3)]">
               Not served by this role
             </span>
           ) : null}
@@ -246,7 +246,7 @@ function Pill({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${background} text-amber-400`}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded type-chip font-semibold uppercase tracking-wide ${background} text-amber-400`}
     >
       {children}
     </span>

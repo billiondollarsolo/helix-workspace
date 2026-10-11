@@ -109,9 +109,9 @@ export function CalendarWeek({
             <ChevronRightIcon size={16} />
           </button>
         </div>
-        <span className="[font-size:var(--text-body)] font-semibold">{windowLabel}</span>
+        <span className="type-body font-semibold">{windowLabel}</span>
         {loading && (
-          <span role="status" className="[font-size:var(--text-meta)] text-muted-foreground">
+          <span role="status" className="type-meta text-muted-foreground">
             Loading...
           </span>
         )}
@@ -133,7 +133,7 @@ export function CalendarWeek({
       {errored && (
         <div
           role="alert"
-          className="shrink-0 [padding:6px_16px] [font-size:var(--text-meta)] bg-muted [border-bottom:1px_solid_var(--border)] text-destructive"
+          className="shrink-0 [padding:6px_16px] type-meta bg-muted [border-bottom:1px_solid_var(--border)] text-destructive"
         >
           Calendar events unavailable — try again later.
         </div>
@@ -142,7 +142,7 @@ export function CalendarWeek({
       {actionError !== null && (
         <div
           role="alert"
-          className="shrink-0 flex items-center gap-2 [padding:6px_16px] [font-size:var(--text-meta)] bg-muted [border-bottom:1px_solid_var(--border)] text-destructive"
+          className="shrink-0 flex items-center gap-2 [padding:6px_16px] type-meta bg-muted [border-bottom:1px_solid_var(--border)] text-destructive"
         >
           <span>{actionError}</span>
           <button
@@ -176,12 +176,12 @@ export function CalendarWeek({
                   key={label}
                   className="[padding:8px_12px] text-center [border-left:1px_solid_var(--border)]"
                 >
-                  <div className="[font-size:var(--text-chip)] text-muted-foreground uppercase [letter-spacing:.06em]">
+                  <div className="type-chip text-muted-foreground uppercase [letter-spacing:.06em]">
                     {label}
                   </div>
                   <div
                     className={cn(
-                      "[font-size:var(--text-h2)] font-semibold mt-0.5 [display:inline-grid] [place-items:center] w-7 h-7 [border-radius:999px]",
+                      "type-h2 font-semibold mt-0.5 [display:inline-grid] [place-items:center] w-7 h-7 [border-radius:999px]",
                       isToday ? "[background:var(--accent)]" : "bg-transparent",
                       isToday ? "[color:var(--accent-fg)]" : "text-foreground",
                     )}
@@ -205,7 +205,7 @@ export function CalendarWeek({
               {GRID_HOURS.map((hour) => (
                 <div
                   key={hour}
-                  className="h-14 [font-size:var(--text-chip)] text-muted-foreground text-right pr-2 pt-0.5 [border-bottom:1px_solid_var(--border)]"
+                  className="h-14 type-chip text-muted-foreground text-right pr-2 pt-0.5 [border-bottom:1px_solid_var(--border)]"
                 >
                   {hour <= 12 ? hour : hour - 12} {hour < 12 ? "AM" : "PM"}
                 </div>
@@ -226,9 +226,7 @@ export function CalendarWeek({
 
             {empty && (
               <div className="absolute inset-0 grid [place-items:center] pointer-events-none">
-                <span className="[font-size:var(--text-body-sm)] text-muted-foreground">
-                  No events this week.
-                </span>
+                <span className="type-body-sm text-muted-foreground">No events this week.</span>
               </div>
             )}
           </div>
@@ -277,9 +275,7 @@ function CalendarPeriodList({
           return (
             <div key={event.id}>
               {showDate ? (
-                <h3 className="[margin:16px_0_6px] [font-size:var(--text-body)]">
-                  {formatCalendarDate(event.date)}
-                </h3>
+                <h3 className="[margin:16px_0_6px] type-body">{formatCalendarDate(event.date)}</h3>
               ) : null}
               <button
                 type="button"

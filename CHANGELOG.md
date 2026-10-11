@@ -8,6 +8,15 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Appearance offers a System theme that follows the device's light or dark setting, and is now the
+  default. Density choices are Default, Comfortable, and Compact; Compact fits more rows on screen.
+- Confirmation messages appear in the bottom-left corner and can offer Undo.
+- Shared interface building blocks for menus with typeahead and submenus, right-click menus
+  (also Shift+F10), popovers, split buttons, loading placeholders, empty and error states with
+  Retry, a "1–50 of 1,234" pager, a keyboard-friendly date and time picker, side panels, and
+  keyboard-driven selectable lists (j/k, x, Shift-click ranges).
+- Avatars and labels draw from a 24-colour palette that stays readable in light and dark themes,
+  and text everywhere follows the Text size setting.
 - Keyboard shortcuts work across the workspace. Press `?` for the full list, `/` to search the
   current app, and `g` then a letter to jump: `i`/`s`/`t`/`d` for Inbox, Starred, Sent, and
   Drafts; `c` Calendar, `k` Chat, `r` Drive, `h` Meet. Mail supports `c`, `j`/`k`, `o`/Enter,

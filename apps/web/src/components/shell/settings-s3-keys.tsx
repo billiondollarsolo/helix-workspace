@@ -84,14 +84,14 @@ export function S3KeysSection() {
 
   return (
     <>
-      <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_4px]">S3 access keys</h1>
-      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-2">
+      <h1 className="type-h2 font-semibold [margin:0_0_4px]">S3 access keys</h1>
+      <div className="type-body-sm text-muted-foreground mb-2">
         Use Drive from aws, rclone, boto3, and other S3 clients. Keys act as you, limited to the
         scopes you choose; uploads are malware-scanned like any Drive upload.
       </div>
       <SettingsField label="Endpoint" hint="Path-style addressing; region us-east-1">
         <code className="block break-all">{endpoint}</code>
-        <div className="[font-size:var(--text-caption)] text-muted-foreground mt-1">
+        <div className="type-caption text-muted-foreground mt-1">
           Buckets: <code>my-drive</code> (your files) and <code>shared-with-me</code>.
         </div>
       </SettingsField>
@@ -107,7 +107,7 @@ export function S3KeysSection() {
             onChange={(event) => setLabel(event.target.value)}
           />
           <fieldset className="grid gap-1 border-0 p-0 m-0">
-            <legend className="[font-size:var(--text-body-sm)] font-medium mb-1">Scopes</legend>
+            <legend className="type-body-sm font-medium mb-1">Scopes</legend>
             {S3_KEY_SCOPES.map((scope) => (
               <label key={scope} className="flex items-center gap-2">
                 <input
@@ -176,7 +176,7 @@ export function S3KeysSection() {
         {keys.length === 0 ? (
           <div className="text-muted-foreground">No S3 access keys yet.</div>
         ) : (
-          <table className="w-full [font-size:var(--text-body-sm)]">
+          <table className="w-full type-body-sm">
             <caption className="sr-only">Your S3 access keys</caption>
             <thead>
               <tr>

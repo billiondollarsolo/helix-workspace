@@ -64,7 +64,7 @@ export function DriveWorkflows(props: {
   return (
     <section aria-label="Drive workflows" className="mt-4">
       <div className="section-label [padding:0_0_6px]">Workflows</div>
-      <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
+      <label className="grid gap-1 mb-1.5 type-caption">
         Action
         <select
           className="input"
@@ -89,7 +89,7 @@ export function DriveWorkflows(props: {
           <option value="investigation">Open investigation</option>
         </select>
       </label>
-      <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
+      <label className="grid gap-1 mb-1.5 type-caption">
         Due date (optional)
         <input
           className="input"
@@ -103,7 +103,7 @@ export function DriveWorkflows(props: {
       {relevant.some(
         (workflow) => workflow.kind === "file_request" && workflow.state === "open",
       ) ? (
-        <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
+        <label className="grid gap-1 mb-1.5 type-caption">
           Uploaded object ID (to complete a file request)
           <input
             className="input"
@@ -115,7 +115,7 @@ export function DriveWorkflows(props: {
           />
         </label>
       ) : null}
-      <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
+      <label className="grid gap-1 mb-1.5 type-caption">
         Assignee email or name (when required)
         <input
           className="input"
@@ -126,7 +126,7 @@ export function DriveWorkflows(props: {
           autoComplete="off"
         />
       </label>
-      <label className="grid gap-1 mb-1.5 [font-size:var(--text-caption)]">
+      <label className="grid gap-1 mb-1.5 type-caption">
         {kind === "classification" ? "Classification" : "Name or reason"}
         {kind === "classification" ? (
           <select
@@ -173,14 +173,14 @@ export function DriveWorkflows(props: {
         {workflows.isFetching ? "Loading…" : "Load workflows"}
       </button>
       {error instanceof Error ? (
-        <p role="alert" className="[color:var(--danger,_#dc2626)] [font-size:var(--text-caption)]">
+        <p role="alert" className="[color:var(--danger)] type-caption">
           {error.message}
         </p>
       ) : null}
       <ul aria-live="polite" className="[list-style:none] p-0 [margin:10px_0_0]">
         {relevant.map((workflow) => (
           <li key={workflow.id} className="[border-top:1px_solid_var(--border)] [padding:8px_0]">
-            <div className="[font-size:var(--text-meta)]">
+            <div className="type-meta">
               {workflow.kind.replaceAll("_", " ")} · {workflow.state}
             </div>
             <a

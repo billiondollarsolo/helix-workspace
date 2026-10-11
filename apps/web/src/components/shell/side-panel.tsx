@@ -49,7 +49,7 @@ function MiniCalendar() {
     <div className="flex flex-col h-full">
       <div className="[padding:12px_14px_6px]">
         <div className="flex items-center mb-2">
-          <span className="[font-size:var(--text-body-sm)] font-semibold">{monthLabel}</span>
+          <span className="type-body-sm font-semibold">{monthLabel}</span>
           <div className="ml-auto flex">
             <button
               type="button"
@@ -73,12 +73,12 @@ function MiniCalendar() {
             </button>
           </div>
         </div>
-        <div className="grid [grid-template-columns:repeat(7,_1fr)] [gap:1px] [font-size:var(--text-chip)] text-center text-muted-foreground mb-1">
+        <div className="grid [grid-template-columns:repeat(7,_1fr)] [gap:1px] type-chip text-center text-muted-foreground mb-1">
           {days.map((day, index) => (
             <div key={`${day}-${String(index)}`}>{day}</div>
           ))}
         </div>
-        <div className="grid [grid-template-columns:repeat(7,_1fr)] [gap:1px] [font-size:var(--text-caption)] text-center">
+        <div className="grid [grid-template-columns:repeat(7,_1fr)] [gap:1px] type-caption text-center">
           {Array.from({ length: 42 }).map((_, index) => {
             const day = index - leadingBlanks + 1;
             const valid = day >= 1 && day <= daysInMonth;
@@ -110,7 +110,7 @@ function MiniCalendar() {
       </div>
       <div className="[height:1px] [background:var(--border)] [margin:8px_0]" />
       <div className="[padding:0_14px_12px] flex-1 overflow-y-auto">
-        <div className="[font-size:var(--text-chip)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em] mb-2">
+        <div className="type-chip text-muted-foreground font-semibold uppercase [letter-spacing:.06em] mb-2">
           Today · {todayLabel}
         </div>
         <button
@@ -137,16 +137,16 @@ function MiniAI() {
   return (
     <div className="flex flex-col h-full">
       <div className="p-3.5 [border-bottom:1px_solid_var(--border)]">
-        <div className="flex items-center gap-2 text-primary font-semibold [font-size:var(--text-body-sm)] mb-1">
+        <div className="flex items-center gap-2 text-primary font-semibold type-body-sm mb-1">
           <SparklesIcon size={16} />
           Helix AI
         </div>
-        <div className="[font-size:var(--text-caption)] text-muted-foreground">
+        <div className="type-caption text-muted-foreground">
           Your assistant for mail, files, and the rest of the workspace.
         </div>
       </div>
       <div className="flex-1 overflow-y-auto p-3">
-        <div className="[font-size:var(--text-chip)] text-muted-foreground font-semibold uppercase [letter-spacing:.06em] mb-2">
+        <div className="type-chip text-muted-foreground font-semibold uppercase [letter-spacing:.06em] mb-2">
           Suggested
         </div>
         {suggestions.map((suggestion) => (
@@ -154,7 +154,7 @@ function MiniAI() {
             key={suggestion}
             type="button"
             onClick={() => void navigate({ to: "/assistant" })}
-            className="w-full text-left [padding:8px_10px] mb-1 bg-muted [border:1px_solid_var(--border)] rounded-md [font-size:var(--text-meta)] text-foreground"
+            className="w-full text-left [padding:8px_10px] mb-1 bg-muted [border:1px_solid_var(--border)] rounded-md type-meta text-foreground"
           >
             {suggestion}
           </button>
@@ -241,7 +241,7 @@ export function SidePanel({ activeTool, onClose }: SidePanelProps) {
     <div className="w-80 shrink-0 [border-left:1px_solid_var(--border)] bg-card flex flex-col min-h-0">
       <div className="h-10 flex items-center [padding:0_14px] gap-2 [border-bottom:1px_solid_var(--border)] shrink-0">
         <Icon size={16} />
-        <span className="font-semibold [font-size:var(--text-body-sm)]">{view.title}</span>
+        <span className="font-semibold type-body-sm">{view.title}</span>
         <div className="ml-auto flex gap-0.5">
           {fullRoute === undefined ? null : (
             <button

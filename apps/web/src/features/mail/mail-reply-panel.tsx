@@ -92,7 +92,7 @@ export function MailReplyPanel({
       aria-label={mode === "forward" ? "Forward message" : "Reply"}
       className="mt-4 bg-card [border:1px_solid_var(--accent-soft-border)] rounded-lg p-0 [box-shadow:0_0_0_3px_var(--accent-soft)]"
     >
-      <div className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2 [font-size:var(--text-meta)]">
+      <div className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2 type-meta">
         {mode === "forward" ? <ForwardIcon size={16} /> : <ReplyIcon size={16} />}
         <span className="font-semibold">
           {mode === "reply" && `Replying to ${senderName}`}
@@ -114,7 +114,7 @@ export function MailReplyPanel({
       {mode === "forward" && (
         <>
           <label className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2">
-            <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">To</span>
+            <span className="type-meta text-muted-foreground w-12.5">To</span>
             <input
               className="input flex-1 [border:none] h-6.5"
               aria-label="Forward recipients"
@@ -126,9 +126,7 @@ export function MailReplyPanel({
             />
           </label>
           <label className="[padding:8px_14px] [border-bottom:1px_solid_var(--border)] flex items-center gap-2">
-            <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">
-              Subject
-            </span>
+            <span className="type-meta text-muted-foreground w-12.5">Subject</span>
             <input
               className="input flex-1 [border:none] h-6.5"
               aria-label="Forward subject"
@@ -147,12 +145,12 @@ export function MailReplyPanel({
         }}
         placeholder={mode === "forward" ? "Add a message (optional)" : "Write your reply…"}
         aria-label="Reply body"
-        className="w-full min-h-30 p-3.5 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)] [line-height:1.55] [resize:vertical] [font-family:inherit]"
+        className="w-full min-h-30 p-3.5 [border:none] outline-none bg-transparent type-body-sm [line-height:1.55] [resize:vertical] [font-family:inherit]"
       />
       {mode === "forward" && original !== undefined && (
         <blockquote
           aria-label="Forwarded message"
-          className="[margin:0_14px_12px] [padding:8px_12px] [border-left:3px_solid_var(--border)] [font-size:var(--text-body-sm)] text-muted-foreground whitespace-pre-wrap"
+          className="[margin:0_14px_12px] [padding:8px_12px] [border-left:3px_solid_var(--border)] type-body-sm text-muted-foreground whitespace-pre-wrap"
         >
           {[
             "---------- Forwarded message ---------",
@@ -169,10 +167,7 @@ export function MailReplyPanel({
         </blockquote>
       )}
       {failed && (
-        <div
-          role="alert"
-          className="[margin:0_14px_8px] [font-size:var(--text-caption)] text-destructive"
-        >
+        <div role="alert" className="[margin:0_14px_8px] type-caption text-destructive">
           {mode === "forward"
             ? "Could not forward. Try again."
             : "Could not send reply. Try again."}

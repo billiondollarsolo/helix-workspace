@@ -14,7 +14,7 @@
  * list had at all:
  *
  *   1. the density token — one `--rd-list-row-h`, so a row is the same height
- *      in Users as in Domains and both grow under `[data-density="comfortable"]`
+ *      in Users as in Domains and both tighten under `[data-density="compact"]`
  *   2. the uppercase caption treatment, as a class rather than the exported
  *      `HEADER_CELL` CSSProperties object (an inline style cannot carry a focus
  *      ring, a media query, or a theme)
@@ -122,7 +122,7 @@ const ARIA_SORT: Record<SortDirection, "ascending" | "descending"> = {
 const VIRTUALIZE_ABOVE = 60;
 
 /** Fallback row height before anything is measured. Matches the density token's
- *  compact value; the virtualizer re-measures from the real DOM immediately. */
+ *  default value; the virtualizer re-measures from the real DOM immediately. */
 const ESTIMATED_ROW_HEIGHT = 36;
 
 export function AdminTable<TRow>({

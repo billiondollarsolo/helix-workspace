@@ -23,10 +23,24 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@/components/settings-store", () => ({
-  ACCENT_OPTIONS: ["#7c3aed", "#2563eb"],
+  ACCENT_OPTIONS: [
+    { value: "violet", label: "Violet", hue: 290 },
+    { value: "blue", label: "Blue", hue: 250 },
+  ],
+  accentSwatch: (hue: number) => `oklch(54% 0.21 ${hue})`,
+  THEME_OPTIONS: [
+    { value: "system", label: "System" },
+    { value: "light", label: "Light" },
+    { value: "dark", label: "Dark" },
+  ],
+  DENSITY_OPTIONS: [
+    { value: "default", label: "Default" },
+    { value: "comfortable", label: "Comfortable" },
+    { value: "compact", label: "Compact" },
+  ],
   setAppearance,
   useAppearance: (selector: (state: object) => unknown) =>
-    selector({ theme: "light", density: "compact", accent: "#7c3aed" }),
+    selector({ theme: "system", density: "default", accent: "violet" }),
 }));
 
 vi.mock("@/lib/auth", () => ({

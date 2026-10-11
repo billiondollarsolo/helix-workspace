@@ -42,9 +42,7 @@ export function CalendarSidebar({
         />
       ))}
       {entries.length === 0 && (
-        <div className="[font-size:var(--text-caption)] text-muted-foreground [padding:4px_0]">
-          No calendars
-        </div>
+        <div className="type-caption text-muted-foreground [padding:4px_0]">No calendars</div>
       )}
     </>
   );
@@ -67,23 +65,18 @@ export function CalendarSidebar({
         <input
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder="Search events"
-          className="[border:none] bg-transparent outline-none [font-size:var(--text-body)] w-full text-foreground"
+          className="[border:none] bg-transparent outline-none type-body w-full text-foreground"
           type="search"
           value={query}
         />
       </label>
 
       {calendarsLoading && (
-        <div className="[font-size:var(--text-meta)] text-muted-foreground [padding:8px_0]">
-          Loading calendars…
-        </div>
+        <div className="type-meta text-muted-foreground [padding:8px_0]">Loading calendars…</div>
       )}
 
       {calendarsError && !calendarsLoading && (
-        <div
-          role="alert"
-          className="[font-size:var(--text-caption)] text-destructive [padding:4px_0_8px]"
-        >
+        <div role="alert" className="type-caption text-destructive [padding:4px_0_8px]">
           Calendars unavailable — try again later.
         </div>
       )}
@@ -110,7 +103,7 @@ function CalendarCheck({
   readonly onToggle: () => void;
 }) {
   return (
-    <label className="flex items-center gap-2 [padding:4px_0] [font-size:var(--text-body)] cursor-pointer">
+    <label className="flex items-center gap-2 [padding:4px_0] type-body cursor-pointer">
       <input checked={checked} onChange={onToggle} style={{ accentColor: color }} type="checkbox" />
       <span>{name}</span>
     </label>

@@ -574,8 +574,8 @@ export function AIProvidersManagement() {
               >
                 <div>
                   <div className="text-xs font-semibold">{slot.label}</div>
-                  <div className="text-[0.7rem] text-muted-foreground">{slot.hint}</div>
-                  <code className="text-[0.65rem] text-muted-foreground">{slot.feature}</code>
+                  <div className="type-caption text-muted-foreground">{slot.hint}</div>
+                  <code className="type-chip text-muted-foreground">{slot.feature}</code>
                 </div>
                 <label className="grid gap-1 text-xs">
                   <span className="font-medium">Provider</span>

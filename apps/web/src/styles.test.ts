@@ -176,6 +176,48 @@ describe("styles.css covers every class the app actually uses", () => {
   });
 });
 
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+  });
+}
+
+describe("design tokens", () => {
+  const defined = captured(STYLES, /(--[\w-]+)\s*:/g);
+
+  it("defines every custom property the app reads", () => {
+    const used = new Set<string>();
+    for (const path of sourceFiles(SRC)) {
+      // `--label-${name}` style templates end in "-" and are checked below.
+      for (const name of captured(readFileSync(path, "utf8"), /var\((--[\w-]+)(?=[),\s])/g)) {
+        if (!name.startsWith("--radix-")) used.add(name);
+      }
+    }
+    expect([...used].filter((name) => !defined.has(name)).sort()).toEqual([]);
+  });
+
+  it("ships a 24-colour label palette with soft variants", () => {
+    const labels = [...defined].filter(
+      (name) => /^--label-[a-z]{2,}$/.test(name) && name !== "--label-on",
+    );
+    expect(labels).toHaveLength(24);
+    for (const label of labels) expect(defined.has(`${label}-soft`), label).toBe(true);
+  });
+
+  it("names the density modes and collapses motion for reduced-motion users", () => {
+    expect(STYLES).toMatch(/\[data-density="default"\]/);
+    expect(STYLES).toMatch(/\[data-density="comfortable"\]/);
+    expect(STYLES).toMatch(/\[data-density="compact"\]/);
+    const reduced = extractAllMediaBlocks(STYLES, "(prefers-reduced-motion: reduce)").join("\n");
+    expect(reduced).toMatch(/--motion-duration-base:\s*0ms/);
+    for (const token of ["--focus-ring", "--star", "--cal-now", "--motion-ease-standard"]) {
+      expect(defined.has(token), token).toBe(true);
+    }
+  });
+});
+
 /**
  * E2.4 — shell responsive contract used by mobile (390×844) e2e.
  * Asserts the production CSS media blocks that reparent the rail as a bottom bar.

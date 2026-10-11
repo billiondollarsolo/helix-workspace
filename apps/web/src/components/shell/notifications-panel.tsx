@@ -180,7 +180,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
       className="fixed top-2 right-14 w-95 [max-height:80vh] bg-card [border:1px_solid_var(--border)] [border-radius:10px] [box-shadow:var(--shadow-lg)] [z-index:250] flex flex-col"
     >
       <div className="[padding:12px_14px] flex items-center [border-bottom:1px_solid_var(--border)]">
-        <span className="[font-size:var(--text-body)] font-semibold">Notifications</span>
+        <span className="type-body font-semibold">Notifications</span>
         <button
           type="button"
           className="btn sm ml-auto mr-1"
@@ -210,10 +210,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
             aria-selected={filter === tab.id}
             aria-controls="notifications-results"
             onClick={() => setFilter(tab.id)}
-            className={cn(
-              filter === tab.id ? "tab active" : "tab",
-              "h-8 [font-size:var(--text-meta)]",
-            )}
+            className={cn(filter === tab.id ? "tab active" : "tab", "h-8 type-meta")}
           >
             {tab.label}
           </button>
@@ -280,18 +277,18 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <div className="[font-size:var(--text-meta)] [line-height:1.45]">
+                <div className="type-meta [line-height:1.45]">
                   <span className="font-semibold">{notification.summary}</span>
                 </div>
                 {notification.body ? (
-                  <div className="truncate [font-size:var(--text-caption)] text-muted-foreground mt-1 [padding:4px_8px] bg-muted rounded [line-height:1.4]">
+                  <div className="truncate type-caption text-muted-foreground mt-1 [padding:4px_8px] bg-muted rounded [line-height:1.4]">
                     {notification.body}
                   </div>
                 ) : null}
                 <time
                   dateTime={notification.createdAt}
                   title={timestamp.absolute}
-                  className="block [font-size:var(--text-caption)] text-muted-foreground mt-1"
+                  className="block type-caption text-muted-foreground mt-1"
                 >
                   {timestamp.relative}
                 </time>

@@ -16,10 +16,8 @@ export function ShortcutsSection() {
   const enabled = useKeyboardShortcutsEnabled();
   return (
     <>
-      <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_4px]">
-        Keyboard shortcuts
-      </h1>
-      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-2">
+      <h1 className="type-h2 font-semibold [margin:0_0_4px]">Keyboard shortcuts</h1>
+      <div className="type-body-sm text-muted-foreground mb-2">
         Press ? anywhere to see this list
       </div>
       <SettingsField

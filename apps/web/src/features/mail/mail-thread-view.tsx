@@ -162,7 +162,7 @@ export function ThreadView({
         >
           <TagIcon size={16} />
         </button>
-        <span className="ml-auto [font-size:var(--text-caption)] text-muted-foreground">
+        <span className="ml-auto type-caption text-muted-foreground">
           {messages.length > 0 ? `${String(messages.length)} messages` : ""}
         </span>
       </div>
@@ -171,7 +171,7 @@ export function ThreadView({
           {isBetaSpamCatch(row) ? (
             <div
               role="status"
-              className="mb-4 [padding:10px_12px] rounded-lg [border:1px_solid_var(--border)] bg-muted [font-size:var(--text-meta)] flex flex-wrap gap-2 items-center"
+              className="mb-4 [padding:10px_12px] rounded-lg [border:1px_solid_var(--border)] bg-muted type-meta flex flex-wrap gap-2 items-center"
             >
               <span>
                 {row.spamCatcher === "ai"
@@ -197,14 +197,12 @@ export function ThreadView({
             </div>
           ) : null}
           <div className="mb-4">
-            <h1 className="[margin:0_0_8px] [font-size:var(--text-h2)] font-semibold [line-height:1.35]">
-              {subject}
-            </h1>
+            <h1 className="[margin:0_0_8px] type-h2 font-semibold [line-height:1.35]">{subject}</h1>
             <div className="flex gap-1.5 flex-wrap">
               {labels.map((label) => (
                 <span
                   key={label.id}
-                  className="[font-size:var(--text-caption)] [padding:2px_6px] rounded font-medium"
+                  className="type-caption [padding:2px_6px] rounded font-medium"
                   style={{ background: `${label.color}20`, color: label.color }}
                 >
                   {label.name}
@@ -214,18 +212,16 @@ export function ThreadView({
           </div>
 
           {isError && (
-            <div className="mb-3 [font-size:var(--text-caption)] text-destructive">
+            <div className="mb-3 type-caption text-destructive">
               Could not load the full conversation — showing the list preview.
             </div>
           )}
           {actionError != null && (
-            <div className="mb-3 [font-size:var(--text-caption)] text-destructive">
-              {actionError}
-            </div>
+            <div className="mb-3 type-caption text-destructive">{actionError}</div>
           )}
 
           {isLoading && messages.length === 0 && (
-            <div className="bg-card [border:1px_solid_var(--border)] rounded-lg p-4 mb-3 [font-size:var(--text-body-sm)] text-muted-foreground">
+            <div className="bg-card [border:1px_solid_var(--border)] rounded-lg p-4 mb-3 type-body-sm text-muted-foreground">
               Loading conversation…
             </div>
           )}
@@ -256,17 +252,15 @@ export function ThreadView({
                   <Avatar name={msgSender} size={32} />
                   <div className="flex-1 min-w-0">
                     <div className="flex [align-items:baseline] gap-1.5 flex-wrap">
-                      <span className="font-semibold [font-size:var(--text-body-sm)]">
-                        {msgSender}
-                      </span>
-                      <span className="[font-size:var(--text-caption)] text-muted-foreground">
+                      <span className="font-semibold type-body-sm">{msgSender}</span>
+                      <span className="type-caption text-muted-foreground">
                         {message.from?.address ?? row.fromEmail}
                       </span>
-                      <span className="ml-auto [font-size:var(--text-caption)] text-muted-foreground whitespace-nowrap">
+                      <span className="ml-auto type-caption text-muted-foreground whitespace-nowrap">
                         {formatThreadTime(message.sentAt)}
                       </span>
                     </div>
-                    <div className="[font-size:var(--text-caption)] text-muted-foreground mb-3">
+                    <div className="type-caption text-muted-foreground mb-3">
                       to{" "}
                       {message.to.length > 0
                         ? message.to.map((addr) => addr.name ?? addr.address).join(", ")
@@ -280,17 +274,17 @@ export function ThreadView({
                         remoteContentBlocked={message.remoteContentBlocked ?? false}
                       />
                     ) : (
-                      <div className="whitespace-pre-wrap [font-size:var(--text-body-sm)] [line-height:1.6]">
+                      <div className="whitespace-pre-wrap type-body-sm [line-height:1.6]">
                         {message.body}
                       </div>
                     )}
                     {message.hasAttachment && (
                       <div className="mt-4 flex gap-2">
-                        <div className="[border:1px_solid_var(--border)] rounded-md [padding:8px_10px] flex items-center gap-2 [font-size:var(--text-meta)]">
+                        <div className="[border:1px_solid_var(--border)] rounded-md [padding:8px_10px] flex items-center gap-2 type-meta">
                           <DocIcon size={16} />
                           <div>
                             <div className="font-medium">Attachment</div>
-                            <div className="[font-size:var(--text-chip)] text-muted-foreground">
+                            <div className="type-chip text-muted-foreground">
                               View in conversation
                             </div>
                           </div>

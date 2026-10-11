@@ -14,7 +14,7 @@ import {
    (e.g. Mail's operator search); otherwise it is a button that opens the
    ⌘K command palette. */
 
-import { toggleTheme, useAppearance } from "@/components/settings-store";
+import { toggleTheme, useResolvedTheme } from "@/components/settings-store";
 import { useShellOverlays } from "@/components/shell/overlay-context";
 import { ProfileMenu } from "@/components/shell/profile-menu";
 import { Avatar } from "@/components/ui/avatar";
@@ -53,7 +53,7 @@ export function TopBar({
   onSearchChange,
 }: TopBarProps) {
   const overlays = useShellOverlays();
-  const theme = useAppearance((s) => s.theme);
+  const theme = useResolvedTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const profileButtonRef = useRef<HTMLButtonElement | null>(null);
   const sessionQuery = useQuery(sessionUserQueryOptions());
@@ -109,9 +109,7 @@ export function TopBar({
           aria-label="Open command palette"
         >
           <SearchIcon size={16} />
-          <span className="flex-1 text-muted-foreground [font-size:var(--text-body-sm)]">
-            {searchPlaceholder}
-          </span>
+          <span className="flex-1 text-muted-foreground type-body-sm">{searchPlaceholder}</span>
           <span className="kbd">⌘K</span>
         </button>
       )}
@@ -135,7 +133,7 @@ export function TopBar({
         >
           <BellIcon size={16} />
           {notifUnread > 0 ? (
-            <span className="absolute top-1 right-1 min-w-3.5 h-3.5 [padding:0_3px] [background:var(--danger)] [color:white] [font-size:var(--text-overline)] font-bold [border-radius:999px] grid [place-items:center] [border:2px_solid_var(--surface)]">
+            <span className="absolute top-1 right-1 min-w-3.5 h-3.5 [padding:0_3px] [background:var(--danger)] [color:white] type-overline font-bold [border-radius:999px] grid [place-items:center] [border:2px_solid_var(--surface)]">
               {notifUnread}
             </span>
           ) : null}

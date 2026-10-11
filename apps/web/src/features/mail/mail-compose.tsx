@@ -626,7 +626,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
               onBlur={saveDraft}
             />
             <div className="flex items-center [padding:4px_0] [border-bottom:1px_solid_var(--border)]">
-              <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">To</span>
+              <span className="type-meta text-muted-foreground w-12.5">To</span>
               <input
                 ref={toInputRef}
                 name="mail-compose-to"
@@ -643,7 +643,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 aria-describedby={
                   recipientError === null ? undefined : "mail-compose-recipient-error"
                 }
-                className="flex-1 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)]"
+                className="flex-1 [border:none] outline-none bg-transparent type-body-sm"
               />
               <button
                 type="button"
@@ -651,7 +651,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 onClick={() => {
                   setShowCc((value) => !value);
                 }}
-                className="min-h-6 min-w-6 [font-size:var(--text-caption)] text-muted-foreground"
+                className="min-h-6 min-w-6 type-caption text-muted-foreground"
               >
                 Cc
               </button>
@@ -662,7 +662,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 onClick={() => {
                   setShowBcc((value) => !value);
                 }}
-                className="min-h-6 min-w-6 [font-size:var(--text-caption)] text-muted-foreground"
+                className="min-h-6 min-w-6 type-caption text-muted-foreground"
               >
                 Bcc
               </button>
@@ -702,13 +702,11 @@ export function Compose({ onClose, onSent }: ComposeProps) {
                 onBlur={saveDraft}
                 placeholder="Subject"
                 aria-label="Subject"
-                className="w-full [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)] font-medium"
+                className="w-full [border:none] outline-none bg-transparent type-body-sm font-medium"
               />
             </div>
             <label className="flex items-center gap-2 [padding:4px_0]">
-              <span className="[font-size:var(--text-meta)] text-muted-foreground w-18">
-                Send later
-              </span>
+              <span className="type-meta text-muted-foreground w-18">Send later</span>
               <input
                 type="datetime-local"
                 aria-label="Send later"
@@ -727,7 +725,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
             onBlur={saveDraft}
             placeholder="Write your message…"
             aria-label="Message body"
-            className="w-full min-h-50 p-3.5 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)] [line-height:1.55] [resize:none] [font-family:inherit]"
+            className="w-full min-h-50 p-3.5 [border:none] outline-none bg-transparent type-body-sm [line-height:1.55] [resize:none] [font-family:inherit]"
           />
           {recipientError === null ? null : (
             <p id="mail-compose-recipient-error" className="compose-inline-error" role="alert">
@@ -773,7 +771,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
           {undo !== null && Date.now() < undo.untilMs && (
             <div
               role="status"
-              className="flex items-center justify-between gap-3 [margin:0_14px_8px] [padding:8px_12px] rounded-lg bg-muted [font-size:var(--text-body-sm)]"
+              className="flex items-center justify-between gap-3 [margin:0_14px_8px] [padding:8px_12px] rounded-lg bg-muted type-body-sm"
             >
               <span>
                 {undo.scheduledAt === undefined
@@ -792,7 +790,7 @@ export function Compose({ onClose, onSent }: ComposeProps) {
             </div>
           )}
           {sendFailed && (
-            <div className="[margin:0_14px_8px] [font-size:var(--text-caption)] text-destructive">
+            <div className="[margin:0_14px_8px] type-caption text-destructive">
               Could not send message. Try again.
             </div>
           )}

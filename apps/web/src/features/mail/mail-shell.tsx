@@ -647,7 +647,7 @@ export function MailShell() {
       {filterNotice === null ? null : (
         <div
           role={filterNotice.kind === "error" ? "alert" : "status"}
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 [z-index:50] flex items-center gap-3 [padding:8px_12px] rounded-lg bg-card [border:1px_solid_var(--border)] [box-shadow:var(--shadow-sm)] [font-size:var(--text-body-sm)]"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 [z-index:50] flex items-center gap-3 [padding:8px_12px] rounded-lg bg-card [border:1px_solid_var(--border)] [box-shadow:var(--shadow-sm)] type-body-sm"
         >
           <span>{filterNotice.text}</span>
           <button type="button" className="btn sm" onClick={() => setFilterNotice(null)}>

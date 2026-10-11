@@ -96,7 +96,7 @@ for (const viewport of [
           JSON.stringify({
             theme: nextTheme,
             density: "compact",
-            accent: "#7c3aed",
+            accent: "violet",
             fontScale: "default",
           }),
         );

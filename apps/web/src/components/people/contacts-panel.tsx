@@ -94,7 +94,7 @@ function ContactRow({ person }: { readonly person: PeopleDirectoryPerson }) {
         <button type="button" className="contacts-panel-row" {...trigger}>
           <PersonAvatar person={ref} size={32} />
           <span className="flex min-w-0 flex-col">
-            <span className="flex items-center gap-1 truncate [font-size:var(--text-body-sm)] font-medium">
+            <span className="flex items-center gap-1 truncate type-body-sm font-medium">
               {person.displayName}
               {person.favorite ? (
                 <>
@@ -108,9 +108,7 @@ function ContactRow({ person }: { readonly person: PeopleDirectoryPerson }) {
               ) : null}
             </span>
             {detail === null ? null : (
-              <span className="truncate [font-size:var(--text-meta)] text-muted-foreground">
-                {detail}
-              </span>
+              <span className="truncate type-meta text-muted-foreground">{detail}</span>
             )}
           </span>
           {badge === null ? null : <span className="contacts-panel-badge">{badge}</span>}

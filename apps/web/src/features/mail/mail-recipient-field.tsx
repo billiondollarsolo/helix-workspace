@@ -15,7 +15,7 @@ export function MailRecipientField({
 }) {
   return (
     <div className="flex items-center [padding:4px_0] [border-bottom:1px_solid_var(--border)]">
-      <span className="[font-size:var(--text-meta)] text-muted-foreground w-12.5">{label}</span>
+      <span className="type-meta text-muted-foreground w-12.5">{label}</span>
       <input
         ref={inputRef}
         name={`mail-compose-${label.toLowerCase()}`}
@@ -27,7 +27,7 @@ export function MailRecipientField({
         aria-label={label}
         aria-invalid={error !== null}
         aria-describedby={error === null ? undefined : "mail-compose-recipient-error"}
-        className="flex-1 [border:none] outline-none bg-transparent [font-size:var(--text-body-sm)]"
+        className="flex-1 [border:none] outline-none bg-transparent type-body-sm"
       />
     </div>
   );

@@ -3,20 +3,18 @@ import { shortcutGroups } from "./catalog";
 import { detectMacPlatform, keySequenceLabels } from "./keys";
 
 const KEY_CLASS =
-  "inline-block min-w-5 text-center font-mono [font-size:var(--text-chip)] [padding:1px_6px] rounded bg-card [border:1px_solid_var(--border)] [border-bottom-width:2px] [color:var(--text-2)]";
+  "inline-block min-w-5 text-center font-mono type-chip [padding:1px_6px] rounded bg-card [border:1px_solid_var(--border)] [border-bottom-width:2px] [color:var(--text-2)]";
 
 function ShortcutKeys({ keys, isMac }: { keys: readonly string[]; isMac: boolean }) {
   return (
     <span className="inline-flex flex-wrap items-center justify-end gap-1">
       {keys.map((spec, specIndex) => (
         <Fragment key={spec}>
-          {specIndex > 0 ? (
-            <span className="text-muted-foreground [font-size:var(--text-caption)]">or</span>
-          ) : null}
+          {specIndex > 0 ? <span className="text-muted-foreground type-caption">or</span> : null}
           {keySequenceLabels(spec, isMac).map((label, chordIndex) => (
             <Fragment key={`${spec}-${chordIndex}`}>
               {chordIndex > 0 ? (
-                <span className="text-muted-foreground [font-size:var(--text-caption)]">then</span>
+                <span className="text-muted-foreground type-caption">then</span>
               ) : null}
               <kbd className={KEY_CLASS}>{label}</kbd>
             </Fragment>
@@ -53,9 +51,7 @@ export function ShortcutList({ columns = 1 }: { columns?: 1 | 2 }) {
                     : "flex flex-wrap items-center gap-x-3 gap-y-1 [padding:6px_12px] [border-top:1px_solid_var(--border)]"
                 }
               >
-                <dt className="[flex:1_1_12rem] [font-size:var(--text-meta)]">
-                  {shortcut.description}
-                </dt>
+                <dt className="[flex:1_1_12rem] type-meta">{shortcut.description}</dt>
                 <dd className="[margin:0] ml-auto">
                   <ShortcutKeys keys={shortcut.keys} isMac={isMac} />
                 </dd>

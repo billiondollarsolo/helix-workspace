@@ -27,7 +27,7 @@ function DriveUploadStatusBadge({
       data-testid="drive-upload-status-badge"
       data-upload-state={view.state}
       title={file.uploadStatusLabel ?? view.label}
-      className="drive-upload-tone inline-flex items-center gap-1 [padding:1px_6px] [border-radius:999px] [font-size:var(--text-chip,_10px)] font-semibold [letter-spacing:0.02em] uppercase"
+      className="drive-upload-tone inline-flex items-center gap-1 [padding:1px_6px] [border-radius:999px] type-chip font-semibold [letter-spacing:0.02em] uppercase"
       data-tone={view.tone}
     >
       {file.uploadStatusLabel ?? view.label}
@@ -91,15 +91,12 @@ export function DriveFileCard({
         <FileTypeIcon name={file.name} icon={meta.icon} color={meta.color} aspectRatio="4 / 3" />
         <div className="p-2.5 w-full [box-sizing:border-box]">
           <div className="flex items-center gap-1.5 mb-1">
-            <FileNameText
-              name={file.name}
-              className="[font-size:var(--text-meta)] font-medium flex-1 min-w-0"
-            />
+            <FileNameText name={file.name} className="type-meta font-medium flex-1 min-w-0" />
           </div>
           <div className="mb-1">
             <DriveUploadStatusBadge file={file} />
           </div>
-          <div className="[font-size:var(--text-caption)] text-muted-foreground flex items-center gap-1.5">
+          <div className="type-caption text-muted-foreground flex items-center gap-1.5">
             <Avatar name={file.owner} size={14} />
             <span className="truncate">{file.modified}</span>
           </div>
@@ -131,7 +128,7 @@ export function DriveFileRow({
     <button
       className={cn(
         "drive-file-row render-contained-list-item",
-        "grid [grid-template-columns:1fr_160px_120px_90px_32px] [padding:0_16px] h-9 items-center [font-size:var(--text-meta)] w-full text-left [border-bottom:1px_solid_var(--border)]",
+        "grid [grid-template-columns:1fr_160px_120px_90px_32px] [padding:0_16px] h-9 items-center type-meta w-full text-left [border-bottom:1px_solid_var(--border)]",
         selected ? "[background:var(--accent-soft)]" : "bg-transparent",
       )}
       type="button"
@@ -195,7 +192,7 @@ function DriveStarToggle({
   const commonProps = {
     className: cn(
       "icon-btn bg-card",
-      starred ? "[color:var(--warning,_#f59e0b)]" : "text-muted-foreground",
+      starred ? "[color:var(--star)]" : "text-muted-foreground",
       className,
     ),
     "aria-pressed": starred,

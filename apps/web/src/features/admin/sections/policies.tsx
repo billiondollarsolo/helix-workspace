@@ -201,7 +201,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
         });
       }}
     >
-      <label className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
+      <label className="row gap-2 text-[var(--text-2)] type-meta">
         <input
           type="checkbox"
           className="accent-[var(--accent)]"
@@ -271,12 +271,12 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
         </fieldset>
       ) : null}
       {requiredUnavailable ? (
-        <p className="m-0 text-[var(--text-3)] [font-size:var(--text-meta)]">
+        <p className="m-0 text-[var(--text-3)] type-meta">
           Required is unavailable until Helix enforces this control at runtime.
         </p>
       ) : null}
       {policy.policyType === "sso" ? (
-        <label className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
+        <label className="row gap-2 text-[var(--text-2)] type-meta">
           <input
             type="checkbox"
             className="accent-[var(--accent)]"
@@ -421,7 +421,7 @@ export function AdminSecurity() {
                         <div className="mb-1 flex items-center gap-2">
                           {/* h3 under the column's h2 — one card is one policy,
                               and its name is the only thing identifying it. */}
-                          <h3 className="m-0 font-semibold [font-size:var(--text-body)]">
+                          <h3 className="m-0 font-semibold type-body">
                             {securityPolicyLabels[policy.policyType]}
                           </h3>
                           <StatusChip tone={level.on ? "success" : "warning"} label={level.text} />
@@ -430,7 +430,7 @@ export function AdminSecurity() {
                             nothing, so the row renders only when there is a
                             setting to describe. */}
                         {settingsSummary.length === 0 ? null : (
-                          <div className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
+                          <div className="row gap-2 text-[var(--text-2)] type-meta">
                             <KeyIcon size={16} /> {settingsSummary}
                           </div>
                         )}
@@ -528,12 +528,10 @@ function LocalLoginSecurityCard() {
       <div className="flex items-start gap-3">
         <div className="flex-1">
           <div className="mb-1 flex items-center gap-2">
-            <h3 className="m-0 font-semibold [font-size:var(--text-body)]">
-              Local email/password login
-            </h3>
+            <h3 className="m-0 font-semibold type-body">Local email/password login</h3>
             <StatusChip tone="success" label="Enabled" />
           </div>
-          <div className="row gap-2 text-[var(--text-2)] [font-size:var(--text-meta)]">
+          <div className="row gap-2 text-[var(--text-2)] type-meta">
             <LockIcon size={16} /> Owner/admin recovery path; SSO is additive.
           </div>
         </div>

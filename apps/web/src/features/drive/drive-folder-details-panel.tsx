@@ -51,9 +51,7 @@ export function DriveFolderDetailsPanel({
       className="w-80 shrink-0 [border-left:1px_solid_var(--border)] bg-card flex flex-col"
     >
       <div className="[padding:10px_14px] flex items-center [border-bottom:1px_solid_var(--border)]">
-        <span className="truncate [font-size:var(--text-body-sm)] font-semibold">
-          Folder details
-        </span>
+        <span className="truncate type-body-sm font-semibold">Folder details</span>
         <button
           type="button"
           aria-label="Close folder details"
@@ -78,7 +76,7 @@ export function DriveFolderDetailsPanel({
             }}
           >
             <input
-              className="input flex-1 min-w-0 [font-size:var(--text-body-sm)]"
+              className="input flex-1 min-w-0 type-body-sm"
               value={renameValue}
               aria-label="Folder name"
               onChange={(event) => setRenameValue(event.target.value)}
@@ -110,19 +108,19 @@ export function DriveFolderDetailsPanel({
               Share
             </button>
           </div>
-          <p className="[font-size:var(--text-caption)] text-muted-foreground mb-3">
+          <p className="type-caption text-muted-foreground mb-3">
             People you add get access to everything inside this folder.
           </p>
 
           <div className="section-label [padding:8px_0_4px]">Owner</div>
-          <div className="flex items-center gap-2 [font-size:var(--text-meta)] mb-3">
+          <div className="flex items-center gap-2 type-meta mb-3">
             <Avatar name={ownerLabel} size={24} />
             <span className="truncate">{ownerLabel}</span>
           </div>
           {entry !== null ? (
             <>
               <div className="section-label [padding:8px_0_4px]">Modified</div>
-              <div className="[font-size:var(--text-meta)] [color:var(--text-2)] mb-3">
+              <div className="type-meta [color:var(--text-2)] mb-3">
                 {formatModified(entry.updatedAt)}
               </div>
             </>

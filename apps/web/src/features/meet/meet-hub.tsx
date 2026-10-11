@@ -269,10 +269,10 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
         {/* Hero / quick start */}
         <div className="grid [grid-template-columns:1.4fr_1fr] gap-5 mb-6">
           <div className="panel p-6 relative overflow-hidden">
-            <div className="[font-size:var(--text-caption)] font-semibold text-muted-foreground uppercase [letter-spacing:.06em] mb-1.5">
+            <div className="type-caption font-semibold text-muted-foreground uppercase [letter-spacing:.06em] mb-1.5">
               Start a call
             </div>
-            <h2 className="[font-size:var(--text-h1)] font-semibold [margin:0_0_16px] [letter-spacing:-0.01em]">
+            <h2 className="type-h1 font-semibold [margin:0_0_16px] [letter-spacing:-0.01em]">
               Premium video meetings, free for everyone at Helix.
             </h2>
             <div className="flex gap-2 flex-wrap">
@@ -312,21 +312,14 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
               </button>
             </div>
             {actionError !== null ? (
-              <div
-                role="alert"
-                className="mt-3 [font-size:var(--text-meta)] [color:var(--danger,_#dc2626)]"
-              >
+              <div role="alert" className="mt-3 type-meta [color:var(--danger)]">
                 {actionError}
               </div>
             ) : null}
             {linkRoom !== null ? (
-              <div className="mt-3.5 flex items-center gap-2.5 [padding:8px_12px] rounded-md [border:1px_solid_var(--border)] [background:var(--bg-2,_var(--bg))]">
-                <span className="[font-size:var(--text-meta)] [color:var(--text-2)]">
-                  Meeting link ready
-                </span>
-                <code className="mono [font-size:var(--text-meta)]">
-                  helix.meet/{linkRoom.code}
-                </code>
+              <div className="mt-3.5 flex items-center gap-2.5 [padding:8px_12px] rounded-md [border:1px_solid_var(--border)] [background:var(--bg)]">
+                <span className="type-meta [color:var(--text-2)]">Meeting link ready</span>
+                <code className="mono type-meta">helix.meet/{linkRoom.code}</code>
                 <button
                   className="btn sm"
                   type="button"
@@ -341,12 +334,10 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
           </div>
 
           <div className="panel p-6">
-            <div className="[font-size:var(--text-caption)] font-semibold text-muted-foreground uppercase [letter-spacing:.06em] mb-1.5">
+            <div className="type-caption font-semibold text-muted-foreground uppercase [letter-spacing:.06em] mb-1.5">
               Join with code
             </div>
-            <h3 className="[font-size:var(--text-h3)] font-semibold [margin:0_0_12px]">
-              Got a meeting code?
-            </h3>
+            <h3 className="type-h3 font-semibold [margin:0_0_12px]">Got a meeting code?</h3>
             <form className="flex gap-1.5" onSubmit={handleJoinByCode}>
               <input
                 className="input mono flex-1"
@@ -361,23 +352,21 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                 {joinMutation.isPending ? "Joining…" : "Join"}
               </button>
             </form>
-            <div className="[font-size:var(--text-caption)] text-muted-foreground mt-2">
-              Or paste a meeting link
-            </div>
+            <div className="type-caption text-muted-foreground mt-2">Or paste a meeting link</div>
           </div>
         </div>
 
         {/* Today's meetings */}
         <div className="mb-6">
           <div className="flex items-center mb-3">
-            <h3 className="[font-size:var(--text-body)] font-semibold m-0">Today</h3>
-            <span className="ml-2 [font-size:var(--text-meta)] text-muted-foreground">
+            <h3 className="type-body font-semibold m-0">Today</h3>
+            <span className="ml-2 type-meta text-muted-foreground">
               {meetingsQuery.isLoading
                 ? "Loading…"
                 : `${String(filteredScheduled.length)} meetings`}
             </span>
             {meetingsQuery.isError ? (
-              <span className="ml-2 [font-size:var(--text-chip)] font-semibold text-muted-foreground [border:1px_solid_var(--border)] rounded [padding:1px_6px] uppercase [letter-spacing:.04em]">
+              <span className="ml-2 type-chip font-semibold text-muted-foreground [border:1px_solid_var(--border)] rounded [padding:1px_6px] uppercase [letter-spacing:.04em]">
                 Meetings unavailable
               </span>
             ) : null}
@@ -401,18 +390,14 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                   )}
                 >
                   <div>
-                    <div className="[font-size:var(--text-body)] font-semibold [font-variant-numeric:tabular-nums]">
+                    <div className="type-body font-semibold [font-variant-numeric:tabular-nums]">
                       {meeting.time}
                     </div>
-                    <div className="[font-size:var(--text-caption)] text-muted-foreground">
-                      {meeting.duration}
-                    </div>
+                    <div className="type-caption text-muted-foreground">{meeting.duration}</div>
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="[font-size:var(--text-body-sm)] font-medium">
-                        {meeting.title}
-                      </span>
+                      <span className="type-body-sm font-medium">{meeting.title}</span>
                       {meeting.inProgress ? (
                         <span className="chip danger">
                           <span className="chip-dot" />
@@ -426,14 +411,14 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                         </span>
                       ) : null}
                     </div>
-                    <div className="flex items-center gap-2 [font-size:var(--text-caption)] text-muted-foreground">
+                    <div className="flex items-center gap-2 type-caption text-muted-foreground">
                       <Avatar name={meeting.host} size={16} />
                       <span>{meeting.host}</span>
                       <span>·</span>
                       <span>{meeting.attendees} attendees</span>
                     </div>
                   </div>
-                  <div className="mono [font-size:var(--text-caption)] text-muted-foreground">
+                  <div className="mono type-caption text-muted-foreground">
                     {meeting.code || "—"}
                   </div>
                   <div className="flex justify-end gap-1.5">
@@ -456,7 +441,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
 
         {/* Recent meetings */}
         <div>
-          <h3 className="[font-size:var(--text-body)] font-semibold [margin:0_0_12px]">Recent</h3>
+          <h3 className="type-body font-semibold [margin:0_0_12px]">Recent</h3>
           <div className="panel">
             {meetingsQuery.isLoading ? (
               <PanelMessage>Loading recent meetings…</PanelMessage>
@@ -476,17 +461,11 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
                   )}
                 >
                   <div>
-                    <div className="[font-size:var(--text-body-sm)] font-medium">
-                      {meeting.title}
-                    </div>
+                    <div className="type-body-sm font-medium">{meeting.title}</div>
                   </div>
-                  <span className="[font-size:var(--text-meta)] [color:var(--text-2)]">
-                    {meeting.date}
-                  </span>
-                  <span className="[font-size:var(--text-meta)] [color:var(--text-2)]">
-                    {meeting.duration}
-                  </span>
-                  <span className="[font-size:var(--text-meta)] [color:var(--text-2)]">
+                  <span className="type-meta [color:var(--text-2)]">{meeting.date}</span>
+                  <span className="type-meta [color:var(--text-2)]">{meeting.duration}</span>
+                  <span className="type-meta [color:var(--text-2)]">
                     {meeting.attendees} people
                   </span>
                   <div className="flex justify-end gap-1.5">
@@ -559,7 +538,7 @@ export function MeetHub({ search = "", onEnterCall }: MeetHubProps) {
 
 function PanelMessage({ children }: { readonly children: React.ReactNode }) {
   return (
-    <div className="[padding:28px_16px] text-center [font-size:var(--text-meta)] text-muted-foreground">
+    <div className="[padding:28px_16px] text-center type-meta text-muted-foreground">
       {children}
     </div>
   );
@@ -627,7 +606,7 @@ function ScheduleDialog({
       }
     >
       <form id="meet-schedule-form" onSubmit={submit} className="flex flex-col gap-3">
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)] font-medium [color:var(--text-2)]">
+        <label className="flex flex-col gap-1 type-meta font-medium [color:var(--text-2)]">
           Title
           <input
             className="input"
@@ -639,7 +618,7 @@ function ScheduleDialog({
             }}
           />
         </label>
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)] font-medium [color:var(--text-2)]">
+        <label className="flex flex-col gap-1 type-meta font-medium [color:var(--text-2)]">
           Start
           <input
             className="input"
@@ -651,7 +630,7 @@ function ScheduleDialog({
             }}
           />
         </label>
-        <label className="flex flex-col gap-1 [font-size:var(--text-meta)] font-medium [color:var(--text-2)]">
+        <label className="flex flex-col gap-1 type-meta font-medium [color:var(--text-2)]">
           Duration
           <select
             className="input"
@@ -668,10 +647,7 @@ function ScheduleDialog({
           </select>
         </label>
         {(localError ?? error) !== null ? (
-          <div
-            role="alert"
-            className="mt-3 [font-size:var(--text-meta)] [color:var(--danger,_#dc2626)]"
-          >
+          <div role="alert" className="mt-3 type-meta [color:var(--danger)]">
             {localError ?? error}
           </div>
         ) : null}

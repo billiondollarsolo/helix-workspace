@@ -82,7 +82,7 @@ function ShortcutHelpDialog({
       width="min(820px, 100%)"
       footer={
         <>
-          <span className="mr-auto self-center [font-size:var(--text-meta)] text-muted-foreground">
+          <span className="mr-auto self-center type-meta text-muted-foreground">
             {enabled
               ? "Single-key shortcuts are on."
               : "Single-key shortcuts are off. Shortcuts with ⌘, Ctrl, or Alt still work."}

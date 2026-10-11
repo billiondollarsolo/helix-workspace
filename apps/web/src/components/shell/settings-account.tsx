@@ -13,8 +13,8 @@ export function ProfileSection() {
   const profile = profileQuery.data;
   return (
     <>
-      <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_4px]">Profile</h1>
-      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-4">
+      <h1 className="type-h2 font-semibold [margin:0_0_4px]">Profile</h1>
+      <div className="type-body-sm text-muted-foreground mb-4">
         How you appear across the workspace
       </div>
       {profile ? (
@@ -69,10 +69,8 @@ export function ProfileSection() {
 export function LanguageSection() {
   return (
     <>
-      <h1 className="[font-size:var(--text-h2)] font-semibold [margin:0_0_4px]">
-        Language &amp; region
-      </h1>
-      <div className="[font-size:var(--text-body-sm)] text-muted-foreground mb-2">
+      <h1 className="type-h2 font-semibold [margin:0_0_4px]">Language &amp; region</h1>
+      <div className="type-body-sm text-muted-foreground mb-2">
         How dates, times, and language are formatted
       </div>
       <SettingsField label="Language" controlId="settings-language">
@@ -139,7 +137,7 @@ export function LanguageSection() {
 
             {...UNAVAILABLE_CONTROL_PROPS}
           />
-          <span className="text-muted-foreground [font-size:var(--text-meta)]">Mon–Fri</span>
+          <span className="text-muted-foreground type-meta">Mon–Fri</span>
         </div>
       </SettingsField>
     </>

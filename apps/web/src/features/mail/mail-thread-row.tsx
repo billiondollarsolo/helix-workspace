@@ -56,7 +56,7 @@ export function ThreadRow({
     <div
       className={cn(
         "mail-thread-row render-contained-list-item",
-        "grid [grid-template-columns:20px_20px_24px_minmax(0,_200px)_minmax(0,_1fr)_auto] items-center gap-x-3 [padding:var(--rd-row-py)_16px] [border-bottom:1px_solid_var(--border)] cursor-pointer [transition:background_0.08s] [font-size:var(--rd-row-fs)] [min-height:var(--rd-list-row-h)]",
+        "grid [grid-template-columns:20px_20px_24px_minmax(0,_200px)_minmax(0,_1fr)_auto] items-center gap-x-3 [padding:var(--rd-row-py)_16px] [border-bottom:1px_solid_var(--border)] cursor-pointer [transition:background_0.08s] type-row [min-height:var(--rd-list-row-h)]",
         checked || selected ? "[background:var(--accent-soft)]" : "bg-transparent",
       )}
       role="button"
@@ -103,7 +103,7 @@ export function ThreadRow({
         }}
         className={cn(
           "w-4.5 h-4.5 grid [place-items:center]",
-          thread.starred ? "[color:#f59e0b]" : "text-muted-foreground",
+          thread.starred ? "[color:var(--star)]" : "text-muted-foreground",
         )}
       >
         <StarIcon size={16} />
@@ -125,7 +125,7 @@ export function ThreadRow({
         {labels.map((label) => (
           <span
             key={label.id}
-            className="[font-size:var(--text-chip)] [padding:0_5px] h-4 [line-height:16px] [border-radius:3px] font-medium shrink-0"
+            className="type-chip [padding:0_5px] h-4 [line-height:16px] [border-radius:3px] font-medium shrink-0"
             style={{ background: `${label.color}1f`, color: label.color }}
           >
             {label.name}
@@ -148,7 +148,7 @@ export function ThreadRow({
         <span
           className={cn(
             "mail-thread-row-date",
-            "[font-size:var(--text-caption)] flex items-center gap-1.5",
+            "type-caption flex items-center gap-1.5",
             thread.unread ? "font-semibold" : "font-normal",
             thread.unread ? "[color:var(--text-2)]" : "text-muted-foreground",
           )}

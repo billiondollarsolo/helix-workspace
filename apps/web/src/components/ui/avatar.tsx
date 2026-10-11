@@ -1,21 +1,21 @@
-/* Avatar — deterministic gradient + initials from a name.
-   Ported from the design handoff (components.jsx). No external image fetch:
-   every avatar is a CSS gradient with up-to-two initials. */
+/* Avatar — deterministic label colour + initials from a name.
+   No external image fetch: every avatar is a label-palette token with
+   up-to-two initials in `--label-on`, readable in light and dark. */
 
 import type { CSSProperties } from "react";
 
-/** Stable, branded avatar gradient pairs. */
-const AVATAR_COLORS: ReadonlyArray<readonly [string, string]> = [
-  ["#7c3aed", "#a78bfa"],
-  ["#0891b2", "#22d3ee"],
-  ["#059669", "#34d399"],
-  ["#dc2626", "#f87171"],
-  ["#ea580c", "#fb923c"],
-  ["#0284c7", "#38bdf8"],
-  ["#9333ea", "#c084fc"],
-  ["#65a30d", "#a3e635"],
-  ["#db2777", "#f472b6"],
-  ["#475569", "#94a3b8"],
+/** Label-palette names; each fill keeps 4.5:1 with `--label-on`. */
+const AVATAR_COLORS: readonly string[] = [
+  "violet",
+  "cyan",
+  "emerald",
+  "red",
+  "orange",
+  "sky",
+  "purple",
+  "lime",
+  "pink",
+  "slate",
 ];
 
 /** Deterministic, stable hash → index in [0, mod). Shared utility. */
@@ -41,7 +41,7 @@ function initialsFromName(name: string): string {
 }
 
 export interface AvatarProps {
-  /** Display name — drives both the gradient and the initials. */
+  /** Display name — drives both the colour and the initials. */
   name?: string;
   /** Diameter in pixels. Defaults to 22. */
   size?: number;
@@ -54,15 +54,13 @@ export interface AvatarProps {
 
 export function Avatar({ name = "", size = 22, src, alt, className }: AvatarProps) {
   const initials = initialsFromName(name);
-  const [c1, c2] = AVATAR_COLORS[hashIdx(name, AVATAR_COLORS.length)] ?? ["#7c3aed", "#a78bfa"];
+  const color = AVATAR_COLORS[hashIdx(name, AVATAR_COLORS.length)] ?? "violet";
 
   const style: CSSProperties = {
     width: size,
     height: size,
     fontSize: Math.max(9, Math.round(size * 0.42)),
-    background: src
-      ? `center / cover no-repeat url("${src}")`
-      : `linear-gradient(135deg, ${c1}, ${c2})`,
+    background: src ? `center / cover no-repeat url("${src}")` : `var(--label-${color})`,
   };
 
   return (

@@ -3,8 +3,6 @@
   "src/components/shell/helix-mark.ts": 3,
   "src/features/admin/tenant-config-management.tsx": 1,
   "src/features/assistant/assistant-data.ts": 4,
-  "src/features/calendar/calendar-day.tsx": 1,
-  "src/features/calendar/data.ts": 5,
   "src/features/drive/drive-data.ts": 7,
   "src/features/mail/mail-html-body.tsx": 4,
   "src/features/mail/mail-shell.test-fixtures.ts": 2,

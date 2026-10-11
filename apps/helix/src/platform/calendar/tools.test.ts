@@ -169,6 +169,53 @@ describe("calendar tools", () => {
     ).toMatchObject({ ok: false, statusCode: 400 });
   });
 
+  it("adds video conferencing to an existing event once", async () => {
+    const store = new FakeCalendarStore();
+    const rooms: unknown[] = [];
+    const registry = createToolRegistry();
+    const room = {
+      roomId: "55555555-5555-4555-8555-555555555555",
+      joinCode: "abc-defg-hij",
+      joinUrl: "https://helix.example.com/meet?code=abc-defg-hij",
+    };
+    registerCalendarTools(registry, {
+      store,
+      conference: {
+        async createRoom(input) {
+          rooms.push(input);
+          return room;
+        },
+      },
+    });
+    const actor: Actor = { id: actorId, orgId, type: "user", scopes: ["calendar.write"] };
+    const update = { eventId, conference: "meet", patch: { metadata: { alarms: [] } } };
+
+    const denied = await registry.invoke("calendar.event.update", update, { actor });
+    const updated = await registry.invoke("calendar.event.update", update, {
+      actor: { ...actor, scopes: ["calendar.write", "meet.write"] },
+    });
+    const again = await registry.invoke(
+      "calendar.event.update",
+      { ...update, patch: { metadata: { conference: { provider: "meet", ...room } } } },
+      { actor: { ...actor, scopes: ["calendar.write", "meet.write"] } },
+    );
+
+    expect(denied).toMatchObject({ ok: false, statusCode: 403 });
+    expect(updated.ok).toBe(true);
+    expect(again.ok).toBe(true);
+    expect(rooms).toEqual([
+      expect.objectContaining({
+        subject: "Planning",
+        startsAt: new Date("2026-05-20T13:00:00.000Z"),
+        endsAt: new Date("2026-05-20T14:00:00.000Z"),
+      }),
+    ]);
+    expect(store.updateInputs[0]?.patch.metadata).toEqual({
+      alarms: [],
+      conference: { provider: "meet", ...room },
+    });
+  });
+
   it("updates and cancels events through the store and invitation sender", async () => {
     const store = new FakeCalendarStore();
     const invitationSender = new FakeInvitationSender();
@@ -389,6 +436,77 @@ describe("calendar tools", () => {
     expect(output.team).toEqual([
       expect.objectContaining({ group: "team", visible: false, color: "#7c3aed" }),
     ]);
+  });
+
+  it("returns merged busy blocks without event details through calendar.free-busy", async () => {
+    const otherActorId = "55555555-5555-4555-8555-555555555555";
+    const freeBusyInputs: unknown[] = [];
+    const store = Object.assign(new FakeCalendarStore(), {
+      listCalendarFreeBusyEvents: async (input: unknown) => {
+        freeBusyInputs.push(input);
+        return [
+          {
+            eventId,
+            actorId: otherActorId,
+            startsAt: new Date("2026-05-20T13:00:00.000Z"),
+            endsAt: new Date("2026-05-20T14:00:00.000Z"),
+            status: "confirmed" as const,
+          },
+          {
+            eventId: calendarId,
+            actorId: otherActorId,
+            startsAt: new Date("2026-05-20T13:30:00.000Z"),
+            endsAt: new Date("2026-05-20T15:00:00.000Z"),
+            status: "confirmed" as const,
+          },
+          {
+            eventId,
+            actorId,
+            startsAt: new Date("2026-05-20T16:00:00.000Z"),
+            endsAt: new Date("2026-05-20T17:00:00.000Z"),
+            status: "confirmed" as const,
+            transparency: "transparent" as const,
+          },
+        ];
+      },
+    });
+    const registry = createToolRegistry();
+    registerCalendarTools(registry, { store });
+    expect(registry.get("calendar.free-busy")).toMatchObject({
+      permission: "calendar.read:freebusy",
+      sideEffects: "read",
+    });
+    const actor: Actor = { id: actorId, orgId, type: "user", scopes: ["calendar.read:freebusy"] };
+
+    const result = await registry.invoke<{ readonly busy: readonly unknown[] }>(
+      "calendar.free-busy",
+      {
+        actorIds: [actorId, otherActorId, otherActorId],
+        windowStartsAt: "2026-05-20T00:00:00.000Z",
+        windowEndsAt: "2026-05-21T00:00:00.000Z",
+      },
+      { actor },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(freeBusyInputs[0]).toMatchObject({ orgId, actorIds: [actorId, otherActorId] });
+    expect(result.ok ? result.output.busy : []).toEqual([
+      {
+        actorId: otherActorId,
+        startsAt: "2026-05-20T13:00:00.000Z",
+        endsAt: "2026-05-20T15:00:00.000Z",
+      },
+    ]);
+    const tooWide = await registry.invoke(
+      "calendar.free-busy",
+      {
+        actorIds: [actorId],
+        windowStartsAt: "2026-05-01T00:00:00.000Z",
+        windowEndsAt: "2026-05-30T00:00:00.000Z",
+      },
+      { actor },
+    );
+    expect(tooWide.ok).toBe(false);
   });
 
   it("exposes membership changes only through the calendar.manage permission", () => {

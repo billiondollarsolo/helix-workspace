@@ -4570,14 +4570,4 @@
       display: flex !important;
     }
   }
-
-  @media (max-width: 640px) {
-    .calendar-toolbar {
-      height: auto !important;
-      min-height: 44px;
-      flex-wrap: wrap;
-      padding: 8px !important;
-      gap: 8px !important;
-    }
-  }
 }

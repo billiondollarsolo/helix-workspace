@@ -41,7 +41,7 @@ All notable changes to Helix Workspace are documented here. This file follows
   current app, and `g` then a letter to jump: `i`/`s`/`t`/`d` for Inbox, Starred, Sent, and
   Drafts; `c` Calendar, `k` Chat, `r` Drive, `h` Meet. Mail supports `c`, `j`/`k`, `o`/Enter,
   `u`, `x`, `s`, `e`, `#`, `!`, Shift+I/Shift+U, `r`/`a`/`f`, and ⌘/Ctrl+Enter to send.
-  Calendar supports `d`/`w`/`m`/`a` views, `t`, `j`/`k` or `n`/`p`, `c`, and `e`. Drive supports
+  Calendar supports `d`/`x`/`w`/`m`/`a` views, `t`, `j`/`k` or `n`/`p`, `c`, `e`, Delete, and Esc. Drive supports
   `n` (new folder), Shift+U (upload), and Delete (move to trash). Chat supports Esc to close a
   thread and Alt+↑/↓ to switch conversations. Shortcuts pause while typing and while a dialog or
   menu is open. Settings → Keyboard shortcuts lists them all and can turn single-key shortcuts off.
@@ -68,6 +68,24 @@ All notable changes to Helix Workspace are documented here. This file follows
 - An offline banner spans the top of the workspace while the device has no connection.
 - "New email" and "Schedule meeting" in ⌘K go to `/mail?compose=new` and
   `/calendar?create=event`.
+
+- Calendar rework. Day, 3-day, Week (with or without weekends), Month and Schedule views show
+  the full 24 hours with sticky day headers and an all-day row, open scrolled to the current
+  time, and mark only the real today. Click or drag on empty time for a quick create with
+  "More options"; drag events to move them, drag the bottom edge to change their length, or use
+  Alt+arrow keys. The full editor has a date and time picker, an all-day switch, plain-language
+  repeat choices (including a Custom repeat with an interval, weekdays and an end), guests from
+  the people picker, "Add video conferencing" (creates a Meet room), notifications as a number
+  and unit, calendar, Busy/Free, and a Find a time tab that shows each guest's busy times side by
+  side with suggested free slots. Event details show the repeat, a Join button, guests with their
+  replies and the organizer, and "Going? Yes / No / Maybe". Deleting and moving offer Undo. The
+  sidebar has a mini month and "My calendars" / "Other calendars" with colours, show/hide, and
+  sharing for calendars you own. Phones get 3-day and Schedule views and a Create button. The
+  calendar follows your week start, working hours, time zone and 12/24-hour clock from your
+  account preferences. Video conferencing can also be added when editing an existing event
+  (`calendar.event.update` accepts `conference: "meet"`).
+- `calendar.free-busy` tool: busy blocks (no event details) for up to 20 organization members over
+  a window of up to 14 days, for the Calendar's Find a time view.
 
 - Drive accepts S3 commands. An S3-compatible gateway at `/v1/s3` lets the AWS CLI, rclone, boto3,
   and the AWS SDKs list, upload, download, copy, and delete Drive files, including multipart uploads,

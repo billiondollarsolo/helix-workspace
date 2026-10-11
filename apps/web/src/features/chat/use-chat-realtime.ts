@@ -326,7 +326,8 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
     (input: ChatRealtimeSendInput): boolean => {
       const client = clientRef.current;
       const active = roomIdRef.current;
-      if (active === undefined) {
+      // Closed socket: the caller sends over REST, so no pending copy is kept.
+      if (active === undefined || client === null || !client.isOpen()) {
         return false;
       }
       const clientMessageId =
@@ -344,13 +345,6 @@ export function useChatRealtime(options: UseChatRealtimeOptions): ChatRealtimeSt
         createdAt: new Date(now()).toISOString(),
       };
       setPendingMessages((prev) => [...prev, pending]);
-
-      if (client === null || !client.isOpen()) {
-        setPendingMessages((prev) =>
-          prev.map((p) => (p.clientMessageId === clientMessageId ? { ...p, status: "failed" } : p)),
-        );
-        return false;
-      }
       client.sendMessage({
         roomId: active,
         body: input.body,

@@ -309,6 +309,7 @@ interface ChatMessageStateRow {
     readonly createdAt: string | Date;
   }[];
   readonly reply_count: number | string;
+  readonly last_reply_at: Date | null;
   readonly pin: {
     readonly roomId: string;
     readonly messageId: string;
@@ -2103,13 +2104,8 @@ async function enrichChatMessages(
         from chat_reactions reaction
         where reaction.message_id = source.id
       ), '[]'::jsonb) as reactions,
-      (
-        select count(*)::int
-        from messages reply
-        where reply.parent_message_id = source.id
-          and reply.kind = 'chat'
-          and reply.deleted_at is null
-      ) as reply_count,
+      replies.reply_count,
+      replies.last_reply_at,
       (
         select jsonb_build_object(
           'roomId', pin.thread_id,
@@ -2144,6 +2140,11 @@ async function enrichChatMessages(
           )
       ), '[]'::jsonb) as attachments
     from unnest(${sql.array(messages.map(({ id }) => id))}::uuid[]) as source(id)
+    cross join lateral (
+      select count(*)::int as reply_count, max(reply.sent_at) as last_reply_at
+      from messages reply
+      where reply.parent_message_id = source.id and reply.kind = 'chat' and reply.deleted_at is null
+    ) replies
   `;
   const states = new Map(rows.map((row) => [row.message_id, row]));
   return messages.map((message) => {
@@ -2158,6 +2159,7 @@ async function enrichChatMessages(
         createdAt: new Date(reaction.createdAt),
       })),
       replyCount: Number(state?.reply_count ?? 0),
+      lastReplyAt: state?.last_reply_at ?? null,
       attachments: (state?.attachments ?? []).map((attachment) => ({
         objectId: attachment.objectId,
         source: attachment.source,
@@ -2588,13 +2590,7 @@ export function chatMessageCreatedEvent(message: ChatMessageRecord): ChatRoomEve
       ),
       metadata: message.metadata,
       attachmentObjectIds: [...message.attachmentObjectIds],
-      attachments: (message.attachments ?? []).map((attachment) => ({
-        objectId: attachment.objectId,
-        source: attachment.source,
-        filename: attachment.filename,
-        mimeType: attachment.mimeType,
-        byteSize: attachment.byteSize,
-      })),
+      attachments: (message.attachments ?? []).map((attachment) => ({ ...attachment })),
       reactions: (message.reactions ?? []).map((reaction) => ({
         messageId: reaction.messageId,
         actorId: reaction.actorId,
@@ -2603,6 +2599,7 @@ export function chatMessageCreatedEvent(message: ChatMessageRecord): ChatRoomEve
         createdAt: reaction.createdAt.toISOString(),
       })),
       replyCount: message.replyCount ?? 0,
+      lastReplyAt: message.lastReplyAt?.toISOString() ?? null,
       pin:
         message.pin === undefined || message.pin === null
           ? null

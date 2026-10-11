@@ -108,3 +108,10 @@ it("renders attachment-only messages and tombstones without a body", () => {
     '<pre><code class="language-js">const x = 1;</code></pre>',
   );
 });
+
+it("renders the inline formatting the composer offers", () => {
+  expect(renderChatBodyHtml("**bold** *italic* ~~gone~~ `code`", "markdown")).toBe(
+    "<p><strong>bold</strong> <em>italic</em> <s>gone</s> <code>code</code></p>",
+  );
+  expect(renderChatBodyHtml("~~<b>x</b>~~", "markdown")).toBe("<p><s>&lt;b&gt;x&lt;/b&gt;</s></p>");
+});

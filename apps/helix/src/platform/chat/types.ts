@@ -70,6 +70,7 @@ export interface ChatMessageRecord {
   /** Complete shared projection used by history, replay, and live delivery. */
   readonly reactions?: readonly ChatReactionRecord[] | undefined;
   readonly replyCount?: number | undefined;
+  readonly lastReplyAt?: Date | null | undefined;
   readonly pin?: ChatPinRecord | null | undefined;
   readonly parentMessageId?: string | null;
   readonly clientMessageId?: string | undefined;

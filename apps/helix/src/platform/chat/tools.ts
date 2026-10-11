@@ -154,10 +154,7 @@ const chatPinsResultSchema = z.object({
 
 const chatUnpinResultSchema = z.object({ ok: z.literal(true) });
 
-const genericObjectJsonSchema = {
-  type: "object",
-  additionalProperties: true,
-} as const;
+const genericObjectJsonSchema = { type: "object", additionalProperties: true } as const;
 
 export interface CreateChatToolDefinitionsOptions {
   readonly store: ChatStore;
@@ -772,6 +769,7 @@ function serializeMessage(message: ChatMessageRecord) {
     attachments: [...(message.attachments ?? [])],
     reactions: (message.reactions ?? []).map(serializeReaction),
     replyCount: message.replyCount ?? 0,
+    lastReplyAt: message.lastReplyAt?.toISOString() ?? null,
     pin: message.pin === undefined || message.pin === null ? null : serializePin(message.pin),
     parentMessageId: message.parentMessageId ?? null,
     ...(message.clientMessageId === undefined ? {} : { clientMessageId: message.clientMessageId }),

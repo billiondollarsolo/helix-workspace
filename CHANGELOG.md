@@ -192,9 +192,35 @@ All notable changes to Helix Workspace are documented here. This file follows
   Filters are created in two steps, with a count of matching conversations before you choose
   what happens to new mail; blocked addresses can be added and unblocked there.
 - Mail filters can mark matching mail as read and star it (`markRead`, `star` actions).
+- Chat has a "+ New chat" menu: Start a chat (pick one person for a direct message or several
+  for a group conversation), Create a space (name, description, and restricted or open to
+  everyone in the organization), and Browse spaces to join open ones.
+- Chat navigation shows Home (conversations with unread first), Mentions, Direct messages and
+  Spaces; unread conversations are bold with a count, @mentions show an @ badge, and opening a
+  conversation marks it read.
+- Chat conversations open at the newest message with an "Unread" divider, date dividers
+  ("Today", "Yesterday", "Monday, 3 March"), grouped messages from the same sender, and a
+  "Jump to newest" button when new messages arrive while you read older ones.
+- The Chat composer is one line that grows: Enter sends, Shift+Enter adds a line, @ suggests
+  members, and it adds formatting (bold, italic, strikethrough, code, link, list), emoji,
+  attachments and Start a meeting, which posts a Meet link.
+- Message actions in Chat: react with a quick reaction or any emoji, reply in a thread (with
+  "N replies · time" under the message), forward to your inbox, copy a link, pin, and edit or
+  delete your own messages. Threads open in a side panel; Esc closes it.
+- Chat search: the top search box searches messages in all conversations or the open one, and
+  a result opens its conversation at the message.
+- Chat on phones starts with the conversation list; a conversation opens full screen with Back,
+  and a floating New chat button.
+- Chat keyboard shortcuts: Alt+Shift+↑/↓ for the previous or next unread conversation, and
+  Ctrl+Alt+Shift+↑/↓ to jump to the first unread or the newest message.
+- Chat messages carry `lastReplyAt` next to `replyCount`, and Chat Markdown renders
+  `~~strikethrough~~`.
 
 ### Changed
 
+- Chat's conversation details (about, members, pinned) stay closed until you open them from the
+  header, and people are added with the people picker. Retention, legal hold and history
+  settings are no longer offered when creating a conversation; admins manage them in Admin.
 - Helix AI picks its tools automatically until you choose tool groups, so a fully scoped admin's
   first prompt no longer fails.
 - Helix AI shows friendly model names; admins see the model id on hover. Chats are searched from
@@ -261,6 +287,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- When Chat can't reach the server it says so with Retry, instead of "Offline" and an empty
+  placeholder room with a working composer. The composer no longer covers the newest messages.
+- Opening a Chat thread shows its replies.
 - Drive trash now keeps items for the retention period an admin set (30 days by default) instead
   of always 30 days. Items already in trash keep at least their original recovery window.
 

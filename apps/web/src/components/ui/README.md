@@ -6,23 +6,23 @@ behaviour, and focus handling, so features compose them rather than
 re-implementing menus, lists, or pickers. Colours, type, spacing, and motion
 come from the tokens in `src/styles.css`.
 
-| Primitive       | Import                                                                     | Use it for                                    |
-| --------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
-| Menu            | `Menu, MenuTrigger, MenuContent, MenuItem, MenuSub…` from `menu`           | Dropdown menus, row ⋮ menus, "Move to"        |
-| ContextMenu     | `ContextMenu, ContextMenuTrigger, ContextMenuContent…` from `context-menu` | Right-click and Shift+F10 menus on rows/cards |
-| Popover         | `Popover, PopoverTrigger, PopoverContent, PopoverClose` from `popover`     | Event details, quick create, snooze picker    |
-| Toast           | `notify, dismissNotification` from `toast`                                 | Confirmations with Undo                       |
-| SplitButton     | `SplitButton` from `split-button`                                          | Send ▾ (schedule send)                        |
-| Skeleton        | `Skeleton` from `skeleton`                                                 | Loading rows, cards, and text                 |
-| EmptyState      | `EmptyState` from `empty-state`                                            | Empty lists and panes                         |
-| InlineError     | `InlineError` from `inline-error`                                          | Failed loads with Retry                       |
-| Pager           | `Pager, pagerRange` from `pager`                                           | "1–50 of 1,234 ‹ ›"                           |
-| DateTimePicker  | `DateTimePicker` from `date-time-picker`                                   | Snooze, schedule send, event times            |
-| SideSheet       | `SideSheet` from `side-sheet`                                              | Right-side details and filter panels          |
-| SelectableList  | `SelectableList, SelectAllCheckbox, keyRange` from `selectable-list`       | Mail threads, files, people, admin rows       |
-| Button          | `Button` from `button`                                                     | Every button                                  |
-| Dialog          | `Dialog` from `helix-dialog`; `AlertDialog…` from `alert-dialog`           | Modal forms and confirmations                 |
-| Avatar, Tooltip | `Avatar` from `avatar`, `Tooltip` from `tooltip`                           | People and icon labels                        |
+| Primitive      | Import                                                                     | Use it for                                    |
+| -------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
+| Menu           | `Menu, MenuTrigger, MenuContent, MenuItem, MenuSub…` from `menu`           | Dropdown menus, row ⋮ menus, "Move to"        |
+| ContextMenu    | `ContextMenu, ContextMenuTrigger, ContextMenuContent…` from `context-menu` | Right-click and Shift+F10 menus on rows/cards |
+| Popover        | `Popover, PopoverTrigger, PopoverContent, PopoverClose` from `popover`     | Event details, quick create, snooze picker    |
+| Toast          | `notify, dismissNotification` from `toast`                                 | Confirmations with Undo                       |
+| SplitButton    | `SplitButton` from `split-button`                                          | Send ▾ (schedule send)                        |
+| Skeleton       | `Skeleton` from `skeleton`                                                 | Loading rows, cards, and text                 |
+| EmptyState     | `EmptyState` from `empty-state`                                            | Empty lists and panes                         |
+| InlineError    | `InlineError` from `inline-error`                                          | Failed loads with Retry                       |
+| Pager          | `Pager, pagerRange` from `pager`                                           | "1–50 of 1,234 ‹ ›"                           |
+| DateTimePicker | `DateTimePicker` from `date-time-picker`                                   | Snooze, schedule send, event times            |
+| SideSheet      | `SideSheet` from `side-sheet`                                              | Right-side details and filter panels          |
+| SelectableList | `SelectableList, SelectAllCheckbox, keyRange` from `selectable-list`       | Mail threads, files, people, admin rows       |
+| Button         | `Button` from `button`                                                     | Every button                                  |
+| Dialog         | `Dialog` from `helix-dialog`; `AlertDialog…` from `alert-dialog`           | Modal forms and confirmations                 |
+| Avatar         | `Avatar` from `avatar`                                                     | People                                        |
 
 ## Menu
 

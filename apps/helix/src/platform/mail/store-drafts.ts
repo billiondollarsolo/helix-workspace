@@ -1,7 +1,74 @@
 import type { JsonObject } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { toSqlJson } from "../util/sql.js";
+import type { ParsedMailSearchQuery } from "./store-search-query.js";
 import type { MailDraftRecord, MailThreadListResult, MailThreadRowRecord } from "./types.js";
+
+interface DraftEnvelope {
+  readonly subject?: string;
+  readonly text?: string;
+  readonly bodyText?: string;
+  readonly html?: string;
+  readonly to?: readonly { readonly address?: string; readonly name?: string }[];
+  readonly cc?: readonly { readonly address?: string; readonly name?: string }[];
+  readonly attachments?: readonly unknown[];
+}
+
+type DraftFolderRow = MailThreadRowRecord & { readonly recipientsText: string };
+
+/** Drafts and undo-window sends list their recipients as the participants. */
+function draftFolderRow(input: {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly envelope: DraftEnvelope;
+  readonly time: Date;
+  readonly from: string;
+  readonly messageCount: number;
+}): DraftFolderRow {
+  const recipients = [...(input.envelope.to ?? []), ...(input.envelope.cc ?? [])];
+  const participants = recipients
+    .filter((recipient) => typeof recipient.address === "string")
+    .slice(0, 4)
+    .map((recipient) => ({
+      name: recipient.name ?? recipient.address?.split("@")[0] ?? "",
+      email: recipient.address ?? "",
+      isMe: false,
+    }));
+  return {
+    threadId: input.threadId,
+    messageId: input.messageId,
+    subject: input.envelope.subject ?? "(no subject)",
+    from: input.from,
+    fromEmail: participants[0]?.email ?? "",
+    preview: (input.envelope.text ?? input.envelope.html ?? "").slice(0, 240),
+    time: input.time.toISOString(),
+    unread: false,
+    starred: false,
+    hasAttachment: (input.envelope.attachments?.length ?? 0) > 0,
+    messageCount: input.messageCount,
+    labels: [],
+    category: "primary",
+    folder: "drafts",
+    snoozedUntil: null,
+    participants,
+    recipientsText: recipients
+      .map((recipient) => `${recipient.name ?? ""} ${recipient.address ?? ""}`)
+      .join(" ")
+      .toLowerCase(),
+  };
+}
+
+function draftMatchesQuery(row: DraftFolderRow, query: ParsedMailSearchQuery): boolean {
+  const text = `${row.subject} ${row.preview}`.toLowerCase();
+  return (
+    query.terms.every((term) => text.includes(term.toLowerCase())) &&
+    query.from.every((term) => term.toLowerCase() === "me") &&
+    query.subject.every((term) => row.subject.toLowerCase().includes(term.toLowerCase())) &&
+    query.to.every((term) => row.recipientsText.includes(term.toLowerCase())) &&
+    query.labels.length === 0 &&
+    (query.hasAttachment === undefined || row.hasAttachment === query.hasAttachment)
+  );
+}
 
 interface MailDraftRow {
   readonly id: string;
@@ -149,10 +216,7 @@ export class MailDraftStore {
   async listDraftFolderThreads(input: {
     readonly orgId: string;
     readonly actorId: string;
-    readonly query: string;
-    readonly from?: string;
-    readonly labels: readonly string[];
-    readonly hasAttachment?: boolean;
+    readonly query: ParsedMailSearchQuery;
     readonly limit: number;
     readonly offset: number;
   }): Promise<MailThreadListResult> {
@@ -160,100 +224,62 @@ export class MailDraftStore {
       orgId: input.orgId,
       actorId: input.actorId,
     });
-    const draftRows: MailThreadRowRecord[] = drafts.map((draft) => {
-      const envelope = draft.envelope as {
-        readonly subject?: string;
-        readonly text?: string;
-        readonly html?: string;
-        readonly to?: readonly { readonly address?: string; readonly name?: string }[];
-        readonly attachments?: readonly unknown[];
-      };
-      const to = envelope.to?.[0];
-      const subject = envelope.subject ?? "(no subject)";
-      const preview = (envelope.text ?? envelope.html ?? "").slice(0, 240);
-      return {
+    const draftRows: DraftFolderRow[] = drafts.map((draft) => {
+      const envelope = draft.envelope as DraftEnvelope;
+      return draftFolderRow({
         threadId: draft.threadId ?? draft.id,
         messageId: draft.id,
-        subject,
+        envelope:
+          typeof envelope.bodyText === "string"
+            ? { ...envelope, text: envelope.bodyText }
+            : envelope,
+        time: draft.updatedAt,
         from: "Draft",
-        fromEmail: to?.address ?? "",
-        preview,
-        time: draft.updatedAt.toISOString(),
-        unread: false,
-        starred: false,
-        hasAttachment: (envelope.attachments?.length ?? 0) > 0,
         messageCount: 0,
-        labels: [],
-        category: "primary",
-        folder: "drafts",
-        snoozedUntil: null,
-      };
+      });
     });
 
-    // Queued outbound still appears under Drafts until delivered/cancelled.
+    // Undo-window sends stay under Drafts until delivered or cancelled;
+    // scheduled sends list in the Scheduled view instead.
     const queuedRows = await this.sql<
       {
         readonly thread_id: string;
         readonly message_id: string;
-        readonly subject: string;
-        readonly from_email: string;
-        readonly body: string;
-        readonly has_attachment: boolean;
-        readonly sent_at: Date;
+        readonly envelope: DraftEnvelope;
+        readonly updated_at: Date;
       }[]
     >`
       select
         coalesce(ob.thread_id, ob.id) as thread_id,
         coalesce(ob.message_id, ob.id) as message_id,
-        coalesce(ob.envelope->>'subject', '(no subject)') as subject,
-        coalesce(ob.envelope->'to'->0->>'address', '') as from_email,
-        coalesce(ob.envelope->>'text', '') as body,
-        jsonb_array_length(coalesce(ob.envelope->'attachments', '[]'::jsonb)) > 0 as has_attachment,
-        ob.updated_at as sent_at
+        ob.envelope,
+        ob.updated_at
       from mail_outbound_messages ob
       where ob.org_id = ${input.orgId}
         and ob.actor_id = ${input.actorId}
         and ob.status = 'queued'
+        and ob.scheduled_for is null
       order by ob.updated_at desc
     `;
+    const outboundRows = queuedRows.map((row) =>
+      draftFolderRow({
+        threadId: row.thread_id,
+        messageId: row.message_id,
+        envelope: row.envelope,
+        time: row.updated_at,
+        from: "Outbox",
+        messageCount: 1,
+      }),
+    );
 
-    const outboundRows: MailThreadRowRecord[] = queuedRows.map((row) => ({
-      threadId: row.thread_id,
-      messageId: row.message_id,
-      subject: row.subject,
-      from: "Outbox",
-      fromEmail: row.from_email,
-      preview: row.body.slice(0, 240),
-      time: row.sent_at.toISOString(),
-      unread: false,
-      starred: false,
-      hasAttachment: row.has_attachment,
-      messageCount: 1,
-      labels: [],
-      category: "primary",
-      folder: "drafts",
-      snoozedUntil: null,
-    }));
-
-    const q = input.query.trim().toLowerCase();
     const merged = [...draftRows, ...outboundRows]
-      .filter((row) => {
-        const matchesText =
-          q.length === 0 ||
-          row.subject.toLowerCase().includes(q) ||
-          row.preview.toLowerCase().includes(q);
-        const matchesFrom =
-          input.from === undefined ||
-          row.fromEmail.toLowerCase().includes(input.from.toLowerCase());
-        const matchesLabels = input.labels.every((label) => row.labels.includes(label));
-        const matchesAttachment =
-          input.hasAttachment === undefined || row.hasAttachment === input.hasAttachment;
-        return matchesText && matchesFrom && matchesLabels && matchesAttachment;
-      })
+      .filter((row) => draftMatchesQuery(row, input.query))
       .sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
 
     const total = merged.length;
-    const threads = merged.slice(input.offset, input.offset + input.limit);
+    const threads = merged
+      .slice(input.offset, input.offset + input.limit)
+      .map(({ recipientsText: _recipients, ...row }) => row);
     return { threads, total, limit: input.limit, offset: input.offset };
   }
 

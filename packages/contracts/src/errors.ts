@@ -8,6 +8,7 @@ import { z } from "zod";
  */
 export const ERROR_CODES = [
   "bad_request",
+  "assistant_tool_limit_exceeded",
   "unauthorized",
   "unauthenticated",
   "session_reauthentication_required",
@@ -40,6 +41,7 @@ const STATUS_TO_CODE: Record<number, ErrorCode> = {
 
 const CODE_TO_STATUS: Record<ErrorCode, number> = {
   bad_request: 400,
+  assistant_tool_limit_exceeded: 400,
   unauthorized: 401,
   unauthenticated: 401,
   session_reauthentication_required: 401,

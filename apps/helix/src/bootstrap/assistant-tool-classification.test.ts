@@ -278,6 +278,7 @@ it.each([
           category: "primary",
           folder: "inbox",
           snoozedUntil: null,
+          participants: [{ name: "Samara", email: "samara@example.test", isMe: false }],
         },
       ],
       total: 1,

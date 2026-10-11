@@ -1,5 +1,6 @@
 import type postgres from "postgres";
-import type { MailFolderId, MailFolderSummary, MailLabelRecord } from "./types.js";
+import type { MailFolderId, MailFolderSummary } from "./types.js";
+import { sentOrReceivedSql } from "./store-search-sql.js";
 import { MAIL_FOLDER_IDS } from "./types.js";
 
 interface MailFolderCountRow {
@@ -8,44 +9,19 @@ interface MailFolderCountRow {
   readonly unread: number;
 }
 
-interface MailLabelRow {
-  readonly id: string;
-  readonly org_id: string;
-  readonly owner_actor_id: string | null;
-  readonly slug: string;
-  readonly name: string;
-  readonly color: string;
-  readonly sort_order: number;
-  readonly thread_count: number;
-  readonly created_at: Date;
-  readonly updated_at: Date;
-}
-
 const MAIL_FOLDER_LABELS: Readonly<Record<MailFolderId, string>> = {
   inbox: "Inbox",
   starred: "Starred",
   snoozed: "Snoozed",
   sent: "Sent",
+  scheduled: "Scheduled",
   drafts: "Drafts",
+  all: "All mail",
   archive: "Archive",
   spam: "Spam",
   trash: "Trash",
 };
 
-function mapLabel(row: MailLabelRow): MailLabelRecord {
-  return {
-    id: row.id,
-    orgId: row.org_id,
-    ownerActorId: row.owner_actor_id,
-    slug: row.slug,
-    name: row.name,
-    color: row.color,
-    sortOrder: row.sort_order,
-    threadCount: row.thread_count,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
 export class MailFolderStore {
   constructor(private readonly sql: postgres.Sql) {}
 
@@ -81,12 +57,11 @@ export class MailFolderStore {
               and received.received_at is not null and incoming.thread_id = m.thread_id
               and incoming.deleted_at is null
           ) as has_received,
-          (
-            select ob.status from mail_outbound_messages ob
+          exists (
+            select 1 from mail_outbound_messages ob
             where ob.thread_id = m.thread_id and ob.actor_id = ${input.actorId}
-            order by ob.created_at desc
-            limit 1
-          ) as outbound_status
+              and ob.status = 'queued' and ob.scheduled_for is null
+          ) as has_undo_window_send
         from messages m
         join threads t on t.id = m.thread_id
         join mail_thread_state mts
@@ -101,6 +76,7 @@ export class MailFolderStore {
               and mailbox_delivery.message_id = m.id and mailbox_delivery.actor_id = ${input.actorId}
           ))
           and m.deleted_at is null
+          and ${sentOrReceivedSql(this.sql, this.sql`m.id`, input.orgId, false)}
           and t.kind = 'mail'
           and (
             exists (
@@ -140,8 +116,9 @@ export class MailFolderStore {
             case when deleted_at is null and snoozed_until is not null
               and snoozed_until > ${now} then 'snoozed' end,
             case when deleted_at is null and has_outbound is true then 'sent' end,
-            -- Queued outbound still contributes to Drafts totals (undo window).
-            case when deleted_at is null and outbound_status = 'queued' then 'drafts' end,
+            -- Undo-window sends still contribute to Drafts totals.
+            case when deleted_at is null and has_undo_window_send then 'drafts' end,
+            case when deleted_at is null and spam_at is null then 'all' end,
             case when deleted_at is null and spam_at is null
               and coalesce(archived_at, thread_archived_at) is not null then 'archive' end,
             case when deleted_at is null and spam_at is not null then 'spam' end,
@@ -162,12 +139,24 @@ export class MailFolderStore {
         and actor_id = ${input.actorId}
     `;
     const trueDraftTotal = draftCountRows[0]?.total ?? 0;
+    // Scheduled sends are not mail yet, so they are counted from the send queue.
+    const scheduledRows = await this.sql<{ readonly total: number }[]>`
+      select count(distinct thread_id)::int as total
+      from mail_outbound_messages
+      where org_id = ${input.orgId} and actor_id = ${input.actorId}
+        and status = 'queued' and scheduled_for is not null
+    `;
 
     const byFolder = new Map(rows.map((row) => [row.folder, row]));
     return MAIL_FOLDER_IDS.map((id) => {
       const row = byFolder.get(id);
       const baseTotal = row?.total ?? 0;
-      const total = id === "drafts" ? baseTotal + trueDraftTotal : baseTotal;
+      const total =
+        id === "drafts"
+          ? baseTotal + trueDraftTotal
+          : id === "scheduled"
+            ? (scheduledRows[0]?.total ?? 0)
+            : baseTotal;
       return {
         id,
         label: MAIL_FOLDER_LABELS[id],
@@ -175,37 +164,5 @@ export class MailFolderStore {
         unread: row?.unread ?? 0,
       };
     });
-  }
-
-  async listLabels(input: {
-    readonly orgId: string;
-    readonly actorId: string;
-  }): Promise<readonly MailLabelRecord[]> {
-    const rows = await this.sql<MailLabelRow[]>`
-      select
-        l.id,
-        l.org_id,
-        l.owner_actor_id,
-        l.slug,
-        l.name,
-        l.color,
-        l.sort_order,
-        l.created_at,
-        l.updated_at,
-        coalesce((
-          select count(*)::int
-          from mail_thread_state mts
-          where mts.actor_id = ${input.actorId}
-            and mts.org_id = ${input.orgId}
-            and mts.deleted_at is null
-            and l.slug = any(mts.labels)
-        ), 0) as thread_count
-      from mail_labels l
-      where l.org_id = ${input.orgId}
-        and l.deleted_at is null
-        and (l.owner_actor_id is null or l.owner_actor_id = ${input.actorId})
-      order by l.sort_order asc, lower(l.name) asc
-    `;
-    return rows.map(mapLabel);
   }
 }

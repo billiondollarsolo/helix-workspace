@@ -1,6 +1,7 @@
 import { canonicalTimeZone } from "@helix/contracts";
 import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
+import { BadRequestError } from "../../api/api-error.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
@@ -9,6 +10,7 @@ import type { CalendarInvitationSender } from "./ics.js";
 import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
 import type {
   CalendarAttendeeRecord,
+  CalendarConferenceProvider,
   CalendarEventRecord,
   CalendarFreeBusyStore,
   CalendarListEntry,
@@ -44,10 +46,12 @@ const createSchema = z.object({
   attendees: z.array(attendeeSchema).default([]),
   metadata: metadataSchema,
   sendInvitations: z.boolean().default(true),
+  /** "Add video conferencing": create a Meet room and link it on the event. */
+  conference: z.enum(["meet"]).optional(),
 });
 
 const updatePatchSchema = createSchema
-  .omit({ sendInvitations: true })
+  .omit({ sendInvitations: true, conference: true })
   .partial()
   .extend({
     visibility: z.enum(["default", "public", "private", "confidential"]).optional(),
@@ -123,6 +127,37 @@ export interface CreateCalendarToolDefinitionsOptions {
    * attendee enforcement is disabled (no internal domain is known).
    */
   readonly internalDomains?: readonly string[];
+  /** Meet rooms for `conference: "meet"`; absent when Meet is not configured. */
+  readonly conference?: CalendarConferenceProvider | undefined;
+}
+
+async function createConference(
+  provider: CalendarConferenceProvider | undefined,
+  actor: { readonly id: string; readonly orgId: string },
+  input: z.output<typeof createSchema>,
+): Promise<JsonObject> {
+  if (provider === undefined) {
+    throw new BadRequestError(
+      "Video conferencing is unavailable because Meet is not configured for this workspace.",
+    );
+  }
+  const room = await provider.createRoom({
+    orgId: actor.orgId,
+    actorId: actor.id,
+    subject: input.title,
+    startsAt: new Date(input.startsAt),
+    endsAt: new Date(input.endsAt),
+    participantActorIds: [
+      ...new Set(
+        input.attendees.flatMap((attendee) =>
+          typeof attendee.actorId === "string" && attendee.actorId !== actor.id
+            ? [attendee.actorId]
+            : [],
+        ),
+      ),
+    ],
+  });
+  return { provider: "meet", ...room };
 }
 
 /** Lower-cased domain portion of an email address, or "" when unparseable. */
@@ -168,17 +203,28 @@ export function createCalendarToolDefinitions(
     when: (input: { attendees?: unknown }) => hasExternalAttendee(input, internalDomains),
   };
 
+  const meetConferenceScope = {
+    scope: "meet.write",
+    reason: "Adding video conferencing creates a Meet room, which requires the meet.write scope.",
+    when: (input: { conference?: unknown }) => input.conference !== undefined,
+  };
+
   return [
     defineTool<z.output<typeof createSchema>, unknown>({
       id: "calendar.event.create",
-      description: "Create a calendar event.",
+      description:
+        'Create a calendar event. conference: "meet" adds video conferencing: a Meet room whose join link is stored in metadata.conference.',
       permission: "calendar.write",
       sideEffects: "external_communication",
       confirmationRequired: true,
-      scopeComposition: { conditionalScopes: [externalAttendeeScope] },
+      scopeComposition: { conditionalScopes: [externalAttendeeScope, meetConferenceScope] },
       inputSchema: zodToolSchema(createSchema, genericObjectJsonSchema),
       outputSchema: unknownOutputSchema,
       handler: async (input, ctx) => {
+        const conference =
+          input.conference === undefined
+            ? undefined
+            : await createConference(options.conference, ctx.actor, input);
         const event = await options.store.createEvent({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
@@ -193,7 +239,9 @@ export function createCalendarToolDefinitions(
           ...(input.timeSemantics === undefined ? {} : { timeSemantics: input.timeSemantics }),
           recurrenceRule: input.recurrenceRule ?? null,
           attendees: attendeeInputs(input.attendees),
-          metadata: toJsonObject(input.metadata),
+          metadata: toJsonObject(
+            conference === undefined ? input.metadata : { ...input.metadata, conference },
+          ),
           sendInvitations: input.sendInvitations,
           ...(options.rsvpBaseUrl === undefined ? {} : { rsvpBaseUrl: options.rsvpBaseUrl }),
         });

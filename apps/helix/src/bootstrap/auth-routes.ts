@@ -1,11 +1,11 @@
-import { fromNodeHeaders } from "better-auth/node";
-import { type FastifyInstance, type FastifyRequest } from "fastify";
+import { type FastifyInstance } from "fastify";
 import type { SessionActorResolver } from "../api/actor.js";
 import { isRecord } from "../platform/util/json.js";
 import {
   type BetterAuthInstance,
   type BetterAuthSessionVerifier,
 } from "../platform/auth/better-auth.js";
+import { createBetterAuthRequest } from "../platform/auth/better-auth-request.js";
 import { type PostgresDomainIdentityStore } from "../platform/auth/domain-identity.js";
 import {
   authResponseSessionToken,
@@ -72,7 +72,7 @@ export function registerBetterAuthRoutes(
         const bridge = await recoveryCodes.consume(requestBody.code);
         requestBody = { ...requestBody, code: bridge ?? "invalid-recovery-code" };
       }
-      const response = await auth.handler(createBetterAuthRequest(request, requestBody));
+      const response = await auth.handler(createBetterAuthRequest(request, { body: requestBody }));
       let body = response.body === null ? null : await response.text();
       if (response.ok && path === "/api/auth/get-session" && request.tenant != null) {
         const payload = jsonRecord(body);
@@ -174,40 +174,4 @@ function jsonRecord(value: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-function createBetterAuthRequest(request: FastifyRequest, body = request.body): Request {
-  const url = new URL(request.url, `${request.protocol}://${request.hostname}`);
-  const headers = fromNodeHeaders(request.headers);
-  for (const name of [
-    "forwarded",
-    "x-forwarded-for",
-    "x-forwarded-host",
-    "x-forwarded-proto",
-    "x-real-ip",
-  ]) {
-    headers.delete(name);
-  }
-  headers.set("x-forwarded-for", request.ip);
-  headers.set("x-forwarded-host", request.hostname);
-  headers.set("x-forwarded-proto", request.protocol);
-  headers.delete("content-length");
-  const init: RequestInit = {
-    method: request.method,
-    headers,
-  };
-  if (request.method !== "GET" && request.method !== "HEAD" && body !== undefined) {
-    init.body = requestBodyForFetch(body);
-  }
-  return new Request(url, init);
-}
-
-function requestBodyForFetch(body: unknown): NonNullable<RequestInit["body"]> {
-  if (typeof body === "string" || body instanceof Blob || body instanceof FormData) {
-    return body;
-  }
-  if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
-    return body as NonNullable<RequestInit["body"]>;
-  }
-  return JSON.stringify(body);
 }

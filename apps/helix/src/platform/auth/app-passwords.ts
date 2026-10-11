@@ -1,6 +1,7 @@
 import type { Actor, JsonObject, ToolDefinition } from "@helix/sdk-types";
 import type postgres from "postgres";
 import { z } from "zod";
+import { ForbiddenError } from "../../api/api-error.js";
 import { actorHasScope } from "../../api/scopes.js";
 import { getCryptoProvider } from "../crypto/index.js";
 import { appPasswordScopeCatalog, validatedPermissions } from "../permissions/scope-catalog.js";
@@ -38,14 +39,18 @@ export interface AppPasswordListInput {
   readonly includeRevoked?: boolean;
 }
 
+export interface AppPasswordRevokeInput {
+  readonly id: string;
+  readonly orgId: string;
+  /** Restrict the revocation to this actor's own passwords (self-service). */
+  readonly actorId?: string;
+  readonly revokedAt: Date;
+}
+
 export interface AppPasswordStore {
   createAppPassword(input: AppPasswordCreateInput): Promise<AppPasswordRecord>;
   listAppPasswords(input: AppPasswordListInput): Promise<readonly AppPasswordRecord[]>;
-  revokeAppPassword(input: {
-    readonly id: string;
-    readonly orgId: string;
-    readonly revokedAt: Date;
-  }): Promise<AppPasswordRecord | null>;
+  revokeAppPassword(input: AppPasswordRevokeInput): Promise<AppPasswordRecord | null>;
 }
 
 export interface AppPasswordAuthenticationInput {
@@ -84,10 +89,7 @@ export class AppPasswordManager {
     return this.store.listAppPasswords(input);
   }
 
-  revoke(input: {
-    readonly id: string;
-    readonly orgId: string;
-  }): Promise<AppPasswordRecord | null> {
+  revoke(input: Omit<AppPasswordRevokeInput, "revokedAt">): Promise<AppPasswordRecord | null> {
     return this.store.revokeAppPassword({ ...input, revokedAt: new Date() });
   }
 }
@@ -130,13 +132,14 @@ export class InMemoryAppPasswordStore implements AppPasswordStore {
       .map(stripHash);
   }
 
-  async revokeAppPassword(input: {
-    readonly id: string;
-    readonly orgId: string;
-    readonly revokedAt: Date;
-  }): Promise<AppPasswordRecord | null> {
+  async revokeAppPassword(input: AppPasswordRevokeInput): Promise<AppPasswordRecord | null> {
     const existing = this.#records.get(input.id);
-    if (existing === undefined || existing.orgId !== input.orgId || existing.revokedAt !== null) {
+    if (
+      existing === undefined ||
+      existing.orgId !== input.orgId ||
+      existing.revokedAt !== null ||
+      (input.actorId !== undefined && existing.actorId !== input.actorId)
+    ) {
       return null;
     }
     const revoked = { ...existing, revokedAt: input.revokedAt };
@@ -241,11 +244,7 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
     });
   }
 
-  async revokeAppPassword(input: {
-    readonly id: string;
-    readonly orgId: string;
-    readonly revokedAt: Date;
-  }): Promise<AppPasswordRecord | null> {
+  async revokeAppPassword(input: AppPasswordRevokeInput): Promise<AppPasswordRecord | null> {
     const rows = await this.sql<AppPasswordRow[]>`
       with updated as (
         update app_passwords
@@ -254,6 +253,7 @@ export class PostgresAppPasswordStore implements AppPasswordStore, AppPasswordAu
         where app_passwords.id = ${input.id}
           and app_passwords.actor_id = actors.id
           and actors.org_id = ${input.orgId}
+          and (${input.actorId ?? null}::uuid is null or app_passwords.actor_id = ${input.actorId ?? null}::uuid)
           and app_passwords.revoked_at is null
         returning
           app_passwords.id,
@@ -327,6 +327,10 @@ const genericObjectJsonSchema = {
 } as const;
 
 const uuidSchema = z.string().uuid();
+/**
+ * People manage their own app passwords; `admin.users` also covers other
+ * members (`actorId`), and an admin listing without `actorId` sees the org.
+ */
 const listSchema = z.object({
   actorId: uuidSchema.optional(),
   includeRevoked: z.boolean().default(false),
@@ -334,7 +338,8 @@ const listSchema = z.object({
 const createSchema = (scopeCatalog: ReadonlySet<string>) =>
   z
     .object({
-      actorId: uuidSchema,
+      /** Defaults to yourself; another member requires admin.users. */
+      actorId: uuidSchema.optional(),
       label: z.string().trim().min(1).max(120),
       scopes: z.array(z.string().min(1)).min(1),
       expiresAt: z.string().datetime().nullable().optional(),
@@ -374,19 +379,32 @@ function createAppPasswordToolDefinitions(
   return [
     defineTool<z.output<typeof createInputSchema>, unknown>({
       id: "app.passwords.create",
-      description: "Create a scoped app password for DAV or SMTP clients.",
-      permission: appPasswordAdminScope,
+      description:
+        "Create a scoped app password for DAV or SMTP clients. The password is returned once. Creates your own unless an admin names another member.",
+      permission: "profile.write",
       sideEffects: "write",
       confirmationRequired: true,
+      interactiveSessionOnly: true,
       sensitiveOutputKeys: ["password"],
       inputSchema: zodToolSchema(createInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        const actorId = targetActorId(ctx.actor, input.actorId);
+        const scopes = normalizeScopes(input.scopes);
+        if (actorId === ctx.actor.id) {
+          if (ctx.actor.type !== "user") {
+            throw new ForbiddenError("Only people can create app passwords for themselves.");
+          }
+          const missing = scopes.filter((scope) => !actorHasScope(ctx.actor, scope));
+          if (missing.length > 0) {
+            throw new ForbiddenError(`You do not hold these scopes: ${missing.join(", ")}.`);
+          }
+        }
         const registration = await manager.create({
-          actorId: input.actorId,
+          actorId,
           orgId: ctx.actor.orgId,
           label: input.label,
-          scopes: normalizeScopes(input.scopes),
+          scopes,
           expiresAt:
             input.expiresAt === undefined || input.expiresAt === null
               ? null
@@ -400,6 +418,7 @@ function createAppPasswordToolDefinitions(
           label: registration.appPassword.label,
           scopes: [...registration.appPassword.scopes],
           expiresAt: dateToJson(registration.appPassword.expiresAt),
+          selfService: registration.appPassword.actorId === ctx.actor.id,
         });
         return {
           appPassword: serializeAppPassword(registration.appPassword),
@@ -409,36 +428,47 @@ function createAppPasswordToolDefinitions(
     }),
     defineTool<z.output<typeof listSchema>, unknown>({
       id: "app.passwords.list",
-      description: "List app passwords for actors in the current org without exposing secrets.",
-      permission: appPasswordAdminScope,
+      description:
+        "List app passwords without secrets: your own, or for admins (admin.users) one member's or the whole org's.",
+      permission: "profile.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
+        const admin = actorHasScope(ctx.actor, appPasswordAdminScope);
+        const actorId = admin ? input.actorId : targetActorId(ctx.actor, input.actorId);
         const appPasswords = await manager.list({
           orgId: ctx.actor.orgId,
-          ...(input.actorId === undefined ? {} : { actorId: input.actorId }),
+          ...(actorId === undefined ? {} : { actorId }),
           includeRevoked: input.includeRevoked,
         });
-        await ctx.audit("app.password.listed", {
-          credentialType: "app_password",
-          ...(input.actorId === undefined ? {} : { targetActorId: input.actorId }),
-          includeRevoked: input.includeRevoked,
-          resultCount: appPasswords.length,
-        });
+        if (actorId !== ctx.actor.id) {
+          await ctx.audit("app.password.listed", {
+            credentialType: "app_password",
+            ...(actorId === undefined ? {} : { targetActorId: actorId }),
+            includeRevoked: input.includeRevoked,
+            resultCount: appPasswords.length,
+          });
+        }
         return { appPasswords: appPasswords.map(serializeAppPassword) };
       },
     }),
     defineTool<z.output<typeof revokeSchema>, unknown>({
       id: "app.passwords.revoke",
-      description: "Revoke an app password in the current org.",
-      permission: appPasswordAdminScope,
+      description:
+        "Revoke one of your app passwords; admins (admin.users) can revoke any in the org.",
+      permission: "profile.write",
       sideEffects: "destructive",
       confirmationRequired: true,
       inputSchema: zodToolSchema(revokeSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {
-        const revoked = await manager.revoke({ id: input.passwordId, orgId: ctx.actor.orgId });
+        const admin = actorHasScope(ctx.actor, appPasswordAdminScope);
+        const revoked = await manager.revoke({
+          id: input.passwordId,
+          orgId: ctx.actor.orgId,
+          ...(admin ? {} : { actorId: ctx.actor.id }),
+        });
         if (revoked === null) {
           return { status: "not_found", passwordId: input.passwordId };
         }
@@ -449,6 +479,7 @@ function createAppPasswordToolDefinitions(
           passwordId: revoked.id,
           label: revoked.label,
           revokedAt: dateToJson(revoked.revokedAt),
+          selfService: revoked.actorId === ctx.actor.id,
         });
         return {
           status: "revoked",
@@ -457,6 +488,15 @@ function createAppPasswordToolDefinitions(
       },
     }),
   ];
+}
+
+/** Yourself by default; naming another member requires admin.users. */
+function targetActorId(actor: Actor, requested: string | undefined): string {
+  if (requested === undefined || requested === actor.id) return actor.id;
+  if (!actorHasScope(actor, appPasswordAdminScope)) {
+    throw new ForbiddenError("Managing another member's app passwords requires admin.users.");
+  }
+  return requested;
 }
 
 export function registerAppPasswordTools(

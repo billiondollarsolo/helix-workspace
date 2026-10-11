@@ -196,7 +196,7 @@ export class MailOutboundStore {
         const outboundRows = await tx<MailOutboundRow[]>`
         insert into mail_outbound_messages (
           id, org_id, actor_id, message_id, thread_id, outbox_id, status, envelope,
-          undo_until, next_attempt_at, idempotency_key, delivery_metadata
+          undo_until, next_attempt_at, scheduled_for, idempotency_key, delivery_metadata
         )
         values (
           ${outboundId},
@@ -209,6 +209,7 @@ export class MailOutboundStore {
           ${tx.json(toSqlJson({ ...envelope, attachments: message.authoritativeAttachments }))},
           ${input.undoUntil},
           ${input.undoUntil},
+          ${input.scheduled === true ? input.undoUntil : null},
           ${input.idempotencyKey ?? null},
           ${tx.json({ senderAuthenticated: input.senderAuthenticated === true })}
         )

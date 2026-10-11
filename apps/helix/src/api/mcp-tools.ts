@@ -349,7 +349,7 @@ interface ValidationIssue {
  * so the model sees an actionable message instead of a protocol error.
  */
 function toolErrorResult(result: ToolInvokeResult & { readonly ok: false }): JsonObject {
-  const code = errorCodeForStatus(result.statusCode);
+  const code = result.code ?? errorCodeForStatus(result.statusCode);
   const retryAfterSeconds = result.retryAfterSeconds ?? result.rateLimit?.retryAfterSeconds;
   const issues = result.statusCode === 400 ? validationIssues(result) : [];
   const firstField = issues[0]?.path.join(".");

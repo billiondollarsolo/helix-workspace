@@ -24,6 +24,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { BadRequestError, ConflictError } from "../../api/api-error.js";
 import type { ResourceClassifier } from "../../api/classify-resource.js";
+import { versionedApiPath } from "../../api/version.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
@@ -43,14 +44,15 @@ import {
 } from "./tools-compose.js";
 import { MailDraftConflictError, type MailStore } from "./store.js";
 import { normalizeProviderDeliveryId } from "./threading.js";
+import { createMailLabelAndScheduleToolDefinitions, serializeLabel } from "./tools-labels.js";
 import { mailUserSettingsPatch, mailUserSettingsSetSchema } from "./user-settings-input.js";
 import type {
   MailFilterActions,
   MailFilterCriteria,
   MailFolderSummary,
   MailInboundRecipient,
-  MailLabelRecord,
   MailOutboundRecord,
+  MailThreadAttachment,
   MailThreadRowRecord,
   MailUserSettings,
 } from "./types.js";
@@ -315,6 +317,7 @@ export function createMailToolDefinitions(
 
   return [
     ...createMailComposeToolDefinitions(options),
+    ...createMailLabelAndScheduleToolDefinitions(options),
     defineTool<z.output<typeof inboundAcceptSchema>, unknown>({
       id: "mail.inbound.accept",
       description:
@@ -504,7 +507,9 @@ export function createMailToolDefinitions(
           actorId: input.mailboxActorId ?? ctx.actor.id,
           threadId: input.threadId,
         });
-        return { thread: thread === null ? null : serializeThread(thread) };
+        return {
+          thread: thread === null ? null : serializeThread(thread, input.mailboxActorId),
+        };
       },
     }),
     defineTool<z.output<typeof readStateSchema>, unknown>({
@@ -709,7 +714,8 @@ export function createMailToolDefinitions(
     }),
     defineTool<z.output<typeof searchSchema>, unknown>({
       id: "mail.search",
-      description: "Search mail visible to the current actor.",
+      description:
+        'Search messages in every folder except Spam and Trash with Gmail-style operators: from:, to:, cc:, subject:, label:, category:, in: (inbox, sent, scheduled, drafts, archive, starred, snoozed, spam, trash, anywhere), has:attachment, is:unread/read/starred/unstarred, before:/after: (YYYY/MM/DD), older_than:/newer_than: (2d, 3w, 1m, 1y), filename: and "quoted phrases".',
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(searchSchema, genericObjectJsonSchema),
@@ -732,7 +738,7 @@ export function createMailToolDefinitions(
     defineTool<z.output<typeof threadsListSchema>, unknown>({
       id: "mail.threads.list",
       description:
-        "List mail threads for a folder view (Inbox/Starred/Snoozed/Sent/Drafts/Archive/Trash), optionally filtered by category tab, label, and query. Returns the UI thread-row projection.",
+        'List mail threads for a folder view (Inbox, Starred, Snoozed, Sent, Scheduled, Drafts, All mail, Archive, Spam, Trash), optionally filtered by category tab, label and a Gmail-style query (from:, to:, subject:, label:, in:, has:attachment, is:unread, is:starred, before:/after:, older_than:/newer_than:, filename:, "quoted phrases"); in: overrides the folder. Rows include up to four participants.',
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(threadsListSchema, genericObjectJsonSchema),
@@ -776,7 +782,7 @@ export function createMailToolDefinitions(
     defineTool<z.output<typeof labelsListSchema>, unknown>({
       id: "mail.labels.list",
       description:
-        "List mail labels (org-shared and actor-owned) with display colours and live thread counts.",
+        "List mail labels (org-shared and your own) with palette colours, nesting (parentId), and live thread and unread counts.",
       permission: "mail.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(labelsListSchema, genericObjectJsonSchema),
@@ -1262,6 +1268,8 @@ function serializeThreadRow(row: MailThreadRowRecord) {
     category: row.category,
     folder: row.folder,
     snoozedUntil: row.snoozedUntil,
+    participants: row.participants.map((participant) => ({ ...participant })),
+    ...(row.spamCatcher === undefined ? {} : { spamCatcher: row.spamCatcher }),
   };
 }
 
@@ -1271,20 +1279,6 @@ function serializeFolder(folder: MailFolderSummary) {
     label: folder.label,
     total: folder.total,
     unread: folder.unread,
-  };
-}
-
-function serializeLabel(label: MailLabelRecord) {
-  return {
-    id: label.id,
-    slug: label.slug,
-    name: label.name,
-    color: label.color,
-    sortOrder: label.sortOrder,
-    threadCount: label.threadCount,
-    shared: label.ownerActorId === null,
-    createdAt: label.createdAt.toISOString(),
-    updatedAt: label.updatedAt.toISOString(),
   };
 }
 
@@ -1362,37 +1356,52 @@ function serializeAlias(alias: {
   };
 }
 
-function serializeThread(thread: {
-  readonly id: string;
-  readonly subject: string;
-  readonly preview: string;
-  readonly participants: readonly unknown[];
-  readonly messages: readonly {
+function serializeThread(
+  thread: {
     readonly id: string;
-    readonly from?: unknown;
-    readonly to: readonly unknown[];
-    readonly cc: readonly unknown[];
-    readonly bcc: readonly unknown[];
-    readonly sentAt: Date;
-    readonly body: string;
-    readonly bodyFormat: string;
-    readonly plainBody?: string | undefined;
-    readonly hasAttachment: boolean;
-    readonly attachments: readonly unknown[];
-  }[];
-  readonly labels: readonly string[];
-  readonly archivedAt: Date | null;
-  readonly deletedAt: Date | null;
-  readonly snoozedUntil: Date | null;
-  readonly lastActivity: Date;
-  readonly unread: boolean;
-  readonly starred: boolean;
-  readonly direction: string;
-}) {
+    readonly subject: string;
+    readonly preview: string;
+    readonly participants: readonly unknown[];
+    readonly messages: readonly {
+      readonly id: string;
+      readonly from?: unknown;
+      readonly to: readonly unknown[];
+      readonly cc: readonly unknown[];
+      readonly bcc: readonly unknown[];
+      readonly sentAt: Date;
+      readonly body: string;
+      readonly bodyFormat: string;
+      readonly plainBody?: string | undefined;
+      readonly hasAttachment: boolean;
+      readonly attachments: readonly MailThreadAttachment[];
+    }[];
+    readonly labels: readonly string[];
+    readonly archivedAt: Date | null;
+    readonly deletedAt: Date | null;
+    readonly snoozedUntil: Date | null;
+    readonly lastActivity: Date;
+    readonly unread: boolean;
+    readonly starred: boolean;
+    readonly direction: string;
+  },
+  mailboxActorId: string | undefined,
+) {
   return {
     ...thread,
     messages: thread.messages.map((message) => {
-      const serialized = { ...message, sentAt: message.sentAt.toISOString() };
+      const serialized = {
+        ...message,
+        sentAt: message.sentAt.toISOString(),
+        attachments: message.attachments.map((attachment) => ({
+          ...attachment,
+          inline: attachment.disposition === "inline",
+          downloadUrl: versionedApiPath(
+            `/api/mail/messages/${message.id}/attachments/${attachment.objectId}${
+              mailboxActorId === undefined ? "" : `?mailboxActorId=${mailboxActorId}`
+            }`,
+          ),
+        })),
+      };
       if (message.bodyFormat !== "html") {
         return serialized;
       }

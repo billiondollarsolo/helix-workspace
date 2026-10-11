@@ -1,8 +1,9 @@
 import type { CompletionShell } from "./parser.js";
+import { withWorkspaceActions, withWorkspaceScopes } from "./workspace-commands.js";
 
 const driveFileActions = ["upload", "finalize", "list", "share", "move", "trash", "restore"];
 
-const topLevelCommands = [
+const topLevelCommands = withWorkspaceScopes([
   "tool",
   "mail",
   "chat",
@@ -25,15 +26,14 @@ const topLevelCommands = [
   "asyncapi",
   "mcp",
   "completion",
-] as const;
+] as const);
 
 /**
- * Canonical registry of every CLI scope and its subcommands. Both the shell
- * completion scripts and the parser-agreement test consume this, so a new
- * subcommand cannot ship in the parser without also being completable (the
- * `parser.test.ts` drift test fails otherwise).
+ * Canonical registry of every CLI scope and its subcommands, consumed by the
+ * completion scripts and the parser-agreement drift test in `parser.test.ts`,
+ * so a new subcommand cannot ship in the parser without being completable.
  */
-export const commandActions: Record<string, readonly string[]> = {
+export const commandActions: Record<string, readonly string[]> = withWorkspaceActions({
   tool: ["list", "describe", "call"],
   mail: [
     "send",
@@ -108,7 +108,7 @@ export const commandActions: Record<string, readonly string[]> = {
   asyncapi: ["get"],
   mcp: ["serve", "resources"],
   completion: ["bash", "zsh", "fish"],
-};
+});
 
 const searchFlags = ["--query", "--type", "--limit", "--json"] as const;
 const securityTierValues = ["personal", "business", "enterprise", "sovereign"] as const;

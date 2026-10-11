@@ -1,3 +1,4 @@
+import { registerAccountSecurityRoutes } from "../platform/auth/account-security-routes.js";
 import { registerAdminUsersRoutes } from "../platform/auth/admin-users.js";
 import { PostgresActorOffboardingStore } from "../platform/auth/actor-offboarding.js";
 import { PostgresProfileStore, registerProfileRoutes } from "../platform/auth/profile.js";
@@ -13,6 +14,7 @@ export async function registerUserAccountRoutes(context: Awaited<ReturnType<type
     actorFromAuthenticatedRequest,
     sessionActorResolver,
     auditStore,
+    betterAuthRuntime,
   } = context;
   await registerAdminUsersRoutes(app, {
     store: adminUsersStore,
@@ -25,6 +27,14 @@ export async function registerUserAccountRoutes(context: Awaited<ReturnType<type
     actorFromRequest: actorFromAuthenticatedRequest,
     auditSink: auditStore,
   });
+  if (betterAuthRuntime !== undefined) {
+    registerAccountSecurityRoutes(app, {
+      auth: betterAuthRuntime.auth,
+      sessionVerifier: betterAuthRuntime.sessionVerifier,
+      sessionActorResolver,
+      auditSink: auditStore,
+    });
+  }
   registerUserAddressRoutes(app, {
     store: new PostgresUserAddressStore(sql),
     actorFromRequest: actorFromAuthenticatedRequest,

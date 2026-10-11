@@ -1,4 +1,5 @@
 import type { FeatureFlagProvider } from "@helix/sdk";
+import type { ErrorCode } from "@helix/contracts";
 import type {
   Actor,
   AIClassification,
@@ -44,6 +45,7 @@ import {
 } from "./tools/policy-firewall.js";
 import type { ConfirmationGate, PendingActionRecord } from "./tools/registry.js";
 import { toolInputFailure, type ToolInvokeErrorDetails } from "./tool-input-issues.js";
+import { domainErrorCode, toolHttpError } from "./tools/tool-http-error.js";
 
 export type ToolInvokeResult<Output = unknown> =
   | { readonly ok: true; readonly status?: "executed"; readonly output: Output }
@@ -61,6 +63,9 @@ export type ToolInvokeResult<Output = unknown> =
       readonly rateLimit?: ToolRateLimitMetadata;
       readonly quotaLimit?: ToolQuotaLimitMetadata;
       readonly details?: ToolInvokeErrorDetails;
+      /** A domain error code (e.g. `assistant_tool_limit_exceeded`) and its remedy details. */
+      readonly code?: ErrorCode;
+      readonly codeDetails?: Readonly<Record<string, unknown>>;
     };
 export type ToolInvokeErrorResult = Extract<ToolInvokeResult, { readonly ok: false }>;
 
@@ -742,6 +747,7 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
               ? {}
               : { retryAfterSeconds: httpError.retryAfterSeconds }),
             ...(httpError?.quotaLimit === undefined ? {} : { quotaLimit: httpError.quotaLimit }),
+            ...domainErrorCode(error),
           };
           return await completeInvocation(span, result, {
             actor,
@@ -1598,69 +1604,6 @@ function actorIsOrgAdmin(actor: Actor): boolean {
         scope === "admin.console.write",
     )
   );
-}
-
-function toolHttpError(error: unknown): {
-  readonly statusCode: number;
-  readonly retryAfterSeconds?: number;
-  readonly quotaLimit?: ToolQuotaLimitMetadata;
-} | null {
-  if (typeof error !== "object" || error === null) {
-    return null;
-  }
-  const statusCode = (error as { readonly statusCode?: unknown }).statusCode;
-  if (
-    typeof statusCode !== "number" ||
-    !Number.isInteger(statusCode) ||
-    statusCode < 400 ||
-    statusCode > 599
-  ) {
-    return null;
-  }
-  const retryAfterSeconds = (error as { readonly retryAfterSeconds?: unknown }).retryAfterSeconds;
-  const quotaLimit = toolQuotaLimit(error);
-  return {
-    statusCode,
-    ...(typeof retryAfterSeconds === "number" &&
-    Number.isInteger(retryAfterSeconds) &&
-    retryAfterSeconds > 0
-      ? { retryAfterSeconds }
-      : {}),
-    ...(quotaLimit === null ? {} : { quotaLimit }),
-  };
-}
-
-function toolQuotaLimit(error: object): ToolQuotaLimitMetadata | null {
-  const raw = (error as { readonly quotaLimit?: unknown }).quotaLimit;
-  if (typeof raw !== "object" || raw === null) {
-    return null;
-  }
-  const quotaLimit = raw as {
-    readonly quota?: unknown;
-    readonly limit?: unknown;
-    readonly used?: unknown;
-    readonly remaining?: unknown;
-    readonly retryAfterSeconds?: unknown;
-    readonly resetsAt?: unknown;
-  };
-  if (
-    typeof quotaLimit.quota !== "string" ||
-    typeof quotaLimit.limit !== "number" ||
-    typeof quotaLimit.used !== "number" ||
-    quotaLimit.remaining !== 0 ||
-    typeof quotaLimit.retryAfterSeconds !== "number" ||
-    typeof quotaLimit.resetsAt !== "string"
-  ) {
-    return null;
-  }
-  return {
-    quota: quotaLimit.quota,
-    limit: quotaLimit.limit,
-    used: quotaLimit.used,
-    remaining: 0,
-    retryAfterSeconds: quotaLimit.retryAfterSeconds,
-    resetsAt: quotaLimit.resetsAt,
-  };
 }
 
 function shouldLimitActor(actor: Actor): boolean {

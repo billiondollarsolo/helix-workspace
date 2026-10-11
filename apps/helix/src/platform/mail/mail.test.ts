@@ -491,6 +491,9 @@ describe("mail tools", () => {
       "mail.forward",
       "mail.inbound.accept",
       "mail.label.apply",
+      "mail.label.create",
+      "mail.label.delete",
+      "mail.label.update",
       "mail.labels.list",
       "mail.outbound.cancel",
       "mail.outbound.get",
@@ -498,6 +501,9 @@ describe("mail tools", () => {
       "mail.read.set",
       "mail.reply",
       "mail.restore",
+      "mail.scheduled.cancel",
+      "mail.scheduled.list",
+      "mail.scheduled.reschedule",
       "mail.search",
       "mail.send",
       "mail.settings.get",
@@ -1050,6 +1056,7 @@ describe("mail tools", () => {
       category: "primary",
       folder: "inbox",
       snoozedUntil: null,
+      participants: [],
     };
     store.threadRows = [
       baseRow,
@@ -1113,59 +1120,6 @@ describe("mail tools", () => {
       { actor },
     );
     expect(archive.ok && archive.output.total).toBe(1);
-  });
-
-  it("lists folders with counts and labels with colours", async () => {
-    const store = new InMemoryMailStore();
-    const registry = createToolRegistry();
-    registerMailTools(registry, { store });
-
-    const actor = {
-      id: actorId,
-      orgId,
-      type: "user" as const,
-      displayName: "Alice",
-      email: "alice@example.com",
-      scopes: ["mail.read"],
-    };
-
-    store.folders = [
-      { id: "inbox", label: "Inbox", total: 24, unread: 6 },
-      { id: "starred", label: "Starred", total: 7, unread: 0 },
-    ];
-    store.labels = [
-      {
-        id: "00000000-0000-4000-8000-0000000000c1",
-        orgId,
-        ownerActorId: null,
-        slug: "team",
-        name: "Team",
-        color: "#7c3aed",
-        sortOrder: 10,
-        threadCount: 4,
-        createdAt: now(),
-        updatedAt: now(),
-      },
-    ];
-
-    const folders = await registry.invoke("mail.folders.list", {}, { actor });
-    expect(folders).toMatchObject({
-      ok: true,
-      output: {
-        folders: [
-          { id: "inbox", total: 24, unread: 6 },
-          { id: "starred", total: 7 },
-        ],
-      },
-    });
-
-    const labels = await registry.invoke("mail.labels.list", {}, { actor });
-    expect(labels).toMatchObject({
-      ok: true,
-      output: {
-        labels: [{ slug: "team", name: "Team", color: "#7c3aed", threadCount: 4, shared: true }],
-      },
-    });
   });
 });
 

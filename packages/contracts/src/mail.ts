@@ -52,6 +52,13 @@ export const mailSpamCatcherSchema = z.enum([
 ]);
 export type MailSpamCatcher = z.infer<typeof mailSpamCatcherSchema>;
 
+export const mailThreadParticipantSchema = z.object({
+  name: z.string(),
+  email: z.string(),
+  isMe: z.boolean(),
+});
+export type MailThreadParticipant = z.infer<typeof mailThreadParticipantSchema>;
+
 export const mailThreadRowSchema = z.object({
   threadId: z.string(),
   messageId: z.string(),
@@ -68,6 +75,12 @@ export const mailThreadRowSchema = z.object({
   category: z.string(),
   folder: z.string(),
   snoozedUntil: z.string().nullable(),
+  /**
+   * Up to four distinct senders, oldest first, for rows like "Samara, me (3)".
+   * The actor's own messages carry `isMe` and the name "me". Drafts and
+   * scheduled sends list their recipients instead.
+   */
+  participants: z.array(mailThreadParticipantSchema).max(4),
   /** Who put this in Spam (spamd / AI beta / user). Omitted when not spam. */
   spamCatcher: mailSpamCatcherSchema.nullable().optional(),
 });
@@ -125,18 +138,171 @@ export const mailFolderSummarySchema = z.object({
 });
 export type MailFolderSummary = z.infer<typeof mailFolderSummarySchema>;
 
+/**
+ * Fixed label palette; the name is the API value and matches the web `--label-<name>`
+ * tokens, and the hex is that token's light-theme colour (oklch 50% lightness).
+ */
+export const MAIL_LABEL_COLOR_NAMES = [
+  "red",
+  "coral",
+  "orange",
+  "amber",
+  "yellow",
+  "olive",
+  "lime",
+  "green",
+  "emerald",
+  "mint",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "plum",
+  "fuchsia",
+  "pink",
+  "rose",
+  "brown",
+  "slate",
+  "gray",
+] as const;
+export type MailLabelColorName = (typeof MAIL_LABEL_COLOR_NAMES)[number];
+export const mailLabelColorNameSchema = z.enum(MAIL_LABEL_COLOR_NAMES);
+export const MAIL_LABEL_COLORS: Readonly<Record<MailLabelColorName, string>> = {
+  red: "#a83634",
+  coral: "#a73b15",
+  orange: "#a14400",
+  amber: "#935200",
+  yellow: "#7e5f00",
+  olive: "#6a6800",
+  lime: "#457200",
+  green: "#00792f",
+  emerald: "#007c4d",
+  mint: "#007d63",
+  teal: "#007c76",
+  cyan: "#007792",
+  sky: "#006fa7",
+  blue: "#1762b6",
+  indigo: "#4d57b7",
+  violet: "#6b4cae",
+  purple: "#7d45a2",
+  plum: "#8c3f91",
+  fuchsia: "#943b84",
+  pink: "#9e366f",
+  rose: "#a6344f",
+  brown: "#895436",
+  slate: "#50667c",
+  gray: "#636363",
+};
+export const MAIL_LABEL_DEFAULT_COLOR: MailLabelColorName = "gray";
+
+/** Palette name for a stored hex colour; unknown colours read as the default. */
+export function mailLabelColorName(hex: string): MailLabelColorName {
+  const normalized = hex.toLowerCase();
+  return (
+    MAIL_LABEL_COLOR_NAMES.find((name) => MAIL_LABEL_COLORS[name] === normalized) ??
+    MAIL_LABEL_DEFAULT_COLOR
+  );
+}
+
 export const mailLabelSchema = z.object({
   id: z.string(),
   slug: z.string(),
   name: z.string(),
-  color: z.string().nullable(),
+  /** Display hex from the palette. */
+  color: z.string(),
+  colorName: mailLabelColorNameSchema,
+  /** Parent label for nesting; `null` at the top level. */
+  parentId: z.string().nullable(),
   sortOrder: z.number().int(),
   threadCount: z.number().int().nonnegative(),
+  /** Unread threads carrying the label, outside Spam and Trash. */
+  unreadCount: z.number().int().nonnegative(),
+  /** Org-wide label; only personal labels can be edited. */
   shared: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type MailLabel = z.infer<typeof mailLabelSchema>;
+
+const mailLabelNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(225)
+  .refine((name) => !/\p{Cc}/u.test(name), "Label names cannot contain control characters.");
+const mailboxActorIdSchema = z.string().uuid().optional();
+
+export const mailLabelCreateInputSchema = z
+  .object({
+    name: mailLabelNameSchema,
+    color: mailLabelColorNameSchema.default(MAIL_LABEL_DEFAULT_COLOR),
+    parentId: z.string().uuid().nullable().default(null),
+    mailboxActorId: mailboxActorIdSchema,
+  })
+  .strict();
+export const mailLabelUpdateInputSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: mailLabelNameSchema.optional(),
+    color: mailLabelColorNameSchema.optional(),
+    parentId: z.string().uuid().nullable().optional(),
+    mailboxActorId: mailboxActorIdSchema,
+  })
+  .strict()
+  .refine(
+    (input) =>
+      input.name !== undefined || input.color !== undefined || input.parentId !== undefined,
+    "Provide a new name, color or parentId.",
+  );
+export const mailLabelDeleteInputSchema = z
+  .object({ id: z.string().uuid(), mailboxActorId: mailboxActorIdSchema })
+  .strict();
+export const mailLabelResultSchema = z.object({ label: mailLabelSchema });
+export const mailLabelDeleteResultSchema = z.object({
+  /** The label and every label nested under it. */
+  deletedIds: z.array(z.string()),
+});
+
+/** A send scheduled for later (the Scheduled view). */
+export const mailScheduledSendSchema = z.object({
+  outboundId: z.string(),
+  threadId: z.string(),
+  messageId: z.string(),
+  subject: z.string(),
+  preview: z.string(),
+  to: z.array(mailAddressSchema),
+  cc: z.array(mailAddressSchema),
+  bcc: z.array(mailAddressSchema),
+  hasAttachment: z.boolean(),
+  sendAt: z.string(),
+  createdAt: z.string(),
+});
+export type MailScheduledSend = z.infer<typeof mailScheduledSendSchema>;
+export const mailScheduledListInputSchema = z
+  .object({
+    limit: z.number().int().positive().max(200).default(50),
+    offset: z.number().int().nonnegative().default(0),
+  })
+  .strict();
+export const mailScheduledListResultSchema = z.object({
+  scheduled: z.array(mailScheduledSendSchema),
+  total: z.number().int().nonnegative(),
+});
+export const mailScheduledRescheduleInputSchema = z
+  .object({ outboundId: z.string().uuid(), sendAt: z.string().datetime() })
+  .strict();
+export const mailScheduledRescheduleResultSchema = z.object({
+  scheduled: mailScheduledSendSchema.nullable(),
+});
+export const mailScheduledCancelInputSchema = z.object({ outboundId: z.string().uuid() }).strict();
+export const mailScheduledCancelResultSchema = z.object({
+  cancelled: z.boolean(),
+  /** The cancelled message returned to Drafts for editing. */
+  draftId: z.string().nullable(),
+});
 
 export const mailSearchInputSchema = z.object({
   query: z.string().optional(),

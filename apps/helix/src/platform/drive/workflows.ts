@@ -2,7 +2,7 @@ import type { JsonObject } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { BadRequestError } from "../../api/api-error.js";
-import { withTenantIoSagaPostgresContext as withTenantPostgresContext } from "../tenancy/postgres-roles.js";
+import { withTenantPostgresContext } from "../tenancy/postgres-roles.js";
 import { DriveForbiddenError, DriveNotFoundError } from "./errors.js";
 
 export const driveWorkflowKinds = [

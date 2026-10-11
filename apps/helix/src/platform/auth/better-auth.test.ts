@@ -12,7 +12,7 @@ import {
 } from "./better-auth.js";
 
 describe("PostgresBetterAuthActorStore", () => {
-  it("activates one provider link and tenant membership in a serializable transaction", async () => {
+  it("activates one provider link and tenant membership in its own read-committed transaction", async () => {
     const metadata = { existing: true };
     const recording = createRecordingSql([
       [{ email: "person@example.com" }],
@@ -46,7 +46,7 @@ describe("PostgresBetterAuthActorStore", () => {
       scopes: [],
       metadata,
     });
-    expect(recording.beginOptions).toEqual(["isolation level serializable"]);
+    expect(recording.beginOptions).toEqual([]);
     expect(recording.calls[0]?.text).toContain("helix_canonical_login_email");
     expect(recording.calls[1]?.text).toContain("helix_activate_identity_membership");
     expect(recording.calls[1]?.values).toEqual([

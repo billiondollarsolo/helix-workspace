@@ -308,6 +308,31 @@ export async function listMeetMeetings(
   };
 }
 
+/**
+ * Whether video meetings are available. Meet stays off until an administrator
+ * connects a Jitsi meeting server; `message` says what to do, worded for the
+ * person asking (configuration steps for admins, whom to ask for members).
+ */
+export interface MeetStatus {
+  readonly available: boolean;
+  readonly message: string | null;
+}
+
+export async function fetchMeetStatus(
+  fetchImpl: MeetApiFetch = authenticatedFetch,
+): Promise<MeetStatus> {
+  const output = await callMeetTool<{ readonly available?: unknown; readonly message?: unknown }>(
+    "meet.status",
+    {},
+    fetchImpl,
+  );
+  // Only an explicit `available: false` turns Meet off.
+  return {
+    available: output.available !== false,
+    message: typeof output.message === "string" ? output.message : null,
+  };
+}
+
 export async function mintMeetToken(
   input: {
     readonly roomId: string;

@@ -230,8 +230,9 @@ calendar.read:freebusy chat.read chat.write meet.read meet.write
 assistant.write assistant.memory admin.users admin.audit admin.agents
 admin.webhooks admin.config.write`.
 The `--search-reindex` check requires the API to be started with Meilisearch
-configuration so `POST /api/admin/search/reindex` is registered; it asserts
-`status: "completed"` with stale pruning disabled for smoke safety.
+configuration so `POST /api/admin/search/reindex` is registered; it queues the
+reindex job with stale pruning disabled for smoke safety and polls
+`GET /api/admin/search/reindex/jobs/<id>` until it reports `status: "completed"`.
 For local UI/API testing with deterministic seeded data, run
 `pnpm --filter @helix/app db:prepare:demo -- --require-storage --require-search`
 with `DATABASE_URL`, `RUSTFS_ENDPOINT`, and Meilisearch env set before starting
@@ -438,7 +439,13 @@ HELIX_BASE_URL=http://127.0.0.1:3000 helix action status <pending-action-id>
 HELIX_BASE_URL=http://127.0.0.1:3000 helix backup create
 HELIX_BASE_URL=http://127.0.0.1:3000 helix restore --from helix-smoke-backup
 HELIX_BASE_URL=http://127.0.0.1:3000 helix reindex --all
+HELIX_BASE_URL=http://127.0.0.1:3000 helix reindex --status <job-id>
 ```
+
+`helix reindex --all` queues a reindex of your organization and follows the job,
+printing progress, for up to 30 minutes (`--max-wait <seconds>` changes that). The
+job keeps running on the server if the CLI stops following it; check it later
+with `helix reindex --status <job-id>`.
 
 Release evidence should include command output, the actor id used, whether a
 pending-tool approval was required for create/revoke, and matching audit rows.

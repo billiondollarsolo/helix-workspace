@@ -81,7 +81,8 @@ ${workspaceLines("account")}
   helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]
   helix backup create
   helix restore --from <backup-id> --target-db <isolated-db> --target-bucket <isolated-bucket> --idempotency-key <key> [--encrypted]
-  helix reindex --all
+  helix reindex --all [--max-wait <seconds>]
+  helix reindex --status <job-id>
   helix action status <action-id>
   helix action approve <action-id>
   helix action cancel <action-id>
@@ -113,6 +114,9 @@ Global options (accepted before or after the command):
   --idempotency-key <key>    Idempotency-Key for tool calls (default: a fresh UUID per invocation, reused on retries)
   --output <text|json>       With json, errors are written to stderr as {"error":{...}}
   -h, --help                 Show help; "helix <command> --help" shows only that command
+
+JSON input: --json takes a JSON object inline or, without a value, from stdin. Commands with
+flags accept both together: the JSON is the base and each flag sets (and overrides) its field.
 
 Retries: 429 responses are retried up to 3 times with exponential backoff that honours Retry-After;
 503 responses and network errors are retried for reads and for tool calls carrying an Idempotency-Key.

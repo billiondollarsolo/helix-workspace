@@ -1,11 +1,15 @@
 import type { Actor } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import { withTenantIoSagaPostgresContext } from "../tenancy/postgres-roles.js";
+import {
+  detachedFromTenantPostgresContext,
+  withTenantIoSagaPostgresContext,
+} from "../tenancy/postgres-roles.js";
 import { errorMessage } from "../util/errors.js";
 import { toSqlJson } from "../util/sql.js";
 import type {
   SearchReindexCursor,
+  SearchReindexProgress,
   SearchReindexRequest,
   SearchReindexSource,
   SearchReindexType,
@@ -40,14 +44,23 @@ export interface ClaimedSearchMutation {
 
 type SearchReindexJobStatus = "queued" | "processing" | "completed" | "cancelled" | "dead_lettered";
 
+/**
+ * `shadow` rebuilds every organization into a new index and swaps it in;
+ * `in_place` reindexes one organization (`targetOrgId`) into the live index.
+ */
+export type SearchReindexJobMode = "shadow" | "in_place";
+
 export interface SearchReindexJob {
   readonly id: string;
   readonly orgId: string;
   readonly requestedByActorId: string;
+  readonly mode: SearchReindexJobMode;
   readonly targetOrgId?: string | undefined;
   readonly types: readonly SearchReindexType[];
   readonly batchSize: number;
-  readonly shadowIndexUid: string;
+  /** The index a shadow job builds; null for in-place jobs. */
+  readonly shadowIndexUid: string | null;
+  readonly pruneStale: boolean;
   readonly status: SearchReindexJobStatus;
   readonly phase: "backfill" | "replay" | "swap";
   readonly sourceIndex: number;
@@ -55,19 +68,27 @@ export interface SearchReindexJob {
   readonly startMutationId: bigint;
   readonly replayMutationId: bigint;
   readonly totalDocuments: bigint;
+  readonly deletedDocuments: bigint;
+  /** Documents indexed so far, by type (in-place jobs). */
+  readonly counts: Readonly<Partial<Record<SearchReindexType, number>>>;
   readonly attemptCount: number;
   readonly leaseToken?: string | undefined;
   readonly lastError?: string | undefined;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+  readonly completedAt?: Date | undefined;
 }
 
 interface JobRow {
   readonly id: string;
   readonly org_id: string;
   readonly requested_by_actor_id: string;
+  readonly mode: SearchReindexJobMode;
   readonly target_org_id: string | null;
   readonly types: readonly SearchReindexType[];
   readonly batch_size: number;
-  readonly shadow_index_uid: string;
+  readonly shadow_index_uid: string | null;
+  readonly prune_stale: boolean;
   readonly status: SearchReindexJobStatus;
   readonly phase: SearchReindexJob["phase"];
   readonly source_index: number;
@@ -75,9 +96,14 @@ interface JobRow {
   readonly start_mutation_id: string;
   readonly replay_mutation_id: string;
   readonly total_documents: string;
+  readonly deleted_documents: string;
+  readonly counts: Readonly<Partial<Record<SearchReindexType, number>>>;
   readonly attempt_count: number;
   readonly lease_token: string | null;
   readonly last_error: string | null;
+  readonly created_at: Date;
+  readonly updated_at: Date;
+  readonly completed_at: Date | null;
 }
 
 export class PostgresSearchDurabilityStore implements SearchMutationQueue {
@@ -168,6 +194,65 @@ export class PostgresSearchDurabilityStore implements SearchMutationQueue {
     return toJob(job);
   }
 
+  /**
+   * Queues an in-place reindex of the actor's organization, or returns the one
+   * already queued or running there.
+   */
+  async createInPlaceJob(
+    actor: Actor,
+    input: SearchReindexRequest = {},
+  ): Promise<SearchReindexJob> {
+    const types =
+      input.types === undefined || input.types.length === 0
+        ? searchReindexTypes
+        : searchReindexTypes.filter((type) => input.types?.includes(type));
+    const created = await this.sql<JobRow[]>`
+      insert into search_reindex_jobs (
+        org_id, requested_by_actor_id, target_org_id, mode, types, batch_size, prune_stale,
+        next_attempt_at
+      ) values (
+        ${actor.orgId}, ${actor.id}, ${actor.orgId}, 'in_place', ${types},
+        ${normalizeBatchSize(input.batchSize)}, ${input.pruneStale !== false}, now()
+      )
+      on conflict (target_org_id) where mode = 'in_place' and status in ('queued', 'processing')
+      do nothing
+      returning *
+    `;
+    const rows =
+      created.length > 0
+        ? created
+        : await this.sql<JobRow[]>`
+            select * from search_reindex_jobs
+            where org_id = ${actor.orgId} and target_org_id = ${actor.orgId}
+              and mode = 'in_place' and status in ('queued', 'processing')
+            limit 1
+          `;
+    const job = rows[0];
+    if (job === undefined) throw new Error("Search reindex job was not created.");
+    return toJob(job);
+  }
+
+  /**
+   * Records progress and renews the lease. It commits on its own, outside the
+   * tenant transaction the reindex runs in, so status reads see it at once.
+   */
+  async progressJob(
+    job: SearchReindexJob,
+    progress: SearchReindexProgress,
+    leaseSeconds: number,
+  ): Promise<boolean> {
+    const rows = await detachedFromTenantPostgresContext(
+      () => this.sql<{ saved: boolean }[]>`
+        select helix_progress_search_reindex_job(
+          ${job.id}, ${job.leaseToken ?? null}, ${progress.sourceIndex},
+          ${progress.totalDocuments}, ${progress.deletedDocuments},
+          ${this.sql.json(toSqlJson(progress.counts))}, ${leaseSeconds}
+        ) saved
+      `,
+    );
+    return rows[0]?.saved === true;
+  }
+
   async getJob(id: string, orgId: string): Promise<SearchReindexJob | undefined> {
     const rows = await this.sql<JobRow[]>`
       select * from search_reindex_jobs where id = ${id} and org_id = ${orgId} limit 1
@@ -184,12 +269,13 @@ export class PostgresSearchDurabilityStore implements SearchMutationQueue {
 
   async claimJobs(input: {
     readonly owner: string;
+    readonly mode: SearchReindexJobMode;
     readonly limit: number;
     readonly leaseSeconds: number;
   }): Promise<readonly SearchReindexJob[]> {
     const rows = await this.sql<JobRow[]>`
       select * from helix_claim_search_reindex_jobs(
-        ${input.owner}, ${input.limit}, ${input.leaseSeconds}
+        ${input.owner}, ${input.mode}, ${input.limit}, ${input.leaseSeconds}
       )
     `;
     return rows.map(toJob);
@@ -275,6 +361,7 @@ export class PostgresSearchDurabilityStore implements SearchMutationQueue {
 
 export interface SearchReindexJobService {
   create(actor: Actor, input?: SearchReindexRequest): Promise<SearchReindexJob>;
+  createInPlace(actor: Actor, input?: SearchReindexRequest): Promise<SearchReindexJob>;
   get(id: string, orgId: string): Promise<SearchReindexJob | undefined>;
   cancel(id: string, orgId: string): Promise<boolean>;
 }
@@ -283,6 +370,9 @@ export class PostgresSearchReindexJobService implements SearchReindexJobService 
   constructor(private readonly store: PostgresSearchDurabilityStore) {}
   create(actor: Actor, input?: SearchReindexRequest): Promise<SearchReindexJob> {
     return this.store.createJob(actor, input);
+  }
+  createInPlace(actor: Actor, input?: SearchReindexRequest): Promise<SearchReindexJob> {
+    return this.store.createInPlaceJob(actor, input);
   }
   get(id: string, orgId: string): Promise<SearchReindexJob | undefined> {
     return this.store.getJob(id, orgId);
@@ -396,6 +486,7 @@ export class SearchShadowReindexWorker {
   async drainOnce(): Promise<number> {
     const jobs = await this.options.store.claimJobs({
       owner: this.owner,
+      mode: "shadow",
       limit: 1,
       leaseSeconds: 300,
     });
@@ -416,7 +507,9 @@ export class SearchShadowReindexWorker {
   }
 
   private async step(job: SearchReindexJob): Promise<void> {
-    const engine = this.options.shadowEngine(job.shadowIndexUid);
+    const shadowIndexUid = job.shadowIndexUid;
+    if (shadowIndexUid === null) throw new Error("A shadow reindex job needs its shadow index.");
+    const engine = this.options.shadowEngine(shadowIndexUid);
     if (job.phase === "backfill" && job.sourceIndex === 0 && job.sourceCursor === undefined) {
       await engine.ensureIndex();
     }
@@ -436,7 +529,6 @@ export class SearchShadowReindexWorker {
       if (source?.collectPage === undefined)
         throw new Error(`Search source ${type} is not resumable.`);
       const page = await source.collectPage({
-        ...(job.targetOrgId === undefined ? {} : { orgId: job.targetOrgId }),
         batchSize: job.batchSize,
         ...(job.sourceCursor === undefined ? {} : { cursor: job.sourceCursor }),
       });
@@ -467,7 +559,7 @@ export class SearchShadowReindexWorker {
     }
     await this.options.store.withMutationSwapLock(async () => {
       if (await this.options.store.jobLeaseActive(job)) {
-        await this.options.swap(job.shadowIndexUid);
+        await this.options.swap(shadowIndexUid);
         await this.options.store.completeJob(job);
       }
     });
@@ -504,10 +596,12 @@ function toJob(row: JobRow): SearchReindexJob {
     id: row.id,
     orgId: row.org_id,
     requestedByActorId: row.requested_by_actor_id,
+    mode: row.mode,
     ...(row.target_org_id === null ? {} : { targetOrgId: row.target_org_id }),
     types: row.types,
     batchSize: row.batch_size,
     shadowIndexUid: row.shadow_index_uid,
+    pruneStale: row.prune_stale,
     status: row.status,
     phase: row.phase,
     sourceIndex: row.source_index,
@@ -515,9 +609,14 @@ function toJob(row: JobRow): SearchReindexJob {
     startMutationId: BigInt(row.start_mutation_id),
     replayMutationId: BigInt(row.replay_mutation_id),
     totalDocuments: BigInt(row.total_documents),
+    deletedDocuments: BigInt(row.deleted_documents),
+    counts: row.counts,
     attemptCount: row.attempt_count,
     ...(row.lease_token === null ? {} : { leaseToken: row.lease_token }),
     ...(row.last_error === null ? {} : { lastError: row.last_error }),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(row.completed_at === null ? {} : { completedAt: row.completed_at }),
   };
 }
 

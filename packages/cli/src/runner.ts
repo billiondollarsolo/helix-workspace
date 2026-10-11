@@ -31,7 +31,10 @@ import {
   reportPending,
   wantsJsonOutput,
 } from "./options.js";
-import { CliUsageError, type HelixCommand, type JsonArgument, parseCliArgs } from "./parser.js";
+import { CliUsageError } from "./cli-error.js";
+import { mergeJsonOverrides, type JsonArgument } from "./json-input.js";
+import { type HelixCommand, parseCliArgs } from "./parser.js";
+import { runReindexAll } from "./reindex.js";
 import { scopedUsage, usage } from "./usage.js";
 
 export type { FetchLike } from "./http.js";
@@ -122,6 +125,8 @@ async function runCommand(command: HelixCommand, context: CliContext): Promise<n
       return await writeMcpJsonResult(buildMcpResourceReadRequest(env, command.uri), context);
     case "tool-describe":
       return await describeOpenApiTool(command.toolId, context);
+    case "reindex-all":
+      return await runReindexAll(command, context);
     default:
       break;
   }
@@ -582,16 +587,18 @@ async function resolveToolInput(
 
   const raw = json.source === "inline" ? json.value : await readAll(stdin);
   if (raw.trim().length === 0) {
-    return {};
+    return mergeJsonOverrides({}, json.overrides);
   }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as unknown;
+    parsed = JSON.parse(raw) as unknown;
   } catch (error) {
     const where = json.source === "inline" ? "--json argument" : "stdin";
     const reason = error instanceof Error ? error.message : "invalid JSON";
     throw new CliUsageError(`Invalid JSON in ${where}: ${reason}`);
   }
+  return mergeJsonOverrides(parsed, json.overrides);
 }
 
 async function readAll(stream: NodeJS.ReadableStream): Promise<string> {

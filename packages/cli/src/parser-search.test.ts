@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CliUsageError, parseCliArgs } from "./parser.js";
+import { CliUsageError } from "./cli-error.js";
+import { parseCliArgs } from "./parser.js";
 
 describe("global search arguments", () => {
   it("parses global search as a tool call", () => {

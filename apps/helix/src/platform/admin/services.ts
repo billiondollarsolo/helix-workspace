@@ -1305,7 +1305,7 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         id: "jitsi-jwt-secret",
         label: "Jitsi JWT secret",
         type: "secret",
-        required: false,
+        required: true,
         envAnyOf: ["MEET_JITSI_JWT_SECRET"],
       }),
     ],
@@ -1315,7 +1315,7 @@ const serviceDefinitions: readonly AdminServiceDefinition[] = [
         key: "jitsiWebhookSecret",
         label: "Jitsi webhook shared secret",
         envAnyOf: ["MEET_JITSI_WEBHOOK_SHARED_SECRET"],
-        required: false,
+        required: true,
         sensitive: true,
       }),
       config({

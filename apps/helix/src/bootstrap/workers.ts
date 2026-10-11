@@ -29,6 +29,7 @@ export async function installWorkers(context: Awaited<ReturnType<typeof installR
     searchEventIndexer,
     searchMutationWorker,
     searchShadowReindexWorker,
+    searchInPlaceReindexWorker,
     searchReconciliationWorker,
     enrichmentWorker,
     outboxWorker,
@@ -70,6 +71,13 @@ export async function installWorkers(context: Awaited<ReturnType<typeof installR
     leaderGatedWorkers.push({
       name: "search-shadow-reindex-worker",
       worker: searchShadowReindexWorker,
+    });
+  }
+
+  if (searchInPlaceReindexWorker !== undefined) {
+    leaderGatedWorkers.push({
+      name: "search-in-place-reindex-worker",
+      worker: searchInPlaceReindexWorker,
     });
   }
 

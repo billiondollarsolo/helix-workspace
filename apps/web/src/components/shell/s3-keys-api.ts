@@ -1,7 +1,7 @@
 import { callTool, type CallToolOptions } from "@/lib/tool-call";
 
 /** Drive scopes an S3 access key may carry. */
-export const S3_KEY_SCOPES = ["drive.read", "drive.write", "drive.delete"] as const;
+const S3_KEY_SCOPES = ["drive.read", "drive.write", "drive.delete"] as const;
 export type S3KeyScope = (typeof S3_KEY_SCOPES)[number];
 
 export interface S3AccessKey {
@@ -21,13 +21,21 @@ export interface S3AccessKeyCreated {
   readonly endpointPath: string;
 }
 
-export async function listS3AccessKeys(options?: CallToolOptions): Promise<readonly S3AccessKey[]> {
-  const output = await callTool<{ readonly accessKeys: readonly S3AccessKey[] }>(
-    "drive.s3-keys.list",
-    {},
-    options,
-  );
-  return output.accessKeys;
+export interface S3AccessKeyList {
+  readonly accessKeys: readonly S3AccessKey[];
+  /** The Drive scopes the signed-in person holds; a new key can carry only these. */
+  readonly grantableScopes: readonly S3KeyScope[];
+}
+
+export async function listS3AccessKeys(options?: CallToolOptions): Promise<S3AccessKeyList> {
+  const output = await callTool<{
+    readonly accessKeys?: readonly S3AccessKey[];
+    readonly grantableScopes?: readonly string[];
+  }>("drive.s3-keys.list", {}, options);
+  return {
+    accessKeys: output.accessKeys ?? [],
+    grantableScopes: S3_KEY_SCOPES.filter((scope) => output.grantableScopes?.includes(scope)),
+  };
 }
 
 export function createS3AccessKey(

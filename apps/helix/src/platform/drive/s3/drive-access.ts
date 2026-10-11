@@ -5,6 +5,7 @@ import type { DriveStore } from "../store.js";
 import type { DriveEntryRecord } from "../types.js";
 import type { DriveS3Bucket, DriveS3ObjectKey } from "./buckets.js";
 import { S3Error, toS3Error } from "./errors.js";
+import type { LockFolderChildren } from "./folder-transaction.js";
 import { driveS3UploadMetadata } from "./object-metadata.js";
 
 /**
@@ -35,9 +36,12 @@ export interface DriveS3Access {
    * Runs folder writes in their own committed tenant transaction. Uploads are
    * staged and finalized in separate I/O-saga transactions that cannot see
    * uncommitted rows of the request transaction, so a folder created for a
-   * key's prefix must be committed before the object is written into it.
+   * key's prefix must be committed before the object is written into it. The
+   * work locks each parent's children before looking them up (see
+   * folder-transaction.ts), so concurrent uploads reuse one new folder.
    */
-  readonly inOwnTransaction?: (<T>(work: () => Promise<T>) => Promise<T>) | undefined;
+  readonly inOwnTransaction?:
+    (<T>(work: (lockFolderChildren: LockFolderChildren) => Promise<T>) => Promise<T>) | undefined;
 }
 
 function rootView(access: DriveS3Access, folderId: string | null) {
@@ -127,15 +131,19 @@ export async function ensureDriveS3Folders(
   if (segments.length === 0) return null;
   return access.inOwnTransaction === undefined
     ? ensureFolderPath(access, segments)
-    : access.inOwnTransaction(() => ensureFolderPath(access, segments));
+    : access.inOwnTransaction((lockFolderChildren) =>
+        ensureFolderPath(access, segments, lockFolderChildren),
+      );
 }
 
 async function ensureFolderPath(
   access: DriveS3Access,
   segments: readonly string[],
+  lockFolderChildren?: LockFolderChildren,
 ): Promise<string | null> {
   let folderId: string | null = null;
   for (const segment of segments) {
+    await lockFolderChildren?.(folderId);
     const existing = await findDriveChild(
       access.store,
       access.actor,

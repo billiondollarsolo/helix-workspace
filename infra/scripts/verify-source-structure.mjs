@@ -17,6 +17,7 @@ const homes = {
   errorMessage: ["platform/util/errors.ts"],
   compactJsonObject: ["platform/util/json.ts"],
   hasControlCharacter: ["platform/util/strings.ts"],
+  escapeHtml: ["platform/util/strings.ts"],
   parseBasicAuthorization: ["platform/util/http-auth.ts"],
 };
 function duplicates(file, source) {

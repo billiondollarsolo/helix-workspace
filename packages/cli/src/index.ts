@@ -6,7 +6,8 @@ export { buildHelixRequest, buildMcpRequest } from "./client.js";
 export { parseCliArgs } from "./parser.js";
 export { CLI_TOOL_IDS } from "./tool-ids.js";
 export type { HelixCliEnv, HelixRequest } from "./client.js";
-export type { HelixCommand, JsonArgument } from "./parser.js";
+export type { JsonArgument } from "./json-input.js";
+export type { HelixCommand } from "./parser.js";
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void runCli(process.argv.slice(2), process.env, {

@@ -1,4 +1,12 @@
+import { CliUsageError } from "./cli-error.js";
 import { parseDriveS3KeysCommand } from "./drive-s3-keys.js";
+import { parseReindexCommand } from "./reindex.js";
+import {
+  parseJsonArgument,
+  splitJsonFlag,
+  withFlagOverrides,
+  type JsonArgument,
+} from "./json-input.js";
 import { parseWorkspaceCommand } from "./workspace-commands.js";
 
 export type HelixCommand =
@@ -50,7 +58,8 @@ export type HelixCommand =
       readonly idempotencyKey: string;
       readonly encrypted?: boolean;
     }
-  | { readonly kind: "reindex-all" }
+  | { readonly kind: "reindex-all"; readonly maxWaitSeconds?: number }
+  | { readonly kind: "reindex-status"; readonly jobId: string }
   | { readonly kind: "action-status"; readonly actionId: string }
   | { readonly kind: "action-approve"; readonly actionId: string }
   | { readonly kind: "action-cancel"; readonly actionId: string }
@@ -69,18 +78,6 @@ export type CompletionShell = "bash" | "zsh" | "fish";
 type SearchType = "mail" | "chat" | "drive" | "calendar";
 type AdminUserType = "user" | "agent" | "service_account" | "system";
 type SecurityTier = "personal" | "business" | "enterprise" | "sovereign";
-
-export type JsonArgument =
-  | { readonly source: "empty" }
-  | { readonly source: "inline"; readonly value: string }
-  | { readonly source: "stdin" };
-
-export class CliUsageError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CliUsageError";
-  }
-}
 
 export function parseCliArgs(args: readonly string[]): HelixCommand {
   const [scope, action, subject, ...rest] = args;
@@ -114,11 +111,7 @@ export function parseCliArgs(args: readonly string[]): HelixCommand {
   const workspace = parseWorkspaceCommand(scope, action, [subject, ...rest].filter(isDefined));
   if (workspace !== undefined) {
     if ("usage" in workspace) throw new CliUsageError(workspace.usage);
-    const json: JsonArgument =
-      workspace.input === null
-        ? parseJsonArgument([subject, ...rest].filter(isDefined))
-        : { source: "inline", value: workspace.input };
-    return { kind: "tool-call", toolId: workspace.toolId, json };
+    return { kind: "tool-call", toolId: workspace.toolId, json: workspace.json };
   }
 
   if (scope === "mail") {
@@ -542,16 +535,11 @@ function parseMailFilterOptions(
   spec: MailFilterSpec,
   usageMessage: string,
 ): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
+  const { base, flags } = splitJsonFlag(args);
 
   const input: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index];
     if (flag === undefined) {
       throw new CliUsageError(usageMessage);
     }
@@ -562,7 +550,7 @@ function parseMailFilterOptions(
       continue;
     }
 
-    const value = args[index + 1];
+    const value = flags[index + 1];
     if (value === undefined || value.startsWith("--")) {
       throw new CliUsageError(usageMessage);
     }
@@ -595,7 +583,7 @@ function parseMailFilterOptions(
     throw new CliUsageError(usageMessage);
   }
 
-  return { source: "inline", value: JSON.stringify(input) };
+  return withFlagOverrides(base, input);
 }
 
 const mailSendOptions = {
@@ -682,18 +670,12 @@ function parseMailOptions(
   spec: MailOptionSpec,
   commandName: string,
 ): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
+  const { base, flags } = splitJsonFlag(args);
 
   const input: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 2) {
-    const flag = args[index];
-    const value = args[index + 1];
+  for (let index = 0; index < flags.length; index += 2) {
+    const flag = flags[index];
+    const value = flags[index + 1];
     if (flag === undefined || value === undefined || value.startsWith("--")) {
       throw new CliUsageError(mailUsage(commandName, spec));
     }
@@ -732,7 +714,7 @@ function parseMailOptions(
     throw new CliUsageError(mailUsage(commandName, spec));
   }
 
-  return { source: "inline", value: JSON.stringify(input) };
+  return withFlagOverrides(base, input);
 }
 
 function readStringArray(value: unknown): string[] {
@@ -798,16 +780,11 @@ function parseMailBooleanOptions(
   booleans: ReadonlyMap<string, MailBooleanOption>,
   usageMessage: string,
 ): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
+  const { base, flags } = splitJsonFlag(args);
 
   const input: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index];
     if (flag === undefined) {
       throw new CliUsageError(usageMessage);
     }
@@ -818,7 +795,7 @@ function parseMailBooleanOptions(
       continue;
     }
 
-    const value = args[index + 1];
+    const value = flags[index + 1];
     if (value === undefined || value.startsWith("--")) {
       throw new CliUsageError(usageMessage);
     }
@@ -833,7 +810,7 @@ function parseMailBooleanOptions(
     throw new CliUsageError(usageMessage);
   }
 
-  return { source: "inline", value: JSON.stringify(input) };
+  return withFlagOverrides(base, input);
 }
 
 function parseChatCommand(
@@ -992,9 +969,7 @@ function parseDriveCommand(
     case "s3-keys": {
       const parsed = parseDriveS3KeysCommand(subject, rest);
       if ("usage" in parsed) throw new CliUsageError(parsed.usage);
-      const json: JsonArgument =
-        parsed.input === null ? parseJsonArgument(rest) : { source: "inline", value: parsed.input };
-      return { kind: "tool-call", toolId: parsed.toolId, json };
+      return { kind: "tool-call", toolId: parsed.toolId, json: parsed.json };
     }
     default:
       throw new CliUsageError(driveUsage);
@@ -1047,17 +1022,11 @@ function parseDriveUploadOptions(path: string | undefined, args: readonly string
 }
 
 function parseDriveListOptions(args: readonly string[]): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
+  const { base, flags } = splitJsonFlag(args);
 
   const input: Record<string, unknown> = {};
   parseDriveFlags(
-    args,
+    flags,
     driveListUsage,
     {
       strings: new Map([["--folder", "folderId"]]),
@@ -1066,21 +1035,15 @@ function parseDriveListOptions(args: readonly string[]): JsonArgument {
     },
     input,
   );
-  return { source: "inline", value: JSON.stringify(input) };
+  return withFlagOverrides(base, input);
 }
 
 function parseDriveSearchOptions(args: readonly string[]): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
+  const { base, flags } = splitJsonFlag(args);
 
   const input: Record<string, unknown> = {};
   parseDriveFlags(
-    args,
+    flags,
     driveSearchUsage,
     {
       strings: new Map([
@@ -1092,7 +1055,7 @@ function parseDriveSearchOptions(args: readonly string[]): JsonArgument {
     },
     input,
   );
-  return { source: "inline", value: JSON.stringify(input) };
+  return withFlagOverrides(base, input);
 }
 
 type DriveOptionSpec = {
@@ -1854,14 +1817,6 @@ function parseRestoreCommand(args: readonly string[]): HelixCommand {
 const backupCreateUsage = "Usage: helix backup create";
 const restoreFromUsage =
   "Usage: helix restore --from <backup-id> --target-db <isolated-db> --target-bucket <isolated-bucket> --idempotency-key <key> [--encrypted]";
-const reindexAllUsage = "Usage: helix reindex --all";
-
-function parseReindexCommand(args: readonly string[]): HelixCommand {
-  if (args.length !== 1 || args[0] !== "--all") {
-    throw new CliUsageError(reindexAllUsage);
-  }
-  return { kind: "reindex-all" };
-}
 
 function parseActionCommand(
   action: string | undefined,
@@ -2252,17 +2207,11 @@ function parseWebhookOptions(
   spec: WebhookOptionSpec,
   usageMessage: string,
 ): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
+  const { base, flags } = splitJsonFlag(args);
 
   const input: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index];
     if (flag === undefined) {
       throw new CliUsageError(usageMessage);
     }
@@ -2273,7 +2222,7 @@ function parseWebhookOptions(
       continue;
     }
 
-    const value = args[index + 1];
+    const value = flags[index + 1];
     if (value === undefined || value.startsWith("--")) {
       throw new CliUsageError(usageMessage);
     }
@@ -2333,7 +2282,7 @@ function parseWebhookOptions(
     throw new CliUsageError(usageMessage);
   }
 
-  return { source: "inline", value: JSON.stringify(input) };
+  return withFlagOverrides(base, input);
 }
 
 function parseJsonValueFlag(value: string, usageMessage: string): unknown {
@@ -2369,17 +2318,11 @@ function parseTypedOptions(
   spec: TypedOptionSpec,
   usageMessage: string,
 ): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  if (args[0] === "--json") {
-    return parseJsonArgument(args);
-  }
+  const { base, flags } = splitJsonFlag(args);
 
   const input: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index];
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index];
     if (flag === undefined) {
       throw new CliUsageError(usageMessage);
     }
@@ -2390,7 +2333,7 @@ function parseTypedOptions(
       continue;
     }
 
-    const value = args[index + 1];
+    const value = flags[index + 1];
     if (value === undefined || value.startsWith("--")) {
       throw new CliUsageError(usageMessage);
     }
@@ -2427,7 +2370,7 @@ function parseTypedOptions(
     throw new CliUsageError(usageMessage);
   }
 
-  return { source: "inline", value: JSON.stringify(input) };
+  return withFlagOverrides(base, input);
 }
 
 function readStringArrayOrRecordArray(value: unknown): Array<string | Record<string, string>> {
@@ -2491,21 +2434,4 @@ function parseFlags(args: readonly string[], allowed: ReadonlySet<string>): Map<
     flags.set(flag, value);
   }
   return flags;
-}
-
-function parseJsonArgument(args: readonly string[]): JsonArgument {
-  if (args.length === 0) {
-    return { source: "empty" };
-  }
-
-  const [flag, value, ...rest] = args;
-  if (flag !== "--json" || rest.length > 0) {
-    throw new CliUsageError("Usage: helix tool call <id> [--json [JSON]]");
-  }
-
-  if (value === undefined) {
-    return { source: "stdin" };
-  }
-
-  return { source: "inline", value };
 }

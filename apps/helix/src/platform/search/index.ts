@@ -1,6 +1,7 @@
 export * from "./event-indexer.js";
 export * from "./durable.js";
 export * from "./env.js";
+export * from "./in-place-reindex.js";
 export * from "./meilisearch-http.js";
 export * from "./meilisearch.js";
 export * from "./admin-routes.js";

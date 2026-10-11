@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CliUsageError, parseCliArgs } from "./parser.js";
+import { CliUsageError } from "./cli-error.js";
+import { parseCliArgs } from "./parser.js";
 
 describe("helix drive s3-keys", () => {
   it("lists and revokes keys", () => {

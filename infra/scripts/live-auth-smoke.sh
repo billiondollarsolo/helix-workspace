@@ -620,7 +620,36 @@ if (!hits.some((hit) => {
 }
 
 run_global_search_reindex_for_live_markers() {
-  request POST /api/admin/search/reindex 200 '{"all":true,"pruneStale":false}' status completed
+  run_search_reindex_job
+}
+
+# POST /api/admin/search/reindex queues a job (202); follow it until it completes.
+run_search_reindex_job() {
+  local job_file job_id status attempt
+  job_file=$(mktemp "${TMPDIR:-/tmp}/helix-reindex.XXXXXX")
+  request_capture POST /api/admin/search/reindex 202 '{"all":true,"pruneStale":false}' \
+    "search reindex" "$job_file"
+  job_id=$(json_field id <"$job_file") || die "search reindex did not return a job id"
+  for attempt in $(seq 1 300); do
+    request_capture GET "/api/admin/search/reindex/jobs/$job_id" 200 "" \
+      "search reindex status" "$job_file"
+    status=$(json_field status <"$job_file") || die "search reindex job $job_id has no status"
+    case "$status" in
+      completed)
+        rm -f "$job_file"
+        log "ok: search reindex job $job_id completed"
+        return 0
+        ;;
+      cancelled | dead_lettered)
+        cat "$job_file" >&2
+        rm -f "$job_file"
+        die "search reindex job $job_id ended $status"
+        ;;
+    esac
+    sleep 2
+  done
+  rm -f "$job_file"
+  die "search reindex job $job_id did not complete within 600s"
 }
 
 request_capture() {
@@ -1271,7 +1300,7 @@ process.stdout.write(JSON.stringify({
 
   if bool_true "$WORKSPACE_SEARCH_SMOKE"; then
     if bool_true "$WORKSPACE_SEARCH_REINDEX"; then
-      request POST /api/admin/search/reindex 200 '{"all":true,"pruneStale":false}' status completed
+      run_search_reindex_job
     else
       log "skipping admin search reindex; relying on event-driven indexing"
     fi
@@ -4094,7 +4123,7 @@ else
 fi
 
 if bool_true "$SEARCH_REINDEX"; then
-  request POST /api/admin/search/reindex 200 '{"all":true,"pruneStale":false}' status completed
+  run_search_reindex_job
 else
   log "skipping search reindex; pass --search-reindex when Meilisearch is configured"
 fi

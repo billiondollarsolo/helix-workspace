@@ -383,7 +383,7 @@ describe("CalendarShell", () => {
     const join = popover?.querySelector<HTMLAnchorElement>(
       "a[href='https://helix.test/meet?code=abc']",
     );
-    expect(join?.textContent).toContain("Join");
+    expect(join?.textContent).toBe("Join with Helix Meet");
     for (const name of ["Edit event", "Delete event", "Email guests", "Close"]) {
       expect(button(name)).toBeDefined();
     }
@@ -397,6 +397,31 @@ describe("CalendarShell", () => {
       eventId: "11111111-1111-4111-8111-111111111111",
       responseStatus: "accepted",
     });
+  });
+
+  it("shows an imported invitation's meeting as a plain link that leaves the app", async () => {
+    mockBackend([
+      apiEvent({
+        metadata: {
+          source: "mail.invitation",
+          conference: { provider: "external", joinUrl: "https://zoom.example/j/42" },
+        },
+      }),
+    ]);
+    const onOpenLink = vi.fn();
+    render({}, { onOpenLink });
+    await flush();
+
+    act(() => chip("Planning")?.click());
+    const popover = document.querySelector("[data-calendar-popover]");
+    expect(popover?.textContent).not.toContain("Join with Helix Meet");
+    const link = popover?.querySelector<HTMLAnchorElement>("a[href='https://zoom.example/j/42']");
+    expect(link?.textContent).toBe("https://zoom.example/j/42");
+    expect(link?.target).toBe("_blank");
+    expect(link?.rel).toBe("noopener noreferrer");
+    link?.addEventListener("click", (event) => event.preventDefault());
+    act(() => link?.click());
+    expect(onOpenLink).not.toHaveBeenCalled();
   });
 
   it("deletes with Undo and only commits when the snackbar closes", async () => {

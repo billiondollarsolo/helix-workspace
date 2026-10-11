@@ -2,11 +2,7 @@ import type { Actor } from "@helix/sdk-types";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { SearchReindexJob, SearchReindexJobService } from "./durable.js";
-import {
-  searchReindexTypes,
-  type SearchReindexRequest,
-  type SearchReindexRunner,
-} from "./reindex.js";
+import { searchReindexTypes } from "./reindex.js";
 
 const adminConfigWriteScope = "admin.config.write";
 
@@ -24,8 +20,7 @@ const shadowReindexSchema = z.object({
 });
 
 export interface RegisterSearchAdminRoutesOptions {
-  readonly service: SearchReindexRunner;
-  readonly jobs?: SearchReindexJobService | undefined;
+  readonly jobs: SearchReindexJobService;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
 }
 
@@ -33,6 +28,12 @@ export async function registerSearchAdminRoutes(
   app: FastifyInstance,
   options: RegisterSearchAdminRoutesOptions,
 ): Promise<void> {
+  const jobs = options.jobs;
+  /**
+   * Queues a reindex of the actor's organization into the live index and
+   * answers 202 with the job; poll `GET /api/admin/search/reindex/jobs/:id`.
+   * While one runs, a new request returns that job.
+   */
   app.post("/api/admin/search/reindex", async (request, reply) => {
     const actor = await options.actorFromRequest(request);
     if (!canReindexSearch(actor)) {
@@ -52,64 +53,63 @@ export async function registerSearchAdminRoutes(
       return reply.code(403).send(crossOrgDenied);
     }
 
-    const input: SearchReindexRequest = {
-      orgId: actor.orgId,
+    const job = await jobs.createInPlace(actor, {
       ...(parsed.data.types === undefined ? {} : { types: parsed.data.types }),
       ...(parsed.data.batchSize === undefined ? {} : { batchSize: parsed.data.batchSize }),
       ...(parsed.data.pruneStale === undefined ? {} : { pruneStale: parsed.data.pruneStale }),
-    };
-    return options.service.reindex(input);
+    });
+    return reply.code(202).send(serializeSearchReindexJob(job));
   });
 
-  if (options.jobs !== undefined) {
-    const jobs = options.jobs;
-    app.post("/api/admin/search/reindex/jobs", async (request, reply) => {
+  app.post("/api/admin/search/reindex/jobs", async (request, reply) => {
+    const actor = await options.actorFromRequest(request);
+    if (!canReindexSearch(actor)) return reply.code(403).send(permissionDenied);
+    const parsed = shadowReindexSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ error: "Invalid search reindex request.", issues: parsed.error.issues });
+    }
+    return serializeSearchReindexJob(
+      await jobs.create(actor, {
+        ...(parsed.data.batchSize === undefined ? {} : { batchSize: parsed.data.batchSize }),
+      }),
+    );
+  });
+
+  app.get<{ Params: { id: string } }>(
+    "/api/admin/search/reindex/jobs/:id",
+    async (request, reply) => {
       const actor = await options.actorFromRequest(request);
       if (!canReindexSearch(actor)) return reply.code(403).send(permissionDenied);
-      const parsed = shadowReindexSchema.safeParse(request.body ?? {});
-      if (!parsed.success) {
-        return reply
-          .code(400)
-          .send({ error: "Invalid search reindex request.", issues: parsed.error.issues });
-      }
-      return serializeSearchReindexJob(
-        await jobs.create(actor, {
-          ...(parsed.data.batchSize === undefined ? {} : { batchSize: parsed.data.batchSize }),
-        }),
-      );
-    });
+      const job = await jobs.get(request.params.id, actor.orgId);
+      return job === undefined
+        ? reply.code(404).send({ error: "Search reindex job not found." })
+        : serializeSearchReindexJob(job);
+    },
+  );
 
-    app.get<{ Params: { id: string } }>(
-      "/api/admin/search/reindex/jobs/:id",
-      async (request, reply) => {
-        const actor = await options.actorFromRequest(request);
-        if (!canReindexSearch(actor)) return reply.code(403).send(permissionDenied);
-        const job = await jobs.get(request.params.id, actor.orgId);
-        return job === undefined
-          ? reply.code(404).send({ error: "Search reindex job not found." })
-          : serializeSearchReindexJob(job);
-      },
-    );
-
-    app.post<{ Params: { id: string } }>(
-      "/api/admin/search/reindex/jobs/:id/cancel",
-      async (request, reply) => {
-        const actor = await options.actorFromRequest(request);
-        if (!canReindexSearch(actor)) return reply.code(403).send(permissionDenied);
-        return (await jobs.cancel(request.params.id, actor.orgId))
-          ? { status: "cancelled" }
-          : reply.code(409).send({ error: "Search reindex job is not cancellable." });
-      },
-    );
-  }
+  app.post<{ Params: { id: string } }>(
+    "/api/admin/search/reindex/jobs/:id/cancel",
+    async (request, reply) => {
+      const actor = await options.actorFromRequest(request);
+      if (!canReindexSearch(actor)) return reply.code(403).send(permissionDenied);
+      return (await jobs.cancel(request.params.id, actor.orgId))
+        ? { status: "cancelled" }
+        : reply.code(409).send({ error: "Search reindex job is not cancellable." });
+    },
+  );
 }
 
+/** A job for API clients: bigint counters as strings, and no lease token. */
 export function serializeSearchReindexJob(job: SearchReindexJob): Record<string, unknown> {
+  const { leaseToken: _leaseToken, ...visible } = job;
   return {
-    ...job,
+    ...visible,
     startMutationId: job.startMutationId.toString(),
     replayMutationId: job.replayMutationId.toString(),
     totalDocuments: job.totalDocuments.toString(),
+    deletedDocuments: job.deletedDocuments.toString(),
   };
 }
 

@@ -19,6 +19,7 @@ import {
   PostgresSearchDurabilityStore,
   PostgresSearchReindexJobService,
   SearchEventIndexer,
+  SearchInPlaceReindexWorker,
   SearchMutationWorker,
   SearchReconciliationWorker,
   SearchReindexService,
@@ -157,6 +158,17 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
           },
         });
 
+  const searchInPlaceReindexWorker =
+    searchDurabilityStore === undefined || searchReindexService === undefined
+      ? undefined
+      : new SearchInPlaceReindexWorker({
+          store: searchDurabilityStore,
+          service: searchReindexService,
+          onError: (error) => {
+            app.log.error({ error }, "Search reindex job failed");
+          },
+        });
+
   const searchReconciliationWorker =
     searchReindexService === undefined
       ? undefined
@@ -264,6 +276,7 @@ export async function installSearch(context: Awaited<ReturnType<typeof installSt
     searchReindexService,
     searchMutationWorker,
     searchShadowReindexWorker,
+    searchInPlaceReindexWorker,
     searchReconciliationWorker,
     enrichmentWorker,
   };

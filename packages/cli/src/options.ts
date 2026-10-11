@@ -1,6 +1,7 @@
 import type { HelixCliEnv } from "./client.js";
 import { EXIT_CODES, exitCodeForError, HttpError, NetworkError, toNetworkError } from "./http.js";
-import { CliUsageError } from "./parser.js";
+import { CliUsageError } from "./cli-error.js";
+import { signedInSessionHint } from "./session-hints.js";
 
 const DEFAULT_TIMEOUT_SECONDS = 120;
 
@@ -95,8 +96,10 @@ export function reportError(
 ): number {
   const exitCode = exitCodeForError(error);
   const failure = exitCode === EXIT_CODES.network ? toNetworkError(error) : error;
+  const hint = signedInSessionHint(failure);
   if (output === "json") {
-    stderr.write(`${JSON.stringify({ error: errorObject(failure) })}\n`);
+    const details = { ...errorObject(failure), ...(hint === undefined ? {} : { hint }) };
+    stderr.write(`${JSON.stringify({ error: details })}\n`);
     return exitCode;
   }
   if (failure instanceof HttpError) {
@@ -105,6 +108,7 @@ export function reportError(
   } else {
     stderr.write(`${failure instanceof Error ? failure.message : "Unknown CLI error"}\n`);
   }
+  if (hint !== undefined) stderr.write(`${hint}\n`);
   if (failure instanceof CliUsageError) stderr.write(`${usageText}\n`);
   return exitCode;
 }

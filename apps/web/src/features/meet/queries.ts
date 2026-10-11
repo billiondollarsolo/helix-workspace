@@ -1,6 +1,6 @@
 import { calendarEventsQueryOptions } from "@/features/calendar/queries";
 import { queryOptions } from "@tanstack/react-query";
-import { listMeetMeetings, type MeetRoomStatus } from "./api";
+import { fetchMeetStatus, listMeetMeetings, type MeetRoomStatus } from "./api";
 
 type MeetRoomsStatusFilter = MeetRoomStatus;
 
@@ -20,7 +20,18 @@ export const meetQueryKeys = {
     ["meet", "rooms", input.status ?? "all", input.limit ?? 50] as const,
   meetings: (input: MeetRoomsQueryInput = defaultMeetRoomsInput) =>
     ["meet", "meetings", input.status ?? "all", input.limit ?? 50] as const,
+  status: ["meet", "status"] as const,
 };
+
+/** `meet.status`: whether a meeting server is configured. Changes only on a server restart. */
+export function meetStatusQueryOptions() {
+  return queryOptions({
+    queryKey: meetQueryKeys.status,
+    queryFn: () => fetchMeetStatus(),
+    staleTime: 5 * 60_000,
+    throwOnError: false,
+  });
+}
 
 /**
  * Hub meetings — the `meet.meetings.list` tool, projected for the hub's

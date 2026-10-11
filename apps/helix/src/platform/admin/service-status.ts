@@ -354,7 +354,7 @@ export class PostgresAdminServiceStatusStore implements AdminServiceRuntimeStatu
       ],
       checks: [
         envCheck("jitsiDomain", "Jitsi domain", this.#env, ["MEET_JITSI_DOMAIN"], false),
-        envCheck("jitsiJwt", "Jitsi JWT secret", this.#env, ["MEET_JITSI_JWT_SECRET"], false),
+        envCheck("jitsiJwt", "Jitsi JWT secret", this.#env, ["MEET_JITSI_JWT_SECRET"], true),
       ],
       lastActivityAt: timestampValue(lastActivityRows[0]),
     });

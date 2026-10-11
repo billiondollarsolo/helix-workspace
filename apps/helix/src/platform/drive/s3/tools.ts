@@ -1,4 +1,4 @@
-import type { JsonObject, ToolDefinition } from "@helix/sdk-types";
+import type { Actor, JsonObject, ToolDefinition } from "@helix/sdk-types";
 import { z } from "zod";
 import { ForbiddenError } from "../../../api/api-error.js";
 import { actorHasScope } from "../../../api/scopes.js";
@@ -9,6 +9,7 @@ import { zodToolSchema } from "../../webhooks/tool-schemas.js";
 import {
   DRIVE_S3_KEY_SCOPES,
   type DriveS3AccessKeyRecord,
+  type DriveS3KeyScope,
   type DriveS3AccessKeyStore,
 } from "./access-keys.js";
 import { DRIVE_S3_BUCKETS } from "./buckets.js";
@@ -21,11 +22,8 @@ const genericObjectJsonSchema = { type: "object", additionalProperties: true } a
 const scopeSchema = z.enum(DRIVE_S3_KEY_SCOPES);
 const createSchema = z.object({
   label: z.string().trim().min(1).max(120),
-  scopes: z
-    .array(scopeSchema)
-    .min(1)
-    .max(3)
-    .default([...DRIVE_S3_KEY_SCOPES]),
+  /** Defaults to every Drive scope the person holds (see `grantableScopes`). */
+  scopes: z.array(scopeSchema).min(1).max(3).optional(),
   expiresAt: z.string().datetime().nullable().optional(),
 });
 const listSchema = z.object({
@@ -49,6 +47,11 @@ function serializeDriveS3AccessKey(key: DriveS3AccessKeyRecord): JsonObject {
   };
 }
 
+/** The S3 key scopes this person holds, in catalog order; a new key can carry only these. */
+function grantableDriveS3Scopes(actor: Actor): DriveS3KeyScope[] {
+  return DRIVE_S3_KEY_SCOPES.filter((scope) => actorHasScope(actor, scope));
+}
+
 function createDriveS3KeyTools(store: DriveS3AccessKeyStore): readonly ToolDefinition[] {
   return [
     defineTool<z.output<typeof createSchema>, unknown>({
@@ -66,15 +69,21 @@ function createDriveS3KeyTools(store: DriveS3AccessKeyStore): readonly ToolDefin
         if (ctx.actor.type !== "user") {
           throw new ForbiddenError("Only people can create S3 access keys for their own Drive.");
         }
-        const missing = input.scopes.filter((scope) => !actorHasScope(ctx.actor, scope));
-        if (missing.length > 0) {
-          throw new ForbiddenError(`You do not hold these scopes: ${missing.join(", ")}.`);
+        const grantable = grantableDriveS3Scopes(ctx.actor);
+        const scopes = input.scopes ?? grantable;
+        const missing = scopes.filter((scope) => !grantable.includes(scope));
+        if (missing.length > 0 || scopes.length === 0) {
+          throw new ForbiddenError(
+            missing.length > 0
+              ? `You do not hold these scopes: ${missing.join(", ")}. Choose from: ${grantable.join(", ") || "none"}.`
+              : "You hold no Drive scopes an S3 access key can carry.",
+          );
         }
         const created = await store.create({
           orgId: ctx.actor.orgId,
           actorId: ctx.actor.id,
           label: input.label,
-          scopes: input.scopes,
+          scopes,
           expiresAt:
             input.expiresAt === undefined || input.expiresAt === null
               ? null
@@ -100,7 +109,7 @@ function createDriveS3KeyTools(store: DriveS3AccessKeyStore): readonly ToolDefin
     defineTool<z.output<typeof listSchema>, unknown>({
       id: "drive.s3-keys.list",
       description:
-        "List your Drive S3 access keys without secrets; admins can list every key in the organization.",
+        "List your Drive S3 access keys without secrets; admins can list every key in the organization. grantableScopes lists the Drive scopes you hold and can give a new key.",
       permission: "drive.read",
       sideEffects: "read",
       inputSchema: zodToolSchema(listSchema, genericObjectJsonSchema),
@@ -124,6 +133,7 @@ function createDriveS3KeyTools(store: DriveS3AccessKeyStore): readonly ToolDefin
         return {
           accessKeys: keys.map(serializeDriveS3AccessKey),
           endpointPath: DRIVE_S3_ENDPOINT_PATH,
+          grantableScopes: grantableDriveS3Scopes(ctx.actor),
         };
       },
     }),

@@ -30,16 +30,22 @@ const job: SearchReindexJob = {
   id: "job-one",
   orgId: actor.orgId,
   requestedByActorId: actor.id,
+  mode: "shadow",
   types: ["drive"],
   batchSize: 100,
   shadowIndexUid: "shadow",
+  pruneStale: false,
   status: "queued",
   phase: "backfill",
   sourceIndex: 0,
   startMutationId: 1n,
   replayMutationId: 1n,
   totalDocuments: 0n,
+  deletedDocuments: 0n,
+  counts: {},
   attemptCount: 0,
+  createdAt: new Date("2026-09-10T12:00:00.000Z"),
+  updatedAt: new Date("2026-09-10T12:00:00.000Z"),
 };
 const apps: ReturnType<typeof fastify>[] = [];
 afterEach(async () => {

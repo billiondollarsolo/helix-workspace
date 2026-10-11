@@ -406,51 +406,6 @@ describe("runCli backup and restore operator commands", () => {
     expect(stdout.output).toBe('{\n  "restoreId": "restore-1"\n}\n');
     expect(stderr.output).toBe("");
   });
-
-  it("posts full search reindex requests to the admin API", async () => {
-    const stdout = new CaptureStream();
-    const stderr = new CaptureStream();
-    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
-    const fetchImpl: FetchLike = async (url, init) => {
-      requests.push({ url, init });
-      return new Response(JSON.stringify({ status: "completed", totalDocuments: 10 }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    };
-
-    await expect(
-      runCli(
-        ["reindex", "--all"],
-        { HELIX_BASE_URL: "https://helix.example", HELIX_ACCESS_TOKEN: "token-1" },
-        {
-          stdin: Readable.from([]),
-          stdout,
-          stderr,
-        },
-        fetchImpl,
-      ),
-    ).resolves.toBe(0);
-
-    expect(requests).toEqual([
-      {
-        url: "https://helix.example/v1/api/admin/search/reindex",
-        init: {
-          redirect: "error",
-          signal: expect.any(AbortSignal),
-          method: "POST",
-          headers: {
-            accept: "application/json",
-            authorization: "Bearer token-1",
-            "content-type": "application/json",
-          },
-          body: '{"all":true}',
-        },
-      },
-    ]);
-    expect(stdout.output).toBe('{\n  "status": "completed",\n  "totalDocuments": 10\n}\n');
-    expect(stderr.output).toBe("");
-  });
 });
 
 describe("runCli action status commands", () => {

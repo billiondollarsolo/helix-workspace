@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CliUsageError, parseCliArgs } from "./parser.js";
+import { CliUsageError } from "./cli-error.js";
+import { parseCliArgs } from "./parser.js";
 import { scopedUsage } from "./usage.js";
 
 describe("workspace command wrappers", () => {

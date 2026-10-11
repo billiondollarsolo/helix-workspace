@@ -3,6 +3,7 @@ import { requireActorScope } from "../api/scopes.js";
 import { dlpDecisionError } from "../platform/dlp.js";
 import { HELIX_API_VERSION_PREFIX } from "../api/version.js";
 import {
+  createDriveS3FolderTransaction,
   DriveS3MultipartCleanupWorker,
   PostgresDriveS3MultipartStore,
   registerDriveRoutes,
@@ -12,10 +13,6 @@ import {
   sendStreamWithRangeSupport,
 } from "../platform/drive/index.js";
 import { loadEffectiveTenantConfig } from "../platform/tenancy/effective-config.js";
-import {
-  detachedFromTenantPostgresContext,
-  withTenantPostgresContext,
-} from "../platform/tenancy/index.js";
 import type { installTools } from "./tools.js";
 
 export async function installDriveRoutes(context: Awaited<ReturnType<typeof installTools>>) {
@@ -79,16 +76,7 @@ export async function installDriveRoutes(context: Awaited<ReturnType<typeof inst
         return config?.features.drive_s3_api !== false;
       },
       resolveOrgSlug: async (orgId) => (await orgStore.findById(orgId))?.slug,
-      // Folder writes commit on their own; one actor's concurrent requests (aws s3
-      // sync, rclone) take turns so they reuse a new prefix folder, not race to
-      // create duplicates.
-      inOwnTenantTransaction: (input, work) =>
-        detachedFromTenantPostgresContext(() =>
-          withTenantPostgresContext(sql, input, async (tx) => {
-            await tx`select pg_advisory_xact_lock(hashtextextended(${`drive-s3-folders:${input.orgId}:${input.actorId}`}, 0))`;
-            return work();
-          }),
-        ),
+      inOwnTenantTransaction: createDriveS3FolderTransaction(sql),
     });
     await registerDriveShareLinkRoute(app, {
       store: driveStore,

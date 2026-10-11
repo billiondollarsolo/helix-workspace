@@ -1,4 +1,4 @@
-import { CliUsageError } from "./parser.js";
+import { CliUsageError } from "./cli-error.js";
 
 /** Documented process exit codes (see `helix --help`). */
 export const EXIT_CODES = {

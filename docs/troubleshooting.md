@@ -221,8 +221,9 @@ Restore cannot be performed with configuration-admin authority. Follow
 [`runbooks/backup-restore-jobs.md`](runbooks/backup-restore-jobs.md) with a stepped-up
 `admin.backups.restore` operator and two separate approvers.
 With `--search-reindex`, the same smoke run also posts to
-`/api/admin/search/reindex` and expects `status: "completed"`. If that route is
-missing, restart the API with Meilisearch configured.
+`/api/admin/search/reindex`, which queues a reindex job (HTTP 202), and polls
+`/api/admin/search/reindex/jobs/<id>` until it reports `status: "completed"`. If
+that route is missing, restart the API with Meilisearch configured.
 With `--seeded-demo-tools`, the smoke run also reads the deterministic local
 demo corpus through `/api/tools/...` and `/mcp` resources, including seeded
 Mail, Chat, Docs, Drive, Calendar, and global search records. Search failures

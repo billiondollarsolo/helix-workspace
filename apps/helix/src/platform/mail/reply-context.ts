@@ -1,4 +1,5 @@
 import type { MailAddress, MailThreadDetail, MailThreadMessage } from "./types.js";
+import { escapeHtml } from "../util/strings.js";
 
 /**
  * Pure reply / reply-all / forward composition over a visible thread.
@@ -101,15 +102,6 @@ export function forwardSubject(subject: string): string {
 
 function displayMailbox(mailbox: Mailbox): string {
   return mailbox.name === undefined ? mailbox.address : `${mailbox.name} <${mailbox.address}>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 function plainBodyOf(message: MailThreadMessage): string {

@@ -61,9 +61,11 @@ describe("DriveWorkflows", () => {
     });
 
     expect(container.querySelector('section[aria-label="Drive workflows"]')).not.toBeNull();
-    expect(container.querySelector('ul[aria-live="polite"]')?.textContent).toContain(
-      "approval · open",
-    );
+    await vi.waitFor(() => {
+      expect(container.querySelector('ul[aria-live="polite"]')?.textContent).toContain(
+        "approval · open",
+      );
+    });
     expect(container.textContent).toContain("approved");
     expect(container.textContent).toContain("rejected");
 

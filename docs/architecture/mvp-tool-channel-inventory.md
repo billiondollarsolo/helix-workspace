@@ -98,6 +98,7 @@ Channels that project the same registry (REST / MCP / tRPC / assistant / CLI) mu
 | `drive.search`          | `drive.read`   | read        | unset                       | allow-read                                              |
 | `drive.share`           | `drive.write`  | write       | true                        | **queue-confirmation**                                  |
 | `drive.star.set`        | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
+| `drive.storage.usage`   | `drive.read`   | read        | unset                       | allow-read                                              |
 | `drive.trash`           | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
 | `drive.upload`          | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |
 | `drive.upload.complete` | `drive.write`  | write       | unset                       | **queue-confirmation**                                  |

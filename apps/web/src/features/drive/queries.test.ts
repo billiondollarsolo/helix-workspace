@@ -7,8 +7,9 @@ import {
   deriveDriveSuggestions,
   driveActorQueryOptions,
   driveItemsInputFromRouteSearch,
-  driveQuotaQueryOptions,
+  driveStorageUsageQueryOptions,
   entryFromSearchHit,
+  trashedEntries,
 } from "./queries";
 
 function makeEntry(
@@ -336,10 +337,35 @@ describe("driveItemsInputFromRouteSearch", () => {
   });
 });
 
-describe("Drive quota meter query", () => {
-  it("never escalates a permission error into the Drive view's error boundary", () => {
-    const options = driveQuotaQueryOptions();
+describe("Drive storage meter query", () => {
+  it("never escalates an error into the Drive view's error boundary", () => {
+    const options = driveStorageUsageQueryOptions();
     expect(options.throwOnError).toBe(false);
     expect(options.retry).toBe(false);
+  });
+});
+
+describe("trashedEntries", () => {
+  it("lists trashed files from every folder once, folding contents into trashed folders", () => {
+    const at = "2026-05-20T09:00:00.000Z";
+    const trashedFolder = makeEntry({ id: "f", type: "folder", updatedAt: at, deletedAt: at });
+    const insideTrashed = makeEntry({
+      id: "a",
+      type: "file",
+      updatedAt: at,
+      deletedAt: at,
+      folderId: "f",
+    });
+    const nested = makeEntry({
+      id: "b",
+      type: "file",
+      updatedAt: at,
+      deletedAt: at,
+      folderId: "x",
+    });
+    const live = makeEntry({ id: "c", type: "file", updatedAt: at });
+    expect(
+      trashedEntries([trashedFolder, insideTrashed, nested, live, nested]).map((e) => e.id),
+    ).toEqual(["f", "b"]);
   });
 });

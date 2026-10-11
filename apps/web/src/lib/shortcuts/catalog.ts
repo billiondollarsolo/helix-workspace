@@ -104,11 +104,25 @@ export const SHORTCUT_CATALOG = {
   "calendar.edit": { scope: "calendar", keys: ["e"], description: "Edit the open event" },
 
   "drive.new-folder": { scope: "drive", keys: ["n"], description: "New folder" },
-  "drive.upload": { scope: "drive", keys: ["shift+u"], description: "Upload a file" },
+  "drive.upload": { scope: "drive", keys: ["shift+u"], description: "Upload files" },
+  "drive.upload-folder": { scope: "drive", keys: ["shift+i"], description: "Upload a folder" },
+  "drive.open": {
+    scope: "drive",
+    keys: ["enter"],
+    description: "Open the selected folder or download the selected file",
+  },
+  "drive.context-menu": {
+    scope: "drive",
+    keys: ["shift+f10"],
+    description: "Show actions for the selected items",
+  },
+  "drive.details": { scope: "drive", keys: ["a"], description: "Show or hide details" },
+  "drive.star": { scope: "drive", keys: ["s"], description: "Star or unstar the selection" },
+  "drive.rename": { scope: "drive", keys: ["f2"], description: "Rename the selected item" },
   "drive.trash": {
     scope: "drive",
     keys: ["delete", "backspace"],
-    description: "Move the selected file to trash",
+    description: "Move the selection to trash",
   },
 
   "chat.close-thread": {

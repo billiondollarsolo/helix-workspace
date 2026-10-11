@@ -67,6 +67,7 @@ export interface DriveListRow {
   readonly version_number: number | null;
   readonly metadata: JsonObject;
   readonly deleted_at: Date | null;
+  readonly trash_purge_after: Date | null;
   readonly created_at: Date;
   readonly updated_at: Date;
   readonly mine: boolean | null;

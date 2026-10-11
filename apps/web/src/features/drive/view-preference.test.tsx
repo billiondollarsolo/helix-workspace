@@ -4,11 +4,7 @@ import { act } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  DocumentSurfaceViewToggle,
-  useDocumentSurfaceViewPreference,
-  type DocumentSurfaceView,
-} from "./view-preference";
+import { useDocumentSurfaceViewPreference, type DocumentSurfaceView } from "./view-preference";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -72,7 +68,7 @@ describe("document surface view preference", () => {
     expect(container.querySelector("[data-view]")?.textContent).toBe("list");
 
     const cardButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.getAttribute("aria-label") === "Card view",
+      (button) => button.textContent === "Grid layout",
     );
     expect(cardButton).not.toBeNull();
     act(() => {
@@ -112,7 +108,9 @@ function Harness() {
   return (
     <div>
       <span data-view>{view}</span>
-      <DocumentSurfaceViewToggle view={view} onViewChange={setView} />
+      <button type="button" onClick={() => setView("grid")}>
+        Grid layout
+      </button>
     </div>
   );
 }

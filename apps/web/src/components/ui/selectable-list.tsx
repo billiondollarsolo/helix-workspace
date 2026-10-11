@@ -16,7 +16,10 @@
      Ctrl/Cmd+A                   select all (onSelectAll, else every row)
      Escape                       clear the selection
    Mouse: Shift-click a checkbox or row selects the range from the last
-   toggled row; Ctrl/Cmd-click toggles; a plain click opens. */
+   toggled row; Ctrl/Cmd-click toggles; a plain click opens. With
+   `selectOnClick` (file lists), a plain click selects only that row and a
+   double-click opens it. Each row carries `data-key` for row-level targets
+   such as context menus and drop zones. */
 
 import {
   useCallback,
@@ -47,8 +50,10 @@ export interface SelectableListProps<T> {
   onSelectedKeysChange: (next: Set<string>) => void;
   /** Row content; rendered inside the row's content cell. */
   renderItem: (item: T, state: SelectableRowState) => ReactNode;
-  /** Plain click, Enter, or o on a row. */
+  /** Plain click (double-click with `selectOnClick`), Enter, or o on a row. */
   onOpen?: (item: T) => void;
+  /** A plain click selects just that row instead of opening it. */
+  selectOnClick?: boolean;
   /** Ctrl/Cmd+A. Defaults to selecting every loaded row; pass this to offer
    *  "select all N matching" for server-side lists instead. */
   onSelectAll?: () => void;
@@ -92,6 +97,7 @@ export function SelectableList<T>({
   onSelectedKeysChange,
   renderItem,
   onOpen,
+  selectOnClick = false,
   onSelectAll,
   activeKey: controlledActive,
   onActiveKeyChange,
@@ -188,9 +194,15 @@ export function SelectableList<T>({
     }
   };
 
-  const onRowClick = (event: ReactMouseEvent<HTMLDivElement>, item: T, key: string) => {
+  const isInnerControl = (event: ReactMouseEvent<HTMLDivElement>) => {
     const control = event.target instanceof Element ? event.target.closest(INNER_CONTROLS) : null;
-    if (control && control !== event.currentTarget && event.currentTarget.contains(control)) return;
+    return (
+      control !== null && control !== event.currentTarget && event.currentTarget.contains(control)
+    );
+  };
+
+  const onRowClick = (event: ReactMouseEvent<HTMLDivElement>, item: T, key: string) => {
+    if (isInnerControl(event)) return;
     activate(key, false);
     if (event.shiftKey) {
       event.preventDefault();
@@ -200,6 +212,11 @@ export function SelectableList<T>({
     }
     if (event.ctrlKey || event.metaKey) {
       toggle(key);
+      return;
+    }
+    if (selectOnClick) {
+      anchorRef.current = key;
+      onSelectedKeysChange(new Set([key]));
       return;
     }
     onOpen?.(item);
@@ -232,10 +249,18 @@ export function SelectableList<T>({
             aria-rowindex={index + 1}
             aria-selected={state.selected}
             tabIndex={state.tabIndex}
+            data-key={key}
             data-active={state.active || undefined}
             data-selected={state.selected || undefined}
             onKeyDown={(event) => onRowKeyDown(event, item, key)}
             onClick={(event) => onRowClick(event, item, key)}
+            onDoubleClick={
+              selectOnClick
+                ? (event) => {
+                    if (!isInnerControl(event)) onOpen?.(item);
+                  }
+                : undefined
+            }
             onFocus={(event) => {
               if (event.target === event.currentTarget && !state.active) activate(key, false);
             }}

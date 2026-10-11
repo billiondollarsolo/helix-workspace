@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { useState } from "react";
+import { act, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { axeViolations, byRole, click, key, mount, unmountAll } from "@/test/ui";
 import {
@@ -24,10 +24,12 @@ function Example({
   onOpen = vi.fn(),
   onSelectAll,
   onStar = vi.fn(),
+  selectOnClick = false,
 }: {
   onOpen?: (thread: Thread) => void;
   onSelectAll?: () => void;
   onStar?: (thread: Thread) => void;
+  selectOnClick?: boolean;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   return (
@@ -46,6 +48,7 @@ function Example({
         selectedKeys={selected}
         onSelectedKeysChange={setSelected}
         onOpen={onOpen}
+        selectOnClick={selectOnClick}
         onSelectAll={onSelectAll}
         renderItem={(thread: Thread, state: SelectableRowState) => (
           <>
@@ -169,6 +172,22 @@ describe("SelectableList", () => {
     await key("a", { metaKey: true });
     expect(onSelectAll).toHaveBeenCalledTimes(1);
     expect(selectedText()).toBe("");
+  });
+
+  it("with selectOnClick, a click selects one row and a double-click opens it", () => {
+    const onOpen = vi.fn();
+    mount(<Example onOpen={onOpen} selectOnClick />);
+    click(rows()[1] ?? null);
+    click(rows()[2] ?? null);
+    expect(selectedText()).toBe("c");
+    expect(onOpen).not.toHaveBeenCalled();
+    click(rows()[4] ?? null, { shiftKey: true });
+    expect(selectedText()).toBe("c,d,e");
+    act(() => {
+      rows()[3]?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(onOpen).toHaveBeenCalledWith(THREADS[3]);
+    expect(rows()[3]?.getAttribute("data-key")).toBe("d");
   });
 
   it("drives a tri-state select-all checkbox", () => {

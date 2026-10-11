@@ -13,6 +13,7 @@ import {
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { zodToolSchema } from "../webhooks/tool-schemas.js";
 import { resolveInternalShareTargets } from "./share-targets.js";
+import { createDriveStorageUsageTool } from "./storage-usage-tool.js";
 import type { DriveStore } from "./store.js";
 import {
   driveAccessListOutputSchema,
@@ -1164,6 +1165,7 @@ export function createDriveToolDefinitions(
         return options.store.getStorageQuotaUsage({ orgId: ctx.actor.orgId });
       },
     }),
+    createDriveStorageUsageTool(options.store),
     defineTool<
       z.output<typeof emptyAdminSchema>,
       z.output<typeof driveLifecyclePolicyOutputSchema>
@@ -1277,10 +1279,13 @@ function serializeUploadStatus(status: DriveUploadStatusRecord) {
     updatedAt: status.updatedAt.toISOString(),
   };
 }
-function serializeEntry(entry: DriveEntryRecord) {
+function serializeEntry({ trashPurgeAfter, ...entry }: DriveEntryRecord) {
   return {
     ...entry,
     deletedAt: entry.deletedAt?.toISOString() ?? null,
+    ...(trashPurgeAfter === undefined
+      ? {}
+      : { trashPurgeAfter: trashPurgeAfter?.toISOString() ?? null }),
     createdAt: entry.createdAt.toISOString(),
     updatedAt: entry.updatedAt.toISOString(),
   };

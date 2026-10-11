@@ -124,6 +124,40 @@ const TOOL_FIXTURES = new Map([
   ["notifications.unread-count", { count: 0 }],
   ["notifications.list", { notifications: [] }],
   ["webhook.overview", { outbound: [], inbound: [], deliveries: [] }],
+  [
+    "drive.list",
+    {
+      entries: [
+        {
+          id: "00000000-0000-4000-8000-0000000000d1",
+          type: "folder",
+          name: "Audit folder",
+          folderId: null,
+          ownerActorId: AUDIT_ACTOR.id,
+          metadata: {},
+          deletedAt: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "00000000-0000-4000-8000-0000000000d2",
+          type: "file",
+          name: "Audit report.pdf",
+          folderId: null,
+          ownerActorId: AUDIT_ACTOR.id,
+          mimeType: "application/pdf",
+          byteSize: 2048,
+          uploadState: "active",
+          available: true,
+          metadata: {},
+          deletedAt: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      nextCursor: null,
+    },
+  ],
 ]);
 
 /**

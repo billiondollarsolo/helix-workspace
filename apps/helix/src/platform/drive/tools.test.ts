@@ -63,6 +63,7 @@ describe("drive tools", () => {
         "drive.search",
         "drive.share",
         "drive.star.set",
+        "drive.storage.usage",
         "drive.trash",
         "drive.upload",
         "drive.upload.complete",

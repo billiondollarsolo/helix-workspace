@@ -1,3 +1,4 @@
+import type { Actor } from "@helix/sdk-types";
 import fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { actorFromRequest } from "../../api/test-actor.js";
@@ -8,6 +9,7 @@ import {
   decodeAdminUsersCursor,
   encodeAdminUsersCursor,
   registerAdminUsersRoutes,
+  type AdminUserLifecycleResult,
   type AdminUserRecord,
   type AdminUsersStore,
   type ListAdminUsersInput,
@@ -52,6 +54,62 @@ describe("admin users routes", () => {
     });
     expect(self.statusCode).toBe(409);
     expect(store.resets).toHaveLength(1);
+  });
+
+  it("suspends and restores people for user administrators only", async () => {
+    const targetId = "55555555-5555-4555-8555-555555555555";
+    const store = new FakeAdminUsersStore([
+      userRecord(targetId, "2026-05-20T12:05:00.000Z"),
+    ]);
+    const app = fastify();
+    await registerAdminUsersRoutes(app, { store, actorFromRequest });
+    const as = (scopes: string) => ({
+      "x-helix-actor-id": actorId,
+      "x-helix-org-id": orgId,
+      "x-helix-scopes": scopes,
+    });
+
+    const denied = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${targetId}/suspend`,
+      headers: as("admin.security"),
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({ requiredScope: "admin.users" });
+    expect(store.lifecycle).toEqual([]);
+
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/admin/users/not-a-uuid/suspend",
+      headers: as("admin.users"),
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const suspended = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${targetId}/suspend`,
+      headers: as("admin.users"),
+    });
+    expect(suspended.statusCode).toBe(200);
+    expect(suspended.json()).toEqual({ actorId: targetId, status: "suspended", changed: true });
+
+    const restored = await app.inject({
+      method: "POST",
+      url: `/api/admin/users/${targetId}/restore`,
+      headers: as("admin.users"),
+    });
+    expect(restored.json()).toEqual({ actorId: targetId, status: "active", changed: true });
+    expect(store.lifecycle).toEqual([
+      { orgId, targetActorId: targetId, suspended: true },
+      { orgId, targetActorId: targetId, suspended: false },
+    ]);
+
+    const missing = await app.inject({
+      method: "POST",
+      url: "/api/admin/users/66666666-6666-4666-8666-666666666666/restore",
+      headers: as("admin.users"),
+    });
+    expect(missing.statusCode).toBe(404);
   });
 
   it("consumes the user-admin role binding", () => {
@@ -202,6 +260,8 @@ describe("PostgresAdminUsersStore", () => {
             display_name: "Agent One",
             scopes: ["mail.read"],
             disabled_at: disabledAt,
+            membership_status: null,
+            last_sign_in_at: null,
             created_at: createdAt,
             updated_at: updatedAt,
           },
@@ -228,17 +288,20 @@ describe("PostgresAdminUsersStore", () => {
         email: "agent@example.com",
         displayName: "Agent One",
         scopes: ["mail.read"],
+        status: "removed",
         disabledAt: disabledAt.toISOString(),
+        lastSignInAt: null,
         createdAt: createdAt.toISOString(),
         updatedAt: updatedAt.toISOString(),
       },
     ]);
-    expect(recording.calls[0]?.text).toContain("from actors");
-    expect(recording.calls[0]?.text).toContain("where org_id =");
-    expect(recording.calls[0]?.text).toContain("type =");
-    expect(recording.calls[0]?.text).toContain("disabled_at is null");
-    expect(recording.calls[0]?.text).toContain("lower(coalesce(email, ''))");
-    expect(recording.calls[0]?.text).toContain("(created_at, id) <");
+    expect(recording.calls[0]?.text).toContain("from actors actor");
+    expect(recording.calls[0]?.text).toContain("left join organization_memberships membership");
+    expect(recording.calls[0]?.text).toContain("where actor.org_id =");
+    expect(recording.calls[0]?.text).toContain("actor.type =");
+    expect(recording.calls[0]?.text).toContain("actor.disabled_at is null");
+    expect(recording.calls[0]?.text).toContain("lower(coalesce(actor.email, ''))");
+    expect(recording.calls[0]?.text).toContain("(actor.created_at, actor.id) <");
     expect(recording.calls[0]?.values).toContain(orgId);
     expect(recording.calls[0]?.values).toContain("agent");
     expect(recording.calls[0]?.values).toContain(true);
@@ -256,6 +319,11 @@ class FakeAdminUsersStore implements AdminUsersStore {
     readonly orgId: string;
     readonly targetActorId: string;
     readonly performedByActorId: string;
+  }[] = [];
+  readonly lifecycle: {
+    readonly orgId: string;
+    readonly targetActorId: string;
+    readonly suspended: boolean;
   }[] = [];
 
   constructor(
@@ -276,6 +344,18 @@ class FakeAdminUsersStore implements AdminUsersStore {
     this.resets.push(input);
     return this.resetResult;
   }
+
+  async setSuspended(
+    actor: Actor,
+    targetActorId: string,
+    suspended: boolean,
+  ): Promise<AdminUserLifecycleResult | null> {
+    this.lifecycle.push({ orgId: actor.orgId, targetActorId, suspended });
+    return this.users.some((user) => user.id === targetActorId)
+      ? { actorId: targetActorId, status: suspended ? "suspended" : "active", changed: true }
+      : null;
+  }
+
 }
 
 function userRecord(id: string, createdAt: string): AdminUserRecord {
@@ -286,7 +366,9 @@ function userRecord(id: string, createdAt: string): AdminUserRecord {
     email: "alice@example.com",
     displayName: "Alice",
     scopes: ["mail.read"],
+    status: "active",
     disabledAt: null,
+    lastSignInAt: null,
     createdAt,
     updatedAt: createdAt,
   };

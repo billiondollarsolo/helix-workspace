@@ -359,14 +359,15 @@ function readDirectory(page: AdminUsersListResponse): Reading {
       attention: "The directory has no accounts.",
     };
   }
-  const disabled = page.users.filter((user) => user.disabledAt !== null).length;
+  const suspended = page.users.filter((user) => user.status === "suspended").length;
+  const active = page.users.filter((user) => user.status === "active").length;
   /* The directory endpoint pages. A `nextCursor` means this is the first page
      of a longer list, so the count is a floor — hence the trailing "+". */
   const truncated = page.nextCursor !== null;
   return {
     figure: truncated ? `${String(total)}+` : String(total),
     caption: `${plural(total, "account", "accounts")}${truncated ? " (first page)" : ""}`,
-    detail: `${String(disabled)} suspended, ${String(total - disabled)} active.`,
+    detail: `${String(suspended)} suspended, ${String(active)} active.`,
     attention: null,
   };
 }
@@ -975,8 +976,8 @@ function PeopleDomainsDetail({
   readonly directory: AdminUsersListResponse;
 }) {
   const { verified, pending, failed } = countVerification(domains);
-  const suspended = directory.users.filter((user) => user.disabledAt !== null).length;
-  const active = directory.users.length - suspended;
+  const suspended = directory.users.filter((user) => user.status === "suspended").length;
+  const active = directory.users.filter((user) => user.status === "active").length;
   const domainNames = domains.map((it) => it.domain.domain);
 
   return (

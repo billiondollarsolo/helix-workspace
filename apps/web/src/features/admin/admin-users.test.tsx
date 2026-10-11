@@ -121,7 +121,9 @@ function adminUsersPage(input: { readonly nextCursor?: string | null }): AdminUs
     users: [
       adminUser(),
       adminUser({
+        status: "suspended",
         disabledAt: "2026-05-19T10:00:00.000Z",
+        lastSignInAt: null,
         displayName: "",
         email: "disabled@example.com",
         id: "22222222-2222-4222-8222-222222222222",
@@ -143,7 +145,9 @@ function adminUser(
     email: "mina@example.com",
     displayName: "Mina Jay",
     scopes: ["admin.users", "workspace.read"],
+    status: "active",
     disabledAt: null,
+    lastSignInAt: null,
     createdAt: "2026-05-18T12:00:00.000Z",
     updatedAt: "2026-05-20T13:30:00.000Z",
     ...overrides,

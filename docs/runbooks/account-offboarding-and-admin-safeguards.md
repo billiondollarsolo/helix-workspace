@@ -5,6 +5,31 @@ resources to another user or agent. It is not permanent deletion of the person's
 identity or historical records. Administrator MFA and second-administrator
 approval are separate operator choices under **Admin → Policies**.
 
+## Suspend and restore a person
+
+Suspension is the reversible way to stop someone using this workspace, for
+example during an investigation or a leave of absence. Their data, groups and
+access grants stay in place.
+
+1. In **Admin → Users**, open the row's **⋮** menu and select **Suspend user…**,
+   then confirm. The operator needs account-management permission (`admin.users`).
+2. The person is signed out of this workspace on every device and cannot sign in
+   again. Their app passwords, Drive S3 access keys and other API credentials stop
+   working while they are suspended. The Users list shows them as **Suspended**.
+3. To give access back, select **Restore user…** from the same menu. Credentials
+   that were not revoked work again; the person signs in again to start a session.
+
+You cannot suspend your own account, and the last active workspace account
+administrator cannot be suspended. Removed (offboarded) accounts cannot be
+suspended or restored. Each change is recorded in the audit log as
+`identity.user.suspended` or `identity.user.restored`.
+
+The API exposes `POST /v1/api/admin/users/:actorId/suspend` and
+`POST /v1/api/admin/users/:actorId/restore`, and the CLI
+`helix admin users <suspend|restore> --actor-id <id>`. The Users list also shows
+each person's last sign-in to this workspace (`lastSignInAt` in
+`GET /v1/api/admin/users`).
+
 ## Preview and hand over an account
 
 1. In **Admin → Users**, open the user or agent's details and select **Offboard

@@ -28,6 +28,11 @@ export type HelixCommand =
       readonly cursor?: string;
     }
   | {
+      readonly kind: "admin-user-lifecycle";
+      readonly action: "suspend" | "restore";
+      readonly actorId: string;
+    }
+  | {
       readonly kind: "admin-audit-list";
       readonly actorId?: string;
       readonly objectId?: string;
@@ -1626,6 +1631,19 @@ function parseAdminAgentCredentialsCommand(
 }
 
 function parseAdminUsersCommand(action: string | undefined, args: readonly string[]): HelixCommand {
+  if (action === "suspend" || action === "restore") {
+    const input: { actorId?: string } = {};
+    parseAdminGetFlags(args, adminUsersLifecycleUsage, {
+      strings: new Map([["--actor-id", "actorId"]]),
+      numbers: new Map<string, string>(),
+      booleans: new Map<string, string>(),
+      enums: new Map<string, ReadonlySet<string>>(),
+      enumFields: new Map<string, string>(),
+      input,
+    });
+    if (input.actorId === undefined) throw new CliUsageError(adminUsersLifecycleUsage);
+    return { kind: "admin-user-lifecycle", action, actorId: input.actorId };
+  }
   if (action !== "list") {
     throw new CliUsageError(adminUsersUsage);
   }
@@ -1699,9 +1717,10 @@ const adminAgentCredentialsCreateUsage =
   "Usage: helix admin agent-credentials create --actor-id <id> --credential-type <api_key|oauth_client|mtls_cert> --label <label> --purpose <purpose> --scope <scope> [--expires-at <iso>] [--json [JSON]]";
 const adminAgentCredentialsRevokeUsage =
   "Usage: helix admin agent-credentials revoke --credential-id <id> [--json [JSON]]";
-const adminUsersUsage =
+const adminUsersListUsage =
   "Usage: helix admin users list [--query <text>] [--type <user|agent|service_account|system>] [--include-disabled] [--limit <number>] [--cursor <cursor>]";
-const adminUsersListUsage = adminUsersUsage;
+const adminUsersLifecycleUsage = "Usage: helix admin users <suspend|restore> --actor-id <id>";
+const adminUsersUsage = `${adminUsersListUsage}\n${adminUsersLifecycleUsage}`;
 const adminAuditUsage =
   "Usage: helix admin audit list [--actor-id <id>] [--object-id <id>] [--object-type <type>] [--verb <verb>] [--limit <number>] [--cursor <cursor>]";
 const adminAuditListUsage = adminAuditUsage;

@@ -122,7 +122,9 @@ async function mockAdminProfiles(page: Page, failFirstSave = false): Promise<unk
         orgId: profile.orgId,
         email: user.type === "user" ? profile.email : null,
         scopes: [],
+        status: "active",
         disabledAt: null,
+        lastSignInAt: null,
         createdAt: "2026-09-01T00:00:00Z",
         updatedAt: "2026-09-01T00:00:00Z",
       }));

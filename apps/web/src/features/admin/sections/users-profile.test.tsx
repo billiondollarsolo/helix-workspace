@@ -27,7 +27,9 @@ function user(id: string, type = "user"): AdminUser {
     email: `${id}@example.com`,
     displayName: id === humanId ? "Morgan Lee" : "Taylor Quinn",
     scopes: [],
+    status: "active",
     disabledAt: null,
+    lastSignInAt: null,
     createdAt: "2026-09-01T00:00:00Z",
     updatedAt: "2026-09-01T00:00:00Z",
   };

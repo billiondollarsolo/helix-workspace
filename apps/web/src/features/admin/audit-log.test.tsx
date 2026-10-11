@@ -406,7 +406,9 @@ function usersPage() {
     email: "ada@helix.local",
     displayName: "Ada Lovelace",
     scopes: ["admin.audit"],
+    status: "active",
     disabledAt: null,
+    lastSignInAt: null,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };

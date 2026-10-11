@@ -44,7 +44,9 @@ function actor(id: string, type = "user", disabledAt: string | null = null): Adm
     displayName: id,
     email: `${id}@example.test`,
     scopes: [],
+    status: disabledAt === null ? "active" : "suspended",
     disabledAt,
+    lastSignInAt: null,
     createdAt: "2026-09-10",
     updatedAt: "2026-09-10",
   };

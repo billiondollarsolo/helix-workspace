@@ -45,6 +45,27 @@ All notable changes to Helix Workspace are documented here. This file follows
   `n` (new folder), Shift+U (upload), and Delete (move to trash). Chat supports Esc to close a
   thread and Alt+↑/↓ to switch conversations. Shortcuts pause while typing and while a dialog or
   menu is open. Settings → Keyboard shortcuts lists them all and can turn single-key shortcuts off.
+- Mail search box looks through all your mail with operators such as `from:` and `has:attachment`
+  and shows "Search results"; Search options builds the query from From, To, Subject, Has the
+  words, Date within, Search in and Has attachment.
+- Mail actions (archive, delete, read/unread, move, label, snooze, spam) update the list at once and
+  offer Undo; `z` undoes the last action. Snooze offers Later today, Tomorrow, This weekend, Next
+  week (following your working hours) or a date and time.
+- Mail list: participants such as "Samara, me (3)", bold unread conversations, red "Draft",
+  select-all with Read/Unread/Starred subsets and "Select all N conversations", a right-click
+  (Shift+F10) menu, dragging conversations onto folders and labels, sender avatars on or off, and a
+  reading pane right of or below the list. Category tabs show only in the Inbox.
+- Mail sidebar in the familiar order with Scheduled, a "More" section (All Mail, Archive, Spam,
+  Trash, categories), and labels with colours, nesting, unread counts and a ⋮ menu (Label color,
+  Edit, Remove label, Add sublabel). The Label menu offers Create new and Manage labels. `g a`
+  opens All Mail.
+- Conversations collapse read messages and fold long threads into "N older messages"; message
+  headers show the contact card, "to me, Samara", the full date and how long ago, with Reply and a
+  ⋮ menu (Forward, Print, Show original, Mark unread from here). Attachments show as chips with
+  name and size that download, with "Download all". The toolbar adds Mark as unread, Move to,
+  Labels and "3 of 76 ‹ ›".
+- On phones, Mail rows show sender, subject, snippet and date, Compose floats over the list, and a
+  conversation opens full screen with a back button.
 - People picker: pick recipients by name or email from your organization's directory, your
   contacts and groups, as chips. Enter, Tab or a comma adds a chip, Backspace removes the last one,
   pasting a list adds one chip per address, and invalid addresses show in red. Starting a direct
@@ -166,6 +187,12 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Fixed
 
+- Mail search no longer looks only in the Inbox's Primary tab, the Label button no longer toggles
+  just the first label, Spam uses a report icon, the empty pager no longer says "No results", and
+  `?settings=` links on /mail keep the settings page open. Mail shows loading placeholders, a
+  Retry on load errors, an empty state per folder, and list rows no longer nest buttons inside
+  buttons. "Filter messages like these" opens the filter dialog with the sender filled in instead
+  of creating an archive filter without asking.
 - The API no longer stops answering after the Drive grid/list toggle. Signing in no longer holds
   identity locks for the whole request, and Drive layout, star and other database-only changes stay
   in the request's own transaction.

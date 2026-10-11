@@ -12,6 +12,7 @@ import {
   listMailFolders,
   listMailLabels,
   listMailThreads,
+  listScheduledMail,
   type MailThreadsListInput,
 } from "./api";
 
@@ -88,12 +89,22 @@ const mailQueryKeys = {
   filters: () => ["mail", "filters"] as const,
   vacation: () => ["mail", "vacation"] as const,
   settings: () => ["mail", "settings"] as const,
+  scheduled: () => ["mail", "scheduled"] as const,
 };
 
 export function mailThreadsQueryOptions(input: MailThreadsListInput) {
   return queryOptions({
     queryKey: mailQueryKeys.threads(input),
     queryFn: () => listMailThreads(input),
+    throwOnError: false,
+  });
+}
+
+/** Scheduled sends, for Reschedule and Cancel send in the Scheduled folder. */
+export function mailScheduledQueryOptions() {
+  return queryOptions({
+    queryKey: mailQueryKeys.scheduled(),
+    queryFn: () => listScheduledMail({ limit: 200 }),
     throwOnError: false,
   });
 }

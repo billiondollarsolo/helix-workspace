@@ -21,7 +21,16 @@ import {
 type MailApiAddress = MailAddress;
 
 export type MailFolderKey =
-  "inbox" | "starred" | "snoozed" | "sent" | "drafts" | "archive" | "spam" | "trash";
+  | "inbox"
+  | "starred"
+  | "snoozed"
+  | "sent"
+  | "drafts"
+  | "scheduled"
+  | "all"
+  | "archive"
+  | "spam"
+  | "trash";
 
 type MailCategoryTab = "primary" | "updates" | "promotions" | "social";
 
@@ -32,7 +41,7 @@ export type MailThreadRow = MailThreadRowContract & {
 
 export interface MailThreadsListInput {
   /** `all` is All mail and `scheduled` the Scheduled view; `in:` in the query overrides it. */
-  readonly folder: MailFolderKey | "all" | "scheduled";
+  readonly folder: MailFolderKey;
   readonly tab?: MailCategoryTab;
   readonly label?: string;
   readonly query?: string;
@@ -97,7 +106,7 @@ export interface MailThreadMessage {
 }
 
 /** Attachment metadata on a message read; `downloadUrl` is the safe download route. */
-interface MailMessageAttachment {
+export interface MailMessageAttachment {
   readonly objectId: string;
   readonly filename?: string;
   readonly contentId?: string;

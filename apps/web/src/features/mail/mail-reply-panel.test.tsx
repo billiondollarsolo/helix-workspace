@@ -107,18 +107,21 @@ beforeEach(() => {
         <ThreadView
           row={row}
           detail={detail}
-          isLoading={false}
-          isError={false}
-          labelColors={new Map()}
-          onClose={() => undefined}
-          onArchive={() => undefined}
-          onDelete={() => undefined}
+          loading={false}
+          error={null}
+          retrying={false}
+          onRetry={() => undefined}
+          folder="inbox"
+          labels={[]}
+          labelsBySlug={new Map()}
+          position={null}
+          myAddress={null}
+          initialReply={null}
+          onBack={() => undefined}
+          onAction={() => undefined}
+          onMarkUnread={() => undefined}
           onSnooze={() => undefined}
-          restoreLabel={null}
-          onRestore={() => undefined}
-          onToggleLabel={() => undefined}
-          actionBusy={false}
-          actionError={null}
+          onMove={() => undefined}
         />
       </QueryClientProvider>,
     );

@@ -109,17 +109,23 @@ function baseJob(): SearchReindexJob {
     id: "job",
     orgId: "org-1",
     requestedByActorId: "actor-1",
+    mode: "shadow",
     types: ["drive"],
     batchSize: 1,
     shadowIndexUid: "shadow",
+    pruneStale: false,
     status: "processing",
     phase: "backfill",
     sourceIndex: 0,
     startMutationId: 0n,
     replayMutationId: 0n,
     totalDocuments: 0n,
+    deletedDocuments: 0n,
+    counts: {},
     attemptCount: 1,
     leaseToken: "lease",
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
   };
 }
 

@@ -1,6 +1,7 @@
 import type { EventBus, EventEnvelope, JsonObject, Unsubscribe } from "@helix/sdk-types";
 import type { MailOutboundDeliveryResult, MailOutboundEnvelope } from "../mail/types.js";
 import type { OutboundMailTransport } from "../mail/outbound.js";
+import { escapeHtml } from "../util/strings.js";
 
 export const signupVerificationEmailSubject = "signup.verification_email.send";
 export const signupOnboardingInviteEmailSubject = "signup.onboarding_invite_email.send";
@@ -333,13 +334,4 @@ function workspaceLabel(slug: string): string {
     return "your workspace";
   }
   return `${trimmed} workspace`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }

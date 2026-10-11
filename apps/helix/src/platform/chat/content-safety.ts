@@ -5,6 +5,7 @@ import {
   type ChatBodyFormat,
 } from "@helix/contracts";
 import type { JsonObject } from "@helix/sdk-types";
+import { escapeHtml } from "../util/strings.js";
 
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\r\n]{1,500})\]\(([^)\s]{1,2048})\)/gu;
 const RESERVED_PREVIEW_KEYS = new Set([
@@ -145,15 +146,6 @@ function renderInlineText(value: string): string {
     .replace(/`([^`\n]+)`/gu, "<code>$1</code>")
     .replace(/~~([^~\n]+)~~/gu, "<s>$1</s>")
     .replace(/(^|[^*])\*([^*\n]+)\*/gu, "$1<em>$2</em>");
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/gu, "&amp;")
-    .replace(/</gu, "&lt;")
-    .replace(/>/gu, "&gt;")
-    .replace(/"/gu, "&quot;")
-    .replace(/'/gu, "&#39;");
 }
 
 function stripUnsafeMetadata(value: JsonObject): JsonObject {

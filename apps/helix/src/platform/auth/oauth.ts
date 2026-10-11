@@ -222,6 +222,8 @@ export interface OAuthTokenServiceOptions {
    * mint access tokens for the `authorization_code` grant.
    */
   readonly authorizationCodeService?: OAuthAuthorizationCodeRedeemer;
+  /** Membership self-service scopes (profile.*) the client's person holds; none for agents. */
+  readonly memberScopes?: (client: OAuthClientRecord) => Promise<readonly string[]>;
 }
 
 export class OAuthTokenService {
@@ -238,23 +240,21 @@ export class OAuthTokenService {
 
   async issueClientCredentialsToken(input: OAuthTokenRequest): Promise<OAuthTokenResponse> {
     const client = await this.options.clientStore.findClient(input.clientId);
-    if (client === null) {
-      throw new OAuthError("invalid_client", "Unknown OAuth client.", 401);
-    }
-    if (client.revokedAt !== null) {
+    if (client === null) throw new OAuthError("invalid_client", "Unknown OAuth client.", 401);
+    if (client.revokedAt !== null)
       throw new OAuthError("invalid_client", "OAuth client has been revoked.", 401);
-    }
     const now = new Date();
-    if (client.expiresAt !== null && client.expiresAt <= now) {
+    if (client.expiresAt !== null && client.expiresAt <= now)
       throw new OAuthError("invalid_client", "OAuth client has expired.", 401);
-    }
     if (!(await verifySecret(input.clientSecret, client.clientSecretHash))) {
       throw new OAuthError("invalid_client", "Invalid OAuth client credentials.", 401);
     }
 
+    // A person's own client may also carry the self-service scopes their membership grants.
+    const ceiling = [...client.scopes, ...((await this.options.memberScopes?.(client)) ?? [])];
     const requestedScopes = parseScope(input.scope);
-    const grantedScopes = requestedScopes.length === 0 ? [...client.scopes] : requestedScopes;
-    const unauthorizedScope = grantedScopes.find((scope) => !client.scopes.includes(scope));
+    const grantedScopes = requestedScopes.length === 0 ? [...new Set(ceiling)] : requestedScopes;
+    const unauthorizedScope = grantedScopes.find((scope) => !ceiling.includes(scope));
     if (unauthorizedScope !== undefined) {
       throw new OAuthError(
         "invalid_scope",

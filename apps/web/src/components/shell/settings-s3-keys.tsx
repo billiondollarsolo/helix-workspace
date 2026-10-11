@@ -6,7 +6,6 @@ import {
   rcloneExample,
   revokeS3AccessKey,
   s3EndpointUrl,
-  S3_KEY_SCOPES,
   type S3AccessKey,
   type S3AccessKeyCreated,
   type S3KeyScope,
@@ -27,8 +26,9 @@ function formatDate(value: string | null): string {
 
 export function S3KeysSection() {
   const [keys, setKeys] = useState<readonly S3AccessKey[]>([]);
+  const [grantable, setGrantable] = useState<readonly S3KeyScope[] | null>(null);
   const [label, setLabel] = useState("");
-  const [scopes, setScopes] = useState<readonly S3KeyScope[]>(S3_KEY_SCOPES);
+  const [scopes, setScopes] = useState<readonly S3KeyScope[]>([]);
   const [created, setCreated] = useState<S3AccessKeyCreated | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +39,12 @@ export function S3KeysSection() {
 
   const load = useCallback((): void => {
     void listS3AccessKeys()
-      .then(setKeys)
+      .then((list) => {
+        setKeys(list.accessKeys);
+        setGrantable(list.grantableScopes);
+        // A new key starts with every Drive scope the person holds, never more.
+        setScopes(list.grantableScopes);
+      })
       .catch((caught: unknown) => {
         setError(
           `Could not load your S3 access keys. ${caught instanceof Error ? caught.message : "Try again."}`,
@@ -72,7 +77,7 @@ export function S3KeysSection() {
       const result = await createS3AccessKey({ label: label.trim(), scopes });
       setCreated(result);
       setLabel("");
-      setKeys(await listS3AccessKeys());
+      setKeys((await listS3AccessKeys()).accessKeys);
     });
   }
 
@@ -108,7 +113,12 @@ export function S3KeysSection() {
             />
             <fieldset className="grid gap-1 border-0 p-0 m-0">
               <legend className="type-body-sm font-medium mb-1">Scopes</legend>
-              {S3_KEY_SCOPES.map((scope) => (
+              {grantable !== null && grantable.length === 0 ? (
+                <p className="type-body-sm text-muted-foreground m-0">
+                  You have no Drive access an S3 key can use. Ask an administrator for Drive access.
+                </p>
+              ) : null}
+              {(grantable ?? []).map((scope) => (
                 <label key={scope} className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -215,7 +225,7 @@ export function S3KeysSection() {
                         onClick={() =>
                           void run(async () => {
                             await revokeS3AccessKey(key.id);
-                            setKeys(await listS3AccessKeys());
+                            setKeys((await listS3AccessKeys()).accessKeys);
                             setMessage(`Revoked ${key.label}.`);
                           })
                         }

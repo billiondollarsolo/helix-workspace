@@ -64,11 +64,15 @@ function planningEvent(): MockEvent {
   };
 }
 
-async function openCalendar(page: Page, path = "/calendar?date=2026-05-20") {
+async function openCalendar(
+  page: Page,
+  path = "/calendar?date=2026-05-20",
+  extraEvents: readonly MockEvent[] = [],
+) {
   await page.clock.setFixedTime(new Date("2026-05-20T12:00:00Z"));
   const accessToken = await seedBrowserSession(page, "e2e-calendar-token");
   const calls: ToolCall[] = [];
-  if (!isLiveBackend()) await mockCalendarBackend(page, accessToken, calls);
+  if (!isLiveBackend()) await mockCalendarBackend(page, accessToken, calls, extraEvents);
   await page.goto(path);
   await expect(page.getByRole("main", { name: "Calendar" })).toBeVisible();
   return calls;
@@ -185,6 +189,50 @@ test.describe("/calendar feature flow", () => {
       await expect(chip).toHaveCount(0);
     });
 
+    test("joins Helix Meet calls in the app and shows other meetings as plain links", async ({
+      page,
+    }) => {
+      const joinUrl = "https://helix.example.test/meet?code=abc-defg-hij";
+      await openCalendar(page, "/calendar?date=2026-05-20", [
+        {
+          ...planningEvent(),
+          id: "00000000-0000-4000-8000-000000000903",
+          title: "Design sync",
+          location: null,
+          startsAt: "2026-05-20T09:00:00.000Z",
+          endsAt: "2026-05-20T10:00:00.000Z",
+          metadata: {
+            conference: { provider: "meet", roomId: "room-1", joinCode: "abc-defg-hij", joinUrl },
+          },
+        },
+        {
+          ...planningEvent(),
+          id: "00000000-0000-4000-8000-000000000904",
+          title: "Vendor call",
+          location: null,
+          startsAt: "2026-05-20T16:00:00.000Z",
+          endsAt: "2026-05-20T17:00:00.000Z",
+          metadata: {
+            source: "mail.invitation",
+            conference: { provider: "external", joinUrl: "https://video.example.org/j/42" },
+          },
+        },
+      ]);
+
+      await page.getByRole("button", { name: /^Design sync, 9 – 10am/ }).click();
+      await expect(page.getByRole("link", { name: "Join with Helix Meet" })).toHaveAttribute(
+        "href",
+        joinUrl,
+      );
+      await page.keyboard.press("Escape");
+
+      await page.getByRole("button", { name: /^Vendor call, 4 – 5pm/ }).click();
+      const external = page.getByRole("link", { name: "https://video.example.org/j/42" });
+      await expect(external).toHaveAttribute("target", "_blank");
+      await expect(external).toHaveAttribute("rel", "noopener noreferrer");
+      await expect(page.getByRole("link", { name: "Join with Helix Meet" })).toHaveCount(0);
+    });
+
     test("shows three days and the schedule on a phone", async ({ page }) => {
       await page.setViewportSize({ width: 390, height: 844 });
       await openCalendar(page);
@@ -225,8 +273,13 @@ test.describe("/calendar feature flow", () => {
   });
 });
 
-async function mockCalendarBackend(page: Page, accessToken: string, calls: ToolCall[]) {
-  const events: MockEvent[] = [planningEvent()];
+async function mockCalendarBackend(
+  page: Page,
+  accessToken: string,
+  calls: ToolCall[],
+  extraEvents: readonly MockEvent[],
+) {
+  const events: MockEvent[] = [planningEvent(), ...extraEvents];
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;

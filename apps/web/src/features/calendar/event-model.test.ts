@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { CalendarApiEvent } from "./api";
 import { calendarLabel } from "./colors";
+import { metadataWithConference } from "./conference";
 import { draftFromEvent, draftToEventInput, newEventDraft } from "./event-draft";
 import {
-  conferenceUrl,
+  eventJoinLink,
   eventQueryWindowForTimeZone,
   occurrencesInWindow,
   type OccurrenceContext,
@@ -101,23 +102,64 @@ describe("occurrencesInWindow", () => {
   });
 
   it("only trusts http(s) links for Join", () => {
-    expect(conferenceUrl(apiEvent({ location: "https://meet.example.test/abc" }))).toBe(
-      "https://meet.example.test/abc",
-    );
-    expect(conferenceUrl(apiEvent({ location: "Room 4" }))).toBeNull();
+    expect(eventJoinLink(apiEvent({ location: "https://meet.example.test/abc" }))).toEqual({
+      url: "https://meet.example.test/abc",
+      kind: "external",
+    });
+    expect(eventJoinLink(apiEvent({ location: "Room 4" }))).toBeNull();
     const conference = { provider: "meet", roomId: "r1", joinCode: "abc-defg-hij" };
     expect(
-      conferenceUrl(
+      eventJoinLink(
         apiEvent({
           metadata: {
             conference: { ...conference, joinUrl: "https://helix.test/meet?code=abc-defg-hij" },
           },
         }),
       ),
-    ).toBe("https://helix.test/meet?code=abc-defg-hij");
+    ).toEqual({ url: "https://helix.test/meet?code=abc-defg-hij", kind: "meet" });
     expect(
-      conferenceUrl(
+      eventJoinLink(
         apiEvent({ metadata: { conference: { ...conference, joinUrl: "javascript:alert(1)" } } }),
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps an imported meeting link when a draft without a Meet room is saved", () => {
+    const external = { provider: "external", joinUrl: "https://zoom.example/j/42" };
+    expect(metadataWithConference({ conference: external, source: "x" }, null)).toEqual({
+      conference: external,
+      source: "x",
+    });
+    const meet = {
+      provider: "meet" as const,
+      roomId: "r1",
+      joinCode: "abc",
+      joinUrl: "https://helix.test/meet?code=abc",
+    };
+    expect(metadataWithConference({ conference: meet, source: "x" }, null)).toEqual({
+      source: "x",
+    });
+  });
+
+  it("treats an imported invitation's meeting link as external, never as a Meet room", () => {
+    const imported = apiEvent({
+      metadata: {
+        conference: {
+          provider: "external",
+          // Even a link that looks like a Meet room on this origin stays external.
+          joinUrl: "https://helix.test/meet?code=abc-defg-hij",
+          roomId: "r1",
+          joinCode: "abc-defg-hij",
+        },
+      },
+    });
+    expect(eventJoinLink(imported)).toEqual({
+      url: "https://helix.test/meet?code=abc-defg-hij",
+      kind: "external",
+    });
+    expect(
+      eventJoinLink(
+        apiEvent({ metadata: { conference: { provider: "external", joinUrl: "javascript:x" } } }),
       ),
     ).toBeNull();
   });

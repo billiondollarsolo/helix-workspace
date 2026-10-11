@@ -2,8 +2,10 @@
  * Flag wrappers for mail labels and scheduled sends, contacts, personal account
  * preferences and app passwords, and the chat Home/Mentions views. Creating an
  * app password needs a signed-in web session, so the CLI cannot mint one; use
- * Settings → Security.
+ * Settings → App passwords.
  */
+
+import { splitJsonFlag, withFlagOverrides, type JsonArgument } from "./json-input.js";
 
 interface FlagSpec {
   readonly strings?: Readonly<Record<string, string>>;
@@ -252,12 +254,7 @@ export function withWorkspaceScopes(scopes: readonly string[]): readonly string[
 }
 
 export type WorkspaceCommandParse =
-  | {
-      readonly toolId: string;
-      /** Inline JSON input, or `null` when the caller passed `--json`. */
-      readonly input: string | null;
-    }
-  | { readonly usage: string };
+  { readonly toolId: string; readonly json: JsonArgument } | { readonly usage: string };
 
 /** `undefined` when the scope/action pair is not one of these commands. */
 export function parseWorkspaceCommand(
@@ -268,16 +265,17 @@ export function parseWorkspaceCommand(
   const spec = action === undefined ? undefined : COMMANDS[scope]?.[action];
   if (spec === undefined) return undefined;
   const usage = { usage: `Usage: ${spec.usage}` };
-  if (args[0] === "--json") return { toolId: spec.toolId, input: null };
+  // `--json` is the base input; flags set (and override) its fields.
+  const { base, flags } = splitJsonFlag(args);
   const input: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index] ?? "";
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index] ?? "";
     const booleanKey = spec.flags.booleans?.[flag];
     if (booleanKey !== undefined) {
       input[booleanKey] = true;
       continue;
     }
-    const value = args[index + 1];
+    const value = flags[index + 1];
     const stringKey = spec.flags.strings?.[flag];
     const numberKey = spec.flags.numbers?.[flag];
     if (value === undefined || value.startsWith("--")) return usage;
@@ -286,6 +284,7 @@ export function parseWorkspaceCommand(
     else return usage;
     index += 1;
   }
-  if ((spec.flags.required ?? []).some((key) => input[key] === undefined)) return usage;
-  return { toolId: spec.toolId, input: JSON.stringify(input) };
+  const missingRequired = (spec.flags.required ?? []).some((key) => input[key] === undefined);
+  if (base.source === "empty" && missingRequired) return usage;
+  return { toolId: spec.toolId, json: withFlagOverrides(base, input) };
 }

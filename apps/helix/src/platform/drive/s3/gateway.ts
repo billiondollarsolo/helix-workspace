@@ -11,6 +11,7 @@ import type { DriveS3AccessKeyRecord, DriveS3AccessKeyStore } from "./access-key
 import { DRIVE_S3_BUCKETS, resolveDriveS3Bucket } from "./buckets.js";
 import type { DriveS3Context, DriveS3Limits } from "./context.js";
 import type { DriveS3Store } from "./drive-access.js";
+import type { DriveS3FolderTransaction } from "./folder-transaction.js";
 import { S3Error, s3ErrorXml, toS3Error } from "./errors.js";
 import type { DriveS3MultipartStore } from "./multipart-store.js";
 import { classifyDriveS3Operation, type DriveS3Operation } from "./operations.js";
@@ -53,11 +54,8 @@ export interface DriveS3GatewayOptions {
   readonly requireTls?: boolean;
   readonly rateLimiter?: WebDavRateLimiter;
   readonly now?: () => Date;
-  /** Runs work in a fresh, committed tenant transaction for the actor (see DriveS3Access). */
-  readonly inOwnTenantTransaction?: <T>(
-    input: { readonly orgId: string; readonly actorId: string },
-    work: () => Promise<T>,
-  ) => Promise<T>;
+  /** Runs folder work in a fresh, committed tenant transaction (see folder-transaction.ts). */
+  readonly inOwnTenantTransaction?: DriveS3FolderTransaction;
 }
 
 const DEFAULT_LIMITS: DriveS3Limits = {

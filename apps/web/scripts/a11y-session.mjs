@@ -300,6 +300,26 @@ const TOOL_FIXTURES = new Map([
       grantableScopes: ["mail.send", "calendar.read", "calendar.write", "drive.read"],
     },
   ],
+  [
+    "drive.s3-keys.list",
+    {
+      accessKeys: [
+        {
+          id: "a11y-s3-key",
+          accessKeyId: "HLXA11YAAAAAAAAAAAAA",
+          label: "Home NAS",
+          scopes: ["drive.read", "drive.write"],
+          lastUsedAt: null,
+          expiresAt: null,
+          revokedAt: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      endpointPath: "/v1/s3",
+      grantableScopes: ["drive.read", "drive.write"],
+    },
+  ],
+  ["meet.status", { available: true }],
   ["webhook.overview", { outbound: [], inbound: [], deliveries: [] }],
   [
     "drive.list",

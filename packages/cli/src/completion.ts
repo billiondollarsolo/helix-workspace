@@ -99,7 +99,7 @@ export const commandActions: Record<string, readonly string[]> = withWorkspaceAc
   admin: ["app-passwords", "agent-credentials", "credentials", "users", "audit", "audit-log"],
   backup: ["create"],
   restore: ["--from", "--target-db", "--target-bucket", "--idempotency-key", "--encrypted"],
-  reindex: ["--all"],
+  reindex: ["--all", "--max-wait", "--status"],
   action: ["status", "approve", "cancel"],
   tier: ["set"],
   logout: [],

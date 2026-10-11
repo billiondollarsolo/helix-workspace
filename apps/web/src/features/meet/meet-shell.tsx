@@ -3,8 +3,9 @@
    screen for that meeting directly. */
 
 import { SurfaceFrame } from "@/components/shell";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useQuery } from "@tanstack/react-query";
-import { Video as VideoIcon } from "lucide-react";
+import { VideoOff, Video as VideoIcon } from "lucide-react";
 import { useState } from "react";
 import type { MeetControlState } from "./api";
 import type { JitsiInitialMedia } from "./jitsi-external-api";
@@ -13,7 +14,11 @@ import { MeetHub } from "./meet-hub";
 import type { MeetJoinTarget } from "./meet-join";
 import { MeetPreJoin } from "./meet-prejoin";
 import { conferenceFromMetadata } from "@/features/calendar/conference";
-import { meetMeetingsQueryOptions, meetTodayEventsQueryOptions } from "./queries";
+import {
+  meetMeetingsQueryOptions,
+  meetStatusQueryOptions,
+  meetTodayEventsQueryOptions,
+} from "./queries";
 
 /** An active call session — a real backend room plus its minted join token. */
 export interface MeetCallSession {
@@ -53,6 +58,7 @@ export interface MeetShellProps {
 export function MeetShell({ code, onCodeChange, onScheduleInCalendar }: MeetShellProps) {
   const [session, setSession] = useState<MeetCallSession | null>(null);
   const [starting, setStarting] = useState(false);
+  const status = useQuery(meetStatusQueryOptions()).data;
   const meetings = useQuery(meetMeetingsQueryOptions()).data;
   const events = useQuery(meetTodayEventsQueryOptions()).data;
 
@@ -64,6 +70,23 @@ export function MeetShell({ code, onCodeChange, onScheduleInCalendar }: MeetShel
 
   if (session !== null) {
     return <MeetCall session={session} onLeave={backToHub} />;
+  }
+
+  if (status?.available === false) {
+    return (
+      <SurfaceFrame title="Meet" icon={<VideoIcon size={16} />}>
+        <div role="status">
+          <EmptyState
+            icon={<VideoOff />}
+            title="Meet is unavailable"
+            body={
+              status.message ??
+              "Video meetings aren't set up for this workspace yet. Ask your administrator."
+            }
+          />
+        </div>
+      </SurfaceFrame>
+    );
   }
 
   const target: MeetJoinTarget | null =

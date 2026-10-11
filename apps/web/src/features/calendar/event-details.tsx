@@ -22,7 +22,7 @@ import { labelFill } from "./colors";
 import { draftFromEvent, draftRecurrenceText } from "./event-draft";
 import { occurrenceDateText, occurrenceTimeText } from "./event-chip";
 import {
-  conferenceUrl,
+  eventJoinLink,
   httpUrl,
   selfAttendee,
   type CalendarOccurrence,
@@ -116,7 +116,7 @@ export function EventDetails({
 }: EventDetailsProps) {
   const { event } = occurrence;
   const format = useTimeFormat();
-  const joinUrl = conferenceUrl(event);
+  const join = eventJoinLink(event);
   const recurrence = event.recurrenceRule ? draftRecurrenceText(draftFromEvent(event)) : null;
   const reminder = reminderFromMetadata(event.metadata);
   const guests = event.attendees;
@@ -194,20 +194,32 @@ export function EventDetails({
           </div>
         </div>
 
-        {joinUrl !== null ? (
+        {join?.kind === "meet" ? (
           <Row icon={Video} label="Video call">
             <a
               className="inline-flex items-center gap-2 rounded-[var(--radius)] bg-primary px-4 py-1.5 text-primary-foreground font-medium focus-ring"
-              href={joinUrl}
+              href={join.url}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={(clickEvent) => onOpenLink?.(joinUrl, clickEvent)}
+              onClick={(clickEvent) => onOpenLink?.(join.url, clickEvent)}
             >
-              Join video call
+              Join with Helix Meet
             </a>
             <span className="block mt-1 type-caption text-muted-foreground break-all">
-              {joinUrl}
+              {join.url}
             </span>
+          </Row>
+        ) : join?.kind === "external" ? (
+          <Row icon={Video} label="Video call">
+            {/* Another system's meeting: a plain link that leaves the app. */}
+            <a
+              className="break-all text-primary underline focus-ring"
+              href={join.url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {join.url}
+            </a>
           </Row>
         ) : null}
 

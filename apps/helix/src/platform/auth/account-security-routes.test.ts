@@ -222,4 +222,32 @@ describe("account security routes", () => {
       ),
     ).toEqual({ browser: "Edge", os: "Windows", deviceType: "desktop" });
   });
+
+  it("names Chromium-based browsers before the Safari token they all carry", () => {
+    expect(
+      describeUserAgent(
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/131.0.6778.33 Safari/537.36",
+      ),
+    ).toEqual({ browser: "Headless Chrome", os: "Linux", deviceType: "desktop" });
+    expect(
+      describeUserAgent(
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chromium/129.0.6668.58 Chrome/129.0.6668.58 Safari/537.36",
+      ),
+    ).toEqual({ browser: "Chromium", os: "Linux", deviceType: "desktop" });
+    expect(
+      describeUserAgent(
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36",
+      ),
+    ).toEqual({ browser: "Chrome", os: "Linux", deviceType: "desktop" });
+    expect(
+      describeUserAgent(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36 EdgA/129.0",
+      ),
+    ).toEqual({ browser: "Edge", os: "Android", deviceType: "mobile" });
+    expect(describeUserAgent(iphone)).toEqual({
+      browser: "Safari",
+      os: "iOS",
+      deviceType: "mobile",
+    });
+  });
 });

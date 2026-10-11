@@ -190,10 +190,16 @@ function describeSession(session: BetterAuthSessionRow, current: boolean): Accou
   };
 }
 
+/**
+ * First match wins, so Chromium-based browsers come before Safari: every one of
+ * them also carries a `Safari/` token, including headless Chrome.
+ */
 const BROWSERS: readonly (readonly [RegExp, string])[] = [
   [/\bEdg(?:e|A|iOS)?\//u, "Edge"],
   [/\bOPR\//u, "Opera"],
   [/\bFirefox\/|\bFxiOS\//u, "Firefox"],
+  [/\bHeadlessChrome\//u, "Headless Chrome"],
+  [/\bChromium\//u, "Chromium"],
   [/\bChrome\/|\bCriOS\//u, "Chrome"],
   [/\bSafari\//u, "Safari"],
   [/\bcurl\//u, "Command line"],

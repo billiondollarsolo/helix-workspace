@@ -41,7 +41,10 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  vi.mocked(listS3AccessKeys).mockResolvedValue([existing]);
+  vi.mocked(listS3AccessKeys).mockResolvedValue({
+    accessKeys: [existing],
+    grantableScopes: ["drive.read", "drive.write", "drive.delete"],
+  });
 });
 
 afterEach(() => {
@@ -59,7 +62,7 @@ it("shows the endpoint and lists keys with labelled revoke buttons", async () =>
   );
   expect(revoke).not.toBeNull();
   vi.mocked(revokeS3AccessKey).mockResolvedValue();
-  vi.mocked(listS3AccessKeys).mockResolvedValue([]);
+  vi.mocked(listS3AccessKeys).mockResolvedValue({ accessKeys: [], grantableScopes: [] });
   await settle(() => revoke?.click());
   expect(revokeS3AccessKey).toHaveBeenCalledWith(existing.id);
   expect(container.querySelector('[role="status"]')?.textContent).toBe("Revoked laptop.");
@@ -93,4 +96,26 @@ it("creates a key, shows the secret once with client examples, and focuses it", 
   const examples = [...container.querySelectorAll("textarea")].map((area) => area.value);
   expect(examples.join("\n")).toContain("--endpoint-url");
   expect(examples.join("\n")).toContain("access_key_id = HLXBBBBBBBBBBBBBBBBB");
+});
+
+it("offers only the Drive scopes the person holds and ticks them by default", async () => {
+  vi.mocked(listS3AccessKeys).mockResolvedValue({
+    accessKeys: [],
+    grantableScopes: ["drive.read", "drive.write"],
+  });
+  await settle(() => root.render(<S3KeysSection />));
+  const boxes = [...container.querySelectorAll<HTMLInputElement>('input[name="scopes"]')];
+  expect(boxes.map((box) => [box.value, box.checked])).toEqual([
+    ["drive.read", true],
+    ["drive.write", true],
+  ]);
+  expect(container.textContent).not.toContain("Delete (move to trash)");
+});
+
+it("explains when the person holds no Drive scope a key can carry", async () => {
+  vi.mocked(listS3AccessKeys).mockResolvedValue({ accessKeys: [], grantableScopes: [] });
+  await settle(() => root.render(<S3KeysSection />));
+  expect(container.querySelectorAll('input[name="scopes"]')).toHaveLength(0);
+  expect(container.textContent).toContain("You have no Drive access an S3 key can use.");
+  expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
 });

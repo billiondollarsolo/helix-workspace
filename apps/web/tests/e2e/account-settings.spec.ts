@@ -3,8 +3,8 @@ import axe from "axe-core";
 import { fulfillCoreAppsRoute } from "./support/api-fixtures";
 import { isLiveBackend, seedBrowserSession } from "./support/backend-mode";
 
-/* Settings → Security, App passwords and Language & region against a small
-   in-memory backend that keeps state between calls. */
+/* Settings → Security, App passwords, S3 access keys and Language & region
+   against a small in-memory backend that keeps state between calls. */
 
 test.beforeEach(() => {
   test.skip(isLiveBackend(), "Account settings use an isolated mock backend.");
@@ -26,6 +26,7 @@ async function mockAccountBackend(page: Page): Promise<Backend> {
     session("tablet", false, "Firefox", "Android", "tablet"),
   ];
   let appPasswords: Record<string, unknown>[] = [];
+  let s3Keys: Record<string, unknown>[] = [];
   let preferences: Record<string, unknown> = {
     language: null,
     timeZone: "UTC",
@@ -62,6 +63,26 @@ async function mockAccountBackend(page: Page): Promise<Backend> {
     "app.passwords.revoke": (body) => {
       appPasswords = appPasswords.filter((record) => record.id !== body.passwordId);
       return { status: "revoked" };
+    },
+    // This person holds Drive read and write but not drive.delete.
+    "drive.s3-keys.list": () => ({
+      accessKeys: s3Keys,
+      endpointPath: "/v1/s3",
+      grantableScopes: ["drive.read", "drive.write"],
+    }),
+    "drive.s3-keys.create": (body) => {
+      const accessKey = {
+        id: `key-${String(s3Keys.length + 1)}`,
+        accessKeyId: "HLXE2EKEYAAAAAAAAAAA",
+        label: body.label,
+        scopes: body.scopes,
+        lastUsedAt: null,
+        expiresAt: null,
+        revokedAt: null,
+        createdAt: now,
+      };
+      s3Keys = [...s3Keys, accessKey];
+      return { accessKey, secretAccessKey: "e2e-s3-secret", endpointPath: "/v1/s3" };
     },
   };
   await page.route("**/api/**", async (route) => {
@@ -257,6 +278,27 @@ test("creates an app password, shows it once, and revokes it", async ({ page }) 
     .getByRole("button", { name: "Revoke", exact: true })
     .click();
   await expect(settings.getByText("No app passwords yet")).toBeVisible();
+});
+
+test("offers an S3 key only the Drive scopes the person holds", async ({ page }) => {
+  const backend = await mockAccountBackend(page);
+  await page.goto("/mail?settings=s3-keys");
+  const settings = settingsDialog(page);
+  const scopes = settings.getByRole("group", { name: "Scopes" });
+  await expect(scopes.getByRole("checkbox", { name: "Read (list and download)" })).toBeChecked();
+  await expect(scopes.getByRole("checkbox", { name: "Write (upload and copy)" })).toBeChecked();
+  await expect(scopes.getByRole("checkbox")).toHaveCount(2);
+  await expect(settings.getByText("Delete (move to trash)")).toHaveCount(0);
+
+  await settings.getByLabel("New key").fill("Home NAS");
+  await settings.getByRole("button", { name: "Create access key" }).click();
+  await expect(settings.getByRole("region", { name: "New S3 access key" })).toContainText(
+    "e2e-s3-secret",
+  );
+  expect(
+    backend.calls.find((call) => call.path === "/api/tools/drive.s3-keys.create")?.body,
+  ).toEqual({ label: "Home NAS", scopes: ["drive.read", "drive.write"] });
+  await expectNoAxeViolations(page);
 });
 
 test("saves language and region choices and formats times with them", async ({ page }) => {

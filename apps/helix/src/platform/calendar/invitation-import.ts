@@ -5,6 +5,7 @@ import type {
   InboundCalendarInvitationImporter,
   MailInboundRecipient,
 } from "../mail/index.js";
+import { inboundConferenceMetadata } from "./conference-link.js";
 import type { CalendarAttendeeInput, CalendarStore } from "./store.js";
 import type { CalendarEventRecord, CalendarResponseStatus } from "./types.js";
 import {
@@ -30,7 +31,12 @@ interface InboundInvitationBase {
 }
 
 export type InboundInvitation =
-  | (InboundInvitationBase & { readonly method: "REQUEST"; readonly event: ParsedVevent })
+  | (InboundInvitationBase & {
+      readonly method: "REQUEST";
+      readonly event: ParsedVevent;
+      /** The organizer's meeting link, always an external link (see conference-link.ts). */
+      readonly conference: JsonObject | null;
+    })
   | (InboundInvitationBase & { readonly method: "CANCEL" });
 
 export type InvitationImportOutcome = "created" | "updated" | "cancelled" | "skipped";
@@ -63,7 +69,9 @@ export function parseInboundInvitation(body: string | Buffer): InboundInvitation
   };
   if (method === "CANCEL") return { ...base, method };
   const event = parseVeventCalendar(calendar);
-  return event === null || event.uid !== uid ? null : { ...base, method, event };
+  return event === null || event.uid !== uid
+    ? null
+    : { ...base, method, event, conference: inboundConferenceMetadata(master) };
 }
 
 /** Collect distinct invitations from a message's text/calendar and application/ics parts. */
@@ -156,6 +164,7 @@ export class CalendarInvitationImporter implements InboundCalendarInvitationImpo
     const event = invitation.event;
     const metadata: JsonObject = {
       ...event.metadata,
+      ...(invitation.conference === null ? {} : { conference: invitation.conference }),
       source: "mail.invitation",
       importedInvitation: {
         organizerEmail: invitation.organizerEmail,

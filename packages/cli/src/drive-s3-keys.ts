@@ -1,3 +1,5 @@
+import { splitJsonFlag, withFlagOverrides, type JsonArgument } from "./json-input.js";
+
 /**
  * `helix drive s3-keys list|revoke`: inspect and revoke the caller's S3 access
  * keys for the Drive S3 API. Creating a key needs a signed-in web session, so
@@ -10,12 +12,7 @@ const driveS3KeysListUsage =
 const driveS3KeysRevokeUsage = "Usage: helix drive s3-keys revoke --key-id <id> [--json [JSON]]";
 
 export type DriveS3KeysParse =
-  | {
-      readonly toolId: string;
-      /** Inline JSON input, or `null` when the caller passed `--json`. */
-      readonly input: string | null;
-    }
-  | { readonly usage: string };
+  { readonly toolId: string; readonly json: JsonArgument } | { readonly usage: string };
 
 interface FlagSpec {
   readonly strings: ReadonlyMap<string, string>;
@@ -50,21 +47,24 @@ export function parseDriveS3KeysCommand(
 ): DriveS3KeysParse {
   const spec = action === undefined ? undefined : SPECS[action];
   if (spec === undefined) return { usage: driveS3KeysUsage };
-  if (args[0] === "--json") return { toolId: spec.toolId, input: null };
+  // `--json` is the base input; flags set (and override) its fields.
+  const { base, flags } = splitJsonFlag(args);
   const input: Record<string, unknown> = {};
-  for (let index = 0; index < args.length; index += 1) {
-    const flag = args[index] ?? "";
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index] ?? "";
     const booleanKey = spec.flags.booleans.get(flag);
     if (booleanKey !== undefined) {
       input[booleanKey] = true;
       continue;
     }
     const stringKey = spec.flags.strings.get(flag);
-    const value = args[index + 1];
+    const value = flags[index + 1];
     if (stringKey === undefined || value === undefined) return { usage: spec.usage };
     input[stringKey] = value;
     index += 1;
   }
-  if (action === "revoke" && input.keyId === undefined) return { usage: spec.usage };
-  return { toolId: spec.toolId, input: JSON.stringify(input) };
+  if (action === "revoke" && base.source === "empty" && input.keyId === undefined) {
+    return { usage: spec.usage };
+  }
+  return { toolId: spec.toolId, json: withFlagOverrides(base, input) };
 }

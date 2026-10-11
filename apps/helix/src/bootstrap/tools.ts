@@ -51,6 +51,8 @@ import {
 import {
   createJibriRecorderHealthCheck,
   createMeetConferenceProvider,
+  missingMeetSecrets,
+  registerMeetStatusTool,
   registerMeetTools,
 } from "../platform/meet/index.js";
 import {
@@ -524,6 +526,10 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
             }),
           }),
     });
+  }
+
+  if (coreApps.shouldRegister("meet")) {
+    registerMeetStatusTool(tools, { missingSecrets: missingMeetSecrets(bootEnv) });
   }
 
   if (configuredMeetSecrets !== null) {

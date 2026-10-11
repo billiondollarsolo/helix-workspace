@@ -11,6 +11,7 @@ import {
   type AgentCredentialStore,
   type CredentialRequestContext,
 } from "../platform/auth/credentials.js";
+import { heldMemberScopes } from "../platform/auth/member-scopes.js";
 import type { AccessTokenStore } from "../platform/auth/oauth.js";
 import {
   actorToolInvocationPrincipal,
@@ -152,13 +153,22 @@ export async function toolInvocationPrincipalFromRequest(
       const actor = actorFromAccessToken(accessToken);
       if (credentialStore?.findByClientId !== undefined) {
         const credential = await credentialStore.findByClientId(accessToken.clientId);
+        // A person's own client may carry the self-service scopes their membership
+        // still grants (checked live); agents and service accounts never hold them.
+        const memberScopes = heldMemberScopes({
+          actorType: accessToken.actorType,
+          orgId: accessToken.orgId,
+          roleBindings: accessToken.roleBindings ?? [],
+        });
         if (
           credential === null ||
           credential.credentialType !== "oauth_client" ||
           credential.clientId !== accessToken.clientId ||
           credential.actorId !== actor.id ||
           credential.orgId !== actor.orgId ||
-          !accessToken.scopes.every((scope) => credential.scopes.includes(scope))
+          !accessToken.scopes.every(
+            (scope) => credential.scopes.includes(scope) || memberScopes.includes(scope),
+          )
         ) {
           return {
             ok: false,

@@ -15,6 +15,7 @@ import {
   OAuthError,
   type OAuthTokenService,
 } from "./oauth.js";
+import { escapeHtml } from "../util/strings.js";
 
 const tokenRequestBodySchema = z.object({
   grant_type: z.string(),
@@ -837,15 +838,6 @@ function renderConsentPage(
   </main>
 </body>
 </html>`;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/gu, "&amp;")
-    .replace(/</gu, "&lt;")
-    .replace(/>/gu, "&gt;")
-    .replace(/"/gu, "&quot;")
-    .replace(/'/gu, "&#39;");
 }
 
 interface AuthorizeRejection {

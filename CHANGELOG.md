@@ -259,6 +259,30 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- Calendar invitations for events with a Helix Meet call carry the join link: a "Join with Helix
+  Meet" link in the email (text and HTML), the link in the event description and in an empty
+  location, and RFC 7986 `CONFERENCE` plus `X-GOOGLE-CONFERENCE` in the `.ics`. The link is an
+  absolute address on `HELIX_PUBLIC_URL`. Invitations imported from mail keep the organizer's
+  meeting link (`CONFERENCE`, `X-GOOGLE-CONFERENCE` or `URL`), shown in the event as a plain link
+  that opens outside Helix, never as a Helix room.
+- `POST /api/admin/search/reindex` queues a reindex of your organization and answers 202 with the
+  job, whose progress `GET /api/admin/search/reindex/jobs/<id>` reports; a second request while one
+  runs returns that job. `helix reindex --all` follows the job and prints progress for up to 30
+  minutes (`--max-wait <seconds>`), and `helix reindex --status <job-id>` checks it later, so a
+  large reindex no longer times out in the CLI. Migration 0216.
+- Meet is unavailable until both Jitsi secrets (`MEET_JITSI_JWT_SECRET` and
+  `MEET_JITSI_WEBHOOK_SHARED_SECRET`) are configured, in every environment; there is no built-in
+  development secret any more. Meet then says so: administrators see what to configure, members
+  whom to ask (`meet.status`). `.env.example` and the CI end-to-end environments set local values.
+- CLI commands with flags accept `--json` as well: the JSON is the base input and each flag sets,
+  and overrides, its field.
+- A person's own CLI login (`helix login`) can carry `profile.read` and `profile.write` from their
+  membership, so `helix account preferences` and `helix account app-passwords` work. Agent and
+  service credentials still get only the scopes they were issued. Creating an app password or an
+  S3 access key from the CLI now says to do it in Settings on the web instead of showing a bare 403.
+- Settings → S3 access keys offers, and ticks by default, only the Drive scopes you hold; the list
+  reports them as `grantableScopes`.
+
 - Helix AI answers keep the workspace items they cited after you reload. Only references are
   saved, and each item is shown only while you can still open it, title included.
 - Sign-in asks for your email first, then your password (or sends you to your company sign-in when
@@ -337,6 +361,10 @@ All notable changes to Helix Workspace are documented here. This file follows
   closed. A live test now keeps the database catalog equal to the app's scope catalog.
 
 ### Fixed
+
+- Two people uploading through the S3 API into the same new folder of a shared folder get one
+  folder, not two: folder creation is serialized per parent folder rather than per person.
+- Signed-in devices name Chromium, Edge and headless Chrome correctly instead of "Safari".
 
 - Meetings added to Calendar events can be joined: the first invited person to join opens the
   scheduled meeting, instead of getting "No meeting is open with that code".

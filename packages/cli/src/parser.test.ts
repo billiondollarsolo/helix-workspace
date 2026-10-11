@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { commandActions } from "./completion.js";
-import { CliUsageError, parseCliArgs } from "./parser.js";
+import { CliUsageError } from "./cli-error.js";
+import { parseCliArgs } from "./parser.js";
 
 const folderId = "44444444-4444-4444-8444-444444444444";
 const webhookId = "66666666-6666-4666-8666-666666666666";

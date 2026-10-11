@@ -13,7 +13,7 @@ import type {
   CalendarListEventsInput,
 } from "./api";
 import { calendarLabel, type CalendarLabel } from "./colors";
-import { conferenceFromMetadata } from "./conference";
+import { conferenceFromMetadata, externalConferenceUrl } from "./conference";
 import { addIsoDays, clockToHour } from "./date-math";
 import { occurrenceDates, parseRRule } from "./recurrence";
 
@@ -241,9 +241,21 @@ export function eventQueryWindowForTimeZone(
   };
 }
 
-/** The event's video call link, or an http(s) location. */
-export function conferenceUrl(event: CalendarApiEvent): string | null {
-  return httpUrl(conferenceFromMetadata(event.metadata)?.joinUrl) ?? httpUrl(event.location);
+/**
+ * The event's video call. `meet` is this workspace's own Meet room; any other
+ * link (an imported invitation's meeting, an http(s) location) is `external`
+ * and is only ever shown as a plain link.
+ */
+export interface EventJoinLink {
+  readonly url: string;
+  readonly kind: "meet" | "external";
+}
+
+export function eventJoinLink(event: CalendarApiEvent): EventJoinLink | null {
+  const meet = httpUrl(conferenceFromMetadata(event.metadata)?.joinUrl);
+  if (meet !== null) return { url: meet, kind: "meet" };
+  const external = httpUrl(externalConferenceUrl(event.metadata)) ?? httpUrl(event.location);
+  return external === null ? null : { url: external, kind: "external" };
 }
 
 export function httpUrl(value: string | null | undefined): string | null {

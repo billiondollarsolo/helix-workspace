@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import axe from "axe-core";
 import { installCoreAppsRoutes } from "./support/api-fixtures";
 
 const accessTokenStorageKey = "helix.accessToken";
@@ -37,6 +38,31 @@ test.describe("/meet Jitsi embed", () => {
     await expectJoinedRoom(page, calls);
   });
 
+  test("says Meet is unavailable, with the next step, when no meeting server is set up", async ({
+    page,
+  }) => {
+    const message =
+      "Meet needs a Jitsi meeting server. Set MEET_JITSI_JWT_SECRET and MEET_JITSI_WEBHOOK_SHARED_SECRET to the secrets your Jitsi deployment shares with Helix, then restart Helix.";
+    const calls = await openMeet(page, { available: false, reason: "not_configured", message });
+    await page.goto("/meet?code=bckl-lnch-rvw0");
+
+    const notice = page.getByRole("status").filter({ hasText: "Meet is unavailable" });
+    await expect(notice.getByRole("heading", { name: "Meet is unavailable" })).toBeVisible();
+    await expect(notice).toContainText(message);
+    await expect(page.getByRole("heading", { name: "Ready to join?" })).toHaveCount(0);
+    expect(calls.some((call) => call.pathname === "/v1/api/tools/meet.join-by-code")).toBe(false);
+
+    await page.addScriptTag({ content: axe.source });
+    const violations = await page.evaluate(async () => {
+      const browser = window as typeof window & { axe: typeof axe };
+      const result = await browser.axe.run(document, {
+        runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] },
+      });
+      return result.violations.map((violation) => violation.id);
+    });
+    expect(violations).toEqual([]);
+  });
+
   test("opens the pre-join screen straight from a calendar join link", async ({ page }) => {
     const calls = await openMeet(page);
     await page.goto("/meet?code=bckl-lnch-rvw0");
@@ -68,7 +94,10 @@ test.describe("/meet Jitsi embed", () => {
   });
 });
 
-async function openMeet(page: Page): Promise<MeetToolCall[]> {
+async function openMeet(
+  page: Page,
+  meetStatus: unknown = { available: true },
+): Promise<MeetToolCall[]> {
   const calls: MeetToolCall[] = [];
   await page.addInitScript(
     ({ key, token }) => {
@@ -76,7 +105,7 @@ async function openMeet(page: Page): Promise<MeetToolCall[]> {
     },
     { key: accessTokenStorageKey, token: accessToken },
   );
-  await mockMeetTools(page, calls);
+  await mockMeetTools(page, calls, meetStatus);
   await mockJitsiExternalApi(page);
   return calls;
 }
@@ -159,7 +188,7 @@ async function mockJitsiExternalApi(page: Page): Promise<void> {
   });
 }
 
-async function mockMeetTools(page: Page, calls: MeetToolCall[]) {
+async function mockMeetTools(page: Page, calls: MeetToolCall[], meetStatus: unknown) {
   // The production shell calls GET /api/core-apps on mount; this spec's route
   // matcher (`**/api/tools/**`) is narrower than that path, so stub the
   // core-app routes explicitly with the shared valid fixtures.
@@ -177,6 +206,10 @@ async function mockMeetTools(page: Page, calls: MeetToolCall[]) {
     } satisfies MeetToolCall;
     calls.push(call);
 
+    if (pathname === "/v1/api/tools/meet.status") {
+      await fulfillJson(route, meetStatus);
+      return;
+    }
     if (pathname === "/v1/api/tools/meet.meetings.list") {
       await fulfillJson(route, {
         meetings: [meetMeeting],

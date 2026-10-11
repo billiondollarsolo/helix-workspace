@@ -110,6 +110,12 @@ export function buildHelixRequest(
       });
     case "reindex-all":
       return createRequest(env, "POST", "/api/admin/search/reindex", { all: true });
+    case "reindex-status":
+      return createRequest(
+        env,
+        "GET",
+        `/api/admin/search/reindex/jobs/${encodeURIComponent(command.jobId)}`,
+      );
     case "action-status":
       return createRequest(env, "GET", `/actions/${encodeURIComponent(command.actionId)}`);
     case "action-approve":

@@ -48,6 +48,7 @@ import {
 } from "../platform/auth/browser-security.js";
 import { PostgresCrownJewelApprovalStore } from "../platform/auth/crown-jewel.js";
 import { registerDomainIdentityDiscoveryRoute } from "../platform/auth/domain-identity.js";
+import { createPostgresMemberScopes } from "../platform/auth/member-scopes.js";
 import { OAuthTokenService } from "../platform/auth/oauth.js";
 import { registerOAuthRoutes } from "../platform/auth/routes.js";
 import { registerTenantScimRoutes } from "../platform/auth/scim-routes.js";
@@ -172,7 +173,6 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
     driveStore,
     chatAttachmentStore,
     searchReindexJobService,
-    searchReindexService,
     mailDkimKeyStore,
     outboundProviderStore,
     mailDeliveryEventStore,
@@ -292,6 +292,7 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
       issuer: oauthIssuer,
       // PRD §13.6: enables the `authorization_code` token grant (PKCE).
       authorizationCodeService,
+      memberScopes: createPostgresMemberScopes(sql),
     }),
     clientStore: oauthStore,
     authorizationCodeService,
@@ -635,10 +636,9 @@ export async function installRoutes(context: Awaited<ReturnType<typeof installTo
 
   leaderGatedWorkers.push({ name: "backup-restore-worker", worker: restoreJobWorker });
 
-  if (searchReindexService !== undefined) {
+  if (searchReindexJobService !== undefined) {
     await registerSearchAdminRoutes(app, {
-      service: searchReindexService,
-      ...(searchReindexJobService === undefined ? {} : { jobs: searchReindexJobService }),
+      jobs: searchReindexJobService,
       actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
     });
   }

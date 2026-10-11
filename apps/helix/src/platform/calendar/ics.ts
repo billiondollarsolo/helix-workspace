@@ -2,6 +2,13 @@ import { versionedApiPath } from "../../api/version.js";
 import type { MailStore } from "../mail/index.js";
 import { MailSendService } from "../mail/outbound.js";
 import type { MailOutboundRecord } from "../mail/types.js";
+import { escapeHtml } from "../util/strings.js";
+import {
+  conferenceIcsLines,
+  descriptionWithConference,
+  eventConferenceLink,
+  type CalendarConferenceLink,
+} from "./conference-link.js";
 import { recurrenceExceptionDates, recurrenceOverrides } from "./recurrence.js";
 import { formatZonedIcsLocalDate } from "./timezone.js";
 import type {
@@ -53,6 +60,9 @@ export function createMailCalendarInvitationSender(
     async sendInvitation(input) {
       const organizer = organizerAddress(input.event, input.actorId, options.defaultFromDomain);
       const attendees = input.event.attendees.filter((attendee) => !attendee.isOrganizer);
+      // The RSVP base is the public origin (HELIX_PUBLIC_URL), so Meet links are absolute too.
+      const conference =
+        input.method === "REQUEST" ? eventConferenceLink(input.event, input.rsvpBaseUrl) : null;
       const queued: MailOutboundRecord[] = [];
       for (const attendee of attendees) {
         const ics = createIcsCalendar({
@@ -60,7 +70,15 @@ export function createMailCalendarInvitationSender(
           method: input.method,
           attendee,
           ...(input.rsvpBaseUrl === undefined ? {} : { rsvpBaseUrl: input.rsvpBaseUrl }),
+          ...(conference === null ? {} : { conference }),
         });
+        const body = invitationBody(
+          input.method,
+          input.event,
+          attendee,
+          input.rsvpBaseUrl,
+          conference,
+        );
         queued.push(
           await service.queue({
             orgId: input.orgId,
@@ -81,7 +99,8 @@ export function createMailCalendarInvitationSender(
                 ? {}
                 : { messageId: calendarDeliveryMessageId(input.deliveryId) }),
               subject: invitationSubject(input.method, input.event),
-              text: invitationText(input.method, input.event, attendee, input.rsvpBaseUrl),
+              text: body.text,
+              html: body.html,
               attachments: [
                 {
                   filename: "invite.ics",
@@ -134,8 +153,11 @@ export function createIcsCalendar(input: {
   readonly method?: "REQUEST" | "CANCEL" | "REPLY" | undefined;
   readonly attendee?: CalendarAttendeeRecord | undefined;
   readonly rsvpBaseUrl?: string | undefined;
+  /** The event's join link, carried in DESCRIPTION, an empty LOCATION, and CONFERENCE. */
+  readonly conference?: CalendarConferenceLink | undefined;
 }): string {
   const method = input.method ?? "REQUEST";
+  const conference = input.conference;
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -153,12 +175,21 @@ export function createIcsCalendar(input: {
     `SUMMARY:${escapeIcsText(input.event.title)}`,
   ];
 
-  if (input.event.description !== null && input.event.description !== undefined) {
-    lines.push(`DESCRIPTION:${escapeIcsText(input.event.description)}`);
+  const description =
+    conference === undefined
+      ? input.event.description
+      : descriptionWithConference(input.event.description, conference);
+  if (description !== null && description !== undefined) {
+    lines.push(`DESCRIPTION:${escapeIcsText(description)}`);
   }
-  if (input.event.location !== null && input.event.location !== undefined) {
-    lines.push(`LOCATION:${escapeIcsText(input.event.location)}`);
+  const location =
+    conference !== undefined && (input.event.location ?? "").trim() === ""
+      ? conference.joinUrl
+      : input.event.location;
+  if (location !== null && location !== undefined) {
+    lines.push(`LOCATION:${escapeIcsText(location)}`);
   }
+  if (conference !== undefined) lines.push(...conferenceIcsLines(conference, escapeIcsParam));
   const organizerEmail = input.event.organizerEmail;
   if (typeof organizerEmail === "string") {
     lines.push("ORGANIZER:mailto:" + organizerEmail);
@@ -275,27 +306,54 @@ function replyText(event: CalendarEventRecord, attendee: CalendarAttendeeRecord)
   ].join("\n");
 }
 
-function invitationText(
+/** One line of the invitation mail; `href` makes it a link in the HTML part. */
+interface InvitationLine {
+  readonly label: string;
+  readonly value: string;
+  readonly href?: string;
+}
+
+/** The plain-text and HTML parts of an invitation, built from the same lines. */
+function invitationBody(
   method: "REQUEST" | "CANCEL",
   event: CalendarEventRecord,
   attendee: CalendarAttendeeRecord,
   rsvpBaseUrl: string | undefined,
-): string {
-  const lines = [
+  conference: CalendarConferenceLink | null,
+): { readonly text: string; readonly html: string } {
+  const heading =
     method === "CANCEL"
       ? `This event was canceled: ${event.title}`
-      : `You are invited: ${event.title}`,
-    `When: ${event.startsAt.toISOString()} to ${event.endsAt.toISOString()}`,
+      : `You are invited: ${event.title}`;
+  const lines: InvitationLine[] = [
+    { label: "When", value: `${event.startsAt.toISOString()} to ${event.endsAt.toISOString()}` },
   ];
-  if (event.location !== null && event.location !== undefined) {
-    lines.push(`Where: ${event.location}`);
+  if (event.location !== null && event.location !== undefined && event.location.trim() !== "") {
+    lines.push({ label: "Where", value: event.location });
+  }
+  if (conference !== null) {
+    lines.push({ label: conference.label, value: conference.joinUrl, href: conference.joinUrl });
   }
   if (rsvpBaseUrl !== undefined && method === "REQUEST" && attendee.rsvpToken !== undefined) {
-    lines.push(`Accept: ${rsvpUrl(rsvpBaseUrl, attendee.rsvpToken, "accepted")}`);
-    lines.push(`Tentative: ${rsvpUrl(rsvpBaseUrl, attendee.rsvpToken, "tentative")}`);
-    lines.push(`Decline: ${rsvpUrl(rsvpBaseUrl, attendee.rsvpToken, "declined")}`);
+    for (const [label, status] of [
+      ["Accept", "accepted"],
+      ["Tentative", "tentative"],
+      ["Decline", "declined"],
+    ] as const) {
+      const href = rsvpUrl(rsvpBaseUrl, attendee.rsvpToken, status);
+      lines.push({ label, value: href, href });
+    }
   }
-  return lines.join("\n");
+  const text = [heading, ...lines.map((line) => `${line.label}: ${line.value}`)].join("\n");
+  const html = [
+    `<p><strong>${escapeHtml(heading)}</strong></p>`,
+    ...lines.map((line) =>
+      line.href === undefined
+        ? `<p>${escapeHtml(line.label)}: ${escapeHtml(line.value)}</p>`
+        : `<p><a href="${escapeHtml(line.href)}">${escapeHtml(line.label)}</a></p>`,
+    ),
+  ].join("\n");
+  return { text, html };
 }
 
 function organizerAddress(

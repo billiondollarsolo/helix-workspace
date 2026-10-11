@@ -16,6 +16,15 @@ export interface SearchReindexRequest {
   readonly orgId?: string | undefined;
   readonly batchSize?: number | undefined;
   readonly pruneStale?: boolean | undefined;
+  /** Called after every indexed batch; a rejection stops the reindex. */
+  readonly onProgress?: ((progress: SearchReindexProgress) => Promise<void>) | undefined;
+}
+/** How far a reindex has got: the type it is on (index into `types`) and counts so far. */
+export interface SearchReindexProgress {
+  readonly sourceIndex: number;
+  readonly totalDocuments: number;
+  readonly deletedDocuments: number;
+  readonly counts: Readonly<Partial<Record<SearchReindexType, number>>>;
 }
 export interface SearchReindexResult {
   readonly status: "completed";
@@ -123,6 +132,12 @@ export class SearchReindexService implements SearchReindexRunner {
         for (const batch of chunks(documents, batchSize)) {
           await this.options.engine.upsert(batch);
         }
+        await input.onProgress?.({
+          sourceIndex: requestedTypes.indexOf(source.type),
+          totalDocuments,
+          deletedDocuments: 0,
+          counts,
+        });
       }
     }
     const deletedDocuments =

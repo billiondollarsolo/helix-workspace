@@ -190,6 +190,33 @@ describe("MeetShell hub", () => {
     expect(onCodeChange).toHaveBeenCalledWith("hrbr-dsgn-rvw0");
   });
 
+  it("shows Meet as unavailable with the server's setup guidance", async () => {
+    const message =
+      "Meet needs a Jitsi meeting server. Set MEET_JITSI_JWT_SECRET and MEET_JITSI_WEBHOOK_SHARED_SECRET, then restart Helix.";
+    mockTools({
+      "meet.status": () => ({ available: false, reason: "not_configured", message }),
+      "meet.meetings.list": () => meetingsPayload,
+      "calendar.event.list": todayEvents,
+    });
+    renderShell({ code: "atl-asly-snc" });
+    await waitForText(container, "Meet is unavailable");
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(message);
+    expect(container.querySelector("h2")?.textContent).toBe("Meet is unavailable");
+    expect(buttonNamed(container, "New meeting")).toBeUndefined();
+    expect(container.textContent).not.toContain("Atlas weekly sync");
+  });
+
+  it("opens the hub when Meet reports it is available", async () => {
+    mockTools({
+      "meet.status": () => ({ available: true }),
+      "meet.meetings.list": () => meetingsPayload,
+      "calendar.event.list": todayEvents,
+    });
+    renderShell();
+    await waitForText(container, "Atlas weekly sync");
+    expect(container.textContent).not.toContain("Meet is unavailable");
+  });
+
   it("shows an actionable error when meetings can't be loaded", async () => {
     vi.spyOn(authModule, "authenticatedFetch").mockResolvedValue(
       Response.json({ error: "boom" }, { status: 500 }),

@@ -86,6 +86,25 @@ describe("drive.s3-keys tools", () => {
     );
   });
 
+  it("offers and defaults to only the Drive scopes the person holds", async () => {
+    const { run, store } = setup();
+    const writer = { ...user, scopes: ["drive.read", "drive.write"] };
+    const listed = (await run("drive.s3-keys.list", {}, writer)) as {
+      grantableScopes: readonly string[];
+    };
+    expect(listed.grantableScopes).toEqual(["drive.read", "drive.write"]);
+    await run("drive.s3-keys.create", { label: "sync" }, writer);
+    expect(store.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ scopes: ["drive.read", "drive.write"] }),
+    );
+    await expect(
+      run("drive.s3-keys.create", { label: "x" }, { ...user, scopes: ["mail.read"] }),
+    ).rejects.toThrow(/no Drive scopes/u);
+    await expect(
+      run("drive.s3-keys.create", { label: "x", scopes: ["drive.read", "drive.delete"] }, writer),
+    ).rejects.toThrow(/drive\.delete\. Choose from: drive\.read, drive\.write/u);
+  });
+
   it("limits org-wide listing and cross-user revocation to admins", async () => {
     const { run, store } = setup();
     await expect(run("drive.s3-keys.list", { allActors: true }, user)).rejects.toThrow(

@@ -76,6 +76,25 @@ describe("CardDAV routes", () => {
     expect(response.body).toContain("<D:sync-token>");
   });
 
+  it("accepts the contacts product scopes, not only the carddav aliases", async () => {
+    const app = await createApp();
+    const propfind = (password: string) =>
+      app.inject({
+        method: "PROPFIND",
+        url: `/dav/card/${actor.id}/`,
+        headers: {
+          authorization: basic("ada@example.test", password),
+          depth: "0",
+          "content-type": "application/xml",
+        },
+        payload: '<D:propfind xmlns:D="DAV:" />',
+      } as unknown as InjectOptions);
+
+    expect((await propfind("contacts.read")).statusCode).toBe(207);
+    expect((await propfind("carddav.read")).statusCode).toBe(207);
+    expect((await propfind("calendar.read")).statusCode).toBe(401);
+  });
+
   it("serves the authenticated actor as a deterministic vCard", async () => {
     const app = await createApp();
 
@@ -642,12 +661,16 @@ class FakeAppPasswordAuthenticator implements AppPasswordAuthenticator {
     readonly username: string;
     readonly password: string;
     readonly requiredScope: string;
+    readonly compatibilityScope?: string;
   }): Promise<Actor | null> {
     if (input.username !== actor.email) {
       return null;
     }
     const scopes = input.password.split(",");
-    if (!scopes.includes(input.requiredScope)) {
+    if (
+      !scopes.includes(input.requiredScope) &&
+      (input.compatibilityScope === undefined || !scopes.includes(input.compatibilityScope))
+    ) {
       return null;
     }
     return { ...actor, scopes: [...(actor.scopes ?? []), ...scopes] };

@@ -31,6 +31,13 @@ export interface DriveS3Access {
   readonly bucket: DriveS3Bucket;
   readonly dlp?: DlpGuard | undefined;
   readonly traceId: string;
+  /**
+   * Runs folder writes in their own committed tenant transaction. Uploads are
+   * staged and finalized in separate I/O-saga transactions that cannot see
+   * uncommitted rows of the request transaction, so a folder created for a
+   * key's prefix must be committed before the object is written into it.
+   */
+  readonly inOwnTransaction?: (<T>(work: () => Promise<T>) => Promise<T>) | undefined;
 }
 
 function rootView(access: DriveS3Access, folderId: string | null) {
@@ -114,6 +121,16 @@ export async function assertDriveS3Download(
 
 /** mkdir -p for the folder segments of a key; returns the innermost folder id. */
 export async function ensureDriveS3Folders(
+  access: DriveS3Access,
+  segments: readonly string[],
+): Promise<string | null> {
+  if (segments.length === 0) return null;
+  return access.inOwnTransaction === undefined
+    ? ensureFolderPath(access, segments)
+    : access.inOwnTransaction(() => ensureFolderPath(access, segments));
+}
+
+async function ensureFolderPath(
   access: DriveS3Access,
   segments: readonly string[],
 ): Promise<string | null> {

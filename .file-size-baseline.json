@@ -18,7 +18,7 @@
   "apps/helix/src/platform/auth/scim-routes.ts": 1244,
   "apps/helix/src/platform/calendar/routes.test.ts": 1716,
   "apps/helix/src/platform/calendar/routes.ts": 1306,
-  "apps/helix/src/platform/calendar/store.ts": 1998,
+  "apps/helix/src/platform/calendar/store.ts": 1948,
   "apps/helix/src/platform/carddav/routes.ts": 890,
   "apps/helix/src/platform/carddav/store.ts": 969,
   "apps/helix/src/platform/chat/realtime.test.ts": 1344,

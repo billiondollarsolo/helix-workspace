@@ -28,7 +28,13 @@ export async function listMailThreads(
   const parsed = parseMailSearchQuery((input.query ?? "").trim(), now);
   const query = {
     ...parsed,
-    labels: [...new Set([...parsed.labels, ...(input.label === undefined ? [] : [input.label])])],
+    // Label matching compares lower-case slugs and names, like `label:` in a query.
+    labels: [
+      ...new Set([
+        ...parsed.labels,
+        ...(input.label === undefined ? [] : [input.label.toLowerCase()]),
+      ]),
+    ],
   };
   const scope = query.scope ?? input.folder ?? "inbox";
   // Rows report the folder they were listed under; `anywhere` lists as All Mail.
@@ -82,6 +88,7 @@ export async function listMailThreads(
         m.thread_id,
         m.id as message_id,
         m.body,
+        m.body_format,
         case when helix_mailbox_sent_message(m.org_id, m.id, ${input.actorId}) then m.metadata else (m.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
         m.sent_at,
         t.subject,
@@ -155,7 +162,7 @@ export async function listMailThreads(
       end
     )
     select
-      thread_id, subject, message_id, body, metadata, sent_at, labels, read_at, starred,
+      thread_id, subject, message_id, body, body_format, metadata, sent_at, labels, read_at, starred,
       category, snoozed_until,
       (
         select count(*)::int from messages counted

@@ -101,6 +101,66 @@ describe("self-service app passwords", () => {
   });
 });
 
+describe("CardDAV app passwords for members", () => {
+  // Members hold contacts.* only through the built-in workspace_member role.
+  const contactsMember: Actor = {
+    id: actorId,
+    orgId,
+    type: "user",
+    email: "member@example.test",
+    displayName: "Member",
+    scopes: ["profile.read"],
+    roleBindings: [
+      {
+        roleId: "44444444-4444-4444-8444-444444444444",
+        allow: ["contacts.read", "contacts.write", "profile.read", "profile.write"],
+        deny: [],
+        scope: { type: "org" },
+      },
+    ],
+  };
+
+  it("offers contacts sync and authenticates CardDAV with the product scope or its alias", async () => {
+    const store = new InMemoryAppPasswordStore();
+    store.addActor(contactsMember);
+    const registry = createToolRegistry();
+    registerAppPasswordTools(registry, { store });
+
+    const listed = await registry.invoke("app.passwords.list", {}, { actor: contactsMember });
+    expect(listed).toMatchObject({
+      output: { grantableScopes: expect.arrayContaining(["contacts.read", "contacts.write"]) },
+    });
+    const created = await registry.invoke(
+      "app.passwords.create",
+      { label: "Phone contacts", scopes: ["contacts.read"] },
+      { actor: contactsMember, skipConfirmation: true },
+    );
+    const password = created.ok ? (created.output as { password: string }).password : "";
+    const alias = await new AppPasswordManager(store).create({
+      actorId,
+      orgId,
+      label: "Legacy CardDAV",
+      scopes: ["carddav.read"],
+    });
+    const login = (secret: string, access: "read" | "write") =>
+      store.authenticateAppPassword({
+        username: "member@example.test",
+        password: secret,
+        requiredScope: `contacts.${access}`,
+        compatibilityScope: `carddav.${access}`,
+      });
+
+    const session = await login(password, "read");
+    expect(session).toMatchObject({ id: actorId, scopes: ["contacts.read"] });
+    // The role proves authority; the session carries only the password's grant.
+    expect(session?.roleBindings).toBeUndefined();
+    await expect(login(alias.password, "read")).resolves.toMatchObject({
+      scopes: ["carddav.read"],
+    });
+    await expect(login(password, "write")).resolves.toBeNull();
+  });
+});
+
 describe("app password tools", () => {
   it("registers create, list, and revoke backend tools", () => {
     const auditSink = new RecordingAuditSink();

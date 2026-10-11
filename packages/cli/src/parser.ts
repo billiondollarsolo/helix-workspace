@@ -2056,7 +2056,7 @@ function parseWebhookInboundCommand(
       return {
         kind: "tool-call",
         toolId: "webhook.inbound.rotate-secret",
-        json: parseWebhookOptions(args, webhookIdOptions, webhookInboundRotateSecretUsage),
+        json: parseWebhookOptions(args, webhookRotateOptions, webhookInboundRotateSecretUsage),
       };
     case "list":
       return {
@@ -2098,9 +2098,9 @@ const webhookInboundUsage =
   "Usage: helix webhook inbound <create|update|delete|rotate-secret|list> [--json [JSON]]";
 const webhookDeliveryUsage = "Usage: helix webhook delivery <get|list> [--json [JSON]]";
 const webhookOutboundCreateUsage =
-  "Usage: helix webhook outbound create [--name <name>] [--url <url>] [--event-subject <subject>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
+  "Usage: helix webhook outbound create [--name <name>] [--url <url>] [--secret <secret>] [--event-subject <subject>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
 const webhookOutboundUpdateUsage =
-  "Usage: helix webhook outbound update [--id <id>] [--name <name>] [--url <url>] [--event-subject <subject>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
+  "Usage: helix webhook outbound update [--id <id>] [--name <name>] [--url <url>] [--secret <secret>] [--event-subject <subject>] [--header <name=value>] [--headers <json-object>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
 const webhookOutboundDeleteUsage =
   "Usage: helix webhook outbound delete [--id <id>] [--json [JSON]]";
 const webhookOutboundListUsage = "Usage: helix webhook outbound list [--json [JSON]]";
@@ -2109,12 +2109,12 @@ const webhookOutboundTestUsage =
 const webhookOutboundReplayUsage =
   "Usage: helix webhook outbound replay [--delivery-id <id>] [--id <id>] [--json [JSON]]";
 const webhookInboundCreateUsage =
-  "Usage: helix webhook inbound create [--name <name>] [--slug <slug>] [--source <source>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
+  "Usage: helix webhook inbound create [--name <name>] [--slug <slug>] [--source <source>] [--secret <secret>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
 const webhookInboundUpdateUsage =
-  "Usage: helix webhook inbound update [--id <id>] [--name <name>] [--slug <slug>] [--source <source>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
+  "Usage: helix webhook inbound update [--id <id>] [--name <name>] [--slug <slug>] [--source <source>] [--secret <secret>] [--metadata <json-object>] [--enabled] [--disabled] [--json [JSON]]";
 const webhookInboundDeleteUsage = "Usage: helix webhook inbound delete [--id <id>] [--json [JSON]]";
 const webhookInboundRotateSecretUsage =
-  "Usage: helix webhook inbound rotate-secret [--id <id>] [--json [JSON]]";
+  "Usage: helix webhook inbound rotate-secret [--id <id>] [--secret <secret>] [--json [JSON]]";
 const webhookInboundListUsage = "Usage: helix webhook inbound list [--json [JSON]]";
 const webhookDeliveryGetUsage = "Usage: helix webhook delivery get [--id <id>] [--json [JSON]]";
 const webhookDeliveryListUsage =
@@ -2130,6 +2130,7 @@ const webhookOutboundBaseOptions = {
   strings: new Map([
     ["--name", "name"],
     ["--url", "url"],
+    ["--secret", "secret"],
   ]),
   numbers: new Map<string, string>(),
   booleans: webhookEnabledOptions,
@@ -2179,6 +2180,7 @@ const webhookInboundBaseOptions = {
     ["--name", "name"],
     ["--slug", "slug"],
     ["--source", "source"],
+    ["--secret", "secret"],
   ]),
   numbers: new Map<string, string>(),
   booleans: webhookEnabledOptions,
@@ -2193,15 +2195,24 @@ const webhookInboundUpdateOptions = {
   strings: new Map([["--id", "id"], ...webhookInboundBaseOptions.strings]),
 } as const;
 
-const webhookIdOptions = {
+const emptyWebhookOptions = {
   arrays: new Map<string, string>(),
-  strings: new Map([["--id", "id"]]),
+  strings: new Map<string, string>(),
   numbers: new Map<string, string>(),
   booleans: new Map<string, WebhookBooleanOption>(),
   jsonObjects: new Map<string, string>(),
   jsonValues: new Map<string, string>(),
   keyValues: new Map<string, string>(),
 } as const;
+
+const webhookIdOptions = { ...emptyWebhookOptions, strings: new Map([["--id", "id"]]) };
+const webhookRotateOptions = {
+  ...emptyWebhookOptions,
+  strings: new Map([
+    ["--id", "id"],
+    ["--secret", "secret"],
+  ]),
+};
 
 const webhookDeliveryListOptions = {
   arrays: new Map<string, string>(),
@@ -2218,16 +2229,6 @@ const webhookDeliveryListOptions = {
     ["--direction", new Set(["outbound", "inbound"])],
     ["--status", new Set(["pending", "in_progress", "delivered", "failed", "abandoned"])],
   ]),
-} as const;
-
-const emptyWebhookOptions = {
-  arrays: new Map<string, string>(),
-  strings: new Map<string, string>(),
-  numbers: new Map<string, string>(),
-  booleans: new Map<string, WebhookBooleanOption>(),
-  jsonObjects: new Map<string, string>(),
-  jsonValues: new Map<string, string>(),
-  keyValues: new Map<string, string>(),
 } as const;
 
 type WebhookBooleanOption = {

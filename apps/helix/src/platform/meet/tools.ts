@@ -1,6 +1,7 @@
 import type { Actor, ToolDefinition } from "@helix/sdk-types";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { NotFoundError } from "../../api/api-error.js";
 import type { PlatformMetrics } from "../../api/metrics.js";
 import type { RuntimeToolRegistry } from "../tool-registry.js";
 import { defineTool } from "../tools/define-tool.js";
@@ -361,7 +362,8 @@ function createMeetToolDefinitions(
           actorId: ctx.actor.id,
           code: input.code,
         });
-        if (room === null || room.status === "ended") throw new Error("Unknown active meeting.");
+        if (room === null || room.status === "ended")
+          throw new NotFoundError("Unknown active meeting.");
         const open = await openRoomForMemberJoin(options.store, room, ctx.actor.id);
         return mintMemberJoin(options, open, ctx.actor, input, jitsiOrigin);
       },
@@ -426,7 +428,7 @@ function createMeetToolDefinitions(
           roomId: input.roomId,
         });
         if (room === null) {
-          throw new Error(`Unknown Meet room: ${input.roomId}`);
+          throw new NotFoundError(`Unknown Meet room: ${input.roomId}`);
         }
         if (room.status === "ended") throw new Error(`Meet room has ended: ${input.roomId}`);
         const decision = await rateLimiter.consume({
@@ -486,7 +488,7 @@ function createMeetToolDefinitions(
           roomId: input.roomId,
         });
         if (state === null || state === undefined)
-          throw new Error(`Unknown Meet room: ${input.roomId}`);
+          throw new NotFoundError(`Unknown Meet room: ${input.roomId}`);
         const canModerate =
           (await options.store.canModerateRoom?.({
             orgId: ctx.actor.orgId,
@@ -548,7 +550,7 @@ function createMeetToolDefinitions(
             roomId: input.roomId,
           })) === null
         ) {
-          throw new Error(`Unknown Meet room: ${input.roomId}`);
+          throw new NotFoundError(`Unknown Meet room: ${input.roomId}`);
         }
         if (input.event === "join_latency") {
           options.metrics.recordMeetQuality({ joinLatencySeconds: input.joinLatencyMs / 1_000 });
@@ -584,7 +586,7 @@ function createMeetToolDefinitions(
           roomId: input.roomId,
         });
         if (room === null) {
-          throw new Error(`Unknown Meet room: ${input.roomId}`);
+          throw new NotFoundError(`Unknown Meet room: ${input.roomId}`);
         }
         return serializeRoom(room);
       },

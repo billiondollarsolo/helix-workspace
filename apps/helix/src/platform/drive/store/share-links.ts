@@ -166,6 +166,22 @@ export async function revokeShareLink(
   });
 }
 
+/**
+ * The tenant phase for a share-link visit: the signed-in viewer from the
+ * link's organization, or, for anyone else, an actor-free service phase. An
+ * anonymous visit has no actor to run as, and the I/O saga refuses to borrow
+ * one, so without this every public link failed.
+ */
+function shareVisit(
+  link: Pick<DriveShareLinkRow, "org_id">,
+  input: Pick<DriveShareAccessInput, "actor">,
+): { readonly orgId: string; readonly actorId?: string; readonly serviceContext?: true } {
+  const actorId = shareActorId(link, input.actor);
+  return actorId === null
+    ? { orgId: link.org_id, serviceContext: true }
+    : { orgId: link.org_id, actorId };
+}
+
 export async function resolveShareLink(
   context: DriveStoreContext,
   input: DriveShareAccessInput,
@@ -194,7 +210,7 @@ export async function resolveShareLink(
     link.rate_limit_per_hour,
     3600,
   );
-  const row = await withTenantPostgresContext(context.sql, { orgId: link.org_id }, async (tx) => {
+  const row = await withTenantPostgresContext(context.sql, shareVisit(link, input), async (tx) => {
     const objects = await tx<ObjectRow[]>`
         select * from objects
         where id = ${link.object_id} and org_id = ${link.org_id}
@@ -239,7 +255,7 @@ export async function openFileByShareToken(
   }
   const object = await withTenantPostgresContext(
     context.sql,
-    { orgId: resolved.orgId },
+    shareVisit({ org_id: resolved.orgId }, input),
     async (tx) => {
       const rows = await tx<ObjectRow[]>`
           select *
@@ -304,7 +320,7 @@ export async function openFileByShareToken(
   }
   const consumed = await withTenantPostgresContext(
     context.sql,
-    { orgId: resolved.orgId },
+    shareVisit({ org_id: resolved.orgId }, input),
     async (tx) =>
       await tx<DriveShareLinkRow[]>`
           update drive_share_links link

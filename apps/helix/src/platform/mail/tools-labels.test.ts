@@ -113,6 +113,34 @@ describe("mail label and scheduled-send tools", () => {
     });
   });
 
+  it("applies labels named by display name, slug, or id as the label slug", async () => {
+    const updateThreadState = vi.fn<MailStore["updateThreadState"]>().mockResolvedValue();
+    const tools = createToolRegistry();
+    for (const tool of createMailToolDefinitions({
+      store: { listLabels: async () => [label], updateThreadState } as unknown as MailStore,
+    }))
+      tools.register(tool);
+    const threadId = "66666666-6666-4666-8666-666666666666";
+
+    const result = await tools.invoke(
+      "mail.label.apply",
+      { threadId, add: ["Clients", labelId, "follow-up"], remove: ["CLIENTS"] },
+      { actor },
+    );
+
+    expect(result).toMatchObject({ ok: true });
+    expect(updateThreadState).toHaveBeenCalledWith({
+      orgId,
+      actorId,
+      threadId,
+      // Unknown names stay as given; removal also drops the value as given.
+      patch: {
+        addLabels: ["clients", "clients", "follow-up"],
+        removeLabels: ["CLIENTS", "clients"],
+      },
+    });
+  });
+
   it("rejects colours outside the palette and empty updates", async () => {
     const tools = registry({});
     expect(

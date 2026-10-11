@@ -4,6 +4,7 @@ import { sensitivityClassificationFromMetadata } from "../ai/classification/inde
 import { toSqlJson } from "../util/sql.js";
 import { mailAddress, mailAddressArray, stringMetadata } from "./store-addresses.js";
 import { parseMailSearchQuery } from "./store-search-query.js";
+import { mailPreviewText } from "./store-thread-projection.js";
 import {
   mailMessageMatchSql,
   mailThreadStateMatchSql,
@@ -24,6 +25,7 @@ interface MailSearchRow {
   readonly message_id: string;
   readonly subject: string | null;
   readonly body: string;
+  readonly body_format: string;
   readonly metadata: JsonObject;
   readonly sent_at: Date;
   readonly labels: readonly string[] | null;
@@ -57,7 +59,11 @@ function mapSearchHit(row: MailSearchRow): MailSearchHit {
     messageId: row.message_id,
     subject: row.subject ?? "",
     ...(from === undefined ? {} : { from }),
-    preview: row.body.slice(0, 240),
+    preview: mailPreviewText({
+      body: row.body,
+      bodyFormat: row.body_format,
+      plainBody: row.metadata.plainBody,
+    }),
     sentAt: row.sent_at,
     labels: row.labels ?? [],
     unread: row.read_at === null || row.read_at < row.sent_at,
@@ -128,6 +134,7 @@ export class MailSearchStore {
         mm.id as message_id,
         t.subject,
         mm.body,
+        mm.body_format,
         case when helix_mailbox_sent_message(mm.org_id, mm.id, ${input.actorId}) then mm.metadata else (mm.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
         mm.sent_at,
         mts.labels,

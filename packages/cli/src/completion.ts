@@ -1,5 +1,7 @@
 import type { CompletionShell } from "./parser.js";
 
+const driveFileActions = ["upload", "finalize", "list", "share", "move", "trash", "restore"];
+
 const topLevelCommands = [
   "tool",
   "mail",
@@ -65,7 +67,7 @@ export const commandActions: Record<string, readonly string[]> = {
     "messages",
     "message-list",
   ],
-  drive: ["upload", "finalize", "list", "share", "move", "trash", "restore", "delete", "search"],
+  drive: [...driveFileActions, "delete", "search", "s3-keys"],
   calendar: [
     "event-create",
     "create",

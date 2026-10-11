@@ -985,6 +985,7 @@ export function createDriveToolDefinitions(
         permission: "drive.write",
         sideEffects: "write",
         confirmationRequired: true,
+        sensitiveOutputKeys: ["token"],
         inputSchema: zodToolSchema(createShareLinkSchema, genericObjectJsonSchema),
         outputSchema: zodToolSchema(driveShareLinkOutputSchema, genericObjectJsonSchema),
         handler: async (input, ctx) => {

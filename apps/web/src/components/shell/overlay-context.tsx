@@ -10,6 +10,7 @@ const SETTINGS_SECTION_IDS = [
   "language",
   "signature",
   "security",
+  "s3-keys",
   "shortcuts",
 ] as const;
 

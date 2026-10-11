@@ -32,7 +32,15 @@ import {
   isSecureWebDavRequest,
   type WebDavRateLimiter,
 } from "./webdav-security.js";
-import { authorizeWebDavAccess, isWebDavListable, type WebDavDriveScope } from "./webdav-access.js";
+import { authorizeWebDavAccess, type WebDavDriveScope } from "./webdav-access.js";
+import {
+  findDriveChild,
+  isDriveEntryListable,
+  listDriveChildren,
+  resolveDriveParentFolder,
+  resolveDrivePath,
+  type ResolvedDrivePath,
+} from "./path-resolution.js";
 
 export interface WebDavDriveStore extends DriveStore {
   createFolder(input: DriveFolderCreateInput): Promise<DriveEntryRecord>;
@@ -237,14 +245,17 @@ export async function registerDriveRoutes(
           if (error instanceof DavStandardsParseError) return reply.code(400).send(error.message);
           throw error;
         }
-        const target = await resolveTarget(options.store, actor, path);
-        if (target === null || (target.entry !== undefined && !isWebDavListable(target.entry))) {
+        const target = await resolveDrivePath(options.store, actor, path);
+        if (
+          target === null ||
+          (target.entry !== undefined && !isDriveEntryListable(target.entry))
+        ) {
           return reply.code(404).send("Unknown WebDAV resource.");
         }
         const depth = propfindDepth(headerString(request.headers.depth));
         const children =
           depth === 1 && target.kind === "folder"
-            ? await listWebDavChildren(options.store, actor, target.folderId)
+            ? await listDriveChildren(options.store, actor, target.folderId)
             : [];
         const requestedPathKeys = [
           pathKey(target.path),
@@ -291,7 +302,7 @@ export async function registerDriveRoutes(
           if (error instanceof DavStandardsParseError) return reply.code(400).send(error.message);
           throw error;
         }
-        const target = await resolveTarget(options.store, actor, path);
+        const target = await resolveDrivePath(options.store, actor, path);
         if (target?.kind !== "folder") {
           return reply.code(404).send("Unknown WebDAV collection.");
         }
@@ -321,7 +332,7 @@ export async function registerDriveRoutes(
         }
         const changes =
           report.afterVersion === undefined
-            ? (await listWebDavChildren(options.store, actor, target.folderId)).map((entry) => ({
+            ? (await listDriveChildren(options.store, actor, target.folderId)).map((entry) => ({
                 pathKey: pathKey([...path, entry.name]),
                 status: 200 as const,
                 resourceType: entry.type,
@@ -341,7 +352,7 @@ export async function registerDriveRoutes(
       }
 
       if (method === "GET") {
-        const target = await resolveTarget(options.store, actor, path);
+        const target = await resolveDrivePath(options.store, actor, path);
         if (target === null || target.kind !== "file" || target.entry === undefined) {
           return reply.code(404).send("Unknown WebDAV file.");
         }
@@ -412,7 +423,7 @@ export async function registerDriveRoutes(
         if (path.length === 0) {
           return reply.code(405).send("Cannot delete the root WebDAV collection.");
         }
-        const target = await resolveTarget(options.store, actor, path);
+        const target = await resolveDrivePath(options.store, actor, path);
         if (target === null || target.entry === undefined) {
           return reply.code(404).send("Unknown WebDAV resource.");
         }
@@ -445,7 +456,7 @@ export async function registerDriveRoutes(
         if (locked !== null) {
           return reply.code(423).send(locked);
         }
-        const parent = await resolveParentFolder(options.store, actor, path);
+        const parent = await resolveDriveParentFolder(options.store, actor, path);
         if (parent === null) {
           return reply.code(409).send("Unknown WebDAV parent collection.");
         }
@@ -453,7 +464,7 @@ export async function registerDriveRoutes(
         if (name === undefined || name.length === 0) {
           return reply.code(405).send("Cannot create the root WebDAV collection.");
         }
-        const existing = await findChild(options.store, actor, parent.folderId, name);
+        const existing = await findDriveChild(options.store, actor, parent.folderId, name);
         if (existing !== null) {
           const preconditionFailure = putPreconditionFailure(request, existing);
           if (preconditionFailure !== null) return reply.code(412).send(preconditionFailure);
@@ -476,9 +487,9 @@ export async function registerDriveRoutes(
           if (error instanceof DavStandardsParseError) return reply.code(400).send(error.message);
           throw error;
         }
-        const target = await resolveTarget(options.store, actor, path);
+        const target = await resolveDrivePath(options.store, actor, path);
         const parent =
-          target === null ? await resolveParentFolder(options.store, actor, path) : null;
+          target === null ? await resolveDriveParentFolder(options.store, actor, path) : null;
         if (target === null && parent === null) {
           return reply.code(409).send("Unknown WebDAV parent collection.");
         }
@@ -521,7 +532,7 @@ export async function registerDriveRoutes(
         return reply.code(204).send();
       }
 
-      const parent = await resolveParentFolder(options.store, actor, path);
+      const parent = await resolveDriveParentFolder(options.store, actor, path);
       if (parent === null) {
         return reply.code(409).send("Unknown WebDAV parent collection.");
       }
@@ -529,7 +540,7 @@ export async function registerDriveRoutes(
       if (name === undefined || name.length === 0) {
         return reply.code(409).send("PUT requires a file name.");
       }
-      const existing = await findChild(options.store, actor, parent.folderId, name);
+      const existing = await findDriveChild(options.store, actor, parent.folderId, name);
       if (existing?.type === "folder") {
         return reply.code(409).send("Cannot overwrite a WebDAV collection with a file.");
       }
@@ -619,103 +630,8 @@ function requiredScope(method: WebDavMethod): WebDavDriveScope {
   }
 }
 
-interface ResolvedTarget {
-  readonly kind: "folder" | "file";
-  readonly folderId: string | null;
-  readonly entry?: DriveEntryRecord;
-  readonly path: readonly string[];
-}
-
-async function resolveTarget(
-  store: WebDavDriveStore,
-  actor: Actor,
-  path: readonly string[],
-): Promise<ResolvedTarget | null> {
-  if (path.length === 0) {
-    return { kind: "folder", folderId: null, path };
-  }
-  const parent = await resolveParentFolder(store, actor, path);
-  if (parent === null) {
-    return null;
-  }
-  const name = path.at(-1);
-  if (name === undefined) {
-    return parent;
-  }
-  const child = await findChild(store, actor, parent.folderId, name);
-  if (child === null) {
-    return null;
-  }
-  return {
-    kind: child.type,
-    folderId: child.type === "folder" ? child.id : parent.folderId,
-    entry: child,
-    path,
-  };
-}
-
-async function resolveParentFolder(
-  store: WebDavDriveStore,
-  actor: Actor,
-  path: readonly string[],
-): Promise<ResolvedTarget | null> {
-  let folderId: string | null = null;
-  const parentSegments = path.slice(0, -1);
-  for (const segment of parentSegments) {
-    const child = await findChild(store, actor, folderId, segment);
-    if (child === null || child.type !== "folder") {
-      return null;
-    }
-    folderId = child.id;
-  }
-  return { kind: "folder", folderId, path: parentSegments };
-}
-
-async function findChild(
-  store: WebDavDriveStore,
-  actor: Actor,
-  folderId: string | null,
-  name: string,
-): Promise<DriveEntryRecord | null> {
-  let cursor: string | undefined;
-  do {
-    const page = await store.list({
-      orgId: actor.orgId,
-      actorId: actor.id,
-      folderId,
-      limit: 250,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    const found = page.entries.find((entry) => entry.name === name);
-    if (found !== undefined) return found;
-    cursor = page.nextCursor ?? undefined;
-  } while (cursor !== undefined);
-  return null;
-}
-
-async function listWebDavChildren(
-  store: WebDavDriveStore,
-  actor: Actor,
-  folderId: string | null,
-): Promise<readonly DriveEntryRecord[]> {
-  const entries: DriveEntryRecord[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await store.list({
-      orgId: actor.orgId,
-      actorId: actor.id,
-      folderId,
-      limit: 250,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    entries.push(...page.entries.filter(isWebDavListable));
-    cursor = page.nextCursor ?? undefined;
-  } while (cursor !== undefined);
-  return entries;
-}
-
 function propfindMultistatusXml(
-  target: ResolvedTarget,
+  target: ResolvedDrivePath,
   children: readonly DriveEntryRecord[],
   body: string,
   locks: ReadonlyMap<string, WebDavLock>,
@@ -730,7 +646,7 @@ function propfindMultistatusXml(
 }
 
 function targetResponseXml(
-  target: ResolvedTarget,
+  target: ResolvedDrivePath,
   request: PropfindRequest,
   locks: ReadonlyMap<string, WebDavLock>,
   syncToken?: string,

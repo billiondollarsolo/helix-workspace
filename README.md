@@ -14,8 +14,10 @@ Package versions alone do not establish production readiness.
   operate direct-to-MX outbound delivery for the pilot.
 - Mail is available through the Helix web UI and supported APIs. The pilot does not include a
   Helix-hosted IMAP server.
-- Drive provides file upload, storage, organization, versions, sharing, download, and WebDAV.
-  Editors, file viewers, and converters are not part of this product.
+- Drive provides file upload, storage, organization, versions, sharing, download, WebDAV, and an
+  S3-compatible API (`/v1/s3`, SigV4 access keys) for the AWS CLI, rclone, and S3 SDKs; see
+  [docs/drive-s3-api.md](docs/drive-s3-api.md). Editors, file viewers, and converters are not part
+  of this product.
 - Chat uses TLS, organization and room authorization, retention controls, and deployment-attested
   encrypted storage. Chat is **not end-to-end encrypted**, and authorized server administrators can
   technically access stored messages.

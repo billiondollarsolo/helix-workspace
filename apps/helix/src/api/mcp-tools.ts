@@ -1,3 +1,4 @@
+import { redactToolInvokeResult } from "../platform/tools/sensitive-output.js";
 import type {
   Actor,
   JsonObject,
@@ -301,7 +302,7 @@ async function invokeIdempotently(
   try {
     const completed = await result;
     await store.complete(storageKey, claim.claimToken, {
-      result: completed,
+      result: redactToolInvokeResult(context.tools.get(toolId), completed),
       statusCode: completed.ok
         ? completed.status === "pending_confirmation"
           ? 202

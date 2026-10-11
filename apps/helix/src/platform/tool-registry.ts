@@ -4,7 +4,6 @@ import type {
   AIClassification,
   AuditRecord,
   JsonObject,
-  JsonValue,
   PendingToolInvocation,
   RequestContext,
   ResourceRef,
@@ -14,6 +13,8 @@ import type {
 } from "@helix/sdk-types";
 import { SpanStatusCode, trace, type Span } from "@opentelemetry/api";
 import { nanoid } from "nanoid";
+import { interactiveSessionDenial } from "./tools/interactive-session.js";
+import { persistedToolOutput, toJsonValue } from "./tools/sensitive-output.js";
 import { operationalControlEnv } from "../config/env.js";
 import type { AgentAutomationPolicy, AgentCredentialPolicy } from "./auth/credentials.js";
 import { confirmationRequiredForSideEffect, tierDefaults } from "./config/tier.js";
@@ -488,6 +489,8 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         if (!(await accessPolicy.can(actor, tool.permission, toolResource(tool)))) {
           return await completeDenial(403, `Actor cannot invoke tool: ${toolId}`);
         }
+        const interactiveDenial = interactiveSessionDenial(tool, invokeOptions?.credentialId);
+        if (interactiveDenial !== null) return await completeDenial(403, interactiveDenial);
         const operationalControl = await evaluateOperationalControl(
           tool,
           actor,
@@ -895,8 +898,8 @@ export function createToolRegistry(options: ToolRegistryOptions = {}): RuntimeTo
         id: pendingId,
         executionActorId: requestingPrincipal.actor.id,
         ...(executionRequest.traceId === undefined ? {} : { traceId: executionRequest.traceId }),
-        ...(result.ok && result.status === "executed"
-          ? { result: toJsonValue(result.output) }
+        ...(result.ok && result.status !== "pending_confirmation"
+          ? { result: persistedToolOutput(tools.get(claim.record.toolId), result.output) }
           : { error: result.ok ? "Pending action did not execute." : result.error }),
       });
       return result;
@@ -1595,10 +1598,6 @@ function actorIsOrgAdmin(actor: Actor): boolean {
         scope === "admin.console.write",
     )
   );
-}
-
-function toJsonValue(value: unknown): JsonValue {
-  return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
 function toolHttpError(error: unknown): {

@@ -378,6 +378,7 @@ function createAppPasswordToolDefinitions(
       permission: appPasswordAdminScope,
       sideEffects: "write",
       confirmationRequired: true,
+      sensitiveOutputKeys: ["password"],
       inputSchema: zodToolSchema(createInputSchema, genericObjectJsonSchema),
       outputSchema: zodToolSchema(z.unknown(), genericObjectJsonSchema),
       handler: async (input, ctx) => {

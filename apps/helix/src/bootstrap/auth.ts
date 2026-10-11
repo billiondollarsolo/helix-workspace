@@ -19,6 +19,7 @@ import { PostgresAssistantStore } from "../platform/assistant/index.js";
 import { PostgresAuditStore } from "../platform/audit/store.js";
 import { PostgresAdminUsersStore } from "../platform/auth/admin-users.js";
 import { PostgresAppPasswordStore } from "../platform/auth/app-passwords.js";
+import { PostgresDriveS3AccessKeyStore } from "../platform/drive/s3/access-keys.js";
 import { AuthorizationCodeService } from "../platform/auth/authorization-code.js";
 import { PostgresOAuthAuthorizationStore } from "../platform/auth/authorization-store.js";
 import {
@@ -314,6 +315,8 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
 
   const appPasswordStore = new PostgresAppPasswordStore(sql);
 
+  const driveS3AccessKeyStore = new PostgresDriveS3AccessKeyStore(sql, tenantSecretCipher);
+
   const adminUsersStore = new PostgresAdminUsersStore(sql);
 
   /* Built here rather than inline at its route registration because
@@ -484,6 +487,7 @@ export async function installAuth(context: Awaited<ReturnType<typeof installHttp
     tenantProvisioningWorker,
     defaultOrg,
     appPasswordStore,
+    driveS3AccessKeyStore,
     adminUsersStore,
     adminDomainsStore,
     auditStore,

@@ -8,6 +8,17 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Added
 
+- Drive accepts S3 commands. An S3-compatible gateway at `/v1/s3` lets the AWS CLI, rclone, boto3,
+  and the AWS SDKs list, upload, download, copy, and delete Drive files, including multipart uploads,
+  ranged downloads, and presigned URLs. It maps the buckets `my-drive` and `shared-with-me` onto
+  Drive, and `/`-separated keys onto Drive folders, which it creates when it needs them. The gateway
+  authenticates with AWS Signature V4, including the aws-chunked streaming uploads that the AWS CLI
+  sends. Every request runs through the normal Drive pipeline: actor permissions, malware scanning,
+  DLP, quotas, versions, trash retention, and the audit trail. Users create, list, and revoke their
+  own S3 access keys in Settings → S3 access keys (`helix drive s3-keys` lists and revokes them);
+  the secret is shown once. Admins can list every key in the org. The org setting `drive_s3_api` (on by default) turns
+  the gateway off. See `docs/drive-s3-api.md`.
+
 - Drive folders have a details panel to rename and share them; people added to a folder get
   access to everything inside it.
 - Drive Home suggests recently updated folders and files from across Drive.
@@ -65,6 +76,16 @@ All notable changes to Helix Workspace are documented here. This file follows
   closed. A live test now keeps the database catalog equal to the app's scope catalog.
 
 ### Fixed
+
+- One-time secrets are no longer stored with confirmed tool actions. App passwords, agent
+  credential secrets, Drive share-link tokens, and Drive S3 secret keys used to be saved in the
+  pending action's result (and the idempotency replay cache), and `actions.get` could fetch them
+  again. Tools now declare their secret output fields (`sensitiveOutputKeys`): the approval
+  response still shows the secret once, and every stored copy keeps a redacted placeholder.
+- Confirmed tool actions that ran successfully are recorded as executed. Before, they were stored
+  as failed with "Pending action did not execute.".
+- Request logs no longer include the `X-Amz-Signature`, `X-Amz-Credential`, or
+  `X-Amz-Security-Token` values of presigned URLs.
 
 - Inbound mail is stored again: the receiver crashed summarizing DMARC for senders with no
   DMARC record (mailauth omits `alignment`), and raw-source integrity always failed because

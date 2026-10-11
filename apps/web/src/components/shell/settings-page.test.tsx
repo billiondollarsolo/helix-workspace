@@ -145,6 +145,7 @@ describe("SettingsPage", () => {
       "Language & region",
       "Mail signature",
       "Security",
+      "S3 access keys",
       "Keyboard shortcuts",
     ]);
   });

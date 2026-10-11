@@ -28,6 +28,11 @@ import {
 } from "./tenant-config-api";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { PageHeading } from "@/features/admin/console/primitives";
+import {
+  BYO_STORAGE_FIELDS,
+  BYO_STORAGE_KINDS,
+  BYO_STORAGE_PROVIDERS,
+} from "./tenant-config-storage-fields";
 
 interface TenantConfigRouteQueryClient {
   ensureQueryData(options: ReturnType<typeof tenantConfigQueryOptions>): Promise<unknown>;
@@ -43,12 +48,14 @@ const BOOLEAN_FEATURE_FLAGS = [
   ["assistant_retrieval", "Assistant searches workspace content"],
   ["mail_outbound", "Outbound mail"],
   ["calendar_import_invitations", "Import calendar invitations from email"],
+  ["drive_s3_api", "Drive S3 API (access keys for aws, rclone, and S3 SDKs)"],
 ] as const;
 
 export const BOOLEAN_FEATURE_FLAG_GROUPS = [
   { title: "AI", keys: ["assistant_retrieval"] },
   { title: "Mail", keys: ["mail_outbound"] },
   { title: "Calendar", keys: ["calendar_import_invitations"] },
+  { title: "Drive", keys: ["drive_s3_api"] },
 ] as const satisfies ReadonlyArray<{
   readonly title: string;
   readonly keys: readonly string[];
@@ -71,27 +78,6 @@ const BRANDING_FIELDS = [
   ["email_from_name", "Email from-name"],
   ["email_from_domain", "Email from-domain"],
   ["custom_domain", "Custom domain"],
-] as const;
-
-const BYO_STORAGE_PROVIDERS = [
-  ["aws-s3", "AWS S3"],
-  ["r2", "Cloudflare R2"],
-  ["s3-compatible", "S3-compatible"],
-] as const;
-
-const BYO_STORAGE_KINDS = [
-  ["helix-default", "Helix default"],
-  ["byo", "Customer-owned"],
-] as const;
-
-const BYO_STORAGE_FIELDS = [
-  ["endpoint", "Endpoint"],
-  ["region", "Region"],
-  ["bucket", "Bucket"],
-  ["prefix", "Prefix"],
-  ["credentials_secret_handle", "Credentials secret handle"],
-  ["sse_kms_key_arn", "SSE-KMS key ARN"],
-  ["retention_days", "Object-lock retention days"],
 ] as const;
 
 /* No shared Select primitive: selects restate the `components/ui/input` field look. */

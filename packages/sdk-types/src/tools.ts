@@ -82,6 +82,18 @@ export interface ToolDefinition<Input = unknown, Output = unknown> {
    * addition to {@link ToolDefinition.permission}. See PRD §9.4.
    */
   readonly scopeComposition?: ToolScopeComposition<Input>;
+  /**
+   * Top-level output keys that hold one-time secrets (passwords, API secrets,
+   * bearer tokens). The live response carries them; every persisted copy of
+   * the output (pending-action results, idempotency replays) is redacted.
+   */
+  readonly sensitiveOutputKeys?: readonly string[];
+  /**
+   * Only a signed-in person may invoke the tool: delegated credentials (OAuth
+   * tokens, API keys, agent credentials) are refused. Used by tools that mint
+   * long-lived credentials, which must not outlive a delegated grant.
+   */
+  readonly interactiveSessionOnly?: boolean;
   handler(input: Input, ctx: ToolContext): Promise<Output>;
 }
 

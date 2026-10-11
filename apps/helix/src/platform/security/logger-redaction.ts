@@ -44,12 +44,41 @@ const HELIX_LOG_REDACT_PATHS = Object.freeze([
   "*.apiKey",
 ] as const);
 
+/** Query parameters that carry signing material (S3 presigned URLs). */
+const SIGNED_URL_PARAMETER =
+  /([?&](?:x-amz-signature|x-amz-credential|x-amz-security-token)=)[^&#]*/giu;
+
+/** Replaces signing material in a URL's query string; the rest of the URL stays useful. */
+export function redactSignedUrl(url: string): string {
+  return url.replace(SIGNED_URL_PARAMETER, "$1[REDACTED]");
+}
+
+interface LoggedRequest {
+  readonly method?: string;
+  readonly url?: string;
+  readonly host?: string;
+  readonly ip?: string;
+  readonly headers?: Readonly<Record<string, string | string[] | undefined>>;
+  readonly socket?: { readonly remotePort?: number };
+}
+
 export function helixLoggerOptions(level: string): LoggerOptions {
   return {
     level,
     redact: {
       paths: [...HELIX_LOG_REDACT_PATHS],
       censor: "[REDACTED]",
+    },
+    serializers: {
+      // Fastify's request shape, with presigned-URL signatures removed.
+      req: (request: LoggedRequest) => ({
+        method: request.method,
+        url: request.url === undefined ? undefined : redactSignedUrl(request.url),
+        version: request.headers?.["accept-version"],
+        host: request.host,
+        remoteAddress: request.ip,
+        remotePort: request.socket?.remotePort,
+      }),
     },
   };
 }

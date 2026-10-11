@@ -40,6 +40,8 @@ export const usage = `Usage:
   helix drive restore [--json [JSON]]
   helix drive delete [--json [JSON]]
   helix drive search [--query <text>] [--folder <folder-id>] [--limit <number>] [--json [JSON]]
+  helix drive s3-keys list [--include-revoked] [--all] [--json [JSON]]
+  helix drive s3-keys revoke --key-id <id> [--json [JSON]]
   helix calendar event-create [--calendar-id <id>] [--title <text>] [--description <text>] [--start <iso>] [--end <iso>] [--timezone <tz>] [--location <text>] [--attendee <email>] [--all-day] [--json [JSON]]
   helix calendar event-update [--event-id <id>] [--calendar-id <id>] [--title <text>] [--description <text>] [--start <iso>] [--end <iso>] [--timezone <tz>] [--location <text>] [--attendee <email>] [--all-day] [--json [JSON]]
   helix calendar event-delete [--event-id <id>] [--send-cancellation] [--json [JSON]]

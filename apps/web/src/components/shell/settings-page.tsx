@@ -5,6 +5,7 @@ import { ArrowLeft as ArrowLeftIcon } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { LanguageSection, ProfileSection, ShortcutsSection } from "./settings-account";
 import { AppearanceSection } from "./settings-appearance";
+import { S3KeysSection } from "./settings-s3-keys";
 import { SecuritySection } from "./settings-security";
 import { SignatureSection } from "./settings-signature";
 
@@ -21,6 +22,7 @@ const SECTIONS: {
   { id: "language", label: "Language & region", icon: "Globe", Component: LanguageSection },
   { id: "signature", label: "Mail signature", icon: "EditPen", Component: SignatureSection },
   { id: "security", label: "Security", icon: "Shield", Component: SecuritySection },
+  { id: "s3-keys", label: "S3 access keys", icon: "Key", Component: S3KeysSection },
   { id: "shortcuts", label: "Keyboard shortcuts", icon: "Code", Component: ShortcutsSection },
 ];
 

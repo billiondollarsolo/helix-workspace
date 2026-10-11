@@ -26,6 +26,7 @@ export const tenantFeatureFlagsSchema = z
     assistant_retrieval: z.boolean(),
     mail_outbound: z.boolean(),
     calendar_import_invitations: z.boolean(),
+    drive_s3_api: z.boolean(),
   })
   .passthrough();
 export type TenantFeatureFlags = z.infer<typeof tenantFeatureFlagsSchema>;
@@ -71,6 +72,7 @@ export const SYSTEM_TENANT_FEATURE_FLAGS = {
   assistant_retrieval: true,
   mail_outbound: true,
   calendar_import_invitations: false,
+  drive_s3_api: true,
 } as const satisfies TenantFeatureFlags;
 
 export const SYSTEM_TENANT_QUOTAS = {

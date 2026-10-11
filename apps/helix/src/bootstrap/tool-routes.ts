@@ -1,3 +1,4 @@
+import { redactToolInvokeResult } from "../platform/tools/sensitive-output.js";
 import { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { type SessionActorResolver } from "../api/actor.js";
@@ -207,7 +208,7 @@ export function registerToolRestRoutes(
       }
       try {
         await idempotency.store.complete(idempotency.key, claim.claimToken, {
-          result,
+          result: redactToolInvokeResult(tool, result),
           statusCode: toolResultStatusCode(result),
           requestHash: idempotency.hash,
           expiresAt: Date.now() + (options.idempotencyTtlMs ?? DEFAULT_IDEMPOTENCY_TTL_MS),

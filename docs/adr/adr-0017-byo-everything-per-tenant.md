@@ -1,6 +1,6 @@
 # ADR-0017: BYO-Everything as Per-Tenant Policy
 
-> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features or impose a commercial license.
+> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features.
 
 > Superseded in part by [ADR-0030](adr-0030-free-open-source-no-plans-or-limits.md): there are no plans, so nothing here is plan- or tier-gated. Every org gets every feature, and the effective config is system defaults plus the org's own overrides.
 
@@ -27,7 +27,7 @@ We will implement **all five BYO surfaces as per-tenant policy** stored in `orgs
 This applies to both deployment shapes:
 
 - **Self-host**: single tenant; BYO becomes "I choose my own infra" config rather than per-tenant variance.
-- **SaaS**: per-tenant BYO is a tier-gated feature (Enterprise+ for storage/DB/KMS; Pro+ for AI provider).
+- **SaaS**: per-tenant BYO storage, database, KMS and AI provider are available to every org.
 
 ## Consequences
 

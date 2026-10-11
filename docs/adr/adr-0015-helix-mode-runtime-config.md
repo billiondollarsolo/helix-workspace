@@ -1,6 +1,6 @@
 # ADR-0015: HELIX_MODE Runtime Configuration for Single-Tenant vs Multi-Tenant SaaS
 
-> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features or impose a commercial license.
+> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features.
 
 ## Status
 

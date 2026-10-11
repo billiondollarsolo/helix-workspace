@@ -1,6 +1,6 @@
 # ADR-0027: Browser-Direct AI for Short Completions; Server-Mediated for Streaming/RAG
 
-> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features or impose a commercial license.
+> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features.
 
 ## Status
 

@@ -1,6 +1,6 @@
 # ADR-0022: CloudNativePG Async Replica for Multi-Region DR
 
-> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features or impose a commercial license.
+> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features.
 
 ## Status
 
@@ -40,7 +40,7 @@ RTO/RPO targets (per tier):
 - Async replication has small data loss window (~5s typical, defines RPO).
 - Failover requires DNS cutover + connection pool flush; brief disruption.
 - Promoted DR replica becomes new primary; un-promote-back complex; usually requires fresh re-replication.
-- Cost: 2x Postgres infrastructure for Enterprise+ tenants opting into DR.
+- Cost: 2x Postgres infrastructure for tenants opting into DR.
 
 ### Neutral
 

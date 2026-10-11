@@ -1,6 +1,6 @@
 # ADR-0025: OpenFeature + In-DB Backend for Feature Flags
 
-> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features or impose a commercial license.
+> Historical cross-product proposal. Retained for context; the [1.0 scope](../release/1.0-scope.md) is authoritative. This record does not enable features.
 
 > Superseded in part by [ADR-0030](adr-0030-free-open-source-no-plans-or-limits.md): there are no plans, so nothing here is plan- or tier-gated. Every org gets every feature, and the effective config is system defaults plus the org's own overrides.
 

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Check, ChevronRight, Clock, LoaderCircle, X } from "lucide-react";
 import { iconMap as Icons, type IconName } from "@/components/icon-map";
@@ -244,6 +244,10 @@ export function AssistantEvidenceDrawer({
   const titleId = useId();
   const drawerRef = useRef<HTMLElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Focus moves in on open and back to the opener on close only. Callers pass
+  // a fresh `onClose` each render; depending on it re-ran this effect on every
+  // re-render and pulled focus out of whatever the person had opened since.
+  const close = useEffectEvent(onClose);
   useEffect(() => {
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -251,7 +255,7 @@ export function AssistantEvidenceDrawer({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        close();
       }
     };
     document.addEventListener("keydown", onKeyDown);
@@ -259,7 +263,7 @@ export function AssistantEvidenceDrawer({
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus();
     };
-  }, [onClose]);
+  }, []);
   return (
     <aside
       ref={drawerRef}

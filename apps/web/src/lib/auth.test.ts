@@ -259,4 +259,45 @@ describe("web auth helpers", () => {
     expect(call?.[0]).toBe("/api/auth/sign-out");
     expect(call?.[1]?.method).toBe("POST");
   });
+
+  it("re-verifies once when concurrent requests hit an expired session", async () => {
+    vi.resetModules();
+    const { authenticatedFetch: freshFetch } = await import("./auth");
+    const replace = vi.fn();
+    vi.stubGlobal("location", {
+      pathname: "/admin/users",
+      search: "",
+      hash: "#directory",
+      replace,
+    });
+    const expired = () =>
+      Response.json(
+        { error: { code: "session_reauthentication_required", message: "Sign in again." } },
+        { status: 401 },
+      );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(expired())
+      .mockResolvedValueOnce(expired());
+    const settled = vi.fn();
+    try {
+      // Both requests are in flight before either 401 arrives.
+      void Promise.all([freshFetch("/api/admin/users"), freshFetch("/api/admin/users")]).then(
+        settled,
+        settled,
+      );
+      await vi.waitFor(() => expect(replace).toHaveBeenCalledOnce());
+      // A request issued while the sign-in page loads never reaches the server.
+      void freshFetch("/api/admin/groups").then(settled, settled);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(replace).toHaveBeenCalledExactlyOnceWith(
+        "/login?reauthenticate=true&returnTo=%2Fadmin%2Fusers%23directory",
+      );
+      expect(settled).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
 });

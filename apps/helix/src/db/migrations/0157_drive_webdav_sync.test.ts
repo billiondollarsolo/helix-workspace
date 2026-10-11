@@ -4,6 +4,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresDriveStore } from "../../platform/drive/store.js";
 import { tenantAwarePostgresSql } from "../../platform/tenancy/postgres-roles.js";
+import { uniqueTestRole } from "../../test-support/test-role.js";
 
 const migration = readFileSync(new URL("./0157_drive_webdav_sync.sql", import.meta.url), "utf8");
 
@@ -22,8 +23,7 @@ describe("0157 Drive WebDAV sync migration", () => {
 
 describe.skipIf(process.env.DATABASE_URL === undefined)("durable Drive WebDAV sync journal", () => {
   const admin = postgres(process.env.DATABASE_URL ?? "", { prepare: false });
-  const role = "helix_webdav_sync_test_app";
-  const password = "helix_webdav_sync_test_password";
+  const { name: role, password } = uniqueTestRole("helix_webdav_sync_test");
   const runtimeUrl = new URL(process.env.DATABASE_URL ?? "postgres://localhost/helix");
   runtimeUrl.username = role;
   runtimeUrl.password = password;
@@ -47,7 +47,6 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("durable Drive WebDAV sy
     `;
     if (ready[0]?.ready !== true) throw new Error("Run migration 0157 before this test.");
     await cleanup();
-    await admin.unsafe(`drop role if exists ${role}`);
     await admin.unsafe(
       `create role ${role} login inherit nosuperuser nobypassrls password '${password}'`,
     );

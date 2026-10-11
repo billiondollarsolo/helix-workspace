@@ -156,6 +156,9 @@ test("rates a saved answer and keeps its cited items and rating after reload", a
   const good = conversation.getByRole("button", { name: "Good response" });
   await good.click();
   await expect(good).toHaveAttribute("aria-pressed", "true");
+  // The rating shows optimistically; the buttons stay disabled until the save settles.
+  await expect(good).toBeEnabled();
+  await expect(good).toHaveAttribute("aria-pressed", "true");
   expect(feedbackBodies).toEqual([{ conversationId, messageId: answerId, rating: "up" }]);
 
   await page.goto(`/assistant?conversation=${conversationId}`);

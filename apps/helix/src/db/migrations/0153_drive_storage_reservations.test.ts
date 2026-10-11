@@ -2,6 +2,7 @@ import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { uniqueTestRole } from "../../test-support/test-role.js";
 
 const migration = readFileSync(
   new URL("./0153_drive_storage_reservations.sql", import.meta.url),
@@ -28,8 +29,7 @@ describe("0153 Drive storage reservations", () => {
 
 describe.skipIf(process.env.DATABASE_URL === undefined)("atomic Drive storage quota", () => {
   const admin = postgres(process.env.DATABASE_URL ?? "", { prepare: false });
-  const role = "helix_drive_quota_test_app";
-  const password = "helix_drive_quota_test_password";
+  const { name: role, password } = uniqueTestRole("helix_drive_quota_test");
   const runtimeUrl = new URL(process.env.DATABASE_URL ?? "postgres://localhost/helix");
   runtimeUrl.username = role;
   runtimeUrl.password = password;
@@ -55,7 +55,6 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("atomic Drive storage qu
 
   beforeAll(async () => {
     await cleanup();
-    await admin.unsafe(`drop role if exists ${role}`);
     await admin.unsafe(
       `create role ${role} login inherit nosuperuser nobypassrls password '${password}'`,
     );

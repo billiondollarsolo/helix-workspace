@@ -85,12 +85,7 @@ test("admin manages addresses across selected domains and keeps failed changes e
   await expect(dialog.getByLabel("Send as sales@second.test")).toHaveCount(0);
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
   await page.reload();
-  const details = page.getByRole("button", { name: "Details for Morgan Lee", exact: true });
-  await expect(details).toBeVisible();
-  if ((await details.getAttribute("aria-expanded")) !== "true") await details.click();
-  await page
-    .getByRole("button", { name: "Manage mail addresses for Morgan Lee", exact: true })
-    .click();
+  await openUserAction(page, "Morgan Lee", "Mail addresses");
   await expect(dialog).toContainText("Primary mail address: support@second.test");
   expect(
     state.writes.filter((write) => write.method === "POST").map((write) => write.body),
@@ -105,16 +100,17 @@ test("email group create and edit send explicit internal or external posting pol
 }) => {
   const state = await mockAddresses(page);
   await page.goto("/admin/groups");
-  await page.getByRole("button", { name: "New group", exact: true }).click();
-  await page.getByLabel("New group name", { exact: true }).fill("Support team");
-  await page.getByLabel("Group email name", { exact: true }).fill("team");
-  await page.getByLabel("Group email domain", { exact: true }).selectOption("second.test");
-  await expect(page.getByLabel("Who can email this group?")).toHaveValue("organization");
-  await page.getByRole("button", { name: "Create group", exact: true }).click();
-  await page.getByRole("button", { name: "Manage team@second.test", exact: true }).click();
-  await page.getByLabel("Who can email this group?").selectOption("anyone");
-  await page.getByRole("button", { name: "Save group settings", exact: true }).click();
-  await expect(page.getByText("Group settings saved.", { exact: true })).toBeVisible();
+  const create = await openCreateGroup(page);
+  await create.getByLabel("Group name", { exact: true }).fill("Support team");
+  await create.getByLabel("Group email name", { exact: true }).fill("team");
+  await create.getByLabel("Group email domain", { exact: true }).selectOption("second.test");
+  await expect(create.getByLabel("Who can email this group?")).toHaveValue("organization");
+  await create.getByRole("button", { name: "Create group", exact: true }).click();
+  await expect(create).toHaveCount(0);
+  const settings = await openGroup(page, "Support team");
+  await settings.getByLabel("Who can email this group?").selectOption("anyone");
+  await settings.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Group saved", { exact: true })).toBeVisible();
   expect(state.groupWrites).toEqual([
     {
       name: "Support team",
@@ -129,9 +125,13 @@ test("email group create and edit send explicit internal or external posting pol
       postingPolicy: "anyone",
     },
   ]);
+  // The open group is part of the URL, so a reload restores its sheet with the saved policy.
   await page.reload();
-  await page.getByRole("button", { name: "Manage team@second.test", exact: true }).click();
-  await expect(page.getByLabel("Who can email this group?")).toHaveValue("anyone");
+  await expect(
+    page
+      .getByRole("form", { name: "Settings for Support team", exact: true })
+      .getByLabel("Who can email this group?"),
+  ).toHaveValue("anyone");
 });
 
 test("saved drafts retain From after reload and revoked aliases block sending until changed", async ({
@@ -187,7 +187,7 @@ for (const width of [390, 768, 1440])
       expect((bounds?.x ?? 0) + (bounds?.width ?? 0)).toBeLessThanOrEqual(width);
       await dialog.getByRole("button", { name: "Done", exact: true }).click();
       await page.goto("/admin/groups");
-      await page.getByRole("button", { name: "New group", exact: true }).click();
+      await openCreateGroup(page);
       await audit(page);
       await page.screenshot({
         path: `/tmp/helix-release-work/mail-groups-${width}-${theme}.png`,
@@ -218,15 +218,30 @@ async function audit(page: Page) {
   );
   expect(violations).toEqual([]);
 }
+/** Runs one action from a directory row's menu. */
+async function openUserAction(page: Page, name: string, action: string) {
+  await page.getByRole("button", { name: `Actions for ${name}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: action, exact: true }).click();
+}
 async function openAddresses(page: Page) {
   await page.goto("/admin/users");
-  const details = page.getByRole("button", { name: "Details for Morgan Lee", exact: true });
-  await expect(details).toBeVisible();
-  if ((await details.getAttribute("aria-expanded")) !== "true") await details.click();
-  await page
-    .getByRole("button", { name: "Manage mail addresses for Morgan Lee", exact: true })
-    .click();
+  await openUserAction(page, "Morgan Lee", "Mail addresses");
   await expect(page.getByLabel("Primary address domain")).toBeVisible();
+}
+/** Opens the Create group sheet from the page header and returns its form. */
+async function openCreateGroup(page: Page) {
+  await page.getByRole("button", { name: "Create group", exact: true }).first().click();
+  const form = page.getByRole("form", { name: "New group", exact: true });
+  await expect(form).toBeVisible();
+  return form;
+}
+/** Opens a group's sheet from its row menu and returns its settings form. */
+async function openGroup(page: Page, name: string) {
+  await page.getByRole("button", { name: `Actions for ${name}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "Edit group and members", exact: true }).click();
+  const form = page.getByRole("form", { name: `Settings for ${name}`, exact: true });
+  await expect(form).toBeVisible();
+  return form;
 }
 async function mockAddresses(page: Page, failFirst = false) {
   await seedBrowserSession(page, "mail-address-session");

@@ -2,6 +2,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ChatMessageNotFoundError } from "./errors.js";
 import { PostgresChatStore } from "./store.js";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
 
 const ORG_A = "f8500000-0000-4000-8000-000000000001";
 const ORG_B = "f8500000-0000-4000-8000-000000000002";
@@ -132,12 +133,9 @@ describe("PostgresChatStore read-receipt isolation", { skip: !process.env.DATABA
 });
 
 async function cleanup(sql: postgres.Sql): Promise<void> {
+  // The outbox and identity subjects are not org-scoped; everything else is,
+  // including the defaults org creation adds, so a rerun starts from nothing.
   await sql`delete from outbox where payload->>'orgId' in (${ORG_A}, ${ORG_B})`;
-  await sql`delete from chat_read_receipts where actor_id in (${ACTOR_A}, ${MEMBER_A})`;
-  await sql`delete from messages where id in (${MESSAGE_OLD}, ${MESSAGE_NEW}, ${MESSAGE_OTHER_ROOM}, ${MESSAGE_OTHER_ORG})`;
-  await sql`delete from permissions where actor_id in (${ACTOR_A}, ${MEMBER_A}, ${ACTOR_B})`;
-  await sql`delete from threads where id in (${ROOM_A}, ${ROOM_A_OTHER}, ${ROOM_B})`;
-  await sql`delete from actors where id in (${ACTOR_A}, ${MEMBER_A}, ${ACTOR_B})`;
-  await sql`delete from orgs where id in (${ORG_A}, ${ORG_B})`;
+  await cleanupTestTenants(sql, [ORG_A, ORG_B]);
   await sql`delete from identity_subjects where id in (${ACTOR_A}, ${MEMBER_A}, ${ACTOR_B})`;
 }

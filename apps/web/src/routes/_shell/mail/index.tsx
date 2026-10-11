@@ -10,14 +10,14 @@ import {
 
 // Mail URL state — folder, Inbox tab, label, search query and the open
 // thread round-trip through the URL so the back button restores the view
-// and links are shareable. `settings` keeps the settings overlay deep link.
+// and links are shareable. The settings overlay deep link (`?settings=`) is
+// declared once by the `_shell` parent route.
 interface ShellMailRouteSearch extends MailComposeHandoff {
   readonly folder?: string;
   readonly tab?: (typeof MAIL_TAB_IDS)[number];
   readonly thread?: string;
   readonly q?: string;
   readonly label?: string;
-  readonly settings?: string;
 }
 
 export const Route = createFileRoute("/_shell/mail/")({
@@ -28,14 +28,12 @@ export const Route = createFileRoute("/_shell/mail/")({
     const thread = optionalUuidSearchParam(search.thread);
     const q = optionalStringSearchParam(search.q);
     const label = optionalStringSearchParam(search.label);
-    const settings = optionalStringSearchParam(search.settings);
     return {
       ...(folder === undefined ? {} : { folder }),
       ...(tab === undefined ? {} : { tab }),
       ...(thread === undefined ? {} : { thread }),
       ...(q === undefined ? {} : { q }),
       ...(label === undefined ? {} : { label }),
-      ...(settings === undefined ? {} : { settings }),
       ...mailComposeHandoffFromSearch(search),
     };
   },

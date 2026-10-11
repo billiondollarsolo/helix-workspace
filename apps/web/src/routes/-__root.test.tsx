@@ -50,8 +50,14 @@ describe("root route recovery states", () => {
     expect(routeErrorDetails(new Error("debug detail"), true)).toContain("debug detail");
   });
 
-  it("offers retry and home recovery actions and focuses the state", () => {
+  it("offers retry and home recovery actions and focuses the state", async () => {
     const reset = vi.fn();
+    let reloaded = () => {};
+    invalidate.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        reloaded = resolve;
+      }),
+    );
     act(() => {
       root.render(<RouteErrorState error={new Error("boom")} reset={reset} />);
     });
@@ -64,8 +70,14 @@ describe("root route recovery states", () => {
     expect(container.textContent).toContain("Your work is still safe.");
     expect(container.querySelector<HTMLAnchorElement>('a[href="/"]')).not.toBeNull();
     act(() => retry?.click());
-    expect(reset).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledTimes(1);
+    // The view re-renders only after the reload settles, never mid-reload.
+    expect(reset).not.toHaveBeenCalled();
+    await act(async () => {
+      reloaded();
+      await Promise.resolve();
+    });
+    expect(reset).toHaveBeenCalledTimes(1);
   });
 
   it("renders an actionable not-found state", () => {

@@ -3,7 +3,7 @@ import type { FastifyRequest } from "fastify";
 import { AsyncResource } from "node:async_hooks";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { OutboxWorker } from "../outbox/outbox.js";
+import { OutboxWorker, type OutboxStore, type StoredOutboxMessage } from "../outbox/outbox.js";
 import { PostgresOutboxStore } from "../outbox/postgres-store.js";
 import { InMemoryEventBus } from "../events/in-memory-event-bus.js";
 import { tenantAwarePostgresSql, withTenantPostgresContext } from "../tenancy/postgres-roles.js";
@@ -18,14 +18,15 @@ import {
   CHAT_WEBSOCKET_PATH,
   type ChatWebSocketTicketStore,
 } from "./websocket-tickets.js";
+import { cleanupTestTenants } from "../../test-support/cleanup-tenants.js";
+import { uniqueTestRole } from "../../test-support/test-role.js";
 
 const ORG = "fc100000-0000-4000-8000-000000000001";
 const FOREIGN_ORG = "fc100000-0000-4000-8000-000000000002";
 const OWNER = "fc100000-0000-4000-8000-000000000011";
 const ROOM = "fc100000-0000-4000-8000-000000000021";
 const EMAIL = "chat-realtime-events@helix.test";
-const APP_ROLE = "helix_chat_0708_app";
-const APP_PASSWORD = "helix_chat_0708_password";
+const { name: APP_ROLE, password: APP_PASSWORD } = uniqueTestRole("helix_chat_rt");
 
 describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === undefined }, () => {
   let sql: postgres.Sql;
@@ -61,7 +62,6 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
         org_id, actor_id, resource_type, resource_id, role, granted_by_actor_id
       ) values (${ORG}, ${OWNER}, 'thread', ${ROOM}, 'owner', ${OWNER})
     `;
-    await dropAppRole(sql);
     await sql.unsafe(`
       create role ${APP_ROLE}
         login password '${APP_PASSWORD}' nosuperuser nobypassrls noinherit;
@@ -314,7 +314,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
     expect(await currentCursor(sql)).toBe(before + 2);
     expect(receivedA).toEqual([]);
     expect(receivedB).toEqual([]);
-    await new OutboxWorker({ store: new PostgresOutboxStore(sql), events: transport }).drainOnce();
+    await new OutboxWorker({ store: suiteOutbox(sql), events: transport }).drainOnce();
     for (const received of [receivedA, receivedB]) {
       expect(received).toHaveLength(2);
       expect(received).toEqual(
@@ -368,7 +368,7 @@ describe("Chat durable realtime events", { skip: process.env.DATABASE_URL === un
       });
     });
     await expect.poll(() => currentCursor(sql)).toBeGreaterThan(subscribeAt);
-    await new OutboxWorker({ store: new PostgresOutboxStore(sql), events: transport }).drainOnce();
+    await new OutboxWorker({ store: suiteOutbox(sql), events: transport }).drainOnce();
     await expect
       .poll(() => socket.messages, { timeout: 2_000 })
       .toContainEqual(
@@ -525,6 +525,46 @@ function ticketRequest(): FastifyRequest {
   } as unknown as FastifyRequest;
 }
 
+/**
+ * The real outbox store, claiming only this suite's tenant. The outbox is
+ * shared: an unscoped drain would deliver other suites' queued messages and,
+ * behind a backlog of them, miss this suite's own within one batch.
+ */
+function suiteOutbox(sql: postgres.Sql): OutboxStore {
+  const store = new PostgresOutboxStore(sql);
+  return {
+    insert: (message) => store.insert(message),
+    markDelivered: (id) => store.markDelivered(id),
+    markFailed: (id, error) => store.markFailed(id, error),
+    async claimUndelivered(limit) {
+      const rows = await sql<
+        (Pick<StoredOutboxMessage, "id" | "subject" | "payload" | "attempts"> & {
+          readonly created_at: Date;
+        })[]
+      >`
+        update outbox
+        set attempts = attempts + 1
+        where id in (
+          select id from outbox
+          where delivered_at is null and deliver_after <= now()
+            and payload->>'orgId' = ${ORG}
+          order by created_at
+          limit ${limit}
+          for update skip locked
+        )
+        returning id, subject, payload, attempts, created_at
+      `;
+      return rows.map((row) => ({
+        id: row.id,
+        subject: row.subject,
+        payload: row.payload,
+        attempts: row.attempts,
+        createdAt: row.created_at.toISOString(),
+      }));
+    },
+  };
+}
+
 async function currentCursor(sql: postgres.Sql): Promise<number> {
   const rows = await sql`
     select next_event_sequence from chat_room_settings
@@ -544,15 +584,10 @@ async function accessEventsAfter(sql: postgres.Sql, cursor: number): Promise<unk
 }
 
 async function cleanup(sql: postgres.Sql): Promise<void> {
+  // The outbox and identity subjects are not org-scoped; everything else is,
+  // including the defaults org creation adds, so a rerun starts from nothing.
   await sql`delete from outbox where payload->>'orgId' in (${ORG}, ${FOREIGN_ORG})`;
-  await sql`delete from chat_read_receipts where thread_id = ${ROOM}`;
-  await sql`delete from messages where thread_id = ${ROOM}`;
-  await sql`delete from permissions where actor_id = ${OWNER} or resource_id = ${ROOM}`;
-  await sql`delete from threads where id = ${ROOM}`;
-  await sql`delete from organization_memberships where actor_id = ${OWNER}`;
-  await sql`delete from activity where org_id in (${ORG}, ${FOREIGN_ORG})`;
-  await sql`delete from actors where id = ${OWNER}`;
-  await sql`delete from orgs where id in (${ORG}, ${FOREIGN_ORG})`;
+  await cleanupTestTenants(sql, [ORG, FOREIGN_ORG]);
   await sql`delete from identity_subjects where canonical_email = ${EMAIL}`;
 }
 

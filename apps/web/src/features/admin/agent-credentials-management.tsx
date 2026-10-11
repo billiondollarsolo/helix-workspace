@@ -16,7 +16,13 @@ import {
 } from "@/components/ui/table";
 import type { AdminUser } from "@/features/admin/admin-users";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import { EmptyRow, PageHeading, ErrorNotice, Notice } from "@/features/admin/console/primitives";
+import {
+  EmptyRow,
+  PageHeading,
+  ErrorNotice,
+  Notice,
+  StatusChip,
+} from "@/features/admin/console/primitives";
 import {
   ActorNoticeBanner,
   ActorSearchField,
@@ -218,10 +224,7 @@ export function AgentCredentialsManagement() {
         header: "Status",
         cell: ({ row }) =>
           row.original.revokedAt === null ? (
-            <span className="inline-flex items-center gap-1 text-emerald-700">
-              <Check className="size-3" />
-              Active
-            </span>
+            <StatusChip tone="success" label="Active" />
           ) : (
             <span className="text-muted-foreground">
               Revoked {formatDateTime(row.original.revokedAt)}
@@ -395,9 +398,9 @@ export function AgentCredentialsManagement() {
           {createdCredential !== null ? (
             <section
               aria-label="Created credential secret"
-              className="grid gap-2 rounded-md border border-emerald-600/30 bg-emerald-600/10 p-3 text-xs"
+              className="grid gap-2 rounded-md border border-[var(--success)] p-3 text-xs"
             >
-              <div className="flex items-center gap-2 font-medium text-emerald-800">
+              <div className="flex items-center gap-2 font-medium text-[var(--success)]">
                 <Check className="size-3.5" />
                 Created
               </div>

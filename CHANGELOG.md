@@ -352,6 +352,14 @@ All notable changes to Helix Workspace are documented here. This file follows
 - Opening a Chat thread shows its replies.
 - Drive trash now keeps items for the retention period an admin set (30 days by default) instead
   of always 30 days. Items already in trash keep at least their original recovery window.
+- When a session must be verified again, the page goes to sign-in once. Requests that were already
+  waiting no longer reach the server with the expired session or flash errors first.
+- Retry on "We couldn’t load this view" no longer sometimes leaves a blank page when the server
+  comes back.
+- The "Active" status and the "Created" notice for app passwords and agent credentials are
+  readable in dark mode.
+- With Helix AI's Evidence panel open, menus such as the composer's options no longer close by
+  themselves when the conversation updates.
 
 - Mail search no longer looks only in the Inbox's Primary tab, the Label button no longer toggles
   just the first label, Spam uses a report icon, the empty pager no longer says "No results", and

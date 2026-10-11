@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgresAuditStore } from "../../platform/audit/store.js";
 import { verifyAuditHashChain } from "../../platform/audit/verifier.js";
 import { tenantAwarePostgresSql } from "../../platform/tenancy/postgres-roles.js";
+import { uniqueTestRole } from "../../test-support/test-role.js";
 
 const migration = readFileSync(
   new URL("./0149_audit_chain_integrity.sql", import.meta.url),
@@ -27,8 +28,7 @@ describe("0149 audit chain integrity migration", () => {
 
 describe.skipIf(process.env.DATABASE_URL === undefined)("concurrent audit chain", () => {
   const admin = postgres(process.env.DATABASE_URL ?? "", { prepare: false });
-  const role = "helix_audit_chain_test_app";
-  const password = "helix_audit_chain_test_password";
+  const { name: role, password } = uniqueTestRole("helix_audit_chain_test");
   const runtimeUrl = new URL(process.env.DATABASE_URL ?? "postgres://localhost/helix");
   runtimeUrl.username = role;
   runtimeUrl.password = password;
@@ -48,7 +48,6 @@ describe.skipIf(process.env.DATABASE_URL === undefined)("concurrent audit chain"
 
   beforeAll(async () => {
     await cleanup();
-    await admin.unsafe(`drop role if exists ${role}`);
     await admin.unsafe(
       `create role ${role} login inherit nosuperuser nobypassrls password '${password}'`,
     );

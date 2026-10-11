@@ -1,664 +1,459 @@
+/* Mail: sidebar, conversation list and conversation view, with the reading
+   pane layout the person picked (no split, right of the list, below it).
+   Searching looks across All Mail with Gmail-style operators. Every action
+   updates the list at once and offers Undo (see use-mail-actions). */
+
 import { SurfaceFrame } from "@/components/shell";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearch } from "@tanstack/react-router";
-import { Mail as MailIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  applyMailLabels,
-  archiveMailThread,
-  createMailFilter,
-  deleteMailThread,
-  setMailThreadRead,
-  setMailThreadStarred,
-  snoozeMailThread,
-  spamMailThread,
-  unspamMailThread,
-  type MailFolderKey,
-  type MailThreadRow,
+import { EmptyState } from "@/components/ui/empty-state";
+import { sessionUserQueryOptions } from "@/lib/auth";
+import { cn } from "@/lib/utils";
+import { useDebouncedCallback } from "@tanstack/react-pacer/debouncer";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Mail as MailIcon, MailOpen } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import type {
+  MailFolderKey,
+  MailLabelSummary,
+  MailThreadDetail,
+  MailThreadRow,
+  MailThreadsListInput,
 } from "./api";
+import { collectThreadIds, type MailAction } from "./mail-actions";
 import { ComposeHost, openCompose } from "./compose";
-import "./mail-shell.css";
-import { MailSidebar } from "./mail-sidebar";
-import { type MailTabId } from "./mail-taxonomy";
+import type { MoveTarget } from "./mail-menus";
+import { useMailReadingPane, useMailShowAvatars } from "./mail-preferences";
+import type { ReplyMode } from "./mail-reply-panel";
+import { MailSearchOptions } from "./mail-search-options";
+import "./mail-list.css";
+import { MailSidebar, type MailDropTarget } from "./mail-sidebar";
 import { ThreadList } from "./mail-thread-list";
 import { ThreadView } from "./mail-thread-view";
-import { isBetaSpamCatch, restoreActionLabel, reverseMailboxState } from "./mail-view-helpers";
 import {
   mailFoldersQueryOptions,
   mailLabelsQueryOptions,
   mailThreadQueryOptions,
   mailThreadsQueryOptions,
 } from "./queries";
+import { useMailActions } from "./use-mail-actions";
 import { useMailRealtime } from "./use-mail-realtime";
 import { useMailShortcuts } from "./use-mail-shortcuts";
-
-/* ------------------------------------------------------------------- shell */
+import { useMailUrlState } from "./use-mail-url-state";
 
 const PAGE_SIZE = 50;
+const SEARCH_DEBOUNCE_MS = 300;
+const NARROW_QUERY = "(max-width: 760px)";
+
+function narrowQuery(): MediaQueryList | null {
+  return typeof window.matchMedia === "function" ? window.matchMedia(NARROW_QUERY) : null;
+}
+
+function useNarrowScreen(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const query = narrowQuery();
+      query?.addEventListener("change", onChange);
+      return () => query?.removeEventListener("change", onChange);
+    },
+    () => narrowQuery()?.matches ?? false,
+    () => false,
+  );
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error && error.message !== ""
+    ? error.message
+    : "Check your connection and try again.";
+}
+
+/** A list row for a conversation opened from a link that is not on this page. */
+function rowFromDetail(detail: MailThreadDetail, folder: MailFolderKey): MailThreadRow {
+  const last = detail.messages.at(-1);
+  return {
+    threadId: detail.id,
+    messageId: last?.id ?? detail.id,
+    subject: detail.subject,
+    from: last?.from?.name ?? last?.from?.address ?? "",
+    fromEmail: last?.from?.address ?? "",
+    preview: detail.preview,
+    time: detail.lastActivity,
+    unread: detail.unread,
+    starred: detail.starred,
+    hasAttachment: detail.messages.some((message) => message.hasAttachment),
+    messageCount: detail.messages.length,
+    labels: [...detail.labels],
+    category: "primary",
+    folder,
+    snoozedUntil: detail.snoozedUntil,
+    participants: [],
+  };
+}
+
+/** The action that moves conversations from `folder` to `target`. */
+function moveAction(folder: MailFolderKey, target: MoveTarget): MailAction {
+  switch (target.kind) {
+    case "spam":
+      return { kind: "spam" };
+    case "trash":
+      return { kind: "trash" };
+    case "label":
+      return { kind: "moveToLabel", label: target.slug };
+    case "inbox":
+      if (folder === "trash") return { kind: "restore" };
+      if (folder === "spam") return { kind: "notSpam" };
+      if (folder === "snoozed") return { kind: "unsnooze" };
+      return { kind: "unarchive" };
+  }
+}
 
 export function MailShell() {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  // Push-driven inbox: SSE invalidates mail queries on activity.mail.* events.
   useMailRealtime(true);
-  // URL-hydrated initial values — back button restores the prior view.
-  const urlSearch: Partial<{
-    folder: string;
-    tab: MailTabId;
-    thread: string;
-    q: string;
-    label: string;
-  }> = useSearch({ strict: false });
-  const [folder, setFolder] = useState<MailFolderKey>(
-    (urlSearch.folder as MailFolderKey | undefined) ?? "inbox",
-  );
-  const [tab, setTab] = useState<MailTabId>(urlSearch.tab ?? "primary");
-  const [activeLabel, setActiveLabel] = useState<string | null>(urlSearch.label ?? null);
-  const [selected, setSelected] = useState<string | null>(urlSearch.thread ?? null);
-  const [query, setQuery] = useState(urlSearch.q ?? "");
-
-  // Two-way bind to the URL. Local state pushes new history entries when the
-  // user navigates; popstate (browser back/forward) flips urlSearch which we
-  // pull back into local state below. Without the reverse sync, hitting back
-  // changed the URL but left the React tree on the still-selected thread.
-  useEffect(() => {
-    void navigate({
-      to: "/mail",
-      search: {
-        // Label views are exclusive — omit folder/tab so URL is ?label=…
-        ...(activeLabel
-          ? { label: activeLabel }
-          : {
-              ...(folder === "inbox" ? {} : { folder }),
-              ...(tab === "primary" ? {} : { tab }),
-            }),
-        ...(selected ? { thread: selected } : {}),
-        ...(query.length === 0 ? {} : { q: query }),
-      },
-      replace: false,
-    });
-  }, [folder, tab, selected, query, activeLabel]);
-
-  // Reverse sync: when the URL changes externally (browser back/forward,
-  // deep-link navigation), pull the new search params back into local state.
-  // Guard against echo loops — only update when the URL value differs from
-  // what local state would emit.
-  useEffect(() => {
-    const urlFolder = (urlSearch.folder as MailFolderKey | undefined) ?? "inbox";
-    const urlTab = urlSearch.tab ?? "primary";
-    const urlThread = urlSearch.thread ?? null;
-    const urlQuery = urlSearch.q ?? "";
-    const urlLabel = urlSearch.label ?? null;
-    if (urlFolder !== folder) setFolder(urlFolder);
-    if (urlTab !== tab) setTab(urlTab);
-    if (urlThread !== selected) setSelected(urlThread);
-    if (urlQuery !== query) setQuery(urlQuery);
-    if (urlLabel !== activeLabel) setActiveLabel(urlLabel);
-  }, [urlSearch.folder, urlSearch.tab, urlSearch.thread, urlSearch.q, urlSearch.label]);
+  const [view, setView] = useMailUrlState();
+  const { folder, tab, label, query, thread } = view;
+  const [searchDraft, setSearchDraft] = useState(query);
   const [offset, setOffset] = useState(0);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [filterNotice, setFilterNotice] = useState<{
-    readonly kind: "created" | "error";
-    readonly text: string;
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [allMatching, setAllMatching] = useState(false);
+  const [replyIntent, setReplyIntent] = useState<{
+    readonly threadId: string;
+    readonly mode: ReplyMode;
   } | null>(null);
-  // Checked (bulk-select) thread IDs
-  const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set());
+  const narrow = useNarrowScreen();
+  const savedPane = useMailReadingPane();
+  const pane = narrow ? "none" : savedPane;
+  const showAvatars = useMailShowAvatars();
+
+  // A new view starts on its first page with nothing selected.
+  const viewKey = `${folder}|${tab}|${label ?? ""}|${query}`;
+  useEffect(() => {
+    setOffset(0);
+    setSelectedIds(new Set());
+    setAllMatching(false);
+  }, [viewKey]);
+
+  // Typing searches after a short pause; Back/Forward to another query refills the box.
+  useEffect(() => setSearchDraft((draft) => (draft.trim() === query ? draft : query)), [query]);
+  const commitSearch = useDebouncedCallback(
+    (next: string) => setView({ query: next.trim(), thread: null }),
+    { wait: SEARCH_DEBOUNCE_MS },
+  );
 
   const foldersQuery = useQuery(mailFoldersQueryOptions());
   const labelsQuery = useQuery(mailLabelsQueryOptions());
+  const sessionQuery = useQuery(sessionUserQueryOptions());
+  const labels = useMemo(() => labelsQuery.data ?? [], [labelsQuery.data]);
+  const labelsBySlug = useMemo(() => new Map(labels.map((entry) => [entry.slug, entry])), [labels]);
+  const activeLabel: MailLabelSummary | null =
+    label === null
+      ? null
+      : (labelsBySlug.get(label) ?? {
+          id: label,
+          slug: label,
+          name: label,
+          color: "",
+          colorName: "gray",
+          parentId: null,
+          sortOrder: 0,
+          threadCount: 0,
+          unreadCount: 0,
+          shared: false,
+        });
 
-  // Label view is exclusive of folder tabs: labeled mail often lives outside
-  // Primary (e.g. Finance → Updates). Applying inbox+primary+label empties the list
-  // while the label still shows a non-zero count.
-  const threadsInput = useMemo(
+  // A label removed here or in Settings takes its view with it.
+  const labelGone = label !== null && labelsQuery.isSuccess && !labelsBySlug.has(label);
+  useEffect(() => {
+    if (labelGone) setView({ label: null, thread: null });
+  }, [labelGone, setView]);
+
+  const threadsInput: MailThreadsListInput = useMemo(
     () => ({
-      folder: activeLabel !== null ? "inbox" : folder,
-      // Skip category tabs whenever a label filter is active.
-      tab: activeLabel === null && folder === "inbox" ? tab : undefined,
-      label: activeLabel ?? undefined,
-      query: query.trim() === "" ? undefined : query.trim(),
+      // Searches and label views cover All Mail; `in:` in the query narrows it.
+      folder: query !== "" || label !== null ? "all" : folder,
+      ...(query === "" && label === null && folder === "inbox" ? { tab } : {}),
+      ...(query === "" && label !== null ? { label } : {}),
+      ...(query === "" ? {} : { query }),
       limit: PAGE_SIZE,
       offset,
     }),
-    [activeLabel, folder, offset, query, tab],
+    [folder, label, offset, query, tab],
   );
-  const threadsQuery = useQuery(mailThreadsQueryOptions(threadsInput));
+  const threadsQuery = useQuery({
+    ...mailThreadsQueryOptions(threadsInput),
+    placeholderData: keepPreviousData,
+  });
+  const rows = useMemo(() => threadsQuery.data?.threads ?? [], [threadsQuery.data]);
+  const total = threadsQuery.data?.total ?? 0;
 
-  const folders = foldersQuery.data ?? [];
-  const labels = labelsQuery.data ?? [];
+  const detailQuery = useQuery({
+    ...mailThreadQueryOptions(thread ?? ""),
+    enabled: thread !== null,
+  });
+  const openRow = useMemo(() => {
+    if (thread === null) return null;
+    const listed = rows.find((row) => row.threadId === thread);
+    if (listed !== undefined) return listed;
+    return detailQuery.data == null ? null : rowFromDetail(detailQuery.data, folder);
+  }, [detailQuery.data, folder, rows, thread]);
 
-  const threadsResult = threadsQuery.data;
-  const threads = threadsResult?.threads ?? [];
-  const total = threadsResult?.total ?? 0;
+  const actions = useMailActions({
+    view: { folder, label, query },
+    listKey: mailThreadsQueryOptions(threadsInput).queryKey,
+    rows,
+    labelName: (slug) => labelsBySlug.get(slug)?.name ?? slug,
+    onLeave: (ids) => {
+      if (thread !== null && ids.has(thread)) setView({ thread: null });
+      setSelectedIds((current) => new Set([...current].filter((id) => !ids.has(id))));
+    },
+  });
+  const { run } = actions;
 
-  const labelColors = useMemo(() => new Map(labels.map((label) => [label.slug, label])), [labels]);
-
-  const selectedRow = useMemo(
-    () => threads.find((thread) => thread.threadId === selected) ?? null,
-    [selected, threads],
+  const onAction = useCallback(
+    (ids: readonly string[], action: MailAction) => {
+      void run(ids, action, action.kind === "star" ? { undoable: false, quiet: true } : {});
+    },
+    [run],
   );
 
-  const threadDetailQuery = useQuery({
-    ...mailThreadQueryOptions(selected ?? ""),
-    enabled: selected != null,
-  });
+  /** The selection, or every conversation the view matches after "Select all N". */
+  const bulk = useCallback(
+    (action: MailAction) => {
+      const ids = [...selectedIds];
+      setSelectedIds(new Set());
+      setAllMatching(false);
+      if (!allMatching) {
+        onAction(ids, action);
+        return;
+      }
+      void collectThreadIds({ ...threadsInput, offset: 0 }).then((all) => onAction(all, action));
+    },
+    [allMatching, onAction, selectedIds, threadsInput],
+  );
 
-  const invalidateLists = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["mail", "threads"] });
-    void queryClient.invalidateQueries({ queryKey: ["mail", "folders"] });
-    void queryClient.invalidateQueries({ queryKey: ["mail", "labels"] });
-  }, [queryClient]);
-
-  const clearActionError = useCallback(() => {
-    setActionError(null);
-  }, []);
-
-  const starMutation = useMutation({
-    mutationFn: (input: { readonly threadId: string; readonly starred: boolean }) =>
-      setMailThreadStarred(input),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not update the star. Try again.");
-    },
-    onSuccess: invalidateLists,
-  });
-
-  const archiveMutation = useMutation({
-    mutationFn: (threadId: string) => archiveMailThread(threadId),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not archive the thread. Try again.");
-    },
-    onSuccess: () => {
-      invalidateLists();
-      setSelected(null);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (threadId: string) => deleteMailThread(threadId),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not delete the thread. Try again.");
-    },
-    onSuccess: () => {
-      invalidateLists();
-      setSelected(null);
-    },
-  });
-
-  const snoozeMutation = useMutation({
-    mutationFn: (threadId: string) =>
-      snoozeMailThread({
-        threadId,
-        until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      }),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not snooze the thread. Try again.");
-    },
-    onSuccess: () => {
-      invalidateLists();
-      setSelected(null);
-    },
-  });
-
-  const restoreMutation = useMutation({
-    mutationFn: (threadId: string) => reverseMailboxState(folder, threadId),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not restore the thread. Try again.");
-    },
-    onSuccess: () => {
-      invalidateLists();
-      setSelected(null);
-    },
-  });
-
-  const readMutation = useMutation({
-    mutationFn: (input: { readonly threadId: string; readonly unread: boolean }) =>
-      setMailThreadRead(input),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not update the read state. Try again.");
-    },
-    onSuccess: invalidateLists,
-  });
-
-  const labelMutation = useMutation({
-    mutationFn: (input: {
-      readonly threadId: string;
-      readonly add?: readonly string[];
-      readonly remove?: readonly string[];
-    }) => applyMailLabels(input),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not update labels. Try again.");
-    },
-    onSuccess: invalidateLists,
-  });
-
-  const spamMutation = useMutation({
-    mutationFn: (threadId: string) => spamMailThread(threadId),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not report spam. Try again.");
-    },
-    onSuccess: () => {
-      invalidateLists();
-      setSelected(null);
-    },
-  });
-
-  const notSpamMutation = useMutation({
-    mutationFn: (threadId: string) => unspamMailThread(threadId),
-    onMutate: clearActionError,
-    onError: () => {
-      setActionError("Could not mark as not spam. Try again.");
-    },
-    onSuccess: () => {
-      invalidateLists();
-      setSelected(null);
-    },
-  });
-
-  // A filter needs an action. "Skip the inbox" (archive) is the default: it is
-  // reversible, and the notice below says exactly what the filter will do.
-  const filterMutation = useMutation({
-    mutationFn: (input: { readonly from: string }) =>
-      createMailFilter({
-        name: `From ${input.from}: skip the inbox`,
-        enabled: true,
-        criteria: { fromContains: input.from },
-        actions: { archive: true },
-      }),
-    onMutate: () => {
-      clearActionError();
-      setFilterNotice(null);
-    },
-    onError: (error) => {
-      setFilterNotice({
-        kind: "error",
-        text: `Could not create the filter. ${error instanceof Error ? error.message : "Try again."}`,
-      });
-    },
-    onSuccess: (_filter, input) => {
-      setFilterNotice({
-        kind: "created",
-        text: `Filter created. New mail from ${input.from} will skip the inbox and go to Archive.`,
-      });
-    },
-  });
-
-  const handleSelect = useCallback(
-    (id: string) => {
-      const row = threads.find((thread) => thread.threadId === id);
+  const openThread = useCallback(
+    (row: MailThreadRow) => {
       // A saved draft (no sent messages yet) resumes in a compose window.
-      if (row?.folder === "drafts" && row.messageCount === 0) {
+      if (row.folder === "drafts" && row.messageCount === 0) {
         openCompose({ draftId: row.messageId });
         return;
       }
-      setSelected(id);
-      if (row?.unread === true) {
-        readMutation.mutate({ threadId: id, unread: false });
-      }
+      setView({ thread: row.threadId });
+      if (row.unread) void run([row.threadId], { kind: "read", unread: false }, { quiet: true });
     },
-    [readMutation, threads],
+    [run, setView],
   );
 
-  // Row-level hover actions
-  const handleRowArchive = useCallback(
-    (threadId: string) => {
-      archiveMutation.mutate(threadId);
+  const reply = useCallback(
+    (threadId: string, mode: ReplyMode) => {
+      setReplyIntent({ threadId, mode });
+      const row = rows.find((entry) => entry.threadId === threadId);
+      if (row === undefined) setView({ thread: threadId });
+      else openThread(row);
     },
-    [archiveMutation],
+    [openThread, rows, setView],
   );
 
-  const handleRowDelete = useCallback(
-    (threadId: string) => {
-      deleteMutation.mutate(threadId);
-    },
-    [deleteMutation],
-  );
-
-  const handleRowSnooze = useCallback(
-    (threadId: string) => {
-      snoozeMutation.mutate(threadId);
-    },
-    [snoozeMutation],
-  );
-
-  const handleRowRestore = useCallback(
-    (threadId: string) => {
-      restoreMutation.mutate(threadId);
-    },
-    [restoreMutation],
-  );
-
-  const handleRowToggleRead = useCallback(
-    (thread: MailThreadRow) => {
-      readMutation.mutate({ threadId: thread.threadId, unread: !thread.unread });
-    },
-    [readMutation],
-  );
-
-  // Bulk actions — apply to all checked IDs, then clear selection
-  const runBulk = useCallback((ids: ReadonlySet<string>, apply: (threadId: string) => void) => {
-    for (const threadId of ids) {
-      apply(threadId);
-    }
-    setCheckedIds(new Set());
-  }, []);
-
-  const handleBulkArchive = useCallback(
-    (ids: ReadonlySet<string>) => {
-      runBulk(ids, (threadId) => archiveMutation.mutate(threadId));
-    },
-    [archiveMutation, runBulk],
-  );
-
-  const handleBulkDelete = useCallback(
-    (ids: ReadonlySet<string>) => {
-      runBulk(ids, (threadId) => deleteMutation.mutate(threadId));
-    },
-    [deleteMutation, runBulk],
-  );
-
-  const handleBulkSpam = useCallback(
-    (ids: ReadonlySet<string>) => {
-      runBulk(ids, (threadId) => spamMutation.mutate(threadId));
-    },
-    [spamMutation, runBulk],
-  );
-
-  const handleBulkNotSpam = useCallback(
-    (ids: ReadonlySet<string>) => {
-      runBulk(ids, (threadId) => notSpamMutation.mutate(threadId));
-    },
-    [notSpamMutation, runBulk],
-  );
-
-  const handleBulkRead = useCallback(
-    (ids: ReadonlySet<string>, unread: boolean) => {
-      runBulk(ids, (threadId) => readMutation.mutate({ threadId, unread }));
-    },
-    [readMutation, runBulk],
-  );
-
-  const handleBulkSnooze = useCallback(
-    (ids: ReadonlySet<string>) => {
-      runBulk(ids, (threadId) => snoozeMutation.mutate(threadId));
-    },
-    [snoozeMutation, runBulk],
-  );
-
-  const handleBulkMove = useCallback(
-    (ids: ReadonlySet<string>, folderId: MailFolderKey) => {
-      // Move is implemented via archive (if target is archive) or a label move.
-      // For now we use archiveMailThread for "archive" and delete for "trash".
-      for (const threadId of ids) {
-        if (folderId === "archive") {
-          archiveMutation.mutate(threadId);
-        } else if (folderId === "trash") {
-          deleteMutation.mutate(threadId);
-        } else if (folderId === "spam") {
-          spamMutation.mutate(threadId);
-        } else if (folderId === "inbox") {
-          // Moving out of spam (or generic restore to inbox) clears spam flag.
-          notSpamMutation.mutate(threadId);
-        }
-      }
-      setCheckedIds(new Set());
-    },
-    [archiveMutation, deleteMutation, spamMutation, notSpamMutation],
-  );
-
-  const handleBulkLabel = useCallback(
-    (ids: ReadonlySet<string>, labelSlug: string, add: boolean) => {
-      for (const threadId of ids) {
-        labelMutation.mutate({
-          threadId,
-          ...(add ? { add: [labelSlug] } : { remove: [labelSlug] }),
-        });
-      }
-      setCheckedIds(new Set());
-    },
-    [labelMutation],
-  );
-
-  const handleRefresh = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["mail", "threads"] });
-  }, [queryClient]);
-
-  const handleMarkAllRead = useCallback(() => {
-    const unreadThreads = threads.filter((t) => t.unread);
-    for (const thread of unreadThreads) {
-      readMutation.mutate({ threadId: thread.threadId, unread: false });
-    }
-  }, [readMutation, threads]);
-
-  const handleBulkStar = useCallback(
-    (ids: ReadonlySet<string>) => {
-      for (const threadId of ids) {
-        starMutation.mutate({ threadId, starred: true });
-      }
-      setCheckedIds(new Set());
-    },
-    [starMutation],
-  );
-
-  const handleBulkFilterLike = useCallback(
-    (ids: ReadonlySet<string>) => {
-      const firstId = [...ids][0];
-      if (firstId === undefined) {
+  const drop = useCallback(
+    (ids: readonly string[], target: MailDropTarget) => {
+      if (target.kind === "label") {
+        onAction(ids, { kind: "label", add: [target.slug], remove: [] });
         return;
       }
-      const firstThread = threads.find((t) => t.threadId === firstId);
-      if (firstThread === undefined) {
-        return;
-      }
-      filterMutation.mutate({ from: firstThread.fromEmail || firstThread.from });
-      setCheckedIds(new Set());
+      const actionByFolder: Partial<Record<MailFolderKey, MailAction>> = {
+        inbox: moveAction(folder, { kind: "inbox" }),
+        starred: { kind: "star", starred: true },
+        archive: { kind: "archive" },
+        spam: { kind: "spam" },
+        trash: { kind: "trash" },
+      };
+      const action = actionByFolder[target.folder];
+      if (action !== undefined) void run(ids, action);
+      setSelectedIds(new Set());
     },
-    [filterMutation, threads],
+    [folder, onAction, run],
   );
+
+  const markAllRead = useCallback(() => {
+    void collectThreadIds({
+      ...threadsInput,
+      offset: 0,
+      query: `${threadsInput.query ?? ""} is:unread`.trim(),
+    }).then((ids) => onAction(ids, { kind: "read", unread: false }));
+  }, [onAction, threadsInput]);
+
+  const goTo = (patch: { folder?: MailFolderKey; tab?: typeof tab; label?: string | null }) => {
+    setSearchDraft("");
+    setView({ folder: "inbox", tab: "primary", label: null, query: "", thread: null, ...patch });
+  };
+
+  const index = openRow === null ? -1 : rows.findIndex((row) => row.threadId === openRow.threadId);
+  const newer = index > 0 ? rows[index - 1] : undefined;
+  const older = index >= 0 ? rows[index + 1] : undefined;
 
   useMailShortcuts({
-    threads,
-    openThreadId: selectedRow?.threadId ?? null,
-    checkedIds,
-    onCheckedChange: setCheckedIds,
+    threads: rows,
+    openThreadId: openRow?.threadId ?? null,
+    selectedIds,
+    onSelectedChange: setSelectedIds,
     onCompose: () => openCompose(),
-    onOpen: handleSelect,
-    onBack: () => setSelected(null),
-    onStar: (ids, starred) =>
-      runBulk(ids, (threadId) => starMutation.mutate({ threadId, starred })),
-    onArchive: handleBulkArchive,
-    onDelete: handleBulkDelete,
-    onSpam: folder === "spam" ? undefined : handleBulkSpam,
-    onRead: handleBulkRead,
+    onOpen: (threadId) => {
+      const row = rows.find((entry) => entry.threadId === threadId);
+      if (row !== undefined) openThread(row);
+    },
+    onBack: () => setView({ thread: null }),
+    onAction,
+    canReportSpam: folder !== "spam" || query !== "" || label !== null,
   });
 
-  const actionBusy =
-    archiveMutation.isPending ||
-    deleteMutation.isPending ||
-    snoozeMutation.isPending ||
-    restoreMutation.isPending ||
-    labelMutation.isPending ||
-    spamMutation.isPending ||
-    notSpamMutation.isPending;
+  const list = (
+    <ThreadList
+      rows={rows}
+      folder={query !== "" ? "all" : folder}
+      tab={tab}
+      onTab={(next) => setView({ tab: next, thread: null })}
+      query={query}
+      onClearSearch={() => {
+        setSearchDraft("");
+        setView({ query: "" });
+      }}
+      activeLabel={query === "" ? activeLabel : null}
+      labels={labels}
+      labelsBySlug={labelsBySlug}
+      total={total}
+      offset={offset}
+      pageSize={PAGE_SIZE}
+      onPage={setOffset}
+      loading={threadsQuery.isPending}
+      error={threadsQuery.isError ? errorText(threadsQuery.error) : null}
+      retrying={threadsQuery.isFetching}
+      onRetry={() =>
+        void queryClient.invalidateQueries({
+          queryKey: mailThreadsQueryOptions(threadsInput).queryKey,
+        })
+      }
+      selectedIds={selectedIds}
+      onSelectedChange={setSelectedIds}
+      allMatching={allMatching}
+      onAllMatchingChange={setAllMatching}
+      openThreadId={pane === "none" ? null : thread}
+      onOpen={openThread}
+      onRefresh={() => void queryClient.invalidateQueries({ queryKey: ["mail"] })}
+      onMarkAllRead={markAllRead}
+      onCompose={() => openCompose()}
+      showAvatars={showAvatars}
+      onAction={onAction}
+      onSnooze={(ids, until) => onAction(ids, { kind: "snooze", until })}
+      onMove={(ids, target) => onAction(ids, moveAction(folder, target))}
+      onReply={reply}
+      onBulkAction={bulk}
+      onBulkMove={(target) => bulk(moveAction(folder, target))}
+      onBulkSnooze={(until) => bulk({ kind: "snooze", until })}
+    />
+  );
+
+  const conversation =
+    openRow === null ? null : (
+      <ThreadView
+        key={openRow.threadId}
+        row={openRow}
+        detail={detailQuery.data}
+        loading={detailQuery.isPending}
+        error={detailQuery.isError ? errorText(detailQuery.error) : null}
+        retrying={detailQuery.isFetching}
+        onRetry={() =>
+          void queryClient.invalidateQueries({
+            queryKey: mailThreadQueryOptions(openRow.threadId).queryKey,
+          })
+        }
+        folder={query !== "" ? "all" : folder}
+        labels={labels}
+        labelsBySlug={labelsBySlug}
+        position={
+          index === -1
+            ? null
+            : {
+                index: offset + index + 1,
+                total,
+                onNewer: newer === undefined ? undefined : () => openThread(newer),
+                onOlder: older === undefined ? undefined : () => openThread(older),
+              }
+        }
+        myAddress={sessionQuery.data?.email ?? null}
+        initialReply={replyIntent?.threadId === openRow.threadId ? replyIntent.mode : null}
+        onBack={() => {
+          setReplyIntent(null);
+          setView({ thread: null });
+        }}
+        onAction={(action) => onAction([openRow.threadId], action)}
+        onMarkUnread={() => {
+          onAction([openRow.threadId], { kind: "read", unread: true });
+          setView({ thread: null });
+        }}
+        onSnooze={(until) => onAction([openRow.threadId], { kind: "snooze", until })}
+        onMove={(target) => onAction([openRow.threadId], moveAction(folder, target))}
+      />
+    );
 
   return (
     <>
       <SurfaceFrame
         title="Mail"
         icon={<MailIcon size={16} />}
-        searchPlaceholder="Search mail (try from:mira, has:attachment, label:urgent)"
-        searchValue={query}
+        searchPlaceholder="Search mail"
+        searchValue={searchDraft}
         onSearchChange={(next) => {
-          setQuery(next);
-          setOffset(0);
+          setSearchDraft(next);
+          commitSearch(next);
         }}
-      >
-        <div className="[display:contents]">
-          <h1 className="sr-only">Mail</h1>
-          <MailSidebar
-            folder={folder}
-            onFolder={(next) => {
-              // Folder view is exclusive of labels.
-              setFolder(next);
-              setActiveLabel(null);
-              setSelected(null);
-              setOffset(0);
-              setCheckedIds(new Set());
-            }}
-            onCompose={() => {
-              openCompose();
-            }}
-            folders={folders}
-            labels={labels}
-            activeLabel={activeLabel}
-            onLabel={(next) => {
-              // Label view is exclusive of folder chrome (inbox stays data scope only).
-              setActiveLabel(next);
-              if (next !== null) {
-                setFolder("inbox");
-              }
-              setSelected(null);
-              setOffset(0);
-              setCheckedIds(new Set());
+        onSearchSubmit={(next) => {
+          setSearchDraft(next);
+          setView({ query: next.trim(), thread: null });
+        }}
+        actions={
+          <MailSearchOptions
+            query={query}
+            onSearch={(next) => {
+              setSearchDraft(next);
+              setView({ query: next, thread: null });
             }}
           />
-          {selectedRow != null ? (
-            <ThreadView
-              row={selectedRow}
-              detail={threadDetailQuery.data}
-              isLoading={threadDetailQuery.isLoading}
-              isError={threadDetailQuery.isError}
-              labelColors={labelColors}
-              onClose={() => {
-                setSelected(null);
-              }}
-              onArchive={() => {
-                archiveMutation.mutate(selectedRow.threadId);
-              }}
-              onDelete={() => {
-                deleteMutation.mutate(selectedRow.threadId);
-              }}
-              onSnooze={() => {
-                snoozeMutation.mutate(selectedRow.threadId);
-              }}
-              restoreLabel={restoreActionLabel(folder)}
-              onRestore={() => {
-                restoreMutation.mutate(selectedRow.threadId);
-              }}
-              onToggleLabel={() => {
-                const firstLabel = labels[0];
-                if (firstLabel === undefined) {
-                  return;
-                }
-                const applied = (threadDetailQuery.data?.labels ?? selectedRow.labels).includes(
-                  firstLabel.slug,
-                );
-                labelMutation.mutate({
-                  threadId: selectedRow.threadId,
-                  ...(applied ? { remove: [firstLabel.slug] } : { add: [firstLabel.slug] }),
-                });
-              }}
-              onReportSpam={
-                folder === "spam"
-                  ? undefined
-                  : () => {
-                      spamMutation.mutate(selectedRow.threadId);
-                    }
-              }
-              onNotSpam={
-                folder === "spam"
-                  ? () => {
-                      notSpamMutation.mutate(selectedRow.threadId);
-                    }
-                  : undefined
-              }
-              onConfirmAiSpam={
-                folder === "spam" && isBetaSpamCatch(selectedRow)
-                  ? () => {
-                      // Re-affirm spam so durable feedback records user agreement with AI/rules.
-                      spamMutation.mutate(selectedRow.threadId);
-                    }
-                  : undefined
-              }
-              actionBusy={actionBusy}
-              actionError={actionError}
-            />
+        }
+      >
+        <h1 className="sr-only">Mail</h1>
+        <MailSidebar
+          activeFolder={query === "" && label === null ? folder : null}
+          activeTab={tab}
+          activeLabel={query === "" ? label : null}
+          folders={foldersQuery.data ?? []}
+          labels={labels}
+          onFolder={(next) => goTo({ folder: next })}
+          onCategory={(next) => goTo({ tab: next })}
+          onLabel={(slug) => goTo({ label: slug })}
+          onCompose={() => openCompose()}
+          onDrop={drop}
+        />
+        <div
+          className={cn("mail-main", `mail-pane-${pane}`)}
+          data-open={openRow === null ? undefined : true}
+        >
+          {pane === "none" ? (
+            (conversation ?? list)
           ) : (
-            <ThreadList
-              tab={tab}
-              onTab={(next) => {
-                setTab(next);
-                setOffset(0);
-              }}
-              hideCategoryTabs={activeLabel !== null}
-              selected={selected}
-              onSelect={handleSelect}
-              threads={threads}
-              folder={folder}
-              query={query}
-              onClearQuery={() => {
-                setQuery("");
-                setOffset(0);
-              }}
-              labelColors={labelColors}
-              labels={labels}
-              folders={folders}
-              total={total}
-              offset={offset}
-              limit={PAGE_SIZE}
-              onPage={setOffset}
-              isLoading={threadsQuery.isLoading}
-              isError={threadsQuery.isError}
-              onToggleStar={(thread) => {
-                starMutation.mutate({
-                  threadId: thread.threadId,
-                  starred: !thread.starred,
-                });
-              }}
-              pendingThreadId={
-                starMutation.isPending ? (starMutation.variables?.threadId ?? null) : null
-              }
-              onArchive={handleRowArchive}
-              onDelete={handleRowDelete}
-              onSnooze={handleRowSnooze}
-              onRestore={handleRowRestore}
-              onToggleRead={handleRowToggleRead}
-              checkedIds={checkedIds}
-              onCheckedChange={setCheckedIds}
-              onBulkArchive={handleBulkArchive}
-              onBulkDelete={handleBulkDelete}
-              onBulkSpam={handleBulkSpam}
-              onBulkNotSpam={handleBulkNotSpam}
-              onBulkRead={handleBulkRead}
-              onBulkSnooze={handleBulkSnooze}
-              onBulkMove={handleBulkMove}
-              onBulkLabel={handleBulkLabel}
-              onRefresh={handleRefresh}
-              onMarkAllRead={handleMarkAllRead}
-              onBulkStar={handleBulkStar}
-              onBulkFilterLike={handleBulkFilterLike}
-            />
+            <>
+              {list}
+              {conversation ?? (
+                <div className="mail-pane-empty">
+                  <EmptyState
+                    icon={<MailOpen />}
+                    title="No conversation selected"
+                    body="Pick a conversation from the list to read it here."
+                    size="inline"
+                  />
+                </div>
+              )}
+            </>
           )}
         </div>
       </SurfaceFrame>
-      {filterNotice === null ? null : (
-        <div
-          role={filterNotice.kind === "error" ? "alert" : "status"}
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 [z-index:50] flex items-center gap-3 [padding:8px_12px] rounded-lg bg-card [border:1px_solid_var(--border)] [box-shadow:var(--shadow-sm)] type-body-sm"
-        >
-          <span>{filterNotice.text}</span>
-          <button type="button" className="btn sm" onClick={() => setFilterNotice(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
       <ComposeHost />
     </>
   );

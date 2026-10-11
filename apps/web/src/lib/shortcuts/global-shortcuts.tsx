@@ -2,7 +2,7 @@
    shortcuts that work in every app: `?` help, ⌘K palette, and the Gmail-style
    `g` navigation sequences. Mounted once by AppShell.
 
-   `g` destinations: i/s/t/d → Mail Inbox, Starred, Sent, Drafts;
+   `g` destinations: i/s/t/d/a → Mail Inbox, Starred, Sent, Drafts, All Mail;
    c → Calendar, k → Chat, r → Drive (files), h → Meet (huddle). */
 
 import { keyboardShortcutsEnabled, useKeyboardShortcutsEnabled } from "@/components/settings-store";
@@ -52,7 +52,7 @@ export function GlobalShortcuts({ onTogglePalette, onOpenShortcutSettings }: Glo
     };
   }, []);
 
-  const goToMail = (folder?: "starred" | "sent" | "drafts") => {
+  const goToMail = (folder?: "starred" | "sent" | "drafts" | "all") => {
     void navigate({ to: "/mail", search: folder === undefined ? {} : { folder } });
   };
 
@@ -63,6 +63,7 @@ export function GlobalShortcuts({ onTogglePalette, onOpenShortcutSettings }: Glo
     "global.go-starred": () => goToMail("starred"),
     "global.go-sent": () => goToMail("sent"),
     "global.go-drafts": () => goToMail("drafts"),
+    "global.go-all-mail": () => goToMail("all"),
     "global.go-calendar": () => void navigate({ to: "/calendar" }),
     "global.go-chat": () => void navigate({ to: "/chat" }),
     "global.go-drive": () => void navigate({ to: "/drive" }),

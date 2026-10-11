@@ -10,13 +10,17 @@ import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { AppStatusPanel, WorkspaceFlagsPanel } from "@/features/admin/console/app-settings";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
 import { AdminField, AdminInput } from "@/features/admin/console/controls";
 import {
+  LoadingState,
   PageHeading,
+  PanelHeading,
   QueryFailureBanner,
-  StateBanner,
   useQueryFailure,
+  ErrorNotice,
+  Notice,
 } from "@/features/admin/console/primitives";
 import {
   describeDriveAdminUnavailable,
@@ -33,7 +37,16 @@ import {
   type DriveQuotaUsage,
 } from "@/features/admin/drive-admin-api";
 
-const PANEL = "grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4";
+const PANEL = "admin-card";
+
+const DRIVE_FLAGS = [
+  {
+    key: "drive_s3_api",
+    label: "S3-compatible access",
+    description:
+      "Lets people create access keys to use Drive from S3 tools such as the AWS CLI and rclone.",
+  },
+] as const;
 
 export function policyToForm(policy: DriveLifecyclePolicy): DriveLifecycleFormInput {
   return lifecycleFormFromPolicy(policy);
@@ -110,11 +123,10 @@ export function DriveAdminSection() {
   };
 
   return (
-    <div className="grid gap-6" data-testid="drive-admin-section">
-      <PageHeading
-        title="Drive"
-        subtitle="Storage usage and trash/orphan lifecycle for this organization. Byte limits are set under Workspace settings."
-      />
+    <div className="admin-stack" data-testid="drive-admin-section">
+      <PageHeading title="Drive" subtitle="Storage, sharing access, and cleanup for Drive." />
+      <AppStatusPanel appId="drive" />
+      <WorkspaceFlagsPanel title="Access" flags={DRIVE_FLAGS} />
 
       {lifecycleFailure !== null ? (
         <QueryFailureBanner
@@ -134,31 +146,26 @@ export function DriveAdminSection() {
           error={quotaFailure.error}
           isRetrying={quotaFailure.isRetrying}
           onRetry={quotaFailure.retry}
-          retryVariant="outline"
         />
       ) : null}
-      {statusMessage !== null ? <StateBanner kind="info">{statusMessage}</StateBanner> : null}
-      {formError !== null ? <StateBanner kind="error">{formError}</StateBanner> : null}
+      {statusMessage !== null ? <Notice>{statusMessage}</Notice> : null}
+      {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
 
       <section className={PANEL} aria-labelledby="drive-quota-heading">
-        <h2 id="drive-quota-heading" className="m-0 type-h3 font-semibold">
-          Storage usage
-        </h2>
-        <p className="m-0 text-[var(--text-3)] type-meta">
-          Live usage against the effective <code>storage_bytes_limit</code>. Change the limit in
-          Workspace settings → Quotas.
-        </p>
+        <PanelHeading
+          id="drive-quota-heading"
+          title="Storage"
+          subtitle="Used across the organization. Set the limit in Workspace settings."
+        />
         <QuotaPanel usage={usage} loading={quotaQuery.isPending} />
       </section>
 
       <section className={PANEL} aria-labelledby="drive-lifecycle-heading">
-        <h2 id="drive-lifecycle-heading" className="m-0 type-h3 font-semibold">
-          Lifecycle policy
-        </h2>
-        <p className="m-0 text-[var(--text-3)] type-meta">
-          Controls how long trashed files are retained before hard-delete eligibility, and how long
-          orphaned uploads wait before garbage collection.
-        </p>
+        <PanelHeading
+          id="drive-lifecycle-heading"
+          title="Cleanup"
+          subtitle="How long files stay in trash, and when abandoned uploads are removed."
+        />
         {policy !== undefined ? (
           <p className="m-0 text-[var(--text-2)] type-meta">{formatLifecycleSummary(policy)}</p>
         ) : null}
@@ -226,11 +233,7 @@ function QuotaPanel({
   readonly loading: boolean;
 }) {
   if (loading && usage === undefined) {
-    return (
-      <p className="m-0 text-[var(--text-3)] type-meta" role="status">
-        Loading storage usage…
-      </p>
-    );
+    return <LoadingState label="Loading storage usage" count={1} />;
   }
   if (usage === undefined) {
     return <p className="m-0 text-[var(--text-3)] type-meta">Storage usage is unavailable.</p>;

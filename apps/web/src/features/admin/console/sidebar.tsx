@@ -1,6 +1,8 @@
 import { iconMap as Icons } from "@/components/icon-map";
-import { ChevronDown as ChevronDownIcon, Search as SearchIcon } from "lucide-react";
-/* The admin console's grouped section navigation. */
+import { ChevronDown as ChevronDownIcon } from "lucide-react";
+/* The admin console's grouped section navigation: Home, then Directory, Apps,
+ * Security, Reporting and Account. Groups fold, and the fold is remembered;
+ * the group holding the current page always stays open. */
 
 import {
   ADMIN_NAV_GROUPS,
@@ -9,17 +11,8 @@ import {
 } from "@/features/admin/admin-console-data";
 import { useAdminRealtimeState } from "@/features/admin/use-admin-realtime";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-/* ------------------------------------------------------------------ */
-/* Collapse preference                                                 */
-/* ------------------------------------------------------------------ */
-
-/* The console re-renders (and can remount) the sidebar on every section
- * change, so collapse state cannot live in component state alone — an operator
- * who folded away four groups would watch them unfold on the next click.
- * localStorage also survives a refresh, which is the point: this is a standing
- * preference about which parts of the console you use, not a per-visit mode. */
 const COLLAPSED_GROUPS_KEY = "helix.admin.nav.collapsed-groups";
 
 function readCollapsedGroups(): readonly string[] {
@@ -29,9 +22,6 @@ function readCollapsedGroups(): readonly string[] {
       return [];
     }
     const parsed: unknown = JSON.parse(raw);
-    /* Anything else in this key is someone else's data or a corrupted write;
-       an unreadable preference must degrade to "show everything", never throw
-       the navigation away. */
     return Array.isArray(parsed)
       ? parsed.filter((value): value is string => typeof value === "string")
       : [];
@@ -44,44 +34,13 @@ function writeCollapsedGroups(titles: readonly string[]): void {
   try {
     window.localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify(titles));
   } catch {
-    /* Private mode / quota. A preference that cannot be saved is not a reason
-       to break the click that set it. */
+    /* Private mode or a full quota: the fold still works for this visit. */
   }
 }
 
-/** `aria-labelledby` and `aria-controls` take space-separated IDREFs, so an id
- *  may not contain whitespace — "Apps & integrations" tokenised into three ids
- *  that do not exist, leaving that group's list unnamed. */
 function groupSlug(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/gu, "-");
 }
-
-/* ------------------------------------------------------------------ */
-/* Overflow affordance                                                 */
-/* ------------------------------------------------------------------ */
-
-/** Which edges of the nav have content beyond them. Measured, never assumed:
- *  a fade painted over a nav that already fits claims there is more below when
- *  there is not — the same class of lie as a silent scroll, pointing the other
- *  way. */
-interface OverflowEdges {
-  readonly top: boolean;
-  readonly bottom: boolean;
-}
-
-function measureEdges(nav: HTMLElement): OverflowEdges {
-  const scrollable = nav.scrollHeight - nav.clientHeight;
-  /* 1px of slack: fractional layout rounds scrollHeight up at non-integer
-     zoom levels, and a permanently-lit fade is worse than none. */
-  return {
-    top: nav.scrollTop > 1,
-    bottom: scrollable > 1 && nav.scrollTop < scrollable - 1,
-  };
-}
-
-/* ------------------------------------------------------------------ */
-/* Sidebar                                                            */
-/* ------------------------------------------------------------------ */
 
 interface AdminNavItem {
   readonly id: AdminSectionId;
@@ -99,12 +58,8 @@ function AdminNavLink({
   readonly onPreload?: (id: AdminSectionId) => void;
 }) {
   const Icon = Icons[item.icon];
-  /* The router's `defaultPreload: "intent"` preloads *route* components, and
-     all 22 sections share one route — so hovering used to preload nothing at
-     all and the click paid for the chunk from cold. Pointer-enter and focus
-     both fire it: a keyboard operator tabbing the nav deserves the same head
-     start as a mouse. Fire-and-forget; the click that follows reports any real
-     failure. */
+  /* All sections share one route, so the router's intent preload cannot warm
+     a section's chunk; hover and focus do it here. */
   const preload = onPreload === undefined ? undefined : () => onPreload(item.id);
   return (
     <Link
@@ -116,84 +71,24 @@ function AdminNavLink({
       onPointerEnter={preload}
       onFocus={preload}
     >
-      <Icon size={16} />
+      <Icon size={16} aria-hidden="true" />
       <span>{item.label}</span>
     </Link>
   );
 }
 
-/** Case- and punctuation-insensitive substring match, so "oauth" finds
- *  "OAuth apps" and "org" finds "Groups & org units". */
-function matchesFilter(label: string, needle: string): boolean {
-  return label.toLowerCase().includes(needle);
-}
-
-/* No "Administration" heading above the list: the TopBar title and the
- * highlighted rail icon already say where you are, and 19 sections plus six
- * group headings need the vertical space more than a third label does.
- *
- * Those 19 sections still do not fit a laptop viewport — 882px of content in
- * an 843px nav at the default density. Three things share the load, in this
- * order:
- *
- *   1. The overflow is signposted. A sticky gradient at whichever edge has
- *      content past it, plus a permanently visible scrollbar, so "more below"
- *      is never something you have to discover by accident.
- *   2. The active section is scrolled into view on arrival, so deep-linking to
- *      Services (the last row) does not open a nav that appears to be missing
- *      it.
- *   3. Groups fold, so an operator who never touches AI or Platform can make
- *      the rest fit for good.
- *
- * Folding is opt-in and starts fully expanded: hiding a section by default to
- * win vertical space trades a scroll for a search, which is the worse deal.
- * The group holding the active section is always rendered open and renders no
- * toggle at all — a control that would hide the row you are standing on is not
- * a control worth shipping, and a *disabled* toggle there would just be a
- * focus stop that does nothing. Its stored preference is untouched, so the
- * group folds itself back up as soon as you navigate away. */
 export function AdminSidebar({
   section,
   onPreloadSection,
 }: {
   readonly section: AdminSectionId;
-  /** Warms a section's chunk and data on hover/focus. Passed down rather than
-   *  imported so the sidebar does not have to import the console that renders
-   *  it, and so a test can mount the nav on its own. */
+  /** Warms a section's chunk and data on hover/focus. */
   readonly onPreloadSection?: (id: AdminSectionId) => void;
 }) {
   const navRef = useRef<HTMLElement | null>(null);
   const [collapsed, setCollapsed] = useState<readonly string[]>(readCollapsedGroups);
-  const [edges, setEdges] = useState<OverflowEdges>({ top: false, bottom: false });
-  /* Not persisted, and cleared on navigation: a filter is a way of getting
-     somewhere, not a standing preference about the console (unlike the group
-     folds above). A filter that survived a click would leave the operator on a
-     page whose nav hides most of itself for reasons they have forgotten. */
-  const [filter, setFilter] = useState("");
-  const needle = filter.trim().toLowerCase();
-
-  useEffect(() => {
-    setFilter("");
-  }, [section]);
-
-  const filteredGroups = ADMIN_NAV_GROUPS.map((group) => ({
-    title: group.title,
-    /* A matching group title keeps all its rows — searching "security" should
-       show what is in Security, not nothing. */
-    items: matchesFilter(group.title, needle)
-      ? group.items
-      : group.items.filter((item) => matchesFilter(item.label, needle)),
-  })).filter((group) => group.items.length > 0);
-  const rootMatches = needle === "" || matchesFilter(ADMIN_NAV_ROOT.label, needle);
-  const noMatches = !rootMatches && filteredGroups.length === 0;
 
   function toggleGroup(title: string): void {
-    /* Functional update, not `collapsed` from this render's closure: two
-       toggles dispatched inside one React batch both read the pre-batch
-       snapshot, so the second overwrites the first and one group silently
-       unfolds. Persisting from inside the updater keeps storage and state
-       from disagreeing for the same reason — and writing the same value twice
-       (StrictMode double-invokes updaters) is a no-op. */
     setCollapsed((previous) => {
       const next = previous.includes(title)
         ? previous.filter((entry) => entry !== title)
@@ -203,118 +98,33 @@ export function AdminSidebar({
     });
   }
 
-  /* Re-measures when the nav resizes (window height, density change) and, via
-     the dependencies, when folding a group changes the content height. */
-  useLayoutEffect(() => {
-    const nav = navRef.current;
-    if (!nav) {
-      return;
-    }
-    const measure = () => {
-      setEdges((prev) => {
-        const next = measureEdges(nav);
-        return prev.top === next.top && prev.bottom === next.bottom ? prev : next;
-      });
-    };
-    measure();
-    nav.addEventListener("scroll", measure, { passive: true });
-    /* jsdom has no ResizeObserver. The scroll listener and this effect's
-       dependencies still cover every state a jsdom test can produce. */
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    observer?.observe(nav);
-    /* The nav's own box also has to be watched from the inside: switching to
-       `[data-density="compact"]` shrinks every row from 36px to 30px without
-       changing the nav's width or height, so observing only the container
-       leaves the affordance reporting the old content height. */
-    for (const child of nav.children) {
-      observer?.observe(child);
-    }
-    return () => {
-      nav.removeEventListener("scroll", measure);
-      observer?.disconnect();
-    };
-  }, [collapsed, section]);
-
   useEffect(() => {
+    /* Deep links to the last rows (Webhooks) must not land on a nav that
+       appears to be missing them. jsdom has no scrollIntoView. */
     const active = navRef.current?.querySelector<HTMLElement>('[aria-current="page"]');
-    /* `block: "nearest"` is deliberate: it moves the nav only when the active
-       row is actually out of view, so it never yanks the list out from under
-       someone who has scrolled it themselves. jsdom does not implement
-       scrollIntoView, hence the guard. scroll-padding-bottom on .admin-nav
-       keeps the last rows (e.g. Services) clear of the viewport edge. */
     if (active && typeof active.scrollIntoView === "function") {
       active.scrollIntoView({ block: "nearest" });
     }
   }, [section]);
 
   return (
-    <nav
-      className="admin-nav"
-      aria-label="Administration"
-      ref={navRef}
-      data-overflow-top={edges.top ? "" : undefined}
-      data-overflow-bottom={edges.bottom ? "" : undefined}
-    >
-      {/* Sticky inside the scroll container, and pulled out of flow by a
-          negative margin so the affordance costs no vertical space. */}
-      <div className="admin-nav-fade admin-nav-fade-top" aria-hidden="true" />
-      {/* 22 sections across 6 groups did not fit the nav, and the three
-          existing affordances — an overflow fade, autoscroll-to-active, and
-          collapsible groups — all compensate for the absence of this box.
-          Typing is faster than scanning six headings. */}
-      <div className="admin-nav-filter">
-        <label className="sr-only" htmlFor="admin-nav-filter-input">
-          Filter admin sections
-        </label>
-        <SearchIcon size={13} aria-hidden="true" />
-        <input
-          id="admin-nav-filter-input"
-          type="search"
-          value={filter}
-          placeholder="Filter sections…"
-          autoComplete="off"
-          onChange={(event) => {
-            setFilter(event.target.value);
-          }}
-        />
-      </div>
-      {noMatches ? (
-        <p className="admin-nav-empty" role="status">
-          No section matches “{filter.trim()}”.
-        </p>
-      ) : null}
-      {rootMatches ? (
-        <AdminNavLink
-          item={ADMIN_NAV_ROOT}
-          active={section === ADMIN_NAV_ROOT.id}
-          onPreload={onPreloadSection}
-        />
-      ) : null}
-      {filteredGroups.map((group) => {
+    <nav className="admin-nav" aria-label="Administration" ref={navRef}>
+      <AdminNavLink
+        item={ADMIN_NAV_ROOT}
+        active={section === ADMIN_NAV_ROOT.id}
+        onPreload={onPreloadSection}
+      />
+      {ADMIN_NAV_GROUPS.map((group) => {
         const slug = groupSlug(group.title);
         const headingId = `admin-nav-${slug}`;
         const listId = `admin-nav-${slug}-list`;
         const holdsActive = group.items.some((item) => item.id === section);
-        /* A filtered group is always open: hiding the rows the operator just
-           searched for behind a fold would make the filter useless. */
-        const open = holdsActive || needle !== "" || !collapsed.includes(group.title);
+        const open = holdsActive || !collapsed.includes(group.title);
         return (
-          <div
-            className="admin-nav-group"
-            key={group.title}
-            data-current={holdsActive ? "" : undefined}
-          >
-            {/* The heading names the list for assistive tech as well as sighted
-                users, so the group is a real <ul> rather than styled divs. It
-                stays an <h2> whether or not it carries the toggle: the
-                disclosure button lives inside the heading (the WAI-ARIA
-                accordion shape) rather than replacing it, so the document
-                outline does not change as groups fold. */}
-            <h2 className="section-label" id={headingId}>
-              {holdsActive || needle !== "" ? (
-                <span className="admin-nav-group-heading">
-                  <span className="admin-nav-group-label">{group.title}</span>
-                </span>
+          <div className="admin-nav-group" key={group.title}>
+            <h2 className="admin-nav-group-title" id={headingId}>
+              {holdsActive ? (
+                <span className="admin-nav-group-heading">{group.title}</span>
               ) : (
                 <button
                   type="button"
@@ -326,24 +136,14 @@ export function AdminSidebar({
                   }}
                 >
                   <span className="admin-nav-group-label">{group.title}</span>
-                  {/* What is behind the fold, in the summary, per the console's
-                      disclosure rule. Only while collapsed — expanded, the
-                      rows themselves are the count. */}
-                  {open ? null : (
-                    <span
-                      className="admin-nav-group-count"
-                      aria-label={`${group.items.length} sections`}
-                    >
-                      {group.items.length}
-                    </span>
-                  )}
-                  <ChevronDownIcon className="admin-nav-group-chevron" size={14} />
+                  <ChevronDownIcon
+                    className="admin-nav-group-chevron"
+                    size={14}
+                    aria-hidden="true"
+                  />
                 </button>
               )}
             </h2>
-            {/* `hidden`, not a CSS height collapse: a visually-hidden list that
-                is still in the tab order is the classic disclosure bug — you
-                tab into rows nobody can see. */}
             <ul id={listId} aria-labelledby={headingId} hidden={!open}>
               {group.items.map((item) => (
                 <li key={item.id}>
@@ -358,17 +158,13 @@ export function AdminSidebar({
           </div>
         );
       })}
-      <div className="admin-nav-fade admin-nav-fade-bottom" aria-hidden="true" />
       <AdminRealtimeIndicator />
     </nav>
   );
 }
 
-/* The console's liveness is not uniform — nine sections are event-driven, the
-   rest poll or refresh on focus — so the honest statement is about the
-   connection, not about the data. A dead socket that looks identical to a quiet
-   system is the failure mode this exists to prevent. Hidden entirely while
-   healthy: a permanent green light is noise. */
+/* Shown only while live updates are down, so a dead connection never reads as
+   a quiet system. */
 function AdminRealtimeIndicator() {
   const state = useAdminRealtimeState();
   if (state === "live") {
@@ -377,7 +173,7 @@ function AdminRealtimeIndicator() {
   return (
     <p className="admin-nav-realtime" data-state={state} role="status">
       {state === "offline"
-        ? "Live updates unavailable — sections refresh on their own schedule."
+        ? "Live updates are off. Pages refresh on their own schedule."
         : "Connecting to live updates…"}
     </p>
   );

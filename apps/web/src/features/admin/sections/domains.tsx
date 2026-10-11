@@ -1,4 +1,10 @@
-import { Globe as GlobeIcon, Plus as PlusIcon, Trash2 as TrashIcon } from "lucide-react";
+import {
+  Globe as GlobeIcon,
+  Plus as PlusIcon,
+  Star as StarIcon,
+  Trash2 as TrashIcon,
+} from "lucide-react";
+import { RowMenu, RowMenuItem } from "@/features/admin/console/widgets";
 /* Admin › Organization › Domains — workspace domains and their DNS records. */
 
 import { Button } from "@/components/ui/button";
@@ -11,15 +17,15 @@ import {
 } from "@/features/admin/console/controls";
 import {
   EmptyRow,
-  EmptyState,
   MutationError,
   PageHeading,
-  PageScroll,
   QueryFailureBanner,
-  StateBanner,
   StatusChip,
   useQueryFailure,
+  ErrorNotice,
+  LoadingState,
 } from "@/features/admin/console/primitives";
+import { EmptyState } from "@/components/ui/empty-state";
 import { AdminTable, type AdminColumn } from "@/features/admin/console/table";
 import {
   createDomain,
@@ -205,12 +211,12 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
     <div className="panel mb-4 overflow-hidden">
       {upsertMutation.isError ? (
         <div className="px-4 py-2">
-          <StateBanner kind="error">{upsertMutation.error.message}</StateBanner>
+          <ErrorNotice>{upsertMutation.error.message}</ErrorNotice>
         </div>
       ) : null}
       {verifyMutation.isError ? (
         <div className="px-4 py-2">
-          <StateBanner kind="error">{verifyMutation.error.message}</StateBanner>
+          <ErrorNotice>{verifyMutation.error.message}</ErrorNotice>
         </div>
       ) : null}
 
@@ -277,7 +283,13 @@ function DomainDnsPanel({ entry }: { entry: DomainWithRecords }) {
               than centred against the taller labelled fields. It is the one
               primary action of this panel — the Verify buttons above it are
               outline so they do not compete with it. */}
-          <Button type="submit" size="sm" className="self-end" disabled={upsertMutation.isPending}>
+          <Button
+            type="submit"
+            size="sm"
+            variant="outline"
+            className="self-end"
+            disabled={upsertMutation.isPending}
+          >
             <PlusIcon size={16} /> Record
           </Button>
         </AdminToolbar>
@@ -326,10 +338,10 @@ export function AdminDomain() {
   const domainsFailure = useQueryFailure(domainsQuery, invalidate);
 
   return (
-    <PageScroll>
+    <>
       <PageHeading
         title="Domains"
-        subtitle="Every domain this workspace owns, what it is used for, and the DNS records behind it."
+        subtitle="Domains your organization uses for email and sign-in."
       />
 
       {domainsFailure !== null ? (
@@ -341,13 +353,12 @@ export function AdminDomain() {
           onRetry={domainsFailure.retry}
           /* The domain list is everything this page renders, so the retry is
              the only action left on screen. */
-          retryVariant="default"
         >
           Adding a domain and editing its DNS records need the current list, so both stay
           unavailable until this loads.
         </QueryFailureBanner>
       ) : domainsQuery.isPending ? (
-        <StateBanner kind="loading">Loading domains…</StateBanner>
+        <LoadingState label="Loading domains…" />
       ) : null}
       <MutationError error={addMutation.error} />
       <MutationError error={primaryMutation.error} />
@@ -385,11 +396,18 @@ export function AdminDomain() {
             /* The loading banner above already says it is loading; a second
                "Loading domains…" in the empty state read as two states. */
             domainsQuery.isPending ? null : (
-              <EmptyState icon={<GlobeIcon size={16} />} title="No domains yet">
-                Add a domain to send and receive mail from it, and to let people sign in with
-                addresses at that domain. Each one needs its DNS records verified before it goes
-                live.
-              </EmptyState>
+              <EmptyState
+                icon={<GlobeIcon size={16} />}
+                title="No domains yet"
+                size="inline"
+                body={
+                  <>
+                    Add a domain to send and receive mail from it, and to let people sign in with
+                    addresses at that domain. Each one needs its DNS records verified before it goes
+                    live.
+                  </>
+                }
+              />
             )
           ) : (
             domains.map((entry) => (
@@ -412,31 +430,25 @@ export function AdminDomain() {
                     tone={verificationVariant(entry.domain.status)}
                     label={ownershipLabel(entry.domain.status)}
                   />
-                  {!entry.domain.isPrimary ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      aria-label={`Make ${entry.domain.domain} primary`}
-                      disabled={primaryMutation.isPending}
-                      onClick={() => primaryMutation.mutate(entry.domain.id)}
+                  <RowMenu label={`Actions for ${entry.domain.domain}`}>
+                    {entry.domain.isPrimary ? null : (
+                      <RowMenuItem
+                        icon={<StarIcon size={16} />}
+                        disabled={primaryMutation.isPending}
+                        onSelect={() => primaryMutation.mutate(entry.domain.id)}
+                      >
+                        Make primary
+                      </RowMenuItem>
+                    )}
+                    <RowMenuItem
+                      icon={<TrashIcon size={16} />}
+                      destructive
+                      disabled={deleteMutation.isPending}
+                      onSelect={() => setDeleteTarget(entry)}
                     >
-                      Make primary
-                    </Button>
-                  ) : null}
-                  {/* Was a bare trash glyph in the same grey as "Make primary",
-                      one click from stopping mail. It now says what it does and
-                      reads as the destructive control it is. */}
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="destructive"
-                    aria-label={`Release ${entry.domain.domain}`}
-                    disabled={deleteMutation.isPending}
-                    onClick={() => setDeleteTarget(entry)}
-                  >
-                    <TrashIcon size={16} /> Release
-                  </Button>
+                      Release domain
+                    </RowMenuItem>
+                  </RowMenu>
                 </div>
                 {/* Capabilities first, DNS records second: what the domain is
                     used for is the question, and the records are how you get
@@ -483,6 +495,6 @@ export function AdminDomain() {
           console cannot undo the deletion.
         </ConfirmDestructive>
       )}
-    </PageScroll>
+    </>
   );
 }

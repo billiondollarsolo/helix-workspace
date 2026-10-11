@@ -17,8 +17,15 @@ import {
   type CoreAppId,
 } from "./core-apps-api";
 import { APPS } from "@/components/apps";
+import { APP_DISABLE_CONSEQUENCE } from "@/features/admin/console/app-settings";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import { PageHeading } from "@/features/admin/console/primitives";
+import {
+  ErrorNotice,
+  LoadingState,
+  PageHeading,
+  QueryFailureBanner,
+} from "@/features/admin/console/primitives";
+import { Switch } from "@/features/admin/console/widgets";
 interface CoreAppsRouteQueryClient {
   ensureQueryData(options: ReturnType<typeof coreAppsAdminQueryOptions>): Promise<unknown>;
 }
@@ -40,15 +47,6 @@ const APP_ICON_BG: Readonly<Record<CoreAppId, string>> = {
   calendar: "bg-orange-500/15 text-orange-400",
   meet: "bg-cyan-500/15 text-cyan-400",
   assistant: "bg-fuchsia-500/15 text-fuchsia-400",
-};
-/* App-specific loss of access shown before disabling an app org-wide. */
-const DISABLE_CONSEQUENCE: Readonly<Record<CoreAppId, string>> = {
-  mail: "Every user loses the inbox, composing, and mail results in search.",
-  chat: "Every user loses channels and direct messages, including conversations already in progress.",
-  drive: "Every user loses file browsing, upload, download, and Drive results in search.",
-  calendar: "Every user loses their schedule, event creation, and invitations.",
-  meet: "Nobody can start or join a meeting from Helix, including meetings already scheduled.",
-  assistant: "Every user loses AI answers, summaries, and assisted actions across the workspace.",
 };
 /**
  * Admin UI to view and toggle core-app enablement org-wide.
@@ -95,10 +93,6 @@ export function CoreAppsManagement() {
     const configuredApps = statusQuery.data?.apps ?? [];
     return configuredApps.filter((app) => APPS.some((workspaceApp) => workspaceApp.id === app.id));
   }, [statusQuery.data?.apps]);
-  /* `undefined` until the request lands, and it stays undefined on failure —
-       defaulting to "all" put a specific claim about the deployment in the
-       subtitle while the body said the settings could not be read. */
-  const role = statusQuery.data?.role;
   const enabledCount = useMemo(() => apps.filter((a) => a.enabled).length, [apps]);
   /* Derived from the live list rather than held as a snapshot: if a refetch
        drops the app, the dialog must not keep offering to disable something that
@@ -110,11 +104,8 @@ export function CoreAppsManagement() {
               h1 like every other `/admin/<section>` page — it rendered an h2 here
               and an h3 in tenant settings purely by accident of authorship. */}
       <PageHeading
-        title="Workspace apps"
-        subtitle={
-          "Turn workspace apps on or off for everyone in your organization. Disabled apps disappear from the launcher, rail, and search." +
-          (role === undefined ? "" : ` This deployment boots with the ${role} role.`)
-        }
+        title="All apps"
+        subtitle="Turn apps on or off for everyone in your organization."
         meta={
           apps.length > 0 ? (
             <span className="ml-auto shrink-0 text-sm text-[var(--text-2)]">
@@ -125,23 +116,20 @@ export function CoreAppsManagement() {
         }
       />
 
-      {error !== null ? (
-        <div
-          role="alert"
-          className="text-sm text-[var(--danger)] bg-[var(--danger-soft,rgba(239,68,68,0.1))] border border-[var(--danger)]/30 rounded-md px-3 py-2"
-        >
-          {error}
-        </div>
-      ) : null}
+      {error !== null ? <ErrorNotice>{error}</ErrorNotice> : null}
 
       {statusQuery.isError ? (
-        <p className="text-sm text-[var(--text-2)]" role="status">
-          Core-app settings are unavailable. You may not have admin access.
-        </p>
+        <QueryFailureBanner
+          summary="App settings couldn't be loaded"
+          subject="app settings"
+          error={statusQuery.error}
+          isRetrying={statusQuery.isFetching}
+          onRetry={() => {
+            void queryClient.invalidateQueries({ queryKey: coreAppsQueryKeys.admin() });
+          }}
+        />
       ) : statusQuery.isLoading ? (
-        <p className="text-sm text-[var(--text-3)]" role="status">
-          Loading core apps…
-        </p>
+        <LoadingState label="Loading apps" variant="row" count={6} />
       ) : (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
           {apps.map((app, idx) => (
@@ -172,7 +160,7 @@ export function CoreAppsManagement() {
             }
           }}
           title={`Disable ${disableTarget.name}`}
-          blastRadius={DISABLE_CONSEQUENCE[disableTarget.id]}
+          blastRadius={APP_DISABLE_CONSEQUENCE[disableTarget.id]}
           confirmLabel={`Disable ${disableTarget.name}`}
           isPending={toggleMutation.isPending}
           onConfirm={() => {
@@ -226,11 +214,11 @@ function CoreAppRow({
         </div>
         <p className="mt-0.5 text-sm text-[var(--text-3)]">{app.description}</p>
       </div>
-      <AppToggle
-        enabled={app.enabled}
-        busy={busy}
-        ariaLabel={`${app.enabled ? "Disable" : "Enable"} ${app.name}`}
-        onChange={onToggle}
+      <Switch
+        checked={app.enabled}
+        disabled={busy}
+        label={`${app.name} on for everyone`}
+        onCheckedChange={onToggle}
       />
     </div>
   );
@@ -250,34 +238,5 @@ function Pill({
     >
       {children}
     </span>
-  );
-}
-function AppToggle({
-  enabled,
-  busy,
-  ariaLabel,
-  onChange,
-}: {
-  readonly enabled: boolean;
-  readonly busy: boolean;
-  readonly ariaLabel: string;
-  readonly onChange: (next: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={enabled}
-      aria-label={ariaLabel}
-      disabled={busy}
-      onClick={() => {
-        onChange(!enabled);
-      }}
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${enabled ? "bg-[var(--accent)]" : "bg-[var(--surface-2)] border border-[var(--border)]"}`}
-    >
-      <span
-        className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${enabled ? "translate-x-5" : "translate-x-0.5"}`}
-      />
-    </button>
   );
 }

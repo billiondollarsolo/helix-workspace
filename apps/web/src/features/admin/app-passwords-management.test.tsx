@@ -267,7 +267,7 @@ describe("AppPasswordsManagement", () => {
     expect(picker.disabled).toBe(true);
     expect(picker.options[0]?.textContent).toBe("Actors unavailable");
     expect(findButton("Create app password").disabled).toBe(true);
-    expect(container.querySelector('[role="alert"].admin-banner')).not.toBeNull();
+    expect(container.querySelector('[role="alert"][data-slot="inline-error"]')).not.toBeNull();
     // The error is recoverable without a reload.
     expect(findButton("Retry")).toBeInstanceOf(HTMLButtonElement);
   });

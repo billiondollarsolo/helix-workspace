@@ -124,7 +124,7 @@ describe("DomainCapabilitiesPanel", () => {
   it("shows the server challenge and hides capabilities until ownership is proved", async () => {
     await render(entry({ domain: { ...entry().domain, status: "pending", verifiedAt: null } }));
     expect(container.textContent).toContain("server-challenge");
-    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(container.querySelector('[role="switch"]')).toBeNull();
     expect(labelled("Verify ownership of helix.test")).not.toBeNull();
     await act(() => {
       labelled("Verify ownership of helix.test")?.click();
@@ -142,9 +142,11 @@ describe("DomainCapabilitiesPanel", () => {
   it("uses the canonical capability route and reports incomplete mail setup", async () => {
     await render(entry());
     expect(container.textContent).toContain("requires a configured provider and verified mail DNS");
-    const mail = [...container.querySelectorAll("label")]
-      .find((label) => label.textContent === "Mail")
-      ?.querySelector("input");
+    const mail = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+      (toggle) =>
+        document.getElementById(toggle.getAttribute("aria-labelledby") ?? "")?.textContent ===
+        "Mail",
+    );
     await act(() => {
       mail?.click();
       return Promise.resolve();
@@ -201,9 +203,11 @@ describe("DomainCapabilitiesPanel", () => {
   });
   it("explains lost delivery before disabling mail and retains stored keys", async () => {
     await render(entry({ domain: { ...entry().domain, mailEnabled: true } }));
-    const mail = [...container.querySelectorAll("label")]
-      .find((label) => label.textContent === "Mail")
-      ?.querySelector("input");
+    const mail = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+      (toggle) =>
+        document.getElementById(toggle.getAttribute("aria-labelledby") ?? "")?.textContent ===
+        "Mail",
+    );
     await act(() => {
       mail?.click();
       return Promise.resolve();

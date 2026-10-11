@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from "react";
+import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { AdminUserAddressesButton } from "./user-addresses-dialog";
+import { AdminUserAddressesDialog } from "./user-addresses-dialog";
 import { GroupMailForm } from "./group-mail-form";
 import { createGroup, updateGroup, type Group } from "../groups-api";
 import { MailSenderSelect, useMailSender } from "../../mail/mail-sender-select";
@@ -96,6 +96,15 @@ async function render(node: ReactNode) {
   });
   await settle();
 }
+function switchByLabel(label: string): HTMLButtonElement {
+  const match = [...document.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+    (item) =>
+      document.getElementById(item.getAttribute("aria-labelledby") ?? "")?.textContent === label,
+  );
+  if (!match) throw new Error(`Missing switch ${label}`);
+  return match;
+}
+
 function field(label: string): HTMLInputElement | HTMLSelectElement {
   const aria = document.querySelector<HTMLInputElement | HTMLSelectElement>(
     `[aria-label="${label}"]`,
@@ -201,7 +210,7 @@ it("manages aliases and tenant primary across eligible domains, preserves failed
     return Response.json(data);
   });
   const invalidate = vi.spyOn(client, "invalidateQueries");
-  await render(<AdminUserAddressesButton actorId="user-1" name="Morgan" />);
+  await render(<AddressesOpener />);
   await click("Mail addresses");
   expect(document.body.textContent).toContain("sign-in email stays unchanged");
   expect(
@@ -212,7 +221,7 @@ it("manages aliases and tenant primary across eligible domains, preserves failed
   await fill("Alias domain", "second.test");
   await act(async () => {
     await Promise.resolve();
-    field("Allow sending as this alias").click();
+    switchByLabel("Allow sending as this alias").click();
   });
   await click("Add alias");
   expect(document.body.textContent).toContain("This address belongs to another user.");
@@ -225,12 +234,12 @@ it("manages aliases and tenant primary across eligible domains, preserves failed
   });
   await act(async () => {
     await Promise.resolve();
-    field("Send as support@second.test").click();
+    switchByLabel("Send as support@second.test").click();
   });
   await settle();
   await act(async () => {
     await Promise.resolve();
-    field("Receive mail at support@second.test").click();
+    switchByLabel("Receive mail at support@second.test").click();
   });
   await settle();
   expect(data.addresses.find((address) => address.id === "alias-1")).toMatchObject({
@@ -259,7 +268,7 @@ it("retries address lookup failures and rejects malformed successful responses",
   fetchMock.mockResolvedValueOnce(
     Response.json({ error: { message: "Directory is restarting." } }, { status: 503 }),
   );
-  await render(<AdminUserAddressesButton actorId="user-1" name="Morgan" />);
+  await render(<AddressesOpener />);
   await click("Mail addresses");
   expect(document.body.textContent).toContain("Directory is restarting.");
   await click("Retry addresses");
@@ -302,7 +311,7 @@ it("creates and edits email groups with explicit sender policy, preserving faile
   const saved = vi.fn();
   await render(<GroupMailForm onSave={createGroup} onSaved={saved} />);
   expect(field("Who can email this group?").value).toBe("organization");
-  await fill("New group name", "Support");
+  await fill("Group name", "Support");
   await fill("Group email name", "support");
   await fill("Group email domain", "second.test");
   await click("Create group");
@@ -325,17 +334,32 @@ it("creates and edits email groups with explicit sender policy, preserving faile
     />,
   );
   await fill("Who can email this group?", "organization");
-  await click("Save group settings");
+  await click("Save");
   expect(writes.at(-1)?.postingPolicy).toBe("organization");
   await fill("Group type", "group");
   expect(document.body.textContent).toContain("stops delivery");
-  await click("Save group settings");
+  await click("Save");
   expect(writes.at(-1)).toMatchObject({ email: null, kind: "group" });
   expect(fetchMock).toHaveBeenLastCalledWith(
     "/api/admin/groups/g-1",
     expect.objectContaining({ method: "PATCH" }),
   );
 });
+
+/** The row menu opens the dialog; this stands in for that menu item. */
+function AddressesOpener() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Mail addresses
+      </button>
+      {open ? (
+        <AdminUserAddressesDialog actorId="user-1" name="Morgan" onClose={() => setOpen(false)} />
+      ) : null}
+    </>
+  );
+}
 
 function SenderHarness({ initial }: { readonly initial?: string }) {
   const sender = useMailSender(initial);

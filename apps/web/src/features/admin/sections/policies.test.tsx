@@ -161,9 +161,9 @@ describe("AdminSecurity", () => {
     await render();
 
     await waitFor(() => {
-      expect(container.textContent).toContain("runtime status");
+      expect(container.textContent).toContain("recorded and audited but not yet");
+      expect(container.textContent).toContain("External sharing");
     });
-    expect(container.textContent).toContain("External sharing");
     expect(container.textContent).toContain("identity provider");
   });
 
@@ -238,10 +238,16 @@ describe("AdminSecurity", () => {
       select.dispatchEvent(new Event("change", { bubbles: true }));
       return Promise.resolve();
     });
-    const checkbox = (label: string) =>
-      [...container.querySelectorAll("label")]
-        .find((item) => item.textContent?.trim() === label)
-        ?.querySelector("input");
+    const checkbox = (label: string) => {
+      const toggle = [...container.querySelectorAll<HTMLButtonElement>('[role="switch"]')].find(
+        (item) =>
+          document.getElementById(item.getAttribute("aria-labelledby") ?? "")?.textContent ===
+          label,
+      );
+      return toggle === undefined
+        ? undefined
+        : { click: () => toggle.click(), checked: toggle.getAttribute("aria-checked") === "true" };
+    };
     await act(() => {
       checkbox("Require recent MFA for sensitive actions")?.click();
       checkbox("Require a second administrator for sensitive actions")?.click();

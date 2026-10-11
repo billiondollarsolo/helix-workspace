@@ -75,13 +75,15 @@ const SUBJECT_ROUTES: Readonly<Record<string, readonly QueryKey[]>> = {
 const SECTION_SUBJECTS: Partial<Record<AdminSectionId, readonly string[]>> = {
   overview: ["helix.config.changed", "flags.changed.*"],
   "tier-readiness": ["helix.config.changed"],
-  "ai-providers": ["helix.config.changed"],
-  "ai-retrieval": ["helix.config.changed"],
+  assistant: ["helix.config.changed", "flags.changed.*"],
+  mail: ["flags.changed.*"],
+  calendar: ["flags.changed.*"],
+  meet: ["flags.changed.*"],
   "workspace-settings": ["flags.changed.*"],
   "workspace-apps": ["flags.changed.*"],
   "ai-costs": ["platform.ai_cost.warning"],
   "ai-observability": ["platform.ai_cost.warning"],
-  drive: ["quota.storage.exceeded"],
+  drive: ["quota.storage.exceeded", "flags.changed.*"],
   "agent-controls": ["platform.pending_action.created"],
 };
 

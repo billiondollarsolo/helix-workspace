@@ -1,3 +1,4 @@
+import { RelativeTime } from "@/features/admin/console/widgets";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
@@ -13,8 +14,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AdminAiRelatedNav } from "@/features/admin/admin-related-nav";
-import { EmptyState, PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import { PageHeading, ErrorNotice, LoadingState } from "@/features/admin/console/primitives";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   aiCostLimitsQueryKeys,
   aiCostLimitsQueryOptions,
@@ -103,7 +104,7 @@ export function AICostLimitsManagement() {
       {
         accessorKey: "updatedAt",
         header: "Updated",
-        cell: ({ row }) => new Date(row.original.updatedAt).toLocaleString(),
+        cell: ({ row }) => <RelativeTime value={row.original.updatedAt} />,
       },
       {
         id: "actions",
@@ -158,14 +159,7 @@ export function AICostLimitsManagement() {
     // `ai-costs` is registered through `withPageScroll` in admin-console.tsx,
     // so the scroll container, page padding, and 1280px cap already wrap this.
     <section className="grid gap-4">
-      <PageHeading
-        title="Cost limits"
-        subtitle={
-          tierDefaultSubtitle(tierDefault) +
-          " Per-user overrides for daily AI spend. Provider keys and models live under AI providers."
-        }
-      />
-      <AdminAiRelatedNav current="ai-costs" />
+      <PageHeading title="AI costs" subtitle={tierDefaultSubtitle(tierDefault)} />
 
       <section
         aria-labelledby="ai-cost-limits-form-heading"
@@ -233,13 +227,13 @@ export function AICostLimitsManagement() {
           </Button>
         </form>
 
-        {formError === null ? null : <StateBanner kind="error">{formError}</StateBanner>}
+        {formError === null ? null : <ErrorNotice>{formError}</ErrorNotice>}
         {upsertMutation.isError ? (
-          <StateBanner kind="error">
+          <ErrorNotice>
             {upsertMutation.error instanceof Error
               ? upsertMutation.error.message
               : "Failed to save AI cost limit."}
-          </StateBanner>
+          </ErrorNotice>
         ) : null}
       </section>
 
@@ -248,27 +242,31 @@ export function AICostLimitsManagement() {
           Active overrides
         </h2>
 
-        {limitsQuery.isPending ? (
-          <StateBanner kind="loading">Loading cost limits…</StateBanner>
-        ) : null}
+        {limitsQuery.isPending ? <LoadingState label="Loading cost limits…" /> : null}
         {limitsQuery.isError ? (
-          <StateBanner kind="error">
-            Cost limits are unavailable or admin AI scope is missing.
-          </StateBanner>
+          <ErrorNotice>Cost limits are unavailable or admin AI scope is missing.</ErrorNotice>
         ) : null}
         {clearMutation.isError ? (
-          <StateBanner kind="error">
+          <ErrorNotice>
             {clearMutation.error instanceof Error
               ? clearMutation.error.message
               : "Failed to clear AI cost limit."}
-          </StateBanner>
+          </ErrorNotice>
         ) : null}
 
         {showEmptyState ? (
-          <EmptyState icon={<BadgeDollarSign aria-hidden="true" />} title="No per-user overrides">
-            Every user is billed against the {tierDefault === undefined ? "tier" : tierDefault.tier}{" "}
-            tier default. Save an override above to give one user a different daily AI budget.
-          </EmptyState>
+          <EmptyState
+            icon={<BadgeDollarSign aria-hidden="true" />}
+            title="No per-user overrides"
+            size="inline"
+            body={
+              <>
+                Every user is billed against the{" "}
+                {tierDefault === undefined ? "tier" : tierDefault.tier} tier default. Save an
+                override above to give one user a different daily AI budget.
+              </>
+            }
+          />
         ) : null}
 
         {hasOverrides ? (
@@ -305,14 +303,13 @@ export function AICostLimitsManagement() {
 }
 
 function tierDefaultSubtitle(tierDefault: AICostTierDefault | undefined): string {
-  const lead =
-    "Override the daily AI spend budget for an individual user. A blank field falls back to the";
+  const lead = "Daily AI budgets. People without an override use the";
   if (tierDefault === undefined) {
     return `${lead} tier default.`;
   }
-  return `${lead} ${tierDefault.tier} tier default (actor ${formatTierBudget(
+  return `${lead} ${tierDefault.tier} tier default: ${formatTierBudget(
     tierDefault.actorDailyUsd,
-  )}, feature ${formatTierBudget(tierDefault.featureDailyUsd)}).`;
+  )} per person, ${formatTierBudget(tierDefault.featureDailyUsd)} per feature.`;
 }
 
 /* A null budget means different things on either side of this screen: on a
@@ -320,7 +317,7 @@ function tierDefaultSubtitle(tierDefault: AICostTierDefault | undefined): string
  * "inherit the tier default". Rendering both as "tier default" made the tier
  * row claim it inherited from itself. */
 function formatTierBudget(value: number | null): string {
-  return value === null ? "no cap" : formatUsd(value);
+  return value === null ? "Unlimited" : formatUsd(value);
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;

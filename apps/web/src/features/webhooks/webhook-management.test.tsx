@@ -234,7 +234,7 @@ describe("WebhookManagement", () => {
     renderWebhooks();
     await waitForText("Slack launch channel");
 
-    await clickHeaderAction("Outbound");
+    await clickHeaderAction("Add outbound");
     await setFieldValue("Name", "  PagerDuty alerts  ");
     await setFieldValue("Destination URL", "  https://example.test/webhook  ");
     await setCheckbox("Enabled", false);
@@ -274,7 +274,7 @@ describe("WebhookManagement", () => {
     renderWebhooks();
     await waitForText("Slack launch channel");
 
-    await clickHeaderAction("Inbound");
+    await clickHeaderAction("Add inbound");
     await setFieldValue("Name", "  Linear intake  ");
     await setFieldValue("Slug", "linear-intake");
     await setFieldValue("Source", "linear");
@@ -311,7 +311,7 @@ describe("WebhookManagement", () => {
     renderWebhooks();
     await waitForText("Slack launch channel");
 
-    await clickHeaderAction("Inbound");
+    await clickHeaderAction("Add inbound");
     const sourceField = findField("Source");
     const options = Array.from(sourceField.querySelectorAll("option")).map(
       (option) => option.value,
@@ -346,7 +346,7 @@ describe("WebhookManagement", () => {
     renderWebhooks();
     await waitForText("Slack launch channel");
 
-    await clickHeaderAction("Outbound");
+    await clickHeaderAction("Add outbound");
     await setFieldValue("Name", "PagerDuty alerts");
     await setFieldValue("Destination URL", "https://example.test/webhook");
     await clickEditorAction("Continue");
@@ -364,7 +364,7 @@ describe("WebhookManagement", () => {
     renderWebhooks();
     await waitForText("Slack launch channel");
 
-    await clickHeaderAction("Inbound");
+    await clickHeaderAction("Add inbound");
     await setFieldValue("Name", "Linear intake");
     await setFieldValue("Slug", "Linear Intake");
     await setFieldValue("Source", "linear");
@@ -386,7 +386,7 @@ describe("WebhookManagement", () => {
     renderWebhooks();
     await waitForText("Slack launch channel");
 
-    await clickHeaderAction("Outbound");
+    await clickHeaderAction("Add outbound");
     await setFieldValue("Name", "PagerDuty alerts");
     await setFieldValue("Destination URL", "https://example.test/webhook");
     await clickEditorAction("Continue");
@@ -408,7 +408,7 @@ describe("WebhookManagement", () => {
     renderWebhooks();
     await waitForText("Slack launch channel");
 
-    await clickHeaderAction("Inbound");
+    await clickHeaderAction("Add inbound");
     await setFieldValue("Name", "Linear intake");
     await setFieldValue("Slug", "linear-intake");
     await setFieldValue("Source", "linear");
@@ -495,8 +495,7 @@ describe("WebhookManagement", () => {
     expect(container.textContent).not.toContain("No outbound webhooks configured");
     expect(container.textContent).toContain("Could not load outbound webhooks.");
 
-    // The heading already says "unavailable"; a backend echoing that word must
-    // not produce "…unavailableunavailable".
+    // A backend echoing the heading's "unavailable" must not double the word.
     expect(container.querySelector(".webhooks-error-panel")?.textContent).toBe(
       "Webhook API unavailableUnable to load webhook data.",
     );
@@ -555,7 +554,7 @@ describe("WebhookManagement", () => {
   it("exposes editor steps as plain buttons rather than a second tablist", async () => {
     renderWebhooks();
     await waitForText("Slack launch channel");
-    await clickHeaderAction("Outbound");
+    await clickHeaderAction("Add outbound");
     await waitForText("Destination");
 
     // One tablist on the page: the section tabs.
@@ -634,7 +633,7 @@ describe("WebhookManagement", () => {
   }
 
   async function clickHeaderAction(label: string) {
-    const button = Array.from(container.querySelectorAll(".webhooks-header-actions button")).find(
+    const button = Array.from(container.querySelectorAll(".admin-page-actions button")).find(
       (candidate) => candidate.textContent?.trim() === label,
     );
     if (!(button instanceof HTMLButtonElement)) {
@@ -699,16 +698,17 @@ describe("WebhookManagement", () => {
   }
 
   async function setCheckbox(label: string, checked: boolean) {
-    const checkboxLabel = Array.from(container.querySelectorAll("label.webhooks-checkbox")).find(
-      (candidate) => candidate.textContent?.trim() === label,
+    const toggle = Array.from(container.querySelectorAll('[role="switch"]')).find(
+      (candidate) =>
+        document.getElementById(candidate.getAttribute("aria-labelledby") ?? "")?.textContent ===
+        label,
     );
-    const input = checkboxLabel?.querySelector("input");
-    if (!(input instanceof HTMLInputElement)) {
-      throw new Error(`Checkbox not found: ${label}`);
+    if (!(toggle instanceof HTMLButtonElement)) {
+      throw new Error(`Switch not found: ${label}`);
     }
     act(() => {
-      if (input.checked !== checked) {
-        input.click();
+      if ((toggle.getAttribute("aria-checked") === "true") !== checked) {
+        toggle.click();
       }
     });
     await flush();

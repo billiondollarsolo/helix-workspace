@@ -358,27 +358,19 @@ describe("admin console request budget", () => {
         "ai-observability": {
           "skipped": "first commit never returns when mounted via the console's lazy boundary",
         },
-        "ai-providers": {
-          "requestCount": 1,
-          "settled": true,
-          "urls": [
-            "/v1/api/admin/platform-config",
-          ],
-        },
-        "ai-retrieval": {
-          "requestCount": 2,
-          "settled": true,
-          "urls": [
-            "/v1/api/admin/ai-retrieval/status",
-            "/v1/api/admin/platform-config",
-          ],
-        },
         "app-passwords": {
           "requestCount": 2,
           "settled": true,
           "urls": [
             "/v1/api/admin/users?includeDisabled=false&limit=50",
             "/v1/api/tools/app.passwords.list",
+          ],
+        },
+        "assistant": {
+          "requestCount": 1,
+          "settled": true,
+          "urls": [
+            "/v1/api/admin/core-apps",
           ],
         },
         "audit": {
@@ -389,10 +381,19 @@ describe("admin console request budget", () => {
             "/v1/api/admin/users?includeDisabled=true&limit=250",
           ],
         },
-        "chat": {
-          "requestCount": 1,
+        "calendar": {
+          "requestCount": 2,
           "settled": true,
           "urls": [
+            "/v1/api/admin/core-apps",
+            "/v1/api/admin/tenant-config",
+          ],
+        },
+        "chat": {
+          "requestCount": 2,
+          "settled": true,
+          "urls": [
+            "/v1/api/admin/core-apps",
             "/v1/api/tools/chat.retention.get",
           ],
         },
@@ -404,19 +405,20 @@ describe("admin console request budget", () => {
           ],
         },
         "drive": {
-          "requestCount": 2,
+          "requestCount": 4,
           "settled": true,
           "urls": [
+            "/v1/api/admin/core-apps",
+            "/v1/api/admin/tenant-config",
             "/v1/api/tools/drive.lifecycle.get",
             "/v1/api/tools/drive.quota.usage",
           ],
         },
         "groups": {
-          "requestCount": 2,
+          "requestCount": 1,
           "settled": true,
           "urls": [
             "/v1/api/admin/groups",
-            "/v1/api/admin/org-units",
           ],
         },
         "identity": {
@@ -427,10 +429,19 @@ describe("admin console request budget", () => {
           ],
         },
         "mail": {
-          "requestCount": 1,
+          "requestCount": 2,
           "settled": true,
           "urls": [
-            "/v1/api/admin/mail/providers",
+            "/v1/api/admin/core-apps",
+            "/v1/api/admin/tenant-config",
+          ],
+        },
+        "meet": {
+          "requestCount": 2,
+          "settled": true,
+          "urls": [
+            "/v1/api/admin/core-apps",
+            "/v1/api/admin/services",
           ],
         },
         "oauth-apps": {

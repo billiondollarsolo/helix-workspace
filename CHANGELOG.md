@@ -29,6 +29,13 @@ All notable changes to Helix Workspace are documented here. This file follows
   contacts and groups, as chips. Enter, Tab or a comma adds a chip, Backspace removes the last one,
   pasting a list adds one chip per address, and invalid addresses show in red. Starting a direct
   message in Chat now uses it instead of asking for an actor ID.
+- Admin console search: one box at the top of every admin page finds users, groups, and settings
+  ("dkim", "legal hold", "mfa") and opens the right page and tab.
+- Admin app pages for Calendar, Meet, and Assistant. Each app page starts with a switch that turns
+  the app on or off for everyone, and its own workspace settings: invitation import on Calendar,
+  the meeting server status on Meet, and models and workspace search on Assistant.
+- The audit log filters by date range, actor, event, and outcome on the server, shows each event
+  in plain words with its outcome, and opens the full record, raw JSON included, in a side panel.
 - Person cards: hover or focus a person in the Contacts side panel to see their photo or initials,
   email and job title, with Send email, Chat, Schedule a meeting and Copy email actions.
 - The Contacts side panel shows avatars, job titles and "Group" or "Contact" labels instead of raw
@@ -58,6 +65,14 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- The admin console navigation is grouped into Home, Directory, Apps, Security, Reporting, and
+  Account, and every admin page shares one layout. Feature switches moved from Workspace settings
+  to the app they affect, and on/off settings use switches throughout.
+- Admin lists show people and groups with avatars, roles, status, and a ⋮ menu for each row
+  (edit profile, mail addresses, reset sign-in verification, remove access, delete group), support
+  selecting several rows, and turn into cards on phones. Times read "3 hours ago" with the exact
+  time on hover, sizes read "5 GB", and empty limits read "Unlimited".
+- Workspace settings shows the organization's name, with its ID behind a copy button.
 - Every quota (storage, AI tokens and images, actors, outbound webhooks, integration API
   requests per second, export jobs per hour) defaults to unlimited, and agent and AI cost
   budgets have no default for any security tier; an org admin may still set a cap (ADR-0030).

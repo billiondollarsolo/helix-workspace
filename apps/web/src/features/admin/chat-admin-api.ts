@@ -1,3 +1,4 @@
+import { formatDuration, formatRelativeTime } from "@/features/admin/console/format";
 import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
@@ -71,8 +72,8 @@ export type ChatExportResult = z.infer<typeof chatExportResultSchema>;
 
 export interface ChatRetentionFormInput {
   readonly retentionDays: string;
-  readonly editWindowSeconds: string;
-  readonly deleteWindowSeconds: string;
+  readonly editWindowMinutes: string;
+  readonly deleteWindowMinutes: string;
   readonly roomId: string;
 }
 
@@ -117,18 +118,20 @@ export type MappedExportInput =
 export function mapRetentionFormToToolInput(form: ChatRetentionFormInput): MappedRetentionInput {
   const retentionDays = parsePositiveInt(form.retentionDays, "Retention days", 1, 36_500);
   if (typeof retentionDays === "string") return retentionDays;
-  const editWindowSeconds = parseNonNegativeInt(
-    form.editWindowSeconds,
-    "Edit window (seconds)",
-    31_536_000,
+  const editWindowMinutes = parseNonNegativeInt(
+    form.editWindowMinutes,
+    "Edit window (minutes)",
+    525_600,
   );
-  if (typeof editWindowSeconds === "string") return editWindowSeconds;
-  const deleteWindowSeconds = parseNonNegativeInt(
-    form.deleteWindowSeconds,
-    "Delete window (seconds)",
-    31_536_000,
+  if (typeof editWindowMinutes === "string") return editWindowMinutes;
+  const deleteWindowMinutes = parseNonNegativeInt(
+    form.deleteWindowMinutes,
+    "Delete window (minutes)",
+    525_600,
   );
-  if (typeof deleteWindowSeconds === "string") return deleteWindowSeconds;
+  if (typeof deleteWindowMinutes === "string") return deleteWindowMinutes;
+  const editWindowSeconds = editWindowMinutes * 60;
+  const deleteWindowSeconds = deleteWindowMinutes * 60;
 
   const roomId = form.roomId.trim();
   if (roomId !== "" && !uuidSchema.safeParse(roomId).success) {
@@ -196,18 +199,20 @@ export function mapExportFormToToolInput(form: ChatExportFormInput): MappedExpor
 export function retentionFormFromPolicy(policy: ChatRetentionPolicyView): ChatRetentionFormInput {
   return {
     retentionDays: String(policy.retentionDays),
-    editWindowSeconds: String(policy.editWindowSeconds),
-    deleteWindowSeconds: String(policy.deleteWindowSeconds),
+    editWindowMinutes: String(Math.round(policy.editWindowSeconds / 60)),
+    deleteWindowMinutes: String(Math.round(policy.deleteWindowSeconds / 60)),
     roomId: policy.roomId ?? "",
   };
 }
 
 export function formatRetentionSummary(policy: ChatRetentionPolicyView): string {
-  const hold = policy.legalHold ? "legal hold on" : "legal hold off";
+  const hold = policy.legalHold ? "Legal hold on" : "Legal hold off";
   const source = policy.configured
-    ? `configured${policy.updatedAt === null ? "" : ` · updated ${policy.updatedAt}`}`
-    : "platform default (no org policy row yet)";
-  return `${String(policy.retentionDays)} day retention · edit ${String(policy.editWindowSeconds)}s · delete ${String(policy.deleteWindowSeconds)}s · ${hold} · ${source}`;
+    ? policy.updatedAt === null
+      ? "Set for your organization"
+      : `Updated ${formatRelativeTime(policy.updatedAt)}`
+    : "Default settings";
+  return `Messages kept for ${formatDuration(policy.retentionDays * 86_400)} · editable for ${formatDuration(policy.editWindowSeconds)} · deletable for ${formatDuration(policy.deleteWindowSeconds)} · ${hold} · ${source}`;
 }
 
 export function describeChatAdminUnavailable(error: Error): string {

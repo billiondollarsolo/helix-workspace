@@ -3,8 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/helix-dialog";
 import {
   QueryFailureBanner,
-  StateBanner,
   useQueryFailure,
+  LoadingState,
 } from "@/features/admin/console/primitives";
 import { profileQueryKeys, profileQueryOptions, updateProfile } from "@/lib/profile";
 import { sessionQueryKeys } from "@/lib/auth";
@@ -57,7 +57,7 @@ export function AdminUserProfileDialog({
           }}
         />
       ) : (
-        <StateBanner kind="loading">Loading profile…</StateBanner>
+        <LoadingState label="Loading profile…" />
       )}
     </Dialog>
   );

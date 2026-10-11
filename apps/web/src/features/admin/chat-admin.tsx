@@ -6,6 +6,8 @@
  * no-op.
  */
 
+import { AppStatusPanel } from "@/features/admin/console/app-settings";
+import { formatDuration } from "@/features/admin/console/format";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -14,8 +16,10 @@ import { AdminField, AdminInput } from "@/features/admin/console/controls";
 import {
   PageHeading,
   QueryFailureBanner,
-  StateBanner,
   useQueryFailure,
+  ErrorNotice,
+  LoadingState,
+  Notice,
 } from "@/features/admin/console/primitives";
 import {
   chatAdminQueryKeys,
@@ -83,8 +87,8 @@ export function ChatAdminSection() {
 
   const [retentionForm, setRetentionForm] = useState<ChatRetentionFormInput>({
     retentionDays: "2555",
-    editWindowSeconds: "86400",
-    deleteWindowSeconds: "86400",
+    editWindowMinutes: "1440",
+    deleteWindowMinutes: "1440",
     roomId: "",
   });
   const [formError, setFormError] = useState<string | null>(null);
@@ -119,7 +123,7 @@ export function ChatAdminSection() {
     },
     onSuccess: async (result) => {
       setStatusMessage(
-        `Retention saved: ${String(result.retentionDays)} days · edit ${String(result.editWindowSeconds)}s · delete ${String(result.deleteWindowSeconds)}s.`,
+        `Retention saved: messages kept for ${formatDuration(result.retentionDays * 86_400)}, editable for ${formatDuration(result.editWindowSeconds)}, deletable for ${formatDuration(result.deleteWindowSeconds)}.`,
       );
       await queryClient.invalidateQueries({ queryKey: chatAdminQueryKeys.retention() });
     },
@@ -225,10 +229,8 @@ export function ChatAdminSection() {
 
   return (
     <section className="grid gap-5">
-      <PageHeading
-        title="Chat"
-        subtitle="Organization retention windows, legal hold, and message exports. Chat is server-readable (not E2EE); exports and policy changes are audited."
-      />
+      <PageHeading title="Chat" subtitle="Message retention, legal hold, and exports." />
+      <AppStatusPanel appId="chat" />
 
       {retentionFailure !== null ? (
         <QueryFailureBanner
@@ -243,11 +245,11 @@ export function ChatAdminSection() {
       ) : null}
 
       {retentionQuery.isPending && retentionFailure === null ? (
-        <StateBanner kind="loading">Loading Chat retention policy…</StateBanner>
+        <LoadingState label="Loading Chat retention policy…" />
       ) : null}
 
-      {statusMessage !== null ? <StateBanner kind="info">{statusMessage}</StateBanner> : null}
-      {formError !== null ? <StateBanner kind="error">{formError}</StateBanner> : null}
+      {statusMessage !== null ? <Notice>{statusMessage}</Notice> : null}
+      {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
 
       <section aria-labelledby="chat-retention-heading" className={PANEL}>
         <div className="grid gap-1">
@@ -280,32 +282,32 @@ export function ChatAdminSection() {
               value={retentionForm.retentionDays}
             />
           </AdminField>
-          <AdminField label="Edit window (seconds)">
+          <AdminField label="Edit window (minutes)">
             <AdminInput
-              aria-label="Edit window in seconds"
+              aria-label="Edit window in minutes"
               disabled={controlsDisabled || retentionMutation.isPending}
               inputMode="numeric"
               onChange={(event) =>
                 setRetentionForm((current) => ({
                   ...current,
-                  editWindowSeconds: event.target.value,
+                  editWindowMinutes: event.target.value,
                 }))
               }
-              value={retentionForm.editWindowSeconds}
+              value={retentionForm.editWindowMinutes}
             />
           </AdminField>
-          <AdminField label="Delete window (seconds)">
+          <AdminField label="Delete window (minutes)">
             <AdminInput
-              aria-label="Delete window in seconds"
+              aria-label="Delete window in minutes"
               disabled={controlsDisabled || retentionMutation.isPending}
               inputMode="numeric"
               onChange={(event) =>
                 setRetentionForm((current) => ({
                   ...current,
-                  deleteWindowSeconds: event.target.value,
+                  deleteWindowMinutes: event.target.value,
                 }))
               }
-              value={retentionForm.deleteWindowSeconds}
+              value={retentionForm.deleteWindowMinutes}
             />
           </AdminField>
           <AdminField label="Room ID override (optional)">
@@ -367,7 +369,7 @@ export function ChatAdminSection() {
           ) : null}
         </div>
 
-        {exportError !== null ? <StateBanner kind="error">{exportError}</StateBanner> : null}
+        {exportError !== null ? <ErrorNotice>{exportError}</ErrorNotice> : null}
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <AdminField label="From (ISO datetime, optional)">
@@ -421,6 +423,7 @@ export function ChatAdminSection() {
             disabled={controlsDisabled || exportMutation.isPending}
             onClick={requestExport}
             type="button"
+            variant="outline"
           >
             Run organization export
           </Button>
@@ -449,8 +452,9 @@ export function ChatAdminSection() {
           retentionMutation.mutate(pendingRetentionInput);
         }}
       >
-        Save retention of {retentionForm.retentionDays} days with edit window{" "}
-        {retentionForm.editWindowSeconds}s and delete window {retentionForm.deleteWindowSeconds}s
+        Keep messages for {formatDuration(Number(retentionForm.retentionDays) * 86_400)}, editable
+        for {formatDuration(Number(retentionForm.editWindowMinutes) * 60)} and deletable for{" "}
+        {formatDuration(Number(retentionForm.deleteWindowMinutes) * 60)}
         {retentionForm.roomId.trim() === ""
           ? " as the organization default."
           : ` for room ${retentionForm.roomId.trim()}.`}

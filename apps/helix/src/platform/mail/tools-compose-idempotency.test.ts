@@ -2,7 +2,7 @@ import type { ToolContext } from "@helix/sdk-types";
 import { describe, expect, it } from "vitest";
 import type { MailStore } from "./store.js";
 import { createMailComposeToolDefinitions } from "./tools-compose.js";
-import type { CreateOutboundMailInput } from "./types.js";
+import type { CreateOutboundMailInput } from "./store-contracts.js";
 
 // The CLI sends its key as an Idempotency-Key header, which the registry passes on as
 // ctx.idempotencyKey (and keeps across approval). Only the input field used to count,

@@ -4,10 +4,10 @@ import { sanitizeMailHtml } from "./content-safety.js";
 import { mailAddress, mailAddressArray } from "./store-addresses.js";
 import type {
   MailFolderId,
-  MailOutboundStatus,
   MailThreadAttachment,
   MailThreadDetail,
   MailThreadMessage,
+  MailThreadParticipant,
   MailThreadRowRecord,
 } from "./types.js";
 
@@ -54,8 +54,7 @@ export interface MailThreadListRow {
   readonly starred: boolean | null;
   readonly category: string | null;
   readonly snoozed_until: Date | null;
-  readonly outbound_status: MailOutboundStatus | null;
-  readonly total: number;
+  readonly participants: readonly MailThreadParticipant[];
 }
 
 export function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): MailThreadRowRecord {
@@ -102,6 +101,9 @@ export function mapThreadRow(row: MailThreadListRow, folder: MailFolderId): Mail
     category,
     folder,
     snoozedUntil: row.snoozed_until?.toISOString() ?? null,
+    participants: row.participants.map((participant) =>
+      participant.isMe ? { ...participant, name: "me" } : participant,
+    ),
     ...(folder === "spam" || spamCatcher !== null ? { spamCatcher } : {}),
   };
 }

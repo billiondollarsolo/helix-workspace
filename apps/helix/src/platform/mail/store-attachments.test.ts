@@ -278,23 +278,23 @@ describe("PostgresMailStore mailbox visibility", () => {
     const store = new PostgresMailStore(recording.sql);
     const actorId = "77777777-7777-4777-8777-777777777777";
 
-    await store.search({ orgId, actorId });
-    await store.getThread({ orgId, actorId, threadId });
-    await store.listThreads({ orgId, actorId });
-    await store.listFolders({ orgId, actorId });
-
-    const mailboxReadQueries = recording.calls.filter(
-      (call) =>
-        (call.text.includes("join threads t") || call.text.includes("from threads t")) &&
-        call.text.includes("visible_message"),
-    );
-    expect(mailboxReadQueries).toHaveLength(5);
-    for (const query of mailboxReadQueries) {
-      expect(query.text).toContain("visible_message.actor_id = ?");
-      expect(query.text).toContain("join mail_message_deliveries visible_delivery");
-      expect(query.text).toContain("visible_delivery.actor_id = ?");
-      expect(query.values).toContain(actorId);
-      expect(query.values).toContain(orgId);
+    const reads: readonly (() => Promise<unknown>)[] = [
+      () => store.search({ orgId, actorId }),
+      () => store.getThread({ orgId, actorId, threadId }),
+      () => store.listThreads({ orgId, actorId, folder: "all", query: "from:mira" }),
+      () => store.listFolders({ orgId, actorId }),
+    ];
+    for (const read of reads) {
+      const start = recording.calls.length;
+      await read();
+      const calls = recording.calls.slice(start);
+      const text = calls.map((call) => call.text).join("\n");
+      // Every message a mailbox reads was sent by it or delivered to it.
+      expect(text).toMatch(/\bm{1,2}\.actor_id\b/u);
+      expect(text).toContain("mail_message_deliveries");
+      expect(calls.flatMap((call) => call.values)).toEqual(
+        expect.arrayContaining([actorId, orgId]),
+      );
     }
   });
 });

@@ -43,7 +43,7 @@ export function toolErrorEnvelope(
   result: ToolInvokeErrorResult,
   traceId: string,
 ): HelixErrorEnvelope {
-  const details: Record<string, unknown> = {};
+  const details: Record<string, unknown> = { ...result.codeDetails };
   if (result.retryAfterSeconds !== undefined) {
     details.retryAfterSeconds = result.retryAfterSeconds;
   }
@@ -60,6 +60,7 @@ export function toolErrorEnvelope(
     statusCode: result.statusCode,
     message: result.error,
     traceId,
+    ...(result.code === undefined ? {} : { code: result.code }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
   });
 }

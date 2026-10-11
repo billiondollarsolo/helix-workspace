@@ -39,14 +39,17 @@ export async function evaluateInboundMail(
       continue;
     }
     matchedFilterIds.push(filter.id);
+    const now = input.now ?? new Date();
     await store.updateThreadState({
       orgId: input.message.orgId,
       actorId,
       threadId: input.stored.threadId,
       patch: {
         addLabels: filter.actions.applyLabels ?? [],
-        ...(filter.actions.archive === true ? { archivedAt: input.now ?? new Date() } : {}),
-        ...(filter.actions.delete === true ? { deletedAt: input.now ?? new Date() } : {}),
+        ...(filter.actions.archive === true ? { archivedAt: now } : {}),
+        ...(filter.actions.markRead === true ? { readAt: now } : {}),
+        ...(filter.actions.star === true ? { starred: true } : {}),
+        ...(filter.actions.delete === true ? { deletedAt: now } : {}),
         ...(filter.actions.snoozeUntil === undefined
           ? {}
           : { snoozedUntil: new Date(filter.actions.snoozeUntil) }),

@@ -33,39 +33,45 @@ Channels that project the same registry (REST / MCP / tRPC / assistant / CLI) mu
 
 ## mail.\*
 
-| Tool id                | Permission    | sideEffects            | Tool `confirmationRequired` | Agent confirmation expectation                                             |
-| ---------------------- | ------------- | ---------------------- | --------------------------- | -------------------------------------------------------------------------- |
-| `mail.alias.create`    | `mail.admin`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.alias.delete`    | `mail.admin`  | destructive            | unset                       | **queue-confirmation**                                                     |
-| `mail.alias.list`      | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.archive`         | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.delete`          | `mail.write`  | destructive            | unset                       | **queue-confirmation**                                                     |
-| `mail.draft.discard`   | `mail.write`  | destructive            | unset                       | **queue-confirmation**                                                     |
-| `mail.draft.get`       | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.draft.list`      | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.draft.save`      | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.filter.create`   | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.filter.delete`   | `mail.write`  | destructive            | unset                       | **queue-confirmation**                                                     |
-| `mail.filter.list`     | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.filter.update`   | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.folders.list`    | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.inbound.accept`  | `mail.system` | write                  | false                       | **queue-confirmation** for agents (system/service actors use trusted path) |
-| `mail.label.apply`     | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.labels.list`     | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.outbound.cancel` | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.outbound.get`    | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.outbound.retry`  | `mail.send`   | external_communication | true                        | **queue-confirmation**                                                     |
-| `mail.read.set`        | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.reply`           | `mail.send`   | external_communication | true                        | **queue-confirmation** (+ `mail.external` conditional scope)               |
-| `mail.search`          | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.send`            | `mail.send`   | external_communication | true                        | **queue-confirmation** (+ `mail.external` conditional scope)               |
-| `mail.snooze`          | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.spam`            | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.star.set`        | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
-| `mail.thread.get`      | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.threads.list`    | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.vacation.get`    | `mail.read`   | read                   | unset                       | allow-read                                                                 |
-| `mail.vacation.set`    | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| Tool id                     | Permission    | sideEffects            | Tool `confirmationRequired` | Agent confirmation expectation                                             |
+| --------------------------- | ------------- | ---------------------- | --------------------------- | -------------------------------------------------------------------------- |
+| `mail.alias.create`         | `mail.admin`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.alias.delete`         | `mail.admin`  | destructive            | unset                       | **queue-confirmation**                                                     |
+| `mail.alias.list`           | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.archive`              | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.delete`               | `mail.write`  | destructive            | unset                       | **queue-confirmation**                                                     |
+| `mail.draft.discard`        | `mail.write`  | destructive            | unset                       | **queue-confirmation**                                                     |
+| `mail.draft.get`            | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.draft.list`           | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.draft.save`           | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.filter.create`        | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.filter.delete`        | `mail.write`  | destructive            | unset                       | **queue-confirmation**                                                     |
+| `mail.filter.list`          | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.filter.update`        | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.folders.list`         | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.inbound.accept`       | `mail.system` | write                  | false                       | **queue-confirmation** for agents (system/service actors use trusted path) |
+| `mail.label.apply`          | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.labels.list`          | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.label.create`         | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.label.update`         | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.label.delete`         | `mail.write`  | destructive            | true                        | **queue-confirmation**                                                     |
+| `mail.scheduled.list`       | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.scheduled.reschedule` | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.scheduled.cancel`     | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.outbound.cancel`      | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.outbound.get`         | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.outbound.retry`       | `mail.send`   | external_communication | true                        | **queue-confirmation**                                                     |
+| `mail.read.set`             | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.reply`                | `mail.send`   | external_communication | true                        | **queue-confirmation** (+ `mail.external` conditional scope)               |
+| `mail.search`               | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.send`                 | `mail.send`   | external_communication | true                        | **queue-confirmation** (+ `mail.external` conditional scope)               |
+| `mail.snooze`               | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.spam`                 | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.star.set`             | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
+| `mail.thread.get`           | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.threads.list`         | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.vacation.get`         | `mail.read`   | read                   | unset                       | allow-read                                                                 |
+| `mail.vacation.set`         | `mail.write`  | write                  | unset                       | **queue-confirmation**                                                     |
 
 ---
 
@@ -130,6 +136,8 @@ Agent clean-read note: the Drive tool surface deliberately omits raw content/dow
 | `chat.retention.set`       | `admin.chat`  | write       | true                        | **queue-confirmation**                                                                            |
 | `chat.room.list`           | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 | `chat.search`              | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.unread.list`         | `chat.read`   | read        | unset                       | allow-read                                                                                        |
+| `chat.mentions.list`       | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 | `chat.send`                | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |
 | `chat.thread.list`         | `chat.read`   | read        | unset                       | allow-read                                                                                        |
 | `chat.unpin`               | `chat.post`   | write       | unset                       | **queue-confirmation**                                                                            |

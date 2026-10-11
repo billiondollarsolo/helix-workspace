@@ -3,7 +3,12 @@ import type postgres from "postgres";
 import { sensitivityClassificationFromMetadata } from "../ai/classification/index.js";
 import { toSqlJson } from "../util/sql.js";
 import { mailAddress, mailAddressArray, stringMetadata } from "./store-addresses.js";
-import { escapeMailLike, parseMailSearchQuery } from "./store-search-query.js";
+import { parseMailSearchQuery } from "./store-search-query.js";
+import {
+  mailMessageMatchSql,
+  mailThreadStateMatchSql,
+  sentOrReceivedSql,
+} from "./store-search-sql.js";
 import type {
   MailClassificationWrite,
   MailEnrichmentRecord,
@@ -103,74 +108,77 @@ function mailClassification(value: unknown): MailSearchRecord["classification"] 
 export class MailSearchStore {
   constructor(private readonly sql: postgres.Sql) {}
 
+  /**
+   * Message hits for Gmail-style queries across every folder except Spam and
+   * Trash; `in:` narrows to one folder view and `in:anywhere` includes both.
+   */
   async search(input: MailSearchRequest): Promise<readonly MailSearchHit[]> {
-    const operators = parseMailSearchQuery(input.query ?? "");
-    const query = escapeMailLike(operators.text);
-    const from = escapeMailLike(operators.from ?? "");
-    const labels = [...new Set([...(input.labels ?? []), ...operators.labels])];
-    const hasAttachment = operators.hasAttachment ?? null;
+    const parsed = parseMailSearchQuery((input.query ?? "").trim());
+    const query = {
+      ...parsed,
+      labels: [
+        ...new Set([...parsed.labels, ...(input.labels ?? []).map((label) => label.toLowerCase())]),
+      ],
+    };
+    const mailbox = { orgId: input.orgId, actorId: input.actorId };
+    const scope = query.scope ?? "all";
     const rows = await this.sql<MailSearchRow[]>`
       select
         t.id as thread_id,
-        m.id as message_id,
+        mm.id as message_id,
         t.subject,
-        m.body,
-        case when helix_mailbox_sent_message(m.org_id, m.id, ${input.actorId}) then m.metadata else (m.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
-        m.sent_at,
+        mm.body,
+        case when helix_mailbox_sent_message(mm.org_id, mm.id, ${input.actorId}) then mm.metadata else (mm.metadata - 'bcc') || '{"direction":"inbound"}'::jsonb end as metadata,
+        mm.sent_at,
         mts.labels,
         mts.read_at,
         mts.starred,
         outbound.status as outbound_status,
         outbound.provider_message_id,
         outbound.delivery_metadata
-      from messages m
-      join threads t on t.id = m.thread_id
+      from messages mm
+      join threads t on t.id = mm.thread_id
       join mail_thread_state mts
         on mts.thread_id = t.id
        and mts.actor_id = ${input.actorId}
        and mts.org_id = ${input.orgId}
-      left join mail_outbound_messages outbound on outbound.message_id = m.id and outbound.org_id = ${input.orgId} and outbound.actor_id = ${input.actorId}
-      where m.org_id = ${input.orgId}
-        and m.kind = 'mail'
-        and (m.actor_id = ${input.actorId} or exists (select 1 from mail_message_deliveries visible where visible.org_id = ${input.orgId} and visible.message_id = m.id and visible.actor_id = ${input.actorId}))
-        and m.deleted_at is null
-        and (
-          exists (
-            select 1 from messages visible_message
-            where visible_message.thread_id = t.id
-              and visible_message.org_id = ${input.orgId}
-              and visible_message.kind = 'mail'
-              and visible_message.actor_id = ${input.actorId}
-          )
-          or exists (
-            select 1
-            from messages recipient_message
-            join mail_message_deliveries visible_delivery
-              on visible_delivery.message_id = recipient_message.id
-              and visible_delivery.org_id = ${input.orgId}
-              and visible_delivery.actor_id = ${input.actorId}
-            where recipient_message.thread_id = t.id
-              and recipient_message.org_id = ${input.orgId}
-              and recipient_message.kind = 'mail'
-          )
-        )
-        and coalesce(mts.deleted_at, t.archived_at) is null
-        and (mts.snoozed_until is null or mts.snoozed_until <= now())
-        and (${query} = '' or t.subject ilike ${`%${query}%`} or m.body ilike ${`%${query}%`})
-        and (
-          ${from} = ''
-          or concat_ws(' ', m.metadata->'from'->>'name', m.metadata->'from'->>'address')
-            ilike ${`%${from}%`}
-        )
-        and (
-          cardinality(${this.sql.array(labels)}::text[]) = 0
-          or coalesce(mts.labels, '{}'::text[]) && ${this.sql.array(labels)}::text[]
-        )
-        and (
-          ${hasAttachment}::boolean is null
-          or exists(select 1 from message_attachments ma where ma.message_id = m.id) = ${hasAttachment}
-        )
-      order by m.sent_at desc
+      left join mail_outbound_messages outbound on outbound.message_id = mm.id and outbound.org_id = ${input.orgId} and outbound.actor_id = ${input.actorId}
+      where mm.org_id = ${input.orgId}
+        and mm.kind = 'mail'
+        and (mm.actor_id = ${input.actorId} or exists (select 1 from mail_message_deliveries visible where visible.org_id = ${input.orgId} and visible.message_id = mm.id and visible.actor_id = ${input.actorId}))
+        and mm.deleted_at is null
+        and ${sentOrReceivedSql(this.sql, this.sql`mm.id`, input.orgId, scope === "scheduled")}
+        and case ${scope}::text
+          when 'anywhere' then true
+          when 'trash' then mts.deleted_at is not null
+          when 'spam' then mts.deleted_at is null and mts.spam_at is not null
+          when 'archive' then mts.deleted_at is null and mts.spam_at is null
+            and coalesce(mts.archived_at, t.archived_at) is not null
+          when 'starred' then mts.deleted_at is null and mts.starred is true
+          when 'snoozed' then mts.deleted_at is null and mts.snoozed_until > now()
+          when 'sent' then mts.deleted_at is null and mm.metadata->>'direction' = 'outbound'
+            and helix_mailbox_sent_message(mm.org_id, mm.id, ${input.actorId})
+          when 'scheduled' then outbound.status = 'queued' and outbound.scheduled_for is not null
+          when 'drafts' then outbound.status = 'queued' and outbound.scheduled_for is null
+          when 'inbox' then mts.deleted_at is null and mts.spam_at is null
+            and coalesce(mts.archived_at, t.archived_at) is null
+            and (mts.snoozed_until is null or mts.snoozed_until <= now())
+            and exists (
+              select 1 from mail_message_deliveries received
+              where received.org_id = ${input.orgId} and received.message_id = mm.id
+                and received.actor_id = ${input.actorId} and received.received_at is not null
+            )
+          else /* all */ mts.deleted_at is null and mts.spam_at is null
+        end
+        and ${mailMessageMatchSql(this.sql, query, mailbox)}
+        and ${mailThreadStateMatchSql(this.sql, query, mailbox, {
+          labels: this.sql`mts.labels`,
+          readAt: this.sql`mts.read_at`,
+          lastActivity: this.sql`mm.sent_at`,
+          starred: this.sql`mts.starred`,
+          category: this.sql`mts.category`,
+        })}
+      order by mm.sent_at desc
       limit ${input.limit ?? 50}
     `;
     return rows.map(mapSearchHit);

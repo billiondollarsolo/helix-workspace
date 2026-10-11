@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { BadRequestError } from "../../../api/api-error.js";
-import { withTenantIoSagaPostgresContext as withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
+import { withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
 import { toSqlJson } from "../../util/sql.js";
 import { DriveForbiddenError } from "../errors.js";
 import type { DriveEntryPage, DriveEntryRecord, DriveSearchHit } from "../types.js";

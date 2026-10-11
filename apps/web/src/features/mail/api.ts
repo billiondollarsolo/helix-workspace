@@ -6,7 +6,9 @@ import type {
   MailDraft,
   MailDraftSaveInput,
   MailFilter,
+  MailLabelColorName,
   MailOutboundRecord,
+  MailScheduledSend,
   MailThreadRow as MailThreadRowContract,
   MailThreadsListResult as MailThreadsListResultContract,
 } from "@helix/contracts";
@@ -29,7 +31,8 @@ export type MailThreadRow = MailThreadRowContract & {
 };
 
 export interface MailThreadsListInput {
-  readonly folder: MailFolderKey;
+  /** `all` is All mail and `scheduled` the Scheduled view; `in:` in the query overrides it. */
+  readonly folder: MailFolderKey | "all" | "scheduled";
   readonly tab?: MailCategoryTab;
   readonly label?: string;
   readonly query?: string;
@@ -54,9 +57,13 @@ export interface MailLabelSummary {
   readonly id: string;
   readonly slug: string;
   readonly name: string;
+  /** Display hex from `MAIL_LABEL_COLORS`. */
   readonly color: string;
+  readonly colorName: MailLabelColorName;
+  readonly parentId: string | null;
   readonly sortOrder: number;
   readonly threadCount: number;
+  readonly unreadCount: number;
   readonly shared: boolean;
 }
 
@@ -86,6 +93,20 @@ export interface MailThreadMessage {
   readonly source?: string;
   readonly remoteContentBlocked?: boolean;
   readonly hasAttachment: boolean;
+  readonly attachments: readonly MailMessageAttachment[];
+}
+
+/** Attachment metadata on a message read; `downloadUrl` is the safe download route. */
+interface MailMessageAttachment {
+  readonly objectId: string;
+  readonly filename?: string;
+  readonly contentId?: string;
+  readonly mimeType: string;
+  readonly byteSize: number;
+  readonly disposition: string;
+  readonly inline: boolean;
+  /** Versioned API path; append `?inline=true` to show a passive image inline. */
+  readonly downloadUrl: string;
 }
 
 export interface MailThreadDetail {
@@ -184,8 +205,11 @@ interface MailFilterCriteria {
 }
 
 interface MailFilterActions {
+  /** Label slugs. */
   readonly applyLabels?: readonly string[];
   readonly archive?: boolean;
+  readonly markRead?: boolean;
+  readonly star?: boolean;
   readonly delete?: boolean;
   readonly snoozeUntil?: string;
 }
@@ -643,4 +667,77 @@ async function callMailTool<Output = unknown>(
   fetchImpl: MailApiFetch,
 ): Promise<Output> {
   return callTool<Output>(toolId, input, { fetchImpl });
+}
+
+export async function createMailLabel(
+  input: {
+    readonly name: string;
+    readonly color?: MailLabelColorName;
+    readonly parentId?: string | null;
+  },
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<MailLabelSummary> {
+  const output = await callMailTool<{ readonly label: MailLabelSummary }>(
+    "mail.label.create",
+    input,
+    fetchImpl,
+  );
+  return output.label;
+}
+
+export async function updateMailLabel(
+  input: {
+    readonly id: string;
+    readonly name?: string;
+    readonly color?: MailLabelColorName;
+    readonly parentId?: string | null;
+  },
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<MailLabelSummary> {
+  const output = await callMailTool<{ readonly label: MailLabelSummary }>(
+    "mail.label.update",
+    input,
+    fetchImpl,
+  );
+  return output.label;
+}
+
+/** Deletes the label and its nested labels; returns every removed id. */
+export async function deleteMailLabel(
+  id: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<readonly string[]> {
+  const output = await callMailTool<{ readonly deletedIds: readonly string[] }>(
+    "mail.label.delete",
+    { id },
+    fetchImpl,
+  );
+  return output.deletedIds;
+}
+
+export async function listScheduledMail(
+  input: { readonly limit?: number; readonly offset?: number } = {},
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<{ readonly scheduled: readonly MailScheduledSend[]; readonly total: number }> {
+  return callMailTool("mail.scheduled.list", input, fetchImpl);
+}
+
+export async function rescheduleMail(
+  input: { readonly outboundId: string; readonly sendAt: string },
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<MailScheduledSend | null> {
+  const output = await callMailTool<{ readonly scheduled: MailScheduledSend | null }>(
+    "mail.scheduled.reschedule",
+    input,
+    fetchImpl,
+  );
+  return output.scheduled;
+}
+
+/** Cancels a scheduled send and returns it to Drafts (`draftId`) for editing. */
+export async function cancelScheduledMail(
+  outboundId: string,
+  fetchImpl: MailApiFetch = authenticatedFetch,
+): Promise<{ readonly cancelled: boolean; readonly draftId: string | null }> {
+  return callMailTool("mail.scheduled.cancel", { outboundId }, fetchImpl);
 }

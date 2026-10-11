@@ -106,16 +106,19 @@ describe("Assistant native tool catalog limits", () => {
     },
   );
 
-  it("rejects oversized selections instead of silently hiding authorized tools", () => {
-    expect(() => routeVisibleTools(catalog, undefined)).toThrow("Choose fewer tool groups");
-    expect(routeVisibleTools(catalog, undefined, [])).toEqual(
+  it("caps the default selection and rejects oversized explicit selections", () => {
+    expect(routeVisibleTools(catalog, undefined, undefined, "hello")).toHaveLength(128);
+    expect(() => routeVisibleTools(catalog, undefined, ["other"], "hello")).toThrow(
+      "Turn off Workspace search and other tools",
+    );
+    expect(routeVisibleTools(catalog, undefined, [], "hello")).toEqual(
       catalog.filter(({ id }) => id.startsWith("web.")),
     );
-    expect(routeVisibleTools(catalog, ["zebra.send", "not.authorized"], ["other"])).toEqual([
+    expect(routeVisibleTools(catalog, ["zebra.send", "not.authorized"], ["other"], "")).toEqual([
       catalog.find(({ id }) => id === "zebra.send"),
     ]);
-    expect(routeVisibleTools(catalog, ["zebra.send"], [])).toEqual([]);
-    expect(() => routeVisibleTools(catalog, undefined, ["not-a-group"])).toThrow(
+    expect(routeVisibleTools(catalog, ["zebra.send"], [], "")).toEqual([]);
+    expect(() => routeVisibleTools(catalog, undefined, ["not-a-group"], "")).toThrow(
       "valid Assistant tool groups",
     );
   });

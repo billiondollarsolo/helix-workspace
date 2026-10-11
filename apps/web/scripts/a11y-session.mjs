@@ -120,8 +120,65 @@ const FIXTURES = new Map([
 
 /** Tool calls answer with the shape their caller parses; `{}` is fine for the
  *  rest because the console renders an empty list rather than throwing. */
+const MAIL_LABEL = {
+  id: "00000000-0000-4000-8000-0000000000b1",
+  slug: "clients",
+  name: "Clients",
+  color: "#007c76",
+  colorName: "teal",
+  parentId: null,
+  sortOrder: 100,
+  threadCount: 3,
+  unreadCount: 1,
+  shared: false,
+};
+
 const TOOL_FIXTURES = new Map([
   ["notifications.unread-count", { count: 0 }],
+  /* Settings → Mail: one label, one filter and one blocked address, so each
+     tab audits its populated list rather than an empty state. */
+  ["mail.labels.list", { labels: [MAIL_LABEL] }],
+  [
+    "mail.filter.list",
+    {
+      filters: [
+        {
+          id: "00000000-0000-4000-8000-0000000000c1",
+          name: "from:billing@example.com",
+          enabled: true,
+          priority: 100,
+          criteria: { fromContains: "billing@example.com" },
+          actions: { archive: true, applyLabels: ["clients"] },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    },
+  ],
+  ["mail.vacation.get", { vacation: null }],
+  [
+    "mail.settings.get",
+    {
+      signatureText: "Thanks,\nAccessibility Audit",
+      signatureHtml: null,
+      includeSignatureOnReplies: true,
+      blockedSenders: ["spam@example.net"],
+      updatedAt: null,
+    },
+  ],
+  [
+    "account.preferences.get",
+    {
+      language: null,
+      timeZone: null,
+      dateFormat: null,
+      timeFormat: null,
+      weekStart: null,
+      workingHours: null,
+      mail: { readingPane: "none", density: "default", conversationView: true },
+      updatedAt: null,
+    },
+  ],
   ["notifications.list", { notifications: [] }],
   ["webhook.overview", { outbound: [], inbound: [], deliveries: [] }],
   [

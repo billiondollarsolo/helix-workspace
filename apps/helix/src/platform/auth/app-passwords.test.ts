@@ -15,8 +15,89 @@ const adminActor: Actor = {
   orgId,
   type: "user",
   displayName: "User Admin",
-  scopes: ["admin.users"],
+  scopes: ["admin.users", "profile.read", "profile.write"],
 };
+const member: Actor = {
+  id: actorId,
+  orgId,
+  type: "user",
+  displayName: "Member",
+  scopes: ["profile.read", "profile.write", "calendar.read", "caldav"],
+};
+
+describe("self-service app passwords", () => {
+  it("lets a member create, list and revoke only their own passwords without admin.users", async () => {
+    const store = new InMemoryAppPasswordStore();
+    const manager = new AppPasswordManager(store);
+    const others = await manager.create({
+      actorId: adminActor.id,
+      orgId,
+      label: "Admin client",
+      scopes: ["caldav"],
+    });
+    const auditSink = new RecordingAuditSink();
+    const registry = createToolRegistry({ auditSink });
+    registerAppPasswordTools(registry, { store });
+
+    const created = await registry.invoke(
+      "app.passwords.create",
+      { label: "Phone calendar", scopes: ["caldav"] },
+      { actor: member, skipConfirmation: true },
+    );
+    expect(created).toMatchObject({
+      ok: true,
+      output: { appPassword: { actorId, label: "Phone calendar" } },
+    });
+    const listed = await registry.invoke("app.passwords.list", {}, { actor: member });
+    expect(
+      listed.ok
+        ? (listed.output as AppPasswordListOutput).appPasswords.map((row) => row.actorId)
+        : [],
+    ).toEqual([actorId]);
+    expect(
+      await registry.invoke(
+        "app.passwords.revoke",
+        { passwordId: others.appPassword.id },
+        { actor: member, skipConfirmation: true },
+      ),
+    ).toMatchObject({ ok: true, output: { status: "not_found" } });
+    expect(auditSink.domainRecords.map((record) => record.verb)).toEqual(["app.password.created"]);
+    expect(auditSink.domainRecords[0]?.metadata).toMatchObject({ selfService: true });
+  });
+
+  it("refuses other members, unheld scopes and delegated credentials", async () => {
+    const store = new InMemoryAppPasswordStore();
+    const registry = createToolRegistry();
+    registerAppPasswordTools(registry, { store });
+
+    const forOther = await registry.invoke(
+      "app.passwords.create",
+      { actorId: adminActor.id, label: "Not mine", scopes: ["caldav"] },
+      { actor: member, skipConfirmation: true },
+    );
+    const unheld = await registry.invoke(
+      "app.passwords.create",
+      { label: "Mail", scopes: ["smtp"] },
+      { actor: member, skipConfirmation: true },
+    );
+    const delegated = await registry.invoke(
+      "app.passwords.create",
+      { label: "Token", scopes: ["caldav"] },
+      { actor: member, credentialId: "credential-1", skipConfirmation: true },
+    );
+    const listOther = await registry.invoke(
+      "app.passwords.list",
+      { actorId: adminActor.id },
+      { actor: member },
+    );
+
+    expect(forOther).toMatchObject({ ok: false, statusCode: 403 });
+    expect(unheld).toMatchObject({ ok: false, statusCode: 403 });
+    expect(delegated).toMatchObject({ ok: false, statusCode: 403 });
+    expect(listOther).toMatchObject({ ok: false, statusCode: 403 });
+    expect(await store.listAppPasswords({ orgId })).toEqual([]);
+  });
+});
 
 describe("app password tools", () => {
   it("registers create, list, and revoke backend tools", () => {
@@ -82,7 +163,7 @@ describe("app password tools", () => {
       trace: { traceId: "trace-1" },
       metadata: {
         actorType: "user",
-        toolPermission: "admin.users",
+        toolPermission: "profile.write",
         credentialType: "app_password",
         targetActorId: actorId,
         targetOrgId: orgId,
@@ -355,6 +436,7 @@ interface AppPasswordCreateOutput {
 interface AppPasswordListOutput {
   readonly appPasswords: readonly {
     readonly id: string;
+    readonly actorId: string;
     readonly orgId: string;
     readonly revokedAt: string | null;
   }[];

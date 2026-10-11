@@ -2,6 +2,7 @@
    with a ⋮ menu each, and a Memory menu whose "Forget memory" asks first.
    Searching chats happens in the top bar. */
 
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Dialog } from "@/components/ui/helix-dialog";
 import { InlineError } from "@/components/ui/inline-error";
@@ -63,10 +64,15 @@ export function AssistantThreadList({
       <div className="[padding:8px_12px] [border-top:1px_solid_var(--border)]">
         <Menu>
           <MenuTrigger asChild>
-            <button type="button" className="btn ghost sm w-full justify-start">
-              <MemoryIcon size={16} aria-hidden="true" /> Memory
-              <ChevronIcon size={16} aria-hidden="true" className="ml-auto" />
-            </button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start text-foreground"
+            >
+              <MemoryIcon aria-hidden="true" /> Memory
+              <ChevronIcon aria-hidden="true" className="ml-auto" />
+            </Button>
           </MenuTrigger>
           <MenuContent side="top" aria-label="Memory">
             <MenuItem
@@ -278,13 +284,15 @@ function ThreadItem({
       </button>
       <Menu>
         <MenuTrigger asChild>
-          <button
+          <Button
             type="button"
-            className="icon-btn absolute right-1 size-7 pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100 aria-expanded:opacity-100"
+            variant="ghost"
+            size="icon-xs"
+            className="absolute right-1 size-7 rounded-full text-muted-foreground pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:group-focus-within:opacity-100 aria-expanded:opacity-100"
             aria-label={`Chat options for ${thread.title}`}
           >
-            <MoreVIcon size={16} />
-          </button>
+            <MoreVIcon />
+          </Button>
         </MenuTrigger>
         <MenuContent align="end" aria-label={`Chat options for ${thread.title}`}>
           <MenuItem

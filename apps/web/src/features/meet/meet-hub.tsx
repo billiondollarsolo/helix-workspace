@@ -21,7 +21,8 @@ import {
 } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import { createMeetRoom, type MeetMeetingRecord } from "./api";
-import { copyMeetingLink, meetJoinLink, parseMeetCode } from "./meet-join";
+import { parseMeetCode } from "./meet-code";
+import { copyMeetingLink, meetJoinLink } from "./meet-join";
 import { meetingToRecent, todayMeetings, type TodayMeeting } from "./meet-taxonomy";
 import { meetMeetingsQueryOptions, meetQueryKeys, meetTodayEventsQueryOptions } from "./queries";
 import { RecordingDrawer } from "./recording-drawer";

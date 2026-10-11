@@ -124,7 +124,7 @@ const WORKSPACE_SOURCE_ICONS: Readonly<Record<GlobalSearchType, IconName>> = {
 };
 
 /** A workspace record the answer drew on, with where it opens in Helix. */
-export interface WorkspaceSource {
+interface WorkspaceSource {
   readonly source: AssistantSource;
   readonly type: GlobalSearchType;
   readonly target: SearchHitTarget;
@@ -135,7 +135,7 @@ export interface WorkspaceSource {
  * index path (`/mail/<thread>?message=…`, `/drive/<file>`, `/chat/<room>…`,
  * `/calendar/events/<event>`); the owning app's URL comes from `searchHitTarget`.
  */
-export function workspaceSources(sources: readonly AssistantSource[]): readonly WorkspaceSource[] {
+function workspaceSources(sources: readonly AssistantSource[]): readonly WorkspaceSource[] {
   return sources.flatMap((source) => {
     const type = source.type;
     if (type !== "mail" && type !== "drive" && type !== "chat" && type !== "calendar") return [];

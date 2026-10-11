@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { parseMeetCode } from "@/features/meet/meet-join";
+import { parseMeetCode } from "@/features/meet/meet-code";
 import { MeetShell } from "@/features/meet/meet-shell";
 
 export interface ShellMeetRouteSearch {

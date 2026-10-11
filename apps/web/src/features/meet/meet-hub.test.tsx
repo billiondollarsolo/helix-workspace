@@ -13,7 +13,7 @@ import {
   setReactInputValue,
   waitForText,
 } from "@/test/meet";
-import { parseMeetCode } from "./meet-join";
+import { parseMeetCode } from "./meet-code";
 import { MeetShell } from "./meet-shell";
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {

@@ -222,7 +222,8 @@ export function AssistantComposer({
         ],
         selectedModel,
         webSearch && models.data?.webSearchEnabled === true,
-        chosenGroups === undefined ? undefined : selectedGroups,
+        // Until the tool list loads, an explicit choice is sent as saved.
+        chosenGroups === undefined || !tools.data ? chosenGroups : selectedGroups,
       )
     ) {
       setText("");

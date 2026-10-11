@@ -2,7 +2,7 @@
    tool-group choice goes over it, the server answers with
    `assistant_tool_limit_exceeded` and the groups to turn off, largest first. */
 
-export const ASSISTANT_TOOL_LIMIT_CODE = "assistant_tool_limit_exceeded";
+const ASSISTANT_TOOL_LIMIT_CODE = "assistant_tool_limit_exceeded";
 
 export interface AssistantToolLimit {
   readonly limit: number;

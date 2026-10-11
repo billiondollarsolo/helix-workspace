@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
@@ -547,10 +548,16 @@ function MeetingDetails({ subject, code }: { readonly subject: string; readonly 
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button type="button" className="btn sm ghost" aria-label="Meeting details">
-          <InfoIcon size={16} aria-hidden="true" />
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-[var(--text-2)]"
+          aria-label="Meeting details"
+        >
+          <InfoIcon aria-hidden="true" />
           <span className="mono type-meta">{code}</span>
-        </button>
+        </Button>
       </PopoverTrigger>
       <PopoverContent aria-label="Meeting details" align="start" className="w-80">
         <p className="m-0 type-body-sm font-semibold">{subject}</p>

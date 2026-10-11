@@ -1,6 +1,12 @@
 const csrfCookieNames = ["__Host-helix_csrf", "helix_csrf"] as const;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 let redirectingForSession = false;
+/* Settles never. Once the session is known to be lost, the document is being
+ * replaced by the sign-in page, so a request issued (or a 401 answered) in the
+ * meantime waits on that navigation instead of reaching the server again or
+ * surfacing an error the person never needs to see. Concurrent 401s therefore
+ * trigger exactly one re-verification. */
+const sessionNavigation = new Promise<never>(() => undefined);
 export const API_VERSION_PREFIX = "/v1";
 
 export type AuthFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -45,6 +51,7 @@ export async function authenticatedFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
+  if (redirectingForSession) return sessionNavigation;
   const headers = new Headers(init?.headers);
   if (!SAFE_METHODS.has((init?.method ?? "GET").toUpperCase())) {
     headers.set("x-helix-csrf-token", await browserCsrfToken());
@@ -57,9 +64,9 @@ export async function authenticatedFetch(
   if (
     response.status === 401 &&
     typeof window !== "undefined" &&
-    window.location.pathname !== "/login" &&
-    !redirectingForSession
+    window.location.pathname !== "/login"
   ) {
+    if (redirectingForSession) return sessionNavigation;
     const output: unknown = await response
       .clone()
       .json()
@@ -67,10 +74,10 @@ export async function authenticatedFetch(
     if (
       isRecord(output) &&
       isRecord(output.error) &&
-      output.error.code === "session_reauthentication_required" &&
-      !redirectingForSession
+      output.error.code === "session_reauthentication_required"
     ) {
       redirectToLogin(true);
+      return sessionNavigation;
     }
   }
   return response;

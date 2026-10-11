@@ -38,8 +38,10 @@ export function RouteErrorState({
               queryErrors.reset();
               // Resetting the render boundary alone retains failed beforeLoad
               // results. Invalidation reruns session verification and loaders.
-              void router.invalidate();
-              reset?.();
+              // It marks the failed match pending before its load promise
+              // exists, so the boundary is reset only once the reload settles;
+              // rendering the match in between throws and blanks the page.
+              void router.invalidate().finally(() => reset?.());
             }}
           >
             Retry

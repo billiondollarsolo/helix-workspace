@@ -1,19 +1,13 @@
-import { cn } from "@/lib/utils";
-import {
-  Bell as BellIcon,
-  Calendar as CalendarIcon,
-  MessageCircle as ChatIcon,
-  MessageSquare as CommentIcon,
-  HardDrive as DriveIcon,
-  Shield as ShieldIcon,
-  X as XIcon,
-  type LucideIcon as IconComponent,
-} from "lucide-react";
-/* NotificationsPanel — cross-app notification feed.
-   Wired to the notifications.* helix tools (replaces the prior static stub).
-   Tabs (All / Unread); rows mark themselves read on click and navigate to
-   the source app via the verb→route map below. */
+import { Bell as BellIcon, X as XIcon } from "lucide-react";
+/* NotificationsPanel — the cross-app notification feed behind the bell.
+   Grouped by app, newest first within each group. Opening a row marks it read
+   and goes to the owning app. */
+import { APPS, type HelixApp } from "@/components/apps";
+import { iconMap as Icons } from "@/components/icon-map";
 import { Avatar } from "@/components/ui/avatar";
+import { EmptyState } from "@/components/ui/empty-state";
+import { InlineError } from "@/components/ui/inline-error";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   notificationsListQueryOptions,
   notificationsQueryKey,
@@ -21,49 +15,35 @@ import {
   useMarkRead,
   type NotificationItem,
 } from "@/features/notifications/api";
+import { cn } from "@/lib/utils";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-type NotificationKind =
-  "mention" | "share" | "comment" | "calendar" | "dm" | "approval" | "recording" | "system";
-const NOTIF_ICONS: Record<
-  NotificationKind,
-  {
-    Icon: IconComponent;
-    bg: string;
-  }
-> = {
-  mention: { Icon: CommentIcon, bg: "#7c3aed" },
-  share: { Icon: DriveIcon, bg: "#7c3aed" },
-  comment: { Icon: CommentIcon, bg: "#0891b2" },
-  calendar: { Icon: CalendarIcon, bg: "#ea580c" },
-  dm: { Icon: ChatIcon, bg: "#db2777" },
-  approval: { Icon: ShieldIcon, bg: "#dc2626" },
-  recording: { Icon: DriveIcon, bg: "#dc2626" },
-  system: { Icon: BellIcon, bg: "#475569" },
-};
-/** Map server-side verbs to the icon kind and the in-app route to open. */
-function kindForVerb(verb: string): NotificationKind {
-  if (verb.startsWith("meet.recording")) return "recording";
-  if (verb.startsWith("meet.")) return "calendar";
-  if (verb.startsWith("calendar.")) return "calendar";
-  if (verb.startsWith("drive.comment")) return "comment";
-  if (verb.startsWith("drive.")) return "share";
-  if (verb.startsWith("chat.")) return "dm";
-  if (verb.startsWith("mail.")) return "mention";
-  if (verb.includes("approval")) return "approval";
-  return "system";
+
+/** The app a notification verb belongs to (`mail.received` → Mail). */
+export function appForNotification(item: Pick<NotificationItem, "verb">): HelixApp | undefined {
+  const prefix = item.verb.split(".")[0];
+  return APPS.find((app) => app.id === prefix);
 }
-export function routeForNotification(item: Pick<NotificationItem, "verb">): string | null {
-  if (item.verb.startsWith("meet.")) {
-    return "/meet";
-  }
-  if (item.verb.startsWith("calendar.")) return "/calendar";
-  if (item.verb.startsWith("drive.")) return "/drive";
-  if (item.verb.startsWith("chat.")) return "/chat";
-  if (item.verb.startsWith("mail.")) return "/mail";
-  return null;
+
+interface NotificationGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly app: HelixApp | undefined;
+  readonly items: readonly NotificationItem[];
 }
+
+/** Groups in app order, with anything app-less last under "Helix". */
+function groupNotifications(items: readonly NotificationItem[]): NotificationGroup[] {
+  const groups = [...APPS, undefined].map((app) => ({
+    id: app?.id ?? "other",
+    label: app?.name ?? "Helix",
+    app,
+    items: items.filter((item) => appForNotification(item) === app),
+  }));
+  return groups.filter((group) => group.items.length > 0);
+}
+
 interface RelativeTimeUnit {
   readonly upperBound: number;
   readonly unit: Intl.RelativeTimeFormatUnit;
@@ -110,18 +90,12 @@ export function formatRelativeNotificationTime(
     }).format(created),
   };
 }
-/** Decorative bell used by the panel's loading / error / empty states. */
-function BellGlyph() {
-  return (
-    <span aria-hidden="true">
-      <BellIcon size={16} />
-    </span>
-  );
-}
+
 export interface NotificationsPanelProps {
   open: boolean;
   onClose: () => void;
 }
+
 export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
   const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -132,15 +106,14 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
   });
   const queryClient = useQueryClient();
   /* Invalidate the shared key rather than this observer's own `refetch`, so a
-       recovery here also un-sticks the unread-count badge in the topbar, which
-       reads a sibling key under the same root. Destructuring `refetch` also hid
-       this call from `helix/query-refresh-discipline`, which only matched member
-       calls — the rule now catches the bare form too. */
+     recovery here also un-sticks the unread-count badge in the topbar, which
+     reads a sibling key under the same root. */
   const retry = () => {
     void queryClient.invalidateQueries({ queryKey: notificationsQueryKey });
   };
   const markRead = useMarkRead();
   const markAllRead = useMarkAllRead();
+
   useEffect(() => {
     if (!open) return;
     const previousFocus =
@@ -154,53 +127,68 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
+    const onPointerDown = (event: Event) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        !panelRef.current?.contains(target) &&
+        target.closest("[data-notifications-trigger]") === null
+      ) {
+        onClose();
+      }
+    };
     window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
     return () => {
       cancelled = true;
       window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
       if (previousFocus?.isConnected === true) {
         previousFocus.focus();
       }
     };
   }, [open, onClose]);
+
   if (!open) return null;
+
   const all = data?.items ?? [];
   const items = filter === "all" ? all : all.filter((n) => n.unread);
   const unreadCount = all.filter((n) => n.unread).length;
   const tabs = [
-    { id: "all" as const, label: `All (${all.length})` },
-    { id: "unread" as const, label: `Unread (${unreadCount})` },
+    { id: "all" as const, label: "All" },
+    { id: "unread" as const, label: unreadCount > 0 ? `Unread (${unreadCount})` : "Unread" },
   ];
+
+  const openNotification = (notification: NotificationItem) => {
+    if (notification.unread) {
+      markRead.mutate([notification.id]);
+    }
+    const app = appForNotification(notification);
+    if (app !== undefined) {
+      void navigate({ to: app.route });
+    }
+    onClose();
+  };
+
   return (
-    <div
-      ref={panelRef}
-      onClick={(event) => event.stopPropagation()}
-      role="dialog"
-      aria-label="Notifications"
-      className="fixed top-2 right-14 w-95 [max-height:80vh] bg-card [border:1px_solid_var(--border)] [border-radius:10px] [box-shadow:var(--shadow-lg)] [z-index:250] flex flex-col"
-    >
-      <div className="[padding:12px_14px] flex items-center [border-bottom:1px_solid_var(--border)]">
-        <span className="type-body font-semibold">Notifications</span>
+    <div ref={panelRef} role="dialog" aria-labelledby="notifications-title" className="notif-panel">
+      <div className="notif-panel-header">
+        <h2 id="notifications-title" className="notif-panel-title">
+          Notifications
+        </h2>
         <button
           type="button"
-          className="btn sm ml-auto mr-1"
-
+          className="btn sm ml-auto"
           disabled={unreadCount === 0 || markAllRead.isPending}
           onClick={() => markAllRead.mutate()}
         >
           Mark all read
         </button>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
-          <span aria-hidden="true">
-            <XIcon size={16} />
-          </span>
+          <XIcon size={16} aria-hidden="true" />
         </button>
       </div>
-      <div
-        role="tablist"
-        aria-label="Notification filters"
-        className="flex gap-0.5 [padding:0_12px] [border-bottom:1px_solid_var(--border)]"
-      >
+      <div role="tablist" aria-label="Notification filters" className="notif-panel-tabs">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -210,7 +198,7 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
             aria-selected={filter === tab.id}
             aria-controls="notifications-results"
             onClick={() => setFilter(tab.id)}
-            className={cn(filter === tab.id ? "tab active" : "tab", "h-8 type-meta")}
+            className={cn(filter === tab.id ? "tab active" : "tab", "h-8")}
           >
             {tab.label}
           </button>
@@ -221,94 +209,86 @@ export function NotificationsPanel({ open, onClose }: NotificationsPanelProps) {
         role="tabpanel"
         aria-labelledby={`notifications-tab-${filter}`}
         tabIndex={0}
-        className="overflow-y-auto flex-1"
+        className="notif-panel-body"
       >
         {isLoading ? (
-          <div className="empty p-8" role="status" aria-live="polite">
-            <BellGlyph />
-            <div>Loading…</div>
-          </div>
+          <Skeleton variant="row" count={4} label="Loading notifications" className="p-2" />
         ) : null}
         {!isLoading && isError ? (
-          <div className="empty p-8 text-destructive" role="alert">
-            <BellGlyph />
-            <div>Could not load notifications. Check your connection and try again.</div>
-            <button
-              type="button"
-              className="btn sm"
-              disabled={isFetching}
-              aria-busy={isFetching}
-              onClick={retry}
-            >
-              {isFetching ? "Retrying…" : "Retry"}
-            </button>
-          </div>
+          <InlineError
+            variant="compact"
+            className="m-3"
+            message="Could not load notifications. Try again in a moment."
+            onRetry={retry}
+            retrying={isFetching}
+          />
         ) : null}
-        {items.map((notification) => {
-          const kind = kindForVerb(notification.verb);
-          const meta = NOTIF_ICONS[kind];
-          const { Icon } = meta;
-          const route = routeForNotification(notification);
-          const timestamp = formatRelativeNotificationTime(notification.createdAt);
-          return (
-            <button
-              key={notification.id}
-              type="button"
-              onClick={() => {
-                if (notification.unread) {
-                  markRead.mutate([notification.id]);
-                }
-                if (route !== null) {
-                  void navigate({ to: route });
-                }
-                onClose();
-              }}
-              className={`notification-row${notification.unread ? " unread" : ""}`}
-            >
-              <div className="relative shrink-0">
-                <Avatar name={notification.summary} size={32} />
-                <div
-                  className="absolute [right:-3px] [bottom:-3px] w-4 h-4 [border-radius:999px] [color:white] grid [place-items:center] [border:2px_solid_var(--surface)]"
-                  style={{ background: meta.bg }}
-                >
-                  <span aria-hidden="true" className="block [transform:scale(0.55)]">
-                    <Icon />
-                  </span>
-                </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="type-meta [line-height:1.45]">
-                  <span className="font-semibold">{notification.summary}</span>
-                </div>
-                {notification.body ? (
-                  <div className="truncate type-caption text-muted-foreground mt-1 [padding:4px_8px] bg-muted rounded [line-height:1.4]">
-                    {notification.body}
-                  </div>
-                ) : null}
-                <time
-                  dateTime={notification.createdAt}
-                  title={timestamp.absolute}
-                  className="block type-caption text-muted-foreground mt-1"
-                >
-                  {timestamp.relative}
-                </time>
-              </div>
-              {notification.unread ? (
-                <div
-                  className="[width:7px] [height:7px] [border-radius:999px] [background:var(--accent)] shrink-0 [align-self:center]"
-                  aria-hidden="true"
-                />
-              ) : null}
-            </button>
-          );
-        })}
+        {groupNotifications(items).map((group) => (
+          <section key={group.id} aria-labelledby={`notifications-group-${group.id}`}>
+            <h3 id={`notifications-group-${group.id}`} className="notif-group-title">
+              {group.label}
+            </h3>
+            {group.items.map((notification) => (
+              <NotificationRow
+                key={notification.id}
+                notification={notification}
+                app={group.app}
+                onOpen={openNotification}
+              />
+            ))}
+          </section>
+        ))}
         {!isLoading && !isError && items.length === 0 ? (
-          <div className="empty p-8">
-            <BellGlyph />
-            <div>You&apos;re all caught up</div>
-          </div>
+          <EmptyState
+            size="inline"
+            headingLevel={3}
+            icon={<BellIcon aria-hidden="true" />}
+            title={filter === "unread" ? "No unread notifications" : "You’re all caught up"}
+            body="New mentions, shares and invitations show up here."
+          />
         ) : null}
       </div>
     </div>
+  );
+}
+
+function NotificationRow({
+  notification,
+  app,
+  onOpen,
+}: {
+  readonly notification: NotificationItem;
+  readonly app: HelixApp | undefined;
+  readonly onOpen: (notification: NotificationItem) => void;
+}) {
+  const Icon = app === undefined ? BellIcon : Icons[app.icon];
+  const timestamp = formatRelativeNotificationTime(notification.createdAt);
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(notification)}
+      className={notification.unread ? "notification-row unread" : "notification-row"}
+    >
+      <span className="notification-avatar">
+        <Avatar name={notification.summary} size={32} />
+        <span
+          className="notification-app"
+          style={{ background: app?.color ?? "var(--label-slate)" }}
+        >
+          <Icon size={10} aria-hidden="true" />
+        </span>
+      </span>
+      <span className="notification-text">
+        <span className="notification-summary">
+          {notification.unread ? <span className="sr-only">Unread: </span> : null}
+          {notification.summary}
+        </span>
+        {notification.body ? <span className="notification-body">{notification.body}</span> : null}
+        <time dateTime={notification.createdAt} title={timestamp.absolute}>
+          {timestamp.relative}
+        </time>
+      </span>
+      {notification.unread ? <span className="notification-dot" aria-hidden="true" /> : null}
+    </button>
   );
 }

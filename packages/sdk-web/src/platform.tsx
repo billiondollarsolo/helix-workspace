@@ -10,7 +10,6 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import type { ColorMode, ColorModeApi } from "./theme";
 
 export interface TRPCClient {
   readonly endpoint: string;
@@ -114,6 +113,17 @@ export interface SuggestionSlotProvider {
   render: (context: SuggestionSlotProviderRenderContext) => ReactNode;
 }
 
+export type ColorMode = "light" | "dark" | "system";
+export type ResolvedColorMode = "light" | "dark";
+
+/** The host app's appearance setting, as plugins see it. The app owns storage
+ *  and applies the theme; plugins read it and can change it. */
+export interface ColorModeApi {
+  mode: ColorMode;
+  resolvedMode: ResolvedColorMode;
+  setMode: (mode: ColorMode) => void;
+}
+
 export interface WebPlatformHost {
   useColorMode(): ColorModeApi;
   readonly trpc: TRPCClient;
@@ -136,14 +146,12 @@ export interface WebPlatformHost {
   getSnapshotVersion(): number;
   subscribe(listener: () => void): () => void;
   readonly tokens: PresetTokens;
-  readonly colorMode: ColorMode;
 }
 
 export interface CreateWebPlatformHostOptions {
   queryClient: QueryClient;
   trpc?: TRPCClient;
   tokens?: Partial<PresetTokens>;
-  getColorMode: () => ColorMode;
 }
 
 const defaultTokens: PresetTokens = {
@@ -186,11 +194,8 @@ export function createWebPlatformHost(options: CreateWebPlatformHostOptions): We
     trpc: options.trpc ?? { endpoint: "/trpc" },
     queryClient: options.queryClient,
     tokens: { ...defaultTokens, ...options.tokens },
-    get colorMode() {
-      return options.getColorMode();
-    },
     useColorMode() {
-      throw new Error("useColorMode must be provided by ColorModeProvider.");
+      throw new Error("useColorMode is provided by WebPlatformProvider.");
     },
     registerShellRoute(route) {
       shellRoutes.set(route.id, route);

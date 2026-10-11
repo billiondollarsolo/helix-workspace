@@ -1,30 +1,92 @@
 import { type IconName } from "@/components/icon-map";
-/* The Helix app registry — the 10 workspace surfaces.
-   Ported from the design handoff (shell.jsx → APPS). Drives the left Rail,
-   the AppLauncher, and the command palette. Each surface has a route under
-   the `_shell` layout. */
+/* The Helix app registry. Drives the navigation rail, the mobile bottom bar,
+   the app launcher, and the command palette. Each app has a route under the
+   `_shell` layout.
+
+   `pinned` apps are the everyday communication tools that sit in the rail and
+   the mobile bottom bar; the launcher lists every app. */
 
 export interface HelixApp {
   /** Stable id, also the route segment (`/mail`, `/calendar`, …). */
   readonly id: string;
   /** Display name. */
   readonly name: string;
+  /** One-line purpose, shown in the launcher. */
+  readonly description: string;
   /** Icon key from the Helix icon set. */
   readonly icon: IconName;
-  /** Brand color used for the launcher tile. */
+  /** Launcher tile color, a label colour token. */
   readonly color: string;
   /** Route path under the `_shell` layout. */
   readonly route: string;
+  /** Shown in the navigation rail and the mobile bottom bar. */
+  readonly pinned: boolean;
 }
 
 export const APPS: readonly HelixApp[] = [
-  { id: "mail", name: "Mail", icon: "Mail", color: "#dc2626", route: "/mail" },
-  { id: "calendar", name: "Calendar", icon: "Calendar", color: "#ea580c", route: "/calendar" },
-  { id: "drive", name: "Drive", icon: "Drive", color: "#7c3aed", route: "/drive" },
-  { id: "meet", name: "Meet", icon: "Video", color: "#0891b2", route: "/meet" },
-  { id: "chat", name: "Chat", icon: "Chat", color: "#db2777", route: "/chat" },
-  { id: "assistant", name: "Helix AI", icon: "Sparkles", color: "#7c3aed", route: "/assistant" },
-  { id: "admin", name: "Admin", icon: "Shield", color: "#475569", route: "/admin" },
+  {
+    id: "mail",
+    name: "Mail",
+    description: "Inbox and conversations",
+    icon: "Mail",
+    color: "var(--label-red)",
+    route: "/mail",
+    pinned: true,
+  },
+  {
+    id: "calendar",
+    name: "Calendar",
+    description: "Events and invitations",
+    icon: "Calendar",
+    color: "var(--label-orange)",
+    route: "/calendar",
+    pinned: true,
+  },
+  {
+    id: "drive",
+    name: "Drive",
+    description: "Files and shared folders",
+    icon: "Drive",
+    color: "var(--label-violet)",
+    route: "/drive",
+    pinned: true,
+  },
+  {
+    id: "chat",
+    name: "Chat",
+    description: "Spaces and direct messages",
+    icon: "Chat",
+    color: "var(--label-pink)",
+    route: "/chat",
+    pinned: true,
+  },
+  {
+    id: "meet",
+    name: "Meet",
+    description: "Video calls",
+    icon: "Video",
+    color: "var(--label-cyan)",
+    route: "/meet",
+    pinned: true,
+  },
+  {
+    id: "assistant",
+    name: "Helix AI",
+    description: "Ask about your work",
+    icon: "Sparkles",
+    color: "var(--label-purple)",
+    route: "/assistant",
+    pinned: false,
+  },
+  {
+    id: "admin",
+    name: "Admin",
+    description: "Users, domains and policies",
+    icon: "Shield",
+    color: "var(--label-slate)",
+    route: "/admin",
+    pinned: false,
+  },
 ];
 
 /** Look up an app by its route path (exact or prefix match). */

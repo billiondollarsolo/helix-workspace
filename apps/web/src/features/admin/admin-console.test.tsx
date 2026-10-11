@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ShellOverlayContext } from "@/components/shell";
 import { AdminConsole } from "./admin-console";
 import type { AdminSectionId } from "./admin-console-data";
+import { shellOverlaysForTest } from "@/test/shell-overlays";
 
 /** TopBar calls `sessionUserQueryOptions()` → fetch("/v1/api/auth/get-session").
  * That would consume the per-test fetchMock Response before the AdminUsers
@@ -38,11 +39,7 @@ vi.mock("@/lib/auth", async () => {
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-const overlayApi = {
-  openNotifications: vi.fn(),
-  openPalette: vi.fn(),
-  openSettings: vi.fn(),
-};
+const overlayApi = shellOverlaysForTest();
 
 const apiUsers = {
   users: [

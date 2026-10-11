@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
 
-import { act, createRef } from "react";
+import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { signOut } from "@/lib/auth";
 import { ProfileMenu } from "./profile-menu";
 
-const { navigate, invalidate, clear, setAppearance } = vi.hoisted(() => ({
+const { navigate, invalidate, clear } = vi.hoisted(() => ({
   navigate: vi.fn(),
   invalidate: vi.fn(),
   clear: vi.fn(),
-  setAppearance: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -22,113 +22,70 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: vi.fn(),
 }));
 
-vi.mock("@/components/settings-store", () => ({
-  ACCENT_OPTIONS: [
-    { value: "violet", label: "Violet", hue: 290 },
-    { value: "blue", label: "Blue", hue: 250 },
-  ],
-  accentSwatch: (hue: number) => `oklch(54% 0.21 ${hue})`,
-  THEME_OPTIONS: [
-    { value: "system", label: "System" },
-    { value: "light", label: "Light" },
-    { value: "dark", label: "Dark" },
-  ],
-  DENSITY_OPTIONS: [
-    { value: "default", label: "Default" },
-    { value: "comfortable", label: "Comfortable" },
-    { value: "compact", label: "Compact" },
-  ],
-  setAppearance,
-  useAppearance: (selector: (state: object) => unknown) =>
-    selector({ theme: "system", density: "default", accent: "violet" }),
-}));
-
 vi.mock("@/lib/auth", () => ({
   sessionUserQueryOptions: () => ({ queryKey: ["session-user"] }),
-  signOut: vi.fn(),
+  signOut: vi.fn(() => Promise.resolve()),
 }));
-
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true;
 
 describe("ProfileMenu", () => {
   let container: HTMLDivElement;
   let root: Root;
-  let anchor: HTMLButtonElement;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    anchor = document.createElement("button");
-    document.body.append(anchor);
-    anchor.focus();
     vi.mocked(useQuery).mockReturnValue({
-      data: { name: "Mira", email: "mira@helix.test" },
+      data: { name: "Mira Chen", email: "mira@helix.test" },
     } as never);
     vi.mocked(useQueryClient).mockReturnValue({ clear } as never);
   });
 
   afterEach(() => {
     act(() => root.unmount());
-    anchor.remove();
     container.remove();
     vi.clearAllMocks();
   });
 
-  it("focuses its controls, supports menu keys, and restores focus with Escape", async () => {
-    const onClose = vi.fn();
-    const anchorRef = createRef<HTMLButtonElement>();
-    anchorRef.current = anchor;
-    act(() => {
-      root.render(
-        <ProfileMenu anchorRef={anchorRef} open onClose={onClose} openSettings={vi.fn()} />,
-      );
-    });
-    await act(async () => Promise.resolve());
+  function openCard(openSettings = vi.fn()) {
+    act(() => root.render(<ProfileMenu openSettings={openSettings} />));
+    const trigger = container.querySelector<HTMLButtonElement>("button");
+    expect(trigger?.getAttribute("aria-label")).toBe("Account: Mira Chen");
+    act(() => trigger?.click());
+    const card = document.querySelector<HTMLElement>('[role="dialog"]');
+    if (card === null) throw new Error("Account card did not open");
+    return { card, openSettings };
+  }
 
-    const menu = container.querySelector<HTMLElement>('[role="menu"]');
-    const controls = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
-    expect(menu?.getAttribute("aria-label")).toBe("Profile & appearance");
-    expect(document.activeElement).toBe(controls[0]);
+  function buttonIn(card: HTMLElement, label: string): HTMLButtonElement | undefined {
+    return Array.from(card.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === label,
+    );
+  }
 
-    act(() => {
-      menu?.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }),
-      );
-    });
-    expect(document.activeElement).toBe(controls.at(-1));
-
-    act(() => {
-      menu?.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
-      );
-    });
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(document.activeElement).toBe(anchor);
+  it("shows the account card with avatar, name and email", () => {
+    const { card } = openCard();
+    expect(card.getAttribute("aria-label")).toBe("Account");
+    expect(card.textContent).toContain("Mira Chen");
+    expect(card.textContent).toContain("mira@helix.test");
+    expect(card.textContent).not.toContain("Accent");
   });
 
-  it("routes privacy and help actions to real settings sections", async () => {
-    const openSettings = vi.fn();
-    const anchorRef = createRef<HTMLButtonElement>();
-    anchorRef.current = anchor;
-    act(() => {
-      root.render(
-        <ProfileMenu anchorRef={anchorRef} open onClose={vi.fn()} openSettings={openSettings} />,
-      );
+  it("manages the account in settings", () => {
+    const { card, openSettings } = openCard();
+    act(() => buttonIn(card, "Manage your account")?.click());
+    expect(openSettings).toHaveBeenCalledWith("profile");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("signs out, clears cached data and returns to login", async () => {
+    const { card } = openCard();
+    await act(async () => {
+      buttonIn(card, "Sign out")?.click();
+      await Promise.resolve();
     });
-    await act(async () => Promise.resolve());
-
-    const click = (label: string) => {
-      const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-        (candidate) => candidate.textContent?.trim() === label,
-      );
-      act(() => button?.click());
-    };
-    click("Privacy & security");
-    click("Help & shortcuts");
-
-    expect(openSettings).toHaveBeenNthCalledWith(1, "security");
-    expect(openSettings).toHaveBeenNthCalledWith(2, "shortcuts");
+    expect(signOut).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith({ to: "/login" });
   });
 });

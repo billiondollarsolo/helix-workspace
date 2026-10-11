@@ -308,6 +308,7 @@ export class MailSendService {
       ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
       envelope,
       undoUntil: sendAt ?? new Date(now.getTime() + this.undoWindowMs),
+      ...(sendAt === undefined ? {} : { scheduled: true }),
       outboxSubject: this.outboxSubject,
       ...(input.draft === undefined ? {} : { draft: input.draft }),
       ...(input.idempotencyKey === undefined

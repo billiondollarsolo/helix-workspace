@@ -143,7 +143,7 @@ describe("SettingsPage", () => {
       "Profile",
       "Appearance",
       "Language & region",
-      "Mail signature",
+      "Mail",
       "Security",
       "S3 access keys",
       "Keyboard shortcuts",

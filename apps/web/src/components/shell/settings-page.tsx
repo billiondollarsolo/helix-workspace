@@ -1,5 +1,6 @@
 import { iconMap as Icons, type IconName } from "@/components/icon-map";
-import type { SettingsSectionId } from "@/components/shell/overlay-context";
+import { settingsSectionBase, type SettingsSectionId } from "@/components/shell/overlay-context";
+import { MailSettingsSection } from "@/features/mail/settings";
 import { cn } from "@/lib/utils";
 import { ArrowLeft as ArrowLeftIcon } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
@@ -8,20 +9,25 @@ import { AppearanceSection } from "./settings-appearance";
 import { S3KeysSection } from "./settings-s3-keys";
 import { SecuritySection } from "./settings-security";
 import { ShortcutsSection } from "./settings-shortcuts";
-import { SignatureSection } from "./settings-signature";
 
 /* ---------- shell ---------- */
 
+/** Tabbed sections get the tab from `?settings=<section>/<tab>` and switch it here. */
+interface SettingsSectionProps {
+  tab: string | undefined;
+  onTabChange: (tab: string) => void;
+}
+
 const SECTIONS: {
-  id: SettingsSectionId;
+  id: ReturnType<typeof settingsSectionBase>;
   label: string;
   icon: IconName;
-  Component: () => ReactNode;
+  Component: (props: SettingsSectionProps) => ReactNode;
 }[] = [
   { id: "profile", label: "Profile", icon: "Users", Component: ProfileSection },
   { id: "appearance", label: "Appearance", icon: "Sun", Component: AppearanceSection },
   { id: "language", label: "Language & region", icon: "Globe", Component: LanguageSection },
-  { id: "signature", label: "Mail signature", icon: "EditPen", Component: SignatureSection },
+  { id: "mail", label: "Mail", icon: "Mail", Component: MailSettingsSection },
   { id: "security", label: "Security", icon: "Shield", Component: SecuritySection },
   { id: "s3-keys", label: "S3 access keys", icon: "Key", Component: S3KeysSection },
   { id: "shortcuts", label: "Keyboard shortcuts", icon: "Code", Component: ShortcutsSection },
@@ -95,7 +101,8 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
     return null;
   }
 
-  const activeSection = SECTIONS.find((entry) => entry.id === section);
+  const sectionBase = settingsSectionBase(section);
+  const activeSection = SECTIONS.find((entry) => entry.id === sectionBase);
   const ActiveSectionBody = activeSection?.Component;
 
   return (
@@ -127,7 +134,7 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
         >
           {SECTIONS.map((entry) => {
             const Icon = Icons[entry.icon];
-            const selected = section === entry.id;
+            const selected = sectionBase === entry.id;
             return (
               <button
                 key={entry.id}
@@ -151,7 +158,12 @@ export function SettingsPage({ open, section, onSectionChange, onClose }: Settin
           aria-label={`${activeSection?.label ?? "Settings"} settings`}
           className="flex-1 overflow-y-auto [padding:24px_32px] max-w-180 min-w-0"
         >
-          {ActiveSectionBody ? <ActiveSectionBody /> : null}
+          {ActiveSectionBody ? (
+            <ActiveSectionBody
+              tab={section.split("/")[1]}
+              onTabChange={(tab) => onSectionChange(`${sectionBase}/${tab}`)}
+            />
+          ) : null}
         </section>
       </div>
     </div>

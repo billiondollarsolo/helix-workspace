@@ -46,7 +46,7 @@ export const assistantChatBodySchema = z
     message: z.string().min(1).max(100_000),
     modelId: z.string().min(1).max(300).optional(),
     webSearch: z.boolean().optional(),
-    toolGroups: z.array(z.enum(assistantToolGroupIds)).max(8).optional(),
+    toolGroups: z.array(z.enum(assistantToolGroupIds)).max(assistantToolGroupIds.length).optional(),
     attachmentObjectIds: z.array(uuidSchema).max(assistantAttachmentLimits.maxFiles).optional(),
     title: z.string().min(1).max(200).optional(),
     memoryOptIn: z.boolean().optional(),

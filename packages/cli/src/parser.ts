@@ -1,4 +1,5 @@
 import { parseDriveS3KeysCommand } from "./drive-s3-keys.js";
+import { parseWorkspaceCommand } from "./workspace-commands.js";
 
 export type HelixCommand =
   | { readonly kind: "tool-list"; readonly source?: ToolListSource }
@@ -103,6 +104,16 @@ export function parseCliArgs(args: readonly string[]): HelixCommand {
       throw new CliUsageError("Usage: helix tool describe <id>");
     }
     return { kind: "tool-describe", toolId: subject };
+  }
+
+  const workspace = parseWorkspaceCommand(scope, action, [subject, ...rest].filter(isDefined));
+  if (workspace !== undefined) {
+    if ("usage" in workspace) throw new CliUsageError(workspace.usage);
+    const json: JsonArgument =
+      workspace.input === null
+        ? parseJsonArgument([subject, ...rest].filter(isDefined))
+        : { source: "inline", value: workspace.input };
+    return { kind: "tool-call", toolId: workspace.toolId, json };
   }
 
   if (scope === "mail") {
@@ -424,7 +435,7 @@ function parseMailCommand(
 }
 
 const mailUsageSummary =
-  "Usage: helix mail <send|reply|forward|list|search|label|archive|delete|snooze|read|star|thread-get|filter-create|filter-update|filter-delete|vacation-get|vacation-set> [--json [JSON]]";
+  "Usage: helix mail <send|reply|forward|list|search|label|labels|label-create|label-update|label-delete|archive|delete|snooze|read|star|thread-get|filter-create|filter-update|filter-delete|vacation-get|vacation-set|scheduled|scheduled-reschedule|scheduled-cancel> [--json [JSON]]";
 const mailLabelApplyUsage =
   "Usage: helix mail label [--thread-id <id>] [--add <label>] [--remove <label>] [--json [JSON]]";
 const mailArchiveUsage = "Usage: helix mail archive [--thread-id <id>] [--json [JSON]]";

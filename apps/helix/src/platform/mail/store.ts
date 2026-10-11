@@ -16,6 +16,8 @@ import {
 } from "./store-contracts.js";
 import { MailDraftStore } from "./store-drafts.js";
 import { MailFolderStore } from "./store-folders.js";
+import { MailLabelStore } from "./store-labels.js";
+import { MailScheduledStore } from "./store-scheduled.js";
 import { MailInboundStore } from "./store-inbound.js";
 import { MailOutboundStore } from "./store-outbound.js";
 import { MailPreferencesStore } from "./store-preferences.js";
@@ -91,6 +93,8 @@ export class PostgresMailStore
   private readonly preferences: MailPreferencesStore;
   private readonly threads: MailThreadStore;
   private readonly folders: MailFolderStore;
+  private readonly labels: MailLabelStore;
+  private readonly scheduled: MailScheduledStore;
   private readonly drafts: MailDraftStore;
   private readonly searchProjection: MailSearchStore;
 
@@ -105,6 +109,8 @@ export class PostgresMailStore
     this.preferences = new MailPreferencesStore(sql);
     this.threads = new MailThreadStore(sql, this.drafts);
     this.folders = new MailFolderStore(sql);
+    this.labels = new MailLabelStore(sql);
+    this.scheduled = new MailScheduledStore(sql);
     this.searchProjection = new MailSearchStore(sql);
   }
 
@@ -395,7 +401,27 @@ export class PostgresMailStore
     readonly orgId: string;
     readonly actorId: string;
   }): Promise<readonly MailLabelRecord[]> {
-    return this.folders.listLabels(input);
+    return this.labels.listLabels(input);
+  }
+
+  createLabel(input: Parameters<MailLabelStore["createLabel"]>[0]): Promise<MailLabelRecord> {
+    return this.labels.createLabel(input);
+  }
+
+  updateLabel(input: Parameters<MailLabelStore["updateLabel"]>[0]): Promise<MailLabelRecord> {
+    return this.labels.updateLabel(input);
+  }
+
+  deleteLabel(input: Parameters<MailLabelStore["deleteLabel"]>[0]): Promise<readonly string[]> {
+    return this.labels.deleteLabel(input);
+  }
+
+  listScheduledSends(input: Parameters<MailScheduledStore["listScheduledSends"]>[0]) {
+    return this.scheduled.listScheduledSends(input);
+  }
+
+  rescheduleSend(input: Parameters<MailScheduledStore["rescheduleSend"]>[0]) {
+    return this.scheduled.rescheduleSend(input);
   }
 
   saveDraft(input: {

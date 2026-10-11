@@ -50,6 +50,8 @@ export function teamChildId(parentId: string, index: number): string {
 
 export const LOCAL_TEAM_SCOPES = [
   "platform.read",
+  "profile.read",
+  "profile.write",
   "mail.read",
   "mail.write",
   "mail.send",

@@ -95,6 +95,16 @@ export async function withTenantIoSagaPostgresContext<T>(
   ) as Promise<T>;
 }
 
+/**
+ * Run a self-contained unit on its own pooled connection, outside any ambient
+ * request/job transaction. Use it for work whose locks must be released at its
+ * own commit (identity activation), never held for the rest of a request where
+ * a later phase on another connection could wait on them forever.
+ */
+export function detachedFromTenantPostgresContext<T>(callback: () => Promise<T>): Promise<T> {
+  return activeTenantContext.exit(callback);
+}
+
 async function applyTenantPostgresContext(
   tx: postgres.TransactionSql,
   input: TenantPostgresContextInput,

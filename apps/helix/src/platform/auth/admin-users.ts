@@ -21,16 +21,6 @@ const adminUsersQuerySchema = z.object({
     .optional(),
   type: emptyStringToUndefined(actorTypeSchema.optional()),
 });
-const peopleDirectoryQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(50).default(25),
-  query: z
-    .string()
-    .trim()
-    .max(200)
-    .transform((value) => (value.length === 0 ? undefined : value))
-    .optional(),
-});
-
 export interface AdminUserRecord {
   readonly id: string;
   readonly orgId: string;
@@ -70,12 +60,6 @@ export interface RegisterAdminUsersRoutesOptions {
   readonly store: AdminUsersStore;
   readonly actorFromRequest: (request: FastifyRequest) => Promise<Actor> | Actor;
   readonly offboarding?: Pick<PostgresActorOffboardingStore, "preview" | "offboard">;
-}
-
-interface PeopleDirectoryRecord {
-  readonly id: string;
-  readonly email: string | null;
-  readonly displayName: string;
 }
 
 export class PostgresAdminUsersStore implements AdminUsersStore {
@@ -272,33 +256,6 @@ export async function registerAdminUsersRoutes(
   }
 }
 
-export async function registerPeopleDirectoryRoutes(
-  app: FastifyInstance,
-  options: RegisterAdminUsersRoutesOptions,
-): Promise<void> {
-  app.get("/api/people", async (request, reply) => {
-    const actor = await options.actorFromRequest(request);
-    const parsed = peopleDirectoryQuerySchema.safeParse(request.query);
-    if (!parsed.success) {
-      return reply
-        .code(400)
-        .send({ error: "Invalid people directory query.", issues: parsed.error.issues });
-    }
-
-    const users = await options.store.listUsers({
-      orgId: actor.orgId,
-      includeDisabled: false,
-      limit: parsed.data.limit,
-      ...(parsed.data.query === undefined ? {} : { query: parsed.data.query }),
-      type: "user",
-    });
-
-    return {
-      people: users.map(personDirectoryRecordFromUser),
-    };
-  });
-}
-
 export function canReadAdminUsers(actor: Actor): boolean {
   return actorHasScope(actor, adminUsersScope);
 }
@@ -360,14 +317,6 @@ function permissionDeniedResponse(): {
   return {
     error: "Admin users permission denied.",
     requiredScope: adminUsersScope,
-  };
-}
-
-function personDirectoryRecordFromUser(user: AdminUserRecord): PeopleDirectoryRecord {
-  return {
-    id: user.id,
-    email: user.email,
-    displayName: user.displayName.trim() || user.email || user.id,
   };
 }
 

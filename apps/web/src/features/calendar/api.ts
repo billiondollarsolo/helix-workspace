@@ -69,9 +69,13 @@ export interface CalendarCreateEventInput {
   readonly attendees?: readonly CalendarApiAttendeeInput[];
   readonly metadata?: Record<string, unknown>;
   readonly sendInvitations?: boolean;
+  /** "Add video conferencing": the event's `metadata.conference.joinUrl` links the Meet room. */
+  readonly conference?: "meet";
 }
 
-type CalendarUpdateEventPatch = Partial<Omit<CalendarCreateEventInput, "sendInvitations">>;
+type CalendarUpdateEventPatch = Partial<
+  Omit<CalendarCreateEventInput, "sendInvitations" | "conference">
+>;
 
 export interface CalendarUpdateEventInput {
   readonly eventId: string;
@@ -188,6 +192,7 @@ export async function createCalendarEvent(
       attendees: input.attendees ?? [],
       metadata: input.metadata ?? {},
       sendInvitations: input.sendInvitations ?? true,
+      ...(input.conference === undefined ? {} : { conference: input.conference }),
     },
     fetchImpl,
   );

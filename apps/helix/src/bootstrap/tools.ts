@@ -20,7 +20,12 @@ import { registerTaskTools } from "../platform/assistant/tasks.js";
 import { registerRoutineTools } from "../platform/assistant/routines.js";
 import { PostgresRoutineStore } from "../platform/assistant/routines-postgres.js";
 import { AssistantRoutineWorker } from "../platform/assistant/routines-worker.js";
+import {
+  PostgresAccountPreferencesStore,
+  registerAccountPreferenceTools,
+} from "../platform/auth/account-preferences.js";
 import { registerAppPasswordTools } from "../platform/auth/app-passwords.js";
+import { PostgresChatInboxStore, registerChatInboxTools } from "../platform/chat/inbox.js";
 import { PostgresUserAddressStore } from "../platform/auth/user-addresses.js";
 import {
   tenantAwarePostgresSql,
@@ -53,7 +58,11 @@ import {
   registerMailStreamRoutes,
   registerMailTools,
 } from "../platform/mail/index.js";
-import { createJibriRecorderHealthCheck, registerMeetTools } from "../platform/meet/index.js";
+import {
+  createJibriRecorderHealthCheck,
+  createMeetConferenceProvider,
+  registerMeetTools,
+} from "../platform/meet/index.js";
 import {
   PostgresNotificationStore,
   registerNotificationTools,
@@ -472,6 +481,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       registerMailSourceRoutes(api, {
         store: mailStore,
         actorFromRequest: (request) => actorFromAuthenticatedRequest(request),
+        maxAttachmentBytes: bootEnv.MAIL_SMTP_MAX_MESSAGE_BYTES,
       });
     });
   }
@@ -482,6 +492,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       bus: chatRoomBus,
       ...(resourceClassifier === undefined ? {} : { classifyResource: resourceClassifier }),
     });
+    registerChatInboxTools(tools, { store: new PostgresChatInboxStore(sql) });
   }
 
   if (coreApps.shouldRegister("drive")) {
@@ -595,6 +606,17 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
       // Same precedence as the auth and route origins; PUBLIC_BASE_URL alone left
       // RSVP links pointing at localhost when only HELIX_PUBLIC_URL was configured.
       rsvpBaseUrl: bootEnv.HELIX_PUBLIC_URL ?? bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
+      ...(configuredMeetSecrets === null
+        ? {}
+        : {
+            conference: createMeetConferenceProvider({
+              store: meetStore,
+              jwtSubject: bootEnv.MEET_JITSI_DOMAIN ?? "meet.localhost",
+              jitsiPublicUrl: bootEnv.MEET_JITSI_PUBLIC_URL,
+              publicBaseUrl:
+                bootEnv.HELIX_PUBLIC_URL ?? bootEnv.PUBLIC_BASE_URL ?? "http://localhost:3000",
+            }),
+          }),
     });
   }
 
@@ -758,6 +780,7 @@ export async function installTools(context: Awaited<ReturnType<typeof installAud
   });
 
   registerAppPasswordTools(tools, { store: appPasswordStore });
+  registerAccountPreferenceTools(tools, { store: new PostgresAccountPreferencesStore(sql) });
 
   const trpcRouter = createHelixTRPCRouter({ tools, metrics, platformConfig });
 

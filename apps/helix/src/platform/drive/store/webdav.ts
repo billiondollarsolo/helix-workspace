@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { BadRequestError } from "../../../api/api-error.js";
-import { withTenantIoSagaPostgresContext as withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
+import { withTenantPostgresContext } from "../../tenancy/postgres-roles.js";
 import type {
   AcquireDriveWebDavLockInput,
   DriveWebDavChangePage,

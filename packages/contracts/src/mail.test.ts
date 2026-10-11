@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAIL_LABEL_COLOR_NAMES,
+  MAIL_LABEL_COLORS,
+  MAIL_LABEL_DEFAULT_COLOR,
+  mailLabelColorName,
+  mailLabelUpdateInputSchema,
   mailFilterSchema,
   mailDraftSaveInputSchema,
   mailReceivingDomainCreateInputSchema,
@@ -42,8 +47,24 @@ describe("mail contracts", () => {
       category: "primary",
       folder: "inbox",
       snoozedUntil: null,
+      participants: [
+        { name: "A", email: "a@b.com", isMe: false },
+        { name: "me", email: "me@b.com", isMe: true },
+      ],
     });
     expect(row.unread).toBe(true);
+    expect(() =>
+      mailThreadRowSchema.parse({ ...row, participants: Array(5).fill(row.participants[0]) }),
+    ).toThrow();
+  });
+
+  it("maps label palette names to colours and back", () => {
+    expect(MAIL_LABEL_COLOR_NAMES).toHaveLength(24);
+    expect(mailLabelColorName(MAIL_LABEL_COLORS.teal.toUpperCase())).toBe("teal");
+    expect(mailLabelColorName("#123456")).toBe(MAIL_LABEL_DEFAULT_COLOR);
+    expect(
+      mailLabelUpdateInputSchema.safeParse({ id: "11111111-1111-4111-8111-111111111111" }).success,
+    ).toBe(false);
   });
 
   it("defaults spam:true in mailSpamInputSchema", () => {

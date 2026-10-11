@@ -21,6 +21,8 @@ export const LOGIN_SEED_SOURCE = "login-seed";
 
 export const ADMIN_SCOPES = [
   "platform.read",
+  "profile.read",
+  "profile.write",
   "mail.read",
   "mail.write",
   "mail.send",
@@ -64,6 +66,8 @@ export const ADMIN_SCOPES = [
 
 const USER_SCOPES = [
   "platform.read",
+  "profile.read",
+  "profile.write",
   "mail.read",
   "mail.write",
   "mail.send",

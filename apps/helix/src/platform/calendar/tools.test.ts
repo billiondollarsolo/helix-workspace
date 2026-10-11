@@ -109,6 +109,66 @@ describe("calendar tools", () => {
     expect(invitationSender.inputs).toHaveLength(0);
   });
 
+  it("adds video conferencing: creates a Meet room and stores its join link", async () => {
+    const store = new FakeCalendarStore();
+    const rooms: unknown[] = [];
+    const registry = createToolRegistry();
+    registerCalendarTools(registry, {
+      store,
+      conference: {
+        async createRoom(input) {
+          rooms.push(input);
+          return {
+            roomId: "55555555-5555-4555-8555-555555555555",
+            joinCode: "abc-defg-hij",
+            joinUrl: "https://helix.example.com/meet?code=abc-defg-hij",
+          };
+        },
+      },
+    });
+    const create = {
+      title: "Design review",
+      startsAt: "2026-05-20T13:00:00.000Z",
+      endsAt: "2026-05-20T14:00:00.000Z",
+      attendees: [
+        { email: "bruno@example.com", actorId: "66666666-6666-4666-8666-666666666666" },
+        { email: "self@example.com", actorId },
+      ],
+      conference: "meet",
+    };
+    const actor: Actor = { id: actorId, orgId, type: "user", scopes: ["calendar.write"] };
+
+    const denied = await registry.invoke("calendar.event.create", create, { actor });
+    const created = await registry.invoke("calendar.event.create", create, {
+      actor: { ...actor, scopes: ["calendar.write", "meet.write"] },
+    });
+
+    expect(denied).toMatchObject({ ok: false, statusCode: 403 });
+    expect(created.ok).toBe(true);
+    expect(rooms).toEqual([
+      expect.objectContaining({
+        subject: "Design review",
+        participantActorIds: ["66666666-6666-4666-8666-666666666666"],
+      }),
+    ]);
+    expect(store.createInputs[0]?.metadata).toEqual({
+      conference: {
+        provider: "meet",
+        roomId: "55555555-5555-4555-8555-555555555555",
+        joinCode: "abc-defg-hij",
+        joinUrl: "https://helix.example.com/meet?code=abc-defg-hij",
+      },
+    });
+
+    const unconfigured = createToolRegistry();
+    registerCalendarTools(unconfigured, { store: new FakeCalendarStore() });
+    expect(
+      await unconfigured.invoke("calendar.event.create", create, {
+        actor: { ...actor, scopes: ["calendar.write", "meet.write"] },
+      }),
+    ).toMatchObject({ ok: false, statusCode: 400 });
+  });
+
   it("updates and cancels events through the store and invitation sender", async () => {
     const store = new FakeCalendarStore();
     const invitationSender = new FakeInvitationSender();

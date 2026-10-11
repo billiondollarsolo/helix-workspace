@@ -1,7 +1,9 @@
+import { PeoplePicker } from "@/components/people/people-picker";
 import { Avatar } from "@/components/ui/avatar";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Hash as HashIcon, Plus as PlusIcon, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
+import type { PersonRef } from "@/features/people/person-ref";
 
 /* ----------------------------------------------------------------
    Spaces sidebar — 240px
@@ -53,6 +55,8 @@ export function ChatSidebar({
 }: ChatSidebarProps) {
   const [creating, setCreating] = useState(false);
   const [draftName, setDraftName] = useState("");
+  const [draftPeer, setDraftPeer] = useState<PersonRef[]>([]);
+  const draftPeerActorId = draftPeer[0]?.actorId ?? null;
   const [draftKind, setDraftKind] = useState<"chat_room" | "chat_dm">("chat_room");
   const [draftSpaceType, setDraftSpaceType] = useState<"conversation" | "announcement" | "project">(
     "conversation",
@@ -171,15 +175,25 @@ export function ChatSidebar({
             />
             Legal hold
           </label>
-          <input
-            type="text"
-            aria-label="Name or member actor id"
-            placeholder={draftKind === "chat_dm" ? "Peer actor UUID" : "Space name"}
-            value={draftName}
-            onChange={(e) => {
-              setDraftName(e.target.value);
-            }}
-          />
+          {draftKind === "chat_dm" ? (
+            <PeoplePicker
+              label="Person"
+              placeholder="Name or email"
+              max={1}
+              value={draftPeer}
+              onChange={setDraftPeer}
+            />
+          ) : (
+            <input
+              type="text"
+              aria-label="Space name"
+              placeholder="Space name"
+              value={draftName}
+              onChange={(e) => {
+                setDraftName(e.target.value);
+              }}
+            />
+          )}
           <label>
             <input
               type="checkbox"
@@ -193,14 +207,18 @@ export function ChatSidebar({
           <button
             type="button"
             className="btn primary sm"
-            disabled={draftName.trim().length === 0 || !retentionIsValid}
+            disabled={
+              (draftKind === "chat_dm"
+                ? draftPeerActorId === null
+                : draftName.trim().length === 0) || !retentionIsValid
+            }
             onClick={() => {
               const name = draftName.trim();
-              if (name.length === 0) return;
               if (draftKind === "chat_dm") {
+                if (draftPeerActorId === null) return;
                 onCreateRoom({
                   kind: "chat_dm",
-                  memberActorIds: [name],
+                  memberActorIds: [draftPeerActorId],
                   readReceiptsEnabled: draftReadReceipts,
                   historyPolicy: draftHistoryPolicy,
                   retentionDays,
@@ -209,6 +227,7 @@ export function ChatSidebar({
                   externalAccess: draftExternalAccess,
                 });
               } else {
+                if (name.length === 0) return;
                 onCreateRoom({
                   kind: "chat_room",
                   subject: name,
@@ -223,6 +242,7 @@ export function ChatSidebar({
                 });
               }
               setDraftName("");
+              setDraftPeer([]);
               setDraftReadReceipts(true);
               setDraftSpaceType("conversation");
               setDraftHistoryPolicy("full");

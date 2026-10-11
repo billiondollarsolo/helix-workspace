@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ChatShell } from "@/features/chat/chat-shell";
 import {
+  chatDirectMessageHandoffFromSearch,
+  type ChatDirectMessageHandoff,
+} from "@/features/people/handoff";
+import {
   optionalEnumSearchParam,
   optionalStringSearchParam,
   optionalUuidSearchParam,
@@ -8,7 +12,7 @@ import {
 
 const chatInfoTabs = ["about", "members", "files", "pinned"] as const;
 
-export interface ShellChatRouteSearch {
+export interface ShellChatRouteSearch extends ChatDirectMessageHandoff {
   readonly room?: string;
   readonly thread?: string;
   readonly tab?: (typeof chatInfoTabs)[number];
@@ -25,6 +29,7 @@ export const Route = createFileRoute("/_shell/chat/")({
       ...(room === undefined ? {} : { room }),
       ...(thread === undefined ? {} : { thread }),
       ...(tab === undefined ? {} : { tab }),
+      ...chatDirectMessageHandoffFromSearch(search),
     };
   },
 });

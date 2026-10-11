@@ -29,9 +29,35 @@ test.describe("/chat feature flow", () => {
       await expect(page.getByText("Chat backend unavailable")).toHaveCount(0);
     }
   });
+
+  test("starts a direct message by picking a person, not typing an id", async ({ page }) => {
+    test.skip(isLiveBackend(), "Mocked people directory fixture");
+    const accessToken = await seedBrowserSession(page, "e2e-chat-dm-token");
+    const created: unknown[] = [];
+    await mockChatBackend(page, accessToken, created);
+
+    await page.goto("/chat");
+    await page.getByRole("button", { name: "New conversation" }).click();
+    const form = page.getByRole("dialog", { name: "New conversation" });
+    await form.getByRole("combobox", { name: "Conversation type" }).selectOption("chat_dm");
+    await expect(form.getByPlaceholder("Peer actor UUID")).toHaveCount(0);
+
+    const person = form.getByRole("combobox", { name: "Person" });
+    await person.fill("sam");
+    await expect(page.getByRole("option", { name: /Sam Patel/u })).toBeVisible();
+    await expect(person).toHaveAttribute("aria-expanded", "true");
+    await person.press("Enter");
+    await expect(form.getByRole("button", { name: "Remove Sam Patel" })).toBeVisible();
+
+    await form.getByRole("button", { name: "Create" }).click();
+    await expect.poll(() => created.length).toBe(1);
+    expect(created[0]).toMatchObject({ kind: "chat_dm", memberActorIds: [samActorId] });
+  });
 });
 
-async function mockChatBackend(page: Page, accessToken: string) {
+const samActorId = "00000000-0000-4000-8000-000000000111";
+
+async function mockChatBackend(page: Page, accessToken: string, created: unknown[] = []) {
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
@@ -95,6 +121,29 @@ async function mockChatBackend(page: Page, accessToken: string) {
           },
         ],
       });
+      return;
+    }
+    if (pathname === "/v1/api/people/autocomplete") {
+      await fulfillJson(route, {
+        people: [
+          {
+            id: samActorId,
+            kind: "directory",
+            actorId: samActorId,
+            email: "sam@helix.local",
+            displayName: "Sam Patel",
+            title: "Engineer",
+            favorite: false,
+            avatarDataUrl: null,
+            relationship: {},
+          },
+        ],
+      });
+      return;
+    }
+    if (pathname === "/v1/api/tools/chat.create_room") {
+      created.push(request.postDataJSON());
+      await fulfillJson(route, {});
       return;
     }
     if (pathname === "/v1/api/tools/chat.search") {

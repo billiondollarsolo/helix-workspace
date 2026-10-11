@@ -52,6 +52,9 @@ export interface PeopleRecord {
   readonly kind: "personal" | "directory" | "group";
   readonly email: string | null;
   readonly displayName: string;
+  /** The org member this entry resolves to; personal contacts inherit it by email. */
+  readonly actorId: string | null;
+  readonly title: string | null;
   readonly favorite: boolean;
   readonly avatarDataUrl: string | null;
   readonly relationship: Readonly<Record<string, string>>;
@@ -101,11 +104,13 @@ export class PostgresPeopleStore implements PeopleStore {
   }): Promise<readonly PeopleRecord[]> {
     const query = input.query?.toLowerCase() ?? null;
     const pattern = query === null ? null : `%${escapeLike(query)}%`;
+    const prefix = query === null ? null : `${escapeLike(query)}%`;
     return this.withActor(input.orgId, input.actorId, async (tx) => {
       const rows = await tx<PeopleRow[]>`
       with candidates as (
         select contact.id, 'personal'::text as kind, contact.email,
           coalesce(nullif(contact.display_name, ''), contact.email, 'Unnamed contact') as display_name,
+          null::uuid as actor_id, null::text as title,
           contact.favorite, contact.avatar_data_url,
           contact.relationship, 0 as source_rank
         from carddav_contacts contact
@@ -113,7 +118,8 @@ export class PostgresPeopleStore implements PeopleStore {
           and contact.deleted_at is null and contact.merged_into_id is null
         union all
         select actor.id, 'directory', actor.email,
-          coalesce(nullif(actor.display_name, ''), actor.email, 'Unnamed person'), false,
+          coalesce(nullif(actor.display_name, ''), actor.email, 'Unnamed person'), actor.id,
+          nullif(btrim(actor.metadata->'profile'->>'jobTitle'), ''), false,
           case when actor.metadata->>'avatarDataUrl' ~ '^data:image/(png|jpeg|webp);base64,'
             then actor.metadata->>'avatarDataUrl' else null end,
           '{}'::jsonb, 1
@@ -129,23 +135,32 @@ export class PostgresPeopleStore implements PeopleStore {
               and membership.status = 'active'
           ))
         union all
-        select group_record.id, 'group', group_record.email, group_record.name, false, null,
+        select group_record.id, 'group', group_record.email, group_record.name, null, null,
+          false, null,
           jsonb_build_object('groupKind', group_record.kind, 'description', group_record.description), 2
         from admin_groups group_record where group_record.org_id = ${input.orgId}
       ), ranked as (
-        select candidates.*, row_number() over (
-          partition by coalesce(lower(email), kind || ':' || id::text)
-          order by source_rank, favorite desc, id
-        ) as duplicate_rank
+        select candidates.*, row_number() over identity as duplicate_rank,
+          max(actor_id::text) over identity as resolved_actor_id,
+          max(title) over identity as resolved_title
         from candidates
         where (${query}::text is null
           or lower(display_name) like ${pattern}::text escape '\\'
           or lower(coalesce(email, '')) like ${pattern}::text escape '\\')
           and (${input.favorites ?? false}::boolean = false or favorite)
+        window identity as (
+          partition by coalesce(lower(email), kind || ':' || id::text)
+          order by source_rank, favorite desc, id
+          rows between unbounded preceding and unbounded following
+        )
       )
-      select id, kind, email, display_name, favorite, avatar_data_url, relationship
+      select id, kind, email, display_name, resolved_actor_id as actor_id,
+        resolved_title as title, favorite, avatar_data_url, relationship
       from ranked where duplicate_rank = 1
-      order by favorite desc, lower(display_name), id
+      order by favorite desc,
+        (${prefix}::text is not null and (lower(display_name) like ${prefix}::text escape '\\'
+          or lower(coalesce(email, '')) like ${prefix}::text escape '\\')) desc,
+        lower(display_name), id
       limit ${input.limit}
     `;
       return rows.map(mapPerson);
@@ -423,6 +438,8 @@ interface PeopleRow {
   readonly kind: PeopleRecord["kind"];
   readonly email: string | null;
   readonly display_name: string;
+  readonly actor_id?: string | null;
+  readonly title?: string | null;
   readonly favorite: boolean;
   readonly avatar_data_url: string | null;
   readonly relationship: Record<string, string>;
@@ -440,6 +457,8 @@ function mapPerson(row: PeopleRow): PeopleRecord {
     kind: row.kind,
     email: row.email,
     displayName: row.display_name,
+    actorId: row.actor_id ?? null,
+    title: row.title ?? null,
     favorite: row.favorite,
     avatarDataUrl: safeAvatar(row.avatar_data_url),
     relationship: row.relationship,

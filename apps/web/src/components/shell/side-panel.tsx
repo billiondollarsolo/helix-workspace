@@ -9,10 +9,9 @@ import {
   X as XIcon,
 } from "lucide-react";
 /* Right side panel — the 44px tool rail + 320px mini panels. */
-import { peopleDirectoryQueryOptions } from "@/features/people/api";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ContactsPanel } from "@/components/people/contacts-panel";
 import { useNavigate } from "@tanstack/react-router";
-import { useDeferredValue, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 export type SideTool = "calendar" | "contacts" | "ai";
 interface SideToolDef {
   id: SideTool;
@@ -126,65 +125,6 @@ function MiniCalendar() {
     </div>
   );
 }
-/* ---------- Mini Contacts ---------- */
-function MiniContacts() {
-  const queryClient = useQueryClient();
-  const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query.trim());
-  const people = useQuery(peopleDirectoryQueryOptions({ query: deferredQuery, limit: 50 }));
-  return (
-    <div className="p-3 overflow-y-auto h-full">
-      <input
-        className="input mb-3"
-        placeholder="Search contacts…"
-        value={query}
-        onChange={(event) => {
-          setQuery(event.target.value);
-        }}
-
-        aria-label="Search contacts"
-      />
-      {people.isLoading ? <div role="status">Loading contacts…</div> : null}
-      {people.isError ? (
-        <button
-          type="button"
-          className="btn sm"
-          onClick={() => {
-            void queryClient.invalidateQueries({ queryKey: ["people", "directory"] });
-          }}
-        >
-          Retry contacts
-        </button>
-      ) : null}
-      {people.data?.length === 0 ? <div>No matching contacts.</div> : null}
-      {people.data?.map((person) => (
-        <a
-          key={person.id}
-          href={person.email === null ? undefined : `mailto:${person.email}`}
-          aria-disabled={person.email === null}
-          className="flex gap-2 items-center [padding:8px_4px]"
-        >
-          {person.avatarDataUrl === null ? null : (
-            <img
-              src={person.avatarDataUrl}
-              alt=""
-              width={28}
-              height={28}
-              className="rounded-full"
-            />
-          )}
-          <span>
-            <strong>{person.favorite ? `★ ${person.displayName}` : person.displayName}</strong>
-            {person.email === null ? null : <span className="block">{person.email}</span>}
-            <span className="block text-muted-foreground [font-size:var(--text-caption)]">
-              {person.kind}
-            </span>
-          </span>
-        </a>
-      ))}
-    </div>
-  );
-}
 /* ---------- Mini Helix AI ---------- */
 function MiniAI() {
   const navigate = useNavigate();
@@ -236,7 +176,7 @@ const MINI_VIEWS: Record<SideTool, MiniView> = {
     Component: MiniCalendar,
     fullRoute: "/calendar",
   },
-  contacts: { title: "Contacts", icon: "Users", Component: MiniContacts },
+  contacts: { title: "Contacts", icon: "Users", Component: ContactsPanel },
   ai: { title: "Helix AI", icon: "Sparkles", Component: MiniAI, fullRoute: "/assistant" },
 };
 /* ---------- Rail + Panel ---------- */

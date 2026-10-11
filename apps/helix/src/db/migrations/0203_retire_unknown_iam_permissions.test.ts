@@ -96,7 +96,11 @@ describe(
         select role_key from iam_roles where org_id = ${org} and kind = 'built_in' order by role_key
       `;
       expect(roles.map((role) => role.role_key)).toEqual(
-        [...Object.keys(DELEGATED_ADMIN_ROLE_PERMISSIONS), "workspace_viewer"].sort(),
+        [
+          ...Object.keys(DELEGATED_ADMIN_ROLE_PERMISSIONS),
+          "workspace_member",
+          "workspace_viewer",
+        ].sort(),
       );
     });
 
@@ -239,6 +243,8 @@ describe(
         loaded: {
           bindings: [
             expect.objectContaining({ allow: ["platform.read", "profile.read", "tools:read"] }),
+            // The implicit built-in member grant (0208).
+            expect.objectContaining({ allow: ["profile.read", "profile.write"] }),
           ],
         },
       });

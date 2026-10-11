@@ -1,8 +1,15 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, CheckCircle2, Dna, Loader2, TriangleAlert } from "lucide-react";
+import { ArrowRight, CheckCircle2, Loader2, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LocalLoginPanel } from "@/routes/login";
-import { getSessionUser, signInWithEmail, type AuthFetch, type SessionUser } from "@/lib/auth";
+import { AuthCard } from "@/features/auth/auth-card";
+import { LocalLoginPanel } from "@/features/auth/login-panel";
+import {
+  discoverSignInMethod,
+  getSessionUser,
+  signInWithEmail,
+  type AuthFetch,
+  type SessionUser,
+} from "@/lib/auth";
 import { acceptSignupOnboardingInvite, type SignupOnboardingInviteAcceptResponse } from "./api";
 
 interface SignupInviteShellProps {
@@ -84,90 +91,78 @@ export function SignupInviteShell({
     return (
       <LocalLoginPanel
         signIn={(input) => signIn(input, fetchImpl)}
+        discover={(email) => discoverSignInMethod(email, fetchImpl)}
         onSignedIn={() => acceptInvite(token)}
       />
     );
   }
 
   return (
-    <main className="auth-screen">
-      <section className="panel auth-panel signup-panel">
-        <div className="auth-brand">
-          <div
-            className={state.status === "error" ? "auth-logo danger" : "auth-logo"}
-            aria-hidden="true"
-          >
-            {state.status === "error" ? (
-              <TriangleAlert />
-            ) : state.status === "accepted" ? (
-              <CheckCircle2 />
-            ) : (
-              <Dna />
-            )}
-          </div>
-          <h1 className="auth-title">{titleForState(state)}</h1>
-          <p className="auth-subtitle">{subtitleForState(state)}</p>
+    <AuthCard
+      wide
+      title={titleForState(state)}
+      subtitle={subtitleForState(state)}
+      {...(state.status === "error"
+        ? { status: { tone: "danger" as const, icon: <TriangleAlert /> } }
+        : state.status === "accepted"
+          ? { status: { tone: "success" as const, icon: <CheckCircle2 /> } }
+          : {})}
+    >
+      {state.status === "checking" || state.status === "accepting" ? (
+        <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
+          <Loader2 className="auth-spinner" aria-hidden="true" />
+          <span>
+            {state.status === "checking" ? "Checking your session…" : "Joining the workspace…"}
+          </span>
         </div>
+      ) : null}
 
-        {state.status === "checking" || state.status === "accepting" ? (
-          <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
-            <Loader2 className="auth-spinner" aria-hidden="true" />
-            <span>{state.status === "checking" ? "Checking session…" : "Joining workspace…"}</span>
-          </div>
+      {state.status === "error" ? (
+        <p className="auth-error" role="alert">
+          {state.message}
+        </p>
+      ) : null}
+
+      {state.status === "accepted" ? (
+        <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
+          <CheckCircle2 aria-hidden="true" />
+          <span>
+            You’re now a member of <strong>{state.result.org.displayName}</strong>.
+          </span>
+        </div>
+      ) : null}
+
+      <div className="auth-actions">
+        {state.status === "error" && token.trim().length > 0 ? (
+          <button className="btn ghost" type="button" onClick={() => acceptInvite(token)}>
+            Try again
+          </button>
         ) : null}
-
-        {state.status === "error" ? (
-          <>
-            <p className="auth-error" role="alert">
-              {state.message}
-            </p>
-            {token.trim().length > 0 ? (
-              <button
-                className="btn primary lg auth-submit"
-                type="button"
-                onClick={() => acceptInvite(token)}
-              >
-                Try joining again
-                <ArrowRight aria-hidden="true" />
-              </button>
-            ) : null}
-          </>
-        ) : null}
-
-        {state.status === "accepted" ? (
-          <div className="auth-success" role="status" aria-live="polite" aria-atomic="true">
-            <CheckCircle2 aria-hidden="true" />
-            <span>
-              Workspace <strong>{state.result.org.slug}</strong> is ready.
-            </span>
-          </div>
-        ) : null}
-
-        <Link className="btn primary lg auth-submit" to={continuePathForState(state)}>
+        <Link className="btn primary auth-submit" to={continuePathForState(state)}>
           {continueLabelForState(state)}
-          <ArrowRight aria-hidden="true" />
+          <ArrowRight aria-hidden="true" size={16} />
         </Link>
-      </section>
-    </main>
+      </div>
+    </AuthCard>
   );
 }
 
 function titleForState(state: InviteState): string {
   if (state.status === "accepted") {
-    return "Invitation accepted";
+    return "You’re in";
   }
   if (state.status === "error") {
-    return "Invitation failed";
+    return "We couldn’t accept this invitation";
   }
-  return "Joining workspace";
+  return "Joining your team";
 }
 
 function subtitleForState(state: InviteState): string {
   if (state.status === "accepted") {
-    return `${state.result.org.displayName} is ready. Local email/password login remains available.`;
+    return `Welcome to ${state.result.org.displayName}.`;
   }
   if (state.status === "error") {
-    return "Use the latest invitation link from your inbox.";
+    return "Open the most recent invitation email and use its link.";
   }
   return "This usually finishes in a few seconds.";
 }
@@ -177,5 +172,5 @@ function continuePathForState(state: InviteState): string {
 }
 
 function continueLabelForState(state: InviteState): string {
-  return state.status === "accepted" ? "Continue" : "Sign in with email/password";
+  return state.status === "accepted" ? "Go to Helix" : "Sign in";
 }

@@ -71,8 +71,8 @@ describe("verify email shell", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Email verified");
-    expect(container.textContent).toContain("Continue");
+    expect(container.textContent).toContain("Your email is verified");
+    expect(container.textContent).toContain("Go to Helix");
     expect(container.querySelector<HTMLAnchorElement>("a")?.getAttribute("href")).toBe(
       "https://acme.helix.example/mail",
     );
@@ -103,8 +103,8 @@ describe("verify email shell", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Sign in with email/password");
-    expect(container.textContent).toContain("ready for local email/password sign in");
+    expect(container.textContent).toContain("Sign in");
+    expect(container.textContent).toContain("Sign in to start using it");
     expect(container.querySelector<HTMLAnchorElement>("a")?.getAttribute("href")).toBe("/login");
   });
 
@@ -137,7 +137,7 @@ describe("verify email shell", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Verification failed");
+    expect(container.textContent).toContain("We couldn’t verify your email");
     expect(container.textContent).toContain("Send a new link");
     clickButton("Send a new link");
     await act(async () => {
@@ -194,14 +194,14 @@ describe("verify email shell", () => {
       root.render(<VerifyEmailShell token="token-1" fetchImpl={fetchImpl} />);
       await Promise.resolve();
     });
-    expect(container.textContent).toContain("Try verification again");
+    expect(container.textContent).toContain("Try again");
 
-    clickButton("Try verification again");
+    clickButton("Try again");
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Email verified");
+    expect(container.textContent).toContain("Your email is verified");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
@@ -240,10 +240,8 @@ describe("signup invite shell", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Local email/password login");
-    expect(container.textContent).toContain("Email + password");
+    expect(container.querySelector("h1")?.textContent).toBe("Sign in");
     expect(container.querySelector('input[type="email"]')).not.toBeNull();
-    expect(container.querySelector('input[type="password"]')).not.toBeNull();
   });
 
   it("accepts an invite after local login succeeds", async () => {
@@ -290,14 +288,27 @@ describe("signup invite shell", () => {
       await Promise.resolve();
     });
 
-    const form = container.querySelector("form");
-    if (form === null) {
-      throw new Error("Local login form was not rendered.");
-    }
-    await act(async () => {
-      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-      await Promise.resolve();
+    const submitForm = async () => {
+      const form = container.querySelector("form");
+      if (form === null) {
+        throw new Error("Local login form was not rendered.");
+      }
+      await act(async () => {
+        form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    };
+    const email = container.querySelector<HTMLInputElement>('input[type="email"]');
+    if (email === null) throw new Error("Email field was not rendered.");
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        email,
+        "ada@example.com",
+      );
+      email.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    await submitForm();
+    await submitForm();
 
     expect(fetchImpl).toHaveBeenCalledWith(
       "/v1/api/signup/onboarding-invite/accept",
@@ -309,8 +320,8 @@ describe("signup invite shell", () => {
         signal: expect.any(AbortSignal),
       }),
     );
-    expect(container.textContent).toContain("Invitation accepted");
-    expect(container.textContent).toContain("Local email/password login remains available");
+    expect(container.textContent).toContain("You’re in");
+    expect(container.textContent).toContain("Welcome to Acme.");
     expect(container.querySelector<HTMLAnchorElement>("a")?.getAttribute("href")).toBe(
       "https://acme.helix.example/mail",
     );
@@ -357,14 +368,14 @@ describe("signup invite shell", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(container.textContent).toContain("Try joining again");
+    expect(container.textContent).toContain("Try again");
 
-    clickButton("Try joining again");
+    clickButton("Try again");
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("Invitation accepted");
+    expect(container.textContent).toContain("You’re in");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });

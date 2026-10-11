@@ -21,8 +21,6 @@ export const LOGIN_SEED_SOURCE = "login-seed";
 
 export const ADMIN_SCOPES = [
   "platform.read",
-  "profile.read",
-  "profile.write",
   "mail.read",
   "mail.write",
   "mail.send",
@@ -32,9 +30,7 @@ export const ADMIN_SCOPES = [
   "drive.write",
   "drive.delete",
   "calendar.read",
-  "calendar.read:freebusy",
   "calendar.write",
-  "calendar.write:respond",
   "calendar.manage",
   "calendar.external",
   "chat.read",
@@ -66,17 +62,13 @@ export const ADMIN_SCOPES = [
 
 const USER_SCOPES = [
   "platform.read",
-  "profile.read",
-  "profile.write",
   "mail.read",
   "mail.write",
   "mail.send",
   "drive.read",
   "drive.write",
   "calendar.read",
-  "calendar.read:freebusy",
   "calendar.write",
-  "calendar.write:respond",
   "calendar.manage",
   "chat.read",
   "chat.post",

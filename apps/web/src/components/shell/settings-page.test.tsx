@@ -1,173 +1,184 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useQuery } from "@tanstack/react-query";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { profileQueryKeys } from "@/lib/profile";
+import { axeViolations, settle, unmountAll } from "@/test/ui";
+import { buttonNamed, typeInto } from "@/features/mail/settings/test-support";
+import type { SettingsSectionId } from "./overlay-context";
 import { SettingsPage } from "./settings-page";
-
-vi.mock("@tanstack/react-query", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
-  useQuery: vi.fn(),
-  useQueryClient: () => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }),
-}));
+import { searchSettings } from "./settings-sections";
+import { mockApi, renderWithClient, sessionUser } from "./settings-test-support";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
+const profile = {
+  actorId: sessionUser.actorId,
+  orgId: "org-1",
+  displayName: "Morgan Lee",
+  email: "morgan@example.com",
+  pronouns: "",
+  jobTitle: "",
+  about: "",
+  avatarDataUrl: null,
+};
+const preferences = {
+  language: null,
+  timeZone: "Europe/Paris",
+  dateFormat: null,
+  timeFormat: "24h",
+  weekStart: null,
+  workingHours: null,
+  mail: { readingPane: "none", density: "default", conversationView: true },
+  updatedAt: null,
+};
+
+afterEach(() => {
+  unmountAll();
+  document.body.style.overflow = "";
+  vi.restoreAllMocks();
+});
+
+function renderPage(section: SettingsSectionId, onSectionChange = vi.fn(), onClose = vi.fn()) {
+  mockApi({ "/api/tools/account.preferences.get": preferences, "/api/profile": { profile } });
+  const view = renderWithClient(
+    <SettingsPage open section={section} onSectionChange={onSectionChange} onClose={onClose} />,
+    (client) => client.setQueryData(profileQueryKeys.current, profile),
+  );
+  return { ...view, onSectionChange, onClose };
+}
+
+function navLabels(): string[] {
+  return Array.from(document.querySelectorAll("nav li button")).map(
+    (button) => button.querySelector("span span")?.textContent ?? "",
+  );
+}
+
 describe("SettingsPage", () => {
-  let container: HTMLDivElement;
-  let root: Root;
-
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.append(container);
-    root = createRoot(container);
-    vi.mocked(useQuery).mockReturnValue({
-      data: {
-        actorId: "actor-1",
-        orgId: "org-1",
-        displayName: "Morgan Lee",
-        email: "morgan@example.com",
-        pronouns: "",
-        jobTitle: "",
-        about: "",
-      },
-      error: null,
-    } as never);
-  });
-
-  afterEach(() => {
-    act(() => root.unmount());
-    container.remove();
-    document.body.style.overflow = "";
-    vi.clearAllMocks();
-  });
-
-  it("labels editable profile controls and manages focus", async () => {
-    const onClose = vi.fn();
-    const onSectionChange = vi.fn();
+  it("is a labelled modal that takes focus, closes on Escape and restores focus", async () => {
     const opener = document.createElement("button");
     document.body.append(opener);
     opener.focus();
+    const { onClose, rerender, onSectionChange } = renderPage("personal-info");
+    await settle();
 
-    act(() => {
-      root.render(
-        <SettingsPage open section="profile" onSectionChange={onSectionChange} onClose={onClose} />,
-      );
-    });
-    await act(async () => Promise.resolve());
-
-    const dialog = container.querySelector<HTMLElement>('[role="dialog"]');
-    const displayName = container.querySelector<HTMLInputElement>('input[name="displayName"]');
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
     expect(dialog?.getAttribute("aria-labelledby")).toBe("settings-title");
     expect(document.body.style.overflow).toBe("hidden");
-    expect(document.activeElement).toBe(
-      container.querySelector<HTMLButtonElement>('button[aria-label="Back"]'),
-    );
+    expect(dialog?.contains(document.activeElement)).toBe(true);
+    const displayName = document.querySelector<HTMLInputElement>('input[name="displayName"]');
     expect(displayName?.labels?.[0]?.textContent).toBe("Display name");
-    expect(displayName?.name).toBe("displayName");
-    expect(displayName?.autocomplete).toBe("name");
-    expect(displayName?.disabled).toBe(false);
     expect(displayName?.value).toBe("Morgan Lee");
 
-    const upload = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
-      (button) => button.textContent === "Upload",
-    );
-    expect(upload).toBeUndefined();
-    expect(container.querySelector('button[type="submit"]')?.textContent).toBe("Save profile");
-
-    const shortcuts = Array.from(container.querySelectorAll<HTMLButtonElement>("nav button")).find(
-      (button) => button.textContent?.includes("Keyboard shortcuts"),
-    );
-    act(() => shortcuts?.click());
-    expect(onSectionChange).toHaveBeenCalledWith("shortcuts");
-
     act(() => {
-      document.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
-      );
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(onClose).toHaveBeenCalledTimes(1);
-
-    act(() => {
-      root.render(
-        <SettingsPage
-          open={false}
-          section="profile"
-          onSectionChange={onSectionChange}
-          onClose={onClose}
-        />,
-      );
-    });
+    rerender(
+      <SettingsPage
+        open={false}
+        section="profile"
+        onSectionChange={onSectionChange}
+        onClose={onClose}
+      />,
+    );
     expect(document.body.style.overflow).toBe("");
     expect(document.activeElement).toBe(opener);
     opener.remove();
   });
 
-  it("omits editor controls from shortcuts settings", () => {
-    act(() =>
-      root.render(
-        <SettingsPage
-          open
-          section="shortcuts"
-          onSectionChange={() => undefined}
-          onClose={() => undefined}
-        />,
-      ),
-    );
-    expect(container.querySelector("section[aria-label]")?.textContent).not.toMatch(
-      /\bDocs\b|\bSheets\b|Go to Docs|Formula generation/,
-    );
-  });
-
-  it("lists only sections backed by real settings, without inert switches", () => {
-    for (const section of ["profile", "appearance", "language", "security"] as const) {
-      act(() =>
-        root.render(
-          <SettingsPage
-            open
-            section={section}
-            onSectionChange={() => undefined}
-            onClose={() => undefined}
-          />,
-        ),
-      );
-      expect(container.querySelector('[role="switch"][disabled]')).toBeNull();
-      expect(container.textContent).not.toMatch(
-        /doc, sheet, or deck|Document comments|Meeting summaries|hosted models|API key/u,
-      );
-    }
-    const nav = Array.from(container.querySelectorAll("nav button")).map((b) => b.textContent);
-    expect(nav).toEqual([
+  it("groups the sections Workspace-style and opens the one you pick", async () => {
+    const { onSectionChange } = renderPage("security");
+    await settle();
+    expect(navLabels()).toEqual([
       "Profile",
-      "Appearance",
-      "Language & region",
-      "Mail",
+      "Personal info",
       "Security",
+      "App passwords",
       "S3 access keys",
+      "Language & region",
+      "Appearance",
       "Keyboard shortcuts",
+      "Mail",
     ]);
+    expect(
+      Array.from(document.querySelectorAll("nav h2")).map((heading) => heading.textContent),
+    ).toEqual(["Account", "Preferences", "Apps"]);
+    expect(document.querySelector('nav [aria-current="page"]')?.textContent).toContain("Security");
+    buttonNamed("Keyboard shortcuts")?.click();
+    expect(onSectionChange).toHaveBeenCalledWith("shortcuts");
+    expect(document.querySelector("section[aria-label]")?.getAttribute("aria-label")).toBe(
+      "Security settings",
+    );
   });
 
-  it("renders controlled deep-linked sections with labelled browser metadata", () => {
+  it("searches sections and individual settings, and Escape clears the search first", async () => {
+    const { onSectionChange, onClose } = renderPage("profile");
+    await settle();
+    const search = document.querySelector<HTMLInputElement>('input[type="search"]');
+    expect(search?.labels?.[0]?.textContent).toBe("Search settings");
+    typeInto(search, "time zone");
+    expect(document.querySelector('nav [role="status"]')?.textContent).toBe("1 section found");
+    expect(document.querySelector("nav li")?.textContent).toContain("Time zone");
     act(() => {
-      root.render(
-        <SettingsPage
-          open
-          section="language"
-          onSectionChange={() => undefined}
-          onClose={() => undefined}
-        />,
+      search?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
       );
     });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(search?.value).toBe("");
 
-    const language = container.querySelector<HTMLSelectElement>("#settings-language");
-    expect(container.querySelector('label[for="settings-language"]')?.textContent).toBe("Language");
-    expect(language?.name).toBe("language");
-    expect(language?.disabled).toBe(true);
-    expect(container.querySelector("section[aria-label]")?.getAttribute("aria-label")).toBe(
-      "Language & region settings",
+    typeInto(search, "sign out");
+    expect(navLabels()).toEqual(["Security"]);
+    (document.querySelector("nav li button") as HTMLButtonElement).click();
+    expect(onSectionChange).toHaveBeenCalledWith("security");
+    typeInto(search, "zzz");
+    expect(document.querySelector('nav [role="status"]')?.textContent).toBe(
+      "No settings match “zzz”",
     );
+  });
+
+  it("starts on the section list on small screens and walks back from a section", async () => {
+    renderPage("profile");
+    await settle();
+    expect(buttonNamed("Close settings")).not.toBeNull();
+    expect(buttonNamed("All settings")).toBeNull();
+    buttonNamed("Language & region")?.click();
+    await settle();
+    expect(buttonNamed("All settings")).not.toBeNull();
+    buttonNamed("All settings")?.click();
+    await settle();
+    expect(buttonNamed("All settings")).toBeNull();
+  });
+
+  it("opens deep links on the section itself, with tabs", async () => {
+    const { onSectionChange } = renderPage("mail/filters");
+    await settle();
+    expect(buttonNamed("All settings")).not.toBeNull();
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      "Filters and blocked addresses",
+    );
+    buttonNamed("Labels")?.click();
+    expect(onSectionChange).toHaveBeenCalledWith("mail/labels");
+  });
+
+  it("has no axe violations on the home and language sections", async () => {
+    renderPage("profile");
+    await settle();
+    expect(await axeViolations()).toEqual([]);
+    unmountAll();
+    renderPage("language");
+    await settle();
+    expect(await axeViolations()).toEqual([]);
+  });
+});
+
+describe("searchSettings", () => {
+  it("matches every word against section names, settings and keywords", () => {
+    expect(searchSettings("dark mode").map((result) => result.section.id)).toEqual(["appearance"]);
+    expect(searchSettings("2fa").map((result) => result.section.id)).toEqual(["security"]);
+    expect(searchSettings("working hours")[0]?.matches).toEqual(["Working hours"]);
+    expect(searchSettings("  ")).toEqual([]);
   });
 });

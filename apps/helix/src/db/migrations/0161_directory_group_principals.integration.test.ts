@@ -87,7 +87,12 @@ describe.skipIf(process.env.DATABASE_URL === undefined)(
 
       await expect(effectiveProducts()).resolves.toEqual(["calendar", "object", "thread"]);
       const bindings = await sql<{ readonly bindings: unknown }[]>`
-      select helix_actor_role_bindings(${orgId}, ${memberId}) as bindings
+      select coalesce(jsonb_agg(grant_entry), '[]'::jsonb) as bindings
+      from jsonb_array_elements(helix_actor_role_bindings(${orgId}, ${memberId})) grant_entry
+      -- Explicit bindings only; every active member also holds workspace_member (0208).
+      where grant_entry->>'roleId' not in (
+        select id::text from iam_roles where role_key = 'workspace_member'
+      )
     `;
       expect(bindings[0]?.bindings).toEqual([
         expect.objectContaining({
@@ -100,7 +105,12 @@ describe.skipIf(process.env.DATABASE_URL === undefined)(
       where org_id = ${orgId} and group_id = ${groupId} and actor_id = ${memberId}`;
       await expect(effectiveProducts()).resolves.toEqual([]);
       const removed = await sql<{ readonly bindings: unknown }[]>`
-      select helix_actor_role_bindings(${orgId}, ${memberId}) as bindings
+      select coalesce(jsonb_agg(grant_entry), '[]'::jsonb) as bindings
+      from jsonb_array_elements(helix_actor_role_bindings(${orgId}, ${memberId})) grant_entry
+      -- Explicit bindings only; every active member also holds workspace_member (0208).
+      where grant_entry->>'roleId' not in (
+        select id::text from iam_roles where role_key = 'workspace_member'
+      )
     `;
       expect(removed[0]?.bindings).toEqual([]);
 

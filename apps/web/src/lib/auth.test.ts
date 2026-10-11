@@ -7,7 +7,9 @@ import {
   safeLoginReturnTo,
   getSessionUser,
   sessionUserQueryOptions,
+  discoverSignInMethod,
   signInWithEmail,
+  WRONG_CREDENTIALS_MESSAGE,
   signInWithOidc,
   signOut,
 } from "./auth";
@@ -91,14 +93,38 @@ describe("web auth helpers", () => {
     expect(call?.[1]?.credentials).toBe("include");
   });
 
-  it("throws a clear error on bad credentials", async () => {
-    const fetchMock = vi
+  it("answers every credential failure with one message that hides whether the account exists", async () => {
+    for (const [status, message] of [
+      [401, "Invalid email or password"],
+      [400, "User not found"],
+    ] as const) {
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(Response.json({ message }, { status }));
+      await expect(
+        signInWithEmail({ email: "x@helix.local", password: "wrong" }, fetchMock),
+      ).rejects.toThrow(WRONG_CREDENTIALS_MESSAGE);
+    }
+    const limited = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(Response.json({ message: "Invalid email or password" }, { status: 401 }));
-
+      .mockResolvedValue(Response.json({ message: "Too many attempts" }, { status: 429 }));
     await expect(
-      signInWithEmail({ email: "x@helix.local", password: "wrong" }, fetchMock),
-    ).rejects.toThrow("Invalid email or password");
+      signInWithEmail({ email: "x@helix.local", password: "wrong" }, limited),
+    ).rejects.toThrow("Too many attempts");
+  });
+
+  it("routes only managed OIDC domains to SSO and falls back to password", async () => {
+    const managed = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ managed: true, protocol: "oidc" }));
+    await expect(discoverSignInMethod(" Ana@Corp.example ", managed)).resolves.toBe("sso");
+    expect(JSON.parse(managed.mock.calls[0]?.[1]?.body as string)).toEqual({
+      email: "ana@corp.example",
+    });
+    const unmanaged = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ managed: false }));
+    await expect(discoverSignInMethod("a@b.example", unmanaged)).resolves.toBe("password");
+    const failing = vi.fn<typeof fetch>().mockResolvedValue(new Response("", { status: 503 }));
+    await expect(discoverSignInMethod("a@b.example", failing)).resolves.toBe("password");
   });
 
   it("discovers a managed domain before starting tenant OIDC", async () => {

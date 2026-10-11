@@ -50,18 +50,14 @@ export function teamChildId(parentId: string, index: number): string {
 
 export const LOCAL_TEAM_SCOPES = [
   "platform.read",
-  "profile.read",
-  "profile.write",
   "mail.read",
   "mail.write",
   "mail.send",
   "drive.read",
   "drive.write",
   "calendar.read",
-  "calendar.read:freebusy",
   "calendar.write",
   "calendar.manage",
-  "calendar.write:respond",
   "chat.read",
   "chat.post",
   "chat.create",

@@ -1282,7 +1282,7 @@ export function featureFlagForTool(tool: Pick<ToolDefinition, "id">): string | u
   if (tool.id === "mail.send" || tool.id === "mail.reply") {
     return "mail_outbound";
   }
-  if (tool.id === "drive.share" || tool.id.startsWith("drive.access.")) {
+  if (tool.id === "drive.link.create") {
     return "b2b_sharing";
   }
   return undefined;

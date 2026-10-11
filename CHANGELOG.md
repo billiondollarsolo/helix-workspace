@@ -14,6 +14,9 @@ All notable changes to Helix Workspace are documented here. This file follows
 
 ### Changed
 
+- Organizations can always share Drive files with their own members; the `b2b_sharing` flag
+  ("External sharing" in admin settings) now governs only public share links, so personal-plan
+  and single-tenant workspaces share internally and admins opt in to sharing outside.
 - ClamAV is now a Helix-built image (`infra/clamav`) promoted like SpamAssassin, so the
   pinned upstream image can take patched Alpine packages first. Production Compose requires
   `HELIX_CLAMAV_IMAGE` with an immutable `helix-workspace-clamav` digest.

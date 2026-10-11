@@ -708,9 +708,11 @@ describe("drive tools", () => {
           requireExpiry: false,
         },
       }),
-      resolveShareActorRefs: async () => ({
-        actorIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab"],
-        unresolvedRefs: [],
+      resolveShareActorRefs: async ({ refs }) => ({
+        actorIds: refs.includes("colleague@team.example")
+          ? ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab"]
+          : [],
+        unresolvedRefs: refs.filter((ref) => ref !== "colleague@team.example"),
       }),
     });
     const actor = {
@@ -720,21 +722,14 @@ describe("drive tools", () => {
       displayName: "Ada",
       scopes: ["drive.write"],
     };
-    await expect(
-      registry.invoke(
-        "drive.share",
-        {
-          objectId,
-          role: "reader",
-          actorIds: [],
-          actorRefs: ["outsider@evil.example"],
-        },
-        { actor },
-      ),
-    ).resolves.toMatchObject({
+    const share = (ref: string) =>
+      registry.invoke("drive.share", { objectId, role: "reader", actorRefs: [ref] }, { actor });
+    await expect(share("outsider@evil.example")).resolves.toMatchObject({
       ok: false,
       error: expect.stringMatching(/denies recipient domain/i),
     });
+    // Members named by email are internal shares, never subject to the external policy.
+    await expect(share("colleague@team.example")).resolves.toMatchObject({ ok: true });
   });
 });
 class FakeWorkflowStore implements DriveWorkflowStore {

@@ -29,6 +29,13 @@ All notable changes to Helix Workspace are documented here. This file follows
   rename reports success or the server's error.
 - Renaming an unknown Drive file reports a file error instead of an unknown folder.
 - The Drive share dialog closes with Escape and focuses the people field when opened.
+- OAuth client lookups work for the constrained runtime database role: `agent_credentials`
+  had only the restrictive tenant boundary, so forced RLS hid every row and the token
+  endpoint answered "Unknown OAuth client". Migration 0201 adds the permissive tenant
+  policy, and the boot-time RLS coverage check now rejects any tenant table without one.
+- The live demo data job runs its API in the demo org and points authenticated k6 at the
+  versioned `/v1` API, so tool, MCP, and search scenarios hit real routes instead of 404s.
+  The k6 metrics scenario now polls once a second instead of saturating the API.
 - Search reindex keyset cursors keep PostgreSQL's microsecond precision, so rows
   that share one millisecond (bulk seeds and imports) no longer return the same
   page forever and stall demo preparation.

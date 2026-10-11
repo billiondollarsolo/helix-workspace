@@ -176,7 +176,11 @@ export async function assertTenantSafeDatabaseRole(sql: postgres.Sql): Promise<v
   }
 }
 
-/** Fail deployment when any public org_id table lacks the canonical restrictive tenant boundary. */
+/**
+ * Fail deployment when any public org_id table lacks the canonical restrictive tenant
+ * boundary, or has no permissive policy: under forced RLS a table with only restrictive
+ * policies hides every row from the runtime role.
+ */
 export async function assertTenantRlsCoverage(sql: postgres.Sql): Promise<void> {
   const gaps = (await sql`
     select c.relname as table_name
@@ -203,6 +207,9 @@ export async function assertTenantRlsCoverage(sql: postgres.Sql): Promise<void> 
             and pg_get_expr(p.polwithcheck, p.polrelid) in (
               '(org_id = helix_current_org_id())', '(org_id = public.helix_current_org_id())'
             )
+        )
+        or not exists (
+          select 1 from pg_policy p where p.polrelid = c.oid and p.polpermissive
         )
       )
     order by c.relname

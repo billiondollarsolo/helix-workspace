@@ -1,10 +1,11 @@
 import { useState } from "react";
+import { SettingToggle } from "@/features/admin/console/widgets";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/helix-dialog";
 import { AdminField, AdminSelect } from "../console/controls";
-import { StateBanner } from "../console/primitives";
+import { ErrorNotice, Notice } from "../console/primitives";
 import { ActorSearchField, useActorPicker } from "../credentials-form-fields";
 import type { AdminUser } from "../admin-users";
 import { offboardAccount, previewOffboarding, type OffboardPreview } from "../user-offboarding-api";
@@ -20,7 +21,7 @@ const RESOURCE_LABELS: Record<keyof OffboardPreview["counts"], string> = {
   assistantConversations: "Assistant conversations",
   assistantMemories: "Assistant memories",
 };
-function UserOffboardingDialog({
+export function UserOffboardingDialog({
   actorId,
   name,
   onClose,
@@ -108,12 +109,12 @@ function UserOffboardingDialog({
           from historical records.
         </p>
         {finished ? (
-          <StateBanner kind="info">
+          <Notice>
             Access is disabled for {name}.{" "}
             {preview?.successor
               ? `Ownership was handed to ${preview.successor.displayName}.`
               : "There were no owned resources to transfer."}
-          </StateBanner>
+          </Notice>
         ) : (
           <>
             <fieldset disabled={pending} className="min-w-0 space-y-3">
@@ -160,18 +161,15 @@ function UserOffboardingDialog({
                   owner.
                 </p>
               ) : null}
-              <label className="flex min-h-8 items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={preserveReceivingAddresses}
-                  onChange={(event) => {
-                    setPreserveReceivingAddresses(event.target.checked);
-                    setPreview(null);
-                    setError(null);
-                  }}
-                />
-                Keep receiving mail at the old addresses
-              </label>
+              <SettingToggle
+                label="Keep receiving mail at the old addresses"
+                checked={preserveReceivingAddresses}
+                onCheckedChange={(checked) => {
+                  setPreserveReceivingAddresses(checked);
+                  setPreview(null);
+                  setError(null);
+                }}
+              />
               <p className="text-sm text-muted-foreground">
                 {preserveReceivingAddresses
                   ? "The successor receives future mail at the listed old addresses. This never grants permission to send as those addresses."
@@ -188,7 +186,7 @@ function UserOffboardingDialog({
               </Button>
             </fieldset>
             {actorsQuery.isError ? (
-              <StateBanner kind="error">
+              <ErrorNotice>
                 {actorsQuery.error.message}{" "}
                 <Button
                   type="button"
@@ -200,7 +198,7 @@ function UserOffboardingDialog({
                 >
                   Retry accounts
                 </Button>
-              </StateBanner>
+              </ErrorNotice>
             ) : null}
             {preview ? (
               <section className="space-y-3" aria-label="Account handoff preview">
@@ -235,13 +233,13 @@ function UserOffboardingDialog({
                   <p className="text-sm text-muted-foreground">No receiving addresses.</p>
                 )}
                 {preview.blockers.length ? (
-                  <StateBanner kind="error">
+                  <ErrorNotice>
                     <ul className="list-inside list-disc">
                       {preview.blockers.map((blocker) => (
                         <li key={blocker}>{blocker}</li>
                       ))}
                     </ul>
-                  </StateBanner>
+                  </ErrorNotice>
                 ) : (
                   <Button
                     type="button"
@@ -258,33 +256,8 @@ function UserOffboardingDialog({
             ) : null}
           </>
         )}
-        {error ? <StateBanner kind="error">{error}</StateBanner> : null}
+        {error ? <ErrorNotice>{error}</ErrorNotice> : null}
       </div>
     </Dialog>
-  );
-}
-export function UserOffboardingButton({
-  actorId,
-  name,
-}: {
-  readonly actorId: string;
-  readonly name: string;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        aria-label={`Offboard ${name}`}
-        onClick={() => setOpen(true)}
-      >
-        Offboard account
-      </Button>
-      {open ? (
-        <UserOffboardingDialog actorId={actorId} name={name} onClose={() => setOpen(false)} />
-      ) : null}
-    </>
   );
 }

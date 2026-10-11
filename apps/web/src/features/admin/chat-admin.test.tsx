@@ -29,8 +29,8 @@ describe("policyToForm / mappers (component-adjacent handlers)", () => {
       }),
     ).toEqual({
       retentionDays: "90",
-      editWindowSeconds: "3600",
-      deleteWindowSeconds: "7200",
+      editWindowMinutes: "60",
+      deleteWindowMinutes: "120",
       roomId: "",
     });
   });
@@ -39,8 +39,8 @@ describe("policyToForm / mappers (component-adjacent handlers)", () => {
     expect(
       mapRetentionFormToToolInput({
         retentionDays: String(CHAT_PLATFORM_DEFAULT_RETENTION_DAYS),
-        editWindowSeconds: "86400",
-        deleteWindowSeconds: "86400",
+        editWindowMinutes: "1440",
+        deleteWindowMinutes: "1440",
         roomId: "",
       }),
     ).toEqual({
@@ -105,19 +105,21 @@ describe("ChatAdminSection", () => {
   });
 
   it("loads the org retention policy and enables real controls", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          orgId: "22222222-2222-4222-8222-222222222222",
-          roomId: null,
-          retentionDays: 90,
-          editWindowSeconds: 86_400,
-          deleteWindowSeconds: 86_400,
-          legalHold: false,
-          updatedAt: "2026-08-01T00:00:00.000Z",
-          configured: true,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            orgId: "22222222-2222-4222-8222-222222222222",
+            roomId: null,
+            retentionDays: 90,
+            editWindowSeconds: 86_400,
+            deleteWindowSeconds: 86_400,
+            legalHold: false,
+            updatedAt: "2026-08-01T00:00:00.000Z",
+            configured: true,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
       ),
     );
 
@@ -133,10 +135,15 @@ describe("ChatAdminSection", () => {
     });
 
     await waitFor(() => {
-      expect(container.textContent ?? "").toContain("90 day retention");
+      expect(container.textContent ?? "").toContain("Messages kept for 90 days");
     });
 
-    expect(headingOutline()).toEqual(["H1:Chat", "H2:Retention policy", "H2:Organization export"]);
+    expect(headingOutline()).toEqual([
+      "H1:Chat",
+      "H2:Service status",
+      "H2:Retention policy",
+      "H2:Organization export",
+    ]);
 
     const retentionInput = inputByLabel("Retention days");
     expect(retentionInput.value).toBe("90");
@@ -144,22 +151,24 @@ describe("ChatAdminSection", () => {
     expect(buttonByText("Save retention policy").disabled).toBe(false);
     expect(buttonByText("Run organization export").disabled).toBe(false);
 
-    const requestInput = fetchMock.mock.calls[0]?.[0];
-    const requestUrl =
+    const requestUrls = fetchMock.mock.calls.map(([requestInput]) =>
       typeof requestInput === "string"
         ? requestInput
         : requestInput instanceof URL
           ? requestInput.toString()
-          : (requestInput?.url ?? "");
-    expect(requestUrl).toContain("/v1/api/tools/chat.retention.get");
+          : requestInput.url,
+    );
+    expect(requestUrls.some((url) => url.includes("/v1/api/tools/chat.retention.get"))).toBe(true);
   });
 
   it("disables controls with an explicit reason when retention tools are unauthorized", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ error: "forbidden" }), {
-        status: 403,
-        headers: { "content-type": "application/json" },
-      }),
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "forbidden" }), {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
     );
 
     await act(() => {
@@ -174,9 +183,9 @@ describe("ChatAdminSection", () => {
     });
 
     await waitFor(() => {
-      expect(container.querySelector('[role="alert"]')?.textContent ?? "").toContain(
-        "Chat retention controls are unavailable",
-      );
+      expect(
+        [...container.querySelectorAll('[role="alert"]')].map((alert) => alert.textContent).join(),
+      ).toContain("Chat retention controls are unavailable");
     });
 
     expect(container.querySelector(".admin-unavailable-reason")?.textContent ?? "").toContain(
@@ -188,19 +197,21 @@ describe("ChatAdminSection", () => {
   });
 
   it("opens a confirmation dialog before posting retention.set (no silent write)", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          orgId: "22222222-2222-4222-8222-222222222222",
-          roomId: null,
-          retentionDays: 2555,
-          editWindowSeconds: 86_400,
-          deleteWindowSeconds: 86_400,
-          legalHold: false,
-          updatedAt: null,
-          configured: false,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            orgId: "22222222-2222-4222-8222-222222222222",
+            roomId: null,
+            retentionDays: 2555,
+            editWindowSeconds: 86_400,
+            deleteWindowSeconds: 86_400,
+            legalHold: false,
+            updatedAt: null,
+            configured: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
       ),
     );
 
@@ -219,7 +230,7 @@ describe("ChatAdminSection", () => {
     // so the input value alone does not prove the load finished (controls stay
     // disabled while the query is pending).
     await waitFor(() => {
-      expect(container.textContent ?? "").toContain("platform default");
+      expect(container.textContent ?? "").toContain("Default settings");
     });
 
     const callsBefore = fetchMock.mock.calls.length;

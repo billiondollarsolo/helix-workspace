@@ -559,7 +559,7 @@ describe("SecurityTierReadiness admin UI", () => {
 
     renderAdminUI();
     await waitForText("Live platform config connected");
-    await waitForText("Tier readiness");
+    await waitForText("Security tier");
 
     // Dead "reference value" tables and AI governance cards used to live here
     // and looked actionable. Controls belong under Policies; spend under AI costs.
@@ -568,7 +568,6 @@ describe("SecurityTierReadiness admin UI", () => {
     expect(container.textContent).not.toContain("Cost limits and audit evidence");
     expect(container.textContent).not.toContain("User daily AI cost");
     expect(container.querySelector('[role="table"][aria-label="Security controls"]')).toBeNull();
-    expect(container.querySelector('[aria-label="Related security admin pages"]')).not.toBeNull();
     expect(container.querySelector('[role="tablist"]')).toBeNull();
     expect(container.querySelector('[aria-label="Plugin catalog"]')).toBeNull();
   });

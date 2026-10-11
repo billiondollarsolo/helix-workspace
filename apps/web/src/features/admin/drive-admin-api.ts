@@ -2,6 +2,7 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 import { authenticatedFetch, type AuthFetch } from "@/lib/auth";
 import { callTool } from "@/lib/tool-call";
+import { formatBytes, formatDuration, formatRelativeTime } from "@/features/admin/console/format";
 import { ADMIN_QUERY_DEFAULTS } from "@/features/admin/console/request-budget";
 
 /**
@@ -74,7 +75,7 @@ export function lifecycleFormFromPolicy(policy: DriveLifecyclePolicy): DriveLife
 export function formatQuotaSummary(usage: DriveQuotaUsage): string {
   const used = formatBytes(usage.usedBytes);
   if (usage.unlimited || usage.limitBytes === null) {
-    return `${used} used · no storage limit`;
+    return `${used} used · Unlimited`;
   }
   const limit = formatBytes(usage.limitBytes);
   const pct = usage.percentUsed === null ? "—" : `${String(usage.percentUsed)}%`;
@@ -83,9 +84,11 @@ export function formatQuotaSummary(usage: DriveQuotaUsage): string {
 
 export function formatLifecycleSummary(policy: DriveLifecyclePolicy): string {
   const source = policy.configured
-    ? `configured${policy.updatedAt === null ? "" : ` · updated ${policy.updatedAt}`}`
-    : "platform default (no org policy row yet)";
-  return `${String(policy.trashRetentionDays)} day trash retention · ${String(policy.orphanGraceHours)}h orphan grace · ${source}`;
+    ? policy.updatedAt === null
+      ? "Set for your organization"
+      : `Updated ${formatRelativeTime(policy.updatedAt)}`
+    : "Default settings";
+  return `Trash kept for ${formatDuration(policy.trashRetentionDays * 86_400)} · abandoned uploads removed after ${formatDuration(policy.orphanGraceHours * 3_600)} · ${source}`;
 }
 
 export function describeDriveAdminUnavailable(error: Error): string {
@@ -168,17 +171,4 @@ function parsePositiveInt(value: string, label: string, min: number, max: number
     return `${label} must be an integer from ${String(min)} to ${String(max)}.`;
   }
   return parsed;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${String(bytes)} B`;
-  const units = ["KB", "MB", "GB", "TB"] as const;
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const rounded = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
-  return `${String(rounded)} ${units[unit]}`;
 }

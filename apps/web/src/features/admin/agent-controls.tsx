@@ -7,8 +7,7 @@ import { ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { AdminAccessRelatedNav } from "@/features/admin/admin-related-nav";
-import { PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import { PageHeading, ErrorNotice, LoadingState } from "@/features/admin/console/primitives";
 import {
   agentControlsQueryKeys,
   agentControlsQueryOptions,
@@ -84,20 +83,15 @@ export function AgentControlsManagement() {
       data-testid="agent-controls-admin"
     >
       <PageHeading
-        title="Agent emergency controls"
-        subtitle="Stop agent writes platform-wide or for one organization. These take effect immediately on non-read tools. Credentials are managed under Agent credentials."
+        title="Agent controls"
+        subtitle="Stop agents from making changes, everywhere or for one organization."
       />
-      <AdminAccessRelatedNav current="agent-controls" />
 
-      {error !== null ? <StateBanner kind="error">{error}</StateBanner> : null}
+      {error !== null ? <ErrorNotice>{error}</ErrorNotice> : null}
       {controlsQuery.isError ? (
-        <StateBanner kind="error">
-          Could not load agent controls. You need admin.agents permission.
-        </StateBanner>
+        <ErrorNotice>Could not load agent controls. You need admin.agents permission.</ErrorNotice>
       ) : null}
-      {controlsQuery.isPending ? (
-        <StateBanner kind="loading">Loading agent controls…</StateBanner>
-      ) : null}
+      {controlsQuery.isPending ? <LoadingState label="Loading agent controls…" /> : null}
 
       {controls !== undefined ? (
         <section

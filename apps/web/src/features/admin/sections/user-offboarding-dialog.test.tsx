@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { UserOffboardingButton } from "./user-offboarding-dialog";
+import { UserOffboardingDialog } from "./user-offboarding-dialog";
 import type { AdminUser } from "../admin-users";
 import type { OffboardPreview } from "../user-offboarding-api";
 
@@ -149,11 +149,25 @@ async function settle() {
     await new Promise((resolve) => setTimeout(resolve, 15));
   });
 }
+/** The row menu opens the dialog; this stands in for that menu item. */
+function OffboardingOpener() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Offboard account
+      </button>
+      {open ? (
+        <UserOffboardingDialog actorId="Morgan" name="Morgan" onClose={() => setOpen(false)} />
+      ) : null}
+    </>
+  );
+}
 async function render() {
   await act(() => {
     root.render(
       <QueryClientProvider client={client}>
-        <UserOffboardingButton actorId="Morgan" name="Morgan" />
+        <OffboardingOpener />
       </QueryClientProvider>,
     );
     return Promise.resolve();
@@ -192,7 +206,7 @@ it("previews exact resources and a selected agent before one explicit offboard, 
   await select("Assistant agent");
   expect(document.querySelector('[aria-label="Account handoff preview"]')).toBeNull();
   await act(() => {
-    document.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click();
+    document.querySelector<HTMLButtonElement>('[role="switch"]')?.click();
     return Promise.resolve();
   });
   await click("Review handoff");

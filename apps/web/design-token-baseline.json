@@ -1,7 +1,6 @@
 {
   "src/components/shell/helix-logo.tsx": 1,
   "src/components/shell/helix-mark.ts": 3,
-  "src/features/admin/tenant-config-management.tsx": 1,
   "src/features/assistant/assistant-data.ts": 4,
   "src/features/drive/drive-data.ts": 7,
   "src/features/mail/mail-html-body.tsx": 4,

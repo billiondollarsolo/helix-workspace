@@ -60,11 +60,11 @@ import {
 import { type AdminUsersListResponse } from "@/features/admin/admin-users";
 import {
   PageHeading,
-  PageScroll,
   QueryFailureBanner,
-  StateBanner,
   useQueryFailure,
   type QueryFailure,
+  LoadingState,
+  Notice,
 } from "@/features/admin/console/primitives";
 import { type CoreAppsAdminStatus } from "@/features/admin/core-apps-api";
 import { type DomainWithRecords } from "@/features/admin/domains-api";
@@ -428,10 +428,8 @@ function coverageOf(signals: readonly Signal[]): Coverage {
 function CoverageNote({ coverage }: { readonly coverage: Coverage }) {
   return (
     <p className="mt-2 mb-0 text-xs text-[var(--text-2)]">
-      These checks read {coverage.checked} of the console&apos;s {coverage.total} sections. The
-      other {coverage.unchecked.length} are not read here at all — a section can be misconfigured,
-      or answering 404 for every request, and nothing on this page will say so. A quiet Overview is
-      not a checked workspace.
+      Checks cover {coverage.checked} of {coverage.total} admin pages. Open a page to review the
+      rest.
     </p>
   );
 }
@@ -530,10 +528,10 @@ export function AdminOverview() {
     toSignal(
       {
         id: "platform",
-        title: "Tier readiness",
+        title: "Security tier",
         icon: <ShieldIcon size={16} />,
         section: "tier-readiness",
-        linkLabel: "Open Tier readiness",
+        linkLabel: "Open Security tier",
         subject: "platform configuration",
       },
       platformQuery,
@@ -559,7 +557,7 @@ export function AdminOverview() {
         title: "Workspace apps",
         icon: <BriefcaseIcon size={16} />,
         section: "workspace-apps",
-        linkLabel: "Open Workspace apps",
+        linkLabel: "Open All apps",
         subject: "workspace apps",
       },
       coreAppsQuery,
@@ -594,10 +592,10 @@ export function AdminOverview() {
   const refreshAll = retryOverview;
 
   return (
-    <PageScroll>
+    <>
       <PageHeading
-        title="Overview"
-        subtitle="Live status from the sections below — Overview stores nothing of its own."
+        title="Home"
+        subtitle="What needs your attention across the organization."
         actions={
           <Button
             type="button"
@@ -653,10 +651,10 @@ export function AdminOverview() {
         <EnterpriseDetailBand
           title="Security & tier"
           section="tier-readiness"
-          linkLabel="Open Tier readiness"
+          linkLabel="Open Security tier"
           tone={toneOf("platform")}
           unreadable={platformFailure !== null}
-          unreadableNote="Tier readiness could not be read — see the banner above."
+          unreadableNote="Security tier could not be read — see the banner above."
           pending={platformData === undefined}
           pendingNote="Reading platform configuration…"
         >
@@ -681,10 +679,10 @@ export function AdminOverview() {
         <EnterpriseDetailBand
           title="App enablement"
           section="workspace-apps"
-          linkLabel="Open Workspace apps"
+          linkLabel="Open All apps"
           tone={toneOf("apps")}
           unreadable={coreAppsFailure !== null}
-          unreadableNote="Workspace apps could not be read — see the banner above."
+          unreadableNote="App status could not be read — see the banner above."
           pending={coreAppsData === undefined}
           pendingNote="Reading workspace apps…"
         >
@@ -693,8 +691,8 @@ export function AdminOverview() {
 
         <EnterpriseDetailBand
           title="AI & mail spam"
-          section="ai-providers"
-          linkLabel="Open AI providers"
+          section="assistant"
+          linkLabel="Open Assistant settings"
           /* No rule of its own — this band reports the platform read, not a
              judgement on what it contains. */
           tone={readingTone(platformFailure, platformData)}
@@ -723,8 +721,8 @@ export function AdminOverview() {
             the count.
           </li>
           <li>
-            Tier readiness reports the live tier and the platform&apos;s own ready flag. The
-            per-gate breakdown lives in Tier readiness.
+            Security tier reports the live tier and the platform&apos;s own ready flag. The per-gate
+            breakdown is on the Security tier page.
           </li>
           <li>
             Directory counts the first page of accounts the admin API returns. A trailing
@@ -747,7 +745,7 @@ export function AdminOverview() {
           </li>
         </ul>
       </details>
-    </PageScroll>
+    </>
   );
 }
 
@@ -812,19 +810,17 @@ function AttentionBand({ signals }: { readonly signals: readonly Signal[] }) {
        out loud that it is not a clean bill of health, because an operator
        reading "nothing needs attention" will stop looking. */
     return (
-      <StateBanner kind="info">
+      <Notice>
         Nothing needs attention in the {answered} of {signals.length}{" "}
         {plural(signals.length, "check", "checks")} that responded. {gap} This is not a clean bill
         of health for the workspace.
-      </StateBanner>
+      </Notice>
     );
   }
 
   if (checking.length > 0) {
     return (
-      <StateBanner kind="loading">
-        Checking domains, security policies, tier readiness, the directory, and workspace apps…
-      </StateBanner>
+      <LoadingState label="Checking domains, security policies, tier readiness, the directory, and workspace apps…" />
     );
   }
 
@@ -1076,9 +1072,7 @@ function AiMailDetail({ status }: { readonly status: PlatformConfigStatus }) {
       </div>
       <div>
         <dt className="sr-only">Note</dt>
-        <dd className="m-0 mt-1 text-[var(--text-2)]">
-          Configure under AI → AI providers. Cost limits and observability stay separate.
-        </dd>
+        <dd className="m-0 mt-1 text-[var(--text-2)]">Configure under Apps › Assistant.</dd>
       </div>
     </dl>
   );

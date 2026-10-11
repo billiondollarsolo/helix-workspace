@@ -13,13 +13,13 @@
 
 import { useDebouncedCallback } from "@tanstack/react-pacer";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { RotateCcw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { adminUsersQueryOptions, type AdminUsersListResponse } from "@/features/admin/admin-users";
 import { AdminInput } from "@/features/admin/console/controls";
-import { StateBanner } from "@/features/admin/console/primitives";
+import { InlineError } from "@/components/ui/inline-error";
+import { LoadingState, Notice } from "@/features/admin/console/primitives";
 import { SELECT_CLASS, parseScopes, toggleScope } from "@/features/admin/credentials-shared";
 
 export interface ActorPicker {
@@ -156,15 +156,13 @@ export function ActorNoticeBanner({
 }) {
   return (
     <div id={id}>
-      <StateBanner kind={kind}>
-        {message}
-        {retryable ? (
-          <Button className="mt-2" onClick={onRetry} size="xs" type="button" variant="outline">
-            <RotateCcw />
-            Retry
-          </Button>
-        ) : null}
-      </StateBanner>
+      {kind === "loading" ? (
+        <LoadingState label={message} count={2} />
+      ) : kind === "error" ? (
+        <InlineError variant="compact" message={message} {...(retryable ? { onRetry } : {})} />
+      ) : (
+        <Notice>{message}</Notice>
+      )}
     </div>
   );
 }

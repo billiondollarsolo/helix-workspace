@@ -5,11 +5,8 @@
  *
  *  - `AdminField` was copy-pasted byte-identically into `drive-admin.tsx`,
  *    `chat-admin.tsx` and `mail-admin.tsx`.
- *  - `AdminToolbar` / `AdminBulkBar` finally give `.admin-filter-bar` and
- *    `.admin-bulk-bar` a caller. Both classes were written, documented in
- *    `styles.css` as "recurs across sections, so it is a class rather than a
- *    repeated inline object", and then used by nothing — every section
- *    hand-rolled its own `{display:"flex", gap:8, marginBottom:12}`.
+ *  - `AdminToolbar` gives `.admin-filter-bar` a caller, instead of every
+ *    section hand-rolling its own `{display:"flex", gap:8, marginBottom:12}`.
  *  - `AdminInput` / `AdminSelect` replace the exported `INPUT_STYLE`
  *    CSSProperties object. An inline style cannot carry `:focus-visible`,
  *    cannot respond to the density token, and can only be overridden with
@@ -54,26 +51,6 @@ export function AdminToolbar({
 }) {
   return (
     <div className="admin-filter-bar" role="group" aria-label={label}>
-      {children}
-    </div>
-  );
-}
-
-/** Selection summary + actions. Rendered only while something is selected. */
-export function AdminBulkBar({
-  /** Names the bar for assistive tech — "Bulk actions for selected users". */
-  label,
-  children,
-}: {
-  readonly label: string;
-  readonly children: ReactNode;
-}) {
-  return (
-    /* `role="status"`: the count changes as rows are ticked, and a bulk action
-       that names a number the operator cannot hear is how the wrong rows get
-       acted on. It still needs a name of its own — a status region announced
-       only as a number does not say what the number counts. */
-    <div className="admin-bulk-bar panel" role="status" aria-label={label}>
       {children}
     </div>
   );

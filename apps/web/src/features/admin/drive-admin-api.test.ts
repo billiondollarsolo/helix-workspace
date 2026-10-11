@@ -63,7 +63,7 @@ describe("drive-admin-api mappers (D11)", () => {
         updatedAt: null,
         configured: false,
       }),
-    ).toMatch(/platform default/);
+    ).toBe("Trash kept for 30 days · abandoned uploads removed after 1 day · Default settings");
   });
 
   it("explains missing admin.drive scope honestly", () => {

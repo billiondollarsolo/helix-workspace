@@ -41,7 +41,7 @@ for (const type of ["user", "agent"] as const)
       0,
     );
     await owner.selectOption(type === "user" ? agentId : personId);
-    await dialog.getByLabel("Keep receiving mail at the old addresses").check();
+    await dialog.getByRole("switch", { name: "Keep receiving mail at the old addresses" }).click();
     await dialog.getByRole("button", { name: "Review handoff", exact: true }).click();
     const preview = dialog.getByRole("region", { name: "Account handoff preview" });
     await expect(preview.locator("dd")).toHaveText(Object.values(initialCounts).map(String));
@@ -125,7 +125,7 @@ test("typing and choice updates retain focus and Escape restores the offboard op
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Offboard Morgan Lee", exact: true }),
+    page.getByRole("button", { name: "Actions for Morgan Lee", exact: true }),
   ).toBeFocused();
 });
 
@@ -178,10 +178,10 @@ async function audit(page: Page) {
 }
 async function openOffboard(page: Page) {
   await page.goto("/admin/users");
-  const details = page.getByRole("button", { name: "Details for Morgan Lee", exact: true });
-  await expect(details).toBeVisible();
-  if ((await details.getAttribute("aria-expanded")) !== "true") await details.click();
-  await page.getByRole("button", { name: "Offboard Morgan Lee", exact: true }).click();
+  const actions = page.getByRole("button", { name: "Actions for Morgan Lee", exact: true });
+  await expect(actions).toBeVisible();
+  await actions.click();
+  await page.getByRole("menuitem", { name: "Remove access…", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Offboard Morgan Lee", exact: true });
   await expect(dialog.getByLabel("New owner", { exact: true })).toBeEnabled();
   return dialog;

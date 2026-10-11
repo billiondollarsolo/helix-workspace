@@ -75,8 +75,8 @@ test.describe("/admin/domains — capabilities", () => {
        under Mail, unreachable from the domain they belong to. */
     await openDomains(page, domainsPayload());
 
-    await expect(page.getByRole("checkbox", { name: "Mail", exact: true })).toBeVisible();
-    await expect(page.getByRole("checkbox", { name: "Identity", exact: true })).toBeVisible();
+    await expect(page.getByRole("switch", { name: "Mail", exact: true })).toBeVisible();
+    await expect(page.getByRole("switch", { name: "Identity", exact: true })).toBeVisible();
   });
 
   test("withholds the capabilities until ownership is proved", async ({ page }) => {
@@ -87,14 +87,14 @@ test.describe("/admin/domains — capabilities", () => {
     await expect(
       page.getByText(/Ownership is not proved, so capabilities are disabled/).first(),
     ).toBeVisible();
-    await expect(page.getByRole("checkbox", { name: "Mail", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("switch", { name: "Mail", exact: true })).toHaveCount(0);
     // The way forward is still on screen.
     await expect(page.getByLabel("Rotate verification record for helix.test")).toBeVisible();
   });
 
   test("warns before disabling mail", async ({ page }) => {
     await openDomains(page, domainsPayload({ mailEnabled: true }));
-    await page.getByRole("checkbox", { name: "Mail", exact: true }).click();
+    await page.getByRole("switch", { name: "Mail", exact: true }).click();
     const dialog = page.getByRole("alertdialog");
     await expect(dialog).toContainText("stops accepting and sending mail");
   });

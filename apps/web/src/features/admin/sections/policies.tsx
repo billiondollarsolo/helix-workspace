@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { SettingToggle } from "@/features/admin/console/widgets";
 import { Key as KeyIcon, Lock as LockIcon } from "lucide-react";
 /* Admin › Security › Policies — authentication, access, and data protection. */
 
@@ -6,15 +7,15 @@ import { Button } from "@/components/ui/button";
 import { useAdminSectionSearch } from "@/features/admin/admin-section-search";
 import { AdminField, AdminSelect } from "@/features/admin/console/controls";
 import {
-  EmptyState,
   MutationError,
   PageHeading,
-  PageScroll,
   QueryFailureBanner,
-  StateBanner,
   StatusChip,
   useQueryFailure,
+  LoadingState,
+  Notice,
 } from "@/features/admin/console/primitives";
+import { EmptyState } from "@/components/ui/empty-state";
 import {
   SECURITY_POLICY_TYPES,
   securityPoliciesQueryKeys,
@@ -201,17 +202,12 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
         });
       }}
     >
-      <label className="row gap-2 text-[var(--text-2)] type-meta">
-        <input
-          type="checkbox"
-          className="accent-[var(--accent)]"
-          aria-label={`Enable ${securityPolicyLabels[policy.policyType]}`}
-          disabled={pending}
-          checked={enabled}
-          onChange={(event) => setEnabled(event.target.checked)}
-        />
-        Policy enabled
-      </label>
+      <SettingToggle
+        label={`${securityPolicyLabels[policy.policyType]} is on`}
+        checked={enabled}
+        disabled={pending}
+        onCheckedChange={(checked) => setEnabled(checked)}
+      />
       {/* The accessible name keeps the policy in it: every card on this page
           shows a control captioned "Enforcement", and a screen reader moving
           between them would otherwise hear the same name six times. */}
@@ -242,22 +238,16 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
               <option value="required">Required</option>
             </AdminSelect>
           </AdminField>
-          <label className="flex min-h-8 items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={sensitiveMfa}
-              onChange={(event) => setSensitiveMfa(event.target.checked)}
-            />
-            Require recent MFA for sensitive actions
-          </label>
-          <label className="flex min-h-8 items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={secondAdmin}
-              onChange={(event) => setSecondAdmin(event.target.checked)}
-            />
-            Require a second administrator for sensitive actions
-          </label>
+          <SettingToggle
+            label="Require recent MFA for sensitive actions"
+            checked={sensitiveMfa}
+            onCheckedChange={(checked) => setSensitiveMfa(checked)}
+          />
+          <SettingToggle
+            label="Require a second administrator for sensitive actions"
+            checked={secondAdmin}
+            onCheckedChange={(checked) => setSecondAdmin(checked)}
+          />
           <p className="text-sm text-muted-foreground">
             These choices apply independently of the general policy switch. A solo operator can make
             administrator MFA optional and turn off second-admin approval. Requiring MFA needs a
@@ -276,17 +266,7 @@ function PolicyEditForm({ policy, pending, onCancel, onSubmit }: PolicyEditFormP
         </p>
       ) : null}
       {policy.policyType === "sso" ? (
-        <label className="row gap-2 text-[var(--text-2)] type-meta">
-          <input
-            type="checkbox"
-            className="accent-[var(--accent)]"
-            aria-label="Local email/password login enabled"
-            checked
-            disabled
-            readOnly
-          />
-          Local email/password login remains enabled
-        </label>
+        <p className="admin-muted">Email and password sign-in stays on alongside single sign-on.</p>
       ) : null}
       {/* Save is this card's single filled button; Cancel and the card's own
           Edit/Test controls stay outlined beside it. */}
@@ -357,26 +337,20 @@ export function AdminSecurity() {
   }, [policies]);
 
   return (
-    <PageScroll>
+    <>
       {/* Titled for the sidebar entry that opens it (Security › Policies), not
           for the module: an operator who clicks a label must land on a page
           carrying that name. The subtitle carries the scope the old
           "Security policies" title was doing double duty for. */}
-      <PageHeading
-        title="Policies"
-        subtitle="Authentication, access, and data protection across the workspace"
-      />
+      <PageHeading title="Policies" subtitle="Sign-in, access, and data protection rules." />
 
       {/* Chips use server runtimeStatus: external sharing and admin MFA are live;
           SSO/DLP/device trust remain recorded-only and cannot be set to Required.
           Partial controls (MFA, session) never claim full Required. */}
-      <StateBanner kind="info">
-        Policy chips show runtime status, not intent alone. External sharing is enforced on live API
-        paths. Administrator MFA and sensitive-action safeguards follow your configured choices.
-        SSO, DLP, and device trust are recorded and audited only — Helix will not let you set them
-        to Required until enforcement ships. Prefer your identity provider or gateway for those
-        controls in the meantime.
-      </StateBanner>
+      <Notice>
+        Single sign-on, data loss prevention, and device trust are recorded and audited but not yet
+        enforced. Use your identity provider for those in the meantime.
+      </Notice>
 
       {policiesFailure !== null ? (
         <QueryFailureBanner
@@ -387,13 +361,12 @@ export function AdminSecurity() {
           onRetry={policiesFailure.retry}
           /* The policy cards are the whole page; with them gone the retry is
              the only action on screen. */
-          retryVariant="default"
         >
           No policy can be read or edited until this loads. Enforcement already in effect is
           unchanged — this is a console read failure, not a policy change.
         </QueryFailureBanner>
       ) : policiesQuery.isPending ? (
-        <StateBanner kind="loading">Loading security policies…</StateBanner>
+        <LoadingState label="Loading security policies…" />
       ) : null}
       <MutationError error={updateMutation.error} />
 
@@ -406,9 +379,12 @@ export function AdminSecurity() {
               </h2>
               {label === "Authentication" ? <LocalLoginSecurityCard /> : null}
               {policiesQuery.isSuccess && grouped[label].length === 0 ? (
-                <EmptyState icon={<LockIcon size={16} />} title={POLICY_GROUP_EMPTY[label].title}>
-                  {POLICY_GROUP_EMPTY[label].body}
-                </EmptyState>
+                <EmptyState
+                  icon={<LockIcon size={16} />}
+                  title={POLICY_GROUP_EMPTY[label].title}
+                  size="inline"
+                  body={<>{POLICY_GROUP_EMPTY[label].body}</>}
+                />
               ) : null}
               {grouped[label].map((policy) => {
                 const level = policyLevel(policy);
@@ -511,7 +487,7 @@ export function AdminSecurity() {
           ))}
         </div>
       )}
-    </PageScroll>
+    </>
   );
 }
 

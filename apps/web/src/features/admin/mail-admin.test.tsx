@@ -174,6 +174,22 @@ function routedFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
     if (url.includes("/api/admin/mail/providers")) {
       return Promise.resolve(jsonResponse(providersPayload));
     }
+    if (url.includes("/api/admin/tenant-config")) {
+      const flags = { mail_outbound: true };
+      return Promise.resolve(
+        jsonResponse({
+          tenantConfig: {
+            orgId: "org-1",
+            orgName: "Acme",
+            byo: {},
+            features: flags,
+            quotas: {},
+            branding: {},
+            effective: { byo: {}, features: flags, quotas: {}, branding: {} },
+          },
+        }),
+      );
+    }
     if (url.includes("/api/admin/mail/domains")) {
       return Promise.resolve(jsonResponse(domainsPayload));
     }
@@ -270,9 +286,23 @@ describe("MailAdminSection", () => {
     vi.clearAllMocks();
   });
 
-  it("renders outbound providers from the admin API by default", async () => {
+  it("opens on General, with the service status and the outbound mail switch", async () => {
+    vi.stubGlobal("fetch", routedFetch());
+
+    await render(createElement(MailAdminSection));
+
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe(
+      "General",
+    );
+    await waitFor(() => {
+      expect(container.textContent).toContain("Send mail outside the organization");
+    });
+  });
+
+  it("renders outbound providers from the admin API on their tab", async () => {
     const fetchMock = routedFetch();
     vi.stubGlobal("fetch", fetchMock);
+    routerMocks.search = { tab: "providers" };
 
     await render(createElement(MailAdminSection));
 
@@ -292,6 +322,7 @@ describe("MailAdminSection", () => {
   it("posts a new provider with kind-specific config", async () => {
     const fetchMock = routedFetch();
     vi.stubGlobal("fetch", fetchMock);
+    routerMocks.search = { tab: "providers" };
 
     await render(createElement(MailAdminSection));
     await waitFor(() => {
@@ -398,7 +429,7 @@ describe("MailAdminSection", () => {
     expect(container.querySelector('[aria-label="Sender pattern"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Subject contains"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Header name"]')).not.toBeNull();
-    expect(container.querySelector('[aria-label="Stop processing"]')).not.toBeNull();
+    expect(container.textContent).toContain("Stop processing later rules");
   });
 
   it("shows spam filtering thresholds and daemon status", async () => {
@@ -433,6 +464,7 @@ describe("MailAdminSection", () => {
         Promise.resolve(jsonResponse({ error: "Missing required scope" }, 403)),
       ),
     );
+    routerMocks.search = { tab: "providers" };
 
     await render(createElement(MailAdminSection));
 

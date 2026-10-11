@@ -1,3 +1,4 @@
+import { ScopeChips } from "@/features/admin/console/widgets";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
@@ -14,9 +15,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { AdminUser } from "@/features/admin/admin-users";
-import { AdminAccessRelatedNav } from "@/features/admin/admin-related-nav";
 import { ConfirmDestructive } from "@/features/admin/console/confirm-destructive";
-import { EmptyRow, PageHeading, StateBanner } from "@/features/admin/console/primitives";
+import { EmptyRow, PageHeading, ErrorNotice, Notice } from "@/features/admin/console/primitives";
 import {
   ActorNoticeBanner,
   ActorSearchField,
@@ -206,18 +206,7 @@ export function AgentCredentialsManagement() {
       {
         accessorKey: "scopes",
         header: "Scopes",
-        cell: ({ row }) => (
-          <div className="flex max-w-md flex-wrap gap-1">
-            {row.original.scopes.map((scope) => (
-              <span
-                className="rounded border border-border bg-background px-1.5 py-0.5 type-caption"
-                key={scope}
-              >
-                {scope}
-              </span>
-            ))}
-          </div>
-        ),
+        cell: ({ row }) => <ScopeChips scopes={row.original.scopes} />,
       },
       {
         id: "expires",
@@ -290,9 +279,8 @@ export function AgentCredentialsManagement() {
     <section className="grid gap-4">
       <PageHeading
         title="Agent credentials"
-        subtitle="Issue scoped OAuth client credentials for agent actors. Revoke credentials that should no longer mint tokens. Emergency kill switches live under Agent emergency controls; human protocol secrets live under App passwords."
+        subtitle="Client credentials that let agents call the API with limited scopes."
       />
-      <AdminAccessRelatedNav current="agent-credentials" />
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(20rem,0.8fr)_minmax(0,1.2fr)]">
         <form
@@ -354,10 +342,10 @@ export function AgentCredentialsManagement() {
                       that person — legal, rarely intended, and invisible once the
                       credential exists. Say so while it can still be changed. */}
                   {selectedActor !== undefined && !isAgentActor(selectedActor) ? (
-                    <StateBanner kind="info">
+                    <Notice>
                       {actorLabel(selectedActor)} is a {selectedActor.type} actor, not an agent.
                       Tokens minted with this credential will act as that {selectedActor.type}.
-                    </StateBanner>
+                    </Notice>
                   ) : null}
                 </div>
               );
@@ -388,11 +376,11 @@ export function AgentCredentialsManagement() {
             )}
           </credentialForm.Field>
 
-          {formError !== null ? <StateBanner kind="error">{formError}</StateBanner> : null}
+          {formError !== null ? <ErrorNotice>{formError}</ErrorNotice> : null}
           {createMutation.isError ? (
-            <StateBanner kind="error">
+            <ErrorNotice>
               {errorMessage(createMutation.error, "Could not create the agent credential.")}
-            </StateBanner>
+            </ErrorNotice>
           ) : null}
 
           <Button
@@ -459,14 +447,14 @@ export function AgentCredentialsManagement() {
           </div>
 
           {credentialsQuery.isError ? (
-            <StateBanner kind="error">
+            <ErrorNotice>
               {errorMessage(credentialsQuery.error, "Could not load agent credentials.")}
-            </StateBanner>
+            </ErrorNotice>
           ) : null}
           {revokeMutation.isError ? (
-            <StateBanner kind="error">
+            <ErrorNotice>
               {errorMessage(revokeMutation.error, "Could not revoke the agent credential.")}
-            </StateBanner>
+            </ErrorNotice>
           ) : null}
 
           <Table aria-label="Agent credentials">

@@ -224,7 +224,7 @@ it("preserves a failed settings draft, clears keys explicitly, and tests or inde
   await click("Save retrieval settings");
   await expectText("Could not save settings. Try again.");
   expect(control("Qdrant API key").value).toBe("qdrant-new-key");
-  expect((control("Clear stored embedding api key") as HTMLInputElement).checked).toBe(true);
+  expect(switchControl("Clear stored embedding api key").getAttribute("aria-checked")).toBe("true");
   await click("Save retrieval settings");
   await expectText("Retrieval settings saved.");
   expect(patches).toHaveLength(2);
@@ -293,9 +293,17 @@ async function fill(name: string, value: string) {
     return Promise.resolve();
   });
 }
+function switchControl(name: string): HTMLButtonElement {
+  const match = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="switch"]')).find(
+    (element) =>
+      document.getElementById(element.getAttribute("aria-labelledby") ?? "")?.textContent === name,
+  );
+  if (!match) throw new Error(`Missing switch: ${name}`);
+  return match;
+}
 async function toggle(name: string) {
   await act(() => {
-    control(name).click();
+    switchControl(name).click();
     return Promise.resolve();
   });
 }
